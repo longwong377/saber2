@@ -22,6 +22,7 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
+const FWD = new THREE.Vector3(0, 0, -1);
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Camera                                                                */
@@ -62,7 +63,14 @@ export class CameraRig {
     this.aimQuat.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
 
     if (!this._init) { this._smoothTarget.copy(target); this._init = true; }
-    dampVec(this._smoothTarget, target, this.firstPerson ? 40 : 16, dt);
+    // First person locks the eye to the body with NO positional smoothing. Even
+    // at a damping rate of 40 the eye trails the body by a couple of frames,
+    // and in first person that reads as the entire world swimming behind your
+    // own movement — the single largest source of first-person jank. Third
+    // person still wants the lag; it is what makes the camera feel like a
+    // camera rather than a rigid boom.
+    if (this.firstPerson) this._smoothTarget.copy(target);
+    else dampVec(this._smoothTarget, target, 16, dt);
 
     this.distance = damp(this.distance, this.targetDistance, 8, dt);
     this.fov = damp(this.fov, this.fovTarget, 7, dt);
@@ -73,7 +81,14 @@ export class CameraRig {
 
     if (this.firstPerson) {
       this.pos.copy(this._smoothTarget).addScaledVector(UP, ctx.eyeHeight ?? 1.62);
-      this.pos.addScaledVector(fwd, 0.08);
+      // Offset along the body's HORIZONTAL forward, not the view forward.
+      // Following the view meant looking down also moved the eye downward and
+      // out of the head, so the pivot drifted as you aimed.
+      _v6.set(fwd.x, 0, fwd.z);
+      if (_v6.lengthSq() > 1e-6) this.pos.addScaledVector(_v6.normalize(), 0.07);
+      // A small gait bob so footfalls have weight. Deliberately tiny — this is
+      // the knob that makes people motion sick.
+      this.pos.y += (ctx.bob ?? 0) * 0.5;
       this.look.copy(this.pos).addScaledVector(fwd, 10);
     } else {
       const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height)
@@ -110,9 +125,26 @@ export class CameraRig {
     }
 
     this.camera.position.copy(this.pos);
-    this.camera.up.set(Math.sin(this.roll), Math.cos(this.roll), 0).applyQuaternion(
-      _q1.setFromAxisAngle(UP, this.yaw));
-    this.camera.lookAt(this.look);
+    if (this.firstPerson) {
+      // Take the orientation straight from aimQuat instead of re-deriving it
+      // with lookAt(). lookAt rebuilds a basis against `up` every frame, which
+      // at the pitch limits sits close to the view direction and goes unstable
+      // — visible as the horizon twitching when you look far up or down. The
+      // aim quaternion is already exact; roll is composed onto it.
+      this.camera.quaternion.copy(this.aimQuat);
+      if (Math.abs(this.roll) > 1e-5) {
+        this.camera.quaternion.multiply(_q1.setFromAxisAngle(FWD, this.roll));
+      }
+      this.camera.up.set(0, 1, 0);
+    } else {
+      this.camera.up.set(Math.sin(this.roll), Math.cos(this.roll), 0).applyQuaternion(
+        _q1.setFromAxisAngle(UP, this.yaw));
+      this.camera.lookAt(this.look);
+    }
+    // The near plane has to be tighter in first person or your own hands and
+    // the base of the blade clip through it.
+    const near = this.firstPerson ? 0.045 : 0.15;
+    if (this.camera.near !== near) { this.camera.near = near; this.camera.updateProjectionMatrix(); }
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();
@@ -326,12 +358,22 @@ export class Player {
   }
 
   _applyViewMode() {
-    const head = this.rig.get('head');
     const fp = this.camera.firstPerson;
-    if (head) head.obj.scale.setScalar(fp ? 0.0001 : 1);
-    const neck = this.rig.get('neck');
-    if (neck) neck.obj.scale.setScalar(fp ? 0.35 : 1);
+
+    // Hide the MESHES, not the bones. Scaling a bone enters matrixWorld, so a
+    // 0.0001x head and a 0.35x neck were silently seen by the sever code, the
+    // cloak colliders, the ragdoll body sizes and every worldPos() call.
+    for (const n of ['head', 'neck']) {
+      const b = this.rig.get(n);
+      if (!b) continue;
+      b.obj.scale.setScalar(1);
+      for (const m of b.parts) m.visible = !fp;
+    }
     this.camera.targetDistance = fp ? 0 : 3.05;
+    // A high guard reads well over the shoulder but leaves first person staring
+    // at the flat of the blade; drop it so the weapon crosses the lower view.
+    this.control.readyX = fp ? 0.26 : 0.30;
+    this.control.readyY = fp ? 0.02 : 0.30;
   }
 
   /* ── locomotion ──────────────────────────────────────────────────── */
@@ -613,8 +655,32 @@ export class Player {
   /* ── blade ───────────────────────────────────────────────────────── */
 
   _updateBlade(dt, ctx) {
-    // chest anchor: the frame the whole blade solve lives in
+    // Chest anchor: the frame the whole blade solve lives in.
+    //
+    // In first person this cannot be the real chest. The eye sits ~28cm above
+    // it, so a blade solved from the sternum arrives at the lens from below and
+    // to the side, a metre of it filling a quarter of the screen. Every first
+    // person game solves this the same way: the weapon hangs off the VIEW, not
+    // off the ribcage. So drop the anchor further below the eye and push it
+    // back behind it, which both recedes the blade to a sane size and puts the
+    // hilt where your hands would actually be if you were holding it up.
     this.chest.copy(this.position).setY(this.position.y + lerp(1.34, 1.0, this.crouch));
+    if (this.camera.firstPerson) {
+      const eye = this.position.y + lerp(1.62, 1.22, this.crouch);
+      // FORWARD and down, not back. The hands sit ~0.29m out along the guard
+      // from this anchor; at 0.30m below the eye they need to be at least
+      // 0.30/tan(30) = 0.52m in FRONT of it to fall inside a 60 degree vertical
+      // frustum at all. Anchoring behind the eye put the hilt permanently off
+      // the bottom of the screen, and closer to the lens made the blade bigger
+      // rather than smaller.
+      this.chest.setY(eye - 0.26);
+      _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat).setY(0);
+      // Kept modest on purpose: this anchor is the REAL one, so whatever it adds
+      // in front of you is real reach. 0.45 looked best but handed first person
+      // a third more range than third person, which is not a view option, it is
+      // a different weapon.
+      if (_v4.lengthSq() > 1e-6) this.chest.addScaledVector(_v4.normalize(), 0.28);
+    }
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
 
@@ -794,6 +860,7 @@ export class Player {
     this.camera.rollTarget = clamp(-this.control.angVel.y * 0.006, -0.05, 0.05);
     this.camera.update(dt, this.position, {
       physics: ctx.physics, terrain: ctx.terrain, eyeHeight: lerp(1.62, 1.22, this.crouch),
+      bob: this.animator?.bob ?? 0,
     });
   }
 
