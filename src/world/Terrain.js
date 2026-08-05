@@ -76,12 +76,12 @@ export const TERRAIN_PRESETS = {
     sandColor: 0x9e7a42, rockColor: 0x6b5d4c,
     maps: 'sand',
     gritColor: 0x6d5430, rockColor2: 0x8a7358,
-    dustColor: 0xbb9459, crustColor: 0xb1a187,
+    dustColor: 0xbb9459, crustColor: 0xa89467,
     // Slope here is 1 − cos θ, so 0.13 is 30° and 0.29 is 45°. A dune sea is
     // sand all the way up — the slip faces get coarse grit, never stone.
     slopeBands: [0.30, 0.52, 0.11, 0.24],
     stoneSlope: 0.30,
-    crust: 0.70, strataH: 5.0,
+    crust: 0.55, strataH: 5.0,
     wind: [0.86, 0.51],
     detail: [0.95, 34],
     height(x, z) {
@@ -123,10 +123,10 @@ export const TERRAIN_PRESETS = {
 
   arena: {
     scale: 460, res: 300, waterLevel: -999,
-    sandColor: 0x9c7b48, rockColor: 0x7d6b52, 
+    sandColor: 0x9c7b48, rockColor: 0x7d6b52,
     maps: 'sand',
     gritColor: 0x6a5334, rockColor2: 0x554a3b,
-    dustColor: 0xb88f55, crustColor: 0xa89c82,
+    dustColor: 0xb88f55, crustColor: 0x9c8f6e,
     slopeBands: [0.14, 0.36, 0.05, 0.15],
     stoneSlope: 0.24,
     crust: 0.55, strataH: 5.5, cliffs: true,
@@ -329,7 +329,7 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // the baked landform channels
   float conc = vTer.x * 2.0 - 1.0;   // + hollow, − crest        (≈8 m)
   float open = vTer.y;               // 0 enclosed, 1 exposed    (≈18 m)
-  float upl  = vTer.z * 2.0 - 1.0;   // − basin, + upland        (≈50 m)
+  float upl  = vTer.z * 2.0 - 1.0;   // − basin, + upland        (≈80 m)
   float expo = vTer.w * 2.0 - 1.0;   // − lee, + windward
 
   float mA = tfbm(wp * uMix.x);      // ≈70 m — the shape of the ground
@@ -375,7 +375,7 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   //    the preset colours ARE the albedo; multiplying tint by texture the way
   //    this used to left the sand a saturated orange in every level.
   vec3 col = uBaseCol;
-  col = mix(col, uGritCol, gritW * 0.9 + scour * 0.16);
+  col = mix(col, uGritCol, min(1.0, gritW * 0.9 + scour * 0.16));
   col = mix(col, uDustCol, driftW * 0.85);
   col = mix(col, uCrustCol, crustW);
   col *= 0.55 + dot(baseC, vec3(0.3333)) * 1.15;
@@ -556,6 +556,11 @@ export class Terrain {
     const R = this.res, n = R * R, H = this.heights;
     const cells = (metres) => Math.max(1, Math.round(metres / this.step));
     this._rS = cells(8);
+    // 8 m for hollows you can stand in, 18 m for how enclosed a spot is, and a
+    // double pass at 50 m — a tent kernel about 80 m wide — for which basin or
+    // upland you are on. That last one is the 50-200 m macro variation the
+    // material needs and noise cannot supply, because it has to agree with the
+    // ground the player is walking over.
     const blurS = this._blur(H, this._rS);
     const blurM = this._blur(H, cells(18));
     const blurL = this._blur(this._blur(H, cells(50)), cells(50));
@@ -686,16 +691,25 @@ export class Terrain {
       this._shader = shader;
     };
 
+    // castShadow alone was a no-op here. three renders the shadow pass with
+    // `shadowSide[material.side]`, which maps FrontSide → BackSide — the usual
+    // front-face-cull trick for closed meshes. A heightfield is a single sheet:
+    // culling its front faces removes it from the shadow map entirely, and the
+    // frame came out byte-for-byte identical to castShadow = false. Measured on
+    // the dune sea at a 26° sun: ground mean luminance 150 with the flag on and
+    // the default side, 141 once the depth pass actually rasterises it.
+    //
+    // No depth bias of our own. The terrain's self-shadow at that sun angle
+    // lives inside a ~15 cm depth window, so a normal offset big enough to
+    // matter for acne (step × 0.09 ≈ 15 cm) put the frame back to 150 — it
+    // erased exactly the shadows it was there to clean up. The light's own
+    // bias is doing the job and no striping is visible at ground level.
+    mat.shadowSide = THREE.FrontSide;
+
     this.material = mat;
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.receiveShadow = true;
-    // One draw call inside a tight ortho frustum, and without it a 60m canyon
-    // wall and an entire dune sea cast nothing at all. The depth pass is offset
-    // along the surface normal (see _shadowDepthMaterial) because the light
-    // grazes a 1.5 m grid at 14–26° and the light's own normalBias is sized for
-    // props, not for a heightfield.
     this.mesh.castShadow = true;
-    this.mesh.customDepthMaterial = this._shadowDepthMaterial();
     this.mesh.matrixAutoUpdate = false;
     this.mesh.updateMatrix();
     scene.add(this.mesh);
@@ -703,32 +717,6 @@ export class Terrain {
     this._scene = scene;
     scene.traverse((o) => { if (o.isHemisphereLight) this._hemi = o; });
     this._syncAtmosphere();
-  }
-
-  /**
-   * The shadow caster, pushed a few centimetres back along its own normal.
-   *
-   * The sun sits at 14–26° in these levels, so it meets flat sand at ~75°
-   * incidence: across one 4.5 cm shadow texel the true depth moves ~18 cm,
-   * while the light's bias adds up to about 3 cm. That is textbook acne, and it
-   * arrived the moment the terrain started casting. Biasing the caster instead
-   * of the receiver fixes it without touching every other shadow in the scene;
-   * the cost is that a dune crest's own shadow starts ~20 cm late, which at
-   * this sun angle is invisible.
-   */
-  _shadowDepthMaterial() {
-    const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-    m.onBeforeCompile = (shader) => {
-      shader.uniforms.uShadowBias = { value: Math.max(0.10, this.step * 0.09) };
-      // NB: the depth vertex shader only builds `objectNormal` under
-      // USE_DISPLACEMENTMAP, so read the attribute directly.
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uShadowBias;')
-        .replace('#include <begin_vertex>',
-          '#include <begin_vertex>\ntransformed -= normal * uShadowBias;');
-      this._depthShader = shader;
-    };
-    return m;
   }
 
   /**
@@ -928,7 +916,6 @@ export class Terrain {
   dispose() {
     this.geometry.dispose();
     this.material.dispose();
-    this.mesh.customDepthMaterial?.dispose();
     this.mesh.parent?.remove(this.mesh);
   }
 }

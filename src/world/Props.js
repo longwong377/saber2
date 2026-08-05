@@ -5,6 +5,30 @@
  * toughness and a cut budget, so a fruit crate parts instantly, a durasteel
  * pillar takes a deliberate push, and a blast door takes twenty seconds of
  * held blade and a river of slag.
+ *
+ * This file is also the environment art vocabulary — everything a level has to
+ * build a PLACE out of, since there are no art assets and never will be:
+ *
+ *   Kit + mergeGeos     bin geometry by material, merge on emit. A ruin made
+ *                       of forty stones costs five draw calls, not forty.
+ *   uvm / boxUv / …     texel density from world size. A 9 m wall and a 0.7 m
+ *                       crate can not share one `repeat` and both read right.
+ *   Architecture kit    columns, arches, lintels, buttresses, broken walls,
+ *                       stairs, railings, plinths, balconies, floor slabs — all
+ *                       sized off ARCH so they butt together.
+ *   Monuments           addColossus, addRuinedGate, addHullSection, addGantry:
+ *                       the thing a level is navigated by.
+ *   Rock                rockGeo and friends — bedded, undercut, vertex-coloured
+ *                       by stratum so the layering survives distance.
+ *   Clutter             pipe runs, catenary cables, crate stacks, tarps,
+ *                       scaffolding, masts, lamps, signage.
+ *   addDebrisField      the rubble a ruin sheds — big near, small far, one
+ *                       instanced draw per shape.
+ *   addRuin/addOutpost  a whole place in one call.
+ *
+ * The convention throughout: `make*` returns a live Prop for the caller to
+ * hand to world.addProp; `add*` builds static scenery and registers it itself.
+ * Pass `{ kit }` to any `add*` to compose it into a larger merge.
  */
 
 import * as THREE from 'three';
@@ -65,7 +89,7 @@ export function propMaterials() {
     crate: mk(metal, lit(0.86, 0.68, 0.40), 0.62, 0.35),        // olive drab
     crateDark: mk(metal, lit(0.41, 0.37, 0.29), 0.55, 0.7),
     barrel: mk(metal, lit(0.96, 0.49, 0.22), 0.5, 0.75),        // oxide red
-    duracrete: mk(crete, lit(0.82, 0.76, 0.66), 0.94, 0.02),
+    duracrete: mk(crete, lit(0.90, 0.79, 0.62), 0.94, 0.02),
     stone: mk(rock, lit(1.90, 2.10, 2.20), 0.92, 0.02),
     steel: mk(metal, lit(1.50, 1.42, 1.30), 0.34, 0.98),
     darkSteel: mk(metal, lit(0.64, 0.60, 0.56), 0.42, 0.95),
@@ -81,7 +105,7 @@ export function propMaterials() {
      * the rust that runs out of every fixing, and the paint somebody put on
      * it before the war are four different materials to the eye even when
      * they share one baked map. */
-    duracreteWarm: mk(crete, lit(1.05, 0.92, 0.72), 0.93, 0.02),  // sun-bleached facing
+    duracreteWarm: mk(crete, lit(1.12, 0.94, 0.68), 0.93, 0.02),  // sun-bleached facing
     duracreteDark: mk(crete, lit(0.40, 0.37, 0.34), 0.96, 0.02),  // wall core, undersides
     sandstone: mk(rock, lit(2.70, 2.40, 1.70), 0.95, 0.0),        // carved stone, plinths
     stoneDark: mk(rock, lit(0.95, 1.10, 1.25), 0.94, 0.02),       // shadowed masonry
@@ -1800,7 +1824,11 @@ export function addLintel(world, pos, opts = {}) {
   return kitClose(world, kit, pos, opts);
 }
 
-/** A solid buttress leaning against a wall: base `t` thick, `h` tall. */
+/**
+ * A buttress leaning against a wall: a battered mass that steps back twice on
+ * its way up, with a weathering slope on each set-off. Sizes: 3 m (a pier),
+ * 5 m (one course of wall), 9 m (two).
+ */
 export function addButtress(world, pos, opts = {}) {
   const kit = kitOpen(pos, opts, 55);
   const M = propMaterials();
@@ -1945,7 +1973,10 @@ export function addStair(world, pos, opts = {}) {
   return kitClose(world, kit, pos, opts);
 }
 
-/** Posts and a rail — balconies, gantries, stair edges. */
+/**
+ * Posts, a top rail and a mid rail. `pitch` rakes it to follow a stair.
+ * Lengths 2-24 m; one post every 1.4 m unless you say otherwise.
+ */
 export function addRailing(world, pos, opts = {}) {
   const kit = kitOpen(pos, opts, 88);
   const M = propMaterials();
@@ -2170,35 +2201,47 @@ export function addColossus(world, pos, opts = {}) {
   scaleUv(face, uvm(1.4));
   kit.put(face, dark, 0, hy + S(0.075), S(0.055), -0.25, 0, 0);
 
-  // arms. One reaches out holding a snapped blade; one is gone at the elbow.
+  // Arms. The right is RAISED holding a snapped blade — a horizontal arm reads
+  // as a T-pose from any distance, and the raised one is what makes this thing
+  // findable across a map. The left is gone at the elbow.
   const armR = S(0.045), armL = S(0.30);
+  const shoulderY = y0 + S(0.6), shoulderX = S(0.115);
   const upper = (sx, pitch, roll) => {
     const g = limbGeo(armL * 0.52, armR, armR * 0.86, 10, true, { rings: 4, bulge: 0.08, bulgeAt: 0.35 });
     tubeUv(g, TAU * armR, armL * 0.52, 1.6);
     g.applyMatrix4(_km.makeRotationFromEuler(_ke.set(pitch, 0, roll)));
-    g.translate(sx * S(0.115), y0 + S(0.6), 0);
+    g.translate(sx * shoulderX, shoulderY, 0);
     return g;
   };
-  kit.add(upper(1, 0.1, -1.5), stone);                       // right: out and forward
-  const fore = limbGeo(armL * 0.5, armR * 0.86, armR * 0.7, 10, true, { rings: 3, bulge: 0.05 });
+  const upRoll = 0.62, foreRoll = 0.26;
+  kit.add(upper(1, 0.08, -upRoll), stone);
+  const elbowX = shoulderX + Math.sin(upRoll) * armL * 0.52;
+  const elbowY = shoulderY + Math.cos(upRoll) * armL * 0.52;
+  const fore = limbGeo(armL * 0.5, armR * 0.86, armR * 0.72, 10, true, { rings: 3, bulge: 0.05 });
   tubeUv(fore, TAU * armR, armL * 0.5, 1.6);
-  fore.applyMatrix4(_km.makeRotationFromEuler(_ke.set(0.5, 0, -1.9)));
-  fore.translate(S(0.115) + Math.sin(1.5) * armL * 0.52, y0 + S(0.6) + Math.cos(1.5) * armL * 0.52, 0);
+  fore.applyMatrix4(_km.makeRotationFromEuler(_ke.set(0.1, 0, -foreRoll)));
+  fore.translate(elbowX, elbowY, 0);
   kit.add(fore, stone);
-  // the blade it holds, snapped a third of the way up
-  const bl = S(0.42) * (ruined ? 0.42 : 1);
+  const handX = elbowX + Math.sin(foreRoll) * armL * 0.5;
+  const handY = elbowY + Math.cos(foreRoll) * armL * 0.5;
+  // a fist, so the blade is held rather than balanced
+  const fist = new THREE.SphereGeometry(armR * 1.15, 8, 6);
+  tubeUv(fist, TAU * armR, Math.PI * armR, 1.4);
+  kit.put(fist, stone, handX, handY, 0);
+  // the blade it holds, snapped short
+  const bl = S(0.5) * (ruined ? 0.45 : 1);
   const blade = extrudeBeveled([
-    [-S(0.026), 0], [S(0.026), 0], [S(0.02), bl * 0.86],
-    [ruined ? S(0.026) : 0, bl], [ruined ? -S(0.014) : 0, bl * 0.97], [-S(0.02), bl * 0.86],
-  ], S(0.018), { bevel: S(0.005), tile: 1.4 });
-  blade.rotateZ(-0.24);
-  blade.translate(S(0.115) + armL * 0.86, y0 + S(0.63), S(0.02));
+    [-S(0.03), 0], [S(0.03), 0], [S(0.022), bl * 0.86],
+    [ruined ? S(0.03) : 0, bl], [ruined ? -S(0.016) : 0, bl * 0.97], [-S(0.022), bl * 0.86],
+  ], S(0.02), { bevel: S(0.006), tile: 1.4 });
+  blade.rotateZ(-0.16);
+  blade.translate(handX + S(0.01), handY - S(0.03), S(0.02));
   kit.add(blade, metal);
 
   if (ruined) {
     const stub = upper(-1, -0.15, 1.15);
     kit.add(stub, stone);
-    const bx = -S(0.115) - Math.sin(1.15) * armL * 0.5, by = y0 + S(0.6) + Math.cos(1.15) * armL * 0.48;
+    const bx = -shoulderX - Math.sin(1.15) * armL * 0.5, by = shoulderY + Math.cos(1.15) * armL * 0.48;
     const ring = [];
     for (let i = 0; i < 10; i++) {
       const a = (i / 10) * TAU;

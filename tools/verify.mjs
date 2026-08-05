@@ -920,11 +920,24 @@ check('terrain: quality scales the grid but never the sampled shape', () => {
   }
   // the coarse grid is a 5.6m lattice over a dune field; it may lag, not diverge
   assert(worst < 3.5, `the two grids disagree by ${worst.toFixed(2)}m`);
-  assert(lo.material.userData !== hi.material.userData || true, '');
-  const r = lo.mesh.customDepthMaterial;
-  assert(r && r.isMeshDepthMaterial, 'the terrain casts shadows with no biased depth material');
   lo.dispose(); hi.dispose();
   return `res ${lo.res}→${hi.res}, worst height disagreement ${worst.toFixed(2)}m`;
+});
+
+check('terrain: the ground is actually in the shadow map', () => {
+  // three renders the shadow pass with shadowSide[material.side], which turns a
+  // FrontSide material into a BackSide depth pass. On a closed mesh that hides
+  // acne; on a single-sheet heightfield it culls the ground out of the shadow
+  // map altogether and castShadow silently does nothing.
+  const t = new Terrain(scene, 'dunes', 0.5);
+  assert(t.mesh.castShadow, 'the terrain does not cast at all');
+  assert(t.mesh.receiveShadow, 'the terrain does not receive');
+  assert(t.material.shadowSide === THREE.FrontSide,
+    `shadowSide is ${t.material.shadowSide} — the depth pass will cull the ground away`);
+  assert(t.mesh.customDepthMaterial === undefined,
+    'a biased depth caster erases the very self-shadowing castShadow is for');
+  t.dispose();
+  return 'castShadow + receiveShadow + FrontSide depth pass, no caster bias';
 });
 
 check('terrain: the canyon is ankle deep, not a lake', () => {
@@ -2078,6 +2091,59 @@ check('scenery: grass is ground cover, not waist-high weeds', async () => {
   // and it must not be so short it reads as moss
   assert(nearMax > 0.25, `the tallest blade is only ${nearMax.toFixed(2)}m`);
   return `tallest blade ${nearMax.toFixed(2)}m, tallest tuft ${cardMax.toFixed(2)}m`;
+});
+
+check('bodies: no face feature is buried inside the head it belongs to', () => {
+  // This bug has now been found FOUR times in this file — the Jedi's eyes,
+  // pupils, brows and nose; the trooper's visor, vents and crest; the acolyte's
+  // eye bar; the B1's photoreceptors — and twice it survived a "fix" because
+  // the offset was checked against one shell while a second one (the jaw)
+  // reached further forward at that height. So: raycast the ASSEMBLED head.
+  // Scoped to the Jedi deliberately. The check is a head-on -Z raycast, which
+  // is only meaningful for a head that IS roughly a ball: on a B1 the
+  // photoreceptors sit on the cranium above a protruding snout, so a head-on
+  // ray hits the snout first and reports a burial that is not real. A test that
+  // cries wolf gets muted, and this one has to survive to be worth having.
+  // The enemy heads have their own purpose-built detectors in the scratchpad.
+  const heads = [['jedi', buildJedi]];
+  const report = [];
+  for (const [name, build] of heads) {
+    const { rig } = build({ scale: 1 });
+    const head = rig.get('head');
+    if (!head) continue;
+    head.obj.updateMatrixWorld(true);
+    const meshes = [];
+    head.obj.traverse(o => { if (o.isMesh && o.geometry) { o.updateMatrixWorld(true); meshes.push(o); } });
+    if (meshes.length < 3) continue;
+    // the shell is the two densest meshes — cranium and jaw / helmet and face
+    const shell = [...meshes].sort((a, b) =>
+      b.geometry.attributes.position.count - a.geometry.attributes.position.count).slice(0, 2);
+    const rc = new THREE.Raycaster();
+    const surfaceZ = (x, y) => {
+      rc.set(V(x, y, 5), V(0, 0, -1));
+      let best = -Infinity;
+      for (const m of shell) for (const h of rc.intersectObject(m, false)) best = Math.max(best, h.point.z);
+      return best;
+    };
+    let worst = 0, worstAt = null;
+    for (const m of meshes) {
+      if (shell.includes(m)) continue;
+      const b = new THREE.Box3().setFromObject(m);
+      const cx = (b.min.x + b.max.x) / 2, cy = (b.min.y + b.max.y) / 2;
+      const sz = surfaceZ(cx, cy);
+      if (!isFinite(sz)) continue;                 // nothing in front of it — ears
+      // Only judge parts that are actually TRYING to be on the face. Hair caps
+      // and cowls sit behind the skull by design, and the shell is legitimately
+      // in front of them.
+      if ((b.min.z + b.max.z) / 2 < 0.03) continue;
+      const proud = b.max.z - sz;
+      if (proud < worst) { worst = proud; worstAt = `${name} (${cx.toFixed(3)}, ${cy.toFixed(3)})`; }
+    }
+    report.push(`${name} ${(worst * 1000).toFixed(1)}mm`);
+    assert(worst > -0.0005,
+      `${worstAt} is ${(-worst * 1000).toFixed(1)}mm inside the head shell — it will never be drawn`);
+  }
+  return report.join(', ') + ' worst clearance';
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -962,12 +962,18 @@ export function buildJedi(opts = {}) {
         // A real eyeball is ~12mm across and mostly buried; sitting proud of the
         // skull at 14.6mm it read as a bug's eye. Set into a socket instead, so
         // the brow above it does the work.
+        // Depths measured by raycasting the assembled skull AND jaw, not by
+        // eyeballing an offset against the sphere's nominal radius: the jaw
+        // ellipsoid reaches further forward than the cranium at this height, so
+        // clearing one still leaves you inside the other. At 0.0865 the eyes
+        // sat 3.9mm INSIDE the shell and the pupils 0.3mm inside, which is why
+        // the face read as blank with two faint dots.
         mesh(new THREE.SphereGeometry(0.0112 * s, 8, 6), new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.28 }),
-          headObj, [sx * 0.033 * s, 0.104 * s, 0.0865 * s], null, [1, 0.85, 0.8]);
+          headObj, [sx * 0.033 * s, 0.104 * s, 0.0915 * s], null, [1, 0.85, 0.8]);
         mesh(new THREE.SphereGeometry(0.0058 * s, 6, 5), new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.2 }),
-          headObj, [sx * 0.033 * s, 0.103 * s, 0.0945 * s]);
+          headObj, [sx * 0.033 * s, 0.103 * s, 0.0985 * s]);
         mesh(plateGeo(0.034 * s, 0.007 * s, 0.012 * s, 0.003 * s, 1), hair,
-          headObj, [sx * 0.036 * s, 0.1245 * s, 0.0915 * s], [0.2, 0, sx * 0.12]);
+          headObj, [sx * 0.036 * s, 0.1245 * s, 0.0935 * s], [0.2, 0, sx * 0.12]);
         // ears
         mesh(new THREE.SphereGeometry(0.019 * s, 8, 6), skin, headObj, [sx * 0.098 * s, 0.093 * s, 0.0], null, [0.5, 1, 0.8]);
       }
@@ -1773,13 +1779,15 @@ export function buildTrooper(opts = {}) {
           // the kneecap's own pole points forward off the shin's real surface;
           // centred on the axis it was 94% inside the leg
           const kr = onLimb(shin, 0.034 * s, [0, 0, 1], 0)[2];
-          const cap = new THREE.SphereGeometry(0.056 * s, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.56);
-          cap.scale(1.05, 0.85, 1.0);
+          const cap = new THREE.SphereGeometry(0.058 * s, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.58);
+          cap.scale(1.02, 0.60, 0.92);
           // +1.45, not -1.45: rotating +Y about X by a NEGATIVE angle tips the
           // dome's pole to -Z, which put the kneecap on the back of the leg
           kn.add(plate, cap, [0, 0.034 * s, kr + 0.004 * s], [1.45, 0, 0]);
-          kn.add(accent, limbPlate(shin, 0.052 * s, 0.072 * s, 1.8, { thick: 0.007 * s, seg: 6, gap: 0.019 * s }),
-            [0, 0.052 * s, 0]);
+          // unit stripe on the greave, where it is read from, rather than on
+          // the joint where the kneecap covers it
+          kn.add(accent, limbPlate(shin, L * 0.30, L * 0.34, 2.0, { thick: 0.007 * s, seg: 6, gap: 0.021 * s }),
+            [0, L * 0.30, 0]);
           kn.add(plate, limbPlate(shin, L * 0.22, L * 0.84, 3.7, { thick: 0.014 * s, seg: 8, gap: 0.006 * s }),
             [0, L * 0.22, 0]);
           kn.add(plate, bandGeo(0.042 * s, 0.056 * s, 0.042 * s, 0.056 * s, 0.028 * s, 12), [0, L * 0.86, 0]);
