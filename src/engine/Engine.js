@@ -15,6 +15,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { SkyDome } from './SkyDome.js';
 import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
 
@@ -232,6 +233,9 @@ export class Engine {
     this.sky = new Sky();
     this.sky.scale.setScalar(20000);
     this.scene.add(this.sky);
+    // Clouds and a distant skyline, composited over the Preetham gradient. One
+    // draw call, and it is most of what stops the world reading as a diorama.
+    this.skyDome = new SkyDome(this.scene);
 
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.pmrem.compileEquirectangularShader();
@@ -264,6 +268,8 @@ export class Engine {
     // the canyon's (fighting it).
     this.fill.position.copy(sunPos).multiplyScalar(-1).setY(0.5).normalize().multiplyScalar(60);
     this.sky.visible = a.sky !== false;
+    this.skyDome.configure(a);
+    this.skyDome.setSun(sunPos);
 
     if (a.fog !== false) {
       this.scene.fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
@@ -400,6 +406,7 @@ export class Engine {
     const u = this.composite.uniforms;
     this.time += dt;
     u.uTime.value = this.time;
+    this.skyDome?.update(dt, this.camera);
 
     this._flash = damp(this._flash, 0, 9, dt);
     this._hurt = damp(this._hurt, 0, 4.2, dt);
@@ -427,6 +434,7 @@ export class Engine {
   }
 
   dispose() {
+    this.skyDome?.dispose();
     window.removeEventListener('resize', this._onResize);
     this.composer?.dispose?.();
     this.pmrem?.dispose();

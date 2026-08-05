@@ -1295,6 +1295,35 @@ check('focus: the two layers stack and never stop or reverse time', () => {
   return `stacked ${both.toFixed(2)}x vs ${f2.scale.toFixed(2)}x held alone, always in (0,1]`;
 });
 
+check('source: no stray backtick inside a GLSL template literal', async () => {
+  // A backtick in a shader comment closes the JS template literal that holds
+  // the shader, and the file dies at parse time with an error pointing at the
+  // GLSL rather than at the quote. It has cost two debugging rounds already.
+  const { readdir, readFile } = await import('node:fs/promises');
+  const walk = async (dir) => {
+    const out = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = dir + '/' + e.name;
+      if (e.isDirectory()) out.push(...await walk(p));
+      else if (e.name.endsWith('.js')) out.push(p);
+    }
+    return out;
+  };
+  const files = await walk(new URL('../src', import.meta.url).pathname);
+  const bad = [];
+  for (const f of files) {
+    const src = await readFile(f, 'utf8');
+    // every /* glsl */` ... ` block
+    const re = /\/\* glsl \*\/`([\s\S]*?)`;/g;
+    let m;
+    while ((m = re.exec(src))) {
+      if (m[1].includes('`')) bad.push(f.split('/src/')[1]);
+    }
+  }
+  assert(bad.length === 0, `backtick inside a shader literal in: ${[...new Set(bad)].join(', ')}`);
+  return `${files.length} source files, all shader literals clean`;
+});
+
 /* ══════════════════════════════════════════════════════════════════════ */
 
 await Promise.all(pending);

@@ -29,6 +29,12 @@ export const LEVELS = {
       skyColor: 0xcfe0f5, groundColor: 0x8a6a44,
       fogColor: 0xd8c8a4, fogDensity: 0.0042, exposure: 0.86, bloom: 0.36,
       saturation: 1.02, lift: [0.010, 0.008, 0.006], gain: [1.05, 1.0, 0.93],
+      // Thin, scorched cloud and a long line of dune ranges receding into the
+      // heat. Sparse cover on purpose — a desert sky is mostly empty, and what
+      // sells the distance here is the horizon, not the clouds.
+      cloudCover: 0.44, cloudLit: 0xfff0d4, cloudDark: 0xbba98c,
+      cloudWindDir: 2.7, cloudWindSpeed: 0.7,
+      horizonAmount: 0.85, horizonScale: 0.75, horizonColor: 0x9a7f5c,
     },
     ambience: { wind: 0.12, windFreq: 520, drone: 0.05 },
     dust: { count: 1300, color: 0xd8c8a8, opacity: 0.34, size: 26 },
@@ -92,6 +98,11 @@ export const LEVELS = {
       skyColor: 0xc0d4ee, groundColor: 0x7a6244,
       fogColor: 0xc8b291, fogDensity: 0.0034, exposure: 0.9, bloom: 0.38,
       saturation: 1.06, lift: [0.008, 0.007, 0.008], gain: [1.04, 1.0, 0.95],
+      // Mesas ringing the bowl, so the arena sits INSIDE a landscape rather
+      // than on top of an empty disc.
+      cloudCover: 0.52, cloudLit: 0xfff4e2, cloudDark: 0xa89880,
+      cloudWindDir: 1.1, cloudWindSpeed: 0.85,
+      horizonAmount: 1.15, horizonScale: 1.25, horizonColor: 0x8d7452,
     },
     ambience: { wind: 0.07, windFreq: 340, drone: 0.10 },
     dust: { count: 800, color: 0xd0bc94, opacity: 0.24, size: 22 },
@@ -149,6 +160,7 @@ export const LEVELS = {
       fillColor: 0xffb070, fillIntensity: 0.6,
       exposure: 1.15, bloom: 0.55, saturation: 1.0,
       lift: [0.006, 0.008, 0.014], gain: [0.98, 1.0, 1.06],
+      clouds: false, horizon: false,   // interior — there is no sky to dress
     },
     ambience: { wind: 0.03, windFreq: 180, drone: 0.16 },
     dust: { count: 500, color: 0xa8b4c8, opacity: 0.16, size: 16 },
@@ -220,6 +232,12 @@ export const LEVELS = {
       skyColor: 0xa8c8f0, groundColor: 0x6a5440,
       fogColor: 0xb4a894, fogDensity: 0.0052, exposure: 0.94, bloom: 0.42,
       saturation: 1.1, lift: [0.008, 0.010, 0.014], gain: [1.03, 1.0, 0.98],
+      // A 14-degree sun under heavy cloud: the light rakes along the canyon and
+      // the cloud base catches it. This is the level that should look like
+      // weather is happening.
+      cloudCover: 0.74, cloudLit: 0xffd9b4, cloudDark: 0x6f7488,
+      cloudWindDir: 0.35, cloudWindSpeed: 1.5,
+      horizonAmount: 1.4, horizonScale: 1.6, horizonColor: 0x5e5347,
     },
     ambience: { wind: 0.09, windFreq: 300, drone: 0.08 },
     dust: { count: 700, color: 0xc8bca8, opacity: 0.2, size: 18 },
