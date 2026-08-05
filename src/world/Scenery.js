@@ -292,7 +292,6 @@ const GRASS_VERT = /* glsl */`
 
   uniform float uTime;
   uniform vec3 uCenter;
-  uniform float uRadius;
   uniform float uNear;       // where this ring starts fading in
   uniform float uFar;        // where this ring is gone
   uniform float uWidth;
@@ -405,7 +404,6 @@ const GRASS_CARD_VERT = /* glsl */`
 
   uniform float uTime;
   uniform vec3 uCenter;
-  uniform float uRadius;
   uniform float uNear;
   uniform float uFar;
   uniform float uWidth;
@@ -806,7 +804,6 @@ export class GrassField {
       uMap: { value: map || null },
       uTime: { value: 0 },
       uCenter: { value: new THREE.Vector3() },
-      uRadius: { value: this.radius },
       uNear: { value: near },
       uFar: { value: far },
       uWidth: { value: width },
@@ -920,7 +917,10 @@ export class GrassField {
   /**
    * @param {THREE.Vector3} center   what to keep the field around
    * @param {Array} pushers          [{x,y,z,w}] — bodies moving through it
-   * @param {THREE.Color} [sunColor] kept for the existing call site
+   * @param {THREE.Color} [sunColor] ignored — the grass reads the scene's own
+   *                                  lights now, so it stays consistent with
+   *                                  the ground it grows out of. Kept so the
+   *                                  existing call site does not have to change.
    */
   update(dt, center, pushers = [], sunColor, opts = {}) {
     if (!this.mesh) return;

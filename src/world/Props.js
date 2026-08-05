@@ -1201,7 +1201,10 @@ export function rockGeo(size, seed = 1, opts = {}) {
     const base = prof(y) * bandMul((y + 1) / 2);
     for (let i = 0; i <= seg; i++) {
       const a = (i / seg) * TAU;
-      const wob = 1 + fbm2(Math.cos(a) * 2.2 + seed * 3, Math.sin(a) * 2.2 + y * 2.6, 3) * 0.16;
+      // the plan shape barely changes with height — a crag is a prism the
+      // weather has bitten, not a potato; the beds do the vertical work
+      const wob = 1 + fbm2(Math.cos(a) * 2.2 + seed * 3, Math.sin(a) * 2.2, 3) * 0.19
+                    + fbm2(Math.cos(a) * 4.1, y * 3.4 + seed, 2) * 0.05;
       const rr = base * plan[i % seg] * wob;
       const o = (j * (seg + 1) + i) * 3, o2 = (j * (seg + 1) + i) * 2;
       const x = Math.cos(a) * rr * size.x, z = Math.sin(a) * rr * size.z, yy = y * size.y;
@@ -1287,7 +1290,7 @@ export function addOutcrop(world, pos, opts = {}) {
   const layers = opts.layers ?? (3 + Math.floor(kit.rng() * 3));
   const rr = kit.rng;
   const mat = opts.mat || M.strata;
-  let y = 0, rad = S;
+  let y = 0, rad = S * 0.62;      // beds are taller than they are wide-ish
   for (let i = 0; i < layers; i++) {
     // beds get taller and narrower going up, so the stack is a mesa rather
     // than a pile of pancakes — and one in four oversails the bed below
@@ -1297,7 +1300,7 @@ export function addOutcrop(world, pos, opts = {}) {
     const sz = new THREE.Vector3(rad, h / 2, rad * (0.62 + rr() * 0.6));
     const g = rockGeo(sz, (opts.seed ?? 606) + i * 13, {
       seg: 12, rings: Math.max(5, Math.round(h * 2.6)), bed: 0.45,
-      dip: (rr() - 0.5) * 0.22, bedOffset: y, bandAmp: 0.15, shoulder: 4.5,
+      dip: (rr() - 0.5) * 0.22, bedOffset: y, bandAmp: 0.16,
     });
     g.rotateY(rr() * TAU);
     kit.put(g, mat, ox, y + h / 2, oz);

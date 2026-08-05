@@ -503,7 +503,14 @@ class Kit {
   /** Merge each bucket down and hang the results on `parent`. */
   bake(parent) {
     const out = [];
-    for (const [mat, parts] of this.buckets) out.push(mesh(mergeGeos(parts), mat, parent));
+    for (const [mat, parts] of this.buckets) {
+      // Same reason as assemble(): after the merge nothing can tell that a
+      // chest plate is inside its own ribcage. This is the last moment the
+      // parts are separable, and the parent is here too, so the probe can
+      // check them against the limb they are bolted to.
+      if (_probe) _probe('kit:' + (parent.name || 'part'), parts, parent);
+      out.push(mesh(mergeGeos(parts), mat, parent));
+    }
     this.buckets.clear();
     return out;
   }
@@ -1288,7 +1295,8 @@ export function buildB1(opts = {}) {
       const kh = new Kit();
       kh.add(joint, plateGeo(0.130 * s, 0.030 * s, 0.086 * s, 0.008 * s, 1), [0, 0.070 * s, 0]);
       kh.add(joint, plateGeo(0.126 * s, 0.008 * s, 0.084 * s, 0.002 * s, 1), [0, -0.006 * s, 0]);
-      kh.add(joint, plateGeo(0.010 * s, 0.100 * s, 0.084 * s, 0.003 * s, 1), [0, 0.030 * s, 0]);
+      kh.add(joint, plateGeo(0.010 * s, 0.100 * s, 0.020 * s, 0.003 * s, 1),
+        onLimb(r.get('hips'), 0.030 * s, [0, 0, 1], -0.004 * s));
       kh.pair((sx) => {
         kh.add(joint, new THREE.CylinderGeometry(0.026 * s, 0.026 * s, 0.030 * s, 8),
           [sx * 0.070 * s, -0.008 * s, 0], [0, 0, 1.5708]);
@@ -1319,7 +1327,7 @@ export function buildB1(opts = {}) {
           ka.add(joint, ram.body, [0.030 * s, L * 0.62, 0.014 * s]);
           ka.add(joint, ram.rod, [0.030 * s, L * 0.62, 0.014 * s]);
           ka.add(joint, new THREE.CylinderGeometry(0.024 * s, 0.024 * s, 0.030 * s, 8), [0, L, 0], [0, 0, 1.5708]);
-          ka.add(joint, riv, [0, L * 0.30, 0.034 * s], [1.5708, 0, 0]);
+          ka.add(joint, riv, [0, L * 0.30, 0.048 * s], [1.5708, 0, 0]);
           ka.bake(arm.obj);
         }
         if (fore) {
@@ -1444,9 +1452,9 @@ export function buildB2(opts = {}) {
       k.add(shell, plateGeo(0.110 * s, 0.290 * s, 0.070 * s, 0.020 * s, 1), at(0.100, [0, 0, 1], 0.012));
       k.add(shell, plateGeo(0.330 * s, 0.070 * s, 0.090 * s, 0.020 * s, 1), at(0.238, [0, 0.5, 1], 0.024));
       k.pair((sx) => {
-        k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], 0.004));
-        k.row(3, (i) => k.add(dark, riv, at(0.030 + i * 0.070, [sx, 0, 0.15], 0.002), [0, 0, -sx * 1.5708]));
-        k.add(dark, bolt, at(0.234, [sx * 0.44, 0.2, 1], 0.004), [1.5708, 0, 0]);
+        k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], -0.036));
+        k.row(3, (i) => k.add(dark, riv, at(0.030 + i * 0.070, [sx, 0, 0.15], -0.050), [0, 0, -sx * 1.5708]));
+        k.add(dark, bolt, at(0.234, [sx * 0.44, 0.2, 1], -0.030), [1.5708, 0, 0]);
         // flank plates, so the barrel does not read as a barrel from the side
         k.add(shell, plateGeo(0.070 * s, 0.230 * s, 0.180 * s, 0.020 * s, 1), at(0.110, [sx, 0, 0], 0.026));
       });
@@ -1491,9 +1499,11 @@ export function buildB2(opts = {}) {
           ka.add(shell, cap, [0, 0.026 * s, 0], [Math.PI, 0, 0]);
           ka.add(dark, bandGeo(0.118 * s, 0.136 * s, 0.114 * s, 0.132 * s, 0.024 * s, 12),
             [0, 0.098 * s, 0], null, [1, 1, 1.14]);
+          // on the pauldron's own shell — its equator is at 12.8cm across and
+          // 14.6 deep, so a ring at 11.8 was inside the dome it fastens
           ka.row(4, (i, t) => {
             const a = (t - 0.5) * 2.1;
-            ka.add(dark, riv, [Math.sin(a) * 0.118 * s, 0.048 * s, Math.cos(a) * 0.130 * s],
+            ka.add(dark, riv, [Math.sin(a) * 0.130 * s, 0.026 * s, Math.cos(a) * 0.148 * s],
               [Math.PI / 2, a, 0]);
           });
           ka.add(shell, plateGeo(0.130 * s, 0.190 * s, 0.120 * s, 0.022 * s, 1), [sx * 0.014 * s, L * 0.34, 0.006 * s]);
@@ -1652,7 +1662,7 @@ export function buildTrooper(opts = {}) {
         k.aim(under, ventGeo(0.034 * s, 0.056 * s, 0.010 * s, 3),
           onSurface(hg, e, 0.003 * s, cheek), e);
         const f = new THREE.Vector3(sx * 0.86, 0.48, 0.14).normalize();
-        k.aim(plate, riv, onSurface(hg, f, 0.001 * s, new THREE.Vector3(0, 0.110 * s, -0.030 * s)), f);
+        k.aim(plate, riv, onSurface(hg, f, -0.003 * s, new THREE.Vector3(0, 0.110 * s, -0.030 * s)), f);
       });
       // Crest: the fin along the crown, in unit colour, plus the stripes that
       // actually get painted on a helmet.
@@ -1679,7 +1689,7 @@ export function buildTrooper(opts = {}) {
       k.pair((sx) => {
         k.add(gear, plateGeo(0.030 * s, 0.230 * s, 0.014 * s, 0.004 * s, 1),
           onLimb(chestB, 0.090 * s, [sx * 0.55, 0, 1], 0.002 * s), [0, -sx * 0.30, sx * 0.16]);
-        k.row(3, (i) => k.add(gear, riv, onLimb(chestB, (0.030 + i * 0.070) * s, [sx * 0.62, 0, 1], 0), [1.2, 0, 0]));
+        k.row(3, (i) => k.add(gear, riv, onLimb(chestB, (0.030 + i * 0.070) * s, [sx * 0.62, 0, 1], -0.030 * s), [1.2, 0, 0]));
       });
       // a chest box: comlink, ammo, whatever a soldier hangs off the front
       k.add(gear, plateGeo(0.060 * s, 0.048 * s, 0.026 * s, 0.006 * s, 1),
@@ -1760,9 +1770,12 @@ export function buildTrooper(opts = {}) {
           const kn = new Kit();
           const L = shin.length;
           // kneecap, then the greave
-          const cap = new THREE.SphereGeometry(0.062 * s, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
-          cap.scale(1.0, 0.9, 1.0);
-          kn.add(plate, cap, [0, 0.028 * s, 0.010 * s], [-1.3, 0, 0]);
+          // the kneecap's own pole points forward off the shin's real surface;
+          // centred on the axis it was 94% inside the leg
+          const kr = onLimb(shin, 0.034 * s, [0, 0, 1], 0)[2];
+          const cap = new THREE.SphereGeometry(0.056 * s, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.56);
+          cap.scale(1.05, 0.85, 1.0);
+          kn.add(plate, cap, [0, 0.034 * s, kr + 0.004 * s], [-1.45, 0, 0]);
           kn.add(accent, limbPlate(shin, 0.052 * s, 0.072 * s, 1.8, { thick: 0.007 * s, seg: 6, gap: 0.019 * s }),
             [0, 0.052 * s, 0]);
           kn.add(plate, limbPlate(shin, L * 0.22, L * 0.84, 3.7, { thick: 0.014 * s, seg: 8, gap: 0.006 * s }),
@@ -1859,8 +1872,8 @@ export function buildAcolyte(opts = {}) {
           onSurface(hg, b, 0.002 * s, at(0.042, 0.140, 0.060)), b);
         // cheek ridge running back toward the ear
         const c = new THREE.Vector3(sx * 0.96, -0.12, 0.26).normalize();
-        k.aim(maskMat, plateGeo(0.088 * s, 0.014 * s, 0.026 * s, 0.004 * s, 1),
-          onSurface(hg, c, 0.005 * s, at(0.030, 0.080, 0.040)), c);
+        k.aim(maskMat, plateGeo(0.088 * s, 0.020 * s, 0.026 * s, 0.004 * s, 1),
+          onSurface(hg, c, -0.004 * s, at(0.030, 0.080, 0.040)), c);
       });
       // breathing grille across the respirator
       const m = new THREE.Vector3(0, -0.30, 1).normalize();
@@ -1921,9 +1934,10 @@ export function buildAcolyte(opts = {}) {
       const kh = new Kit();
       kh.add(leather, bandGeo(0.126 * s, 0.148 * s, 0.126 * s, 0.148 * s, 0.078 * s, 18), [0, 0.028 * s, 0], null, [1, 1, 0.82]);
       kh.add(trim, plateGeo(0.070 * s, 0.056 * s, 0.028 * s, 0.008 * s, 2), onLimb(hipsB, 0.062 * s, [0, 0, 1], -0.008 * s));
+      // on the belt's outer face (14.8cm across, 12.1 deep after the squash)
       kh.row(6, (i, t) => {
         const a = (t - 0.5) * 2.4;
-        kh.add(trim, stud, [Math.sin(a) * 0.140 * s, 0.062 * s, Math.cos(a) * 0.118 * s], [1.5708, a, 0]);
+        kh.add(trim, stud, [Math.sin(a) * 0.152 * s, 0.062 * s, Math.cos(a) * 0.126 * s], [1.5708, a, 0]);
       });
       // hanging tassets, longest at the front
       kh.row(5, (i, t) => {
@@ -1956,7 +1970,7 @@ export function buildAcolyte(opts = {}) {
             [0, 0.122 * s, 0]);
           ka.row(4, (i, t) => {
             const a = (t - 0.5) * 2.2;
-            ka.add(trim, stud, [Math.sin(a) * 0.096 * s, 0.040 * s, Math.cos(a) * 0.102 * s], [1.5708, a, 0]);
+            ka.add(trim, stud, [Math.sin(a) * 0.106 * s, 0.040 * s, Math.cos(a) * 0.112 * s], [1.5708, a, 0]);
           });
           // the sleeve of the coat over the humerus
           ka.add(robe, bandGeo(0.048 * s, 0.062 * s, 0.042 * s, 0.056 * s, L * 0.55, 12), [0, L * 0.40, 0]);
@@ -1971,7 +1985,8 @@ export function buildAcolyte(opts = {}) {
           kf.add(trim, bandGeo(0.038 * s, 0.048 * s, 0.038 * s, 0.048 * s, 0.014 * s, 12), [0, L * 0.86, 0]);
           kf.row(3, (i, t) => {
             const a = (t - 0.5) * 1.4;
-            kf.add(trim, stud, [Math.sin(a) * 0.044 * s, L * 0.44, Math.cos(a) * 0.044 * s], [1.5708, a, 0]);
+            const rr = onLimb(fore, L * 0.44, [1, 0, 0], -0.016 * s)[0];
+            kf.add(trim, stud, [Math.sin(a) * rr, L * 0.44, Math.cos(a) * rr], [1.5708, a, 0]);
           });
           kf.bake(fore.obj);
         }
@@ -2094,10 +2109,10 @@ export function buildDroideka(opts = {}) {
     kl.add(dark, new THREE.SphereGeometry(0.090 * S, 8, 6), [0, 0, 0.02 * S]);
     kl.add(shell, plateGeo(0.150 * S, 0.170 * S, 0.130 * S, 0.030 * S, 1), [0, -0.02 * S, 0.06 * S], [-0.74, 0, 0]);
     kl.add(dark, new THREE.CylinderGeometry(0.058 * S, 0.048 * S, 0.36 * S, 8), [0, -0.13 * S, 0.12 * S], [-0.744, 0, 0]);
-    kl.add(shell, arcGeo(0.052 * S, 0.046 * S, 0.26 * S, 3.0, 0.020 * S, 6), [0, -0.03 * S, 0.03 * S], [-0.744 + Math.PI, 0, 0]);
+    kl.add(shell, arcGeo(0.060 * S, 0.054 * S, 0.26 * S, 3.0, 0.020 * S, 6), [0, -0.03 * S, 0.03 * S], [-0.744 + Math.PI, 0, 0]);
     const ram = ramGeo(0.28 * S, 0.024 * S, 0.013 * S);
-    kl.add(dark, ram.body, [0.070 * S, -0.13 * S, 0.12 * S], [-0.744, 0, 0]);
-    kl.add(shell, ram.rod, [0.070 * S, -0.13 * S, 0.12 * S], [-0.744, 0, 0]);
+    kl.add(dark, ram.body, [0.096 * S, -0.13 * S, 0.12 * S], [-0.744, 0, 0]);
+    kl.add(shell, ram.rod, [0.096 * S, -0.13 * S, 0.12 * S], [-0.744, 0, 0]);
     kl.add(dark, new THREE.CylinderGeometry(0.072 * S, 0.072 * S, 0.115 * S, 8), [0, -0.26 * S, 0.24 * S], [0, 0, 1.5708]);
     kl.bake(leg);
 
@@ -2105,7 +2120,7 @@ export function buildDroideka(opts = {}) {
     lower.position.set(0, -0.26 * S, 0.24 * S);
     const kw = new Kit();
     kw.add(dark, new THREE.CylinderGeometry(0.044 * S, 0.032 * S, 0.30 * S, 8), [0, -0.12 * S, -0.07 * S], [0.528, 0, 0]);
-    kw.add(shell, arcGeo(0.040 * S, 0.032 * S, 0.22 * S, 3.2, 0.016 * S, 6), [0, -0.02 * S, -0.012 * S], [0.528, 0, 0]);
+    kw.add(shell, arcGeo(0.046 * S, 0.038 * S, 0.22 * S, 3.2, 0.016 * S, 6), [0, -0.02 * S, -0.012 * S], [0.528, 0, 0]);
     // ankle and a three-toed foot, which is what makes it read as a walker
     kw.add(dark, new THREE.SphereGeometry(0.055 * S, 8, 6), [0, -0.50 * S, 0.10 * S]);
     kw.pair((sx) => kw.add(dark, clawGeo(0.15 * S, 0.028 * S, 0.010 * S, 0.9, 5, 3),
@@ -2210,22 +2225,22 @@ export function buildWalker(opts = {}) {
     // sponsons over the hip sockets, and the fasteners along the flank
     kb.add(shell, plateGeo(0.18 * S, 0.30 * S, 0.86 * S, 0.05 * S, 1), [sx * 0.55 * S, 0.06 * S, 0]);
     kb.add(dark, ventGeo(0.34 * S, 0.20 * S, 0.05 * S, 4), [sx * 0.645 * S, 0.06 * S, -0.24 * S], [0, sx * 1.5708, 0]);
-    kb.row(5, (i, t) => kb.add(dark, riv, [sx * 0.545 * S, 0.24 * S, (t - 0.5) * 1.10 * S], [0, 0, -sx * 1.5708]));
+    kb.row(5, (i, t) => kb.add(dark, riv, [sx * 0.648 * S, 0.20 * S, (t - 0.5) * 1.10 * S], [0, 0, -sx * 1.5708]));
     // exhaust stacks off the engine deck
     kb.add(dark, new THREE.CylinderGeometry(0.070 * S, 0.080 * S, 0.34 * S, 8), [sx * 0.26 * S, 0.62 * S, -0.34 * S], [0.18, 0, 0]);
     kb.add(hot, new THREE.CylinderGeometry(0.055 * S, 0.062 * S, 0.05 * S, 8), [sx * 0.26 * S, 0.78 * S, -0.31 * S], [0.18, 0, 0]);
   });
   // dorsal spine and a hull number
   kb.add(dark, plateGeo(0.10 * S, 0.10 * S, 1.10 * S, 0.02 * S, 1), [0, 0.36 * S, 0.10 * S]);
-  kb.add(mark, plateGeo(0.24 * S, 0.02 * S, 0.30 * S, 0.006 * S, 1), [0, 0.345 * S, 0.30 * S]);
-  kb.pair((sx) => kb.add(mark, plateGeo(0.02 * S, 0.18 * S, 0.28 * S, 0.006 * S, 1), [sx * 0.645 * S, 0.10 * S, 0.26 * S]));
+  kb.add(mark, plateGeo(0.24 * S, 0.02 * S, 0.30 * S, 0.006 * S, 1), [0, 0.425 * S, 0.30 * S]);
+  kb.pair((sx) => kb.add(mark, plateGeo(0.02 * S, 0.18 * S, 0.28 * S, 0.006 * S, 1), [sx * 0.652 * S, 0.10 * S, 0.26 * S]));
   kb.add(dark, ventGeo(0.60 * S, 0.28 * S, 0.06 * S, 5), [0, 0.34 * S, -0.50 * S], [0, Math.PI, 0]);
   // hull scoring: it has been shot at, and a boss should look like it
   for (let i = 0; i < 6; i++) {
     const sx = rng() < 0.5 ? -1 : 1;
     const w = (0.10 + rng() * 0.18) * S;
     kb.aim(scorch, plateGeo(w, 0.006 * S, w * 0.65, 0.002 * S, 1),
-      [sx * 0.56 * S, (-0.02 + rng() * 0.30) * S, (rng() - 0.5) * 1.1 * S], [sx, 0.15, 0]);
+      [sx * 0.652 * S, (-0.02 + rng() * 0.28) * S, (rng() - 0.5) * 1.1 * S], [sx, 0.15, 0]);
   }
   kb.bake(body.obj);
 
@@ -2243,9 +2258,9 @@ export function buildWalker(opts = {}) {
   kt.pair((sx) => {
     kt.add(eye, new THREE.SphereGeometry(0.055 * S, 7, 5), [sx * 0.15 * S, 0.60 * S, 0.51 * S], null, [1, 0.8, 0.6]);
     kt.add(dark, plateGeo(0.10 * S, 0.26 * S, 0.34 * S, 0.03 * S, 1), [sx * 0.32 * S, 0.50 * S, 0.06 * S]);
-    kt.add(dark, riv, [sx * 0.20 * S, 0.665 * S, -0.10 * S], null);
+    kt.add(dark, riv, [sx * 0.20 * S, 0.678 * S, -0.10 * S], null);
   });
-  kt.add(mark, plateGeo(0.20 * S, 0.02 * S, 0.20 * S, 0.006 * S, 1), [0, 0.668 * S, -0.10 * S]);
+  kt.add(mark, plateGeo(0.20 * S, 0.02 * S, 0.20 * S, 0.006 * S, 1), [0, 0.678 * S, -0.10 * S]);
   kt.bake(head.obj);
 
   const cannons = [];
@@ -2364,10 +2379,10 @@ export function buildBeast(opts = {}) {
   kb.row(7, (i, t) => {
     const z = (0.42 - t * 1.30) * S;
     const w = (0.60 - Math.abs(t - 0.35) * 0.34) * S;
-    kb.add(chitin, plateGeo(w * 0.82, 0.10 * S, 0.20 * S, 0.03 * S, 1), [0, (0.62 - Math.abs(t - 0.4) * 0.22) * S, z], [0.1, 0, 0]);
+    kb.add(chitin, plateGeo(w * 0.82, 0.10 * S, 0.20 * S, 0.03 * S, 1), [0, (0.70 - Math.abs(t - 0.4) * 0.26) * S, z], [0.1, 0, 0]);
     // a dorsal spine on each plate, tallest over the shoulder
     const h = (0.42 - Math.abs(t - 0.3) * 0.30) * S;
-    kb.add(chitin, clawGeo(h, 0.075 * S, 0.012 * S, -0.5, 6, 3), [0, (0.62 - Math.abs(t - 0.4) * 0.22) * S, z], [0.5 - t * 0.5, 0, 0]);
+    kb.add(chitin, clawGeo(h, 0.075 * S, 0.012 * S, -0.5, 6, 3), [0, (0.72 - Math.abs(t - 0.4) * 0.26) * S, z], [0.5 - t * 0.5, 0, 0]);
   });
   // ribbed flanks and a soft underbelly
   kb.pair((sx) => {
@@ -2412,9 +2427,11 @@ export function buildBeast(opts = {}) {
       [sx * 0.17 * S, hy - 0.13 * S, hz + 0.30 * S], [1.30, -sx * 0.30, 0]);
     // teeth along the jaw
     kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.11 * S, hy - 0.16 * S, hz + (0.22 + t * 0.34) * S], [2.7, 0, 0]));
+      [sx * 0.115 * S, hy - 0.20 * S, hz + (0.22 + t * 0.34) * S], [0.5, 0, 0]));
+    // the upper row hangs from the palate, below the skull's own shell — at
+    // hy - 0.05 every one of these was inside the head
     kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.09 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.10 * S, hy - 0.05 * S, hz + (0.24 + t * 0.32) * S], [0.5, 0, 0]));
+      [sx * 0.115 * S, hy - 0.09 * S, hz + (0.24 + t * 0.32) * S], [2.55, 0, 0]));
     // neck plates
     kh.row(3, (i, t) => kh.add(chitin, plateGeo(0.10 * S, 0.26 * S, 0.10 * S, 0.03 * S, 1),
       [sx * 0.24 * S, (0.18 + t * 0.52) * S, (0.10 + t * 0.34) * S], [0.6, 0, sx * 0.3]));

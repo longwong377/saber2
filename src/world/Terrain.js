@@ -129,7 +129,7 @@ export const TERRAIN_PRESETS = {
     dustColor: 0xb88f55, crustColor: 0xa89c82,
     slopeBands: [0.14, 0.36, 0.05, 0.15],
     stoneSlope: 0.24,
-    crust: 0.55, strataH: 3.4, cliffs: true,
+    crust: 0.55, strataH: 5.5, cliffs: true,
     wind: [0.34, 0.94],
     detail: [0.95, 30],
     height(x, z) {
@@ -164,7 +164,7 @@ export const TERRAIN_PRESETS = {
     dustColor: 0xa8895d, crustColor: 0x55523e,
     slopeBands: [0.10, 0.32, 0.035, 0.12],
     stoneSlope: 0.20,
-    crust: 0.5, damp: 0.35, strataH: 2.9, cliffs: true,
+    crust: 0.5, damp: 0.35, strataH: 3.8, cliffs: true,
     wind: [0.99, 0.14],
     detail: [1.05, 30],
     height(x, z) {
@@ -327,7 +327,7 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   vec2 wp = vWPos.xz;
 
   // the baked landform channels
-  float conc = vTer.x * 2.0 - 1.0;   // + hollow, − crest        (≈5 m)
+  float conc = vTer.x * 2.0 - 1.0;   // + hollow, − crest        (≈8 m)
   float open = vTer.y;               // 0 enclosed, 1 exposed    (≈18 m)
   float upl  = vTer.z * 2.0 - 1.0;   // − basin, + upland        (≈50 m)
   float expo = vTer.w * 2.0 - 1.0;   // − lee, + windward
@@ -392,9 +392,9 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   vec3 terNrmOff = (Txz * baseN.x + Bxz * baseN.y) * (baseAmp * (1.0 - rockW));
 
   if (rockW > 0.004) {
-    vec2 ruv = (TB_A * wp) * uScales.z;
-    vec3 rockC = texture2D(uRockAlb, ruv).rgb;
-    vec2 rockN = (texture2D(uRockNrm, ruv).xy * 2.0 - 1.0) * TB_A;
+    vec3 rockC; vec2 rockN;
+    bombTap(uRockAlb, uRockNrm, wp, uScales.z, uScales.z * 0.53,
+            clamp(mA * 1.7 - 0.35, 0.0, 1.0), rockC, rockN);
 
     float bedY = (vWPos.y + sin(vWPos.y * 0.41) * 1.25
                  + (mA - 0.5) * 4.0 + (mB - 0.5) * 0.9) / uGround.w;
@@ -402,7 +402,7 @@ const TERRAIN_FRAG_MAP = /* glsl */`
     float bandR = thash(vec2(bandI, 7.3));
     float seam = (smoothstep(0.11, 0.0, bandF) + smoothstep(0.89, 1.0, bandF))
                * (0.25 + thash(vec2(bandI, 21.7)) * 1.1);
-    vec3 rockTint = mix(uRockCol, uRockCol2, bandR) * (0.84 + bandR * 0.30) * (1.0 - seam * 0.30);
+    vec3 rockTint = mix(uRockCol, uRockCol2, bandR) * (0.84 + bandR * 0.30) * (1.0 - seam * 0.22);
 
     col = mix(col, rockTint * (0.55 + dot(rockC, vec3(0.3333)) * 1.15), rockW);
     terRough = mix(terRough, 0.88, rockW);
@@ -620,7 +620,12 @@ export class Terrain {
         nrm.setXYZ(j * this.res + i, _tv.x, _tv.y, _tv.z);
       }
     }
-    geo.setAttribute('aTer', new THREE.BufferAttribute(this.landform, 4, true));
+    const ter = new THREE.BufferAttribute(this.landform, 4, true);
+    // craters rewrite all three of these in place
+    pos.setUsage(THREE.DynamicDrawUsage);
+    nrm.setUsage(THREE.DynamicDrawUsage);
+    ter.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aTer', ter);
     geo.computeBoundingSphere();
     this.geometry = geo;
 
@@ -873,18 +878,19 @@ export class Terrain {
     const ter = this.geometry.attributes.aTer;
     const i0 = Math.max(0, r.i0 - 1), i1 = Math.min(this.res - 1, r.i1 + 1);
     const j0 = Math.max(0, r.j0 - 1), j1 = Math.min(this.res - 1, r.j1 + 1);
+    // A crater touches a few hundred vertices. Without update ranges each one
+    // re-uploads the whole 1.4 MB position buffer, the whole normal buffer and
+    // now the landform buffer as well — one row per range is a couple of kB.
+    const span = i1 - i0 + 1;
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
         const k = j * this.res + i;
         pos.setY(k, this.heights[k]);
-      }
-    }
-    // recompute normals only in the touched region
-    for (let j = j0; j <= j1; j++) {
-      for (let i = i0; i <= i1; i++) {
         this._vertexNormal(i, j, _tv);
-        nrm.setXYZ(j * this.res + i, _tv.x, _tv.y, _tv.z);
+        nrm.setXYZ(k, _tv.x, _tv.y, _tv.z);
       }
+      pos.addUpdateRange((j * this.res + i0) * 3, span * 3);
+      nrm.addUpdateRange((j * this.res + i0) * 3, span * 3);
     }
     // and the concavity channel, so a fresh crater collects drift the way any
     // other hollow does rather than staying flagged as the crest it used to be
@@ -897,6 +903,7 @@ export class Terrain {
         const v = clamp(0.5 + (this._localMean(i, j, rs) - this.heights[k]) * this._kConc, 0, 1);
         this.landform[k * 4] = v * 255;
       }
+      ter.addUpdateRange((j * this.res + ci0) * 4, (ci1 - ci0 + 1) * 4);
     }
     pos.needsUpdate = true;
     nrm.needsUpdate = true;

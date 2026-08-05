@@ -680,13 +680,16 @@ export class Particles {
     const n = Math.max(1, Math.round(count * this.scale));
     const speed = opts.speed ?? 9;
     const color = opts.color ?? 0xffd9a0;
+    // One heightfield lookup per burst, not per spark. Without it every spark
+    // in the game falls through the world instead of skittering along it.
+    const floor = opts.floor ?? (ground.heightAt(pos.x, pos.z) ?? -999);
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       if (normal) _v.lerp(normal, 0.45).normalize();
       _v.multiplyScalar(speed * (0.35 + rng() * 1.0));
       this.sparks.spawn(pos, _v, {
         life: 0.35 + rng() * 0.55, size: 0.035 + rng() * 0.05,
-        drag: 1.6, gravity: 16, color, alpha: 1, floor: opts.floor ?? -999,
+        drag: 1.6, gravity: 16, color, alpha: 1, floor,
       });
     }
     if (opts.embers !== false) {
@@ -701,12 +704,14 @@ export class Particles {
   /** The cauterised flare when a blade parts something. */
   cutFlare(pos, dir, color = 0x57c9ff, count = 26, opts = {}) {
     const n = Math.max(2, Math.round(count * this.scale));
+    const gh = ground.heightAt(pos.x, pos.z);
+    const floor = gh ?? -999;
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize()
         .multiplyScalar(2 + rng() * 7);
       if (dir) _v.addScaledVector(dir, 3 * rng());
       this.sparks.spawn(pos, _v, { life: 0.3 + rng() * 0.5, size: 0.03 + rng() * 0.05,
-        drag: 2.2, gravity: 14, color: i % 3 === 0 ? color : 0xfff0c0, alpha: 1 });
+        drag: 2.2, gravity: 14, color: i % 3 === 0 ? color : 0xfff0c0, alpha: 1, floor });
     }
     for (let i = 0; i < n * 0.25; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.5 + 0.3, rng() * 2 - 1).normalize().multiplyScalar(0.7 + rng());
@@ -717,7 +722,6 @@ export class Particles {
 
     // a blade parting something a hand's width off the deck takes the cover
     // with it — this is the only place the world hears about most saber swings
-    const gh = ground.heightAt(pos.x, pos.z);
     if (opts.cover !== false && gh !== null && pos.y - gh < 1.1) {
       ground.disturb(pos.x, pos.z, 0.55, { cut: 0.85, press: 0.7 });
       this.grassClippings(pos, pos, opts.coverColor ?? 0x7d8c4a, 0.5);
@@ -945,10 +949,12 @@ export class Particles {
   }
 
   explosion(pos, size = 1) {
+    const floor = ground.heightAt(pos.x, pos.z);
+    const y = floor !== null ? floor : pos.y;
     for (let i = 0; i < 26 * size * this.scale; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize().multiplyScalar((3 + rng() * 12) * size);
       this.sparks.spawn(pos, _v, { life: 0.5 + rng() * 0.7, size: 0.05 * size, drag: 1.3, gravity: 13,
-        color: 0xffd090, alpha: 1 });
+        color: 0xffd090, alpha: 1, floor: y });
     }
     for (let i = 0; i < 14 * size * this.scale; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.4 + 0.2, rng() * 2 - 1).normalize().multiplyScalar((1.5 + rng() * 4) * size);
@@ -958,8 +964,6 @@ export class Particles {
     this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.28, size: 3.4 * size, drag: 1, gravity: 0,
       color: 0xffc070, alpha: 1 });
 
-    const floor = ground.heightAt(pos.x, pos.z);
-    const y = floor !== null ? floor : pos.y;
     this.chipBurst(pos, null, Math.round(10 * size), { speed: 8 * size, size: 0.06 * size, floor: y });
     this.decals.add(_v3.set(pos.x, y + 0.015, pos.z), UP, 1.1 * size,
       { life: 22, heat: 1, alpha: 0.95 });
