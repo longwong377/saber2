@@ -28,6 +28,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Sanity-check the tree
+        # A stray symlink (e.g. a local node_modules) makes tar --dereference
+        # fail with "File removed before we read it", which is a confusing way
+        # to learn something got committed by accident.
+        run: |
+          broken=$(find . -path ./.git -prune -o -xtype l -print)
+          if [ -n "$broken" ]; then
+            echo "::error::dangling symlinks in the tree:"; echo "$broken"; exit 1
+          fi
+          test -f index.html
       - uses: actions/configure-pages@v5
         with:
           # create the Pages site on first run so no manual switch is needed
