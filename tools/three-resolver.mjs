@@ -9,10 +9,14 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VENDOR = resolvePath(HERE, '..', 'vendor', 'three');
+const RAPIER = resolvePath(HERE, '..', 'vendor', 'rapier', 'rapier.es.js');
 
 export async function resolve(specifier, context, next) {
   if (specifier === 'three') {
     return { url: pathToFileURL(resolvePath(VENDOR, 'three.module.js')).href, shortCircuit: true };
+  }
+  if (specifier === 'rapier') {
+    return { url: pathToFileURL(RAPIER).href, shortCircuit: true };
   }
   if (specifier.startsWith('three/addons/')) {
     return { url: pathToFileURL(resolvePath(VENDOR, specifier.slice('three/addons/'.length))).href, shortCircuit: true };

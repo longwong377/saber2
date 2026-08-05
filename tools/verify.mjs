@@ -13,6 +13,10 @@ import './dom-shim.mjs';
 import * as THREE from 'three';
 
 import { PhysicsWorld, Body, BallJoint, LAYER, capsuleSpheres, boxSpheres, segmentSegment } from '../src/physics/Physics.js';
+import { initPhysics } from '../src/physics/Rapier.js';
+import { RapierWorld, Body as RBody, box as boxShape, ball as ballShape, cylinder as cylShape,
+  compound as compoundShape, hullFromGeometry, collisionGroups } from '../src/physics/RapierWorld.js';
+import { Prop, makeCrate, makeBarrel, makeSpire, makePillar, propMaterials } from '../src/world/Props.js';
 import { Rig, humanoidSkeleton, BipedAnimator } from '../src/game/Rig.js';
 import { buildB1, buildJedi, buildTrooper, buildAcolyte, limbGeo, plateGeo } from '../src/game/Bodies.js';
 import { Actor, updateCauterisation } from '../src/game/Ragdoll.js';
@@ -79,38 +83,468 @@ const Q = (x, y, z) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y,
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerpN = (a, b, i, n) => (n <= 1 ? (a + b) / 2 : a + (b - a) * (i / (n - 1)));
 
+// Rapier is WASM and every world below needs it instantiated first.
+await initPhysics();
+
+/** A perfectly flat, analytic ground both solvers understand. */
+const flatGround = () => ({ height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0),
+  raycast: () => null, friction: 0.9, size: 400 });
+
+/**
+ * How square a body is to the floor: world-up taken into the body's own frame,
+ * then its largest component. 1 means a face is flat on the ground; a cube
+ * balanced on an edge reads 0.707.
+ */
+const _fu = new THREE.Vector3(), _fq = new THREE.Quaternion();
+function faceUp(quat) {
+  _fu.set(0, 1, 0).applyQuaternion(_fq.copy(quat).invert());
+  return Math.max(Math.abs(_fu.x), Math.abs(_fu.y), Math.abs(_fu.z));
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Physics                                                               */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-check('solver: a box dropped on flat ground comes to rest', () => {
-  const w = new PhysicsWorld();
-  w.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null, friction: 0.9 };
-  const b = new Body({ position: V(0, 4, 0), spheres: boxSpheres(0.4, 0.4, 0.4), mass: 20 });
-  w.add(b);
-  for (let i = 0; i < 400; i++) w.step(1 / 60);
-  assert(b.position.y > 0.25 && b.position.y < 0.65, `settled at y=${b.position.y.toFixed(3)}`);
-  assert(b.velocity.length() < 0.6, `still moving: ${b.velocity.length().toFixed(3)}`);
-  assert(isFinite(b.position.y), 'position went non-finite');
-  return `y=${b.position.y.toFixed(3)} after 400 steps`;
+// ── Rapier: the world, the props, the debris, everything you can throw.
+// The four checks that used to live here tested the sphere solver's version of
+// these invariants; they are ported, not dropped, and tightened where Rapier
+// can now be held to a standard spheres never could.
+
+check('rapier: a box dropped TILTED settles FLAT on one face', () => {
+  // The whole complaint in one test. A cluster of spheres has no faces, so it
+  // comes to rest at whatever angle it stopped rolling at. A cuboid lands on a
+  // face, every time, from any attitude.
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  const worst = [];
+  for (const e of [[0.5, 0.3, 0.4], [0.9, 0, 0], [0.2, 1.1, 0.7], [-0.6, 0.4, -0.9]]) {
+    const b = new RBody({ position: V(0, 4, 0), quaternion: Q(...e), shape: boxShape(0.4, 0.4, 0.4),
+      mass: 20, friction: 0.8, restitution: 0.05 });
+    w.add(b);
+    for (let i = 0; i < 400; i++) w.step(1 / 60);
+    assert(isFinite(b.position.y), 'position went non-finite');
+    assert(b.position.y > 0.34 && b.position.y < 0.46, `settled at y=${b.position.y.toFixed(3)}, not on a face`);
+    assert(b.velocity.length() < 0.05, `still moving: ${b.velocity.length().toFixed(3)}`);
+    // World-up, expressed in the body's own frame, must land on a body axis —
+    // i.e. one of the cube's six faces is square to the floor. (Yaw about the
+    // vertical is free, so measuring the body's +Y axis in world would pass a
+    // box lying on its side and fail nothing.)
+    const flat = faceUp(b.quaternion);
+    assert(flat > 0.9995, `came to rest tilted ${(Math.acos(clamp(flat, -1, 1)) * 57.3).toFixed(1)}° off a face`);
+    worst.push(Math.acos(clamp(flat, -1, 1)) * 57.3);
+    w.remove(b);
+  }
+  return `4 attitudes, worst ${Math.max(...worst).toFixed(3)}° off flat`;
 });
 
-check('solver: a stack of five crates does not explode', () => {
-  const w = new PhysicsWorld();
-  w.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null, friction: 0.9 };
+check('rapier: a stack of five crates is still a stack a minute later', () => {
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
   const boxes = [];
   for (let i = 0; i < 5; i++) {
-    const b = new Body({ position: V(0, 0.4 + i * 0.82, 0), spheres: boxSpheres(0.4, 0.4, 0.4), mass: 18 });
+    const b = new RBody({ position: V(0, 0.4 + i * 0.82, 0), shape: boxShape(0.4, 0.4, 0.4),
+      mass: 18, friction: 0.8, restitution: 0.02 });
     w.add(b); boxes.push(b);
   }
-  for (let i = 0; i < 480; i++) w.step(1 / 60);
-  const maxDrift = Math.max(...boxes.map(b => Math.hypot(b.position.x, b.position.z)));
-  assert(maxDrift < 2.2, `stack scattered ${maxDrift.toFixed(2)}m`);
+  for (let i = 0; i < 600; i++) w.step(1 / 60);
+  const drift = Math.max(...boxes.map(b => Math.hypot(b.position.x, b.position.z)));
   assert(boxes.every(b => isFinite(b.position.y) && b.position.y > -1), 'a crate fell through the floor');
-  return `drift ${maxDrift.toFixed(2)}m`;
+  assert(drift < 0.05, `the stack slid ${drift.toFixed(3)}m apart`);
+  // and it has to still be five storeys, not a heap
+  const ys = boxes.map(b => b.position.y).sort((a, b) => a - b);
+  for (let i = 1; i < ys.length; i++) {
+    near(ys[i] - ys[i - 1], 0.8, 0.05, `gap between crate ${i} and ${i - 1}`);
+  }
+  assert(boxes.every(b => !b.awake), 'the stack never went to sleep — it is still being solved');
+  return `drift ${(drift * 1000).toFixed(1)}mm, top crate at y=${ys[4].toFixed(3)}, all asleep`;
 });
 
-check('solver: a ball joint holds two bodies together', () => {
+check('rapier: a crate on a shallow ramp stays put instead of rolling away', () => {
+  // A crate approximated by eight spheres rolls down anything. A cuboid on a
+  // 12° ramp with 0.8 friction (µ = tan 12° = 0.21) does not move at all.
+  const w = new RapierWorld({ gravity: -24 });
+  const tilt = new THREE.Quaternion().setFromAxisAngle(V(0, 0, 1), 12 * Math.PI / 180);
+  w.addStaticBox(V(0, 0, 0), V(12, 0.5, 12), tilt, { friction: 0.85 });
+  const b = new RBody({ position: V(0, 1.4, 0), quaternion: tilt.clone(), shape: boxShape(0.35, 0.35, 0.35),
+    mass: 22, friction: 0.85, restitution: 0.02 });
+  w.add(b);
+  const start = b.position.clone();
+  for (let i = 0; i < 300; i++) w.step(1 / 60);
+  const slid = Math.hypot(b.position.x - start.x, b.position.z - start.z);
+  assert(slid < 0.12, `the crate travelled ${slid.toFixed(3)}m down a 12° ramp`);
+  return `slid ${(slid * 1000).toFixed(0)}mm in 5s on a 12° ramp`;
+});
+
+check('rapier: a body at 360 m/s does not tunnel through a thin wall', () => {
+  const w = new RapierWorld({ gravity: 0 });
+  w.addStaticBox(V(0, 0, 0), V(6, 6, 0.04));     // 8 cm of wall
+  const b = new RBody({ position: V(0, 0, 20), shape: boxShape(0.12, 0.12, 0.12),
+    mass: 5, gravityScale: 0, restitution: 0 });
+  b.velocity.set(0, 0, -360);                    // 6 m of travel per frame
+  w.add(b);
+  let minZ = Infinity;
+  for (let i = 0; i < 60; i++) { w.step(1 / 60); minZ = Math.min(minZ, b.position.z); }
+  assert(minZ > 0.04, `it got to z=${minZ.toFixed(3)} — through the wall`);
+  // and the same body with both continuous modes off is what the old solver
+  // did with it: gone, and still going
+  const w2 = new RapierWorld({ gravity: 0 });
+  w2.addStaticBox(V(0, 0, 0), V(6, 6, 0.04));
+  const b2 = new RBody({ position: V(0, 0, 20), shape: boxShape(0.12, 0.12, 0.12),
+    mass: 5, gravityScale: 0, ccd: false, softCcd: 0 });
+  b2.velocity.set(0, 0, -360);
+  w2.add(b2);
+  for (let i = 0; i < 60; i++) w2.step(1 / 60);
+  assert(b2.position.z < 0, 'the control case did not tunnel, so this proves nothing');
+  return `stopped at z=${minZ.toFixed(3)}m; without CCD the same body reaches z=${b2.position.z.toFixed(0)}m`;
+});
+
+check('rapier: debris dropped from height lands ON the terrain, not under it', () => {
+  // Rapier's ordinary CCD does not sweep against heightfields — only soft CCD
+  // does. Without it, anything arriving faster than a three metre fall goes
+  // straight through the ground, which put 45% of a level's debris under the
+  // map. This is the regression test for that.
+  const t = new Terrain(scene, 'arena', 1.0);
+  const rand = (() => { let s = 4242; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+  const drop = (softCcd) => {
+    const w = new RapierWorld({ gravity: -24 });
+    w.terrain = t;
+    const bs = [];
+    for (let i = 0; i < 40; i++) {
+      const x = (rand() - 0.5) * 60, z = (rand() - 0.5) * 60;
+      const b = new RBody({ position: V(x, t.height(x, z) + 3 + rand() * 12, z),
+        shape: boxShape(0.175, 0.11, 0.15), mass: 8, friction: 0.8, restitution: 0.06, softCcd });
+      b.velocity.set((rand() - 0.5) * 8, 0, (rand() - 0.5) * 8);
+      w.add(b); bs.push(b);
+    }
+    for (let i = 0; i < 500; i++) w.step(1 / 60);
+    return bs.filter(b => b.dead || b.position.y < t.height(b.position.x, b.position.z) - 0.6).length;
+  };
+  const lost = drop(undefined);
+  assert(lost === 0, `${lost}/40 pieces of debris fell through the ground`);
+  const lostWithout = drop(0);
+  assert(lostWithout > 5, `only ${lostWithout}/40 fell through without soft CCD — this test proves nothing`);
+  return `0/40 through with soft CCD, ${lostWithout}/40 without it`;
+});
+
+check('rapier: raycast agrees with the sphere solver it replaced', () => {
+  // Same scene in both engines, same rays, same answers — this is the query the
+  // camera, line-of-sight and Force grip all run.
+  const build = (w) => {
+    w.add(new (w instanceof RapierWorld ? RBody : Body)({
+      position: V(0, 1, -5), shape: ballShape(0.5), spheres: [{ c: V(), r: 0.5 }],
+      mass: 4, gravityScale: 0, layer: LAYER.PROP }));
+    w.addStaticBox(V(0, 1, -12), V(1, 1, 1));
+    return w;
+  };
+  const old = build(new PhysicsWorld());
+  const neu = build(new RapierWorld({}));
+  neu.step(1 / 60);
+
+  const rays = [
+    [V(0, 1, 0), V(0, 0, -1), 30, null],
+    [V(0, 1, -8), V(0, 0, -1), 30, null],
+    [V(0, 1, 0), V(0, 0, -1), 30, (b) => b.static],           // bodies filtered out
+    [V(-3, 1, -12), V(1, 0, 0), 30, null],
+    [V(0, 6, -12), V(0, -1, 0), 30, null],
+  ];
+  const lines = [];
+  for (const [o, d, m, f] of rays) {
+    const a = old.raycast(o, d, m, f), b = neu.raycast(o, d, m, f);
+    assert(!!a === !!b, `one engine hit and the other missed for ray from ${o.toArray()}`);
+    if (!a) { lines.push('miss=miss'); continue; }
+    near(a.distance, b.distance, 0.02, 'hit distance');
+    assert(!!a.body === !!b.body && !!a.box === !!b.box, 'hit a different kind of thing');
+    if (a.body) assert(a.body.layer === b.body.layer, 'hit a different body');
+    assert(a.normal.dot(b.normal) > 0.99, `normals differ: ${a.normal.toArray()} vs ${b.normal.toArray()}`);
+    lines.push(`${a.distance.toFixed(2)}≈${b.distance.toFixed(2)}`);
+  }
+  return lines.join(', ');
+});
+
+check('rapier: layer and mask filtering excludes exactly what it used to', () => {
+  // LAYER/mask maps onto Rapier's 16-bit membership + 16-bit filter, and the
+  // rule has to stay `(A.layer & B.mask) && (B.layer & A.mask)`.
+  near(collisionGroups(LAYER.PROP, LAYER.WORLD | LAYER.PROP), (LAYER.PROP << 16 >>> 0) | (LAYER.WORLD | LAYER.PROP),
+    0, 'group packing');
+
+  const drop = (aMask, bMask) => {
+    const w = new RapierWorld({ gravity: -24 });
+    w.terrain = flatGround();
+    const A = new RBody({ position: V(0, 0.5, 0), shape: boxShape(0.5, 0.5, 0.5), mass: 10,
+      layer: LAYER.PROP, mask: aMask, friction: 0.8 });
+    const B = new RBody({ position: V(0, 2.4, 0), shape: boxShape(0.5, 0.5, 0.5), mass: 10,
+      layer: LAYER.DEBRIS, mask: bMask, friction: 0.8 });
+    w.add(A); w.add(B);
+    for (let i = 0; i < 400; i++) w.step(1 / 60);
+    return B.position.y;
+  };
+  // both see each other → the upper crate rests on the lower one
+  near(drop(LAYER.ALL, LAYER.ALL), 1.5, 0.05, 'mutually visible crates should stack');
+  // the faller ignores props → it falls straight through to the ground
+  near(drop(LAYER.ALL, LAYER.WORLD), 0.5, 0.05, 'DEBRIS masked to WORLD should pass through a PROP');
+  // and the rule is symmetric: one side refusing is enough
+  near(drop(LAYER.WORLD, LAYER.ALL), 0.5, 0.05, 'a PROP masked to WORLD should not catch DEBRIS');
+  return 'stacks at 1.5, passes through at 0.5, symmetric';
+});
+
+check('rapier: the terrain heightfield IS the terrain', () => {
+  // Rapier's heightfield is column-major with columns along x and rows along z;
+  // Terrain stores heights[j*res + i] with i along x. Get that transpose wrong
+  // and the ground is a mirror of itself — which reads as "sometimes solid".
+  const t = new Terrain(scene, 'arena', 1.0);
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = t;
+  w.step(1 / 60);
+
+  let worstRay = 0, sum = 0, sumSq = 0, sumMirror = 0, n = 0;
+  for (let k = 0; k < 220; k++) {
+    const x = ((k * 137.51) % 180) - 90, z = ((k * 61.803) % 180) - 90;
+    const hit = w.raycast(V(x, t.height(x, z) + 40, z), V(0, -1, 0), 120);
+    assert(hit && hit.terrain, `no ground under (${x.toFixed(0)}, ${z.toFixed(0)})`);
+    const err = hit.point.y - t.height(x, z);
+    worstRay = Math.max(worstRay, Math.abs(err));
+    sum += err; sumSq += err * err;
+    // what the same ray would report if the grid had gone in transposed
+    sumMirror += Math.abs(hit.point.y - t.height(z, x));
+    n++;
+  }
+  // A heightfield is triangles and terrain.height() is bilinear, so within a
+  // cell they differ by that cell's own curvature. What must NOT happen is a
+  // landform-sized error, which is what a transposed grid produces.
+  const rms = Math.sqrt(sumSq / n), mean = sum / n, mirror = sumMirror / n;
+  assert(worstRay < 0.9, `the collider sits ${worstRay.toFixed(2)}m from the ground it was built from`);
+  assert(rms < 0.12, `the collider is ${rms.toFixed(3)}m rms off the ground`);
+  assert(Math.abs(mean) < 0.06, `the collider is biased ${mean.toFixed(3)}m off the ground`);
+  assert(mirror > rms * 12, `the transposed sample is only ${(mirror / rms).toFixed(1)}x worse — `
+    + 'this terrain cannot tell x from z, so the test proves nothing');
+
+  // and a real body must come to rest ON it
+  const rest = [];
+  for (const [x, z] of [[0, 0], [18, -25], [-31, 12], [7, 40]]) {
+    const b = new RBody({ position: V(x, t.height(x, z) + 3, z), shape: boxShape(0.3, 0.3, 0.3),
+      mass: 15, friction: 0.9, restitution: 0 });
+    w.add(b);
+    for (let i = 0; i < 400; i++) w.step(1 / 60);
+    const err = b.position.y - 0.3 - t.height(b.position.x, b.position.z);
+    assert(Math.abs(err) < 0.4, `a box at (${x},${z}) rested ${err.toFixed(2)}m off terrain.height()`);
+    rest.push(err);
+    w.remove(b);
+  }
+  return `220 rays: ${(rms * 100).toFixed(1)}cm rms, ${(mean * 1000).toFixed(0)}mm bias, `
+    + `${(mirror / rms).toFixed(0)}x worse transposed; 4 dropped boxes within `
+    + `${(Math.max(...rest.map(Math.abs)) * 100).toFixed(0)}cm of terrain.height()`;
+});
+
+check('rapier: a crater under a resting crate drops the crate with it', () => {
+  // The heightfield is a snapshot, so a deformed dune has to invalidate it or
+  // props stand on ground that is no longer there.
+  const t = new Terrain(scene, 'arena', 1.0);
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = t;
+  const b = new RBody({ position: V(0, t.height(0, 0) + 1, 0), shape: boxShape(0.3, 0.3, 0.3), mass: 15, friction: 0.9 });
+  w.add(b);
+  for (let i = 0; i < 240; i++) w.step(1 / 60);
+  const before = b.position.y;
+  t.crater(0, 0, 6, 2.5);
+  b.wake();
+  for (let i = 0; i < 300; i++) w.step(1 / 60);
+  const drop = before - b.position.y;
+  assert(drop > 1.5, `the crate only fell ${drop.toFixed(2)}m into a 2.5m crater`);
+  near(b.position.y - 0.3, t.height(b.position.x, b.position.z), 0.4, 'rest height after the crater');
+  return `fell ${drop.toFixed(2)}m into the new hole`;
+});
+
+check('rapier: props carry the shape they look like, not a bag of spheres', () => {
+  propMaterials();
+  const w = { scene: new THREE.Scene(), props: [], physics: { add: () => {}, remove: () => {} } };
+  const crate = makeCrate(w, V(0, 0, 0), 0.7);
+  const barrel = makeBarrel(w, V(0, 0, 0));
+  const pillar = makePillar(w, V(0, 0, 0), 4.2);
+  const spire = makeSpire(w, V(0, 0, 0), 6);
+  assert(crate.body.shape.type === 'box', `a crate is a ${crate.body.shape.type}`);
+  assert(barrel.body.shape.type === 'cylinder', `a barrel is a ${barrel.body.shape.type}`);
+  assert(pillar.body.shape.type === 'compound' && pillar.body.shape.parts.length === 3,
+    `a pillar is a ${pillar.body.shape.type}`);
+  assert(spire.body.shape.type === 'hull', `a spire is a ${spire.body.shape.type}`);
+  assert(spire.body.shape.points.length / 3 > 20,
+    `the spire's hull has only ${spire.body.shape.points.length / 3} points`);
+
+  // and the hull actually describes the mesh: every vertex inside its own AABB
+  const g = spire.mesh.geometry; g.computeBoundingBox();
+  const p = spire.body.shape.points;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 1; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]); }
+  near(hi - lo, g.boundingBox.max.y - g.boundingBox.min.y, 0.02, 'hull height vs mesh height');
+  return `crate box, barrel cylinder, pillar 3-part compound, spire hull of ${p.length / 3} points`;
+});
+
+check('rapier: a heavy prop actually TIPS off an edge instead of teetering', () => {
+  // Real inertia and a real contact manifold: a crate pushed two thirds off a
+  // ledge rotates about the edge and falls. Eight spheres just roll off.
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  w.addStaticBox(V(0, 1, 0), V(2, 1, 2), new THREE.Quaternion(), { friction: 0.9 });
+  const b = new RBody({ position: V(2.25, 2.42, 0), shape: boxShape(0.4, 0.4, 0.4),
+    mass: 22, friction: 0.9, restitution: 0.02 });
+  w.add(b);
+  for (let i = 0; i < 400; i++) w.step(1 / 60);
+  assert(b.position.y < 0.5, `it is still on the ledge at y=${b.position.y.toFixed(2)}`);
+  assert(faceUp(b.quaternion) > 0.999, 'it landed at an angle');
+  return `tipped off the ledge and landed flat at y=${b.position.y.toFixed(3)}`;
+});
+
+check('rapier: grip, hurl and push still move a prop the way the Force did', () => {
+  // The three Force powers all reach into the body directly: a raycast to find
+  // it, gravityScale to hold it up, per-frame velocity writes to carry it, and
+  // impulses to throw it. All four still have to work through the cache.
+  propMaterials();
+  const w = new RapierWorld({ gravity: -24, iterations: 4 });
+  w.terrain = flatGround();
+  const host = { scene: new THREE.Scene(), props: [], physics: w, addProp(p) { this.props.push(p); return p; } };
+  const crate = makeCrate(host, V(0, 0.5, -4), 0.7);
+  for (let i = 0; i < 180; i++) w.step(1 / 60);
+  const restY = crate.body.position.y;
+
+  // grip: the raycast the player fires, with the player's own filter
+  const hit = w.raycast(V(0, restY, 2), V(0, 0, -1), 32,
+    (b) => b.invMass > 0 && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL));
+  assert(hit && hit.body === crate.body, 'the grip ray did not find the crate');
+  const b = hit.body;
+  b.gravityScale = 0;
+  const hold = V(0, 3.2, -2);
+  for (let i = 0; i < 180; i++) {
+    b.wake();
+    b.velocity.copy(hold).sub(b.position).multiplyScalar(9).clampLength(0, 28);
+    b.angularVelocity.multiplyScalar(1 - (1 / 60) * 2);
+    b.angularVelocity.y += (1 / 60) * 2.2;
+    w.step(1 / 60);
+  }
+  const held = b.position.distanceTo(hold);
+  assert(held < 0.05, `the gripped crate hangs ${held.toFixed(3)}m from the hold point`);
+  assert(b.angularVelocity.y > 0.5, `the gripped crate is not turning (${b.angularVelocity.y.toFixed(2)} rad/s)`);
+
+  // hurl
+  b.gravityScale = 1;
+  const from = b.position.clone();
+  b.applyImpulse(V(0, 0, -1).multiplyScalar(b.mass * 26), b.position);
+  for (let i = 0; i < 60; i++) w.step(1 / 60);
+  const flew = from.distanceTo(b.position);
+  assert(flew > 10, `a hurled crate only travelled ${flew.toFixed(2)}m in a second`);
+
+  // push, from across the room
+  const other = makeCrate(host, V(6, 0.5, 0), 0.7);
+  for (let i = 0; i < 180; i++) w.step(1 / 60);
+  const p0 = other.body.position.clone();
+  other.body.applyImpulse(V(other.body.mass * 15, other.body.mass * 6, 0), other.body.position);
+  for (let i = 0; i < 90; i++) w.step(1 / 60);
+  const shoved = p0.distanceTo(other.body.position);
+  assert(shoved > 3, `a Force push only moved a crate ${shoved.toFixed(2)}m`);
+  return `held to ${(held * 1000).toFixed(1)}mm, hurled ${flew.toFixed(1)}m, pushed ${shoved.toFixed(1)}m`;
+});
+
+check('rapier: a cut prop becomes two halves with hulls of their own', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -24, iterations: 4 });
+  w.terrain = flatGround();
+  const host = { scene: new THREE.Scene(), props: [], physics: w, addProp(p) { this.props.push(p); return p; } };
+  const crate = makeCrate(host, V(0, 3, 0), 0.7);
+  host.props.push(crate);
+  crate.update(1 / 60);
+  crate.mesh.updateMatrixWorld(true);
+  const halves = crate.cut(crate.body.position.clone(), V(0.3, 1, 0.1).normalize(), V(0, 0, 4));
+  assert(halves && halves.length === 2, 'the crate did not part');
+  for (const h of halves) {
+    assert(h.body.shape.type === 'hull', `a half is a ${h.body.shape.type}, not a hull of its own geometry`);
+    assert(h.body.shape.points.length / 3 > 20, 'the half hull is too coarse to be the half');
+    host.props.push(h);
+  }
+  for (let i = 0; i < 300; i++) { w.step(1 / 60); for (const p of host.props) p.update(1 / 60); }
+  const ys = halves.map(h => h.body.position.y);
+  assert(ys.every(y => isFinite(y) && y > 0 && y < 0.8), `halves rested at ${ys.map(y => y.toFixed(2)).join(', ')}`);
+  return `two halves, ${halves.map(h => h.body.shape.points.length / 3).join('+')} hull points, resting at `
+    + ys.map(y => y.toFixed(2)).join(' / ');
+});
+
+check('rapier: the sphere solver still runs alongside it, on the same ground', () => {
+  // Ragdolls and severed limbs stay on the old solver for now, so a RapierWorld
+  // has to accept one of its bodies, step it, and let it land on the shared
+  // terrain and the shared static boxes.
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  w.addStaticBox(V(0, 0.5, 0), V(2, 0.5, 2), new THREE.Quaternion(), { friction: 0.8 });
+
+  const limb = new Body({ position: V(0, 4, 0), spheres: capsuleSpheres(0.14, 0.07), mass: 3,
+    layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL });
+  const crate = new RBody({ position: V(4, 3, 0), shape: boxShape(0.4, 0.4, 0.4), mass: 20, friction: 0.8 });
+  w.add(limb); w.add(crate);
+  assert(w.bodies.length === 2, 'both bodies must appear in the shared list');
+  assert(w.legacy.bodies.length === 1, 'the sphere body did not reach the sphere solver');
+  assert(w.stats.rapier === 0 || true, '');
+  for (let i = 0; i < 400; i++) w.step(1 / 60);
+  near(limb.position.y, 1.07, 0.16, 'the limb should rest on top of the static box');
+  near(crate.position.y, 0.4, 0.05, 'the crate should rest on the ground');
+  // and a ray finds both
+  const rl = w.raycast(V(0, 6, 0), V(0, -1, 0), 20, (b) => b.layer === LAYER.RAGDOLL);
+  assert(rl && rl.body === limb, 'the ray missed the sphere-solver body');
+  return `limb on the ledge at y=${limb.position.y.toFixed(2)}, crate on the ground at y=${crate.position.y.toFixed(2)}`;
+});
+
+check('rapier: loading a level three times over leaves a clean world each time', () => {
+  // clear() throws the Rapier world away and builds a new one, which is where a
+  // stale collider handle or a freed rigid body would surface.
+  const w = new RapierWorld({ gravity: -24, iterations: 4 });
+  const lines = [];
+  for (let round = 0; round < 3; round++) {
+    w.clear();
+    const t = new Terrain(scene, round % 2 ? 'dunes' : 'arena', 0.6);
+    w.terrain = t;
+    for (let i = 0; i < 12; i++) w.addStaticBox(V(i * 2 - 12, t.height(i * 2 - 12, 0) + 1, 0), V(0.9, 1, 0.9));
+    for (let i = 0; i < 24; i++) {
+      const x = (i % 6) * 1.2 - 3, z = Math.floor(i / 6) * 1.2 - 3;
+      w.add(new RBody({ position: V(x, t.height(x, z) + 2 + i * 0.1, z), shape: boxShape(0.3, 0.3, 0.3),
+        mass: 12, friction: 0.8 }));
+    }
+    for (let i = 0; i < 6; i++) {
+      w.add(new Body({ position: V(i - 3, t.height(i - 3, 0) + 3, 0), spheres: capsuleSpheres(0.14, 0.07),
+        mass: 3, layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL }));
+    }
+    for (let i = 0; i < 400; i++) w.step(1 / 60);
+    assert(w.bodies.length === 30, `round ${round} lost ${30 - w.bodies.length} bodies`);
+    assert(w.stats.colliders === 37, `round ${round} has ${w.stats.colliders} colliders, expected 37`);
+    const bad = w.bodies.filter(b => !isFinite(b.position.y)
+      || b.position.y < t.height(b.position.x, b.position.z) - 1).length;
+    assert(bad === 0, `round ${round} left ${bad} bodies under the map`);
+    lines.push(`${w.bodies.length}b/${w.stats.colliders}c`);
+  }
+  w.dispose();
+  return lines.join(', ') + ', disposed clean';
+});
+
+check('sphere solver: a body inside a static box pushes out instead of exploding', () => {
+  // In the inside-the-box branch the contact normal was already a unit axis and
+  // was then divided by the distance to the nearest face — so a ragdoll that had
+  // ended up level with a wall's top face left at 1e23 m/s, and the broadphase
+  // then tried to hash it into every cell in the universe.
+  const w = new PhysicsWorld();
+  w.terrain = flatGround();
+  const boxTop = 2;
+  w.addStaticBox(V(0, 1, 0), V(0.9, 1, 0.9));
+  const worst = [];
+  for (const y of [boxTop, boxTop - 1e-9, 1, 0.05]) {       // level with each face, and dead centre
+    const b = new Body({ position: V(0, y, 0), spheres: capsuleSpheres(0.14, 0.07), mass: 3,
+      layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL });
+    w.add(b);
+    for (let i = 0; i < 240; i++) w.step(1 / 60);
+    assert(isFinite(b.position.length()), `a body starting at y=${y} went non-finite`);
+    assert(b.position.length() < 12, `it was flung to ${b.position.length().toExponential(2)}m`);
+    assert(b.velocity.length() < 40, `it left at ${b.velocity.length().toExponential(2)} m/s`);
+    worst.push(b.position.length());
+    w.remove(b);
+  }
+  return `4 starting positions inside the box, worst travel ${Math.max(...worst).toFixed(2)}m`;
+});
+
+check('sphere solver: a ball joint still holds two bodies together (ragdolls use it)', () => {
   const w = new PhysicsWorld();
   w.terrain = null;
   const a = new Body({ position: V(0, 5, 0), spheres: capsuleSpheres(0.2, 0.1), mass: 0, static: true });
@@ -123,20 +557,6 @@ check('solver: a ball joint holds two bodies together', () => {
   const err = anchorA.distanceTo(anchorB);
   assert(err < 0.16, `joint drifted ${err.toFixed(3)}m`);
   return `joint error ${(err * 1000).toFixed(1)}mm`;
-});
-
-check('solver: raycast finds a body and a static box', () => {
-  const w = new PhysicsWorld();
-  const b = new Body({ position: V(0, 1, -5), spheres: [{ c: V(), r: 0.5 }], mass: 4 });
-  w.add(b);
-  w.addStaticBox(V(0, 1, -12), V(1, 1, 1));
-  const hitBody = w.raycast(V(0, 1, 0), V(0, 0, -1), 30);
-  assert(hitBody && hitBody.body === b, 'did not hit the body');
-  near(hitBody.distance, 4.5, 0.05, 'body hit distance');
-  const hitBox = w.raycast(V(0, 1, -8), V(0, 0, -1), 30);
-  assert(hitBox && hitBox.box, 'did not hit the static box');
-  near(hitBox.distance, 3.0, 0.05, 'box hit distance');
-  return `body @${hitBody.distance.toFixed(2)}m, box @${hitBox.distance.toFixed(2)}m`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

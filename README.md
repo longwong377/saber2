@@ -103,11 +103,16 @@ swept, so a crate cut corner-to-corner gives two wedges. Cut rate is
 deliberate push, and a **blast door** takes twenty seconds of held blade, a
 traced molten kerf and a shower of slag before the slug falls out and clangs.
 
-**Physics.** A bespoke sequential-impulse solver. Every collider is decomposed
-into spheres, which is what makes it possible to rebuild a body's collider at
-runtime when part of it has just been taken away. Ragdolls are articulated bodies
-with cone/twist joints; severing a limb removes a constraint and the distal piece
-inherits the parent's velocity. Warm-started contacts, islands, sleeping.
+**Physics.** The world runs on Rapier, so everything in it is the shape it looks
+like: cuboids for crates, cylinders for drums and columns, convex hulls built
+from the actual vertex data for anything irregular, compound colliders for props
+made of several parts, and the terrain as a real heightfield. A crate tips off a
+ledge instead of rolling off it, a stack stays a stack, and continuous collision
+detection keeps a hurled object out of the geometry it used to tunnel through.
+
+Ragdolls are still the bespoke sphere solver's, because cutting a limb rebuilds
+that limb's collider mid-flight and spheres make that trivial. The two engines
+share the terrain and the architecture, so a corpse still lands on the ground.
 
 **Force.** Jump, push, pull, grip-and-hurl, saber throw and recall, and time
 dilation — all of them physics verbs rather than damage buttons.
@@ -157,7 +162,7 @@ Layout:
 
 ```
 src/engine/    renderer, HDR post stack, input, synthesised audio, texture foundry
-src/physics/   the impulse solver
+src/physics/   Rapier for the world, the bespoke sphere solver for ragdolls
 src/game/      blade control, combat resolution, bodies, rigs, dismemberment,
                enemies, waves, levels, the world loop
 src/world/     terrain, particles, props, slicing, scenery

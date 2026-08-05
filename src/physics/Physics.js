@@ -450,6 +450,9 @@ export class PhysicsWorld {
       const x0 = Math.floor(b.aabbMin.x / cs), x1 = Math.floor(b.aabbMax.x / cs);
       const y0 = Math.floor(b.aabbMin.y / cs), y1 = Math.floor(b.aabbMax.y / cs);
       const z0 = Math.floor(b.aabbMin.z / cs), z1 = Math.floor(b.aabbMax.z / cs);
+      // A body that has been flung somewhere absurd would otherwise ask for
+      // billions of cells and hang the frame it is about to be culled on.
+      if (!((x1 - x0) < 64 && (y1 - y0) < 64 && (z1 - z0) < 64)) continue;
       for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
         const h = this._hash(x, y, z);
         let arr = this._grid.get(h);
@@ -574,7 +577,11 @@ export class PhysicsWorld {
         } else if (d2 >= r * r) continue;
         const d = Math.sqrt(d2);
         const depth = inside ? r + d : r - d;
-        _v4.multiplyScalar(1 / Math.max(d, 1e-6));   // local outward normal
+        // Only the outside case needs normalising: in the inside case _v4 is
+        // ALREADY a unit axis, and d is the distance to the nearest face — so
+        // dividing by it scaled the contact normal by up to 1e6 and turned a
+        // body that had ended up inside a wall into a 1e23 m/s projectile.
+        if (!inside) _v4.multiplyScalar(1 / Math.max(d, 1e-6));   // local outward normal
         _v5.copy(_v4).applyQuaternion(box.quat);      // world outward normal
         const c = this._contact();
         c.a = b; c.b = null;

@@ -32,7 +32,7 @@
  */
 
 import * as THREE from 'three';
-import { Body, LAYER, boxSpheres, capsuleSpheres } from '../physics/Physics.js';
+import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
 import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps } from '../engine/Textures.js';
 import { plateGeo, limbGeo } from '../game/Bodies.js';
@@ -607,10 +607,15 @@ export class Prop {
     this.mesh.receiveShadow = true;
     world.scene.add(this.mesh);
 
+    // The collider is the real shape: whatever the factory declared, or failing
+    // that a convex hull of the mesh the player is actually looking at. The
+    // sphere set is now only the proxy the BLADE solver walks — it decides
+    // where a cut lands, not how the prop behaves when it falls over.
     const spheres = opts.spheres || spheresForGeometry(this.mesh.geometry, 8);
+    const shape = opts.shape || hullFromGeometry(this.mesh.geometry);
     this.body = new Body({
       position: opts.position, quaternion: opts.quaternion,
-      spheres, mass: opts.mass ?? 24,
+      spheres, shape, mass: opts.mass ?? 24,
       friction: opts.friction ?? 0.72, restitution: opts.restitution ?? 0.08,
       layer: LAYER.PROP,
       mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER,
@@ -780,7 +785,8 @@ export function makeCrate(world, pos, size = 0.7, opts = {}) {
     kind: 'crate', mesh, position: pos,
     quaternion: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * 6.28),
     mass: 22 * s, toughness: TOUGHNESS.plastoid, hp: 34,
-    spheres: boxSpheres(s / 2, s * 0.45, s / 2), ...opts,
+    spheres: boxSpheres(s / 2, s * 0.45, s / 2),
+    shape: box(s / 2, s * 0.45, s / 2), ...opts,
   });
 }
 
@@ -814,7 +820,9 @@ export function makeBarrel(world, pos, opts = {}) {
   return new Prop(world, {
     kind: 'barrel', mesh, position: pos, mass: 30,
     toughness: TOUGHNESS.plastoid, hp: 22, explosive: true,
-    spheres: capsuleSpheres(h / 2 - r * 0.6, r, 'y', 2), ...opts,
+    spheres: capsuleSpheres(h / 2 - r * 0.6, r, 'y', 2),
+    // a drum is a drum: it rolls on its side and stands on its chime
+    shape: cylinder(h / 2, r), ...opts,
   });
 }
 
@@ -852,7 +860,14 @@ export function makePillar(world, pos, height = 4.2, opts = {}) {
   return new Prop(world, {
     kind: 'pillar', mesh, position: pos, mass: 900,
     toughness: TOUGHNESS.armour, hp: 320, grippable: false,
-    spheres: capsuleSpheres(height / 2 - r, r, 'y', Math.max(2, Math.round(height / 1.1))), ...opts,
+    spheres: capsuleSpheres(height / 2 - r, r, 'y', Math.max(2, Math.round(height / 1.1))),
+    // shaft, capital and plinth — three colliders on one body, so a toppled
+    // column lies on its flutes and its base catches on the ground
+    shape: compound([
+      { ...cylinder(height / 2 - 0.28, r) },
+      { ...box(r * 1.25, 0.13, r * 1.25), at: [0, height / 2 - 0.12, 0] },
+      { ...box(r * 1.3, 0.15, r * 1.3), at: [0, -height / 2 + 0.15, 0] },
+    ]), ...opts,
   });
 }
 
@@ -888,7 +903,20 @@ export function makeVaporator(world, pos, opts = {}) {
   return new Prop(world, {
     kind: 'vaporator', mesh, position: pos, mass: 180,
     toughness: TOUGHNESS.armour, hp: 120,
-    spheres: capsuleSpheres(1.1, 0.26, 'y', 3), ...opts,
+    spheres: capsuleSpheres(1.1, 0.26, 'y', 3),
+    // stem, head and the three condenser fins, each a collider of its own
+    shape: compound([
+      { ...cylinder(1.16, 0.24), at: [0, -0.04, 0] },
+      { ...cylinder(0.23, 0.30), at: [0, 1.35, 0] },
+      ...[0, 1, 2].map((i) => {
+        const a = (i / 3) * TAU;
+        return {
+          ...box(0.0375, 0.725, 0.23),
+          at: [Math.sin(a) * 0.3, 0.55, Math.cos(a) * 0.3],
+          quat: new THREE.Quaternion().setFromAxisAngle(UP, a),
+        };
+      }),
+    ]), ...opts,
   });
 }
 
@@ -924,7 +952,10 @@ export function makeSpire(world, pos, height = 6, opts = {}) {
   return new Prop(world, {
     kind: 'spire', mesh, position: pos, mass: 500,
     toughness: TOUGHNESS.armour, hp: 200, grippable: false,
-    spheres: capsuleSpheres(height / 2 - 0.6, 0.55, 'y', 4), ...opts,
+    spheres: capsuleSpheres(height / 2 - 0.6, 0.55, 'y', 4),
+    // no `shape`: the Prop falls back to a convex hull of this exact bent,
+    // wasp-waisted lathe — which is the whole reason for the migration
+    ...opts,
   });
 }
 
@@ -964,7 +995,13 @@ export function makeConsole(world, pos, opts = {}) {
   return new Prop(world, {
     kind: 'console', mesh, position: pos, mass: 90,
     toughness: TOUGHNESS.heavy, hp: 90,
-    spheres: boxSpheres(0.55, 0.5, 0.3), ...opts,
+    spheres: boxSpheres(0.55, 0.5, 0.3),
+    shape: compound([
+      { ...box(0.55, 0.31, 0.3) },                                        // plinth
+      { ...box(0.55, 0.12, 0.31), at: [0, 0.4, 0] },                      // raked desk
+      { ...box(0.53, 0.17, 0.05), at: [0, 0.56, -0.16],                   // hood
+        quat: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.34) },
+    ]), ...opts,
   });
 }
 

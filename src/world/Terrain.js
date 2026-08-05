@@ -494,6 +494,8 @@ export class Terrain {
 
     this.heights = new Float32Array(this.res * this.res);
     this.deform = new Float32Array(this.res * this.res);
+    /** Bumped by every crater, so the physics heightfield can tell it is stale. */
+    this.deformSeq = 0;
 
     for (let j = 0; j < this.res; j++) {
       for (let i = 0; i < this.res; i++) {
@@ -823,6 +825,9 @@ export class Terrain {
     // shallow it to move the same amount of sand.
     const minR = this.step * 1.35;
     if (radius < minR) { depth *= (radius * radius) / (minR * minR); radius = minR; }
+    // The physics heightfield is a snapshot of this grid; bump the counter so
+    // it knows to take another one.
+    this.deformSeq++;
     const i0 = Math.max(0, Math.floor((x - radius + this.half) * this.invStep));
     const i1 = Math.min(this.res - 1, Math.ceil((x + radius + this.half) * this.invStep));
     const j0 = Math.max(0, Math.floor((z - radius + this.half) * this.invStep));

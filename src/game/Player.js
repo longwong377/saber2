@@ -13,7 +13,7 @@ import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak } from './Cloth.js';
-import { Body, LAYER, capsuleSpheres } from '../physics/Physics.js';
+import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -251,6 +251,7 @@ export class Player {
     this.body = new Body({
       position: this.position.clone().setY(this.position.y + 0.9),
       spheres: capsuleSpheres(0.55, this.radius, 'y', 3),
+      shape: capsule(0.55, this.radius),
       mass: 78, kinematic: true, static: false, layer: LAYER.PLAYER,
       mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
     });

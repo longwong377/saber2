@@ -158,7 +158,7 @@ Waves escalate with a spawn budget. Every third wave, draft one of three **boons
 ## 7. Technical
 
 - **Renderer** — WebGL2 / Three.js, HDR half-float pipeline, ACES filmic tonemapping, PBR materials, fitted cascade shadows, threshold bloom, custom composite pass (grain, chromatic aberration, vignette, heat haze off the blade, grade).
-- **Physics** — bespoke sequential-impulse solver. Spheres/capsules/boxes/heightfield, warm-started contacts, ball-socket joints with cone/twist limits and motors, islands and sleeping. Built for one thing: ragdolls that can be taken apart mid-flight.
+- **Physics** — Rapier (WASM, vendored) for the world: real cuboids, cylinders, convex hulls from mesh vertices, compound colliders, a terrain heightfield, continuous collision detection, islands and sleeping. Alongside it, the original bespoke sequential-impulse sphere solver still runs the ragdolls, because a body that can be taken apart mid-flight needs a collider that can be rebuilt mid-flight.
 - **Content** — 100 % procedural. Meshes, skeletons, materials, textures, animation and audio are all generated in code. Nothing to download, nothing to license, and every character can be sliced because every character was built to be.
 - **Animation** — no clips. Gait solver with terrain foot IK, two-bone arm IK to the hilt, spine counter-rotation from blade momentum, additive hit reactions.
 - **Audio** — WebAudio synthesis. The hum is an oscillator bank whose pitch and amplitude track blade speed, so the saber *sings when you move it*.

@@ -36,9 +36,12 @@ export function initPhysics() {
     RAPIER = R;
     return R;
   })().catch((e) => {
-    // Leave `ready` resolved-with-null rather than rejected: a browser without
-    // WASM should fall back to the bespoke solver, not fail to boot at all.
-    console.error('Rapier failed to initialise; falling back to the sphere solver.', e);
+    // Resolve with null rather than rejecting, so a browser without WASM still
+    // reaches the main menu instead of dying on the loading screen. Deploying a
+    // level will then fail loudly in RapierWorld's constructor — the world, its
+    // props and its terrain are all Rapier's now, and there is no half-world to
+    // fall back to. Only the ragdolls still run on the bespoke sphere solver.
+    console.error('Rapier failed to initialise. Levels will not load.', e);
     RAPIER = null;
     return null;
   });

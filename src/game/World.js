@@ -8,7 +8,7 @@
  */
 
 import * as THREE from 'three';
-import { PhysicsWorld, Body, LAYER, boxSpheres } from '../physics/Physics.js';
+import { RapierWorld, Body, LAYER, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere } from '../world/Scenery.js';
@@ -22,7 +22,6 @@ import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
-import { spheresForGeometry } from '../world/Slice.js';
 import { packAvatar, packSnapshot } from '../net/Net.js';
 import { clamp, lerp, damp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
@@ -36,7 +35,7 @@ export class World {
     this.engine = engine;
     this.scene = engine.scene;
     this.settings = settings;
-    this.physics = new PhysicsWorld({ gravity: -24, iterations: 8, maxBodies: settings.maxBodies ?? 1100 });
+    this.physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: settings.maxBodies ?? 1100 });
 
     this.players = [];
     this.enemies = [];
@@ -219,14 +218,15 @@ export class World {
     return best;
   }
 
-  /** A loose mesh becomes a rigid body. */
+  /** A loose mesh becomes a rigid body — with the mesh's own shape, hulled. */
   spawnDebris(mesh, position, velocity, size) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
-    const spheres = size ? boxSpheres(size.x / 2, size.y / 2, size.z / 2) : spheresForGeometry(mesh.geometry, 5);
+    const shape = hullFromGeometry(mesh.geometry)
+      || (size ? box(size.x / 2, size.y / 2, size.z / 2) : ball(0.25));
     const body = new Body({
-      position, spheres, mass: 6 + rng() * 8,
+      position, shape, mass: 6 + rng() * 8,
       friction: 0.8, restitution: 0.06, layer: LAYER.DEBRIS,
       mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
     });
@@ -244,9 +244,13 @@ export class World {
     group.position.copy(position);
     group.quaternion.identity();
     this.scene.add(group);
+    // A wrecked chassis is a box the size of the wreck, not a beach ball. The
+    // group is already at `position` with no rotation, so its world AABB minus
+    // that position is the body-local box — and any scale the builder put on
+    // the group is baked into it, which is what the collider wants.
+    const shape = boxFromObject(group, position) || ball(radius);
     const body = new Body({
-      position: position.clone(),
-      spheres: [{ c: new THREE.Vector3(), r: radius }],
+      position: position.clone(), shape,
       mass: 20, friction: 0.8, restitution: 0.05, layer: LAYER.DEBRIS,
       mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
     });

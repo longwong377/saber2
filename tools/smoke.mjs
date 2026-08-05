@@ -258,7 +258,10 @@ await step('perf sample', async () => {
       p95Ms: +samples[85].toFixed(2),
       physicsMs: +(S.world.physics.stats.ms).toFixed(2),
       bodies: S.world.physics.stats.bodies,
-      contacts: S.world.physics.stats.contacts,
+      // Rapier has no global contact count, and a level at rest should have
+      // almost nothing awake — that is the number worth watching.
+      awake: S.world.physics.stats.awake,
+      colliders: S.world.physics.stats.colliders,
       drawCalls: S.engine.renderer.info.render.calls,
       triangles: S.engine.renderer.info.render.triangles,
       enemies: S.world.enemies.length,

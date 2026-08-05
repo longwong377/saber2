@@ -15,7 +15,7 @@ import { Saber } from './Saber.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak } from './Cloth.js';
-import { LAYER, Body, capsuleSpheres } from '../physics/Physics.js';
+import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
@@ -158,6 +158,7 @@ export class Enemy {
     this.body = new Body({
       position: this.position.clone().setY(this.position.y + (A.big ? 1.4 : 0.9)),
       spheres: capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
+      shape: capsule(A.big ? 0.9 : 0.55, r),
       mass: A.mass, kinematic: true, layer: LAYER.ENEMY,
       mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
     });
