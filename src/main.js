@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { Engine, QUALITY } from './engine/Engine.js';
 import { Input } from './engine/Input.js';
 import { audio } from './engine/Audio.js';
+import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
 import { LEVELS } from './game/Levels.js';
@@ -101,11 +102,16 @@ async function boot() {
     ['casting plastoid', () => armorMaps()],
     ['pouring duracrete', () => duracreteMaps()],
     ['tuning the hum', () => { }],
+    ['settling the world', null],     // async: see below
   ];
   for (let i = 0; i < steps.length; i++) {
     const [msg, fn] = steps[i];
     menu.progress(i / steps.length, msg);
     await new Promise(r => requestAnimationFrame(() => r()));
+    // The physics engine is WASM and has to finish instantiating before any
+    // level can build a body, so it is warmed up here with the textures rather
+    // than raced at level load.
+    if (fn === null) { await initPhysics(); continue; }
     try { fn(); } catch (e) { console.warn('warm-up step failed:', msg, e); }
   }
   menu.progress(1, 'ready');
