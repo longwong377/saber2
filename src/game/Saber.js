@@ -379,6 +379,19 @@ export class Saber {
     const n = this.trailSegments;
     const h = this.trailHistory;
     if (this.ignition > 0.4) {
+      // On a slow frame the blade can cross a metre between samples, which
+      // would leave the ribbon a fan of huge triangles. Fill in the gap so the
+      // trail reads the same at 20 fps as it does at 144.
+      const gap = this.tip.distanceTo(this.prevTip);
+      const fill = Math.min(6, Math.floor(gap / 0.3));
+      for (let i = fill; i >= 1; i--) {
+        const k = i / (fill + 1);
+        h.unshift({
+          b: this.prevBase.clone().lerp(this.base, 1 - k),
+          t: this.prevTip.clone().lerp(this.tip, 1 - k),
+          age: dt * (1 / 0.13) * k,
+        });
+      }
       h.unshift({ b: this.base.clone(), t: this.tip.clone(), age: 0 });
     } else h.length = 0;
     while (h.length > n) h.pop();
