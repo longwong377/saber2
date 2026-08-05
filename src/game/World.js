@@ -149,6 +149,9 @@ export class World {
   }
 
   unload() {
+    // The level's wind and drone are level state; without this they kept
+    // playing under the main menu after quitting.
+    audio.setAmbience?.({ wind: 0, drone: 0 });
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     this.locks.length = 0;
@@ -406,6 +409,9 @@ export class World {
   /* ── blade resolution ────────────────────────────────────────────── */
 
   _resolveBlades(dt) {
+    // Contact-sound throttles are drained once per frame, not once per contact.
+    this._clangSound = (this._clangSound || 0) - dt;
+    this._grindSound = (this._grindSound || 0) - dt;
     for (const p of this.players) {
       if (!p.alive || p.saber.ignition < 0.6) continue;
 
@@ -480,7 +486,11 @@ export class World {
     const P = this.particles;
     if (ev.type === 'clang') {
       P.sparkBurst(ev.point, null, 8, { speed: 6 });
-      audio.clash(ev.point, 0.5);
+      // A blast door presents a capsule every 0.55m, each with its own 0.12s
+      // contact cooldown, so holding the blade against one fired ~24 clashes a
+      // second — 72 voices, half the pool, and it buzzed. Throttle it the way
+      // grind already is.
+      if (this._clangSound <= 0) { this._clangSound = 0.1; audio.clash(ev.point, 0.5); }
       player.camera.addShake(0.06);
       return;
     }
@@ -495,7 +505,9 @@ export class World {
         P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
         if (rng() < 0.35) P.sparkBurst(ev.point, null, 3, { speed: 5, embers: false });
       }
-      audio.ui && (this._grindSound = (this._grindSound || 0) - dt);
+      // NB: the timer is drained once per frame in _resolveBlades, not here —
+      // decrementing per event made a 0.14s throttle behave like 0.047s
+      // whenever three contacts landed on the same frame.
       if (this._grindSound <= 0) {
         this._grindSound = 0.14;
         audio.noise({ dur: 0.16, gain: 0.13, type: 'bandpass', freq: 2800, freqEnd: 1400, q: 2.4, pos: ev.point });

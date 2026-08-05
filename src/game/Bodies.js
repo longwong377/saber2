@@ -21,7 +21,11 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true) {
   // lathe profile: [radius, y], rounded at both ends
   const profile = [];
   const capN = cap ? 4 : 0;
-  for (let i = capN; i > 0; i--) {
+  // Ascending, starting AT the pole. Counting down from capN skipped i = 0
+  // entirely — so the cap was left open with a hole of radius 0.38*r0 — and
+  // then jumped from the last ring back out to the equator, revolving an
+  // inverted cone through the cap it had just built.
+  for (let i = 0; i < capN; i++) {
     const a = (i / capN) * Math.PI * 0.5;
     profile.push(new THREE.Vector2(Math.sin(a) * r0 * 0.999, -Math.cos(a) * r0 * 0.62));
   }
@@ -32,8 +36,15 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true) {
     const a = (i / capN) * Math.PI * 0.5;
     profile.push(new THREE.Vector2(Math.cos(a) * r1 * 0.999, len + Math.sin(a) * r1 * 0.62));
   }
+  // NB: normalizeNormals(), NOT computeVertexNormals(). The lathe already emits
+  // analytically correct, seam-consistent normals; re-deriving them from face
+  // normals averages per index, and since the lathe duplicates the seam column
+  // each seam vertex only sees the faces on its own side — a lighting crease
+  // running the full length of every arm, leg, torso and neck. The lathe does
+  // leave the final profile vertex's normal unnormalized (three quirk), so
+  // rescale in place without touching the directions.
   const g = new THREE.LatheGeometry(profile, seg);
-  g.computeVertexNormals();
+  g.normalizeNormals();
   return g;
 }
 
@@ -399,7 +410,7 @@ export function buildTrooper(opts = {}) {
       mesh(plateGeo(0.13 * s, 0.20 * s, 0.04 * s, 0.015 * s), plate, hips, [0, -0.12 * s, 0.10 * s]);
       for (const side of ['L', 'R']) {
         const sx = side === 'L' ? 1 : -1;
-        mesh(plateGeo(0.13 * s, 0.13 * s, 0.14 * s, 0.03 * s), plate, r.get('clav' + side).obj, [sx * 0.05 * s, 0, 0]);
+        mesh(plateGeo(0.13 * s, 0.13 * s, 0.14 * s, 0.03 * s), plate, r.get('clav' + side).obj, [0, 0.05 * s, 0]);
         mesh(new THREE.CylinderGeometry(0.062 * s, 0.058 * s, 0.16 * s, 12), plate, r.get('arm' + side).obj, [0, 0.08 * s, 0]);
         mesh(new THREE.CylinderGeometry(0.056 * s, 0.05 * s, 0.15 * s, 12), plate, r.get('fore' + side).obj, [0, 0.14 * s, 0]);
         mesh(new THREE.CylinderGeometry(0.095 * s, 0.088 * s, 0.24 * s, 12), plate, r.get('thigh' + side).obj, [0, 0.16 * s, 0]);
@@ -443,7 +454,7 @@ export function buildAcolyte(opts = {}) {
       const chest = r.get('chest').obj;
       for (const sx of [-1, 1]) {
         mesh(plateGeo(0.10 * s, 0.44 * s, 0.03 * s, 0.012 * s), robe, chest, [sx * 0.07 * s, 0.02 * s, 0.10 * s], [0.1, 0, sx * 0.04]);
-        mesh(plateGeo(0.16 * s, 0.16 * s, 0.14 * s, 0.03 * s), leather, r.get('clav' + (sx > 0 ? 'L' : 'R')).obj, [sx * 0.05 * s, 0, 0]);
+        mesh(plateGeo(0.16 * s, 0.16 * s, 0.14 * s, 0.03 * s), leather, r.get('clav' + (sx > 0 ? 'L' : 'R')).obj, [0, 0.05 * s, 0]);
       }
       const hips = r.get('hips').obj;
       const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.14 * s, 0.136 * s, 0.09 * s, 18, 1, true), leather);

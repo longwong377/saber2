@@ -378,7 +378,7 @@ export const DOJO_LEVEL = {
   training: true,
   atmosphere: {
     sky: false, bgColor: 0x0c1119, fog: true, fogColor: 0x161d28, fogDensity: 0.009,
-    sunColor: 0xcfe0ff, sunIntensity: 2.2, ambient: 1.9,
+    sunColor: 0xcfe0ff, sunIntensity: 4.5, ambient: 0.5,
     skyColor: 0x6e88b8, groundColor: 0x2a2e36, elevation: 70, azimuth: 30,
     fillColor: 0xffb070, fillIntensity: 0.5,
     exposure: 1.25, bloom: 0.55, saturation: 1.0,

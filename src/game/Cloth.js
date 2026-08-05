@@ -223,7 +223,9 @@ export function attachCloak(scene, rig, opts = {}) {
   const chest = rig.get('chest');
   if (!chest) return null;
 
-  const halfSpan = (opts.width ?? 0.6 * S) * 0.5;
+  // NB: (opts.width ?? 0.6) * S — the * S used to bind to the default only, so
+  // any scaled character got a collar half as wide as its own cloth.
+  const halfSpan = ((opts.width ?? 0.6) * S) * 0.5;
   const cloak = new Cloak(scene, {
     cols: opts.cols ?? 9,
     rows: opts.rows ?? 11,
@@ -231,6 +233,8 @@ export function attachCloak(scene, rig, opts = {}) {
     length: (opts.length ?? 1.0) * S,
     color: opts.color ?? 0x4c3a26,
     material: opts.material,
+    flare: opts.flare,                 // was silently dropped on the floor
+    stiffness: opts.stiffness,
     gravity: opts.gravity ?? -13,
     anchorFn: (c, n, out) => {
       // spread the pins across the shoulders, slightly behind the back

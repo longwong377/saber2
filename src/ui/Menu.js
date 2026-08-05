@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS = {
   coreWidth: 1,
   sensitivity: 1,
   camFollow: 0,
-  fov: 78,
+  fov: 60,
   invertY: false,
   firstPerson: false,
   scheme: 'hold',

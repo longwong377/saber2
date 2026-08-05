@@ -179,7 +179,9 @@ export class Terrain {
     this.material = mat;
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.receiveShadow = true;
-    this.mesh.castShadow = false;
+    // One draw call inside a tight ortho frustum, and without it a 60m canyon
+    // wall and an entire dune sea cast nothing at all.
+    this.mesh.castShadow = true;
     this.mesh.matrixAutoUpdate = false;
     this.mesh.updateMatrix();
     scene.add(this.mesh);

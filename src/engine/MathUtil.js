@@ -2,7 +2,13 @@
 
 import * as THREE from 'three';
 
-export const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+/**
+ * Clamp, written so NaN lands on the low bound instead of passing straight
+ * through. `v < a ? a : v > b ? b : v` returns NaN for NaN — which then reached
+ * WebAudio params, physics positions and shader uniforms, all of which either
+ * throw or render black. A clamp is the natural place to stop that.
+ */
+export const clamp = (v, a, b) => (v >= a ? (v <= b ? v : b) : a);
 export const lerp = (a, b, t) => a + (b - a) * t;
 export const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 export const damp = (a, b, lambda, dt) => lerp(a, b, 1 - Math.exp(-lambda * dt));

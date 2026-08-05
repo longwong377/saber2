@@ -30,11 +30,16 @@ const XAXIS = new THREE.Vector3(1, 0, 0);
 const _a1 = new THREE.Vector3(), _a2 = new THREE.Vector3();
 const _a3 = new THREE.Vector3(), _a4 = new THREE.Vector3();
 const _am = new THREE.Matrix4();
+const BACK = new THREE.Vector3(0, 0, -1);
 
 /** Quaternion that points local +Y along `dir`, with `ref` biasing the roll. */
 export function aimY(dir, ref, out = new THREE.Quaternion()) {
   _a1.copy(dir).normalize();
-  _a2.copy(ref || XAXIS);
+  // The reference must be normalised BEFORE the degeneracy test. solveIK passes
+  // a pole vector 0.7-1.6m long, so an un-normalised dot cleared 0.985 for
+  // references only 40 degrees off — firing the fallback on a third of all
+  // upper-arm solves and snapping the bone's roll by 90 degrees as it did.
+  _a2.copy(ref || XAXIS).normalize();
   if (Math.abs(_a1.dot(_a2)) > 0.985) _a2.set(0, 0, 1);
   _a3.crossVectors(_a2, _a1);
   if (_a3.lengthSq() < 1e-10) { _a2.set(0, 0, 1); _a3.crossVectors(_a2, _a1); }
@@ -158,7 +163,16 @@ export class Rig {
     const worldRest = new Map();
     for (const def of defs) {
       const b = this.bones.get(def.name);
-      const wq = aimY(b.restDir, null, new THREE.Quaternion());
+      // Reference is -Z (the character's back), NOT the default +X. aimY's
+      // default gives an upright bone a basis of X->+Z, Z->-X — a -90 degree
+      // yaw — so the whole skeleton was built a quarter turn off. The animator
+      // overwrites hips with a pure yaw, which accidentally undid it for bones
+      // pointing up, but the clavicles' rest direction is sideways, so they
+      // kept the error: the shoulder line ran 25.6cm front-to-back and 7cm
+      // across, and the left arm reached round the spine to a hilt held in
+      // front. aimY((0,1,0), (0,0,-1)) is identity, which is what it should
+      // always have been.
+      const wq = aimY(b.restDir, BACK, new THREE.Quaternion());
       worldRest.set(b.name, wq);
       const pq = b.parent ? worldRest.get(b.parent.name) : new THREE.Quaternion();
       b.restQuat.copy(pq).invert().multiply(wq);
@@ -239,7 +253,11 @@ export class Rig {
     if (axis.lengthSq() < 1e-7) { axis.crossVectors(toTarget, XAXIS); if (axis.lengthSq() < 1e-7) axis.crossVectors(toTarget, YAXIS); }
     axis.normalize();
 
-    _q1.setFromAxisAngle(axis, -a);
+    // +a, not -a. axis = toTarget x poleDir, so a POSITIVE rotation about it
+    // swings the upper bone toward the pole. Negated, every joint in the game
+    // bent away from its own pole hint: knees backwards, elbows folded across
+    // the chest. Measured 300/300 solves on the wrong side before this.
+    _q1.setFromAxisAngle(axis, a);
     const upperDir = _ikUpper.copy(toTarget).applyQuaternion(_q1);
 
     // place the upper bone
@@ -277,6 +295,9 @@ export class BipedAnimator {
     this.scale = opts.scale ?? 1;
     this.strideLength = (opts.stride ?? 0.86) * this.scale;
     this.hipHeight = (opts.hipHeight ?? 0.94) * this.scale;
+    // Measured from the skeleton, not assumed: every archetype scales its legs
+    // differently and the hip solve below has to know the real budget.
+    this.legLen = (rig.get('thighL')?.length ?? 0.44) + (rig.get('shinL')?.length ?? 0.42);
     this.phase = 0;
     this.feet = [
       { name: 'L', planted: new THREE.Vector3(), next: new THREE.Vector3(), pos: new THREE.Vector3(), lift: 0, offset: 0.0, grounded: true },
@@ -387,8 +408,25 @@ export class BipedAnimator {
     const sway = Math.sin(this.phase * TAU) * clamp(speed * 0.012, 0, 0.045) * this.scale;
 
     const hips = rig.hipsBone.obj;
-    const targetHipY = p.position.y + hipY + this.bob
+    let targetHipY = p.position.y + hipY + this.bob
       - (p.grounded ? 0 : clamp(this.airTime * 0.4, 0, 0.12) * this.scale);
+
+    // The pelvis has to come down to whichever foot is lowest, or the legs
+    // simply run out of length. Held at a constant height above the point under
+    // the character's centre, the standing leg sat 98.5% extended on FLAT
+    // ground — knee locked straight — and on a slope or a step-down the low
+    // foot dangled up to 39cm above where it was asked to be, because solveIK
+    // clamps rather than stretching. Budget for the ankle offset and keep a few
+    // percent of bend in reserve so the knee always has somewhere to go.
+    if (p.grounded) {
+      const reach = this.legLen * 0.94;   // already in world units
+      let lowest = Infinity;
+      for (const f of this.feet) lowest = Math.min(lowest, f.pos.y);
+      if (isFinite(lowest)) {
+        targetHipY = Math.min(targetHipY, lowest + 0.072 * this.scale + reach);
+      }
+    }
+
     hips.position.set(
       p.position.x + right.x * sway,
       targetHipY,
@@ -417,15 +455,21 @@ export class BipedAnimator {
       const foot = i === 0 ? 'footL' : 'footR';
       _v4.copy(f.pos).addScaledVector(fwd, 0.30 * this.scale)
         .addScaledVector(right, side * 0.12 * this.scale).setY(f.pos.y + 0.42 * this.scale);
-      const ankle = _v5.copy(f.pos).setY(f.pos.y + 0.075 * this.scale);
+      // Chosen by measuring the boot mesh's actual world AABB in a stance
+      // pose: at the old 0.075 the soles sat 2.3cm under the floor.
+      const ankle = _v5.copy(f.pos).setY(f.pos.y + 0.072 * this.scale);
       rig.solveIK(upper, lower, ankle, _v4);
 
       // roll the foot: flat on the ground in stance, toe-off in swing
       const fb = rig.get(foot);
       if (fb) {
         const ph = (this.phase + f.offset) % 1;
+        // Toe-off is plantarflexion — the toes go DOWN as the heel lifts — so
+        // this term is negated relative to how it was written. And the stance
+        // pitch is -0.05, not -0.24: at 0.94 forward that was a permanent 14
+        // degree toe-down stoop, and the sole was never once flat on the floor.
         const toe = moving ? smoothstep(0.32, 0.5, ph) * 0.7 - smoothstep(0.5, 0.8, ph) * 0.55 : 0;
-        _v6.copy(fwd).multiplyScalar(0.94).setY(-0.24 + toe * 0.7 - f.lift * 1.2);
+        _v6.copy(fwd).multiplyScalar(0.94).setY(-0.05 - toe * 0.55 - f.lift * 1.2);
         rig.aimBoneWorld(foot, _v6.normalize(), YAXIS);
       }
     }

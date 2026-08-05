@@ -41,8 +41,8 @@ export class CameraRig {
     this.look = new THREE.Vector3();
     this.shake = 0;
     this.shakeSeed = rng() * 100;
-    this.fov = 78;
-    this.fovTarget = 78;
+    this.fov = 60;
+    this.fovTarget = 60;
     this.roll = 0;
     this.rollTarget = 0;
     this.enabled = true;
@@ -681,9 +681,24 @@ export class Player {
       accelStrafe: 0,
     });
 
+    const rig = this.rig;
+
+    // Spine FIRST. It is an ancestor of chest -> clavicle -> arm, so rewriting
+    // it after the arms have been IK'd to world-space grip points drags the
+    // solved hands straight off the hilt — measured up to 18cm at the clamp
+    // limits, on exactly the fast swings where this layer is most active.
+    const spine = rig.get('spine');
+    if (spine) {
+      const w = this.control.angVel;
+      const twist = clamp(-w.y * 0.026, -0.32, 0.32);
+      const lean = clamp(this.control.handVel.dot(_v1.set(Math.sin(this.facing), 0, Math.cos(this.facing))) * 0.012, -0.2, 0.2);
+      spine.obj.quaternion.copy(spine.restQuat)
+        .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
+    }
+    rig.updateMatrices();
+
     // arms to the hilt
     const twoHanded = this.control.grip === 'two' && this.throwState === 'held';
-    const rig = this.rig;
     const chest = rig.worldPos('chest', _v1);
 
     if (this.throwState === 'held') {
@@ -707,6 +722,10 @@ export class Player {
           .addScaledVector(UP, -0.8 + lift).addScaledVector(fwd, -0.2);
         rig.solveIK('armL', 'foreL', gripL, poleL);
       } else {
+        // handL's local quaternion is force-set while two-handed; nothing put it
+        // back, so switching to one hand left it frozen 167 degrees off rest.
+        const hl = rig.get('handL');
+        if (hl) hl.obj.quaternion.copy(hl.restQuat);
         const rest = _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
           .addScaledVector(fwd, this.gripBody ? 0.55 : -0.05);
         const poleL = _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
@@ -730,15 +749,6 @@ export class Player {
       rig.solveIK('armL', 'foreL', rest, _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7));
     }
 
-    // spine counter-rotation: the body braces against the blade's momentum
-    const spine = rig.get('spine');
-    if (spine) {
-      const w = this.control.angVel;
-      const twist = clamp(-w.y * 0.026, -0.32, 0.32);
-      const lean = clamp(this.control.handVel.dot(_v1.set(Math.sin(this.facing), 0, Math.cos(this.facing))) * 0.012, -0.2, 0.2);
-      spine.obj.quaternion.copy(spine.restQuat)
-        .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
-    }
     // Head: a limited glance toward the aim, layered on the rest pose. The head
     // bone's +Y runs up through the skull and its face is +Z, so the old code —
     // which aimed +Y at the blade tip — laid the head over sideways every time
@@ -748,7 +758,14 @@ export class Player {
       head.obj.parent.getWorldQuaternion(_q1);
       _q1.multiply(head.restQuat);                      // rest orientation, in world
       _v1.copy(this.aimDir).applyQuaternion(_q1.invert());
-      const yaw = clamp(Math.atan2(_v1.x, _v1.z), -0.85, 0.85);
+      // Shortest arc, then clamp. Raw atan2 jumps +pi -> -pi when the aim
+      // passes directly behind the head, which whipped the head 97 degrees
+      // across the front every time facing diverged from the camera.
+      let yaw = Math.atan2(_v1.x, _v1.z);
+      let d = yaw - (this._headYaw ?? 0);
+      while (d > Math.PI) d -= TAU;
+      while (d < -Math.PI) d += TAU;
+      yaw = clamp((this._headYaw ?? 0) + d, -0.85, 0.85);
       const pitch = clamp(Math.asin(clamp(_v1.y, -1, 1)), -0.5, 0.42);
       this._headYaw = damp(this._headYaw ?? 0, yaw, 11, dt);
       this._headPitch = damp(this._headPitch ?? 0, pitch, 11, dt);

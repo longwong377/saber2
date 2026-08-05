@@ -11,7 +11,13 @@
 import * as THREE from 'three';
 import { clamp, makeRng } from './MathUtil.js';
 
+/** Finite-or-default. WebAudio params throw on NaN; game maths produces it. */
+const num = (v, d) => (Number.isFinite(v) ? v : d);
+
 const rng = makeRng(4242);
+
+// listener scratch — updateListener runs every frame
+const _lq = new THREE.Quaternion(), _lf = new THREE.Vector3(), _lu = new THREE.Vector3();
 
 export class AudioEngine {
   constructor() {
@@ -38,14 +44,21 @@ export class AudioEngine {
 
     // A gentle bus compressor keeps a hundred droids from clipping the mix.
     this.comp = this.ctx.createDynamicsCompressor();
-    this.comp.threshold.value = -14;
-    this.comp.knee.value = 22;
-    this.comp.ratio.value = 6;
+    // A limiter for the peaks, not a blanket. At -14dB with a 22dB knee the
+    // soft knee began at -25dBFS, so essentially every sound in the game was
+    // being compressed all the time — quiet UI blips vanished and the whole mix
+    // pumped on each blaster shot.
+    this.comp.threshold.value = -6;
+    this.comp.knee.value = 6;
+    this.comp.ratio.value = 4;
     this.comp.attack.value = 0.004;
-    this.comp.release.value = 0.22;
+    this.comp.release.value = 0.12;
 
     this.sfxBus = this.ctx.createGain(); this.sfxBus.gain.value = 1;
     this.musicBus = this.ctx.createGain(); this.musicBus.gain.value = this.musicVolume;
+    // Wind and drone are the world, not the score. On musicBus, turning the
+    // music down muted the level's own atmosphere along with it.
+    this.ambBus = this.ctx.createGain(); this.ambBus.gain.value = 1;
 
     this.reverb = this.ctx.createConvolver();
     this.reverb.buffer = this._makeImpulse(2.4, 2.6);
@@ -55,7 +68,10 @@ export class AudioEngine {
     this.sfxBus.connect(this.reverbSend);
     this.reverbSend.connect(this.reverb);
     this.reverb.connect(this.comp);
-    this.musicBus.connect(this.comp);
+    this.ambBus.connect(this.comp);
+    // The score bypasses the compressor: on it, every blaster shot pumped the
+    // music down with it.
+    this.musicBus.connect(this.master);
     this.comp.connect(this.master);
     this.master.connect(this.ctx.destination);
 
@@ -66,8 +82,14 @@ export class AudioEngine {
   }
 
   resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
-  setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
-  setMusicVolume(v) { this.musicVolume = v; if (this.musicBus) this.musicBus.gain.value = v; }
+  setVolume(v) {
+    this.volume = v;
+    if (this.master) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+  setMusicVolume(v) {
+    this.musicVolume = v;
+    if (this.musicBus) this.musicBus.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
 
   _makeNoise(seconds, pink) {
     const len = Math.floor(this.ctx.sampleRate * seconds);
@@ -113,9 +135,9 @@ export class AudioEngine {
     if ((this._resumeCheck & 31) === 0 && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     const l = this.ctx.listener;
     camera.getWorldPosition(this._listenerPos);
-    const q = camera.getWorldQuaternion(new THREE.Quaternion());
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const q = camera.getWorldQuaternion(_lq);
+    const fwd = _lf.set(0, 0, -1).applyQuaternion(q);
+    const up = _lu.set(0, 1, 0).applyQuaternion(q);
     const t = this.ctx.currentTime;
     if (l.positionX) {
       l.positionX.setTargetAtTime(this._listenerPos.x, t, 0.02);
@@ -131,7 +153,7 @@ export class AudioEngine {
     }
   }
 
-  _panner(pos, refDist = 6, maxDist = 160) {
+  _panner(pos, refDist = 1.8, maxDist = 160) {
     const p = this.ctx.createPanner();
     p.panningModel = 'HRTF';
     p.distanceModel = 'inverse';
@@ -145,6 +167,9 @@ export class AudioEngine {
 
   _out(pos) {
     if (!pos) return this.sfxBus;
+    // A NaN anywhere in a position makes PannerNode throw, which used to leak
+    // the voice that was already taken. Fall back to a non-positional play.
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return this.sfxBus;
     // Cull distant one-shots before they cost anything.
     if (this._listenerPos.distanceToSquared(pos) > 190 * 190) return null;
     const p = this._panner(pos);
@@ -157,67 +182,113 @@ export class AudioEngine {
     this.voices++;
     return true;
   }
+  /** Hand a voice back to the pool. Idempotent — callers may race. */
+  _release() { this.voices = Math.max(0, this.voices - 1); }
+
   /**
-   * Retire a voice. Only ever tear down the per-voice panner — a non-positional
-   * sound is routed straight to the shared sfxBus, and disconnecting *that*
-   * unplugs the entire effects bus from the compressor, silencing the game for
-   * good after the first UI blip. This guard is the whole reason sound survives.
+   * Retire a voice once its source has actually finished.
+   *
+   * This used to be a wall-clock setTimeout, which is wrong in three ways that
+   * all end in silence. A backgrounded tab throttles timers to one per minute,
+   * so a pool that was full when you alt-tabbed stays full long after you come
+   * back. A suspended context freezes ctx.currentTime while wall-clock runs on,
+   * so the timer fires for a sound that never played. And the timer raced the
+   * source's own stop time, unplugging the output from under it.
+   *
+   * `ended` fires on the audio clock, which is the only clock that knows when
+   * the sound is over. The timer stays purely as a backstop for the case where
+   * `ended` never arrives at all.
+   *
+   * Only ever tear down the per-voice panner: a non-positional sound routes
+   * straight to the shared sfxBus, and disconnecting *that* unplugs the whole
+   * effects bus from the compressor, silencing the game for the rest of the
+   * session after the first UI blip.
    */
-  _freeAt(node, t) {
-    setTimeout(() => {
-      this.voices = Math.max(0, this.voices - 1);
+  _freeOnEnd(src, node, dur) {
+    let done = false;
+    const release = () => {
+      if (done) return;
+      done = true;
+      this._release();
       if (!node || node === this.sfxBus || node === this.musicBus || node === this.master) return;
       try { node.disconnect(); } catch {}
-    }, t * 1000 + 60);
+    };
+    try { src.onended = release; } catch { /* fall through to the backstop */ }
+    setTimeout(release, (dur + 1.2) * 1000);
   }
 
   /* ── primitives ────────────────────────────────────────────────────── */
 
   noise({ dur = 0.2, gain = 0.4, type = 'bandpass', freq = 1200, q = 1.2, freqEnd = null,
           pos = null, pink = false, attack = 0.002, curve = 2.2 } = {}) {
-    if (!this.ready || !this._voice()) return;
-    const t = this.ctx.currentTime;
-    const src = this.ctx.createBufferSource();
-    src.buffer = pink ? this._pinkBuf : this._noiseBuf;
-    src.loop = true;
-    src.playbackRate.value = 0.85 + rng() * 0.3;
-    const flt = this.ctx.createBiquadFilter();
-    flt.type = type; flt.frequency.value = freq; flt.Q.value = q;
-    if (freqEnd !== null) flt.frequency.exponentialRampToValueAtTime(Math.max(40, freqEnd), t + dur);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(gain, t + attack);
-    g.gain.setTargetAtTime(0.0001, t + attack, dur / curve);
+    if (!this.ready) return;
+    // Sanitise BEFORE taking a voice. Every AudioParam below rejects a
+    // non-finite value with a TypeError, and a throw between _voice() and the
+    // release leaks that voice permanently — 44 of them and the game is mute.
+    dur = num(dur, 0.2); gain = num(gain, 0.4); freq = num(freq, 1200); q = num(q, 1.2);
+    attack = num(attack, 0.002); curve = num(curve, 2.2) || 2.2;
+    if (freqEnd !== null) freqEnd = num(freqEnd, freq);
+
+    // Cull before allocating anything: _out decides whether this is even
+    // audible, and building three nodes first was pure waste.
     const out = this._out(pos);
-    if (!out) { this.voices--; return; }
-    src.connect(flt); flt.connect(g); g.connect(out);
-    src.start(t + rng() * 0.004);
-    src.stop(t + dur + 0.06);
-    this._freeAt(out, dur);
+    if (!out || !this._voice()) return;
+    try {
+      const t = this.ctx.currentTime;
+      const stopAt = t + dur + 0.06;
+      const src = this.ctx.createBufferSource();
+      src.buffer = pink ? this._pinkBuf : this._noiseBuf;
+      src.loop = true;
+      src.playbackRate.value = 0.85 + rng() * 0.3;
+      const flt = this.ctx.createBiquadFilter();
+      flt.type = type; flt.frequency.value = freq; flt.Q.value = q;
+      if (freqEnd !== null) flt.frequency.exponentialRampToValueAtTime(Math.max(40, freqEnd), t + dur);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(gain, t + attack);
+      g.gain.setTargetAtTime(0.0001, t + attack, dur / curve);
+      // The exponential release only ever reaches ~11% of peak, so cutting the
+      // source there clicks. Ramp the last of it to silence first.
+      g.gain.linearRampToValueAtTime(0.0001, stopAt);
+      src.connect(flt); flt.connect(g); g.connect(out);
+      src.start(t + rng() * 0.004);
+      src.stop(stopAt + 0.01);
+      this._freeOnEnd(src, out, dur);
+    } catch { this._release(); }
   }
 
   tone({ freq = 440, freqEnd = null, dur = 0.2, gain = 0.25, type = 'sine', pos = null,
          attack = 0.004, detune = 0, filter = null } = {}) {
-    if (!this.ready || !this._voice()) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    o.type = type; o.frequency.value = freq; o.detune.value = detune;
-    if (freqEnd !== null) o.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t + dur);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(gain, t + attack);
-    g.gain.setTargetAtTime(0.0001, t + attack, dur / 2.6);
+    if (!this.ready) return;
+    dur = num(dur, 0.2); gain = num(gain, 0.25); freq = num(freq, 440);
+    attack = num(attack, 0.004); detune = num(detune, 0);
+    if (freqEnd !== null) freqEnd = num(freqEnd, freq);
+
     const out = this._out(pos);
-    if (!out) { this.voices--; return; }
-    let node = o;
-    if (filter) {
-      const f = this.ctx.createBiquadFilter();
-      f.type = filter.type || 'lowpass'; f.frequency.value = filter.freq || 2000; f.Q.value = filter.q || 1;
-      o.connect(f); node = f;
-    }
-    node.connect(g); g.connect(out);
-    o.start(t); o.stop(t + dur + 0.05);
-    this._freeAt(out, dur);
+    if (!out || !this._voice()) return;
+    try {
+      const t = this.ctx.currentTime;
+      const stopAt = t + dur + 0.05;
+      const o = this.ctx.createOscillator();
+      o.type = type; o.frequency.value = freq; o.detune.value = detune;
+      if (freqEnd !== null) o.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t + dur);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(gain, t + attack);
+      g.gain.setTargetAtTime(0.0001, t + attack, dur / 2.6);
+      // an oscillator chopped mid-cycle at 7% of peak is an audible click
+      g.gain.linearRampToValueAtTime(0.0001, stopAt);
+      let node = o;
+      if (filter) {
+        const f = this.ctx.createBiquadFilter();
+        f.type = filter.type || 'lowpass';
+        f.frequency.value = num(filter.freq, 2000); f.Q.value = num(filter.q, 1);
+        o.connect(f); node = f;
+      }
+      node.connect(g); g.connect(out);
+      o.start(t); o.stop(stopAt + 0.01);
+      this._freeOnEnd(o, out, dur);
+    } catch { this._release(); }
   }
 
   /* ── the saber ─────────────────────────────────────────────────────── */
@@ -239,7 +310,10 @@ export class AudioEngine {
                                           [0.5, 'sine', 0.34, 0], [2.02, 'triangle', 0.10, 12],
                                           [3.01, 'sine', 0.05, -14]]) {
       const o = ctx.createOscillator();
-      o.type = type; o.frequency.value = base * mult; o.detune.value = det;
+      // Every hum used to be built from identical fixed detunes and an
+      // identical noise phase, so ten enemies summed coherently to 10x and beat
+      // against each other instead of sounding like ten separate blades.
+      o.type = type; o.frequency.value = base * mult; o.detune.value = det + (rng() - 0.5) * 26;
       const g = ctx.createGain(); g.gain.value = lvl;
       o.connect(g); g.connect(bus);
       o.start();
@@ -249,7 +323,9 @@ export class AudioEngine {
     const ns = ctx.createBufferSource(); ns.buffer = this._pinkBuf; ns.loop = true;
     const nsF = ctx.createBiquadFilter(); nsF.type = 'bandpass'; nsF.frequency.value = 900; nsF.Q.value = 0.8;
     const nsG = ctx.createGain(); nsG.gain.value = 0.10;
-    ns.connect(nsF); nsF.connect(nsG); nsG.connect(bus); ns.start();
+    ns.playbackRate.value = 0.92 + rng() * 0.16;
+    ns.connect(nsF); nsF.connect(nsG); nsG.connect(bus);
+    ns.start(0, rng() * this._pinkBuf.duration);
 
     // slow wobble, the instability of a plasma blade
     const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 4.3;
@@ -267,8 +343,8 @@ export class AudioEngine {
         const t = ctx.currentTime;
         bus.gain.cancelScheduledValues(t);
         bus.gain.setValueAtTime(0.0001, t);
-        bus.gain.linearRampToValueAtTime(0.5, t + 0.09);
-        bus.gain.linearRampToValueAtTime(0.20, t + 0.34);
+        bus.gain.linearRampToValueAtTime(0.20, t + 0.09);
+        bus.gain.linearRampToValueAtTime(0.085, t + 0.34);
         for (const { o, mult } of oscs) {
           o.frequency.cancelScheduledValues(t);
           o.frequency.setValueAtTime(base * mult * 0.35, t);
@@ -292,7 +368,10 @@ export class AudioEngine {
         const s = clamp(speed / 26, 0, 1.6);
         const pitch = 1 + s * 0.42 + strain * 0.25;
         for (const { o, mult } of oscs) o.frequency.setTargetAtTime(base * mult * pitch, t, 0.05);
-        bus.gain.setTargetAtTime(0.19 + s * 0.30 + strain * 0.24, t, 0.045);
+        // The oscillator gains already sum to ~1.03; a bus gain over 1 here put
+        // a single hum at full scale and made the compressor duck everything
+        // else in the game by ~12dB every time the blade moved.
+        bus.gain.setTargetAtTime(0.075 + s * 0.115 + strain * 0.10, t, 0.045);
         lp.frequency.setTargetAtTime(1400 + s * 3400 + strain * 2600, t, 0.05);
         nsG.gain.setTargetAtTime(0.08 + s * 0.16 + strain * 0.42, t, 0.05);
         lfoG.gain.setTargetAtTime(3.2 + strain * 26, t, 0.05);
@@ -306,11 +385,15 @@ export class AudioEngine {
         } else panner.setPosition(pos.x, pos.y, pos.z);
       },
       dispose() {
-        try {
-          for (const { o } of oscs) o.stop();
-          ns.stop(); lfo.stop();
-          bus.disconnect(); lp.disconnect(); hp.disconnect(); panner.disconnect();
-        } catch {}
+        // Disconnect BEFORE stopping, and guard every step separately. As one
+        // try block, a single throwing o.stop() skipped every disconnect below
+        // it and left a hum audible for the rest of the session.
+        for (const n of [panner, hp, lp, bus, nsG, nsF, lfoG, ...gains]) {
+          try { n.disconnect(); } catch {}
+        }
+        for (const { o } of oscs) { try { o.stop(); } catch {} }
+        try { ns.stop(); } catch {}
+        try { lfo.stop(); } catch {}
       },
     };
     return api;
@@ -414,16 +497,18 @@ export class AudioEngine {
     src.buffer = this._pinkBuf; src.loop = true;
     const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 420; f.Q.value = 0.35;
     const g = ctx.createGain(); g.gain.value = 0.0;
-    src.connect(f); f.connect(g); g.connect(this.musicBus);
+    src.connect(f); f.connect(g); g.connect(this.ambBus);
     src.start();
     this.windGain = g; this.windFilter = f;
 
     // Drone bed: a slow-breathing minor cluster that swells with the fight.
     this.droneOsc = [];
     this.droneGain = ctx.createGain(); this.droneGain.gain.value = 0;
-    this.droneGain.connect(this.musicBus);
+    // droneGain -> lp -> ambBus. This used to connect droneGain to BOTH the bus
+    // and the filter, so the filter was an orphan and the drone was unfiltered.
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     this.droneGain.connect(lp);
+    lp.connect(this.ambBus);
     for (const f2 of [55, 82.4, 110, 164.8, 220]) {
       const o = ctx.createOscillator();
       o.type = 'sine'; o.frequency.value = f2;
@@ -465,6 +550,7 @@ export class AudioEngine {
       g.gain.linearRampToValueAtTime(0.14 * this.intensity, t + 0.006);
       g.gain.setTargetAtTime(0.0001, t + 0.01, 0.07);
       o.connect(g); g.connect(this.musicBus);
+      o.onended = () => { try { g.disconnect(); } catch {} };
       o.start(t); o.stop(t + 0.35);
     }
   }

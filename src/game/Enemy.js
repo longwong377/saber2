@@ -438,7 +438,15 @@ export class Enemy {
     this.dying = 0;
     this.world.onEnemyKilled?.(this, source, kind);
 
-    if (this.hum) this.hum.retract();
+    // Retire the hum with the body. dispose() only runs 40s later, when the
+    // corpse is cleaned up, and retract() merely fades the gain — so a cleared
+    // wave of twelve duellists carried twelve full oscillator stacks and twelve
+    // HRTF panners into the next wave. That is what overloads the audio thread.
+    if (this.hum) {
+      const h = this.hum; this.hum = null;
+      h.retract();
+      setTimeout(() => { try { h.dispose(); } catch {} }, 400);
+    }
     if (this.telegraphArc) this.telegraphArc.hide();
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.saber) {
@@ -995,7 +1003,13 @@ export class Enemy {
 
     this.saber.setHiltPose(this.saberHand, this.saberQuat);
     this.saber.update(dt, ctx.time, this.velocity);
-    if (this.hum) { this.hum.set(this.saber.swingSpeed, this.saber.contactStrain); this.hum.move(this.saber.pointAt(0.5, _v3)); }
+    // set() issues nine AudioParam automations and move() three more, per hum,
+    // per frame. Twenty duellists at 60fps is 14,400 events/second queued onto
+    // parameter timelines — so distant blades update at a coarser cadence.
+    if (this.hum && (this.lod === 0 || (this._humTick = (this._humTick | 0) + 1) % 4 === 0)) {
+      this.hum.set(this.saber.swingSpeed, this.saber.contactStrain);
+      this.hum.move(this.saber.pointAt(0.5, _v3));
+    }
 
     // arms follow the hilt, exactly like the player's do
     const poleR = _v3.copy(chest).addScaledVector(right, 0.8 * S).addScaledVector(UP, -0.75 * S);

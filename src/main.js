@@ -347,9 +347,21 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') e.preventDefault();
 });
 
+// The menu sits in a fixed, full-screen overlay above the canvas, so a click
+// in it never reached the canvas listener below — which was the only thing that
+// called audio.init(). Every menu blip was a no-op and the game was silent
+// until the first Ignite. Arm the context on any pointer down, anywhere.
+window.addEventListener('pointerdown', () => { audio.init(); audio.resume(); }, true);
+window.addEventListener('keydown', () => { audio.init(); audio.resume(); }, true);
+
 canvas.addEventListener('pointerdown', () => {
   audio.init(); audio.resume();
   if (state === 'playing' && !input.locked) input.requestLock();
+});
+
+// A hidden tab suspends the context; nothing re-armed it on return.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) audio.resume();
 });
 
 function frame(now) {

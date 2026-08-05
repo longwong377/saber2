@@ -104,8 +104,8 @@
         <h3>Control</h3>
         <div id="opt-scheme" class="difflist"></div>
         <label class="slider">Blade sensitivity <input type="range" id="opt-sens" min="0.3" max="3" step="0.05" value="1"><b></b></label>
-        <label class="slider">Camera follow <input type="range" id="opt-camfollow" min="0" max="1.6" step="0.02" value="0.75"><b></b></label>
-        <label class="slider">Field of view <input type="range" id="opt-fov" min="60" max="105" step="1" value="78"><b></b></label>
+        <label class="slider">Camera follow <input type="range" id="opt-camfollow" min="0" max="1.6" step="0.02" value="0"><b></b></label>
+        <label class="slider">Field of view <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
         <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
       </div>
@@ -127,8 +127,9 @@
       <div class="col wide codex">
         <h3>The blade is yours to move</h3>
         <div class="codex-grid">
-          <div><kbd>Mouse</kbd><span>Moves the <b>blade</b>, not the camera. The camera follows when the blade leaves the centre.</span></div>
-          <div><kbd>RMB</kbd><span>Hold to pin the blade and look around freely.</span></div>
+          <div><kbd>Hold LMB</kbd><span>The mouse becomes the <b>blade</b>. The camera holds still while you hold it.</span></div>
+          <div><kbd>Mouse</kbd><span>Released, it is the camera. The blade settles back to a ready guard.</span></div>
+          <div><kbd>RMB</kbd><span>Thrust — drive the hands forward along the blade.</span></div>
           <div><kbd>W A S D</kbd><span>Move. <kbd>Shift</kbd> sprint, <kbd>Ctrl</kbd> crouch.</span></div>
           <div><kbd>Space</kbd><span>Force jump — hold to leap higher. Landing sends out a shockwave.</span></div>
           <div><kbd>Q</kbd> <kbd>E</kbd><span>Roll the wrist. Changes the plane your blade cuts on.</span></div>

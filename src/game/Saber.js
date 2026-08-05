@@ -15,6 +15,7 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _c = new THREE.Color();
+const WHITE = new THREE.Color(1, 1, 1);
 
 export const SABER_COLORS = [
   { name: 'Cerulean',  hex: 0x3ba7ff, glow: 0x8fd8ff, key: 'blue' },
@@ -145,7 +146,10 @@ export class Saber {
    * tinted enough that the hue survives the clamp at the edges.
    */
   _coreColour(out = new THREE.Color()) {
-    return out.copy(this.glowColor).multiplyScalar(1.75);
+    // Pushed well over the 1.8 bloom threshold so the blade is the brightest
+    // thing in any frame, but only half-way to white — the hue has to survive
+    // ACES, which desaturates highlights toward white by construction.
+    return out.copy(this.color).lerp(WHITE, 0.5).multiplyScalar(7.0);
   }
 
   /* ── construction ──────────────────────────────────────────────────── */
@@ -236,6 +240,13 @@ export class Saber {
         },
         vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG,
         transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        // The fragment shader emits premultiplied colour — vec4(uColor*a, a).
+        // Without this flag three uses blendFunc(SRC_ALPHA, ONE) and multiplies
+        // by alpha a second time, so the halo arrived at alpha squared. The
+        // outermost shell authored at 0.30 was landing at 0.09, which is why
+        // the coloured glow collapsed to a hairline at any real distance and
+        // every blade read as a white stick.
+        premultipliedAlpha: true,
         side: THREE.DoubleSide, toneMapped: false,
       });
       const m = new THREE.Mesh(geo, mat);
@@ -298,6 +309,7 @@ export class Saber {
       },
       vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      premultipliedAlpha: true,          // TRAIL_FRAG also emits vec4(c*a, a)
       side: THREE.DoubleSide, toneMapped: false,
     });
     this.trail = new THREE.Mesh(geo, this.trailMat);
@@ -393,7 +405,7 @@ export class Saber {
     if (on) {
       this.pointAt(0.45, _v1);
       this.light.position.copy(_v1);
-      this.light.intensity = 2.1 * this.ignition * (1 + this.contactStrain * 1.6) * flick;
+      this.light.intensity = 6.0 * this.ignition * (1 + this.contactStrain * 1.6) * flick;
       this.light.distance = 6 + len * 2.4;
       this.tipLight.position.copy(this.tip);
       this.tipLight.intensity = 0.9 * this.ignition * flick;

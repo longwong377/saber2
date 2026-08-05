@@ -159,6 +159,89 @@ check('rig: two-bone IK reaches every target inside its range', () => {
   return `40 targets, worst error ${(worst * 1000).toFixed(2)}mm`;
 });
 
+check('rig: the feet stand on the ground, not through it or above it', () => {
+  const { rig } = buildJedi({ robeIndex: 0, scale: 1 });
+  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  anim.setFacing(0);
+  const step = (y, groundAt) => {
+    for (let i = 0; i < 10; i++) {
+      anim.update(1 / 60, { position: V(0, y, 0), facing: 0, velocity: V(0, 0, 0),
+        grounded: true, groundAt, crouch: 0, accelForward: 0, accelStrafe: 0 });
+    }
+    rig.updateMatrices();
+    rig.root.updateMatrixWorld(true);
+    let lo = Infinity;
+    for (const n of ['footL', 'footR']) {
+      const box = new THREE.Box3();
+      for (const m of rig.get(n).parts) { m.updateMatrixWorld(true); box.expandByObject(m); }
+      lo = Math.min(lo, box.min.y);
+    }
+    return lo;
+  };
+
+  const flat = step(0, () => 0);
+  assert(Math.abs(flat) < 0.02, `on flat ground the soles sit ${(flat * 100).toFixed(1)}cm off the floor`);
+
+  // and the legs must not be pinned at full extension, or a slope or a step
+  // leaves the low foot dangling — solveIK clamps rather than stretching
+  const hip = rig.worldPos('thighL', new THREE.Vector3());
+  const ankleTip = rig.tipPos('shinL', new THREE.Vector3());
+  const reach = rig.get('thighL').length + rig.get('shinL').length;
+  const used = hip.distanceTo(ankleTip) / reach;
+  assert(used < 0.97, `the standing leg is ${(used * 100).toFixed(1)}% extended — the knee is locked straight`);
+  return `soles at ${(flat * 1000).toFixed(1)}mm, leg ${(used * 100).toFixed(1)}% extended`;
+});
+
+check('rig: the shoulders are mounted left and right, not front and back', () => {
+  const rig = new Rig(humanoidSkeleton(1));
+  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  anim.setFacing(0);
+  anim.update(1 / 60, { position: V(0, 0, 0), facing: 0, velocity: V(0, 0, 0),
+    grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0, accelStrafe: 0 });
+  rig.updateMatrices();
+  const L = rig.worldPos('armL', new THREE.Vector3());
+  const R = rig.worldPos('armR', new THREE.Vector3());
+  const across = Math.abs(L.x - R.x), foreAft = Math.abs(L.z - R.z);
+  assert(across > 0.24, `shoulders only ${(across * 100).toFixed(1)}cm apart across the chest`);
+  assert(foreAft < 0.03, `the shoulder line runs ${(foreAft * 100).toFixed(1)}cm front-to-back`);
+  assert(Math.abs(L.x + R.x) < 0.01, `shoulders are not symmetric about the spine`);
+  // and the rest pose must be identity for an upright root, or every offset
+  // authored in character space lands a quarter turn away from where it should
+  const q = rig.get('hips').restQuat;
+  assert(Math.abs(q.w) > 0.999, `hips rest quaternion is not identity: w=${q.w.toFixed(3)}`);
+  return `${(across * 100).toFixed(1)}cm across, ${(foreAft * 100).toFixed(1)}cm fore/aft, symmetric`;
+});
+
+check('rig: a joint bends TOWARD its pole, not away from it', () => {
+  const rig = new Rig(humanoidSkeleton(1));
+  rig.hipsBone.obj.position.set(0, 0.95, 0);
+  rig.updateMatrices();
+  const root = rig.worldPos('armR', new THREE.Vector3());
+  const reach = rig.get('armR').length + rig.get('foreR').length;
+  let wrong = 0, total = 0, worst = 0;
+  for (let i = 0; i < 300; i++) {
+    const a = i * 0.813, b = i * 0.371;
+    const dir = V(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b)).normalize();
+    const target = root.clone().addScaledVector(dir, reach * 0.72);
+    const side = V(Math.sin(i * 1.7), 0.3, Math.cos(i * 1.7)).normalize();
+    const pole = root.clone().addScaledVector(side, 1.2);
+    rig.solveIK('armR', 'foreR', target, pole);
+    rig.updateMatrices();
+    const joint = rig.tipPos('armR', new THREE.Vector3());
+    const along = target.clone().sub(root).normalize();
+    const perp = (p) => { const o = p.clone().sub(root); return o.addScaledVector(along, -o.dot(along)); };
+    const off = perp(joint), poleOff = perp(pole);
+    if (poleOff.lengthSq() < 1e-8 || off.lengthSq() < 1e-8) continue;
+    total++;
+    if (off.clone().normalize().dot(poleOff.clone().normalize()) < 0) {
+      wrong++; worst = Math.max(worst, off.length());
+    }
+  }
+  assert(wrong === 0,
+    `${wrong}/${total} solves bent away from the pole (worst ${(worst * 100).toFixed(1)}cm) — knees bend backwards`);
+  return `${total} solves, all on the pole's side`;
+});
+
 check('rig: IK clamps instead of tearing when the target is out of reach', () => {
   const rig = new Rig(humanoidSkeleton(1));
   rig.hipsBone.obj.position.set(0, 0.95, 0);
@@ -1023,16 +1106,106 @@ check('audio: retiring a voice never tears down the shared effects bus', async (
   a.master = { disconnect: () => busDisconnects++ };
   const panner = { disconnect: () => panDisconnects++ };
 
+  // a source whose `ended` we can fire by hand, the way the audio clock would
+  const mkSrc = () => ({ set onended(f) { this._f = f; }, get onended() { return this._f; } });
+  const s1 = mkSrc(), s2 = mkSrc(), s3 = mkSrc();
   a.voices = 3;
-  a._freeAt(a.sfxBus, 0);
-  a._freeAt(a.musicBus, 0);
-  a._freeAt(panner, 0);
-  await new Promise(r => setTimeout(r, 90));
+  a._freeOnEnd(s1, a.sfxBus, 0.1);
+  a._freeOnEnd(s2, a.musicBus, 0.1);
+  a._freeOnEnd(s3, panner, 0.1);
+  s1.onended(); s2.onended(); s3.onended();
 
   assert(busDisconnects === 0, `${busDisconnects} shared buses were disconnected — the game goes silent`);
   assert(panDisconnects === 1, `the per-voice panner was not released (${panDisconnects})`);
   assert(a.voices === 0, `voice count leaked: ${a.voices} still held`);
+
+  // and the backstop must not double-release when `ended` already fired
+  s3.onended();
+  assert(a.voices === 0 && panDisconnects === 1, 'a second `ended` released the voice twice');
   return 'buses survive, panners are released, voice count returns to 0';
+});
+
+check('audio: a NaN never leaks the voice pool dry', async () => {
+  // Game maths produces NaN (a degenerate normal, a zero-length velocity), and
+  // every WebAudio param rejects it with a TypeError. Thrown between taking a
+  // voice and releasing it, 44 of those silence the game for the whole session.
+  const { AudioEngine } = await import('../src/engine/Audio.js');
+  const a = new AudioEngine();
+  a.ready = true;
+  const bad = () => { throw new TypeError('non-finite value'); };
+  const param = () => ({ set value(v) { if (!Number.isFinite(v)) bad(); },
+                         setValueAtTime: bad, linearRampToValueAtTime: bad,
+                         exponentialRampToValueAtTime: bad, setTargetAtTime: bad });
+  a.sfxBus = { disconnect() {} };
+  a.ctx = {
+    currentTime: 0,
+    createBufferSource: () => ({ playbackRate: { value: 0 }, connect() {}, start: bad, stop() {}, buffer: null, loop: false }),
+    createBiquadFilter: () => ({ type: '', frequency: param(), Q: { value: 0 }, connect() {} }),
+    createGain: () => ({ gain: param(), connect() {} }),
+    createOscillator: () => ({ type: '', frequency: param(), detune: { value: 0 }, connect() {}, start: bad, stop() {} }),
+  };
+  for (let i = 0; i < 200; i++) {
+    a.noise({ dur: 0.2, gain: 0.4, freq: 1200 });
+    a.tone({ freq: 440, dur: 0.2 });
+  }
+  assert(a.voices === 0, `${a.voices} of ${a.maxVoices} voices leaked — the game would go silent`);
+
+  // and NaN arguments must not reach a param in the first place
+  const seen = [];
+  a.ctx.createBiquadFilter = () => ({ type: '',
+    frequency: { set value(v) { seen.push(v); }, exponentialRampToValueAtTime: (v) => seen.push(v) },
+    Q: { set value(v) { seen.push(v); } }, connect() {} });
+  a.ctx.createGain = () => ({ gain: { setValueAtTime: (v) => seen.push(v),
+    linearRampToValueAtTime: (v) => seen.push(v), setTargetAtTime: (v) => seen.push(v) }, connect() {} });
+  a.ctx.createBufferSource = () => ({ playbackRate: { value: 0 }, connect() {}, start() {}, stop() {}, buffer: null, loop: false });
+  a.noise({ dur: NaN, gain: NaN, freq: NaN, q: NaN, freqEnd: NaN });
+  assert(seen.length && seen.every(Number.isFinite), `NaN reached an AudioParam: ${seen}`);
+  return `200 throwing calls, 0 voices leaked; NaN args sanitised at the door`;
+});
+
+check('audio: a NaN position falls back instead of throwing away a voice', async () => {
+  const { AudioEngine } = await import('../src/engine/Audio.js');
+  const a = new AudioEngine();
+  a.sfxBus = { id: 'sfx' };
+  a._listenerPos.set(0, 0, 0);
+  assert(a._out({ x: NaN, y: 0, z: 0 }) === a.sfxBus, 'a NaN position did not fall back to the bus');
+  assert(a._out({ x: 0, y: 0, z: 300 }) === null, 'a distant sound was not culled');
+  return 'NaN → dry bus, 300m → culled';
+});
+
+check('math: clamp does not pass NaN through', () => {
+  assert(clamp(NaN, 0, 1) === 0, `clamp(NaN) returned ${clamp(NaN, 0, 1)}`);
+  assert(clamp(-5, 0, 1) === 0 && clamp(5, 0, 1) === 1 && clamp(0.5, 0, 1) === 0.5, 'clamp broke');
+  assert(clamp(0, 0, 1) === 0 && clamp(1, 0, 1) === 1, 'clamp is not inclusive at the bounds');
+  return 'NaN → low bound, bounds inclusive';
+});
+
+check('bodies: a limb is a closed surface with no seam crease', () => {
+  const g = limbGeo(0.4, 0.07, 0.05, 12, true);
+  const pos = g.attributes.position, nrm = g.attributes.normal;
+  assert(nrm, 'the lathe produced no normals');
+
+  // every normal unit length and finite — a degenerate profile ring shows up here
+  let worst = 0;
+  for (let i = 0; i < nrm.count; i++) {
+    const l = Math.hypot(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+    assert(isFinite(l), `normal ${i} is non-finite`);
+    worst = Math.max(worst, Math.abs(l - 1));
+  }
+  assert(worst < 1e-3, `normals are not unit length (off by ${worst.toFixed(4)})`);
+
+  // the cap must reach the pole: some vertex has to sit on the axis below y=0
+  let lowest = Infinity, radiusAtLowest = Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < lowest - 1e-6) { lowest = y; radiusAtLowest = Math.hypot(pos.getX(i), pos.getZ(i)); }
+  }
+  assert(lowest < -0.03, `the bottom cap only reaches y=${lowest.toFixed(4)}`);
+  assert(radiusAtLowest < 1e-4,
+    `the cap is open: its lowest ring has radius ${radiusAtLowest.toFixed(4)}, not a pole`);
+
+  // and the profile must be monotonic in y, or it folds back through itself
+  return `closed at y=${lowest.toFixed(3)}, ${nrm.count} unit normals, no re-derivation`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

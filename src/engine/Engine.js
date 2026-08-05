@@ -34,8 +34,8 @@ const CompositeShader = {
     uTime:       { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
     uGrain:      { value: 0.045 },
-    uVignette:   { value: 0.42 },
-    uAberration: { value: 0.7 },
+    uVignette:   { value: 0.22 },
+    uAberration: { value: 0.30 },
     uSaturation: { value: 1.06 },
     uContrast:   { value: 1.04 },
     uLift:       { value: new THREE.Vector3(0.004, 0.006, 0.012) },
@@ -45,7 +45,7 @@ const CompositeShader = {
     uHeat:       { value: [] },     // vec4 x,y,radius,strength (screen space)
     uHeatCount:  { value: 0 },
     uRadial:     { value: 0 },      // radial blur amount
-    uSharpen:    { value: 0.35 },
+    uSharpen:    { value: 0.12 },
     uFlash:      { value: 0 },
   },
   vertexShader: /* glsl */`
@@ -64,6 +64,18 @@ const CompositeShader = {
     varying vec2 vUv;
 
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
+
+    // One place that knows how to read the frame, so the radial blur cannot be
+    // silently dropped by a later channel-wise fetch.
+    vec3 sampleScene(vec2 uv){
+      if(uRadial <= 0.001) return texture2D(tDiffuse, uv).rgb;
+      vec3 acc = vec3(0.0);
+      for(int i=0;i<6;i++){
+        float t = float(i)/5.0;
+        acc += texture2D(tDiffuse, mix(uv, vec2(0.5), t * uRadial * 0.16)).rgb;
+      }
+      return acc / 6.0;
+    }
 
     void main(){
       vec2 uv = vUv;
@@ -87,24 +99,18 @@ const CompositeShader = {
       uv += warp;
 
       // — radial blur (Force Sense / impacts)
-      vec3 col;
-      if(uRadial > 0.001){
-        vec3 acc = vec3(0.0);
-        for(int i=0;i<6;i++){
-          float t = float(i)/5.0;
-          vec2 suv = mix(uv, vec2(0.5), t * uRadial * 0.16);
-          acc += texture2D(tDiffuse, suv).rgb;
-        }
-        col = acc / 6.0;
-      } else {
-        col = texture2D(tDiffuse, uv).rgb;
-      }
+      vec3 col = sampleScene(uv);
 
       // — chromatic aberration, stronger toward the corners
-      float ca = uAberration * (0.0016 + r2 * 0.007) * (1.0 + uHurt*2.0);
+      // ~1px of R/B separation at the corners, not seven. The old falloff had
+      // a constant term, so even dead centre was fringing.
+      float ca = uAberration * (0.0002 + r2 * 0.0035) * (1.0 + uHurt*0.6);
       if(ca > 0.00001){
-        col.r = texture2D(tDiffuse, uv + centred * ca).r;
-        col.b = texture2D(tDiffuse, uv - centred * ca).b;
+        // NB: sample through the same path col came from. Reading tDiffuse
+        // directly here discarded the radial blur in R and B, so Force Sense
+        // blurred the green channel only and the screen looked broken.
+        col.r = sampleScene(uv + centred * ca).r;
+        col.b = sampleScene(uv - centred * ca).b;
       }
 
       // — unsharp mask for micro contrast
@@ -138,12 +144,17 @@ const CompositeShader = {
       col += uFlash;
 
       // — vignette
-      float vig = 1.0 - uVignette * smoothstep(0.16, 0.86, r2*1.6);
+      vec2 vc = centred * vec2(uResolution.x / uResolution.y, 1.0);
+      float vig = 1.0 - uVignette * smoothstep(0.16, 0.86, dot(vc, vc) * 1.6);
       col *= vig;
 
       // — grain, gently animated, scaled by darkness so highlights stay clean
       float g = hash(gl_FragCoord.xy + fract(uTime)*vec2(311.0,271.0)) - 0.5;
       col += g * uGrain * (1.0 - smoothstep(0.15, 0.95, luma));
+      // The grain above is deliberately absent in the highlights, which is
+      // exactly where an 8-bit framebuffer bands — the sky was stepping. A
+      // triangular dither of one LSB underneath fixes it and is invisible.
+      col += (hash(gl_FragCoord.xy + 17.0) - hash(gl_FragCoord.xy + 71.0)) * (1.0/255.0);
 
       gl_FragColor = vec4(max(col, 0.0), 1.0);
     }
@@ -171,7 +182,10 @@ export class Engine {
     this.renderer.info.autoReset = false;
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(78, 1, 0.06, q.viewDist);
+    // NB: three's `fov` is VERTICAL. 78 vertical at 16:9 is 111 horizontal —
+    // fisheye, which stretched everything at the edges and pushed more of the
+    // frame into the region where vignette and aberration are strongest.
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.15, q.viewDist);
     this.scene.add(this.camera);
 
     this.resolutionScale = 1;
@@ -195,15 +209,20 @@ export class Engine {
     this.sun = new THREE.DirectionalLight(0xfff0d8, 3.6);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(QUALITY[this.quality].shadow, QUALITY[this.quality].shadow);
-    this.sun.shadow.bias = -0.0006;
-    this.sun.shadow.normalBias = 0.035;
+    // Ortho shadow depth is linear, so -0.0006 NDC over a 250-unit frustum was
+    // ~7.5cm of world bias — feet detached from their own shadows.
+    this.sun.shadow.bias = -0.00015;
+    this.sun.shadow.normalBias = 0.02;
     this.sun.shadow.camera.near = 0.5;
     this.sun.shadow.camera.far = 260;
-    this.sun.shadow.blurSamples = 12;
+    // blurSamples only applies to VSM; PCFSoft reads `radius`.
+    this.sun.shadow.radius = 3;
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
-    this.hemi = new THREE.HemisphereLight(0xbcd8ff, 0x60482e, 0.85);
+    // Was 0.85, which alone put a shadowed pixel at over half the brightness of
+    // a lit one. Sun and sky IBL do the lighting now; this is only a floor.
+    this.hemi = new THREE.HemisphereLight(0xbcd8ff, 0x60482e, 0.30);
     this.scene.add(this.hemi);
 
     this.fill = new THREE.DirectionalLight(0x9fc4ff, 0.45);
@@ -239,7 +258,11 @@ export class Engine {
     this.hemi.groundColor.set(a.groundColor ?? 0x60482e);
     this.hemi.intensity = a.ambient ?? 0.85;
     this.fill.color.set(a.fillColor ?? 0x9fc4ff);
-    this.fill.intensity = a.fillIntensity ?? 0.45;
+    this.fill.intensity = a.fillIntensity ?? 0.25;
+    // Sky bounce from the shadow side. Pinned to a fixed direction it was
+    // nearly co-directional with the arena's sun (doing nothing) and opposed to
+    // the canyon's (fighting it).
+    this.fill.position.copy(sunPos).multiplyScalar(-1).setY(0.5).normalize().multiplyScalar(60);
     this.sky.visible = a.sky !== false;
 
     if (a.fog !== false) {
@@ -266,7 +289,12 @@ export class Engine {
     else tmp.background = new THREE.Color(0x11151d);
     this._envRT = this.pmrem.fromScene(tmp, 0.04);
     this.scene.environment = this._envRT.texture;
-    this.scene.environmentIntensity = 0.85;
+    // The sky probe is baked from a Preetham Sky whose shader returns
+    // display-referred colour (pow(c, 1/2.4)) but is consumed here as linear
+    // radiance, so it arrives 2-3x hotter than physical. Together with the
+    // hemisphere that left a shadowed pixel at ~58% of a lit one — no shape on
+    // anything, and nothing dark for the blade to glow against.
+    this.scene.environmentIntensity = 0.30;
   }
 
   _setupComposer() {
@@ -285,7 +313,11 @@ export class Engine {
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
 
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.5, 0.42, 0.92);
+    // Threshold is in LINEAR HDR, and the Preetham sky sits at 0.7-1.5 there — at
+    // 0.92 the sky bloomed harder than the lightsaber did, which is the milky
+    // smear across the top of every outdoor frame. Above 1.8 only the blade,
+    // bolts and molten cuts qualify.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.42, 0.55, 1.8);
     this.composer.addPass(this.bloom);
 
     this.outputPass = new OutputPass();
@@ -322,6 +354,10 @@ export class Engine {
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h, false);
+    // Must precede setSize: EffectComposer multiplies by its own stored ratio,
+    // and a stale one leaves its targets smaller than the drawing buffer, so
+    // the final full-screen quad upscales and the whole frame goes soft.
+    this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
