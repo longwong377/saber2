@@ -61,7 +61,15 @@ await page.evaluate(() => {
   };
 });
 
-const A = parseFloat(process.env.PORTRAIT_ANGLE || '2.4');
+// stand 90 degrees off the sun so the figure is lit but not blown out, and
+// drop the cloak, which otherwise hides the entire body
+const A = parseFloat(process.env.PORTRAIT_ANGLE || await page.evaluate(() => {
+  const p = window.SABER.world.player;
+  p.cloak?.setVisible(false);
+  p.cloak && (p.cloak.setVisible = () => {});
+  const s = window.SABER.engine.sun.position;
+  return String(Math.atan2(s.x, s.z) + Math.PI * 0.5);
+}));
 const dir = (r, h) => [Math.sin(A) * r, h, Math.cos(A) * r];
 const shots = [
   ['40-torso',   { d: dir(1.9, 0.30), look: [0, 1.15, 0], fov: 34 }],
