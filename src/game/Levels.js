@@ -13,6 +13,119 @@ import { DOJO_LEVEL } from './Dojo.js';
 
 const rng = makeRng(20250805);
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Composition                                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The single biggest reason a procedural level reads as a toy is UNIFORM
+ * SCATTER: N objects placed at independent random positions over a disc. Real
+ * places are not uniform. Things cluster, because something put them there —
+ * a building fell, a convoy stopped, water ran. The eye reads that instantly
+ * and reads its absence just as fast.
+ *
+ * These are the placement primitives the dressing passes compose with. They
+ * know nothing about what they are placing, so any new prop maker drops in.
+ */
+
+const _p = new THREE.Vector3();
+
+/** Polar sample with a density exponent: <1 crowds the centre, >1 the rim. */
+export function polar(rmin, rmax, bias = 1, angle = null) {
+  const a = angle ?? rng() * TAU;
+  const r = lerp(rmin, rmax, Math.pow(rng(), bias));
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, a, r };
+}
+
+/**
+ * Is this somewhere a thing could plausibly rest, and is it clear of what is
+ * already there? Uniform scatter happily stacks two crates in the same metre
+ * and drops a pillar down a cliff face; both read as broken.
+ */
+export function siteOk(world, x, z, opts = {}) {
+  const T = world.terrain;
+  if (!T) return true;
+  if (T.slopeAt(x, z) > (opts.maxSlope ?? 0.38)) return false;
+  const y = T.height(x, z);
+  if (opts.minHeight !== undefined && y < opts.minHeight) return false;
+  if (opts.maxHeight !== undefined && y > opts.maxHeight) return false;
+  // keep the player's own footing clear so a run never starts inside a wall
+  const keep = opts.spawnClear ?? 6;
+  if (x * x + z * z < keep * keep) return false;
+  const taken = world._siteTaken || (world._siteTaken = []);
+  const rad = opts.clearance ?? 2.2;
+  for (let i = 0; i < taken.length; i++) {
+    const t = taken[i];
+    const dx = t.x - x, dz = t.z - z;
+    const min = rad + t.r;
+    if (dx * dx + dz * dz < min * min) return false;
+  }
+  taken.push({ x, z, r: rad });
+  return true;
+}
+
+/** Find a site that passes, or give up rather than force a bad one. */
+export function findSite(world, rmin, rmax, opts = {}) {
+  for (let i = 0; i < (opts.tries ?? 14); i++) {
+    const q = polar(rmin, rmax, opts.bias ?? 1, opts.angle);
+    if (siteOk(world, q.x, q.z, opts)) {
+      _p.set(q.x, world.terrain ? world.terrain.height(q.x, q.z) : 0, q.z);
+      return { pos: _p.clone(), a: q.a, r: q.r };
+    }
+  }
+  return null;
+}
+
+/**
+ * A cluster: one anchor, then satellites falling off around it. This is the
+ * workhorse — a camp, a rockfall, a debris field, a stand of trees. `place` is
+ * called with (position, indexInCluster, distanceFromAnchor, clusterAngle).
+ */
+export function cluster(world, opts, place) {
+  const site = findSite(world, opts.rmin ?? 20, opts.rmax ?? 80, opts);
+  if (!site) return 0;
+  const n = opts.count ?? 6;
+  const spread = opts.spread ?? 7;
+  let placed = 0;
+  for (let i = 0; i < n; i++) {
+    // sqrt keeps the areal density even instead of piling everything on the
+    // anchor; the bias exponent then lets a caller crowd it deliberately
+    const d = Math.pow(rng(), opts.falloff ?? 0.5) * spread;
+    const a = rng() * TAU;
+    const x = site.pos.x + Math.cos(a) * d;
+    const z = site.pos.z + Math.sin(a) * d;
+    if (!siteOk(world, x, z, { ...opts, clearance: opts.satClearance ?? 1.4 })) continue;
+    _p.set(x, world.terrain ? world.terrain.height(x, z) : 0, z);
+    place(_p, i, d, site.a);
+    placed++;
+  }
+  return placed;
+}
+
+/**
+ * A line of things — a colonnade, a wall run, a ridge of wreckage. Straight
+ * scatter never produces one, and a single line does more to make a space feel
+ * built than fifty scattered objects.
+ */
+export function run(world, from, to, count, place, opts = {}) {
+  const jitter = opts.jitter ?? 0;
+  let placed = 0;
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0.5 : i / (count - 1);
+    const x = lerp(from.x, to.x, t) + (rng() - 0.5) * jitter;
+    const z = lerp(from.z, to.z, t) + (rng() - 0.5) * jitter;
+    if (opts.checked !== false && !siteOk(world, x, z, opts)) continue;
+    _p.set(x, world.terrain ? world.terrain.height(x, z) : 0, z);
+    place(_p, i, t);
+    placed++;
+  }
+  return placed;
+}
+
+/** Reset the occupancy grid at the start of a dressing pass. */
+export function beginDressing(world) { world._siteTaken = []; }
+
+
 export const LEVELS = {
   dojo: DOJO_LEVEL,
   dunes: {
@@ -41,45 +154,72 @@ export const LEVELS = {
     grass: 0,
     dress(world) {
       const T = world.terrain;
-      // scattered wrecks and vaporators, denser near the middle
-      for (let i = 0; i < 26; i++) {
-        const a = rng() * TAU, r = 12 + Math.pow(rng(), 0.6) * 78;
-        const p = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
-        if (T.slopeAt(p.x, p.z) > 0.38) continue;
-        p.y = T.height(p.x, p.z) + 0.5;
-        world.addProp(makeCrate(world, p, 0.8));
-      }
-      for (let i = 0; i < 9; i++) {
-        const a = rng() * TAU, r = 22 + rng() * 74;
-        const p = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
-        p.y = T.height(p.x, p.z) + 1.3;
-        world.addProp(makeVaporator(world, p));
-      }
-      for (let i = 0; i < 12; i++) {
-        const a = rng() * TAU, r = 16 + rng() * 80;
-        const p = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
-        p.y = T.height(p.x, p.z) + 0.55;
-        world.addProp(makeBarrel(world, p));
-      }
-      // a half-buried hull to fight around
       const M = propMaterials();
+      beginDressing(world);
+
+      // ── Landmarks first. Three big wrecks, spread apart so that wherever you
+      // stand at least one is on your skyline and you can navigate by it. A
+      // desert with nothing to steer by is where "featureless" comes from.
       for (let k = 0; k < 3; k++) {
-        const a = rng() * TAU, r = 30 + rng() * 46;
-        const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
-        const y = T.height(cx, cz);
-        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng() * 0.4 - 0.2, rng() * TAU, rng() * 0.3 - 0.15));
-        addWall(world, new THREE.Vector3(cx, y + 1.6, cz), new THREE.Vector3(9 + rng() * 6, 3.4, 2.2), q, M.hull);
-        addWall(world, new THREE.Vector3(cx + 5, y + 3.0, cz + 3), new THREE.Vector3(4, 5.5, 1.6),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(0.2, rng() * TAU, 0.1)), M.hull);
+        const site = findSite(world, 34, 78, { angle: (k / 3) * TAU + rng() * 0.6, clearance: 16, maxSlope: 0.3 });
+        if (!site) continue;
+        const y = site.pos.y, cx = site.pos.x, cz = site.pos.z;
+        const yaw = rng() * TAU;
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng() * 0.3 - 0.15, yaw, rng() * 0.24 - 0.12));
+        addWall(world, new THREE.Vector3(cx, y + 1.6, cz), new THREE.Vector3(11 + rng() * 6, 3.6, 2.4), q, M.hull);
+        addWall(world, new THREE.Vector3(cx + Math.cos(yaw) * 6, y + 3.4, cz + Math.sin(yaw) * 6),
+          new THREE.Vector3(4.5, 6.5, 1.8),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, yaw + 0.4, 0.1)), M.hull);
+
+        // Debris falls off from where the thing broke — big pieces near, small
+        // far. Scattering identical crates uniformly is the single most
+        // recognisable tell of a generated level.
+        cluster(world, { rmin: 0, rmax: 0, count: 14, spread: 15, falloff: 0.75,
+          angle: site.a, satClearance: 1.3, maxSlope: 0.42 }, (pos, i2, d) => {
+          const near = 1 - clamp(d / 15, 0, 1);
+          if (rng() < near * 0.55) {
+            world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.6 + near * 0.9));
+          } else {
+            const sz = 0.6 + near * 1.9;
+            addRock(world, pos.clone().setY(pos.y + sz * 0.2),
+              new THREE.Vector3(sz * 1.4, sz * 0.8, sz * 1.2), i2 + k * 31 + 1);
+          }
+        });
       }
-      // half-buried outcrops for cover
-      for (let i = 0; i < 22; i++) {
-        const a = rng() * TAU, r = 16 + rng() * 86;
-        const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
-        const y = T.height(cx, cz);
-        const s = 1.0 + rng() * 2.4;
-        addRock(world, new THREE.Vector3(cx, y + s * 0.24, cz),
-          new THREE.Vector3(s * 1.5, s * 1.0, s * 1.3), i + 1);
+
+      // ── A moisture farm: vaporators stand in surveyed LINES, not scattered.
+      // One line of them says people worked here; nine random ones say nothing.
+      const fa = rng() * TAU, fr = 26 + rng() * 34;
+      const fx = Math.cos(fa) * fr, fz = Math.sin(fa) * fr;
+      const dir = fa + Math.PI * 0.5;
+      run(world,
+        { x: fx - Math.cos(dir) * 26, z: fz - Math.sin(dir) * 26 },
+        { x: fx + Math.cos(dir) * 26, z: fz + Math.sin(dir) * 26 },
+        6, (pos) => world.addProp(makeVaporator(world, pos.clone().setY(pos.y + 1.3))),
+        { jitter: 3.5, clearance: 5, maxSlope: 0.3 });
+      // and the clutter of working them
+      cluster(world, { rmin: 0, rmax: 0, count: 9, spread: 9, angle: fa,
+        satClearance: 1.2 }, (pos) => {
+        if (rng() < 0.5) world.addProp(makeBarrel(world, pos.clone().setY(pos.y + 0.55)));
+        else world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.7));
+      });
+
+      // ── Rock. Outcrops come in groups along a fault, with scree trailing off
+      // downslope — not as evenly spaced lumps.
+      for (let g = 0; g < 5; g++) {
+        cluster(world, { rmin: 18, rmax: 92, count: 7, spread: 11, falloff: 0.6,
+          satClearance: 2.0, maxSlope: 0.5 }, (pos, i2, d) => {
+          const sz = lerp(2.6, 0.5, clamp(d / 11, 0, 1)) * (0.75 + rng() * 0.5);
+          addRock(world, pos.clone().setY(pos.y + sz * 0.22),
+            new THREE.Vector3(sz * 1.5, sz * 1.0, sz * 1.3), g * 17 + i2 + 1);
+        });
+      }
+
+      // ── Loose cover, thinned deliberately: it exists to break sight-lines
+      // near the fight, not to fill the map.
+      for (let i = 0; i < 10; i++) {
+        const site = findSite(world, 14, 46, { bias: 0.7, clearance: 4 });
+        if (site) world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.85));
       }
     },
   },
