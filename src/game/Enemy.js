@@ -12,6 +12,8 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster } from './Bodies.js';
 import { Saber } from './Saber.js';
+import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
+import { buildRemote } from './Dojo.js';
 import { LAYER, Body, capsuleSpheres } from '../physics/Physics.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -75,6 +77,25 @@ export const ARCHETYPES = {
     fireRate: 2.6, burst: 2, burstGap: 0.22, spread: 0.03, damage: 26, big: true,
     preferred: [12, 26], boltColor: BOLT_COLORS.gold, score: 1600, threat: 12,
   },
+  /* ── dojo only ── */
+  remote: {
+    label: 'Training Remote', build: buildRemote, scale: 1.0, hp: 4, mass: 3,
+    speed: 2.6, toughness: TOUGHNESS.plastoid, ranged: true, custom: 'remote',
+    fireRate: 2.0, burst: 1, spread: 0.02, damage: 3, float: 1.55,
+    preferred: [4.5, 7.5], boltColor: 0xffc040, score: 0, threat: 0, training: true,
+  },
+  dummy: {
+    label: 'Training Droid', build: buildB1, scale: 1.02, hp: 999, mass: 52,
+    speed: 0, toughness: TOUGHNESS.droid, inert: true,
+    preferred: [0, 0], score: 0, threat: 0, training: true,
+  },
+  sparring: {
+    label: 'Sparring Partner', build: buildAcolyte, scale: 1.04, hp: 400, mass: 82,
+    speed: 3.4, toughness: TOUGHNESS.flesh, melee: true, saber: true,
+    saberColor: 1, hilt: 'Guardian', damage: 3, preferred: [1.6, 3.2],
+    score: 0, threat: 0, training: true,
+  },
+
   beast: {
     label: 'Acklay', build: buildBeast, scale: 2.9, hp: 900, mass: 1400,
     speed: 4.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
@@ -116,7 +137,7 @@ export class Enemy {
     this.attackTimer = rng() * 1.2;
     this.burstLeft = 0;
     this.burstTimer = 0;
-    this.telegraph = 0;
+    this.aimCharge = 0;
     this.state = 'approach';
     this.stateTime = 0;
     this.strafeDir = rng() < 0.5 ? 1 : -1;
@@ -170,9 +191,13 @@ export class Enemy {
         this.legTargets = [];
       }
     } else {
-      // droideka: a bespoke group rather than a bone rig
+      // droideka / training remote: a bespoke group rather than a bone rig
       this.group = built.group;
       this.world.scene.add(this.group);
+      if (A.custom === 'remote') {
+        this.hoverPhase = rng() * TAU;
+        this.orbitPhase = rng() * TAU;
+      }
     }
 
     // weapon
@@ -183,18 +208,19 @@ export class Enemy {
     }
     if (A.saber) {
       this.saber = new Saber(this.world.scene, {
-        colorIndex: A.saberColor ?? 4, bladeLength: 1.12, hiltStyle: 'Sentinel',
+        colorIndex: A.saberColor ?? 4, bladeLength: 1.12, hiltStyle: A.hilt ?? 'Sentinel',
       });
       this.saber.ignite();
       this.hum = audio.createHum(this.saber.color.getHex());
       this.hum.ignite();
-      this.saberPhase = 'guard';
-      this.saberTimer = 0;
-      this.saberGuard = new THREE.Vector3(0.4, 0.35, -0.85).normalize();
-      this.saberGuardTarget = this.saberGuard.clone();
+      this.telegraphArc = new Telegraph(this.world.scene);
+      this.duel = new DuelBrain(this, {
+        form: A.form || FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)],
+        telegraph: this.telegraphArc,
+      });
+      this.formName = this.duel.describe();
       this.saberHand = new THREE.Vector3();
       this.saberQuat = new THREE.Quaternion();
-      this.saberAngVel = new THREE.Vector3();
     }
     if (A.shield) {
       this.shieldUp = false;
@@ -240,6 +266,10 @@ export class Enemy {
           toughness: this._boneToughness(b.name), enemy: this, vital: VITAL[b.name] ?? 0.4,
         });
       }
+    } else if (this.group && this.A.custom === 'remote') {
+      const c = _v1.copy(this.group.position);
+      out.push({ name: 'core', p0: c.clone(), p1: c.clone(), r: 0.14 * this.A.scale,
+        toughness: this.A.toughness, enemy: this, vital: 1 });
     } else if (this.group) {
       // droideka: shield first, then the core
       const c = _v1.copy(this.group.position).addScaledVector(UP, 0.62 * this.A.scale);
@@ -249,7 +279,7 @@ export class Enemy {
       }
       out.push({ name: 'core', p0: c.clone(), p1: c.clone().setY(c.y + 0.3 * this.A.scale),
         r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: 1 });
-      for (const leg of this.built.legs) {
+      for (const leg of (this.built.legs || [])) {
         leg.leg.getWorldPosition(_v2);
         leg.lower.getWorldPosition(_v3);
         out.push({ name: 'leg' + this.built.legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
@@ -271,6 +301,7 @@ export class Enemy {
 
   damage(amount, point, source, kind) {
     if (this.dead) return false;
+    if (this.invincible) return false;
     if (this.shieldUp && kind !== 'melee') {
       this.shieldHp -= amount;
       this.built.shieldMat.uniforms.uPower.value = 1.4;
@@ -399,6 +430,7 @@ export class Enemy {
     this.world.onEnemyKilled?.(this, source, kind);
 
     if (this.hum) this.hum.retract();
+    if (this.telegraphArc) this.telegraphArc.hide();
     if (this.saber) {
       // the blade falls with them, then goes out
       this.saber.retract();
@@ -483,6 +515,8 @@ export class Enemy {
 
     if (this.gripped) { this.wish = null; return; }
     if (this.stunTimer > 0 || this.toppled) { this.wish = null; return; }
+    if (A.inert) { this.wish = null; return; }
+    if (A.custom === 'remote') { this._remoteBrain(dt, ctx, dist); return; }
 
     const [near, far] = A.preferred;
     this.strafeTimer -= dt;
@@ -540,12 +574,12 @@ export class Enemy {
     }
     if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12) && this._hasLineOfSight(ctx)) {
       if (A.telegraph) {
-        if (this.telegraph <= 0) {
-          this.telegraph = A.telegraph;
+        if (this.aimCharge <= 0) {
+          this.aimCharge = A.telegraph;
           this._beginTelegraph(ctx);
         }
-        this.telegraph -= dt;
-        if (this.telegraph <= 0) {
+        this.aimCharge -= dt;
+        if (this.aimCharge <= 0) {
           this._endTelegraph();
           this.burstLeft = A.burst ?? 1;
           this.burstTimer = 0;
@@ -556,6 +590,22 @@ export class Enemy {
         this.burstTimer = 0;
         this.attackTimer = A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression : 1);
       }
+    }
+  }
+
+  _remoteBrain(dt, ctx, dist) {
+    // circle the student at a polite distance and fire slowly
+    this.orbitPhase += dt * 0.55;
+    const side = _v2.set(-this.toTarget.z, 0, this.toTarget.x);
+    const want = _v3.copy(side).multiplyScalar(Math.sin(this.orbitPhase) > 0 ? 1 : -1);
+    if (dist > this.A.preferred[1]) want.add(this.toTarget);
+    else if (dist < this.A.preferred[0]) want.sub(this.toTarget);
+    this.wish = want.normalize().clone();
+
+    this.attackTimer -= dt;
+    if (this.attackTimer <= 0) {
+      this.attackTimer = (this.trainingFireRate ?? this.A.fireRate) * (0.8 + rng() * 0.4);
+      this._shoot(ctx);
     }
   }
 
@@ -589,6 +639,11 @@ export class Enemy {
   }
 
   _muzzleWorld(out) {
+    if (this.built?.muzzles?.length) {
+      // a remote fires from whichever emitter is facing the student
+      const m = this.built.muzzles[(this._armToggle = ((this._armToggle || 0) + 1) % this.built.muzzles.length)];
+      return m.getWorldPosition(out);
+    }
     if (this.weapon && this.weapon.userData.muzzle) {
       return out.copy(this.weapon.userData.muzzle).applyMatrix4(this.weapon.matrixWorld);
     }
@@ -627,7 +682,7 @@ export class Enemy {
     _v3.normalize();
 
     ctx.bolts.fire(from, _v3, {
-      speed, damage: this.damage, color: A.boltColor ?? BOLT_COLORS.red,
+      speed: this.trainingBoltSpeed ?? speed, damage: this.damage, color: A.boltColor ?? BOLT_COLORS.red,
       owner: this, team: this.team, big: !!A.big,
       length: A.big ? 2.4 : 1.15, radius: A.big ? 0.1 : 0.05,
     });
@@ -639,44 +694,13 @@ export class Enemy {
 
   _meleeBrain(dt, ctx, dist) {
     if (!this.saber) { this._beastBrain(dt, ctx, dist); return; }
-    const diff = this.world.difficulty;
-    this.saberTimer -= dt;
-
-    if (this.saberPhase === 'guard') {
-      // circle and read; occasionally feint to bait a chamber
-      if (dist < 3.2 && this.saberTimer <= 0) {
-        const feint = rng() < 0.22 * (diff ? diff.enemyAggression : 1);
-        this.saberPhase = feint ? 'feint' : 'windup';
-        this.saberTimer = feint ? 0.22 : lerp(0.42, 0.24, (diff?.enemyAggression ?? 1) - 0.5);
-        this._pickSwing();
-      } else if (this.saberTimer <= 0) {
-        this.saberTimer = 0.3 + rng() * 0.5;
-        this.saberGuardTarget.set((rng() - 0.5) * 1.3, rng() * 0.8 - 0.1, -0.8).normalize();
-      }
-    } else if (this.saberPhase === 'windup') {
-      if (this.saberTimer <= 0) {
-        this.saberPhase = 'swing';
-        this.saberTimer = 0.2;
-        audio.swing(20, this.saber.base);
-      }
-    } else if (this.saberPhase === 'swing') {
-      if (this.saberTimer <= 0) { this.saberPhase = 'recover'; this.saberTimer = 0.32; }
-    } else if (this.saberPhase === 'feint') {
-      if (this.saberTimer <= 0) {
-        this.saberPhase = 'windup';
-        this.saberTimer = 0.2;
-        this._pickSwing(true);
-      }
-    } else if (this.saberPhase === 'recover') {
-      if (this.saberTimer <= 0) { this.saberPhase = 'guard'; this.saberTimer = 0.18 + rng() * 0.4; }
+    if (this.lock) { this.wish = null; return; }   // a blade lock pins both fighters
+    if (this.trainingSpeed) this.duel.timeScale = this.trainingSpeed;
+    this.duel.update(dt, ctx, dist);
+    // a lunging attack actually carries the duellist forward
+    if (this.duel.lungeSpeed > 0.01 && this.toTarget) {
+      this.velocity.addScaledVector(this.toTarget, this.duel.lungeSpeed * dt * 9);
     }
-  }
-
-  _pickSwing(reverse = false) {
-    const a = rng() * TAU;
-    this.swingFrom = new THREE.Vector3(Math.cos(a) * 0.95, Math.sin(a) * 0.8 + 0.25, -0.55).normalize();
-    this.swingTo = new THREE.Vector3(-Math.cos(a) * 0.95, -Math.sin(a) * 0.5 - 0.1, -0.95).normalize();
-    if (reverse) { const t = this.swingFrom; this.swingFrom = this.swingTo; this.swingTo = t; }
   }
 
   _beastBrain(dt, ctx, dist) {
@@ -730,6 +754,18 @@ export class Enemy {
     } else if (this.knockTimer <= 0) {
       this.velocity.x = damp(this.velocity.x, 0, 6, dt);
       this.velocity.z = damp(this.velocity.z, 0, 6, dt);
+    }
+
+    if (this.A.float) {
+      // hover: hold a height above the ground with a slow bob
+      const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
+      this.hoverPhase += dt * 1.7;
+      const want = gh + this.A.float + Math.sin(this.hoverPhase) * 0.16;
+      this.velocity.y = damp(this.velocity.y, (want - this.position.y) * 4.5, 8, dt);
+      this.position.addScaledVector(this.velocity, dt);
+      this.grounded = false;
+      this._syncBody();
+      return;
     }
 
     if (!this.grounded) this.velocity.y -= 24 * dt;
@@ -808,6 +844,10 @@ export class Enemy {
       this._poseArms(dt, ctx);
     } else if (this.rig) {
       this._poseWalker(dt, ctx);
+    } else if (this.group && A.custom === 'remote') {
+      this.group.position.copy(this.position);
+      this.group.rotation.y += dt * 1.2;
+      if (this.built.halo) this.built.halo.intensity = 1.1 + Math.sin(ctx.time * 6 + this.hoverPhase) * 0.5;
     } else if (this.group) {
       this._poseDroideka(dt, ctx);
     }
@@ -864,28 +904,23 @@ export class Enemy {
     const rig = this.rig;
     const S = this.A.scale;
 
-    // where the enemy wants its guard to be, in its own frame
-    let want;
-    if (this.saberPhase === 'swing' || this.saberPhase === 'windup') {
-      const t = this.saberPhase === 'windup' ? 0 : clamp(1 - this.saberTimer / 0.2, 0, 1);
-      want = _v4.copy(this.swingFrom || this.saberGuard).lerp(this.swingTo || this.saberGuard, t).normalize();
-    } else {
-      want = _v4.copy(this.saberGuardTarget);
-    }
-    dampVec(this.saberGuard, want, this.saberPhase === 'swing' ? 26 : 7, dt);
+    // the duel brain owns where the guard wants to be
+    const guard = this.duel.guardDir;
+    const fast = this.duel.phase === 'strike';
 
-    // convert to world using the enemy's facing
-    _q1.setFromAxisAngle(UP, this.facing);
-    const dirWorld = _v5.copy(this.saberGuard).applyQuaternion(_q1).normalize();
-    const handTarget = _v6.copy(chest).addScaledVector(dirWorld, 0.34 * S).addScaledVector(UP, -0.08 * S);
-    const guardPoint = _v1.copy(chest).addScaledVector(dirWorld, 0.95 * S);
+    // convert to world using the enemy's facing, plus any spin the move carries
+    _q1.setFromAxisAngle(UP, this.facing + this.duel.spin);
+    const dirWorld = _v5.copy(guard).applyQuaternion(_q1).normalize();
+    const reach = 0.34 + (this.duel.attack?.reach ?? 0);
+    const handTarget = _v6.copy(chest).addScaledVector(dirWorld, reach * S).addScaledVector(UP, -0.08 * S);
+    const guardPoint = _v1.copy(chest).addScaledVector(dirWorld, (reach + 0.61) * S);
 
     if (!this._saberHandInit) { this.saberHand.copy(handTarget); this._saberHandInit = true; }
-    dampVec(this.saberHand, handTarget, this.saberPhase === 'swing' ? 30 : 12, dt);
+    dampVec(this.saberHand, handTarget, fast ? 30 : 12, dt);
 
     _v2.subVectors(guardPoint, this.saberHand).normalize();
     aimY(_v2, null, _q2);
-    this.saberQuat.slerp(_q2, clamp(dt * (this.saberPhase === 'swing' ? 26 : 10), 0, 1));
+    this.saberQuat.slerp(_q2, clamp(dt * (fast ? 26 : 10), 0, 1));
 
     this.saber.setHiltPose(this.saberHand, this.saberQuat);
     this.saber.update(dt, ctx.time);
@@ -984,6 +1019,7 @@ export class Enemy {
   dispose() {
     if (this.saber) this.saber.dispose();
     if (this.hum) this.hum.dispose();
+    if (this.telegraphArc) this.telegraphArc.dispose();
     if (this.laser) { this.world.scene.remove(this.laser); this.laser.geometry.dispose(); this.laser.material.dispose(); }
     if (this.actor) this.actor.dispose();
     else if (this.rig) { this.world.scene.remove(this.rig.root); this.rig.dispose(); }

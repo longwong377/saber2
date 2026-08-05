@@ -128,6 +128,11 @@ function buildWorld(levelKey) {
   world.onKillFeed = (who, what, kind) => hud.killFeed(who, what, kind);
   world.onGameOver = (stats) => gameOver(stats);
   world.onDraftOffer = (boons) => offerDraft(boons);
+  world.onDeflectFeedback = (grade, point, why) => {
+    // grades: -1 wrong answer, 0..3 deflection quality, 4 chamber, 5 lock
+    const colour = grade >= 4 ? '#ffd88a' : grade >= 2 ? '#8fe8ff' : grade < 0 ? '#ff8080' : '#9fb0c6';
+    hud.explain(why, colour, grade < 0 ? 2.0 : 1.4);
+  };
 
   world.loadLevel(levelKey);
   const player = world.spawnPlayer({ name: net.name || 'Jedi', isLocal: true });
@@ -138,6 +143,13 @@ function buildWorld(levelKey) {
 
   hud.setLevel(LEVELS[levelKey].name, world.difficulty.name);
   hud.setBoons([]);
+
+  if (world.training) {
+    world.director.onLesson = (state) => hud.setCoach(state);
+    world.director.start();
+    hud.setCoach(world.director.state());
+  } else hud.showCoach(false);
+
   return world;
 }
 
@@ -160,7 +172,7 @@ function deploy() {
   input.enabled = true;
   input.requestLock();
 
-  if (world.netMode !== 'client') world.director.start(1);
+  if (world.netMode !== 'client' && !world.training) world.director.start(1);
   world.notify('MAY THE FORCE BE WITH YOU', LEVELS[levelKey].name);
 }
 
@@ -321,6 +333,13 @@ input.onLockChange = (locked) => {
 };
 
 window.addEventListener('keydown', (e) => {
+  // dojo lesson navigation — only where it cannot cost you anything
+  if (state === 'playing' && world?.training) {
+    const d = world.director;
+    if (e.code === 'KeyN') { d.skip(); hud.setCoach(d.state()); }
+    else if (e.code === 'KeyB') { d.back(); hud.setCoach(d.state()); }
+    else if (e.code === 'KeyY') { d.repeat(); hud.setCoach(d.state()); }
+  }
   if (e.code === 'Escape') {
     if (state === 'playing') pause();
     else if (state === 'paused') resume();

@@ -300,3 +300,39 @@ button{font-family:inherit}
   .hud-bl{left:16px;bottom:18px}.hud-br{right:16px;bottom:18px}
   .logo h1{font-size:36px}
 }
+
+/* ══════════════════ V2: coaching, locks, deflect feedback ══════════════ */
+
+.coach{position:absolute;left:34px;top:50%;transform:translateY(-50%);width:290px;
+  padding:16px 18px;border:1px solid var(--line);border-left:2px solid var(--accent);
+  border-radius:10px;background:rgba(6,9,15,.82);backdrop-filter:blur(6px);
+  animation:riseIn .4s cubic-bezier(.22,1,.36,1) both}
+.coach-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px}
+.coach-head b{font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+.coach-head em{font:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--accent);font-style:normal}
+.coach-brief{font-size:12.5px;line-height:1.6;color:var(--ink);margin-bottom:8px}
+.coach-hint{font-size:11.5px;line-height:1.55;color:var(--dim);font-style:italic}
+.coach-bar{height:2px;background:rgba(255,255,255,.1);border-radius:2px;margin:12px 0 10px;overflow:hidden}
+.coach-bar i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#2b90d9,var(--accent));
+  box-shadow:0 0 10px var(--accent);transition:width .25s cubic-bezier(.22,1,.36,1)}
+.coach-keys{display:flex;gap:12px;font:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--dimmer)}
+.coach-keys kbd{min-width:0;padding:1px 4px;font-size:9px}
+
+.lockmeter{position:absolute;left:50%;top:60%;transform:translateX(-50%);width:340px;text-align:center;
+  animation:riseIn .2s both}
+.lock-track{position:relative;height:10px;border:1px solid var(--line-hot);border-radius:6px;
+  background:rgba(0,0,0,.6);overflow:hidden}
+.lock-track u{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.45)}
+.lock-track i{position:absolute;left:50%;top:0;bottom:0;width:0%;border-radius:4px;
+  background:linear-gradient(90deg,#2b90d9,#8ee6ff);box-shadow:0 0 16px rgba(87,201,255,.9);
+  transition:width .06s linear,left .06s linear}
+.lock-track i.losing{background:linear-gradient(90deg,#ff5a62,#ffa040);box-shadow:0 0 16px rgba(255,90,98,.9)}
+.lockmeter span{display:block;margin-top:7px;font:var(--mono);font-size:9.5px;letter-spacing:.28em;
+  text-transform:uppercase;color:var(--ink)}
+
+.deflectwhy{position:absolute;left:50%;top:57%;transform:translateX(-50%);text-align:center;
+  font:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  opacity:0;transition:opacity .25s;white-space:nowrap;pointer-events:none}
+.deflectwhy.on{opacity:1}
+
+@media (max-width:820px){ .coach{display:none} }

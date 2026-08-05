@@ -630,6 +630,7 @@ export class Player {
     if (this.saber.tipSpeed > 11 && now - this._lastSwingSound > 0.19) {
       this._lastSwingSound = now;
       audio.swing(this.saber.tipSpeed, this.saber.pointAt(0.7, _v1));
+      this.world.report?.({ type: 'swing', speed: this.saber.tipSpeed });
       this.stamina = Math.max(0, this.stamina - clamp(this.saber.tipSpeed * 0.055, 0, 2.4) * (this.difficulty?.staminaDrain ?? 1));
     }
 
@@ -1022,6 +1023,8 @@ export class Player {
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
     this.hp -= dmg;
+    // the dojo promises nothing there can kill you, and means it
+    if (this.world.training) this.hp = Math.max(this.hp, 1);
     this.invuln = 0.18;
     this.hitFlash = 1;
     this.flow = clamp(this.flow - 0.28, 0, 1);

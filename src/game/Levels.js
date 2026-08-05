@@ -9,10 +9,12 @@
 import * as THREE from 'three';
 import { makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole, addWall, addRock, BlastDoor, propMaterials } from '../world/Props.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
+import { DOJO_LEVEL } from './Dojo.js';
 
 const rng = makeRng(20250805);
 
 export const LEVELS = {
+  dojo: DOJO_LEVEL,
   dunes: {
     name: 'The Dune Sea',
     blurb: 'Open dunes under a white sun. Nothing between you and the horde but sand.',
@@ -250,4 +252,4 @@ export const LEVELS = {
   },
 };
 
-export const LEVEL_ORDER = ['dunes', 'arena', 'hangar', 'canyon'];
+export const LEVEL_ORDER = ['dojo', 'dunes', 'arena', 'hangar', 'canyon'];

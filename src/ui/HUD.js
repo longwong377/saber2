@@ -39,6 +39,15 @@ export class HUD {
       center: root.getElementById('hud-center-msg'),
       hitmarks: root.getElementById('hitmarks'),
       killfeed: root.getElementById('killfeed'),
+      coach: root.getElementById('coach'),
+      coachTitle: root.getElementById('coach-title'),
+      coachCount: root.getElementById('coach-count'),
+      coachBrief: root.getElementById('coach-brief'),
+      coachHint: root.getElementById('coach-hint'),
+      coachFill: root.getElementById('coach-fill'),
+      lock: root.getElementById('lockmeter'),
+      lockFill: root.getElementById('lock-fill'),
+      why: root.getElementById('deflect-why'),
       boons: root.getElementById('boon-strip'),
       powers: root.getElementById('power-wheel'),
       reticle: root.getElementById('reticle'),
@@ -50,6 +59,7 @@ export class HUD {
     this.centerTimer = 0;
     this._buildPowers();
     this._marks = [];
+    this.whyTimer = 0;
   }
 
   _buildPowers() {
@@ -130,6 +140,25 @@ export class HUD {
       el.cursor.firstElementChild.style.transform = `scale(${(0.7 + heat * 0.75).toFixed(2)})`;
     }
 
+    // ── blade lock: a bar that runs out from the centre either way
+    const lock = player.lockState;
+    if (lock && !lock.done) {
+      el.lock.classList.remove('hidden');
+      const p01 = clamp(lock.pressure, -1, 1);
+      const halfPct = Math.abs(p01) * 50;
+      el.lockFill.style.width = `${halfPct}%`;
+      el.lockFill.style.left = p01 >= 0 ? '50%' : `${50 - halfPct}%`;
+      el.lockFill.classList.toggle('losing', p01 < 0);
+    } else if (!el.lock.classList.contains('hidden')) {
+      el.lock.classList.add('hidden');
+    }
+
+    // ── the line that says why the last deflection graded as it did
+    if (this.whyTimer > 0) {
+      this.whyTimer -= dt;
+      if (this.whyTimer <= 0) el.why.classList.remove('on');
+    }
+
     // ── center message
     if (this.centerTimer > 0) {
       this.centerTimer -= dt;
@@ -155,6 +184,31 @@ export class HUD {
     p.cd.style.transform = `scaleY(${clamp(cd, 0, 1)})`;
     p.root.classList.toggle('ready', affordable && cd <= 0.01);
     p.root.classList.toggle('active', !!active);
+  }
+
+  /** Dojo coaching panel. */
+  setCoach(state) {
+    const el = this.el;
+    if (!state) { el.coach.classList.add('hidden'); return; }
+    el.coach.classList.remove('hidden');
+    el.coachTitle.textContent = state.title;
+    el.coachCount.textContent = state.need === Infinity
+      ? `${state.index + 1}/${state.total}`
+      : `${state.progress}/${state.need}`;
+    el.coachBrief.textContent = state.brief;
+    el.coachHint.textContent = state.form ? `${state.hint}  ·  sparring: ${state.form}` : state.hint;
+    const frac = state.need === Infinity ? 1 : clamp(state.progress / state.need, 0, 1);
+    el.coachFill.style.width = `${frac * 100}%`;
+  }
+  showCoach(on) { this.el.coach.classList.toggle('hidden', !on); }
+
+  /** One short line explaining the last deflection or clash. */
+  explain(text, colour = '#9fb0c6', duration = 1.6) {
+    if (!text) return;
+    this.el.why.textContent = text;
+    this.el.why.style.color = colour;
+    this.el.why.classList.add('on');
+    this.whyTimer = duration;
   }
 
   message(title, sub, duration = 2.4) {

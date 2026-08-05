@@ -131,7 +131,8 @@ export class Menu {
     const g = c.getContext('2d');
     const L = LEVELS[key];
     const sky = { dunes: ['#cfe0f5', '#e8d0a0'], arena: ['#c0d4ee', '#d8b98a'],
-                  hangar: ['#1b2430', '#0a0d13'], canyon: ['#a8c8f0', '#c08a60'] }[key];
+                  hangar: ['#1b2430', '#0a0d13'], canyon: ['#a8c8f0', '#c08a60'],
+                  dojo: ['#20293a', '#0b0f16'] }[key] || ['#20293a', '#0b0f16'];
     const grad = g.createLinearGradient(0, 0, 0, 140);
     grad.addColorStop(0, sky[0]); grad.addColorStop(1, sky[1]);
     g.fillStyle = grad; g.fillRect(0, 0, 320, 140);
@@ -140,8 +141,8 @@ export class Menu {
     g.fillStyle = 'rgba(0,0,0,0.42)';
     g.beginPath(); g.moveTo(0, 140);
     for (let x = 0; x <= 320; x += 8) {
-      const y = key === 'hangar'
-        ? 96 + (x % 64 < 32 ? 0 : -18)
+      const y = key === 'hangar' ? 96 + (x % 64 < 32 ? 0 : -18)
+        : key === 'dojo' ? 104 + (Math.abs(x - 160) > 118 ? -40 : 0)
         : 92 + Math.sin(x * 0.021 + (key === 'canyon' ? 2 : 0)) * (key === 'arena' ? 8 : 20)
              + Math.sin(x * 0.061) * 7;
       g.lineTo(x, y);
@@ -166,7 +167,7 @@ export class Menu {
       card.className = 'card' + (this.s.level === key ? ' sel' : '');
       card.innerHTML = `
         <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
-        <div class="tagpill">${L.pool.length} unit types</div>
+        <div class="tagpill">${L.training ? 'start here' : `${L.pool.length} unit types`}</div>
         <div class="meta"><b>${L.name}</b><span>${L.blurb}</span></div>`;
       card.addEventListener('click', () => {
         audio.ui('click');

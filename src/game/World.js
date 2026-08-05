@@ -18,6 +18,8 @@ import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector } from './Waves.js';
 import { LEVELS } from './Levels.js';
+import { BladeLock } from './Duel.js';
+import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { spheresForGeometry } from '../world/Slice.js';
 import { packAvatar, packSnapshot } from '../net/Net.js';
@@ -40,6 +42,7 @@ export class World {
     this.props = [];
     this.doors = [];
     this.debris = [];
+    this.locks = [];
     this.statics = [];
     this.levelLights = [];
     this.takenBoons = new Set();
@@ -98,6 +101,14 @@ export class World {
 
     L.dress(this);
 
+    if (L.training) {
+      // the dojo runs lessons instead of waves
+      this.director = new DojoDirector(this);
+      this.training = true;
+      this.running = true;
+      return L;
+    }
+    this.training = false;
     this.director = new WaveDirector(this, { mode: this.settings.mode ?? 'roguelite', pool: L.pool });
     this.director.onWaveStart = (w, n) => {
       this.notify(`WAVE ${w}`, `${n} contacts inbound`);
@@ -140,6 +151,7 @@ export class World {
   unload() {
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
+    this.locks.length = 0;
     for (const p of this.props.slice()) p.destroy();
     this.props.length = 0;
     for (const d of this.doors) d.dispose();
@@ -281,6 +293,9 @@ export class World {
   setTimeScale(s) { this.targetTimeScale = s; }
   addHitstop(t) { this.hitstop = Math.max(this.hitstop, t); }
 
+  /** Anything a lesson might be watching for. Free outside the dojo. */
+  report(ev) { if (this.director && this.director.report) this.director.report(ev); }
+
   notify(title, sub) {
     this.notifications.push({ title, sub, t: 0 });
     this.onNotify?.(title, sub);
@@ -420,28 +435,43 @@ export class World {
     // enemy blades vs the player, and blade-on-blade
     for (const e of this.enemies) {
       if (e.dead || !e.saber || e.saber.ignition < 0.6) continue;
+      if (e.lock) continue;                       // a lock owns both blades
       for (const p of this.players) {
-        if (!p.alive) continue;
+        if (!p.alive || !p.control) continue;
         // blades meeting takes precedence over a blade meeting a body
         if (p.saber.ignition > 0.5) {
           const clash = resolveBladeClash(p.saber, e.saber);
           if (clash) { this._applyClash(p, e, clash); continue; }
         }
         // enemy blade vs the player's body
-        if (e.saberPhase === 'swing' && p.invuln <= 0) {
+        if (e.duel && e.duel.phase === 'strike' && p.invuln <= 0) {
           _v1.copy(p.position).setY(p.position.y + 0.4);
           _v2.copy(p.position).setY(p.position.y + 1.7);
           const hit = segmentNear(e.saber.prevTip, e.saber.tip, _v1, _v2, 0.44);
           if (hit) {
-            p.damage(e.damage, hit, e, 'saber');
+            p.damage(e.damage * e.duel.damageScale, hit, e, 'saber');
             _v3.subVectors(p.position, e.position).setY(0.3).normalize().multiplyScalar(6);
             p.velocity.add(_v3);
             this.particles.cutFlare(hit, null, e.saber.color.getHex(), 20);
             audio.cut(hit, false);
-            e.saberPhase = 'recover'; e.saberTimer = 0.45;
+            e.duel.interrupt(0.45);
             this.addHitstop(0.05);
           }
         }
+      }
+    }
+
+    // blade locks run their own contest
+    for (let i = this.locks.length - 1; i >= 0; i--) {
+      const lock = this.locks[i];
+      lock.update(dt, this);
+      if (lock.done) {
+        lock.enemy.lock = null;
+        lock.player.lockState = null;
+        this.locks.splice(i, 1);
+        this.notifyFloating(lock.point, lock.result === 'player' ? 'LOCK WON' : 'OVERPOWERED',
+          lock.result === 'player' ? '#ffd88a' : '#ff8080');
+        if (lock.result === 'player') this.report({ type: 'lockWon' });
       }
     }
   }
@@ -503,11 +533,28 @@ export class World {
     }
   }
 
+  /**
+   * Blade meets blade. What happens depends on what the duellist is actually
+   * doing — which the telegraph told you a moment ago:
+   *
+   *   light        parry it or chamber it, either works
+   *   heavy        chamber it or get out of the way; a flat parry breaks your guard
+   *   unblockable  your blade is not an answer, only your feet are
+   */
   _applyClash(player, enemy, clash) {
     const P = this.particles;
     const now = this.time;
     if (now - (enemy._lastClash || -1) < 0.09) return;
     enemy._lastClash = now;
+
+    const duel = enemy.duel;
+    const tier = duel ? duel.tier : { parryable: true, chamberable: true, guardBreak: 0.6, colour: 0x9fd8ff };
+    const attacking = duel && (duel.phase === 'windup' || duel.phase === 'strike');
+
+    _v1.subVectors(player.saber.pointAt(0.5, _v2), clash.point).normalize();
+    // the direction the player's blade is actually travelling
+    _v4.lerpVectors(player.saber.baseVelocity, player.saber.tipVelocity, 0.7);
+    const bladeSpeed = _v4.length();
 
     P.sparkBurst(clash.point, null, Math.round(10 + clash.power * 22), { speed: 8 + clash.power * 9 });
     audio.clash(clash.point, clash.power);
@@ -515,54 +562,66 @@ export class World {
     enemy.saber.strain(clash.power);
     player.camera.addShake(0.08 + clash.power * 0.12);
 
-    _v1.subVectors(player.saber.pointAt(0.5, _v2), clash.point).normalize();
-
-    if (clash.type === 'chamber') {
-      if (clash.winner === 'a') {
-        // the player chambered — their attack dies, you are free
-        enemy.saberPhase = 'recover'; enemy.saberTimer = 0.75;
-        enemy.stun(0.5);
-        player.riposteTimer = 0.55 * (player.boonMods.riposteWindow ?? 1);
-        player.addFlow(0.30);
-        this.addHitstop(0.075);
-        this.notifyFloating(clash.point, 'CHAMBER', '#8fe8ff');
-        audio.deflect(clash.point, 3);
-        player.score += 120;
-      } else {
-        player.control.hitImpulse(clash.point, _v1.multiplyScalar(-14), 1.4);
-        player.staggerTimer = 0.4;
-        player.stamina = Math.max(0, player.stamina - 18);
-        this.notifyFloating(clash.point, 'CHAMBERED', '#ff8080');
-      }
+    // ── CHAMBER: swung against the declared arc, inside the window
+    if (duel && duel.chamberOpen && bladeSpeed > 5.5 && duel.chambersWith(_v4)) {
+      duel.interrupt(0.85);
+      enemy.stun(0.6);
+      player.riposteTimer = 0.6 * (player.boonMods.riposteWindow ?? 1);
+      player.addFlow(0.34);
+      this.addHitstop(0.085);
+      this.engine.flash(0.06);
+      this.notifyFloating(clash.point, 'CHAMBER', '#8fe8ff');
+      this.report({ type: 'chamber', enemy });
+      audio.deflect(clash.point, 3);
+      player.score += 160;
+      player.chambers = (player.chambers || 0) + 1;
+      this.onDeflectFeedback?.(4, clash.point, `chambered ${duel.attack.label}`);
       return;
     }
 
-    if (clash.type === 'bind') {
-      // a contest of pressure: whoever pushes harder wins ground
-      const push = player.control.angVel.length() * 0.6 + player.control.handVel.length();
-      if (push > 5.5) {
-        enemy.stun(0.42);
-        enemy.applyKnockback(_v2.subVectors(enemy.position, player.position).setY(0.2).normalize().multiplyScalar(9), 4, player);
-        this.notifyFloating(clash.point, 'BIND WON', '#ffd080');
-        player.addFlow(0.12);
-      } else {
-        player.control.hitImpulse(clash.point, _v1.multiplyScalar(-4), 0.6);
-        player.stamina = Math.max(0, player.stamina - 12 * 0.016 * 60);
-      }
-      player.saber.strain(0.5);
+    // ── UNBLOCKABLE: the blade is not the answer
+    if (attacking && !tier.parryable && !tier.chamberable) {
+      player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(-9), 1.0);
+      player.stamina = Math.max(0, player.stamina - 10);
+      this.notifyFloating(clash.point, 'UNBLOCKABLE', '#ff5a62');
+      this.onDeflectFeedback?.(-1, clash.point, 'that one had to be dodged');
       return;
     }
 
-    // parry / clash — both blades recoil, the slower one loses ground
-    const playerWon = clash.winner === 'a';
+    // ── HEAVY parried flat: guard broken
+    if (attacking && !tier.parryable) {
+      player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(-16), 1.5);
+      player.stamina = Math.max(0, player.stamina - 22 * tier.guardBreak);
+      player.staggerTimer = Math.max(player.staggerTimer, 0.38);
+      this.addHitstop(0.05);
+      this.notifyFloating(clash.point, 'GUARD BROKEN', '#ffa040');
+      this.onDeflectFeedback?.(-1, clash.point, 'heavy — chamber it or step aside');
+      return;
+    }
+
+    // ── BIND: both blades slow and touching, nobody committed → a lock
+    if (clash.type === 'bind' && !enemy.lock && !attacking && this.locks.length < 2) {
+      const lock = new BladeLock(player, enemy, clash.point);
+      enemy.lock = lock;
+      player.lockState = lock;
+      this.locks.push(lock);
+      this.notifyFloating(clash.point, 'BLADE LOCK', '#ffd88a');
+      this.onDeflectFeedback?.(5, clash.point, 'drive the mouse to overpower');
+      return;
+    }
+
+    // ── PARRY / CLASH — both blades recoil, the slower one loses ground
+    const playerWon = clash.winner === 'a' || bladeSpeed > clash.sb;
     player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(playerWon ? -5 : -13), playerWon ? 0.6 : 1.3);
     if (playerWon) {
-      enemy.saberPhase = 'recover'; enemy.saberTimer = 0.42;
+      if (duel) duel.interrupt(0.45);
       enemy.stun(0.18);
-      player.riposteTimer = 0.4 * (player.boonMods.riposteWindow ?? 1);
+      player.riposteTimer = 0.42 * (player.boonMods.riposteWindow ?? 1);
       player.addFlow(0.12);
-      player.score += 40;
+      player.score += 45;
       this.notifyFloating(clash.point, 'PARRY', '#a8f0ff');
+      this.report({ type: 'parry', enemy });
+      this.onDeflectFeedback?.(3, clash.point, 'riposte now');
     } else {
       player.stamina = Math.max(0, player.stamina - 14);
       if (player.stamina <= 0) player.staggerTimer = 0.6;
@@ -633,7 +692,8 @@ export class World {
     } else if (res.grade === GRADE.BLOCK) {
       owner.stamina = Math.max(0, owner.stamina - 4);
     }
-    this.onDeflectFeedback?.(res.grade, bladePoint);
+    this.onDeflectFeedback?.(res.grade, bladePoint, DEFLECT_WHY[res.grade]);
+    this.report({ type: 'deflect', grade: res.grade });
   }
 
   _boltHitTest(bolt, from, to) {
@@ -743,6 +803,7 @@ export class World {
   onLimbSevered(enemy, bone, point, source) {
     if (source instanceof Player) {
       this.onHitmark?.(point, 'sever', bone);
+      this.report({ type: 'sever', bone, enemy });
     }
   }
 
@@ -840,6 +901,17 @@ export class World {
 
   dispose() { this.unload(); }
 }
+
+/**
+ * Why a deflection graded the way it did. Being told "BLOCK" teaches nothing;
+ * being told the blade was too slow teaches the whole game.
+ */
+const DEFLECT_WHY = [
+  'blade too slow — drive it into the bolt',
+  'good — now aim at someone as you meet it',
+  'returned',
+  'perfect',
+];
 
 /* ── helper: closest approach between two segments ───────────────────── */
 
