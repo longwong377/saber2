@@ -13,7 +13,9 @@ import { DIFFICULTY } from '../game/Combat.js';
 import { MODES } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
 
-const STORE_KEY = 'saber.settings.v1';
+// v2: the control scheme defaults changed, and a stored v1 blob would keep
+// pinning returning players to the old blade-leads-camera scheme.
+const STORE_KEY = 'saber.settings.v2';
 
 export const DEFAULT_SETTINGS = {
   level: 'dunes',
@@ -25,11 +27,11 @@ export const DEFAULT_SETTINGS = {
   bladeLength: 1.15,
   coreWidth: 1,
   sensitivity: 1,
-  camFollow: 0.75,
+  camFollow: 0,
   fov: 78,
   invertY: false,
   firstPerson: false,
-  scheme: 'free',
+  scheme: 'hold',
   quality: 'high',
   resolutionScale: 1,
   bloom: true,
@@ -379,8 +381,8 @@ export class Menu {
 
   _buildOptions() {
     const schemes = [
-      ['free', 'Free Blade', 'The mouse always moves the blade. The camera follows it. Hold RMB to look around.'],
-      ['hold', 'Hold to Blade', 'The mouse looks. Hold LMB to take the blade.'],
+      ['hold', 'Hold to Blade', 'The mouse looks. Hold left mouse and the mouse IS the blade. Recommended.'],
+      ['free', 'Free Blade', 'The mouse always moves the blade and the camera follows it. Hold RMB to look around. Chaotic.'],
     ];
     const host = document.getElementById('opt-scheme');
     host.innerHTML = '';

@@ -215,13 +215,14 @@ button{font-family:inherit}
 .score{font:var(--mono);font-size:13px;letter-spacing:.2em;color:#cfdaea;margin-top:6px}
 
 .hud-bl{position:absolute;left:34px;bottom:30px;animation:riseIn .5s both}
-.bars{display:flex;flex-direction:column;gap:9px}
+.bars{display:flex;flex-direction:column;gap:19px}
 .bar{position:relative;width:230px;height:6px;background:rgba(0,0,0,.45);border-radius:3px;overflow:visible;
   box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .bar i{position:absolute;inset:0;width:100%;border-radius:3px;transform-origin:left;transition:transform .12s linear}
 .bar u{position:absolute;inset:0;width:100%;border-radius:3px;transform-origin:left;background:rgba(255,80,90,.4);
   transition:transform .5s .25s cubic-bezier(.22,1,.36,1);z-index:-1}
-.bar label{position:absolute;left:0;top:9px;font:var(--mono);font-size:8.5px;letter-spacing:.28em;color:#9fb0c6}
+/* labels ride above their bar — below, they collided with the next bar down */
+.bar label{position:absolute;left:0;bottom:9px;font:var(--mono);font-size:8.5px;letter-spacing:.28em;color:#9fb0c6}
 .bar.hp i{background:linear-gradient(90deg,#e8f4ff,#7fd6ff);box-shadow:0 0 12px rgba(120,210,255,.6)}
 .bar.fc{width:186px}
 .bar.fc i{background:linear-gradient(90deg,#7f6bff,#b39dff);box-shadow:0 0 12px rgba(150,130,255,.6)}
@@ -336,3 +337,15 @@ button{font-family:inherit}
 .deflectwhy.on{opacity:1}
 
 @media (max-width:820px){ .coach{display:none} }
+
+.bossbar{position:absolute;left:50%;top:78px;transform:translateX(-50%);width:min(520px,52vw);
+  text-align:center;animation:riseIn .45s both}
+.boss-name{display:flex;align-items:baseline;justify-content:center;gap:12px;margin-bottom:7px}
+.boss-name b{font-size:14px;letter-spacing:.3em;text-transform:uppercase;
+  text-shadow:0 0 22px rgba(255,120,60,.7)}
+.boss-name em{font:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--accent-warm);font-style:normal}
+.boss-track{height:5px;background:rgba(0,0,0,.6);border:1px solid rgba(255,140,70,.35);
+  border-radius:3px;overflow:hidden}
+.boss-track i{display:block;height:100%;width:100%;transform-origin:left;
+  background:linear-gradient(90deg,#ff7a3a,#ffca7a);box-shadow:0 0 16px rgba(255,140,70,.8);
+  transition:transform .18s cubic-bezier(.22,1,.36,1)}

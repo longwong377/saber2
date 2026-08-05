@@ -294,11 +294,16 @@ export class DuelBrain {
         const inRange = dist < F.spacing[1];
         const want = F.aggression * (playerRecovering ? 1 + F.punishRecovery : 1)
                    * (F.defensive && !playerCommitted ? 0.35 : 1);
-        if (inRange && this.timer <= 0 && rng() < clamp(want * dt * 5.5, 0, 1)) {
-          if (rng() < F.feint) this._beginFeint(sp);
-          else this._beginAttack(sp);
-        } else if (this.timer <= 0) {
-          this.timer = 0.14 + rng() * 0.3;
+        // The decision happens when the pause between attacks runs out — once,
+        // not every frame. Rolling per-frame made aggression depend on the
+        // player's framerate and left duellists idling for seconds at a time.
+        if (this.timer <= 0) {
+          if (inRange && rng() < clamp(want * 0.62, 0.1, 0.94)) {
+            if (rng() < F.feint) this._beginFeint(sp);
+            else this._beginAttack(sp);
+          } else {
+            this.timer = (0.2 + rng() * 0.45) / clamp(F.aggression, 0.45, 1.6);
+          }
         }
         break;
       }

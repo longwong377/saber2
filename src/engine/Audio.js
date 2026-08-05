@@ -106,6 +106,11 @@ export class AudioEngine {
 
   updateListener(camera) {
     if (!this.ready) return;
+    // The context gets suspended by the browser on tab-switch, on losing
+    // pointer lock, and on some autoplay heuristics. Nothing re-arms it on its
+    // own, so a silent watchdog does — cheaply, twice a second.
+    this._resumeCheck = (this._resumeCheck || 0) + 1;
+    if ((this._resumeCheck & 31) === 0 && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     const l = this.ctx.listener;
     camera.getWorldPosition(this._listenerPos);
     const q = camera.getWorldQuaternion(new THREE.Quaternion());
@@ -152,8 +157,18 @@ export class AudioEngine {
     this.voices++;
     return true;
   }
+  /**
+   * Retire a voice. Only ever tear down the per-voice panner — a non-positional
+   * sound is routed straight to the shared sfxBus, and disconnecting *that*
+   * unplugs the entire effects bus from the compressor, silencing the game for
+   * good after the first UI blip. This guard is the whole reason sound survives.
+   */
   _freeAt(node, t) {
-    setTimeout(() => { this.voices = Math.max(0, this.voices - 1); try { node.disconnect(); } catch {} }, t * 1000 + 60);
+    setTimeout(() => {
+      this.voices = Math.max(0, this.voices - 1);
+      if (!node || node === this.sfxBus || node === this.musicBus || node === this.master) return;
+      try { node.disconnect(); } catch {}
+    }, t * 1000 + 60);
   }
 
   /* ── primitives ────────────────────────────────────────────────────── */

@@ -21,6 +21,14 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Guard travel limits, in units of max deflection. At maxYaw = 1.62 rad,
+ * GX_MAX = 1 puts the guard at 93 deg off centre — the edge of what a pair of
+ * arms can hold in front of the chest. The old 1.35 reached 125 deg, behind
+ * the shoulder, where the only IK solution runs the arm through the ribs.
+ */
+const GX_MAX = 1.0, GY_MAX = 1.05, GY_MIN = 1.0;
 const YAXIS = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -47,14 +55,26 @@ export class SaberController {
     this.rollVel = 0;
 
     this.sensitivity = opts.sensitivity ?? 1;
-    this.followStrength = opts.followStrength ?? 0.75;
+    this.followStrength = opts.followStrength ?? 0;
     this.deadzone = 0.24;
-    this.scheme = opts.scheme ?? 'free';     // 'free' | 'hold'
+    this.scheme = opts.scheme ?? 'hold';     // 'hold' | 'free'
+
+    // Where the blade sits when you are not steering it: a high right guard.
+    // Releasing the mouse returns to this, rather than leaving the blade
+    // wherever the last flick abandoned it.
+    this.readyX = 0.30;
+    this.readyY = 0.30;
+    this.recentre = 5.5;     // rad/s of easing back to the ready guard
+    this.steering = 0;       // 1 while the player is actually driving the blade
 
     this.grip = 'two';
     this.gripBlend = 1;
 
-    // integrated blade state
+    // Integrated blade state. handLocal is the hand offset from the chest and
+    // is what actually gets integrated: a spring chasing a world-space target
+    // lags by v·kD/kP, which at a run is over half a metre — the blade trailed
+    // behind the body like a windsock any time you moved.
+    this.handLocal = new THREE.Vector3();
     this.handPos = new THREE.Vector3();
     this.handVel = new THREE.Vector3();
     this.quat = new THREE.Quaternion();
@@ -88,10 +108,11 @@ export class SaberController {
   }
 
   reset(chest, aimQuat) {
-    this.gx = 0.2; this.gy = 0.1; this.roll = 0;
+    this.gx = this.readyX; this.gy = this.readyY; this.roll = 0;
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.initialised = false;
     this.solveTargets(chest, aimQuat, 0);
+    this.handLocal.subVectors(this._handTarget, chest);
     this.handPos.copy(this._handTarget);
     this.quat.copy(this._targetQuat);
     this.initialised = true;
@@ -117,17 +138,22 @@ export class SaberController {
     const cam = { yaw: 0, pitch: 0 };
     if (this.locked) return cam;
 
+    // One control at a time. Hold the mouse button and the mouse IS the blade —
+    // the camera does not move. Let go and the mouse is the camera again, and
+    // the blade settles back to guard. Driving both at once, which is what the
+    // old blade-leads-camera scheme did, makes neither of them legible.
     const bladeMode = this.scheme === 'free' ? !input.buttons[2] : input.buttons[0];
     const s = this.sensitivity * 0.0021;
     const dx = input.mouse.dx, dy = input.mouse.dy;
 
     if (bladeMode) {
-      this.gx = clamp(this.gx + dx * s, -1.35, 1.35);
-      this.gy = clamp(this.gy - dy * s, -1.1, 1.15);
+      this.steering = 1;
+      this.gx = clamp(this.gx + dx * s, -GX_MAX, GX_MAX);
+      this.gy = clamp(this.gy - dy * s, -GY_MIN, GY_MAX);
 
-      // Camera follows the blade once it leaves the inner deadzone. The guard
-      // is pulled back by exactly the amount the camera turned, so the blade
-      // stays put in the world while the view swings to meet it.
+      // Optional, off by default: let the camera drift after a blade that has
+      // left the deadzone, pulling the guard back by the same amount so the
+      // blade stays put in the world while the view swings to meet it.
       const f = this.followStrength;
       if (f > 0.001) {
         const ox = Math.abs(this.gx) > this.deadzone ? (this.gx - Math.sign(this.gx) * this.deadzone) : 0;
@@ -141,13 +167,15 @@ export class SaberController {
         this.gy -= cp / this.maxPitch;
       }
     } else {
-      // camera-only: the blade holds its world-space pose
+      this.steering = 0;
+      // camera-only. The guard is body-relative, so it simply rides round with
+      // the shoulders — it must NOT be counter-rotated to stay world-fixed, or
+      // turning ninety degrees pins the blade against its own travel limit.
       cam.yaw = -dx * s * 1.15;
       cam.pitch = -dy * s * 1.15;
-      this.gx -= cam.yaw / this.maxYaw;
-      this.gy += cam.pitch / this.maxPitch;
-      this.gx = clamp(this.gx, -1.35, 1.35);
-      this.gy = clamp(this.gy, -1.1, 1.15);
+      const k = clamp(dt * this.recentre, 0, 1);
+      this.gx = lerp(this.gx, this.readyX, k);
+      this.gy = lerp(this.gy, this.readyY, k);
     }
 
     // wrist roll
@@ -228,6 +256,7 @@ export class SaberController {
   update(dt, chest, aimQuat, ctx = {}) {
     this.solveTargets(chest, aimQuat, dt);
     if (!this.initialised) {
+      this.handLocal.subVectors(this._handTarget, chest);
       this.handPos.copy(this._handTarget);
       this.quat.copy(this._targetQuat);
       this.initialised = true;
@@ -278,21 +307,24 @@ export class SaberController {
     this.quat.x += _q1.x; this.quat.y += _q1.y; this.quat.z += _q1.z; this.quat.w += _q1.w;
     this.quat.normalize();
 
-    // linear spring for the hands
-    _v3.subVectors(this._handTarget, this.handPos).multiplyScalar(g.lin * fatigue);
+    // Linear spring for the hands, solved in the chest's frame. handVel is
+    // therefore a velocity *relative to the body* — which is also exactly what
+    // the spine lean and the blade-lock push want to read.
+    _v5.subVectors(this._handTarget, chest);
+    _v3.subVectors(_v5, this.handLocal).multiplyScalar(g.lin * fatigue);
     _v3.addScaledVector(this.handVel, -g.linD);
     _v3.add(this.impulseLin);
     this.impulseLin.multiplyScalar(Math.max(0, 1 - dt * 12));
     this.handVel.addScaledVector(_v3, dt);
     if (this.handVel.lengthSq() > 900) this.handVel.setLength(30);
-    this.handPos.addScaledVector(this.handVel, dt);
+    this.handLocal.addScaledVector(this.handVel, dt);
 
     // keep the hands within reach of the chest no matter what hit them
-    _v4.subVectors(this.handPos, chest);
     const maxReach = 0.86, minReach = 0.16;
-    const rl = _v4.length();
-    if (rl > maxReach) { _v4.setLength(maxReach); this.handPos.copy(chest).add(_v4); this.handVel.multiplyScalar(0.5); }
-    else if (rl < minReach) { _v4.setLength(minReach); this.handPos.copy(chest).add(_v4); }
+    const rl = this.handLocal.length();
+    if (rl > maxReach) { this.handLocal.setLength(maxReach); this.handVel.multiplyScalar(0.5); }
+    else if (rl < minReach) this.handLocal.setLength(minReach);
+    this.handPos.copy(chest).add(this.handLocal);
   }
 
   /** External impulse on the blade — a parry, a bind, a bolt landing on it. */
@@ -306,8 +338,8 @@ export class SaberController {
 
   /** Shove the guard point itself — used when a blade is physically blocked. */
   displaceGuard(dx, dy) {
-    this.gx = clamp(this.gx + dx, -1.35, 1.35);
-    this.gy = clamp(this.gy + dy, -1.1, 1.15);
+    this.gx = clamp(this.gx + dx, -GX_MAX, GX_MAX);
+    this.gy = clamp(this.gy + dy, -GY_MIN, GY_MAX);
   }
 
   /**
@@ -333,8 +365,8 @@ export class SaberController {
     _v3.copy(best.dir).applyQuaternion(_q1.copy(aimQuat).invert());
     const yaw = Math.atan2(_v3.x, -_v3.z);
     const pitch = Math.asin(clamp(_v3.y, -1, 1));
-    const tx = clamp(yaw / this.maxYaw, -1.2, 1.2);
-    const ty = clamp(pitch / this.maxPitch, -1.05, 1.05);
+    const tx = clamp(yaw / this.maxYaw, -GX_MAX, GX_MAX);
+    const ty = clamp(pitch / this.maxPitch, -GY_MIN, GY_MAX);
     const k = this.assist * best.urgency * clamp(dt * 5.5, 0, 0.4);
     this.gx = lerp(this.gx, tx, k);
     this.gy = lerp(this.gy, ty, k);

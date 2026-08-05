@@ -12,6 +12,7 @@ import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { Rig, BipedAnimator } from './Rig.js';
+import { attachCloak } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres } from '../physics/Physics.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
@@ -140,6 +141,7 @@ export class Player {
     world.scene.add(this.rig.root);
     this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
+    this._makeCloak();
 
     // ── saber
     this.saber = new Saber(world.scene, {
@@ -150,8 +152,8 @@ export class Player {
     });
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
-      followStrength: opts.followStrength ?? 0.75,
-      scheme: opts.scheme ?? 'free',
+      followStrength: opts.followStrength ?? 0,
+      scheme: opts.scheme ?? 'hold',
     });
     this.hum = audio.createHum(this.saber.color.getHex());
 
@@ -231,6 +233,17 @@ export class Player {
     this._lastSwingSound = 0;
     this.hitFlash = 0;
     this.events = [];
+  }
+
+  _makeCloak() {
+    this.cloak?.dispose();
+    const mat = this.palette.outer.clone();
+    mat.side = THREE.DoubleSide;
+    this.cloak = attachCloak(this.world.scene, this.rig, {
+      // narrow at the collar, flared at the hem, and stopping above the knee so
+      // the legs still read — a floor-length sack hides the whole silhouette.
+      material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0,
+    });
   }
 
   /* ── convenience ─────────────────────────────────────────────────── */
@@ -518,6 +531,7 @@ export class Player {
 
   _land(ctx, impactSpeed) {
     const power = clamp(impactSpeed / 18, 0.2, 1.6);
+    this.cloak?.impulse(_v5.set(0, 1, 0), power * 2.2);
     this.camera.addShake(power * 0.5);
     audio.thud(this.position, power);
     if (ctx.particles) {
@@ -621,25 +635,29 @@ export class Player {
       this._updateThrow(dt, ctx);
     }
 
-    this.saber.update(dt, ctx.time);
-    this.hum.set(this.saber.tipSpeed, this.saber.contactStrain);
+    this.saber.update(dt, ctx.time, this.velocity);
+    const swing = this.saber.swingSpeed;
+    this.hum.set(swing, this.saber.contactStrain);
     this.hum.move(this.saber.pointAt(0.5, _v1));
 
     // swing whoosh when the blade crosses a speed threshold
     const now = ctx.time;
-    if (this.saber.tipSpeed > 11 && now - this._lastSwingSound > 0.19) {
+    if (swing > 11 && now - this._lastSwingSound > 0.19) {
       this._lastSwingSound = now;
-      audio.swing(this.saber.tipSpeed, this.saber.pointAt(0.7, _v1));
-      this.world.report?.({ type: 'swing', speed: this.saber.tipSpeed });
-      this.stamina = Math.max(0, this.stamina - clamp(this.saber.tipSpeed * 0.055, 0, 2.4) * (this.difficulty?.staminaDrain ?? 1));
+      audio.swing(swing, this.saber.pointAt(0.7, _v1));
+      this.world.report?.({ type: 'swing', speed: swing });
+      this.stamina = Math.max(0, this.stamina - clamp(swing * 0.055, 0, 2.4) * (this.difficulty?.staminaDrain ?? 1));
     }
 
-    // heat haze off the blade
-    if (this.saber.ignition > 0.5 && this.world.settings.bloom) {
+    // Heat haze off the blade — but ONLY while it is genuinely moving. Emitting
+    // this at rest parked a permanent refractive smear over screen centre,
+    // where a third-person blade lives, and read as condensation on the lens.
+    if (this.saber.ignition > 0.5 && this.world.settings.bloom && swing > 9) {
       _v1.copy(this.saber.pointAt(0.5, _v2)).project(ctx.camera);
       if (_v1.z < 1) {
+        const heat = clamp((swing - 9) / 22, 0, 1);
         this.world.engine.addHeat((_v1.x * 0.5 + 0.5), (_v1.y * 0.5 + 0.5),
-          0.14 + this.saber.tipSpeed * 0.002, clamp(0.4 + this.saber.tipSpeed * 0.03, 0.4, 1.4));
+          0.07 + heat * 0.05, heat * 0.42);
       }
     }
   }
@@ -674,10 +692,19 @@ export class Player {
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
 
-      const poleR = _v6.copy(chest).addScaledVector(right, 0.75).addScaledVector(UP, -0.75).addScaledVector(fwd, -0.2);
+      // Elbow poles track which side of the body the hands are actually on. A
+      // pole pinned to the right of the chest folds the right elbow straight
+      // through the ribs the moment the guard crosses to the left — which is
+      // most of what read as the body overlapping itself.
+      const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62, 0.62);
+      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1, 0.42);
+
+      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 + side)
+        .addScaledVector(UP, -0.75 + lift).addScaledVector(fwd, -0.2);
       rig.solveIK('armR', 'foreR', gripR, poleR);
       if (twoHanded) {
-        const poleL = _v6.copy(chest).addScaledVector(right, -0.62).addScaledVector(UP, -0.8).addScaledVector(fwd, -0.2);
+        const poleL = _v6.copy(chest).addScaledVector(right, -0.62 + side)
+          .addScaledVector(UP, -0.8 + lift).addScaledVector(fwd, -0.2);
         rig.solveIK('armL', 'foreL', gripL, poleL);
       } else {
         const rest = _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
@@ -712,16 +739,32 @@ export class Player {
       spine.obj.quaternion.copy(spine.restQuat)
         .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
     }
-    // head looks where the blade is going
+    // Head: a limited glance toward the aim, layered on the rest pose. The head
+    // bone's +Y runs up through the skull and its face is +Z, so the old code —
+    // which aimed +Y at the blade tip — laid the head over sideways every time
+    // the blade moved. It read as a snapped neck, not a look.
     const head = rig.get('head');
-    if (head) {
-      _v1.copy(this.saber.tip).sub(rig.worldPos('neck', _v2));
-      if (_v1.lengthSq() > 0.01) {
-        _v1.normalize().lerp(_v3.copy(this.aimDir), 0.55).normalize();
-        rig.aimBoneWorld('head', _v1.lerp(UP, 0.5).normalize(), null);
-      }
+    if (head && head.obj.parent) {
+      head.obj.parent.getWorldQuaternion(_q1);
+      _q1.multiply(head.restQuat);                      // rest orientation, in world
+      _v1.copy(this.aimDir).applyQuaternion(_q1.invert());
+      const yaw = clamp(Math.atan2(_v1.x, _v1.z), -0.85, 0.85);
+      const pitch = clamp(Math.asin(clamp(_v1.y, -1, 1)), -0.5, 0.42);
+      this._headYaw = damp(this._headYaw ?? 0, yaw, 11, dt);
+      this._headPitch = damp(this._headPitch ?? 0, pitch, 11, dt);
+      head.obj.quaternion.copy(head.restQuat)
+        .multiply(_q2.setFromEuler(new THREE.Euler(-this._headPitch, this._headYaw, 0, 'YXZ')));
     }
     rig.updateMatrices();
+
+    // the cloak hangs off the finished pose, and feels the wind and the run
+    if (this.cloak) {
+      _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
+      _v1.x += Math.sin(ctx.time * 0.7) * 1.1;
+      _v1.z += Math.cos(ctx.time * 0.53) * 1.1;
+      this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
+      this.cloak.setVisible(!this.camera.firstPerson);
+    }
   }
 
   _updateCamera(dt, ctx) {
@@ -759,6 +802,7 @@ export class Player {
     this.cooldowns.push = 0.55;
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
+    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
 
     const origin = this.chest;
     const dir = this.aimDir;
@@ -1046,6 +1090,7 @@ export class Player {
     if (this.senseActive) this.toggleSense(this.world);
     this.saber.retract();
     this.hum.retract();
+    this.cloak?.dispose(); this.cloak = null;
     this.world.onPlayerDeath?.(this, source);
     audio.ui('bad');
     // collapse
@@ -1080,6 +1125,7 @@ export class Player {
     this.world.scene.add(this.rig.root);
     this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, s) => this._footstep(p, s);
+    this._makeCloak();
     this._applyViewMode();
     this.saber.ignite();
     this.hum.ignite();
@@ -1094,6 +1140,7 @@ export class Player {
 
   dispose() {
     this.hum.dispose();
+    this.cloak?.dispose();
     this.saber.dispose();
     if (this.actor) this.actor.dispose();
     else { this.world.scene.remove(this.rig.root); this.rig.dispose(); }

@@ -48,6 +48,10 @@ export class HUD {
       lock: root.getElementById('lockmeter'),
       lockFill: root.getElementById('lock-fill'),
       why: root.getElementById('deflect-why'),
+      boss: root.getElementById('bossbar'),
+      bossLabel: root.getElementById('boss-label'),
+      bossPhase: root.getElementById('boss-phase'),
+      bossFill: root.getElementById('boss-fill'),
       boons: root.getElementById('boon-strip'),
       powers: root.getElementById('power-wheel'),
       reticle: root.getElementById('reticle'),
@@ -111,12 +115,18 @@ export class HUD {
     } else el.combo.classList.remove('on');
     el.score.textContent = Math.floor(world.score + player.score).toLocaleString();
 
-    // ── wave
+    // ── wave, or lesson if we are in the dojo
     el.wave.textContent = world.director.wave;
-    const remaining = world.director.remaining;
-    el.remaining.textContent = world.director.active
-      ? `${remaining} remaining`
-      : (world.director.intermission > 900 ? 'attune' : `next wave in ${Math.ceil(world.director.intermission)}`);
+    if (world.training) {
+      el.wave.previousSibling && (el.wave.parentElement.firstChild.textContent = 'LESSON ');
+      const st = world.director.state();
+      el.remaining.textContent = st.need === Infinity ? 'free practice' : `${st.progress} of ${st.need}`;
+    } else {
+      const remaining = world.director.remaining;
+      el.remaining.textContent = world.director.active
+        ? `${remaining} remaining`
+        : (world.director.intermission > 900 ? 'attune' : `next wave in ${Math.ceil(world.director.intermission)}`);
+    }
 
     // ── powers
     this._power('push', player.cooldowns.push / 0.55, player.force >= 20);
@@ -139,6 +149,19 @@ export class HUD {
       el.cursor.style.opacity = (0.25 + heat * 0.75).toFixed(2);
       el.cursor.firstElementChild.style.transform = `scale(${(0.7 + heat * 0.75).toFixed(2)})`;
     }
+
+    // ── boss bar: whichever boss is alive and nearest
+    let boss = null;
+    for (const e of world.enemies) {
+      if (e.dead || !e.A.boss && !e.A.big) continue;
+      if (!boss || e.position.distanceToSquared(player.position) < boss.position.distanceToSquared(player.position)) boss = e;
+    }
+    if (boss) {
+      el.boss.classList.remove('hidden');
+      el.bossLabel.textContent = boss.A.label;
+      el.bossPhase.textContent = boss.bossPhase ? `PHASE ${boss.bossPhase}` : '';
+      el.bossFill.style.transform = `scaleX(${clamp(boss.hp / boss.maxHp, 0, 1)})`;
+    } else el.boss.classList.add('hidden');
 
     // ── blade lock: a bar that runs out from the centre either way
     const lock = player.lockState;

@@ -14,6 +14,7 @@ import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalke
 import { Saber } from './Saber.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
 import { buildRemote } from './Dojo.js';
+import { attachCloak } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres } from '../physics/Physics.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -140,6 +141,9 @@ export class Enemy {
     this.aimCharge = 0;
     this.state = 'approach';
     this.stateTime = 0;
+    this.bossPhase = 1;
+    this.recentDamage = 0;
+    this.windTimer = 0;
     this.strafeDir = rng() < 0.5 ? 1 : -1;
     this.strafeTimer = rng() * 2;
     this.target = null;
@@ -221,6 +225,10 @@ export class Enemy {
       this.formName = this.duel.describe();
       this.saberHand = new THREE.Vector3();
       this.saberQuat = new THREE.Quaternion();
+      this.cloak = attachCloak(this.world.scene, this.rig, {
+        scale: A.scale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
+        color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
+      });
     }
     if (A.shield) {
       this.shieldUp = false;
@@ -309,6 +317,7 @@ export class Enemy {
       return false;
     }
     this.hp -= amount;
+    if (this.A.boss) this.recentDamage = (this.recentDamage || 0) + amount;
     if (this.hp <= 0) { this.die(point, source, kind); return true; }
     if (amount > this.maxHp * 0.22) this.stun(0.28);
     return false;
@@ -431,6 +440,7 @@ export class Enemy {
 
     if (this.hum) this.hum.retract();
     if (this.telegraphArc) this.telegraphArc.hide();
+    if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.saber) {
       // the blade falls with them, then goes out
       this.saber.retract();
@@ -463,7 +473,7 @@ export class Enemy {
       if (this.saber && this.actor?.ragdolled) {
         const hand = this.actor.bodies.get('handR') || this.actor.bodies.get('foreR');
         if (hand) this.saber.setHiltPose(hand.position, hand.quaternion);
-        this.saber.update(dt, ctx.time);
+        this.saber.update(dt, ctx.time, this.velocity);
       }
       return this.dying < 40;
     }
@@ -703,30 +713,91 @@ export class Enemy {
     }
   }
 
+  /**
+   * A boss should not be one move repeated. The acklay works through three
+   * phases as it loses health — stalking, then sweeping, then enraged — and
+   * every heavy attack leaves it winded, which is the window to take a leg.
+   * Three legs and it goes down, physically, because it has three legs left.
+   */
   _beastBrain(dt, ctx, dist) {
-    this.attackTimer -= dt;
-    if (dist < this.A.preferred[1] + 2 && this.attackTimer <= 0) {
-      this.attackTimer = 2.1 + rng() * 1.4;
-      this.state = 'lunge';
-      this.stateTime = 0;
-      this.lungeDir = this.toTarget.clone();
-      audio.explosion(this.position, 0.5);
+    const A = this.A;
+    const hpFrac = clamp(this.hp / this.maxHp, 0, 1);
+    const phase = hpFrac > 0.66 ? 1 : hpFrac > 0.33 ? 2 : 3;
+    if (phase !== this.bossPhase) {
+      this.bossPhase = phase;
+      this.speed = A.speed * (1 + (phase - 1) * 0.22);
+      if (phase > 1) {
+        this.world.notify?.(`${A.label.toUpperCase()} — PHASE ${phase}`, phase === 3 ? 'it has stopped being careful' : 'it is angry now');
+        audio.explosion(this.position, 1.2);
+        this.stun(0.6);
+        this.world.particles?.sandPuff(this.position.clone(), 3.2,
+          this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+        this.world.engine?.flash(0.1);
+      }
     }
+
+    // being hurt fast enough winds it — the only safe time to go for a leg
+    this.windTimer = Math.max(0, (this.windTimer || 0) - dt);
+    this.recentDamage = Math.max(0, (this.recentDamage || 0) - dt * this.maxHp * 0.12);
+    if (this.recentDamage > this.maxHp * 0.14 && this.windTimer <= 0 && this.state !== 'winded') {
+      this.recentDamage = 0;
+      this.state = 'winded';
+      this.stateTime = 0;
+      this.windTimer = 7;
+      this.world.notifyFloating?.(this.aimPoint(_v1), 'WINDED', '#ffd88a');
+      audio.explosion(this.position, 0.7);
+    }
+    if (this.state === 'winded') {
+      this.wish = null;
+      if (this.stateTime > 2.4) { this.state = 'approach'; }
+      return;
+    }
+
+    this.attackTimer -= dt;
+    if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
+      const roll = rng();
+      const canSweep = phase >= 2;
+      const canCharge = phase >= 3;
+      this.state = canCharge && roll < 0.34 ? 'charge'
+                 : canSweep && roll < 0.66 ? 'sweep'
+                 : 'lunge';
+      this.attackTimer = lerp(2.4, 1.15, (phase - 1) / 2) + rng() * 1.1;
+      this.stateTime = 0;
+      this._swiped = false;
+      this.lungeDir = this.toTarget.clone();
+      audio.explosion(this.position, this.state === 'charge' ? 0.9 : 0.5);
+      if (this.state === 'charge') this.world.notifyFloating?.(this.aimPoint(_v1), 'CHARGE', '#ff6a52');
+    }
+
+    const hitTarget = (radius, dmg, lift) => {
+      if (this._swiped) return;
+      this._swiped = true;
+      const t = this.target;
+      if (t && t.position.distanceTo(this.position) < radius) {
+        _v1.subVectors(t.position, this.position).setY(lift).normalize().multiplyScalar(16);
+        t.damage?.(dmg, this.position, this);
+        t.velocity?.add(_v1);
+        t.camera?.addShake(0.7);
+      }
+      this.world.particles?.sandPuff(this.position.clone().addScaledVector(this.toTarget, 3), 2.4,
+        this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+    };
+
     if (this.state === 'lunge') {
-      if (this.stateTime < 0.5) {
-        this.velocity.addScaledVector(this.lungeDir, 42 * dt);
-      } else if (this.stateTime < 0.85) {
-        if (!this._swiped) {
-          this._swiped = true;
-          const t = this.target;
-          if (t && t.position.distanceTo(this.position) < 5.4 * this.A.scale * 0.6) {
-            _v1.subVectors(t.position, this.position).setY(0.5).normalize().multiplyScalar(16);
-            t.damage?.(this.damage, this.position, this);
-            t.velocity?.add(_v1);
-          }
-          this.world.particles?.sandPuff(this.position.clone().addScaledVector(this.toTarget, 3), 2.2,
-            this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
-        }
+      if (this.stateTime < 0.5) this.velocity.addScaledVector(this.lungeDir, 42 * dt);
+      else if (this.stateTime < 0.85) hitTarget(5.4 * A.scale * 0.6, this.damage, 0.5);
+      else { this.state = 'approach'; this._swiped = false; }
+    } else if (this.state === 'sweep') {
+      // a wide claw arc — step aside rather than back
+      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(6.6 * A.scale * 0.6, this.damage * 0.85, 0.9);
+      else if (this.stateTime >= 1.15) { this.state = 'approach'; this._swiped = false; }
+    } else if (this.state === 'charge') {
+      if (this.stateTime < 0.65) this.wish = null;                    // the wind-up
+      else if (this.stateTime < 1.9) {
+        this.velocity.addScaledVector(this.lungeDir, 30 * dt);
+        hitTarget(4.6 * A.scale * 0.6, this.damage * 1.3, 0.8);
+        if (rng() < 0.4) this.world.particles?.sandPuff(this.position.clone(), 1.4,
+          this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
       } else { this.state = 'approach'; this._swiped = false; }
     }
   }
@@ -923,8 +994,8 @@ export class Enemy {
     this.saberQuat.slerp(_q2, clamp(dt * (fast ? 26 : 10), 0, 1));
 
     this.saber.setHiltPose(this.saberHand, this.saberQuat);
-    this.saber.update(dt, ctx.time);
-    if (this.hum) { this.hum.set(this.saber.tipSpeed, this.saber.contactStrain); this.hum.move(this.saber.pointAt(0.5, _v3)); }
+    this.saber.update(dt, ctx.time, this.velocity);
+    if (this.hum) { this.hum.set(this.saber.swingSpeed, this.saber.contactStrain); this.hum.move(this.saber.pointAt(0.5, _v3)); }
 
     // arms follow the hilt, exactly like the player's do
     const poleR = _v3.copy(chest).addScaledVector(right, 0.8 * S).addScaledVector(UP, -0.75 * S);
@@ -932,6 +1003,16 @@ export class Enemy {
     const poleL = _v3.copy(chest).addScaledVector(right, -0.7 * S).addScaledVector(UP, -0.8 * S);
     rig.solveIK('armL', 'foreL', _v2.copy(this.saberHand).addScaledVector(right, -0.06 * S).addScaledVector(UP, -0.06 * S), poleL);
     rig.updateMatrices();
+
+    // close duellists get simulated robes; distant ones do not need them
+    if (this.cloak) {
+      if (this.lod > 1) { this.cloak.setVisible(false); }
+      else {
+        this.cloak.setVisible(true);
+        _v3.copy(this.velocity).multiplyScalar(-0.8).setY(0);
+        this.cloak.update(dt, this.cloak.refreshColliders(), _v3);
+      }
+    }
   }
 
   _poseWalker(dt, ctx) {
@@ -1019,6 +1100,7 @@ export class Enemy {
   dispose() {
     if (this.saber) this.saber.dispose();
     if (this.hum) this.hum.dispose();
+    if (this.cloak) this.cloak.dispose();
     if (this.telegraphArc) this.telegraphArc.dispose();
     if (this.laser) { this.world.scene.remove(this.laser); this.laser.geometry.dispose(); this.laser.material.dispose(); }
     if (this.actor) this.actor.dispose();

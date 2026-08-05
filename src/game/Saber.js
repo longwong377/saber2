@@ -12,6 +12,7 @@ import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 
 const rng = makeRng(88);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 export const SABER_COLORS = [
@@ -107,6 +108,7 @@ export class Saber {
     this.tipVelocity = new THREE.Vector3();
     this.baseVelocity = new THREE.Vector3();
     this.tipSpeed = 0;
+    this.swingSpeed = 0;
     this.sweepNormal = new THREE.Vector3(1, 0, 0);
     this.sweepArea = 0;
     this.valid = false;
@@ -314,7 +316,7 @@ export class Saber {
     return this.speedAt(t);
   }
 
-  update(dt, time) {
+  update(dt, time, carrierVel = null) {
     const target = this.lit ? 1 : 0;
     const rate = this.lit ? 6.5 : 8.5;
     this.ignition += (target - this.ignition) * Math.min(1, dt * rate);
@@ -343,6 +345,14 @@ export class Saber {
     }
     this.valid = true;
     this.tipSpeed = this.tipVelocity.length();
+
+    // Swing speed is measured against the body that carries the blade, not the
+    // world. Sprinting moves the tip at 7 m/s while the wrist is perfectly
+    // still — read as world speed that is a swing, and the game whooshes,
+    // burns stamina and blurs the screen just because you are walking.
+    if (carrierVel) {
+      this.swingSpeed = _v4.subVectors(this.tipVelocity, carrierVel).length();
+    } else this.swingSpeed = this.tipSpeed;
 
     // plane the blade swept this frame — this is the cut plane
     _v1.subVectors(this.tip, this.base);

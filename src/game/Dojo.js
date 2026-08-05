@@ -24,7 +24,11 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
 
 /* ── the training remote ─────────────────────────────────────────────── */
 
-export function buildRemote(scale = 1) {
+export function buildRemote(opts = {}) {
+  // Every other body builder takes an options object and Enemy calls them all
+  // the same way — taking a bare number here meant the remote was built at a
+  // scale of `{scale:1}`, i.e. NaN, all the way through to the audio panner.
+  const scale = typeof opts === 'number' ? opts : (opts.scale ?? 1);
   const g = new THREE.Group();
   const shell = new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.85, roughness: 0.3 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1a1d23, metalness: 0.5, roughness: 0.6 });
@@ -330,7 +334,7 @@ export function dressDojo(world) {
   // ceiling ring and lights
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * TAU + Math.PI / 8;
-    const lamp = new THREE.PointLight(0xffdcb0, 16, 26, 2);
+    const lamp = new THREE.PointLight(0xffdcb0, 52, 40, 2);
     lamp.position.set(Math.cos(a) * (R - 5), H - 1.4, Math.sin(a) * (R - 5));
     world.scene.add(lamp);
     world.levelLights.push(lamp);
@@ -341,7 +345,7 @@ export function dressDojo(world) {
     world.statics.push(fixture);
   }
   // a cool skylight so the room has a direction
-  const sky = new THREE.PointLight(0xbcd8ff, 22, 40, 2);
+  const sky = new THREE.PointLight(0xbcd8ff, 90, 60, 2);
   sky.position.set(0, H + 2, 0);
   world.scene.add(sky);
   world.levelLights.push(sky);
@@ -373,11 +377,11 @@ export const DOJO_LEVEL = {
   spawnRadius: [5, 8],
   training: true,
   atmosphere: {
-    sky: false, bgColor: 0x070a10, fog: true, fogColor: 0x0d131c, fogDensity: 0.014,
-    sunColor: 0xcfe0ff, sunIntensity: 1.4, ambient: 0.75,
+    sky: false, bgColor: 0x0c1119, fog: true, fogColor: 0x161d28, fogDensity: 0.009,
+    sunColor: 0xcfe0ff, sunIntensity: 2.2, ambient: 1.9,
     skyColor: 0x6e88b8, groundColor: 0x2a2e36, elevation: 70, azimuth: 30,
     fillColor: 0xffb070, fillIntensity: 0.5,
-    exposure: 1.05, bloom: 0.62, saturation: 1.0,
+    exposure: 1.25, bloom: 0.55, saturation: 1.0,
     lift: [0.006, 0.008, 0.013], gain: [0.99, 1.0, 1.05],
   },
   ambience: { wind: 0.02, windFreq: 150, drone: 0.13 },

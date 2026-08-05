@@ -22,13 +22,26 @@ import { Saber } from '../src/game/Saber.js';
 import { SaberController } from '../src/game/SaberController.js';
 import { WaveDirector, BOONS, drawBoons } from '../src/game/Waves.js';
 import { Terrain } from '../src/world/Terrain.js';
+import { DuelBrain, Telegraph, BladeLock, FORMS, FORM_KEYS, TIER } from '../src/game/Duel.js';
+import { Cloak, attachCloak } from '../src/game/Cloth.js';
+import { DojoDirector, LESSONS, buildRemote } from '../src/game/Dojo.js';
 import { clamp } from '../src/engine/MathUtil.js';
 
 let pass = 0, fail = 0;
 const results = [];
+const pending = [];
 function check(name, fn) {
   try {
     const detail = fn();
+    // a check may be async; keep its slot in order and settle it before printing
+    if (detail && typeof detail.then === 'function') {
+      const slot = ['✓', name, ''];
+      results.push(slot);
+      pending.push(detail.then(
+        (d) => { pass++; slot[2] = d === undefined ? '' : String(d); },
+        (e) => { fail++; slot[0] = '✗'; slot[2] = e.message; }));
+      return;
+    }
     pass++;
     results.push(['✓', name, detail === undefined ? '' : String(detail)]);
   } catch (e) {
@@ -60,6 +73,7 @@ function sweepBlade(saber, fromPos, fromQuat, toPos, toQuat, dt = 1 / 60) {
 const scene = new THREE.Scene();
 const Q = (x, y, z) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const lerpN = (a, b, i, n) => (n <= 1 ? (a + b) / 2 : a + (b - a) * (i / (n - 1)));
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Physics                                                               */
@@ -528,24 +542,82 @@ check('control: the hands never leave arm\'s reach', () => {
   return `max reach ${maxReach.toFixed(3)}m`;
 });
 
-check('control: the camera follow returns the guard toward centre', () => {
-  const c = new SaberController({ sensitivity: 1, followStrength: 1.0 });
+const mkInput = () => ({
+  mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 },
+  buttons: [false, false, false], buttonPressed: [false, false, false],
+  down: () => false, padButtons: null, padDown: () => false,
+});
+
+check('control: Free Blade still drags the camera after the guard', () => {
+  const c = new SaberController({ sensitivity: 1, followStrength: 1.0, scheme: 'free' });
   const chest = V(0, 1.35, 0);
   c.reset(chest, new THREE.Quaternion());
   c.gx = 1.0;
-  const input = {
-    mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 },
-    buttons: [false, false, false], buttonPressed: [false, false, false],
-    down: () => false, padButtons: null, padDown: () => false,
-  };
+  const input = mkInput();
   let camYaw = 0;
-  for (let i = 0; i < 40; i++) {
-    const d = c.applyInput(input, 1 / 60, { stamina: 1 });
-    camYaw += d.yaw;
-  }
+  for (let i = 0; i < 40; i++) camYaw += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw;
   assert(c.gx < 0.55, `the guard stayed out at ${c.gx.toFixed(3)}`);
   assert(camYaw < -0.2, `the camera did not turn toward the blade (${camYaw.toFixed(3)} rad)`);
   return `guard 1.00 → ${c.gx.toFixed(2)}, camera turned ${(camYaw * 57.3).toFixed(0)}°`;
+});
+
+check('control: the mouse moves the blade ONLY while the button is held', () => {
+  const c = new SaberController({ sensitivity: 1 });      // shipped defaults
+  assert(c.scheme === 'hold', `default scheme is "${c.scheme}", not hold-to-blade`);
+  const chest = V(0, 1.35, 0);
+  c.reset(chest, new THREE.Quaternion());
+  const input = mkInput();
+
+  // button up: the mouse is the camera, and the blade must not follow it
+  const gx0 = c.gx;
+  let camYaw = 0;
+  for (let i = 0; i < 30; i++) {
+    input.mouse.dx = 40;
+    camYaw += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw;
+  }
+  assert(Math.abs(c.gx - gx0) < 0.02, `the blade drifted ${(c.gx - gx0).toFixed(3)} with the button up`);
+  assert(Math.abs(camYaw) > 0.5, `the camera barely turned (${camYaw.toFixed(2)} rad) with the button up`);
+
+  // button down: the mouse is the blade, and the camera must hold still
+  input.buttons[0] = true;
+  let camYaw2 = 0;
+  for (let i = 0; i < 30; i++) {
+    input.mouse.dx = 40;
+    camYaw2 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw;
+  }
+  assert(c.gx > gx0 + 0.3, `the blade did not move with the button held (${c.gx.toFixed(3)})`);
+  assert(Math.abs(camYaw2) < 1e-6, `the camera moved ${camYaw2.toFixed(4)} rad while steering the blade`);
+  return `up: camera ${(camYaw * 57.3).toFixed(0)}° / blade still; down: blade → ${c.gx.toFixed(2)} / camera still`;
+});
+
+check('control: letting go returns the blade to a ready guard', () => {
+  const c = new SaberController({ sensitivity: 1 });
+  const chest = V(0, 1.35, 0);
+  c.reset(chest, new THREE.Quaternion());
+  const input = mkInput();
+  c.gx = -0.95; c.gy = -0.9;                      // abandoned low-left
+  for (let i = 0; i < 90; i++) c.applyInput(input, 1 / 60, { stamina: 1 });
+  const off = Math.hypot(c.gx - c.readyX, c.gy - c.readyY);
+  assert(off < 0.05, `the guard settled ${off.toFixed(3)} away from ready`);
+  return `low-left → ready in 1.5s (${off.toFixed(4)} off)`;
+});
+
+check('control: walking does not drag the blade around behind you', () => {
+  const c = new SaberController({ sensitivity: 1 });
+  const aim = new THREE.Quaternion();
+  const chest = V(0, 1.35, 0);
+  c.reset(chest, aim);
+  // sprint 4m in a straight line, hands untouched, and measure the blade's
+  // offset from the body — it must stay exactly where a still player holds it.
+  const restOffset = c.handPos.clone().sub(chest);
+  let worstDrift = 0;
+  for (let i = 0; i < 240; i++) {
+    chest.x += 7.4 / 60;                          // a hard sprint
+    c.update(1 / 60, chest, aim, {});
+    worstDrift = Math.max(worstDrift, c.handPos.clone().sub(chest).distanceTo(restOffset));
+  }
+  assert(worstDrift < 0.01, `the blade lagged ${(worstDrift * 100).toFixed(1)}cm behind a sprinting body`);
+  return `4m sprint, blade drifted ${(worstDrift * 1000).toFixed(2)}mm from the body`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -651,6 +723,321 @@ check('bodies: a limb rebuilt at 40% is 40% as long', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  V2 — duelling                                                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** Just enough enemy for a duel brain to run against. */
+function stubDuellist(formKey) {
+  const saber = makeBlade(scene);
+  const e = {
+    position: V(0, 0, 0), facing: 0, lod: 0, saberPhase: 'guard', saberTimer: 0,
+    A: { scale: 1 }, saber, world: { difficulty: DIFFICULTY.knight },
+    target: null, aimPoint: (o) => o.set(0, 1.4, 0),
+  };
+  e.duel = new DuelBrain(e, { form: formKey });
+  return e;
+}
+
+check('duel: every form only names moves that exist, with a valid tier', () => {
+  let count = 0;
+  for (const key of FORM_KEYS) {
+    const f = FORMS[key];
+    assert(f.moves.length, `${key} has no moves`);
+    const e = stubDuellist(key);
+    // drive it long enough to have drawn every move at least once
+    const seen = new Set();
+    for (let i = 0; i < 6000; i++) {
+      e.duel.update(1 / 120, {}, 2.0);
+      if (e.duel.attack) { seen.add(e.duel.attackKey); assert(TIER[e.duel.attack.tier], `${key}: bad tier`); }
+    }
+    for (const m of f.moves) assert(seen.has(m), `${key} never used ${m}`);
+    count += seen.size;
+  }
+  return `${FORM_KEYS.length} forms, ${count} move slots exercised`;
+});
+
+check('duel: attack rate does not depend on the framerate', () => {
+  const count = (dt) => {
+    const e = stubDuellist('makashi');
+    let attacks = 0, last = 'guard';
+    for (let t = 0; t < 30; t += dt) {
+      e.duel.update(dt, {}, 2.0);
+      if (e.duel.phase === 'windup' && last !== 'windup') attacks++;
+      last = e.duel.phase;
+    }
+    return attacks;
+  };
+  const at60 = count(1 / 60), at240 = count(1 / 240);
+  assert(at60 > 8, `only ${at60} attacks in 30s at 60fps — duellists are idling`);
+  const ratio = Math.max(at60, at240) / Math.max(1, Math.min(at60, at240));
+  assert(ratio < 1.6, `attack rate changed ${ratio.toFixed(2)}× between 60 and 240 fps`);
+  return `${at60} attacks @60fps, ${at240} @240fps in 30s`;
+});
+
+check('duel: the brain cycles guard → windup → strike → recover', () => {
+  const e = stubDuellist('djemSo');
+  const seen = [];
+  for (let i = 0; i < 3000; i++) {
+    const before = e.duel.phase;
+    e.duel.update(1 / 120, {}, 2.0);
+    if (e.duel.phase !== before) seen.push(e.duel.phase);
+    if (seen.length > 12) break;
+  }
+  const order = seen.join(' ');
+  assert(/windup strike recover/.test(order), `never completed a strike: ${order}`);
+  assert(seen.every(p => ['guard', 'feint', 'windup', 'strike', 'recover'].includes(p)), `unknown phase in ${order}`);
+  return order.slice(0, 46);
+});
+
+check('duel: the chamber window opens only in the tail of a wind-up', () => {
+  const e = stubDuellist('djemSo');
+  let sawWindup = false, openedEarly = false, openedLate = false;
+  for (let i = 0; i < 4000; i++) {
+    e.duel.update(1 / 120, {}, 2.0);
+    if (e.duel.phase === 'windup') {
+      sawWindup = true;
+      const k = 1 - e.duel.timer / e.duel._windupLen;
+      if (e.duel.chamberOpen && k < 0.4) openedEarly = true;
+      if (e.duel.chamberOpen && k > 0.75) openedLate = true;
+    }
+  }
+  assert(sawWindup, 'never wound up');
+  assert(!openedEarly, 'the chamber window opened at the start of the wind-up');
+  assert(openedLate, 'the chamber window never opened');
+  return 'opens in the last third, as advertised';
+});
+
+check('duel: chambering needs a swing AGAINST the declared arc', () => {
+  const e = stubDuellist('djemSo');
+  // wind one up and hold it in the chamber window
+  let guard = 0;
+  while (!e.duel.chamberOpen && guard++ < 8000) e.duel.update(1 / 240, {}, 2.0);
+  assert(e.duel.chamberOpen, 'could not reach a chamber window');
+  const a = e.duel.attack;
+  const along = a.to.clone().sub(a.from).normalize();          // the way it travels
+  assert(e.duel.chambersWith(along.clone().negate()), 'swinging against the arc did not chamber');
+  assert(!e.duel.chambersWith(along), 'swinging WITH the arc chambered, which it must not');
+  const across = new THREE.Vector3().crossVectors(along, V(0, 1, 0)).normalize();
+  assert(!e.duel.chambersWith(across), 'a perpendicular swing chambered');
+  return `${a.label}: opposing yes, following no, perpendicular no`;
+});
+
+check('duel: heavy and unblockable attacks refuse a flat parry', () => {
+  assert(TIER.light.parryable, 'light should be parryable');
+  assert(!TIER.heavy.parryable && TIER.heavy.chamberable, 'heavy should be chamber-only');
+  assert(!TIER.unblockable.parryable && !TIER.unblockable.chamberable, 'unblockable should be neither');
+  assert(TIER.unblockable.guardBreak > TIER.heavy.guardBreak, 'guard-break should scale with tier');
+  return 'light → parry, heavy → chamber, red → feet';
+});
+
+check('duel: interrupting a duellist kills the attack it was declaring', () => {
+  const e = stubDuellist('ataru');
+  let guard = 0;
+  while (e.duel.phase !== 'windup' && guard++ < 8000) e.duel.update(1 / 240, {}, 2.0);
+  assert(e.duel.attack, 'never declared an attack');
+  e.duel.interrupt(0.5);
+  assert(e.duel.phase === 'recover' && !e.duel.attack, 'the attack survived the interrupt');
+  assert(!e.duel.chamberOpen, 'chamber window left open after an interrupt');
+  return 'parried mid-declaration → recover, no attack';
+});
+
+check('duel: a sparring time-scale genuinely slows the form down', () => {
+  const fast = stubDuellist('makashi');
+  const slow = stubDuellist('makashi');
+  slow.duel.timeScale = 0.5;
+  const windupOf = (e) => {
+    let guard = 0;
+    while (e.duel.phase !== 'windup' && guard++ < 20000) e.duel.update(1 / 480, {}, 2.0);
+    return e.duel._windupLen;
+  };
+  const a = windupOf(fast), b = windupOf(slow);
+  assert(b > a * 1.5, `half speed only stretched the wind-up ${(b / a).toFixed(2)}×`);
+  return `wind-up ${a.toFixed(2)}s → ${b.toFixed(2)}s at half speed`;
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  V2 — cloth                                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+check('cloth: a cloak hangs from its anchors and settles', () => {
+  const anchor = V(0, 1.6, 0);
+  const cloak = new Cloak(scene, {
+    cols: 7, rows: 9, width: 0.6, length: 1.0,
+    anchorFn: (c, n, out) => out.set(lerpN(-0.3, 0.3, c, n), anchor.y, anchor.z),
+  });
+  cloak.reset();
+  for (let i = 0; i < 240; i++) cloak.update(1 / 60, [], V(0, 0, 0));
+  const p = cloak.pos;
+  let lowest = Infinity, highest = -Infinity, moved = 0;
+  for (let i = 0; i < cloak.cols * cloak.rows; i++) {
+    const y = p[i * 3 + 1];
+    assert(isFinite(y), 'a cloth particle went non-finite');
+    lowest = Math.min(lowest, y); highest = Math.max(highest, y);
+    moved = Math.max(moved, Math.abs(p[i * 3] - p[i * 3 + 2]));
+  }
+  near(highest, anchor.y, 1e-6, 'the top row left its anchors');
+  assert(lowest > anchor.y - cloak.length * 1.12, `the cloth stretched to ${(anchor.y - lowest).toFixed(2)}m past its ${cloak.length}m`);
+  assert(lowest < anchor.y - cloak.length * 0.75, 'the cloth never fell');
+  return `hangs ${(anchor.y - lowest).toFixed(2)}m from a ${cloak.length}m cloak`;
+});
+
+check('cloth: colliders keep the cloak out of the body', () => {
+  const anchor = V(0, 1.6, 0);
+  const cloak = new Cloak(scene, {
+    cols: 7, rows: 9, width: 0.6, length: 1.0, gravity: -13,
+    anchorFn: (c, n, out) => out.set(lerpN(-0.3, 0.3, c, n), anchor.y, anchor.z),
+  });
+  cloak.reset();
+  // a fat torso directly in the cloth's path
+  const body = [{ c: V(0, 1.1, 0), r: 0.34 }];
+  for (let i = 0; i < 300; i++) cloak.update(1 / 60, body, V(0, 0, -1.5));
+  let worst = 0;
+  for (let i = cloak.cols; i < cloak.cols * cloak.rows; i++) {
+    const d = Math.hypot(cloak.pos[i * 3] - body[0].c.x,
+                         cloak.pos[i * 3 + 1] - body[0].c.y,
+                         cloak.pos[i * 3 + 2] - body[0].c.z);
+    worst = Math.max(worst, body[0].r - d);
+  }
+  assert(worst < 0.02, `cloth sank ${(worst * 100).toFixed(1)}cm into the body`);
+  return `deepest intrusion ${(worst * 1000).toFixed(1)}mm`;
+});
+
+check('cloth: a long frame does not detonate the solve', () => {
+  const cloak = new Cloak(scene, {
+    cols: 7, rows: 9, width: 0.6, length: 1.0,
+    anchorFn: (c, n, out) => out.set(lerpN(-0.3, 0.3, c, n), 1.6, 0),
+  });
+  cloak.reset();
+  for (let i = 0; i < 30; i++) cloak.update(0.9, [], V(0, 0, 0));   // 0.9s frames
+  for (let i = 0; i < cloak.cols * cloak.rows; i++) {
+    assert(isFinite(cloak.pos[i * 3 + 1]), 'cloth blew up on a long frame');
+    assert(Math.abs(cloak.pos[i * 3 + 1]) < 60, 'cloth flew away on a long frame');
+  }
+  return 'clamped, stays put';
+});
+
+check('cloth: a rigged cloak finds its anchors and its body', () => {
+  const rig = new Rig(humanoidSkeleton(1));
+  rig.hipsBone.obj.position.set(0, 0.95, 0);
+  rig.updateMatrices();
+  const cloak = attachCloak(scene, rig, { width: 0.6, length: 1.0, cols: 7, rows: 9 });
+  assert(cloak, 'attachCloak returned nothing');
+  const cols = cloak.refreshColliders();
+  assert(cols.length >= 12, `only ${cols.length} body colliders`);
+  cloak.reset();
+  for (let i = 0; i < 120; i++) cloak.update(1 / 60, cloak.refreshColliders(), V(0, 0, 0));
+  const chestY = rig.worldPos('chest', new THREE.Vector3()).y;
+  const top = cloak.pos[1];
+  assert(Math.abs(top - chestY) < 0.5, `collar sat ${Math.abs(top - chestY).toFixed(2)}m from the chest`);
+  return `${cols.length} colliders, collar at the shoulders`;
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  V2 — the dojo                                                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+check('dojo: lessons advance on the event each one is watching for', () => {
+  const spawned = [];
+  const world = {
+    enemies: [], locks: [], player: { position: V(0, 0, 0) },
+    bolts: { clear() {} }, notify() {},
+    spawnEnemy(type, pos) {
+      const e = { type, dead: false, dying: 0, dispose() {}, duel: null, position: pos.clone() };
+      spawned.push(e); world.enemies.push(e); return e;
+    },
+  };
+  const d = new DojoDirector(world);
+  d.start();
+  assert(d.lesson.id === 'feel', `started on ${d.lesson.id}`);
+
+  // the first lesson wants fast swings and nothing else
+  d.report({ type: 'deflect', grade: 3 });
+  assert(d.progress === 0, 'a deflection advanced the swing lesson');
+  for (let i = 0; i < LESSONS[0].need; i++) d.report({ type: 'swing', speed: 20 });
+  assert(d.lesson.id === 'block', `did not advance past 'feel' (on ${d.lesson.id})`);
+  assert(spawned.some(e => e.type === 'remote'), 'the block lesson brought no remote');
+
+  // and a slow swing must not count
+  d.repeat();
+  const before = d.progress;
+  d.report({ type: 'swing', speed: 2 });
+  assert(d.progress === before, 'a slow swing counted');
+  return `${LESSONS.length} lessons, gated on the right events`;
+});
+
+check('dojo: every lesson has a brief, a hint and a reachable target', () => {
+  for (const L of LESSONS) {
+    assert(L.title && L.brief && L.hint, `${L.id} is missing copy`);
+    assert(typeof L.check === 'function', `${L.id} has no check`);
+    assert(L.need > 0, `${L.id} needs ${L.need}`);
+    assert(L.setup, `${L.id} has no room setup`);
+  }
+  const last = LESSONS[LESSONS.length - 1];
+  assert(last.need === Infinity, 'the final lesson should never complete');
+  return `${LESSONS.length} lessons, all documented`;
+});
+
+check('dojo: skipping and going back stay inside the lesson list', () => {
+  const world = { enemies: [], locks: [], player: null, bolts: { clear() {} }, notify() {},
+    spawnEnemy: () => ({ dead: false, dying: 0, dispose() {} }) };
+  const d = new DojoDirector(world);
+  for (let i = 0; i < 40; i++) d.skip();
+  assert(d.index === LESSONS.length - 1, `skipped past the end to ${d.index}`);
+  for (let i = 0; i < 40; i++) d.back();
+  assert(d.index === 0, `went back past the start to ${d.index}`);
+  return 'clamped at both ends';
+});
+
+check('dojo: a training remote is built and can be aimed', () => {
+  const r = buildRemote({ scale: 1 });
+  for (const key of ['group']) assert(r[key], `remote missing ${key}`);
+  // and every vertex must be finite — a NaN scale here reaches the audio panner
+  let bad = 0;
+  r.group.traverse(o => {
+    const p = o.geometry?.attributes?.position;
+    if (!p) return;
+    for (let i = 0; i < p.count * 3; i++) if (!isFinite(p.array[i])) bad++;
+  });
+  assert(bad === 0, `${bad} non-finite vertices in the remote`);
+  assert(r.group, 'no mesh');
+  assert(r.muzzles.length >= 3, `only ${r.muzzles.length} emitters`);
+  let tris = 0;
+  r.group.traverse(o => { if (o.geometry?.index) tris += o.geometry.index.count / 3; });
+  assert(tris > 100, `remote is only ${tris} triangles`);
+  return `${r.muzzles.length} emitters, ${Math.round(tris)} triangles`;
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Audio                                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+check('audio: retiring a voice never tears down the shared effects bus', async () => {
+  // A non-positional one-shot is routed straight to sfxBus. Calling disconnect()
+  // on that unplugs every sound in the game from the compressor — permanently,
+  // and silently. This is the guard that keeps the game audible.
+  const { AudioEngine } = await import('../src/engine/Audio.js');
+  const a = new AudioEngine();
+  let busDisconnects = 0, panDisconnects = 0;
+  a.sfxBus = { disconnect: () => busDisconnects++ };
+  a.musicBus = { disconnect: () => busDisconnects++ };
+  a.master = { disconnect: () => busDisconnects++ };
+  const panner = { disconnect: () => panDisconnects++ };
+
+  a.voices = 3;
+  a._freeAt(a.sfxBus, 0);
+  a._freeAt(a.musicBus, 0);
+  a._freeAt(panner, 0);
+  await new Promise(r => setTimeout(r, 90));
+
+  assert(busDisconnects === 0, `${busDisconnects} shared buses were disconnected — the game goes silent`);
+  assert(panDisconnects === 1, `the per-voice panner was not released (${panDisconnects})`);
+  assert(a.voices === 0, `voice count leaked: ${a.voices} still held`);
+  return 'buses survive, panners are released, voice count returns to 0';
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+await Promise.all(pending);
 
 const w = Math.max(...results.map(r => r[1].length));
 console.log('');

@@ -19,6 +19,7 @@ const flag = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[
 const has = (n) => args.includes('--' + n);
 
 const SECONDS = parseFloat(flag('seconds', '6'));
+const FRAMES = parseInt(flag('frames', '40'), 10);
 const LEVEL = flag('level', 'dunes');
 const QUALITY = flag('quality', 'medium');
 
@@ -88,7 +89,7 @@ await step('load', async () => {
 
 await step('preset settings', async () => {
   await page.evaluate(([level, quality]) => {
-    localStorage.setItem('saber.settings.v1', JSON.stringify({
+    localStorage.setItem('saber.settings.v2', JSON.stringify({
       level, quality, resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',
       volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6,
     }));
@@ -139,16 +140,21 @@ await step('report boot diagnostics', async () => {
 await step('simulate combat', async () => {
   // The page is not pointer-locked in headless, so drive the sim directly:
   // feed the input layer synthetic mouse deltas and keys the way the browser would.
-  await page.evaluate((secs) => {
+  await page.evaluate((frames) => {
     const S = window.SABER;
     S.input.locked = true;             // pretend we hold the pointer
     S.input.enabled = true;
     window.__SMOKE_T = 0;
+    window.__SMOKE_FRAMES = 0;
     window.__SMOKE_ERR = null;
     window.__SMOKE_DONE = false;
     const tick = () => {
       try {
+        window.__SMOKE_FRAMES = (window.__SMOKE_FRAMES || 0) + 1;
         const t = (window.__SMOKE_T += 1 / 60);
+        // hold-to-blade is the shipped scheme: without the button down the
+        // mouse only turns the camera and the blade is never exercised
+        S.input.buttons[0] = (t % 1.7) < 1.1;
         S.input.mouse.dx += Math.sin(t * 5.1) * 26;
         S.input.mouse.dy += Math.sin(t * 3.3 + 1) * 16;
         if (Math.floor(t * 2) % 3 === 0) S.input.keys.add('KeyW'); else S.input.keys.delete('KeyW');
@@ -156,20 +162,24 @@ await step('simulate combat', async () => {
         if (t % 2.4 < 0.02) S.input.pressed.add('Space');
         if (t % 3.7 < 0.02) S.input.pressed.add('KeyF');
         if (t % 5.2 < 0.02) S.input.pressed.add('KeyR');
-        if (t < secs) { requestAnimationFrame(tick); return; }
+        if (window.__SMOKE_FRAMES < frames) { requestAnimationFrame(tick); return; }
       } catch (e) {
         window.__SMOKE_ERR = (e && e.stack) || String(e);
       }
       S.input.keys.clear();
+      S.input.buttons[0] = false;
       window.__SMOKE_DONE = true;
     };
     tick();
-  }, SECONDS);
+  }, FRAMES);
   try {
-    await page.waitForFunction(() => window.__SMOKE_DONE === true, { timeout: (SECONDS + 20) * 1000 });
+    // NB: waitForFunction is (fn, arg, options) — passing options second makes
+    // them the argument and silently leaves the 30s default in place.
+    await page.waitForFunction(() => window.__SMOKE_DONE === true, null,
+      { timeout: FRAMES * 3000 + 20000 });
   } catch (e) {
     const diag = await page.evaluate(() => ({
-      t: window.__SMOKE_T, err: window.__SMOKE_ERR, done: window.__SMOKE_DONE,
+      frames: window.__SMOKE_FRAMES, err: window.__SMOKE_ERR, done: window.__SMOKE_DONE,
       fps: window.SABER?.fps, alive: !!window.SABER?.world?.player?.alive,
     })).catch(() => null);
     throw new Error(`${e.message} | diag=${JSON.stringify(diag)}`);
