@@ -26,7 +26,7 @@ import { DuelBrain, Telegraph, BladeLock, FORMS, FORM_KEYS, TIER } from '../src/
 import { Cloak, attachCloak } from '../src/game/Cloth.js';
 import { DojoDirector, LESSONS, buildRemote } from '../src/game/Dojo.js';
 import { FocusSystem, FOCUS } from '../src/game/Focus.js';
-import { polar, siteOk, findSite, cluster, run, beginDressing } from '../src/game/Levels.js';
+import { polar, siteOk, findSite, cluster, run, beginDressing, LEVELS, LEVEL_ORDER } from '../src/game/Levels.js';
 import { WindField, wind, WIND_GLSL, GrassField, Water, Atmosphere, PusherTracker, ground } from '../src/world/Scenery.js';
 import { Particles, ParticlePool, ChipField, DecalField } from '../src/world/Particles.js';
 import { clamp } from '../src/engine/MathUtil.js';
@@ -2144,6 +2144,55 @@ check('bodies: no face feature is buried inside the head it belongs to', () => {
       `${worstAt} is ${(-worst * 1000).toFixed(1)}mm inside the head shell — it will never be drawn`);
   }
   return report.join(', ') + ' worst clearance';
+});
+
+check('levels: every level dresses itself without throwing', () => {
+  // A dressing pass runs ONCE, inside level load, and if it throws the world is
+  // left half-built with a null player — which surfaces as a dozen unrelated
+  // "cannot read property of null" failures far away from the cause. Prop
+  // makers do not share one signature (addBrokenWall takes its size as a
+  // Vector3 third argument while its neighbours take an options object), so
+  // this is a very easy mistake and a very confusing one to chase.
+  const stub = () => {
+    const scene = new THREE.Scene();
+    return {
+      scene, statics: [], lights: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+      physics: { addStaticBox: () => {}, staticBoxes: [], add: () => {}, bodies: [], raycast: () => null },
+      addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
+      addDoor(d) { this.doors.push(d); return d; },
+      particles: { sandPuff() {}, sparkBurst() {}, slag() {} },
+      notify() {}, report() {}, onNotify: null, spawnEnemy: () => null,
+      difficulty: DIFFICULTY.knight, time: 0,
+      addProp(p) { this.props.push(p); return p; },
+      terrain: {
+        height: (x, z) => Math.sin(x * 0.05) * 1.5 + Math.cos(z * 0.04) * 1.2,
+        slopeAt: (x, z) => Math.abs(Math.sin(x * 0.03 + z * 0.02)) * 0.5,
+        normalAt: (x, z, o) => o.set(0, 1, 0).normalize(),
+        surfaceAt: () => 'sand',
+      },
+      settings: { quality: 'medium' },
+    };
+  };
+
+  const done = [];
+  for (const key of LEVEL_ORDER) {
+    const L = LEVELS[key];
+    if (!L || typeof L.dress !== 'function') continue;
+    const world = stub();
+    L.dress(world);                       // must not throw
+    const n = world.statics.length + world.props.length;
+    assert(n > 0, `${key} dressed itself with nothing at all`);
+    // and nothing may land at a non-finite position, which is how a NaN
+    // dimension escapes into the scene without anyone noticing
+    let bad = 0;
+    for (const m of world.statics) {
+      if (!isFinite(m.position.x) || !isFinite(m.position.y) || !isFinite(m.position.z)) bad++;
+    }
+    assert(bad === 0, `${key} placed ${bad} statics at a non-finite position`);
+    done.push(`${key} ${n}`);
+  }
+  assert(done.length >= 3, `only ${done.length} levels were exercised`);
+  return done.join(', ') + ' pieces';
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

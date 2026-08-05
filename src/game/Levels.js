@@ -7,7 +7,13 @@
  */
 
 import * as THREE from 'three';
-import { makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole, addWall, addRock, BlastDoor, propMaterials } from '../world/Props.js';
+import {
+  makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole,
+  addWall, addRock, BlastDoor, propMaterials,
+  addColumn, addArch, addBrokenWall, addColossus, addOutcrop, addScree,
+  addDebrisField, addCrateStack, addRuin, addOutpost, addGantry, addPipeRun,
+  addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection,
+} from '../world/Props.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { DOJO_LEVEL } from './Dojo.js';
 
@@ -250,38 +256,100 @@ export const LEVELS = {
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
-      // the ring wall
-      const R = 56, seg = 44;
-      for (let i = 0; i < seg; i++) {
-        const a = (i / seg) * TAU;
+      beginDressing(world);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      // ── The ring. Still a ring — it is what makes the arena an arena — but
+      // built as ARCHITECTURE rather than 44 identical slabs: a colonnade on a
+      // stepped stylobate, with tiers of seating behind it, broken open where
+      // the horde comes through. Evenly spaced identical boxes is the single
+      // clearest tell that nobody designed the space.
+      const R = 56, bays = 36;
+      const gates = [0.7, 0.7 + TAU / 4, 0.7 + TAU / 2, 0.7 + TAU * 0.75];
+      const nearGate = (a) => gates.some(g => {
+        let d = Math.abs(((a - g + Math.PI) % TAU + TAU) % TAU - Math.PI);
+        return d < 0.10;
+      });
+
+      for (let i = 0; i < bays; i++) {
+        const a = (i / bays) * TAU;
+        if (nearGate(a)) continue;
         const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
-        const y = T.height(cx, cz);
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a);
-        addWall(world, new THREE.Vector3(cx, y + 4.4, cz), new THREE.Vector3(8.6, 8.8, 2.2), q, M.duracrete);
-        if (i % 4 === 0) {
-          addRock(world, new THREE.Vector3(cx, y + 9.4, cz), new THREE.Vector3(1.5, 1.4, 1.8), 200 + i);
+        const yaw = -a + Math.PI / 2;
+        // Every fourth bay has fallen. A wall that is uniformly intact reads as
+        // a texture; one that fails in places reads as having a history.
+        const fallen = (i * 7 + 3) % 9 < 2;
+        // NB: addBrokenWall takes its dimensions as a Vector3 THIRD argument,
+        // not as fields on the options object. Passing an options object here
+        // makes every dimension undefined, which propagates NaN into the rebar
+        // curve and throws out of the whole dressing pass.
+        addBrokenWall(world, at(cx, cz),
+          V(9.4, fallen ? 3.2 + rng() * 1.6 : 8.4, 2.1),
+          { yaw, seed: 400 + i, mat: M.duracrete, ruin: fallen ? 0.75 : 0.28 });
+        // colonnade standing in front of the wall, some columns snapped
+        if (i % 2 === 0) {
+          const ix = Math.cos(a) * (R - 5.5), iz = Math.sin(a) * (R - 5.5);
+          addColumn(world, at(ix, iz), {
+            height: 7.5, radius: 0.55, yaw, seed: 500 + i,
+            standing: fallen ? 0.35 + rng() * 0.3 : 1,
+            mat: M.sandstone,
+          });
         }
       }
-      // execution pillars in the middle
+
+      // ── Four gates the horde walks out of, framed properly.
+      for (let g = 0; g < gates.length; g++) {
+        const a = gates[g];
+        const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
+        addArch(world, at(cx, cz), {
+          span: 7.5, rise: 5.4, thickness: 2.2, yaw: -a + Math.PI / 2,
+          seed: 600 + g, mat: M.duracrete, broken: g === 2,
+        });
+      }
+
+      // ── The landmark. An execution arena has something at its focus, and a
+      // toppled colossus gives the space a story and the fight a centrepiece to
+      // circle. Off-centre so the middle stays clear to fight in.
+      addColossus(world, at(-14, 11, 0), { height: 17, yaw: 2.1, seed: 707, ruined: true });
+      addDebrisField(world, at(-14, 11), { radius: 11, seed: 708, count: 26 });
+
+      // ── The execution pillars themselves — the reason the place has a name.
       for (let i = 0; i < 3; i++) {
         const a = (i / 3) * TAU + 0.4;
-        const cx = Math.cos(a) * 9, cz = Math.sin(a) * 9;
-        const p = new THREE.Vector3(cx, T.height(cx, cz) + 3.2, cz);
-        world.addProp(makePillar(world, p, 6.4));
+        const cx = Math.cos(a) * 9.5, cz = Math.sin(a) * 9.5;
+        addColumn(world, at(cx, cz), {
+          height: 6.4, radius: 0.42, seed: 800 + i, mat: M.sandstone,
+          standing: i === 1 ? 0.55 : 1,
+        });
+        siteOk(world, cx, cz, { clearance: 4, spawnClear: 0 });
       }
-      for (let i = 0; i < 22; i++) {
-        const a = rng() * TAU, r = 12 + rng() * 40;
-        const p = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
-        p.y = T.height(p.x, p.z) + 0.5;
-        world.addProp(rng() < 0.3 ? makeBarrel(world, p) : makeCrate(world, p, 0.75));
+
+      // ── Rock spilling in through the broken bays, and the debris of a place
+      // that has been fought in before.
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 30, 50, { clearance: 9, maxSlope: 0.5 });
+        if (!site) continue;
+        addOutcrop(world, site.pos, { size: 4.5 + rng() * 2.5, seed: 900 + k });
+        addScree(world, site.pos, { radius: 9, count: 90, seed: 910 + k });
       }
-      // gates the horde walks out of
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * TAU + 0.7;
-        const cx = Math.cos(a) * (R - 2), cz = Math.sin(a) * (R - 2);
-        const y = T.height(cx, cz);
-        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + Math.PI / 2);
-        addWall(world, new THREE.Vector3(cx, y + 5.6, cz), new THREE.Vector3(7, 1.4, 2.6), q, M.darkSteel);
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 16, 44, { clearance: 7 });
+        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 950 + k, count: 16 });
+      }
+
+      // ── Loose, cuttable cover. Stacked, not sprinkled: crates arrive in
+      // stacks because someone stacked them.
+      for (let k = 0; k < 5; k++) {
+        const site = findSite(world, 13, 42, { clearance: 3.5 });
+        if (site) addCrateStack(world, site.pos, { seed: 970 + k, height: 2 + (rng() < 0.4 ? 1 : 0) });
+      }
+      for (let i = 0; i < 12; i++) {
+        const site = findSite(world, 12, 46, { clearance: 2.6 });
+        if (!site) continue;
+        world.addProp(rng() < 0.3
+          ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
+          : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.75));
       }
     },
   },
