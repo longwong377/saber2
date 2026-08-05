@@ -32,10 +32,16 @@ Then open the URL. That is the whole setup — there is nothing to install and
 nothing to compile.
 
 **On the web** — the repository is a static site, so it deploys as-is to GitHub
-Pages, Netlify, Cloudflare Pages, or anything that serves files. A Pages
-workflow is included at `.github/workflows/pages.yml`; enable Pages for the repo
-with **Settings → Pages → Source: GitHub Actions** and every push publishes a
-playable URL.
+Pages, Netlify, Cloudflare Pages, or anything that serves files.
+
+A Pages workflow is included at `.github/workflows/pages.yml`. It needs one
+click first: **Settings → Pages → Source: “GitHub Actions”**. (GitHub's default
+workflow token is not permitted to create a Pages site that doesn't exist yet,
+so the workflow fails until a human flips that switch — after which every push
+publishes automatically to `https://longwong377.github.io/saber2/`.)
+
+Opening `index.html` straight off disk will *not* work: browsers refuse to load
+ES modules over `file://`. The page says so if you try.
 
 Requires WebGL2 — any current Chrome, Edge, Firefox or Safari. Click the canvas
 to capture the mouse; `Esc` releases it.

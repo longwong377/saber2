@@ -1,5 +1,9 @@
 # Publishes the repository as a playable static site.
-# Enable with: Settings → Pages → Source: GitHub Actions
+#
+# One-time setup: Settings → Pages → Source: "GitHub Actions".
+# GitHub's default workflow token is not allowed to create a Pages site that
+# does not exist yet, so the first run fails until that switch is flipped.
+# After that, every push publishes automatically.
 name: Deploy SABER to Pages
 
 on:

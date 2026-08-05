@@ -236,6 +236,17 @@
   </div>
 </div>
 
+<script>
+  // ES modules are blocked on file:// — without this the page would just sit
+  // black with a CORS error in a console nobody opened.
+  if (location.protocol === 'file:') {
+    document.getElementById('boot').innerHTML =
+      '<div class="boot-inner"><h2>Needs a web server</h2>' +
+      '<p class="hint">Browsers refuse to load ES modules straight from disk. ' +
+      'From this folder run <b>node tools/serve.mjs</b> (or <b>npx serve .</b>, ' +
+      'or <b>python3 -m http.server 8080</b>) and open the address it prints.</p></div>';
+  }
+</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
