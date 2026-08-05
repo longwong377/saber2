@@ -1,6 +1,14 @@
 /**
- * Close-up portraits of the character rig, for eyeballing body work.
- *   node tools/portrait.mjs [--fp]
+ * Close-up portraits of the character rigs, for eyeballing body work.
+ *
+ *   node tools/portrait.mjs                 the player
+ *   node tools/portrait.mjs --enemy b1      one enemy archetype, held still
+ *   node tools/portrait.mjs --enemy all     every archetype in turn
+ *
+ * Enemy shots land in .smoke/ as e-<type>-<view>.png. The unit is spawned in
+ * front of the player, its AI is pinned so it neither walks off nor shoots,
+ * and the camera is placed from its OWN world position and height so the
+ * framing survives archetypes that are four metres tall.
  */
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
@@ -71,6 +79,86 @@ const A = parseFloat(process.env.PORTRAIT_ANGLE || await page.evaluate(() => {
   return String(Math.atan2(s.x, s.z) + Math.PI * 0.5);
 }));
 const dir = (r, h) => [Math.sin(A) * r, h, Math.cos(A) * r];
+
+/* ── enemy portraits ─────────────────────────────────────────────────── */
+
+const argv = process.argv.slice(2);
+const enemyArg = argv.includes('--enemy') ? argv[argv.indexOf('--enemy') + 1] : null;
+if (enemyArg) {
+  const types = enemyArg === 'all'
+    ? ['b1', 'b2', 'trooper', 'sniper', 'acolyte', 'droideka', 'walker', 'beast']
+    : enemyArg.split(',');
+  for (const type of types) {
+    // Spawn one, pin it, and measure how big it actually is — a walker is
+    // three times a trooper and one framing cannot serve both.
+    const info = await page.evaluate((type) => {
+      const w = window.SABER.world;
+      for (const e of w.enemies.slice()) e.dispose?.();
+      w.enemies.length = 0;
+      const p = w.player.position;
+      const e = w.spawnEnemy(type, new window.THREE_V3
+        ? new window.THREE_V3(p.x, p.y, p.z + 6) : { x: p.x, y: p.y, z: p.z + 6 });
+      return { ok: !!e };
+    }, type).catch((e) => ({ ok: false, err: String(e) }));
+    if (!info.ok) { console.log('spawn failed for', type, info.err || ''); continue; }
+    // hold it still, facing the camera, and let a few frames settle the gait
+    await page.evaluate(() => {
+      const w = window.SABER.world;
+      const e = w.enemies[0];
+      e.speed = 0; e.stunTimer = 1e9; e.attackTimer = 1e9;
+      e.velocity.set(0, 0, 0);
+      window.__pin = e;
+    });
+    await page.waitForTimeout(1600);
+    const box = await page.evaluate(() => {
+      const e = window.__pin;
+      const THREE = window.SABER.engine.scene.constructor === Object ? null : null;
+      const root = e.rig ? e.rig.root : e.group;
+      let lo = Infinity, hi = -Infinity, wide = 0;
+      root.updateMatrixWorld(true);
+      root.traverse(o => {
+        if (!o.isMesh || !o.geometry) return;
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        for (const sx of [bb.min.x, bb.max.x]) for (const sy of [bb.min.y, bb.max.y]) for (const sz of [bb.min.z, bb.max.z]) {
+          const v = { x: sx, y: sy, z: sz };
+          const p = o.localToWorld(new o.position.constructor(v.x, v.y, v.z));
+          lo = Math.min(lo, p.y); hi = Math.max(hi, p.y);
+          wide = Math.max(wide, Math.hypot(p.x - e.position.x, p.z - e.position.z));
+        }
+      });
+      return { x: e.position.x, y: e.position.y, z: e.position.z, lo, hi, wide, facing: e.facing };
+    });
+    const H = Math.max(0.6, box.hi - box.lo);
+    const R = Math.max(H * 0.95, box.wide * 2.6);
+    const views = [
+      ['full', { r: R, h: box.lo + H * 0.55, look: H * 0.5, fov: 40 }],
+      ['upper', { r: R * 0.5, h: box.lo + H * 0.82, look: H * 0.78, fov: 38 }],
+      ['head', { r: R * 0.26, h: box.lo + H * 0.95, look: H * 0.93, fov: 36 }],
+      ['back', { r: -R, h: box.lo + H * 0.55, look: H * 0.5, fov: 40 }],
+      ['side', { r: R, h: box.lo + H * 0.55, look: H * 0.5, fov: 40, yaw: Math.PI / 2 }],
+      ['legs', { r: R * 0.62, h: box.lo + H * 0.34, look: H * 0.22, fov: 42 }],
+      ['far', { r: R * 3.4, h: box.lo + H * 0.6, look: H * 0.5, fov: 30 }],
+    ];
+    for (const [name, v] of views) {
+      const a = A + (v.yaw || 0);
+      await page.evaluate(({ box, v, a }) => {
+        window.__portrait = {
+          p: [box.x + Math.sin(a) * v.r, v.h, box.z + Math.cos(a) * v.r],
+          t: [box.x, box.lo + v.look, box.z],
+          fov: v.fov,
+        };
+      }, { box, v, a });
+      await page.waitForTimeout(650);
+      await page.screenshot({ path: join(OUT, `e-${type}-${name}.png`) });
+    }
+    console.log('wrote', type, `(height ${H.toFixed(2)}m, radius ${box.wide.toFixed(2)}m)`);
+  }
+  await browser.close();
+  server.close();
+  process.exit(0);
+}
+
 const shots = [
   ['40-torso',   { d: dir(1.9, 1.30), look: [0, 1.10, 0], fov: 36 }],
   ['41-arms',    { d: dir(0.95, 1.35), look: [0.12, 1.22, 0.12], fov: 44 }],

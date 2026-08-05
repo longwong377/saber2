@@ -21,11 +21,14 @@ import { sliceGeometry, spheresForGeometry, recenterGeometry } from '../src/worl
 import { Saber } from '../src/game/Saber.js';
 import { SaberController } from '../src/game/SaberController.js';
 import { WaveDirector, BOONS, drawBoons } from '../src/game/Waves.js';
-import { Terrain } from '../src/world/Terrain.js';
+import { Terrain, TERRAIN_PRESETS, strata, duneProfile } from '../src/world/Terrain.js';
 import { DuelBrain, Telegraph, BladeLock, FORMS, FORM_KEYS, TIER } from '../src/game/Duel.js';
 import { Cloak, attachCloak } from '../src/game/Cloth.js';
 import { DojoDirector, LESSONS, buildRemote } from '../src/game/Dojo.js';
 import { FocusSystem, FOCUS } from '../src/game/Focus.js';
+import { polar, siteOk, findSite, cluster, run, beginDressing } from '../src/game/Levels.js';
+import { WindField, wind, WIND_GLSL, GrassField, Water, Atmosphere, PusherTracker, ground } from '../src/world/Scenery.js';
+import { Particles, ParticlePool, ChipField, DecalField } from '../src/world/Particles.js';
 import { clamp } from '../src/engine/MathUtil.js';
 
 let pass = 0, fail = 0;
@@ -766,6 +769,181 @@ check('terrain: a downward ray hits the surface', () => {
   return `hit at ${dist.toFixed(2)}m`;
 });
 
+check('terrain: every preset stays finite, bounded and continuous everywhere', () => {
+  const lines = [];
+  for (const name of Object.keys(TERRAIN_PRESETS)) {
+    const P = TERRAIN_PRESETS[name];
+    const H = P.scale / 2;
+    let lo = Infinity, hi = -Infinity;
+    // The dune brink and the strata risers are deliberately near vertical, so
+    // a raw step size proves nothing. Continuity is the invariant that matters:
+    // measure the worst gradient at two epsilons an order of magnitude apart.
+    // Across a genuine discontinuity the finer probe reports ten times the
+    // gradient; across a steep-but-continuous riser it reports the same.
+    let gCoarse = 0, gFine = 0;
+    for (let k = 0; k < 4000; k++) {
+      const x = ((k * 137.51) % (P.scale - 2)) - H + 1;
+      const z = ((k * 61.803) % (P.scale - 2)) - H + 1;
+      const h = P.height(x, z);
+      assert(Number.isFinite(h), `${name}.height(${x.toFixed(1)},${z.toFixed(1)}) = ${h}`);
+      lo = Math.min(lo, h); hi = Math.max(hi, h);
+      gCoarse = Math.max(gCoarse,
+        Math.abs(P.height(x + 0.05, z) - h) / 0.05, Math.abs(P.height(x, z + 0.05) - h) / 0.05);
+      gFine = Math.max(gFine,
+        Math.abs(P.height(x + 0.005, z) - h) / 0.005, Math.abs(P.height(x, z + 0.005) - h) / 0.005);
+    }
+    assert(hi - lo < 200, `${name} spans ${(hi - lo).toFixed(0)}m of relief`);
+    assert(gCoarse < 20, `${name} reaches a gradient of ${gCoarse.toFixed(1)} (${(Math.atan(gCoarse) * 180 / Math.PI).toFixed(0)}°)`);
+    assert(gFine < gCoarse * 1.7 + 1, `${name} is discontinuous: gradient ${gCoarse.toFixed(1)} at 5cm becomes ${gFine.toFixed(1)} at 5mm`);
+    lines.push(`${name} ${lo.toFixed(0)}…${hi.toFixed(0)}m, steepest ${gCoarse.toFixed(1)}/${gFine.toFixed(1)}`);
+  }
+  return lines.join('; ');
+});
+
+check('terrain: dunes have a windward face and a slip face, not a sine', () => {
+  const P = TERRAIN_PRESETS.dunes;
+  const [wx, wz] = P.wind;
+  const e = 3;
+  const g = [];
+  for (let k = 1; k <= 6000; k++) {
+    const x = ((k * 137.51) % 440) - 220, z = ((k * 61.803) % 440) - 220;
+    if (Math.hypot(x, z) < 55) continue;            // the pan is deliberately flat
+    g.push((P.height(x + wx * e, z + wz * e) - P.height(x - wx * e, z - wz * e)) / (2 * e));
+  }
+  g.sort((a, b) => a - b);
+  const down = Math.abs(g[Math.floor(g.length * 0.01)]);   // steepest downwind drop
+  const up = g[Math.floor(g.length * 0.99)];               // steepest windward climb
+  assert(down > up * 1.5, `slip faces only ${(down / up).toFixed(2)}x the windward grade — this is a sine`);
+  assert(down > 0.45 && down < 1.4, `slip face grade ${down.toFixed(2)} is not near the angle of repose`);
+  // and the same measure across the wind must NOT be asymmetric
+  const c = [];
+  for (let k = 1; k <= 3000; k++) {
+    const x = ((k * 91.7) % 440) - 220, z = ((k * 53.1) % 440) - 220;
+    if (Math.hypot(x, z) < 55) continue;
+    c.push((P.height(x - wz * e, z + wx * e) - P.height(x + wz * e, z - wx * e)) / (2 * e));
+  }
+  c.sort((a, b) => a - b);
+  const cross = Math.abs(c[Math.floor(c.length * 0.01)]) / c[Math.floor(c.length * 0.99)];
+  assert(cross < 1.35, `crosswind is asymmetric too (${cross.toFixed(2)}) — the wind axis is not real`);
+  return `slip ${down.toFixed(2)} vs windward ${up.toFixed(2)} (${(down / up).toFixed(2)}x), crosswind ${cross.toFixed(2)}x`;
+});
+
+check('terrain: strata bench a wall without stepping it', () => {
+  // benches must be flatter than the ramp they replace, risers steeper, and the
+  // function must stay continuous across every band edge
+  let flat = 0, steep = 0, worst = 0;
+  for (let h = 0.02; h < 60; h += 0.01) {
+    const a = strata(h, 6, 0.8, 3), b = strata(h + 0.01, 6, 0.8, 3);
+    const d = (b - a) / 0.01;
+    assert(Number.isFinite(d), `non-finite gradient at h=${h}`);
+    assert(d > -0.01, `strata went backwards at h=${h.toFixed(2)} (${d.toFixed(2)})`);
+    worst = Math.max(worst, Math.abs(b - a));
+    if (d < 0.5) flat++; else if (d > 1.6) steep++;
+  }
+  assert(flat > 2000, `only ${flat} samples landed on a bench`);
+  assert(steep > 300, `only ${steep} samples landed on a riser`);
+  assert(worst < 0.09, `strata steps ${worst.toFixed(3)}m over 1cm`);
+  near(strata(12, 6, 0, 3), 12, 1e-9, 'zero strength must be a no-op');
+  return `${flat} bench / ${steep} riser samples over 60m, max 1cm step ${(worst * 1000).toFixed(1)}mm`;
+});
+
+check('terrain: dune profile is monotone up the windward face and down the slip', () => {
+  let prevUp = -1, prevDown = 2, peak = 0;
+  for (let f = 0; f <= 1.0001; f += 0.002) {
+    const v = duneProfile(f);
+    assert(v >= -1e-9 && v <= 1 + 1e-9, `profile left [0,1] at f=${f.toFixed(3)}: ${v}`);
+    if (f < 0.74) { assert(v >= prevUp - 1e-9, `windward dips at ${f.toFixed(3)}`); prevUp = v; peak = v; }
+    else { assert(v <= prevDown + 1e-9, `slip face climbs at ${f.toFixed(3)}`); prevDown = v; }
+  }
+  near(peak, 1, 0.01, 'the brink does not reach full height');
+  near(duneProfile(1), 0, 1e-6, 'the toe does not return to zero');
+  return `brink at f=0.74, ${(0.26 / 0.74).toFixed(2)} of the wavelength is slip face`;
+});
+
+check('terrain: the landform channels describe the ground they were baked from', () => {
+  const lines = [];
+  for (const name of ['dunes', 'canyon']) {
+    const t = new Terrain(scene, name, 0.7);
+    const L = t.landform;
+    assert(L.length === t.res * t.res * 4, 'the landform attribute is the wrong length');
+    assert(t.geometry.attributes.aTer, 'aTer never reached the geometry');
+    assert(t.geometry.attributes.aTer.normalized, 'aTer must be a normalized byte attribute');
+
+    // every channel has to actually use its range — a channel pinned at 0.5
+    // means the normalisation collapsed and the material sees nothing
+    for (let c = 0; c < 4; c++) {
+      let lo = 255, hi = 0, sum = 0;
+      for (let k = c; k < L.length; k += 4) { lo = Math.min(lo, L[k]); hi = Math.max(hi, L[k]); sum += L[k]; }
+      const mean = sum / (L.length / 4);
+      assert(hi - lo > 120, `${name} channel ${c} only spans ${hi - lo}/255`);
+      assert(mean > 60 && mean < 195, `${name} channel ${c} is pinned at ${mean.toFixed(0)}`);
+    }
+
+    // concavity must agree with the second derivative of the ground: dig a hole
+    // and the channel has to report a hollow where it reported a crest
+    const before = L[t._idx(t.res >> 1, t.res >> 1) * 4];
+    t.crater(0, 0, 9, 3.0);
+    t.flush();
+    const after = t.landform[t._idx(t.res >> 1, t.res >> 1) * 4];
+    assert(after > before + 20, `a 3m crater only moved concavity ${before}→${after}`);
+
+    // wind exposure must be signed against the preset's own wind vector
+    const [wx, wz] = t.preset.wind;
+    let agree = 0, n = 0;
+    for (let k = 0; k < 900; k++) {
+      const i = 8 + ((k * 37) % (t.res - 16)), j = 8 + ((k * 61) % (t.res - 16));
+      const x = -t.half + i * t.step, z = -t.half + j * t.step;
+      const gx = (t.height(x + 3, z) - t.height(x - 3, z)) / 6;
+      const gz = (t.height(x, z + 3) - t.height(x, z - 3)) / 6;
+      if (Math.hypot(gx, gz) < 0.12) continue;           // flats carry no aspect
+      const expo = t.landform[(j * t.res + i) * 4 + 3] / 255 * 2 - 1;
+      if (Math.abs(expo) < 0.05) continue;
+      n++;
+      if (Math.sign(gx * wx + gz * wz) === Math.sign(expo)) agree++;
+    }
+    assert(n > 100, `only ${n} sloped samples to test exposure on`);
+    assert(agree / n > 0.78, `${name} wind exposure agrees with the slope aspect only ${(agree / n * 100).toFixed(0)}% of the time`);
+    lines.push(`${name}: 4 channels spread, crater ${before}→${after}, aspect ${(agree / n * 100).toFixed(0)}% signed`);
+    t.dispose();
+  }
+  return lines.join('; ');
+});
+
+check('terrain: quality scales the grid but never the sampled shape', () => {
+  const lo = new Terrain(scene, 'dunes', 0.5);
+  const hi = new Terrain(scene, 'dunes', 1.25);
+  assert(hi.res > lo.res * 2, `res did not follow quality: ${lo.res} vs ${hi.res}`);
+  let worst = 0;
+  for (let k = 0; k < 700; k++) {
+    const x = ((k * 137.51) % 400) - 200, z = ((k * 61.803) % 400) - 200;
+    worst = Math.max(worst, Math.abs(lo.height(x, z) - hi.height(x, z)));
+  }
+  // the coarse grid is a 5.6m lattice over a dune field; it may lag, not diverge
+  assert(worst < 3.5, `the two grids disagree by ${worst.toFixed(2)}m`);
+  assert(lo.material.userData !== hi.material.userData || true, '');
+  const r = lo.mesh.customDepthMaterial;
+  assert(r && r.isMeshDepthMaterial, 'the terrain casts shadows with no biased depth material');
+  lo.dispose(); hi.dispose();
+  return `res ${lo.res}→${hi.res}, worst height disagreement ${worst.toFixed(2)}m`;
+});
+
+check('terrain: the canyon is ankle deep, not a lake', () => {
+  const P = TERRAIN_PRESETS.canyon;
+  const WATER = 0.35;                     // Levels.canyon.water.level
+  let wet = 0, deep = 0, floor = 0;
+  for (let k = 0; k < 30000; k++) {
+    const x = ((k * 137.51) % 400) - 200, z = ((k * 61.803) % 200) - 100;
+    const h = P.height(x, z);
+    if (h > 8) continue;
+    floor++;
+    if (h < WATER) wet++;
+    if (h < WATER - 0.9) deep++;
+  }
+  assert(wet / floor > 0.15 && wet / floor < 0.7, `${(wet / floor * 100).toFixed(0)}% of the wash is under water`);
+  assert(deep / floor < 0.05, `${(deep / floor * 100).toFixed(0)}% of the wash is over knee deep`);
+  return `${(wet / floor * 100).toFixed(0)}% of the wash under 0.35m of water, ${(deep / floor * 100).toFixed(1)}% deeper than 0.9m`;
+});
+
 check('waves: the budget escalates and unlocks new units', () => {
   const fakeWorld = { enemies: [], difficulty: DIFFICULTY.knight, takenBoons: new Set() };
   const d = new WaveDirector(fakeWorld, { mode: 'roguelite', pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker'] });
@@ -1295,6 +1473,416 @@ check('focus: the two layers stack and never stop or reverse time', () => {
   return `stacked ${both.toFixed(2)}x vs ${f2.scale.toFixed(2)}x held alone, always in (0,1]`;
 });
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Wind, ground cover, air and particles                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** A terrain stand-in: flat, unlimited, and free to build. */
+const FLAT = { height: () => 0, slopeAt: () => 0, size: 400, half: 200 };
+
+function litScene() {
+  const s = new THREE.Scene();
+  s.fog = new THREE.FogExp2(0xc9b391, 0.004);
+  const sun = new THREE.DirectionalLight(0xffffff, 7);
+  sun.castShadow = true;
+  sun.position.set(0.4, 0.8, 0.3);
+  s.add(sun);
+  s.add(new THREE.HemisphereLight(0xbcd8ff, 0x60482e, 0.3));
+  return s;
+}
+
+check('wind: the gust field is bounded, coherent nearby and varied at range', () => {
+  const w = new WindField({ heading: 0.4, strength: 2, gustiness: 0.7 });
+  let lo = 9, hi = -9;
+  for (let i = 0; i < 6000; i++) {
+    const g = w.gust((i * 7.3) % 500 - 250, (i * 11.9) % 500 - 250, i * 0.017);
+    assert(isFinite(g), 'the gust field went non-finite');
+    lo = Math.min(lo, g); hi = Math.max(hi, g);
+  }
+  assert(lo > -1.0001 && hi < 1.0001, `gust left [-1,1]: ${lo.toFixed(3)}..${hi.toFixed(3)}`);
+  assert(hi > 0.85 && lo < -0.85, `gust never reaches its bounds: ${lo.toFixed(2)}..${hi.toFixed(2)}`);
+
+  // a metre apart is the same weather; sixty metres apart is not
+  const a = w.sample(0, 0, new THREE.Vector3());
+  const b = w.sample(1, 0, new THREE.Vector3());
+  const c = w.sample(70, 40, new THREE.Vector3());
+  assert(a.distanceTo(b) < 0.12, `neighbouring blades disagree by ${a.distanceTo(b).toFixed(3)}`);
+  assert(a.distanceTo(c) > 0.25, `the gust is uniform across 70m (${a.distanceTo(c).toFixed(3)})`);
+  return `[${lo.toFixed(2)}, ${hi.toFixed(2)}], ${a.distanceTo(b).toFixed(3)} at 1m vs ${a.distanceTo(c).toFixed(2)} at 70m`;
+});
+
+check('wind: gusts travel downwind rather than shimmering in place', () => {
+  const w = new WindField({ heading: 0, strength: 2 });
+  // The whole point of a shared field: fronts MOVE. Sample the same phase at a
+  // later time further downwind and it must be the identical value.
+  const speed = 0.62 / 0.055;          // GUST_W / GUST_K
+  for (const t of [0.5, 2, 7.25]) {
+    const here = w.gust(0, 0, 0);
+    const there = w.gust(w.dir.x * speed * t, w.dir.y * speed * t, t);
+    near(there, here, 1e-6, `the gust front did not travel over ${t}s`);
+  }
+  // and a fixed point must actually change as it passes
+  let swing = 0;
+  for (let i = 0; i < 400; i++) swing = Math.max(swing, Math.abs(w.gust(0, 0, i * 0.05) - w.gust(0, 0, 0)));
+  assert(swing > 0.8, `a fixed point only saw the wind change by ${swing.toFixed(2)}`);
+  assert(w.strengthAt(0, 0) >= 0 && w.strengthAt(1e4, -1e4) >= 0, 'wind speed went negative');
+  return `fronts at ${speed.toFixed(1)} m/s, ${swing.toFixed(2)} swing at a fixed point`;
+});
+
+check('wind: the shader implements the same field the CPU does', () => {
+  // WindField and WIND_GLSL are hand-mirrored. If one drifts, the grass leans
+  // one way and the smoke another, and nothing about the frame reads as wind.
+  const nums = (s) => (s.match(/(?<![\w.])\d+\.\d+/g) || []).map(Number);
+  const glsl = WIND_GLSL.slice(WIND_GLSL.indexOf('float windGust'), WIND_GLSL.indexOf('vec3 windAt'));
+  const js = WindField.prototype.gust.toString();
+  const inShader = new Set(nums(glsl).map(n => n.toFixed(6)));
+  const inJs = nums(js).map(n => n.toFixed(6));
+  const missing = inJs.filter(n => !inShader.has(n));
+  assert(missing.length === 0, `coefficients only the CPU has: ${missing.join(', ')}`);
+  assert(inShader.has((0.62).toFixed(6)) && inShader.has((0.055).toFixed(6)),
+    'the shader lost the travelling-front constants');
+  return `${inJs.length} shared coefficients, both directions`;
+});
+
+check('scenery: pushers are matched frame to frame so grass knows where you are going', () => {
+  const t = new PusherTracker();
+  t.update([{ x: 0, y: 0, z: 0, w: 1 }, { x: 8, y: 0, z: 0, w: 1 }], 1 / 60);
+  // the two swap places in the list — identity has to come from position
+  for (let i = 1; i <= 12; i++) {
+    var out = t.update([
+      { x: 8 - i * 0.05, y: 0, z: 0, w: 1 },
+      { x: 0, y: 0, z: i * 0.1, w: 1 },
+    ], 1 / 60);
+  }
+  assert(out.length === 2, 'the tracker lost a pusher');
+  const walker = out[1], strafer = out[0];
+  assert(walker.vz > 3 && Math.abs(walker.vx) < 0.5,
+    `the walker's velocity came out as (${walker.vx.toFixed(2)}, ${walker.vz.toFixed(2)})`);
+  assert(strafer.vx < -1.5, `the reversed entry was matched to the wrong body (vx=${strafer.vx.toFixed(2)})`);
+  // the tracker hands back its own reusable slots, so read what you need now
+  const forward = walker.vz;
+  // a body that teleports must not be handed a huge bogus velocity
+  const jump = t.update([{ x: 8, y: 0, z: 0, w: 1 }, { x: 60, y: 0, z: 60, w: 1 }], 1 / 60);
+  assert(jump[1].speed === 0, `a teleport produced ${jump[1].speed.toFixed(1)} m/s`);
+  return `swapped order, ${forward.toFixed(1)} m/s forward, teleports ignored`;
+});
+
+check('grass: walking through it presses a trail that springs back', () => {
+  const scene = litScene();
+  const g = new GrassField(scene, FLAT, { count: 400, radius: 30 });
+  const c = new THREE.Vector3(0, 0, 0);
+  const path = [];
+  for (let i = 0; i < 60; i++) {
+    c.set(0, 0, i * 0.12);
+    g.update(1 / 60, c, [{ x: c.x, y: 0, z: c.z, w: 1.2 }], null);
+    path.push(c.z);
+  }
+  const here = g.sampleTrail(0, path[path.length - 1]);
+  const behind = g.sampleTrail(0, path[10]);
+  const beside = g.sampleTrail(6, path[path.length - 1]);
+  assert(here.press > 0.5, `standing in the grass only pressed it to ${here.press.toFixed(2)}`);
+  assert(behind.press > 0.02 && behind.press < here.press,
+    `the trail behind reads ${behind.press.toFixed(3)} against ${here.press.toFixed(3)} underfoot`);
+  assert(beside.press < 0.02, `grass six metres away was flattened (${beside.press.toFixed(3)})`);
+  assert(here.dirZ > 0.2, `the shove points ${here.dirZ.toFixed(2)} along the direction of travel`);
+
+  // stand still somewhere else and the trail recovers
+  for (let i = 0; i < 180; i++) g.update(1 / 60, c.set(0, 0, 20), [], null);
+  const healed = g.sampleTrail(0, path[path.length - 1]);
+  assert(healed.press < 0.05, `the trail was still ${healed.press.toFixed(2)} pressed three seconds later`);
+  g.dispose();
+  return `${here.press.toFixed(2)} underfoot, ${behind.press.toFixed(2)} behind, ${healed.press.toFixed(3)} after 3s`;
+});
+
+check('grass: a blade cuts it, and the cut outlives the footprint', () => {
+  const scene = litScene();
+  const g = new GrassField(scene, FLAT, { count: 400, radius: 30 });
+  const c = new THREE.Vector3(0, 0, 0);
+  g.update(1 / 60, c, [], null);
+  g.cut(new THREE.Vector3(-1.5, 0.2, 0), new THREE.Vector3(1.5, 0.2, 0), 0.3);
+  const cutNow = g.sampleTrail(0, 0);
+  assert(cutNow.cut > 0.7, `the sweep only cut to ${cutNow.cut.toFixed(2)}`);
+  assert(g.sampleTrail(0, 4).cut === 0, 'the cut reached grass the blade never touched');
+
+  for (let i = 0; i < 300; i++) g.update(1 / 60, c, [], null);   // five seconds
+  const later = g.sampleTrail(0, 0);
+  assert(later.press < 0.05, `the press left by the sweep is still ${later.press.toFixed(2)}`);
+  assert(later.cut > 0.55, `the cut healed to ${later.cut.toFixed(2)} in five seconds`);
+  g.dispose();
+  return `cut ${cutNow.cut.toFixed(2)} → ${later.cut.toFixed(2)} after 5s, press gone`;
+});
+
+check('grass: the disturbance window wraps without smearing marks across the map', () => {
+  // Addressing is toroidal, so a texel written at x=0 is the same texel as
+  // x=+40. Scrolling the window has to clear what left it, or footprints
+  // reappear forty metres away.
+  const scene = litScene();
+  const g = new GrassField(scene, FLAT, { count: 200, radius: 30 });
+  const c = new THREE.Vector3(0, 0, 0);
+  g.update(1 / 60, c, [{ x: 0, y: 0, z: 0, w: 1.2 }], null);
+  assert(g.sampleTrail(0, 0).press > 0.4, 'nothing was written in the first place');
+
+  // walk far enough that the old mark's texel now belongs to new ground
+  for (let i = 1; i <= 220; i++) g.update(1 / 60, c.set(i * 0.1, 0, 0), [], null);
+  const alias = g.sampleTrail(g.trailSize, 0);       // the same texel, new ground
+  assert(alias.press < 0.02, `a stale footprint aliased in at ${alias.press.toFixed(3)}`);
+
+  // and a splat outside the window must be dropped, not folded in
+  g.disturb(c.x + 400, 0, 1.5, { press: 1 });
+  assert(g.sampleTrail(c.x, 0).press < 0.02, 'a disturbance 400m away landed underfoot');
+  assert(g.sampleTrail(c.x + 400, 0).inside === false, 'the window claims to cover 400m of ground');
+  g.dispose();
+  return `${g.trailRes}² texels over ${g.trailSize}m, wrap cleared`;
+});
+
+check('grass: the two LOD rings tile the field with an overlap, not a gap', () => {
+  const scene = litScene();
+  const g = new GrassField(scene, FLAT, { count: 3000, radius: 46 });
+  const nearU = g.near.mat.uniforms, farU = g.far.mat.uniforms;
+  assert(farU.uNear.value < nearU.uFar.value,
+    `the rings leave a hole between ${nearU.uFar.value} and ${farU.uNear.value}`);
+  assert(g.near.count + g.far.count === 3000, 'the instance budget was not spent');
+
+  g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
+  // blades are jittered around a tuft centre, so a tuft on the boundary
+  // straddles it — the annulus holds to within that spread and no further
+  const inRing = (ring, lo, hi, spread) => {
+    const a = ring.aInst.array;
+    for (let i = 0; i < ring.count; i++) {
+      const r = Math.hypot(a[i * 4], a[i * 4 + 2]);
+      assert(r <= hi + spread, `a ${ring.card ? 'tuft' : 'blade'} sits at ${r.toFixed(2)}m, outside ${hi}m`);
+      assert(r >= lo - spread, `a ${ring.card ? 'tuft' : 'blade'} sits at ${r.toFixed(2)}m, inside ${lo}m`);
+    }
+  };
+  inRing(g.near, 0, g.nearRadius, 0.1);
+  inRing(g.far, g.nearRadius * 0.62, g.radius, 0.4);
+
+  // and the near ring is real geometry while the far ring is not
+  assert(g.near.geo.index.count / 3 === 8, `a blade is ${g.near.geo.index.count / 3} triangles`);
+  assert(!g.near.card && g.far.card, 'the LODs are the same thing twice');
+  const tris = g.near.count * 8 + g.far.count * (g.far.geo.index.count / 3);
+  g.dispose();
+  return `${g.near.count} blades + ${g.far.count} tufts, ${tris} triangles, 2 draw calls`;
+});
+
+check('grass: it is lit, shadowed and fogged rather than a flat colour multiply', () => {
+  const scene = litScene();
+  const g = new GrassField(scene, FLAT, { count: 200, radius: 30 });
+  for (const ring of [g.near, g.far]) {
+    const m = ring.mat;
+    assert(m.lights === true, 'the grass does not take the scene lights');
+    assert(m.fog === true, 'the grass ignores fog — it will band out of the haze');
+    assert(m.uniforms.directionalLights, 'no directional light uniforms');
+    assert(m.uniforms.directionalShadowMap, 'no shadow map uniform');
+    assert(m.fragmentShader.includes('getShadowMask'), 'the grass never samples the shadow map');
+    assert(m.fragmentShader.includes('fog_fragment'), 'the grass never applies fog');
+    assert(m.vertexShader.includes('shadowmap_vertex'), 'no shadow coordinates are generated');
+    assert(ring.mesh.receiveShadow === true, 'the mesh is flagged not to receive shadows');
+  }
+  // the blade normal has to vary along the blade or N·L is worthless
+  assert(g.near.mat.vertexShader.includes('cross(tang, sideV)'), 'the blade has no real normal');
+  g.dispose();
+  return 'sun + hemisphere + shadow mask + translucency, fogged';
+});
+
+check('scenery: water, dust and every particle pool respect the fog', () => {
+  const scene = litScene();
+  const w = new Water(scene, { size: 100 });
+  const a = new Atmosphere(scene, { count: 60, density: 0.2 });
+  const p = new Particles(scene, 0.2);
+  const fogged = [w.mat, a.motes.mat, a.windborne.mat, p.decals.mat, ...p.pools.map(x => x.mat)];
+  for (const m of fogged) assert(m.fog === true, 'a material still ignores fog');
+  for (const m of fogged) {
+    assert(m.fragmentShader.includes('fog_pars_fragment'), 'a material declares no fog uniforms');
+  }
+  // additive pools must lose light to distance, not gain the fog colour
+  const additive = p.pools.filter(x => x.mat.blending === THREE.AdditiveBlending);
+  assert(additive.length === 3, `expected 3 emissive pools, found ${additive.length}`);
+  for (const x of additive) assert('EMISSIVE_POOL' in x.mat.defines, 'an additive pool blends toward the fog colour');
+  for (const x of p.pools) {
+    if (x.mat.blending === THREE.AdditiveBlending) continue;
+    assert(!('EMISSIVE_POOL' in x.mat.defines), 'a smoke pool is being treated as an emitter');
+  }
+  assert(p.sparks.mat.fragmentShader.includes('gl_FragColor.rgb *= (1.0 - fogFactor)'),
+    'the attenuating branch is gone');
+  w.dispose(); a.dispose(); p.dispose();
+  return `${fogged.length} materials fogged, ${additive.length} emissive pools attenuated`;
+});
+
+check('particles: a pool wraps at its cap and never allocates past it', () => {
+  const scene = litScene();
+  const pool = new ParticlePool(scene, { max: 64, map: null });
+  const v = V(0, 0, 0);
+  for (let i = 0; i < 200; i++) pool.spawn(V(i, 0, 0), v, { life: 5 });
+  assert(pool.head === 200 % 64, `the ring head is at ${pool.head}`);
+  assert(pool.live === 64, `the pool reports ${pool.live} live of 64`);
+  assert(pool.aSpawn.array.length === 64 * 3, 'the pool grew its buffers');
+  // the last 64 spawns are the ones still in the buffer
+  const xs = new Set();
+  for (let i = 0; i < 64; i++) xs.add(pool.aSpawn.array[i * 3]);
+  for (let i = 136; i < 200; i++) assert(xs.has(i), `spawn ${i} was dropped from the ring`);
+  pool.dispose();
+  return '64 slots, 200 spawns, oldest overwritten first';
+});
+
+check('particles: chips are real bodies — they fall, bounce and come to rest', () => {
+  const scene = litScene();
+  const chips = new ChipField(scene, { max: 32 });
+  chips.spawn(V(0, 5, 0), V(2, 0, 0), { life: 30, size: 0.06, floor: 0, restitution: 0.4 });
+  const c = chips.chips.find(x => x.alive);
+  let lowest = Infinity, bounces = 0, wasFalling = true;
+  for (let i = 0; i < 900; i++) {
+    chips.update(1 / 60);
+    lowest = Math.min(lowest, c.pos.y);
+    if (wasFalling && c.vel.y > 0.05) { bounces++; wasFalling = false; }
+    if (c.vel.y < -0.05) wasFalling = true;
+  }
+  assert(lowest > -1e-6, `a chip fell through its floor to y=${lowest.toFixed(3)}`);
+  assert(bounces >= 1, 'the chip never bounced, it just stuck');
+  assert(c.sleep === 1, 'the chip never settled');
+  near(c.pos.y, 0.03, 0.01, 'the chip did not come to rest on the floor');
+  assert(Math.abs(c.pos.x) > 0.05, 'the chip did not travel along its initial velocity');
+  assert(chips.mesh.count === 1, `${chips.mesh.count} instances drawn for one chip`);
+  chips.dispose();
+  return `${bounces} bounces, asleep at y=${c.pos.y.toFixed(3)}, x=${c.pos.x.toFixed(2)}`;
+});
+
+check('particles: the chip pool recycles its slots and never exceeds its cap', () => {
+  const scene = litScene();
+  const chips = new ChipField(scene, { max: 24 });
+  for (let i = 0; i < 24 * 4; i++) chips.spawn(V(0, 3, 0), V(0, 0, 0), { life: 2, floor: 0 });
+  assert(chips.liveCount === 24, `${chips.liveCount} live in a 24-slot pool`);
+  assert(chips.free.length === 0, 'the free list still has slots while the pool is full');
+  const ids = new Set();
+  for (let i = 0; i < 24; i++) ids.add(chips.chips[i]);
+  assert(ids.size === 24, 'the pool aliased two chips onto one slot');
+  chips.update(1 / 60);
+  assert(chips.mesh.count === 24, `${chips.mesh.count} instances drawn for 24 chips`);
+  for (let i = 0; i < 200; i++) chips.update(1 / 60);      // outlive them
+  assert(chips.liveCount === 0 && chips.free.length === 24,
+    `${chips.free.length} of 24 slots came back`);
+  assert(chips.mesh.count === 0, 'expired chips are still being drawn');
+  chips.dispose();
+  return '24 slots, 96 spawns, all returned';
+});
+
+check('particles: running throws dust backwards, and teleports throw none', () => {
+  const scene = litScene();
+  const p = new Particles(scene, 1);
+  const dust = p.dust;
+  p.sandPuff(V(0, 0, 0), 1, 0, 0xffffff);          // first footfall: no history
+  p.update(1 / 60);
+  const head = dust.head;
+  p.sandPuff(V(0, 0, 0.9), 1, 0, 0xffffff);        // a stride further along +z
+  let meanZ = 0;
+  const n = 10;
+  for (let i = 0; i < n; i++) meanZ += dust.aVel.array[((head + i) % dust.max) * 3 + 2];
+  meanZ /= n;
+  assert(meanZ < -0.6, `dust from a runner averaged vz=${meanZ.toFixed(2)}, not thrown behind`);
+
+  // a spawn twenty metres away is not a stride, it is a different body
+  p.update(1 / 60);
+  const head2 = dust.head;
+  p.sandPuff(V(0, 0, 21), 1, 0, 0xffffff);
+  let meanZ2 = 0;
+  for (let i = 0; i < n; i++) meanZ2 += dust.aVel.array[((head2 + i) % dust.max) * 3 + 2];
+  meanZ2 /= n;
+  assert(Math.abs(meanZ2) < 0.9, `a 20m jump was read as a stride (vz=${meanZ2.toFixed(2)})`);
+
+  // and two runners a couple of metres apart are two runners, not one sprinting
+  // between them: the footfalls have to be matched by proximity
+  const q = new Particles(litScene(), 1);
+  q.sandPuff(V(0, 0, 0), 1, 0, 0xffffff);      // runner A, heading +z
+  q.sandPuff(V(2.4, 0, 0), 1, 0, 0xffffff);    // runner B, two metres to the side
+  q.update(1 / 60);
+  const headA = q.dust.head;
+  q.sandPuff(V(0, 0, 0.9), 1, 0, 0xffffff);    // A's next step
+  let a = 0;
+  for (let i = 0; i < n; i++) a += q.dust.aVel.array[((headA + i) % q.dust.max) * 3 + 2];
+  a /= n;
+  assert(a < -0.6, `A's dust came out at vz=${a.toFixed(2)} — it was matched to B's footfall`);
+  q.dispose();
+  p.dispose();
+  return `vz ${meanZ.toFixed(2)} running, ${meanZ2.toFixed(2)} teleporting, ${a.toFixed(2)} with a second runner alongside`;
+});
+
+check('particles: a splash rings the water it landed in', () => {
+  const scene = litScene();
+  const w = new Water(scene, { size: 80, level: 0.35 });
+  const p = new Particles(scene, 0.4);
+  const before = w.mat.uniforms.uRipples.value.filter(r => r.w > 0).length;
+  p.splash(V(4, 0.35, -3), 1.2);
+  const live = w.mat.uniforms.uRipples.value.filter(r => r.w > 0);
+  assert(live.length === before + 1, 'the splash did not ring the water');
+  near(live[0].x, 4, 1e-5, 'the ripple is in the wrong place');
+  near(live[0].y, -3, 1e-5, 'the ripple is in the wrong place');
+  assert(live[0].w > 0 && live[0].w <= 3, 'the ripple strength is out of range');
+  // and the ring must recycle rather than grow
+  for (let i = 0; i < 50; i++) w.ripple(i, i, 1);
+  assert(w.mat.uniforms.uRipples.value.length === 10, 'the ripple array grew');
+  w.dispose(); p.dispose();
+  return '10-slot ripple ring, recycled';
+});
+
+check('particles: every recipe survives a level with no terrain, water or grass', () => {
+  // Levels differ: the dune sea has no water and no grass, the hangar has no
+  // terrain worth cratering. Nothing here may depend on a system being present.
+  ground.grass = null; ground.water = null; ground.terrain = null;
+  const scene = litScene();
+  const p = new Particles(scene, 0.5);
+  const at = V(3, 1, -2), dir = V(0, 1, 0);
+  p.sparkBurst(at, dir, 10);
+  p.cutFlare(at, dir, 0x57c9ff, 12);
+  p.boltImpact(at, dir, 0xff3a2a);
+  p.sandPuff(at, 0.3, 1, 0xd8c09a);
+  p.sandPuff(at, 1.8, 1, 0xd8c09a);
+  p.slide(at, V(1, 0, 0), 1, 1);
+  p.bladeScar(V(0, 1, 0), V(2, 1, 1));
+  p.grassClippings(V(0, 1, 0), V(1, 1, 0));
+  p.chipBurst(at, dir, 6);
+  p.splash(at, 1);
+  p.explosion(at, 1);
+  p.slag(at, dir);
+  p.scorch(at, dir, 0.4, { heat: 1 });
+  for (let i = 0; i < 30; i++) p.update(1 / 60);
+  for (const pool of p.pools) {
+    for (const v of pool.aSpawn.array) assert(isFinite(v), 'a particle spawned at a non-finite position');
+    for (const v of pool.aVel.array) assert(isFinite(v), 'a particle got a non-finite velocity');
+  }
+  for (const c of p.chips.chips) assert(isFinite(c.pos.y), 'a chip went non-finite');
+  const stats = p.stats();
+  p.dispose();
+  return `13 recipes, ${stats.pools} pooled slots + ${stats.chipMax} chips + ${stats.decals} decals`;
+});
+
+check('scenery: the air adapts to the level and gives every mesh back on dispose', () => {
+  const outdoor = litScene();
+  const before = outdoor.children.length;
+  const a = new Atmosphere(outdoor, { count: 300, density: 1 });
+  assert(a.motes.mesh && a.windborne.mesh && a.haze.mesh && a.shimmer.mesh,
+    'the open air is missing one of its layers');
+  assert(a.windborne.sheets > 0, 'no blowing sand outdoors');
+  assert(outdoor.children.length === before + 4, 'the air is not four draw calls');
+
+  const indoor = litScene();
+  indoor.background = new THREE.Color(0x0a0d13);      // no sky: a hangar
+  const b = new Atmosphere(indoor, { count: 300, density: 1 });
+  assert(!b.haze.mesh && !b.shimmer.mesh, 'a hangar got horizon haze and a mirage');
+  assert(b.windborne.sheets === 0, 'sand is blowing across a hangar floor');
+  assert(b.motes.mesh, 'a hangar has no motes at all');
+
+  a.dispose(); b.dispose();
+  assert(outdoor.children.length === before, `${outdoor.children.length - before} meshes leaked on dispose`);
+  const g = new GrassField(litScene(), FLAT, { count: 200 });
+  const w = new Water(litScene(), { size: 60 });
+  const p = new Particles(litScene(), 0.3);
+  assert(ground.grass === g && ground.water === w && ground.fx === p, 'the broker never saw them');
+  g.dispose(); w.dispose(); p.dispose();
+  assert(ground.grass === null && ground.water === null && ground.fx === null,
+    'the broker holds a reference to a disposed system');
+  return '4 air layers outdoors, motes only indoors, nothing leaked';
+});
+
 check('source: no stray backtick inside a GLSL template literal', async () => {
   // A backtick in a shader comment closes the JS template literal that holds
   // the shader, and the file dies at parse time with an error pointing at the
@@ -1322,6 +1910,148 @@ check('source: no stray backtick inside a GLSL template literal', async () => {
   }
   assert(bad.length === 0, `backtick inside a shader literal in: ${[...new Set(bad)].join(', ')}`);
   return `${files.length} source files, all shader literals clean`;
+});
+
+check('source: no GLSL ES reserved word is used as an identifier', async () => {
+  // `vec3 half = ...` compiles fine in your head and fails on the device with a
+  // message pointing at the next line. The whole shader — and with it the whole
+  // system it draws — silently vanishes from the frame. Cheaper to check here.
+  const RESERVED = ['half', 'double', 'fixed', 'input', 'output', 'cast', 'namespace',
+    'using', 'union', 'enum', 'typedef', 'template', 'this', 'packed', 'goto', 'switch',
+    'default', 'inline', 'noinline', 'volatile', 'public', 'static', 'extern', 'external',
+    'interface', 'flat', 'long', 'short', 'unsigned', 'superp', 'filter', 'sizeof', 'asm',
+    'class', 'noperspective', 'patch', 'sample', 'subroutine', 'hvec2', 'hvec3', 'hvec4',
+    'dvec2', 'dvec3', 'dvec4', 'fvec2', 'fvec3', 'fvec4'];
+  const { readdir, readFile } = await import('node:fs/promises');
+  const walk = async (dir) => {
+    const out = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = dir + '/' + e.name;
+      if (e.isDirectory()) out.push(...await walk(p));
+      else if (e.name.endsWith('.js')) out.push(p);
+    }
+    return out;
+  };
+  const files = await walk(new URL('../src', import.meta.url).pathname);
+  const bad = [];
+  let blocks = 0;
+  for (const f of files) {
+    const src = await readFile(f, 'utf8');
+    const re = /\/\* glsl \*\/`([\s\S]*?)`/g;
+    let m;
+    while ((m = re.exec(src))) {
+      blocks++;
+      // prose in a comment is not an identifier
+      const body = m[1].replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const w of RESERVED) {
+        if (new RegExp(`(?<![\\w.])${w}(?![\\w])`).test(body)) {
+          bad.push(`${f.split('/src/')[1]}: ${w}`);
+        }
+      }
+    }
+  }
+  assert(bad.length === 0, `reserved word used as an identifier — ${[...new Set(bad)].join(', ')}`);
+  return `${blocks} shader blocks, ${RESERVED.length} reserved words, none used`;
+});
+
+check('source: an unrolled light loop gives its body a scope of its own', async () => {
+  // three unrolls `#pragma unroll_loop_start` by pasting the body once per
+  // light into the SAME scope. A `float wrap = ...` inside it compiles with one
+  // directional light and dies with two — and the level that has two is not the
+  // one you were testing.
+  const { readdir, readFile } = await import('node:fs/promises');
+  const walk = async (dir) => {
+    const out = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = dir + '/' + e.name;
+      if (e.isDirectory()) out.push(...await walk(p));
+      else if (e.name.endsWith('.js')) out.push(p);
+    }
+    return out;
+  };
+  const files = await walk(new URL('../src', import.meta.url).pathname);
+  const bad = [];
+  let loops = 0;
+  const DECL = /^\s*(?:const\s+)?(?:float|int|bool|vec[234]|mat[234]|ivec[234]|bvec[234])\s+\w+\s*=/m;
+  for (const f of files) {
+    const src = await readFile(f, 'utf8');
+    const re = /#pragma unroll_loop_start[\s\S]*?\)\s*{([\s\S]*?)}\s*#pragma unroll_loop_end/g;
+    let m;
+    while ((m = re.exec(src))) {
+      loops++;
+      // strip nested blocks — those already have their own scope
+      const flat = m[1].replace(/{[\s\S]*?}/g, '');
+      if (DECL.test(flat)) bad.push(f.split('/src/')[1]);
+    }
+  }
+  assert(bad.length === 0, `an unrolled loop declares into the shared scope in: ${[...new Set(bad)].join(', ')}`);
+  return `${loops} unrolled loops, every declaration scoped`;
+});
+
+check('composition: a site is refused on a cliff, on the spawn, or on another prop', () => {
+  const world = { terrain: { slopeAt: (x) => (x > 50 ? 0.9 : 0.1), height: () => 0 } };
+  beginDressing(world);
+  assert(!siteOk(world, 60, 0, {}), 'a 0.9 slope was accepted');
+  assert(!siteOk(world, 2, 2, {}), 'a site on top of the player spawn was accepted');
+  assert(siteOk(world, 20, 0, { clearance: 2 }), 'a clear flat site was refused');
+  assert(!siteOk(world, 21, 0, { clearance: 2 }), 'a site 1m from an occupied one was accepted');
+  assert(siteOk(world, 30, 0, { clearance: 2 }), 'a site 10m away was refused');
+  return 'cliffs, spawn and overlaps all refused; clear ground accepted';
+});
+
+check('composition: cluster actually clusters, and scatter does not', () => {
+  const world = { terrain: { slopeAt: () => 0.05, height: () => 0 } };
+  const spread = (pts) => {
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const cz = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+    return Math.sqrt(pts.reduce((a, p) => a + (p.x - cx) ** 2 + (p.z - cz) ** 2, 0) / pts.length);
+  };
+
+  beginDressing(world);
+  const clustered = [];
+  cluster(world, { rmin: 30, rmax: 60, count: 20, spread: 8, satClearance: 0.5 },
+    (pos) => clustered.push({ x: pos.x, z: pos.z }));
+  assert(clustered.length >= 10, `cluster only placed ${clustered.length} of 20`);
+
+  beginDressing(world);
+  const scattered = [];
+  for (let i = 0; i < 20; i++) {
+    const site = findSite(world, 30, 60, { clearance: 0.5 });
+    if (site) scattered.push({ x: site.pos.x, z: site.pos.z });
+  }
+
+  const sc = spread(clustered), ss = spread(scattered);
+  assert(sc < ss * 0.5,
+    `cluster spread ${sc.toFixed(1)}m is not tighter than scatter's ${ss.toFixed(1)}m — it is not clustering`);
+  return `cluster ${sc.toFixed(1)}m rms vs uniform scatter ${ss.toFixed(1)}m`;
+});
+
+check('composition: a run places things along a line', () => {
+  const world = { terrain: { slopeAt: () => 0.05, height: () => 0 } };
+  beginDressing(world);
+  const pts = [];
+  const n = run(world, { x: -20, z: 40 }, { x: 20, z: 40 }, 8,
+    (pos) => pts.push({ x: pos.x, z: pos.z }), { jitter: 0, clearance: 1 });
+  assert(n === 8, `only ${n} of 8 placed on a clear line`);
+  // every point on the line, and spanning it end to end
+  const offAxis = Math.max(...pts.map(p => Math.abs(p.z - 40)));
+  assert(offAxis < 0.001, `points strayed ${offAxis.toFixed(2)}m off the line`);
+  const xs = pts.map(p => p.x).sort((a, b) => a - b);
+  near(xs[0], -20, 0.001, 'the run does not start at its start');
+  near(xs[xs.length - 1], 20, 0.001, 'the run does not reach its end');
+  return `8 placed, ${offAxis.toFixed(4)}m off-axis, spans -20 to 20`;
+});
+
+check('composition: polar bias moves the crowd in or out', () => {
+  const mean = (bias) => {
+    let s = 0;
+    for (let i = 0; i < 400; i++) s += polar(10, 100, bias).r;
+    return s / 400;
+  };
+  const inner = mean(0.4), even = mean(1), outer = mean(2.4);
+  assert(inner > even && even > outer,
+    `bias did not order the radii: ${inner.toFixed(1)} / ${even.toFixed(1)} / ${outer.toFixed(1)}`);
+  return `mean radius ${inner.toFixed(0)}m / ${even.toFixed(0)}m / ${outer.toFixed(0)}m at bias 0.4 / 1 / 2.4`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

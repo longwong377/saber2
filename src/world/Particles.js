@@ -1,20 +1,38 @@
 /**
- * SABER — particles.
+ * SABER — particles, chips, decals.
  *
- * Simulation runs entirely in the vertex shader: the CPU only ever writes a
- * spawn record (position, velocity, life, colour, and the ground height under
- * the spawn point). That keeps sand storms, spark showers and smoke columns
- * essentially free, and lets a single draw call carry twenty thousand of them.
+ * Three tiers, chosen by what each effect has to be able to do.
+ *
+ *   ParticlePool   Simulation lives entirely in the vertex shader: the CPU only
+ *                  writes a spawn record. That keeps sand storms and spark
+ *                  showers essentially free and lets one draw call carry twenty
+ *                  thousand of them. Sparks skitter and die on the ground,
+ *                  smoke and embers shear in the shared wind, and everything is
+ *                  fogged — additively blended pools by ATTENUATION, because
+ *                  blending a spark toward the fog colour makes it brighter.
+ *
+ *   ChipField      Debris that has to behave: real integration, real bounces,
+ *                  real angular velocity, lit and shadowed like the world it
+ *                  landed in. A few hundred, recycled through a free list.
+ *
+ *   DecalField     Marks that outlive the event — scorch, scuff, skid, and the
+ *                  molten line a blade leaves in the dirt, cooling from orange
+ *                  to char over the first couple of seconds.
  */
 
 import * as THREE from 'three';
-import { sparkSprite, smokeSprite, radialSprite } from '../engine/Textures.js';
-import { makeRng } from '../engine/MathUtil.js';
+import { sparkSprite, smokeSprite, radialSprite, scorchSprite } from '../engine/Textures.js';
+import { makeRng, clamp, TAU } from '../engine/MathUtil.js';
+import { WIND_GLSL, windUniforms, syncWind, ground, wind } from './Scenery.js';
 
 const rng = makeRng(2718);
 
 const VERT = /* glsl */`
   precision highp float;
+  #include <common>
+  #include <fog_pars_vertex>
+  ${WIND_GLSL}
+
   attribute vec3 aSpawn;
   attribute vec3 aVel;
   attribute vec4 aParams;   // life, size, drag, gravity
@@ -25,6 +43,9 @@ const VERT = /* glsl */`
   uniform float uGrow;
   uniform float uSpin;
   uniform float uFadeIn;
+  uniform float uWindK;     // how hard the wind carries this pool
+  uniform float uCurl;      // how much it tumbles as it goes
+  uniform float uBounce;    // 0 = settle, >0 = skitter and die
   varying vec2 vUv;
   varying vec4 vColor;
   varying float vLife;
@@ -37,22 +58,54 @@ const VERT = /* glsl */`
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // cull off-screen
       vColor = vec4(0.0);
       vUv = uv;
+      #ifdef USE_FOG
+        vFogDepth = 0.0;
+      #endif
       return;
     }
 
     float k = max(aParams.z, 0.0001);
     float e = (1.0 - exp(-k * t)) / k;
-    vec3 pos = aSpawn + aVel * e + vec3(0.0, -aParams.w, 0.0) * (t / k - e) / k;
+    float accel = (t / k - e) / k;             // the integral of a constant force
+    vec3 pos = aSpawn + aVel * e + vec3(0.0, -aParams.w, 0.0) * accel;
 
-    // settle on the ground captured at spawn time
+    // ── carried by the same wind the grass is leaning in.
+    // Drag pulls a particle toward the air's velocity, and the displacement
+    // that produces is w·(t − e): it starts at nothing and approaches moving
+    // WITH the wind. Treating wind as a constant force instead gives a drift
+    // that keeps accelerating, and smoke that shoots sideways off the screen.
+    if(uWindK > 0.0){
+      vec3 w = windAt(aSpawn.xz);
+      pos += w * (uWindK * (t - e));
+      if(uCurl > 0.0){
+        float ph = aExtra.y * 6.2831;
+        pos += vec3(sin(ph + t * 1.7), sin(ph * 1.7 + t * 0.9) * 0.35, cos(ph + t * 1.3))
+               * (uCurl * t * length(w.xz) * 0.35);
+      }
+    }
+
+    // ── the ground captured at spawn time
     float floorY = aExtra.x;
-    if(pos.y < floorY){
-      float over = floorY - pos.y;
-      pos.y = floorY + min(over * 0.16, 0.05);
+    float over = floorY - pos.y;
+    float grounded = 0.0;
+    if(over > 0.0){
+      grounded = 1.0;
+      if(uBounce > 0.0){
+        // A spark below the floor has overshot it. How far below stands in for
+        // how long ago it landed, so folding that depth through a decaying
+        // oscillation gives a few shrinking hops and then a skid — which is
+        // what a spark does, without the shader having to solve for the exact
+        // moment of contact under drag.
+        float s = sqrt(over);
+        pos.y = floorY + abs(sin(s * uBounce)) * exp(-s * 2.1) * (0.30 * s + 0.015);
+      } else {
+        pos.y = floorY + min(over * 0.16, 0.05);
+      }
     }
 
     float grow = 1.0 + uGrow * vLife;
     float fade = smoothstep(1.0, 0.72, vLife) * smoothstep(0.0, uFadeIn, vLife);
+    if(uBounce > 0.0) fade *= exp(-max(over, 0.0) * 1.1);   // spent sparks go out
     float size = aParams.y * grow;
 
     // billboard, optionally stretched along the velocity direction
@@ -70,13 +123,15 @@ const VERT = /* glsl */`
       float vl = length(v);
       vec3 dir = vl > 0.001 ? v / vl : vec3(0.0,1.0,0.0);
       vec3 side = normalize(cross(dir, normalize(cameraPosition - pos)) + vec3(1e-5));
-      float stretch = 1.0 + min(vl * uStretch, 6.0);
+      float stretch = 1.0 + min(vl * uStretch, 6.0) * (1.0 - grounded * 0.8);
       offset = dir * q.y * size * stretch + side * q.x * size;
     } else {
       offset = camRight * q.x * size + camUp * q.y * size;
     }
 
     vec4 mv = modelViewMatrix * vec4(pos + offset, 1.0);
+    vec4 mvPosition = mv;
+    #include <fog_vertex>
     gl_Position = projectionMatrix * mv;
     vUv = uv;
     vColor = vec4(aColor.rgb, aColor.a * fade);
@@ -85,6 +140,8 @@ const VERT = /* glsl */`
 
 const FRAG = /* glsl */`
   precision highp float;
+  #include <common>
+  #include <fog_pars_fragment>
   uniform sampler2D uMap;
   uniform vec3 uColorEnd;
   uniform float uColorShift;
@@ -97,6 +154,22 @@ const FRAG = /* glsl */`
     float a = tex.a * vColor.a;
     if(a < 0.004) discard;
     gl_FragColor = vec4(c * tex.rgb, a);
+
+    // Fog, done by hand because the stock chunk is wrong for additive blending:
+    // mixing an ember toward a bright fog colour makes distant sparks GLOW.
+    // What distance does to an emitter is take light away from it.
+    #ifdef USE_FOG
+      #ifdef FOG_EXP2
+        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+      #ifdef EMISSIVE_POOL
+        gl_FragColor.rgb *= (1.0 - fogFactor);
+      #else
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+      #endif
+    #endif
   }
 `;
 
@@ -105,6 +178,7 @@ export class ParticlePool {
     this.max = opts.max ?? 3000;
     this.head = 0;
     this.time = 0;
+    this.live = 0;
 
     const geo = new THREE.InstancedBufferGeometry();
     const quad = new THREE.PlaneGeometry(1, 1);
@@ -127,22 +201,30 @@ export class ParticlePool {
     // start everything expired
     for (let i = 0; i < this.max; i++) this.aParams.array[i * 4] = -1;
 
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]);
+    Object.assign(uniforms, windUniforms(), {
+      uTime: { value: 0 },
+      uMap: { value: opts.map },
+      uStretch: { value: opts.stretch ?? 0 },
+      uGrow: { value: opts.grow ?? 0 },
+      uSpin: { value: opts.spin ?? 0 },
+      uFadeIn: { value: opts.fadeIn ?? 0.05 },
+      uWindK: { value: opts.windK ?? 0 },
+      uCurl: { value: opts.curl ?? 0 },
+      uBounce: { value: opts.bounce ?? 0 },
+      uColorEnd: { value: new THREE.Color(opts.colorEnd ?? 0xffffff) },
+      uColorShift: { value: opts.colorShift ?? 0 },
+    });
+
     const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uMap: { value: opts.map },
-        uStretch: { value: opts.stretch ?? 0 },
-        uGrow: { value: opts.grow ?? 0 },
-        uSpin: { value: opts.spin ?? 0 },
-        uFadeIn: { value: opts.fadeIn ?? 0.05 },
-        uColorEnd: { value: new THREE.Color(opts.colorEnd ?? 0xffffff) },
-        uColorShift: { value: opts.colorShift ?? 0 },
-      },
+      uniforms,
+      defines: opts.additive ? { EMISSIVE_POOL: '' } : {},
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
       depthWrite: false,
       depthTest: true,
+      fog: true,
       blending: opts.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
       side: THREE.DoubleSide,
     });
@@ -163,6 +245,7 @@ export class ParticlePool {
   spawn(pos, vel, { life = 1, size = 0.1, drag = 1.2, gravity = 9, color = 0xffffff, alpha = 1, floor = -999 } = {}) {
     const i = this.head;
     this.head = (this.head + 1) % this.max;
+    if (this.live < this.max) this.live++;
     const i3 = i * 3, i4 = i * 4;
     this.aSpawn.array[i3] = pos.x; this.aSpawn.array[i3 + 1] = pos.y; this.aSpawn.array[i3 + 2] = pos.z;
     this.aVel.array[i3] = vel.x; this.aVel.array[i3 + 1] = vel.y; this.aVel.array[i3 + 2] = vel.z;
@@ -174,11 +257,13 @@ export class ParticlePool {
     this.aExtra.array[i3] = floor; this.aExtra.array[i3 + 1] = rng();
     this.aExtra.array[i3 + 2] = this.time;
     this._dirty = true;
+    return i;
   }
 
   update(dt) {
     this.time += dt;
     this.mat.uniforms.uTime.value = this.time;
+    syncWind(this.mat.uniforms);
     if (this._dirty) {
       this.aSpawn.needsUpdate = true; this.aVel.needsUpdate = true;
       this.aParams.needsUpdate = true; this.aColor.needsUpdate = true; this.aExtra.needsUpdate = true;
@@ -196,36 +281,398 @@ export class ParticlePool {
 const _col = new THREE.Color();
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _m = new THREE.Matrix4();
+const _scl = new THREE.Vector3();
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Chips — debris with actual physics                                    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A few hundred stone and metal chips that bounce, tumble, skid and settle.
+ * They are a MeshStandardMaterial InstancedMesh, so they are lit, fogged and
+ * shadowed by the same rig as everything else — which is the whole point: a
+ * billboard chip always looks like a decal, a real one looks like rubble.
+ *
+ * Active chips are compacted into the front of the instance buffer each frame
+ * and `mesh.count` is set to how many there are, so a quiet moment costs a
+ * draw call with zero instances rather than a pass over the dead.
+ */
+export class ChipField {
+  constructor(scene, opts = {}) {
+    this.max = Math.max(8, Math.floor(opts.max ?? 240));
+    const geo = new THREE.TetrahedronGeometry(1, 0);
+    geo.scale(1, 0.62, 1);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.88, metalness: 0.04, flatShading: true,
+    });
+    this.mesh = new THREE.InstancedMesh(geo, mat, this.max);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.frustumCulled = false;
+    this.mesh.castShadow = false;
+    this.mesh.receiveShadow = true;
+    this.mesh.count = 0;
+    this.mesh.matrixAutoUpdate = false;
+    // seed instanceColor so the attribute exists before the first spawn
+    for (let i = 0; i < this.max; i++) this.mesh.setColorAt(i, _col.setRGB(1, 1, 1));
+    scene.add(this.mesh);
+    this.material = mat;
+
+    this.chips = [];
+    this.free = [];
+    for (let i = 0; i < this.max; i++) {
+      this.chips.push({
+        alive: false, age: 0, life: 1, scale: 0.05, rest: 0.3, floor: -999,
+        pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+        spin: new THREE.Vector3(), quat: new THREE.Quaternion(),
+        color: new THREE.Color(), sleep: 0,
+      });
+      this.free.push(i);
+    }
+    this._oldest = 0;
+  }
+
+  get liveCount() { return this.max - this.free.length; }
+
+  /** Take a slot, recycling the oldest live chip when the pool is full. */
+  _take() {
+    if (this.free.length) return this.free.pop();
+    const i = this._oldest;
+    this._oldest = (this._oldest + 1) % this.max;
+    return i;
+  }
+
+  spawn(pos, vel, { life = 6, size = 0.05, color = 0x9a8a72, floor = -999, restitution = 0.32, spin = 12 } = {}) {
+    const i = this._take();
+    const c = this.chips[i];
+    c.alive = true; c.age = 0; c.life = life; c.scale = size; c.rest = restitution;
+    c.floor = floor; c.sleep = 0;
+    c.pos.copy(pos);
+    c.vel.copy(vel);
+    c.spin.set((rng() - 0.5) * spin, (rng() - 0.5) * spin, (rng() - 0.5) * spin);
+    c.quat.setFromEuler(_eul.set(rng() * TAU, rng() * TAU, rng() * TAU));
+    c.color.set(color);
+    return i;
+  }
+
+  update(dt, gravity = 22) {
+    if (dt <= 0) return;
+    const step = Math.min(dt, 1 / 30);
+    let n = 0;
+    for (let i = 0; i < this.max; i++) {
+      const c = this.chips[i];
+      if (!c.alive) continue;
+      c.age += dt;
+      if (c.age >= c.life) {
+        c.alive = false;
+        this.free.push(i);
+        continue;
+      }
+      if (c.sleep < 1) {
+        c.vel.y -= gravity * step;
+        c.pos.addScaledVector(c.vel, step);
+        const floorY = c.floor > -900 ? c.floor : (ground.heightAt(c.pos.x, c.pos.z) ?? -1e4);
+        if (c.pos.y < floorY + c.scale * 0.5) {
+          c.pos.y = floorY + c.scale * 0.5;
+          if (c.vel.y < 0) c.vel.y = -c.vel.y * c.rest;
+          // friction bleeds the slide off, and the tumble with it
+          c.vel.x *= 0.72; c.vel.z *= 0.72;
+          c.spin.multiplyScalar(0.62);
+          if (c.vel.lengthSq() < 0.05) { c.sleep = 1; c.vel.set(0, 0, 0); c.spin.set(0, 0, 0); }
+        }
+        const s = c.spin.length();
+        if (s > 1e-4) {
+          _q2.setFromAxisAngle(_v3.copy(c.spin).multiplyScalar(1 / s), s * step);
+          c.quat.premultiply(_q2).normalize();
+        }
+      }
+      // shrink away over the last second rather than blinking out
+      const k = clamp((c.life - c.age) / 0.8, 0, 1);
+      _scl.setScalar(Math.max(1e-4, c.scale * k));
+      _m.compose(c.pos, c.quat, _scl);
+      this.mesh.setMatrixAt(n, _m);
+      this.mesh.setColorAt(n, c.color);
+      n++;
+    }
+    this.mesh.count = n;
+    if (n > 0) {
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  clear() {
+    this.free.length = 0;
+    for (let i = 0; i < this.max; i++) { this.chips[i].alive = false; this.free.push(i); }
+    this.mesh.count = 0;
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    this.mesh.parent?.remove(this.mesh);
+  }
+}
+
+const _eul = new THREE.Euler();
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Decals — the marks that stay                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+const DECAL_VERT = /* glsl */`
+  precision highp float;
+  #include <common>
+  #include <fog_pars_vertex>
+  attribute vec4 aPos;      // x, y, z, radius
+  attribute vec4 aNrm;      // nx, ny, nz, spin
+  attribute vec4 aParams;   // start time, life, heat, fade
+  uniform float uTime;
+  varying vec2 vUv;
+  varying float vAge;
+  varying float vHeat;
+  varying float vFade;
+
+  void main(){
+    float t = uTime - aParams.x;
+    if(aParams.y <= 0.0 || t < 0.0 || t > aParams.y){
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      vUv = uv; vAge = 1.0; vHeat = 0.0; vFade = 0.0;
+      #ifdef USE_FOG
+        vFogDepth = 0.0;
+      #endif
+      return;
+    }
+    vAge = t;
+    vHeat = aParams.z;
+    // a fresh mark blooms open in a tenth of a second, then holds, then goes
+    vFade = smoothstep(0.0, 0.09, t) * smoothstep(aParams.y, aParams.y * 0.62, t) * aParams.w;
+
+    vec3 n = normalize(aNrm.xyz);
+    vec3 ref = abs(n.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 side = normalize(cross(n, ref));
+    vec3 up = cross(n, side);
+    float cs = cos(aNrm.w), sn = sin(aNrm.w);
+    vec3 r = side * cs + up * sn;
+    vec3 u = side * -sn + up * cs;
+
+    float grow = mix(0.55, 1.0, smoothstep(0.0, 0.14, t));
+    vec3 p = aPos.xyz + n * 0.02
+           + r * (position.x * aPos.w * 2.0 * grow)
+           + u * (position.y * aPos.w * 2.0 * grow);
+    vUv = uv;
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+    #include <fog_vertex>
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const DECAL_FRAG = /* glsl */`
+  precision highp float;
+  #include <common>
+  #include <fog_pars_fragment>
+  uniform sampler2D uMap;
+  uniform vec3 uChar;
+  varying vec2 vUv;
+  varying float vAge;
+  varying float vHeat;
+  varying float vFade;
+  void main(){
+    float a = texture2D(uMap, vUv).a * vFade;
+    if(a < 0.004) discard;
+    // Molten cools. The centre goes white-hot, then orange, then to char, and
+    // it does it from the rim inward the way real slag does.
+    float cool = exp(-vAge * 0.85) * vHeat;
+    float rim = 1.0 - smoothstep(0.0, 0.62, length(vUv - 0.5) * 2.0);
+    vec3 hot = mix(vec3(1.6, 0.42, 0.06), vec3(2.4, 1.5, 0.55), clamp(cool * 1.4 - 0.5, 0.0, 1.0));
+    vec3 col = mix(uChar, hot, clamp(cool * rim * 1.6, 0.0, 1.0));
+    gl_FragColor = vec4(col, a);
+    #include <fog_fragment>
+  }
+`;
+
+export class DecalField {
+  constructor(scene, opts = {}) {
+    this.max = Math.max(8, Math.floor(opts.max ?? 96));
+    this.head = 0;
+    this.time = 0;
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.attributes.position = quad.attributes.position;
+    geo.attributes.uv = quad.attributes.uv;
+    geo.instanceCount = this.max;
+
+    this.aPos = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
+    this.aNrm = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
+    this.aParams = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
+    for (const a of [this.aPos, this.aNrm, this.aParams]) a.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aPos', this.aPos);
+    geo.setAttribute('aNrm', this.aNrm);
+    geo.setAttribute('aParams', this.aParams);
+
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]);
+    Object.assign(uniforms, {
+      uTime: { value: 0 },
+      uMap: { value: scorchSprite(128) },
+      uChar: { value: new THREE.Color(opts.char ?? 0x14100c) },
+    });
+    this.mat = new THREE.ShaderMaterial({
+      uniforms, vertexShader: DECAL_VERT, fragmentShader: DECAL_FRAG,
+      transparent: true, depthWrite: false, depthTest: true, fog: true,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+      side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.Mesh(geo, this.mat);
+    this.mesh.frustumCulled = false;
+    this.mesh.matrixAutoUpdate = false;
+    this.mesh.renderOrder = 4;
+    scene.add(this.mesh);
+    this._dirty = false;
+  }
+
+  /**
+   * @param {THREE.Vector3} pos     where it lands
+   * @param {THREE.Vector3} normal  surface normal (defaults to straight up)
+   */
+  add(pos, normal, radius = 0.5, { life = 16, heat = 0, alpha = 1 } = {}) {
+    const i = this.head;
+    this.head = (this.head + 1) % this.max;
+    const i4 = i * 4;
+    this.aPos.array[i4] = pos.x; this.aPos.array[i4 + 1] = pos.y;
+    this.aPos.array[i4 + 2] = pos.z; this.aPos.array[i4 + 3] = Math.max(0.03, radius);
+    const nx = normal ? normal.x : 0, ny = normal ? normal.y : 1, nz = normal ? normal.z : 0;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    this.aNrm.array[i4] = nx / nl; this.aNrm.array[i4 + 1] = ny / nl;
+    this.aNrm.array[i4 + 2] = nz / nl; this.aNrm.array[i4 + 3] = rng() * TAU;
+    this.aParams.array[i4] = this.time;
+    this.aParams.array[i4 + 1] = life;
+    this.aParams.array[i4 + 2] = heat;
+    this.aParams.array[i4 + 3] = alpha;
+    this._dirty = true;
+    return i;
+  }
+
+  update(dt) {
+    this.time += dt;
+    this.mat.uniforms.uTime.value = this.time;
+    if (this._dirty) {
+      this.aPos.needsUpdate = true; this.aNrm.needsUpdate = true; this.aParams.needsUpdate = true;
+      this._dirty = false;
+    }
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose(); this.mat.dispose(); this.mesh.parent?.remove(this.mesh);
+  }
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Manager — named emitters used across the game                         */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 export class Particles {
-  constructor(scene, scale = 1) {
+  /**
+   * @param {number} scale        the `particleScale` setting, 0..1.5
+   * @param {object} [opts]       opts.terrain lets chips and decals find the
+   *                              ground; without one they settle where they
+   *                              were thrown, which is close enough for the
+   *                              impacts that produce them.
+   */
+  constructor(scene, scale = 1, opts = {}) {
     this.scale = scale;
+    if (opts.terrain) ground.terrain = opts.terrain;
     const s = (n) => Math.max(120, Math.floor(n * scale));
     const spark = sparkSprite(64);
     const smoke = smokeSprite(128);
     const soft = radialSprite(128, '#ffffff', 'rgba(255,255,255,0)', 2.4);
 
+    // windK is how completely the air owns each pool: 1 means it ends up
+    // travelling with the wind, 0 means it is too heavy to care.
     this.sparks = new ParticlePool(scene, { max: s(4200), map: spark, additive: true, stretch: 0.055,
-      colorEnd: 0xff4400, colorShift: 0.9, fadeIn: 0.02, renderOrder: 12 });
+      colorEnd: 0xff4400, colorShift: 0.9, fadeIn: 0.02, renderOrder: 12,
+      bounce: 5.5, windK: 0.05 });
     this.embers = new ParticlePool(scene, { max: s(1400), map: soft, additive: true,
-      colorEnd: 0x882200, colorShift: 1.0, grow: -0.4, renderOrder: 12 });
+      colorEnd: 0x882200, colorShift: 1.0, grow: -0.4, renderOrder: 12,
+      windK: 0.95, curl: 0.5 });
     this.plasma = new ParticlePool(scene, { max: s(1800), map: soft, additive: true, grow: 1.6,
       colorShift: 0.6, renderOrder: 12 });
     this.smoke = new ParticlePool(scene, { max: s(1600), map: smoke, additive: false, grow: 2.6,
-      spin: 1, colorEnd: 0x2a2a2e, colorShift: 0.8, fadeIn: 0.12, renderOrder: 9 });
+      spin: 1, colorEnd: 0x2a2a2e, colorShift: 0.8, fadeIn: 0.12, renderOrder: 9,
+      windK: 1.0, curl: 0.55 });
     this.dust = new ParticlePool(scene, { max: s(5200), map: smoke, additive: false, grow: 2.0,
-      spin: 0.6, colorEnd: 0xa08050, colorShift: 0.35, fadeIn: 0.08, renderOrder: 8 });
-    this.grit = new ParticlePool(scene, { max: s(3600), map: soft, additive: false, grow: -0.2, renderOrder: 8 });
+      spin: 0.6, colorEnd: 0xa08050, colorShift: 0.35, fadeIn: 0.08, renderOrder: 8,
+      windK: 0.7, curl: 0.35 });
+    this.grit = new ParticlePool(scene, { max: s(3600), map: soft, additive: false, grow: -0.2,
+      renderOrder: 8, bounce: 4.0, windK: 0.12 });
     this.water = new ParticlePool(scene, { max: s(2000), map: soft, additive: false, grow: 0.4,
-      colorEnd: 0x9fd8ff, colorShift: 0.5, renderOrder: 9 });
+      colorEnd: 0x9fd8ff, colorShift: 0.5, renderOrder: 9, bounce: 3.2, windK: 0.1 });
     this.pools = [this.sparks, this.embers, this.plasma, this.smoke, this.dust, this.grit, this.water];
+
+    this.chips = new ChipField(scene, { max: Math.max(48, Math.floor(260 * scale)) });
+    this.decals = new DecalField(scene, { max: Math.max(24, Math.floor(110 * scale)) });
+
+    // Recent footfalls, used to infer which way each runner is going. It has to
+    // be a small set rather than one entry: the player and three droids are all
+    // putting feet down, and a single "last step" turns two bodies two metres
+    // apart into one impossibly fast runner.
+    this._steps = Array.from({ length: 8 }, () => ({ x: 0, z: 0, t: -99 }));
+    this._stepHead = 0;
+    this._clock = 0;
+    ground.fx = this;
   }
 
-  update(dt) { for (const p of this.pools) p.update(dt); }
+  update(dt) {
+    this._clock += dt;
+    for (const p of this.pools) p.update(dt);
+    this.chips.update(dt);
+    this.decals.update(dt);
+  }
+
+  /**
+   * Which way whoever just put a foot down here is travelling.
+   *
+   * Nothing that calls sandPuff passes a direction, but consecutive footfalls a
+   * stride apart and a fraction of a second apart ARE the direction of travel.
+   * Matching by proximity keeps four bodies on a field from being read as one.
+   * Returns null when this is the first step of a run, or a jump, or a
+   * teleport, all of which should throw dust straight up.
+   */
+  _stride(x, z, out) {
+    let best = -1, bestD = 3.2 * 3.2;
+    for (let i = 0; i < this._steps.length; i++) {
+      const s = this._steps[i];
+      if (this._clock - s.t > 0.75) continue;
+      const d = (s.x - x) * (s.x - x) + (s.z - z) * (s.z - z);
+      if (d < bestD && d > 0.18 * 0.18) { bestD = d; best = i; }
+    }
+    let slot = best;
+    if (slot < 0) { slot = this._stepHead; this._stepHead = (this._stepHead + 1) % this._steps.length; }
+    else {
+      const s = this._steps[slot];
+      const d = Math.sqrt(bestD);
+      out.dirX = (x - s.x) / d;
+      out.dirZ = (z - s.z) / d;
+      out.stride = clamp(d / 1.4, 0, 1.4);
+    }
+    const s = this._steps[slot];
+    s.x = x; s.z = z; s.t = this._clock;
+    return best >= 0;
+  }
+
+  /** Pool occupancy, for the HUD and for the tests. */
+  stats() {
+    return {
+      pools: this.pools.reduce((a, p) => a + p.max, 0),
+      chips: this.chips.liveCount,
+      chipMax: this.chips.max,
+      decals: this.decals.max,
+    };
+  }
 
   /* ── recipes ───────────────────────────────────────────────────────── */
 
@@ -252,7 +699,7 @@ export class Particles {
   }
 
   /** The cauterised flare when a blade parts something. */
-  cutFlare(pos, dir, color = 0x57c9ff, count = 26) {
+  cutFlare(pos, dir, color = 0x57c9ff, count = 26, opts = {}) {
     const n = Math.max(2, Math.round(count * this.scale));
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize()
@@ -267,9 +714,17 @@ export class Particles {
         drag: 1.4, gravity: -0.5, color: 0x555a60, alpha: 0.34 });
     }
     this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.18, size: 0.55, drag: 1, gravity: 0, color, alpha: 0.9 });
+
+    // a blade parting something a hand's width off the deck takes the cover
+    // with it — this is the only place the world hears about most saber swings
+    const gh = ground.heightAt(pos.x, pos.z);
+    if (opts.cover !== false && gh !== null && pos.y - gh < 1.1) {
+      ground.disturb(pos.x, pos.z, 0.55, { cut: 0.85, press: 0.7 });
+      this.grassClippings(pos, pos, opts.coverColor ?? 0x7d8c4a, 0.5);
+    }
   }
 
-  boltImpact(pos, normal, color = 0xff3a2a) {
+  boltImpact(pos, normal, color = 0xff3a2a, opts = {}) {
     this.sparkBurst(pos, normal, 12, { speed: 7, color: 0xffe0b0 });
     this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.14, size: 0.6, drag: 1, gravity: 0, color, alpha: 1 });
     for (let i = 0; i < 5 * this.scale; i++) {
@@ -277,39 +732,216 @@ export class Particles {
       this.smoke.spawn(pos, _v, { life: 0.8 + rng() * 0.6, size: 0.1, drag: 2, gravity: -0.6,
         color: 0x6a6a70, alpha: 0.28 });
     }
+    // Only scar things that will still be there in ten seconds. A mark left on
+    // a droid that then walks away is a mark hanging in mid-air. A steeply
+    // up-facing normal means the bolt found a floor, not a chest.
+    const gh = ground.heightAt(pos.x, pos.z);
+    const grounded = gh !== null ? Math.abs(pos.y - gh) < 0.4 : (normal && normal.y > 0.62);
+    if (opts.surface === true || grounded) {
+      this.scorch(pos, normal, 0.16 + rng() * 0.1, { heat: 0.8, life: 11 });
+    }
   }
 
-  /** Sand thrown up by a footfall, a landing, or a body hitting the dune. */
-  sandPuff(pos, power = 1, groundY = null, color = 0xd8c09a) {
+  /** A lasting mark: scorch, scuff, skid. `heat` makes it start molten. */
+  scorch(pos, normal, radius = 0.4, opts = {}) {
+    this.decals.add(pos, normal, radius, {
+      life: opts.life ?? 16, heat: opts.heat ?? 0, alpha: opts.alpha ?? 1,
+    });
+  }
+
+  /**
+   * Sand thrown up by a footfall, a landing, or a body hitting the dune.
+   * Dust leaving from under the ball of the foot goes BACKWARDS along the
+   * direction of travel, which `_stride` recovers from the footfalls.
+   */
+  sandPuff(pos, power = 1, groundY = null, color = 0xd8c09a, opts = {}) {
     const n = Math.max(2, Math.round(10 * power * this.scale));
     const floor = groundY ?? pos.y;
+
+    _gait.dirX = 0; _gait.dirZ = 0; _gait.stride = 0;
+    if (opts.dir) {
+      const m = Math.hypot(opts.dir.x, opts.dir.z) || 1;
+      _gait.dirX = opts.dir.x / m;
+      _gait.dirZ = opts.dir.z / m;
+      _gait.stride = 1;
+      this._stride(pos.x, pos.z, _gaitSpare);   // still record where the foot fell
+    } else {
+      this._stride(pos.x, pos.z, _gait);
+    }
+    const dirX = _gait.dirX, dirZ = _gait.dirZ, stride = _gait.stride;
+
+    const kick = stride * clamp(power * 1.6, 0.2, 2.2);
     for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2, r = rng();
+      const a = rng() * TAU, r = rng();
       _v.set(Math.cos(a) * r, rng() * 0.55 + 0.15, Math.sin(a) * r).multiplyScalar(1.4 + power * 2.4 * rng());
+      // dust is thrown BEHIND a runner, not around them
+      _v.x -= dirX * kick * (1 + rng()); _v.z -= dirZ * kick * (1 + rng());
       this.dust.spawn(pos, _v, { life: 0.9 + rng() * 1.5, size: 0.18 + rng() * 0.3 * power,
         drag: 2.6, gravity: 1.1, color, alpha: 0.16 + 0.12 * rng(), floor });
     }
     for (let i = 0; i < n * 0.8; i++) {
-      const a = rng() * Math.PI * 2;
+      const a = rng() * TAU;
       _v.set(Math.cos(a), rng() * 1.6 + 0.4, Math.sin(a)).multiplyScalar(2 + power * 4 * rng());
+      _v.x -= dirX * kick * 2.4 * rng(); _v.z -= dirZ * kick * 2.4 * rng();
       this.grit.spawn(pos, _v, { life: 0.6 + rng() * 0.8, size: 0.02 + rng() * 0.03,
         drag: 0.9, gravity: 15, color, alpha: 0.75, floor });
     }
+
+    // the cover gets walked through, and hard arrivals flatten a wide patch
+    ground.disturb(pos.x, pos.z, 0.45 + power * 0.55, {
+      press: clamp(0.45 + power * 0.4, 0, 1), dirX, dirZ,
+    });
+
+    if (power >= 1.05) this.landingRing(pos, power, floor, color);
+    else if (power >= 0.5) {
+      this.decals.add(_v3.set(pos.x, floor + 0.01, pos.z), UP, 0.22 + power * 0.3,
+        { life: 9, heat: 0, alpha: 0.32 });
+    }
   }
 
-  splash(pos, power = 1) {
+  /**
+   * A hard landing: the ring of displaced ground going outward, a few real
+   * chips of it thrown, and a scuff where the impact was.
+   */
+  landingRing(pos, power = 1.4, groundY = null, color = 0xd8c09a) {
+    const floor = groundY ?? pos.y;
+    const ring = Math.max(6, Math.round(16 * power * this.scale));
+    for (let i = 0; i < ring; i++) {
+      const a = (i / ring) * TAU + rng() * 0.3;
+      const sp = (2.6 + rng() * 3.4) * power;
+      _v.set(Math.cos(a) * sp, 0.5 + rng() * 0.8, Math.sin(a) * sp);
+      _v2.set(pos.x + Math.cos(a) * 0.3, floor + 0.06, pos.z + Math.sin(a) * 0.3);
+      this.dust.spawn(_v2, _v, { life: 1.1 + rng() * 0.9, size: 0.3 + 0.35 * power,
+        drag: 2.3, gravity: 0.7, color, alpha: 0.20 + 0.1 * rng(), floor });
+    }
+    for (let i = 0; i < Math.round(7 * power * this.scale); i++) {
+      const a = rng() * TAU, sp = (2.5 + rng() * 5) * power;
+      _v.set(Math.cos(a) * sp, 3 + rng() * 5 * power, Math.sin(a) * sp);
+      _v2.set(pos.x, floor + 0.1, pos.z);
+      this.chips.spawn(_v2, _v, {
+        life: 5 + rng() * 4, size: 0.035 + rng() * 0.055 * power,
+        color: _col.set(color).multiplyScalar(0.72 + rng() * 0.4).getHex(),
+        floor, restitution: 0.28,
+      });
+    }
+    this.decals.add(_v3.set(pos.x, floor + 0.012, pos.z), UP, 0.55 + power * 0.75,
+      { life: 14, heat: 0, alpha: 0.42 });
+    ground.disturb(pos.x, pos.z, 1.1 + power * 0.9, { press: 1 });
+  }
+
+  /** A skid: a smear of dust and grit dragged along the ground, plus its mark. */
+  slide(pos, dir, power = 1, groundY = null, color = 0xd8c09a) {
+    const floor = groundY ?? pos.y;
+    const d = _v3.copy(dir).setY(0);
+    const dl = d.length();
+    if (dl > 1e-4) d.multiplyScalar(1 / dl); else d.set(0, 0, 1);
+    const n = Math.max(2, Math.round(6 * power * this.scale));
+    for (let i = 0; i < n; i++) {
+      _v.copy(d).multiplyScalar(-(1.2 + rng() * 2.4) * power);
+      _v.x += (rng() - 0.5) * 1.4; _v.z += (rng() - 0.5) * 1.4;
+      _v.y = 0.4 + rng() * 1.1;
+      this.dust.spawn(pos, _v, { life: 0.8 + rng() * 0.9, size: 0.18 + 0.22 * power,
+        drag: 2.8, gravity: 0.9, color, alpha: 0.14 + 0.1 * rng(), floor });
+    }
+    for (let i = 0; i < n; i++) {
+      _v.copy(d).multiplyScalar(-(2 + rng() * 5) * power);
+      _v.y = 1.4 + rng() * 2.6;
+      _v.x += (rng() - 0.5) * 2; _v.z += (rng() - 0.5) * 2;
+      this.grit.spawn(pos, _v, { life: 0.5 + rng() * 0.6, size: 0.018 + rng() * 0.026,
+        drag: 1.0, gravity: 16, color, alpha: 0.7, floor });
+    }
+    this.decals.add(_v2.set(pos.x, floor + 0.01, pos.z), UP, 0.20 + power * 0.28,
+      { life: 11, heat: 0, alpha: 0.34 });
+    ground.disturb(pos.x, pos.z, 0.5 + power * 0.4, {
+      press: clamp(0.6 + power * 0.3, 0, 1), dirX: d.x, dirZ: d.z,
+    });
+  }
+
+  /**
+   * A blade dragged through the ground. Sand does not spark — it fuses, so this
+   * is molten glass spitting out of a line that glows and then cools to a scar.
+   */
+  bladeScar(a, b, color = 0xffb040, opts = {}) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const len = Math.hypot(dx, dz) || 0.001;
+    const steps = Math.min(10, Math.max(1, Math.round(len / 0.32)));
+    for (let s = 0; s <= steps; s++) {
+      const t = steps ? s / steps : 0;
+      _v2.set(a.x + dx * t, a.y + dy * t, a.z + dz * t);
+      const floor = ground.heightAt(_v2.x, _v2.z);
+      if (floor !== null) _v2.y = floor + 0.02;
+      this.decals.add(_v2, UP, 0.16 + rng() * 0.12, { life: 18, heat: 1, alpha: 0.9 });
+      for (let i = 0; i < Math.max(1, Math.round(3 * this.scale)); i++) {
+        _v.set((rng() - 0.5) * 2.5, 1.5 + rng() * 3.5, (rng() - 0.5) * 2.5);
+        this.sparks.spawn(_v2, _v, { life: 0.5 + rng() * 0.7, size: 0.025 + rng() * 0.035,
+          drag: 1.1, gravity: 18, color, alpha: 1, floor: _v2.y });
+      }
+      if (rng() < 0.6) {
+        _v.set((rng() - 0.5) * 0.8, 0.9 + rng() * 0.8, (rng() - 0.5) * 0.8);
+        this.smoke.spawn(_v2, _v, { life: 1.3 + rng(), size: 0.1 + rng() * 0.1,
+          drag: 1.7, gravity: -0.7, color: 0x5a5852, alpha: 0.26 });
+      }
+    }
+    if (opts.cover !== false) ground.grass?.cut(a, b, 0.35, { clippings: false });
+  }
+
+  /** Grass and leaf litter thrown by a cut. Cheap, short-lived, green. */
+  grassClippings(a, b, color = 0x7d8c4a, amount = 1) {
+    const n = Math.max(1, Math.round(10 * amount * this.scale));
+    const dx = (b.x - a.x), dz = (b.z - a.z);
+    const len = Math.hypot(dx, dz) || 1;
+    for (let i = 0; i < n; i++) {
+      const t = rng();
+      _v2.set(a.x + dx * t, (a.y + (b.y - a.y) * t) + 0.1, a.z + dz * t);
+      _v.set(dx / len * (1.4 + rng() * 3), 1.4 + rng() * 2.6, dz / len * (1.4 + rng() * 3));
+      _v.x += (rng() - 0.5) * 2.2; _v.z += (rng() - 0.5) * 2.2;
+      this.grit.spawn(_v2, _v, {
+        life: 1.0 + rng() * 1.2, size: 0.022 + rng() * 0.03, drag: 2.6, gravity: 7,
+        color: _col.set(color).multiplyScalar(0.7 + rng() * 0.6).getHex(),
+        alpha: 0.9, floor: _v2.y - 0.1,
+      });
+    }
+  }
+
+  /** Chips of whatever just broke: real bodies, not billboards. */
+  chipBurst(pos, dir, count = 8, opts = {}) {
+    const n = Math.max(1, Math.round(count * this.scale));
+    // With no terrain published, the height it was thrown from is the best
+    // guess at where it lands — much better than letting it fall forever.
+    const floor = opts.floor ?? (ground.heightAt(pos.x, pos.z) ?? pos.y);
+    for (let i = 0; i < n; i++) {
+      _v.set(rng() * 2 - 1, rng() * 1.6 + 0.2, rng() * 2 - 1).normalize()
+        .multiplyScalar((opts.speed ?? 5) * (0.4 + rng()));
+      if (dir) _v.addScaledVector(dir, (opts.speed ?? 5) * 0.5 * rng());
+      this.chips.spawn(pos, _v, {
+        life: opts.life ?? (4 + rng() * 5),
+        size: (opts.size ?? 0.05) * (0.6 + rng() * 0.9),
+        color: opts.color ?? 0x8a7c66,
+        floor, restitution: opts.restitution ?? 0.32,
+      });
+    }
+  }
+
+  splash(pos, power = 1, opts = {}) {
     const n = Math.max(3, Math.round(16 * power * this.scale));
     for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2, r = rng();
+      const a = rng() * TAU, r = rng();
       _v.set(Math.cos(a) * r, rng() * 1.6 + 0.6, Math.sin(a) * r).multiplyScalar(2 + power * 4 * rng());
       this.water.spawn(pos, _v, { life: 0.5 + rng() * 0.7, size: 0.04 + rng() * 0.09,
         drag: 0.6, gravity: 16, color: 0xdff2ff, alpha: 0.75, floor: pos.y });
+    }
+    // the crown: a tight vertical jet, which is what actually reads as "entry"
+    for (let i = 0; i < n * 0.35; i++) {
+      _v.set((rng() - 0.5) * 0.9, 3.4 + rng() * 3.6 * power, (rng() - 0.5) * 0.9);
+      this.water.spawn(pos, _v, { life: 0.6 + rng() * 0.5, size: 0.05 + rng() * 0.07,
+        drag: 0.4, gravity: 18, color: 0xeaf8ff, alpha: 0.85, floor: pos.y });
     }
     for (let i = 0; i < n * 0.4; i++) {
       _v.set(rng() - 0.5, rng() * 0.5 + 0.2, rng() - 0.5).multiplyScalar(1.6 * power);
       this.dust.spawn(pos, _v, { life: 0.8, size: 0.2 * power, drag: 3, gravity: 0.4,
         color: 0xcfe8ff, alpha: 0.2, floor: pos.y });
     }
+    if (opts.ripple !== false) ground.ripple(pos.x, pos.z, power);
   }
 
   explosion(pos, size = 1) {
@@ -325,6 +957,13 @@ export class Particles {
     }
     this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.28, size: 3.4 * size, drag: 1, gravity: 0,
       color: 0xffc070, alpha: 1 });
+
+    const floor = ground.heightAt(pos.x, pos.z);
+    const y = floor !== null ? floor : pos.y;
+    this.chipBurst(pos, null, Math.round(10 * size), { speed: 8 * size, size: 0.06 * size, floor: y });
+    this.decals.add(_v3.set(pos.x, y + 0.015, pos.z), UP, 1.1 * size,
+      { life: 22, heat: 1, alpha: 0.95 });
+    ground.disturb(pos.x, pos.z, 2.4 * size, { press: 1, cut: 0.55 });
   }
 
   /** Continuous molten slag while cutting through heavy plate. */
@@ -339,7 +978,25 @@ export class Particles {
       _v.set(rng() - 0.5, 0.6 + rng() * 0.5, rng() - 0.5);
       this.smoke.spawn(pos, _v, { life: 1.2, size: 0.09, drag: 1.8, gravity: -0.8, color: 0x55585e, alpha: 0.3 });
     }
+    if (rng() < 0.12) {
+      const gh = ground.heightAt(pos.x, pos.z);
+      if (gh !== null && Math.abs(pos.y - gh) < 0.5) {
+        this.scorch(_v2.set(pos.x, gh + 0.02, pos.z), UP, 0.12 + rng() * 0.1, { heat: 1, life: 14 });
+      }
+    }
   }
 
-  dispose() { for (const p of this.pools) p.dispose(); }
+  dispose() {
+    if (ground.fx === this) ground.fx = null;
+    for (const p of this.pools) p.dispose();
+    this.chips.dispose();
+    this.decals.dispose();
+  }
 }
+
+const UP = new THREE.Vector3(0, 1, 0);
+const _gait = { dirX: 0, dirZ: 0, stride: 0 };
+const _gaitSpare = { dirX: 0, dirZ: 0, stride: 0 };
+
+/** Re-exported so callers only have to know about one of these two files. */
+export { wind, ground };
