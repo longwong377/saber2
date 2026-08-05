@@ -18,18 +18,32 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _m1 = new THREE.Matrix4();
+// solveIK's own state — kept apart from everything else for the same reason.
+const _ikRoot = new THREE.Vector3(), _ikDir = new THREE.Vector3(), _ikPole = new THREE.Vector3();
+const _ikAxis = new THREE.Vector3(), _ikUpper = new THREE.Vector3();
+const _ikElbow = new THREE.Vector3(), _ikLower = new THREE.Vector3();
 const YAXIS = new THREE.Vector3(0, 1, 0);
 const XAXIS = new THREE.Vector3(1, 0, 0);
 
+// Private scratch — deliberately NOT shared with solveIK, which calls aimY
+// while still holding live vectors of its own.
+const _a1 = new THREE.Vector3(), _a2 = new THREE.Vector3();
+const _a3 = new THREE.Vector3(), _a4 = new THREE.Vector3();
+const _am = new THREE.Matrix4();
+
 /** Quaternion that points local +Y along `dir`, with `ref` biasing the roll. */
 export function aimY(dir, ref, out = new THREE.Quaternion()) {
-  _v1.copy(dir).normalize();
-  _v2.copy(ref || XAXIS);
-  if (Math.abs(_v1.dot(_v2)) > 0.985) _v2.set(0, 0, 1);
-  _v3.crossVectors(_v2, _v1).normalize();      // x
-  _v4.crossVectors(_v1, _v3).normalize();      // z
-  _m1.makeBasis(_v3, _v1, _v4);
-  return out.setFromRotationMatrix(_m1);
+  _a1.copy(dir).normalize();
+  _a2.copy(ref || XAXIS);
+  if (Math.abs(_a1.dot(_a2)) > 0.985) _a2.set(0, 0, 1);
+  _a3.crossVectors(_a2, _a1);
+  if (_a3.lengthSq() < 1e-10) { _a2.set(0, 0, 1); _a3.crossVectors(_a2, _a1); }
+  _a3.normalize();                              // x
+  // z = x × y. Taking y × x instead yields a left-handed basis, and
+  // setFromRotationMatrix silently returns a mirrored rotation for one.
+  _a4.crossVectors(_a3, _a1).normalize();       // z
+  _am.makeBasis(_a3, _a1, _a4);
+  return out.setFromRotationMatrix(_am);
 }
 
 /* ── skeleton templates ──────────────────────────────────────────────── */
@@ -51,12 +65,12 @@ export function humanoidSkeleton(scale = 1, opts = {}) {
     { name: 'head',      parent: 'neck',    offset: [0, 0.075 * s, 0],         length: 0.23 * s, rest: [0, 1, 0] },
 
     { name: 'clavL',     parent: 'chest',   offset: [0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [1, 0.18, 0] },
-    { name: 'armL',      parent: 'clavL',   offset: [0.13 * s, 0, 0],          length: 0.285 * s * armLen, rest: [0.30, -0.95, -0.05] },
+    { name: 'armL',      parent: 'clavL',   offset: [0, 0.13 * s, 0],          length: 0.285 * s * armLen, rest: [0.30, -0.95, -0.05] },
     { name: 'foreL',     parent: 'armL',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [0.10, -0.99, 0.05] },
     { name: 'handL',     parent: 'foreL',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0] },
 
     { name: 'clavR',     parent: 'chest',   offset: [-0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [-1, 0.18, 0] },
-    { name: 'armR',      parent: 'clavR',   offset: [-0.13 * s, 0, 0],          length: 0.285 * s * armLen, rest: [-0.30, -0.95, -0.05] },
+    { name: 'armR',      parent: 'clavR',   offset: [0, 0.13 * s, 0],           length: 0.285 * s * armLen, rest: [-0.30, -0.95, -0.05] },
     { name: 'foreR',     parent: 'armR',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [-0.10, -0.99, 0.05] },
     { name: 'handR',     parent: 'foreR',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0] },
 
@@ -74,16 +88,16 @@ export function humanoidSkeleton(scale = 1, opts = {}) {
 export function walkerSkeleton(scale = 1, legs = 4) {
   const s = scale;
   const out = [
-    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 0, -1] },
-    { name: 'body', parent: 'hips', offset: [0, 0.25 * s, 0], length: 0.7 * s, rest: [0, 0, -1] },
-    { name: 'head', parent: 'body', offset: [0, 0.1 * s, -0.6 * s], length: 0.4 * s, rest: [0, 0, -1] },
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0] },
+    { name: 'body', parent: 'hips', offset: [0, 0.25 * s, 0], length: 0.7 * s, rest: [0, 1, 0] },
+    { name: 'head', parent: 'body', offset: [0, 0.1 * s, -0.6 * s], length: 0.4 * s, rest: [0, 1, 0] },
   ];
   for (let i = 0; i < legs; i++) {
     const side = i % 2 === 0 ? 1 : -1;
     const row = Math.floor(i / 2);
     const z = (row - (legs / 2 - 1) / 2) * 0.55 * s;
     out.push({ name: `hipL${i}`, parent: 'hips', offset: [0.34 * s * side, 0.1 * s, z], length: 0.16 * s, rest: [side, 0.2, 0] });
-    out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0.16 * s * side, 0, 0], length: 0.62 * s, rest: [side * 0.5, 0.72, 0] });
+    out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, 0.16 * s, 0], length: 0.62 * s, rest: [side * 0.5, 0.72, 0] });
     out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, 0.62 * s, 0], length: 0.74 * s, rest: [side * 0.15, -1, 0] });
     out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, 0.74 * s, 0], length: 0.3 * s, rest: [0, -0.4, 0.6] });
   }
@@ -202,44 +216,45 @@ export class Rig {
     if (!upper || !lower || !upper.obj.parent) return;
 
     upper.obj.parent.updateMatrixWorld(true);
-    const rootPos = _v1.setFromMatrixPosition(upper.obj.matrixWorld);
+    const rootPos = _ikRoot.setFromMatrixPosition(upper.obj.matrixWorld);
     const l1 = upper.length * upper.cutT;
     const l2 = lower.length * lower.cutT;
 
-    _v2.subVectors(target, rootPos);
-    let dist = _v2.length();
+    const toTarget = _ikDir.subVectors(target, rootPos);
+    let dist = toTarget.length();
     const maxD = (l1 + l2) * softness;
     const minD = Math.abs(l1 - l2) * 1.02 + 1e-4;
     dist = clamp(dist, minD, maxD);
-    if (_v2.lengthSq() < 1e-8) _v2.set(0, -1, 0);
-    _v2.normalize();
+    if (toTarget.lengthSq() < 1e-8) toTarget.set(0, -1, 0);
+    toTarget.normalize();
 
     // law of cosines for the elbow/knee bend
     const cosA = clamp((l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist), -1, 1);
     const a = Math.acos(cosA);
 
-    // build a frame: forward toward target, side from the pole vector
-    _v3.subVectors(pole, rootPos);
-    _v4.crossVectors(_v2, _v3);
-    if (_v4.lengthSq() < 1e-7) { _v4.crossVectors(_v2, XAXIS); if (_v4.lengthSq() < 1e-7) _v4.crossVectors(_v2, YAXIS); }
-    _v4.normalize();                       // rotation axis
+    // rotation axis from the pole vector — this is what decides which way the
+    // joint bends, so it has to survive the aimY calls below
+    const poleDir = _ikPole.subVectors(pole, rootPos);
+    const axis = _ikAxis.crossVectors(toTarget, poleDir);
+    if (axis.lengthSq() < 1e-7) { axis.crossVectors(toTarget, XAXIS); if (axis.lengthSq() < 1e-7) axis.crossVectors(toTarget, YAXIS); }
+    axis.normalize();
 
-    _q1.setFromAxisAngle(_v4, -a);
-    _v5.copy(_v2).applyQuaternion(_q1);    // upper bone direction
+    _q1.setFromAxisAngle(axis, -a);
+    const upperDir = _ikUpper.copy(toTarget).applyQuaternion(_q1);
 
     // place the upper bone
     upper.obj.parent.getWorldQuaternion(_q2);
-    aimY(_v5, _v3, _q1);
-    upper.obj.quaternion.copy(_q2.clone().invert()).multiply(_q1);
+    aimY(upperDir, poleDir, _q1);
+    upper.obj.quaternion.copy(_q2.invert()).multiply(_q1);
     upper.obj.updateMatrixWorld(true);
 
-    // lower bone points from the elbow to the target
-    _v6.copy(rootPos).addScaledVector(_v5, l1);
-    _v5.copy(target).sub(_v6);
-    if (_v5.lengthSq() < 1e-8) _v5.set(0, -1, 0);
-    _v5.normalize();
+    // the lower bone points from the elbow to the target
+    const elbow = _ikElbow.copy(rootPos).addScaledVector(upperDir, l1);
+    const lowerDir = _ikLower.subVectors(target, elbow);
+    if (lowerDir.lengthSq() < 1e-8) lowerDir.set(0, -1, 0);
+    lowerDir.normalize();
     upper.obj.getWorldQuaternion(_q2);
-    aimY(_v5, _v3, _q1);
+    aimY(lowerDir, poleDir, _q1);
     lower.obj.quaternion.copy(_q2.invert()).multiply(_q1);
     lower.obj.updateMatrixWorld(true);
   }

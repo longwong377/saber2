@@ -1,0 +1,12 @@
+{
+  "name": "saber",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A physics-driven lightsaber game that runs in the browser.",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "verify": "node --import ./tools/register.mjs tools/verify.mjs",
+    "smoke": "node tools/smoke.mjs --shots"
+  }
+}

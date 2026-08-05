@@ -41,6 +41,10 @@ export class BoltPool {
 
     const geo = new THREE.CylinderGeometry(1, 1, 1, 7, 1);
     geo.rotateX(Math.PI / 2);       // along +Z
+    // vertexColors turns on USE_COLOR, which multiplies by a `color` attribute
+    // before instanceColor is applied — without it every bolt renders black.
+    geo.setAttribute('color', new THREE.BufferAttribute(
+      new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
     const mat = new THREE.MeshBasicMaterial({
       vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, toneMapped: false, opacity: 1,

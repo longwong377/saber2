@@ -718,7 +718,10 @@ export class PhysicsWorld {
         _v1.copy(_v3).cross(_v2).applyMatrix3(A.invInertiaWorld).cross(_v3); k += _v1.dot(_v2);
         _v1.copy(_v4).cross(_v2).applyMatrix3(B.invInertiaWorld).cross(_v4); k += _v1.dot(_v2);
         if (k < 1e-9) continue;
-        const bias = -0.32 * invDt * _v5.getComponent(axis) * (j.softness > 0 ? (1 - j.softness) : 1);
+        // The error points from anchorA to anchorB, so the bias must be
+        // POSITIVE: solving relVel → -bias drives B back toward A. Negating it
+        // here feeds the error back on itself and the joint flies apart.
+        const bias = 0.32 * invDt * _v5.getComponent(axis) * (j.softness > 0 ? (1 - j.softness) : 1);
         const lambda = -(_v6.getComponent(axis) + bias) / k;
         _v1.copy(_v2).multiplyScalar(lambda);
         if (A.invMass > 0) {

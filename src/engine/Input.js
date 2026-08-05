@@ -88,8 +88,14 @@ export class Input {
 
   requestLock() {
     if (this.locked) return;
-    const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
-    if (p && p.catch) p.catch(() => this.canvas.requestPointerLock());
+    // Both paths can reject — most often "a user gesture is required", which
+    // simply means the caller has to wait for the next click. Swallow it; an
+    // unhandled rejection here would surface as a page error.
+    const retry = () => { try { this.canvas.requestPointerLock()?.catch?.(() => {}); } catch {} };
+    try {
+      const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
+      if (p && p.catch) p.catch(retry);
+    } catch { retry(); }
   }
   exitLock() { if (this.locked) document.exitPointerLock?.(); }
 

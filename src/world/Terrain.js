@@ -257,8 +257,12 @@ export class Terrain {
    * Push the surface down (or up with a negative depth) — craters from Force
    * landings, gouges from a body hitting the dune at speed.
    */
-  crater(x, z, radius, depth, rim = 0.28) {
+  crater(x, z, radius, depth, rim = 0.22) {
     if (this.preset.flat) return;
+    // A crater narrower than the grid cannot be represented, so widen it and
+    // shallow it to move the same amount of sand.
+    const minR = this.step * 1.35;
+    if (radius < minR) { depth *= (radius * radius) / (minR * minR); radius = minR; }
     const i0 = Math.max(0, Math.floor((x - radius + this.half) * this.invStep));
     const i1 = Math.min(this.res - 1, Math.ceil((x + radius + this.half) * this.invStep));
     const j0 = Math.max(0, Math.floor((z - radius + this.half) * this.invStep));
@@ -270,11 +274,14 @@ export class Terrain {
       for (let i = i0; i <= i1; i++) {
         const wx = -this.half + i * this.step;
         const d = Math.hypot(wx - x, wz - z) * inv;
-        if (d > 1.15) continue;
+        if (d > 1.25) continue;
         const k = this._idx(i, j);
-        // bowl with a raised lip
-        const bowl = -depth * Math.pow(clamp(1 - d, 0, 1), 1.6);
-        const lip = depth * rim * Math.exp(-Math.pow((d - 0.92) * 5.5, 2));
+        // A broad bowl, with the displaced material piled just outside the rim.
+        // The lip is confined past 0.8 so it can never lift the crater floor.
+        const bowl = -depth * (Math.cos(Math.min(d, 1) * Math.PI) * 0.5 + 0.5);
+        const lip = d > 0.78
+          ? depth * rim * Math.exp(-Math.pow((d - 1.0) * 4.2, 2))
+          : 0;
         const delta = bowl + lip;
         this.deform[k] += delta;
         this.deform[k] = clamp(this.deform[k], -4.5, 3.0);

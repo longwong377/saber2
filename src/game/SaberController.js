@@ -23,11 +23,17 @@ const _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
 const YAXIS = new THREE.Vector3(0, 1, 0);
 
+/**
+ * The angular term integrates as  θ'' = (kP/I)·θ_err − kD·θ'.
+ * Critical damping is therefore kD = 2·√(kP/I); everything here sits around a
+ * damping ratio of 0.6, which is what gives the blade its weight — a flick
+ * overshoots by roughly a tenth of the arc and swings back, exactly as a
+ * metre of metal on the end of your wrist would.
+ */
 export const GRIPS = {
-  // stiffness, damping, inertia, reach, hand extend, hand offset
-  two:  { kP: 156, kD: 21.5, inertia: 1.00, guardR: 0.60, handExtend: 0.29, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 17 },
-  one:  { kP: 118, kD: 16.0, inertia: 0.74, guardR: 0.72, handExtend: 0.36, offset: new THREE.Vector3(0.185, -0.13, 0.0), lin: 92,  linD: 14 },
-  rev:  { kP: 132, kD: 19.0, inertia: 0.86, guardR: 0.58, handExtend: 0.26, offset: new THREE.Vector3(-0.14, -0.06, 0.03), lin: 104, linD: 15 },
+  two:  { kP: 156, kD: 15.0, inertia: 1.00, guardR: 0.60, handExtend: 0.29, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 15 },
+  one:  { kP: 118, kD: 13.6, inertia: 0.74, guardR: 0.72, handExtend: 0.36, offset: new THREE.Vector3(0.185, -0.13, 0.0), lin: 92,  linD: 13 },
+  rev:  { kP: 132, kD: 14.4, inertia: 0.86, guardR: 0.58, handExtend: 0.26, offset: new THREE.Vector3(-0.14, -0.06, 0.03), lin: 104, linD: 14 },
 };
 
 export class SaberController {

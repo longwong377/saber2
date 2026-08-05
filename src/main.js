@@ -1,0 +1,367 @@
+/**
+ * SABER — entry point.
+ *
+ * Boot, warm the procedural content, then hand the frame to the World.
+ */
+
+import * as THREE from 'three';
+import { Engine, QUALITY } from './engine/Engine.js';
+import { Input } from './engine/Input.js';
+import { audio } from './engine/Audio.js';
+import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps } from './engine/Textures.js';
+import { World } from './game/World.js';
+import { LEVELS } from './game/Levels.js';
+import { DIFFICULTY } from './game/Combat.js';
+import { HUD } from './ui/HUD.js';
+import { Menu, loadSettings, saveSettings } from './ui/Menu.js';
+import { Net, RemoteAvatar } from './net/Net.js';
+import { BOONS } from './game/Waves.js';
+import { clamp } from './engine/MathUtil.js';
+
+const canvas = document.getElementById('view');
+
+/* ── capability check ────────────────────────────────────────────────── */
+{
+  const test = document.createElement('canvas');
+  const gl = test.getContext('webgl2');
+  if (!gl) {
+    document.getElementById('boot').classList.add('hidden');
+    document.getElementById('unsupported').classList.remove('hidden');
+    throw new Error('WebGL2 unavailable');
+  }
+}
+
+const settings = loadSettings();
+const engine = new Engine(canvas, settings.quality);
+const input = new Input(canvas);
+const hud = new HUD(document);
+const net = new Net();
+
+input.sensitivity = 1;      // the blade controller applies the user's scaling
+input.invertY = settings.invertY;
+
+engine.setResolutionScale(settings.resolutionScale);
+engine.setBloom(settings.bloom);
+engine.setGrain(settings.grain);
+audio.setVolume(settings.volume);
+audio.setMusicVolume(settings.music);
+
+let world = null;
+let state = 'boot';         // boot | menu | playing | paused | dead | draft
+let last = performance.now();
+let accum = 0;
+let fpsSmooth = 60;
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Menu                                                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+const menu = new Menu(settings, {
+  onDeploy: () => deploy(),
+  onResume: () => resume(),
+  onRestart: () => { menu.hidePause(); restartWave(); },
+  onQuit: () => quitToMenu(),
+  onRetry: () => { menu.hideDeath(); deploy(); },
+  onQualityChange: (q) => { engine.setQuality(q); },
+  onResolution: (v) => engine.setResolutionScale(v),
+  onBloom: (v) => engine.setBloom(v),
+  onGrain: (v) => engine.setGrain(v),
+  onInvert: (v) => { input.invertY = v; },
+  onSensitivity: (v) => { if (world?.player) world.player.control.sensitivity = v; },
+  onCamFollow: (v) => { if (world?.player) world.player.control.followStrength = v; },
+  onFov: (v) => { if (world?.player) world.player.camera.fovTarget = v; },
+  onSchemeChange: (v) => { if (world?.player) world.player.control.setScheme(v); },
+  onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
+  onHost: () => hostSession(),
+  onJoin: (code) => joinSession(code),
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Boot                                                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+async function boot() {
+  const steps = [
+    ['forging blade', () => { }],
+    ['grinding sand', () => sandMaps()],
+    ['weathering rock', () => rockMaps()],
+    ['milling durasteel', () => metalMaps()],
+    ['weaving robes', () => clothMaps()],
+    ['casting plastoid', () => armorMaps()],
+    ['pouring duracrete', () => duracreteMaps()],
+    ['tuning the hum', () => { }],
+  ];
+  for (let i = 0; i < steps.length; i++) {
+    const [msg, fn] = steps[i];
+    menu.progress(i / steps.length, msg);
+    await new Promise(r => requestAnimationFrame(() => r()));
+    try { fn(); } catch (e) { console.warn('warm-up step failed:', msg, e); }
+  }
+  menu.progress(1, 'ready');
+
+  const gl = engine.renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const name = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'WebGL2';
+  menu.setGpuLine(String(name).slice(0, 62));
+
+  await new Promise(r => setTimeout(r, 260));
+  menu.hideBoot();
+  menu.showMenu();
+  state = 'menu';
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Session control                                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+function buildWorld(levelKey) {
+  if (world) { world.dispose(); world = null; }
+  audio.init();
+  audio.resume();
+
+  world = new World(engine, settings);
+  world.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
+
+  world.onNotify = (t, s) => hud.message(t, s);
+  world.onFloating = (p, text, color) => hud.floating(p, text, color);
+  world.onHitmark = (p, kind, bone) => hud.hitmark(p, kind, bone);
+  world.onKillFeed = (who, what, kind) => hud.killFeed(who, what, kind);
+  world.onGameOver = (stats) => gameOver(stats);
+  world.onDraftOffer = (boons) => offerDraft(boons);
+
+  world.loadLevel(levelKey);
+  const player = world.spawnPlayer({ name: net.name || 'Jedi', isLocal: true });
+  player.control.sensitivity = settings.sensitivity;
+  player.control.followStrength = settings.camFollow;
+  player.camera.fovTarget = settings.fov;
+  player.camera.fov = settings.fov;
+
+  hud.setLevel(LEVELS[levelKey].name, world.difficulty.name);
+  hud.setBoons([]);
+  return world;
+}
+
+function deploy() {
+  saveSettings(settings);
+  menu.hideMenu();
+  menu.hideDeath();
+  menu.hidePause();
+
+  const levelKey = settings.level;
+  buildWorld(levelKey);
+
+  if (net.enabled && net.connected) {
+    world.attachNet(net, net.isHost ? 'host' : 'client');
+    if (net.isHost) net.broadcast({ t: 'start', level: levelKey, difficulty: settings.difficulty, mode: settings.mode });
+  }
+
+  hud.show(true);
+  state = 'playing';
+  input.enabled = true;
+  input.requestLock();
+
+  if (world.netMode !== 'client') world.director.start(1);
+  world.notify('MAY THE FORCE BE WITH YOU', LEVELS[levelKey].name);
+}
+
+function resume() {
+  menu.hidePause();
+  state = 'playing';
+  world.paused = false;
+  input.enabled = true;
+  input.requestLock();
+}
+
+function pause() {
+  if (state !== 'playing') return;
+  state = 'paused';
+  world.paused = true;
+  input.enabled = false;
+  input.exitLock();
+  const p = world.player;
+  menu.showPause([
+    ['Wave', world.director.wave],
+    ['Score', Math.floor(world.score + (p?.score || 0)).toLocaleString()],
+    ['Kills', p?.kills ?? 0],
+    ['Deflections', p?.deflects ?? 0],
+    ['Perfect returns', p?.perfects ?? 0],
+    ['Limbs taken', p?.limbsRemoved ?? 0],
+  ]);
+}
+
+function restartWave() {
+  if (!world) return;
+  for (const e of world.enemies) e.dispose();
+  world.enemies.length = 0;
+  const p = world.player;
+  if (p) { p.hp = p.maxHp; p.force = p.maxForce; p.stamina = p.maxStamina; }
+  world.director.start(Math.max(1, world.director.wave));
+  resume();
+}
+
+function quitToMenu() {
+  menu.hidePause();
+  menu.hideDeath();
+  hud.show(false);
+  input.enabled = false;
+  input.exitLock();
+  if (world) { world.dispose(); world = null; }
+  menu.showMenu();
+  state = 'menu';
+}
+
+function gameOver(stats) {
+  state = 'dead';
+  input.enabled = false;
+  setTimeout(() => {
+    input.exitLock();
+    menu.showDeath([
+      ['Wave reached', stats.wave],
+      ['Score', Math.floor(stats.score).toLocaleString()],
+      ['Kills', stats.kills],
+      ['Deflections', stats.deflects],
+      ['Perfect returns', stats.perfects],
+      ['Limbs taken', stats.limbs],
+    ]);
+  }, 2600);
+}
+
+function offerDraft(boons) {
+  if (!boons || !boons.length) { world.director.resumeAfterDraft(); return; }
+  state = 'draft';
+  world.paused = true;
+  input.enabled = false;
+  input.exitLock();
+  menu.showDraft(boons, (b) => {
+    world.applyBoon(b);
+    hud.setBoons([...world.takenBoons].map(id =>
+      BOONS.find(x => x.id === id) || { icon: '•', name: id }));
+    resume();
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Multiplayer                                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+function wireNet() {
+  net.on('roster', (roster) => menu.netRoster(roster));
+  net.on('error', (err) => menu.netStatus(String(err.message || err), 'err'));
+  net.on('peer-joined', (id, name) => menu.netStatus(`${name || 'a Jedi'} joined`, 'ok'));
+  net.on('peer-left', (id) => {
+    menu.netStatus('a Jedi left', '');
+    const r = world?.remotes?.get(id);
+    if (r) { r.dispose(); world.remotes.delete(id); }
+  });
+  net.on('welcome', (hostSettings) => {
+    if (hostSettings) {
+      settings.level = hostSettings.level;
+      settings.difficulty = hostSettings.difficulty;
+      settings.mode = hostSettings.mode;
+    }
+    menu.netStatus('connected — waiting for the host to deploy', 'ok');
+  });
+  net.on('start', (msg) => {
+    settings.level = msg.level;
+    settings.difficulty = msg.difficulty;
+    settings.mode = msg.mode;
+    if (state === 'menu') deploy();
+  });
+  net.on('snapshot', (msg) => world?.applySnapshot(msg));
+  net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
+  net.on('avatar', (peerId, msg) => {
+    if (!world) return;
+    if (!world.remotes) world.remotes = new Map();
+    let r = world.remotes.get(peerId);
+    if (!r) {
+      const entry = net.roster.find(x => x.id === peerId);
+      r = new RemoteAvatar(world, {
+        id: peerId, name: entry?.name || 'Jedi',
+        colorIndex: (net.roster.findIndex(x => x.id === peerId) + 1) % 8,
+        robeIndex: (net.roster.findIndex(x => x.id === peerId) + 1) % 6,
+      });
+      world.remotes.set(peerId, r);
+      world.players.push(r);
+    }
+    r.push(msg, performance.now() / 1000);
+  });
+}
+wireNet();
+
+async function hostSession() {
+  menu.netStatus('opening a session…');
+  try {
+    const code = await net.host(net.name || 'Jedi', {
+      level: settings.level, difficulty: settings.difficulty, mode: settings.mode,
+    });
+    menu.netCode(code);
+    menu.netStatus('session open — share the code, then Ignite', 'ok');
+  } catch (e) {
+    menu.netStatus(`could not open a session: ${e.message || e}`, 'err');
+  }
+}
+
+async function joinSession(code) {
+  menu.netStatus(`connecting to ${code}…`);
+  try {
+    await net.join(code, net.name || 'Jedi');
+    menu.netCode(code);
+    menu.netStatus('connected — the host starts the run', 'ok');
+  } catch (e) {
+    menu.netStatus(`could not join: ${e.message || e}`, 'err');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Frame                                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+input.onLockChange = (locked) => {
+  if (!locked && state === 'playing') pause();
+};
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') {
+    if (state === 'playing') pause();
+    else if (state === 'paused') resume();
+  }
+  if (e.code === 'Tab') e.preventDefault();
+});
+
+canvas.addEventListener('pointerdown', () => {
+  audio.init(); audio.resume();
+  if (state === 'playing' && !input.locked) input.requestLock();
+});
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = (now - last) / 1000;
+  last = now;
+  if (!isFinite(dt) || dt <= 0) return;
+  dt = Math.min(dt, 0.1);
+  fpsSmooth += (1 / dt - fpsSmooth) * 0.04;
+
+  input.begin(dt);
+
+  if (world && (state === 'playing' || state === 'dead')) {
+    world.update(dt, input);
+    if (world.remotes) for (const r of world.remotes.values()) {
+      r.update(dt, { terrain: world.terrain, camera: engine.camera, time: world.time });
+    }
+    hud.update(dt, world, world.player, engine.camera);
+  } else if (world && (state === 'paused' || state === 'draft')) {
+    // keep the camera alive behind the overlay
+    world.player?.camera.update(dt, world.player.position, { physics: world.physics, terrain: world.terrain });
+  }
+
+  engine.render(dt);
+  input.end();
+}
+
+/* ── go ──────────────────────────────────────────────────────────────── */
+
+boot().then(() => requestAnimationFrame(frame));
+
+// Handy for tuning from the console.
+window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud,
+  get fps() { return Math.round(fpsSmooth); } };

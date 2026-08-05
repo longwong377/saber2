@@ -1,0 +1,870 @@
+/**
+ * SABER — the world.
+ *
+ * Owns the frame: input, blade solve, contact resolution, physics, spawning,
+ * and everything the HUD reads. The update order matters — blades resolve
+ * before bolts move, so a deflection is decided by where your blade was when
+ * the bolt arrived, not by where it ended up afterwards.
+ */
+
+import * as THREE from 'three';
+import { PhysicsWorld, Body, LAYER, boxSpheres } from '../physics/Physics.js';
+import { Terrain } from '../world/Terrain.js';
+import { Particles } from '../world/Particles.js';
+import { GrassField, Water, Atmosphere } from '../world/Scenery.js';
+import { BoltPool } from './Bolts.js';
+import { BladeContactSolver, gradeDeflection, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY } from './Combat.js';
+import { Player } from './Player.js';
+import { Enemy, ARCHETYPES } from './Enemy.js';
+import { WaveDirector } from './Waves.js';
+import { LEVELS } from './Levels.js';
+import { updateCauterisation } from './Ragdoll.js';
+import { spheresForGeometry } from '../world/Slice.js';
+import { packAvatar, packSnapshot } from '../net/Net.js';
+import { clamp, lerp, damp, makeRng, TAU } from '../engine/MathUtil.js';
+import { audio } from '../engine/Audio.js';
+
+const rng = makeRng((Math.random() * 1e9) | 0);
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
+
+export class World {
+  constructor(engine, settings) {
+    this.engine = engine;
+    this.scene = engine.scene;
+    this.settings = settings;
+    this.physics = new PhysicsWorld({ gravity: -24, iterations: 8, maxBodies: settings.maxBodies ?? 1100 });
+
+    this.players = [];
+    this.enemies = [];
+    this.props = [];
+    this.doors = [];
+    this.debris = [];
+    this.statics = [];
+    this.levelLights = [];
+    this.takenBoons = new Set();
+
+    this.timeScale = 1;
+    this.targetTimeScale = 1;
+    this.hitstop = 0;
+    this.time = 0;
+    this.score = 0;
+    this.combatIntensity = 0;
+    this.paused = false;
+    this.running = false;
+
+    this.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
+    this.hpScale = 1;
+    this.dmgScale = 1;
+
+    this.bladeSolver = new BladeContactSolver();
+    this.events = [];
+    this.notifications = [];
+
+    this._targets = [];
+    this._capsCache = [];
+  }
+
+  /* ── level lifecycle ─────────────────────────────────────────────── */
+
+  loadLevel(key) {
+    this.unload();
+    const L = LEVELS[key] || LEVELS.dunes;
+    this.level = L;
+    this.levelKey = key;
+    this.groundColor = L.groundColor;
+
+    const q = { low: 0.55, medium: 0.8, high: 1, ultra: 1.25 }[this.settings.quality] ?? 1;
+
+    this.terrain = new Terrain(this.scene, L.terrain, q);
+    this.physics.terrain = this.terrain;
+
+    this.particles = new Particles(this.scene, this.settings.particleScale ?? q);
+    this.bolts = new BoltPool(this.scene, 460);
+    this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
+    this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
+
+    this.engine.applyAtmosphere(L.atmosphere);
+    audio.setAmbience(L.ambience || {});
+
+    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: q });
+    if (L.water) this.water = new Water(this.scene, { ...L.water, size: this.terrain.size + 60 });
+    if (L.grass) {
+      this.grass = new GrassField(this.scene, this.terrain, {
+        count: 11000, density: (this.settings.grassScale ?? 1) * L.grass,
+        tintA: L.grassTint?.[0], tintB: L.grassTint?.[1], radius: 46,
+      });
+    }
+
+    L.dress(this);
+
+    this.director = new WaveDirector(this, { mode: this.settings.mode ?? 'roguelite', pool: L.pool });
+    this.director.onWaveStart = (w, n) => {
+      this.notify(`WAVE ${w}`, `${n} contacts inbound`);
+      audio.ui('wave');
+    };
+    this.director.onWaveClear = (w) => {
+      this.notify('WAVE CLEAR', 'the Force is with you');
+      audio.ui('good');
+      this.score += 500 * w;
+      for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
+    };
+    this.director.onDraft = (boons) => { this.onDraftOffer?.(boons); };
+
+    this.running = true;
+    return L;
+  }
+
+  spawnPlayer(opts = {}) {
+    const p = new Player(this, {
+      ...opts,
+      colorIndex: this.settings.colorIndex,
+      bladeLength: this.settings.bladeLength,
+      coreWidth: this.settings.coreWidth,
+      hiltStyle: this.settings.hiltStyle,
+      robeIndex: this.settings.robeIndex,
+      sensitivity: this.settings.sensitivity,
+      followStrength: this.settings.camFollow,
+      scheme: this.settings.scheme,
+      spawn: opts.spawn || new THREE.Vector3(0, 0, 8),
+    });
+    p.camera.firstPerson = !!this.settings.firstPerson;
+    p._applyViewMode();
+    this.players.push(p);
+    if (!this.player) this.player = p;
+    p.saber.ignite();
+    p.hum.ignite();
+    return p;
+  }
+
+  unload() {
+    for (const e of this.enemies) e.dispose();
+    this.enemies.length = 0;
+    for (const p of this.props.slice()) p.destroy();
+    this.props.length = 0;
+    for (const d of this.doors) d.dispose();
+    this.doors.length = 0;
+    for (const d of this.debris) { this.scene.remove(d.mesh); d.mesh.geometry?.dispose?.(); }
+    this.debris.length = 0;
+    for (const m of this.statics) { this.scene.remove(m); m.geometry?.dispose?.(); }
+    this.statics.length = 0;
+    for (const l of this.levelLights) this.scene.remove(l);
+    this.levelLights.length = 0;
+    for (const p of this.players) p.dispose();
+    this.players.length = 0;
+    this.player = null;
+    this.bolts?.dispose();
+    this.particles?.dispose();
+    this.grass?.dispose(); this.grass = null;
+    this.water?.dispose(); this.water = null;
+    this.atmosphere?.dispose(); this.atmosphere = null;
+    this.terrain?.dispose(); this.terrain = null;
+    this.physics.clear();
+    this.physics.terrain = null;
+    this.bladeSolver.reset();
+    this.running = false;
+  }
+
+  /* ── spawning ────────────────────────────────────────────────────── */
+
+  addProp(p) { this.props.push(p); return p; }
+
+  spawnEnemy(type, pos) {
+    const e = new Enemy(this, type, pos);
+    this.enemies.push(e);
+    return e;
+  }
+
+  pickSpawn(type) {
+    const L = this.level;
+    const [rmin, rmax] = L.spawnRadius || [34, 56];
+    const anchor = this.player ? this.player.position : _v1.set(0, 0, 0);
+    for (let i = 0; i < 24; i++) {
+      const a = rng() * TAU;
+      const r = lerp(rmin, rmax, rng());
+      const x = anchor.x + Math.cos(a) * r;
+      const z = anchor.z + Math.sin(a) * r;
+      if (!this.terrain.inBounds(x, z, 10)) continue;
+      if (this.terrain.slopeAt(x, z) > 0.5) continue;
+      return new THREE.Vector3(x, this.terrain.height(x, z), z);
+    }
+    const a = rng() * TAU;
+    return new THREE.Vector3(anchor.x + Math.cos(a) * rmin, 0, anchor.z + Math.sin(a) * rmin);
+  }
+
+  pickTarget(enemy) {
+    let best = null, bestD = Infinity;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const d = p.position.distanceToSquared(enemy.position);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  /** A loose mesh becomes a rigid body. */
+  spawnDebris(mesh, position, velocity, size) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
+    const spheres = size ? boxSpheres(size.x / 2, size.y / 2, size.z / 2) : spheresForGeometry(mesh.geometry, 5);
+    const body = new Body({
+      position, spheres, mass: 6 + rng() * 8,
+      friction: 0.8, restitution: 0.06, layer: LAYER.DEBRIS,
+      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
+    });
+    if (velocity) body.velocity.copy(velocity);
+    body.angularVelocity.set((rng() - .5) * 9, (rng() - .5) * 9, (rng() - .5) * 9);
+    const entry = { mesh, body, age: 0, life: 22 + rng() * 8 };
+    body.userData.onCull = () => { this.scene.remove(mesh); mesh.geometry?.dispose?.(); entry.gone = true; };
+    this.physics.add(body);
+    this.debris.push(entry);
+    return entry;
+  }
+
+  /** A whole Object3D subtree (a droideka leg, a wrecked chassis) becomes debris. */
+  spawnDebrisGroup(group, position, velocity, radius = 0.5) {
+    group.position.copy(position);
+    group.quaternion.identity();
+    this.scene.add(group);
+    const body = new Body({
+      position: position.clone(),
+      spheres: [{ c: new THREE.Vector3(), r: radius }],
+      mass: 20, friction: 0.8, restitution: 0.05, layer: LAYER.DEBRIS,
+      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
+    });
+    if (velocity) body.velocity.copy(velocity);
+    body.angularVelocity.set((rng() - .5) * 8, (rng() - .5) * 8, (rng() - .5) * 8);
+    const entry = { mesh: group, body, age: 0, life: 24 };
+    body.userData.onCull = () => { this.scene.remove(group); entry.gone = true; };
+    this.physics.add(body);
+    this.debris.push(entry);
+    return entry;
+  }
+
+  onExplosion(centre, size = 1) {
+    this.particles?.explosion(centre, size);
+    audio.explosion(centre, size);
+    const radius = 5.5 * size, force = 24 * size, damage = 55 * size;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = e.position.distanceTo(centre);
+      if (d > radius) continue;
+      const k = 1 - d / radius;
+      _v1.subVectors(e.position, centre).setY(0.7).normalize().multiplyScalar(force * k);
+      e.applyKnockback(_v1, damage * k, null);
+    }
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const d = p.position.distanceTo(centre);
+      if (d > radius) continue;
+      const k = 1 - d / radius;
+      p.damage(damage * 0.4 * k, centre, null, 'explosion');
+      _v1.subVectors(p.position, centre).setY(0.6).normalize().multiplyScalar(force * 0.35 * k);
+      p.velocity.add(_v1);
+      p.camera.addShake(k);
+    }
+    for (const b of this.physics.bodies) {
+      if (b.invMass === 0) continue;
+      const d = b.position.distanceTo(centre);
+      if (d > radius) continue;
+      const k = 1 - d / radius;
+      _v1.subVectors(b.position, centre).setY(0.5).normalize().multiplyScalar(force * k * b.mass * 0.6);
+      b.applyImpulse(_v1, b.position);
+    }
+    if (this.terrain) this.terrain.crater(centre.x, centre.z, 2.6 * size, 0.55 * size);
+    this.engine.flash(0.18 * size);
+  }
+
+  /* ── frame ───────────────────────────────────────────────────────── */
+
+  setTimeScale(s) { this.targetTimeScale = s; }
+  addHitstop(t) { this.hitstop = Math.max(this.hitstop, t); }
+
+  notify(title, sub) {
+    this.notifications.push({ title, sub, t: 0 });
+    this.onNotify?.(title, sub);
+  }
+
+  update(rawDt, input) {
+    if (!this.running || this.paused) return;
+
+    // hitstop bites first — it is what makes a perfect return land in the hands
+    let dt = rawDt;
+    if (this.hitstop > 0) {
+      this.hitstop -= rawDt;
+      dt = rawDt * 0.06;
+    }
+    this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
+    dt *= this.timeScale;
+    dt = Math.min(dt, 1 / 24);
+    this.time += dt;
+
+    const camera = this.engine.camera;
+    const ctx = {
+      input, dt, time: this.time, camera,
+      physics: this.physics, terrain: this.terrain, particles: this.particles,
+      bolts: this.bolts, enemies: this.enemies, players: this.players,
+      groundColor: this.groundColor,
+      pickTarget: (e) => this.pickTarget(e),
+      pickSpawn: (t) => this.pickSpawn(t),
+      spawnEnemy: (t, p) => this.spawnEnemy(t, p),
+    };
+
+    // 1 — players
+    for (const p of this.players) p.update(dt, ctx);
+
+    // 2 — enemies
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
+      if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
+    }
+
+    // 3 — blades against everything
+    this._resolveBlades(dt);
+
+    // 4 — bolts
+    this.bolts.update(dt, {
+      blades: this._bladeEntries(),
+      hitTest: (b, from, to) => this._boltHitTest(b, from, to),
+    });
+
+    // 5 — physics
+    this.physics.step(dt);
+
+    // 6 — bookkeeping
+    for (const p of this.props) p.update(dt);
+    for (const d of this.doors) d.update(dt);
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i];
+      if (d.gone) { this.debris.splice(i, 1); continue; }
+      d.mesh.position.copy(d.body.position);
+      d.mesh.quaternion.copy(d.body.quaternion);
+      d.age += dt;
+      if (d.age > d.life) {
+        const k = clamp((d.age - d.life) / 2.2, 0, 1);
+        d.mesh.scale.setScalar(Math.max(0.001, 1 - k));
+        if (k >= 1) { this.physics.remove(d.body); this.scene.remove(d.mesh); d.mesh.geometry?.dispose?.(); this.debris.splice(i, 1); }
+      }
+    }
+    updateCauterisation(dt);
+    this.particles.update(dt);
+    this.terrain.flush();
+
+    // 7 — scenery
+    const focus = this.player ? this.player.position : _v1.set(0, 0, 0);
+    if (this.grass) {
+      const pushers = [];
+      for (const p of this.players) pushers.push({ x: p.position.x, y: p.position.y, z: p.position.z, w: 1.4 });
+      for (const e of this.enemies) {
+        if (e.dead || pushers.length >= 8) continue;
+        if (e.position.distanceToSquared(focus) > 900) continue;
+        pushers.push({ x: e.position.x, y: e.position.y, z: e.position.z, w: 1.2 * e.A.scale });
+      }
+      this.grass.update(dt, focus, pushers, this.engine.sun.color);
+    }
+    this.water?.update(dt, this.engine.sunDir, this.engine.hemi.color);
+    this.atmosphere?.update(dt, focus);
+
+    // 8 — director (the host owns the horde; clients receive it)
+    if (this.netMode !== 'client') this.director.update(dt, ctx);
+    if (this.netMode) this._netTick(rawDt);
+
+    // 9 — intensity drives the score and the mix
+    const alive = this.enemies.filter(e => !e.dead).length;
+    const near = this.enemies.filter(e => !e.dead && e.position.distanceToSquared(focus) < 400).length;
+    this.combatIntensity = damp(this.combatIntensity, clamp(near / 9 + alive / 26, 0, 1), 1.4, rawDt);
+    audio.updateScore(rawDt, this.combatIntensity);
+    audio.updateListener(camera);
+
+    this.engine.fitShadows(focus);
+    this.engine.setRadial(this.player?.senseActive ? 0.35 : 0);
+  }
+
+  _bladeEntries() {
+    const out = [];
+    for (const p of this.players) if (p.alive && p.saber.ignition > 0.5) out.push({ saber: p.saber, owner: p, team: 0 });
+    for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: 1 });
+    return out;
+  }
+
+  /* ── blade resolution ────────────────────────────────────────────── */
+
+  _resolveBlades(dt) {
+    for (const p of this.players) {
+      if (!p.alive || p.saber.ignition < 0.6) continue;
+
+      // build the target list once per player
+      const targets = this._targets;
+      targets.length = 0;
+      const bladeMid = p.saber.pointAt(0.5, _v1);
+      for (const e of this.enemies) {
+        if (e.dead && !e.actor?.ragdolled) continue;
+        if (e.position.distanceToSquared(bladeMid) > 36) continue;
+        targets.push({ id: e.id, capsules: e.capsules(), enemy: e, dead: false });
+      }
+      for (const pr of this.props) {
+        if (pr.body.position.distanceToSquared(bladeMid) > 25) continue;
+        targets.push({ id: pr.id, capsules: pr.capsules(), prop: pr, dead: false });
+      }
+      for (const d of this.doors) {
+        if (d.opened) continue;
+        if (d.mesh.position.distanceToSquared(bladeMid) > 64) continue;
+        targets.push({ id: d.id, capsules: d.capsules(), door: d, dead: false });
+      }
+
+      const events = this.bladeSolver.solve(p.saber, targets, dt, { power: p.boonMods.cutPower });
+      for (const ev of events) this._applyBladeEvent(p, ev, dt);
+    }
+
+    // enemy blades vs the player, and blade-on-blade
+    for (const e of this.enemies) {
+      if (e.dead || !e.saber || e.saber.ignition < 0.6) continue;
+      for (const p of this.players) {
+        if (!p.alive) continue;
+        // blades meeting takes precedence over a blade meeting a body
+        if (p.saber.ignition > 0.5) {
+          const clash = resolveBladeClash(p.saber, e.saber);
+          if (clash) { this._applyClash(p, e, clash); continue; }
+        }
+        // enemy blade vs the player's body
+        if (e.saberPhase === 'swing' && p.invuln <= 0) {
+          _v1.copy(p.position).setY(p.position.y + 0.4);
+          _v2.copy(p.position).setY(p.position.y + 1.7);
+          const hit = segmentNear(e.saber.prevTip, e.saber.tip, _v1, _v2, 0.44);
+          if (hit) {
+            p.damage(e.damage, hit, e, 'saber');
+            _v3.subVectors(p.position, e.position).setY(0.3).normalize().multiplyScalar(6);
+            p.velocity.add(_v3);
+            this.particles.cutFlare(hit, null, e.saber.color.getHex(), 20);
+            audio.cut(hit, false);
+            e.saberPhase = 'recover'; e.saberTimer = 0.45;
+            this.addHitstop(0.05);
+          }
+        }
+      }
+    }
+  }
+
+  _applyBladeEvent(player, ev, dt) {
+    const P = this.particles;
+    if (ev.type === 'clang') {
+      P.sparkBurst(ev.point, null, 8, { speed: 6 });
+      audio.clash(ev.point, 0.5);
+      player.camera.addShake(0.06);
+      return;
+    }
+
+    if (ev.type === 'grind') {
+      // holding the blade against something that will not part quickly
+      if (ev.target.door) {
+        const breached = ev.target.door.burn(ev.point, ev.speed * player.boonMods.cutPower, dt);
+        player.saber.strain(0.9);
+        if (breached) this.addHitstop(0.05);
+      } else {
+        P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
+        if (rng() < 0.35) P.sparkBurst(ev.point, null, 3, { speed: 5, embers: false });
+      }
+      audio.ui && (this._grindSound = (this._grindSound || 0) - dt);
+      if (this._grindSound <= 0) {
+        this._grindSound = 0.14;
+        audio.noise({ dur: 0.16, gain: 0.13, type: 'bandpass', freq: 2800, freqEnd: 1400, q: 2.4, pos: ev.point });
+      }
+      player.camera.addShake(0.02);
+      return;
+    }
+
+    if (ev.type !== 'cut') return;
+
+    // ── a real cut
+    const t = ev.target;
+    if (t.enemy) {
+      const e = t.enemy;
+      const wasAlive = !e.dead;
+      e.takeCut(ev, player);
+      player.limbsRemoved++;
+      player.addFlow(0.10);
+      player.combo++;
+      player.comboTimer = 3.2;
+      player.score += 60;
+      if (player.boonMods.lifesteal) player.heal(player.boonMods.lifesteal);
+      this.addHitstop(ev.speed > 20 ? 0.055 : 0.03);
+      player.camera.addShake(clamp(ev.speed / 60, 0.05, 0.3));
+      this.onHitmark?.(ev.point, wasAlive && e.dead ? 'kill' : 'cut', ev.bone);
+    } else if (t.prop) {
+      const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
+      if (!halves) t.prop.shatter(ev.impulse, ev.point);
+      else { for (const h of halves) this.props.push(h); }
+      this.bladeSolver.clearTarget(t.id);
+      P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
+      audio.cut(ev.point, false);
+      player.camera.addShake(0.06);
+      player.score += 10;
+    }
+  }
+
+  _applyClash(player, enemy, clash) {
+    const P = this.particles;
+    const now = this.time;
+    if (now - (enemy._lastClash || -1) < 0.09) return;
+    enemy._lastClash = now;
+
+    P.sparkBurst(clash.point, null, Math.round(10 + clash.power * 22), { speed: 8 + clash.power * 9 });
+    audio.clash(clash.point, clash.power);
+    player.saber.strain(clash.power);
+    enemy.saber.strain(clash.power);
+    player.camera.addShake(0.08 + clash.power * 0.12);
+
+    _v1.subVectors(player.saber.pointAt(0.5, _v2), clash.point).normalize();
+
+    if (clash.type === 'chamber') {
+      if (clash.winner === 'a') {
+        // the player chambered — their attack dies, you are free
+        enemy.saberPhase = 'recover'; enemy.saberTimer = 0.75;
+        enemy.stun(0.5);
+        player.riposteTimer = 0.55 * (player.boonMods.riposteWindow ?? 1);
+        player.addFlow(0.30);
+        this.addHitstop(0.075);
+        this.notifyFloating(clash.point, 'CHAMBER', '#8fe8ff');
+        audio.deflect(clash.point, 3);
+        player.score += 120;
+      } else {
+        player.control.hitImpulse(clash.point, _v1.multiplyScalar(-14), 1.4);
+        player.staggerTimer = 0.4;
+        player.stamina = Math.max(0, player.stamina - 18);
+        this.notifyFloating(clash.point, 'CHAMBERED', '#ff8080');
+      }
+      return;
+    }
+
+    if (clash.type === 'bind') {
+      // a contest of pressure: whoever pushes harder wins ground
+      const push = player.control.angVel.length() * 0.6 + player.control.handVel.length();
+      if (push > 5.5) {
+        enemy.stun(0.42);
+        enemy.applyKnockback(_v2.subVectors(enemy.position, player.position).setY(0.2).normalize().multiplyScalar(9), 4, player);
+        this.notifyFloating(clash.point, 'BIND WON', '#ffd080');
+        player.addFlow(0.12);
+      } else {
+        player.control.hitImpulse(clash.point, _v1.multiplyScalar(-4), 0.6);
+        player.stamina = Math.max(0, player.stamina - 12 * 0.016 * 60);
+      }
+      player.saber.strain(0.5);
+      return;
+    }
+
+    // parry / clash — both blades recoil, the slower one loses ground
+    const playerWon = clash.winner === 'a';
+    player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(playerWon ? -5 : -13), playerWon ? 0.6 : 1.3);
+    if (playerWon) {
+      enemy.saberPhase = 'recover'; enemy.saberTimer = 0.42;
+      enemy.stun(0.18);
+      player.riposteTimer = 0.4 * (player.boonMods.riposteWindow ?? 1);
+      player.addFlow(0.12);
+      player.score += 40;
+      this.notifyFloating(clash.point, 'PARRY', '#a8f0ff');
+    } else {
+      player.stamina = Math.max(0, player.stamina - 14);
+      if (player.stamina <= 0) player.staggerTimer = 0.6;
+    }
+    this.addHitstop(0.03);
+  }
+
+  notifyFloating(point, text, color) { this.onFloating?.(point, text, color); }
+
+  /* ── bolts ───────────────────────────────────────────────────────── */
+
+  _onBoltDeflect(bolt, entry, hit, bladePoint) {
+    const owner = entry.owner;
+    const isPlayer = owner instanceof Player;
+
+    if (!isPlayer) {
+      // an enemy duelist batting a bolt away — no grading, just a deflection
+      bolt.vel.copy(hit.point).sub(bladePoint).normalize().multiplyScalar(bolt.speed);
+      if (bolt.vel.lengthSq() < 1) bolt.vel.set(rng() - .5, rng() * .4, rng() - .5).setLength(bolt.speed);
+      bolt.team = 1;
+      bolt.deflected = true; bolt.deflector = owner;
+      this.particles.sparkBurst(bladePoint, null, 8, { speed: 6 });
+      audio.deflect(bladePoint, 0);
+      return;
+    }
+    if (bolt.team === 0) return;    // already ours
+
+    const candidates = this.enemies.filter(e => !e.dead);
+    const res = gradeDeflection(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint }, {
+      aimOrigin: owner.camera.pos,
+      aimDir: owner.aimDir,
+      candidates,
+      flow: owner.flow,
+      returnCone: owner.boonMods.returnCone,
+    });
+
+    bolt.pos.copy(bladePoint);
+    bolt.prev.copy(bladePoint);
+    bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
+    bolt.damage *= res.damageMul * owner.boonMods.deflectDamage;
+    bolt.team = 0;
+    bolt.owner = owner;
+    bolt.deflected = true;
+    bolt.deflector = owner;
+    bolt.color.setHex(res.grade >= GRADE.RETURN ? 0xfff0a0 : bolt.color.getHex());
+    bolt.life = Math.max(bolt.life, 2.2);
+
+    owner.saber.strain(0.45 + res.grade * 0.15);
+    owner.deflects++;
+    owner.combo++;
+    owner.comboTimer = 3.2;
+    this.particles.sparkBurst(bladePoint, res.normal, 8 + res.grade * 8, { speed: 6 + res.grade * 4 });
+    this.particles.plasma.spawn(bladePoint, _v1.set(0, 0, 0),
+      { life: 0.16, size: 0.34 + res.grade * 0.16, drag: 1, gravity: 0, color: owner.saber.color.getHex(), alpha: 0.9 });
+    audio.deflect(bladePoint, res.grade);
+
+    const gain = [0.03, 0.06, 0.13, 0.24][res.grade];
+    owner.addFlow(gain);
+    owner.score += [10, 25, 70, 160][res.grade];
+    owner.camera.addShake(0.03 + res.grade * 0.02);
+    if (res.grade === GRADE.PERFECT) {
+      owner.perfects++;
+      this.addHitstop(0.07);
+      this.engine.flash(0.09);
+      this.notifyFloating(bladePoint, 'PERFECT RETURN', '#ffe9a0');
+    } else if (res.grade === GRADE.RETURN) {
+      this.notifyFloating(bladePoint, 'RETURN', '#a8f0ff');
+    } else if (res.grade === GRADE.BLOCK) {
+      owner.stamina = Math.max(0, owner.stamina - 4);
+    }
+    this.onDeflectFeedback?.(res.grade, bladePoint);
+  }
+
+  _boltHitTest(bolt, from, to) {
+    // players
+    if (bolt.team !== 0) {
+      for (const p of this.players) {
+        if (!p.alive || p.invuln > 0) continue;
+        _v1.copy(p.position).setY(p.position.y + 0.35);
+        _v2.copy(p.position).setY(p.position.y + 1.72);
+        const hit = segmentNear(from, to, _v1, _v2, 0.36);
+        if (hit) {
+          if (p.boonMods.absorb) {
+            p.force = Math.min(p.maxForce, p.force + bolt.damage * 0.8);
+            p.damage(bolt.damage * 0.45, hit, bolt.owner, 'bolt');
+          } else p.damage(bolt.damage, hit, bolt.owner, 'bolt');
+          return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: p };
+        }
+      }
+    }
+    // enemies
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      if (bolt.team === 1 && bolt.owner !== e) {
+        // enemies do not shoot each other unless the bolt came back at them
+        if (!bolt.deflected) continue;
+      }
+      if (bolt.team === 1 && !bolt.deflected) continue;
+      const caps = e.capsules();
+      for (const c of caps) {
+        if (c.shield) {
+          const hit = segmentNear(from, to, c.p0, c.p1, c.r);
+          if (hit) {
+            e.damage(bolt.damage, hit, bolt.owner, 'bolt');
+            this.particles.sparkBurst(hit, null, 10, { speed: 5, color: 0x88ffcc });
+            return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: e, bone: 'shield' };
+          }
+          continue;
+        }
+        const hit = segmentNear(from, to, c.p0, c.p1, c.r);
+        if (!hit) continue;
+        const vital = c.vital ?? 0.4;
+        const dmg = bolt.damage * lerp(0.6, 1.9, vital);
+        const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+        if (bolt.owner instanceof Player) {
+          bolt.owner.score += killed ? 150 : 25;
+          this.onHitmark?.(hit, killed ? 'kill' : 'hit');
+        }
+        return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: e, bone: c.name };
+      }
+    }
+    // props
+    for (const pr of this.props) {
+      const rr = pr.body.boundingRadius;
+      const hit = segmentNear(from, to, pr.body.position, pr.body.position, rr);
+      if (hit) {
+        pr.damage(bolt.damage * 0.8, hit, _v3.subVectors(to, from).normalize());
+        pr.body.applyImpulse(_v3.copy(to).sub(from).normalize().multiplyScalar(bolt.damage * 2.4), hit);
+        return { point: hit, normal: _v3.clone().negate(), victim: pr };
+      }
+    }
+    // world
+    const dir = _v1.subVectors(to, from);
+    const len = dir.length();
+    if (len < 1e-6) return null;
+    dir.multiplyScalar(1 / len);
+    const hit = this.physics.raycast(from, dir, len, (b) => b.static || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL);
+    if (hit) {
+      if (hit.body && hit.body.invMass > 0) hit.body.applyImpulse(_v2.copy(dir).multiplyScalar(bolt.damage * 1.6), hit.point);
+      return { point: hit.point.clone(), normal: hit.normal.clone(), victim: null };
+    }
+    return null;
+  }
+
+  _onBoltImpact(bolt, res) {
+    this.particles.boltImpact(res.point, res.normal || _v1.set(0, 1, 0), bolt.color.getHex());
+    audio.boltHit(res.point);
+    if (this.terrain && !res.victim) {
+      const gh = this.terrain.height(res.point.x, res.point.z);
+      if (Math.abs(res.point.y - gh) < 0.3) {
+        this.terrain.crater(res.point.x, res.point.z, 0.55, 0.06);
+        this.particles.sandPuff(res.point, 0.35, gh, this.groundColor);
+      }
+    }
+  }
+
+  /* ── callbacks ───────────────────────────────────────────────────── */
+
+  onEnemyKilled(enemy, source, kind) {
+    const A = enemy.A;
+    this.score += A.score;
+    if (source instanceof Player) {
+      source.kills++;
+      source.score += A.score;
+      source.addFlow(kind === 'cut' ? 0.16 : 0.08);
+      source.combo++;
+      source.comboTimer = 3.4;
+      if (source.boonMods.healOnKill) source.heal(source.boonMods.healOnKill);
+      this.onKillFeed?.(source.name, A.label, kind);
+    }
+    if (A.boss || A.big) {
+      this.addHitstop(0.12);
+      this.engine.flash(0.12);
+      this.notify(A.label.toUpperCase() + ' DOWN', 'the field is yours');
+    }
+  }
+
+  onLimbSevered(enemy, bone, point, source) {
+    if (source instanceof Player) {
+      this.onHitmark?.(point, 'sever', bone);
+    }
+  }
+
+  onPlayerDeath(player, source) {
+    if (this.players.every(p => !p.alive)) {
+      this.running = false;
+      this.onGameOver?.({
+        wave: this.director.wave,
+        score: this.score,
+        kills: this.players.reduce((a, p) => a + p.kills, 0),
+        deflects: this.players.reduce((a, p) => a + p.deflects, 0),
+        perfects: this.players.reduce((a, p) => a + p.perfects, 0),
+        limbs: this.players.reduce((a, p) => a + p.limbsRemoved, 0),
+      });
+    }
+  }
+
+  applyBoon(boon) {
+    this.takenBoons.add(boon.id);
+    for (const p of this.players) p.applyBoon(boon);
+    this.director.resumeAfterDraft();
+    this.notify(boon.name.toUpperCase(), boon.tag);
+  }
+
+  /* ── networking ──────────────────────────────────────────────────── */
+
+  attachNet(net, mode) {
+    this.net = net;
+    this.netMode = mode;            // 'host' | 'client'
+    this.remotes = new Map();
+    this._netAccum = 0;
+    this._netEnemyIndex = new Map();
+    this._netPack = { packAvatar, packSnapshot };
+  }
+
+  _netTick(rawDt) {
+    const net = this.net;
+    if (!net || !net.connected) return;
+    this._netAccum += rawDt;
+    const interval = 1 / (this.netMode === 'host' ? 18 : 24);
+    if (this._netAccum < interval) return;
+    this._netAccum = 0;
+
+    if (this.player) {
+      const { packAvatar, packSnapshot } = this._netPack;
+      net.broadcast(packAvatar(this.player));
+      if (this.netMode === 'host') net.broadcast(packSnapshot(this));
+    }
+  }
+
+  /** Host → client: reconcile the enemy list against the snapshot. */
+  applySnapshot(msg) {
+    if (this.netMode !== 'client' || !this.terrain) return;
+    const seen = new Set();
+    for (const rec of msg.e) {
+      const [id, type, x, y, z, f, hp, dead] = rec;
+      seen.add(id);
+      let e = this._netEnemyIndex.get(id);
+      if (!e) {
+        e = this.spawnEnemy(type, new THREE.Vector3(x, y, z));
+        e.id = id;
+        e.netDriven = true;
+        this._netEnemyIndex.set(id, e);
+      }
+      e.netTarget = (e.netTarget || new THREE.Vector3()).set(x, y, z);
+      e.netFacing = f;
+      e.hp = hp;
+      if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
+    }
+    for (const [id, e] of this._netEnemyIndex) {
+      if (!seen.has(id) && !e.dead) { e.die(e.position.clone(), null, 'net'); this._netEnemyIndex.delete(id); }
+    }
+    this.director.wave = msg.w;
+    this.director.active = !!msg.act;
+    this.director._netRemaining = msg.rem;
+    this.score = msg.sc;
+  }
+
+  /** Client → host: "my blade did this." Trusted; this is co-op with friends. */
+  applyClaim(peerId, msg) {
+    if (this.netMode !== 'host') return;
+    const e = this._netEnemyIndex?.get(msg.id) || this.enemies.find(x => x.id === msg.id);
+    if (!e || e.dead) return;
+    if (msg.k === 'cut') {
+      const cap = e.capsules().find(c => c.name === msg.b);
+      if (!cap) return;
+      e.takeCut({
+        bone: msg.b, cutT: msg.t, cap, point: new THREE.Vector3(...msg.p),
+        impulse: new THREE.Vector3(...msg.v), normal: new THREE.Vector3(0, 1, 0), speed: 20,
+      }, null);
+    } else if (msg.k === 'dmg') {
+      e.damage(msg.d, new THREE.Vector3(...msg.p), null, 'remote');
+    }
+  }
+
+  dispose() { this.unload(); }
+}
+
+/* ── helper: closest approach between two segments ───────────────────── */
+
+const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+function segmentNear(p0, p1, c0, c1, radius) {
+  const d1 = _v4.subVectors(p1, p0);
+  const d2 = _v5.subVectors(c1, c0);
+  const r = _a.subVectors(p0, c0);
+  const a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r);
+  let s, t;
+  if (a <= 1e-8 && e <= 1e-8) { s = t = 0; }
+  else if (a <= 1e-8) { s = 0; t = clamp(f / e, 0, 1); }
+  else {
+    const c = d1.dot(r);
+    if (e <= 1e-8) { t = 0; s = clamp(-c / a, 0, 1); }
+    else {
+      const b = d1.dot(d2);
+      const denom = a * e - b * b;
+      s = denom !== 0 ? clamp((b * f - c * e) / denom, 0, 1) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = clamp(-c / a, 0, 1); }
+      else if (t > 1) { t = 1; s = clamp((b - c) / a, 0, 1); }
+    }
+  }
+  _a.copy(p0).addScaledVector(d1, s);
+  _b.copy(c0).addScaledVector(d2, t);
+  return _a.distanceToSquared(_b) <= radius * radius ? _a.clone() : null;
+}
