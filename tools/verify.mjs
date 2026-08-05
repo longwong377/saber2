@@ -2629,6 +2629,33 @@ check('levels: every level dresses itself without throwing', () => {
   return done.join(', ') + ' pieces';
 });
 
+check('enemies: distant detail is culled, silhouettes are not', () => {
+  // Every small piece of an enemy — panel lines, rivets, vents, fasteners — is
+  // its own draw call. An acolyte is 56 meshes and a walker 66, so a horde of
+  // twenty is over a thousand draw calls BEFORE the shadow pass doubles it.
+  // None of that detail resolves past thirty metres, so it is culled by
+  // distance. What must never be culled is the limb tubes: they are the
+  // silhouette, and the silhouette is what the player fights by.
+  const builders = [['b1', buildB1], ['trooper', buildTrooper], ['acolyte', buildAcolyte]];
+  const report = [];
+  for (const [name, build] of builders) {
+    const { rig } = build({ scale: 1 });
+    const keep = new Set();
+    for (const b of rig.list) if (b.primary) keep.add(b.primary);
+    let all = 0, detail = 0;
+    rig.root.traverse((o) => { if (o.isMesh) { all++; if (!keep.has(o)) detail++; } });
+
+    assert(keep.size >= 15, `${name} only has ${keep.size} silhouette meshes — the rig is not built`);
+    const kept = all - detail;
+    assert(kept >= 15, `${name} would cull down to ${kept} meshes — the silhouette would break up`);
+    const cut = detail / all;
+    assert(cut > 0.35,
+      `${name} only sheds ${(cut * 100).toFixed(0)}% of its meshes at distance — a horde will not render`);
+    report.push(`${name} ${all}\u2192${kept}`);
+  }
+  return report.join(', ');
+});
+
 /* ══════════════════════════════════════════════════════════════════════ */
 
 await Promise.all(pending);

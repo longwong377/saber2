@@ -12,7 +12,7 @@ import {
   addWall, addRock, BlastDoor, propMaterials,
   addColumn, addArch, addBrokenWall, addColossus, addOutcrop, addScree,
   addDebrisField, addCrateStack, addRuin, addOutpost, addGantry, addPipeRun,
-  addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection,
+  addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
 } from '../world/Props.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { DOJO_LEVEL } from './Dojo.js';
@@ -394,21 +394,61 @@ export const LEVELS = {
         world.scene.add(fixture);
         world.statics.push(fixture);
       }
-      // interior cover blocks
-      for (let i = 0; i < 16; i++) {
-        const x = (rng() - 0.5) * 78, z = (rng() - 0.5) * 74;
-        if (Math.hypot(x, z) < 9) continue;
-        addWall(world, new THREE.Vector3(x, 1.3, z), new THREE.Vector3(3.4 + rng() * 3, 2.6, 2.2 + rng() * 3),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * TAU), M.duracrete);
+      // ── The interior. A hangar is a WORKSHOP: bays down the sides, an
+      // aisle down the middle to the door, and the clutter of people who work
+      // there. Sixteen randomly-rotated concrete blocks scattered over the
+      // floor is what a generated level looks like, not what a hangar does.
+      beginDressing(world);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      // service gantries along both long walls, with the pipework they carry
+      for (const side of [-1, 1]) {
+        addGantry(world, V(side * 34, 0, -14), { length: 30, height: 5.4, yaw: Math.PI / 2, seed: 1700 + side });
+        // NB: addPipeRun takes an ARRAY of points, not two endpoints — it is a
+        // run through a polyline, not a segment.
+        addPipeRun(world, [
+          V(side * 41, 6.6, -34), V(side * 41, 6.6, -8),
+          V(side * 41, 7.4, 8), V(side * 41, 7.4, 34),
+        ], { radius: 0.34, seed: 1710 + side });
+        addCableRun(world, V(side * 39, 8.2, -20), V(side * 39, 7.4, 12), { seed: 1720 + side, sag: 1.4 });
       }
-      for (let i = 0; i < 40; i++) {
-        const x = (rng() - 0.5) * 84, z = (rng() - 0.5) * 80;
-        const p = new THREE.Vector3(x, T.height(x, z) + 0.5, z);
-        world.addProp(rng() < 0.25 ? makeBarrel(world, p) : makeCrate(world, p, 0.8));
+
+      // working bays down each side: scaffold, crate stacks, a tarp, a console
+      for (let b = 0; b < 6; b++) {
+        const side = b % 2 ? 1 : -1;
+        const z = -34 + Math.floor(b / 2) * 24 + rng() * 6;
+        const x = side * (22 + rng() * 6);
+        if (!siteOk(world, x, z, { clearance: 8, spawnClear: 10 })) continue;
+        const yaw = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+        if (rng() < 0.5) addScaffold(world, at(x, z), { width: 4.5, depth: 2.2, lifts: 2, seed: 1800 + b });
+        else addCrateStack(world, at(x, z), { seed: 1810 + b, height: 3 });
+        world.addProp(makeConsole(world, at(x - side * 4, z + 3, 0.5)));
+        // low cover in front of the bay — this is what you actually fight behind
+        addWall(world, at(x - side * 7, z - 4, 1.1), V(5.5, 2.2, 1.4),
+          new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), yaw), M.duracrete);
       }
-      for (let i = 0; i < 5; i++) {
-        const x = (rng() - 0.5) * 70, z = (rng() - 0.5) * 66;
-        world.addProp(makeConsole(world, new THREE.Vector3(x, T.height(x, z) + 0.5, z)));
+
+      // a wrecked hull being worked on, the reason the bay exists
+      addHullSection(world, at(-8, 20), { length: 22, radius: 3.8, yaw: 0.3, seed: 1900 });
+      addDebrisField(world, at(-8, 20), { radius: 10, seed: 1910, count: 22 });
+      addTarp(world, at(6, 16), { width: 5, depth: 4, seed: 1920 });
+
+      // loose clutter, clustered around the bays rather than sprinkled evenly
+      for (let k = 0; k < 6; k++) {
+        cluster(world, { rmin: 12, rmax: 40, count: 7, spread: 5, satClearance: 1.3, spawnClear: 10 },
+          (pos) => {
+            world.addProp(rng() < 0.28
+              ? makeBarrel(world, pos.clone().setY(pos.y + 0.55))
+              : makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.8));
+          });
+      }
+      // and the aisle to the door stays clear, so the fight has a spine
+      for (let i = 0; i < 8; i++) {
+        const site = findSite(world, 14, 40, { clearance: 3, spawnClear: 11 });
+        if (site && Math.abs(site.pos.x) > 7) {
+          world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.8));
+        }
       }
       // THE blast door
       const door = new BlastDoor(world, {
@@ -454,25 +494,82 @@ export const LEVELS = {
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
-      for (let i = 0; i < 30; i++) {
-        const x = (rng() - 0.5) * 150, z = (rng() - 0.5) * 44;
-        const y = T.height(x, z);
-        if (y > 6) continue;
-        const p = new THREE.Vector3(x, y + 0.5, z);
-        world.addProp(rng() < 0.3 ? makeBarrel(world, p) : makeCrate(world, p, 0.8));
+      beginDressing(world);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      // The canyon runs roughly along x, with a water course down the middle.
+      // Everything here is placed relative to that axis rather than sprinkled
+      // over a rectangle, because a canyon is a CORRIDOR and its dressing
+      // should read as things the water and the walls put where they are.
+      const wet = world.level?.water?.level ?? 0.35;
+
+      // ── A rock arch spanning the gorge. One landmark you can see from a long
+      // way down the canyon and navigate by.
+      const archSite = findSite(world, 20, 55, { clearance: 16, maxSlope: 0.6 });
+      if (archSite) addRockArch(world, archSite.pos, { span: 15, height: 11, seed: 1201 });
+
+      // ── Outcrops shed from the walls, with scree fanning out below them.
+      // Real talus sits at the foot of the slope it fell off, not in midfield.
+      for (let k = 0; k < 7; k++) {
+        const x = (rng() - 0.5) * 165;
+        const side = rng() < 0.5 ? -1 : 1;
+        const z = side * (24 + rng() * 20);
+        if (!siteOk(world, x, z, { clearance: 10, maxSlope: 0.85 })) continue;
+        const pos = at(x, z);
+        addOutcrop(world, pos, { size: 4 + rng() * 4, seed: 1300 + k });
+        // the fan runs downslope, toward the channel
+        addScree(world, at(x, z - side * 5), { radius: 10, count: 110, seed: 1310 + k });
       }
-      for (let i = 0; i < 26; i++) {
-        const x = (rng() - 0.5) * 170, z = (rng() - 0.5) * 90;
-        const y = T.height(x, z);
-        const s = 1.1 + rng() * 2.8;
-        addRock(world, new THREE.Vector3(x, y + s * 0.26, z),
-          new THREE.Vector3(s * 1.4, s * 1.1, s * 1.4), 100 + i);
+      for (let k = 0; k < 5; k++) {
+        const site = findSite(world, 14, 80, { clearance: 8, maxSlope: 0.7 });
+        if (site) addBoulderCluster(world, site.pos, { radius: 6, count: 7, seed: 1400 + k });
       }
-      for (let i = 0; i < 10; i++) {
-        const x = (rng() - 0.5) * 130, z = (rng() - 0.5) * 70;
+
+      // ── Spires on the high ground only. They read as erosion remnants, and
+      // a remnant standing in the middle of the wash makes no sense.
+      for (let i = 0; i < 12; i++) {
+        const x = (rng() - 0.5) * 150, z = (rng() - 0.5) * 78;
         const y = T.height(x, z);
-        if (y < 1) continue;
-        world.addProp(makeSpire(world, new THREE.Vector3(x, y + 3, z), 5 + rng() * 4));
+        if (y < wet + 2.5) continue;
+        if (!siteOk(world, x, z, { clearance: 6, maxSlope: 0.8 })) continue;
+        world.addProp(makeSpire(world, V(x, y + 3, z), 5 + rng() * 4));
+      }
+
+      // ── Somebody camped in the gorge: a small outpost on a dry bench, and a
+      // scatter of what they left, clustered around it rather than everywhere.
+      const camp = findSite(world, 25, 65, { clearance: 16, maxSlope: 0.3, minHeight: wet + 0.9 });
+      if (camp) {
+        addOutpost(world, camp.pos, { radius: 10, seed: 1500, yaw: rng() * TAU });
+        cluster(world, { rmin: 0, rmax: 0, count: 10, spread: 12, angle: camp.a,
+          satClearance: 1.6, minHeight: wet + 0.5 }, (pos) => {
+          if (rng() < 0.35) world.addProp(makeBarrel(world, pos.clone().setY(pos.y + 0.55)));
+          else world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.8));
+        });
+        // NB: addCableRun takes TWO endpoints, not a position and options.
+        addCableRun(world,
+          at(camp.pos.x - 5, camp.pos.z - 3, 3.4),
+          at(camp.pos.x + 6, camp.pos.z + 4, 2.6), { seed: 1510, sag: 0.9 });
+      }
+
+      // ── Wreckage half in the water, because a canyon collects what washes
+      // down it. This is the cover you actually fight around.
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 18, 70, { clearance: 12, maxSlope: 0.45 });
+        if (!site) continue;
+        addHullSection(world, site.pos, {
+          length: 16 + rng() * 10, radius: 3.4, yaw: rng() * TAU, seed: 1600 + k,
+        });
+        addDebrisField(world, site.pos, { radius: 9, seed: 1610 + k, count: 20 });
+      }
+
+      // ── Loose cover on the dry benches only.
+      for (let i = 0; i < 14; i++) {
+        const site = findSite(world, 10, 75, { clearance: 3, minHeight: wet + 0.4, maxSlope: 0.35 });
+        if (!site) continue;
+        world.addProp(rng() < 0.3
+          ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
+          : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.8));
       }
     },
   },

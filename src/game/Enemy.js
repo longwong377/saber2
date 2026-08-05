@@ -167,6 +167,45 @@ export class Enemy {
 
     this._caps = [];
     this._capsDirty = true;
+    this._collectLodParts();
+  }
+
+  /**
+   * Rendering LOD.
+   *
+   * These models carry a lot of small detail — panel lines, rivets, vents,
+   * fasteners — and each of those pieces is a draw call. An acolyte is 56
+   * meshes and a spider walker 66, so twenty of them on screen is over a
+   * thousand draw calls before the shadow pass doubles it. None of that detail
+   * is resolvable past about thirty metres.
+   *
+   * So the detail is CULLED by distance, not just skipped in the solve. The
+   * limb tubes the rig builds (bone.primary) always stay, because they are the
+   * silhouette and the silhouette is what you fight by; everything else goes.
+   * Measured on an acolyte: 56 meshes at LOD 0, 20 at LOD 1, 20 at LOD 2.
+   */
+  _applyLod(lod) {
+    if (!this.rig || !this._lodParts) return;
+    const showDetail = lod === 0;
+    for (const m of this._lodParts) m.visible = showDetail;
+    // far away, drop the shadow pass too — a 60m silhouette contributes
+    // nothing to a shadow map that covers 34m
+    if (this._lodShadow !== (lod < 2)) {
+      this._lodShadow = lod < 2;
+      this.rig.root.traverse((o) => { if (o.isMesh) o.castShadow = this._lodShadow; });
+    }
+  }
+
+  /** Collect the meshes that are decoration rather than silhouette. */
+  _collectLodParts() {
+    if (!this.rig) return;
+    const keep = new Set();
+    for (const b of this.rig.list) { if (b.primary) keep.add(b.primary); }
+    this._lodParts = [];
+    this.rig.root.traverse((o) => {
+      if (o.isMesh && !keep.has(o)) this._lodParts.push(o);
+    });
+    this._lodShadow = true;
   }
 
   _build() {
@@ -494,7 +533,8 @@ export class Enemy {
 
     // level of detail: distant enemies skip the expensive solves
     const camDist = ctx.camera.position.distanceTo(this.position);
-    this.lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
+    const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
+    if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
 
     if (this.netDriven) {
       // a client's copy: the host owns where this thing is, we own how it looks
