@@ -76,6 +76,8 @@ b{font-weight:650}
 .col::-webkit-scrollbar{width:6px}
 .col::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:3px}
 .col.narrow{flex:0 0 300px;display:flex;flex-direction:column}
+.col.narrow .primary{position:sticky;bottom:0;margin-top:20px;
+  box-shadow:0 0 26px -6px rgba(87,201,255,.75),inset 0 1px 0 rgba(255,255,255,.25),0 -14px 22px -10px #05070c}
 .col.wide{flex:1}
 h2{font-weight:200;font-size:30px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:10px}
 h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--dimmer);
@@ -99,14 +101,14 @@ h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:upperca
 
 /* difficulty / mode list */
 .difflist{display:flex;flex-direction:column;gap:7px}
-.diff{display:flex;align-items:center;gap:11px;padding:10px 13px;border:1px solid var(--line);border-radius:9px;
+.diff{display:flex;align-items:center;gap:11px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;
   background:var(--panel);cursor:pointer;transition:.18s}
 .diff:hover{border-color:var(--line-hot);background:rgba(20,30,46,.9)}
 .diff.sel{border-color:var(--accent);background:rgba(20,44,66,.75)}
 .diff .dot{width:7px;height:7px;border-radius:50%;background:var(--dimmer);flex:none;transition:.18s}
 .diff.sel .dot{background:var(--accent);box-shadow:0 0 10px var(--accent)}
 .diff .txt b{display:block;font-size:12.5px;letter-spacing:.09em}
-.diff .txt span{font-size:10.5px;color:var(--dim)}
+.diff .txt span{font-size:10.5px;color:var(--dim);line-height:1.35;display:block}
 
 /* swatches */
 .swatches{display:flex;flex-wrap:wrap;gap:9px}
@@ -175,7 +177,9 @@ button{font-family:inherit}
   font:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase}
 
 /* ══════════════════ HUD ══════════════════ */
-#hud{position:fixed;inset:0;z-index:20;pointer-events:none;font:var(--ui)}
+#hud{position:fixed;inset:0;z-index:20;pointer-events:none;font:var(--ui);
+  text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 14px rgba(0,0,0,.55)}
+.hud-tl,.hud-tr,.hud-bl,.hud-br{filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
 #reticle{position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);opacity:.5;
   transition:opacity .2s}
 .ret-ring{fill:none;stroke:rgba(255,255,255,.5);stroke-width:1.2}
@@ -191,16 +195,16 @@ button{font-family:inherit}
 
 .hud-tl{position:absolute;left:34px;top:28px;animation:riseIn .5s both}
 .wave-line{display:flex;align-items:center;gap:10px;font:var(--mono);font-size:10px;letter-spacing:.26em;
-  text-transform:uppercase;color:var(--dim)}
+  text-transform:uppercase;color:#cfdaea}
 .wave-line em{font-style:normal;color:var(--accent-warm)}
-.wave-big{font-size:12px;letter-spacing:.3em;color:var(--dim);margin-top:4px}
+.wave-big{font-size:12px;letter-spacing:.3em;color:#cfdaea;margin-top:4px}
 .wave-big b{font-size:30px;font-weight:200;letter-spacing:0;color:#fff;margin-left:6px;
   text-shadow:0 0 24px rgba(255,255,255,.28)}
-.wave-sub{font:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--dimmer);margin-top:2px}
+.wave-sub{font:var(--mono);font-size:10.5px;letter-spacing:.16em;color:#9fb0c6;margin-top:2px}
 
 .hud-tr{position:absolute;right:34px;top:28px;text-align:right;animation:riseIn .5s both}
-.flowmeter{position:relative;width:168px;height:3px;background:rgba(255,255,255,.1);border-radius:2px;
-  margin-left:auto;overflow:visible}
+.flowmeter{position:relative;width:168px;height:3px;background:rgba(0,0,0,.45);border-radius:2px;
+  margin-left:auto;overflow:visible;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .flowmeter i{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:2px;
   background:linear-gradient(90deg,#2b90d9,#8ee6ff);box-shadow:0 0 14px rgba(87,201,255,.85);transition:width .1s linear}
 .flowmeter span{position:absolute;right:0;top:8px;font:var(--mono);font-size:9px;letter-spacing:.3em;color:var(--dimmer)}
@@ -208,15 +212,16 @@ button{font-family:inherit}
 .combo{margin-top:26px;font-size:26px;font-weight:200;letter-spacing:.04em;color:#fff;opacity:0;transition:.18s;
   text-shadow:0 0 26px rgba(87,201,255,.75)}
 .combo.on{opacity:1}
-.score{font:var(--mono);font-size:13px;letter-spacing:.2em;color:var(--dim);margin-top:6px}
+.score{font:var(--mono);font-size:13px;letter-spacing:.2em;color:#cfdaea;margin-top:6px}
 
 .hud-bl{position:absolute;left:34px;bottom:30px;animation:riseIn .5s both}
 .bars{display:flex;flex-direction:column;gap:9px}
-.bar{position:relative;width:230px;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:visible}
+.bar{position:relative;width:230px;height:6px;background:rgba(0,0,0,.45);border-radius:3px;overflow:visible;
+  box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .bar i{position:absolute;inset:0;width:100%;border-radius:3px;transform-origin:left;transition:transform .12s linear}
 .bar u{position:absolute;inset:0;width:100%;border-radius:3px;transform-origin:left;background:rgba(255,80,90,.4);
   transition:transform .5s .25s cubic-bezier(.22,1,.36,1);z-index:-1}
-.bar label{position:absolute;left:0;top:9px;font:var(--mono);font-size:8.5px;letter-spacing:.28em;color:var(--dimmer)}
+.bar label{position:absolute;left:0;top:9px;font:var(--mono);font-size:8.5px;letter-spacing:.28em;color:#9fb0c6}
 .bar.hp i{background:linear-gradient(90deg,#e8f4ff,#7fd6ff);box-shadow:0 0 12px rgba(120,210,255,.6)}
 .bar.fc{width:186px}
 .bar.fc i{background:linear-gradient(90deg,#7f6bff,#b39dff);box-shadow:0 0 12px rgba(150,130,255,.6)}

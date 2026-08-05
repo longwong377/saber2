@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS = {
   mode: 'roguelite',
   colorIndex: 0,
   hiltStyle: 'Graflex',
-  robeIndex: 0,
+  robeIndex: 1,
   bladeLength: 1.15,
   coreWidth: 1,
   sensitivity: 1,

@@ -231,19 +231,21 @@ export class Saber {
       return m;
     };
 
-    // white-hot core — deliberately over 1.0 so bloom bites
+    // A white-hot core just over 1.0 so bloom bites, wrapped in a halo only a
+    // few centimetres wider. Any more and the blade stops reading as a blade
+    // and becomes a smear of light with a person somewhere behind it.
     const coreGeo = new THREE.CapsuleGeometry(0.0125 * w, L - 0.024 * w, 4, 12);
     coreGeo.translate(0, L / 2, 0);
     this.core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({
-      color: new THREE.Color(3.4, 3.4, 3.4), toneMapped: false, fog: false,
+      color: new THREE.Color(2.2, 2.2, 2.2), toneMapped: false, fog: false,
     }));
     this.core.frustumCulled = false;
     this.bladeGroup.add(this.core);
 
     this.glowMeshes = [
-      mkGlow(0.028 * w, 1.1, 1.5),
-      mkGlow(0.052 * w, 2.0, 0.85),
-      mkGlow(0.10 * w, 3.4, 0.34),
+      mkGlow(0.023 * w, 1.2, 1.05),
+      mkGlow(0.040 * w, 2.2, 0.55),
+      mkGlow(0.068 * w, 3.6, 0.20),
     ];
     this.bladeGroup.scale.y = 0.0001;
     this.bladeGroup.visible = false;
@@ -356,16 +358,16 @@ export class Saber {
     const flick = 0.94 + Math.sin(time * 47.3) * 0.022 + Math.sin(time * 111.7) * 0.014
                   + this.contactStrain * 0.22 * Math.sin(time * 180);
     for (const g of this.glowMeshes) g.material.uniforms.uFlicker.value = flick;
-    this.core.material.color.setRGB(3.4 * flick, 3.4 * flick, 3.4 * flick);
+    this.core.material.color.setRGB(2.2 * flick, 2.2 * flick, 2.2 * flick);
 
     const on = this.ignition > 0.05;
     if (on) {
       this.pointAt(0.45, _v1);
       this.light.position.copy(_v1);
-      this.light.intensity = 3.4 * this.ignition * (1 + this.contactStrain * 1.6) * flick;
-      this.light.distance = 7 + len * 3;
+      this.light.intensity = 2.1 * this.ignition * (1 + this.contactStrain * 1.6) * flick;
+      this.light.distance = 6 + len * 2.4;
       this.tipLight.position.copy(this.tip);
-      this.tipLight.intensity = 1.5 * this.ignition * flick;
+      this.tipLight.intensity = 0.9 * this.ignition * flick;
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;
@@ -402,7 +404,7 @@ export class Saber {
     }
     this.trail.geometry.attributes.position.needsUpdate = true;
     this.trail.geometry.attributes.aAge.needsUpdate = true;
-    this.trailMat.uniforms.uIntensity.value = clamp(this.tipSpeed / 12, 0.15, 1.5) * this.ignition;
+    this.trailMat.uniforms.uIntensity.value = clamp(this.tipSpeed / 16, 0.08, 1.0) * this.ignition;
     this.trail.visible = this.ignition > 0.2;
   }
 

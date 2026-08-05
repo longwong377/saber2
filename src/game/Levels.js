@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import { makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole, addWall, BlastDoor, propMaterials } from '../world/Props.js';
+import { makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole, addWall, addRock, BlastDoor, propMaterials } from '../world/Props.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 
 const rng = makeRng(20250805);
@@ -23,9 +23,9 @@ export const LEVELS = {
     atmosphere: {
       turbidity: 8.5, rayleigh: 1.5, mie: 0.012, mieG: 0.83,
       elevation: 26, azimuth: 155,
-      sunColor: 0xfff2d6, sunIntensity: 4.4, ambient: 0.9,
+      sunColor: 0xfff2d6, sunIntensity: 3.1, ambient: 0.7,
       skyColor: 0xcfe0f5, groundColor: 0x8a6a44,
-      fogColor: 0xd8c8a4, fogDensity: 0.0042, exposure: 1.0, bloom: 0.58,
+      fogColor: 0xd8c8a4, fogDensity: 0.0042, exposure: 0.86, bloom: 0.48,
       saturation: 1.02, lift: [0.010, 0.008, 0.006], gain: [1.05, 1.0, 0.93],
     },
     ambience: { wind: 0.12, windFreq: 520, drone: 0.05 },
@@ -64,14 +64,14 @@ export const LEVELS = {
         addWall(world, new THREE.Vector3(cx + 5, y + 3.0, cz + 3), new THREE.Vector3(4, 5.5, 1.6),
           new THREE.Quaternion().setFromEuler(new THREE.Euler(0.2, rng() * TAU, 0.1)), M.hull);
       }
-      // rocky outcrops for cover
-      for (let i = 0; i < 16; i++) {
-        const a = rng() * TAU, r = 18 + rng() * 84;
+      // half-buried outcrops for cover
+      for (let i = 0; i < 22; i++) {
+        const a = rng() * TAU, r = 16 + rng() * 86;
         const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
         const y = T.height(cx, cz);
-        const s = 1.4 + rng() * 3.2;
-        addWall(world, new THREE.Vector3(cx, y + s * 0.4, cz), new THREE.Vector3(s * 2, s, s * 1.6),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(rng() * 0.3, rng() * TAU, rng() * 0.3)), M.stone);
+        const s = 1.0 + rng() * 2.4;
+        addRock(world, new THREE.Vector3(cx, y + s * 0.24, cz),
+          new THREE.Vector3(s * 1.5, s * 1.0, s * 1.3), i + 1);
       }
     },
   },
@@ -86,9 +86,9 @@ export const LEVELS = {
     atmosphere: {
       turbidity: 6, rayleigh: 2.4, mie: 0.01, mieG: 0.8,
       elevation: 34, azimuth: 210,
-      sunColor: 0xffe8c0, sunIntensity: 4.0, ambient: 0.85,
+      sunColor: 0xffe8c0, sunIntensity: 3.0, ambient: 0.68,
       skyColor: 0xc0d4ee, groundColor: 0x7a6244,
-      fogColor: 0xc8b291, fogDensity: 0.0034, exposure: 1.02, bloom: 0.6,
+      fogColor: 0xc8b291, fogDensity: 0.0034, exposure: 0.9, bloom: 0.5,
       saturation: 1.06, lift: [0.008, 0.007, 0.008], gain: [1.04, 1.0, 0.95],
     },
     ambience: { wind: 0.07, windFreq: 340, drone: 0.10 },
@@ -106,7 +106,7 @@ export const LEVELS = {
         const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a);
         addWall(world, new THREE.Vector3(cx, y + 4.4, cz), new THREE.Vector3(8.6, 8.8, 2.2), q, M.duracrete);
         if (i % 4 === 0) {
-          addWall(world, new THREE.Vector3(cx, y + 9.4, cz), new THREE.Vector3(2.4, 2.4, 3.2), q, M.stone);
+          addRock(world, new THREE.Vector3(cx, y + 9.4, cz), new THREE.Vector3(1.5, 1.4, 1.8), 200 + i);
         }
       }
       // execution pillars in the middle
@@ -214,9 +214,9 @@ export const LEVELS = {
     atmosphere: {
       turbidity: 4.5, rayleigh: 3.0, mie: 0.006, mieG: 0.78,
       elevation: 14, azimuth: 95,
-      sunColor: 0xffd9a8, sunIntensity: 3.4, ambient: 0.95,
+      sunColor: 0xffd9a8, sunIntensity: 2.7, ambient: 0.78,
       skyColor: 0xa8c8f0, groundColor: 0x6a5440,
-      fogColor: 0xb4a894, fogDensity: 0.0052, exposure: 1.05, bloom: 0.7,
+      fogColor: 0xb4a894, fogDensity: 0.0052, exposure: 0.94, bloom: 0.58,
       saturation: 1.1, lift: [0.008, 0.010, 0.014], gain: [1.03, 1.0, 0.98],
     },
     ambience: { wind: 0.09, windFreq: 300, drone: 0.08 },
@@ -233,12 +233,12 @@ export const LEVELS = {
         const p = new THREE.Vector3(x, y + 0.5, z);
         world.addProp(rng() < 0.3 ? makeBarrel(world, p) : makeCrate(world, p, 0.8));
       }
-      for (let i = 0; i < 22; i++) {
+      for (let i = 0; i < 26; i++) {
         const x = (rng() - 0.5) * 170, z = (rng() - 0.5) * 90;
         const y = T.height(x, z);
-        const s = 1.2 + rng() * 3.4;
-        addWall(world, new THREE.Vector3(x, y + s * 0.4, z), new THREE.Vector3(s * 2, s, s * 1.7),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(rng() * 0.4, rng() * TAU, rng() * 0.4)), M.stone);
+        const s = 1.1 + rng() * 2.8;
+        addRock(world, new THREE.Vector3(x, y + s * 0.26, z),
+          new THREE.Vector3(s * 1.4, s * 1.1, s * 1.4), 100 + i);
       }
       for (let i = 0; i < 10; i++) {
         const x = (rng() - 0.5) * 130, z = (rng() - 0.5) * 70;

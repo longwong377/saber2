@@ -507,6 +507,45 @@ export class BlastDoor {
 /*  Static architecture                                                   */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * An irregular boulder: a subdivided icosahedron pushed around by noise, with
+ * a box collider underneath. Boxes read as crates no matter how you texture
+ * them, and a desert full of crates is a desert full of level-design.
+ */
+export function addRock(world, centre, size, seed = 1) {
+  const M = propMaterials();
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+  const r = makeRng(seed * 7919 + 13);
+  const ax = 0.6 + r() * 0.9, ay = 0.5 + r() * 0.5, az = 0.6 + r() * 0.9;
+  const ph = [r() * 10, r() * 10, r() * 10];
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    // layered ridges give facets rather than a lumpy potato
+    const n1 = Math.sin(v.x * 2.6 + ph[0]) * Math.sin(v.y * 3.1 + ph[1]) * Math.sin(v.z * 2.3 + ph[2]);
+    const n2 = Math.sin(v.x * 6.2 + ph[1]) * Math.sin(v.z * 5.4 + ph[0]);
+    const k = 1 + n1 * 0.22 + n2 * 0.09;
+    pos.setXYZ(i, v.x * ax * k, v.y * ay * k, v.z * az * k);
+  }
+  geo.computeVertexNormals();
+  geo.scale(size.x, size.y, size.z);
+
+  const mesh = new THREE.Mesh(geo, M.stone);
+  mesh.position.copy(centre);
+  mesh.rotation.set(r() * 0.4 - 0.2, r() * Math.PI * 2, r() * 0.4 - 0.2);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+
+  world.physics.addStaticBox(centre,
+    new THREE.Vector3(size.x * 0.62, size.y * 0.6, size.z * 0.62),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, mesh.rotation.y, 0)),
+    { friction: 0.9 });
+  return mesh;
+}
+
 export function addWall(world, centre, size, quat = new THREE.Quaternion(), material = null) {
   const M = propMaterials();
   const geo = plateGeo(size.x, size.y, size.z, Math.min(size.x, size.y, size.z) * 0.03, 1);

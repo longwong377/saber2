@@ -198,7 +198,7 @@ export function buildJedi(opts = {}) {
 
   dressHumanoid(rig, {
     scale: S,
-    body: tunic, arm: tunic, leg: outer, hand: leather, boot: leather,
+    body: outer, arm: tunic, leg: outer, hand: leather, boot: leather,
     head: skin, skin,
     parts: { chestR: 0.162, shoulderR: 0.142, hipR: 0.138, waistR: 0.122, armR: 0.055, thighR: 0.09 },
     buildHead(headObj, s) {

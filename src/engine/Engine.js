@@ -251,7 +251,7 @@ export class Engine {
     this.composite.uniforms.uLift.value.set(...(a.lift ?? [0.004, 0.006, 0.012]));
     this.composite.uniforms.uGain.value.set(...(a.gain ?? [1.02, 1.0, 0.98]));
     this.composite.uniforms.uSaturation.value = a.saturation ?? 1.06;
-    this.bloom.strength = a.bloom ?? 0.62;
+    this.bloom.strength = a.bloom ?? 0.5;
 
     this.refreshEnvironment();
   }
@@ -285,7 +285,7 @@ export class Engine {
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
 
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.62, 0.62, 0.78);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.5, 0.42, 0.92);
     this.composer.addPass(this.bloom);
 
     this.outputPass = new OutputPass();

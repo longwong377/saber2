@@ -87,17 +87,23 @@ function bake(size, sampler, opts = {}) {
   return { albedo: mk(albedo), normal: mk(nrm), rough: mk(rough) };
 }
 
+const baked = new Map();      // name → canvases, shared across tilings
+
 function materialFrom(name, size, sampler, opts = {}) {
-  if (cache.has(name)) return cache.get(name);
-  const baked = bake(size, sampler, opts);
   const repeat = opts.repeat ?? 1;
+  // Tiling lives on the texture object, so each distinct repeat needs its own
+  // texture. The expensive part — baking the pixels — is still done once.
+  const key = `${name}@${repeat}`;
+  if (cache.has(key)) return cache.get(key);
+  if (!baked.has(name)) baked.set(name, bake(size, sampler, opts));
+  const b = baked.get(name);
   const set = {
-    map: toTexture(baked.albedo, { repeat, srgb: true }),
-    normalMap: toTexture(baked.normal, { repeat }),
-    roughnessMap: toTexture(baked.rough, { repeat }),
-    metalnessMap: toTexture(baked.rough, { repeat }),
+    map: toTexture(b.albedo, { repeat, srgb: true }),
+    normalMap: toTexture(b.normal, { repeat }),
+    roughnessMap: toTexture(b.rough, { repeat }),
+    metalnessMap: toTexture(b.rough, { repeat }),
   };
-  cache.set(name, set);
+  cache.set(key, set);
   return set;
 }
 
@@ -138,13 +144,13 @@ export function rockMaps(repeat = 8) {
 }
 
 export function metalMaps(repeat = 4, opts = {}) {
-  const key = 'metal' + repeat + (opts.tint || '');
+  const key = 'metal@' + repeat + (opts.tint || '');
   const tintR = opts.tintR ?? 0.62, tintG = opts.tintG ?? 0.65, tintB = opts.tintB ?? 0.70;
   if (cache.has(key)) return cache.get(key);
   const rng = makeRng(77);
   const scratches = [];
   for (let i = 0; i < 160; i++) scratches.push({ x: rng(), y: rng(), a: rng() * Math.PI, l: rng() * 0.4 + 0.03, w: rng() * 0.0016 + 0.0004 });
-  const baked = bake(512, (u, v) => {
+  const bakedMetal = bake(512, (u, v) => {
     // panel seams
     const gx = Math.abs(((u * 4) % 1) - 0.5), gy = Math.abs(((v * 4) % 1) - 0.5);
     const seam = clamp(1 - Math.min(gx, gy) * 44, 0, 1);
@@ -167,10 +173,10 @@ export function metalMaps(repeat = 4, opts = {}) {
     };
   }, { normalStrength: 3.2 });
   const set = {
-    map: toTexture(baked.albedo, { repeat, srgb: true }),
-    normalMap: toTexture(baked.normal, { repeat }),
-    roughnessMap: toTexture(baked.rough, { repeat }),
-    metalnessMap: toTexture(baked.rough, { repeat }),
+    map: toTexture(bakedMetal.albedo, { repeat, srgb: true }),
+    normalMap: toTexture(bakedMetal.normal, { repeat }),
+    roughnessMap: toTexture(bakedMetal.rough, { repeat }),
+    metalnessMap: toTexture(bakedMetal.rough, { repeat }),
   };
   cache.set(key, set);
   return set;
@@ -334,4 +340,5 @@ export function noiseTexture(size = 256) {
 export function disposeTextureCache() {
   for (const set of cache.values()) for (const t of Object.values(set)) t.dispose?.();
   cache.clear();
+  baked.clear();
 }
