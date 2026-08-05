@@ -12,11 +12,17 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 
-import { PhysicsWorld, Body, BallJoint, LAYER, capsuleSpheres, boxSpheres, segmentSegment } from '../src/physics/Physics.js';
+// The sphere solver is nobody's engine any more — ragdolls were the last
+// thing on it. It survives here only as the reference the Rapier raycast is
+// checked against, and for LAYER and the segment maths the blade still uses.
+import { PhysicsWorld, Body, LAYER, segmentSegment } from '../src/physics/Physics.js';
 import { initPhysics } from '../src/physics/Rapier.js';
-import { RapierWorld, Body as RBody, box as boxShape, ball as ballShape, cylinder as cylShape,
-  compound as compoundShape, hullFromGeometry, collisionGroups } from '../src/physics/RapierWorld.js';
+import { RapierWorld, Body as RBody, RagdollJoint, box as boxShape, ball as ballShape, cylinder as cylShape,
+  capsule as capShape, compound as compoundShape, hullFromGeometry,
+  collisionGroups } from '../src/physics/RapierWorld.js';
 import { Prop, makeCrate, makeBarrel, makeSpire, makePillar, propMaterials } from '../src/world/Props.js';
+import { addColumn, addBrokenWall, addLintel } from '../src/world/Props.js';
+import { Destruction, Structure, PROFILES, fractureSolid, boxPoly, clipPoly, polyVolume, cellHp } from '../src/world/Destruction.js';
 import { Rig, humanoidSkeleton, BipedAnimator } from '../src/game/Rig.js';
 import { buildB1, buildJedi, buildTrooper, buildAcolyte, limbGeo, plateGeo } from '../src/game/Bodies.js';
 import { Actor, updateCauterisation } from '../src/game/Ragdoll.js';
@@ -465,27 +471,29 @@ check('rapier: a cut prop becomes two halves with hulls of their own', () => {
     + ys.map(y => y.toFixed(2)).join(' / ');
 });
 
-check('rapier: the sphere solver still runs alongside it, on the same ground', () => {
-  // Ragdolls and severed limbs stay on the old solver for now, so a RapierWorld
-  // has to accept one of its bodies, step it, and let it land on the shared
-  // terrain and the shared static boxes.
+check('rapier: a severed limb and a crate share one world, one ground and one ray', () => {
+  // This used to prove the sphere solver still ran ALONGSIDE Rapier, because
+  // ragdolls were still its. There is one solver now, so it proves the thing
+  // that replaced it: a limb is a Rapier capsule, it lands on the same static
+  // box the crate lands beside, and one raycast finds either of them.
   const w = new RapierWorld({ gravity: -24 });
   w.terrain = flatGround();
   w.addStaticBox(V(0, 0.5, 0), V(2, 0.5, 2), new THREE.Quaternion(), { friction: 0.8 });
 
-  const limb = new Body({ position: V(0, 4, 0), spheres: capsuleSpheres(0.14, 0.07), mass: 3,
+  const limb = new RBody({ position: V(0, 4, 0), shape: capShape(0.07, 0.07), mass: 3,
     layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL });
   const crate = new RBody({ position: V(4, 3, 0), shape: boxShape(0.4, 0.4, 0.4), mass: 20, friction: 0.8 });
   w.add(limb); w.add(crate);
-  assert(w.bodies.length === 2, 'both bodies must appear in the shared list');
-  assert(w.legacy.bodies.length === 1, 'the sphere body did not reach the sphere solver');
-  assert(w.stats.rapier === 0 || true, '');
+  assert(w.bodies.length === 2, 'both bodies must appear in the world');
+  assert(w.stats.colliders === 0 || true, '');
   for (let i = 0; i < 400; i++) w.step(1 / 60);
   near(limb.position.y, 1.07, 0.16, 'the limb should rest on top of the static box');
   near(crate.position.y, 0.4, 0.05, 'the crate should rest on the ground');
-  // and a ray finds both
+  // and a ray finds either of them, filtered by layer exactly as before
   const rl = w.raycast(V(0, 6, 0), V(0, -1, 0), 20, (b) => b.layer === LAYER.RAGDOLL);
-  assert(rl && rl.body === limb, 'the ray missed the sphere-solver body');
+  assert(rl && rl.body === limb, 'the ray missed the limb');
+  const rc = w.raycast(V(4, 6, 0), V(0, -1, 0), 20, (b) => b.layer === LAYER.DEBRIS);
+  assert(rc && rc.body === crate, 'the ray missed the crate');
   return `limb on the ledge at y=${limb.position.y.toFixed(2)}, crate on the ground at y=${crate.position.y.toFixed(2)}`;
 });
 
@@ -505,12 +513,12 @@ check('rapier: loading a level three times over leaves a clean world each time',
         mass: 12, friction: 0.8 }));
     }
     for (let i = 0; i < 6; i++) {
-      w.add(new Body({ position: V(i - 3, t.height(i - 3, 0) + 3, 0), spheres: capsuleSpheres(0.14, 0.07),
+      w.add(new RBody({ position: V(i - 3, t.height(i - 3, 0) + 3, 0), shape: capShape(0.07, 0.07),
         mass: 3, layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL }));
     }
     for (let i = 0; i < 400; i++) w.step(1 / 60);
     assert(w.bodies.length === 30, `round ${round} lost ${30 - w.bodies.length} bodies`);
-    assert(w.stats.colliders === 37, `round ${round} has ${w.stats.colliders} colliders, expected 37`);
+    assert(w.stats.colliders === 43, `round ${round} has ${w.stats.colliders} colliders, expected 43`);
     const bad = w.bodies.filter(b => !isFinite(b.position.y)
       || b.position.y < t.height(b.position.x, b.position.z) - 1).length;
     assert(bad === 0, `round ${round} left ${bad} bodies under the map`);
@@ -520,18 +528,18 @@ check('rapier: loading a level three times over leaves a clean world each time',
   return lines.join(', ') + ', disposed clean';
 });
 
-check('sphere solver: a body inside a static box pushes out instead of exploding', () => {
-  // In the inside-the-box branch the contact normal was already a unit axis and
-  // was then divided by the distance to the nearest face — so a ragdoll that had
-  // ended up level with a wall's top face left at 1e23 m/s, and the broadphase
-  // then tried to hash it into every cell in the universe.
-  const w = new PhysicsWorld();
+check('rapier: a limb spawned inside a static box pushes out instead of exploding', () => {
+  // Ported from the sphere solver, where the inside-the-box branch divided an
+  // already-unit contact normal by the distance to the nearest face, so a
+  // ragdoll that ended up level with a wall's top face left at 1e23 m/s. The
+  // invariant belongs to whichever solver owns ragdolls, and that is Rapier.
+  const w = new RapierWorld({ gravity: -24 });
   w.terrain = flatGround();
   const boxTop = 2;
   w.addStaticBox(V(0, 1, 0), V(0.9, 1, 0.9));
   const worst = [];
   for (const y of [boxTop, boxTop - 1e-9, 1, 0.05]) {       // level with each face, and dead centre
-    const b = new Body({ position: V(0, y, 0), spheres: capsuleSpheres(0.14, 0.07), mass: 3,
+    const b = new RBody({ position: V(0, y, 0), shape: capShape(0.07, 0.07), mass: 3,
       layer: LAYER.RAGDOLL, mask: LAYER.WORLD | LAYER.RAGDOLL });
     w.add(b);
     for (let i = 0; i < 240; i++) w.step(1 / 60);
@@ -544,19 +552,43 @@ check('sphere solver: a body inside a static box pushes out instead of exploding
   return `4 starting positions inside the box, worst travel ${Math.max(...worst).toFixed(2)}m`;
 });
 
-check('sphere solver: a ball joint still holds two bodies together (ragdolls use it)', () => {
-  const w = new PhysicsWorld();
-  w.terrain = null;
-  const a = new Body({ position: V(0, 5, 0), spheres: capsuleSpheres(0.2, 0.1), mass: 0, static: true });
-  const b = new Body({ position: V(0, 4.4, 0), spheres: capsuleSpheres(0.2, 0.1), mass: 8 });
-  w.add(a); w.add(b);
-  w.addJoint(new BallJoint(a, b, V(0, -0.2, 0), V(0, 0.2, 0), { coneAngle: 1.2 }));
-  for (let i = 0; i < 300; i++) w.step(1 / 60);
-  const anchorA = V(0, 4.8, 0);
-  const anchorB = b.position.clone().add(V(0, 0.2, 0).applyQuaternion(b.quaternion));
-  const err = anchorA.distanceTo(anchorB);
-  assert(err < 0.16, `joint drifted ${err.toFixed(3)}m`);
-  return `joint error ${(err * 1000).toFixed(1)}mm`;
+check('ragdoll: the socket holds — anchor drift under load, the ball joint\'s old measure', () => {
+  // Ported from the sphere solver's ball-joint test, which hung ONE body off a
+  // static one and allowed 160mm of drift. A single unloaded link never told
+  // anyone anything — both solvers score 0.0mm on it — so the same measurement
+  // is taken on the thing a ragdoll actually is: a loaded chain of nine. There
+  // the diagonal-approximation ball joint pulled 328mm apart and Rapier's
+  // spherical joint holds to 11.
+  const anchors = (w) => {
+    let worst = 0;
+    for (const j of w.joints) {
+      const wa = j.anchorA.clone().applyQuaternion(j.a.quaternion).add(j.a.position);
+      const wb = j.anchorB.clone().applyQuaternion(j.b.quaternion).add(j.b.position);
+      worst = Math.max(worst, wa.distanceTo(wb));
+    }
+    return worst;
+  };
+  const w = new RapierWorld({ gravity: -24 });
+  const root = new RBody({ position: V(0, 5, 0), shape: capShape(0.2, 0.1), mass: 0, static: true });
+  w.add(root);
+  let prev = root;
+  for (let i = 0; i < 9; i++) {
+    const n = new RBody({ position: V(0, 4.6 - i * 0.4, 0), shape: capShape(0.2, 0.1), mass: 8 });
+    w.add(n);
+    w.addJoint(new RagdollJoint(prev, n, V(0, -0.2, 0), V(0, 0.2, 0), { coneAngle: 1.2, twistLimit: 0.6 }));
+    prev = n;
+  }
+  prev.applyImpulse(V(140, 0, 40), prev.position);
+  let settled = 0, transient = 0;
+  for (let i = 0; i < 400; i++) {
+    w.step(1 / 60);
+    const d = anchors(w);
+    transient = Math.max(transient, d);
+    if (i > 200) settled = Math.max(settled, d);
+  }
+  assert(transient < 0.06, `a socket opened ${(transient * 1000).toFixed(1)}mm mid-swing`);
+  assert(settled < 0.02, `a socket stayed ${(settled * 1000).toFixed(1)}mm open`);
+  return `9 joints, ${(transient * 1000).toFixed(1)}mm worst mid-swing, ${(settled * 1000).toFixed(2)}mm settled`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -777,8 +809,8 @@ check('blade: a stationary blade resting on a limb does NOT cut', () => {
 });
 
 check('cut: severing rebuilds the stub, spawns the piece, and takes the children with it', () => {
-  const physics = new PhysicsWorld();
-  physics.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null };
+  const physics = new RapierWorld({ gravity: -24 });
+  physics.terrain = flatGround();
   const rig = droidRig();
   const actor = new Actor(scene, physics, rig, { mass: 52 });
 
@@ -800,8 +832,8 @@ check('cut: severing rebuilds the stub, spawns the piece, and takes the children
 });
 
 check('cut: the severed piece falls and settles under gravity', () => {
-  const physics = new PhysicsWorld();
-  physics.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null, friction: 0.9 };
+  const physics = new RapierWorld({ gravity: -24 });
+  physics.terrain = flatGround();
   const rig = droidRig();
   const actor = new Actor(scene, physics, rig, { mass: 52 });
   actor.cut('thighL', 0.5, V(1, 0, 0), rig.worldPos('thighL', new THREE.Vector3()));
@@ -814,7 +846,7 @@ check('cut: the severed piece falls and settles under gravity', () => {
 });
 
 check('cut: cutting an already-cut bone shortens it again rather than duplicating', () => {
-  const physics = new PhysicsWorld();
+  const physics = new RapierWorld({ gravity: -24 });
   const rig = droidRig();
   const actor = new Actor(scene, physics, rig, { mass: 52 });
   actor.cut('armR', 0.7, V(0, 0, -3), rig.worldPos('armR', new THREE.Vector3()));
@@ -828,8 +860,8 @@ check('cut: cutting an already-cut bone shortens it again rather than duplicatin
 });
 
 check('ragdoll: a whole body collapses into jointed bodies and settles', () => {
-  const physics = new PhysicsWorld();
-  physics.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null, friction: 0.9 };
+  const physics = new RapierWorld({ gravity: -24 });
+  physics.terrain = flatGround();
   const rig = droidRig();
   const actor = new Actor(scene, physics, rig, { mass: 52 });
   actor.goRagdoll(V(0, 0, -2), V(1, 0, 0));
@@ -846,8 +878,8 @@ check('ragdoll: a whole body collapses into jointed bodies and settles', () => {
 });
 
 check('ragdoll: severing after death breaks only that joint', () => {
-  const physics = new PhysicsWorld();
-  physics.terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null };
+  const physics = new RapierWorld({ gravity: -24 });
+  physics.terrain = flatGround();
   const rig = droidRig();
   const actor = new Actor(scene, physics, rig, { mass: 52 });
   actor.goRagdoll(V(0, 0, 0), V(0, 0, 0));
@@ -856,6 +888,235 @@ check('ragdoll: severing after death breaks only that joint', () => {
   physics.step(1 / 60);
   assert(physics.joints.length === before - 1, `broke ${before - physics.joints.length} joints, expected 1`);
   return `${before} → ${physics.joints.length} joints`;
+});
+
+check('ragdoll: dropped from height, it settles and goes to SLEEP rather than buzzing', () => {
+  // The whole point of the port. On the sphere solver a corpse never stopped:
+  // all 19 bodies were still awake ten seconds after landing, with 11 m/s of
+  // peak residual and the joints 175mm out of their sockets.
+  //
+  // Rest is judged by whether the thing MOVES, not by what its velocity field
+  // says: Rapier 0.14 feeds phantom spin into every round collider lying on the
+  // ground, so a settled capsule reads 0.8 rad/s while turning a third of a
+  // degree per second (see SLEEP_MOVE and Body.spinFriction in RapierWorld).
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  const rig = droidRig();
+  rig.hipsBone.obj.position.set(0, 2.6, 0);
+  rig.updateMatrices();
+  const actor = new Actor(scene, w, rig, { mass: 52 });
+  actor.goRagdoll(V(0, 0, 0), V(0, 0, 0));
+  const parts = [...actor.bodies.values()];
+
+  let slept = -1, peak = 0;
+  for (let i = 0; i < 3000 && slept < 0; i++) {
+    w.step(1 / 60); actor.update(1 / 60);
+    if (i > 300) peak = Math.max(peak, ...parts.map(b => b.velocity.length()));
+    if (i > 60 && parts.every(b => !b.awake)) slept = i;
+  }
+  assert(peak < 1, `five seconds after it landed the corpse was still moving at ${peak.toFixed(2)} m/s`);
+  assert(slept > 0, 'the ragdoll never went to sleep');
+  // and it is genuinely still, not merely flagged: nothing moves over a second
+  for (let i = 0; i < 60; i++) { w.step(1 / 60); actor.update(1 / 60); }
+  const before = parts.map(b => [b.position.clone(), b.quaternion.clone()]);
+  for (let i = 0; i < 60; i++) { w.step(1 / 60); actor.update(1 / 60); }
+  let moved = 0, turned = 0;
+  for (let i = 0; i < parts.length; i++) {
+    moved = Math.max(moved, before[i][0].distanceTo(parts[i].position));
+    turned = Math.max(turned, before[i][1].angleTo(parts[i].quaternion));
+  }
+  assert(moved < 1e-3 && turned < 0.01,
+    `a sleeping ragdoll drifted ${(moved * 1000).toFixed(3)}mm / ${(turned * 57.3).toFixed(3)}° in a second, `
+    + `${parts.filter(b => b.awake).length} of ${parts.length} awake again`);
+  assert(parts.every(b => b.position.y > -0.2 && b.position.y < 1.2),
+    'it did not end up on the ground');
+  return `${parts.length} bodies, ${peak.toFixed(2)} m/s peak after landing, all asleep at `
+    + `${(slept / 60).toFixed(1)}s, then ${(moved * 1000).toFixed(2)}mm/${(turned * 57.3).toFixed(2)}° in the next second`;
+});
+
+check('ragdoll: a corpse knocks a crate over, and a hurled crate moves a corpse', () => {
+  // The seam this whole change exists to close. Ragdolls were on one solver and
+  // props on another, so neither could see the other at all: a corpse fell
+  // through a crate and a crate flew through a corpse.
+  propMaterials();
+  const w = new RapierWorld({ gravity: -24, iterations: 4 });
+  w.terrain = flatGround();
+  const host = { scene: new THREE.Scene(), props: [], physics: w, addProp(p) { this.props.push(p); return p; } };
+
+  // 1 — throw a body at a crate and watch the crate go
+  const crate = makeCrate(host, V(1.0, 0.36, 0), 0.7);
+  host.props.push(crate);
+  for (let i = 0; i < 90; i++) { w.step(1 / 60); crate.update(1 / 60); }
+  const crateP0 = crate.body.position.clone(), crateQ0 = crate.body.quaternion.clone();
+
+  const rig = droidRig();
+  rig.hipsBone.obj.position.set(-1.4, 1.3, 0);
+  rig.updateMatrices();
+  const actor = new Actor(scene, w, rig, { mass: 52 });
+  actor.goRagdoll(V(10, 0.6, 0), V(0, 0, 0));
+  for (let i = 0; i < 300; i++) { w.step(1 / 60); actor.update(1 / 60); crate.update(1 / 60); }
+  const shoved = crateP0.distanceTo(crate.body.position);
+  const tipped = crateQ0.angleTo(crate.body.quaternion);
+  assert(shoved > 0.2 || tipped > 0.4,
+    `a 52kg corpse at 10 m/s moved a ${crate.body.mass.toFixed(0)}kg crate `
+    + `${(shoved * 100).toFixed(0)}cm and turned it ${tipped.toFixed(2)} rad`);
+
+  // 2 — hurl a crate at a corpse that has come to rest, in a world of its own
+  const w2 = new RapierWorld({ gravity: -24, iterations: 4 });
+  w2.terrain = flatGround();
+  const host2 = { scene: new THREE.Scene(), props: [], physics: w2, addProp(p) { this.props.push(p); return p; } };
+  const rig2 = droidRig();
+  rig2.hipsBone.obj.position.set(0, 1.3, 0);
+  rig2.updateMatrices();
+  const corpse = new Actor(scene, w2, rig2, { mass: 52 });
+  corpse.goRagdoll(V(0, 0, 0), V(0, 0, 0));
+  for (let i = 0; i < 400; i++) { w2.step(1 / 60); corpse.update(1 / 60); }
+  const chest = corpse.bodies.get('chest') || corpse.bodies.get('spine');
+  const restedAt = chest.position.clone();
+  const missile = makeCrate(host2, chest.position.clone().add(V(-4, 0.2, 0)), 0.6);
+  host2.props.push(missile);
+  missile.body.gravityScale = 0.2;              // keep it on line for the four metres
+  missile.body.velocity.set(40, 0, 0);
+  missile.body.wake();
+  for (let i = 0; i < 150; i++) { w2.step(1 / 60); corpse.update(1 / 60); for (const p of host2.props) p.update(1 / 60); }
+  const knocked = restedAt.distanceTo(chest.position);
+  assert(knocked > 0.2, `a crate at 40 m/s only moved the corpse ${(knocked * 100).toFixed(1)}cm`);
+
+  // 3 — the Force, exactly as Player._shockwave and toggleGrip run it: one
+  // raycast to find a body, one impulse per body inside the radius.
+  const bones = [...corpse.bodies.values()];
+  const seen = bones.map(b => b.position.clone());
+  const hitRay = w2.raycast(chest.position.clone().add(V(0, 3, 0)), V(0, -1, 0), 8,
+    (b) => b.invMass > 0 && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL));
+  assert(hitRay && corpse.bodies.get(hitRay.body.userData.bone) === hitRay.body,
+    'the Force grip ray did not find a bone of the corpse');
+  const origin = chest.position.clone().add(V(-3, 0, 0));
+  for (const b of bones) {
+    const d = b.position.distanceTo(origin);
+    if (d > 6) continue;
+    const k = 1 - d / 6;
+    b.applyImpulse(b.position.clone().sub(origin).setY(0.5).normalize()
+      .multiplyScalar(30 * k * b.mass * 0.5), b.position);
+  }
+  for (let i = 0; i < 90; i++) { w2.step(1 / 60); corpse.update(1 / 60); }
+  let blown = 0;
+  bones.forEach((b, i) => { blown = Math.max(blown, seen[i].distanceTo(b.position)); });
+  assert(blown > 1, `a Force push only moved the corpse ${blown.toFixed(2)}m`);
+
+  return `corpse shoved the crate ${(shoved * 100).toFixed(0)}cm and tipped it ${tipped.toFixed(2)} rad; `
+    + `a hurled crate moved the corpse ${(knocked * 100).toFixed(0)}cm; a Force push threw it ${blown.toFixed(1)}m`;
+});
+
+check('cut: a severed limb separates, falls, and lands on the ground AND on a crate', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -24, iterations: 4 });
+  w.terrain = flatGround();
+  const host = { scene: new THREE.Scene(), props: [], physics: w, addProp(p) { this.props.push(p); return p; } };
+  const crate = makeCrate(host, V(0, 0.36, 0), 0.7);
+  host.props.push(crate);
+  for (let i = 0; i < 60; i++) { w.step(1 / 60); crate.update(1 / 60); }
+  const crateTop = crate.body.position.y + 0.36;
+
+  const rig = droidRig();
+  rig.hipsBone.obj.position.set(0.9, 1.6, 0);
+  rig.updateMatrices();
+  const actor = new Actor(scene, w, rig, { mass: 52 });
+  const arm = rig.worldPos('foreR', new THREE.Vector3());
+  assert(actor.cut('foreR', 0.5, V(-7, 1, 0), arm), 'the cut was refused');
+  const piece = actor.pieces[0];
+  const bodies = piece.entries.map(e => e.body);
+  // (a) it separated: every part of the piece is its own body, none of them the
+  // actor's, and it is a capsule of the new length rather than the old one
+  assert(bodies.length >= 2, `the piece is only ${bodies.length} bodies`);
+  assert(bodies.every(b => b.shape.type === 'capsule'), 'a severed part is not a capsule');
+  const stub = bodies[0];
+  const stubLen = (stub.shape.halfHeight + stub.shape.radius) * 2;
+  near(stubLen, rig.get('foreR').length * 0.5, 0.02, 'the stub capsule is the length of the stub');
+
+  const y0 = bodies.map(b => b.position.y);
+  for (let i = 0; i < 420; i++) { w.step(1 / 60); actor.update(1 / 60); crate.update(1 / 60); }
+  // (b) it fell, and (c) it is resting on something — the ground or the crate
+  const rest = bodies.filter(b => !b.dead).map(b => b.position.y);
+  assert(rest.length, 'the piece vanished');
+  assert(Math.min(...rest) < Math.min(...y0) - 0.3, 'the piece never fell');
+  assert(rest.every(y => y > -0.2 && y < crateTop + 0.4),
+    `a part came to rest at y=${rest.map(y => y.toFixed(2)).join(',')}`);
+  assert(bodies.every(b => b.velocity.length() < 0.6), 'the piece never stopped');
+
+  // and it can land ON a crate rather than through it: drop one straight down
+  const above = new RBody({ position: V(0, crateTop + 1.2, 0), shape: capShape(0.06, 0.05),
+    mass: 1.2, layer: LAYER.DEBRIS, mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP });
+  w.add(above);
+  for (let i = 0; i < 300; i++) { w.step(1 / 60); crate.update(1 / 60); }
+  assert(above.position.y > crateTop - 0.05,
+    `a limb dropped on a crate ended up at y=${above.position.y.toFixed(2)}, crate top ${crateTop.toFixed(2)}`);
+  return `stub ${(stubLen * 100).toFixed(0)}cm capsule, parts rest at y=`
+    + rest.map(y => y.toFixed(2)).join('/') + `, a limb sits on the crate at ${above.position.y.toFixed(2)}`;
+});
+
+check('ragdoll: a corpse ignores its own bones but not another corpse\'s', () => {
+  // A ragdoll's bones overlap by a radius wherever they share a socket, and the
+  // two thighs overlap almost as much without sharing one, so a corpse left to
+  // collide with itself spends forever shoving itself apart. Each actor takes a
+  // self-exclusion bit instead (SELF_GROUPS) — which must NOT cost corpse
+  // against corpse, and must not change `layer`, because gameplay compares it
+  // by equality.
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+
+  const a = new Actor(scene, w, (() => { const r = droidRig(); r.hipsBone.obj.position.set(0, 1.1, 0); r.updateMatrices(); return r; })(), { mass: 52 });
+  a.goRagdoll(V(0, 0, 0), V(0, 0, 0));
+  assert([...a.bodies.values()].every(b => b.layer === LAYER.RAGDOLL),
+    'a bone stopped being LAYER.RAGDOLL, which is what the Force and the bolts test');
+  assert(a.selfGroup !== 0 && (a.selfGroup & LAYER.ALL & 0x3f) === 0,
+    'the self bit collides with a LAYER bit');
+  for (let i = 0; i < 400; i++) { w.step(1 / 60); a.update(1 / 60); }
+  const floor = Math.max(...[...a.bodies.values()].map(b => b.position.y));
+
+  // a second corpse dropped straight onto the first has to land ON it
+  const b = new Actor(scene, w, (() => { const r = droidRig(); r.hipsBone.obj.position.set(0, 2.4, 0); r.updateMatrices(); return r; })(), { mass: 52 });
+  assert(b.selfGroup !== a.selfGroup, 'two actors in a row took the same self bit');
+  b.goRagdoll(V(0, 0, 0), V(0, 0, 0));
+  for (let i = 0; i < 400; i++) { w.step(1 / 60); a.update(1 / 60); b.update(1 / 60); }
+  const top = Math.max(...[...b.bodies.values()].map(x => x.position.y));
+  assert(top > floor * 0.9,
+    `the second corpse sank into the first: it tops out at ${top.toFixed(2)}m, the pile is ${floor.toFixed(2)}m`);
+  return `corpse on corpse: the pile is ${top.toFixed(2)}m deep, both still LAYER.RAGDOLL`;
+});
+
+check('ragdoll: spawn, cut, kill and dispose a hundred times over and nothing leaks', () => {
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  const base = { bodies: w.bodies.length, joints: w.joints.length,
+    colliders: w.world.colliders.len(), rb: w.world.bodies.len(), ij: w.world.impulseJoints.len() };
+  const marks = [];
+  for (let round = 0; round < 20; round++) {
+    const rig = droidRig();
+    const actor = new Actor(scene, w, rig, { mass: 52 });
+    // cut the same bone twice, so a collider gets rebuilt as well as created
+    actor.cut('foreR', 0.6, V(0, 0, -5), rig.worldPos('foreR', new THREE.Vector3()));
+    actor.cut('foreR', 0.5, V(0, 0, -5), rig.worldPos('foreR', new THREE.Vector3()));
+    actor.cut('thighL', 0.45, V(2, 0, 0), rig.worldPos('thighL', new THREE.Vector3()));
+    actor.goRagdoll(V(0, 0, -2), V(1, 0, 0));
+    for (let i = 0; i < 30; i++) { w.step(1 / 60); actor.update(1 / 60); }
+    // and cut a bone off the corpse too, which rebuilds a live capsule
+    actor.cutRagdoll('shinR', V(0, 3, 0), 0.5);
+    for (let i = 0; i < 30; i++) { w.step(1 / 60); actor.update(1 / 60); }
+    if (round === 0) marks.push(`peak ${w.bodies.length} bodies / ${w.world.colliders.len()} colliders`);
+    actor.dispose();
+    w.step(1 / 60);
+    assert(w.bodies.length === base.bodies,
+      `round ${round} left ${w.bodies.length - base.bodies} bodies behind`);
+    assert(w.joints.length === base.joints,
+      `round ${round} left ${w.joints.length - base.joints} joints behind`);
+    assert(w.world.colliders.len() === base.colliders,
+      `round ${round} left ${w.world.colliders.len() - base.colliders} colliders behind`);
+    assert(w.world.bodies.len() === base.rb,
+      `round ${round} left ${w.world.bodies.len() - base.rb} rigid bodies behind`);
+    assert(w.world.impulseJoints.len() === base.ij,
+      `round ${round} left ${w.world.impulseJoints.len() - base.ij} Rapier joints behind`);
+  }
+  return `20 spawn/cut/kill/dispose cycles, ${marks[0]}, back to ${base.bodies}/${base.colliders} every time`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -2657,6 +2918,305 @@ check('enemies: distant detail is culled, silhouettes are not', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Destructible architecture                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** A world stub good enough for the Destruction manager, on a real Rapier world. */
+function destructionHost(physics, opts = {}) {
+  const scene = new THREE.Scene();
+  return {
+    scene, statics: [], props: [], enemies: [], doors: [], levelLights: [], debris: [],
+    physics, particles: null, bladeSolver: null,
+    terrain: { height: () => 0, slopeAt: () => 0, inBounds: () => true, friction: 0.9, size: 400,
+      normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null },
+    player: { position: opts.player || V(0, 1, 0) },
+    settings: { quality: 'medium' },
+    addProp(p) { this.props.push(p); return p; },
+    addLight(l) { return l; },
+    onExplosion(centre, size) { this.booms = (this.booms || 0) + 1; },
+  };
+}
+const rapierGround = () => ({ size: 256, res: 33, heights: new Float32Array(33 * 33),
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), slopeAt: () => 0, inBounds: () => true,
+  friction: 0.9, deformSeq: 0, raycast: () => null });
+
+check('destruction: a piece of architecture registers itself without changing what it costs', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  const before = { boxes: w.staticBoxes.length, statics: host.statics.length };
+  addColumn(host, V(0, 0, 0), { height: 7.5, radius: 0.55, seed: 500 });
+  const D = host.destruction;
+  assert(D, 'the column did not attach a Destruction manager');
+  assert(D.structures.length === 1, `${D.structures.length} structures registered for one column`);
+  const s = D.structures[0];
+  assert(s.state === 'intact' && !s.chunks, 'registering must not fracture anything up front');
+  assert(w.staticBoxes.length === before.boxes + 1, 'the column changed its collider count');
+  assert(host.statics.length > before.statics, 'the column did not emit its meshes');
+  // and it rides in props, which is how it gets a frame and a blade target list
+  assert(host.props.length === 1 && host.props[0] === D.proxy, 'the manager is not in world.props');
+  assert(D.proxy.body.boundingRadius === 0,
+    'the proxy must have no bounding radius, or the bolt sweep will hit it instead of the world');
+  return `1 piece, ${w.staticBoxes.length} collider, ${host.statics.length} meshes — unchanged until hit`;
+});
+
+check('destruction: fracture makes convex cells that tile the piece', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  addBrokenWall(host, V(0, 0, 0), V(9.4, 8.4, 2.1), { seed: 401, ruin: 0.28 });
+  const s = host.destruction.structures[0];
+  const t0 = performance.now();
+  s.prefracture();
+  s.prepareAll();
+  const ms = performance.now() - t0;
+
+  assert(s.chunks.length >= 6, `only ${s.chunks.length} cells out of a 9m wall`);
+  assert(s.chunks.length <= host.destruction.maxCellsPerPiece,
+    `${s.chunks.length} cells exceeds the ${host.destruction.maxCellsPerPiece} cap`);
+  let vol = 0, tris = 0;
+  for (const c of s.chunks) {
+    assert(isFinite(c.centre.x) && isFinite(c.centre.y) && isFinite(c.centre.z), 'a cell centre is not finite');
+    assert(c.volume > 1e-4 && isFinite(c.volume), `a cell has volume ${c.volume}`);
+    assert(c.mass > 0 && isFinite(c.mass), 'a cell has no mass');
+    assert(c.hull && c.hull.type === 'hull', 'a cell did not produce a hull');
+    const pts = c.hull.points;
+    assert(pts.length >= 12, `a cell hull has only ${pts.length / 3} points`);
+    for (let i = 0; i < pts.length; i++) assert(isFinite(pts[i]), 'a hull point is not finite');
+    assert(c.geo && c.geo.attributes.position.count >= 12, 'a cell has no drawable geometry');
+    vol += c.volume;
+    tris += c.tris;
+  }
+  // the cells must actually be the wall: no cell may sit outside it
+  const bb = s.local;
+  for (const c of s.chunks) {
+    assert(c.bounds.min.x >= bb.min.x - 0.01 && c.bounds.max.x <= bb.max.x + 0.01
+      && c.bounds.min.y >= bb.min.y - 0.01 && c.bounds.max.y <= bb.max.y + 0.01,
+      'a cell escaped the piece it came from');
+  }
+  // and they must be connected to each other, or nothing can hold anything up
+  const linked = s.chunks.filter(c => c.neighbours.length > 0).length;
+  assert(linked >= s.chunks.length - 1, `${s.chunks.length - linked} cells have no neighbours at all`);
+  assert(s.chunks.some(c => c.grounded), 'no cell reaches the ground');
+  return `${s.chunks.length} cells, ${vol.toFixed(0)}m³, ${tris} triangles, built in ${ms.toFixed(1)}ms`;
+});
+
+check('destruction: damage accumulates per cell and only breaks past the threshold', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  addColumn(host, V(0, 0, 0), { height: 7.5, radius: 0.55, seed: 77 });
+  const D = host.destruction;
+  const s = D.structures[0];
+  s.prefracture();
+  const cell = s.chunks.find(c => c.grounded);
+  const hp = cell.hp;
+  assert(hp > 0 && isFinite(hp), 'a cell has no health');
+
+  // three taps well under the threshold: damage banks, nothing comes off
+  const at = cell.worldCentre(new THREE.Vector3());
+  for (let i = 0; i < 3; i++) s.damageSphere(at, 1.0, hp * 0.2);
+  assert(s.state === 'intact', 'the column broke on a scratch');
+  assert(cell.damage > hp * 0.5 && cell.damage < hp,
+    `damage did not accumulate: ${cell.damage.toFixed(1)} of ${hp.toFixed(1)}`);
+  const banked = cell.damage;
+
+  // the blow that crosses it does
+  s.damageSphere(at, 1.0, hp * 0.6);
+  assert(cell.damage > banked, 'the last blow did not add to the bank');
+  assert(s.state !== 'intact', `the cell survived ${cell.damage.toFixed(1)} damage against ${hp.toFixed(1)} health`);
+  assert(cell.state === 'live', `the broken cell is ${cell.state}, not a loose body`);
+  assert(cell.body && cell.body.invMass > 0, 'the broken cell is not a dynamic body');
+  // falloff: the same blow from far enough away does nothing at all
+  const far = D.structures[0];
+  assert(!far.damageSphere(V(60, 1, 60), 2, 1e6), 'damage reached a piece outside its radius');
+  return `threshold ${hp.toFixed(0)} hp; banked ${banked.toFixed(0)} without breaking, broke at ${cell.damage.toFixed(0)}`;
+});
+
+check('destruction: a broken support drops what it was holding up', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  addColumn(host, V(-2.2, 0, 0), { height: 6, radius: 0.45, seed: 1 });
+  addColumn(host, V(2.2, 0, 0), { height: 6, radius: 0.45, seed: 2 });
+  addLintel(host, V(0, 6.2, 0), { length: 6.4, height: 0.62, depth: 0.72, seed: 3 });
+  const D = host.destruction;
+  assert(D.structures.length === 3, `${D.structures.length} pieces registered`);
+  D._linkSupports();
+  const [left, right, lintel] = D.structures;
+  assert(lintel.restsOn.length === 2, `the lintel thinks it rests on ${lintel.restsOn.length} pieces`);
+  assert(left.carries.includes(lintel), 'the column does not know it carries the lintel');
+  assert(!left.restsOn.includes(right), 'two columns side by side must not carry each other');
+
+  const y0 = lintel.centre.y;
+  left.damageSphere(V(-2.2, 0.5, 0), 1.6, 4000, V(1, 0, 0));
+  assert(left.state === 'collapsed', `the column is ${left.state} after losing its base`);
+  assert(lintel.state === 'collapsed', `the lintel is ${lintel.state} with a column gone from under it`);
+  const loose = lintel.chunks.filter(c => c.state === 'live').length;
+  assert(loose >= 2, `only ${loose} of the lintel's ${lintel.chunks.length} pieces let go`);
+
+  for (let i = 0; i < 360; i++) { w.step(1 / 60); D.update(1 / 60); }
+  const ys = lintel.chunks.filter(c => c.mesh).map(c => c.mesh.position.y);
+  assert(ys.length > 0, 'the lintel left nothing behind');
+  assert(ys.every(y => isFinite(y)), 'a fallen piece went non-finite');
+  const highest = Math.max(...ys);
+  assert(highest < y0 - 2, `the lintel is still hanging in the air at y=${highest.toFixed(2)} (was ${y0.toFixed(2)})`);
+  return `lintel fell ${(y0 - highest).toFixed(1)}m from y=${y0.toFixed(1)} to y=${highest.toFixed(1)} when its column went`;
+});
+
+check('destruction: the live-chunk cap actually caps, and the rest settles or goes', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  for (let i = 0; i < 12; i++) addColumn(host, V((i % 6) * 4 - 10, 0, Math.floor(i / 6) * 6), { height: 7, radius: 0.5, seed: 200 + i });
+  const D = host.destruction;
+  D.maxLive = 16;
+  D.maxChunks = 48;
+  for (const s of D.structures) s.prepareAll();
+  let cells = 0;
+  for (const s of D.structures) cells += s.chunks.length;
+  for (const s of D.structures) s.collapse();
+  assert(D.live.length === cells, `${D.live.length} of ${cells} cells went dynamic`);
+
+  // walk away: rubble at rest and out of sight goes back to being static
+  for (let i = 0; i < 240; i++) { w.step(1 / 60); D.update(1 / 60); }
+  assert(D.live.length <= D.maxLive, `${D.live.length} live chunks against a cap of ${D.maxLive}`);
+  host.player.position.set(0, 1, 90);
+  for (let i = 0; i < 300; i++) { w.step(1 / 60); D.update(1 / 60); }
+  assert(D.settled.length > 0, 'nothing ever settled back to static, even far away and at rest');
+  assert(D.live.length === 0 || D.live.length < D.maxLive,
+    `${D.live.length} chunks are still simulating with the player 90m away`);
+  assert(D.live.length + D.settled.length <= D.maxChunks,
+    `${D.live.length + D.settled.length} chunks against a total cap of ${D.maxChunks}`);
+  const dyn = w.bodies.filter(b => !b.static).length;
+  assert(dyn <= D.maxLive, `${dyn} dynamic bodies survive against a cap of ${D.maxLive}`);
+  assert(D.stats.despawned > 0, 'nothing was retired even though the cap was blown through');
+  // a settled chunk keeps its collider, so rubble is still something to walk into
+  for (const c of D.settled) assert(c.staticBox, 'a settled chunk lost its collider');
+  return `${cells} cells collapsed at once → ${D.live.length} live (cap ${D.maxLive}), `
+    + `${D.settled.length} settled static, ${D.stats.despawned} retired`;
+});
+
+check('destruction: repeated break and cleanup cycles leak no bodies', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const base = { bodies: w.bodies.length, boxes: w.staticBoxes.length };
+  const marks = [];
+  for (let round = 0; round < 10; round++) {
+    const host = destructionHost(w);
+    addColumn(host, V(0, 0, 0), { height: 7, radius: 0.5, seed: 500 });
+    addBrokenWall(host, V(14, 0, 0), V(9.4, 8.4, 2.1), { seed: 401, ruin: 0.28 });
+    const D = host.destruction;
+    for (const s of D.structures) s.prepareAll();
+    D.structures[0].collapse();
+    D.structures[1].damageSphere(V(14, 3, 1), 4, 5000);
+    for (let i = 0; i < 60; i++) { w.step(1 / 60); D.update(1 / 60); }
+    D.dispose();
+    marks.push(`${w.bodies.length}/${w.staticBoxes.length}`);
+    assert(host.props.length === 0, 'the proxy prop survived dispose');
+    assert(!host.destruction, 'the world still points at a disposed manager');
+  }
+  assert(w.bodies.length === base.bodies,
+    `${w.bodies.length - base.bodies} bodies leaked over ten break/cleanup cycles (${marks.join(' ')})`);
+  assert(w.staticBoxes.length === base.boxes,
+    `${w.staticBoxes.length - base.boxes} static colliders leaked (${marks.join(' ')})`);
+  return `10 cycles of collapse + explosion + dispose, ${marks[marks.length - 1]} bodies/colliders left`;
+});
+
+check('destruction: the blade grinds through a column and drops what was above the cut', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w, { player: V(0, 1.2, 1.4) });
+  const solver = new BladeContactSolver();
+  host.bladeSolver = solver;
+  addColumn(host, V(0, 0, 0), { height: 7, radius: 0.5, seed: 9 });
+  const D = host.destruction;
+  const s = D.structures[0];
+  const saber = makeBlade(host.scene, { length: 1.3 });
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+
+  const seen = { grind: 0, cut: 0, clang: 0 };
+  let firstCut = -1;
+  for (let i = 0; i < 240; i++) {
+    const dt = 1 / 60, t = i * dt;
+    saber.setHiltPose(V(Math.sin(t * 7) * 0.7, 1.5, 1.4), q);
+    saber.update(dt, dt);
+    // exactly what World does: capsules from props, events back to the prop
+    const caps = D.proxy.capsules();
+    const events = solver.solve(saber, [{ id: D.proxy.id, capsules: caps, prop: D.proxy, dead: false }], dt, {});
+    for (const e of events) {
+      seen[e.type] = (seen[e.type] || 0) + 1;
+      if (e.type === 'cut') {
+        if (firstCut < 0) firstCut = i;
+        const halves = D.proxy.cut(e.point, e.normal, e.impulse);
+        assert(Array.isArray(halves), 'the proxy must hand World an array back, not null');
+      }
+    }
+    D.update(dt); w.step(dt);
+  }
+  assert(seen.grind > 20, `only ${seen.grind} grind events — the blade never met the column`);
+  assert(seen.cut > 0, 'the blade never got through a stone column');
+  assert(firstCut > 12, `the column parted in ${(firstCut / 60).toFixed(2)}s — toughness is not being respected`);
+  assert(s.state !== 'intact', `the column is still ${s.state} after being cut`);
+  const above = s.chunks.filter(c => c.centre.y > 2.4);
+  assert(above.every(c => c.state !== 'attached'),
+    'the top of the column is still hanging above the cut');
+  for (let i = 0; i < 300; i++) { w.step(1 / 60); D.update(1 / 60); }
+  const ys = s.chunks.filter(c => c.mesh).map(c => c.mesh.position.y);
+  assert(ys.every(y => isFinite(y) && y < 3), `a piece of the column is still up at y=${Math.max(...ys).toFixed(2)}`);
+  return `${seen.grind} grinds then a cut at ${(firstCut / 60).toFixed(2)}s; `
+    + `${s.chunks.length} pieces on the floor, highest y=${Math.max(...ys).toFixed(2)}`;
+});
+
+check('destruction: an explosion takes a bite out of a wall without levelling it', () => {
+  propMaterials();
+  const w = new RapierWorld({ gravity: -22 });
+  w.terrain = rapierGround();
+  const host = destructionHost(w);
+  addBrokenWall(host, V(0, 0, 0), V(9.4, 8.4, 2.1), { seed: 401, ruin: 0.28 });
+  const D = host.destruction;
+  const s = D.structures[0];
+  host.onExplosion(V(0, 2, 1.4), 1.4);            // the wrapped world hook
+  assert(host.booms === 1, 'the original world explosion did not still run');
+  assert(s.state === 'broken', `the wall is ${s.state} after a charge went off against it`);
+  const loose = s.chunks.filter(c => c.state === 'live').length;
+  assert(loose >= 1, 'the charge did not remove anything');
+  assert(s.attached >= 2, `the whole wall came down (${s.attached} of ${s.chunks.length} left standing)`);
+  assert(s.shell && s.shell.length,
+    'the standing remainder must be one merged mesh, not one draw call per cell');
+  const shellDraws = s.shell.length;
+  for (let i = 0; i < 120; i++) { w.step(1 / 60); D.update(1 / 60); }
+  return `${loose} of ${s.chunks.length} cells blown out, ${s.attached} still standing in ${shellDraws} draw call(s)`;
+});
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/* ── per-domain suites ────────────────────────────────────────────────
+ * Each workstream owns a file under tools/checks/ so parallel work never has
+ * to edit this one. They run with the same helpers as everything above.
+ */
+{
+  const { readdir } = await import('node:fs/promises');
+  const dir = new URL('./checks/', import.meta.url);
+  let files = [];
+  try { files = (await readdir(dir)).filter(f => f.endsWith('.mjs')).sort(); } catch {}
+  for (const f of files) {
+    try {
+      const mod = await import(new URL(f, dir).href);
+      if (typeof mod.run === 'function') await mod.run({ check, assert, near, V, Q, THREE, lerpN });
+    } catch (e) {
+      fail++;
+      results.push(['✗', `suite ${f}`, e.message]);
+    }
+  }
+}
 
 await Promise.all(pending);
 

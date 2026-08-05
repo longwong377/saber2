@@ -949,6 +949,8 @@ export class Player {
       _v2.copy(dir).multiplyScalar(b.mass * 15 * k * P).setY(b.mass * 6 * k * P);
       b.applyImpulse(_v2, b.position);
     }
+    // architecture: a push does not move a wall, it damages it (Destruction.js)
+    this.world?.destruction?.forceBlast(origin, dir, range, P);
     // bolts get scattered
     if (ctx.bolts) {
       for (const bolt of ctx.bolts.bolts) {

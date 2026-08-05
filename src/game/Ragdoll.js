@@ -9,10 +9,23 @@
  *
  * Nothing about that is authored. Cut a droid's forearm halfway and you get
  * half a forearm, because that is what half a forearm is.
+ *
+ * ── on Rapier ─────────────────────────────────────────────────────────────
+ *
+ * Every bone is a Rapier rigid body with a CAPSULE collider the length and
+ * radius of the bone it stands for, and every articulation is a RagdollJoint —
+ * Rapier's spherical joint for the socket, with the cone, twist and rest-pose
+ * motor of JOINT_LIMITS on top. Cutting rebuilds a collider rather than
+ * rebuilding a sphere cluster: `Body.setShape(capsule(...))` swaps a limb for
+ * a shorter limb without disturbing the body that is already falling.
+ *
+ * The point of the move is that there is now ONE world. A corpse knocks a
+ * crate over, a hurled crate rolls a corpse, and a severed forearm piles up
+ * with the rubble, because they are all in the same broadphase.
  */
 
 import * as THREE from 'three';
-import { Body, BallJoint, LAYER, capsuleSpheres } from '../physics/Physics.js';
+import { Body, RagdollJoint, LAYER, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
 import { limbGeo } from './Bodies.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 
@@ -75,11 +88,23 @@ function capMesh(radius, bladeColor) {
   return m;
 }
 
+/**
+ * The collider for a limb of length `len` and radius `r`, centred on the bone's
+ * midpoint with +Y along it. Rapier's capsule is a segment with hemispherical
+ * caps, so the segment is the bone minus one radius at each end and the whole
+ * thing is exactly `len` long — which is what makes a cut limb the length it
+ * looks, and what makes two of them stack the way two tubes stack.
+ */
+function limbCapsule(len, r) {
+  return capsule(Math.max(0.004, len * 0.5 - r), r);
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Actor — a rig that can be cut and can collapse                        */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 let _pieceId = 1;
+let _actorSeq = 0;
 
 export class Actor {
   /**
@@ -100,6 +125,8 @@ export class Actor {
     this.onSever = opts.onSever || null;
     this.severedCount = 0;
     this.rootScale = opts.scale ?? 1;
+    /** So this corpse's own bones ignore each other — see SELF_GROUPS. */
+    this.selfGroup = selfGroup(_actorSeq++);
     scene.add(rig.root);
   }
 
@@ -113,6 +140,13 @@ export class Actor {
     const bone = this.rig.get(boneName);
     if (!bone || bone.severed) return false;
     t = clamp(t, 0.06, 0.94);
+    // A corpse's bones are already loose bodies with colliders of their own, so
+    // cutting one is a shorter collider and a broken joint — not a new piece.
+    if (this.ragdolled) {
+      const ok = this.cutRagdoll(boneName, impulse, t);
+      if (ok && this.onSever) this.onSever(boneName, cutPoint, null);
+      return ok;
+    }
 
     const fullLen = bone.length * bone.cutT;
     const keepLen = fullLen * t;
@@ -181,6 +215,25 @@ export class Actor {
     this.ragdolled = true;
     this.rig.updateMatrices();
 
+    /**
+     * A bone weighs its share of the whole body, by limb volume.
+     *
+     * This was `clamp(len·r²·260, 0.6, 22)` per bone, which clamped nearly
+     * every bone of a humanoid to the 0.6 kg floor and made a 52 kg droid weigh
+     * eleven. That did not matter while ragdolls were on a solver of their own
+     * and could not touch anything; now that a corpse is in the same world as
+     * the crates, it does — an eleven kilo corpse landing on a fourteen kilo
+     * crate moved it 3cm, and a fifty-two kilo one tips it over.
+     */
+    let volume = 0;
+    for (const bone of this.rig.list) {
+      if (bone.severed || bone.parts.length === 0) continue;
+      const len = Math.max(0.04, bone.length * bone.cutT);
+      const r = Math.max(0.028, bone.radius * 0.92);
+      volume += len * r * r;
+    }
+    const perVolume = this._perVolume = volume > 1e-9 ? this.mass / volume : 260;
+
     const joints = [];
     for (const bone of this.rig.list) {
       if (bone.severed || bone.parts.length === 0) continue;
@@ -193,15 +246,18 @@ export class Actor {
       _q1.setFromRotationMatrix(_m1);
       const mid = _v2.copy(_v1).add(_v3.set(0, len * 0.5, 0).applyQuaternion(_q1));
 
-      const shareOfMass = clamp(len * r * r * 260, 0.6, 22);
+      const shareOfMass = clamp(len * r * r * perVolume, 0.35, this.mass * 0.4);
       const body = new Body({
         position: mid, quaternion: _q1,
+        shape: limbCapsule(len, r),
         spheres: capsuleSpheres(Math.max(0.001, len * 0.5 - r * 0.6), r, 'y', len > r * 3 ? 3 : 2),
         mass: shareOfMass,
         friction: 0.72, restitution: 0.02,
         linearDamping: 0.08, angularDamping: 0.18,
+        solverIterations: 4, inertiaScale: 3,
         layer: LAYER.RAGDOLL,
         mask: LAYER.WORLD | LAYER.RAGDOLL | LAYER.DEBRIS | LAYER.PROP | LAYER.PLAYER,
+        selfGroup: this.selfGroup,
       });
       if (velocity) body.velocity.copy(velocity);
       if (angular) body.angularVelocity.copy(angular);
@@ -238,8 +294,7 @@ export class Actor {
       const len = bone.length * bone.cutT;
       const anchorB = _v2.set(0, -len * 0.5, 0);
       const limits = JOINT_LIMITS[stripSide(bone.name)] || { cone: 1.1, twist: 0.7 };
-      const j = new BallJoint(a, b, anchorA, anchorB, {
-        coneAxis: new THREE.Vector3(0, 1, 0),
+      const j = new RagdollJoint(a, b, anchorA, anchorB, {
         coneAngle: limits.cone,
         twistLimit: limits.twist,
         stiffness: limits.stiff ?? 0,
@@ -265,15 +320,37 @@ export class Actor {
     }
   }
 
-  /** Cut a ragdolled body apart — severing a joint on an already-dead body. */
-  cutRagdoll(boneName, impulse) {
+  /**
+   * Cut a ragdolled body apart — severing a joint on an already-dead body.
+   *
+   * With a fraction `t`, the bone is shortened as well as detached: its capsule
+   * is rebuilt at `t` of its length, the body is re-seated so the stub still
+   * starts where the joint was, and the visual holder is re-hung to match. That
+   * is the whole of "rebuild the collider at runtime" on Rapier — one
+   * `setShape`, with the body's velocity, joints and island left alone.
+   */
+  cutRagdoll(boneName, impulse, t = 0) {
     const bone = this.rig.get(boneName);
     if (!bone) return false;
-    let broke = false;
-    for (const j of this.physics.joints) {
-      if (j.b === this.bodies.get(boneName)) { j.broken = true; broke = true; }
-    }
     const body = this.bodies.get(boneName);
+    let broke = false;
+    for (const j of [...this.physics.joints]) {
+      if (j.b === body) { this.physics.removeJoint(j); broke = true; }
+    }
+    if (body && t > 0 && t < 1) {
+      const len = Math.max(0.04, bone.length * bone.cutT);
+      const keep = len * t;
+      const r = Math.max(0.028, bone.radius * 0.92);
+      // the base of the bone stays put; the centre moves up to the new midpoint
+      _v1.set(0, (keep - len) * 0.5, 0).applyQuaternion(body.quaternion);
+      body.setTransform(_v2.copy(body.position).add(_v1), body.quaternion);
+      body.setShape(limbCapsule(keep, r),
+        { mass: clamp(keep * r * r * (this._perVolume ?? 260), 0.35, this.mass * 0.4) });
+      const holder = this.holders.get(boneName);
+      if (holder && holder.children[0]) holder.children[0].position.y = -keep * 0.5;
+      bone.cutT *= t;
+      this.severedCount++;
+    }
     if (body && impulse) body.applyImpulse(impulse, body.position);
     return broke;
   }
@@ -338,6 +415,7 @@ export class DetachedPiece {
     this.physics = physics;
     this.bladeColor = bladeColor;
     this.entries = [];        // { body, holder }
+    this.joints = [];         // what holds a severed forearm to its hand
     this.age = 0;
     this.lifetime = 26 + rng() * 10;
     this.dead = false;
@@ -372,10 +450,11 @@ export class DetachedPiece {
     const r = Math.max(0.026, rCut);
     const body = new Body({
       position: holder.position, quaternion: _q1,
+      shape: limbCapsule(dropLen, r),
       spheres: capsuleSpheres(Math.max(0.001, dropLen * 0.5 - r * 0.5), r, 'y', 2),
       mass: clamp(dropLen * r * r * 300, 0.4, 12),
-      friction: 0.8, restitution: 0.04, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP,
+      friction: 0.8, restitution: 0.04, inertiaScale: 3, layer: LAYER.DEBRIS,
+      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER,
     });
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len: dropLen });
@@ -411,10 +490,11 @@ export class DetachedPiece {
 
     const body = new Body({
       position: holder.position, quaternion: _q1,
+      shape: limbCapsule(len, r),
       spheres: capsuleSpheres(Math.max(0.001, len * 0.5 - r * 0.5), r, 'y', 2),
       mass: clamp(len * r * r * 300, 0.3, 14),
-      friction: 0.8, restitution: 0.03, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP,
+      friction: 0.8, restitution: 0.03, inertiaScale: 3, layer: LAYER.DEBRIS,
+      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER,
     });
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len, bone });
@@ -439,17 +519,23 @@ export class DetachedPiece {
         .setY((e.bone ? e.bone.offset.y : 0) - parent.len * 0.5);
       const anchorB = _v2.set(0, -e.len * 0.5, 0);
       const lim = JOINT_LIMITS[stripSide(e.boneName)] || { cone: 1.0, twist: 0.5 };
-      this.physics.addJoint(new BallJoint(parent.body, e.body, anchorA, anchorB, {
-        coneAxis: new THREE.Vector3(0, 1, 0), coneAngle: lim.cone, twistLimit: lim.twist,
+      this.joints.push(this.physics.addJoint(new RagdollJoint(parent.body, e.body, anchorA, anchorB, {
+        coneAngle: lim.cone, twistLimit: lim.twist,
         stiffness: 0, damping: 0.25,
         restQuat: e.bone ? e.bone.restQuat.clone() : new THREE.Quaternion(),
-      }));
+      })));
     }
     if (impulse) {
       for (const e of this.entries) {
-        e.body.applyImpulse(_v1.copy(impulse).multiplyScalar(e.body.mass * 0.34), cutPoint || e.body.position);
+        // Written straight onto the body rather than queued as an impulse: the
+        // piece is brand new and has not been stepped, so gameplay reading its
+        // velocity this frame — the blade, the particle trail — has to see the
+        // blade's momentum already in it. The spin is overwritten anyway, which
+        // is why the torque an off-centre impulse would add is not worth having.
+        e.body.velocity.addScaledVector(impulse, 0.34);
         e.body.angularVelocity.set(
           (rng() - 0.5) * 9 * spin, (rng() - 0.5) * 9 * spin, (rng() - 0.5) * 9 * spin);
+        e.body.wake();
       }
     }
     for (const e of this.entries) e.body.userData.onCull = () => { this._removeEntry(e); };

@@ -84,20 +84,29 @@ let _structId = 1;
  *   density    kg/m³ in GAME units, not real ones. A 0.7 m crate in this game
  *              is 22 kg (≈65 kg/m³); real stone at 2400 would make every chunk
  *              immovable by a Force push, which is the wrong game.
- *   hpPerM3    how much explosive/impact damage the solid absorbs per m³.
+ *   hpPerM2    damage to break a square metre of fracture surface. Per AREA and
+ *              not per volume on purpose: a chunk comes off when the material
+ *              around it fails, so a chunk with eight times the volume should be
+ *              four times as hard to remove, not eight. Volume-scaled health
+ *              made big pieces immune to the same charge that shattered small
+ *              ones, purely because the cell grid had put fewer cells in them.
  *   cell       target chunk edge in metres. Bigger = fewer, heavier chunks.
  */
 export const PROFILES = {
-  sandstone: { toughness: TOUGHNESS.heavy * 0.55, density: 95, hpPerM3: 34, cell: 1.25, chip: 0xbba077, mass: 1 },
-  stone: { toughness: TOUGHNESS.heavy, density: 120, hpPerM3: 52, cell: 1.35, chip: 0x9c9186, mass: 1 },
-  duracrete: { toughness: TOUGHNESS.heavy * 1.6, density: 135, hpPerM3: 74, cell: 1.5, chip: 0x8e8b84, mass: 1 },
-  statue: { toughness: TOUGHNESS.heavy * 1.2, density: 120, hpPerM3: 62, cell: 1.8, chip: 0xa89madeup, mass: 1 },
-  durasteel: { toughness: TOUGHNESS.durasteel, density: 220, hpPerM3: 180, cell: 1.1, chip: 0x8a94a0, mass: 1 },
-  blastdoor: { toughness: TOUGHNESS.blastdoor, density: 260, hpPerM3: 420, cell: 1.0, chip: 0x8a94a0, mass: 1 },
-  unbreakable: { toughness: Infinity, density: 200, hpPerM3: Infinity, cell: 2, chip: 0x888888, mass: 1 },
+  sandstone: { toughness: TOUGHNESS.heavy * 0.55, density: 75, hpPerM2: 8, cell: 1.25, chip: 0xbba077 },
+  stone: { toughness: TOUGHNESS.heavy, density: 90, hpPerM2: 11, cell: 1.35, chip: 0x9c9186 },
+  duracrete: { toughness: TOUGHNESS.heavy * 1.6, density: 100, hpPerM2: 15, cell: 1.5, chip: 0x8e8b84 },
+  statue: { toughness: TOUGHNESS.heavy * 1.2, density: 95, hpPerM2: 13, cell: 1.8, chip: 0xa8987c },
+  durasteel: { toughness: TOUGHNESS.durasteel, density: 180, hpPerM2: 42, cell: 1.1, chip: 0x8a94a0 },
+  blastdoor: { toughness: TOUGHNESS.blastdoor, density: 220, hpPerM2: 95, cell: 1.0, chip: 0x8a94a0 },
+  unbreakable: { toughness: Infinity, density: 200, hpPerM2: Infinity, cell: 2, chip: 0x888888 },
 };
-// (the statue chip colour, written properly)
-PROFILES.statue.chip = 0xa8987c;
+
+/** What it takes to break one chunk of `volume` m³ out of `profile`. */
+export function cellHp(volume, profile) {
+  if (profile.hpPerM2 === Infinity) return Infinity;
+  return Math.max(5, profile.hpPerM2 * 4.8 * Math.cbrt(Math.max(1e-4, volume * volume)));
+}
 
 export function profileFor(p) {
   if (!p) return null;
@@ -233,6 +242,63 @@ export function polyBounds(poly, out = new THREE.Box3()) {
   return out;
 }
 
+/** Distance from `c` to the furthest vertex — the cell's reach. */
+export function polyRadius(poly, c) {
+  let r2 = 0;
+  for (const f of poly.faces) for (const p of f.pts) r2 = Math.max(r2, p.distanceToSquared(c));
+  return Math.sqrt(r2);
+}
+
+/**
+ * Points for a Rapier convex hull, straight off the faces.
+ *
+ * hullFromGeometry would do the same job from the triangles, but it quantises
+ * every vertex into a string-keyed Set to collapse the duplicates a merged
+ * geometry is full of — 67 µs a cell, measured, and pure waste here: a convex
+ * cell already IS its hull, and Rapier does not mind the shared corners.
+ */
+export function polyHullPoints(poly, origin) {
+  let n = 0;
+  for (const f of poly.faces) n += f.pts.length;
+  const out = new Float32Array(n * 3);
+  let i = 0;
+  for (const f of poly.faces) {
+    for (const p of f.pts) {
+      out[i++] = p.x - origin.x; out[i++] = p.y - origin.y; out[i++] = p.z - origin.z;
+    }
+  }
+  return out;
+}
+
+/** Concatenate non-indexed position/normal/uv geometries into one. */
+function mergeFlat(list, offsets) {
+  let n = 0;
+  for (const g of list) n += g.attributes.position.count;
+  if (!n) return null;
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  let o = 0;
+  for (let k = 0; k < list.length; k++) {
+    const g = list[k], off = offsets[k];
+    const p = g.attributes.position.array, na = g.attributes.normal?.array, ua = g.attributes.uv?.array;
+    const c = g.attributes.position.count;
+    for (let i = 0; i < c; i++) {
+      pos[(o + i) * 3] = p[i * 3] + off.x;
+      pos[(o + i) * 3 + 1] = p[i * 3 + 1] + off.y;
+      pos[(o + i) * 3 + 2] = p[i * 3 + 2] + off.z;
+      if (na) { nrm[(o + i) * 3] = na[i * 3]; nrm[(o + i) * 3 + 1] = na[i * 3 + 1]; nrm[(o + i) * 3 + 2] = na[i * 3 + 2]; }
+      if (ua) { uv[(o + i) * 2] = ua[i * 2]; uv[(o + i) * 2 + 1] = ua[i * 2 + 1]; }
+    }
+    o += c;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  return g;
+}
+
 /**
  * Triangulate. Flat-shaded (a fractured face is flat), planar-projected UVs at
  * the same texel density the architecture uses, and translated so the chunk's
@@ -293,23 +359,31 @@ export function fractureSolid(bounds, samples, opts = {}) {
   const nz = Math.max(1, Math.round(size.z / target));
   let scale = 1;
   if (nx * ny * nz > maxCells) scale = Math.cbrt((nx * ny * nz) / maxCells);
-  const gx = Math.max(1, Math.round(nx / scale));
-  const gy = Math.max(1, Math.round(ny / scale));
-  const gz = Math.max(1, Math.round(nz / scale));
+  let gx = Math.max(1, Math.round(nx / scale));
+  let gy = Math.max(1, Math.round(ny / scale));
+  let gz = Math.max(1, Math.round(nz / scale));
+  // rounding three axes up can overshoot the cap by half again; walk the
+  // longest axis down until it fits, so `maxCells` is a real ceiling
+  while (gx * gy * gz > maxCells) {
+    if (gx >= gy && gx >= gz && gx > 1) gx--;
+    else if (gy >= gz && gy > 1) gy--;
+    else if (gz > 1) gz--;
+    else break;
+  }
   const sx = size.x / gx, sy = size.y / gy, sz = size.z / gz;
 
   const sites = [];
+  const P = new Float32Array(gx * gy * gz * 3);       // flat, for the hot loop
   for (let k = 0; k < gz; k++) {
     for (let j = 0; j < gy; j++) {
       for (let i = 0; i < gx; i++) {
-        sites.push({
-          i, j, k,
-          p: new THREE.Vector3(
-            min.x + (i + 0.5 + (rng() - 0.5) * 0.62) * sx,
-            min.y + (j + 0.5 + (rng() - 0.5) * 0.62) * sy,
-            min.z + (k + 0.5 + (rng() - 0.5) * 0.62) * sz),
-          n: 0, sum: null, box: new THREE.Box3(), mats: null,
-        });
+        const idx = (k * gy + j) * gx + i;
+        const p = new THREE.Vector3(
+          min.x + (i + 0.5 + (rng() - 0.5) * 0.62) * sx,
+          min.y + (j + 0.5 + (rng() - 0.5) * 0.62) * sy,
+          min.z + (k + 0.5 + (rng() - 0.5) * 0.62) * sz);
+        P[idx * 3] = p.x; P[idx * 3 + 1] = p.y; P[idx * 3 + 2] = p.z;
+        sites.push({ i, j, k, index: idx, p, n: 0, box: new THREE.Box3(), mats: null, nbrs: null });
       }
     }
   }
@@ -319,19 +393,24 @@ export function fractureSolid(bounds, samples, opts = {}) {
   // ── which cell does each surface sample belong to? (nearest site = Voronoi)
   const matOf = opts.matOf;
   const cnt = samples ? samples.length / 3 : 0;
+  const lo = [min.x, min.y, min.z], inv = [1 / sx, 1 / sy, 1 / sz];
   for (let s = 0; s < cnt; s++) {
     const x = samples[s * 3], y = samples[s * 3 + 1], z = samples[s * 3 + 2];
-    const i0 = clamp(Math.floor((x - min.x) / sx), 0, gx - 1);
-    const j0 = clamp(Math.floor((y - min.y) / sy), 0, gy - 1);
-    const k0 = clamp(Math.floor((z - min.z) / sz), 0, gz - 1);
-    let best = null, bestD = Infinity;
-    for (let dk = -1; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-      const c = at(i0 + di, j0 + dj, k0 + dk);
-      if (!c) continue;
-      const d = (c.p.x - x) ** 2 + (c.p.y - y) ** 2 + (c.p.z - z) ** 2;
-      if (d < bestD) { bestD = d; best = c; }
+    const i0 = clamp(Math.floor((x - lo[0]) * inv[0]), 0, gx - 1);
+    const j0 = clamp(Math.floor((y - lo[1]) * inv[1]), 0, gy - 1);
+    const k0 = clamp(Math.floor((z - lo[2]) * inv[2]), 0, gz - 1);
+    let bestI = -1, bestD = Infinity;
+    const ki = Math.max(0, k0 - 1), ke = Math.min(gz - 1, k0 + 1);
+    const ji = Math.max(0, j0 - 1), je = Math.min(gy - 1, j0 + 1);
+    const ii = Math.max(0, i0 - 1), ie = Math.min(gx - 1, i0 + 1);
+    for (let k = ki; k <= ke; k++) for (let j = ji; j <= je; j++) for (let i = ii; i <= ie; i++) {
+      const o = ((k * gy + j) * gx + i) * 3;
+      const dx = P[o] - x, dy = P[o + 1] - y, dz = P[o + 2] - z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bestD) { bestD = d; bestI = (k * gy + j) * gx + i; }
     }
-    if (!best) continue;
+    if (bestI < 0) continue;
+    const best = sites[bestI];
     best.n++;
     best.box.expandByPoint(_v1.set(x, y, z));
     if (matOf) {
@@ -348,31 +427,41 @@ export function fractureSolid(bounds, samples, opts = {}) {
   for (const s of sites) {
     if (cnt && s.n < floor) continue;
     let poly = boxPoly(bounds.getCenter(new THREE.Vector3()), size.clone().multiplyScalar(0.5));
+    // furthest point of the cell from its site: a bisector further than that
+    // cannot reach the cell, which is what keeps this to the six or eight
+    // neighbours that matter instead of all twenty-six
+    let far = polyRadius(poly, s.p);
+    const nbrs = [];
     for (let dk = -1; dk <= 1 && poly; dk++) for (let dj = -1; dj <= 1 && poly; dj++) for (let di = -1; di <= 1 && poly; di++) {
       if (!di && !dj && !dk) continue;
       const o = at(s.i + di, s.j + dj, s.k + dk);
       if (!o) continue;
       const n = new THREE.Vector3().subVectors(o.p, s.p);
       const len = n.length();
-      if (len < 1e-5) continue;
+      if (len < 1e-5 || len * 0.5 > far) continue;
       n.multiplyScalar(1 / len);
       const mid = _v1.addVectors(o.p, s.p).multiplyScalar(0.5);
-      poly = clipPoly(poly, n, -n.dot(mid));
+      const next = clipPoly(poly, n, -n.dot(mid));
+      // a bisector that actually trimmed the cell is a shared face, which is
+      // the exact Voronoi adjacency — and therefore the support graph
+      if (next !== poly) { poly = next; nbrs.push(o.index); if (poly) far = polyRadius(poly, s.p); }
     }
     if (!poly) continue;
     // Shrink the cell onto the surface it actually holds, so a chunk of arch
     // is arch-shaped rather than a brick from the bounding box.
     if (cnt && s.n > 0) {
-      const pad = Math.max(0.06, Math.min(sx, sy, sz) * 0.16);
+      const pad = Math.max(0.05, Math.min(sx, sy, sz) * 0.12);
       const lo = s.box.min, hi = s.box.max;
+      // keep n·p + d <= 0, so d = -n·(a point on the plane)
       const planes = [
         [new THREE.Vector3(-1, 0, 0), lo.x - pad], [new THREE.Vector3(1, 0, 0), hi.x + pad],
         [new THREE.Vector3(0, -1, 0), lo.y - pad], [new THREE.Vector3(0, 1, 0), hi.y + pad],
         [new THREE.Vector3(0, 0, -1), lo.z - pad], [new THREE.Vector3(0, 0, 1), hi.z + pad],
       ];
-      for (const [n, at1] of planes) {
+      for (const [n, cut] of planes) {
         if (!poly) break;
-        poly = clipPoly(poly, n, -(n.x + n.y + n.z) * at1 * (n.x + n.y + n.z));
+        // n is a signed unit axis: n·P where P lies on the plane is ±cut
+        poly = clipPoly(poly, n, -(n.x + n.y + n.z) * cut);
       }
     }
     if (!poly) continue;
@@ -382,7 +471,7 @@ export function fractureSolid(bounds, samples, opts = {}) {
     if (!isFinite(centre.x) || !isFinite(centre.y) || !isFinite(centre.z)) continue;
     let mat = null, bestN = 0;
     if (s.mats) for (const [m, n] of s.mats) if (n > bestN) { bestN = n; mat = m; }
-    out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat });
+    out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat, site: s.index, nbrs });
   }
   return out;
 }
@@ -397,14 +486,17 @@ class Chunk {
     this.structure = structure;
     this.index = index;
     this.cell = cell;
-    this.centre = cell.centre.clone();        // piece-local
-    this.volume = cell.volume;
     this.bounds = cell.bounds.clone();        // piece-local
+    // The body's origin is the cell's AABB centre, not its centroid: the mesh,
+    // the hull and the static box the settled chunk gets are then all the same
+    // frame, and Rapier works out the real centre of mass from the collider.
+    this.centre = cell.bounds.getCenter(new THREE.Vector3());
+    this.volume = cell.volume;
     this.half = cell.bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
     this.material = cell.mat || structure.material;
     this.state = 'shell';
     this.damage = 0;
-    this.hp = Math.max(1, cell.volume * structure.profile.hpPerM3);
+    this.hp = cellHp(cell.volume, structure.profile);
     this.mass = clamp(cell.volume * structure.profile.density, 1.5, 900);
     this.neighbours = [];
     this.grounded = false;
@@ -469,7 +561,7 @@ export class Structure {
     this.volume = Math.max(0.01, this.size.x * this.size.y * this.size.z * 0.55);
 
     this.material = this.meshes.length ? this.meshes[0].material : null;
-    this.maxHp = this.volume * this.profile.hpPerM3;
+    this.maxHp = cellHp(this.volume, this.profile) * 2;
     this.hp = this.maxHp;
     this.stress = 0;                 // 0..1, how close to failure — drives the shake
     this.state = 'intact';           // intact → broken → collapsed → gone
@@ -479,16 +571,12 @@ export class Structure {
     this.carries = [];
     this._linked = false;
     this._shakeBase = null;
+    this.shell = null;            // the standing remainder, merged
+    this.shellDirty = false;
   }
 
   get fractured() { return !!this.chunks; }
   get intact() { return this.state === 'intact'; }
-
-  /** Nearest point of the piece's world AABB to `p` — cheap proximity test. */
-  distanceTo(p) {
-    _box.copy(this.local).applyMatrix4(_m4From(this.position, this.quaternion));
-    return _box.distanceToPoint(p);
-  }
 
   /* ── capsules for the blade solver ─────────────────────────────────── */
 
@@ -500,7 +588,10 @@ export class Structure {
   bladeCapsules(near, reach, out) {
     if (this.state === 'gone') return out;
     const r2 = reach * reach;
-    if (this.chunks) {
+    // NB: `chunks` existing does NOT mean the piece has come apart — it is
+    // pre-fractured long before it is touched. Until it converts, the blade
+    // meets the solid the maker registered.
+    if (this.chunks && this.state !== 'intact') {
       for (const c of this.chunks) {
         if (c.state !== 'attached') continue;
         c.worldCentre(_v1);
@@ -522,14 +613,8 @@ export class Structure {
       // capsules run along the box's longest axis, stacked across the second —
       // the same shape the blast door publishes, generalised
       const dims = [he.x, he.y, he.z];
-      const ax = dims.indexOf(Math.max(...dims));
-      let sec = 0, rad = Infinity;
-      for (let i = 0; i < 3; i++) {
-        if (i === ax) continue;
-        if (dims[i] > dims[sec === ax ? (ax + 1) % 3 : sec] || sec === ax) sec = i;
-        rad = Math.min(rad, dims[i]);
-      }
-      if (sec === ax) sec = (ax + 1) % 3;
+      const order = [0, 1, 2].sort((a, b) => dims[b] - dims[a]);
+      const ax = order[0], sec = order[1], rad = dims[order[2]];
       const axisV = _v3.set(ax === 0 ? 1 : 0, ax === 1 ? 1 : 0, ax === 2 ? 1 : 0).applyQuaternion(b.quat);
       const secV = _v4.set(sec === 0 ? 1 : 0, sec === 1 ? 1 : 0, sec === 2 ? 1 : 0).applyQuaternion(b.quat);
       const half = dims[ax], span = dims[sec];
@@ -572,25 +657,7 @@ export class Structure {
     if (this.chunks || this.state === 'gone') return this.chunks;
     const t0 = now();
 
-    // surface samples — every vertex of every bin, strided so a 5000-vertex
-    // arch costs the same as a 400-vertex wall
-    const bins = this.meshes.filter((m) => m.geometry && m.geometry.attributes.position);
-    let total = 0;
-    for (const m of bins) total += m.geometry.attributes.position.count;
-    const stride = Math.max(1, Math.ceil(total / 2400));
-    const pts = [];
-    const mats = [];
-    for (const m of bins) {
-      const p = m.geometry.attributes.position;
-      for (let i = 0; i < p.count; i += stride) {
-        const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-        if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
-        pts.push(x, y, z);
-        mats.push(m.material);
-      }
-    }
-    const samples = new Float32Array(pts);
-
+    const { samples, mats } = this._surfaceSamples();
     const bounds = this.local.clone();
     if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
     const cells = fractureSolid(bounds, samples, {
@@ -603,22 +670,113 @@ export class Structure {
     this.chunks = [];
     for (let i = 0; i < cells.length; i++) this.chunks.push(new Chunk(this, cells[i], i));
     this._link();
+    // The cells know the real solid; the bounding-box guess the piece was born
+    // with does not. Rescale the piece's health to what it is actually made of,
+    // keeping whatever fraction of it is already gone.
+    if (this.chunks.length) {
+      let v = 0, hp = 0;
+      for (const c of this.chunks) { v += c.volume; hp += c.hp; }
+      const frac = this.hp / Math.max(1e-6, this.maxHp);
+      this.volume = v;
+      this.maxHp = Math.max(1, hp);
+      this.hp = this.maxHp * frac;
+    }
     this.buildMs = now() - t0;
     this.manager.stats.prefractured++;
     this.manager.stats.prefractureMs += this.buildMs;
     return this.chunks;
   }
 
-  /** Neighbourhood and grounding — the support graph, cheaply. */
+  /**
+   * Where the piece's surface actually is, sampled by AREA rather than by
+   * vertex.
+   *
+   * Vertices alone are a trap here: a column shaft is a lathe of five rings, so
+   * its vertices live at six heights and nowhere in between. Cells built from
+   * those thought the two metres between rings were empty air and shrank to
+   * nothing, leaving a column of floating discs. Triangles are sampled on a
+   * barycentric lattice sized by area, so a two-triangle wall face is described
+   * as well as a two-hundred-triangle one, for a bounded number of points.
+   */
+  _surfaceSamples(budget = 1600) {
+    const bins = [];
+    for (const m of this.meshes) {
+      const g = m.geometry;
+      if (!g || !g.attributes.position) continue;
+      bins.push({
+        pos: g.attributes.position.array,
+        idx: g.index ? g.index.array : null,
+        n: g.index ? g.index.count : g.attributes.position.count,
+        mat: m.material,
+      });
+    }
+    let area = 0, count = 0;
+    for (const b of bins) {
+      const { pos, idx, n } = b;
+      for (let i = 0; i + 2 < n; i += 3) {
+        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
+        const ux = pos[b0] - pos[a0], uy = pos[b0 + 1] - pos[a0 + 1], uz = pos[b0 + 2] - pos[a0 + 2];
+        const vx = pos[c0] - pos[a0], vy = pos[c0 + 1] - pos[a0 + 1], vz = pos[c0 + 2] - pos[a0 + 2];
+        const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+        const t = Math.sqrt(cx * cx + cy * cy + cz * cz) * 0.5;
+        if (t > 0) { area += t; count++; }
+      }
+    }
+    if (!count) return { samples: new Float32Array(0), mats: [] };
+    // one extra sample per `per` m² of face, on top of one centroid per triangle
+    const per = Math.max(1e-6, area) / Math.max(1, budget - Math.min(count, budget * 0.6));
+
+    const pts = [], mats = [];
+    for (const b of bins) {
+      const { pos, idx, n, mat } = b;
+      for (let i = 0; i + 2 < n; i += 3) {
+        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
+        const ax = pos[a0], ay = pos[a0 + 1], az = pos[a0 + 2];
+        const bx = pos[b0], by = pos[b0 + 1], bz = pos[b0 + 2];
+        const cx0 = pos[c0], cy0 = pos[c0 + 1], cz0 = pos[c0 + 2];
+        if (!isFinite(ax) || !isFinite(bx) || !isFinite(cx0)) continue;
+        pts.push((ax + bx + cx0) / 3, (ay + by + cy0) / 3, (az + bz + cz0) / 3);
+        mats.push(mat);
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx0 - ax, vy = cy0 - ay, vz = cz0 - az;
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const t = Math.sqrt(nx * nx + ny * ny + nz * nz) * 0.5;
+        const k = clamp(Math.round(Math.sqrt(t / per)), 1, 6);
+        if (k < 2) continue;
+        for (let u = 0; u < k; u++) {
+          for (let v = 0; v + u < k; v++) {
+            const bu = (u + 0.333) / k, bv = (v + 0.333) / k, bw = 1 - bu - bv;
+            if (bw <= 0) continue;
+            pts.push(ax * bw + bx * bu + cx0 * bv, ay * bw + by * bu + cy0 * bv, az * bw + bz * bu + cz0 * bv);
+            mats.push(mat);
+          }
+        }
+      }
+    }
+    return { samples: new Float32Array(pts), mats };
+  }
+
+  /**
+   * The support graph: who holds up whom.
+   *
+   * Two cells are linked when they share a Voronoi face AND their solids are
+   * actually close. The first test alone would connect the two sides of a
+   * doorway across the opening; the second alone would connect a cell to
+   * whatever happened to be near it in the bounding box. Both together is what
+   * makes an arch collapse when a voussoir is taken and a wall with a hole in it
+   * stay standing.
+   */
   _link() {
     const cs = this.chunks;
+    const bySite = new Map();
+    for (const c of cs) bySite.set(c.cell.site, c);
     const groundTol = Math.max(0.22, this.size.y * 0.06);
-    for (let i = 0; i < cs.length; i++) {
-      const a = cs[i];
+    const gap = Math.max(0.12, this.profile.cell * 0.55);
+    for (const a of cs) {
       a.grounded = a.bounds.min.y <= this.local.min.y + groundTol;
-      for (let j = i + 1; j < cs.length; j++) {
-        const b = cs[j];
-        const gap = Math.max(0.05, this.profile.cell * 0.22);
+      for (const site of (a.cell.nbrs || [])) {
+        const b = bySite.get(site);
+        if (!b || b === a || a.neighbours.includes(b)) continue;
         if (a.bounds.max.x + gap < b.bounds.min.x || b.bounds.max.x + gap < a.bounds.min.x) continue;
         if (a.bounds.max.y + gap < b.bounds.min.y || b.bounds.max.y + gap < a.bounds.min.y) continue;
         if (a.bounds.max.z + gap < b.bounds.min.z || b.bounds.max.z + gap < a.bounds.min.z) continue;
@@ -628,39 +786,98 @@ export class Structure {
     }
   }
 
+  /* ── preparing ─────────────────────────────────────────────────────── */
+
+  /**
+   * Build the geometry and the hull for one cell. Measured at ~90 µs, so an
+   * eighteen-cell piece is a two-millisecond job that must not land in one
+   * frame — the manager spends it a few cells at a time.
+   */
+  prepareCell(c) {
+    if (!c || c.geo || c.state === 'gone') return false;
+    const uv = 1 / Math.max(0.6, this.profile.cell * 1.6);
+    c.geo = polyGeometry(c.cell.poly, c.centre, uv);
+    if (!c.geo) { c.state = 'gone'; return false; }
+    c.hull = { type: 'hull', points: polyHullPoints(c.cell.poly, c.centre) };
+    c.tris = c.geo.attributes.position.count / 3;
+    this.manager.stats.chunkTris += c.tris;
+    return true;
+  }
+
+  /** True once every cell has its geometry. */
+  get prepared() {
+    if (!this.chunks) return false;
+    for (const c of this.chunks) if (!c.geo && c.state !== 'gone') return false;
+    return true;
+  }
+
+  prepareAll() {
+    this.prefracture();
+    if (!this.chunks) return;
+    for (const c of this.chunks) this.prepareCell(c);
+  }
+
   /* ── conversion ────────────────────────────────────────────────────── */
 
   /** Merged mesh out, cells in. Still static, still solid — just breakable. */
   convert() {
     if (this.chunks && this.state !== 'intact') return;
-    this.prefracture();
+    this.prepareAll();
     if (!this.chunks || !this.chunks.length) { this.state = 'broken'; return; }
 
     for (const m of this.meshes) m.visible = false;
     for (const b of this.boxes) this.world.physics?.removeStaticBox?.(b);
 
-    const uv = 1 / Math.max(0.6, this.profile.cell * 1.6);
     for (const c of this.chunks) {
-      c.geo = polyGeometry(c.cell.poly, c.centre, uv);
-      if (!c.geo) { c.state = 'gone'; continue; }
-      c.hull = hullFromGeometry(c.geo) || boxShape(Math.max(0.02, c.half.x), Math.max(0.02, c.half.y), Math.max(0.02, c.half.z));
-      c.tris = c.geo.attributes.position.count / 3;
-      this.manager.stats.chunkTris += c.tris;
-      c.mesh = new THREE.Mesh(c.geo, c.material || this.material);
-      c.mesh.castShadow = true; c.mesh.receiveShadow = true;
-      c.mesh.matrixAutoUpdate = false;
-      c.worldCentre(c.mesh.position);
-      c.mesh.quaternion.copy(this.quaternion);
-      c.mesh.updateMatrix();
-      this.world.scene?.add(c.mesh);
+      if (c.state === 'gone') continue;
       c.state = 'attached';
       c.staticBox = this.world.physics?.addStaticBox?.(
-        c.mesh.position.clone(), c.half.clone().max(_v1.set(0.03, 0.03, 0.03)),
+        c.worldCentre(new THREE.Vector3()), c.half.clone().max(_v1.set(0.03, 0.03, 0.03)),
         this.quaternion.clone(), { friction: 0.85 }) || null;
       this.attached++;
     }
     this.state = 'broken';
+    this.shellDirty = true;
+    this.rebuildShell();
     this.manager._linkSupports();
+  }
+
+  /**
+   * What is left standing, as ONE mesh per material.
+   *
+   * A cell needs its own draw call only once it is loose. Keeping the standing
+   * remainder merged is the difference between a levelled arena costing 968
+   * draw calls and costing the couple of hundred its loose rubble is worth —
+   * measured on the arena, which fractures into 968 cells.
+   */
+  rebuildShell() {
+    this.shellDirty = false;
+    if (this.shell) {
+      for (const m of this.shell) { this.world.scene?.remove(m); m.geometry.dispose(); }
+      this.shell = null;
+    }
+    if (!this.chunks) return;
+    const byMat = new Map();
+    for (const c of this.chunks) {
+      if (c.state !== 'attached' || !c.geo) continue;
+      const mat = c.material || this.material;
+      let e = byMat.get(mat);
+      if (!e) byMat.set(mat, e = { geos: [], offs: [] });
+      e.geos.push(c.geo); e.offs.push(c.centre);
+    }
+    if (!byMat.size) return;
+    this.shell = [];
+    for (const [mat, e] of byMat) {
+      const geo = mergeFlat(e.geos, e.offs);
+      if (!geo) continue;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.position.copy(this.position);
+      mesh.quaternion.copy(this.quaternion);
+      mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+      this.world.scene?.add(mesh);
+      this.shell.push(mesh);
+    }
   }
 
   /* ── damage ────────────────────────────────────────────────────────── */
@@ -671,7 +888,7 @@ export class Structure {
    * anything actually lets go.
    */
   damageSphere(centre, radius, amount, dir = null) {
-    if (this.state === 'gone' || this.profile.hpPerM3 === Infinity) return false;
+    if (this.state === 'gone' || this.profile.hpPerM2 === Infinity) return false;
     if (!(amount > 0)) return false;
     this.prefracture();
     if (!this.chunks) return false;
@@ -705,7 +922,9 @@ export class Structure {
     this.prefracture();
     if (!this.chunks || !this.chunks.length) return false;
     if (this.state === 'intact') this.convert();
-    const n = _v2.copy(normal).normalize();
+    // a real vector, not module scratch: this call reaches deep enough that
+    // shared temporaries get clobbered under it
+    const n = new THREE.Vector3().copy(normal).normalize();
     const d = -n.dot(point);
     const band = Math.max(0.35, this.profile.cell * 0.75);
     const reach = Math.max(2.2, this.profile.cell * 2.4);
@@ -728,29 +947,116 @@ export class Structure {
       }
       if (best) hits.push(best);
     }
-    for (const c of hits) this.detach(c, impulse, point);
+    // The cells the plane runs through are parted ON the plane rather than
+    // knocked out whole — this is the one place a runtime slice earns its cost,
+    // and it is the difference between a column that was cut and a column that
+    // had a lump taken out of it. Bounded, because it is not cheap.
+    let parted = 0;
+    for (const c of hits) {
+      if (parted < 3 && this._partChunk(c, point, n, impulse)) { parted++; continue; }
+      this.detach(c, impulse, point);
+    }
     this.settleSupport();
     this.manager._breakFx(point, hits.length, this.profile, true);
     return hits.length > 0;
   }
 
-  /** Blade grinding: work done against toughness weakens the whole piece. */
+  /**
+   * Slice one attached cell on the blade's plane and let both halves go. Falls
+   * back to the caller's plain detach when the plane misses the cell's solid.
+   */
+  _partChunk(chunk, point, normal, impulse) {
+    if (!chunk || chunk.state !== 'attached' || !chunk.geo) return false;
+    const q = this.quaternion;
+    const inv = _q1.copy(q).invert();
+    const origin = chunk.worldCentre(new THREE.Vector3());
+    const lp = new THREE.Vector3().subVectors(point, origin).applyQuaternion(inv);
+    const ln = new THREE.Vector3().copy(normal).applyQuaternion(inv).normalize();
+    let res = null;
+    try { res = sliceGeometry(chunk.geo, lp, ln); } catch (e) { res = null; }
+    if (!res) return false;
+
+    const localCentre = chunk.centre.clone();
+    const volume = chunk.volume;
+    const halfLen = chunk.half.length();
+    const mat = chunk.material || this.material;
+    this.manager._forget(chunk, true);            // the whole cell is spent
+
+    const scratch = new THREE.Vector3();
+    let made = 0;
+    for (const [geo, sign] of [[res.front, 1], [res.back, -1]]) {
+      const off = new THREE.Vector3();
+      geo.computeBoundingBox();
+      geo.boundingBox.getCenter(off);
+      geo.translate(-off.x, -off.y, -off.z);
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+      const bb = geo.boundingBox.clone().translate(scratch.copy(localCentre).add(off));
+      const share = clamp(bb.getSize(scratch).length() / Math.max(1e-3, halfLen * 2), 0.1, 1);
+      const frag = new Chunk(this, {
+        bounds: bb, centre: bb.getCenter(new THREE.Vector3()),
+        volume: volume * share, mat, poly: null,
+      }, this.chunks.length);
+      frag.geo = geo;
+      frag.hull = hullFromGeometry(geo)
+        || boxShape(Math.max(0.02, frag.half.x), Math.max(0.02, frag.half.y), Math.max(0.02, frag.half.z));
+      frag.tris = geo.attributes.position.count / 3;
+      this.manager.stats.chunkTris += frag.tris;
+      frag.mesh = new THREE.Mesh(geo, mat);
+      frag.mesh.castShadow = true; frag.mesh.receiveShadow = true;
+      frag.mesh.matrixAutoUpdate = false;
+      frag.mesh.position.copy(off).applyQuaternion(q).add(origin);
+      frag.mesh.quaternion.copy(q);
+      frag.mesh.updateMatrix();
+      this.world.scene?.add(frag.mesh);
+      frag.state = 'attached';
+      this.chunks.push(frag);
+      this.attached++;
+      this.detach(frag, impulse, new THREE.Vector3().copy(point).addScaledVector(normal, -sign * 0.35));
+      made++;
+    }
+    return made > 0;
+  }
+
+  /**
+   * Blade grinding. The solver's own accumulated work is the damage — hold the
+   * blade against a wall long enough and it fails where you were holding it,
+   * even if you never pushed hard enough for a clean cut.
+   */
   wear(work, point) {
-    if (this.state === 'gone') return;
+    if (this.state === 'gone' || this.profile.hpPerM2 === Infinity) return false;
     this.hp -= work;
     this.stress = clamp(1 - this.hp / Math.max(1e-3, this.maxHp), 0, 1);
-    if (this.hp <= 0) this.damageSphere(point || this.centre, this.radius * 0.6, 0.001);
+    if (this.hp > 0) return false;
+    const p = point ? point.clone() : this.centre.clone();
+    const r = Math.max(1.4, this.profile.cell * 1.3);
+    // enough to part the cells under the blade, not the whole piece
+    let amount = 0;
+    for (const c of this.chunks || []) amount = Math.max(amount, c.hp);
+    amount = Math.max(amount, cellHp(this.profile.cell ** 3, this.profile)) * 2.2;
+    this.hp = this.maxHp * 0.35;
+    return this.damageSphere(p, r, amount);
   }
 
   /* ── detaching ─────────────────────────────────────────────────────── */
 
-  /** A cell becomes a real body. */
+  /** A cell becomes a real body — and, at that moment, its own mesh. */
   detach(chunk, impulse, point) {
     if (!chunk || chunk.state !== 'attached') return null;
     if (chunk.staticBox) { this.world.physics?.removeStaticBox?.(chunk.staticBox); chunk.staticBox = null; }
     chunk.state = 'live';
     this.attached--;
+    this.shellDirty = true;
 
+    if (!chunk.mesh && chunk.geo) {
+      chunk.mesh = new THREE.Mesh(chunk.geo, chunk.material || this.material);
+      chunk.mesh.castShadow = true; chunk.mesh.receiveShadow = true;
+      chunk.mesh.matrixAutoUpdate = false;
+      chunk.worldCentre(chunk.mesh.position);
+      chunk.mesh.quaternion.copy(this.quaternion);
+      chunk.mesh.updateMatrix();
+      this.world.scene?.add(chunk.mesh);
+    }
     const pos = chunk.mesh ? chunk.mesh.position.clone() : chunk.worldCentre();
     const body = new Body({
       position: pos, quaternion: this.quaternion,
@@ -771,7 +1077,8 @@ export class Structure {
       const d = _v1.length();
       _v1.multiplyScalar(1 / Math.max(0.15, d));
       const push = clamp(3.2 / Math.max(0.5, d), 0.4, 4.5);
-      _v1.multiplyScalar(chunk.mass * push).addScaledVector(_v3.set(0, 1, 0), chunk.mass * 0.5);
+      _v1.multiplyScalar(chunk.mass * push);
+      _v1.y += chunk.mass * 0.5;
       if (impulse) _v1.addScaledVector(impulse, chunk.mass * 0.06);
       body.applyImpulse(_v1, pos);
     }
@@ -869,8 +1176,12 @@ export class Structure {
   dispose() {
     this.state = 'gone';
     if (this._shakeBase) this._unshake();
+    if (this.shell) {
+      for (const m of this.shell) { this.world.scene?.remove(m); m.geometry.dispose(); }
+      this.shell = null;
+    }
     if (!this.chunks) return;
-    for (const c of this.chunks) this.manager._forget(c, false);
+    for (const c of this.chunks) this.manager._forget(c, true);
     this.chunks = null;
   }
 }
@@ -895,15 +1206,28 @@ export class Destruction {
     this.settled = [];               // chunks that came to rest and went static
     this.time = 0;
 
-    this.maxLive = opts.maxLive ?? 96;
-    this.maxChunks = opts.maxChunks ?? 260;
-    this.maxCellsPerPiece = opts.maxCellsPerPiece ?? 24;
+    /**
+     * The budget, measured rather than guessed. On the arena, with every piece
+     * in the level collapsed at once, the Rapier step costs:
+     *
+     *   nothing broken   0.78 ms      64 live   3.2 ms
+     *   32 live          1.8 ms       96 live   4.6 ms
+     *                                160 live   7.5 ms
+     *
+     * Sixty-four is the most that leaves room for the rest of the frame, and it
+     * is only ever reached by a player who has levelled half the arena.
+     */
+    const q = world.settings?.quality;
+    this.maxLive = opts.maxLive ?? (q === 'low' ? 36 : q === 'high' ? 96 : 64);
+    this.maxChunks = opts.maxChunks ?? this.maxLive * 3;
+    this.maxCellsPerPiece = opts.maxCellsPerPiece ?? 18;
+    this.prepareBudgetMs = opts.prepareBudgetMs ?? 1.2;
     this.settleSpeed = opts.settleSpeed ?? 0.4;
     this.settleTime = opts.settleTime ?? 1.4;
     this.settleDist = opts.settleDist ?? 24;
     this.chunkLife = opts.chunkLife ?? 34;
     this.bladeReach = opts.bladeReach ?? 3.4;
-    this.prefractureRange = opts.prefractureRange ?? 34;
+    this.prefractureRange = opts.prefractureRange ?? 30;
     this.impactSpeed = opts.impactSpeed ?? 7.5;
 
     this.rng = makeRng(opts.seed ?? 90210);
@@ -914,6 +1238,7 @@ export class Destruction {
 
     this._impactCd = new Map();
     this._bladeSeen = new Map();
+    this._bladeMark = new Map();
     this._caps = new Map();
     this._linked = false;
     this._pfCursor = 0;
@@ -921,6 +1246,12 @@ export class Destruction {
     this.proxy = new DestructionProxy(this);
     if (world.addProp) world.addProp(this.proxy);
     else if (world.props) world.props.push(this.proxy);
+
+    // Warm the fracture path. Measured in call order on the arena, the first
+    // piece cost 9 ms and the thirtieth cost 1.4 — all of it V8 tiering up
+    // through code that only runs once per piece. A throwaway fracture at load
+    // buys most of that back before the player can see it.
+    warmFracture();
 
     // Explosions already exist and already know how to shake the world; all
     // they were missing was somewhere to send the damage.
@@ -958,6 +1289,10 @@ export class Destruction {
     const n = this.structures.length;
     const world = [];
     for (const s of this.structures) {
+      // a piece registered since the last pass invalidates the whole graph, so
+      // rebuild it rather than appending the same links twice
+      s.restsOn.length = 0;
+      s.carries.length = 0;
       world.push(_worldBox(s, new THREE.Box3()));
     }
     for (let i = 0; i < n; i++) {
@@ -989,7 +1324,9 @@ export class Destruction {
 
   explosion(centre, size = 1) {
     const radius = 5.5 * size;
-    this.damageSphere(centre, radius, 130 * size * size);
+    // A fuel drum going off against a wall takes a bite out of the wall. The
+    // same charge only chips a blast door, because that is what toughness is.
+    this.damageSphere(centre, radius, 340 * size * size);
     // and the rubble that had already settled gets up again
     for (let i = this.settled.length - 1; i >= 0; i--) {
       const c = this.settled[i];
@@ -1012,7 +1349,7 @@ export class Destruction {
       const k = clamp(1 - (d - s.radius) / range, 0.15, 1);
       // the push lands where the cone meets the piece, not at its centre
       _v2.copy(origin).addScaledVector(dir, Math.max(0.5, d - s.radius * 0.6));
-      if (s.damageSphere(_v2, Math.max(2.2, s.radius * 0.7), 90 * power * k, dir)) hit++;
+      if (s.damageSphere(_v2, Math.max(2.2, s.radius * 0.7), 150 * power * k, dir)) hit++;
     }
     return hit;
   }
@@ -1032,7 +1369,7 @@ export class Destruction {
       const speed = Math.sqrt(v2);
       const reach = (b.boundingRadius || 0.4) + speed * dt * 1.5;
       for (const s of this.structures) {
-        if (s.state === 'gone' || s.profile.hpPerM3 === Infinity) continue;
+        if (s.state === 'gone' || s.profile.hpPerM2 === Infinity) continue;
         if (s.centre.distanceToSquared(b.position) > (s.radius + reach + 1) ** 2) continue;
         if (_worldBox(s, _box).distanceToPoint(b.position) > reach) continue;
         this._impactCd.set(b.id, this.time + 0.3);
@@ -1081,14 +1418,30 @@ export class Destruction {
       this._bladeSeen.set(key, work);
       if (delta <= 0) continue;
       const s = cap.structure;
-      s.wear(delta * 2.2, _v1.lerpVectors(cap.p0, cap.p1, 0.5));
-      s.stress = Math.max(s.stress, clamp(work / Math.max(1e-3, cap.toughness), 0, 1));
-      if (this.rng() < 0.35) {
-        this._dust(_v1.lerpVectors(cap.p0, cap.p1, 0.5), 0.3 + s.stress * 0.5, s.profile.chip);
+      const at = _v2.lerpVectors(cap.p0, cap.p1, 0.5);
+      s.wear(delta * 2.2, at);
+      const frac = clamp(work / Math.max(1e-3, cap.toughness), 0, 1);
+      s.stress = Math.max(s.stress, frac);
+      if (this.rng() < 0.35) this._dust(at, 0.3 + s.stress * 0.5, s.profile.chip);
+      // the kerf, widening: one mark when the blade has bitten, a bigger one
+      // when the piece is nearly through. The same DecalField the blade already
+      // scorches ground and armour with.
+      const step = frac > 0.75 ? 2 : frac > 0.35 ? 1 : 0;
+      if (step > (this._bladeMark.get(key) || 0)) {
+        this._bladeMark.set(key, step);
+        const P = this.world.particles;
+        if (P && P.scorch) {
+          _v3.subVectors(this.proxy.body.position, at);
+          _v3.y = 0;
+          if (_v3.lengthSq() < 1e-6) _v3.set(0, 1, 0); else _v3.normalize();
+          P.scorch(at, _v3, 0.1 + step * 0.11, { heat: 1, life: 20, alpha: 0.8 });
+        }
       }
     }
     if (this._bladeSeen.size > 256) {
-      for (const k of this._bladeSeen.keys()) if (!solver.progress.has(k)) this._bladeSeen.delete(k);
+      for (const k of this._bladeSeen.keys()) {
+        if (!solver.progress.has(k)) { this._bladeSeen.delete(k); this._bladeMark.delete(k); }
+      }
     }
   }
 
@@ -1188,12 +1541,14 @@ export class Destruction {
     if (si >= 0) this.settled.splice(si, 1);
     if (chunk.body) { this.world.physics?.remove?.(chunk.body); chunk.body = null; }
     if (chunk.staticBox) { this.world.physics?.removeStaticBox?.(chunk.staticBox); chunk.staticBox = null; }
-    if (chunk.mesh) {
-      this.world.scene?.remove(chunk.mesh);
-      if (hard) chunk.mesh.geometry?.dispose?.();
-      chunk.mesh = null;
+    if (chunk.mesh) { this.world.scene?.remove(chunk.mesh); chunk.mesh = null; }
+    // an attached cell has geometry but no mesh of its own — it lives in the
+    // merged shell — so the geometry has to be released here either way
+    if (hard && chunk.geo) chunk.geo.dispose();
+    if (chunk.state === 'attached' && chunk.structure) {
+      chunk.structure.attached--;
+      chunk.structure.shellDirty = true;
     }
-    if (chunk.state === 'attached' && chunk.structure) chunk.structure.attached--;
     chunk.state = 'gone';
     chunk.geo = null;
     this.stats.despawned++;
@@ -1210,20 +1565,45 @@ export class Destruction {
     this._readBladeWork(dt);
     this._updateChunks(dt, focus);
     if (focus) this._impactScan(dt);
-    for (const s of this.structures) if (s._shakeBase || s.stress > 0.05) s.updateStress(dt);
+    for (const s of this.structures) {
+      if (s._shakeBase || s.stress > 0.05) s.updateStress(dt);
+      if (s.shellDirty) s.rebuildShell();
+    }
+    if (focus) this._prepare(focus);
+  }
 
-    // Amortised pre-fracture: one piece per frame, nearest first, so the cost
-    // of the first hit on anything is already paid before the player gets there.
-    if (focus && this.structures.length) {
-      const n = this.structures.length;
-      for (let i = 0; i < n; i++) {
-        const s = this.structures[(this._pfCursor + i) % n];
-        if (s.chunks || s.state === 'gone') continue;
-        if (s.centre.distanceToSquared(focus) > this.prefractureRange * this.prefractureRange) continue;
-        this._pfCursor = (this._pfCursor + i + 1) % n;
+  /**
+   * Getting a piece ready to break, a slice of a millisecond at a time.
+   *
+   * Doing it when the piece is hit costs five milliseconds in the one frame
+   * that can least afford it. Doing it at level build costs half a second of
+   * load for fifty pieces most of which are never touched. So it is done here:
+   * nearest first, inside a frame budget, cells for one piece and then its
+   * geometry a few cells at a time.
+   */
+  _prepare(focus) {
+    const n = this.structures.length;
+    if (!n) return;
+    const range2 = this.prefractureRange * this.prefractureRange;
+    const t0 = now();
+    let did = false;
+    for (let i = 0; i < n && now() - t0 < this.prepareBudgetMs; i++) {
+      const s = this.structures[(this._pfCursor + i) % n];
+      if (s.state === 'gone' || s.prepared) continue;
+      if (s.centre.distanceToSquared(focus) > range2) continue;
+      if (!s.chunks) {
         s.prefracture();
-        break;
+        this._pfCursor = (this._pfCursor + i) % n;
+        return;                                  // cells are a whole frame's work
       }
+      for (const c of s.chunks) {
+        if (c.geo || c.state === 'gone') continue;
+        s.prepareCell(c);
+        did = true;
+        if (now() - t0 >= this.prepareBudgetMs) break;
+      }
+      this._pfCursor = (this._pfCursor + i) % n;
+      if (did) return;
     }
   }
 
@@ -1288,6 +1668,7 @@ export class Destruction {
     this.settled.length = 0;
     this._caps.clear();
     this._bladeSeen.clear();
+    this._bladeMark.clear();
     this._impactCd.clear();
     this._unwrap?.();
     if (this.world.destruction === this) this.world.destruction = null;
@@ -1315,7 +1696,7 @@ export class Destruction {
  */
 class DestructionProxy {
   constructor(manager) {
-    this.id = 'destr' + manager.rng().toFixed(6).slice(2);
+    this.id = 'destr' + (_structId++);
     this.manager = manager;
     this.dead = false;
     this.kind = 'destruction';
@@ -1382,7 +1763,26 @@ export function registerDestructible(world, spec) {
 
 /* ── small helpers ───────────────────────────────────────────────────── */
 
+let _warmed = false;
+/** Run the fracture path once on a throwaway solid so it is compiled hot. */
+function warmFracture() {
+  if (_warmed) return;
+  _warmed = true;
+  const b = new THREE.Box3(new THREE.Vector3(-1, 0, -0.4), new THREE.Vector3(1, 3, 0.4));
+  const pts = [];
+  for (let i = 0; i < 240; i++) {
+    pts.push(-1 + (i % 7) / 3, (i % 13) * 0.23, -0.4 + ((i * 3) % 5) * 0.2);
+  }
+  const cells = fractureSolid(b, new Float32Array(pts), { cell: 0.7, seed: 3, maxCells: 12 });
+  for (const c of cells) {
+    const g = polyGeometry(c.poly, c.centre, 0.3);
+    polyHullPoints(c.poly, c.centre);
+    g?.dispose();
+  }
+}
+
 const _m4 = new THREE.Matrix4();
-function _m4From(p, q) { return _m4.compose(p, q, _v1.set(1, 1, 1)); }
+const _ONE = new THREE.Vector3(1, 1, 1);
+function _m4From(p, q) { return _m4.compose(p, q, _ONE); }
 function _worldBox(s, out) { return out.copy(s.local).applyMatrix4(_m4From(s.position, s.quaternion)); }
 function now() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }

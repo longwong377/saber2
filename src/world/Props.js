@@ -34,6 +34,7 @@
 import * as THREE from 'three';
 import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
+import { registerDestructible } from './Destruction.js';
 import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps } from '../engine/Textures.js';
 import { plateGeo, limbGeo } from '../game/Bodies.js';
 import { makeCapMaterial } from '../game/Ragdoll.js';
@@ -548,11 +549,14 @@ export class Kit {
   }
 
   /**
-   * Merge, place and register. Returns { meshes, triangles, draws } so a
-   * level (or a measuring script) can see what it just paid for.
+   * Merge, place and register. Returns { meshes, triangles, draws, boxes } so
+   * a level (or a measuring script) can see what it just paid for — and so a
+   * destructible piece can be handed the colliders it will have to give back
+   * when it comes apart.
    */
   emit(world, position, quaternion = new THREE.Quaternion(), opts = {}) {
     const meshes = [];
+    const madeBoxes = [];
     let triangles = 0;
     for (const [mat, geos] of this.bins) {
       const geo = mergeGeos(geos);
@@ -568,7 +572,8 @@ export class Kit {
     if (opts.collide !== false) {
       for (const b of this.boxes) {
         const c = b.c.clone().applyQuaternion(quaternion).add(position);
-        world.physics.addStaticBox(c, b.he, quaternion.clone().multiply(b.q), { friction: b.friction });
+        const rec = world.physics.addStaticBox(c, b.he, quaternion.clone().multiply(b.q), { friction: b.friction });
+        if (rec) madeBoxes.push(rec);
       }
     }
     this.boxes.length = 0;
@@ -580,7 +585,7 @@ export class Kit {
     }
     this.lights.length = 0;
     this.tris += triangles;
-    return { meshes, triangles, draws: meshes.length };
+    return { meshes, triangles, draws: meshes.length, boxes: madeBoxes };
   }
 }
 
@@ -1624,11 +1629,34 @@ function kitOpen(pos, opts, seed) {
   else kit.push(0, 0, 0, opts.yaw || 0);
   return kit;
 }
-/** Close a maker: emit unless the caller is composing. */
-function kitClose(world, kit, pos, opts) {
+/**
+ * Close a maker: emit unless the caller is composing.
+ *
+ * This is also the one place destructibility is wired in. A maker names what it
+ * is made of (`destructible: 'stone'`); the piece is registered with the
+ * world's Destruction manager, which pre-fractures it only if something ever
+ * threatens it. Registration costs a bounds computation and nothing else — the
+ * meshes, the draw calls and the colliders are exactly what they were.
+ *
+ * A maker composed into a PARENT kit (`opts.kit`) is deliberately not
+ * registered: its geometry has been merged into somebody else's mesh by then,
+ * and half a merged mesh cannot be hidden when it breaks. Pieces a level wants
+ * destructible are the ones it places on their own, which is how every level
+ * already places its walls, columns and arches.
+ */
+function kitClose(world, kit, pos, opts, destructible = null) {
   kit.pop();
   if (opts.kit) return kit;
-  return kit.emit(world, pos, opts.quaternion || IDENT, opts);
+  const res = kit.emit(world, pos, opts.quaternion || IDENT, opts);
+  const profile = opts.destructible ?? destructible;
+  if (profile && res && res.meshes.length) {
+    registerDestructible(world, {
+      kind: opts.kind || 'piece', profile, seed: opts.seed ?? 1,
+      meshes: res.meshes, boxes: res.boxes,
+      position: pos, quaternion: opts.quaternion || IDENT,
+    });
+  }
+  return res;
 }
 
 /** Triangle fan closing a ring of points — broken tops, open shell ends. */
@@ -1778,7 +1806,7 @@ export function addColumn(world, pos, opts = {}) {
     }
   }
   kit.collider(0, (y0 + shaftH) / 2, 0, r * 1.06, (y0 + shaftH) / 2, r * 1.06);
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'stone');
 }
 
 /**
@@ -1831,7 +1859,7 @@ export function addArch(world, pos, opts = {}) {
   if (opts.collideArch !== false && missing === 0) {
     kit.collider(0, spring + rIn * yScale * 0.72, 0, rIn * 0.9, t * 0.7, d / 2);
   }
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'stone');
 }
 
 /**
@@ -1858,7 +1886,7 @@ export function addLintel(world, pos, opts = {}) {
     }
   }
   kit.collider(0, 0, 0, L / 2, h / 2, d / 2);
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'stone');
 }
 
 /**
@@ -1878,7 +1906,7 @@ export function addButtress(world, pos, opts = {}) {
   kit.put(g, mat, 0, 0, 0);
   kit.slab(opts.trimMat || M.sandstone, t * 1.1, 0.26, w * 1.15, t * 0.55, 0.13, 0, { tile: 2.0, collide: false });
   kit.collider(t * 0.38, h * 0.34, 0, t * 0.42, h * 0.34, w / 2);
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'stone');
 }
 
 /**
@@ -1963,7 +1991,7 @@ export function addBrokenWall(world, pos, size, opts = {}) {
     const cw = w / nc;
     kit.collider(-w / 2 + cw * (i + 0.5), solid / 2, 0, cw / 2, solid / 2, t / 2);
   }
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'duracrete');
 }
 
 /**
@@ -2302,7 +2330,7 @@ export function addColossus(world, pos, opts = {}) {
 
   kit.collider(0, y0 + S(0.3) / 2, 0, S(0.19), S(0.3) / 2 + y0 * 0.5, S(0.19));
   kit.collider(0, y0 + S(0.5), 0, S(0.14), S(0.16), S(0.14));
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'statue');
 }
 
 /**
@@ -2371,7 +2399,7 @@ export function addRuinedGate(world, pos, opts = {}) {
       kit, radius: span * 0.8, seed: (opts.seed ?? 303) + 7, density: 0.8, mat, chipMat: M.duracreteDark,
     });
   }
-  return kitClose(world, kit, pos, opts);
+  return kitClose(world, kit, pos, opts, 'stone');
 }
 
 /**
