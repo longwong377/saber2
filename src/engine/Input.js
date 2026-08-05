@@ -7,6 +7,8 @@
  * committed swing from a feint).
  */
 
+import { loadBindings, MOUSE } from './Bindings.js';
+
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -16,9 +18,9 @@ export class Input {
     this.mouse = { dx: 0, dy: 0, x: 0, y: 0, wheel: 0 };
     this.prevDelta = { x: 0, y: 0 };
     this.accel = { x: 0, y: 0 };
-    this.buttons = [false, false, false];
-    this.buttonPressed = [false, false, false];
-    this.buttonReleased = [false, false, false];
+    this.buttons = [false, false, false, false, false];
+    this.buttonPressed = [false, false, false, false, false];
+    this.buttonReleased = [false, false, false, false, false];
     this.locked = false;
     this.enabled = false;
     this.sensitivity = 1;
@@ -26,6 +28,7 @@ export class Input {
     this.gamepadIndex = null;
     this.gamepad = null;
     this.usingGamepad = false;
+    this.bindings = loadBindings();
     this._listeners = [];
 
     this._bind();
@@ -53,10 +56,10 @@ export class Input {
 
     this._on(this.canvas, 'mousedown', (e) => {
       if (!this.locked && this.enabled) { this.requestLock(); return; }
-      if (e.button < 3) { this.buttons[e.button] = true; this.buttonPressed[e.button] = true; }
+      if (e.button < 5) { this.buttons[e.button] = true; this.buttonPressed[e.button] = true; }
     });
     this._on(window, 'mouseup', (e) => {
-      if (e.button < 3) { this.buttons[e.button] = false; this.buttonReleased[e.button] = true; }
+      if (e.button < 5) { this.buttons[e.button] = false; this.buttonReleased[e.button] = true; }
     });
     this._on(window, 'contextmenu', (e) => { if (this.enabled) e.preventDefault(); });
 
@@ -127,8 +130,8 @@ export class Input {
   end() {
     this.mouse.dx = 0; this.mouse.dy = 0; this.mouse.wheel = 0;
     this.pressed.clear(); this.released.clear();
-    this.buttonPressed[0] = this.buttonPressed[1] = this.buttonPressed[2] = false;
-    this.buttonReleased[0] = this.buttonReleased[1] = this.buttonReleased[2] = false;
+    this.buttonPressed.fill(false);
+    this.buttonReleased.fill(false);
   }
 
   down(code) { return this.keys.has(code); }
@@ -137,13 +140,51 @@ export class Input {
   anyDown(...codes) { return codes.some((c) => this.keys.has(c)); }
   padDown(i) { return !!(this.padButtons && this.padButtons[i] && this.padButtons[i].pressed); }
 
+  /* ── bindings ────────────────────────────────────────────────────────
+   * Gameplay asks for ACTIONS. A key code that starts with "Mouse" is read
+   * from the button arrays, everything else from the keyboard sets, so a
+   * player can bind Focus to a thumb button or to T and neither is special.
+   */
+
+  setBindings(b) { this.bindings = b; }
+
+  _codeDown(code) {
+    if (code.startsWith('Mouse')) {
+      for (const i in MOUSE) if (MOUSE[i] === code) return !!this.buttons[i];
+      return false;
+    }
+    return this.keys.has(code);
+  }
+  _codeHit(code) {
+    if (code.startsWith('Mouse')) {
+      for (const i in MOUSE) if (MOUSE[i] === code) return !!this.buttonPressed[i];
+      return false;
+    }
+    return this.pressed.has(code);
+  }
+
+  /** Is any key bound to this action currently held. */
+  act(id) {
+    const keys = this.bindings[id];
+    if (!keys) return false;
+    for (let i = 0; i < keys.length; i++) if (this._codeDown(keys[i])) return true;
+    return false;
+  }
+  /** Did any key bound to this action go down THIS frame. */
+  actHit(id) {
+    const keys = this.bindings[id];
+    if (!keys) return false;
+    for (let i = 0; i < keys.length; i++) if (this._codeHit(keys[i])) return true;
+    return false;
+  }
+
   /** WASD + left stick, as a normalised 2D vector (x = strafe, y = forward). */
   moveAxis(out = { x: 0, y: 0 }) {
     let x = 0, y = 0;
-    if (this.down('KeyW') || this.down('ArrowUp')) y += 1;
-    if (this.down('KeyS') || this.down('ArrowDown')) y -= 1;
-    if (this.down('KeyD') || this.down('ArrowRight')) x += 1;
-    if (this.down('KeyA') || this.down('ArrowLeft')) x -= 1;
+    if (this.act('moveF') || this.down('ArrowUp')) y += 1;
+    if (this.act('moveB') || this.down('ArrowDown')) y -= 1;
+    if (this.act('moveR') || this.down('ArrowRight')) x += 1;
+    if (this.act('moveL') || this.down('ArrowLeft')) x -= 1;
     if (this.padLeft) { x += this.padLeft.x; y -= this.padLeft.y; }
     const len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; }

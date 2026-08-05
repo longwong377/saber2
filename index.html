@@ -108,6 +108,14 @@
         <label class="slider">Field of view <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
         <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
+        <h3 style="margin-top:22px">Deflection aiming</h3>
+        <div id="opt-deflect" class="difflist"></div>
+      </div>
+      <div class="col">
+        <h3>Key bindings</h3>
+        <p class="hint" style="margin-bottom:12px">Click a key to rebind. Mouse buttons work too. <b id="bind-hint"></b></p>
+        <div id="bind-list" class="bindlist"></div>
+        <button id="btn-bind-reset" class="secondary" style="margin-top:14px">Reset to defaults</button>
       </div>
       <div class="col">
         <h3>Fidelity</h3>
@@ -133,14 +141,19 @@
           <div><kbd>W A S D</kbd><span>Move. <kbd>Shift</kbd> sprint, <kbd>Ctrl</kbd> crouch.</span></div>
           <div><kbd>Space</kbd><span>Force jump — hold to leap higher. Landing sends out a shockwave.</span></div>
           <div><kbd>Q</kbd> <kbd>E</kbd><span>Roll the wrist. Changes the plane your blade cuts on.</span></div>
-          <div><kbd>F</kbd><span>Force push. <kbd>Shift+F</kbd> pulls.</span></div>
-          <div><kbd>G</kbd><span>Grip an object — then move the mouse to swing it, click to hurl it.</span></div>
-          <div><kbd>R</kbd><span>Throw the saber. Press again to recall it.</span></div>
-          <div><kbd>C</kbd><span>Force sense — the world slows, you do not.</span></div>
+          <div><kbd>M3</kbd> / <kbd>T</kbd><span><b>Focus</b> — hold to bend time. The world slows to a third, you barely do. Burns Force fast, so pick your volleys.</span></div>
+          <div><kbd>Alt</kbd> / <kbd>M4</kbd><span>Dash, in any direction you are holding. No direction = dash back.</span></div>
+          <div><kbd>Space</kbd> <kbd>Space</kbd><span>Double jump. Hold on the way up to feed Force into the leap.</span></div>
+          <div><kbd>F</kbd><span>Force push.</span></div>
+          <div><kbd>R</kbd><span>Force pull.</span></div>
+          <div><kbd>G</kbd><span>Grip an object — then move the mouse to swing it, <kbd>M2</kbd> to hurl it.</span></div>
+          <div><kbd>H</kbd><span>Throw the saber. Press again to recall it.</span></div>
+          <div><kbd>C</kbd><span>Force sense — see through walls.</span></div>
           <div><kbd>V</kbd><span>Toggle first / third person.</span></div>
           <div><kbd>X</kbd><span>Ignite / retract.</span></div>
           <div><kbd>Tab</kbd><span>Scoreboard &amp; run boons.</span></div>
         </div>
+        <p class="hint" style="margin-top:14px">Every one of these can be rebound under <b>Options</b>.</p>
         <h3 style="margin-top:26px">The four things that make a master</h3>
         <ol class="codex-list">
           <li><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>

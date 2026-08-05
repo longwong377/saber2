@@ -349,6 +349,9 @@ export class Engine {
   }
 
   setBloom(on) { this.bloom.enabled = !!on; }
+
+  /** 0..1 — how hard time is being bent. Drives the Focus grade. */
+  setFocus(v) { this._focusTarget = v; }
   setGrain(on) { this.composite.uniforms.uGrain.value = on ? 0.045 : 0; }
 
   resize() {
@@ -405,6 +408,10 @@ export class Engine {
     u.uFlash.value = this._flash;
     u.uHurt.value = this._hurt;
     u.uSense.value = this._sense;
+    // Focus reuses the Sense grade's cool desaturation at a fraction of its
+    // strength, so the two read as the same family of ability.
+    this._focus = damp(this._focus || 0, this._focusTarget || 0, 12, dt);
+    if (this._focus > 0.002) u.uSense.value = Math.max(u.uSense.value, this._focus * 0.55);
     u.uRadial.value = this._radial;
 
     const heat = u.uHeat.value;

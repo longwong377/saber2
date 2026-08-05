@@ -25,6 +25,7 @@ import { Terrain } from '../src/world/Terrain.js';
 import { DuelBrain, Telegraph, BladeLock, FORMS, FORM_KEYS, TIER } from '../src/game/Duel.js';
 import { Cloak, attachCloak } from '../src/game/Cloth.js';
 import { DojoDirector, LESSONS, buildRemote } from '../src/game/Dojo.js';
+import { FocusSystem, FOCUS } from '../src/game/Focus.js';
 import { clamp } from '../src/engine/MathUtil.js';
 
 let pass = 0, fail = 0;
@@ -625,10 +626,15 @@ check('control: the hands never leave arm\'s reach', () => {
   return `max reach ${maxReach.toFixed(3)}m`;
 });
 
+// Stands in for Input: gameplay asks for actions, so the fake has to answer
+// them. `buttons` stays so a test can still say "hold the left mouse button".
 const mkInput = () => ({
   mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 },
-  buttons: [false, false, false], buttonPressed: [false, false, false],
+  buttons: [false, false, false, false, false],
+  buttonPressed: [false, false, false, false, false],
   down: () => false, padButtons: null, padDown: () => false,
+  act(id) { return id === 'blade' ? !!this.buttons[0] : id === 'thrust' ? !!this.buttons[2] : false; },
+  actHit(id) { return id === 'blade' ? !!this.buttonPressed[0] : id === 'thrust' ? !!this.buttonPressed[2] : false; },
 });
 
 check('control: Free Blade still drags the camera after the guard', () => {
@@ -669,8 +675,34 @@ check('control: the mouse moves the blade ONLY while the button is held', () => 
     camYaw2 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw;
   }
   assert(c.gx > gx0 + 0.3, `the blade did not move with the button held (${c.gx.toFixed(3)})`);
-  assert(Math.abs(camYaw2) < 1e-6, `the camera moved ${camYaw2.toFixed(4)} rad while steering the blade`);
-  return `up: camera ${(camYaw * 57.3).toFixed(0)}° / blade still; down: blade → ${c.gx.toFixed(2)} / camera still`;
+  return `up: camera ${(camYaw * 57.3).toFixed(0)}° / blade still; down: blade → ${c.gx.toFixed(2)}`;
+});
+
+check('control: inside the guard cone the view holds still; past it, it turns', () => {
+  const c = new SaberController({ sensitivity: 1 });
+  c.reset(V(0, 1.35, 0), new THREE.Quaternion());
+  const input = mkInput();
+  input.buttons[0] = true;
+  c.gx = 0;
+
+  // a small push moves the blade and nothing else — this is what makes precise
+  // blocking possible while the button is held
+  let cam = 0;
+  for (let i = 0; i < 8; i++) { input.mouse.dx = 20; cam += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
+  assert(c.gx > 0.2, `the blade barely moved (${c.gx.toFixed(3)})`);
+  assert(Math.abs(cam) < 1e-9, `the view drifted ${cam.toFixed(5)} rad inside the cone`);
+
+  // drive it hard into the limit — now the body has to come round
+  let cam2 = 0;
+  for (let i = 0; i < 40; i++) { input.mouse.dx = 60; cam2 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
+  assert(Math.abs(c.gx - 1.0) < 1e-6, `the guard did not pin at its limit (${c.gx.toFixed(4)})`);
+  assert(cam2 < -0.8, `past the cone the view only turned ${(cam2 * 57.3).toFixed(1)}°`);
+
+  // and it must work the other way too
+  let cam3 = 0;
+  for (let i = 0; i < 40; i++) { input.mouse.dx = -60; cam3 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
+  assert(cam3 > 0.8, `turning the other way gave ${(cam3 * 57.3).toFixed(1)}°`);
+  return `cone: 0 rad of view drift; past it: ${(cam2 * 57.3).toFixed(0)}° / ${(cam3 * 57.3).toFixed(0)}°`;
 });
 
 check('control: letting go returns the blade to a ready guard', () => {
@@ -1206,6 +1238,61 @@ check('bodies: a limb is a closed surface with no seam crease', () => {
 
   // and the profile must be monotonic in y, or it folds back through itself
   return `closed at y=${lowest.toFixed(3)}, ${nrm.count} unit normals, no re-derivation`;
+});
+
+check('focus: the passive dip is free and arms only on a close bolt', () => {
+  const f = new FocusSystem();
+  // nothing incoming: full speed, no cost
+  for (let i = 0; i < 30; i++) assert(f.update(1 / 60, false, 100, []) === 0, 'the passive layer charged Force');
+  near(f.scale, 1, 1e-6, 'time was slowed with nothing incoming');
+
+  // a bolt a long way out must NOT arm it
+  for (let i = 0; i < 30; i++) f.update(1 / 60, false, 100, [{ eta: 1.2, dist: 12 }]);
+  near(f.scale, 1, 0.02, 'a distant bolt armed the passive dip');
+
+  // one about to land does
+  for (let i = 0; i < 30; i++) f.update(1 / 60, false, 100, [{ eta: 0.12, dist: 6 }]);
+  assert(f.scale < FOCUS.passiveScale + 0.03,
+    `the passive dip only reached ${f.scale.toFixed(3)}, expected ~${FOCUS.passiveScale}`);
+  assert(f.update(1 / 60, false, 100, [{ eta: 0.12, dist: 6 }]) === 0, 'the passive layer charged Force');
+  return `1.00 idle → ${f.scale.toFixed(2)} on a 0.12s bolt, free`;
+});
+
+check('focus: the held layer is deep, costs Force, and stops at empty', () => {
+  const f = new FocusSystem();
+  let spent = 0;
+  for (let i = 0; i < 60; i++) spent += f.update(1 / 60, true, 100, []);
+  assert(f.scale < 0.45, `held Focus only reached ${f.scale.toFixed(3)}`);
+  assert(spent > 25 && spent < 45, `one second of Focus cost ${spent.toFixed(1)} Force`);
+  // the player keeps most of their own speed — that asymmetry IS the ability
+  const effective = f.scale * f.playerCompensation;
+  assert(effective > 0.7, `the player was slowed to ${effective.toFixed(2)} of real time along with the world`);
+
+  // empty Force must not sustain it
+  for (let i = 0; i < 60; i++) f.update(1 / 60, true, 2, []);
+  near(f.scale, 1, 0.02, `Focus held at ${f.scale.toFixed(3)} on an empty Force bar`);
+  assert(f.update(1 / 60, true, 2, []) === 0, 'it charged Force it did not have');
+  return `world ${(0.35).toFixed(2)}x / player ${effective.toFixed(2)}x, ${spent.toFixed(0)} Force/s, cuts out at empty`;
+});
+
+check('focus: the two layers stack and never stop or reverse time', () => {
+  const f = new FocusSystem();
+  const threat = [{ eta: 0.1, dist: 5 }];
+  for (let i = 0; i < 90; i++) f.update(1 / 60, true, 100, threat);
+  const both = f.scale;
+  const f2 = new FocusSystem();
+  for (let i = 0; i < 90; i++) f2.update(1 / 60, true, 100, []);
+  assert(both < f2.scale - 0.02, `stacking gave ${both.toFixed(3)} vs held-only ${f2.scale.toFixed(3)}`);
+
+  // and under every combination time stays strictly positive and bounded
+  const f3 = new FocusSystem();
+  for (let i = 0; i < 600; i++) {
+    const s = f3.update(1 / 60, i % 3 === 0, 100, i % 2 ? threat : []);
+    assert(f3.scale > 0 && f3.scale <= 1, `time scale left (0,1]: ${f3.scale}`);
+    assert(isFinite(f3.playerCompensation) && f3.playerCompensation >= 1, 'compensation went non-finite');
+    assert(s >= 0, 'negative Force drain');
+  }
+  return `stacked ${both.toFixed(2)}x vs ${f2.scale.toFixed(2)}x held alone, always in (0,1]`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

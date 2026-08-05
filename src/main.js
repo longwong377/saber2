@@ -71,6 +71,10 @@ const menu = new Menu(settings, {
   onCamFollow: (v) => { if (world?.player) world.player.control.followStrength = v; },
   onFov: (v) => { if (world?.player) world.player.camera.fovTarget = v; },
   onSchemeChange: (v) => { if (world?.player) world.player.control.setScheme(v); },
+  // Both are live: switch the deflection model or a keybind mid-fight and the
+  // very next bolt uses it, which is the only honest way to compare them.
+  onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
+  onBindings: (b) => { input.setBindings(b); },
   onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),

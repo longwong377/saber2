@@ -601,12 +601,12 @@ export class Enemy {
           this._endTelegraph();
           this.burstLeft = A.burst ?? 1;
           this.burstTimer = 0;
-          this.attackTimer = A.fireRate * (0.75 + rng() * 0.5) / (diff ? diff.enemyAggression : 1);
+          this.attackTimer = A.fireRate * (0.75 + rng() * 0.5) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
         }
       } else {
         this.burstLeft = A.burst ?? 1;
         this.burstTimer = 0;
-        this.attackTimer = A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression : 1);
+        this.attackTimer = A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
       }
     }
   }

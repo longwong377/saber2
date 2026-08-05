@@ -349,3 +349,25 @@ button{font-family:inherit}
 .boss-track i{display:block;height:100%;width:100%;transform-origin:left;
   background:linear-gradient(90deg,#ff7a3a,#ffca7a);box-shadow:0 0 16px rgba(255,140,70,.8);
   transition:transform .18s cubic-bezier(.22,1,.36,1)}
+
+/* ── key bindings ────────────────────────────────────────────────────── */
+.bindlist{display:flex;flex-direction:column;gap:2px;max-height:330px;overflow-y:auto;padding-right:6px}
+.bindlist .grp{font:var(--mono);font-size:9px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--dimmer);margin:12px 0 4px}
+.bindlist .grp:first-child{margin-top:0}
+.bindrow{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:5px 8px;border-radius:6px;transition:background .12s}
+.bindrow:hover{background:rgba(255,255,255,.04)}
+.bindrow span{font-size:12px;color:var(--dim)}
+.bindrow .keys{display:flex;gap:4px}
+.bindrow b{font:var(--mono);font-size:10px;letter-spacing:.08em;color:#cfdaea;cursor:pointer;
+  padding:3px 8px;min-width:34px;text-align:center;border:1px solid var(--line);border-radius:5px;
+  background:rgba(9,13,21,.75);transition:.12s}
+.bindrow b:hover{border-color:#57c9ff;color:#fff}
+.bindrow b.listening{border-color:#ffb03a;color:#ffb03a;animation:pulseLow .7s ease-in-out infinite}
+.bindrow b.conflict{border-color:#ff3a46;color:#ff3a46}
+#bind-hint{color:#ffb03a}
+
+/* Focus: the Force bar burns while time is bent */
+.bar.fc.focus i{background:linear-gradient(90deg,#ffb03a,#fff0c0);
+  box-shadow:0 0 18px rgba(255,180,80,.9);animation:pulseLow .5s ease-in-out infinite}

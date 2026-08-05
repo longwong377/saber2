@@ -12,6 +12,7 @@ import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
+import { ACTIONS, MOUSE, keyLabel, loadBindings, saveBindings, defaultBindings, findConflict } from '../engine/Bindings.js';
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS = {
   invertY: false,
   firstPerson: false,
   scheme: 'hold',
+  deflectAim: 'reticle',
   quality: 'high',
   resolutionScale: 1,
   bloom: true,
@@ -379,7 +381,142 @@ export class Menu {
 
   /* ── options ─────────────────────────────────────────────────────── */
 
+  /**
+   * The three deflection aiming models, live-switchable so they can be
+   * compared back to back in the same fight rather than argued about.
+   */
+  _buildDeflectModes() {
+    const host = document.getElementById('opt-deflect');
+    if (!host) return;
+    const modes = [
+      ['reticle', 'Reticle',
+       'Where you LOOK decides where the bolt goes; the blade decides IF it goes. Two skills at once.'],
+      ['physical', 'Physical',
+       'The bolt mirrors off the blade\u2019s real surface. Utterly honest, brutally hard to place.'],
+      ['sweep', 'Sweep',
+       'The bolt goes where you SWUNG. Drag left, it flies left.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.deflectAim === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      d.addEventListener('click', () => {
+        audio.ui('click');
+        this.s.deflectAim = key;
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        saveSettings(this.s);
+        this.hooks.onDeflectAim?.(key);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /**
+   * Key bindings. Clicking a key listens for the next keypress or mouse button
+   * and takes it, warning if it is already spoken for. Escape cancels.
+   */
+  _buildBindings() {
+    const host = document.getElementById('bind-list');
+    if (!host) return;
+    this.bindings = this.bindings || loadBindings();
+    const hint = document.getElementById('bind-hint');
+
+    const render = () => {
+      host.innerHTML = '';
+      let group = null;
+      for (const a of ACTIONS) {
+        if (a.group !== group) {
+          group = a.group;
+          const g = document.createElement('div');
+          g.className = 'grp'; g.textContent = group;
+          host.appendChild(g);
+        }
+        const row = document.createElement('div');
+        row.className = 'bindrow';
+        const label = document.createElement('span');
+        label.textContent = a.label;
+        const keys = document.createElement('div');
+        keys.className = 'keys';
+        const bound = this.bindings[a.id] || [];
+        // always offer one empty slot so a second key can be added
+        for (let i = 0; i < Math.min(bound.length + 1, 3); i++) {
+          const b = document.createElement('b');
+          b.textContent = keyLabel(bound[i]);
+          b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
+          b.addEventListener('click', (e) => { e.preventDefault(); listen(a, i, b); });
+          b.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (!bound[i] || bound.length < 2) return;   // never leave it unbound
+            audio.ui('click');
+            this.bindings[a.id] = bound.filter((_, j) => j !== i);
+            saveBindings(this.bindings); this.hooks.onBindings?.(this.bindings); render();
+          });
+          keys.appendChild(b);
+        }
+        row.appendChild(label); row.appendChild(keys);
+        host.appendChild(row);
+      }
+    };
+
+    const listen = (action, slot, el) => {
+      if (this._listening) return;
+      this._listening = true;
+      el.classList.add('listening');
+      el.textContent = '…';
+      if (hint) hint.textContent = 'press a key or mouse button — Esc to cancel';
+
+      const finish = (code) => {
+        window.removeEventListener('keydown', onKey, true);
+        window.removeEventListener('mousedown', onMouse, true);
+        this._listening = false;
+        if (hint) hint.textContent = '';
+        if (code) {
+          const clash = findConflict(this.bindings, code, action.id);
+          if (clash) {
+            // take it from the other action rather than binding one key twice,
+            // but never leave that action with nothing at all
+            const other = this.bindings[clash].filter(k => k !== code);
+            if (other.length) this.bindings[clash] = other;
+          }
+          const list = (this.bindings[action.id] || []).slice();
+          list[slot] = code;
+          this.bindings[action.id] = list.filter(Boolean).slice(0, 3);
+          saveBindings(this.bindings);
+          this.hooks.onBindings?.(this.bindings);
+          audio.ui('click');
+        }
+        render();
+      };
+      const onKey = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        finish(e.code === 'Escape' ? null : e.code);
+      };
+      const onMouse = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        finish(MOUSE[e.button] || null);
+      };
+      window.addEventListener('keydown', onKey, true);
+      window.addEventListener('mousedown', onMouse, true);
+    };
+
+    const reset = document.getElementById('btn-bind-reset');
+    if (reset && !reset._wired) {
+      reset._wired = true;
+      reset.addEventListener('click', () => {
+        audio.ui('click');
+        this.bindings = defaultBindings();
+        saveBindings(this.bindings);
+        this.hooks.onBindings?.(this.bindings);
+        render();
+      });
+    }
+    render();
+  }
+
   _buildOptions() {
+    this._buildDeflectModes();
+    this._buildBindings();
     const schemes = [
       ['hold', 'Hold to Blade', 'The mouse looks. Hold left mouse and the mouse IS the blade. Recommended.'],
       ['free', 'Free Blade', 'The mouse always moves the blade and the camera follows it. Hold RMB to look around. Chaotic.'],

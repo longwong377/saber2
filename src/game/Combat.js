@@ -20,26 +20,35 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 export const GRADE = { BLOCK: 0, DEFLECT: 1, RETURN: 2, PERFECT: 3 };
 export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
 
+/**
+ * Difficulty.
+ *
+ * `boltSpeed` and `fireRate` are the two numbers that decide whether blocking
+ * is learnable at all. At the old values a Knight-tier bolt crossed the last
+ * ten metres in 0.13s, which is inside human reaction time — you could not
+ * block, only guess. The tiers now span genuinely learnable to genuinely
+ * brutal, and the ramp across a run does the rest.
+ */
 export const DIFFICULTY = {
   padawan: {
     name: 'Padawan', blurb: 'The blade is forgiving. Assist guides your guard.',
     assist: 0.55, enemyAccuracy: 0.42, enemyAggression: 0.55, damageTaken: 0.55,
-    deflectWindow: 1.6, boltSpeed: 0.72, chamberWindow: 0.22, staminaDrain: 0.7,
+    deflectWindow: 1.6, boltSpeed: 0.34, fireRate: 0.5, chamberWindow: 0.22, staminaDrain: 0.7,
   },
   knight: {
     name: 'Knight', blurb: 'A fair fight. Light assist, honest bolts.',
     assist: 0.26, enemyAccuracy: 0.62, enemyAggression: 0.78, damageTaken: 0.85,
-    deflectWindow: 1.25, boltSpeed: 0.88, chamberWindow: 0.17, staminaDrain: 0.9,
+    deflectWindow: 1.25, boltSpeed: 0.46, fireRate: 0.65, chamberWindow: 0.17, staminaDrain: 0.9,
   },
   master: {
     name: 'Master', blurb: 'No hand on your wrist. They shoot to kill.',
     assist: 0.07, enemyAccuracy: 0.8, enemyAggression: 1.0, damageTaken: 1.15,
-    deflectWindow: 1.0, boltSpeed: 1.0, chamberWindow: 0.14, staminaDrain: 1.0,
+    deflectWindow: 1.0, boltSpeed: 0.63, fireRate: 0.85, chamberWindow: 0.14, staminaDrain: 1.0,
   },
   grandmaster: {
     name: 'Grandmaster', blurb: 'Zero assist. Every bolt is yours to answer.',
     assist: 0, enemyAccuracy: 0.94, enemyAggression: 1.25, damageTaken: 1.5,
-    deflectWindow: 0.86, boltSpeed: 1.15, chamberWindow: 0.11, staminaDrain: 1.15,
+    deflectWindow: 0.86, boltSpeed: 0.72, fireRate: 1.0, chamberWindow: 0.11, staminaDrain: 1.15,
   },
 };
 
@@ -83,36 +92,76 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
   if (bladeSpeed > 3.2 || closing > 1.6) grade = GRADE.DEFLECT;
 
   // Return: a fast tip, and somewhere worth sending it
+  const mode = ctx.aimMode || 'reticle';
   let target = null;
   const tipZone = bladeT > 0.42;
-  if (grade === GRADE.DEFLECT && bladeSpeed > 7.5 && tipZone && ctx.candidates) {
+  // Only the reticle model promotes a deflect to a RETURN by finding a victim;
+  // under the physical and sweep models a bolt reaches an enemy because you
+  // pointed the blade at them, not because the game looked for one.
+  if (mode === 'reticle' && grade === GRADE.DEFLECT && bladeSpeed > 7.5 && tipZone && ctx.candidates) {
     target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? 0.42);
     if (target) grade = GRADE.RETURN;
   }
   if (grade === GRADE.RETURN && bladeSpeed > 15 && closing > 5 && bladeT > 0.55) grade = GRADE.PERFECT;
 
-  // outgoing direction
+  // ── outgoing direction: three models, chosen by ctx.aimMode
   const out = new THREE.Vector3();
-  if (grade >= GRADE.RETURN && target) {
-    out.subVectors(target.point, hit.point).normalize();
-    // a tiny inaccuracy that Flow removes entirely
-    const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.008 : 0.028);
-    out.x += (Math.random() - 0.5) * jitter;
-    out.y += (Math.random() - 0.5) * jitter;
-    out.z += (Math.random() - 0.5) * jitter;
+  const mirror = _a.copy(boltDir).reflect(_v4).normalize();
+
+  if (grade === GRADE.BLOCK) {
+    // A block is not aimed under any model — you got the blade in the way and
+    // the bolt went somewhere. That is the whole difference from a deflect.
+    out.copy(mirror);
+    const scatter = 0.55;
+    out.x += (Math.random() - 0.5) * scatter;
+    out.y += (Math.random() - 0.5) * scatter + 0.12;
+    out.z += (Math.random() - 0.5) * scatter;
     out.normalize();
+  } else if (mode === 'physical') {
+    // PHYSICAL — the bolt mirrors off the blade's real surface and nothing
+    // else. Completely honest, completely unforgiving: to place a bolt you
+    // must set the blade's angle in three dimensions inside the contact
+    // window. You will hit things, but mostly by accident.
+    out.copy(mirror).addScaledVector(_v5, 0.018).normalize();
+  } else if (mode === 'sweep') {
+    // SWEEP — the bolt goes where you SWUNG. Drag the blade left and it flies
+    // left. Very physical to read, and it uses the motion you were already
+    // making, but it welds aiming to the same input that does the blocking:
+    // the swing that blocks best is not the swing that aims best.
+    if (_v5.lengthSq() > 1e-6) {
+      out.copy(_v5).normalize().multiplyScalar(clamp(bladeSpeed / 14, 0.25, 1));
+      out.addScaledVector(mirror, 0.55).normalize();
+    } else out.copy(mirror);
   } else {
-    // mirror about the blade surface, then carry some of the blade's motion
-    out.copy(boltDir).reflect(_v4);
-    if (grade === GRADE.BLOCK) {
-      const scatter = 0.55;
-      out.x += (Math.random() - 0.5) * scatter;
-      out.y += (Math.random() - 0.5) * scatter + 0.12;
-      out.z += (Math.random() - 0.5) * scatter;
+    // RETICLE (default) — where you LOOK decides where it goes; the blade
+    // decides IF it goes. Two independent skills, which is what makes this
+    // feel like mastery instead of luck: time the contact with the blade, pick
+    // the victim with the camera. Meet the bolt cleanly with nothing under the
+    // crosshair and you still get an honest mirror.
+    if (target) {
+      out.subVectors(target.point, hit.point).normalize();
+      const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.008 : 0.028);
+      out.x += (Math.random() - 0.5) * jitter;
+      out.y += (Math.random() - 0.5) * jitter;
+      out.z += (Math.random() - 0.5) * jitter;
+      out.normalize();
+    } else if (ctx.aimDir) {
+      // no victim, but a clean deflect still throws it down your sightline
+      out.copy(mirror).lerp(ctx.aimDir, 0.55).normalize();
     } else {
-      out.addScaledVector(_v5, 0.018);
+      out.copy(mirror);
     }
-    out.normalize();
+  }
+
+  // Under the physical and sweep models nothing has claimed a target yet, so
+  // check whether the bolt we just produced is actually going to reach one —
+  // earning the same RETURN credit by aim rather than by assist.
+  if (mode !== 'reticle' && grade === GRADE.DEFLECT && ctx.candidates) {
+    const hitting = pickReturnTarget(hit.point, out, ctx.candidates, 0.06);
+    if (hitting) {
+      target = hitting;
+      grade = bladeSpeed > 15 && closing > 5 && bladeT > 0.55 ? GRADE.PERFECT : GRADE.RETURN;
+    }
   }
 
   const damageMul = grade === GRADE.PERFECT ? 2.5 : grade === GRADE.RETURN ? 1.5 : 1.0;

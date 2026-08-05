@@ -99,6 +99,10 @@ export class HUD {
     el.hpGhost.style.transform = `scaleX(${clamp(this.hpGhostValue, 0, 1)})`;
     el.hp.parentElement.classList.toggle('low', hp < 0.3);
     el.force.style.transform = `scaleX(${clamp(player.force / player.maxForce, 0, 1)})`;
+    // Focus reads on the Force bar itself — it is Force being spent, and
+    // showing it anywhere else would hide the trade the ability is built on.
+    const fs = world?.focus;
+    if (fs) el.force.parentElement.classList.toggle('focus', fs.held > 0.05);
     el.stam.style.transform = `scaleX(${clamp(player.stamina / player.maxStamina, 0, 1)})`;
     el.stam.parentElement.classList.toggle('low', player.stamina / player.maxStamina < 0.25);
 

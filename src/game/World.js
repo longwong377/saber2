@@ -19,6 +19,7 @@ import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector } from './Waves.js';
 import { LEVELS } from './Levels.js';
 import { BladeLock } from './Duel.js';
+import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { spheresForGeometry } from '../world/Slice.js';
@@ -48,6 +49,7 @@ export class World {
     this.takenBoons = new Set();
 
     this.timeScale = 1;
+    this.focus = new FocusSystem();
     this.targetTimeScale = 1;
     this.hitstop = 0;
     this.time = 0;
@@ -313,10 +315,24 @@ export class World {
       this.hitstop -= rawDt;
       dt = rawDt * 0.06;
     }
+    // ── Focus. Two layers, both of which slow the WORLD: a free shallow dip
+    // when a bolt is genuinely about to land, and a deep, Force-hungry one the
+    // player holds deliberately. The player is compensated back up afterwards,
+    // so what the system actually produces is not bullet time — it is you being
+    // fast while everything else is not.
+    const P = this.player;
+    if (P && P.alive && P.isLocal) {
+      const threats = this.bolts ? this.bolts.threatsNear(P.chest, this.focus.passiveRange) : null;
+      const hostile = threats ? threats.filter(t => t.bolt.team !== P.team) : null;
+      const spent = this.focus.update(rawDt, input?.act('focus'), P.force, hostile);
+      if (spent) P.force = Math.max(0, P.force - spent);
+    } else this.focus.reset();
+
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
-    dt *= this.timeScale;
+    dt *= this.timeScale * this.focus.scale;
     dt = Math.min(dt, 1 / 24);
     this.time += dt;
+    this.engine.setFocus?.(this.focus.intensity());
 
     const camera = this.engine.camera;
     const ctx = {
@@ -329,8 +345,13 @@ export class World {
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
     };
 
-    // 1 — players
-    for (const p of this.players) p.update(dt, ctx);
+    // 1 — players. The local player gets time back that Focus took away; that
+    // asymmetry between the player's clock and the world's IS the ability.
+    for (const p of this.players) {
+      if (p.isLocal && this.focus.playerCompensation > 1.0001) {
+        p.update(Math.min(dt * this.focus.playerCompensation, 1 / 24), { ...ctx, dt: dt * this.focus.playerCompensation });
+      } else p.update(dt, ctx);
+    }
 
     // 2 — enemies
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -668,6 +689,7 @@ export class World {
       candidates,
       flow: owner.flow,
       returnCone: owner.boonMods.returnCone,
+      aimMode: this.settings.deflectAim || 'reticle',
     });
 
     bolt.pos.copy(bladePoint);

@@ -300,31 +300,29 @@ export class Player {
     this.camera.addPitch(camDelta.pitch);
 
     // ignite / retract
-    if (input.hit('KeyX')) {
+    if (input.actHit('ignite')) {
       this.saber.toggle();
       if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
       else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
     }
-    if (input.hit('KeyV')) {
+    if (input.actHit('view')) {
       this.camera.firstPerson = !this.camera.firstPerson;
       this._applyViewMode();
     }
 
     // grip / one-hand
-    const wantOne = input.down('AltLeft') || input.down('AltRight') || this.saberThrown;
+    const wantOne = input.act('grip2') || this.saberThrown;
     this.control.grip = wantOne ? 'one' : 'two';
 
     // force powers
-    if (input.hit('KeyF')) {
-      if (input.down('ShiftLeft') || input.down('ShiftRight')) this.forcePull(ctx);
-      else this.forcePush(ctx);
-    }
-    if (input.hit('KeyG')) this.toggleGrip(ctx);
-    if (input.hit('KeyR')) this.throwOrRecall(ctx);
-    if (input.hit('KeyC')) this.toggleSense(ctx);
-    if (input.hit('KeyZ') && this.boonMods.lightning) this.forceLightning(ctx);
-    if (input.buttonPressed[1] && this.gripBody) this.hurlGripped(ctx);
-    if (input.hit('ShiftLeft') && input.moveAxis(_axis).y !== 0 && this.cooldowns.dash <= 0) this._tryDash(ctx);
+    if (input.actHit('push')) this.forcePush(ctx);
+    if (input.actHit('pull')) this.forcePull(ctx);
+    if (input.actHit('grip')) this.toggleGrip(ctx);
+    if (input.actHit('throw')) this.throwOrRecall(ctx);
+    if (input.actHit('sense')) this.toggleSense(ctx);
+    if (input.actHit('lightning') && this.boonMods.lightning) this.forceLightning(ctx);
+    if (input.actHit('hurl') && this.gripBody) this.hurlGripped(ctx);
+    if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
   }
 
   _applyViewMode() {
@@ -343,8 +341,8 @@ export class Player {
     const terrain = ctx.terrain;
     const axis = this.isLocal ? input.moveAxis(_axis) : (this.netAxis || _axis0);
 
-    const sprinting = this.isLocal && (input.down('ShiftLeft') || input.down('ShiftRight')) && axis.y > 0.2 && this.stamina > 4;
-    const crouching = this.isLocal && (input.down('ControlLeft') || input.down('ControlRight'));
+    const sprinting = this.isLocal && input.act('sprint') && axis.y > 0.2 && this.stamina > 4;
+    const crouching = this.isLocal && input.act('crouch');
     this.crouch = damp(this.crouch, crouching ? 1 : 0, 12, dt);
 
     const base = 4.6 * this.boonMods.moveSpeed;
@@ -368,11 +366,13 @@ export class Player {
     this.velocity.z = damp(this.velocity.z, targetV.z, accel * 0.42, dt);
 
     // ── jump
-    if (this.grounded) { this.coyote = 0.14; this.airJumps = this.boonMods.doubleJump ? 1 : 0; }
+    // Everyone gets the second jump — it is a Force jump, not an upgrade. The
+    // boon grants a third.
+    if (this.grounded) { this.coyote = 0.14; this.airJumps = this.boonMods.doubleJump ? 2 : 1; }
     else this.coyote = Math.max(0, this.coyote - dt);
 
     if (this.isLocal) {
-      if (input.hit('Space')) {
+      if (input.actHit('jump')) {
         if (this.coyote > 0) {
           this.velocity.y = 7.4 * this.boonMods.jumpPower;
           this.grounded = false; this.coyote = 0;
@@ -392,7 +392,7 @@ export class Player {
         }
       }
       // holding jump feeds the Force into the leap — a real, controllable arc
-      if (input.down('Space') && this.jumpHeld > 0 && this.velocity.y > 0 && this.force > 0) {
+      if (input.act('jump') && this.jumpHeld > 0 && this.velocity.y > 0 && this.force > 0) {
         const cost = 34 * dt * this.boonMods.forceCost;
         this.force = Math.max(0, this.force - cost);
         this.velocity.y += 20 * dt;
@@ -584,8 +584,11 @@ export class Player {
     const axis = ctx.input.moveAxis(_axis);
     const fwd = _v1.set(Math.sin(this.camera.yaw), 0, Math.cos(this.camera.yaw)).negate();
     const right = _v2.set(fwd.z, 0, -fwd.x).negate();
+    // Any direction, including pure strafe and pure backward — this used to
+    // require a forward or back input, so you could not sidestep a bolt.
     this.dashDir.set(0, 0, 0).addScaledVector(fwd, axis.y).addScaledVector(right, axis.x);
-    if (this.dashDir.lengthSq() < 0.01) this.dashDir.copy(fwd);
+    // No direction held means "get me out of here": dash backward, not into it.
+    if (this.dashDir.lengthSq() < 0.01) this.dashDir.copy(fwd).negate();
     this.dashDir.normalize();
     this.dashTimer = 0.17;
     this.stamina -= 18;
