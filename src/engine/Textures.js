@@ -183,20 +183,29 @@ export function metalMaps(repeat = 4, opts = {}) {
 }
 
 export function clothMaps(repeat = 3) {
-  return materialFrom('cloth', 256, (u, v) => {
-    const weaveU = Math.sin(u * Math.PI * 2 * 64) * 0.5 + 0.5;
-    const weaveV = Math.sin(v * Math.PI * 2 * 64) * 0.5 + 0.5;
-    const weave = Math.max(weaveU, weaveV);
+  return materialFrom('cloth', 512, (u, v) => {
+    // A woven twill: two interleaved thread directions plus fine fuzz.
+    //
+    // The large-scale `wear` term is deliberately almost invisible in the
+    // albedo. It used to swing the base tone by ±25% at 8 cycles across the
+    // sheet, which — tiled twice over a cape — baked soft grey-brown blotches
+    // into every robe in the game. On a moving cloak they read as water
+    // condensation on the lens rather than as fabric. Cloth wants tight, high
+    // frequency structure and a nearly flat base tone; the character comes
+    // from the weave, not from big soft stains.
+    const threadU = Math.sin(u * Math.PI * 2 * 48) * 0.5 + 0.5;
+    const threadV = Math.sin(v * Math.PI * 2 * 48) * 0.5 + 0.5;
+    const weave = Math.max(threadU, threadV);
     const wear = fbm2(u * 8, v * 8, 4) * 0.5 + 0.5;
-    const fuzz = fbm2(u * 220, v * 220, 2) * 0.5 + 0.5;
-    const h = weave * 0.5 + fuzz * 0.2 + wear * 0.3;
-    const t = 0.72 + wear * 0.35 + weave * 0.12;
+    const fuzz = fbm2(u * 200, v * 200, 2) * 0.5 + 0.5;
+    const h = weave * 0.55 + fuzz * 0.26 + wear * 0.06;
+    const t = 0.94 + weave * 0.06 + fuzz * 0.03 - wear * 0.05;
     return {
       h: h * 0.04,
       r: clamp(t, 0, 1), g: clamp(t, 0, 1), b: clamp(t, 0, 1),
-      rough: clamp(0.86 + fuzz * 0.1 - wear * 0.08, 0, 1), metal: 0,
+      rough: clamp(0.88 + fuzz * 0.06 - wear * 0.03, 0, 1), metal: 0,
     };
-  }, { repeat, normalStrength: 3.0 });
+  }, { repeat, normalStrength: 2.0 });
 }
 
 export function armorMaps(repeat = 2) {

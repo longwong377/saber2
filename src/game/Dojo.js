@@ -87,14 +87,14 @@ export function buildDummy() {
 export const LESSONS = [
   {
     id: 'feel', title: 'Feel the weight', need: 6,
-    brief: 'Move the mouse. The blade follows, but not instantly — it lags a flick and overshoots a snap.',
-    hint: 'Swing the blade hard enough to hear it cut the air.',
+    brief: 'HOLD LEFT MOUSE and move. While you hold it the mouse is the blade, not the camera. Let go and the blade returns to guard.',
+    hint: 'The blade lags a flick and overshoots a snap. Swing hard enough to hear it cut the air.',
     setup: { remotes: 0, dummies: 0, spar: false },
     check: (ev, s) => ev.type === 'swing' && ev.speed > 13,
   },
   {
     id: 'block', title: 'Meet the bolt', need: 5,
-    brief: 'A remote will fire slowly. Just get the blade in the way — anywhere on it.',
+    brief: 'A remote will fire slowly. Hold left mouse and get the blade in the way — anywhere on it.',
     hint: 'Watch where the bolt is going, not where it is.',
     setup: { remotes: 1, fireRate: 2.4, boltSpeed: 26, dummies: 0, spar: false },
     check: (ev) => ev.type === 'deflect',
@@ -144,7 +144,7 @@ export const LESSONS = [
   {
     id: 'lock', title: 'Blade lock', need: 1,
     brief: 'Rest your blade against theirs while neither of you is swinging, and you will bind.',
-    hint: 'In a lock, drive the mouse hard to overpower them.',
+    hint: 'In a lock, hold left mouse and drive it hard to overpower them.',
     setup: { remotes: 0, dummies: 0, spar: true, sparForm: 'soresu', sparSpeed: 0.7 },
     check: (ev) => ev.type === 'lockWon',
   },

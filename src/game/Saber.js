@@ -14,6 +14,7 @@ const rng = makeRng(88);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _c = new THREE.Color();
 
 export const SABER_COLORS = [
   { name: 'Cerulean',  hex: 0x3ba7ff, glow: 0x8fd8ff, key: 'blue' },
@@ -135,6 +136,16 @@ export class Saber {
     this.trailMat.uniforms.uCore.value.copy(this.glowColor);
     this.light.color.copy(this.color);
     this.tipLight.color.copy(this.color);
+    this.core.material.color.copy(this._coreColour());
+  }
+
+  /**
+   * The core's emissive colour: the pale end of the blade's palette, pushed
+   * above 1.0 so it blooms. Bright enough to look white-hot down the middle,
+   * tinted enough that the hue survives the clamp at the edges.
+   */
+  _coreColour(out = new THREE.Color()) {
+    return out.copy(this.glowColor).multiplyScalar(1.75);
   }
 
   /* ── construction ──────────────────────────────────────────────────── */
@@ -233,21 +244,29 @@ export class Saber {
       return m;
     };
 
-    // A white-hot core just over 1.0 so bloom bites, wrapped in a halo only a
-    // few centimetres wider. Any more and the blade stops reading as a blade
-    // and becomes a smear of light with a person somewhere behind it.
-    const coreGeo = new THREE.CapsuleGeometry(0.0125 * w, L - 0.024 * w, 4, 12);
+    // A hot core just over 1.0 so bloom bites, wrapped in a halo a few
+    // centimetres wider. Any more and the blade stops reading as a blade and
+    // becomes a smear of light with a person somewhere behind it.
+    //
+    // The core is tinted, NOT pure white. Everything above 1.0 clamps to white
+    // on the way out, so a (2.2, 2.2, 2.2) core rendered every saber in the
+    // game as an identical colourless stick — the chosen colour only ever
+    // survived in the halo, which the core then sat on top of.
+    const coreGeo = new THREE.CapsuleGeometry(0.0115 * w, L - 0.023 * w, 4, 12);
     coreGeo.translate(0, L / 2, 0);
     this.core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({
-      color: new THREE.Color(2.2, 2.2, 2.2), toneMapped: false, fog: false,
+      color: this._coreColour(), toneMapped: false, fog: false,
     }));
     this.core.frustumCulled = false;
     this.bladeGroup.add(this.core);
 
+    // Each shell approximates the chord length through a tube of plasma, so it
+    // is brightest on the axis and fades to nothing at its own silhouette.
+    // They need to be wide and soft, or the colour hides under the core.
     this.glowMeshes = [
-      mkGlow(0.023 * w, 1.2, 1.05),
-      mkGlow(0.040 * w, 2.2, 0.55),
-      mkGlow(0.068 * w, 3.6, 0.20),
+      mkGlow(0.028 * w, 0.95, 1.45),
+      mkGlow(0.052 * w, 1.70, 0.80),
+      mkGlow(0.098 * w, 2.70, 0.30),
     ];
     this.bladeGroup.scale.y = 0.0001;
     this.bladeGroup.visible = false;
@@ -368,7 +387,7 @@ export class Saber {
     const flick = 0.94 + Math.sin(time * 47.3) * 0.022 + Math.sin(time * 111.7) * 0.014
                   + this.contactStrain * 0.22 * Math.sin(time * 180);
     for (const g of this.glowMeshes) g.material.uniforms.uFlicker.value = flick;
-    this.core.material.color.setRGB(2.2 * flick, 2.2 * flick, 2.2 * flick);
+    this.core.material.color.copy(this._coreColour(_c)).multiplyScalar(flick);
 
     const on = this.ignition > 0.05;
     if (on) {
