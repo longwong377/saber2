@@ -22,11 +22,11 @@
  */
 
 import * as THREE from 'three';
-import { grassSprite, smokeSprite, radialSprite } from '../engine/Textures.js';
+import { grassSprite, smokeSprite } from '../engine/Textures.js';
 import { makeRng, clamp, fbm2, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng(70707);
-const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _v1 = new THREE.Vector3();
 const _col = new THREE.Color();
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -471,7 +471,7 @@ const GRASS_CARD_VERT = /* glsl */`
     // instance budget over thirty times the area of the near one, so each
     // instance has to stand in for a patch rather than for a plant. They widen
     // further out again, where a gap between clumps would be a bald spot.
-    float widen = 0.8 + 0.7 * (d / uFar);
+    float widen = 0.55 + 0.95 * (d / uFar);
     vec3 world = base
                + sideV * (position.x * uWidth * len * 2.2 * widen)
                + vec3(lean.x, h * len, lean.y);
@@ -858,8 +858,8 @@ export class GrassField {
     const outer = ring.far;
     const span = outer * outer - inner * inner;
     const waterLine = ground.water ? ground.water.level : null;
-    const perTuft = ring.card ? 2 : 5;
-    const spread = ring.card ? 0.55 : 0.13;
+    const perTuft = ring.card ? 2 : 6;
+    const spread = ring.card ? 0.55 : 0.11;
 
     let left = 0, tx = 0, tz = 0, density = 0, live = false, lean = 0;
     for (let i = 0; i < ring.count; i++) {
@@ -886,9 +886,17 @@ export class GrassField {
       const x = tx + (rng() - 0.5) * spread;
       const z = tz + (rng() - 0.5) * spread;
       const y = this.terrain ? this.terrain.height(x, z) : 0;
-      const base = ring.card ? 0.50 : 0.40;
-      const varies = ring.card ? 0.44 : 0.52;
-      const scale = live ? (base + rng() * varies) * clamp(density * 1.8, 0.4, 1.5) : 0;
+      // Height matters more than it looks. A 1.4m blade beside a 1.78m
+      // character reads as scratchy weeds however many of them there are;
+      // knee-high and packed reads as ground cover. Cap it well under the knee.
+      // Blade geometry spans v = 0..1, so these ARE metres, not a multiplier.
+      // At 0.30 + 0.34 the median blade stood 0.51m and the top 5% reached
+      // 0.87m — thigh-high on a 1.78m character. Sparse AND that tall reads as
+      // scratchy weeds rather than ground cover. Pasture is ankle-to-knee; the
+      // wet margin still earns its taller reeds from the density term above.
+      const base = ring.card ? 0.26 : 0.20;
+      const varies = ring.card ? 0.26 : 0.26;
+      const scale = live ? (base + rng() * varies) * clamp(density * 1.8, 0.5, 1.15) : 0;
 
       a[i * 4] = x;
       a[i * 4 + 1] = y - 0.02;

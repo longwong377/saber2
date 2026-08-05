@@ -62,12 +62,12 @@ export function propMaterials() {
   });
   const cloth = clothMaps(2);
   MATS = {
-    crate: mk(metal, lit(1.08, 0.83, 0.49), 0.62, 0.35),        // olive drab
+    crate: mk(metal, lit(0.86, 0.68, 0.40), 0.62, 0.35),        // olive drab
     crateDark: mk(metal, lit(0.41, 0.37, 0.29), 0.55, 0.7),
     barrel: mk(metal, lit(0.96, 0.49, 0.22), 0.5, 0.75),        // oxide red
-    duracrete: mk(crete, lit(0.91, 0.89, 0.87), 0.94, 0.02),
-    stone: mk(rock, lit(2.02, 2.44, 2.76), 0.92, 0.02),
-    steel: mk(metal, lit(1.75, 1.63, 1.46), 0.34, 0.98),
+    duracrete: mk(crete, lit(0.82, 0.76, 0.66), 0.94, 0.02),
+    stone: mk(rock, lit(1.90, 2.10, 2.20), 0.92, 0.02),
+    steel: mk(metal, lit(1.50, 1.42, 1.30), 0.34, 0.98),
     darkSteel: mk(metal, lit(0.64, 0.60, 0.56), 0.42, 0.95),
     hull: mk(armor, lit(0.63, 0.68, 0.76), 0.42, 0.85),
     glass: new THREE.MeshStandardMaterial({ color: 0x8fd8ff, roughness: 0.06, metalness: 0.1,
@@ -81,10 +81,10 @@ export function propMaterials() {
      * the rust that runs out of every fixing, and the paint somebody put on
      * it before the war are four different materials to the eye even when
      * they share one baked map. */
-    duracreteWarm: mk(crete, lit(1.22, 1.08, 0.87), 0.93, 0.02),  // sun-bleached facing
-    duracreteDark: mk(crete, lit(0.46, 0.45, 0.45), 0.96, 0.02),  // wall core, undersides
-    sandstone: mk(rock, lit(3.12, 3.21, 2.59), 0.95, 0.0),        // carved stone, plinths
-    stoneDark: mk(rock, lit(1.01, 1.28, 1.55), 0.94, 0.02),       // shadowed masonry
+    duracreteWarm: mk(crete, lit(1.05, 0.92, 0.72), 0.93, 0.02),  // sun-bleached facing
+    duracreteDark: mk(crete, lit(0.40, 0.37, 0.34), 0.96, 0.02),  // wall core, undersides
+    sandstone: mk(rock, lit(2.70, 2.40, 1.70), 0.95, 0.0),        // carved stone, plinths
+    stoneDark: mk(rock, lit(0.95, 1.10, 1.25), 0.94, 0.02),       // shadowed masonry
     strata: null,                                                 // filled in below
     rust: mk(metal, lit(0.51, 0.26, 0.12), 0.88, 0.55),
     rebar: mk(metal, lit(0.45, 0.26, 0.15), 0.8, 0.72),
@@ -95,10 +95,10 @@ export function propMaterials() {
     panel: mk(armor, lit(0.36, 0.40, 0.47), 0.46, 0.85),
     grating: mk(metal, lit(0.32, 0.29, 0.27), 0.66, 0.9),
     tarp: new THREE.MeshStandardMaterial({
-      color: lit(0.28, 0.21, 0.12), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
+      color: lit(0.42, 0.33, 0.19), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
       roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide }),
     tarpBlue: new THREE.MeshStandardMaterial({
-      color: lit(0.11, 0.15, 0.21), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
+      color: lit(0.15, 0.20, 0.28), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
       roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide }),
     cable: new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.86, metalness: 0.1 }),
     glowAmber: new THREE.MeshStandardMaterial({ color: 0x1a1206, emissive: 0xffa838, emissiveIntensity: 2.6, roughness: 0.5 }),
@@ -1177,7 +1177,7 @@ export function rockGeo(size, seed = 1, opts = {}) {
   const nb = Math.max(2, Math.round(size.y * 2 / (opts.bed ?? 0.55)));
   // three rings per bed — base, body, undercut — or the steps smooth away into
   // the pillow shape that makes procedural rock look like bread
-  const seg = opts.seg ?? 13, rings = opts.rings ?? Math.min(30, Math.max(6, nb * 3));
+  const seg = opts.seg ?? 13, rings = opts.rings ?? Math.min(48, Math.max(6, nb * 3));
   const hard = [];
   for (let b = 0; b <= nb + 1; b++) hard.push(r());
   const plan = [];
@@ -1278,35 +1278,52 @@ export function addInstanced(world, geo, mat, list, centre, opts = {}) {
 }
 
 /**
- * A sedimentary outcrop: three to six bedded masses stacked with overhangs,
- * plus the scree they have shed. `size` is the footprint radius — 4 m is a
- * bit of cover, 12 m is a landmark you can lose a squad behind.
+ * A sedimentary outcrop: one tall bedded mass — the beds are cut into the mass
+ * itself, not stacked as separate discs, which is the difference between a
+ * crag and a pile of plates — plus buttress spurs at its foot, a cap rock, and
+ * the scree it has shed.
+ *
+ * `size` is the footprint radius: 4 m is a bit of cover, 8 m is a place to
+ * fight around, 12 m is a landmark you can lose a squad behind.
  */
 export function addOutcrop(world, pos, opts = {}) {
   const kit = kitOpen(pos, opts, 606);
   const M = propMaterials();
   const S = opts.size ?? 7;
-  const H = opts.height ?? S * 1.15;
-  const layers = opts.layers ?? (3 + Math.floor(kit.rng() * 3));
+  const H = opts.height ?? S * 1.25;
   const rr = kit.rng;
+  const seed = opts.seed ?? 606;
   const mat = opts.mat || M.strata;
-  let y = 0, rad = S * 0.62;      // beds are taller than they are wide-ish
-  for (let i = 0; i < layers; i++) {
-    // beds get taller and narrower going up, so the stack is a mesa rather
-    // than a pile of pancakes — and one in four oversails the bed below
-    const h = (H / layers) * (0.85 + rr() * 1.1) * lerp(0.85, 1.3, i / layers);
-    const shrink = rr() < 0.26 ? 1.1 : lerp(0.9, 0.58, rr());
-    const ox = (rr() - 0.5) * rad * 0.36, oz = (rr() - 0.5) * rad * 0.36;
-    const sz = new THREE.Vector3(rad, h / 2, rad * (0.62 + rr() * 0.6));
-    const g = rockGeo(sz, (opts.seed ?? 606) + i * 13, {
-      seg: 12, rings: Math.max(5, Math.round(h * 2.6)), bed: 0.45,
-      dip: (rr() - 0.5) * 0.22, bedOffset: y, bandAmp: 0.16,
+
+  const main = rockGeo(new THREE.Vector3(S * 0.72, H / 2, S * 0.58), seed, {
+    seg: 15, bed: 0.55, bandAmp: 0.17, dip: (rr() - 0.5) * 0.13,
+  });
+  main.rotateY(rr() * TAU);
+  kit.put(main, mat, 0, H / 2, 0);
+  kit.collider(0, H / 2, 0, S * 0.5, H / 2, S * 0.42, rr() * TAU, 0.92);
+
+  // spurs at the foot, leaning out of the mass — these are what stop the
+  // silhouette being a single extruded blob
+  const spurs = opts.spurs ?? (2 + Math.floor(rr() * 3));
+  for (let i = 0; i < spurs; i++) {
+    const a = (i / spurs) * TAU + rr() * 0.9;
+    const sh = H * (0.22 + rr() * 0.4);
+    const sw = S * (0.3 + rr() * 0.3);
+    const d = S * (0.45 + rr() * 0.4);
+    const g = rockGeo(new THREE.Vector3(sw, sh / 2, sw * (0.6 + rr() * 0.5)), seed + 31 + i * 7, {
+      seg: 11, bed: 0.5, bandAmp: 0.16, dip: (rr() - 0.35) * 0.5, bedOffset: 0,
     });
     g.rotateY(rr() * TAU);
-    kit.put(g, mat, ox, y + h / 2, oz);
-    kit.collider(ox, y + h / 2, oz, rad * 0.66, h / 2, rad * 0.55, rr() * TAU, 0.92);
-    y += h * (0.68 + rr() * 0.22);
-    rad *= shrink;
+    kit.put(g, mat, Math.cos(a) * d, sh / 2 - sh * 0.12, Math.sin(a) * d);
+    kit.collider(Math.cos(a) * d, sh / 2, Math.sin(a) * d, sw * 0.7, sh / 2, sw * 0.55, a, 0.92);
+  }
+  // a harder cap that has protected the beds under it
+  if (opts.cap !== false) {
+    const ch = H * 0.16;
+    const g = rockGeo(new THREE.Vector3(S * 0.5, ch / 2, S * 0.42), seed + 91, {
+      seg: 13, bed: 0.4, bandAmp: 0.1, shoulder: 14, bedOffset: H,
+    });
+    kit.put(g, mat, (rr() - 0.5) * S * 0.2, H - ch * 0.2, (rr() - 0.5) * S * 0.2);
   }
   if (opts.scree !== false) {
     addScree(world, new THREE.Vector3(0, 0, 0), {
@@ -2640,13 +2657,21 @@ export function addTarp(world, pos, opts = {}) {
   for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
     const u = i / nx, v = j / nz;
     const x = (u - 0.5) * w, z = (v - 0.5) * d;
-    // a soft dome over whatever is underneath, pulled down hard at the corners
-    const dome = Math.cos((u - 0.5) * Math.PI) * Math.cos((v - 0.5) * Math.PI);
-    const wrinkle = Math.sin(u * 11 + ph) * Math.sin(v * 8.6 + ph) * 0.045
-                  + fbm2(u * 4 + ph, v * 4, 3) * 0.07;
-    const y = h * Math.pow(clamp(dome, 0, 1), 0.7) + wrinkle * h;
+    // A tarp over a pile is flat on top and creased down the sides, not a
+    // cone: the load holds the middle up and the fabric breaks over its edges.
+    const du = Math.abs(u - 0.5) * 2, dv = Math.abs(v - 0.5) * 2;
+    const load = clamp(1 - Math.pow(Math.max(du, dv), 3.2), 0, 1);
+    const dome = Math.pow(load, 0.42);
+    // creases run down the slope from the high points and gather at the hem
+    const slope = 1 - dome;
+    const crease = (Math.sin(Math.atan2(z, x) * 7 + ph) * 0.5 + 0.5) * slope * slope * 0.22
+                 + Math.sin(u * 13.7 + ph) * Math.sin(v * 11.3 + ph * 1.7) * 0.035
+                 + fbm2(u * 5 + ph, v * 5, 3) * 0.05;
+    const y = h * (dome - crease * 0.9) + 0.02;
     const o = (j * (nx + 1) + i) * 3, o2 = (j * (nx + 1) + i) * 2;
-    pos3[o] = x * (1 + (1 - dome) * 0.06); pos3[o + 1] = y; pos3[o + 2] = z * (1 + (1 - dome) * 0.06);
+    // the hem kicks outward where the fabric bunches on the ground
+    const flare = 1 + Math.pow(Math.max(du, dv), 4) * 0.12;
+    pos3[o] = x * flare; pos3[o + 1] = Math.max(0.01, y); pos3[o + 2] = z * flare;
     uv[o2] = x * k; uv[o2 + 1] = z * k;
   }
   const idx = [];

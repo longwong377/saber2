@@ -1775,7 +1775,9 @@ export function buildTrooper(opts = {}) {
           const kr = onLimb(shin, 0.034 * s, [0, 0, 1], 0)[2];
           const cap = new THREE.SphereGeometry(0.056 * s, 9, 6, 0, Math.PI * 2, 0, Math.PI * 0.56);
           cap.scale(1.05, 0.85, 1.0);
-          kn.add(plate, cap, [0, 0.034 * s, kr + 0.004 * s], [-1.45, 0, 0]);
+          // +1.45, not -1.45: rotating +Y about X by a NEGATIVE angle tips the
+          // dome's pole to -Z, which put the kneecap on the back of the leg
+          kn.add(plate, cap, [0, 0.034 * s, kr + 0.004 * s], [1.45, 0, 0]);
           kn.add(accent, limbPlate(shin, 0.052 * s, 0.072 * s, 1.8, { thick: 0.007 * s, seg: 6, gap: 0.019 * s }),
             [0, 0.052 * s, 0]);
           kn.add(plate, limbPlate(shin, L * 0.22, L * 0.84, 3.7, { thick: 0.014 * s, seg: 8, gap: 0.006 * s }),

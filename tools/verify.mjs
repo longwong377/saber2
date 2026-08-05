@@ -2054,6 +2054,32 @@ check('composition: polar bias moves the crowd in or out', () => {
   return `mean radius ${inner.toFixed(0)}m / ${even.toFixed(0)}m / ${outer.toFixed(0)}m at bias 0.4 / 1 / 2.4`;
 });
 
+check('scenery: grass is ground cover, not waist-high weeds', async () => {
+  // The blade geometry spans v = 0..1, so the per-instance scale IS the blade's
+  // height in metres. That makes it very easy to author grass that is taller
+  // than a person's knee without noticing, which is exactly what happened.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/world/Scenery.js', import.meta.url), 'utf8');
+
+  // the geometry must still be unit-height, or the numbers below mean nothing
+  const geo = src.match(/function bladeGeometry[\s\S]*?\n\}/);
+  assert(geo && /pos\[k \* 3 \+ 1\] = v;/.test(geo[0]),
+    'bladeGeometry no longer spans v = 0..1 — the height maths below is void');
+
+  const m = src.match(/const base = ring\.card \? ([\d.]+) : ([\d.]+);\s*\n\s*const varies = ring\.card \? ([\d.]+) : ([\d.]+);/);
+  assert(m, 'could not find the grass height constants');
+  const [cardBase, nearBase, cardVar, nearVar] = m.slice(1).map(Number);
+
+  // worst case: the top of the random range times the top of the density clamp
+  const tallest = (b, v) => (b + v) * 1.5;
+  const nearMax = tallest(nearBase, nearVar), cardMax = tallest(cardBase, cardVar);
+  assert(nearMax < 0.75, `the tallest blade is ${nearMax.toFixed(2)}m — knee-high on a 1.78m character at most`);
+  assert(cardMax < 0.85, `the tallest tuft is ${cardMax.toFixed(2)}m`);
+  // and it must not be so short it reads as moss
+  assert(nearMax > 0.25, `the tallest blade is only ${nearMax.toFixed(2)}m`);
+  return `tallest blade ${nearMax.toFixed(2)}m, tallest tuft ${cardMax.toFixed(2)}m`;
+});
+
 /* ══════════════════════════════════════════════════════════════════════ */
 
 await Promise.all(pending);

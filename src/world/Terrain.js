@@ -387,8 +387,11 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   vec3 Txz = normalize(vec3(ny, -nW.x, 0.0));
   vec3 Bxz = normalize(vec3(0.0, -nW.z, ny));
   float nFade = 1.0 - smoothstep(90.0, 300.0, viewDist) * 0.75;
+  // Ripples are a windward phenomenon: the slip face avalanches smooth, the
+  // hollows fill with fines, and a crust does not ripple at all.
   float baseAmp = uNrmScale.x * mix(1.0, 0.45, driftW) * mix(1.0, 1.3, scour)
-                * mix(1.0, 0.5, crustW) * nFade;
+                * mix(1.0, 0.5, crustW) * nFade
+                * mix(1.0, 0.42, lee * smoothstep(0.05, 0.17, slope));
   vec3 terNrmOff = (Txz * baseN.x + Bxz * baseN.y) * (baseAmp * (1.0 - rockW));
 
   if (rockW > 0.004) {
@@ -652,7 +655,7 @@ export class Terrain {
       uMix: { value: new THREE.Vector4(1 / 74, 1 / 21, detail[1] * 0.35, detail[1]) },
       uNrmScale: { value: new THREE.Vector3(1.15, 0.85, 1.35) },
       uSkyCol: { value: new THREE.Color(0xcfe0f5) },
-      uHaze: { value: new THREE.Vector2(1.15, 0.85) },
+      uHaze: { value: new THREE.Vector2(0.8, 0.7) },   // re-read every frame
     };
 
     const mat = new THREE.MeshStandardMaterial({
@@ -723,6 +726,7 @@ export class Terrain {
         .replace('#include <common>', '#include <common>\nuniform float uShadowBias;')
         .replace('#include <begin_vertex>',
           '#include <begin_vertex>\ntransformed -= normal * uShadowBias;');
+      this._depthShader = shader;
     };
     return m;
   }
