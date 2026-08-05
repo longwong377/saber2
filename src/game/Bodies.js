@@ -427,10 +427,12 @@ export function dressHumanoid(rig, style) {
   addLimb('neck', P.neckR ?? 0.062, (P.neckR ?? 0.062) * 0.84, style.skin || style.body,
     { seg: SEG.neck ?? 12, rings: 3, bulge: 0 });
 
-  // head
+  // Head. `headR` exists because the droids replace the skull with their own
+  // shell: a B2's head is a box 17cm across, and the default 12cm ball was
+  // engulfing it — a smooth sphere with an armour plate buried inside.
   const head = rig.get('head');
   if (head) {
-    const hg = new THREE.SphereGeometry(0.105 * S, 18, 14);
+    const hg = new THREE.SphereGeometry((P.headR ?? 0.105) * S, 18, 14);
     hg.scale(0.94, 1.16, 1.03);
     hg.translate(0, 0.10 * S, 0);
     const hm = mesh(hg, style.head || style.skin || style.body, head.obj);
@@ -462,8 +464,8 @@ export function dressHumanoid(rig, style) {
       const ab = rig.get('arm' + side);
       if (ab) {
         mesh(new THREE.SphereGeometry(1, 12, 8), style.arm || style.body, ab.obj,
-          [0, armR * 0.78 * S, 0], null,
-          [armR * 1.38 * S, armR * 1.55 * S, armR * 1.22 * S]);
+          [0, armR * 0.85 * S, 0], null,
+          [armR * 1.32 * S, armR * 1.70 * S, armR * 1.16 * S]);
       }
     }
 
@@ -504,7 +506,10 @@ export function buildJedi(opts = {}) {
   const trim = clothMat(robe.trim, 0.85);
   const leather = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 0.55, metalness: 0.05 });
   const skin = skinMat(opts.skinColor ?? 0xc79a76);
-  const hair = new THREE.MeshStandardMaterial({ color: opts.hairColor ?? 0x2a1d14, roughness: 0.78 });
+  // DoubleSide: the hair cap is an open shell, and at the hairline you look
+  // straight at its inside face
+  const hair = new THREE.MeshStandardMaterial({
+    color: opts.hairColor ?? 0x2a1d14, roughness: 0.78, side: THREE.DoubleSide });
 
   dressHumanoid(rig, {
     scale: S,
@@ -516,84 +521,117 @@ export function buildJedi(opts = {}) {
              armR: 0.045, clavR: 0.062, thighR: 0.088, neckR: 0.060, torsoDepth: 0.76 },
     hands: { curl: 0.95 },
     buildHead(headObj, s) {
-      // brow, jaw, eyes, hair — small pieces, but they carry the silhouette
+      // The skull is a sphere of x-radius 9.9cm and z-radius 10.8cm. Every
+      // feature below used to be authored a centimetre or so *inside* that —
+      // both eyes, both pupils, both brows and the nose had literally never
+      // been drawn, which is most of why the face read as a blank egg. The z
+      // values here are measured against the skull surface, not eyeballed.
       const jaw = new THREE.SphereGeometry(0.082 * s, 12, 10);
-      jaw.scale(0.92, 0.74, 1.06); jaw.translate(0, 0.048 * s, 0.012 * s);
+      jaw.scale(0.94, 0.78, 1.06); jaw.translate(0, 0.046 * s, 0.014 * s);
       mesh(jaw, skin, headObj);
       for (const sx of [-1, 1]) {
-        mesh(new THREE.SphereGeometry(0.0165 * s, 8, 6), new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.28 }),
-          headObj, [sx * 0.035 * s, 0.105 * s, 0.079 * s]);
-        mesh(new THREE.SphereGeometry(0.0082 * s, 6, 5), new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.2 }),
-          headObj, [sx * 0.036 * s, 0.104 * s, 0.090 * s]);
+        // A real eyeball is ~12mm across and mostly buried; sitting proud of the
+        // skull at 14.6mm it read as a bug's eye. Set into a socket instead, so
+        // the brow above it does the work.
+        mesh(new THREE.SphereGeometry(0.0112 * s, 8, 6), new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.28 }),
+          headObj, [sx * 0.033 * s, 0.104 * s, 0.0865 * s], null, [1, 0.85, 0.8]);
+        mesh(new THREE.SphereGeometry(0.0058 * s, 6, 5), new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.2 }),
+          headObj, [sx * 0.033 * s, 0.103 * s, 0.0945 * s]);
         mesh(plateGeo(0.034 * s, 0.007 * s, 0.012 * s, 0.003 * s, 1), hair,
-          headObj, [sx * 0.036 * s, 0.128 * s, 0.082 * s], [0.2, 0, sx * 0.12]);
+          headObj, [sx * 0.036 * s, 0.1245 * s, 0.0915 * s], [0.2, 0, sx * 0.12]);
         // ears
-        mesh(new THREE.SphereGeometry(0.019 * s, 8, 6), skin, headObj, [sx * 0.098 * s, 0.095 * s, 0.0], null, [0.5, 1, 0.8]);
+        mesh(new THREE.SphereGeometry(0.019 * s, 8, 6), skin, headObj, [sx * 0.098 * s, 0.093 * s, 0.0], null, [0.5, 1, 0.8]);
       }
-      // nose
-      mesh(new THREE.ConeGeometry(0.018 * s, 0.045 * s, 8), skin, headObj, [0, 0.088 * s, 0.085 * s], [Math.PI / 2.1, 0, 0]);
-      // hair cap
-      const cap = new THREE.SphereGeometry(0.112 * s, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62);
-      cap.scale(1, 1.12, 1.04); cap.translate(0, 0.105 * s, -0.004 * s);
+      // Nose: a wedge blended back into the cheeks, not a cone stuck on. And
+      // the mouth is a shallow crease in the skin's own colour — as a separate
+      // coloured slab it read as a sticker applied to the face.
+      const nose = new THREE.ConeGeometry(0.016 * s, 0.042 * s, 8);
+      nose.scale(0.85, 1, 0.7);
+      mesh(nose, skin, headObj, [0, 0.081 * s, 0.0975 * s], [Math.PI / 2.25, 0, 0]);
+      // The jaw ellipsoid's surface is at z=0.0995 at this height — measured by
+      // raycast, not guessed — so anything behind that is inside the face.
+      const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.72 });
+      mesh(plateGeo(0.030 * s, 0.0055 * s, 0.007 * s, 0.002 * s, 1), lip,
+        headObj, [0, 0.0575 * s, 0.0985 * s]);
+      // Hair. The cap used to run 111° down from the crown all the way round,
+      // which put a dead-level ring below the eyeline and shrouded the whole
+      // face. Shortened to 95° and tipped forward *about its own centre* —
+      // rotating the mesh instead would swing the cap 2cm off the skull — it
+      // clears the brow at the front and reaches the nape at the back.
+      // NB the sign: +0.38 tips the cap's axis *forward*, which drags the rim
+      // down over the eyes — the opposite of what is wanted.
+      const cap = new THREE.SphereGeometry(0.113 * s, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.53);
+      cap.scale(1, 1.12, 1.07);
+      cap.rotateX(-0.38);
+      cap.translate(0, 0.105 * s, -0.004 * s);
       mesh(cap, hair, headObj);
+      // the mass at the nape, filling in under the cap's back edge
+      mesh(new THREE.SphereGeometry(1, 8, 6), hair, headObj,
+        [0, 0.058 * s, -0.052 * s], null, [0.075 * s, 0.058 * s, 0.062 * s]);
       // a short braid, because of course — one tapered strand rather than the
       // five spheres it used to be, which cost 400 triangles on their own
       const braid = new THREE.Group(); headObj.add(braid);
-      braid.position.set(0.085 * s, 0.09 * s, 0.02 * s);
-      braid.rotation.set(0.12, 0, 0.16);
-      mesh(limbGeo(0.115 * s, 0.013 * s, 0.008 * s, 7, true, { rings: 5, bulge: 0.22, bulgeAt: 0.5, capN: 2 }),
-        hair, braid, [0, -0.115 * s, 0]);
+      braid.position.set(0.080 * s, 0.085 * s, 0.006 * s);
+      braid.rotation.set(0.10, 0, 0.09);
+      mesh(limbGeo(0.125 * s, 0.0085 * s, 0.0045 * s, 7, true, { rings: 6, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
+        hair, braid, [0, -0.125 * s, 0]);
     },
     dress(r, s) {
       const chest = r.get('chest').obj;
       const hips = r.get('hips').obj;
       const neck = r.get('neck');
 
-      // tabards over the shoulders
+      // Tabards over the shoulders. The torso is an ellipse 0.76 as deep as it
+      // is wide, so anything worn on the chest has to sit at z ≈ chestR·0.76
+      // or it is simply inside the body — which is where the old z = 0.10
+      // now puts it.
       for (const sx of [-1, 1]) {
-        const tab = plateGeo(0.085 * s, 0.40 * s, 0.028 * s, 0.012 * s);
-        mesh(tab, outer, chest, [sx * 0.062 * s, 0.055 * s, 0.088 * s], [0.14, sx * 0.06, sx * 0.05]);
-        const tabBack = plateGeo(0.10 * s, 0.34 * s, 0.026 * s, 0.012 * s);
-        mesh(tabBack, outer, chest, [sx * 0.055 * s, 0.06 * s, -0.088 * s], [-0.1, 0, sx * 0.04]);
+        const tab = plateGeo(0.085 * s, 0.40 * s, 0.026 * s, 0.011 * s);
+        mesh(tab, outer, chest, [sx * 0.058 * s, 0.055 * s, 0.112 * s], [0.10, sx * 0.06, sx * 0.05]);
+        const tabBack = plateGeo(0.10 * s, 0.34 * s, 0.024 * s, 0.011 * s);
+        mesh(tabBack, outer, chest, [sx * 0.052 * s, 0.06 * s, -0.110 * s], [-0.08, 0, sx * 0.04]);
       }
       // the V of the crossed tunic
       for (const sx of [-1, 1]) {
         mesh(plateGeo(0.13 * s, 0.24 * s, 0.02 * s, 0.01 * s), trim, chest,
-          [sx * 0.045 * s, 0.09 * s, 0.098 * s], [0.1, 0, sx * 0.38]);
+          [sx * 0.042 * s, 0.09 * s, 0.114 * s], [0.1, 0, sx * 0.38]);
       }
       // collar — rides the neck so it clears the shoulder line and gives the
-      // head something to sit in rather than on
+      // head something to sit in rather than on. Kept nearly straight: flared
+      // hard it reads as a funnel round the throat, not a folded collar.
       if (neck) {
-        mesh(bandGeo(0.058 * s, 0.064 * s, 0.072 * s, 0.100 * s, 0.062 * s, 14), trim, neck.obj,
-          [0, -0.020 * s, 0], [0.10, 0, 0]);
+        mesh(bandGeo(0.058 * s, 0.070 * s, 0.064 * s, 0.084 * s, 0.058 * s, 14), trim, neck.obj,
+          [0, -0.008 * s, 0], [0.08, 0, 0]);
       }
       // obi / belt — a rolled band, not an open cylinder you can see through
       mesh(bandGeo(0.126 * s, 0.146 * s, 0.124 * s, 0.142 * s, 0.105 * s, 18), trim, hips,
         [0, 0.022 * s, 0], null, [1, 1, 0.82]);
-      mesh(plateGeo(0.062 * s, 0.05 * s, 0.02 * s, 0.008 * s), metalMat(0x9a8a6a), hips,
-        [0, 0.075 * s, 0.115 * s]);
+      mesh(plateGeo(0.062 * s, 0.05 * s, 0.022 * s, 0.008 * s), metalMat(0x9a8a6a), hips,
+        [0, 0.075 * s, 0.126 * s]);
       // pouches
       for (const sx of [-1, 1]) mesh(plateGeo(0.05 * s, 0.055 * s, 0.035 * s, 0.01 * s), leather, hips,
-        [sx * 0.105 * s, 0.055 * s, 0.075 * s]);
+        [sx * 0.102 * s, 0.055 * s, 0.098 * s]);
       // skirt panels of the robe
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-        const panel = plateGeo(0.13 * s, 0.42 * s, 0.022 * s, 0.01 * s);
+        const panel = plateGeo(0.15 * s, 0.42 * s, 0.022 * s, 0.01 * s);
         const m = mesh(panel, outer, hips,
-          [Math.sin(a) * 0.108 * s, -0.13 * s, Math.cos(a) * 0.092 * s], [0.06, a, 0]);
+          [Math.sin(a) * 0.110 * s, -0.13 * s, Math.cos(a) * 0.094 * s], [0.06, a, 0]);
         m.userData.skirt = { angle: a, index: i };
       }
-      // boots
+      // boots — the shaft has to reach the ankle at y = shin.length, or a
+      // stripe of bare leg shows between the boot top and the foot
       for (const side of ['L', 'R']) {
         const sh = r.get('shin' + side);
-        if (sh) mesh(bandGeo(0.055 * s, 0.080 * s, 0.050 * s, 0.070 * s, 0.20 * s, 12), leather, sh.obj, [0, 0.20 * s, 0]);
+        if (sh) mesh(bandGeo(0.056 * s, 0.078 * s, 0.048 * s, 0.068 * s, sh.length - 0.185 * s, 12),
+          leather, sh.obj, [0, 0.185 * s, 0]);
       }
       // bracers, and the hem of the robe's sleeve above them
       for (const side of ['L', 'R']) {
         const f = r.get('fore' + side);
         if (!f) continue;
-        mesh(bandGeo(0.040 * s, 0.055 * s, 0.034 * s, 0.049 * s, 0.135 * s, 12), leather, f.obj, [0, 0.105 * s, 0]);
-        mesh(bandGeo(0.040 * s, 0.050 * s, 0.044 * s, 0.070 * s, 0.055 * s, 12), tunic, f.obj, [0, 0.030 * s, 0]);
+        mesh(bandGeo(0.036 * s, 0.048 * s, 0.030 * s, 0.042 * s, 0.135 * s, 12), leather, f.obj, [0, 0.105 * s, 0]);
+        mesh(bandGeo(0.040 * s, 0.048 * s, 0.042 * s, 0.064 * s, 0.055 * s, 12), tunic, f.obj, [0, 0.030 * s, 0]);
       }
     },
   });
@@ -615,9 +653,11 @@ export function buildB1(opts = {}) {
     body: shell, arm: joint, leg: joint, hand: joint, boot: shell, head: shell,
     // a B1 is a rack of struts — no muscle, and its own shoulder ball below
     deltoid: false,
+    // headR 0.050: a B1's head is the snout and the dome below, not the 11cm
+    // ball the humanoid default hangs there — which used to swallow both
     parts: { chestR: 0.115, shoulderR: 0.085, hipR: 0.075, waistR: 0.062,
              armR: 0.030, clavR: 0.040, thighR: 0.046, neckR: 0.034, torsoDepth: 0.72,
-             shoulderDome: 0.35 },
+             shoulderDome: 0.35, headR: 0.050 },
     seg: { torso: 12, arm: 12, leg: 8, clav: 8, neck: 8 },
     hands: { fingers: 3, palmW: 0.050, palmL: 0.054, palmT: 0.019, fingerL: 0.060,
              fingerR: 0.0070, wristR: 0.019, curl: 0.55, seg: 5 },
@@ -667,7 +707,7 @@ export function buildB2(opts = {}) {
     body: shell, arm: shell, leg: shell, hand: dark, boot: dark, head: shell,
     parts: { chestR: 0.21, shoulderR: 0.175, hipR: 0.14, waistR: 0.125,
              armR: 0.072, clavR: 0.095, thighR: 0.095, neckR: 0.070, torsoDepth: 0.86,
-             shoulderDome: 0.30 },
+             shoulderDome: 0.30, headR: 0.048 },
     seg: { torso: 12, arm: 12, leg: 10, clav: 8, neck: 8 },
     hands: { fingers: 3, palmW: 0.098, palmL: 0.086, palmT: 0.042, fingerL: 0.080,
              fingerR: 0.0155, wristR: 0.036, curl: 0.85, seg: 6 },
@@ -724,18 +764,21 @@ export function buildTrooper(opts = {}) {
       const helm = new THREE.SphereGeometry(0.115 * s, 16, 14);
       helm.scale(0.95, 1.12, 1.06); helm.translate(0, 0.10 * s, 0);
       mesh(helm, plate, headObj);
-      // the T-visor
-      mesh(plateGeo(0.10 * s, 0.055 * s, 0.02 * s, 0.008 * s), visor, headObj, [0, 0.125 * s, 0.098 * s]);
-      mesh(plateGeo(0.036 * s, 0.085 * s, 0.02 * s, 0.008 * s), visor, headObj, [0, 0.088 * s, 0.10 * s]);
-      mesh(plateGeo(0.055 * s, 0.03 * s, 0.03 * s, 0.008 * s), accent, headObj, [0, 0.185 * s, 0.05 * s]);
+      // The T-visor. Same trap as the Jedi's face: the helmet shell reaches
+      // z = 12.2cm and all of this sat at 10, i.e. inside its own helmet.
+      mesh(plateGeo(0.10 * s, 0.058 * s, 0.024 * s, 0.008 * s), visor, headObj, [0, 0.126 * s, 0.114 * s]);
+      mesh(plateGeo(0.038 * s, 0.090 * s, 0.024 * s, 0.008 * s), visor, headObj, [0, 0.086 * s, 0.118 * s]);
+      mesh(plateGeo(0.055 * s, 0.032 * s, 0.034 * s, 0.008 * s), accent, headObj, [0, 0.192 * s, 0.062 * s]);
       // breather vents
-      for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.02 * s, 8), visor,
-        headObj, [sx * 0.055 * s, 0.062 * s, 0.075 * s], [0, 0, Math.PI / 2]);
+      for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.024 * s, 8), visor,
+        headObj, [sx * 0.058 * s, 0.062 * s, 0.098 * s], [0, 0, Math.PI / 2]);
     },
     dress(r, s) {
       const chest = r.get('chest').obj;
-      mesh(plateGeo(0.27 * s, 0.27 * s, 0.19 * s, 0.045 * s), plate, chest, [0, 0.10 * s, 0]);
-      mesh(plateGeo(0.20 * s, 0.10 * s, 0.13 * s, 0.03 * s), accent, chest, [0, 0.20 * s, 0.01 * s]);
+      // deep enough to clear the (now elliptical) ribcage — at 0.19 the plate's
+      // faces sat inside the body and only its four corners showed
+      mesh(plateGeo(0.27 * s, 0.27 * s, 0.235 * s, 0.045 * s), plate, chest, [0, 0.10 * s, 0]);
+      mesh(plateGeo(0.20 * s, 0.10 * s, 0.15 * s, 0.03 * s), accent, chest, [0, 0.20 * s, 0.01 * s]);
       // neck seal, so the helmet is not floating over a gap
       const neck = r.get('neck');
       if (neck) mesh(bandGeo(0.056 * s, 0.070 * s, 0.062 * s, 0.082 * s, 0.062 * s, 12), plate, neck.obj, [0, -0.020 * s, 0]);
@@ -781,7 +824,7 @@ export function buildAcolyte(opts = {}) {
       const helm = new THREE.SphereGeometry(0.113 * s, 16, 14);
       helm.scale(0.95, 1.14, 1.02); helm.translate(0, 0.10 * s, 0);
       mesh(helm, maskMat, headObj);
-      mesh(plateGeo(0.085 * s, 0.03 * s, 0.02 * s, 0.008 * s), eye, headObj, [0, 0.125 * s, 0.096 * s]);
+      mesh(plateGeo(0.085 * s, 0.032 * s, 0.024 * s, 0.008 * s), eye, headObj, [0, 0.125 * s, 0.112 * s]);
       // Hood — an open cowl with a rolled rim and a peak, rather than a
       // hemisphere pulled over the skull like a swim cap. Three's sphere puts
       // phi=0 at -X and phi=π/2 at +Z, so the shell has to start at 0.8π for
@@ -802,7 +845,7 @@ export function buildAcolyte(opts = {}) {
     dress(r, s) {
       const chest = r.get('chest').obj;
       for (const sx of [-1, 1]) {
-        mesh(plateGeo(0.10 * s, 0.44 * s, 0.03 * s, 0.012 * s), robe, chest, [sx * 0.07 * s, 0.02 * s, 0.090 * s], [0.1, 0, sx * 0.04]);
+        mesh(plateGeo(0.10 * s, 0.44 * s, 0.03 * s, 0.012 * s), robe, chest, [sx * 0.066 * s, 0.02 * s, 0.108 * s], [0.1, 0, sx * 0.04]);
         mesh(plateGeo(0.16 * s, 0.16 * s, 0.14 * s, 0.03 * s), leather, r.get('clav' + (sx > 0 ? 'L' : 'R')).obj, [0, 0.05 * s, 0]);
       }
       // mantle across the shoulders — the cowl has to come from somewhere.

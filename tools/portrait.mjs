@@ -72,20 +72,22 @@ const A = parseFloat(process.env.PORTRAIT_ANGLE || await page.evaluate(() => {
 }));
 const dir = (r, h) => [Math.sin(A) * r, h, Math.cos(A) * r];
 const shots = [
-  ['40-torso',   { d: dir(1.9, 0.30), look: [0, 1.15, 0], fov: 34 }],
-  ['41-arms',    { d: dir(0.95, 0.28), look: [0.10, 1.20, 0.10], fov: 42 }],
-  ['42-hands',   { d: dir(0.50, 0.16), look: [0.14, 1.22, 0.22], fov: 42 }],
-  ['43-back',    { d: dir(-1.9, 0.35), look: [0, 1.10, 0], fov: 34 }],
-  ['44-head',    { d: dir(0.75, 0.32), look: [0, 1.46, 0.03], fov: 32 }],
-  ['45-legs',    { d: dir(1.4, 0.05), look: [0, 0.52, 0], fov: 38 }],
+  ['40-torso',   { d: dir(1.9, 1.30), look: [0, 1.10, 0], fov: 36 }],
+  ['41-arms',    { d: dir(0.95, 1.35), look: [0.12, 1.22, 0.12], fov: 44 }],
+  ['42-hands',   { d: dir(0.46, 1.34), look: [0.16, 1.24, 0.24], fov: 44 }],
+  ['43-back',    { d: dir(-1.9, 1.25), look: [0, 1.05, 0], fov: 36 }],
+  ['44-head',    { d: dir(0.72, 1.56), look: [0, 1.48, 0.02], fov: 34 }],
+  ['46-face',    { face: true, r: 0.62, h: 1.52, look: [0, 1.47, 0], fov: 34 }],
+  ['45-legs',    { d: dir(1.5, 0.72), look: [0, 0.52, 0], fov: 40 }],
 ];
 for (const [name, s] of shots) {
   await page.evaluate((s) => {
     const p = window.SABER.world.player;
     // aim the blade up and to the right so the arms are lifted
     p.control.handPos.set(p.position.x + 0.3, p.position.y + 1.25, p.position.z + 0.35);
+    const d = s.face ? [Math.sin(p.facing) * s.r, s.h, Math.cos(p.facing) * s.r] : s.d;
     window.__portrait = {
-      p: [p.position.x + s.d[0], p.position.y + s.d[1] + 0.0, p.position.z + s.d[2]],
+      p: [p.position.x + d[0], p.position.y + d[1] + 0.0, p.position.z + d[2]],
       t: [p.position.x + s.look[0], p.position.y + s.look[1], p.position.z + s.look[2]],
       fov: s.fov,
     };
