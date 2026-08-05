@@ -359,8 +359,8 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   bombTap(uBaseAlb, uBaseNrm, wp, uScales.x, uScales.y,
           clamp(mB * 1.5 - 0.25, 0.0, 1.0), baseC, baseN);
 
-  // ── detail near the feet: a third rotation an octave up, faded out by 30 m,
-  //    so the ground you are standing on has grain and the horizon does not pay
+  // ── detail near the feet: a third rotation an octave up, gone by ~30 m, so
+  //    the ground you stand on has grain and the horizon does not pay for it
   #ifdef TERRAIN_DETAIL
     float detW = 1.0 - smoothstep(uMix.z, uMix.w, viewDist);
     if (detW > 0.02) {
@@ -381,7 +381,8 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   col *= 0.55 + dot(baseC, vec3(0.3333)) * 1.15;
 
   // ── rock, and the strata it is bedded in. Skipped wholesale where nothing is
-  //    steep — on the dune sea that is the entire map, and it is five taps.
+  //    steep — on the dune sea that is the entire map, and it is four taps
+  //    (six where the cliff re-projection runs).
   float terRough = mix(0.94, 0.99, driftW);
   float ny = max(abs(nW.y), 0.28);
   vec3 Txz = normalize(vec3(ny, -nW.x, 0.0));
