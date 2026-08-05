@@ -75,6 +75,13 @@ const menu = new Menu(settings, {
   // very next bolt uses it, which is the only honest way to compare them.
   onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
   onBindings: (b) => { input.setBindings(b); },
+  // Force settings are read live off world.settings, so the sliders take effect
+  // mid-fight without a reload.
+  onForce: () => {
+    if (!world) return;
+    world.settings.forcePower = settings.forcePower;
+    world.settings.forceDrain = settings.forceDrain;
+  },
   onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),

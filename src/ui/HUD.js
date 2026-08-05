@@ -142,7 +142,10 @@ export class HUD {
     // ── reticle & blade cursor
     const threat = world.enemies.some(e => !e.dead && e.position.distanceToSquared(player.position) < 25);
     el.reticle.classList.toggle('hot', threat);
-    el.reticle.style.opacity = player.camera.firstPerson ? 0.75 : 0.45;
+    // full strength: a reticle you cannot see is not a reticle
+    el.reticle.style.opacity = player.camera.firstPerson ? 1 : 0.9;
+    // and mark the blade cursor while the player is actually driving the blade
+    el.cursor?.classList.toggle('steering', !!player.control?.steering);
 
     if (player.control._grip) {
       const g = player.control.screenGuard(camera, player.chest, player.camera.aimQuat, _screen);

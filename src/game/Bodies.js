@@ -1046,13 +1046,30 @@ export function buildJedi(opts = {}) {
       // pouches
       for (const sx of [-1, 1]) mesh(plateGeo(0.05 * s, 0.055 * s, 0.035 * s, 0.01 * s), leather, hips,
         [sx * 0.102 * s, 0.055 * s, 0.098 * s]);
-      // skirt panels of the robe
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-        const panel = plateGeo(0.15 * s, 0.42 * s, 0.022 * s, 0.01 * s);
-        const m = mesh(panel, outer, hips,
-          [Math.sin(a) * 0.110 * s, -0.13 * s, Math.cos(a) * 0.094 * s], [0.06, a, 0]);
-        m.userData.skirt = { angle: a, index: i };
+      // The robe's skirt.
+      //
+      // This used to be eight flat plates spaced evenly around a full circle.
+      // Eight panels 0.15 wide is 1.2m of plate wrapped around a 0.63m
+      // circumference, so they overlapped into a closed barrel with a vertical
+      // ridge every 45 degrees — from any distance it read as a corrugated
+      // cylinder or a screw thread hanging under the character, which is
+      // exactly what it looked like.
+      //
+      // A skirt is a flared tube with a couple of overlapping panels for
+      // depth, not a ring of boxes.
+      const skirtH = 0.46 * s;
+      const skirt = new THREE.CylinderGeometry(0.135 * s, 0.215 * s, skirtH, 16, 1, true);
+      skirt.translate(0, -skirtH * 0.5 - 0.015 * s, 0);
+      const skirtMat = outer.clone();
+      skirtMat.side = THREE.DoubleSide;
+      mesh(skirt, skirtMat, hips);
+      // two front panels overlapping the tube, so the silhouette has a seam and
+      // a bit of layering instead of being a perfect cone
+      for (const sx of [-1, 1]) {
+        const a = sx * 0.42;
+        const panel = plateGeo(0.17 * s, 0.44 * s, 0.02 * s, 0.012 * s, 3);
+        mesh(panel, outer, hips,
+          [Math.sin(a) * 0.145 * s, -0.145 * s, Math.cos(a) * 0.145 * s], [0.05, a, 0]);
       }
       // boots — the shaft has to reach the ankle at y = shin.length, or a
       // stripe of bare leg shows between the boot top and the foot

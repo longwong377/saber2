@@ -180,18 +180,27 @@ button{font-family:inherit}
 #hud{position:fixed;inset:0;z-index:20;pointer-events:none;font:var(--ui);
   text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 14px rgba(0,0,0,.55)}
 .hud-tl,.hud-tr,.hud-bl,.hud-br{filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
-#reticle{position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);opacity:.5;
-  transition:opacity .2s}
-.ret-ring{fill:none;stroke:rgba(255,255,255,.5);stroke-width:1.2}
-.ret-dot{fill:rgba(255,255,255,.9)}
-.ret-tick{stroke:rgba(255,255,255,.65);stroke-width:1.6;fill:none}
+/* The reticle has to read on white sand AND in a dark hangar, so everything
+   carries a dark outline underneath it. At 0.5 alpha white on 0.45 opacity it
+   was invisible over the desert — which is most of the game. */
+#reticle{position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%);
+  transition:opacity .2s;filter:drop-shadow(0 0 2px rgba(0,0,0,.95)) drop-shadow(0 0 5px rgba(0,0,0,.7))}
+.ret-ring{fill:none;stroke:rgba(255,255,255,.92);stroke-width:1.6;
+  paint-order:stroke;stroke-linecap:round}
+.ret-dot{fill:#fff}
+.ret-tick{stroke:rgba(255,255,255,.98);stroke-width:2.2;fill:none;stroke-linecap:round}
 #reticle.hot .ret-ring{stroke:var(--danger)}
 #reticle.hot .ret-tick{stroke:var(--danger)}
+#reticle.hot .ret-dot{fill:var(--danger)}
 
 #blade-cursor{position:absolute;left:50%;top:50%;width:24px;height:24px;margin:-12px 0 0 -12px;pointer-events:none;
   will-change:transform}
-#blade-cursor i{display:block;width:100%;height:100%;border-radius:50%;border:1px solid rgba(120,210,255,.55);
-  box-shadow:0 0 12px rgba(87,201,255,.5),inset 0 0 8px rgba(87,201,255,.35)}
+/* Where the BLADE is pointing, as distinct from where you are looking. This is
+   the one piece of feedback that makes blade control legible, so it has to be
+   clearly visible and clearly a different thing from the reticle. */
+#blade-cursor i{display:block;width:100%;height:100%;border-radius:50%;border:2px solid rgba(140,220,255,.95);
+  box-shadow:0 0 10px rgba(87,201,255,.9),inset 0 0 8px rgba(87,201,255,.5),0 0 2px 1px rgba(0,0,0,.8)}
+#blade-cursor.steering i{border-color:#fff;box-shadow:0 0 16px rgba(160,230,255,1),inset 0 0 10px rgba(120,210,255,.7),0 0 2px 1px rgba(0,0,0,.85)}
 
 .hud-tl{position:absolute;left:34px;top:28px;animation:riseIn .5s both}
 .wave-line{display:flex;align-items:center;gap:10px;font:var(--mono);font-size:10px;letter-spacing:.26em;

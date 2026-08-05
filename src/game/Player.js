@@ -360,14 +360,23 @@ export class Player {
   _applyViewMode() {
     const fp = this.camera.firstPerson;
 
-    // Hide the MESHES, not the bones. Scaling a bone enters matrixWorld, so a
-    // 0.0001x head and a 0.35x neck were silently seen by the sever code, the
-    // cloak colliders, the ragdoll body sizes and every worldPos() call.
-    for (const n of ['head', 'neck']) {
-      const b = this.rig.get(n);
-      if (!b) continue;
-      b.obj.scale.setScalar(1);
-      for (const m of b.parts) m.visible = !fp;
+    // Hide the MESHES, not the bones — scaling a bone enters matrixWorld, so a
+    // 0.0001x head was silently seen by the sever code, the cloak colliders,
+    // the ragdoll body sizes and every worldPos() call.
+    //
+    // And hide EVERY mesh under the bone, not bone.parts. `parts` holds only
+    // the limb tube the rig built: the head bone carries fifteen meshes (jaw,
+    // ears, nose, eyes, brows, mouth, hair, hood) and `parts` lists one. Hiding
+    // just that left the whole face wrapped around the first-person camera,
+    // which is why first person looked like being inside your own skull.
+    // Traversing the NECK covers the head too, since head parents to it — and
+    // stops short of the chest, so the arms stay visible holding the blade.
+    const neck = this.rig.get('neck');
+    if (neck) {
+      neck.obj.scale.setScalar(1);
+      const head = this.rig.get('head');
+      if (head) head.obj.scale.setScalar(1);
+      neck.obj.traverse((o) => { if (o.isMesh) o.visible = !fp; });
     }
     this.camera.targetDistance = fp ? 0 : 3.05;
     // A high guard reads well over the shoulder but leaves first person staring
@@ -421,9 +430,9 @@ export class Player {
           this.jumpHeld = 0.42;
           audio.force(this.position, 'jump');
           if (ctx.particles) ctx.particles.sandPuff(this.position.clone(), 0.8, this.position.y, ctx.groundColor);
-        } else if (this.airJumps > 0 && this.force > 12) {
+        } else if (this.airJumps > 0 && this._canSpend(12)) {
           this.airJumps--;
-          this.force -= 12;
+          this._spend(12);
           this.velocity.y = 6.9 * this.boonMods.jumpPower;
           this.jumpHeld = 0.34;
           audio.force(this.position, 'jump');
@@ -435,8 +444,7 @@ export class Player {
       }
       // holding jump feeds the Force into the leap — a real, controllable arc
       if (input.act('jump') && this.jumpHeld > 0 && this.velocity.y > 0 && this.force > 0) {
-        const cost = 34 * dt * this.boonMods.forceCost;
-        this.force = Math.max(0, this.force - cost);
+        this._spend(34 * dt);
         this.velocity.y += 20 * dt;
         this.jumpHeld -= dt;
         if (ctx.particles && rng() < 0.5) {
@@ -864,6 +872,28 @@ export class Player {
     });
   }
 
+  /**
+   * Force economy, in one place.
+   *
+   * `forcePower` scales how hard every power hits; `forceDrain` scales what it
+   * costs, and at 0 it costs nothing at all. Both are player-facing settings —
+   * this is a power fantasy, and someone who wants to spend an afternoon
+   * throwing rocks around should not have to fight a resource meter for it.
+   */
+  get forceScale() { return this.world.settings?.forcePower ?? 1; }
+  _spend(cost) {
+    const drain = this.world.settings?.forceDrain ?? 1;
+    if (drain <= 0) return true;                   // unlimited
+    const c = cost * drain * this.boonMods.forceCost;
+    if (this.force < c) return false;
+    this.force -= c;
+    return true;
+  }
+  _canSpend(cost) {
+    const drain = this.world.settings?.forceDrain ?? 1;
+    return drain <= 0 || this.force >= cost * drain * this.boonMods.forceCost;
+  }
+
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
     this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
@@ -883,9 +913,7 @@ export class Player {
   /* ── force powers ────────────────────────────────────────────────── */
 
   forcePush(ctx) {
-    const cost = 20 * this.boonMods.forceCost;
-    if (this.force < cost || this.cooldowns.push > 0) return;
-    this.force -= cost;
+    if (this.cooldowns.push > 0 || !this._spend(20)) return;
     this.cooldowns.push = 0.55;
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
@@ -893,7 +921,10 @@ export class Player {
 
     const origin = this.chest;
     const dir = this.aimDir;
-    const range = 13, halfAngle = 0.72;
+    // forcePower scales reach and impulse together, so turning it up makes the
+    // push genuinely bigger rather than just harder-hitting in the same cone.
+    const P = this.forceScale;
+    const range = 13 * Math.sqrt(P), halfAngle = 0.72;
 
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
@@ -903,8 +934,8 @@ export class Player {
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < Math.cos(halfAngle)) continue;
       const k = (1 - d / range);
-      _v2.copy(dir).multiplyScalar(20 * k).setY(7 * k + 3);
-      e.applyKnockback(_v2, 8 * k, this);
+      _v2.copy(dir).multiplyScalar(20 * k * P).setY((7 * k + 3) * P);
+      e.applyKnockback(_v2, 8 * k * P, this);
     }
     for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
       if (b.invMass === 0 || b === this.body) continue;
@@ -914,7 +945,7 @@ export class Player {
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < Math.cos(halfAngle)) continue;
       const k = 1 - d / range;
-      _v2.copy(dir).multiplyScalar(b.mass * 15 * k).setY(b.mass * 6 * k);
+      _v2.copy(dir).multiplyScalar(b.mass * 15 * k * P).setY(b.mass * 6 * k * P);
       b.applyImpulse(_v2, b.position);
     }
     // bolts get scattered
@@ -948,9 +979,7 @@ export class Player {
   }
 
   forcePull(ctx) {
-    const cost = 16 * this.boonMods.forceCost;
-    if (this.force < cost || this.cooldowns.pull > 0) return;
-    this.force -= cost;
+    if (this.cooldowns.pull > 0 || !this._spend(16)) return;
     this.cooldowns.pull = 0.6;
     audio.force(this.chest, 'pull');
     const origin = this.chest, dir = this.aimDir, range = 17;
@@ -996,7 +1025,7 @@ export class Player {
       return;
     }
     this.gripBody = hit.body;
-    this.gripDistance = clamp(hit.distance, 2.4, 14);
+    this.gripDistance = clamp(hit.distance, 2.0, 14 * Math.sqrt(this.forceScale));
     this.gripBody.gravityScale = 0;
     audio.force(this.chest, 'pull');
   }
@@ -1011,7 +1040,7 @@ export class Player {
     if (this.gripBody) {
       const b = this.gripBody;
       b.gravityScale = 1;
-      _v2.subVectors(target, b.position).normalize().multiplyScalar(b.mass * 26);
+      _v2.subVectors(target, b.position).normalize().multiplyScalar(b.mass * 26 * this.forceScale);
       b.applyImpulse(_v2, b.position);
       b.userData.hurledBy = this;
       b.userData.hurlTimer = 2.4;
@@ -1030,8 +1059,9 @@ export class Player {
     const hold = _v1.copy(this.camera.pos).addScaledVector(this.aimDir, this.gripDistance);
     if (this.gripBody) {
       const b = this.gripBody;
-      this.force -= 9 * dt * this.boonMods.forceCost;
-      if (this.force <= 0) { this.releaseGrip(); return; }
+      // Only drop it when the Force actually ran out. With drain disabled the
+      // bar sits wherever it was and this must not fire.
+      if (!this._spend(9 * dt)) { this.releaseGrip(); return; }
       b.wake();
       _v2.subVectors(hold, b.position);
       b.velocity.copy(_v2).multiplyScalar(9).clampLength(0, 28);
@@ -1041,11 +1071,14 @@ export class Player {
         ctx.particles.plasma.spawn(b.position, _v3.set(0, 0, 0),
           { life: 0.3, size: b.boundingRadius * 1.5, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.12 });
       }
-      this.gripDistance = clamp(this.gripDistance + (ctx.input?.mouse.wheel || 0) * -0.6, 2, 18);
+      // Scroll pushes the held object away and pulls it in. Range scales with
+      // forcePower so a stronger Jedi can hold something at arm's length or
+      // halfway across the arena.
+      const reach = 18 * Math.sqrt(this.forceScale);
+      this.gripDistance = clamp(this.gripDistance + (ctx.input?.mouse.wheel || 0) * -0.6, 1.6, reach);
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
-      this.force -= 14 * dt * this.boonMods.forceCost;
-      if (this.force <= 0 || e.dead) { this.releaseGrip(); return; }
+      if (e.dead || !this._spend(14 * dt)) { this.releaseGrip(); return; }
       e.liftTarget = hold.clone();
     }
   }
