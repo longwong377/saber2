@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070c">
+<title>SABER</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='14' y='2' width='4' height='20' rx='2' fill='%2360d8ff'/><rect x='13' y='21' width='6' height='9' rx='1.5' fill='%23888'/></svg>">
+<link rel="stylesheet" href="./styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<!-- ══════════════════════ BOOT ══════════════════════ -->
+<div id="boot" class="screen">
+  <div class="boot-inner">
+    <div class="logo"><span class="logo-blade"></span><h1>SABER</h1></div>
+    <div class="boot-bar"><i id="boot-fill"></i></div>
+    <div id="boot-msg" class="boot-msg">forging blade…</div>
+  </div>
+</div>
+
+<!-- ══════════════════════ MENU ══════════════════════ -->
+<div id="menu" class="screen hidden">
+  <div class="menu-bg"></div>
+  <div class="menu-wrap">
+    <header class="menu-head">
+      <div class="logo small"><span class="logo-blade"></span><h1>SABER</h1></div>
+      <p class="tagline">a single blade against a hundred</p>
+    </header>
+
+    <nav class="menu-tabs">
+      <button class="tab active" data-tab="play">Deploy</button>
+      <button class="tab" data-tab="saber">Saber</button>
+      <button class="tab" data-tab="coop">Co-op</button>
+      <button class="tab" data-tab="opts">Options</button>
+      <button class="tab" data-tab="train">Codex</button>
+    </nav>
+
+    <section class="panel active" data-panel="play">
+      <div class="col">
+        <h3>Theatre</h3>
+        <div id="level-list" class="cards"></div>
+      </div>
+      <div class="col narrow">
+        <h3>Trial</h3>
+        <div id="diff-list" class="difflist"></div>
+        <h3 style="margin-top:26px">Mode</h3>
+        <div id="mode-list" class="difflist"></div>
+        <button id="btn-deploy" class="primary">Ignite</button>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="saber">
+      <div class="col">
+        <h3>Crystal</h3>
+        <div id="color-list" class="swatches"></div>
+        <h3 style="margin-top:22px">Hilt</h3>
+        <div id="hilt-list" class="cards small"></div>
+        <h3 style="margin-top:22px">Blade</h3>
+        <label class="slider">Length <input type="range" id="opt-bladelen" min="0.85" max="1.45" step="0.01" value="1.15"><b></b></label>
+        <label class="slider">Core width <input type="range" id="opt-bladewidth" min="0.7" max="1.6" step="0.01" value="1"><b></b></label>
+        <h3 style="margin-top:22px">Robes</h3>
+        <div id="robe-list" class="swatches"></div>
+      </div>
+      <div class="col narrow">
+        <h3>Preview</h3>
+        <div id="saber-preview" class="preview"></div>
+        <p class="hint">Drag to rotate. The blade you build is the blade you carry.</p>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="coop">
+      <div class="col">
+        <h3>Play with friends</h3>
+        <p class="hint" style="margin-bottom:16px">Peer-to-peer. One player hosts, the rest join with the code. No server, no account.</p>
+        <div class="netrow">
+          <button id="btn-host" class="primary">Host a session</button>
+          <div class="or">or</div>
+          <input id="join-code" placeholder="SESSION CODE" maxlength="10" spellcheck="false">
+          <button id="btn-join" class="secondary">Join</button>
+        </div>
+        <div id="net-status" class="netstatus"></div>
+        <div id="net-roster" class="roster"></div>
+      </div>
+      <div class="col narrow">
+        <h3>Session</h3>
+        <div id="net-code" class="codebox">—</div>
+        <p class="hint">Share this code. Up to 4 Jedi.</p>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="opts">
+      <div class="col">
+        <h3>Control</h3>
+        <div id="opt-scheme" class="difflist"></div>
+        <label class="slider">Blade sensitivity <input type="range" id="opt-sens" min="0.3" max="3" step="0.05" value="1"><b></b></label>
+        <label class="slider">Camera follow <input type="range" id="opt-camfollow" min="0" max="1.6" step="0.02" value="0.75"><b></b></label>
+        <label class="slider">Field of view <input type="range" id="opt-fov" min="60" max="105" step="1" value="78"><b></b></label>
+        <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
+        <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
+      </div>
+      <div class="col">
+        <h3>Fidelity</h3>
+        <div id="opt-quality" class="difflist"></div>
+        <label class="slider">Resolution <input type="range" id="opt-scale" min="0.5" max="1.35" step="0.05" value="1"><b></b></label>
+        <label class="check"><input type="checkbox" id="opt-bloom" checked> Bloom</label>
+        <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
+        <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
+        <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
+        <h3 style="margin-top:22px">Audio</h3>
+        <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
+        <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="train">
+      <div class="col wide codex">
+        <h3>The blade is yours to move</h3>
+        <div class="codex-grid">
+          <div><kbd>Mouse</kbd><span>Moves the <b>blade</b>, not the camera. The camera follows when the blade leaves the centre.</span></div>
+          <div><kbd>RMB</kbd><span>Hold to pin the blade and look around freely.</span></div>
+          <div><kbd>W A S D</kbd><span>Move. <kbd>Shift</kbd> sprint, <kbd>Ctrl</kbd> crouch.</span></div>
+          <div><kbd>Space</kbd><span>Force jump — hold to leap higher. Landing sends out a shockwave.</span></div>
+          <div><kbd>Q</kbd> <kbd>E</kbd><span>Roll the wrist. Changes the plane your blade cuts on.</span></div>
+          <div><kbd>F</kbd><span>Force push. <kbd>Shift+F</kbd> pulls.</span></div>
+          <div><kbd>G</kbd><span>Grip an object — then move the mouse to swing it, click to hurl it.</span></div>
+          <div><kbd>R</kbd><span>Throw the saber. Press again to recall it.</span></div>
+          <div><kbd>C</kbd><span>Force sense — the world slows, you do not.</span></div>
+          <div><kbd>V</kbd><span>Toggle first / third person.</span></div>
+          <div><kbd>X</kbd><span>Ignite / retract.</span></div>
+          <div><kbd>Tab</kbd><span>Scoreboard &amp; run boons.</span></div>
+        </div>
+        <h3 style="margin-top:26px">The four things that make a master</h3>
+        <ol class="codex-list">
+          <li><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>
+          <li><b>Chamber.</b> When a duelist swings, whip your blade <i>against</i> the direction of their arc. Their attack dies and yours is already free.</li>
+          <li><b>Drag and accelerate.</b> Your blade has mass. Slow the mouse mid-arc and the strike lands late, past their parry. Snap it and you arrive early.</li>
+          <li><b>Cut with the tip.</b> The end of the blade travels many times faster than the emitter. That is where limbs come off.</li>
+        </ol>
+      </div>
+    </section>
+
+    <footer class="menu-foot">
+      <span id="gpu-line"></span>
+      <span class="build">build <b id="build-id">—</b></span>
+    </footer>
+  </div>
+</div>
+
+<!-- ══════════════════════ HUD ══════════════════════ -->
+<div id="hud" class="hidden">
+  <svg id="reticle" viewBox="0 0 100 100" aria-hidden="true">
+    <circle class="ret-ring" cx="50" cy="50" r="15"></circle>
+    <circle class="ret-dot" cx="50" cy="50" r="1.4"></circle>
+    <path class="ret-tick" d="M50 26 v6 M50 68 v6 M26 50 h6 M68 50 h6"></path>
+  </svg>
+  <div id="blade-cursor"><i></i></div>
+
+  <div class="hud-tl">
+    <div class="wave-line"><span id="hud-level">—</span><em id="hud-diff"></em></div>
+    <div class="wave-big">WAVE <b id="hud-wave">1</b></div>
+    <div id="hud-remaining" class="wave-sub"></div>
+  </div>
+
+  <div class="hud-tr">
+    <div id="hud-flow" class="flowmeter"><i></i><span>FLOW</span></div>
+    <div id="hud-combo" class="combo"></div>
+    <div id="hud-score" class="score">0</div>
+  </div>
+
+  <div class="hud-bl">
+    <div class="bars">
+      <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u><label>VITALITY</label></div>
+      <div class="bar fc"><i id="bar-force"></i><label>FORCE</label></div>
+      <div class="bar st"><i id="bar-stam"></i><label>STAMINA</label></div>
+    </div>
+    <div id="boon-strip" class="boons"></div>
+  </div>
+
+  <div class="hud-br">
+    <div id="power-wheel" class="powers"></div>
+  </div>
+
+  <div id="hud-center-msg" class="centermsg"></div>
+  <div id="hitmarks"></div>
+  <div id="dmg-vignette"></div>
+  <div id="flow-vignette"></div>
+  <div id="killfeed"></div>
+</div>
+
+<!-- ══════════════════════ OVERLAYS ══════════════════════ -->
+<div id="boon-draft" class="screen hidden">
+  <div class="draft-wrap">
+    <h2>Attune</h2>
+    <p class="hint">The Force offers. Choose one.</p>
+    <div id="draft-cards" class="draft-cards"></div>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="pause-wrap">
+    <h2>Meditate</h2>
+    <div id="pause-stats" class="pause-stats"></div>
+    <button id="btn-resume" class="primary">Resume</button>
+    <button id="btn-restart" class="secondary">Restart wave</button>
+    <button id="btn-quit" class="ghost">Abandon run</button>
+    <div class="pause-hints">
+      <span><kbd>Esc</kbd> resume</span><span><kbd>V</kbd> camera</span><span><kbd>Tab</kbd> boons</span>
+    </div>
+  </div>
+</div>
+
+<div id="death" class="screen hidden">
+  <div class="death-wrap">
+    <h2 id="death-title">You are one with the Force</h2>
+    <div id="death-stats" class="death-stats"></div>
+    <button id="btn-retry" class="primary">Rise again</button>
+    <button id="btn-menu" class="ghost">Return to the Temple</button>
+  </div>
+</div>
+
+<div id="unsupported" class="screen hidden">
+  <div class="boot-inner">
+    <h2>WebGL2 unavailable</h2>
+    <p class="hint">This browser or machine cannot run the renderer. Try a recent Chrome, Edge, or Firefox with hardware acceleration enabled.</p>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
