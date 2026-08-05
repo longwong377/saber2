@@ -695,17 +695,31 @@ check('control: inside the guard cone the view holds still; past it, it turns', 
   assert(c.gx > 0.2, `the blade barely moved (${c.gx.toFixed(3)})`);
   assert(Math.abs(cam) < 1e-9, `the view drifted ${cam.toFixed(5)} rad inside the cone`);
 
-  // drive it hard into the limit — now the body has to come round
+  // and it must STAY still even driven hard past the guard's travel limit —
+  // this is the whole point: a slash must never spin the view
   let cam2 = 0;
-  for (let i = 0; i < 40; i++) { input.mouse.dx = 60; cam2 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
+  for (let i = 0; i < 40; i++) { input.mouse.dx = 90; cam2 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
   assert(Math.abs(c.gx - 1.0) < 1e-6, `the guard did not pin at its limit (${c.gx.toFixed(4)})`);
-  assert(cam2 < -0.8, `past the cone the view only turned ${(cam2 * 57.3).toFixed(1)}°`);
+  assert(Math.abs(cam2) < 1e-9, `driving past the cone turned the view ${(cam2 * 57.3).toFixed(1)}°`);
+  return `blade reached its limit, view drift 0 rad throughout`;
+});
 
-  // and it must work the other way too
-  let cam3 = 0;
-  for (let i = 0; i < 40; i++) { input.mouse.dx = -60; cam3 += c.applyInput(input, 1 / 60, { stamina: 1 }).yaw; }
-  assert(cam3 > 0.8, `turning the other way gave ${(cam3 * 57.3).toFixed(1)}°`);
-  return `cone: 0 rad of view drift; past it: ${(cam2 * 57.3).toFixed(0)}° / ${(cam3 * 57.3).toFixed(0)}°`;
+check('control: a full slash fits inside one comfortable mouse sweep', () => {
+  // The cone is +/-1.0 in guard units, so corner to corner is 2.0. If that
+  // costs more mouse travel than a person sweeps in one motion, you physically
+  // cannot slash horizontally — which is what a gain of 0.0021 did, needing
+  // 950px for a full arc.
+  const c = new SaberController({ sensitivity: 1 });
+  c.reset(V(0, 1.35, 0), new THREE.Quaternion());
+  const input = mkInput();
+  input.buttons[0] = true;
+  c.gx = -1;
+  let px = 0;
+  for (let i = 0; i < 400 && c.gx < 0.999; i++) { input.mouse.dx = 10; px += 10; c.applyInput(input, 1 / 60, { stamina: 1 }); }
+  assert(c.gx > 0.999, 'the guard never crossed its full travel');
+  assert(px < 420, `a full slash costs ${px}px of mouse — too far to sweep in one motion`);
+  assert(px > 200, `a full slash costs only ${px}px — the blade will be twitchy`);
+  return `full arc in ${px}px of mouse travel`;
 });
 
 check('control: letting go returns the blade to a ready guard', () => {

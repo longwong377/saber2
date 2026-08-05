@@ -65,7 +65,15 @@ export class SaberController {
     this.readyX = 0.30;
     this.readyY = 0.30;
     this.recentre = 5.5;     // rad/s of easing back to the ready guard
-    this.overflowTurn = 1.0; // how much of a past-the-limit push turns the view
+    // The camera does NOT move while you are steering the blade. A full
+    // left-to-right slash has to fit INSIDE the cone, or every slash spills
+    // over and spins the view — which is exactly what made horizontal slashing
+    // while strafing impossible.
+    this.overflowTurn = 0;
+    // Blade travel is ~2.0 units corner to corner, so at this gain a full slash
+    // is about 350px of mouse: one comfortable sweep, not an arm's length.
+    this.bladeGain = 0.0057;
+    this.camGain = 0.0024;
     this.steering = 0;       // 1 while the player is actually driving the blade
 
     this.grip = 'two';
@@ -145,18 +153,22 @@ export class SaberController {
     // old blade-leads-camera scheme did, makes neither of them legible.
     // 'blade' is a rebindable action, so the player can move it off LMB.
     const bladeMode = this.scheme === 'free' ? !input.act('thrust') : input.act('blade');
-    const s = this.sensitivity * 0.0021;
+    // Two separate gains: the blade needs a full arc inside one sweep, the
+    // camera needs shooter-normal turn rates. Sharing one number made the blade
+    // sluggish or the camera twitchy, depending which you tuned for.
+    const s = this.sensitivity * this.bladeGain;
+    const cs = this.sensitivity * this.camGain;
     const dx = input.mouse.dx, dy = input.mouse.dy;
 
     if (bladeMode) {
       this.steering = 1;
-      // Overflow steering. Inside the guard's cone the mouse is purely the
-      // blade and the view holds perfectly still, which is what makes precise
-      // blocking possible. Push PAST the cone and the excess turns the camera —
-      // because a person can only reach so far across themselves before their
-      // shoulders have to follow. So you never lose the camera while steering:
-      // you just have to commit to a bigger movement to bring it round, exactly
-      // as you would if the blade were really in your hands.
+      // While you hold the button the mouse is purely the blade and the view
+      // does not move at all. The cone is wide enough that a full left-to-right
+      // slash fits inside it in one sweep, which is the whole point: an earlier
+      // version let a push past the cone turn the camera, and since a real
+      // slash overshoots the cone every time, every slash spun the view and
+      // horizontal attacks while strafing were impossible. overflowTurn is kept
+      // as a knob but ships at zero.
       const wantX = this.gx + dx * s;
       const wantY = this.gy - dy * s;
       this.gx = clamp(wantX, -GX_MAX, GX_MAX);
@@ -184,8 +196,8 @@ export class SaberController {
       // camera-only. The guard is body-relative, so it simply rides round with
       // the shoulders — it must NOT be counter-rotated to stay world-fixed, or
       // turning ninety degrees pins the blade against its own travel limit.
-      cam.yaw = -dx * s * 1.15;
-      cam.pitch = -dy * s * 1.15;
+      cam.yaw = -dx * cs;
+      cam.pitch = -dy * cs;
       const k = clamp(dt * this.recentre, 0, 1);
       this.gx = lerp(this.gx, this.readyX, k);
       this.gy = lerp(this.gy, this.readyY, k);
