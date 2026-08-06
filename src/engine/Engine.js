@@ -7,7 +7,7 @@
  * frame gets its character — grain, chromatic aberration, vignette, heat haze
  * off the blade, and the desaturated pull of Force Sense.
  *
- * Two things here are load-bearing for whether the frame reads as photographed:
+ * Three things here are load-bearing for whether the frame reads as photographed:
  *
  *   1. THE SKY IS ACTUAL RADIANCE. three's Preetham sky ships display-referred:
  *      its last line is pow(texColor, 1/2.4), which is a gamma curve applied to
@@ -23,6 +23,14 @@
  *      inscattering, so distance separates into layers and haze glows toward
  *      the sun. It reaches every material in the game — terrain, grass, water,
  *      props — without any of them knowing, because it is the stock chunk.
+ *
+ *   3. …AND THEN IT IS COMPRESSED BACK DOWN FOR THE CAMERA, on a different
+ *      curve from the one light transport wants. See SKY_PHYSICAL /
+ *      SKY_DISPLAY. 42.3% of the arena's sky hemisphere rendered above the
+ *      bloom pass's threshold, which turns a highlight effect into a
+ *      frame-wide veil, and measured on the deployed frame that — not fog, not
+ *      albedo — was what bleached the landscape: the rim wall read 0.441
+ *      display luminance with bloom off and 0.782 with it on.
  */
 
 import * as THREE from 'three';
@@ -157,7 +165,23 @@ function installAerialPerspective(THREE_) {
     '    float phase = ( 1.0 - g2 ) / pow( max( 1.0 + g2 - 2.0 * g * fogCos, 1.0e-4 ), 1.5 );',
     // Rayleigh-ish backscatter keeps the anti-sun side from going dead flat.
     '    float back = 0.75 * ( 1.0 + fogCos * fogCos );',
-    '    fogTone += uAerialTint.xyz * uAerialSun.w * ( phase + back * 0.16 );',
+    '    vec3 fogGlow = uAerialTint.xyz * uAerialSun.w * ( phase + back * 0.16 );',
+    // ENERGY LIMIT. Added raw, this term is unbounded: the forward lobe peaks
+    // at 6.0 at g = 0.5, so on the arena it put 0.79 on top of a fog colour of
+    // 3.19 and every distant surface converged on something a quarter BRIGHTER
+    // than the haze it was supposed to be dissolving into. Distance then
+    // bleaches instead of receding, and a far wall ends up brighter than the
+    // sky behind it — which for a passive surface behind a scattering medium
+    // is not a matter of taste.
+    //
+    // The haze cannot hand back more light than it holds. The same exponential
+    // shoulder the sky uses turns the sum into an ASYMPTOTE: identical to the
+    // raw term while the glow is small, bending over to at most a quarter above
+    // the fog colour however hard the phase function is driven. Convergence is
+    // guaranteed by construction rather than by the numbers happening to stay
+    // small.
+    '    vec3 fogCap = max( fogColor, vec3( 1.0e-4 ) ) * 0.26;',
+    '    fogTone += fogCap * ( 1.0 - exp( - fogGlow / fogCap ) );',
     '  }',
     '  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogTone, fogFactor );',
     '#endif',
@@ -179,7 +203,7 @@ function installAerialPerspective(THREE_) {
 
 installAerialPerspective(THREE);
 
-const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color(), _c4 = new THREE.Color();
+const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 
 /**
@@ -263,11 +287,187 @@ export function skyRadiance(dir, sunDir, a, out = new THREE.Color()) {
   return out.setRGB(c[0] + 0, c[1] + 0.0003, c[2] + 0.00075, THREE.LinearSRGBColorSpace);
 }
 
-/** The shoulder _linearSky bakes into the dome, so the CPU side agrees with it. */
-export function skyShoulder(c, knee = 2.4, ceil = 9.5) {
+/* ── two shoulders, because the sky is doing two jobs ────────────────────
+ *
+ * LIGHT TRANSPORT wants the sky as it really is. The exposure meter integrates
+ * it for the irradiance landing on the ground, and the environment probe baked
+ * from it is the only indirect light in the game; both need a sky whose
+ * horizon is genuinely twenty times its zenith or the shading loses all its
+ * direction. SKY_PHYSICAL is that, and it exists at all only because
+ * Preetham's solar term reaches 7e5 and a half-float target turns anything
+ * past 65504 into Infinity — which takes bloom to NaN.
+ *
+ * WHAT IS DRAWN has to fit inside the camera, and it did not. Measured on the
+ * arena: 42.3% of the sky hemisphere renders above 1.8 — which is the bloom
+ * pass's threshold, and the threshold every VFX in the game is authored
+ * against (Particles.js pins sparks at 1.50 against it, Saber.js the blade).
+ * Bloom is a HIGHLIGHT effect. Handed half the frame as a source it is not a
+ * highlight, it is a veil, and it was measurably the thing bleaching the
+ * landscape: with bloom off the arena rim reads 0.441 display luminance and
+ * with it on 0.782, the spire at 60 m goes 0.321 → 0.866, and the whole sky
+ * clips to white. Not fog. Not albedo. Bloom, fed a sky two to four times over
+ * its own threshold across half the dome.
+ *
+ * So the DRAWN dome is compressed onto a ceiling under that threshold. The sun
+ * disc is added AFTER the shoulder and still reaches 34, so it stays the one
+ * thing in the sky that blooms — which is the one thing that should. Nothing
+ * about the light the scene is lit by changes: refreshEnvironment swaps the
+ * physical pair back in for the duration of the bake.
+ */
+export const SKY_PHYSICAL = { knee: 2.4, ceil: 9.5 };
+
+/**
+ * The exposed radiance the brightest piece of sky is allowed to reach. ACES
+ * has a long shoulder and a scene pushed up against it has no separation left,
+ * so 0.72 lands the skyline around 0.92 display luminance: plainly the
+ * brightest thing in the frame, still short of paper white, with the sun disc
+ * left as the only thing that clips.
+ */
+const SKY_CLIP = 0.72;
+/**
+ * …held inside this band in LINEAR radiance whatever the exposure asks for.
+ * The ceiling is the load-bearing one: 1.55 is under the bloom pass's 1.8
+ * threshold, so the dome cannot become a bloom source. The floor stops a level
+ * metered for a dark gorge — the canyon meters at 1.71, two and a half stops
+ * off the arena — from compressing its own sky into a flat grey card.
+ */
+const SKY_CLIP_RANGE = [0.45, 1.55];
+
+/**
+ * The shoulder the DRAWN sky is compressed onto for a given atmosphere. It has
+ * to move with the exposure: a single fixed pair put the arena's skyline at
+ * 0.96 display and the canyon's at 1.002 — clipped — because the two levels
+ * meter two and a half stops apart off the same authored numbers.
+ */
+export function skyDisplayShoulder(a, meter = null) {
+  const m = meter || atmosphereMeter(a);
+  const ceil = clamp(SKY_CLIP / Math.max(m.exposure, 1e-3), SKY_CLIP_RANGE[0], SKY_CLIP_RANGE[1]);
+  // The knee is where compression starts, and it has to be LOW. The drawn sky
+  // spans about ten to one from zenith to skyline; put the knee where the
+  // zenith is and everything above it lands inside the last 5% of the range.
+  // At 0.15 of the ceiling the whole dome is on the reciprocal tail, which is
+  // the part that keeps separating — arena zenith 0.765 → 0.52 against a
+  // skyline of 3.19 → 0.85, a gradient you can see rather than a wash.
+  return { knee: ceil * 0.15, ceil };
+}
+
+/**
+ * The shoulder _linearSky bakes into the dome, so the CPU side agrees with it.
+ *
+ * A RECIPROCAL tail, not an exponential one. The exponential is within a per
+ * cent of its ceiling two spans past the knee and flat as a board after that,
+ * which is fine when the ceiling is 9.5 and almost nothing reaches it, and
+ * catastrophic once the ceiling comes down to where the drawn sky lives:
+ * measured on the arena with a 1.056 ceiling, the whole sky from the skyline
+ * to 50° elevation — physical radiance 1.6 to 3.9, well over two stops of real
+ * modelling — came out between 0.99 and 1.056. One flat card. The reciprocal
+ * has the same value and the same slope at the knee and the same asymptote,
+ * but it never stops separating: those same two stops come out 0.81 to 0.96.
+ */
+export function skyShoulder(c, knee = SKY_PHYSICAL.knee, ceil = SKY_PHYSICAL.ceil) {
   const span = Math.max(ceil - knee, 0.001);
-  const f = (v) => Math.min(v, knee) + span * (1 - Math.exp(-Math.max(v - knee, 0) / span));
+  const f = (v) => { const x = Math.max(v - knee, 0); return Math.min(v, knee) + span * x / (x + span); };
   return c.setRGB(f(c.r), f(c.g), f(c.b), THREE.LinearSRGBColorSpace);
+}
+
+/**
+ * What distance dissolves into, in radiance. One function, so the checks can
+ * assert on the thing the engine actually runs instead of on a transcription
+ * of it that drifts the first time either changes.
+ *
+ * Authored fog colours are albedo-ish sRGB swatches; used raw they dissolve
+ * distance into something DARKER than the horizon it meets, which is a hard
+ * silhouette where there should be a merge, and — when the swatch is the same
+ * tan as the sand, which it was — 50% fog at 200 m that changes nothing at all.
+ * Keep the authored hue, take the LEVEL from the sky.
+ *
+ * From the DRAWN sky, specifically. Anchored to the physical skyline the arena
+ * fog landed at linear luminance 3.19 while the same skyline rendered at 1.50,
+ * so everything at distance converged on something twice as bright as the sky
+ * standing over it.
+ */
+export function hazeRadiance(a, out = new THREE.Color(), shoulder = null) {
+  out.set(a.fogColor ?? 0xc9b391);
+  if (a.sky === false) return out;
+  const s = shoulder || skyDisplayShoulder(a);
+  const sunPos = sunDirection(a, new THREE.Vector3());
+  // Beside the sun, at the skyline: the direction most of the haze in a level
+  // is actually seen against. Local vectors — skyRadiance borrows the module
+  // scratch for its own normalisation.
+  const side = sunPos.clone().setY(0).normalize()
+    .cross(new THREE.Vector3(0, 1, 0)).setY(0.02).normalize();
+  const haze = skyShoulder(skyRadiance(side, sunPos, a, new THREE.Color()), s.knee, s.ceil);
+  // Half the HUE comes from the sky too. In a bright desert the haze is barely
+  // brighter than the sand, so what actually reads as distance is losing
+  // SATURATION into the sky, and a fog swatch authored the same tan as the sand
+  // it hides takes no saturation from anything. Keep enough of the author's
+  // dust to keep the mood.
+  out.lerp(haze.clone().multiplyScalar(1 / Math.max(0.02, lum(haze))), 0.55);
+  const want = clamp(lum(haze), 0.25, 3.2);
+  // The lower bound used to be 0.9 — a guard against crushing the authored
+  // swatch, from when the sky it was matching to was three times brighter than
+  // anything else in the frame. Against the drawn sky it is the wrong way
+  // round: on the canyon it pinned the fog at 0.66 under a skyline of 0.45, so
+  // distance converged on something half again brighter than the sky it was
+  // dissolving into. The sky is the authority; let it pull the swatch down.
+  return out.multiplyScalar(clamp(want / Math.max(0.02, lum(out)), 0.35, 4.5));
+}
+
+/**
+ * What lights a cloud, in the same radiance units as everything else. Pure
+ * function of an atmosphere block, because it is the number the whole deck's
+ * tonality hangs off and it has to be checkable without a GL context.
+ *
+ * A cumulus is a WHITE BODY — albedo about 0.9 — not an authored swatch. Its
+ * sunlit face returns the sun's own irradiance over pi; on the arena that is
+ * 1.12 against the 0.145 a swatch-as-radiance was giving a thick cloud. Eight
+ * times too dark is not a cloud, it is a hole in the sky, and that is exactly
+ * how the deck read.
+ *
+ * Its base has three sources and none of them is optional:
+ *   · the GROUND BOUNCE. Over pale sand this rivals the other two, and it is
+ *     why a desert cumulus has a warm belly rather than a blue one.
+ *   · the SKY, which the base sees a good slice of around the cloud's edge.
+ *   · MULTIPLE SCATTERING inside the deck itself. Single scattering alone puts
+ *     a base at 0.30 display against a 0.83 top, which is a thunderhead; a
+ *     fair-weather cumulus is grey underneath, not black, and essentially all
+ *     of that grey is light that has bounced twice inside the cloud.
+ *
+ * `tint` is those same three weighted by how much each contributes, which is
+ * the only honest way to get the base's colour. Read straight off the dome and
+ * lerped toward white it measured 0.51 saturated and the deck came out
+ * turquoise over an ochre desert; weighted, it lands near 0.29 — a cool grey
+ * with a warm undertone, which is what a cloud base is.
+ */
+const CLOUD_ALBEDO = 0.9;
+export function cloudLight(a, meter = null) {
+  const m = meter || atmosphereMeter(a);
+  const sunPos = m.sunPos;
+  const sun = CLOUD_ALBEDO * (a.sunIntensity ?? 3.6) * Math.max(sunPos.y, 0.05) / Math.PI;
+  const tint = new THREE.Color(1, 1, 1);
+  if (!m.outdoor) return { sun, amb: 0.42, tint, bounce: 0, sky: 0, inner: 0 };
+  const ground = new THREE.Color(a.groundColor ?? 0x60482e);
+  const bounce = lum(ground) * m.irradiance / Math.PI;
+  ground.multiplyScalar(1 / Math.max(0.02, lum(ground)));
+  const zen = new THREE.Color();
+  const sky = lum(skyShoulder(skyRadiance(new THREE.Vector3(0, 1, 0), sunPos, a, zen))) * 0.25;
+  // The sky's CHROMA from the shade side, which is the bluest part of the dome
+  // — and a cloud base does not see one direction, it sees the whole
+  // hemisphere, most of which is the pale sky near the horizon. Standing that
+  // average in with a single sample left the canyon's base tint 0.43 saturated,
+  // which is a turquoise cloud. Pulling a third of the way to white is the
+  // cheap version of the integral and lands all three levels under 0.35.
+  const skyHue = skyRadiance(new THREE.Vector3(-sunPos.x, 1.6, -sunPos.z).normalize(),
+    sunPos, a, new THREE.Color());
+  skyHue.multiplyScalar(1 / Math.max(0.02, lum(skyHue))).lerp(WHITE, 0.34);
+  const inner = sun * 0.22;
+  const amb = bounce + sky + inner;
+  const inv = 1 / Math.max(amb, 1e-4);
+  tint.setRGB((ground.r * bounce + skyHue.r * sky + inner) * inv,
+    (ground.g * bounce + skyHue.g * sky + inner) * inv,
+    (ground.b * bounce + skyHue.b * sky + inner) * inv, THREE.LinearSRGBColorSpace);
+  tint.multiplyScalar(1 / Math.max(0.02, lum(tint)));
+  return { sun, amb, tint, bounce, sky, inner };
 }
 
 /** Where the sun is, from an atmosphere block. */
@@ -623,16 +823,21 @@ export class Engine {
       return;
     }
     m.uniforms.uSkyScale = { value: 1 };
-    // Knee and ceiling for the sky's own soft shoulder. Preetham's horizon
-    // beside a 26° sun measures 21.7 and its solar term reaches 7e5; a
-    // half-float target turns anything past 65504 into Infinity and takes
-    // bloom to NaN with it, and long before that a quarter of the frame is a
-    // single blown white shape with no drawing in it at all.
-    m.uniforms.uSkyKnee = { value: 2.4 };
-    m.uniforms.uSkyCeil = { value: 9.5 };
+    // Knee and ceiling for the sky's own soft shoulder — the DRAWN pair, see
+    // skyDisplayShoulder, re-derived per level in applyAtmosphere because it
+    // tracks the metered exposure. refreshEnvironment lifts these to
+    // SKY_PHYSICAL for the duration of the probe bake so the light the world
+    // is lit by keeps the full hundred-to-one the model actually produces.
+    this.skyDisplay = skyDisplayShoulder({});
+    m.uniforms.uSkyKnee = { value: this.skyDisplay.knee };
+    m.uniforms.uSkyCeil = { value: this.skyDisplay.ceil };
     // The disc, separated out so it is not compressed along with the aureole
     // it sits in — it is the one thing in the sky that SHOULD read as a hole
-    // punched through the exposure.
+    // punched through the exposure, and the one thing that should still bloom.
+    // Scaled with the drawn ceiling in applyAtmosphere: a fixed 34 against a
+    // sky that used to reach 9.5 was a 3.6:1 highlight, and against the 1.06
+    // the arena draws now it is 32:1, which is far enough past UnrealBloomPass's
+    // mip chain to leave a vertical smear up the frame instead of a halo.
     m.uniforms.uSkyDisc = { value: new THREE.Vector3(34, 32, 29) };
     m.uniforms.uSkyDiscCos = { value: new THREE.Vector2(0.99993, 0.99998) };
     // Only ever anything but 1 while the environment probe is being baked, see
@@ -642,13 +847,14 @@ export class Engine {
       'uniform float uSkyScale, uSkyKnee, uSkyCeil, uSkySat;',
       'uniform vec3 uSkyDisc;',
       'uniform vec2 uSkyDiscCos;',
-      // Exponential shoulder: identity below the knee, asymptotic to the
-      // ceiling above it. Keeps the horizon glow bright without letting it
-      // become a flat white plate.
+      // Reciprocal shoulder: identity below the knee, asymptotic to the ceiling
+      // above it, and — unlike the exponential this replaces — still separating
+      // decades past it. Keeps the horizon glow bright without letting it
+      // become a flat white plate. Must stay identical to skyShoulder() above.
       'vec3 skyShoulder( vec3 c ) {',
       '  vec3 over = max( c - uSkyKnee, 0.0 );',
       '  float span = max( uSkyCeil - uSkyKnee, 0.001 );',
-      '  return min( c, vec3( uSkyKnee ) ) + span * ( 1.0 - exp( - over / span ) );',
+      '  return min( c, vec3( uSkyKnee ) ) + span * over / ( over + span );',
       '}',
       m.fragmentShader,
     ].join('\n'))
@@ -703,39 +909,43 @@ export class Engine {
     // Everything about distance and everything about shade derives from these.
     const side = _v1.copy(sunPos).setY(0).normalize().cross(_v2.set(0, 1, 0)).setY(0.02).normalize();
     const flat = _v2.copy(sunPos).setY(0.03).normalize();
-    const hazeSide = skyShoulder(skyRadiance(side, sunPos, a, _c2));
+    // Which shoulder a sample is read through depends on what the answer is
+    // FOR, and getting that backwards costs you the effect either way:
+    //
+    //   · what distance CONVERGES ON has to be what the dome actually draws,
+    //     or the far ground comes out brighter than the sky standing over it.
+    //     The fog was anchored to the physical skyline at linear 3.19 while
+    //     that same skyline drew at 1.50. hazeRadiance does that job.
+    //   · the sunward glow's COLOUR and STRENGTH are properties of the air, and
+    //     come off the physical pair below. Read through the display shoulder
+    //     the two skyline samples sit within half a per cent of the same
+    //     ceiling in every channel — the sunward tint measured (1.000, 1.000,
+    //     1.000), dead neutral, and the strength measured 0.07 where the air
+    //     actually carries 4.59. That is the whole sunset colour of the haze
+    //     compressed out of existence by a curve with no business setting it.
+    const disp = this.skyDisplay = skyDisplayShoulder(a, meter);
+    const skyU = this.sky.material.uniforms;
+    if (skyU.uSkyKnee) {
+      skyU.uSkyKnee.value = disp.knee; skyU.uSkyCeil.value = disp.ceil;
+      // Nine times the brightest sky: five stops over, so it is unambiguously a
+      // blown highlight and blooms into a halo, without the 32:1 that streaks.
+      skyU.uSkyDisc.value.set(disp.ceil * 9.0, disp.ceil * 8.5, disp.ceil * 7.7);
+    }
     const hazeSun = skyShoulder(skyRadiance(flat, sunPos, a, _c3));
-    const ambient = skyRadiance(_v1.set(-sunPos.x, 1.6, -sunPos.z).normalize(), sunPos, a, _c4);
-    ambient.multiplyScalar(1 / Math.max(0.02, lum(ambient))).lerp(WHITE, 0.35);
+    const glowSide = lum(skyShoulder(skyRadiance(side, sunPos, a, _c2)));
+    const glowSun = lum(hazeSun);
+    const light = cloudLight(a, meter);
 
     this.skyDome.configure(a);
     this.skyDome.setSun(sunPos);
-    // Clouds are lit by the same sun as everything else and hang in the same
-    // sky, so they are scaled into the same radiance units the linear Preetham
-    // dome now works in. Left at 1.0 against a display-referred sky they read
-    // as bright paper stuck to a flat card, which is precisely what they were.
-    this.skyDome.setRadiance(this.skyLinear ? 0.95 : 1,
-      clamp(sunI / 6.5, 0.35, 1.5), ambient);
+    this.skyDome.setRadiance(this.skyLinear ? 0.95 : 1, light.sun, light.tint, light.amb);
 
     if (a.fog !== false) {
-      // Haze is LIT, and it is lit by the sky it is part of. Authored fog
-      // colours are albedo-ish sRGB swatches; used raw they dissolve distance
-      // into something DARKER than the horizon it meets, which is a hard
-      // silhouette where there should be a merge, and — when the swatch is the
-      // same tan as the sand, which it was — 50% fog at 200m that changes
-      // nothing at all. Keep the authored hue, take the level from the sky.
+      // Haze is LIT, and it is lit by the sky it is part of — see hazeRadiance,
+      // which is where that derivation lives so the checks can assert on the
+      // engine's own arithmetic rather than on a copy of it.
       const fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
-      if (outdoor) {
-        // Half the HUE comes from the sky too. In a bright desert the haze is
-        // barely brighter than the sand — 1.2 against 0.9 — so what actually
-        // reads as distance is losing SATURATION into the sky, and a fog swatch
-        // authored the same tan as the sand it hides takes no saturation from
-        // anything. Keep enough of the author's dust to keep the mood.
-        const n = _c1.copy(hazeSide).multiplyScalar(1 / Math.max(0.02, lum(hazeSide)));
-        fog.color.lerp(n, 0.55);
-        const want = clamp(lum(hazeSide), 0.25, 3.2);
-        fog.color.multiplyScalar(clamp(want / Math.max(0.02, lum(fog.color)), 0.9, 4.5));
-      }
+      hazeRadiance(a, fog.color, disp);
       this.scene.fog = fog;
       this.skyDome.setHaze(fog.color, _c1.set(a.horizonColor ?? 0x6d6152)
         .multiplyScalar(clamp(sunI * Math.max(0.12, sunPos.y) / Math.PI, 0.05, 8)));
@@ -750,8 +960,11 @@ export class Engine {
     AERIAL.shape.w = 1;
     AERIAL.sun.x = sunPos.x; AERIAL.sun.y = sunPos.y; AERIAL.sun.z = sunPos.z;
     // How much brighter the skyline gets as it swings toward the sun, spread
-    // over the phase lobe. Straight out of the model rather than a taste knob.
-    const gain = clamp(lum(hazeSun) - lum(hazeSide), 0, 12);
+    // over the phase lobe. Straight out of the model rather than a taste knob,
+    // and off the PHYSICAL sky — the drawn one has this gradient compressed
+    // out of it by design, and reading it there would silently switch the
+    // sunward haze off. The chunk energy-limits what this can actually add.
+    const gain = clamp(glowSun - glowSide, 0, 12);
     AERIAL.sun.w = outdoor ? (a.inscatter ?? gain * 0.028) : 0;
     const sl = Math.max(0.02, lum(hazeSun));
     AERIAL.tint.x = hazeSun.r / sl; AERIAL.tint.y = hazeSun.g / sl; AERIAL.tint.z = hazeSun.b / sl;
@@ -787,7 +1000,16 @@ export class Engine {
     // Preetham's blue; baked at full chroma every shadowed face turns cyan.
     const sat = this.sky.material.uniforms.uSkySat;
     if (sat) sat.value = 0.6;
+    // And bake from the PHYSICAL sky, not the drawn one. The drawn dome is
+    // soft-clipped at 1.55 so it cannot feed the bloom pass (see SKY_DISPLAY);
+    // baking the probe from that would quietly re-flatten the image-based
+    // light — a horizon only twice the zenith carries no direction, which is
+    // the exact fault _linearSky was written to fix. Mesh.clone shares the
+    // material, so moving the uniforms here moves the clone too.
+    const knee = this.sky.material.uniforms.uSkyKnee, ceil = this.sky.material.uniforms.uSkyCeil;
+    if (knee) { knee.value = SKY_PHYSICAL.knee; ceil.value = SKY_PHYSICAL.ceil; }
     this._envRT = this.pmrem.fromScene(tmp, 0.04);
+    if (knee) { knee.value = this.skyDisplay.knee; ceil.value = this.skyDisplay.ceil; }
     if (sat) sat.value = 1;
     this.scene.environment = this._envRT.texture;
     // With the sky linearised the probe is in the same units as the sun, so

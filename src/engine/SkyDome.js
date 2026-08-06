@@ -35,9 +35,53 @@
  *     displaced from their bases as you look across the deck.
  *
  * All four are here, and all four are one or two lines each.
+ *
+ * AND THE LEVEL HAS TO COME FROM THE LIGHT, NOT FROM A SWATCH. This is the
+ * fault that made the deck read as smoke. cloudLit/cloudDark were authored as
+ * sRGB colours and used as absolute radiance, so the arena's 0xa89880 pinned
+ * the shadowed side at linear (0.39, 0.31, 0.22) — brown — and the shading
+ * terms took it DOWN from there: measured, a thick core came out at linear
+ * 0.145 against a sky behind it at 1.49 and a skyline at 3.19. A cloud an
+ * order of magnitude darker than the sky it hangs in is not a cloud, it is a
+ * hole, and a brown one is a smoke smear. A cumulus is a white body with an
+ * albedo near 0.9; its sunlit face is the sun's own irradiance over pi and its
+ * base is what the sky and the ground throw back up at it. Those two numbers
+ * arrive as uCloudSun and uCloudAmb, in the same radiance units as the rest of
+ * the frame, and the authored swatches are demoted to what they always were —
+ * a HUE, normalised to unit luminance and pulled most of the way to white,
+ * because whatever colour a white body has comes from the light on it.
  */
 
 import * as THREE from 'three';
+
+const _lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+const _WHITE = new THREE.Color(1, 1, 1);
+const _scratch = new THREE.Color();
+
+/**
+ * An authored swatch, demoted to a tint: renormalised to unit luminance so it
+ * can only ever say WHAT COLOUR and never HOW BRIGHT, then pulled toward white
+ * by (1 - keep). A cumulus is a white body; the arena's 0xa89880 underside is
+ * 0.45 saturated as authored, and a cloud base that saturated is a mud smear
+ * whatever its level, because the only chroma a white body has is the chroma
+ * of the light landing on it — which arrives separately, as uSkyAmb.
+ */
+function tint(c, keep) {
+  return unitLum(c).lerp(_WHITE, 1 - keep);
+}
+
+/**
+ * No floor on the divisor. A floor is the usual guard against dividing by a
+ * black swatch, and it silently breaks the guarantee tint() exists for: with a
+ * 0.02 floor, 0x101014 came out at 0.78 luminance instead of 1, so an author
+ * picking a very dark cloud colour was still setting the deck's LEVEL through
+ * the back door. Only literal black needs handling.
+ */
+function unitLum(c) {
+  const L = _lum(c);
+  if (L > 1e-5) c.multiplyScalar(1 / L); else c.copy(_WHITE);
+  return c;
+}
 
 const VERT = /* glsl */`
   varying vec3 vDir;
@@ -59,8 +103,8 @@ const FRAG = /* glsl */`
   uniform vec3  uSunDir;
   uniform float uTime;
   uniform float uCoverage;     // 0 = clear, 1 = overcast
-  uniform vec3  uCloudLit;     // sunlit face
-  uniform vec3  uCloudDark;    // shadowed underside
+  uniform vec3  uCloudLit;     // hue of the sunlit face, unit luminance
+  uniform vec3  uCloudDark;    // hue of the shadowed underside, unit luminance
   uniform vec3  uHazeColor;    // what distance dissolves into
   uniform float uHorizonAmt;   // 0 = flat empty horizon, 1 = full range
   uniform float uHorizonScale; // angular size of the landforms
@@ -69,7 +113,8 @@ const FRAG = /* glsl */`
   uniform float uWindSpeed;
   uniform float uOpacity;
   uniform float uHdr;          // radiance scale, matched to the linear sky
-  uniform float uSunPower;     // how hard the sun is driving the deck
+  uniform float uCloudSun;     // radiance of a white cloud face square to the sun
+  uniform float uCloudAmb;     // radiance of a white cloud face lit by sky + ground
   uniform vec3  uSkyAmb;       // colour of the skylight falling on the deck
 
   varying vec3 vDir;
@@ -195,6 +240,17 @@ const FRAG = /* glsl */`
       vec2  up = -p * 0.16;                       // toward the zenith on the deck
       float d  = deck(p + up * clamp(d0 * 4.0, 0.0, 1.0), thr, wind);
 
+      // — erosion. The outline of a cumulus is not the level set of a smooth
+      // field; it is torn by turbulence an order of magnitude finer than the
+      // billow it sits on. A high-frequency field subtracted at the RIM only —
+      // weighted out by the time the density is 0.22 above threshold, so the
+      // core is untouched — eats the silhouette into fringes and wisps. Kept
+      // OUT of deck() on purpose: the coverage statistics in
+      // tools/checks/lighting.mjs port that function, and this term has zero
+      // mean, so it must not be allowed to move the threshold calibration.
+      float fine = fbm3(p * 6.3 + wind * 0.028) - 0.5;
+      d -= fine * 0.075 * (1.0 - smoothstep(0.0, 0.22, d));
+
       // Thickness in optical units. d tops out near 0.40, so ×3.4 puts a solid
       // cloud around 1 and a wisp around 0.15.
       float h = clamp(d * 3.4, 0.0, 1.3);
@@ -224,27 +280,43 @@ const FRAG = /* glsl */`
       // — phase. Forward scattering gives the rim in front of the sun its
       // blaze and the backlit interior its glow. Capped, or a cloud crossing
       // the sun becomes a white hole.
+      //
+      // NORMALISED so a face the sun reaches square-on returns about 1. The
+      // old constants peaked at 0.68 across the side-lit majority of the deck,
+      // which quietly took a third off every lit shoulder in the sky — a white
+      // body cannot return less light than falls on it and then still read as
+      // white. The forward lobe is what is meant to be big here, not the
+      // baseline.
       float cosT = dot(dir, uSunDir);
-      float phase = min(0.62 + 0.22 * hg(cosT, 0.72), 3.0);
+      float phase = min(0.88 + 0.30 * hg(cosT, 0.72), 2.4);
 
-      float sun = trans * mix(0.35, 1.0, powder) * phase * uSunPower;
-      // ambient from the sky: the underside is not black, it is lit by the
-      // whole dome, more so where the cloud is thin.
-      float amb = mix(0.85, 0.30, clamp(h, 0.0, 1.0));
+      float sun = trans * mix(0.42, 1.0, powder) * phase;
+      // ambient: the underside is not black, it is lit by the whole dome and
+      // by everything the ground throws back up, more so where the cloud is
+      // thin. The floor is 0.55 rather than 0.30 because uCloudAmb already
+      // carries the multiple-scattering term — light that has bounced twice
+      // INSIDE the deck is most of what makes a fair-weather base grey instead
+      // of the storm-black a single-scatter model gives you.
+      float amb = mix(0.95, 0.55, clamp(h, 0.0, 1.0));
 
       // The shaded part of a cloud is not "a darker cloud colour" — it is a
       // white surface lit by the BLUE SKY. Multiplying the authored underside
       // by the sky's own chroma is what turns a deck of tan paper cut-outs
-      // into cumulus with cold bellies and warm shoulders.
-      vec3 cloud = (uCloudDark * uSkyAmb * amb + uCloudLit * sun) * uHdr;
+      // into cumulus with cold bellies and warm shoulders. The LEVEL of both
+      // faces comes from uCloudSun / uCloudAmb; the swatches only tint.
+      vec3 cloud = (uCloudDark * uSkyAmb * uCloudAmb * amb
+                  + uCloudLit * uCloudSun * sun) * uHdr;
       // a touch of extra silver right on the sunward rim
-      cloud += uCloudLit * uHdr * pow(max(cosT, 0.0), 12.0) * (1.0 - clamp(h, 0.0, 1.0)) * cum * 0.35;
+      cloud += uCloudLit * uCloudSun * uHdr
+             * pow(max(cosT, 0.0), 12.0) * (1.0 - clamp(h, 0.0, 1.0)) * cum * 0.35;
 
       // — cirrus: stretched, faster, much fainter, and high enough that it
       // does not fight the cumulus for the same piece of sky.
       vec2 q = base * vec2(0.50, 2.4) + wind * 0.030;
       float cir = smoothstep(0.50, 0.80, fbm3(q)) * smoothstep(0.03, 0.32, el);
-      vec3 cirrusCol = uCloudLit * uHdr * (0.55 + 0.55 * pow(max(cosT, 0.0), 6.0));
+      // Ice, not water: cirrus is thin enough that essentially all of it is
+      // lit, so it sits at the deck's own sunlit level rather than below it.
+      vec3 cirrusCol = uCloudLit * uCloudSun * uHdr * (0.62 + 0.55 * pow(max(cosT, 0.0), 6.0));
 
       float ca = clamp(cum, 0.0, 1.0);
       col = mix(col, cloud, ca);
@@ -285,7 +357,11 @@ export class SkyDome {
         uWindSpeed:    { value: 1 },
         uOpacity:      { value: 1 },
         uHdr:          { value: 1 },
-        uSunPower:     { value: 1 },
+        // Defaults are a fair-weather day at a 30° sun with a 0.9-albedo deck,
+        // so a SkyDome built without an Engine still draws cloud rather than a
+        // black cut-out.
+        uCloudSun:     { value: 1.0 },
+        uCloudAmb:     { value: 0.42 },
         uSkyAmb:       { value: new THREE.Color(1, 1, 1) },
       },
       vertexShader: VERT,
@@ -311,8 +387,21 @@ export class SkyDome {
     const u = this.mat.uniforms;
     u.uCoverage.value = a.cloudCover ?? 0.42;
     u.uOpacity.value = a.clouds === false ? 0 : (a.cloudOpacity ?? 1);
-    u.uCloudLit.value.set(a.cloudLit ?? 0xfff6e6);
-    u.uCloudDark.value.set(a.cloudDark ?? 0x9aa8bd);
+    // Hue only — see tint(). The lit face keeps more of its authored cast than
+    // the shadowed one because the sun genuinely is coloured at low elevation,
+    // whereas a base is lit by the whole hemisphere and averages out nearly
+    // neutral whatever the level author had in mind.
+    //
+    // And the lit face is a white body under THE SUN, so the sun's own colour
+    // belongs on it — pulled halfway to white, because a cumulus top is above
+    // most of the dust that reddens the same sun down at ground level. Without
+    // this the tops came out the same cold grey-blue as the bases, since the
+    // level of the sunlit term is a scalar and carries no chroma at all.
+    tint(u.uCloudLit.value.set(a.cloudLit ?? 0xfff6e6), 0.55)
+      .multiply(tint(_scratch.set(a.sunColor ?? 0xfff0d8), 0.5));
+    // the product of two unit-luminance tints is not unit luminance
+    unitLum(u.uCloudLit.value);
+    tint(u.uCloudDark.value.set(a.cloudDark ?? 0x9aa8bd), 0.30);
     u.uHazeColor.value.set(a.fogColor ?? 0xd8c8a4);
     u.uHorizonAmt.value = a.horizon === false ? 0 : (a.horizonAmount ?? 1);
     u.uHorizonScale.value = a.horizonScale ?? 1;
@@ -326,10 +415,17 @@ export class SkyDome {
    * Tie the deck to the sky it hangs in. The Preetham dome is consumed as
    * linear radiance, so the clouds have to be scaled into the same units or
    * they are either black paper or blown-out white paper against it.
+   *
+   * `cloudSun` and `cloudAmb` are the two numbers the whole deck's tonality
+   * hangs off: the radiance of a white cloud face square to the sun, and the
+   * radiance of one lit by nothing but the sky and the ground bounce. Engine
+   * derives both from the level's own light, so a deck cannot come out darker
+   * than the sky behind it however the level's swatches were authored.
    */
-  setRadiance(hdr, sunPower = 1, skyAmbient = null) {
+  setRadiance(hdr, cloudSun = 1, skyAmbient = null, cloudAmb = null) {
     this.mat.uniforms.uHdr.value = hdr;
-    this.mat.uniforms.uSunPower.value = sunPower;
+    this.mat.uniforms.uCloudSun.value = cloudSun;
+    if (cloudAmb != null) this.mat.uniforms.uCloudAmb.value = cloudAmb;
     if (skyAmbient) this.mat.uniforms.uSkyAmb.value.copy(skyAmbient);
   }
 

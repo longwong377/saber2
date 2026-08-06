@@ -30,7 +30,38 @@ import {
   addAntenna, addLamp, addSign, addDebrisField, addRuin, addOutpost,
   makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole,
 } from '../../src/world/Props.js';
-import { MEAN_ALBEDO } from '../../src/engine/Textures.js';
+import { MEAN_ALBEDO, rawMaps, sandMaps, rockMaps, duracreteMaps, metalMaps, armorMaps,
+         clothMaps } from '../../src/engine/Textures.js';
+
+/**
+ * How far above its own mean a bake's brightest texels reach, as p99/mean of
+ * linear luminance — the factor any tint chosen against MEAN_ALBEDO has to
+ * survive before it clips.
+ *
+ * Measured: sand 1.59, duracrete 1.21, rock 1.97. A tint that lands the MEAN
+ * of the rock map on a target puts its top decile a further 97% above that,
+ * which is how the sand drift ended up with a physically impossible albedo
+ * while every number written down about it was correct.
+ */
+const PEAK = new Map();
+function mapPeak(tex) {
+  if (PEAK.size === 0) {
+    const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    for (const [name, fn] of [['sand', sandMaps], ['rock', rockMaps], ['duracrete', duracreteMaps],
+      ['metal', metalMaps], ['armor', armorMaps], ['cloth', clothMaps]]) {
+      const m = rawMaps(name);
+      const N = m.size * m.size, lum = new Float64Array(N);
+      let s = 0;
+      for (let i = 0; i < N; i++) {
+        const l = (toLin(m.albedo[i * 4]) + toLin(m.albedo[i * 4 + 1]) + toLin(m.albedo[i * 4 + 2])) / 3;
+        lum[i] = l; s += l;
+      }
+      lum.sort();
+      PEAK.set(fn(2).map, lum[Math.floor(0.99 * (N - 1))] / (s / N));
+    }
+  }
+  return PEAK.get(tex);
+}
 
 /* ── a world stub that records everything a maker does ───────────────── */
 function stubWorld() {
@@ -182,6 +213,190 @@ export function run({ check, assert, near }) {
     assert(bad.length === 0, `unpainted: ${bad.slice(0, 6).join(', ')}`);
     const painted = built().filter((b) => b.geo.attributes.color).length;
     return `${painted}/${built().length} meshes carry vertex colour`;
+  });
+
+  /* ══ masonry ═════════════════════════════════════════════════════════ */
+
+  /**
+   * Albedo, area-weighted, over the triangles a camera in front of a wall can
+   * actually see: front-facing, and in front of everything else at that point.
+   * A hidden surface is not a colour the shot contains, and averaging one in is
+   * how a wall with a facing on it measures as varied while looking flat.
+   */
+  function faceAlbedo(w, zFace) {
+    const MAPOF = { duracrete: 'duracrete', duracreteWarm: 'duracrete', duracreteDark: 'duracrete',
+      sandstone: 'rock', stone: 'rock', stoneDark: 'rock', drift: 'rock', rebar: 'metal' };
+    const M = propMaterials();
+    const nameOf = new Map(Object.entries(M).map(([k, v]) => [v, k]));
+    const out = [];
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    for (const mesh of w.statics) {
+      const mm = MEAN_ALBEDO[MAPOF[nameOf.get(mesh.material)] || 'duracrete'];
+      const col = mesh.material.color;
+      const base = [col.r * mm[0], col.g * mm[1], col.b * mm[2]];
+      const g = mesh.geometry, pos = g.attributes.position, cc = g.attributes.color, idx = g.index;
+      const n = idx ? idx.count : pos.count;
+      for (let i = 0; i + 2 < n; i += 3) {
+        const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+        a.fromBufferAttribute(pos, i0); b.fromBufferAttribute(pos, i1); c.fromBufferAttribute(pos, i2);
+        // only the outermost skin: anything at or behind the wall plane is
+        // covered by the facing standing proud of it
+        if ((a.z + b.z + c.z) / 3 < zFace) continue;
+        b.sub(a); c.sub(a); b.cross(c);
+        const area = b.length() * 0.5;
+        if (!(area > 1e-7) || b.normalize().z < 0.5) continue;
+        let r = 1, gg = 1, bb = 1;
+        if (cc) {
+          r = (cc.getX(i0) + cc.getX(i1) + cc.getX(i2)) / 3;
+          gg = (cc.getY(i0) + cc.getY(i1) + cc.getY(i2)) / 3;
+          bb = (cc.getZ(i0) + cc.getZ(i1) + cc.getZ(i2)) / 3;
+        }
+        out.push({ area, l: base[0] * r * 0.2126 + base[1] * gg * 0.7152 + base[2] * bb * 0.0722 });
+      }
+    }
+    const A = out.reduce((s, x) => s + x.area, 0);
+    const mean = out.reduce((s, x) => s + x.l * x.area, 0) / A;
+    const sd = Math.sqrt(out.reduce((s, x) => s + (x.l - mean) ** 2 * x.area, 0) / A);
+    return { mean, sd, rel: sd / mean, area: A };
+  }
+
+  check('masonry: a wall face is built out of stones, not printed on a panel', () => {
+    /* MEASURED on the arena ring, and the reason ashlarFace exists. Rasterised
+     * at 2 cm/px, one 9.4 × 8.4 m bay put 62.8% of its visible face into a
+     * single luminance bin out of sixteen and 80% of it into two. That is a
+     * white card, and no amount of relighting fixes it, because an extruded
+     * polygon has exactly one albedo and the per-PIECE weathering tone that
+     * was meant to break it up is by definition constant over the piece.
+     *
+     * This is the same measurement without the rasteriser: area-weighted
+     * spread of the outermost skin. The A/B is against the same wall with the
+     * facing switched off, so it cannot pass by the lighting changing. */
+    const size = V(9.4, 8.4, 2.1);
+    const mk = (o) => { const w = stubWorld(); addBrokenWall(w, V(0, 0, 0), size, { seed: 403, ruin: 0.28, ...o }); return w; };
+    const flat = faceAlbedo(mk({ ashlar: false, footing: false, drift: false, talus: false, stringCourse: false }), 1.04);
+    const laid = faceAlbedo(mk({ drift: false, talus: false }), 1.04);
+    assert(flat.area > 30, `only ${flat.area.toFixed(0)} m² of face to measure`);
+    assert(flat.rel < 0.13, `an unfaced wall already varies by ${(flat.rel * 100).toFixed(1)}% — the A/B is meaningless`);
+    assert(laid.rel > 0.18, `the facing varies by ${(laid.rel * 100).toFixed(1)}% — that is still one flat panel`);
+    assert(laid.rel > flat.rel * 1.8, `facing ${(laid.rel * 100).toFixed(1)}% vs panel ${(flat.rel * 100).toFixed(1)}%`);
+    // and the tones must span real ground, not wobble about one value
+    near(laid.mean, flat.mean, flat.mean * 0.16, 'the facing changed the wall\'s exposure, not just its variation');
+    return `panel ${(flat.rel * 100).toFixed(1)}% → ashlar ${(laid.rel * 100).toFixed(1)}% ` +
+      `at albedo ${flat.mean.toFixed(3)} → ${laid.mean.toFixed(3)}`;
+  });
+
+  check('masonry: what stands in sand is bedded into it', () => {
+    /* Every standing structure's lowest polygon used to sit exactly on y = 0,
+     * so on rolling terrain you could see under one edge of it, and the desert
+     * stopped dead at its face. Both halves are checked: masonry BELOW grade
+     * that nobody ever sees, and drifted sand banked against the face. */
+    const rows = [];
+    const cases = [
+      ['addBrokenWall', (w) => addBrokenWall(w, V(0, 0, 0), V(9.4, 8.4, 2.1), { seed: 403, ruin: 0.28 })],
+      ['addColumn', (w) => addColumn(w, V(0, 0, 0), { height: 7.5, radius: 0.55, seed: 504 })],
+      ['addArch', (w) => addArch(w, V(0, 0, 0), { span: 7.5, rise: 5.4, thickness: 2.2, seed: 601 })],
+    ];
+    for (const [name, fn] of cases) {
+      const w = stubWorld();
+      fn(w);
+      let low = 0, drift = 0;
+      for (const m of w.statics) {
+        m.geometry.computeBoundingBox();
+        low = Math.min(low, m.geometry.boundingBox.min.y);
+        if (m.material === propMaterials().drift) drift += surface(m.geometry).area;
+      }
+      assert(low < -0.18, `${name} stops at y=${low.toFixed(2)} — nothing of it is buried`);
+      assert(drift > 1.0, `${name} has ${drift.toFixed(1)} m² of drifted sand against it`);
+      rows.push(`${name.replace('add', '')} ${low.toFixed(2)}m deep, ${drift.toFixed(0)}m² drift`);
+    }
+    /* And it has to bank against SOMETHING. sandDrift builds about its own
+     * origin, so a caller that forgets to push the pier's frame gets a bank of
+     * sand hanging in the middle of the gateway — which still measures as
+     * thirty square metres of drift, and is exactly the kind of geometry
+     * standing inside other geometry this file keeps being bitten by. The
+     * clear span of an arch is the one place there is nothing to bank against,
+     * so that is where it is measured. */
+    {
+      const w = stubWorld();
+      const span = 7.5;
+      addArch(w, V(0, 0, 0), { span, rise: 5.4, thickness: 2.2, seed: 601 });
+      let inside = 0, total = 0;
+      for (const m of w.statics) {
+        if (m.material !== propMaterials().drift) continue;
+        const p = m.geometry.attributes.position;
+        for (let i = 0; i < p.count; i++) { total++; if (Math.abs(p.getX(i)) < span * 0.42) inside++; }
+      }
+      assert(total > 60, `the arch emitted only ${total} drift vertices`);
+      assert(inside / total < 0.12,
+        `${inside}/${total} drift vertices stand in the arch's clear span — that sand is banked against nothing`);
+      rows.push(`gateway ${inside}/${total} drift verts in the span`);
+    }
+
+    /* And it has to stand at an angle sand can stand at.
+     *
+     * Dry sand holds about 34° and not one degree past it — pile it steeper
+     * and it avalanches until it is 34° again — so a surface claiming to be a
+     * wind-blown drift is falsified by a single face steeper than that. Both
+     * versions of this that shipped had them: the section put the face above
+     * the slack at 44°, and the taper at the ends of a column's drift dropped
+     * from full height to a sixth of it between two columns 46 cm apart, which
+     * is 52°. Measured over every drift triangle any maker emits, including
+     * the cross-slope along the wall, which is where the taper hid. Faces
+     * below grade are excluded: they are inside the terrain. */
+    {
+      const REPOSE = 34, tol = 4;
+      let worst = 0, worstAt = '', n = 0;
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      for (const [name, fn] of [['brokenWall', (w) => addBrokenWall(w, V(0, 0, 0), V(9.4, 8.4, 2.1), { seed: 403, ruin: 0.28 })],
+        ['column', (w) => addColumn(w, V(0, 0, 0), { height: 7.5, radius: 0.55, seed: 504 })],
+        ['plinth', (w) => addPlinth(w, V(0, 0, 0), { width: 8, height: 2.7, seed: 99 })],
+        ['ruinedGate', (w) => addRuinedGate(w, V(0, 0, 0))]]) {
+        const w = stubWorld();
+        fn(w);
+        for (const m of w.statics) {
+          if (m.material !== propMaterials().drift) continue;
+          const p = m.geometry.attributes.position, idx = m.geometry.index;
+          const cnt = idx ? idx.count : p.count;
+          for (let i = 0; i + 2 < cnt; i += 3) {
+            const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+            a.fromBufferAttribute(p, i0); b.fromBufferAttribute(p, i1); c.fromBufferAttribute(p, i2);
+            if (Math.min(a.y, b.y, c.y) < -0.02) continue;         // buried in the terrain
+            b.sub(a); c.sub(a); b.cross(c);
+            if (b.length() < 1e-9) continue;
+            const deg = Math.acos(Math.min(1, Math.abs(b.normalize().y))) * 180 / Math.PI;
+            n++;
+            if (deg > worst) { worst = deg; worstAt = name; }
+          }
+        }
+      }
+      assert(n > 200, `only ${n} drift faces to measure`);
+      assert(worst < REPOSE + tol,
+        `${worstAt} banks sand at ${worst.toFixed(0)}° — dry sand stands at ${REPOSE}°`);
+      rows.push(`steepest sand ${worst.toFixed(0)}° over ${n} faces`);
+    }
+
+    /* And the drift has to BE sand — a grey ramp against a wall is worse than
+     * no ramp at all — so it is pinned to the ground's own measured albedo.
+     *
+     * Read off the material's OWN recorded product rather than re-deriving
+     * `colour x map mean` here, because the version of this check that did the
+     * multiplication itself hard-coded MEAN_ALBEDO.rock and therefore passed a
+     * drift that was 14% brighter and a third less saturated than the sand,
+     * on screen, while agreeing to two decimal places on paper. */
+    const dm = propMaterials().drift;
+    const alb = dm.userData.albedo, s = MEAN_ALBEDO.sand;
+    assert(alb, 'the drift material carries no measured albedo');
+    for (let i = 0; i < 3; i++) near(alb[i], s[i], 0.075, `drift albedo channel ${i} against sand`);
+    /* A mean is not a picture. The old drift matched sand's MEAN by running a
+     * map with twice sand's tonal contrast at a 4.9x multiplier, which put the
+     * top of its albedo histogram at 1.14 — a surface brighter than a perfect
+     * white reflector, so it clipped, and a bank of desert sand rendered as
+     * white marble. Whatever bake it is on, the drift's brightest texel has to
+     * stay inside physical albedo. */
+    const peak = Math.max(...alb) * (mapPeak(dm.map) ?? 3);
+    assert(peak < 0.95, `the drift's 99th-percentile albedo is ${peak.toFixed(2)} — that clips to white`);
+    return `${rows.join(', ')}; drift albedo ${alb.map((x) => x.toFixed(2)).join('/')} ` +
+      `vs sand ${s.map((x) => x.toFixed(2)).join('/')}, p99 ${peak.toFixed(2)}`;
   });
 
   /* ══ weathering ══════════════════════════════════════════════════════ */
@@ -580,16 +795,32 @@ export function run({ check, assert, near }) {
     // in a sheet of card. Real masonry has jambs, a head and a sill.
     const plain = stubWorld(), dressed = stubWorld();
     const openings = [{ x: -3, y: 0, w: 1.5, h: 2.8, arched: true }, { x: 3, y: 1.6, w: 1.6, h: 1.6 }];
-    addBrokenWall(plain, V(0, 0, 0), V(10, 6, 0.7), { ruin: 0.4, openings, dressings: false, seed: 5 });
-    addBrokenWall(dressed, V(0, 0, 0), V(10, 6, 0.7), { ruin: 0.4, openings, seed: 5 });
+    // no drift and no fallen rubble: this check is about what a DOORWAY is
+    // made of, and both of those put geometry a metre clear of the wall face
+    const bare = { drift: false, talus: false };
+    addBrokenWall(plain, V(0, 0, 0), V(10, 6, 0.7), { ruin: 0.4, openings, dressings: false, seed: 5, ...bare });
+    addBrokenWall(dressed, V(0, 0, 0), V(10, 6, 0.7), { ruin: 0.4, openings, seed: 5, ...bare });
     const tri = (w) => w.statics.reduce((a, m) => a + (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3, 0);
     const a = tri(plain), b = tri(dressed);
     assert(b > a * 1.1, `dressings added ${b - a} triangles to a wall with two openings`);
-    // and they must stand PROUD of the wall face, or they are invisible
+    /* And they must stand PROUD of the wall face, or they are invisible.
+     * Scanned only INSIDE the openings' own bands: the wall now has a footing
+     * that projects to 0.48 m and a sand drift that reaches 1.4 m clear of the
+     * face, and either of those satisfies a whole-mesh bounding box without a
+     * single jamb being present — which is a check that has stopped checking. */
     let maxZ = 0;
+    const v = new THREE.Vector3();
     for (const m of dressed.statics) {
-      m.geometry.computeBoundingBox();
-      maxZ = Math.max(maxZ, m.geometry.boundingBox.max.z);
+      const p = m.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i);
+        for (const o of openings) {
+          const ow = o.w / 2 + 0.35, oh = o.h;
+          if (Math.abs(v.x - o.x) <= ow && v.y >= o.y - 0.3 && v.y <= o.y + oh + 0.5) {
+            maxZ = Math.max(maxZ, v.z);
+          }
+        }
+      }
     }
     assert(maxZ > 0.36, `nothing projects past the 0.35 m wall face (max ${maxZ.toFixed(2)} m) — no reveal`);
     return `${a} → ${b} triangles, dressings project to ${maxZ.toFixed(2)} m on a 0.35 m face`;
@@ -599,7 +830,12 @@ export function run({ check, assert, near }) {
     // the whole reason for Kit: a ruin of two hundred stones is a handful of
     // draw calls. Tessellation and weathering must not have changed that.
     const rows = [];
-    for (const [name, max] of [['addRuin', 9], ['addRuinedGate', 7], ['addHullSection', 6],
+    // addRuin went 9 → 10 when the masonry got ground contact: the sand drift
+    // banked against every footing is a fifth stone, and it cannot share a bin
+    // with any of the other four because it has to be the GROUND's albedo
+    // (0.40 luminance) and they are all around 0.20. One draw call for every
+    // building in the game meeting the desert is the right trade.
+    for (const [name, max] of [['addRuin', 10], ['addRuinedGate', 7], ['addHullSection', 6],
                                ['addGantry', 7], ['addOutcrop', 3], ['addColossus', 5]]) {
       const n = built().filter((b) => b.maker === name).length;
       assert(n <= max, `${name} costs ${n} draw calls`);

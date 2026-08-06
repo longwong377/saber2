@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
-  AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter,
+  AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -346,16 +346,25 @@ export function run({ check, assert, near, THREE: T }) {
       const sun = sunDirection(a);
       const side = sun.clone().setY(0).normalize()
         .cross(new T.Vector3(0, 1, 0)).setY(0.02).normalize();
+      // The engine's own derivation, called rather than transcribed. The
+      // transcription that used to live here went stale the moment the haze
+      // was re-anchored from the physical skyline to the DRAWN one: it went on
+      // reporting 3.14 for the arena while applyAtmosphere was handing the
+      // scene 0.85, and it went on passing, which is worse than failing.
       const haze = skyShoulder(skyRadiance(side, sun, a, new T.Color()));
       const authored = new T.Color(a.fogColor ?? 0xc9b391);
-      // reproduce applyAtmosphere's derivation
-      const n = haze.clone().multiplyScalar(1 / Math.max(0.02, lum(haze)));
-      const fog = authored.clone().lerp(n, 0.55);
-      const want = Math.min(Math.max(lum(haze), 0.25), 3.2);
-      fog.multiplyScalar(Math.min(Math.max(want / Math.max(0.02, lum(fog)), 0.9), 4.5));
+      const fog = hazeRadiance(a, new T.Color());
 
-      assert(lum(fog) > lum(authored) * 1.3,
-        `${key}: the haze is only ${(lum(fog) / lum(authored)).toFixed(2)}x the authored swatch`);
+      // The LEVEL must come from the sky, which is stronger than asserting the
+      // fog is merely brighter than the swatch: double the swatch's luminance
+      // and the haze must not move at all. (The old form asserted 1.3x the
+      // swatch, which only held while the haze was anchored to the physical
+      // skyline at three times the level the dome actually drew.)
+      const brighter = new T.Color(authored).multiplyScalar(2);
+      const fog2 = hazeRadiance({ ...a, fogColor: brighter.getHex(T.LinearSRGBColorSpace) }, new T.Color());
+      near(lum(fog2), lum(fog), lum(fog) * 0.02,
+        `${key}: doubling the authored swatch moved the haze from ${lum(fog).toFixed(2)} to ${lum(fog2).toFixed(2)} `
+        + '— the level is coming off the swatch, not off the sky');
       // and it must differ from the ground it is dissolving, in hue as well as
       // value, or distance takes nothing away
       const ground = new T.Color(LEVELS[key].groundColor ?? 0xb09578);

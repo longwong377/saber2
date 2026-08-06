@@ -35,7 +35,7 @@ import * as THREE from 'three';
 import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
 import { registerDestructible } from './Destruction.js';
-import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps } from '../engine/Textures.js';
+import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps, sandMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { plateGeo, limbGeo } from '../game/Bodies.js';
 import { makeCapMaterial } from '../game/Ragdoll.js';
 import { TOUGHNESS } from '../game/Combat.js';
@@ -98,11 +98,33 @@ export function propMaterials() {
   const crete = duracreteMaps(2);
   const rock = rockMaps(2);
   const armor = armorMaps(2);
-  const mk = (maps, color, rough, metalness) => readsVertexColour(new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness,
-  }));
   const cloth = clothMaps(2);
+  // The one map in this file that is not a stand-in for something else: the
+  // drift IS the ground, so it gets the ground's own bake (see `drift` below).
+  const sandy = sandMaps(2);
+  /**
+   * Which bake each material stands on, so mk() can record the product.
+   *
+   * Every colour in this table is a LINEAR MULTIPLIER on a map mean, which
+   * makes the numbers unreadable on their own: lit(4.90,4.70,3.20) and
+   * lit(0.90,0.90,0.90) are the same surface on two different maps, and there
+   * is no way to see that from the source. So each material carries its
+   * PRODUCT — the linear albedo it actually renders at — on userData, and
+   * tools/checks/environment.mjs holds surfaces against each other with it
+   * instead of re-deriving the multiplication and getting the map wrong.
+   */
+  const MEAN = new Map([[metal, MEAN_ALBEDO.metal], [crete, MEAN_ALBEDO.duracrete],
+    [rock, MEAN_ALBEDO.rock], [armor, MEAN_ALBEDO.armor], [cloth, MEAN_ALBEDO.cloth],
+    [sandy, MEAN_ALBEDO.sand]]);
+  const mk = (maps, color, rough, metalness) => {
+    const m = readsVertexColour(new THREE.MeshStandardMaterial({
+      color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+      roughness: rough, metalness,
+    }));
+    const u = MEAN.get(maps);
+    if (u) m.userData.albedo = [m.color.r * u[0], m.color.g * u[1], m.color.b * u[2]];
+    return m;
+  };
   MATS = {
     crate: mk(metal, lit(0.86, 0.68, 0.40), 0.62, 0.35),        // olive drab
     crateDark: mk(metal, lit(0.41, 0.37, 0.29), 0.55, 0.7),
@@ -135,11 +157,25 @@ export function propMaterials() {
      * it before the war are four different materials to the eye even when
      * they share one baked map. */
     duracreteWarm: mk(crete, lit(0.90, 0.76, 0.55), 0.93, 0.02),  // sun-bleached facing
-    // The CORE of a broken wall: fresh aggregate, NEUTRAL grey. Its whole job
-    // is to be a different material from the weathered face outside it and
-    // from shadowed masonry — at lit(0.40,0.37,0.34) it was 6% in luminance
-    // and 0.018 in chroma from stoneDark, which is one material spelled twice.
-    duracreteDark: mk(crete, lit(0.46, 0.44, 0.42), 0.96, 0.02),  // wall core, undersides
+    /* The CORE of a broken wall — and, because ashlarFace beds every stone on
+     * it, every mortar joint and every empty socket in the game.
+     *
+     * It used to be NEUTRAL grey, on the argument that fresh aggregate is
+     * grey. That is true of the aggregate and false of the picture: a neutral
+     * 0.20-chroma surface sitting in a hundred metres of joint line, lit by a
+     * blue sky and shaded from a warm sun, comes back BLUE — measured off a
+     * close shot of the gate pier, the joints read visibly cold against warm
+     * ashlar and turned the wall into grey-grouted blockwork.
+     *
+     * So it is warmed into the stone's own family AND taken down, because a
+     * joint is a RECESS and the old value was bright enough to read as grout:
+     * crete's mean is 0.332/0.318/0.290, so lit(0.44,0.365,0.27) lands at
+     * 0.146/0.116/0.078 — mean 0.113 against the old 0.138, 18% darker, with
+     * chroma 0.46 against the old 0.20. The darkening is not optional once the
+     * hue moves: warm alone put it 9% in value and 0.067 in chroma from
+     * `stone`, which the palette check calls one material spelled twice. At
+     * this value the closest neighbour is 23% away. */
+    duracreteDark: mk(crete, lit(0.44, 0.365, 0.27), 0.96, 0.02),  // wall core, joints, undersides
     sandstone: mk(rock, lit(2.70, 2.40, 1.70), 0.95, 0.0),        // carved stone, plinths
     /* Shadowed masonry — recessed bands, the void inside a cowl. The old
      * lit(0.95,1.10,1.25) baked a BLUE cast into the albedo, which is
@@ -148,6 +184,29 @@ export function propMaterials() {
      * darker — 0.105 luminance rather than 0.090, because a shadow is a
      * shadow and not a hole cut in the world. */
     stoneDark: mk(rock, lit(1.35, 1.15, 0.92), 0.94, 0.02),
+    /* Wind-blown sand banked against anything that has stood still in a desert
+     * long enough to matter. It is built on the SAND map, and the reason is a
+     * textbook case of a mean hiding a distribution.
+     *
+     * The first version of this ran the ROCK map at lit(4.90,4.70,3.20),
+     * chosen so the products of the two means came out on MEAN_ALBEDO.sand.
+     * The means matched to two decimal places and it still rendered as a
+     * ribbon of white marble with orange veins in it: MEASURED off a
+     * close-range shot, the drift came back luminance 0.704 / saturation 0.341
+     * against open sand at 0.619 / 0.506 — 14% brighter and a third less
+     * saturated than the ground it is made of. Two things did it. The rock map
+     * has three times sand's tonal contrast, so a 4.9x multiplier that lands
+     * the MEAN on target sends the top of the histogram past 1.0 and clips it
+     * to white; and the rock map's pattern is a crack network, which is the
+     * one thing a sand bank does not have.
+     *
+     * On the sand map both problems are gone, the ripples on the bank match
+     * the ripples on the ground because they are the same ripples, and the
+     * multiplier becomes a single readable number: 0.9, i.e. one tenth darker
+     * than open desert, because sand piled in a wall's lee is packed, damp at
+     * depth and half in shadow. `albedo` is the product, recorded so a check
+     * can hold this against the ground without knowing which map it came off. */
+    drift: mk(sandy, lit(0.90, 0.90, 0.90), 0.97, 0.0),
     strata: null,                                                 // filled in below
     rust: mk(metal, lit(0.51, 0.26, 0.12), 0.88, 0.55),
     rebar: mk(metal, lit(0.45, 0.26, 0.15), 0.8, 0.72),
@@ -177,6 +236,22 @@ export function propMaterials() {
   }));
 
   /**
+   * DRESSED stone is not the same surface as a boulder, and the file only had
+   * one rock bake to build both out of.
+   *
+   * MEASURED off the baked bytes: the rock normal map carries 14.3° of mean
+   * texel tilt against duracrete's 6.3°, and its albedo is a crack network.
+   * That is right for a boulder and it is what made a 7.5 m colonnade shaft
+   * read as TREE BARK at close range — a column is a stone somebody spent a
+   * winter dressing flat with a claw chisel, and a dressed face has tool marks
+   * and grain, not a fracture pattern. Halving the normal on the two carved
+   * materials puts them at about 6.4° effective, which is the same relief as
+   * the concrete beside them, and leaves boulders (`stone`) and cliffs
+   * (`strata`) at the full 14.3° where it belongs.
+   */
+  for (const n of ['sandstone', 'stoneDark']) MATS[n].normalScale.set(0.45, 0.45);
+
+  /**
    * How hard each surface weathers, as a multiplier on WEAR (below).
    *
    * Not every material wears the same way and none of them wear at zero. Stone
@@ -185,8 +260,12 @@ export function propMaterials() {
    * because it sheds water; a lamp lens takes none at all, because a light
    * fitting with mud on it is a light fitting nobody can find.
    */
+  // Drift is at 0.5 because sand does not stain and does not run: what it wants
+  // off WEAR is the up-face dust term and the per-piece tone, not a mud line at
+  // the foot of a thing that IS the mud line.
   const wear = { 1: ['duracrete', 'duracreteWarm', 'duracreteDark', 'sandstone', 'stone', 'stoneDark',
                      'strata', 'wood', 'rust', 'rebar', 'patina'],
+                 0.5: ['drift'],
                  0.72: ['hull', 'panel', 'paint', 'paintPale', 'grating', 'darkSteel', 'crate', 'crateDark',
                         'barrel', 'bronze', 'tarp', 'tarpBlue'],
                  0.45: ['steel', 'cable'] };
@@ -718,14 +797,23 @@ export function pipeBetween(a, b, radius, radial = 8) {
  * returned as [x,y] points ready to close a 2-D outline. Ruins live or die on
  * this silhouette — a straight top edge reads as "unfinished box".
  */
-export function brokenEdge(x0, x1, yLow, yHigh, r, steps = 9) {
+export function brokenEdge(x0, x1, yLow, yHigh, r, steps = 9, snap = null) {
   const pts = [];
-  let y = lerp(yLow, yHigh, 0.55 + r() * 0.4);
+  /* Masonry FAILS ALONG ITS BED JOINTS. A free random walk gave a top edge
+   * that sliced through the middle of stones at arbitrary heights, which is
+   * the silhouette of a torn card and not of a wall — and once the face is
+   * coursed (see ashlarFace) an unsnapped edge also puts the facing and the
+   * silhouette permanently out of register. `snap` is the course height, and
+   * `snap.y0` its origin, so every notch lands on a bed. */
+  const q = snap && snap.h > 0.05
+    ? (v) => snap.y0 + Math.round((clamp(v, yLow, yHigh) - snap.y0) / snap.h) * snap.h
+    : (v) => clamp(v, yLow, yHigh);
+  let y = q(lerp(yLow, yHigh, 0.55 + r() * 0.4));
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const x = lerp(x0, x1, t);
-    y = clamp(y + (r() - 0.5) * (yHigh - yLow) * 0.5, yLow, yHigh);
-    if (r() < 0.22) y = lerp(yLow, y, 0.35);          // a course has fallen away
+    y = q(y + (r() - 0.5) * (yHigh - yLow) * 0.5);
+    if (r() < 0.22) y = q(lerp(yLow, y, 0.35));       // a course has fallen away
     pts.push([x, y]);
     if (i < steps && r() < 0.45) pts.push([lerp(x0, x1, t + 0.5 / steps), y]);   // a flat course
   }
@@ -2206,6 +2294,560 @@ function fanCap(pts, cy, up = true, tile = 1.6, jog = 0) {
   return g;
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Masonry — the difference between a wall and a panel                   */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The stone a wall is actually built out of, as LINEAR MULTIPLIERS on whatever
+ * albedo the caller's material already has.
+ *
+ * MEASURED, and the whole reason this table exists. Six arena bays, rasterised
+ * at 2 cm/px over the surfaces a camera in front of them can actually see, put
+ * 80% of that area into TWO luminance bins out of sixteen and 46% of it into a
+ * single bin — relative spread 11.5%, chroma 0.247. That is not a lighting
+ * problem. A wall built as one extruded polygon has, by construction, exactly
+ * one albedo, and the per-PIECE weathering tone that was supposed to break it
+ * up is by definition constant across the piece it is a tone for.
+ *
+ * A quarry never cut two stones the same colour, so the variation belongs at
+ * BLOCK scale: 1.1 × 0.7 m, which at fifty metres is about 12 × 8 pixels and
+ * therefore reads. Five tones, 2.33:1 in luminance from the bleached course at
+ * the top to the stained one at the foot, spanning hue as well as value
+ * because real stone differs by iron content far more than by brightness.
+ *
+ * The WEIGHTED MEAN of the three channels has to stay on 1.0: these land in
+ * the same vertex-colour attribute weathering uses, and
+ * tools/checks/environment.mjs measures that attribute against 1.0 precisely so
+ * that nobody can dim the world by a third and call it mood. So this table
+ * carries the wall's HUE and its SPREAD, and not one stop of its exposure.
+ */
+const ASHLAR = [
+  { w: 0.22, c: [1.62, 1.42, 1.16] },   // sun-bleached — the courses near the top
+  { w: 0.35, c: [1.24, 1.00, 0.76] },   // the common bed
+  { w: 0.17, c: [1.38, 0.97, 0.60] },   // ferruginous: same value, much redder
+  { w: 0.17, c: [0.74, 0.60, 0.44] },   // stained — damp, lichen, the splash zone
+  /* A later repair, in a paler stock. It used to be [1.06,1.00,0.90] at 0.11 —
+   * r/b 1.18 against the common bed's 1.63 — and on a wall lit by a warm sun
+   * and shaded by a blue sky that is not a neutral stone, it is a BLUE one:
+   * measured off a close shot, a fifth of the arena's facing read cold against
+   * the rest, in a level whose ground is 3.0:1 warm. Pulled to r/b 1.32 and
+   * down to one stone in eleven, which is what a patched wall shows and is
+   * still the least saturated thing on the face — which is the point of it. */
+  { w: 0.09, c: [1.08, 0.99, 0.82] },
+];
+/**
+ * Puts the emitted mean back on 1.0. The weighted channel mean of the table
+ * above is 1.0127 — measured, not guessed — and 1.3% is well inside the ±5%
+ * the weathering check allows, but the whole point of writing it down is that
+ * nobody has to wonder which way the table drifted when they edit it.
+ *
+ * The mean is [1.248, 1.018, 0.772]: r/b of 1.62, which on the grey duracrete
+ * the arena passes in lands the facing at 0.52 chroma against the sand's 0.67.
+ * That gap is the point — stone quarried out of a desert is the same rock as
+ * the desert, a little less saturated for having been cut and dressed. At the
+ * material's own 0.24 it was a different planet.
+ */
+const ASHLAR_LIFT = 0.9874;
+
+/**
+ * Pick a quarry tone for a block at height fraction `t` (0 at the footing,
+ * 1 at the wallhead).
+ *
+ * Bleaching climbs and staining sinks — that is the gradient the brief for this
+ * pass asked for and it is what every photograph of an old wall shows. The two
+ * bias factors are deliberately mirror images about t = 0.5, so the bias moves
+ * stone around the wall without moving the wall's mean.
+ */
+function ashlarTone(t, r, out = [1, 1, 1]) {
+  const bias = [0.5 + 1.0 * t, 1, 1, 1.5 - 1.0 * t, 1];
+  let total = 0;
+  for (let i = 0; i < ASHLAR.length; i++) total += ASHLAR[i].w * bias[i];
+  let pick = r() * total, k = ASHLAR.length - 1;
+  for (let i = 0; i < ASHLAR.length; i++) {
+    pick -= ASHLAR[i].w * bias[i];
+    if (pick <= 0) { k = i; break; }
+  }
+  // one stone is never quite the next stone even out of the same bed
+  const jit = (0.90 + r() * 0.20) * ASHLAR_LIFT;
+  for (let c = 0; c < 3; c++) out[c] = ASHLAR[k].c[c] * jit;
+  return out;
+}
+
+/**
+ * Give a whole piece one flat quarry tone.
+ *
+ * For masonry that is already modelled a stone at a time — voussoirs, drums,
+ * fallen blocks — the block IS the piece, so it wants one ASHLAR tone rather
+ * than a facing. weatherGeo multiplies into whatever colour attribute it finds,
+ * so this composes with the dirt runs instead of replacing them.
+ */
+function tintGeo(geo, rgb) {
+  const n = geo.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { col[i * 3] = rgb[0]; col[i * 3 + 1] = rgb[1]; col[i * 3 + 2] = rgb[2]; }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return geo;
+}
+
+/**
+ * Sample a broken-edge polyline (see brokenEdge) at x. The points run from
+ * +x to -x, so this walks them backwards; between points it takes the LOWER
+ * of the two, because a stone is either still up there or it is not.
+ */
+function edgeSampler(pts) {
+  return (x) => {
+    let best = pts[0][1];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const lo = Math.min(a[0], b[0]), hi = Math.max(a[0], b[0]);
+      if (x >= lo - 1e-6 && x <= hi + 1e-6) return Math.min(a[1], b[1]);
+      best = b[1];
+    }
+    return best;
+  };
+}
+
+/**
+ * A coursed ashlar facing — the visible skin of a masonry wall.
+ *
+ * Lays stones in equal beds across a face, clipped to the wall's broken top,
+ * and emits them as two flat-shaded non-indexed geometries: the stones that
+ * are still there, and the sockets where stones are not. Each block gets
+ *
+ *   · a quarry tone from ASHLAR, biased by height;
+ *   · relief of its own, from 1 cm back inside the wall to 8 cm proud of it,
+ *     so the chamfer round it catches sky along its top edge and shade along
+ *     its bottom one — that, and not a drawn line, is what a course reads as
+ *     at distance, and the SPREAD is what stops the face being a flat card
+ *     with a grid scored into it;
+ *   · a one-in-six chance of a knocked-off arris, because nothing that has
+ *     stood for two thousand years has a sharp corner left on it;
+ *   · a one-in-seven chance of being a bonder, two courses high, which is what
+ *     breaks the wall out of a brick rhythm;
+ *   · a chance of being gone, rising sharply in the two courses under the
+ *     break, which emits a recessed socket in the core material instead.
+ *
+ * About seventy stones and 850 triangles for a 9 × 8 m face, in two bins the
+ * kit is already merging — so facing every wall in a thirty-six bay ring costs
+ * no extra draw calls whatsoever.
+ */
+function ashlarFace(w, opts = {}) {
+  const r = opts.rng || rng;
+  const course = Math.max(0.28, opts.course ?? 0.7);
+  const zf = opts.z ?? 0;                            // the wall surface plane
+  const nz = opts.nz ?? 1;                           // +1 or -1: which way is out
+  const base = opts.base ?? 0;                       // y of the lowest bed joint
+  const hTop = opts.height ?? 4;                     // full height above `base`
+  const joint = opts.joint ?? 0.03;
+  /* 3.8 cm of chamfer, down from 5. The chamfer is the only lit edge a stone
+   * has, so it is also the whole reason a course reads at fifty metres — but
+   * at 5 cm on a 0.7 m bed it is 7% of the stone's height, every one of them
+   * catches the sun square on, and MEASURED on a close shot the wall came back
+   * as a grid of cream-rimmed rectangles: cinder block with white grout. The
+   * rim has to be thin enough to be a line and not a border. */
+  const cham = opts.cham ?? 0.038;
+  const ruin = clamp(opts.ruin ?? 0.3, 0, 1);
+  const k = uvm(opts.tile ?? ARCH_TILE);
+  const ledges = opts.ledges || [];
+  const openings = opts.openings || [];
+  const topAt = opts.topAt || (() => base + hTop);
+  const tone = [1, 1, 1];
+  // Mortar is a VERTEX tone of about 1.0 on purpose: its darkness comes from
+  // being emitted in the core material (0.141 albedo against the facing's
+  // 0.22), which is a real material difference. Carrying it as a dim vertex
+  // colour instead would put a hundred square metres per wall at 0.85 into the
+  // attribute the weathering check meters, and quietly darken the world.
+  const MORTAR = [1.04, 0.99, 0.92];
+
+  // 11 floats per vertex: position, normal, uv, colour. Flat-shaded and
+  // non-indexed — a chamfer whose normals have been averaged with the face it
+  // meets is a soft blur, which is the one thing it must not be.
+  const bins = [[], []];                             // 0 = stone, 1 = socket
+
+  const tri = (B, a, b, c, col) => {
+    const A = [a[0], a[1], zf + nz * a[2]];
+    const Bv = [b[0], b[1], zf + nz * b[2]];
+    const Cv = [c[0], c[1], zf + nz * c[2]];
+    // flipping z reverses the winding, so the far face swaps two corners back
+    const p1 = nz > 0 ? Bv : Cv, p2 = nz > 0 ? Cv : Bv;
+    const ux = p1[0] - A[0], uy = p1[1] - A[1], uz = p1[2] - A[2];
+    const vx = p2[0] - A[0], vy = p2[1] - A[1], vz = p2[2] - A[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nn = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nn) || 1;
+    nx /= l; ny /= l; nn /= l;
+    for (const p of [A, p1, p2]) {
+      B.push(p[0], p[1], p[2], nx, ny, nn, p[0] * k, p[1] * k, col[0], col[1], col[2]);
+    }
+  };
+  const quad = (B, a, b, c, d, col) => { tri(B, a, b, c, col); tri(B, a, c, d, col); };
+
+  /** One dressed stone: a chamfered face standing proud of the wall plane. */
+  const stone = (x0, x1, y0, y1, col, proud, chip, sunk) => {
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    let o = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];   // CCW seen from outside
+    if (chip >= 0) {
+      // knock the arris off: the corner is replaced by the two points the
+      // chip cuts back to, which turns the stone into a pentagon
+      const n = o.length, p = o[chip], a = o[(chip + n - 1) % n], b = o[(chip + 1) % n];
+      const f = 0.12 + r() * 0.24;      // 12–36% of the edge, not half the stone
+      o = o.slice(0, chip)
+        .concat([[lerp(p[0], a[0], f), lerp(p[1], a[1], f)], [lerp(p[0], b[0], f), lerp(p[1], b[1], f)]])
+        .concat(o.slice(chip + 1));
+    }
+    const inner = o.map(([x, y]) => [
+      x + Math.sign(cx - x) * Math.min(cham, Math.abs(cx - x) * 0.45),
+      y + Math.sign(cy - y) * Math.min(cham, Math.abs(cy - y) * 0.45),
+    ]);
+    const B = bins[sunk ? 1 : 0];
+    /* The MORTAR BED. Without it the gap between two stones shows the panel
+     * behind, which is the wall's own face material at the wall's own tone —
+     * so the joints came out LIGHTER than the stones and the coursing read as
+     * white grouting on bathroom tile. One quad per stone, oversized by a
+     * joint so neighbours overlap and there is no gap anywhere, sitting 1.5 cm
+     * behind the chamfer feet in the darker core material. */
+    if (!sunk) {
+      const j = cham * 0.9;
+      const mx0 = Math.max(-w / 2, x0 - j), mx1 = Math.min(w / 2, x1 + j);
+      const my0 = y0 - j, my1 = y1 + j * 0.4;
+      // The bed sits 2.2 cm behind whatever face it is bedding, not at a fixed
+      // depth: `proud` may be NEGATIVE for a stone the weather has eaten back
+      // into the wall, and a bed at a fixed -1.5 cm would then be in front of
+      // the stone it is supposed to be behind — a mortar joint standing proud
+      // of the masonry, z-fighting the face it bounds.
+      const mz = Math.min(-0.015, proud - 0.022);
+      quad(bins[1], [mx0, my0, mz], [mx1, my0, mz], [mx1, my1, mz], [mx0, my1, mz], MORTAR);
+    }
+    for (let i = 1; i + 1 < inner.length; i++) {
+      tri(B, [inner[0][0], inner[0][1], proud], [inner[i][0], inner[i][1], proud],
+        [inner[i + 1][0], inner[i + 1][1], proud], col);
+    }
+    for (let i = 0; i < o.length; i++) {
+      const j = (i + 1) % o.length;
+      quad(B, [o[i][0], o[i][1], 0], [o[j][0], o[j][1], 0],
+        [inner[j][0], inner[j][1], proud], [inner[i][0], inner[i][1], proud], col);
+    }
+  };
+
+  const blocked = (x0, x1, y0, y1) => {
+    for (const op of openings) {
+      const ow = (op.w ?? 1.2) / 2 + 0.2, oh = op.h ?? 2.2, ox = op.x ?? 0, oy = (op.y ?? 0) - 0.2;
+      if (x1 > ox - ow && x0 < ox + ow && y1 > oy && y0 < oy + oh + 0.3) return true;
+    }
+    return false;
+  };
+
+  const nCourse = Math.max(1, Math.floor(hTop / course + 0.5));
+  /* Which x-ranges of the CURRENT course are already filled from below.
+   *
+   * A wall of equal beds all the way up is a brick wall, and the arena's read
+   * as one: MEASURED off a close shot, every stone in the ring was one course
+   * high and 1.3-2.6 courses long, so the eye found the rhythm instantly and
+   * the whole ring became a texture. Real ashlar is not laid that way. Every
+   * few stones the mason sets a BONDER — a block turned on end that ties two
+   * courses together and goes right through the wall — and the courses either
+   * side of it have to work round it. One in seven here, which is about what a
+   * surviving Roman face shows, and it is the cheapest possible break in the
+   * grid: no extra stones, no extra triangles, just two beds' worth of face on
+   * one block and a gap left in the course above. */
+  let taken = [];
+  for (let j = 0; j < nCourse; j++) {
+    const y0 = base + j * course;
+    const y1 = y0 + course - joint;
+    const t = clamp(j / Math.max(1, nCourse - 1), 0, 1);
+    const nextTaken = [];
+    let x = -w / 2;
+    // Break joint. Every course starts on a different phase, or the wall is a
+    // grid — and a grid of joints running straight up a wall is the one thing
+    // no mason has ever built, because it falls down.
+    let len0 = course * (0.6 + r() * 1.4);
+    while (x < w / 2 - 1e-3) {
+      let x1b = Math.min(w / 2, x + (len0 || course * (1.3 + r() * 1.3)));
+      len0 = 0;
+      if (w / 2 - x1b < course * 0.55) x1b = w / 2;      // no slivers at the reveal
+      // a bonder from the course below already fills this run
+      if (taken.some(([a, b]) => x1b > a + 1e-3 && x < b - 1e-3)) { x = x1b + joint; continue; }
+      const tp = Math.min(topAt(x + 0.02), topAt(x1b - 0.02), topAt((x + x1b) / 2));
+      // A bonder is TALL, so it is also shortish — a two-course block a metre
+      // and a half long is not something four men lift. It only goes in where
+      // the wall is still two full courses high at that x.
+      const tall = j + 1 < nCourse && x1b - x < course * 2.1 && r() < 0.145
+        && tp >= y0 + course * 2 - joint - 1e-3;
+      const yb = Math.min(tall ? y0 + 2 * course - joint : y1, tp);
+      if (yb - y0 > course * 0.34 && !blocked(x, x1b, y0, yb)) {
+        if (tall) nextTaken.push([x - joint, x1b + joint]);
+        // how exposed this stone is: the two courses under a break lose stones
+        // fast, because that is where the wall was actually failing
+        const bare = clamp(1 - (tp - yb) / (course * 2.2), 0, 1);
+        const sunk = r() < 0.012 + ruin * 0.06 + bare * ruin * 0.34;
+        ashlarTone(t, r, tone);
+        // Stain: the splash zone at the foot, and the run under every ledge.
+        // A projecting band throws water clear of the wall, so what is under it
+        // is wet for a week after every storm and what is above it is not.
+        let s = clamp(1 - (y0 - base) / 1.7, 0, 1) * 0.55;
+        for (const ly of ledges) {
+          const d = ly - yb;
+          if (d > 0 && d < 2.3) s = Math.max(s, (1 - d / 2.3) * (0.2 + r() * 0.8) * 0.7);
+        }
+        if (s > 0) for (let c = 0; c < 3; c++) tone[c] *= lerp(1, [0.78, 0.72, 0.64][c], s);
+        if (sunk) for (let c = 0; c < 3; c++) tone[c] = 0.9 + r() * 0.16;
+        /* How far the stone stands out of the wall plane, and the second
+         * reason the old face read as tile: every stone sat 3-6.5 cm proud, so
+         * the surface was DEAD FLAT with a grid scored into it. A wall that has
+         * weathered for two thousand years is not flat — the hard beds stand
+         * out, the soft ones have gone back into the wall, and the line of
+         * light along the top of a course wanders in and out because of it.
+         * The distribution is squared so most stones sit near flush and the
+         * few that stand right out are the ones the eye picks up; one in eight
+         * has eroded BACK behind the plane, which is what the mortar bed's
+         * depth had to be made to follow. */
+        const relief = sunk ? -(0.05 + r() * 0.06)
+          : (r() < 0.12 ? -(0.008 + r() * 0.026) : 0.014 + r() * r() * 0.07);
+        stone(x + joint * 0.5, x1b - joint * 0.5, y0, yb,
+          tone, relief, r() < 0.17 ? Math.floor(r() * 4) : -1, sunk);
+      }
+      x = x1b + joint;
+    }
+    taken = nextTaken;
+  }
+
+  const build = (B) => {
+    if (B.length < 33) return null;
+    const nv = B.length / 11;
+    const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3);
+    const uv = new Float32Array(nv * 2), col = new Float32Array(nv * 3);
+    for (let i = 0; i < nv; i++) {
+      const o = i * 11;
+      pos[i * 3] = B[o]; pos[i * 3 + 1] = B[o + 1]; pos[i * 3 + 2] = B[o + 2];
+      nrm[i * 3] = B[o + 3]; nrm[i * 3 + 1] = B[o + 4]; nrm[i * 3 + 2] = B[o + 5];
+      uv[i * 2] = B[o + 6]; uv[i * 2 + 1] = B[o + 7];
+      col[i * 3] = B[o + 8]; col[i * 3 + 1] = B[o + 9]; col[i * 3 + 2] = B[o + 10];
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return g;
+  };
+  return { face: build(bins[0]), socket: build(bins[1]) };
+}
+
+/**
+ * Where a wall meets the ground.
+ *
+ * The single clearest tell that nothing in this level was designed: every
+ * standing structure's lowest polygon sat exactly on y = 0, so a rectangular
+ * slab appeared to have been dropped onto the sand rather than built up out
+ * of it. Real architecture arrives at grade in three moves, and all three are
+ * here because on rolling terrain any one of them alone still shows a seam
+ * (the fourth, the sand banked against it, is sandDrift below):
+ *
+ *   buried course   0.7 m of masonry below grade. Nobody ever sees it, which
+ *                   is exactly the point — the terrain can fall away by half a
+ *                   metre and there is still wall down there.
+ *   stylobate       two set-back steps. This is what gives the eye the base of
+ *                   the building, and it is why a temple reads as heavier at
+ *                   the bottom than at the top.
+ *   damp course     a thin projecting drip band. Water leaves the wall here
+ *                   instead of running on down it, so everything above it is
+ *                   clean and everything below it is not: that band IS the
+ *                   dark line at the foot of every old building.
+ *
+ * Returns the y the first ashlar course beds onto.
+ */
+function footing(kit, w, t, opts = {}) {
+  const M = propMaterials();
+  const trim = opts.trim || M.duracreteWarm;
+  // The damp band defaults to the wall's own CORE material, not to a fifth
+  // stone: it is a 5 cm strip, and a 5 cm strip is not worth a draw call on
+  // every wall in a thirty-six bay ring.
+  const band = opts.band || M.duracreteDark;
+  /* MEASURED, on the shot this pass exists to fix: a stylobate cut in the same
+   * duracreteWarm as the wall's dressings put a band 19% BRIGHTER than the
+   * facing along the foot of every wall in the ring — a white skirting board,
+   * which is the exact opposite of what a base is for. The two lower courses
+   * therefore go in the darker core stone: the bottom of a building is the
+   * part that is wet for a week after every storm and has had boots against
+   * it for two thousand years, and it is supposed to weigh the wall down. Only
+   * the top step keeps the pale dressing stone, so there is one lit nosing to
+   * read the profile by. */
+  kit.slab(band, w * 1.03, 0.70, t * 1.08, 0, -0.32, 0, { tile: ARCH_TILE, seg: 2, bevel: 0.05, collide: false });
+  kit.slab(band, w * 1.09, 0.24, t * 1.36, 0, 0.12, 0, { tile: ARCH_TILE, seg: 3, bevel: 0.055, collide: false });
+  kit.slab(trim, w * 1.04, 0.20, t * 1.17, 0, 0.34, 0, { tile: ARCH_TILE, seg: 3, bevel: 0.05, collide: false });
+  kit.slab(band, w * 1.015, 0.055, t * 1.05, 0, 0.472, 0, { tile: TRIM_TILE, seg: 2, bevel: 0.02, collide: false });
+  return 0.5;
+}
+
+/**
+ * The sand that has banked against the windward face of anything standing
+ * still in a desert.
+ *
+ * This is the other half of ground contact, and the half nothing in the file
+ * was doing: a wall can have the finest stylobate ever cut and it still reads
+ * as furniture if the desert stops dead at its edge. Sand does not stop; it
+ * piles at its angle of repose — about 34°, so the toe of the drift is
+ * roughly 1.5 heights out — and it buries the bottom course.
+ *
+ * Emitted as one triangle strip along the face: eleven columns, four triangles
+ * each, forty triangles for a nine-metre wall.
+ */
+function sandDrift(kit, w, t, opts = {}) {
+  const M = propMaterials();
+  const mat = opts.mat || M.drift;
+  const r = opts.rng || rng;
+  const nz = opts.nz ?? 1;
+  const H = opts.height ?? 0.8;
+  const seed = opts.seed ?? 0;
+  const n = Math.max(4, Math.min(16, Math.round(w / 0.95)));
+  const k = uvm(ROCK_TILE);
+  const P = [], U = [];
+  const z0 = nz * (t * 0.5 + 0.02);
+  const rows = [];
+  for (let i = 0; i <= n; i++) {
+    const x = lerp(-w * 0.54, w * 0.54, i / n);
+    // low frequency along the wall, so the drift has dunes in it rather than
+    // a constant fillet — a constant fillet reads as a moulding, not as sand
+    const f = 0.5 + 0.5 * fbm2(x * 0.42 + seed * 1.7, seed * 0.9, 2);
+    const end = Math.min(1, (1 - Math.abs(i / n - 0.5) * 2) * 3.2 + 0.16);
+    /* The swing along the wall runs 0.06..1.00 of H, not 0.26..1.00, and the
+     * reason is composition rather than geology.
+     *
+     * MEASURED off a close shot of the arena ring: a 1.3 m drift whose lowest
+     * point was still 0.34 m had buried the entire stylobate — the buried
+     * course, both steps and the damp band, all of it — under an unbroken
+     * ribbon of sand, so the one thing the footing exists to show, that this
+     * wall was BUILT up out of the ground, was hidden by the one thing meant
+     * to bed it into the ground. A drift has to scour as well as pile. Down at
+     * 6% the sand thins to nothing every few metres and the base course reads
+     * through the gaps, which is what a wall standing in a desert looks like
+     * and is also the only way both details survive in the same frame. */
+    rows.push([x, H * (0.06 + 0.94 * f * f) * end, 0]);
+  }
+  /* Avalanche. A heap of sand cannot hold a step, and the crest line built
+   * above has plenty: the end taper alone dropped from full height to 16% of
+   * it between two columns 46 cm apart on a column's drift, which is a 52°
+   * wall of sand standing unsupported. Two relaxation sweeps, forward and
+   * back, clamping the rise between neighbours to dx·tan(34°) — which is
+   * literally the settling a real pile does, and is why a drift's crest is a
+   * long shallow curve and not a row of spikes. Doing it here rather than by
+   * hand-tuning the taper means the repose angle holds for any width, any
+   * column count and any height a caller asks for. */
+  /* The clamp is NOT tan(34°), and that is the whole point.
+   *
+   * A face's steepest slope is the VECTOR SUM of its along-wall and its
+   * cross-wall gradient, not whichever is larger. Clamping the crest line to
+   * tan(34°) while the section independently sits just under 34° gives a
+   * quad whose true gradient is sqrt(0.674² + 0.643²) = 0.93 — a 43° wall of
+   * sand, built out of two separately correct clamps. Measured at 39° on a
+   * column, which is where this was caught.
+   *
+   * So the crest gets only the headroom the section leaves it:
+   * sqrt(tan²34° − cross²). With the toe reach below at 2.6 heights the
+   * steepest section face is 1.286·h/r ≈ 0.495, leaving 0.45 for the crest —
+   * about 24°, still ample to read as dunes rather than a fillet. */
+  const step = (w * 1.08 / n) * 0.45;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i <= n; i++) rows[i][1] = Math.min(rows[i][1], rows[i - 1][1] + step);
+    for (let i = n - 1; i >= 0; i--) rows[i][1] = Math.min(rows[i][1], rows[i + 1][1] + step);
+  }
+  // 2.6-3.4 heights of toe, up from 2.0-2.8, and measured off the SETTLED
+  // height. See the section below: at the old reach the face above the slack
+  // came out at 44°, and sand does not stand at 44° either.
+  for (const row of rows) row[2] = row[1] * (2.6 + r() * 0.8) + 0.15;
+  const push = (x, y, z, u, v) => { P.push(x, y, z); U.push(u, v); };
+  for (let i = 0; i < n; i++) {
+    const [xa, ha, ra] = rows[i], [xb, hb, rb] = rows[i + 1];
+    /* Four-point section: crest against the wall, a slack, a long feather, and
+     * a toe that runs 0.22 m BELOW grade — not 0.06, because the levels place
+     * these on rolling terrain and a drift whose edge is a knife on the
+     * nominal ground plane lifts clear of it the moment the ground drops two
+     * centimetres. A straight ramp is a wedge; a drift is concave.
+     *
+     * The breakpoints exist to hold the ANGLE OF REPOSE. Dry sand stands at
+     * about 34° and not one degree more — pile it steeper and it avalanches
+     * until it is 34° again — and the old three-point section put the face
+     * above the slack at 44°, which is a heap of gravel, not a drift. At these
+     * fractions of a 2.0-2.8 height reach the three visible faces come out at
+     * 31°, 26° and 22° on a metre-high bank: under repose everywhere, which is
+     * also why the drift now reaches half again as far out from the wall as it
+     * used to. The buried toe gets a fixed 28 cm of extra run so that a bank
+     * only eight centimetres high still arrives at -0.22 down a 33° face
+     * rather than falling off a cliff. */
+    const secA = [[0, ha], [ra * 0.42, ha * 0.46], [ra * 0.80, ha * 0.06], [ra + 0.28, -0.22]];
+    const secB = [[0, hb], [rb * 0.42, hb * 0.46], [rb * 0.80, hb * 0.06], [rb + 0.28, -0.22]];
+    for (let s = 0; s < 3; s++) {
+      const a0 = secA[s], a1 = secA[s + 1], b0 = secB[s], b1 = secB[s + 1];
+      const va = [xa, a0[1], z0 + nz * a0[0]], vb = [xb, b0[1], z0 + nz * b0[0]];
+      const vc = [xb, b1[1], z0 + nz * b1[0]], vd = [xa, a1[1], z0 + nz * a1[0]];
+      // Wound so the normal comes out UP AND AWAY from the wall. Get this
+      // backwards and the drift is back-facing — invisible, and invisible in a
+      // way that still measures as geometry, which is the exact failure mode
+      // this file's header warns about.
+      for (const [p, q, o] of nz > 0 ? [[va, vd, vc], [va, vc, vb]] : [[va, vc, vd], [va, vb, vc]]) {
+        push(p[0], p[1], p[2], p[0] * k, p[2] * k);
+        push(q[0], q[1], q[2], q[0] * k, q[2] * k);
+        push(o[0], o[1], o[2], o[0] * k, o[2] * k);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(P), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(U), 2));
+  g.computeVertexNormals();
+  /* Undo the weathering model's up-face terms, which are written for masonry.
+   *
+   * WEAR.sky lightens and desaturates anything pointing at the sky, because a
+   * flat ledge on a building collects dust and gets bleached. A sand bank does
+   * not collect dust: it IS the dust, and it does not bleach because there is
+   * nothing on it to bleach. But it is almost entirely up-facing, so it took
+   * the term at full strength — MEASURED with weatherStats on a wall's own
+   * drift, mean vertex colour 1.090, i.e. the one surface in the file that is
+   * supposed to match the ground exactly was emitted 9% brighter than its own
+   * albedo before a single photon was traced. Pre-dividing puts the emitted
+   * mean back on 1.0, where the weathering check meters it and where the
+   * material's stated albedo is actually what renders. */
+  tintGeo(g, [1 / 1.090, 1 / 1.090, 1 / 1.090]);
+  kit.put(g, mat, 0, 0, 0);
+  return g;
+}
+
+/**
+ * The stones a broken wall shed. A ruin with a clean floor at the foot of it
+ * is the tell that nothing ever actually fell down: the masonry went
+ * somewhere, and it went about a third of a wall-height out from the base,
+ * biggest pieces nearest.
+ */
+function talus(kit, w, t, h, opts = {}) {
+  const M = propMaterials();
+  const r = opts.rng || rng;
+  const mat = opts.mat || M.duracrete;
+  const n = Math.min(15, Math.round(w * (opts.amount ?? 0.5) * 1.4));
+  const geos = [];
+  // own scratch: kit.put reaches for the shared kit matrices, and this runs
+  // between building a piece and handing it over
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const e = new THREE.Euler(), p = new THREE.Vector3(), s = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const sz = (0.24 + r() * 0.42) * (opts.scale ?? 1);
+    // Icosahedral lumps are 80 triangles and tetrahedral ones are 4, so the
+    // mix is what keeps a whole arena ring's worth of rubble affordable.
+    const g = scaleUv(rubbleGeo(r() < 0.35 ? 1 : 2, Math.floor(r() * 9999)), sz);
+    const nzs = r() < 0.5 ? 1 : -1;
+    const out = t * 0.5 + 0.15 + r() * r() * h * 0.42;
+    // bedded, not balanced: a fallen block sits about a third into the sand it
+    // landed in, and a composed kit cannot ask the terrain where that is
+    g.applyMatrix4(m.compose(
+      p.set((r() - 0.5) * w * 1.06, sz * 0.18, nzs * out),
+      q.setFromEuler(e.set((r() - 0.5) * 1.1, r() * TAU, (r() - 0.5) * 1.1)),
+      s.set(sz * (0.85 + r() * 0.5), sz * (0.6 + r() * 0.5), sz * (0.85 + r() * 0.5))));
+    geos.push(g);
+  }
+  const merged = mergeGeos(geos);
+  if (merged) kit.put(merged, mat, 0, 0, 0);
+  return merged;
+}
+
 /**
  * A tapered shaft with entasis (the classical swell — a straight taper reads
  * as a pipe), optional fluting, and an optional jagged top for a snapped
@@ -2224,12 +2866,21 @@ function shaftGeo(rBot, rTop, h, opts = {}) {
   for (let i = 0; i < seg; i++) jit[i] = (jit[i] * 2 + jit[(i + 1) % seg] + jit[(i + seg - 1) % seg]) * 0.25;
   jit.push(jit[0]);
 
+  /* A column is not a pipe: it is a STACK OF DRUMS, and every joint between
+   * two of them has been open to the weather for two thousand years. `drums`
+   * nicks the radius in by 1.8% at each joint — enough to catch a shadow line
+   * at ten metres, not enough to read as a corset. It costs nothing: the rings
+   * are already there, this only moves them. */
+  const drums = opts.drums ?? 0;
+  const every = drums > 0 ? Math.max(2, Math.round(rings / drums)) : 0;
+
   const nv = (rings + 1) * (seg + 1);
   const pos = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
   const rim = [];
   for (let j = 0; j <= rings; j++) {
     const t = j / rings;
-    const rr = lerp(rBot, rTop, t) * (1 + entasis * Math.sin(t * Math.PI));
+    let rr = lerp(rBot, rTop, t) * (1 + entasis * Math.sin(t * Math.PI));
+    if (every && j > 0 && j < rings && j % every === 0) rr *= 0.982;
     for (let i = 0; i <= seg; i++) {
       const a = (i / seg) * TAU;
       const f = flutes ? (1 - fd * (0.5 - 0.5 * Math.cos(a * flutes))) : 1;
@@ -2276,11 +2927,33 @@ export function addColumn(world, pos, opts = {}) {
   const standing = clamp(opts.standing ?? 1, 0.12, 1);
   const broken = standing < 0.999;
 
-  // stepped plinth
+  // Stepped plinth — and, under it, the part nobody sees. A column standing
+  // with its lowest polygon exactly on grade shows daylight under one edge the
+  // moment the ground rolls, and it is the reason a colonnade reads as pins
+  // pushed into sand rather than as stone set into it.
   const pw = r * 2.9, ph = r * 0.34;
+  if (opts.footing !== false) {
+    kit.slab(trim, pw * 1.04, 0.62, pw * 1.04, 0, -0.28, 0, { tile: ARCH_TILE, seg: 2, bevel: 0.05, collide: false });
+  }
   kit.slab(trim, pw, ph, pw, 0, ph / 2, 0, { tile: 2.2, collide: false });
   kit.slab(trim, pw * 0.86, ph * 0.8, pw * 0.86, 0, ph * 1.4, 0, { tile: 2.2, collide: false });
   const y0 = ph * 1.8;
+  // and the sand that has drifted round it. Four short runs rather than a
+  // revolved skirt: a perfect cone of sand round a column is a lampshade.
+  if (opts.drift !== false) {
+    for (let i = 0; i < 4; i++) {
+      kit.push(0, 0, 0, i * Math.PI / 2);
+      // 2.6-4.4 plinth-steps of peak, which after sandDrift's squared profile
+      // means a mean of about a third of that: two faces of the plinth banked
+      // over and two scoured back to the stone, rather than a even skirt all
+      // the way round, which is a lampshade by another route
+      sandDrift(kit, pw * 1.15, pw, {
+        rng: rr, nz: 1, height: ph * (2.6 + rr() * 1.8) * (opts.drift ?? 1),
+        seed: (opts.seed ?? 21) + i * 3.7,
+      });
+      kit.pop();
+    }
+  }
   // torus base moulding
   const base = torusGeo(r * 1.02, r * 0.2, 6, 16, TAU, 1.0);
   base.rotateX(Math.PI / 2);
@@ -2288,10 +2961,35 @@ export function addColumn(world, pos, opts = {}) {
 
   const capH = broken ? 0 : r * 1.5;
   const shaftH = Math.max(0.4, h * standing - y0 - capH);
+  // one drum per 1.5 m of shaft — about the biggest lump two people and a
+  // sheer-legs can set, which is why real drums are that tall
+  const nDrum = clamp(Math.round(shaftH / 1.5), 1, 8);
   const sh = shaftGeo(r, r * (broken ? lerp(1, 0.86, standing) : 0.84), shaftH, {
-    seg: opts.seg ?? 18, rings: broken ? 4 : 5, flutes: opts.flutes ?? (rr() < 0.5 ? 16 : 0),
+    seg: opts.seg ?? 18, rings: Math.max(broken ? 4 : 5, nDrum * 2), drums: nDrum,
+    flutes: opts.flutes ?? (rr() < 0.5 ? 16 : 0),
     entasis: 0.03, topJitter: broken ? r * 0.9 : 0, rng: rr, tile: 1.9,
   });
+  /* Every drum came off a different bed, so every drum is a different colour.
+   *
+   * The joint nick in shaftGeo gives the shaft its horizontal shadow lines and
+   * nothing else, so a colonnade still came out as painted pipes: one flat
+   * tone from base to capital on a piece four metres tall, which is the exact
+   * complaint the ashlar facing exists to answer, unanswered on the one
+   * element of the arena the player walks between. Painting the quarry tone in
+   * by drum costs a colour attribute the material already reads and no
+   * triangles at all; weatherGeo multiplies its dirt runs INTO this rather
+   * than over it, so the two compose. The tone stream is its own, for the same
+   * reason addArch's is: a colour must not move a layout. */
+  {
+    const tr = makeRng((opts.seed ?? 21) * 37 + 11);
+    const dh = shaftH / nDrum, ton = [1, 1, 1];
+    const tones = [];
+    for (let i = 0; i < nDrum; i++) tones.push(ashlarTone(i / Math.max(1, nDrum - 1), tr, ton).slice());
+    paintGeo(sh.side, (x, y, z, out) => {
+      const c = tones[clamp(Math.floor(y / dh), 0, nDrum - 1)];
+      out[0] = c[0]; out[1] = c[1]; out[2] = c[2];
+    });
+  }
   kit.put(sh.side, mat, 0, y0, 0);
   if (broken) {
     const rimPts = sh.rim.map((p) => p.clone().setY(p.y + y0));
@@ -2351,6 +3049,12 @@ export function addArch(world, pos, opts = {}) {
   const trim = opts.trimMat || M.sandstone;
   const rr = kit.rng;
   const missing = Math.round(n * clamp(opts.broken ?? 0, 0, 0.55));
+  /* Quarry tones draw from their OWN stream, exactly as weathering does: this
+   * maker's shape decisions come off kit.rng, and a colour that pulled from
+   * the same stream would move every voussoir and every wing in every level
+   * the day somebody adds one more tone to the table. */
+  const tr = makeRng((opts.seed ?? 33) * 31 + 7);
+  const ton = [1, 1, 1];
 
   const arcPt = (a, rad) => [Math.cos(a) * rad, Math.sin(a) * rad * yScale];
   for (let i = 0; i < n; i++) {
@@ -2362,7 +3066,14 @@ export function addArch(world, pos, opts = {}) {
     for (let s = 0; s <= 3; s++) pts.push(arcPt(lerp(a0, a1, s / 3), rIn));
     for (let s = 3; s >= 0; s--) pts.push(arcPt(lerp(a0, a1, s / 3), ro));
     const g = extrudeBeveled(pts, d * (key ? 1.06 : 1), { bevel: Math.min(0.045, d * 0.14), tile: 2.2 });
-    kit.put(g, key ? trim : mat, 0, spring, 0);
+    /* A voussoir IS a stone, so it takes a stone's tone. Left untinted beside
+     * a wall that has been faced in ashlar the ring came out flat grey against
+     * warm masonry — measured on the arena gate, 0.30 chroma against the
+     * facing's 0.51 — which reads as an arch cast in concrete and dropped next
+     * to a stone wall. The high tones sit at the crown where the sun gets at
+     * it and the dark ones near the springing. */
+    kit.put(tintGeo(g, ashlarTone(0.35 + Math.sin((i + 0.5) / n * Math.PI) * 0.6, tr, ton)),
+      key ? trim : mat, 0, spring, 0);
   }
   if (missing > 0) {                                  // a stub where the ring tore
     const a = (missing / n) * Math.PI;
@@ -2374,9 +3085,58 @@ export function addArch(world, pos, opts = {}) {
     for (const sx of [-1, 1]) {
       const x = sx * (rIn + t / 2);
       kit.slab(mat, t, spring, d, x, spring / 2, 0, { tile: 2.4, seg: 3, collide: false });
+      // and the pier is coursed masonry too, on both faces the gate is seen
+      // from — a plain slab under a stone ring is where the eye goes first
+      if (opts.ashlar !== false) {
+        kit.push(x, 0, 0, 0);
+        for (const nz of [1, -1]) {
+          const { face: fg, socket: sg } = ashlarFace(t, {
+            rng: tr, course: spring / Math.max(3, Math.round(spring / 0.72)),
+            base: 0.16, height: spring - 0.16, ruin: 0.12,
+            z: nz * (d * 0.5 + 0.02), nz, tile: ARCH_TILE,
+            topAt: () => spring - 0.14,
+          });
+          if (fg) kit.put(fg, mat, 0, 0, 0);
+          if (sg) kit.put(sg, M.duracreteDark, 0, 0, 0);
+        }
+        kit.pop();
+      }
       kit.slab(trim, t * 1.34, 0.22, d * 1.2, x, spring - 0.11, 0, { tile: 1.8, collide: false });   // impost
       kit.slab(trim, t * 1.4, 0.3, d * 1.28, x, 0.15, 0, { tile: 1.8, collide: false });             // footing
+      // the pier goes into the ground, and sand banks against it
+      kit.slab(trim, t * 1.3, 0.66, d * 1.2, x, -0.3, 0, { tile: ARCH_TILE, seg: 2, bevel: 0.05, collide: false });
       kit.collider(x, spring / 2, 0, t / 2 + 0.02, spring / 2, d / 2);
+      if (opts.drift !== false) {
+        // MEASURED the hard way: sandDrift builds about its own origin, and
+        // without this frame both piers' drifts landed at x = 0 — a bank of
+        // sand hanging in the middle of the gateway, in mid-air, which is
+        // precisely the kind of geometry-inside-geometry this file keeps
+        // being bitten by. The wall and the column wrap theirs; this did not.
+        kit.push(x, 0, 0, 0);
+        for (const nz of [1, -1]) {
+          sandDrift(kit, t * 1.5, d, { rng: rr, nz, height: 0.6 * (opts.drift ?? 1), seed: (opts.seed ?? 33) + sx * 5 });
+        }
+        kit.pop();
+      }
+    }
+
+    /* ── what the arch belongs to ─────────────────────────────────────
+     * An arch standing alone in a field is a folly. An arch is a HOLE, and a
+     * hole is only a hole if there is something round it — so unless the
+     * caller has already given it something (addRuinedGate has its pylons),
+     * each pier grows a torn-off return of the wall the arch was cut through.
+     * Short and broken, so it reads as the surviving haunch of a wall rather
+     * than as more building; it also gives the gateway a genuine reveal, which
+     * is what makes a gateway look thick enough to walk through. */
+    if (opts.wings !== false) {
+      const wl = opts.wingLength ?? span * 0.34;
+      for (const sx of [-1, 1]) {
+        addBrokenWall(world, new THREE.Vector3(sx * (rIn + t + wl / 2), 0, 0),
+          new THREE.Vector3(wl, spring * (0.72 + rr() * 0.2), d * 0.92), {
+            kit, seed: (opts.seed ?? 33) * 3 + 17 + sx, mat, trimMat: trim, coreMat: M.duracreteDark,
+            ruin: 0.62 + rr() * 0.2, course: opts.course, stringCourse: false,
+          });
+      }
     }
   }
   if (opts.collideArch !== false && missing === 0) {
@@ -2468,7 +3228,7 @@ export function addBrokenWall(world, pos, size, opts = {}) {
     return holes;
   };
 
-  const panel = (depth, zOff, top, mat, tile) => {
+  const panel = (depth, zOff, top, mat, tile, hidden = false) => {
     const pts = [new THREE.Vector2(-w / 2, 0), new THREE.Vector2(w / 2, 0)];
     for (const [x, y] of top) pts.push(new THREE.Vector2(x, y));
     const shape = new THREE.Shape(pts);
@@ -2481,15 +3241,72 @@ export function addBrokenWall(world, pos, size, opts = {}) {
     g.translate(0, 0, zOff - (depth / 2 - b));
     scaleUv(g, uvm(tile));
     g.computeVertexNormals();
+    /* Once a face is covered in ashlar the panel behind it is BACKING: nothing
+     * but its edges is ever seen. Weathering it means tessellating a 9 x 8 m
+     * polygon down to 1.15 m cells to paint dirt runs on a surface that is
+     * two centimetres behind a hundred stones — measured, 1.4k triangles per
+     * wall, 45k across the arena's ring, all of it invisible. */
+    const was = kit.weather;
+    if (hidden) kit.weather = false;
     kit.put(g, mat, 0, 0, 0);
+    kit.weather = was;
   };
 
-  const tA = brokenEdge(w / 2, -w / 2, lowest, h, rr, Math.max(4, Math.round(w / 1.6)));
-  const tB = brokenEdge(w / 2, -w / 2, lowest * 0.94, h * 0.98, rr, Math.max(4, Math.round(w / 1.6)));
-  const tC = brokenEdge(w / 2, -w / 2, lowest * 1.02, h * 0.9, rr, Math.max(3, Math.round(w / 2.2)));
-  panel(t * 0.3, t * 0.35, tA, face, 2.4);
+  /* ── the courses ──────────────────────────────────────────────────────
+   * Everything about this wall is decided by its bed height, because that is
+   * how a real one is decided. The stone comes out of the quarry in a bed of a
+   * given thickness, the wall is laid in courses of that thickness, and when
+   * it falls down it falls down ALONG those courses. So the course is picked
+   * first, the broken tops snap to it, and the facing lands in register with
+   * the silhouette instead of fighting it. 0.68 m is a big building stone —
+   * about what a two-man block weighs out of soft sandstone. */
+  const bed = clamp(opts.course ?? 0.68, 0.3, Math.max(0.3, h * 0.34));
+  // A 0.5 m stylobate under a 0.9 m parapet is a plinth with a lid on it, so
+  // anything under about a metre and a half is built straight off the ground.
+  const y0 = opts.footing === false || h < 1.6 ? 0
+    : footing(kit, w, t, { trim: opts.trimMat || M.duracreteWarm, band: opts.bandMat || core });
+  const nCourse = Math.max(1, Math.round((h - y0) / bed));
+  const course = Math.max(0.25, (h - y0) / nCourse);
+  const snap = { y0, h: course };
+
+  const tA = brokenEdge(w / 2, -w / 2, lowest, h, rr, Math.max(4, Math.round(w / 1.6)), snap);
+  const tB = brokenEdge(w / 2, -w / 2, lowest * 0.94, h * 0.98, rr, Math.max(4, Math.round(w / 1.6)), snap);
+  const tC = brokenEdge(w / 2, -w / 2, lowest * 1.02, h * 0.9, rr, Math.max(3, Math.round(w / 2.2)), snap);
+  const faced = opts.ashlar !== false;
+  panel(t * 0.3, t * 0.35, tA, face, 2.4, faced);
   panel(t * 0.42, 0, tC, core, 2.0);
-  panel(t * 0.3, -t * 0.35, tB, face, 2.4);
+  panel(t * 0.3, -t * 0.35, tB, face, 2.4, faced);
+
+  /* ── the facing ───────────────────────────────────────────────────────
+   * The three panels above are the wall's MASS and its silhouette. They are
+   * not its surface: an extruded polygon has one albedo and reads at any
+   * distance as one flat card, which is exactly what the arena's ring did.
+   * ashlarFace lays real stones over both outward faces — 2.33:1 in tone
+   * block to block, chamfered so each course catches its own light, chipped,
+   * and with the odd stone missing to a socket in the darker core. */
+  const ledges = [];
+  if (opts.stringCourse !== false && h - y0 > 3.4 && ruin < 0.66) {
+    // A drip mould two thirds of the way up. Every horizontal projection on a
+    // building throws water clear of the wall, and every one of them therefore
+    // has a stain under it — which the facing below reads off `ledges`.
+    const ly = y0 + course * Math.max(2, Math.round(nCourse * 0.62));
+    if (ly < lowest * 0.92) {
+      kit.slab(opts.trimMat || M.duracreteWarm, w * 1.005, 0.16, t * 1.14, 0, ly + 0.08, 0,
+        { tile: TRIM_TILE, seg: 3, bevel: 0.035, collide: false });
+      ledges.push(ly);
+    }
+  }
+  if (opts.ashlar !== false) {
+    for (const [top, nz] of [[tA, 1], [tB, -1]]) {
+      const { face: fg, socket: sg } = ashlarFace(w, {
+        rng: rr, course, base: y0, height: h - y0, ruin, ledges, openings,
+        // 2 cm proud of the panel, so the mortar bed has somewhere to be
+        z: nz * (t * 0.5 + 0.02), nz, topAt: edgeSampler(top), tile: ARCH_TILE,
+      });
+      if (fg) kit.put(fg, face, 0, 0, 0);
+      if (sg) kit.put(sg, core, 0, 0, 0);
+    }
+  }
 
   /* ── openings are HOLES IN A WALL, not holes in a sheet ────────────────
    * The three panels above cut every opening straight through with a 5 cm
@@ -2545,8 +3362,26 @@ export function addBrokenWall(world, pos, size, opts = {}) {
       new THREE.Vector3(x + (rr() - 0.5) * 0.9, y + up, z + (rr() - 0.5) * 0.7),
     ], 0.021, 4, FINE_TILE), M.rebar);
   }
-  // a base course so it meets the ground with an edge, not a seam
-  if (opts.plinth !== false) kit.slab(opts.trimMat || M.duracreteWarm, w * 1.02, 0.3, t * 1.2, 0, 0.15, 0, { tile: 2.4, collide: false });
+  /* ── the ground ───────────────────────────────────────────────────────
+   * A stylobate is only half of meeting the desert. Sand piles against a
+   * windward face and buries the bottom course; the leeward face gets an eddy
+   * drift about half the size. Both are always emitted, because a wall with
+   * sand banked on one side and a knife-edge on the other reads as a bug from
+   * every angle but the one it was authored from. */
+  if (opts.drift !== false) {
+    const dr = opts.drift ?? 1;
+    const lee = rr() < 0.5 ? 1 : -1;
+    // 1.3 m windward. Measured off the first shot with a drift on it: at 0.9 m
+    // against an 8.4 m wall the bank was four pixels tall at fifty metres and
+    // read as a kerb. A drift that does not bury the bottom COURSE is not a
+    // drift, it is a fillet.
+    sandDrift(kit, w, t, { rng: rr, nz: lee, height: Math.min(h * 0.3, 1.3) * dr, seed: (opts.seed ?? 66) * 0.37, mat: opts.driftMat });
+    sandDrift(kit, w, t, { rng: rr, nz: -lee, height: Math.min(h * 0.18, 0.72) * dr, seed: (opts.seed ?? 66) * 0.91 + 4, mat: opts.driftMat });
+  }
+  // and what came off it when it broke
+  if (opts.talus !== false && ruin > 0.22) {
+    talus(kit, w, t, h, { rng: rr, mat: face, amount: ruin });
+  }
 
   const solid = lowest * 0.9;
   const nc = Math.max(1, Math.round(w / 6));
@@ -2631,16 +3466,46 @@ export function addPlinth(world, pos, opts = {}) {
   const M = propMaterials();
   const w = opts.width ?? 4, d = opts.depth ?? w, h = opts.height ?? 1.2;
   const mat = opts.mat || M.sandstone;
+  const band = opts.bandMat || M.stoneDark;
   const steps = opts.steps ?? 3;
+  const rr = kit.rng;
+  const tr = makeRng((opts.seed ?? 99) * 41 + 3);
+  const ton = [1, 1, 1];
+  /* The buried course. A plinth is the thing a monument's WEIGHT goes into,
+   * and the arena's colossus stood on one whose lowest polygon was exactly on
+   * grade — a stepped box laid on the sand with a straight dark line under it,
+   * which is the single clearest way to say "this was placed, not built". Two
+   * thirds of a metre of masonry below grade costs four hundred triangles
+   * across the whole game and means the terrain can roll under it. */
+  if (opts.footing !== false) {
+    kit.slab(band, w * 1.05, 0.66, d * 1.05, 0, -0.30, 0, { tile: ARCH_TILE, seg: 2, bevel: 0.05, collide: false });
+  }
   for (let i = 0; i < steps; i++) {
     const t = i / steps;
     const sw = lerp(w, w * 0.78, t), sd = lerp(d, d * 0.78, t);
     const sh = h / steps;
-    kit.slab(mat, sw, sh, sd, 0, sh * (i + 0.5), 0, { tile: 2.4, seg: 3, collide: false });
+    // one quarry tone per step, low at the foot and bleached at the top: three
+    // identical slabs are one slab three times, and the eye reads the stack as
+    // a single extruded mass rather than as courses of stone
+    const g = slabGeo(sw, sh, sd, { tile: 2.4, seg: 3 });
+    kit.put(tintGeo(g, ashlarTone(t, tr, ton)), mat, 0, sh * (i + 0.5), 0);
   }
   // recessed inscription band
-  kit.slab(opts.bandMat || M.stoneDark, w * 0.72, h * 0.26, d * 0.79, 0, h * 0.52, 0, { tile: 1.4, collide: false });
-  kit.slab(opts.bandMat || M.stoneDark, w * 0.79, h * 0.26, d * 0.72, 0, h * 0.52, 0, { tile: 1.4, collide: false });
+  kit.slab(band, w * 0.72, h * 0.26, d * 0.79, 0, h * 0.52, 0, { tile: 1.4, collide: false });
+  kit.slab(band, w * 0.79, h * 0.26, d * 0.72, 0, h * 0.52, 0, { tile: 1.4, collide: false });
+  // and the desert against all four faces, so the sand does not stop dead at
+  // the bottom step
+  if (opts.drift !== false) {
+    for (let i = 0; i < 4; i++) {
+      const along = i % 2 ? d : w, thick = i % 2 ? w : d;
+      kit.push(0, 0, 0, i * Math.PI / 2);
+      sandDrift(kit, along * 1.02, thick, {
+        rng: rr, nz: 1, height: Math.min(h * 0.5, 0.44) * (opts.drift ?? 1),
+        seed: (opts.seed ?? 99) + i * 5.1,
+      });
+      kit.pop();
+    }
+  }
   kit.collider(0, h / 2, 0, w / 2, h / 2, d / 2);
   return kitClose(world, kit, pos, opts);
 }
@@ -2928,6 +3793,30 @@ export function addRuinedGate(world, pos, opts = {}) {
     // a recessed panel down each face gives the mass a scale reference
     for (const sz of [-1, 1]) {
       kit.slab(M.duracreteDark, pw * 0.5, H * 0.5, 0.1, x, H * 0.34, sz * pd * 0.5, { tile: 2.2, collide: false });
+    }
+    /* Where the pylon meets the ground. A battered mass is the one shape that
+     * makes the omission unmissable — the taper says the eye is looking at
+     * something that carries load, and then it arrives at grade on a knife
+     * edge with a shadow under it. A buried course, a projecting damp band
+     * that throws the water clear, and sand banked on all four faces. */
+    if (opts.footing !== false) {
+      kit.slab(M.duracreteDark, pw * 1.06, 0.72, pd * 1.06, x, -0.33, 0, { tile: ARCH_TILE, seg: 2, bevel: 0.06, collide: false });
+      kit.slab(trim, pw * 1.1, 0.22, pd * 1.1, x, 0.11, 0, { tile: TRIM_TILE, seg: 3, bevel: 0.04, collide: false });
+    }
+    if (opts.drift !== false) {
+      // pushed into the PYLON's frame: sandDrift builds about its own origin,
+      // and both pylons' banks would otherwise land on the gate's centreline —
+      // in mid-air, in the middle of the opening
+      kit.push(x, 0, 0, 0);
+      for (let i = 0; i < 4; i++) {
+        const along = i % 2 ? pd : pw, thick = i % 2 ? pw : pd;
+        kit.push(0, 0, 0, i * Math.PI / 2);
+        sandDrift(kit, along * 1.05, thick, {
+          rng: rr, nz: 1, height: 0.62 * (opts.drift ?? 1), seed: (opts.seed ?? 303) + sx * 7 + i * 2.3,
+        });
+        kit.pop();
+      }
+      kit.pop();
     }
     kit.collider(x, y / 2, 0, pw * 0.52, y / 2, pd * 0.52);
   }
