@@ -148,7 +148,10 @@ export class Enemy {
     this.hp = A.hp * (world.hpScale ?? 1);
     this.maxHp = this.hp;
     this.speed = A.speed * (0.9 + rng() * 0.2) * (diff ? lerp(0.86, 1.12, diff.enemyAggression / 1.25) : 1);
-    this.damage = A.damage * (world.dmgScale ?? 1);
+    // NOT `damage`: Enemy also has a damage() METHOD, and an instance property
+    // of the same name shadows it. That collision silently broke every way of
+    // hurting an enemy except the blade — see the note on damage() below.
+    this.attackDamage = A.damage * (world.dmgScale ?? 1);
 
     this.position = spawn.clone();
     this.position.y = world.terrain ? world.terrain.height(spawn.x, spawn.z) : 0;
@@ -369,6 +372,17 @@ export class Enemy {
 
   /* ── damage ──────────────────────────────────────────────────────── */
 
+  /**
+   * Take damage. The attack damage this enemy DEALS is `attackDamage`, and the
+   * two must never share a name again: `this.damage = <number>` in the
+   * constructor shadowed this method on every instance, so `e.damage(...)`
+   * threw "e.damage is not a function" everywhere it was called — deflected
+   * bolts, Force lightning, fall damage, net damage. Only the blade could kill
+   * anything, and the throw aborted the rest of world.update() on every frame
+   * a bolt reached an enemy, which is what made a run degrade until it froze.
+   * Nothing failed loudly: the exception surfaced as a console error behind a
+   * requestAnimationFrame that had already been scheduled.
+   */
   damage(amount, point, source, kind) {
     if (this.dead) return false;
     if (this.invincible) return false;
@@ -777,7 +791,7 @@ export class Enemy {
     _v3.normalize();
 
     ctx.bolts.fire(from, _v3, {
-      speed: this.trainingBoltSpeed ?? speed, damage: this.damage, color: A.boltColor ?? BOLT_COLORS.red,
+      speed: this.trainingBoltSpeed ?? speed, damage: this.attackDamage, color: A.boltColor ?? BOLT_COLORS.red,
       owner: this, team: this.team, big: !!A.big,
       length: A.big ? 2.4 : 1.15, radius: A.big ? 0.1 : 0.05,
     });
@@ -870,17 +884,17 @@ export class Enemy {
 
     if (this.state === 'lunge') {
       if (this.stateTime < 0.5) this.velocity.addScaledVector(this.lungeDir, 42 * dt);
-      else if (this.stateTime < 0.85) hitTarget(5.4 * A.scale * 0.6, this.damage, 0.5);
+      else if (this.stateTime < 0.85) hitTarget(5.4 * A.scale * 0.6, this.attackDamage, 0.5);
       else { this.state = 'approach'; this._swiped = false; }
     } else if (this.state === 'sweep') {
       // a wide claw arc — step aside rather than back
-      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(6.6 * A.scale * 0.6, this.damage * 0.85, 0.9);
+      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(6.6 * A.scale * 0.6, this.attackDamage * 0.85, 0.9);
       else if (this.stateTime >= 1.15) { this.state = 'approach'; this._swiped = false; }
     } else if (this.state === 'charge') {
       if (this.stateTime < 0.65) this.wish = null;                    // the wind-up
       else if (this.stateTime < 1.9) {
         this.velocity.addScaledVector(this.lungeDir, 30 * dt);
-        hitTarget(4.6 * A.scale * 0.6, this.damage * 1.3, 0.8);
+        hitTarget(4.6 * A.scale * 0.6, this.attackDamage * 1.3, 0.8);
         if (rng() < 0.4) this.world.particles?.sandPuff(this.position.clone(), 1.4,
           this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
       } else { this.state = 'approach'; this._swiped = false; }

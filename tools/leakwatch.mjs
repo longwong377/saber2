@@ -113,6 +113,22 @@ const rows = await page.evaluate(async ({ seconds, samples, render }) => {
       statics: w.statics.length,
       bolts: w.bolts ? w.bolts.bolts.filter((b) => b.active).length : -1,
       wave: w.director ? (w.director.wave ?? -1) : -1,
+      // Every bolt that hits the ground craters it, which dirties a patch of
+      // heightfield and forces the Rapier collider to be rebuilt. Both are
+      // per-frame costs that a long firefight could grow without ever growing
+      // an object count, which is exactly the shape of "it gets slower".
+      craters: w.terrain ? (w.terrain.deformSeq ?? -1) : -1,
+      // live particles, summed over every pool the world owns
+      parts: (() => {
+        const P = w.particles; if (!P) return -1;
+        let n = 0;
+        for (const k of Object.keys(P)) {
+          const v = P[k];
+          if (v && typeof v.count === 'number') n += v.count;
+          else if (v && Array.isArray(v.items)) n += v.items.filter((x) => x && x.alive).length;
+        }
+        return n;
+      })(),
       // JS heap, in MB
       heap: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
     };
