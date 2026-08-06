@@ -8,9 +8,8 @@
  */
 
 import * as THREE from 'three';
-import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
+import { clamp, lerp } from '../engine/MathUtil.js';
 
-const rng = makeRng(88);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -34,47 +33,194 @@ export const HILT_STYLES = ['Graflex', 'Guardian', 'Sentinel', 'Consular', 'Cros
 
 /* ── shaders ─────────────────────────────────────────────────────────── */
 
-const GLOW_VERT = /* glsl */`
-  varying vec3 vN; varying vec3 vV; varying float vY;
+/**
+ * THE BLADE.
+ *
+ * One camera-facing quad spanning the blade axis, and an emission profile
+ * evaluated analytically against the distance to that axis. Everything that
+ * makes plasma read as plasma is in that profile:
+ *
+ *   • it is ONE colour at THREE amplitudes, spanning nearly two orders of
+ *     magnitude. The centre is the crystal's own hue pushed so far past white
+ *     that every channel saturates — which is exactly why an over-exposed
+ *     emitter photographs as a white core with a coloured halo, and it is the
+ *     only way to get a coloured bloom out of a tonemapped renderer. A blade
+ *     built the other way round — a white core mesh with a tinted shell over
+ *     it — can only ever be a white stick, because the white is authored, not
+ *     earned, and the tint sits UNDER it.
+ *   • the falloff is Gaussian, so there is no silhouette anywhere. The old
+ *     build was four nested cylinders: a hard-edged solid core capsule and
+ *     three shells whose alpha came from the facing angle of a 14-sided tube,
+ *     so the blade had a polygonal edge, banded where the shells crossed, and
+ *     lost its coloured shell entirely at any distance.
+ *   • the field is a CAPSULE, not a tube, so the tip is a proper rounded cap
+ *     for free and from every angle, including end-on where the blade should
+ *     collapse to a bright disc rather than disappear.
+ *   • it is one draw call and two triangles.
+ */
+const BLADE_VERT = /* glsl */`
+  #include <common>
+  #include <fog_pars_vertex>
+  uniform float uLen;        // blade length, metres, from the emitter
+  uniform float uRadius;     // how far out the quad has to reach
+  attribute vec2 aQuad;      // x across in [-1,1], y along in [0,1]
+  varying vec2 vP;           // (across, along) in view-space metres
+  varying float vLen;
   void main(){
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    vN = normalize(normalMatrix * normal);
-    vV = normalize(-mv.xyz);
-    vY = uv.y;
-    gl_Position = projectionMatrix * mv;
+    vec3 B = (modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    vec3 T = (modelViewMatrix * vec4(0.0, uLen, 0.0, 1.0)).xyz;
+    vec3 ax = T - B;
+    float L = length(ax);
+    vec3 A = L > 1e-5 ? ax / L : vec3(0.0, 1.0, 0.0);
+    // Any scale on the way down the hierarchy has to reach the radius too, or
+    // a scaled saber gets a full-sized halo around a small blade.
+    float sc = L / max(uLen, 1e-4);
+    float R = uRadius * sc;
+    // Billboard about the blade's own axis: the quad turns to face the camera
+    // but never leaves the axis, so the blade is where it says it is.
+    vec3 V = normalize(-(B + T) * 0.5);
+    vec3 S = cross(A, V);
+    float sl = length(S);
+    // End-on the cross product vanishes; any perpendicular will do, because the
+    // capsule field below collapses to a disc there anyway.
+    S = sl > 1e-4 ? S / sl : normalize(cross(A, vec3(0.0, 0.0, 1.0)) + vec3(1e-4, 0.0, 0.0));
+    // The quad reaches a full radius past the TIP, because the tip is a round
+    // cap, but barely past the emitter, because the emitter is a hole in a
+    // piece of machined steel. Symmetrical bounds put a 30 cm ball of light
+    // around the hilt.
+    float along = mix(-0.055 * sc, L + R, aQuad.y);
+    vec3 p = B + A * along + S * (aQuad.x * R);
+    vP = vec2(aQuad.x * R, along);
+    vLen = L;
+    vec4 mvPosition = vec4(p, 1.0);
+    #include <fog_vertex>
+    gl_Position = projectionMatrix * mvPosition;
   }
 `;
-const GLOW_FRAG = /* glsl */`
-  uniform vec3 uColor; uniform float uPower; uniform float uIntensity; uniform float uFlicker;
-  varying vec3 vN; varying vec3 vV; varying float vY;
+const BLADE_FRAG = /* glsl */`
+  #include <common>
+  #include <fog_pars_fragment>
+  uniform vec3 uHue;         // the crystal, normalised so its peak channel is 1
+  uniform vec3 uWidth;       // gaussian sigma: core, glow, halo
+  uniform vec3 uAmp;         // amplitude:      core, glow, halo
+  uniform float uRadius;
+  uniform float uFlicker;
+  uniform float uTime;
+  uniform float uSurge;      // ignition front
+  varying vec2 vP;
+  varying float vLen;
   void main(){
-    float facing = abs(dot(normalize(vN), normalize(vV)));
-    float a = pow(facing, uPower) * uIntensity * uFlicker;
-    // soften the very ends so the cap reads as rounded plasma
-    a *= smoothstep(0.0, 0.035, vY) * smoothstep(1.0, 0.965, vY);
-    gl_FragColor = vec4(uColor * a, a);
+    float a = vP.y;
+    // Distance to the segment [0, vLen] — a capsule field, so the tip is round
+    // for free from every angle. The emitter end is compressed rather than
+    // capped: plasma comes OUT of the shroud, it does not pool around it.
+    float dy = a < 0.0 ? a * 3.2 : (a > vLen ? a - vLen : 0.0);
+    float d = length(vec2(vP.x, dy));
+    float t = clamp(a / max(vLen, 1e-4), 0.0, 1.0);
+
+    // The plasma leaves the emitter wide and hot and closes toward the tip,
+    // which brightens as it narrows.
+    float w = 1.0 + 0.30 * exp(-a * 26.0) - 0.09 * smoothstep(0.5, 1.0, t);
+    // Standing instability: three incommensurate waves crawling along the
+    // blade. Small — 6% — but it is the difference between a lamp and a
+    // contained arc, and it is the only thing on the blade that moves.
+    float n = sin(a * 57.0 - uTime * 8.0)
+            + sin(a * 23.0 + uTime * 5.3) * 0.7
+            + sin(a * 127.0 + uTime * 17.0) * 0.3;
+    float amp = uFlicker * (1.0 + n * 0.030) * (1.0 + 0.22 * smoothstep(0.86, 1.0, t));
+    // the ignition front burns hotter than the blade behind it
+    amp *= 1.0 + uSurge * exp(-(1.0 - t) * 7.0);
+
+    /* A 2 cm blade at 20 m is a fifth of a pixel wide, and a gaussian narrower
+     * than the sample grid is a line of aliased dots that mostly misses. So no
+     * lobe is allowed to be thinner than about a pixel, and whatever is
+     * widened has its amplitude cut by the same factor — the LINE INTEGRAL of
+     * a gaussian is amp·sigma, so holding that product constant keeps the
+     * blade's total light identical while it stops being sub-pixel. This is
+     * the difference between a blade that carries across a battlefield and one
+     * that shimmers out at ten metres. */
+    float px = max(fwidth(vP.x), 1e-7);
+    vec3 wid = uWidth * w;
+    vec3 we = max(wid, vec3(px * 0.62));
+    vec3 keep = wid / we;
+    vec3 dd = vec3(d) / we;
+    float core = exp(-dd.x * dd.x) * keep.x;
+    float glow = exp(-dd.y * dd.y) * keep.y;
+    // a longer tail than a gaussian on the outermost lobe — this is the wash
+    // that lands on walls and faces, and it has to reach
+    float halo = exp(-pow(dd.z, 1.4)) * keep.z;
+    float e = (uAmp.x * core + uAmp.y * glow + uAmp.z * halo) * amp;
+    // guarantee it is exactly zero at the quad's edge
+    e *= smoothstep(uRadius, uRadius * 0.55, d);
+    if(e < 0.002) discard;
+
+    vec3 c = uHue * e;
+    #ifdef USE_FOG
+      #ifdef FOG_EXP2
+        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+      // Haze takes light AWAY from an emitter. Mixing toward the fog colour —
+      // what the stock chunk does — makes a distant blade brighter than a near
+      // one, which is how you get a glowing stick on the horizon.
+      c *= 1.0 - fogFactor;
+    #endif
+    // Additive blending ignores alpha, but the canvas does not: the menu
+    // preview composites over the page, and emitting alpha 1 across the whole
+    // quad painted a 60 cm opaque black rectangle behind the blade.
+    gl_FragColor = vec4(c, clamp(max(max(c.r, c.g), c.b), 0.0, 1.0));
   }
 `;
 
+/**
+ * THE TRAIL.
+ *
+ * The swept volume of the blade over the last fraction of a second, as three
+ * parallel sheets offset along the sweep's own normal. The thickness is what
+ * stops a chop swung nearly in the view plane — where the swept surface turns
+ * edge-on — from collapsing to nothing, which a zero-thickness ribbon does.
+ */
 const TRAIL_VERT = /* glsl */`
-  attribute float aAge;
-  attribute float aSide;
-  varying float vAge; varying float vSide;
+  #include <common>
+  #include <fog_pars_vertex>
+  attribute float aAge;      // 0 = this frame, 1 = gone
+  attribute float aSide;     // 0 at the emitter, ~1.05 past the tip
+  attribute float aThick;    // -1, 0, +1 across the swept sheet
+  attribute float aPunch;    // how fast the blade was moving when it was here
+  varying float vAge; varying float vSide; varying float vThick; varying float vPunch;
   void main(){
-    vAge = aAge; vSide = aSide;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vAge = aAge; vSide = aSide; vThick = aThick; vPunch = aPunch;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    #include <fog_vertex>
+    gl_Position = projectionMatrix * mvPosition;
   }
 `;
 const TRAIL_FRAG = /* glsl */`
-  uniform vec3 uColor; uniform vec3 uCore; uniform float uIntensity;
-  varying float vAge; varying float vSide;
+  #include <common>
+  #include <fog_pars_fragment>
+  uniform vec3 uHue; uniform float uGlow; uniform float uHot;
+  varying float vAge; varying float vSide; varying float vThick; varying float vPunch;
   void main(){
-    float fade = pow(clamp(1.0 - vAge, 0.0, 1.0), 1.7);
-    float across = 1.0 - abs(vSide * 2.0 - 1.0);
-    vec3 c = mix(uColor, uCore, pow(across, 3.0) * fade);
-    float a = fade * (0.25 + across * 0.75) * uIntensity;
-    if(a < 0.003) discard;
-    gl_FragColor = vec4(c * a, a);
+    float fade = pow(clamp(1.0 - vAge, 0.0, 1.0), 1.5);
+    // feathered at the emitter, carried a little past the tip
+    float prof = smoothstep(0.0, 0.13, vSide) * (1.0 - smoothstep(0.99, 1.06, vSide));
+    float th = exp(-vThick * vThick * 1.3);
+    // The freshest slice is still at blade temperature and whites out; behind
+    // it the smear cools to the crystal's own colour before it dies.
+    float hot = pow(clamp(1.0 - vAge * 2.6, 0.0, 1.0), 2.0);
+    float e = prof * th * vPunch * (uGlow * fade + uHot * hot);
+    if(e < 0.002) discard;
+    vec3 c = uHue * e;
+    #ifdef USE_FOG
+      #ifdef FOG_EXP2
+        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+      c *= 1.0 - fogFactor;
+    #endif
+    gl_FragColor = vec4(c, clamp(max(max(c.r, c.g), c.b), 0.0, 1.0));
   }
 `;
 
@@ -87,6 +233,8 @@ export class Saber {
     const c = SABER_COLORS[this.colorIndex] || SABER_COLORS[0];
     this.color = new THREE.Color(c.hex);
     this.glowColor = new THREE.Color(c.glow);
+    this.hue = new THREE.Color(1, 1, 1);
+    this.punch = 1;
     this.bladeLength = opts.bladeLength ?? 1.15;
     this.coreWidth = opts.coreWidth ?? 1;
     this.hiltStyle = opts.hiltStyle ?? 'Graflex';
@@ -98,6 +246,7 @@ export class Saber {
 
     this.lit = false;
     this.ignition = 0;            // 0..1 extension
+    this.surge = 0;               // how fast that extension is changing
     this.throwState = 'held';     // held | flying | returning
     this.contactStrain = 0;
 
@@ -119,11 +268,17 @@ export class Saber {
     this._buildBlade();
     this._buildTrail();
 
-    this.light = new THREE.PointLight(this.color.getHex(), 0, 9, 2);
+    // A metre of plasma is a LINE light. Two point lights is the cheapest
+    // approximation that still has a gradient along it: one carrying the bulk
+    // of the wash from the middle of the blade, one at the tip so the thing
+    // the tip is nearest is the thing that lights up.
+    this.light = new THREE.PointLight(0xffffff, 0, 7, 2);
     this.light.castShadow = false;
     scene.add(this.light);
-    this.tipLight = new THREE.PointLight(this.color.getHex(), 0, 5, 2);
+    this.tipLight = new THREE.PointLight(0xffffff, 0, 4.5, 2);
     scene.add(this.tipLight);
+
+    this._applyColour();
   }
 
   setColor(index) {
@@ -132,24 +287,32 @@ export class Saber {
     this.color.setHex(c.hex);
     this.glowColor.setHex(c.glow);
     this.isDark = c.key === 'red' || c.key === 'black';
-    for (const g of this.glowMeshes) g.material.uniforms.uColor.value.copy(this.color);
-    this.trailMat.uniforms.uColor.value.copy(this.color);
-    this.trailMat.uniforms.uCore.value.copy(this.glowColor);
-    this.light.color.copy(this.color);
-    this.tipLight.color.copy(this.color);
-    this.core.material.color.copy(this._coreColour());
+    this._applyColour();
   }
 
   /**
-   * The core's emissive colour: the pale end of the blade's palette, pushed
-   * above 1.0 so it blooms. Bright enough to look white-hot down the middle,
-   * tinted enough that the hue survives the clamp at the edges.
+   * The blade emits ONE colour. Everything else about how it reads — white
+   * core, coloured halo, coloured bloom — comes from the amplitude profile
+   * running that colour from ~28 down to ~0.01 across four centimetres.
+   *
+   * So the hue is normalised to a peak channel of 1: a crystal is a hue, not a
+   * brightness. `punch` then puts the brightness back, but only partly, so a
+   * deliberately dim crystal (Void) stays moody instead of being renormalised
+   * into a lamp.
    */
-  _coreColour(out = new THREE.Color()) {
-    // Pushed well over the 1.8 bloom threshold so the blade is the brightest
-    // thing in any frame, but only half-way to white — the hue has to survive
-    // ACES, which desaturates highlights toward white by construction.
-    return out.copy(this.color).lerp(WHITE, 0.5).multiplyScalar(7.0);
+  _applyColour() {
+    const c = this.color;
+    const peak = Math.max(c.r, c.g, c.b, 1e-4);
+    this.hue.copy(c).multiplyScalar(1 / peak);
+    this.punch = 0.62 + 0.38 * Math.pow(peak, 0.6);
+    // The light the blade throws is the same hue, kept a little paler than the
+    // emission because bounce light has been through a surface.
+    _c.copy(this.hue).lerp(WHITE, 0.22);
+    this.light.color.copy(_c);
+    this.tipLight.color.copy(_c);
+    if (this.bladeMat) this.bladeMat.uniforms.uHue.value.copy(this.hue);
+    if (this.trailMat) this.trailMat.uniforms.uHue.value.copy(this.hue);
+    this.hiltAccent.emissive.copy(this.color);
   }
 
   /* ── construction ──────────────────────────────────────────────────── */
@@ -219,98 +382,127 @@ export class Saber {
     this.emitterY = 0.155;
   }
 
+  /**
+   * The emission profile, in metres of gaussian sigma and in linear radiance.
+   *
+   * Amplitudes span 28 → 0.44 → 0.075, which is what puts the white/coloured
+   * boundary where it belongs. Worked through for a cerulean crystal, hue
+   * (0.23, 0.65, 1.00):
+   *
+   *   d = 0      28.6  → (6.6, 18.6, 28.6)  every channel saturates: white
+   *   d = 8 mm    6.4  → (1.5,  4.2,  6.4)  pale blue, still over the bloom line
+   *   d = 20 mm   1.1  → (0.25, 0.71, 1.10) the blade's colour, at full chroma
+   *   d = 40 mm   0.24 → (0.06, 0.16, 0.24) the wash
+   *   d = 90 mm   0.05
+   *
+   * The bloom pass thresholds on LUMINANCE at 1.8, and blue carries 7% of
+   * luminance — so a blue blade can only ever bloom by being bright enough in
+   * green as well, i.e. by having a genuinely over-exposed core. That is why
+   * the amplitude has to reach 28 and not 7.
+   */
+  static PROFILE = {
+    width: [0.0056, 0.0230, 0.088],
+    amp:   [30.0,   2.75,   0.50],
+    radius: 0.32,
+  };
+
   _buildBlade() {
     this.bladeGroup = new THREE.Group();
     this.bladeGroup.position.y = this.emitterY;
     this.root.add(this.bladeGroup);
 
-    const L = 1;   // unit length, scaled by ignition * bladeLength
-    const seg = 1;
     const w = this.coreWidth;
+    const P = Saber.PROFILE;
 
-    const mkGlow = (radius, power, intensity) => {
-      const geo = new THREE.CylinderGeometry(radius, radius, L, 14, seg, true);
-      geo.translate(0, L / 2, 0);
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uColor: { value: this.color.clone() },
-          uPower: { value: power },
-          uIntensity: { value: intensity },
-          uFlicker: { value: 1 },
-        },
-        vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG,
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        // The fragment shader emits premultiplied colour — vec4(uColor*a, a).
-        // Without this flag three uses blendFunc(SRC_ALPHA, ONE) and multiplies
-        // by alpha a second time, so the halo arrived at alpha squared. The
-        // outermost shell authored at 0.30 was landing at 0.09, which is why
-        // the coloured glow collapsed to a hairline at any real distance and
-        // every blade read as a white stick.
-        premultipliedAlpha: true,
-        side: THREE.DoubleSide, toneMapped: false,
-      });
-      const m = new THREE.Mesh(geo, mat);
-      m.frustumCulled = false;
-      this.bladeGroup.add(m);
-      return m;
-    };
+    // Two triangles. aQuad.x runs across the blade, aQuad.y along it.
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
+    geo.setAttribute('aQuad', new THREE.BufferAttribute(new Float32Array([
+      -1, 0, 1, 0, 1, 1, -1, 1,
+    ]), 2));
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
 
-    // A hot core just over 1.0 so bloom bites, wrapped in a halo a few
-    // centimetres wider. Any more and the blade stops reading as a blade and
-    // becomes a smear of light with a person somewhere behind it.
-    //
-    // The core is tinted, NOT pure white. Everything above 1.0 clamps to white
-    // on the way out, so a (2.2, 2.2, 2.2) core rendered every saber in the
-    // game as an identical colourless stick — the chosen colour only ever
-    // survived in the halo, which the core then sat on top of.
-    const coreGeo = new THREE.CapsuleGeometry(0.0115 * w, L - 0.023 * w, 4, 12);
-    coreGeo.translate(0, L / 2, 0);
-    this.core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({
-      color: this._coreColour(), toneMapped: false, fog: false,
-    }));
-    this.core.frustumCulled = false;
-    this.bladeGroup.add(this.core);
-
-    // Each shell approximates the chord length through a tube of plasma, so it
-    // is brightest on the axis and fades to nothing at its own silhouette.
-    // They need to be wide and soft, or the colour hides under the core.
-    this.glowMeshes = [
-      mkGlow(0.028 * w, 0.95, 1.45),
-      mkGlow(0.052 * w, 1.70, 0.80),
-      mkGlow(0.098 * w, 2.70, 0.30),
-    ];
-    this.bladeGroup.scale.y = 0.0001;
+    this.bladeMat = new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+        uHue: { value: new THREE.Color(1, 1, 1) },
+        uWidth: { value: new THREE.Vector3(P.width[0] * w, P.width[1] * w, P.width[2] * w) },
+        uAmp: { value: new THREE.Vector3(...P.amp) },
+        uRadius: { value: P.radius * w },
+        uLen: { value: 0.001 },
+        uFlicker: { value: 1 },
+        uTime: { value: 0 },
+        uSurge: { value: 0 },
+      }]),
+      vertexShader: BLADE_VERT, fragmentShader: BLADE_FRAG,
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending,
+      // The shader emits vec4(c, 1.0) with the colour already carrying all of
+      // its own weight, so the blend must be ONE/ONE. Without this flag three
+      // uses SRC_ALPHA/ONE, which happens to be the same here — but only
+      // because alpha is 1, and saying so keeps it that way.
+      premultipliedAlpha: true,
+      fog: true,
+      side: THREE.DoubleSide, toneMapped: true,
+    });
+    this.blade = new THREE.Mesh(geo, this.bladeMat);
+    this.blade.frustumCulled = false;
+    this.blade.renderOrder = 12;
+    this.bladeGroup.add(this.blade);
     this.bladeGroup.visible = false;
   }
 
+  /**
+   * The trail is SHEETS × SAMPLES quads. Three sheets, offset along the normal
+   * of the surface the blade swept, so the smear has thickness: a vertical
+   * chop puts the swept plane edge-on to the camera, and a zero-thickness
+   * ribbon disappears completely in exactly the strike you most want to see.
+   */
   _buildTrail() {
-    this.trailSegments = 26;
-    const n = this.trailSegments;
+    this.trailSegments = 30;
+    this.trailSheets = 3;
+    // half the thickness of the swept slab — the blade's own glow radius
+    this.trailThickness = 0.045 * this.coreWidth;
+    const n = this.trailSegments, S = this.trailSheets;
+    const verts = n * S * 2;
     const geo = new THREE.BufferGeometry();
-    this.trailPos = new Float32Array(n * 2 * 3);
-    this.trailAge = new Float32Array(n * 2);
-    this.trailSide = new Float32Array(n * 2);
-    for (let i = 0; i < n; i++) { this.trailSide[i * 2] = 0; this.trailSide[i * 2 + 1] = 1; }
+    this.trailPos = new Float32Array(verts * 3);
+    this.trailAge = new Float32Array(verts);
+    this.trailPunch = new Float32Array(verts);
+    const side = new Float32Array(verts);
+    const thick = new Float32Array(verts);
+    for (let i = 0; i < n; i++) {
+      for (let s = 0; s < S; s++) {
+        const v = (i * S + s) * 2;
+        side[v] = 0; side[v + 1] = 1.05;      // carried a little past the tip
+        thick[v] = thick[v + 1] = s - 1;      // -1, 0, +1
+      }
+    }
     const idx = [];
     for (let i = 0; i < n - 1; i++) {
-      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
-      idx.push(a, b, c, b, d, c);
+      for (let s = 0; s < S; s++) {
+        const a = (i * S + s) * 2, b = a + 1;
+        const c = ((i + 1) * S + s) * 2, d = c + 1;
+        idx.push(a, b, c, b, d, c);
+      }
     }
     geo.setIndex(idx);
     geo.setAttribute('position', new THREE.BufferAttribute(this.trailPos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aAge', new THREE.BufferAttribute(this.trailAge, 1).setUsage(THREE.DynamicDrawUsage));
-    geo.setAttribute('aSide', new THREE.BufferAttribute(this.trailSide, 1));
+    geo.setAttribute('aPunch', new THREE.BufferAttribute(this.trailPunch, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+    geo.setAttribute('aThick', new THREE.BufferAttribute(thick, 1));
 
     this.trailMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: this.color.clone() },
-        uCore: { value: this.glowColor.clone() },
-        uIntensity: { value: 1 },
-      },
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+        uHue: { value: new THREE.Color(1, 1, 1) },
+        uGlow: { value: 1.15 },
+        uHot: { value: 2.6 },
+      }]),
       vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      premultipliedAlpha: true,          // TRAIL_FRAG also emits vec4(c*a, a)
-      side: THREE.DoubleSide, toneMapped: false,
+      premultipliedAlpha: true,
+      fog: true,
+      side: THREE.DoubleSide, toneMapped: true,
     });
     this.trail = new THREE.Mesh(geo, this.trailMat);
     this.trail.frustumCulled = false;
@@ -350,12 +542,16 @@ export class Saber {
   update(dt, time, carrierVel = null) {
     const target = this.lit ? 1 : 0;
     const rate = this.lit ? 6.5 : 8.5;
+    const was = this.ignition;
     this.ignition += (target - this.ignition) * Math.min(1, dt * rate);
+    // How fast the blade is growing, in blade-lengths per second. The plasma
+    // front is hotter than the column behind it, which is the whole read of an
+    // ignition — without it the blade simply appears, one length at a time.
+    this.surge = dt > 0 ? clamp((this.ignition - was) / dt / 5.5, 0, 1) : 0;
     if (this.ignition < 0.002 && !this.lit) { this.bladeGroup.visible = false; this.ignition = 0; }
     else if (this.ignition > 0.002) this.bladeGroup.visible = true;
 
     const len = this.bladeLength * this.ignition;
-    this.bladeGroup.scale.y = Math.max(0.0001, len);
     this.root.updateMatrixWorld(true);
 
     // sweep bookkeeping
@@ -398,17 +594,25 @@ export class Saber {
   _updateVisuals(dt, time, len) {
     const flick = 0.94 + Math.sin(time * 47.3) * 0.022 + Math.sin(time * 111.7) * 0.014
                   + this.contactStrain * 0.22 * Math.sin(time * 180);
-    for (const g of this.glowMeshes) g.material.uniforms.uFlicker.value = flick;
-    this.core.material.color.copy(this._coreColour(_c)).multiplyScalar(flick);
+    const u = this.bladeMat.uniforms;
+    u.uLen.value = Math.max(0.001, len);
+    u.uTime.value = time;
+    // A blade under load runs hot: the amplitude rises and the instability with
+    // it, so a bind or a bolt on the blade is visible on the blade itself.
+    u.uFlicker.value = flick * this.punch * (1 + this.contactStrain * 0.5);
+    u.uSurge.value = this.surge * 2.4;
 
     const on = this.ignition > 0.05;
     if (on) {
-      this.pointAt(0.45, _v1);
+      // The wash is split along the blade rather than pinned to its middle, so
+      // a blade held low lights the floor and a blade held high does not.
+      this.pointAt(0.36, _v1);
       this.light.position.copy(_v1);
-      this.light.intensity = 6.0 * this.ignition * (1 + this.contactStrain * 1.6) * flick;
-      this.light.distance = 6 + len * 2.4;
+      this.light.intensity = 5.2 * this.ignition * (1 + this.contactStrain * 1.6) * flick * this.punch;
+      this.light.distance = 4.6 + len * 3.0;
       this.tipLight.position.copy(this.tip);
-      this.tipLight.intensity = 0.9 * this.ignition * flick;
+      this.tipLight.intensity = 2.1 * this.ignition * flick * this.punch;
+      this.tipLight.distance = 3.0 + len * 1.5;
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;
@@ -416,50 +620,93 @@ export class Saber {
     this.contactStrain *= Math.max(0, 1 - dt * 6);
   }
 
+  /**
+   * How hard this instant of the sweep smears, 0..1.
+   *
+   * Measured against the BODY, not the world: sprinting carries the tip at
+   * 7 m/s with the wrist perfectly still, and read as world speed that lays a
+   * full-strength trail down behind a player who is only jogging.
+   *
+   * And it reaches exactly zero below 2.6 m/s. A blade at rest has to leave a
+   * clean frame; the old floor of 0.08 meant one never did, so every still
+   * blade dragged a permanent ribbon behind it.
+   */
+  _trailPunch() {
+    return clamp((this.swingSpeed - 2.6) / 13, 0, 1) * this.ignition;
+  }
+
   _updateTrail(dt, len) {
-    const n = this.trailSegments;
+    const n = this.trailSegments, S = this.trailSheets;
     const h = this.trailHistory;
+    const LIFE = 0.17;
+    const punch = this._trailPunch();
+
     if (this.ignition > 0.4) {
+      const sample = (b, t, age, k) => {
+        const s = { b: b.clone(), t: t.clone(), age, punch: k, n: new THREE.Vector3() };
+        // The sheet normal is the normal of the surface the blade is sweeping:
+        // blade axis × direction of travel. Degenerate when the blade is not
+        // moving, which is also when nothing is drawn.
+        _v1.subVectors(s.t, s.b);
+        _v2.subVectors(s.t, this.prevTip);
+        s.n.crossVectors(_v1, _v2);
+        const nl = s.n.length();
+        if (nl > 1e-6) s.n.multiplyScalar(1 / nl);
+        else if (h.length) s.n.copy(h[0].n);
+        else s.n.set(1, 0, 0);
+        return s;
+      };
       // On a slow frame the blade can cross a metre between samples, which
       // would leave the ribbon a fan of huge triangles. Fill in the gap so the
       // trail reads the same at 20 fps as it does at 144.
       const gap = this.tip.distanceTo(this.prevTip);
-      const fill = Math.min(6, Math.floor(gap / 0.3));
+      const fill = Math.min(8, Math.floor(gap / 0.18));
       for (let i = fill; i >= 1; i--) {
         const k = i / (fill + 1);
-        h.unshift({
-          b: this.prevBase.clone().lerp(this.base, 1 - k),
-          t: this.prevTip.clone().lerp(this.tip, 1 - k),
-          age: dt * (1 / 0.13) * k,
-        });
+        h.unshift(sample(_v3.lerpVectors(this.prevBase, this.base, 1 - k),
+                         _v4.lerpVectors(this.prevTip, this.tip, 1 - k),
+                         dt * (1 / LIFE) * k, punch));
       }
-      h.unshift({ b: this.base.clone(), t: this.tip.clone(), age: 0 });
+      h.unshift(sample(this.base, this.tip, 0, punch));
     } else h.length = 0;
     while (h.length > n) h.pop();
 
-    const decay = 1 / 0.13;   // trail lifetime in seconds
-    for (const s of h) s.age += dt * decay;
+    for (const s of h) s.age += dt * (1 / LIFE);
 
-    const pos = this.trailPos, age = this.trailAge;
+    const pos = this.trailPos, age = this.trailAge, pun = this.trailPunch;
+    const TH = this.trailThickness;
+    let live = 0;
     for (let i = 0; i < n; i++) {
-      const s = h[Math.min(i, h.length - 1)];
-      const i6 = i * 6;
-      if (!s || s.age >= 1) {
-        // collapse unused segments onto the hilt so they render nothing
-        pos[i6] = pos[i6 + 3] = this.base.x;
-        pos[i6 + 1] = pos[i6 + 4] = this.base.y;
-        pos[i6 + 2] = pos[i6 + 5] = this.base.z;
-        age[i * 2] = age[i * 2 + 1] = 1;
-        continue;
+      const s = h[i];
+      const dead = !s || s.age >= 1 || s.punch <= 0.001;
+      if (!dead) live++;
+      for (let k = 0; k < S; k++) {
+        const v = (i * S + k) * 2, p = v * 3;
+        if (dead) {
+          // collapse unused segments onto the hilt so they rasterise nothing
+          pos[p] = pos[p + 3] = this.base.x;
+          pos[p + 1] = pos[p + 4] = this.base.y;
+          pos[p + 2] = pos[p + 5] = this.base.z;
+          age[v] = age[v + 1] = 1;
+          pun[v] = pun[v + 1] = 0;
+          continue;
+        }
+        const o = (k - 1) * TH;
+        pos[p] = s.b.x + s.n.x * o; pos[p + 1] = s.b.y + s.n.y * o; pos[p + 2] = s.b.z + s.n.z * o;
+        // carried 6% past the tip so the smear's leading edge is feathered
+        pos[p + 3] = s.t.x + (s.t.x - s.b.x) * 0.06 + s.n.x * o;
+        pos[p + 4] = s.t.y + (s.t.y - s.b.y) * 0.06 + s.n.y * o;
+        pos[p + 5] = s.t.z + (s.t.z - s.b.z) * 0.06 + s.n.z * o;
+        age[v] = age[v + 1] = s.age;
+        pun[v] = pun[v + 1] = s.punch;
       }
-      pos[i6] = s.b.x; pos[i6 + 1] = s.b.y; pos[i6 + 2] = s.b.z;
-      pos[i6 + 3] = s.t.x; pos[i6 + 4] = s.t.y; pos[i6 + 5] = s.t.z;
-      age[i * 2] = age[i * 2 + 1] = s.age;
     }
     this.trail.geometry.attributes.position.needsUpdate = true;
     this.trail.geometry.attributes.aAge.needsUpdate = true;
-    this.trailMat.uniforms.uIntensity.value = clamp(this.tipSpeed / 16, 0.08, 1.0) * this.ignition;
-    this.trail.visible = this.ignition > 0.2;
+    this.trail.geometry.attributes.aPunch.needsUpdate = true;
+    this.trailMat.uniforms.uHot.value = 2.6 * this.punch;
+    this.trailMat.uniforms.uGlow.value = 1.15 * this.punch;
+    this.trail.visible = this.ignition > 0.2 && live > 1;
   }
 
   /** Register a contact so the blade flares and the hum strains. */

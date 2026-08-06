@@ -1,0 +1,659 @@
+/**
+ * The blade, its trail, and everything that comes off an impact.
+ *
+ * The complaint these exist to catch is "it looks like a hobby project", and
+ * every one of the faults underneath it measured fine:
+ *
+ *   • The blade was a solid white capsule inside three tinted cylinders. Its
+ *     colour was set correctly, its bloom fired, its shells were the right
+ *     radii — and every crystal in the game rendered as the same white stick,
+ *     because the white was AUTHORED and the tint sat under it. Measured on a
+ *     cerulean blade at 2.6 m, the chroma nine pixels off the axis was 0.06.
+ *   • The trail had a floor of 0.08 intensity and was driven by WORLD tip
+ *     speed, so a blade held perfectly still while its owner walked laid down
+ *     a permanent ribbon.
+ *   • Not one particle in the game could cross the bloom threshold. The colour
+ *     attribute was a 0..1 swatch and the fragment shader could not emit more
+ *     than 1.0, so every spark, ember and impact flash was a sticker beside a
+ *     blade that glowed.
+ *   • Sparks were 5 cm radial blobs stretched by a factor of 1.4. Glowing peas.
+ *
+ * So these check the numbers underneath the look: the shape of the emission
+ * profile, what survives of the hue at each radius, what actually reaches the
+ * bloom pass, and what a smear does when nobody is swinging.
+ */
+
+import * as THREE from 'three';
+import { Saber, SABER_COLORS } from '../../src/game/Saber.js';
+import { Particles, ParticlePool, ChipField } from '../../src/world/Particles.js';
+
+const lum = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
+const chroma = (r, g, b) => {
+  const M = Math.max(r, g, b), m = Math.min(r, g, b);
+  return M < 1e-6 ? 0 : (M - m) / M;
+};
+
+/** A scene with the rig a level hangs: one shadowing sun, one hemisphere. */
+function litScene() {
+  const s = new THREE.Scene();
+  const sun = new THREE.DirectionalLight(0xffe8c0, 7);
+  sun.castShadow = true;
+  sun.position.set(30, 52, -18);
+  s.add(sun); s.add(sun.target);
+  s.add(new THREE.HemisphereLight(0xc0d4ee, 0x7a6244, 0.3));
+  return s;
+}
+
+/**
+ * The blade's emission profile, in linear radiance, as a function of distance
+ * from the axis — transcribed from BLADE_FRAG but driven by the uniforms of a
+ * REAL material, so the constants cannot drift away from the shader that uses
+ * them without this going with them.
+ *
+ * @param {number} d      metres from the blade axis
+ * @param {number} pxSize metres per pixel, for the sub-pixel widening
+ */
+function emission(mat, d, pxSize = 0) {
+  const u = mat.uniforms;
+  const wid = [u.uWidth.value.x, u.uWidth.value.y, u.uWidth.value.z];
+  const amp = [u.uAmp.value.x, u.uAmp.value.y, u.uAmp.value.z];
+  const R = u.uRadius.value;
+  let e = 0;
+  for (let i = 0; i < 3; i++) {
+    const we = Math.max(wid[i], pxSize * 0.62);
+    const keep = wid[i] / we;
+    const dd = d / we;
+    e += amp[i] * (i === 2 ? Math.exp(-Math.pow(dd, 1.4)) : Math.exp(-dd * dd)) * keep;
+  }
+  // the shader's outer feather, so the quad edge is exactly zero
+  const t = Math.min(1, Math.max(0, (d - R) / (R * 0.55 - R)));
+  return e * (t * t * (3 - 2 * t));
+}
+
+/** The profile as an RGB triple for a given crystal. */
+function emissionRGB(saber, d, pxSize = 0) {
+  const e = emission(saber.bladeMat, d, pxSize) * saber.punch;
+  const h = saber.hue;
+  return [h.r * e, h.g * e, h.b * e];
+}
+
+/**
+ * three's ACESFilmicToneMapping, transcribed from tonemapping_pars_fragment.
+ *
+ * Nothing about how a blade READS can be judged in linear radiance: the blade
+ * is one hue at every radius, so its emission chroma is constant and the
+ * white core exists only because the tone curve puts it there. This is the
+ * only place the question "is it a white stick" can actually be asked.
+ */
+function aces(rgb, exposure = 0.9) {
+  const mul = (m, v) => [
+    m[0] * v[0] + m[3] * v[1] + m[6] * v[2],
+    m[1] * v[0] + m[4] * v[1] + m[7] * v[2],
+    m[2] * v[0] + m[5] * v[1] + m[8] * v[2],
+  ];
+  const IN = [0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777];
+  const OUT = [1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602];
+  let v = rgb.map(c => c * exposure / 0.6);
+  v = mul(IN, v);
+  v = v.map(x => (x * (x + 0.0245786) - 0.000090537) / (x * (0.983729 * x + 0.4329510) + 0.238081));
+  return mul(OUT, v).map(x => Math.min(1, Math.max(0, x)));
+}
+
+export function run({ check, assert, near }) {
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  The blade                                                             */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('blade: white on the axis, the crystal\'s own colour a centimetre out', () => {
+    // The whole complaint, as a number, measured ON SCREEN — through the tone
+    // curve, because that is where a white stick becomes a white stick.
+    //
+    // A blade reads as plasma when the region that comes out white is a few
+    // millimetres across and the region that comes out saturated is
+    // centimetres across. The old build had it the other way round: a solid
+    // 23 mm white capsule inside a 56 mm shell authored at amplitude 1.45, so
+    // most of the blade's visible width was white BEFORE the tone curve ever
+    // saw it, and the hue only appeared where the emission was already too
+    // faint to read. Measured in the browser on a cerulean blade at 2.6 m, the
+    // chroma nine pixels off the axis was 0.06; it is 0.22 now.
+    const scene = new THREE.Scene();
+    const lines = [];
+    for (const key of ['blue', 'red', 'green', 'purple', 'amber']) {
+      const idx = SABER_COLORS.findIndex(c => c.key === key);
+      const s = new Saber(scene, { colorIndex: idx });
+
+      // How much of the crystal's own saturation survives to the screen. A
+      // fixed chroma threshold cannot be used here: ACES desaturates by a
+      // different amount for every hue, so a red blade's core lands at 0.15
+      // and a blue one's at 0.00 for the same physical reason.
+      const kept = (d) => chroma(...aces(emissionRGB(s, d))) / chroma(s.hue.r, s.hue.g, s.hue.b);
+      let white = 0, coloured = 0;
+      for (let d = 0; d < 0.25; d += 0.0002) {
+        const k = kept(d);
+        if (k < 0.25) white = d;                                        // blown to white
+        if (k > 0.75 && lum(...aces(emissionRGB(s, d))) > 0.05) coloured = d;
+      }
+      assert(white > 0.0015 && white < 0.013,
+        `${key}: the blade comes out white to a radius of ${(white * 1000).toFixed(1)}mm`);
+      assert(coloured > 0.045,
+        `${key}: the coloured band dies at ${(coloured * 1000).toFixed(0)}mm from the axis`);
+      assert(coloured / white > 5,
+        `${key}: only ${(coloured / white).toFixed(1)}× more coloured blade than white blade`);
+
+      // and the transition has to be somewhere a player is looking, not out in
+      // the wash where the emission is already invisible
+      assert(kept(0.020) > 0.42, `${key}: only ${(kept(0.020) * 100).toFixed(0)}% of the hue survives at 20mm`);
+      assert(kept(0.040) > 0.72, `${key}: only ${(kept(0.040) * 100).toFixed(0)}% of the hue survives at 40mm`);
+      lines.push(`${key} white≤${(white * 1000).toFixed(1)}mm colour≥${(coloured * 1000).toFixed(0)}mm `
+        + `hue@20mm ${(kept(0.02) * 100).toFixed(0)}%`);
+      s.dispose();
+    }
+    return lines.join(', ');
+  });
+
+  check('blade: every crystal crosses the bloom threshold on its own axis', () => {
+    // UnrealBloomPass thresholds LUMINANCE at 1.8, and blue carries 7% of
+    // luminance. A blue blade can therefore only bloom by being genuinely
+    // over-exposed rather than merely bright — which is the reason the core
+    // amplitude is 30 and not 7. Anything that quietly lowers it takes the
+    // glow off half the palette and leaves the other half untouched.
+    const scene = new THREE.Scene();
+    const worst = [];
+    for (let i = 0; i < SABER_COLORS.length; i++) {
+      const s = new Saber(scene, { colorIndex: i });
+      const L = lum(...emissionRGB(s, 0));
+      assert(L > 1.8 * 1.6, `${SABER_COLORS[i].name} peaks at luminance ${L.toFixed(2)} — it will not bloom`);
+      // and the bloom must not be a white ball: the emission has to have fallen
+      // back under the threshold within a couple of centimetres
+      let over = 0;
+      for (let d = 0; d < 0.3; d += 0.0005) if (lum(...emissionRGB(s, d)) > 1.8) over = d;
+      assert(over < 0.030, `${SABER_COLORS[i].name} is over the bloom line out to ${(over * 1000).toFixed(0)}mm`);
+      worst.push([SABER_COLORS[i].name, L, over]);
+      s.dispose();
+    }
+    const lo = worst.reduce((a, b) => (a[1] < b[1] ? a : b));
+    const hi = worst.reduce((a, b) => (a[2] > b[2] ? a : b));
+    return `dimmest ${lo[0]} L=${lo[1].toFixed(1)}, widest over-threshold ${hi[0]} ${(hi[2] * 1000).toFixed(0)}mm`;
+  });
+
+  check('blade: the emission is monotone and reaches zero inside its own quad', () => {
+    // A billboard whose profile has not died by the time it hits the quad's
+    // edge draws a straight bright seam down each side of the blade — the
+    // exact silhouette the analytic falloff exists to get rid of.
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    const R = s.bladeMat.uniforms.uRadius.value;
+    let prev = Infinity, peak = 0;
+    for (let d = 0; d <= R; d += R / 400) {
+      const e = emission(s.bladeMat, d);
+      peak = Math.max(peak, e);
+      assert(e <= prev + 1e-9, `the profile rises again at ${(d * 1000).toFixed(0)}mm`);
+      prev = e;
+    }
+    const edge = emission(s.bladeMat, R);
+    assert(edge === 0, `the profile is still ${edge.toExponential(2)} at the quad edge`);
+    assert(emission(s.bladeMat, R * 0.98) / peak < 1e-4, 'the feather is too abrupt to hide the edge');
+    // and the last thing it can be cutting off has to be negligible
+    const uncut = s.bladeMat.uniforms.uAmp.value.z
+      * Math.exp(-Math.pow(R * 0.8 / s.bladeMat.uniforms.uWidth.value.z, 1.4));
+    assert(uncut / peak < 0.004,
+      `the feather starts where the halo is still ${(100 * uncut / peak).toFixed(2)}% of peak`);
+    s.dispose();
+    return `monotone over ${(R * 100).toFixed(0)}cm, halo down to ${(100 * uncut / peak).toFixed(3)}% before the feather`;
+  });
+
+  check('blade: going sub-pixel costs no light — amp·sigma is conserved', () => {
+    // At 20 m a 2 cm blade is a fifth of a pixel wide, and a gaussian narrower
+    // than the sample grid is a row of aliased dots that mostly misses. The
+    // shader widens any lobe under about a pixel and cuts its amplitude by the
+    // same factor. The LINE INTEGRAL of a gaussian is amp·sigma·√π, so holding
+    // that product constant means the blade keeps every photon it had while it
+    // stops being sub-pixel. If the compensation is ever dropped, distant
+    // blades get brighter instead of merely wider.
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    const R = s.bladeMat.uniforms.uRadius.value;
+    const integral = (px) => {
+      let sum = 0;
+      const step = R / 4000;
+      for (let d = 0; d <= R; d += step) sum += emission(s.bladeMat, d, px) * step;
+      return sum * 2;
+    };
+    const sharp = integral(0);
+    // 15 mm per pixel is a blade seen at about eight metres in a 600px frame
+    const coarse = integral(0.015);
+    const veryCoarse = integral(0.04);
+    near(coarse / sharp, 1, 0.02, 'light lost or gained at 15mm/px');
+    near(veryCoarse / sharp, 1, 0.05, 'light lost or gained at 40mm/px');
+    // and it must actually be widening, or the test proves nothing
+    const w0 = s.bladeMat.uniforms.uWidth.value.x;
+    assert(0.04 * 0.62 > w0 * 3, 'the coarse case is not wide enough to trigger the clamp');
+    const peakSharp = emission(s.bladeMat, 0, 0);
+    const peakCoarse = emission(s.bladeMat, 0, 0.04);
+    assert(peakCoarse < peakSharp * 0.6,
+      'the peak did not come down, so the amplitude is not being compensated');
+    s.dispose();
+    return `∫ ratio ${(coarse / sharp).toFixed(4)} at 15mm/px, ${(veryCoarse / sharp).toFixed(4)} at 40mm/px; `
+      + `peak ${peakSharp.toFixed(1)} → ${peakCoarse.toFixed(1)}`;
+  });
+
+  check('blade: a crystal is a hue, and the whole blade is one colour', () => {
+    // Everything the blade does — white core, coloured halo, coloured bloom —
+    // has to come out of ONE colour at many amplitudes. Two colours (a pale
+    // "glow" and a saturated "hex") is how the old build ended up with a white
+    // stick: the pale one always won, because it was on top.
+    const scene = new THREE.Scene();
+    const rows = [];
+    for (let i = 0; i < SABER_COLORS.length; i++) {
+      const s = new Saber(scene, { colorIndex: i });
+      const h = s.hue;
+      near(Math.max(h.r, h.g, h.b), 1, 1e-6, `${SABER_COLORS[i].name} hue is not normalised`);
+      // the hue must keep the crystal's ratios
+      const c = s.color;
+      const k = 1 / Math.max(c.r, c.g, c.b);
+      near(h.r, c.r * k, 1e-6, 'hue drifted from the crystal');
+      near(h.g, c.g * k, 1e-6, 'hue drifted from the crystal');
+      assert(s.punch > 0.6 && s.punch <= 1.0001, `${SABER_COLORS[i].name} punch ${s.punch}`);
+      // and the shader is fed that hue, not the raw swatch
+      assert(s.bladeMat.uniforms.uHue.value.equals(h), 'the material is not carrying the hue');
+      assert(s.trailMat.uniforms.uHue.value.equals(h), 'the trail is not carrying the hue');
+      rows.push([SABER_COLORS[i].name, s.punch]);
+      s.dispose();
+    }
+    // a deliberately dark crystal must stay darker than a bright one
+    const dark = rows.find(r => r[0] === 'Void')[1];
+    const bright = rows.find(r => r[0] === 'Ivory')[1];
+    assert(dark < bright * 0.92, `Void (${dark.toFixed(2)}) is as bright as Ivory (${bright.toFixed(2)})`);
+    return `10 crystals normalised, punch ${dark.toFixed(2)} (Void) … ${bright.toFixed(2)} (Ivory)`;
+  });
+
+  check('blade: the whole weapon is one billboard, two triangles', () => {
+    // It used to be a capsule and three 14-sided open cylinders: four draw
+    // calls and ~300 triangles of geometry whose only job was to be a surface
+    // for an angle-of-incidence fake that a distance field does exactly.
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    assert(s.bladeGroup.children.length === 1, `${s.bladeGroup.children.length} meshes in the blade`);
+    const g = s.blade.geometry;
+    assert(g.index.count === 6, `${g.index.count / 3} triangles`);
+    assert(g.attributes.aQuad, 'the quad has no billboard coordinates');
+    assert(s.bladeMat.blending === THREE.AdditiveBlending && s.bladeMat.premultipliedAlpha,
+      'the blade must add its own light with an ONE/ONE blend');
+    assert(s.bladeMat.depthWrite === false && s.bladeMat.depthTest === true,
+      'the blade must test depth without writing it');
+    // toneMapped:true matters only where the material renders straight to a
+    // canvas — the saber forge preview — but that is where an un-tonemapped
+    // amplitude of 30 clips to flat white and the crystal is invisible.
+    assert(s.bladeMat.toneMapped === true, 'the blade bypasses the tone curve');
+    assert(s.bladeMat.fog === true && s.bladeMat.fragmentShader.includes('1.0 - fogFactor'),
+      'haze must take light AWAY from an emitter, not mix it toward the fog colour');
+    s.dispose();
+    return '1 mesh, 2 triangles, additive, fogged by attenuation';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  The trail                                                             */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  const swing = (s, frames, fn, dt = 1 / 60, carrier = null) => {
+    const q = new THREE.Quaternion(), p = new THREE.Vector3();
+    for (let i = 0; i < frames; i++) {
+      fn(i * dt, p, q);
+      s.setHiltPose(p, q);
+      s.update(dt, i * dt, carrier);
+    }
+  };
+
+  check('trail: a blade nobody is swinging leaves nothing behind', () => {
+    // The old trail had a floor of 0.08 and read WORLD tip speed, so a blade
+    // held dead still while its owner walked painted a permanent ribbon across
+    // the frame — and standing still painted a stationary one.
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    s.ignite(); s.ignition = 1;
+    swing(s, 40, (t, p, q) => { p.set(0, 1, 0); q.identity(); });
+    assert(s._trailPunch() === 0, `a still blade has trail punch ${s._trailPunch()}`);
+    assert(!s.trail.visible, 'a still blade is drawing a trail');
+
+    // walking: the tip moves at 4 m/s through the world, and the wrist not at all
+    const carrier = new THREE.Vector3(0, 0, -4);
+    swing(s, 40, (t, p, q) => { p.set(0, 1, -4 * t); q.identity(); }, 1 / 60, carrier);
+    assert(s.tipSpeed > 3.5, `the test never moved the blade (tip ${s.tipSpeed.toFixed(2)} m/s)`);
+    assert(s.swingSpeed < 0.2, `a carried blade reads ${s.swingSpeed.toFixed(2)} m/s of swing`);
+    assert(!s.trail.visible, 'walking leaves a sword trail');
+
+    // and a real cut does leave one: a steady 8 rad/s carve
+    swing(s, 30, (t, p, q) => {
+      p.set(0, 1, 0);
+      q.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -1.2 + t * 8);
+    });
+    assert(s.swingSpeed > 6, `the swing only reached ${s.swingSpeed.toFixed(2)} m/s`);
+    assert(s.trail.visible, 'a real slash left no trail');
+    assert(s._trailPunch() > 0.35, `a real slash only reached punch ${s._trailPunch().toFixed(2)}`);
+    const punch = s.trail.geometry.attributes.aPunch.array;
+    assert(punch.some(v => v > 0.3), 'the punch never reached the vertices');
+    s.dispose();
+    return `still 0.00, walking 0.00 (tip ${s.tipSpeed.toFixed(1)} m/s), slashing ${s._trailPunch().toFixed(2)}`;
+  });
+
+  check('trail: the smear has thickness, across the surface it swept', () => {
+    // A swept ribbon of zero thickness disappears completely when the plane it
+    // swept contains the view direction — which is every overhead chop. Three
+    // sheets, offset along the swept surface's own normal, give it a body.
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    s.ignite(); s.ignition = 1;
+    const axis = new THREE.Vector3(0, 0, 1);
+    swing(s, 30, (t, p, q) => { p.set(0, 1, 0); q.setFromAxisAngle(axis, -1.2 + t * 8); });
+
+    assert(s.trailSheets === 3, `${s.trailSheets} sheets`);
+    const pos = s.trail.geometry.attributes.position.array;
+    const S = s.trailSheets;
+    // sample 0 is this frame's blade; compare its outer sheets
+    const v = (i, k, end) => new THREE.Vector3(
+      ...pos.slice(((i * S + k) * 2 + end) * 3, ((i * S + k) * 2 + end) * 3 + 3));
+    const lo = v(0, 0, 0), mid = v(0, 1, 0), hi = v(0, 2, 0);
+    const off = hi.clone().sub(lo);
+    near(off.length(), s.trailThickness * 2, 1e-5, 'the sheets are not two half-thicknesses apart');
+    near(mid.distanceTo(lo), s.trailThickness, 1e-5, 'the middle sheet is not centred');
+
+    // and that offset has to be the normal of the swept surface
+    const bladeDir = v(0, 1, 1).sub(mid).normalize();
+    const travel = s.tip.clone().sub(s.prevTip).normalize();
+    const n = off.clone().normalize();
+    assert(Math.abs(n.dot(bladeDir)) < 1e-3, `the offset is ${n.dot(bladeDir).toFixed(3)} along the blade`);
+    assert(Math.abs(n.dot(travel)) < 0.05, `the offset is ${n.dot(travel).toFixed(3)} along the travel`);
+
+    // the ribbon must be carried past the tip so its leading edge is feathered
+    const side = s.trail.geometry.attributes.aSide.array;
+    assert(side[1] > 1.0, `the ribbon stops at the tip (aSide ${side[1]})`);
+    s.dispose();
+    return `3 sheets ${(s.trailThickness * 2000).toFixed(0)}mm apart on the sweep normal, `
+      + `carried ${((side[1] - 1) * 100).toFixed(0)}% past the tip`;
+  });
+
+  check('trail: a slow frame is filled in, not spanned by one huge quad', () => {
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    s.ignite(); s.ignition = 1;
+    const axis = new THREE.Vector3(0, 0, 1);
+    const q = new THREE.Quaternion(), p = new THREE.Vector3(0, 1, 0);
+    // two frames, a quarter of a second apart, with the blade a metre and a
+    // half further round: at 60 fps this would have been fifteen samples
+    s.setHiltPose(p, q.setFromAxisAngle(axis, -0.7)); s.update(1 / 4, 0);
+    s.setHiltPose(p, q.setFromAxisAngle(axis, 0.7)); s.update(1 / 4, 0.25);
+    const live = s.trailHistory.length;
+    assert(live >= 6, `a 1.5 m step produced only ${live} samples`);
+    // and they have to be spread along the arc, not stacked
+    const gaps = [];
+    for (let i = 1; i < live; i++) gaps.push(s.trailHistory[i - 1].t.distanceTo(s.trailHistory[i].t));
+    const max = Math.max(...gaps);
+    assert(max < 0.35, `the largest gap in the smear is ${max.toFixed(2)}m`);
+    s.dispose();
+    return `${live} samples across a 250ms frame, largest gap ${(max * 100).toFixed(0)}cm`;
+  });
+
+  check('blade: ignition drives a hot front up the blade and then stops', () => {
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });
+    let peak = 0;
+    s.ignite();
+    for (let i = 0; i < 12; i++) { s.update(1 / 60, i / 60); peak = Math.max(peak, s.surge); }
+    assert(peak > 0.15, `the ignition front only reached ${peak.toFixed(3)}`);
+    for (let i = 0; i < 240; i++) s.update(1 / 60, i / 60);
+    assert(s.ignition > 0.99, 'the blade never finished extending');
+    assert(s.surge < 0.01, `a lit blade is still surging at ${s.surge.toFixed(4)}`);
+    assert(s.bladeMat.uniforms.uSurge.value < 0.03, 'the surge never reached the material');
+    // the length reaches the shader, or the blade is drawn at unit length
+    near(s.bladeMat.uniforms.uLen.value, s.bladeLength, 1e-3, 'blade length uniform');
+    s.dispose();
+    return `surge peaks at ${peak.toFixed(2)} and settles to 0`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  Particles                                                             */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('sparks: an impact puts light INTO the frame — the pools are HDR now', () => {
+    // Nothing in this file could exceed 1.0 before, so nothing in it ever
+    // reached the bloom pass (threshold 1.8 in linear luminance). Every impact
+    // in the game was a decal beside a blade that glowed.
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const head = p.sparks.head;
+    p.sparkBurst(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, 0), 24, { speed: 10 });
+    const n = (p.sparks.head - head + p.sparks.max) % p.sparks.max;
+    assert(n > 20, `only ${n} sparks in a 24-spark burst`);
+    let over = 0, peak = 0;
+    for (let i = 0; i < n; i++) {
+      const j = ((head + i) % p.sparks.max) * 4;
+      const L = lum(p.sparks.aColor.array[j], p.sparks.aColor.array[j + 1], p.sparks.aColor.array[j + 2]);
+      peak = Math.max(peak, L);
+      if (L > 1.8) over++;
+    }
+    assert(over === n, `${n - over} of ${n} sparks are under the bloom threshold`);
+    assert(peak > 2.2 && peak < 8, `spark luminance peaks at ${peak.toFixed(2)}`);
+
+    // ...and the smoke must NOT be, or a puff of soot glows like a flare
+    const sHead = p.smoke.head;
+    p.cutFlare(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0), 0x57c9ff, 20);
+    const sn = (p.smoke.head - sHead + p.smoke.max) % p.smoke.max;
+    assert(sn > 0, 'the cut made no smoke');
+    for (let i = 0; i < sn; i++) {
+      const j = ((sHead + i) % p.smoke.max) * 4;
+      const m = Math.max(p.smoke.aColor.array[j], p.smoke.aColor.array[j + 1], p.smoke.aColor.array[j + 2]);
+      assert(m <= 1.0001, `smoke was authored at ${m.toFixed(2)} — soot cannot emit`);
+    }
+    p.dispose();
+    return `${n} sparks all over the 1.8 line (peak ${peak.toFixed(1)}), ${sn} smoke puffs all under 1.0`;
+  });
+
+  check('sparks: a fast spark is a streak, not a glowing pea', () => {
+    // The billboard is stretched along its velocity AND narrowed across by the
+    // same factor. Without the narrowing a fast spark just gets bigger, which
+    // is what put 5 cm luminous lozenges all over every impact.
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const u = p.sparks.mat.uniforms;
+    const shape = (speed, size) => {
+      const stretch = 1 + Math.min(speed * u.uStretch.value, u.uStretchMax.value);
+      const narrow = 1 / (1 + (stretch - 1) * u.uThin.value);
+      return { len: size * stretch, wide: size * narrow, aspect: stretch / narrow };
+    };
+    const head = p.sparks.head;
+    p.sparkBurst(new THREE.Vector3(0, 1, 0), null, 40, { speed: 12 });
+    const n = (p.sparks.head - head + p.sparks.max) % p.sparks.max;
+    let maxSize = 0, sumSpeed = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (head + i) % p.sparks.max;
+      maxSize = Math.max(maxSize, p.sparks.aParams.array[j * 4 + 1]);
+      sumSpeed += Math.hypot(p.sparks.aVel.array[j * 3], p.sparks.aVel.array[j * 3 + 1],
+        p.sparks.aVel.array[j * 3 + 2]);
+    }
+    const mean = sumSpeed / n;
+    assert(maxSize < 0.025, `the biggest spark in the burst is ${(maxSize * 100).toFixed(1)}cm across`);
+    const s12 = shape(12, maxSize);
+    assert(s12.aspect > 6, `a 12 m/s spark is only ${s12.aspect.toFixed(1)}:1`);
+    assert(s12.wide < 0.01, `a 12 m/s spark is ${(s12.wide * 1000).toFixed(1)}mm across`);
+    // a spark that has slowed right down goes back to being a point
+    assert(shape(0.5, maxSize).aspect < 1.3, 'a spent spark is still stretched');
+    // and it must skitter rather than sink through the floor
+    assert(u.uBounce.value > 0, 'sparks do not bounce');
+    p.dispose();
+    return `${n} sparks, ≤${(maxSize * 1000).toFixed(0)}mm, ${s12.aspect.toFixed(0)}:1 at 12 m/s `
+      + `(mean launch ${mean.toFixed(1)} m/s), 1.0:1 at rest`;
+  });
+
+  check('smoke: a puff is shaded by the level\'s own key light', () => {
+    // Smoke and dust were the only things in the frame with volume and no
+    // lighting, which is exactly why they read as grey stickers stuck to the
+    // world. Each billboard is now shaded as the sphere it stands in for.
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const sun = scene.children.find(c => c.isDirectionalLight);
+    const want = sun.position.clone().sub(sun.target.position).normalize();
+    const u = p.smoke.mat.uniforms;
+    assert(u.uSunDir.value.distanceTo(want) < 1e-6,
+      `the smoke is lit from ${u.uSunDir.value.toArray().map(v => v.toFixed(2))}`);
+    assert('LIT_POOL' in p.smoke.mat.defines && 'LIT_POOL' in p.dust.mat.defines,
+      'smoke or dust is still unlit');
+    assert(!('LIT_POOL' in p.sparks.mat.defines) && !('LIT_POOL' in p.plasma.mat.defines),
+      'an emitter is being diffuse-lit');
+
+    /* The one thing this must not do is quietly rebalance how bright the smoke
+     * in a level is. Averaged over the visible hemisphere of a puff AND over
+     * every direction the key could come from, the shading has to be exactly
+     * 1 — for every pool, whatever its wrap. A fixed split cannot manage that:
+     * the mean of the wrapped term is (1 + wrap)/4, so the same pair of levels
+     * brightens a tightly-wrapped pool and darkens a loose one. */
+    const means = [];
+    for (const pool of p.pools.filter(x => x.lit)) {
+      const pu = pool.mat.uniforms;
+      const sunS = pu.uShadeSun.value, skyS = pu.uShadeSky.value, wrap = pu.uWrap.value;
+      let acc = 0, w = 0;
+      // key directions on a spiral over the sphere; puff normals over the disc
+      for (let i = 0; i < 64; i++) {
+        const z = -1 + 2 * (i + 0.5) / 64, rr = Math.sqrt(1 - z * z), th = i * 2.39996;
+        const sl = [rr * Math.cos(th), rr * Math.sin(th), z];
+        for (let y = -0.5; y <= 0.5; y += 0.02) {
+          for (let x = -0.5; x <= 0.5; x += 0.02) {
+            const r2 = (x * x + y * y) * 4;
+            if (r2 > 1) continue;
+            const ndl = x * 2 * sl[0] + y * 2 * sl[1] + Math.sqrt(1 - r2) * sl[2];
+            const t = Math.min(1, Math.max(0, (ndl + wrap) / (1 + wrap)));
+            const k = t * t * (3 - 2 * t);
+            acc += ((skyS.x + (sunS.x - skyS.x) * k) + (skyS.y + (sunS.y - skyS.y) * k)
+                  + (skyS.z + (sunS.z - skyS.z) * k)) / 3;
+            w++;
+          }
+        }
+      }
+      const mean = acc / w;
+      near(mean, 1, 0.03, `mean shading of a wrap-${wrap} pool`);
+      means.push(mean);
+      // and it has to be doing something visible
+      const range = (sunS.x + sunS.y + sunS.z) / (skyS.x + skyS.y + skyS.z);
+      assert(range > 1.7, `only ${range.toFixed(2)}:1 between the lit and shadowed sides of a puff`);
+    }
+    const range = (u.uShadeSun.value.x + u.uShadeSun.value.y + u.uShadeSun.value.z)
+                / (u.uShadeSky.value.x + u.uShadeSky.value.y + u.uShadeSky.value.z);
+    p.dispose();
+    return `key from the scene's sun, ${range.toFixed(1)}:1 across a puff, `
+      + `${means.length} lit pools all averaging ${means[0].toFixed(3)}`;
+  });
+
+  check('smoke: the key is re-read when the level re-hangs its lights', () => {
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const sun = scene.children.find(c => c.isDirectionalLight);
+    sun.position.set(-40, 30, 60);
+    sun.color.setHex(0xff4020);
+    // it must not change until the pools are asked to look again
+    p.update(1 / 60);
+    for (let i = 0; i < 40; i++) p.update(1 / 60);
+    const u = p.dust.mat.uniforms;
+    const want = sun.position.clone().normalize();
+    assert(u.uSunDir.value.distanceTo(want) < 1e-6, 'the pools never re-read the sun');
+    // a red sun tints the lit side red without changing the overall level
+    assert(u.uShadeSun.value.x > u.uShadeSun.value.z * 1.5, 'the key tint did not follow the sun colour');
+    const k = 0.25 * (1 + u.uWrap.value);
+    near((u.uShadeSun.value.x + u.uShadeSun.value.y + u.uShadeSun.value.z) / 3, 1 + (1 - k) * 0.78, 0.02,
+      'the lit side changed level as well as tint');
+    p.dispose();
+    return 'sun direction and tint re-read within half a second';
+  });
+
+  check('chips: debris out of a fireball glows and then cools', () => {
+    // A black tetrahedron tumbling out of an explosion is the loudest possible
+    // sign that the explosion and the debris were authored by different people.
+    const scene = litScene();
+    const chips = new ChipField(scene, { max: 32 });
+    chips.spawn(new THREE.Vector3(0, 4, 0), new THREE.Vector3(0, 2, 0),
+      { life: 20, size: 0.05, floor: 0, heat: 1, cool: 1.2 });
+    chips.update(1 / 60);
+    const hot = chips.aHeat.array[0];
+    assert(hot > 0.45, `a chip spawned at heat 1 renders at ${hot.toFixed(3)}`);
+    for (let i = 0; i < 60; i++) chips.update(1 / 60);
+    const warm = chips.aHeat.array[0];
+    assert(warm < hot * 0.65, `after a second the chip is still at ${warm.toFixed(3)}`);
+    for (let i = 0; i < 300; i++) chips.update(1 / 60);
+    assert(chips.aHeat.array[0] < 0.03, `the chip is still glowing at ${chips.aHeat.array[0].toFixed(3)}`);
+    // cold debris must be exactly cold, not faintly warm
+    chips.clear();
+    chips.spawn(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), { life: 5, floor: 0 });
+    chips.update(1 / 60);
+    assert(chips.aHeat.array[0] === 0, 'a stone chip is glowing');
+    assert(chips.material.onBeforeCompile, 'the heat attribute never reaches a shader');
+    chips.dispose();
+
+    const p = new Particles(litScene(), 1);
+    p.explosion(new THREE.Vector3(0, 0.4, 0), 1.2);
+    p.update(1 / 60);
+    const anyHot = p.chips.chips.some(c => c.alive && c.heat > 0.3);
+    assert(anyHot, 'an explosion threw nothing but cold rubble');
+    p.dispose();
+    return `heat ${hot.toFixed(2)} → ${warm.toFixed(2)} in 1s → 0 in 6s; explosions throw hot debris`;
+  });
+
+  check('impacts: every strike has a flash that outshines the thing it hit', () => {
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const at = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(0, 1, 0);
+    const flashes = (fn) => {
+      const head = p.plasma.head;
+      fn();
+      const n = (p.plasma.head - head + p.plasma.max) % p.plasma.max;
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const j = ((head + i) % p.plasma.max) * 4;
+        out.push({
+          L: lum(p.plasma.aColor.array[j], p.plasma.aColor.array[j + 1], p.plasma.aColor.array[j + 2]),
+          size: p.plasma.aParams.array[(((head + i) % p.plasma.max)) * 4 + 1],
+          life: p.plasma.aParams.array[(((head + i) % p.plasma.max)) * 4],
+        });
+      }
+      return out;
+    };
+    for (const [name, fn] of [
+      ['cutFlare', () => p.cutFlare(at, nrm, 0x57c9ff, 20)],
+      ['boltImpact', () => p.boltImpact(at, nrm, 0xff3a2a)],
+      ['explosion', () => p.explosion(at, 1)],
+    ]) {
+      const f = flashes(fn);
+      assert(f.length >= 2, `${name} produced ${f.length} flash lobes — it needs a hot one and a wide one`);
+      assert(f.some(x => x.L > 1.8), `${name}'s flash peaks at ${Math.max(...f.map(x => x.L)).toFixed(2)}`);
+      // the hot lobe has to be the small, brief one, or the flash is a fog bank
+      const hot = f.reduce((a, b) => (a.L > b.L ? a : b));
+      const wide = f.reduce((a, b) => (a.size > b.size ? a : b));
+      assert(hot !== wide, `${name}'s brightest lobe is also its widest`);
+      assert(hot.life < wide.life, `${name}'s hot core outlives its afterglow`);
+      assert(hot.life < 0.14, `${name}'s flash core lasts ${hot.life.toFixed(2)}s`);
+    }
+    p.dispose();
+    return 'cutFlare, boltImpact and explosion each flash hot-and-brief over wide-and-dim';
+  });
+
+  check('particles: every recipe still runs, and none of them emits a NaN', () => {
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const at = new THREE.Vector3(2, 1, -1), dir = new THREE.Vector3(0, 1, 0);
+    p.sparkBurst(at, dir, 12);
+    p.spatter(at, dir, 4);
+    p.cutFlare(at, dir, 0x57c9ff, 14);
+    p.boltImpact(at, dir, 0xff3a2a);
+    p.explosion(at, 1.4);
+    p.slag(at, dir);
+    p.chipBurst(at, dir, 6, { heat: 0.8 });
+    for (let i = 0; i < 40; i++) p.update(1 / 60);
+    let live = 0;
+    for (const pool of p.pools) {
+      for (const v of pool.aColor.array) assert(isFinite(v) && v >= 0, 'a particle colour went bad');
+      for (const v of pool.aParams.array) assert(isFinite(v), 'a particle parameter went bad');
+      live += pool.live;
+    }
+    for (const v of p.chips.aHeat.array) assert(isFinite(v) && v >= 0, 'a chip heat went bad');
+    p.dispose();
+    return `7 recipes, ${live} particles alive, all finite`;
+  });
+}

@@ -39,7 +39,7 @@ import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps } from '../eng
 import { plateGeo, limbGeo } from '../game/Bodies.js';
 import { makeCapMaterial } from '../game/Ragdoll.js';
 import { TOUGHNESS } from '../game/Combat.js';
-import { clamp, lerp, makeRng, fbm2, noise2, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, smoothstep, makeRng, fbm2, noise2, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng(9091);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -74,6 +74,23 @@ let _propId = 1;
  */
 const lit = (r, g, b) => new THREE.Color().setRGB(r, g, b, THREE.LinearSRGBColorSpace);
 
+/**
+ * Every surface a maker builds carries per-vertex weathering (see weatherGeo),
+ * so its material has to read vertex colours — and that is a loaded gun.
+ *
+ * MEASURED, not assumed: a MeshStandardMaterial with vertexColors:true drawn
+ * over a geometry that has no `color` attribute renders (0,0,0). Pure black.
+ * Destruction.js rebuilds a fractured chunk with position/normal/uv only, and
+ * so does Slice.js when the blade cuts a prop — so the first time anything in
+ * this file was broken, the pieces would have turned into holes in the world.
+ *
+ * defaultAttributeValues is three's escape hatch: the renderer feeds it to
+ * gl.vertexAttrib3fv for any attribute the geometry is missing. With white in
+ * there an unpainted geometry falls back to exactly the unweathered material.
+ */
+const WHITE_ATTR = { color: [1, 1, 1] };
+function readsVertexColour(m) { m.vertexColors = true; m.defaultAttributeValues = WHITE_ATTR; return m; }
+
 let MATS = null;
 export function propMaterials() {
   if (MATS) return MATS;
@@ -81,20 +98,31 @@ export function propMaterials() {
   const crete = duracreteMaps(2);
   const rock = rockMaps(2);
   const armor = armorMaps(2);
-  const mk = (maps, color, rough, metalness) => new THREE.MeshStandardMaterial({
+  const mk = (maps, color, rough, metalness) => readsVertexColour(new THREE.MeshStandardMaterial({
     color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness,
-  });
+  }));
   const cloth = clothMaps(2);
   MATS = {
     crate: mk(metal, lit(0.86, 0.68, 0.40), 0.62, 0.35),        // olive drab
     crateDark: mk(metal, lit(0.41, 0.37, 0.29), 0.55, 0.7),
     barrel: mk(metal, lit(0.96, 0.49, 0.22), 0.5, 0.75),        // oxide red
-    duracrete: mk(crete, lit(0.90, 0.79, 0.62), 0.94, 0.02),
-    stone: mk(rock, lit(1.90, 2.10, 2.20), 0.92, 0.02),
+    // grey structural concrete — deliberately NOT the same tan as the
+    // sun-bleached facing below: at lit(0.90,0.79,0.62) the two were 17% apart
+    // in luminance and 0.027 apart in chroma, which is one material with a
+    // rounding error, not two.
+    duracrete: mk(crete, lit(0.68, 0.65, 0.59), 0.94, 0.02),
+    /* Loose boulder rock. The old lit(1.90,2.10,2.20) was BLUE-biased — b > r
+     * on a map that is warm — so every boulder read cold grey against the
+     * ochre outcrop it had supposedly fallen off, and against ochre sand.
+     * This is warm but DARKER and less saturated than the carved sandstone
+     * below: desert varnish is exactly what happens to a block that has sat
+     * out in the sun for a few thousand years, and it also keeps the two
+     * apart, which at 8% luminance and 0.043 chroma they were not. */
+    stone: mk(rock, lit(1.98, 1.80, 1.55), 0.92, 0.02),
     steel: mk(metal, lit(1.50, 1.42, 1.30), 0.34, 0.98),
     darkSteel: mk(metal, lit(0.64, 0.60, 0.56), 0.42, 0.95),
-    hull: mk(armor, lit(0.63, 0.68, 0.76), 0.42, 0.85),
+    hull: mk(armor, lit(0.42, 0.45, 0.51), 0.42, 0.85),
     glass: new THREE.MeshStandardMaterial({ color: 0x8fd8ff, roughness: 0.06, metalness: 0.1,
       transparent: true, opacity: 0.32 }),
     emissive: new THREE.MeshStandardMaterial({ color: 0x111318, emissive: 0x60d8ff, emissiveIntensity: 2.2,
@@ -106,26 +134,36 @@ export function propMaterials() {
      * the rust that runs out of every fixing, and the paint somebody put on
      * it before the war are four different materials to the eye even when
      * they share one baked map. */
-    duracreteWarm: mk(crete, lit(1.12, 0.94, 0.68), 0.93, 0.02),  // sun-bleached facing
-    duracreteDark: mk(crete, lit(0.40, 0.37, 0.34), 0.96, 0.02),  // wall core, undersides
+    duracreteWarm: mk(crete, lit(0.90, 0.76, 0.55), 0.93, 0.02),  // sun-bleached facing
+    // The CORE of a broken wall: fresh aggregate, NEUTRAL grey. Its whole job
+    // is to be a different material from the weathered face outside it and
+    // from shadowed masonry — at lit(0.40,0.37,0.34) it was 6% in luminance
+    // and 0.018 in chroma from stoneDark, which is one material spelled twice.
+    duracreteDark: mk(crete, lit(0.46, 0.44, 0.42), 0.96, 0.02),  // wall core, undersides
     sandstone: mk(rock, lit(2.70, 2.40, 1.70), 0.95, 0.0),        // carved stone, plinths
-    stoneDark: mk(rock, lit(0.95, 1.10, 1.25), 0.94, 0.02),       // shadowed masonry
+    /* Shadowed masonry — recessed bands, the void inside a cowl. The old
+     * lit(0.95,1.10,1.25) baked a BLUE cast into the albedo, which is
+     * double-counting: this surface is already lit by sky, and the renderer
+     * does that part. It is the same warm stone as everything else, just
+     * darker — 0.105 luminance rather than 0.090, because a shadow is a
+     * shadow and not a hole cut in the world. */
+    stoneDark: mk(rock, lit(1.35, 1.15, 0.92), 0.94, 0.02),
     strata: null,                                                 // filled in below
     rust: mk(metal, lit(0.51, 0.26, 0.12), 0.88, 0.55),
     rebar: mk(metal, lit(0.45, 0.26, 0.15), 0.8, 0.72),
     bronze: mk(metal, lit(1.97, 1.29, 0.49), 0.44, 0.95),
     patina: mk(metal, lit(0.70, 1.00, 0.68), 0.74, 0.3),
     paint: mk(armor, lit(0.36, 0.14, 0.11), 0.6, 0.35),           // faded hull paint
-    paintPale: mk(armor, lit(0.69, 0.68, 0.61), 0.62, 0.3),
+    paintPale: mk(armor, lit(0.50, 0.49, 0.44), 0.62, 0.3),
     panel: mk(armor, lit(0.36, 0.40, 0.47), 0.46, 0.85),
     grating: mk(metal, lit(0.32, 0.29, 0.27), 0.66, 0.9),
-    tarp: new THREE.MeshStandardMaterial({
+    tarp: readsVertexColour(new THREE.MeshStandardMaterial({
       color: lit(0.42, 0.33, 0.19), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
-      roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide }),
-    tarpBlue: new THREE.MeshStandardMaterial({
+      roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide })),
+    tarpBlue: readsVertexColour(new THREE.MeshStandardMaterial({
       color: lit(0.15, 0.20, 0.28), map: cloth.map, normalMap: cloth.normalMap, roughnessMap: cloth.roughnessMap,
-      roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide }),
-    cable: new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.86, metalness: 0.1 }),
+      roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide })),
+    cable: readsVertexColour(new THREE.MeshStandardMaterial({ color: 0x191b1f, roughness: 0.86, metalness: 0.1 })),
     glowAmber: new THREE.MeshStandardMaterial({ color: 0x1a1206, emissive: 0xffa838, emissiveIntensity: 2.6, roughness: 0.5 }),
     glowRed: new THREE.MeshStandardMaterial({ color: 0x180808, emissive: 0xff3418, emissiveIntensity: 2.4, roughness: 0.5 }),
     glowCold: new THREE.MeshStandardMaterial({ color: 0x0d1218, emissive: 0xbcd8ff, emissiveIntensity: 3.0, roughness: 0.4 }),
@@ -133,10 +171,28 @@ export function propMaterials() {
   // Sedimentary banding is painted into the vertices: it survives distance,
   // survives fog, and costs nothing. The map only supplies the grain, and the
   // vertex colour carries the whole brightness budget (see STRATA).
-  MATS.strata = new THREE.MeshStandardMaterial({
+  MATS.strata = readsVertexColour(new THREE.MeshStandardMaterial({
     color: 0xffffff, map: rock.map, normalMap: rock.normalMap, roughnessMap: rock.roughnessMap,
-    roughness: 0.95, metalness: 0.0, vertexColors: true,
-  });
+    roughness: 0.95, metalness: 0.0,
+  }));
+
+  /**
+   * How hard each surface weathers, as a multiplier on WEAR (below).
+   *
+   * Not every material wears the same way and none of them wear at zero. Stone
+   * and concrete take the full treatment — soil at the foot, dust on the flats,
+   * dirt running down every vertical. Painted and plated metal takes less
+   * because it sheds water; a lamp lens takes none at all, because a light
+   * fitting with mud on it is a light fitting nobody can find.
+   */
+  const wear = { 1: ['duracrete', 'duracreteWarm', 'duracreteDark', 'sandstone', 'stone', 'stoneDark',
+                     'strata', 'wood', 'rust', 'rebar', 'patina'],
+                 0.72: ['hull', 'panel', 'paint', 'paintPale', 'grating', 'darkSteel', 'crate', 'crateDark',
+                        'barrel', 'bronze', 'tarp', 'tarpBlue'],
+                 0.45: ['steel', 'cable'] };
+  for (const [k, names] of Object.entries(wear)) {
+    for (const n of names) if (MATS[n]) MATS[n].userData.weather = +k;
+  }
   return MATS;
 }
 
@@ -146,6 +202,33 @@ export function propMaterials() {
 
 /** Every shared map in propMaterials() is built at repeat 2 across 0..1. */
 const TEX_REPEAT = 2;
+
+/**
+ * Texel density, in metres per texture repeat.
+ *
+ * The maps are shared, so the only thing that sets how big the grain LOOKS is
+ * the number a maker passes as `tile`. Left to per-maker taste this file had
+ * spread over 15:1 between its coarsest and finest surface — a fuel drum whose
+ * plate grain was eight times finer than the gantry beside it, and rock chips
+ * twelve times finer than the cliff they fell off. That reads as objects from
+ * different games standing in the same room, and it is the single thing a
+ * shipped environment is most disciplined about.
+ *
+ * These are the whole vocabulary. Small hand-held things sit at FINE because
+ * they are looked at from a metre away; everything a level is built out of
+ * sits within a factor of two of ARCH_TILE.
+ */
+export const ROCK_TILE = 2.4;      // rock, scree, boulders, rubble
+const ARCH_TILE = 2.4;             // walls, columns, floors, big plate
+const TRIM_TILE = 1.7;             // mouldings, kerbs, nosings, stringers
+const FINE_TILE = 1.1;             // crates, drums, consoles, fittings, pipes
+/**
+ * Nothing may be authored outside this band, in metres per repeat.
+ * tools/checks/environment.mjs measures every maker against it. Measured
+ * spread when the band was introduced: 5.0:1 across every material bin in
+ * every maker, down from 15:1.
+ */
+export const TEXEL_BAND = [0.7, 3.1];
 
 /**
  * UV multiplier that makes one texture tile span `metres` of surface, for
@@ -225,6 +308,247 @@ export function triplanarUv(geo, tile = 3) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   if (g !== geo) geo.dispose();
   return g;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Weathering — the difference between a building and a box              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The single measurable thing that separated this environment from a shipped
+ * one: EVERY architectural surface had exactly zero low-frequency albedo
+ * variation. The baked maps tile every 2.5 m, so a 9 m wall is the same 2.5 m
+ * of noise four times, and at any distance past a few metres the eye integrates
+ * that to one flat value. A real wall is never one flat value — it is dirty at
+ * the foot, bleached and dusty on every up-face, black under every overhang,
+ * streaked below every ledge, and quarried a course at a time out of stone that
+ * was never the same colour twice.
+ *
+ * All of that is low frequency, so all of it fits in vertex colours: no shader,
+ * no extra texture, no extra draw call, and it survives distance and fog when a
+ * normal map has long since averaged itself away.
+ *
+ * The terms, all multiplicative on the base albedo:
+ *
+ *   tone     one scalar per PIECE. A colonnade of eight identical columns is
+ *            eight copies of a column; ±10% of tone makes it eight columns.
+ *   patch    fbm at ~6 m — render, damp, a different batch of concrete.
+ *   streak   dirt runs: high frequency around the girth, smeared 12:1 down the
+ *            face, and only on verticals. This is THE cue that says "outside,
+ *            for a long time" and nothing else in the file was doing it.
+ *   soil     the splash zone: the bottom SOIL_H metres take mud back off the
+ *            ground, darker and browner.
+ *   sky/AO   up-faces catch dust and sun (lighter, desaturated); down-faces are
+ *            in permanent shade (darker, cooler).
+ *
+ * Calibrated so the AREA-WEIGHTED MEAN stays near 1.0 — the trap this file has
+ * fallen into before is a plausible-looking tweak that quietly halves the
+ * albedo of everything, so weatherStats() below exists to be measured.
+ */
+export const WEAR = {
+  tone: 0.125,       // ± per-piece quarry tone
+  patch: 0.115,      // ± large-scale blotching
+  streak: 0.24,      // depth of the dirt runs on verticals
+  soil: 0.36,        // how much darker the splash zone gets
+  soilH: 1.15,       // metres of splash zone above the piece's base
+  sky: 0.13,         // up-face dust/bleach
+  cavity: 0.20,      // down-face shade
+  warm: 0.55,        // how much of soil/shade is a hue shift rather than value
+  lift: 1.111,       // put the mean back on 1.0 after all of the above
+  cell: 1.15,        // metres: the vertex spacing all of the above needs to read
+};
+
+/**
+ * Split every triangle whose longest edge exceeds `maxEdge`, by bisecting that
+ * edge. Position, normal, uv and colour are interpolated; the result is
+ * indexed, so the vertex count grows only by the midpoints actually needed.
+ *
+ * This exists because weathering is a vertex colour and MEASURED vertex
+ * density on exactly the surfaces that read as cardboard was:
+ *
+ *   a 92 m hangar wall      0.10 verts/m², median triangle edge 30.7 m
+ *   a 10 m broken wall      2.85 verts/m², median edge 10.0 m
+ *   a 34 m hull shell       0.39 verts/m², median edge  2.4 m
+ *   an 18 m colossus        1.58 verts/m²
+ *
+ * A 16 × 7 m wall face is one polygon with about twenty vertices round its
+ * outline and NOTHING in the middle, so any amount of per-vertex variation
+ * painted onto it is linearly interpolated across the whole wall and vanishes.
+ * That is why every previous attempt at breaking up these surfaces failed.
+ *
+ * The split is longest-edge bisection rather than 1→4, so the cost tracks the
+ * surface that actually needs it — and a triangle is only split if it is BROAD
+ * as well as long. Without that second test a 32 m stringer 26 cm wide gets
+ * chopped into thirty slivers that can never show a metre-scale dirt run:
+ * measured, the naive version took the whole prop kit from 118k triangles to
+ * 297k, and nine tenths of the new ones were on pipework nobody can see.
+ */
+export function tessellate(geo, maxEdge, maxTris = 40000) {
+  const pos = geo.attributes.position;
+  if (!pos || !(maxEdge > 0)) return geo;
+  const m2 = maxEdge * maxEdge;
+  // A face narrower than a third of a metre cannot show a metre-scale dirt run,
+  // so it is never worth splitting: that one test is what separates a 4 m wall
+  // face (split) from a 32 m stringer 26 cm wide and a 5 cm pipe (both left
+  // alone), and it is the difference between +13% triangles and +150%.
+  const minWidth = maxEdge * 0.28;      // altitude to the edge being split
+  const idx0 = geo.index;
+  const n0 = idx0 ? idx0.count : pos.count;
+  const pa = pos.array;
+  // a triangle is worth splitting only if it is both long and broad
+  const worth = (ax, ay, az, bx, by, bz, cx, cy, cz) => {
+    const e0 = (ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2;
+    const e1 = (bx - cx) ** 2 + (by - cy) ** 2 + (bz - cz) ** 2;
+    const e2 = (cx - ax) ** 2 + (cy - ay) ** 2 + (cz - az) ** 2;
+    const bl = Math.max(e0, e1, e2);
+    if (bl <= m2) return -1;
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const area2 = Math.hypot(nx, ny, nz);           // = 2·area
+    if (area2 / Math.sqrt(bl) < minWidth) return -1;
+    return bl === e0 ? 0 : (bl === e1 ? 1 : 2);
+  };
+  let need = false;
+  for (let i = 0; i + 2 < n0 && !need; i += 3) {
+    const a = (idx0 ? idx0.getX(i) : i) * 3, b = (idx0 ? idx0.getX(i + 1) : i + 1) * 3, c = (idx0 ? idx0.getX(i + 2) : i + 2) * 3;
+    if (worth(pa[a], pa[a + 1], pa[a + 2], pa[b], pa[b + 1], pa[b + 2], pa[c], pa[c + 1], pa[c + 2]) >= 0) need = true;
+  }
+  if (!need) return geo;
+
+  const names = ['position', 'normal', 'uv', 'color'].filter((k) => geo.attributes[k]);
+  const sizes = names.map((k) => geo.attributes[k].itemSize);
+  const stride = sizes.reduce((a, b) => a + b, 0);
+  const nrmAt = names.indexOf('normal') >= 0 ? sizes.slice(0, names.indexOf('normal')).reduce((a, b) => a + b, 0) : -1;
+  const data = [];
+  for (let i = 0; i < pos.count; i++) {
+    for (let k = 0; k < names.length; k++) {
+      const a = geo.attributes[names[k]];
+      for (let c = 0; c < sizes[k]; c++) data.push(a.array[i * sizes[k] + c]);
+    }
+  }
+  let tris = [];
+  for (let i = 0; i + 2 < n0; i += 3) {
+    tris.push(idx0 ? [idx0.getX(i), idx0.getX(i + 1), idx0.getX(i + 2)] : [i, i + 1, i + 2]);
+  }
+  const mid = (a, b) => {
+    const k = data.length / stride;
+    for (let c = 0; c < stride; c++) data.push((data[a * stride + c] + data[b * stride + c]) * 0.5);
+    if (nrmAt >= 0) {                       // a lerped normal is not unit length
+      const o = k * stride + nrmAt;
+      const l = Math.hypot(data[o], data[o + 1], data[o + 2]) || 1;
+      data[o] /= l; data[o + 1] /= l; data[o + 2] /= l;
+    }
+    return k;
+  };
+  for (let pass = 0; pass < 12 && tris.length < maxTris; pass++) {
+    let any = false;
+    const next = [];
+    for (const t of tris) {
+      const o0 = t[0] * stride, o1 = t[1] * stride, o2 = t[2] * stride;
+      const best = worth(data[o0], data[o0 + 1], data[o0 + 2], data[o1], data[o1 + 1], data[o1 + 2],
+        data[o2], data[o2 + 1], data[o2 + 2]);
+      if (best < 0) { next.push(t); continue; }
+      any = true;
+      const a = t[best], b = t[(best + 1) % 3], c = t[(best + 2) % 3];
+      const m = mid(a, b);
+      next.push([a, m, c], [m, b, c]);
+    }
+    tris = next;
+    if (!any) break;
+  }
+
+  const nv = data.length / stride;
+  const out = new THREE.BufferGeometry();
+  let off = 0;
+  for (let k = 0; k < names.length; k++) {
+    const s = sizes[k], arr = new Float32Array(nv * s);
+    for (let i = 0; i < nv; i++) for (let c = 0; c < s; c++) arr[i * s + c] = data[i * stride + off + c];
+    out.setAttribute(names[k], new THREE.Float32BufferAttribute(arr, s));
+    off += s;
+  }
+  const ia = nv > 65535 ? new Uint32Array(tris.length * 3) : new Uint16Array(tris.length * 3);
+  for (let i = 0; i < tris.length; i++) { ia[i * 3] = tris[i][0]; ia[i * 3 + 1] = tris[i][1]; ia[i * 3 + 2] = tris[i][2]; }
+  out.setIndex(new THREE.BufferAttribute(ia, 1));
+  geo.dispose();
+  return out;
+}
+
+/**
+ * Paint weathering into `geo`, in the frame it is already in — so y must be
+ * height above the structure's own base, which is exactly what Kit space is.
+ * Multiplies into an existing colour attribute (strata rock) or creates one.
+ */
+export function weatherGeo(geo, opts = {}) {
+  const W = WEAR;
+  const k = opts.strength ?? 1;
+  if (k <= 0) return geo;
+  const p = geo.attributes.position;
+  if (!p) return geo;
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  const n = geo.attributes.normal;
+  const seed = opts.seed ?? 0;
+  const tone = 1 + (opts.tone ?? 0) * W.tone * k;
+  const y0 = opts.y0 ?? 0;
+  const soilH = Math.max(0.2, opts.soilH ?? W.soilH);
+  const prev = geo.attributes.color;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const ny = n ? n.getY(i) : 0;
+
+    // large-scale blotching, and the runs down every vertical face
+    let v = tone * (1 + W.patch * k * fbm2(x * 0.17 + seed * 0.7, z * 0.17 - y * 0.05 + seed * 1.3, 3));
+    const vert = 1 - Math.min(1, Math.abs(ny));
+    /* The runs are SKEWED, not symmetric: mostly clean stone with occasional
+     * deep dirt, which is both what a weathered wall looks like and what
+     * survives an ACES shoulder. A symmetric ±12% wobble on a sun-facing wall
+     * sitting at 4.5 scene-linear comes out the far side as 0.6% — measured —
+     * because half of it is spent brightening a surface that is already flat
+     * out. Spending the whole budget downward is worth three times as much. */
+    const run = clamp(fbm2((x * 1.05 + z * 0.85) + seed * 2.9, y * 0.085 + seed * 0.4, 3) * 0.62 + 0.5, 0, 1);
+    v *= 1 - W.streak * 1.9 * k * vert * Math.pow(run, 2.2);
+
+    // Splash zone at the foot, dust on the flats, shade underneath. Splash-back
+    // is thrown ONTO verticals by rain and boots, so it is gated on verticality:
+    // ungated it painted a 16×12 m paved floor uniformly 25% darker, which is
+    // not weathering, it is a dimmer switch.
+    const s = clamp(1 - (y - y0) / soilH, 0, 1);
+    const soil = W.soil * k * s * s * (0.28 + 0.72 * vert);
+    const sky = W.sky * k * Math.max(0, ny) * Math.max(0, ny);
+    const cav = W.cavity * k * Math.max(0, -ny);
+    const val = v * (1 - soil * (1 - W.warm * 0.35) + sky - cav) * W.lift;
+
+    // hue: mud and dust are warm, shade is the sky, so they pull opposite ways
+    const warm = (soil * W.warm + sky * 0.35 - cav * W.warm * 0.7);
+    const o = i * 3;
+    let r = val * (1 + warm * 0.30), g = val * (1 + warm * 0.02), b = val * (1 - warm * 0.34);
+    if (prev) { r *= prev.getX(i); g *= prev.getY(i); b *= prev.getZ(i); }
+    col[o] = r; col[o + 1] = g; col[o + 2] = b;
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return geo;
+}
+
+/**
+ * Area-weighted mean and spread of a geometry's vertex colours. The mean is
+ * the number that must not drift: weathering is meant to add variation, not to
+ * dim the world by a third and call it mood.
+ */
+export function weatherStats(geo) {
+  const c = geo.attributes.color, p = geo.attributes.position;
+  if (!c) return null;
+  let sr = 0, sg = 0, sb = 0;
+  for (let i = 0; i < c.count; i++) { sr += c.getX(i); sg += c.getY(i); sb += c.getZ(i); }
+  const N = c.count;
+  const mean = [sr / N, sg / N, sb / N];
+  const m = (mean[0] + mean[1] + mean[2]) / 3;
+  let vv = 0;
+  for (let i = 0; i < c.count; i++) {
+    const l = (c.getX(i) + c.getY(i) + c.getZ(i)) / 3;
+    vv += (l - m) ** 2;
+  }
+  return { mean, lum: m, sd: Math.sqrt(vv / N), count: N, verts: p ? p.count : 0 };
 }
 
 /** Paint a per-vertex colour from a callback (x,y,z) → [r,g,b] in 0..1. */
@@ -415,10 +739,24 @@ export function brokenEdge(x0, x1, yLow, yHigh, r, steps = 9) {
  * averages 0.11 linear, so a bed at 2.8 lands on 0.30 albedo — sandstone in
  * sun. Anything under about 1.5 here reads as a hole in the ground.
  */
-const STRATA = [[2.9, 2.3, 1.6], [3.4, 3.0, 2.3], [2.2, 1.9, 1.6],
-                [3.1, 2.5, 1.7], [1.9, 1.8, 1.7], [3.6, 3.3, 2.7]];
+const STRATA = [[2.89, 2.39, 1.70], [3.20, 2.75, 2.10], [2.57, 2.15, 1.63],
+                [3.05, 2.47, 1.68], [2.47, 2.21, 1.89], [3.26, 2.89, 2.36]];
 export function strataTint(y, seed = 0, scale = 1.1, out = [1, 1, 1]) {
-  const wob = noise2(y * 0.7 + seed, seed * 0.37) * 0.35;
+  /* Bed THICKNESS is the whole game. The old version advanced the band index
+   * at a constant rate with a ±0.35 wobble, so a 9 m outcrop was sixteen
+   * equal stripes cycling a six-colour palette in order — a zebra, and the
+   * single biggest reason these rocks read as a stack of pancakes rather than
+   * as a cliff. The warp below is low-frequency and large: df/dy ranges about
+   * 0.4× to 1.7×, so beds run from a third of nominal to nearly twice it, and
+   * the palette never repeats at a findable pitch.
+   *
+   * The palette itself was 1.78:1 in luminance between its lightest and
+   * darkest bed. Real sequences differ by hue far more than by value; this one
+   * is 1.34:1 with the same mean (2.43), so the layering still reads across the
+   * map without turning the cliff into a barcode. */
+  const inv = 1 / Math.max(0.35, scale);
+  const wob = fbm2(y * 0.26 + seed, seed * 0.37, 2) * (0.70 * inv)
+            + noise2(y * 0.68 + seed * 2.1, seed) * (0.13 * inv);
   const f = (y + wob) * scale + seed * 3.1;
   const i = Math.floor(f);
   const band = STRATA[((i % STRATA.length) + STRATA.length) % STRATA.length];
@@ -466,6 +804,16 @@ export class Kit {
     this._yaw = 0;
     this._placed = false;
     this._stack = [];
+    // Weathering draws from its OWN stream. Sharing this.rng would shift every
+    // maker's shape decisions by however many pieces it happens to emit, and
+    // every seeded layout in every level would move.
+    this._wrng = makeRng(seed * 7919 + 104729);
+    this.weather = true;
+    // Kit-space y of the ground the assembly stands on. Zero for everything
+    // built up from its own footprint; addHullSection sets it to -R because its
+    // origin is the cylinder axis, and without that the splash zone lands
+    // halfway up an eight-metre shell instead of where it is buried.
+    this.groundY = 0;
   }
 
   /**
@@ -488,10 +836,23 @@ export class Kit {
     return this;
   }
 
-  /** Bin a geometry that is already in this frame's local coordinates. */
+  /**
+   * Bin a geometry that is already in this frame's local coordinates.
+   *
+   * This is the single funnel every static surface in the file goes through,
+   * so it is also where weathering is applied — after the frame transform, so
+   * the y a piece is painted by is its height above the STRUCTURE's base and a
+   * balcony four metres up does not get mud on it.
+   */
   add(geo, mat) {
     if (!geo) return geo;
     if (this._placed) geo.applyMatrix4(this._pm);
+    const w = this.weather && mat && mat.userData ? mat.userData.weather : 0;
+    if (w) {
+      const r = this._wrng;
+      geo = tessellate(geo, WEAR.cell);
+      weatherGeo(geo, { strength: w, tone: r() * 2 - 1, seed: r() * 40, y0: this.groundY });
+    }
     let b = this.bins.get(mat);
     if (!b) this.bins.set(mat, b = []);
     b.push(geo);
@@ -610,6 +971,23 @@ export class Prop {
     this.mesh = opts.mesh;
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
+    // A level scatters forty crates. Without this they are forty copies of one
+    // crate; with it they are forty crates. Painted in the prop's own frame, so
+    // the grimy end stays the grimy end after the player kicks it over.
+    if (opts.weather !== false) {
+      // its own stream, keyed off the prop id: drawing from the shared module
+      // rng here would shift every size, material pick and yaw of every prop
+      // made after it, and every seeded layout in every level with them
+      const wr = makeRng(_propId * 92083 + 4441);
+      const t = wr() * 2 - 1, sd = wr() * 40;
+      this.mesh.traverse((o) => {
+        const w = o.isMesh && o.material && o.material.userData ? o.material.userData.weather : 0;
+        if (!w || !o.geometry || o.geometry.attributes.color) return;
+        o.geometry.computeBoundingBox();
+        weatherGeo(o.geometry, { strength: w * 0.8, tone: t, seed: sd,
+          y0: o.geometry.boundingBox.min.y, soilH: opts.soilH ?? 0.55 });
+      });
+    }
     world.scene.add(this.mesh);
 
     // The collider is the real shape: whatever the factory declared, or failing
@@ -762,10 +1140,10 @@ export function makeCrate(world, pos, size = 0.7, opts = {}) {
   const h = s * 0.9;
   // the body carries a shallow recessed panel on each face, modelled in, so
   // the silhouette is not a rectangle from any angle
-  const body = [slabGeo(s, h, s, { bevel: s * 0.07, seg: 3, tile: 0.55 })];
+  const body = [slabGeo(s, h, s, { bevel: s * 0.07, seg: 3, tile: FINE_TILE })];
   for (const [ax, az] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const g = slabGeo(ax ? s * 0.06 : s * 0.62, h * 0.6, az ? s * 0.06 : s * 0.62,
-      { bevel: s * 0.02, seg: 2, tile: 0.4 });
+      { bevel: s * 0.02, seg: 2, tile: FINE_TILE });
     g.translate(ax * s * 0.5, 0, az * s * 0.5);
     body.push(g);
   }
@@ -773,16 +1151,16 @@ export function makeCrate(world, pos, size = 0.7, opts = {}) {
   const mesh = new THREE.Mesh(geo, rng() < 0.35 ? M.crateDark : M.crate);
   const trim = [];
   for (const sy of [1, -1]) {
-    const band = slabGeo(s * 1.03, h * 0.09, s * 1.03, { bevel: s * 0.018, seg: 2, tile: 0.35 });
+    const band = slabGeo(s * 1.03, h * 0.09, s * 1.03, { bevel: s * 0.018, seg: 2, tile: FINE_TILE });
     band.translate(0, sy * h * 0.33, 0);
     trim.push(band);
   }
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-    const c = slabGeo(s * 0.16, h * 1.01, s * 0.16, { bevel: s * 0.02, seg: 2, tile: 0.3 });
+    const c = slabGeo(s * 0.16, h * 1.01, s * 0.16, { bevel: s * 0.02, seg: 2, tile: FINE_TILE });
     c.translate(sx * s * 0.45, 0, sz * s * 0.45);
     trim.push(c);
   }
-  const latch = slabGeo(s * 0.2, h * 0.16, s * 0.06, { bevel: s * 0.015, seg: 2, tile: 0.25 });
+  const latch = slabGeo(s * 0.2, h * 0.16, s * 0.06, { bevel: s * 0.015, seg: 2, tile: FINE_TILE });
   latch.translate(0, 0, s * 0.52);
   trim.push(latch);
   mesh.add(new THREE.Mesh(mergeGeos(trim), M.crateDark));
@@ -807,19 +1185,19 @@ export function makeBarrel(world, pos, opts = {}) {
     [0, -h / 2], [r * 0.72, -h / 2], [r * 0.86, -h / 2 + 0.03], [r * 0.93, -h / 2 + 0.09],
     [r, -h * 0.16], [r, h * 0.16], [r * 0.93, h / 2 - 0.09], [r * 0.86, h / 2 - 0.03],
     [r * 0.72, h / 2], [0, h / 2],
-  ], { seg: 16, tile: 0.7 });
+  ], { seg: 16, tile: FINE_TILE });
   const mesh = new THREE.Mesh(geo, M.barrel);
   const trim = [];
   for (const y of [-0.26, 0.26]) {
-    const ring = cylGeo(r * 1.05, r * 1.05, 0.055, 16, 1.2);
+    const ring = cylGeo(r * 1.05, r * 1.05, 0.055, 16, FINE_TILE);
     ring.translate(0, y, 0);
     trim.push(ring);
   }
-  const bung = cylGeo(0.055, 0.06, 0.035, 8, 1.2);
+  const bung = cylGeo(0.055, 0.06, 0.035, 8, FINE_TILE);
   bung.translate(r * 0.42, h / 2 + 0.005, 0);
   trim.push(bung);
   mesh.add(new THREE.Mesh(mergeGeos(trim), M.darkSteel));
-  const hazard = new THREE.Mesh(cylGeo(r * 1.015, r * 1.015, 0.16, 16, 1.2, true),
+  const hazard = new THREE.Mesh(cylGeo(r * 1.015, r * 1.015, 0.16, 16, FINE_TILE, true),
     new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0x552200, emissiveIntensity: 0.5, roughness: 0.6 }));
   mesh.add(hazard);
   return new Prop(world, {
@@ -885,12 +1263,12 @@ export function makeVaporator(world, pos, opts = {}) {
   const geo = revolveGeo([
     [0, -1.2], [0.24, -1.2], [0.24, -1.1], [0.19, -1.02], [0.185, -0.2], [0.2, -0.1],
     [0.2, 0.5], [0.17, 0.6], [0.17, 1.0], [0.22, 1.06], [0.22, 1.12],
-  ], { seg: 14, folds: 10, foldDepth: 0.06, tile: 1.0 });
+  ], { seg: 14, folds: 10, foldDepth: 0.06, tile: FINE_TILE });
   const mesh = new THREE.Mesh(geo, M.steel);
   const dark = [];
   for (let i = 0; i < 3; i++) {
     const a = (i / 3) * Math.PI * 2;
-    const fin = slabGeo(0.075, 1.45, 0.46, { bevel: 0.02, seg: 3, tile: 0.8 });
+    const fin = slabGeo(0.075, 1.45, 0.46, { bevel: 0.02, seg: 3, tile: TRIM_TILE });
     fin.applyMatrix4(_km.makeRotationY(a));
     fin.translate(Math.sin(a) * 0.3, 0.55, Math.cos(a) * 0.3);
     dark.push(fin);
@@ -898,12 +1276,12 @@ export function makeVaporator(world, pos, opts = {}) {
       new THREE.Vector3(Math.sin(a) * 0.42, 0.05, Math.cos(a) * 0.42), 0.018, 4);
     dark.push(stay);
   }
-  const panel = slabGeo(0.24, 0.36, 0.05, { bevel: 0.015, seg: 2, tile: 0.4 });
+  const panel = slabGeo(0.24, 0.36, 0.05, { bevel: 0.015, seg: 2, tile: FINE_TILE });
   panel.translate(0, -0.55, 0.2); dark.push(panel);
   mesh.add(new THREE.Mesh(mergeGeos(dark), M.darkSteel));
   const head = revolveGeo([
     [0, 1.12], [0.16, 1.14], [0.29, 1.24], [0.31, 1.4], [0.22, 1.52], [0.09, 1.57], [0, 1.58],
-  ], { seg: 14, tile: 0.9 });
+  ], { seg: 14, tile: FINE_TILE });
   mesh.add(new THREE.Mesh(head, M.hull));
   return new Prop(world, {
     kind: 'vaporator', mesh, position: pos, mass: 180,
@@ -970,32 +1348,32 @@ export function makeSpire(world, pos, height = 6, opts = {}) {
  */
 export function makeConsole(world, pos, opts = {}) {
   const M = propMaterials();
-  const parts = [slabGeo(1.1, 0.62, 0.6, { bevel: 0.05, seg: 3, tile: 0.9 })];
+  const parts = [slabGeo(1.1, 0.62, 0.6, { bevel: 0.05, seg: 3, tile: TRIM_TILE })];
   const desk = extrudeBeveled([[-0.55, -0.05], [0.55, -0.05], [0.55, 0.16], [-0.55, 0.3]], 0.62,
-    { bevel: 0.035, tile: 0.8 });
+    { bevel: 0.035, tile: TRIM_TILE });
   desk.rotateY(Math.PI / 2);
   desk.translate(0, 0.38, 0);
   parts.push(desk);
   for (const sx of [-1, 1]) {
-    const foot = slabGeo(0.14, 0.12, 0.66, { bevel: 0.03, seg: 2, tile: 0.4 });
+    const foot = slabGeo(0.14, 0.12, 0.66, { bevel: 0.03, seg: 2, tile: FINE_TILE });
     foot.translate(sx * 0.46, -0.36, 0);
     parts.push(foot);
   }
-  const hood = slabGeo(1.06, 0.34, 0.1, { bevel: 0.03, seg: 3, tile: 0.7 });
+  const hood = slabGeo(1.06, 0.34, 0.1, { bevel: 0.03, seg: 3, tile: TRIM_TILE });
   hood.applyMatrix4(_km.makeRotationX(-0.34));
   hood.translate(0, 0.56, -0.16);
   parts.push(hood);
   const mesh = new THREE.Mesh(mergeGeos(parts), M.hull);
-  const screen = new THREE.Mesh(slabGeo(0.78, 0.3, 0.04, { bevel: 0.012, seg: 2, tile: 0.5 }), M.emissive);
+  const screen = new THREE.Mesh(slabGeo(0.78, 0.3, 0.04, { bevel: 0.012, seg: 2, tile: FINE_TILE }), M.emissive);
   screen.position.set(0, 0.46, 0.14); screen.rotation.x = -0.42;
   mesh.add(screen);
   const dark = [];
-  const keys = slabGeo(0.62, 0.03, 0.2, { bevel: 0.008, seg: 2, tile: 0.3 });
+  const keys = slabGeo(0.62, 0.03, 0.2, { bevel: 0.008, seg: 2, tile: FINE_TILE });
   keys.applyMatrix4(_km.makeRotationX(-0.16));
   keys.translate(0, 0.42, 0.2);
   dark.push(keys);
   dark.push(tubeAlong([new THREE.Vector3(0.3, -0.28, -0.3), new THREE.Vector3(0.5, -0.4, -0.5),
-    new THREE.Vector3(0.62, -0.48, -0.4)], 0.035, 5, 0.4));
+    new THREE.Vector3(0.62, -0.48, -0.4)], 0.035, 5, FINE_TILE));
   mesh.add(new THREE.Mesh(mergeGeos(dark), M.darkSteel));
   return new Prop(world, {
     kind: 'console', mesh, position: pos, mass: 90,
@@ -1215,7 +1593,18 @@ export function addWall(world, centre, size, quat = new THREE.Quaternion(), mate
   const geo = slabGeo(size.x, size.y, size.z, {
     bevel: Math.min(0.09, Math.min(size.x, size.y, size.z) * 0.06), seg: 3, tile: 2.6,
   });
-  const mesh = new THREE.Mesh(geo, material || M.duracrete);
+  const mat = material || M.duracrete;
+  // A wall is the single flattest thing a level places — a 92 m hangar wall was
+  // 32 triangles — so it has to be tessellated before there is anywhere to put
+  // the weathering. Painted in the frame it will stand in, so the splash zone
+  // lands at its foot and not at its waist.
+  let g2 = geo;
+  if (mat.userData && mat.userData.weather) {
+    g2 = tessellate(geo, WEAR.cell);
+    weatherGeo(g2, { strength: mat.userData.weather, y0: -size.y / 2,
+      tone: noise2(centre.x * 0.31, centre.z * 0.31), seed: (centre.x * 3.7 + centre.z * 1.9) % 40 });
+  }
+  const mesh = new THREE.Mesh(g2, mat);
   mesh.position.copy(centre);
   mesh.quaternion.copy(quat);
   mesh.castShadow = true; mesh.receiveShadow = true;
@@ -1240,45 +1629,120 @@ export function addWall(world, centre, size, quat = new THREE.Quaternion(), mate
  */
 export function rockGeo(size, seed = 1, opts = {}) {
   const r = makeRng(seed * 7919 + 13);
-  const nb = Math.max(2, Math.round(size.y * 2 / (opts.bed ?? 0.55)));
-  // three rings per bed — base, body, undercut — or the steps smooth away into
-  // the pillow shape that makes procedural rock look like bread
-  const seg = opts.seg ?? 13, rings = opts.rings ?? Math.min(48, Math.max(6, nb * 3));
-  const hard = [];
-  for (let b = 0; b <= nb + 1; b++) hard.push(r());
-  const plan = [];
-  for (let i = 0; i < seg; i++) plan.push(0.8 + fbm2(Math.cos(i / seg * TAU) * 1.7 + seed, Math.sin(i / seg * TAU) * 1.7, 3) * 0.4);
-  const amp = opts.bandAmp ?? 0.13;
-  const bandMul = (y01) => {
-    const f = clamp(y01, 0, 0.9999) * nb;
-    const i = Math.floor(f), frac = f - i;
-    // each bed stands proud at its base and is undercut at its top
-    return 1 + amp * (hard[i] - 0.45) * 2 * (0.62 + 0.5 * (1 - frac)) - amp * 0.35 * frac;
+  const bedT = opts.bed ?? 0.55;
+  const seg = opts.seg ?? 15;
+  const nb = Math.max(2, Math.round(size.y * 2 / bedT));
+  const rings = opts.rings ?? clamp(Math.round(nb * 2.6), 10, 56);
+
+  /* ── bedding ───────────────────────────────────────────────────────────
+   * The old version put a bed boundary every `bed` metres exactly and stepped
+   * the radius by ±13% across it with a Math.floor, three rings apart. That is
+   * a stack of discs — a wedding cake — and it is precisely what every one of
+   * these rocks read as. Two changes fix it:
+   *
+   *   · bed THICKNESS varies 0.6–2.3× the nominal, so the eye never finds the
+   *     rhythm. Real sequences are 0.2 m shales under 2 m of sandstone.
+   *   · relief drops to ~6% and the contact is a chamfer over the first tenth
+   *     of the bed, not a cliff. Differential erosion on a real face is a few
+   *     per cent of the radius; the LAYERING is carried by colour (strataTint),
+   *     which survives distance where a 15% ledge just reads as a machined step.
+   */
+  const edges = [0];
+  while (edges[edges.length - 1] < 1) {
+    edges.push(edges[edges.length - 1] + (bedT / Math.max(0.4, size.y * 2)) * (0.6 + r() * 1.7));
+  }
+  const hard = edges.map(() => r());
+  const amp = opts.bandAmp ?? 0.042;
+  /** The bed's radius offset, as a fraction of `amp`, at height y01. */
+  const bandRelief = (y01) => {
+    let i = 0;
+    while (i + 1 < edges.length && edges[i + 1] <= y01) i++;
+    const lo = edges[i], hi = edges[i + 1] ?? 1;
+    const f = clamp((y01 - lo) / Math.max(1e-4, hi - lo), 0, 1);
+    const h = (hard[i] - 0.5) * 2;
+    const chamfer = smoothstep(0, 0.22, f);             // the contact, softened
+    const proud = h * (0.55 + 0.45 * chamfer) * (1 - 0.3 * f);
+    // a soft bed is eaten back under the hard one above it
+    const under = -0.7 * Math.pow(f, 3) * Math.max(0, (hard[i + 1] ?? 0.5) - hard[i]);
+    return proud + under;
   };
-  // near-vertical sides with a hard break to a flat top: rock erodes into
+
+  /* ── vertical jointing ─────────────────────────────────────────────────
+   * What actually makes a crag read as a crag, and what was missing entirely:
+   * the plan shape was a function of azimuth alone, so every rock was one
+   * extruded prism. Rock parts along near-vertical joints into buttresses and
+   * re-entrants; these are narrow, deep, and they drift a little with height.
+   */
+  const nJ = opts.joints ?? Math.max(3, Math.round(seg * 0.5));
+  const jd = opts.jointDepth ?? 0.16, jPhase = r() * TAU;
+  const jointMul = (a, y01) => {
+    const t = a * nJ + jPhase
+      + fbm2(Math.cos(a) * 1.3 + seed, Math.sin(a) * 1.3, 2) * 2.4
+      + noise2(y01 * 1.7 + seed * 0.5, seed) * 0.55;
+    return 1 - jd * Math.pow(0.5 + 0.5 * Math.cos(t), 7);
+  };
+
+  const plan = [], crest = [];
+  const tiltA = (r() - 0.5) * (opts.crestTilt ?? 0.30), tiltB = (r() - 0.5) * (opts.crestTilt ?? 0.30);
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * TAU;
+    plan.push(0.8 + fbm2(Math.cos(a) * 1.7 + seed, Math.sin(a) * 1.7, 3) * 0.4);
+    /* The CREST offset, per azimuth — the other half of why every one of these
+     * read as a drum. prof() below gives near-vertical sides and the top ring
+     * sat at one constant height all the way round, so the silhouette was a
+     * cylinder capped by a disc from every angle. A real mass is taller on the
+     * side the weather came from and broken down on the other.
+     *
+     * It has to be very nearly LINEAR in azimuth — a tilted plane — because
+     * the top is closed by a triangle fan to a single apex, and a fan over a
+     * rim that undulates by more than the cap is tall folds into something
+     * that reads as a tied sack. Three variants were tried and all three
+     * looked like laundry: scaling y per azimuth pinches the rim in while the
+     * radius stays full; tapering the radius above a per-azimuth crest turns
+     * the low side into a tent pole; and offsetting y on a ramp COMPRESSES
+     * every ring the ramp covers, piling the whole dome onto the low side.
+     * A plane tilt shears cleanly, and its centre — where the fan apex sits —
+     * is still exactly on the plane. */
+    const tilt = tiltA * Math.cos(a) + tiltB * Math.sin(a);
+    crest.push(tilt + fbm2(Math.cos(a) * 1.15 + seed * 5, Math.sin(a) * 1.15 - seed, 3) * 0.055);
+  }
+  // near-vertical sides with a hard break to a bench on top: rock erodes into
   // cliffs and benches, not into ellipsoids
-  const prof = (y) => Math.pow(Math.max(0, 1 - Math.pow(Math.abs(y), opts.shoulder ?? 10)), 0.25);
+  const prof = (y) => Math.pow(Math.max(0, 1 - Math.pow(Math.abs(y), opts.shoulder ?? 9)), 0.25);
 
   const pos = new Float32Array((rings + 1) * (seg + 1) * 3), uv = new Float32Array((rings + 1) * (seg + 1) * 2);
   const bottom = [], top = [];
   const k = uvm(opts.tile ?? 2.4);
+  let topSum = 0;
   for (let j = 0; j <= rings; j++) {
     const y = lerp(-0.96, 0.985, j / rings);
-    const base = prof(y) * bandMul((y + 1) / 2);
+    const y01 = (y + 1) / 2;
+    // a talus flare where it meets the ground: a rock that hits the dirt along
+    // a hard vertical line is a cylinder somebody dropped, not a landform
+    const flare = 1 + (opts.flare ?? 0.17) * Math.pow(clamp(1 - y01 / 0.2, 0, 1), 1.8);
+    const relief = bandRelief(y01);
+    const base = prof(y) * flare;
+    const cw = smoothstep(0.34, 1, y01);              // the crest only bites up top
     for (let i = 0; i <= seg; i++) {
       const a = (i / seg) * TAU;
+      // A ledge that runs unbroken all the way round the mass is a lathe
+      // feature. On a real face the bench is cut by the joints: it stands out a
+      // metre on one buttress and has weathered flush on the next.
+      const band = 1 + amp * relief * (0.3 + 1.15 * (0.5 + 0.5 * fbm2(
+        Math.cos(a) * 1.9 + seed * 7, Math.sin(a) * 1.9 - seed, 2)));
       // the plan shape barely changes with height — a crag is a prism the
       // weather has bitten, not a potato; the beds do the vertical work
       const wob = 1 + fbm2(Math.cos(a) * 2.2 + seed * 3, Math.sin(a) * 2.2, 3) * 0.19
                     + fbm2(Math.cos(a) * 4.1, y * 3.4 + seed, 2) * 0.05;
-      const rr = base * plan[i % seg] * wob;
+      const rr = base * band * plan[i % seg] * wob * jointMul(a, y01);
       const o = (j * (seg + 1) + i) * 3, o2 = (j * (seg + 1) + i) * 2;
-      const x = Math.cos(a) * rr * size.x, z = Math.sin(a) * rr * size.z, yy = y * size.y;
+      const x = Math.cos(a) * rr * size.x, z = Math.sin(a) * rr * size.z;
+      const yy = (y + crest[i % seg] * cw) * size.y;
       pos[o] = x; pos[o + 1] = yy; pos[o + 2] = z;
       uv[o2] = a * Math.max(size.x, size.z) * k; uv[o2 + 1] = yy * k;
       if (i < seg) {
         if (j === 0) bottom.push(new THREE.Vector3(x, yy, z));
-        if (j === rings) top.push(new THREE.Vector3(x, yy, z));
+        if (j === rings) { top.push(new THREE.Vector3(x, yy, z)); topSum += yy; }
       }
     }
   }
@@ -1292,9 +1756,19 @@ export function rockGeo(size, seed = 1, opts = {}) {
   side.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   side.setIndex(idx);
   side.computeVertexNormals();
-  const geo = mergeGeos([side, fanCap(top, size.y * 1.02, true, 2.4), fanCap(bottom, -size.y * 1.06, false, 2.4)]);
+  // the cap closes on the MEAN of the rim, not on a fixed apex — with a ragged
+  // crest a fixed apex is a spike sticking out of the low side
+  const capY = topSum / Math.max(1, top.length) + size.y * 0.07;
+  const geo = mergeGeos([side, fanCap(top, capY, true, 2.4),
+    fanCap(bottom, -size.y * 1.06, false, 2.4)]);
   if (opts.dip) geo.applyMatrix4(_km.makeRotationZ(opts.dip));
-  return paintGeo(geo, (x, y, z, out) => strataTint(y + (opts.bedOffset || 0), seed, 1 / (opts.bed ?? 0.55), out));
+  // Beds pinch, swell and undulate across a face; a contact that is a dead
+  // horizontal line all the way round is a machined groove. Perturbing the
+  // sample height by a metre-scale function of x and z costs one fbm and buys
+  // every contact a bit of geology.
+  return paintGeo(geo, (x, y, z, out) => strataTint(
+    y + (opts.bedOffset || 0) + fbm2(x * 0.11 + seed, z * 0.11, 2) * (opts.bed ?? 0.55) * 0.9,
+    seed, 1 / (opts.bed ?? 0.55), out));
 }
 
 /**
@@ -1306,6 +1780,8 @@ export function addRock(world, centre, size, seed = 1) {
   const M = propMaterials();
   const r = makeRng(seed * 7919 + 13);
   const geo = rockGeo(size, seed, { dip: (r() - 0.5) * 0.16 });
+  weatherGeo(geo, { strength: 1, y0: -size.y, soilH: Math.min(1.2, size.y * 0.8),
+    tone: r() * 2 - 1, seed: r() * 40 });
   const mesh = new THREE.Mesh(geo, M.strata);
   mesh.position.copy(centre);
   mesh.rotation.set(0, r() * Math.PI * 2, 0);
@@ -1362,7 +1838,7 @@ export function addOutcrop(world, pos, opts = {}) {
   const mat = opts.mat || M.strata;
 
   const main = rockGeo(new THREE.Vector3(S * 0.72, H / 2, S * 0.58), seed, {
-    seg: 15, bed: 0.55, bandAmp: 0.17, dip: (rr() - 0.5) * 0.13,
+    seg: 17, bed: 0.55, dip: (rr() - 0.5) * 0.13, joints: 8, jointDepth: 0.2,
   });
   main.rotateY(rr() * TAU);
   kit.put(main, mat, 0, H / 2, 0);
@@ -1377,7 +1853,7 @@ export function addOutcrop(world, pos, opts = {}) {
     const sw = S * (0.3 + rr() * 0.3);
     const d = S * (0.45 + rr() * 0.4);
     const g = rockGeo(new THREE.Vector3(sw, sh / 2, sw * (0.6 + rr() * 0.5)), seed + 31 + i * 7, {
-      seg: 11, bed: 0.5, bandAmp: 0.16, dip: (rr() - 0.35) * 0.5, bedOffset: 0,
+      seg: 11, bed: 0.5, dip: (rr() - 0.35) * 0.5, bedOffset: 0, jointDepth: 0.19,
     });
     g.rotateY(rr() * TAU);
     kit.put(g, mat, Math.cos(a) * d, sh / 2 - sh * 0.12, Math.sin(a) * d);
@@ -1387,7 +1863,8 @@ export function addOutcrop(world, pos, opts = {}) {
   if (opts.cap !== false) {
     const ch = H * 0.16;
     const g = rockGeo(new THREE.Vector3(S * 0.5, ch / 2, S * 0.42), seed + 91, {
-      seg: 13, bed: 0.4, bandAmp: 0.1, shoulder: 14, bedOffset: H,
+      seg: 13, bed: 0.4, bandAmp: 0.05, shoulder: 14, bedOffset: H,
+      crestTilt: 0.12, flare: 0.05, jointDepth: 0.1,
     });
     kit.put(g, mat, (rr() - 0.5) * S * 0.2, H - ch * 0.2, (rr() - 0.5) * S * 0.2);
   }
@@ -1476,6 +1953,7 @@ export function addRockArch(world, pos, opts = {}) {
  * rounder weathered one. All are squashed and half-buried by the caller — a
  * boulder resting exactly on the ground plane reads as a prop, not a rock.
  */
+const BOULDER_VARIANTS = 5;
 function boulderGeo(variant, seed) {
   const r = makeRng(seed * 131 + variant * 977);
   const ph = [r() * 9, r() * 9, r() * 9];
@@ -1485,14 +1963,39 @@ function boulderGeo(variant, seed) {
   const g = variant === 0 ? plateGeo(1.7, 1.4, 1.5, 0.18, 4)
     : new THREE.IcosahedronGeometry(1, variant === 2 ? 2 : 1);
   const p = g.attributes.position;
-  const flat = variant === 1 ? 0.6 : 0.9;
+  // aspect per variant: a blocky joint block, a slab on its side, a weathered
+  // round one, an upended wedge, a low flake. Three shapes, all roughly
+  // spherical, is why a cluster read as seven copies of one muffin.
+  const ASPECT = [[1, 0.9, 1], [1.25, 0.5, 1.05], [1, 0.86, 1], [0.78, 1.15, 0.9], [1.3, 0.42, 1.15]];
+  const AMP = [0.16, 0.3, 0.24, 0.28, 0.26];
+  const asp = ASPECT[variant % ASPECT.length], amp = AMP[variant % AMP.length];
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
     const n1 = Math.sin(v.x * 2.3 + ph[0]) * Math.sin(v.y * 2.9 + ph[1]) * Math.sin(v.z * 2.1 + ph[2]);
     const n2 = Math.sin(v.x * 5.1 + ph[1]) * Math.sin(v.z * 4.4 + ph[0]);
     const bed = Math.sin(v.y * 4.2 + ph[2]) * (variant === 0 ? 0.05 : 0.12);
-    const kk = 1 + n1 * (variant === 0 ? 0.14 : 0.3) + n2 * 0.1 + bed;
-    p.setXYZ(i, v.x * kk, v.y * flat * kk, v.z * kk);
+    const kk = 1 + n1 * amp + n2 * 0.1 + bed;
+    p.setXYZ(i, v.x * asp[0] * kk, v.y * asp[1] * kk, v.z * asp[2] * kk);
+  }
+  /* Rock BREAKS. Any amount of smooth noise on a sphere converges on a potato,
+   * which is what these were; what a broken boulder actually has is a handful
+   * of flat conchoidal faces meeting at edges. Flattening every vertex that
+   * pokes through a random half-space costs one dot product each and turns the
+   * potato into something with facets that catch the sun differently. One of
+   * the planes is always the bedding plane it is lying on, so it also sits. */
+  const nPlanes = variant === 2 ? 2 : 3;
+  const n = new THREE.Vector3();
+  for (let f = 0; f < nPlanes; f++) {
+    if (f === 0) n.set((r() - 0.5) * 0.5, -1, (r() - 0.5) * 0.5).normalize();
+    else n.set(r() * 2 - 1, (r() - 0.5) * 1.2, r() * 2 - 1).normalize();
+    let hi = -Infinity;
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); hi = Math.max(hi, v.dot(n)); }
+    const d = hi * (f === 0 ? 0.86 : 0.7 + r() * 0.2);
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const t = v.dot(n) - d;
+      if (t > 0) { v.addScaledVector(n, -t); p.setXYZ(i, v.x, v.y, v.z); }
+    }
   }
   g.computeVertexNormals();
   return triplanarUv(g, 2.4);
@@ -1510,17 +2013,26 @@ export function addBoulderCluster(world, centre, opts = {}) {
   const size = opts.size ?? 1.1;
   const seed = opts.seed ?? 808;
   const r = makeRng(seed * 31 + 5);
-  const lists = [[], [], []], cols = [[], [], []];
+  // one instanced draw per shape, so ask for shapes in proportion to boulders:
+  // five variants over seven rocks is four draw calls of two instances each
+  const NV = clamp(Math.round(n / 4), 2, BOULDER_VARIANTS);
+  const lists = [], cols = [];
+  for (let i = 0; i < NV; i++) { lists.push([]); cols.push([]); }
   const c = new THREE.Color();
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
     const a = r() * TAU, rad = R * Math.pow(r(), 0.62);
-    const sc = size * lerp(1.25, 0.35, rad / R) * (0.6 + r() * 0.9);
+    // a much wider size ladder: a cluster of near-identical boulders reads as
+    // set dressing, one with a 4:1 range between its biggest and its chips
+    // reads as a rockfall
+    const sc = size * lerp(1.35, 0.3, rad / R) * (0.4 + r() * r() * 1.6);
     p.set(Math.cos(a) * rad, 0, Math.sin(a) * rad);
-    p.y = groundY(world, centre.x + p.x, centre.z + p.z) - groundY(world, centre.x, centre.z) + sc * 0.2;
-    q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.5, r() * TAU, (r() - 0.5) * 0.5));
+    // how deep it is bedded VARIES: some sit proud, some are nearly swallowed.
+    // A row all buried to the same depth is a row, however good the shapes are.
+    p.y = groundY(world, centre.x + p.x, centre.z + p.z) - groundY(world, centre.x, centre.z) + sc * (0.16 - r() * 0.2);
+    q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.7, r() * TAU, (r() - 0.5) * 0.7));
     s.set(sc * (0.8 + r() * 0.5), sc * (0.6 + r() * 0.5), sc * (0.8 + r() * 0.5));
-    const v = i % 3;
+    const v = i % NV;
     lists[v].push(m.clone().compose(p, q, s));
     const t = 0.78 + r() * 0.42;
     cols[v].push(c.clone().setRGB(t, t * (0.96 + r() * 0.08), t * (0.9 + r() * 0.1)));
@@ -1532,9 +2044,13 @@ export function addBoulderCluster(world, centre, opts = {}) {
     }
   }
   const out = [];
-  for (let v = 0; v < 3; v++) {
+  for (let v = 0; v < NV; v++) {
     if (!lists[v].length) continue;
-    out.push(addInstanced(world, boulderGeo(v, seed), opts.mat || M.stone, lists[v], centre, { colors: cols[v] }));
+    let ms = 0;
+    for (const mtx of lists[v]) { mtx.decompose(_v1, _q1, _v2); ms += (_v2.x + _v2.y + _v2.z) / 3; }
+    ms = Math.max(0.05, ms / lists[v].length);   // texel density off the size it is SEEN at
+    out.push(addInstanced(world, scaleUv(boulderGeo(v, seed), ms), opts.mat || M.stone,
+      lists[v], centre, { colors: cols[v] }));
   }
   return out;
 }
@@ -1550,11 +2066,18 @@ export function addScree(world, centre, opts = {}) {
   const R = opts.radius ?? 8, inner = opts.inner ?? 0;
   const size = opts.size ?? 0.22;
   const r = makeRng((opts.seed ?? 909) * 17 + 3);
-  // The chip is authored at unit size and shrunk per instance, so its UVs have
-  // to be pre-divided by the size it will actually be seen at — otherwise the
-  // rock grain on a 15 cm chip is fifty times finer than on the cliff it fell
-  // off, and the field sparkles.
-  const chip = triplanarUv(new THREE.IcosahedronGeometry(0.5, 0), 1 / (3 * clamp(size, 0.05, 3)));
+  /* The chip is authored at unit size and shrunk per instance, so its LOCAL
+   * tile has to be multiplied by the scale it will be seen at — a piece shrunk
+   * 5× needs a 5× coarser local tile to land on the same world texel density.
+   *
+   * The previous line divided instead of multiplying (`1/(3*size)`), which put
+   * a 20 cm chip at 0.21 m per repeat against the 2.4 m of the cliff it fell
+   * off: TWELVE times finer, measured. That is the sparkle it was written to
+   * prevent. `chipScale` below is the mean of the distribution generated just
+   * under it, so the two cannot drift apart again.
+   */
+  const chipScale = Math.max(0.02, size * 0.975 * 1.0);   // mean of lerp(1.5,0.45)·(0.5+r)
+  const chip = triplanarUv(new THREE.IcosahedronGeometry(0.5, 0), ROCK_TILE / chipScale);
   chip.scale(1, 0.52, 1);
   const list = [], cols = [];
   const c = new THREE.Color();
@@ -1660,11 +2183,11 @@ function kitClose(world, kit, pos, opts, destructible = null) {
 }
 
 /** Triangle fan closing a ring of points — broken tops, open shell ends. */
-function fanCap(pts, cy, up = true, tile = 1.6) {
+function fanCap(pts, cy, up = true, tile = 1.6, jog = 0) {
   const n = pts.length;
   const k = uvm(tile);
   const pos = new Float32Array((n + 1) * 3), uv = new Float32Array((n + 1) * 2);
-  pos[1] = cy;
+  pos[1] = cy + jog;                     // the apex is off-level too
   for (let i = 0; i < n; i++) {
     const p = pts[i], o = (i + 1) * 3;
     pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
@@ -1784,7 +2307,7 @@ export function addColumn(world, pos, opts = {}) {
         new THREE.Vector3(bx * 1.2, lerp(y0 + shaftH, top, 0.5), bz * 1.2),
         new THREE.Vector3(bx * (1.4 + rr()), top, bz * (1.4 + rr())),
       ];
-      kit.put(tubeAlong(pts, 0.022, 4, 0.6), M.rebar);
+      kit.put(tubeAlong(pts, 0.022, 4, FINE_TILE), M.rebar);
     }
   } else {
     // capital: necking, echinus, abacus
@@ -1968,6 +2491,46 @@ export function addBrokenWall(world, pos, size, opts = {}) {
   panel(t * 0.42, 0, tC, core, 2.0);
   panel(t * 0.3, -t * 0.35, tB, face, 2.4);
 
+  /* ── openings are HOLES IN A WALL, not holes in a sheet ────────────────
+   * The three panels above cut every opening straight through with a 5 cm
+   * bevel, so a 1.4 m doorway in a 62 cm wall had no jamb, no sill and no head
+   * — the wall read as card with rectangles punched out of it, which is the
+   * single most cardboard thing in the arch shot. Real masonry dresses an
+   * opening: the jambs are a different stone from the field, the sill throws
+   * water clear of the wall below, and the head is either a lintel or a
+   * relieving arch. Six small merged pieces per opening, no draw calls. */
+  if (opts.dressings !== false) {
+    const dressMat = opts.trimMat || M.duracreteWarm;
+    for (const o of openings) {
+      const ow = o.w ?? 1.2, oh = o.h ?? 2.2, ox = o.x ?? 0, oy = o.y ?? 0;
+      if (oy + oh > lowest * 0.96) continue;            // the break already ate it
+      const jw = clamp(ow * 0.13, 0.1, 0.24);
+      const headY = oy + oh - (o.arched ? ow / 2 : 0);
+      for (const sx of [-1, 1]) {                       // jambs, proud of the face
+        kit.slab(dressMat, jw, headY - oy, t * 1.06, ox + sx * (ow / 2 + jw / 2 - 0.01),
+          oy + (headY - oy) / 2, 0, { tile: TRIM_TILE, seg: 3, bevel: 0.035, collide: false });
+      }
+      if (o.arched) {                                   // voussoirs over the head
+        const nV = Math.max(5, Math.round(ow * 3) | 1);
+        for (let i = 0; i < nV; i++) {
+          const a0 = (i / nV) * Math.PI, a1 = ((i + 1) / nV) * Math.PI;
+          const rI = ow / 2, rO = ow / 2 + jw * 1.5;
+          const pts = [];
+          for (let s = 0; s <= 2; s++) { const a = lerp(a0, a1, s / 2); pts.push([Math.cos(a) * rI, Math.sin(a) * rI]); }
+          for (let s = 2; s >= 0; s--) { const a = lerp(a0, a1, s / 2); pts.push([Math.cos(a) * rO, Math.sin(a) * rO]); }
+          kit.put(extrudeBeveled(pts, t * 1.04, { bevel: 0.03, tile: TRIM_TILE }), dressMat, ox, headY, 0);
+        }
+      } else {                                          // a lintel over the head
+        kit.slab(dressMat, ow + jw * 2.6, jw * 1.7, t * 1.1, ox, headY + jw * 0.85, 0,
+          { tile: TRIM_TILE, seg: 3, bevel: 0.035, collide: false });
+      }
+      if (oy > 0.35) {                                  // a window sill, throated
+        kit.slab(dressMat, ow + jw * 2.2, 0.13, t * 1.24, ox, oy - 0.05, 0,
+          { tile: TRIM_TILE, seg: 3, bevel: 0.03, rx: 0.05, collide: false });
+      }
+    }
+  }
+
   // rebar out of the top of the core
   const nBar = Math.round(clamp(w * 0.5, 2, 9) * ruin);
   for (let i = 0; i < nBar; i++) {
@@ -1980,7 +2543,7 @@ export function addBrokenWall(world, pos, size, opts = {}) {
       new THREE.Vector3(x, y - 0.35, z),
       new THREE.Vector3(x + (rr() - 0.5) * 0.2, y + up * 0.6, z + (rr() - 0.5) * 0.2),
       new THREE.Vector3(x + (rr() - 0.5) * 0.9, y + up, z + (rr() - 0.5) * 0.7),
-    ], 0.021, 4, 0.6), M.rebar);
+    ], 0.021, 4, FINE_TILE), M.rebar);
   }
   // a base course so it meets the ground with an edge, not a seam
   if (opts.plinth !== false) kit.slab(opts.trimMat || M.duracreteWarm, w * 1.02, 0.3, t * 1.2, 0, 0.15, 0, { tile: 2.4, collide: false });
@@ -2318,7 +2881,7 @@ export function addColossus(world, pos, opts = {}) {
       kit.put(tubeAlong([
         new THREE.Vector3(bx + Math.cos(a) * rad, by - armR * 0.4, Math.sin(a) * rad),
         new THREE.Vector3(bx + Math.cos(a) * rad * 1.3, by + armR * (0.8 + rr()), Math.sin(a) * rad * 1.3),
-      ], armR * 0.09, 4, 0.5), M.rebar);
+      ], armR * 0.09, 4, FINE_TILE), M.rebar);
     }
     // a wound in the shoulder where the arm tore away
     const wound = new THREE.SphereGeometry(S(0.05), 8, 6);
@@ -2358,7 +2921,7 @@ export function addRuinedGate(world, pos, opts = {}) {
       const w0 = lerp(pw, pw * 0.72, t), w1 = lerp(pw, pw * 0.72, t1);
       kit.put(extrudeBeveled([
         [-w0 / 2, 0], [w0 / 2, 0], [w1 / 2, h], [-w1 / 2, h],
-      ], lerp(pd, pd * 0.78, t), { bevel: 0.06, tile: 3.0 }), mat, x + lean * y * 8, y, 0);
+      ], lerp(pd, pd * 0.78, t), { bevel: 0.06, tile: ARCH_TILE }), mat, x + lean * y * 8, y, 0);
       kit.slab(trim, w1 * 1.12, 0.24, lerp(pd, pd * 0.78, t1) * 1.1, x, y + h, 0, { tile: 2.6, collide: false });
       y += h + 0.24;
     }
@@ -2379,7 +2942,7 @@ export function addRuinedGate(world, pos, opts = {}) {
   for (let i = 0; i < 3; i++) {
     const a = new THREE.Vector3(span * 0.2 + i * 0.5, H * 0.62 + span * 0.3, (rr() - 0.5) * pd * 0.4);
     const b = new THREE.Vector3(a.x + 1.2 + rr(), H * 0.62 - 1 - rr() * 2, a.z + (rr() - 0.5));
-    kit.put(tubeAlong(catenaryPoints(a, b, 0.3, 10), 0.045, 4, 0.5), M.rust);
+    kit.put(tubeAlong(catenaryPoints(a, b, 0.3, 10), 0.045, 4, FINE_TILE), M.rust);
   }
   // a banner nobody took down
   const bw = span * 0.22;
@@ -2418,6 +2981,8 @@ export function addHullSection(world, pos, opts = {}) {
   const trimM = opts.trimMat || M.panel;
   const rr = kit.rng;
   const na = opts.arcSeg ?? 22, nz = opts.lenSeg ?? 18;
+  const g0 = kit.groundY;
+  kit.groundY = -R;                       // the origin is the axis, not the keel
 
   // the tear line: where the shell stops, as a function of length
   const tear = [];
@@ -2427,7 +2992,7 @@ export function addHullSection(world, pos, opts = {}) {
     lo = clamp(lo + (rr() - 0.5) * 0.16, -0.86, -0.34);
     tear.push([lo * Math.PI, hi * Math.PI]);
   }
-  const k = uvm(3.2);
+  const k = uvm(ARCH_TILE);
   const build = (radius, flip) => {
     const pos3 = new Float32Array((nz + 1) * (na + 1) * 3), uv = new Float32Array((nz + 1) * (na + 1) * 2);
     for (let j = 0; j <= nz; j++) {
@@ -2514,7 +3079,7 @@ export function addHullSection(world, pos, opts = {}) {
   for (let i = 0; i < 9; i++) {
     const a = lerp(-2.3, 2.3, rr()), z = (rr() - 0.5) * L * 0.9;
     const w = 0.5 + rr() * 1.6, h = 0.4 + rr() * 1.1;
-    kit.put(slabGeo(w, 0.14, h, { tile: 1.4, seg: 3 }), rr() < 0.3 ? M.rust : trimM,
+    kit.put(slabGeo(w, 0.14, h, { tile: TRIM_TILE, seg: 3 }), rr() < 0.3 ? M.rust : trimM,
       Math.sin(a) * (R + 0.06), -Math.cos(a) * (R + 0.06), z, 0, 0, -a);
   }
   for (let i = 0; i < 3; i++) {
@@ -2524,7 +3089,7 @@ export function addHullSection(world, pos, opts = {}) {
       new THREE.Vector3(Math.sin(a) * (R - t - 0.3), -Math.cos(a) * (R - t - 0.3), z),
       new THREE.Vector3(Math.sin(a) * (R + 0.6), -Math.cos(a) * (R + 0.4), z + 1.2 + rr()),
       new THREE.Vector3(Math.sin(a) * (R + 1.4), -Math.cos(a) * (R + 0.2) - 1.2, z + 2.4 + rr() * 2),
-    ], 0.11, 5, 1.0), M.cable);
+    ], 0.11, 5, FINE_TILE), M.cable);
   }
 
   // coarse colliders: the shell reads as a wall on both flanks and a floor
@@ -2537,6 +3102,7 @@ export function addHullSection(world, pos, opts = {}) {
     }
     kit.collider(0, -R * 0.94, z, R * 0.5, 0.5, L / nCol / 2);
   }
+  kit.groundY = g0;
   return kitClose(world, kit, pos, opts);
 }
 
@@ -2568,7 +3134,7 @@ export function addGantry(world, pos, opts = {}) {
     for (const sx of [-1, 1]) {
       const foot = sx * (W / 2 + H * 0.16);
       kit.put(pipeBetween(new THREE.Vector3(foot, 0, z), new THREE.Vector3(sx * W / 2, H - 0.2, z), 0.1, 7), steel);
-      kit.slab(steel, 0.5, 0.16, 0.5, foot, 0.08, z, { tile: 1.0, collide: false });
+      kit.slab(steel, 0.5, 0.16, 0.5, foot, 0.08, z, { tile: FINE_TILE, collide: false });
     }
     for (let i = 0; i < 3; i++) {
       const y0 = H * (0.2 + i * 0.26), y1 = H * (0.2 + (i + 1) * 0.26);
@@ -2580,8 +3146,8 @@ export function addGantry(world, pos, opts = {}) {
     kit.collider(0, H / 2, z, W / 2 + H * 0.16, H / 2, 0.3);
   }
   // deck and its stiffeners
-  kit.slab(deckM, W, 0.14, L, 0, H, 0, { tile: 1.2, seg: 3 });
-  for (const sx of [-1, 1]) kit.slab(steel, 0.16, 0.34, L, sx * (W / 2 - 0.08), H + 0.1, 0, { tile: 1.6, collide: false });
+  kit.slab(deckM, W, 0.14, L, 0, H, 0, { tile: ARCH_TILE, seg: 3 });
+  for (const sx of [-1, 1]) kit.slab(steel, 0.16, 0.34, L, sx * (W / 2 - 0.08), H + 0.1, 0, { tile: TRIM_TILE, collide: false });
   addRailing(world, new THREE.Vector3(0, H + 0.07, W / 2), { kit, length: L, height: 1.05, posts: bays * 2, yaw: Math.PI / 2 });
   addRailing(world, new THREE.Vector3(0, H + 0.07, -W / 2), { kit, length: L, height: 1.05, posts: bays * 2, yaw: Math.PI / 2 });
 
@@ -2593,14 +3159,14 @@ export function addGantry(world, pos, opts = {}) {
   }
   // crane trolley on a rail under the deck, hook swinging on a cable
   const tz = (rr() - 0.5) * L * 0.5;
-  kit.slab(steel, 0.34, 0.22, L * 0.94, 0, H - 0.22, 0, { tile: 1.4, collide: false });
-  kit.slab(M.panel, 0.8, 0.5, 1.3, 0, H - 0.6, tz, { tile: 1.2, collide: false });
+  kit.slab(steel, 0.34, 0.22, L * 0.94, 0, H - 0.22, 0, { tile: TRIM_TILE, collide: false });
+  kit.slab(M.panel, 0.8, 0.5, 1.3, 0, H - 0.6, tz, { tile: TRIM_TILE, collide: false });
   kit.put(pipeBetween(new THREE.Vector3(0, H - 0.85, tz), new THREE.Vector3(0.1, H - 3.4, tz + 0.2), 0.028, 4), M.cable);
-  kit.put(torusGeo(0.28, 0.06, 5, 10, Math.PI * 1.5, 1.0), M.rust, 0.1, H - 3.7, tz + 0.2, Math.PI / 2, 0, 0.4);
+  kit.put(torusGeo(0.28, 0.06, 5, 10, Math.PI * 1.5, FINE_TILE), M.rust, 0.1, H - 3.7, tz + 0.2, Math.PI / 2, 0, 0.4);
   if (opts.lights !== false) {
     for (let i = 0; i < 3; i++) {
       const z = (i / 2 - 0.5) * L * 0.7;
-      kit.slab(M.glowCold, 0.5, 0.1, 0.24, 0, H - 0.24, z, { tile: 0.6, collide: false, seg: 2 });
+      kit.slab(M.glowCold, 0.5, 0.1, 0.24, 0, H - 0.24, z, { tile: FINE_TILE, collide: false, seg: 2 });
     }
   }
   kit.collider(0, H, 0, W / 2, 0.16, L / 2);
@@ -2689,11 +3255,11 @@ export function addCableRun(world, a, b, opts = {}) {
     const p0 = la.clone().add(off).setY(la.y - drop);
     const p1 = lb.clone().add(off).setY(lb.y - drop);
     const slack = (opts.slack ?? 0.09) * (0.7 + rr() * 0.8);
-    kit.add(tubeAlong(catenaryPoints(p0, p1, slack, opts.segments ?? 16), rad * (0.8 + rr() * 0.5), 5, 0.8), opts.mat || M.cable);
+    kit.add(tubeAlong(catenaryPoints(p0, p1, slack, opts.segments ?? 16), rad * (0.8 + rr() * 0.5), 5, FINE_TILE), opts.mat || M.cable);
   }
   if (opts.brackets !== false) {
     for (const p of [la, lb]) {
-      kit.put(slabGeo(0.3, 0.22, 0.3, { tile: 0.8, seg: 3 }), M.darkSteel, p.x, p.y, p.z);
+      kit.put(slabGeo(0.3, 0.22, 0.3, { tile: FINE_TILE, seg: 3 }), M.darkSteel, p.x, p.y, p.z);
     }
   }
   return kitClose(world, kit, a, opts);
@@ -2730,10 +3296,10 @@ export function addCrateStack(world, pos, opts = {}) {
         dyn.push([x, y + s * 0.5, z, s]);                     // this one is a live prop
         continue;
       }
-      const box = slabGeo(s, s * 0.88, s, { bevel: s * 0.055, seg: 3, tile: 0.5 });
+      const box = slabGeo(s, s * 0.88, s, { bevel: s * 0.055, seg: 3, tile: FINE_TILE });
       kit.put(box, rr() < 0.32 ? M.crateDark : M.crate, x, y + s * 0.44, z, 0, jitter, 0);
       for (const ry of [s * 0.28, -s * 0.28]) {               // banding ribs
-        kit.put(slabGeo(s * 1.03, s * 0.07, s * 1.03, { bevel: s * 0.02, seg: 2, tile: 0.4 }),
+        kit.put(slabGeo(s * 1.03, s * 0.07, s * 1.03, { bevel: s * 0.02, seg: 2, tile: FINE_TILE }),
           M.crateDark, x, y + s * 0.44 + ry, z, 0, jitter, 0);
       }
       kit.collider(x, y + s * 0.44, z, s / 2, s * 0.44, s / 2, jitter, 0.85);
@@ -2798,8 +3364,8 @@ export function addTarp(world, pos, opts = {}) {
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const a = new THREE.Vector3(sx * w * 0.46, h * 0.16, sz * d * 0.46);
       const b = new THREE.Vector3(sx * (w * 0.5 + 0.5 + rr() * 0.4), 0.02, sz * (d * 0.5 + 0.5 + rr() * 0.4));
-      kit.add(tubeAlong(catenaryPoints(a, b, 0.02, 5), 0.018, 4, 0.4), M.cable);
-      kit.put(cylGeo(0.03, 0.02, 0.3, 5, 1.2), M.rust, b.x, 0.1, b.z, 0.2, 0, 0.15);
+      kit.add(tubeAlong(catenaryPoints(a, b, 0.02, 5), 0.018, 4, FINE_TILE), M.cable);
+      kit.put(cylGeo(0.03, 0.02, 0.3, 5, FINE_TILE), M.rust, b.x, 0.1, b.z, 0.2, 0, 0.15);
     }
   }
   kit.collider(0, h * 0.35, 0, w * 0.42, h * 0.35, d * 0.42);
@@ -2838,7 +3404,7 @@ export function addScaffold(world, pos, opts = {}) {
     for (let b = 0; b < nb; b++) {
       if (l === lifts && rr() < 0.25) continue;              // a plank has been taken
       const z = -D / 2 + (b + 0.5) * (D / nb);
-      kit.put(slabGeo(W * 0.98, 0.05, D / nb * 0.9, { bevel: 0.012, seg: 3, tile: 0.9 }), board, 0, y + 0.05, z, 0, (rr() - 0.5) * 0.02, 0);
+      kit.put(slabGeo(W * 0.98, 0.05, D / nb * 0.9, { bevel: 0.012, seg: 3, tile: TRIM_TILE }), board, 0, y + 0.05, z, 0, (rr() - 0.5) * 0.02, 0);
     }
     kit.collider(0, y + 0.05, 0, W / 2, 0.09, D / 2);
   }
@@ -2904,14 +3470,14 @@ export function addAntenna(world, pos, opts = {}) {
   }
   // whip and lamp
   kit.put(cylGeo(0.015, 0.035, H * 0.24, 5, 1.2), steel, 0, H * 1.1, 0);
-  kit.put(tubeUv(new THREE.SphereGeometry(0.12, 8, 6), TAU * 0.12, Math.PI * 0.12, 0.5), M.glowRed, 0, H * 1.23, 0);
+  kit.put(tubeUv(new THREE.SphereGeometry(0.12, 8, 6), TAU * 0.12, Math.PI * 0.12, FINE_TILE), M.glowRed, 0, H * 1.23, 0);
   // guy wires
   if (opts.guys !== false) {
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.6;
       const anchor = new THREE.Vector3(Math.cos(a) * H * 0.55, 0.1, Math.sin(a) * H * 0.55);
-      kit.add(tubeAlong(catenaryPoints(leg(i, 0.82), anchor, 0.012, 8), 0.022, 4, 0.6), M.cable);
-      kit.put(cylGeo(0.09, 0.13, 0.4, 6, 1.2), M.duracreteDark, anchor.x, 0.2, anchor.z);
+      kit.add(tubeAlong(catenaryPoints(leg(i, 0.82), anchor, 0.012, 8), 0.022, 4, FINE_TILE), M.cable);
+      kit.put(cylGeo(0.09, 0.13, 0.4, 6, FINE_TILE), M.duracreteDark, anchor.x, 0.2, anchor.z);
     }
   }
   kit.slab(M.duracrete, base * 3, 0.32, base * 3, 0, 0.16, 0, { tile: 1.6 });
@@ -2931,18 +3497,18 @@ export function addLamp(world, pos, opts = {}) {
   const reach = opts.reach ?? H * 0.22;
   const steel = opts.mat || M.darkSteel;
   const glow = opts.glowMat || M.glowAmber;
-  kit.slab(M.duracrete, 0.6, 0.26, 0.6, 0, 0.13, 0, { tile: 1.2 });
-  kit.put(cylGeo(0.075, 0.11, H, 8, 1.2), steel, 0, H / 2 + 0.2, 0);
+  kit.slab(M.duracrete, 0.6, 0.26, 0.6, 0, 0.13, 0, { tile: TRIM_TILE });
+  kit.put(cylGeo(0.075, 0.11, H, 8, TRIM_TILE), steel, 0, H / 2 + 0.2, 0);
   // the head cranes over
   kit.add(tubeAlong([
     new THREE.Vector3(0, H * 0.86, 0), new THREE.Vector3(0, H + 0.16, 0),
     new THREE.Vector3(reach * 0.7, H + 0.24, 0), new THREE.Vector3(reach, H + 0.14, 0),
-  ], 0.062, 6, 1.0), steel);
+  ], 0.062, 6, FINE_TILE), steel);
   const cowl = revolveGeo([
     [0.05, 0.3], [0.2, 0.22], [0.3, 0.06], [0.31, 0], [0.28, -0.02],
-  ], { seg: 14, tile: 1.0 });
+  ], { seg: 14, tile: FINE_TILE });
   kit.put(cowl, steel, reach, H + 0.02, 0);
-  kit.put(cylGeo(0.26, 0.2, 0.09, 12, 1.2), glow, reach, H - 0.03, 0);
+  kit.put(cylGeo(0.26, 0.2, 0.09, 12, FINE_TILE), glow, reach, H - 0.03, 0);
   if (opts.light) kit.light(reach, H - 0.2, 0, opts);
   kit.collider(0, H / 2, 0, 0.14, H / 2, 0.14);
   return kitClose(world, kit, pos, opts);
@@ -2997,7 +3563,7 @@ export function addSign(world, pos, opts = {}) {
   kit.put(back, M.panel, 0, y, 0);
   const faceG = new THREE.PlaneGeometry(w * 0.94, h * 0.86);
   kit.put(faceG, SIGN_MAT, 0, y, 0.065);
-  kit.put(slabGeo(w * 0.98, 0.05, 0.04, { bevel: 0.012, seg: 2, tile: 0.5 }),
+  kit.put(slabGeo(w * 0.98, 0.05, 0.04, { bevel: 0.012, seg: 2, tile: FINE_TILE }),
     rr() < 0.5 ? M.glowAmber : M.glowCold, 0, y - h / 2 - 0.03, 0.08);
   if (opts.post !== false) {
     for (const sx of [-1, 1]) {
@@ -3006,7 +3572,7 @@ export function addSign(world, pos, opts = {}) {
     kit.collider(0, (y + h / 2) / 2, 0, w * 0.4, (y + h / 2) / 2, 0.12);
   } else {
     for (const sx of [-1, 1]) {
-      kit.put(slabGeo(0.06, 0.06, 0.34, { bevel: 0.015, seg: 2, tile: 0.4 }), M.darkSteel, sx * w * 0.35, y, -0.2);
+      kit.put(slabGeo(0.06, 0.06, 0.34, { bevel: 0.015, seg: 2, tile: FINE_TILE }), M.darkSteel, sx * w * 0.35, y, -0.2);
     }
   }
   return kitClose(world, kit, pos, opts);
@@ -3044,7 +3610,9 @@ function rubbleGeo(variant, seed) {
     g = new THREE.TetrahedronGeometry(0.62, 0);
     g.scale(1.1, 0.7, 0.9);
   }
-  return triplanarUv(g, 1.1);
+  // authored at ~1 m; addDebrisField re-scales the UVs by the mean instance
+  // scale so a chip and the slab it broke off share one texel density
+  return triplanarUv(g, ARCH_TILE);
 }
 
 /**
@@ -3093,7 +3661,16 @@ export function addDebrisField(world, centre, opts = {}) {
   const out = [];
   for (let v = 0; v < 3; v++) {
     if (!lists[v].length) continue;
-    const g = rubbleGeo(v, seed);
+    // Same trap as addScree: the three rubble shapes are authored at ~1 m and
+    // then scaled per instance, and the small chips end up 3× finer than the
+    // slabs beside them. Re-UV each variant by the mean scale it ACTUALLY got,
+    // read off the matrices that were just generated.
+    let ms = 0;
+    for (const mtx of lists[v]) { mtx.decompose(_v1, _q1, _v2); ms += (_v2.x + _v2.y + _v2.z) / 3; }
+    ms = Math.max(0.05, ms / lists[v].length);
+    // shrunk by `ms`, so its LOCAL uv has to be multiplied by ms to land on the
+    // same world density — divide here and the chips get finer, not coarser
+    const g = scaleUv(rubbleGeo(v, seed), ms);
     const mm = v === 0 ? mat : chipMat;
     if (composing) {
       const geos = [];
@@ -3116,12 +3693,15 @@ export function addDebrisField(world, centre, opts = {}) {
         new THREE.Vector3(x, yy, z),
         new THREE.Vector3(x + (r() - 0.5) * 1.2, yy + 0.3 + r() * 0.5, z + (r() - 0.5) * 1.2),
         new THREE.Vector3(x + (r() - 0.5) * 2.4, yy + 0.2 + r() * 0.9, z + (r() - 0.5) * 2.4),
-      ], 0.024 * scale, 4, 0.6));
+      ], 0.024 * scale, 4, FINE_TILE / Math.max(0.2, scale)));
     }
     const merged = mergeGeos(bars);
     if (merged) {
       if (composing) opts.kit.put(merged, M.rebar, 0, 0, 0);
-      else out.push(addStatic(world, new THREE.Mesh(merged, M.rebar), centre, IDENT));
+      else {
+        weatherGeo(merged, { strength: M.rebar.userData.weather, tone: r() * 2 - 1, seed: r() * 40, soilH: 0.7 });
+        out.push(addStatic(world, new THREE.Mesh(merged, M.rebar), centre, IDENT));
+      }
     }
   }
   return composing ? opts.kit : out;
@@ -3238,7 +3818,7 @@ export function addOutpost(world, pos, opts = {}) {
   const sw = R * 0.55, sd = R * 0.42, sh = 3.2;
   kit.slab(M.panel, sw, sh, 0.3, 0, sh / 2, -sd / 2, { tile: 2.4, seg: 3 });
   for (const sx of [-1, 1]) kit.slab(M.panel, 0.3, sh, sd, sx * sw / 2, sh / 2, 0, { tile: 2.4, seg: 3 });
-  kit.slab(M.hull, sw * 1.12, 0.18, sd * 1.18, 0, sh + 0.2, 0.1, { tile: 2.8, seg: 3, rx: -0.09, collide: false });
+  kit.slab(M.hull, sw * 1.12, 0.18, sd * 1.18, 0, sh + 0.2, 0.1, { tile: ARCH_TILE, seg: 3, rx: -0.09, collide: false });
   for (let i = 0; i < 4; i++) {
     kit.slab(M.rust, sw * 1.1, 0.06, 0.1, 0, sh + 0.3, -sd / 2 + i * sd * 0.32, { tile: 1.0, seg: 2, collide: false });
   }

@@ -46,9 +46,13 @@ const VERT = /* glsl */`
   uniform float uWindK;     // how hard the wind carries this pool
   uniform float uCurl;      // how much it tumbles as it goes
   uniform float uBounce;    // 0 = settle, >0 = skitter and die
+  uniform float uThin;      // how far a stretched billboard narrows across
+  uniform float uStretchMax;
+  uniform vec3 uSunDir;     // world-space direction TO the key light
   varying vec2 vUv;
   varying vec4 vColor;
   varying float vLife;
+  varying vec3 vSun;        // the key light in the billboard's own frame
 
   void main(){
     float t = uTime - aExtra.z;
@@ -58,6 +62,7 @@ const VERT = /* glsl */`
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // cull off-screen
       vColor = vec4(0.0);
       vUv = uv;
+      vSun = vec3(0.0, 0.0, 1.0);
       #ifdef USE_FOG
         vFogDepth = 0.0;
       #endif
@@ -123,11 +128,26 @@ const VERT = /* glsl */`
       float vl = length(v);
       vec3 dir = vl > 0.001 ? v / vl : vec3(0.0,1.0,0.0);
       vec3 side = normalize(cross(dir, normalize(cameraPosition - pos)) + vec3(1e-5));
-      float stretch = 1.0 + min(vl * uStretch, 6.0) * (1.0 - grounded * 0.8);
-      offset = dir * q.y * size * stretch + side * q.x * size;
+      float stretch = 1.0 + min(vl * uStretch, uStretchMax) * (1.0 - grounded * 0.8);
+      // A spark is not a glowing pea. Stretching a billboard along its
+      // velocity without narrowing it across gives a lozenge that gets FATTER
+      // the faster it goes; narrowing by the same factor turns it into the
+      // hairline streak an incandescent particle actually is.
+      float narrow = 1.0 / (1.0 + (stretch - 1.0) * uThin);
+      offset = dir * q.y * size * stretch + side * q.x * size * narrow;
     } else {
       offset = camRight * q.x * size + camUp * q.y * size;
     }
+
+    #ifdef LIT_POOL
+      // The key light in the billboard's own frame, with the spin undone so the
+      // fragment shader can read its sphere normal straight off the uv.
+      vec3 camFwd = vec3(modelViewMatrix[0][2], modelViewMatrix[1][2], modelViewMatrix[2][2]);
+      vec3 sl = vec3(dot(uSunDir, camRight), dot(uSunDir, camUp), dot(uSunDir, camFwd));
+      vSun = vec3(sl.x * cs + sl.y * sn, -sl.x * sn + sl.y * cs, sl.z);
+    #else
+      vSun = vec3(0.0, 0.0, 1.0);
+    #endif
 
     vec4 mv = modelViewMatrix * vec4(pos + offset, 1.0);
     vec4 mvPosition = mv;
@@ -145,14 +165,34 @@ const FRAG = /* glsl */`
   uniform sampler2D uMap;
   uniform vec3 uColorEnd;
   uniform float uColorShift;
+  uniform vec3 uShadeSun;   // tint+level on the lit side of a puff
+  uniform vec3 uShadeSky;   // tint+level on the shadowed side
+  uniform float uWrap;      // how far the light wraps round it
   varying vec2 vUv;
   varying vec4 vColor;
   varying float vLife;
+  varying vec3 vSun;
   void main(){
     vec4 tex = texture2D(uMap, vUv);
     vec3 c = mix(vColor.rgb, uColorEnd, vLife * uColorShift);
     float a = tex.a * vColor.a;
     if(a < 0.004) discard;
+
+    /* Smoke and dust are the only things in the frame with volume and no
+     * lighting, which is exactly why they read as grey stickers. Each billboard
+     * is shaded as the sphere it is standing in for: a hemisphere normal off
+     * the quad's own uv, wrapped diffuse against the level's key light. The two
+     * shade colours average to 1, so this only ever adds FORM — it cannot
+     * silently rebalance how bright the smoke in a level is. */
+    #ifdef LIT_POOL
+      vec2 q = vUv - 0.5;
+      float r2 = dot(q, q) * 4.0;
+      float nz = sqrt(max(0.0, 1.0 - r2));
+      float ndl = dot(vec3(q * 2.0, nz), vSun);
+      float wrapd = clamp((ndl + uWrap) / (1.0 + uWrap), 0.0, 1.0);
+      c *= mix(uShadeSky, uShadeSun, wrapd * wrapd * (3.0 - 2.0 * wrapd));
+    #endif
+
     gl_FragColor = vec4(c * tex.rgb, a);
 
     // Fog, done by hand because the stock chunk is wrong for additive blending:
@@ -206,6 +246,8 @@ export class ParticlePool {
       uTime: { value: 0 },
       uMap: { value: opts.map },
       uStretch: { value: opts.stretch ?? 0 },
+      uStretchMax: { value: opts.stretchMax ?? 6 },
+      uThin: { value: opts.thin ?? 0 },
       uGrow: { value: opts.grow ?? 0 },
       uSpin: { value: opts.spin ?? 0 },
       uFadeIn: { value: opts.fadeIn ?? 0.05 },
@@ -214,11 +256,20 @@ export class ParticlePool {
       uBounce: { value: opts.bounce ?? 0 },
       uColorEnd: { value: new THREE.Color(opts.colorEnd ?? 0xffffff) },
       uColorShift: { value: opts.colorShift ?? 0 },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.82, 0.4).normalize() },
+      uShadeSun: { value: new THREE.Vector3(1, 1, 1) },
+      uShadeSky: { value: new THREE.Vector3(1, 1, 1) },
+      uWrap: { value: opts.wrap ?? 0.45 },
     });
+
+    const defines = {};
+    if (opts.additive) defines.EMISSIVE_POOL = '';
+    if (opts.lit) defines.LIT_POOL = '';
+    this.lit = !!opts.lit;
 
     const mat = new THREE.ShaderMaterial({
       uniforms,
-      defines: opts.additive ? { EMISSIVE_POOL: '' } : {},
+      defines,
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -241,8 +292,15 @@ export class ParticlePool {
   /**
    * @param {THREE.Vector3} pos
    * @param {THREE.Vector3} vel
+   *
+   * `hdr` multiplies the colour past 1. Nothing in this file used to: the
+   * colour attribute was a plain 0..1 sRGB swatch and the fragment could not
+   * emit more than 1.0, so not one spark, ember or muzzle flash in the game
+   * ever crossed the bloom threshold (1.8 in linear luminance) — the blade was
+   * the only thing that glowed, and every impact was a sticker beside it.
    */
-  spawn(pos, vel, { life = 1, size = 0.1, drag = 1.2, gravity = 9, color = 0xffffff, alpha = 1, floor = -999 } = {}) {
+  spawn(pos, vel, { life = 1, size = 0.1, drag = 1.2, gravity = 9, color = 0xffffff,
+    alpha = 1, floor = -999, hdr = 1 } = {}) {
     const i = this.head;
     this.head = (this.head + 1) % this.max;
     if (this.live < this.max) this.live++;
@@ -252,12 +310,33 @@ export class ParticlePool {
     this.aParams.array[i4] = life; this.aParams.array[i4 + 1] = size;
     this.aParams.array[i4 + 2] = drag; this.aParams.array[i4 + 3] = gravity;
     const c = _col.set(color);
-    this.aColor.array[i4] = c.r; this.aColor.array[i4 + 1] = c.g;
-    this.aColor.array[i4 + 2] = c.b; this.aColor.array[i4 + 3] = alpha;
+    this.aColor.array[i4] = c.r * hdr; this.aColor.array[i4 + 1] = c.g * hdr;
+    this.aColor.array[i4 + 2] = c.b * hdr; this.aColor.array[i4 + 3] = alpha;
     this.aExtra.array[i3] = floor; this.aExtra.array[i3 + 1] = rng();
     this.aExtra.array[i3 + 2] = this.time;
     this._dirty = true;
     return i;
+  }
+
+  /**
+   * Aim the fake volumetric shading at the level's key light. `sun` and `sky`
+   * are unit-mean TINTS; the levels are derived here, from this pool's own
+   * wrap, so that the shading averages to exactly 1 over all key directions.
+   *
+   * The mean of the wrapped-and-smoothed term over a uniformly distributed
+   * key direction and the visible hemisphere of a puff is (1 + wrap)/4 — so
+   * splitting the contrast about that point is what makes this add form
+   * without ever changing how bright the smoke in a level is. A fixed split
+   * would quietly brighten a tightly-wrapped pool and darken a loose one.
+   */
+  setKey(dir, sun, sky) {
+    if (!this.lit) return;
+    const u = this.mat.uniforms;
+    u.uSunDir.value.copy(dir);
+    const k = 0.25 * (1 + u.uWrap.value);
+    const S = 0.78;                       // lit-to-shadow contrast across a puff
+    u.uShadeSun.value.copy(sun).multiplyScalar(1 + (1 - k) * S);
+    u.uShadeSky.value.copy(sky).multiplyScalar(1 - k * S);
   }
 
   update(dt) {
@@ -285,6 +364,9 @@ const _v3 = new THREE.Vector3();
 const _q2 = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const _scl = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _shadeA = new THREE.Vector3();
+const _shadeB = new THREE.Vector3();
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Chips — debris with actual physics                                    */
@@ -305,9 +387,26 @@ export class ChipField {
     this.max = Math.max(8, Math.floor(opts.max ?? 240));
     const geo = new THREE.TetrahedronGeometry(1, 0);
     geo.scale(1, 0.62, 1);
+    // Per-instance heat. Debris that has just been blown off a wall, or parted
+    // by a blade, is GLOWING for the first second or two, and a black chip
+    // tumbling out of a fireball is the single loudest thing in a frame that
+    // says the explosion and the debris were authored by different people.
+    this.aHeat = new THREE.InstancedBufferAttribute(new Float32Array(this.max), 1);
+    this.aHeat.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aHeat', this.aHeat);
     const mat = new THREE.MeshStandardMaterial({
       color: 0xffffff, roughness: 0.88, metalness: 0.04, flatShading: true,
     });
+    mat.onBeforeCompile = (s) => {
+      s.vertexShader = 'attribute float aHeat;\nvarying float vHeat;\n' + s.vertexShader
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvHeat = aHeat;');
+      s.fragmentShader = 'varying float vHeat;\n' + s.fragmentShader
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+          // a crude blackbody: dull red at the end of it, straw-white at the
+          // start, and over 1.0 while it is hot so the bloom pass sees it
+          totalEmissiveRadiance += mix(vec3(1.5, 0.20, 0.02), vec3(3.2, 2.0, 0.8),
+            clamp(vHeat * 1.6 - 0.6, 0.0, 1.0)) * vHeat;`);
+    };
     this.mesh = new THREE.InstancedMesh(geo, mat, this.max);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -327,7 +426,7 @@ export class ChipField {
         alive: false, age: 0, life: 1, scale: 0.05, rest: 0.3, floor: -999,
         pos: new THREE.Vector3(), vel: new THREE.Vector3(),
         spin: new THREE.Vector3(), quat: new THREE.Quaternion(),
-        color: new THREE.Color(), sleep: 0,
+        color: new THREE.Color(), sleep: 0, heat: 0, cool: 1.4,
       });
       this.free.push(i);
     }
@@ -344,11 +443,12 @@ export class ChipField {
     return i;
   }
 
-  spawn(pos, vel, { life = 6, size = 0.05, color = 0x9a8a72, floor = -999, restitution = 0.32, spin = 12 } = {}) {
+  spawn(pos, vel, { life = 6, size = 0.05, color = 0x9a8a72, floor = -999, restitution = 0.32,
+    spin = 12, heat = 0, cool = 1.4 } = {}) {
     const i = this._take();
     const c = this.chips[i];
     c.alive = true; c.age = 0; c.life = life; c.scale = size; c.rest = restitution;
-    c.floor = floor; c.sleep = 0;
+    c.floor = floor; c.sleep = 0; c.heat = heat; c.cool = cool;
     c.pos.copy(pos);
     c.vel.copy(vel);
     c.spin.set((rng() - 0.5) * spin, (rng() - 0.5) * spin, (rng() - 0.5) * spin);
@@ -394,11 +494,16 @@ export class ChipField {
       _m.compose(c.pos, c.quat, _scl);
       this.mesh.setMatrixAt(n, _m);
       this.mesh.setColorAt(n, c.color);
+      // Newton's law of cooling is close enough, and a chip on the ground
+      // sheds heat into it faster than one still in the air.
+      this.aHeat.array[n] = c.heat > 0.002
+        ? c.heat * Math.exp(-c.age / (c.cool * (c.sleep ? 0.55 : 1))) : 0;
       n++;
     }
     this.mesh.count = n;
     if (n > 0) {
       this.mesh.instanceMatrix.needsUpdate = true;
+      this.aHeat.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
   }
@@ -592,8 +697,13 @@ export class Particles {
 
     // windK is how completely the air owns each pool: 1 means it ends up
     // travelling with the wind, 0 means it is too heavy to care.
-    this.sparks = new ParticlePool(scene, { max: s(4200), map: spark, additive: true, stretch: 0.055,
-      colorEnd: 0xff4400, colorShift: 0.9, fadeIn: 0.02, renderOrder: 12,
+    //
+    // stretch/thin are what make a spark a spark: at 12 m/s a spark here is
+    // 3.6 cm long and 5 mm across. The old numbers gave a 5 cm blob stretched
+    // to 7, which is what put glowing peas all over every impact.
+    this.sparks = new ParticlePool(scene, { max: s(4200), map: spark, additive: true,
+      stretch: 0.17, stretchMax: 14, thin: 0.9,
+      colorEnd: 0xff3000, colorShift: 0.95, fadeIn: 0.015, renderOrder: 12,
       bounce: 5.5, windK: 0.05 });
     this.embers = new ParticlePool(scene, { max: s(1400), map: soft, additive: true,
       colorEnd: 0x882200, colorShift: 1.0, grow: -0.4, renderOrder: 12,
@@ -602,14 +712,15 @@ export class Particles {
       colorShift: 0.6, renderOrder: 12 });
     this.smoke = new ParticlePool(scene, { max: s(1600), map: smoke, additive: false, grow: 2.6,
       spin: 1, colorEnd: 0x2a2a2e, colorShift: 0.8, fadeIn: 0.12, renderOrder: 9,
-      windK: 1.0, curl: 0.55 });
+      windK: 1.0, curl: 0.55, lit: true, wrap: 0.55 });
     this.dust = new ParticlePool(scene, { max: s(5200), map: smoke, additive: false, grow: 2.0,
       spin: 0.6, colorEnd: 0xa08050, colorShift: 0.35, fadeIn: 0.08, renderOrder: 8,
-      windK: 0.7, curl: 0.35 });
+      windK: 0.7, curl: 0.35, lit: true, wrap: 0.7 });
     this.grit = new ParticlePool(scene, { max: s(3600), map: soft, additive: false, grow: -0.2,
-      renderOrder: 8, bounce: 4.0, windK: 0.12 });
+      renderOrder: 8, bounce: 4.0, windK: 0.12, lit: true, wrap: 0.35 });
     this.water = new ParticlePool(scene, { max: s(2000), map: soft, additive: false, grow: 0.4,
-      colorEnd: 0x9fd8ff, colorShift: 0.5, renderOrder: 9, bounce: 3.2, windK: 0.1 });
+      colorEnd: 0x9fd8ff, colorShift: 0.5, renderOrder: 9, bounce: 3.2, windK: 0.1,
+      lit: true, wrap: 0.3 });
     this.pools = [this.sparks, this.embers, this.plasma, this.smoke, this.dust, this.grit, this.water];
 
     this.chips = new ChipField(scene, { max: Math.max(48, Math.floor(260 * scale)) });
@@ -622,11 +733,51 @@ export class Particles {
     this._steps = Array.from({ length: 8 }, () => ({ x: 0, z: 0, t: -99 }));
     this._stepHead = 0;
     this._clock = 0;
+    this._keyTimer = 99;
+    this.scene = scene;
     ground.fx = this;
+    this._syncKey();
+  }
+
+  /**
+   * Find the level's key light and hand it to the pools that are lit by it.
+   *
+   * The lights are dug out of the scene rather than injected, for the same
+   * reason Scenery does it: nothing that constructs a Particles knows about
+   * the lighting rig, and a level can re-light itself at any time. Both tints
+   * are normalised to unit mean, and setKey splits the levels about each
+   * pool's own mean, so the shading can only ever add form — it can never
+   * change how bright the smoke in a level is, which is the one thing a
+   * change here must not do silently.
+   */
+  _syncKey() {
+    let sun = null, hemi = null;
+    for (const c of this.scene.children) {
+      if (c.isDirectionalLight && (!sun || (c.castShadow && !sun.castShadow))) sun = c;
+      else if (c.isHemisphereLight && !hemi) hemi = c;
+    }
+    const unit = (col, out) => {
+      out.set(col ? col.r : 1, col ? col.g : 1, col ? col.b : 1);
+      const m = (out.x + out.y + out.z) / 3;
+      return m > 1e-4 ? out.multiplyScalar(1 / m) : out.set(1, 1, 1);
+    };
+    if (sun) {
+      _dir.copy(sun.position);
+      if (sun.target) _dir.sub(sun.target.position);
+      if (_dir.lengthSq() < 1e-8) _dir.set(0.4, 0.9, 0.3);
+      _dir.normalize();
+    } else _dir.set(0.4, 0.82, 0.4).normalize();
+    unit(sun && sun.color, _shadeA);
+    unit(hemi && hemi.color, _shadeB);
+    for (const p of this.pools) p.setKey(_dir, _shadeA, _shadeB);
   }
 
   update(dt) {
     this._clock += dt;
+    // The rig can be re-hung at any moment (a level change, a night section),
+    // and scanning a scene's top level twice a second costs nothing.
+    this._keyTimer += dt;
+    if (this._keyTimer > 0.5) { this._keyTimer = 0; this._syncKey(); }
     for (const p of this.pools) p.update(dt);
     this.chips.update(dt);
     this.decals.update(dt);
@@ -675,49 +826,91 @@ export class Particles {
 
   /* ── recipes ───────────────────────────────────────────────────────── */
 
+  /**
+   * A shower of incandescent particles.
+   *
+   * Three populations, because one never reads as sparks: a dense spray of
+   * fast hairline streaks, a few heavy ones that outlive the rest and skitter
+   * on the ground, and slow embers that float off the top. All of them are
+   * authored ABOVE 1.0 so the bloom pass sees them — an impact has to put
+   * light into the frame, not decals.
+   */
   sparkBurst(pos, normal, count = 18, opts = {}) {
-    const n = Math.max(1, Math.round(count * this.scale));
+    const n = Math.max(2, Math.round(count * 1.7 * this.scale));
     const speed = opts.speed ?? 9;
     const color = opts.color ?? 0xffd9a0;
+    const hdr = opts.hdr ?? 3.4;
     // One heightfield lookup per burst, not per spark. Without it every spark
     // in the game falls through the world instead of skittering along it.
     const floor = opts.floor ?? (ground.heightAt(pos.x, pos.z) ?? -999);
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       if (normal) _v.lerp(normal, 0.45).normalize();
-      _v.multiplyScalar(speed * (0.35 + rng() * 1.0));
+      // A cubed roll: most sparks are ordinary, a few are the ones that carry
+      // right across the frame. An even spread reads as a puff, not a strike.
+      const r = rng();
+      _v.multiplyScalar(speed * (0.3 + r * r * r * 2.6));
       this.sparks.spawn(pos, _v, {
-        life: 0.35 + rng() * 0.55, size: 0.035 + rng() * 0.05,
-        drag: 1.6, gravity: 16, color, alpha: 1, floor,
+        life: 0.3 + rng() * 0.5 + r * 0.5, size: 0.008 + rng() * 0.013,
+        drag: 1.5, gravity: 15, color, alpha: 1, hdr, floor,
       });
     }
     if (opts.embers !== false) {
-      for (let i = 0; i < n * 0.3; i++) {
+      for (let i = 0; i < n * 0.22; i++) {
         _v.set(rng() * 2 - 1, rng() * 1.4, rng() * 2 - 1).normalize().multiplyScalar(speed * 0.35 * rng());
-        this.embers.spawn(pos, _v, { life: 0.9 + rng(), size: 0.05 + rng() * 0.06, drag: 2.4,
-          gravity: -1.2, color: 0xff9040, alpha: 0.85, floor: -999 });
+        this.embers.spawn(pos, _v, { life: 0.9 + rng(), size: 0.022 + rng() * 0.03, drag: 2.4,
+          gravity: -1.2, color: 0xff9040, alpha: 0.9, hdr: 2.2, floor: -999 });
       }
+    }
+  }
+
+  /**
+   * Molten spatter: heavy, slow, long-lived droplets that arc, hit the deck
+   * and cool there. Sparks alone are all one speed and one lifetime; this is
+   * what makes a cut through metal look like it went through metal.
+   */
+  spatter(pos, dir, count = 5, color = 0xffb050, opts = {}) {
+    const n = Math.max(1, Math.round(count * this.scale));
+    const floor = opts.floor ?? (ground.heightAt(pos.x, pos.z) ?? -999);
+    for (let i = 0; i < n; i++) {
+      _v.set(rng() * 2 - 1, rng() * 0.9 + 0.35, rng() * 2 - 1).normalize()
+        .multiplyScalar((opts.speed ?? 3.2) * (0.4 + rng()));
+      if (dir) _v.addScaledVector(dir, (opts.speed ?? 3.2) * 0.5 * rng());
+      this.sparks.spawn(pos, _v, {
+        life: 1.1 + rng() * 1.0, size: 0.020 + rng() * 0.022,
+        drag: 0.55, gravity: 20, color, alpha: 1, hdr: opts.hdr ?? 2.4, floor,
+      });
     }
   }
 
   /** The cauterised flare when a blade parts something. */
   cutFlare(pos, dir, color = 0x57c9ff, count = 26, opts = {}) {
-    const n = Math.max(2, Math.round(count * this.scale));
+    const n = Math.max(3, Math.round(count * 1.6 * this.scale));
     const gh = ground.heightAt(pos.x, pos.z);
     const floor = gh ?? -999;
     for (let i = 0; i < n; i++) {
-      _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize()
-        .multiplyScalar(2 + rng() * 7);
+      _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
+      const r = rng();
+      _v.multiplyScalar(1.6 + r * r * 11);
       if (dir) _v.addScaledVector(dir, 3 * rng());
-      this.sparks.spawn(pos, _v, { life: 0.3 + rng() * 0.5, size: 0.03 + rng() * 0.05,
-        drag: 2.2, gravity: 14, color: i % 3 === 0 ? color : 0xfff0c0, alpha: 1, floor });
+      // Every third spark carries the BLADE's colour, not the metal's: what
+      // comes off a saber cut is partly the blade itself.
+      this.sparks.spawn(pos, _v, { life: 0.26 + rng() * 0.5, size: 0.008 + rng() * 0.012,
+        drag: 2.0, gravity: 14, color: i % 3 === 0 ? color : 0xfff0c0,
+        alpha: 1, hdr: i % 3 === 0 ? 4.2 : 3.6, floor });
     }
-    for (let i = 0; i < n * 0.25; i++) {
+    this.spatter(pos, dir, Math.round(n * 0.16), 0xffc070, { speed: 2.6, floor });
+    for (let i = 0; i < n * 0.22; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.5 + 0.3, rng() * 2 - 1).normalize().multiplyScalar(0.7 + rng());
       this.smoke.spawn(pos, _v, { life: 1.4 + rng() * 1.2, size: 0.12 + rng() * 0.12,
-        drag: 1.4, gravity: -0.5, color: 0x555a60, alpha: 0.34 });
+        drag: 1.4, gravity: -0.5, color: 0x6a6f76, alpha: 0.40 });
     }
-    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.18, size: 0.55, drag: 1, gravity: 0, color, alpha: 0.9 });
+    // The flash. Two lobes: a small white-hot one that is over in a twelfth of
+    // a second, and a wider one in the blade's colour behind it.
+    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.09, size: 0.30, drag: 1, gravity: 0,
+      color: 0xfff4e0, alpha: 1, hdr: 5.5 });
+    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.22, size: 0.62, drag: 1, gravity: 0,
+      color, alpha: 0.9, hdr: 2.6 });
 
     // a blade parting something a hand's width off the deck takes the cover
     // with it — this is the only place the world hears about most saber swings
@@ -728,12 +921,15 @@ export class Particles {
   }
 
   boltImpact(pos, normal, color = 0xff3a2a, opts = {}) {
-    this.sparkBurst(pos, normal, 12, { speed: 7, color: 0xffe0b0 });
-    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.14, size: 0.6, drag: 1, gravity: 0, color, alpha: 1 });
+    this.sparkBurst(pos, normal, 10, { speed: 7, color: 0xffe0b0 });
+    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.07, size: 0.26, drag: 1, gravity: 0,
+      color: 0xfff0dc, alpha: 1, hdr: 5.0 });
+    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.17, size: 0.62, drag: 1, gravity: 0,
+      color, alpha: 1, hdr: 2.4 });
     for (let i = 0; i < 5 * this.scale; i++) {
       _v.copy(normal).multiplyScalar(1.2 + rng()).add(_v2.set(rng() - 0.5, rng() * 0.6, rng() - 0.5));
       this.smoke.spawn(pos, _v, { life: 0.8 + rng() * 0.6, size: 0.1, drag: 2, gravity: -0.6,
-        color: 0x6a6a70, alpha: 0.28 });
+        color: 0x7a7a82, alpha: 0.30 });
     }
     // Only scar things that will still be there in ten seconds. A mark left on
     // a droid that then walks away is a mark hanging in mid-air. A steeply
@@ -874,15 +1070,17 @@ export class Particles {
       const floor = ground.heightAt(_v2.x, _v2.z);
       if (floor !== null) _v2.y = floor + 0.02;
       this.decals.add(_v2, UP, 0.16 + rng() * 0.12, { life: 18, heat: 1, alpha: 0.9 });
-      for (let i = 0; i < Math.max(1, Math.round(3 * this.scale)); i++) {
-        _v.set((rng() - 0.5) * 2.5, 1.5 + rng() * 3.5, (rng() - 0.5) * 2.5);
-        this.sparks.spawn(_v2, _v, { life: 0.5 + rng() * 0.7, size: 0.025 + rng() * 0.035,
-          drag: 1.1, gravity: 18, color, alpha: 1, floor: _v2.y });
+      for (let i = 0; i < Math.max(2, Math.round(5 * this.scale)); i++) {
+        _v.set((rng() - 0.5) * 3.5, 1.5 + rng() * 5.0, (rng() - 0.5) * 3.5);
+        this.sparks.spawn(_v2, _v, { life: 0.5 + rng() * 0.7, size: 0.009 + rng() * 0.014,
+          drag: 1.1, gravity: 18, color, alpha: 1, hdr: 3.2, floor: _v2.y });
       }
+      // fused sand is glass, and glass runs before it sets
+      if (rng() < 0.5) this.spatter(_v2, null, 1, 0xffcf90, { speed: 2.2, floor: _v2.y });
       if (rng() < 0.6) {
         _v.set((rng() - 0.5) * 0.8, 0.9 + rng() * 0.8, (rng() - 0.5) * 0.8);
         this.smoke.spawn(_v2, _v, { life: 1.3 + rng(), size: 0.1 + rng() * 0.1,
-          drag: 1.7, gravity: -0.7, color: 0x5a5852, alpha: 0.26 });
+          drag: 1.7, gravity: -0.7, color: 0x6e6b62, alpha: 0.30 });
       }
     }
     if (opts.cover !== false) ground.grass?.cut(a, b, 0.35, { clippings: false });
@@ -921,6 +1119,8 @@ export class Particles {
         size: (opts.size ?? 0.05) * (0.6 + rng() * 0.9),
         color: opts.color ?? 0x8a7c66,
         floor, restitution: opts.restitution ?? 0.32,
+        heat: opts.heat ? opts.heat * (0.55 + rng() * 0.75) : 0,
+        cool: opts.cool ?? 1.4,
       });
     }
   }
@@ -950,20 +1150,33 @@ export class Particles {
   explosion(pos, size = 1) {
     const floor = ground.heightAt(pos.x, pos.z);
     const y = floor !== null ? floor : pos.y;
-    for (let i = 0; i < 26 * size * this.scale; i++) {
-      _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize().multiplyScalar((3 + rng() * 12) * size);
-      this.sparks.spawn(pos, _v, { life: 0.5 + rng() * 0.7, size: 0.05 * size, drag: 1.3, gravity: 13,
-        color: 0xffd090, alpha: 1, floor: y });
+    for (let i = 0; i < 40 * size * this.scale; i++) {
+      const r = rng();
+      _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize()
+        .multiplyScalar((2.5 + r * r * 20) * size);
+      this.sparks.spawn(pos, _v, { life: 0.5 + rng() * 0.9, size: (0.010 + rng() * 0.014) * size,
+        drag: 1.3, gravity: 13, color: 0xffd090, alpha: 1, hdr: 3.6, floor: y });
     }
-    for (let i = 0; i < 14 * size * this.scale; i++) {
+    this.spatter(pos, null, Math.round(8 * size), 0xffb060, { speed: 5 * size, floor: y });
+    // A fireball is smoke lit from inside. The soot comes after it, and it is
+    // the smoke that carries the scale of the thing.
+    for (let i = 0; i < 10 * size * this.scale; i++) {
+      _v.set(rng() * 2 - 1, rng() * 1.2 + 0.4, rng() * 2 - 1).normalize().multiplyScalar((2 + rng() * 5) * size);
+      this.embers.spawn(pos, _v, { life: 0.30 + rng() * 0.25, size: (0.34 + rng() * 0.3) * size,
+        drag: 3.4, gravity: -3, color: 0xffa040, alpha: 1, hdr: 2.8 });
+    }
+    for (let i = 0; i < 16 * size * this.scale; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.4 + 0.2, rng() * 2 - 1).normalize().multiplyScalar((1.5 + rng() * 4) * size);
       this.smoke.spawn(pos, _v, { life: 1.6 + rng() * 1.6, size: 0.4 * size, drag: 1.6, gravity: -1.4,
-        color: 0x3a3a40, alpha: 0.5 });
+        color: 0x5a5a62, alpha: 0.5 });
     }
-    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.28, size: 3.4 * size, drag: 1, gravity: 0,
-      color: 0xffc070, alpha: 1 });
+    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.10, size: 1.3 * size, drag: 1, gravity: 0,
+      color: 0xfff0d0, alpha: 1, hdr: 4.5 });
+    this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.30, size: 3.2 * size, drag: 1, gravity: 0,
+      color: 0xffc070, alpha: 1, hdr: 1.9 });
 
-    this.chipBurst(pos, null, Math.round(10 * size), { speed: 8 * size, size: 0.06 * size, floor: y });
+    this.chipBurst(pos, null, Math.round(12 * size), { speed: 8 * size, size: 0.06 * size,
+      floor: y, heat: 0.9, cool: 1.1 });
     this.decals.add(_v3.set(pos.x, y + 0.015, pos.z), UP, 1.1 * size,
       { life: 22, heat: 1, alpha: 0.95 });
     ground.disturb(pos.x, pos.z, 2.4 * size, { press: 1, cut: 0.55 });
@@ -971,15 +1184,20 @@ export class Particles {
 
   /** Continuous molten slag while cutting through heavy plate. */
   slag(pos, normal, color = 0xffa030) {
-    for (let i = 0; i < 3 * this.scale; i++) {
-      _v.copy(normal).multiplyScalar(1 + rng() * 2.5);
-      _v.x += rng() - 0.5; _v.z += rng() - 0.5; _v.y += rng() * 0.6;
-      this.sparks.spawn(pos, _v, { life: 0.6 + rng() * 0.8, size: 0.03 + rng() * 0.04,
-        drag: 1.0, gravity: 19, color, alpha: 1 });
+    for (let i = 0; i < 5 * this.scale; i++) {
+      _v.copy(normal).multiplyScalar(1.5 + rng() * 5);
+      _v.x += (rng() - 0.5) * 2; _v.z += (rng() - 0.5) * 2; _v.y += rng() * 1.2;
+      this.sparks.spawn(pos, _v, { life: 0.6 + rng() * 0.8, size: 0.008 + rng() * 0.012,
+        drag: 1.0, gravity: 19, color, alpha: 1, hdr: 3.4 });
+    }
+    if (rng() < 0.45) this.spatter(pos, normal, 1, 0xffa838, { speed: 2.2 });
+    if (rng() < 0.35) {
+      this.plasma.spawn(pos, _v.set(0, 0, 0), { life: 0.07, size: 0.16, drag: 1, gravity: 0,
+        color: 0xffe8c0, alpha: 1, hdr: 4.0 });
     }
     if (rng() < 0.3) {
       _v.set(rng() - 0.5, 0.6 + rng() * 0.5, rng() - 0.5);
-      this.smoke.spawn(pos, _v, { life: 1.2, size: 0.09, drag: 1.8, gravity: -0.8, color: 0x55585e, alpha: 0.3 });
+      this.smoke.spawn(pos, _v, { life: 1.2, size: 0.09, drag: 1.8, gravity: -0.8, color: 0x6a6d74, alpha: 0.32 });
     }
     if (rng() < 0.12) {
       const gh = ground.heightAt(pos.x, pos.z);

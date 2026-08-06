@@ -5,10 +5,33 @@
  * to download, and full control over tiling, normal strength and roughness.
  * Heightfields are authored once and albedo/normal/roughness are derived from
  * them, which keeps lighting response consistent across every material.
+ *
+ * Three rules this file is built on, each of which it used to break:
+ *
+ *  1. EVERY tiling map wraps. All the noise below is periodic on an integer
+ *     lattice whose period equals its own frequency, so the last column meets
+ *     the first exactly. Measured before this pass: the wrap discontinuity was
+ *     6.5× the local gradient on duracrete, 5.0× on armour, 4.6× on sand — a
+ *     hard line down every tile boundary on every wall and every stormtrooper.
+ *  2. NOTHING below ~8 cycles per tile. A soft blob at 4-6 cycles is the single
+ *     loudest tiling tell there is: the eye reads the blob, not the grain, and
+ *     the repeat becomes a grid. Macro variation is the *consumer's* job — the
+ *     terrain shader has world-space noise for it, props have vertex colour.
+ *     (This is the same disease that once baked "condensation" into every robe.)
+ *  3. ALBEDO IS AUTHORED IN LINEAR AND CALIBRATED. Samplers return linear
+ *     reflectance; the writer encodes to sRGB. Each map is then scaled so its
+ *     mean linear albedo lands exactly on a measured value, which is what lets
+ *     Props.js and Bodies.js multiply by a known tint and get a known result.
+ *
+ * Measured mean linear albedo of each map (this is the contract the rest of the
+ * game tints against — see MEAN_ALBEDO and tools/checks/materials.mjs):
+ *
+ *   sand  0.578 0.399 0.190     rock   0.110 0.080 0.059    metal 0.318 0.353 0.416
+ *   cloth 0.935 0.935 0.935     armor  0.668 0.653 0.623    crete 0.332 0.318 0.290
  */
 
 import * as THREE from 'three';
-import { noise2, fbm2, worley2, ridged2, clamp, lerp, makeRng } from './MathUtil.js';
+import { fbm2, clamp, lerp, makeRng } from './MathUtil.js';
 
 const cache = new Map();
 
@@ -16,6 +39,345 @@ function canvasOf(size) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   return c;
+}
+
+/**
+ * Does this environment have a 2D context that can actually give pixels back?
+ * A real browser can; the Node DOM shim the checks run under accepts
+ * putImageData and returns zeros from getImageData, which is exactly the kind
+ * of silent black readback that makes a texture measure as perfect.
+ */
+let _readable = null;
+function canvasReadable() {
+  if (_readable !== null) return _readable;
+  try {
+    const ctx = canvasOf(1).getContext('2d');
+    const img = ctx.createImageData(1, 1);
+    img.data[0] = 173; img.data[3] = 255;
+    ctx.putImageData(img, 0, 0);
+    _readable = ctx.getImageData(0, 0, 1, 1).data[0] === 173;
+  } catch { _readable = false; }
+  return _readable;
+}
+
+/**
+ * Linear reflectance → sRGB display encoding, through an interpolated table.
+ * The exact form needs a Math.pow per channel per texel — twelve million of
+ * them across a boot — and the table is accurate to well under one 8-bit code.
+ */
+const SRGB_LUT = new Float32Array(4097);
+for (let i = 0; i <= 4096; i++) {
+  const c = i / 4096;
+  SRGB_LUT[i] = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+function encodeSrgb(c) {
+  if (c <= 0) return 0;
+  if (c >= 1) return 1;
+  const t = c * 4096, i = t | 0, f = t - i;
+  return SRGB_LUT[i] + (SRGB_LUT[i + 1] - SRGB_LUT[i]) * f;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Periodic noise                                                        */
+/*                                                                        */
+/*  MathUtil's noise is fine for world-space fields but it does not wrap,  */
+/*  and a texture that does not wrap has a seam. Everything here takes an  */
+/*  explicit lattice period; call it with period == frequency and the      */
+/*  result is exactly periodic over the unit tile.                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+const PP = new Uint8Array(512);
+{
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  const r = makeRng(20857);
+  for (let i = 255; i > 0; i--) { const j = r.int(0, i); const t = p[i]; p[i] = p[j]; p[j] = t; }
+  for (let i = 0; i < 512; i++) PP[i] = p[i & 255];
+}
+
+// Branchy but hot: this runs tens of millions of times per bake and the double
+// modulo it replaces was measurable.
+const wrapi = (i, n) => (i >= 0 ? (i < n ? i : i % n) : ((i % n) + n) % n);
+/** Deterministic 0..1 from a pair of lattice coordinates. */
+const hash2 = (a, b, s = 0) => PP[(PP[(a + s) & 255] + b) & 255] / 255;
+const fade5 = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+const K = 1.4142135;
+const grad = (h, x, y) => {
+  switch (h & 7) {
+    case 0: return x + y; case 1: return x - y; case 2: return -x + y; case 3: return -x - y;
+    case 4: return x * K; case 5: return -x * K; case 6: return y * K; default: return -y * K;
+  }
+};
+
+/**
+ * Perlin gradient noise, wrapping on a `px` × `py` lattice. Roughly [-1, 1].
+ * Periods above 256 alias in the hash table (cell 0 and cell 256 share a
+ * gradient) but stay geometrically periodic, which is the property that
+ * matters here.
+ */
+function pnoise(x, y, px, py = px, seed = 0) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const fx = x - xi, fy = y - yi;
+  // no closure in here: this runs ~15 million times per bake and a per-call
+  // arrow function was two thirds of the foundry's boot cost
+  const w0 = wrapi(xi, px), v0 = wrapi(yi, py);
+  const a0 = PP[(w0 + seed) & 255], a1 = PP[((w0 + 1 < px ? w0 + 1 : 0) + seed) & 255];
+  const y0 = v0, y1 = v0 + 1 < py ? v0 + 1 : 0;
+  const u = fade5(fx), v = fade5(fy);
+  const n00 = grad(PP[(a0 + y0) & 255], fx, fy);
+  const n10 = grad(PP[(a1 + y0) & 255], fx - 1, fy);
+  const n01 = grad(PP[(a0 + y1) & 255], fx, fy - 1);
+  const n11 = grad(PP[(a1 + y1) & 255], fx - 1, fy - 1);
+  const ix0 = n00 + (n10 - n00) * u, ix1 = n01 + (n11 - n01) * u;
+  return (ix0 + (ix1 - ix0) * v) * 1.32;
+}
+
+/** fbm with lacunarity exactly 2, so every octave's period divides the tile. */
+function pfbm(u, v, cycles, oct = 4, gain = 0.5, seed = 0) {
+  let s = 0, a = 1, f = 1, n = 0;
+  for (let i = 0; i < oct; i++) {
+    s += pnoise(u * cycles * f, v * cycles * f, cycles * f, cycles * f, seed + i * 37) * a;
+    n += a; a *= gain; f *= 2;
+  }
+  return s / n;
+}
+
+/** Anisotropic single-octave noise: long in v, tight in u (brushed metal, streaks). */
+const pstretch = (u, v, cu, cv, seed = 0) => pnoise(u * cu, v * cv, cu, cv, seed);
+
+/** Ridged multifractal — sharp crests for rock and crazing. */
+function pridged(u, v, cycles, oct = 4, seed = 0) {
+  let s = 0, a = 0.5, f = 1, prev = 1, n = 0;
+  for (let i = 0; i < oct; i++) {
+    let x = 1 - Math.abs(pnoise(u * cycles * f, v * cycles * f, cycles * f, cycles * f, seed + i * 53));
+    x *= x * prev; prev = x;
+    s += x * a; n += a; a *= 0.5; f *= 2;
+  }
+  return s / n;
+}
+
+const _w = new Float64Array(3);
+/**
+ * Periodic cellular noise → [F1, F2, id].
+ *
+ * Feature points are jittered inside the middle 70% of their cell, which keeps
+ * the 3×3 search exact for both F1 and F2. F2 − F1 goes to zero on cell
+ * *borders*, giving a proper fracture network instead of thresholded blobs;
+ * `id` is a 0..1 constant across each cell, which is what lets a field be made
+ * of discrete pieces — broken rock where every block sits at its own height and
+ * tone — rather than of smooth distance falloffs.
+ */
+function pworley(u, v, cells, seed = 0) {
+  const x = u * cells, y = v * cells;
+  const xi = Math.floor(x), yi = Math.floor(y);
+  let f1 = 99, f2 = 99, id = 0;         // squared until the very end
+  const bx = wrapi(xi - 1, cells), by = wrapi(yi - 1, cells);
+  let wy = by;
+  for (let j = -1; j <= 1; j++) {
+    let wx = bx;
+    const cy = yi + j;
+    for (let i = -1; i <= 1; i++) {
+      const cx = xi + i;
+      const ha = PP[(PP[(wx + seed) & 255] + wy) & 255];
+      const hb = PP[(ha + 89 + seed) & 255];
+      const dx = cx + 0.15 + ha * 0.00274510 - x;
+      const dy = cy + 0.15 + hb * 0.00274510 - y;
+      const d = dx * dx + dy * dy;
+      if (d < f1) { f2 = f1; f1 = d; id = PP[(hb + 151 + seed) & 255]; } else if (d < f2) f2 = d;
+      if (++wx >= cells) wx = 0;
+    }
+    if (++wy >= cells) wy = 0;
+  }
+  _w[0] = Math.sqrt(f1); _w[1] = Math.sqrt(f2); _w[2] = id / 255;
+  return _w;
+}
+
+const sstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+
+/**
+ * An asymmetric periodic wave along the lattice direction (cu, cv). Both must
+ * be integers or the tile stops wrapping. `skew` < 0.5 puts the crest early:
+ * wind ripples climb a long stoss slope and drop down a short lee face, which
+ * is the difference between sand and corrugated iron.
+ */
+function ridgeWave(u, v, cu, cv, phase, skew) {
+  const t = u * cu + v * cv + phase;
+  const f = t - Math.floor(t);
+  const p = f < skew ? f / skew : (1 - f) / (1 - skew);
+  return p * p * (3 - 2 * p);
+}
+
+/**
+ * The primitive set, exposed so tools/checks/materials.mjs can prove the one
+ * property everything above depends on: that each of these meets itself after
+ * exactly one tile in u and in v. Statistics on a baked map can only ever
+ * suggest a seam; this is the property itself.
+ */
+export const PERIODIC = { pnoise, pfbm, pridged, pworley, pstretch, ridgeWave, hash2 };
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The baker                                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** Separable box blur that wraps, O(n) per radius. Used for the cavity AO. */
+function boxBlurWrap(src, dst, size, r, tmp) {
+  const w = 2 * r + 1, inv = 1 / w;
+  for (let y = 0; y < size; y++) {
+    const row = y * size;
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += src[row + wrapi(k, size)];
+    for (let x = 0; x < size; x++) {
+      tmp[row + x] = sum * inv;
+      sum += src[row + wrapi(x + r + 1, size)] - src[row + wrapi(x - r, size)];
+    }
+  }
+  for (let x = 0; x < size; x++) {
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += tmp[wrapi(k, size) * size + x];
+    for (let y = 0; y < size; y++) {
+      dst[y * size + x] = sum * inv;
+      sum += tmp[wrapi(y + r + 1, size) * size + x] - tmp[wrapi(y - r, size) * size + x];
+    }
+  }
+  return dst;
+}
+
+/**
+ * Build albedo / normal / packed-roughness from a single sampler.
+ *
+ * sampler(u, v, x, y) → { h, r, g, b, rough, metal }  — r,g,b LINEAR.
+ *
+ * opts:
+ *   normalStrength  slope gain; resolution independent (scaled by size/512)
+ *   ao / aoFloor    cavity occlusion depth and its clamp
+ *   aoRough         how much occlusion roughens (dust settles in the cavities)
+ *   grime           linear colour that occlusion tints toward
+ *   grimeAmount     how far
+ *   calibrate       [r,g,b] target mean LINEAR albedo of the finished map
+ */
+function bake(size, sampler, opts = {}) {
+  const {
+    normalStrength = 2.0, ao = 0.75, aoFloor = 0.42, aoRough = 0,
+    grime = null, grimeAmount = 0, calibrate = null,
+  } = opts;
+  const N = size * size;
+  const H = new Float32Array(N);
+  const CR = new Float32Array(N), CG = new Float32Array(N), CB = new Float32Array(N);
+  const RO = new Float32Array(N), ME = new Float32Array(N);
+  const inv = 1 / size;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const s = sampler(x * inv, y * inv, x, y);
+      H[i] = s.h;
+      CR[i] = s.r; CG[i] = s.g; CB[i] = s.b;
+      RO[i] = clamp(s.rough ?? 0.8, 0, 1);
+      ME[i] = clamp(s.metal ?? 0, 0, 1);
+    }
+  }
+
+  /* ── cavity occlusion ────────────────────────────────────────────────
+   * Three scales of "how far below my neighbourhood am I", normalised by each
+   * scale's own spread so one strength knob means the same thing on every
+   * material. Crucially this only ever DARKENS. The old Laplacian version was
+   * allowed to reach 1.15, which put a bright halo around every crack — the
+   * cheapest possible tell that a texture was generated rather than measured. */
+  const AO = new Float32Array(N).fill(1);
+  if (ao > 0) {
+    const scales = [[Math.max(1, size >> 7), 0.46], [Math.max(2, size >> 5), 0.34], [Math.max(4, size >> 3), 0.20]];
+    const blur = new Float32Array(N), occ = new Float32Array(N), scratch = new Float32Array(N);
+    for (const [r, w] of scales) {
+      boxBlurWrap(H, blur, size, r, scratch);
+      let s = 0, ss = 0;
+      for (let i = 0; i < N; i++) { const d = blur[i] - H[i]; s += d; ss += d * d; }
+      const m = s / N, sd = Math.sqrt(Math.max(1e-14, ss / N - m * m));
+      const k = 1 / (sd * 2.3);
+      for (let i = 0; i < N; i++) occ[i] += w * clamp((blur[i] - H[i]) * k, 0, 1.35);
+    }
+    for (let i = 0; i < N; i++) AO[i] = clamp(1 - ao * occ[i], aoFloor, 1);
+  }
+
+  // Dirt lives where light does not reach. Tying grime to the occlusion rather
+  // than to a second noise field is both cheaper and the reason it reads as
+  // dirt: it lands in the seams, the pits and the weave, never on the crowns.
+  if (grime && grimeAmount > 0) {
+    for (let i = 0; i < N; i++) {
+      const t = (1 - AO[i]) * grimeAmount;
+      CR[i] += (grime[0] - CR[i]) * t;
+      CG[i] += (grime[1] - CG[i]) * t;
+      CB[i] += (grime[2] - CB[i]) * t;
+    }
+  }
+  if (aoRough) for (let i = 0; i < N; i++) RO[i] = clamp(RO[i] + (1 - AO[i]) * aoRough, 0, 1);
+
+  for (let i = 0; i < N; i++) { CR[i] *= AO[i]; CG[i] *= AO[i]; CB[i] *= AO[i]; }
+
+  /* ── calibration ─────────────────────────────────────────────────────
+   * Author the structure, then scale onto a real measured albedo. One pass is
+   * exact when nothing clamps; where the bright tail does clip — cloth, whose
+   * mean of 0.935 leaves almost no headroom — it iterates to within a fraction
+   * of a percent. */
+  if (calibrate) {
+    for (const [ch, target] of [[CR, calibrate[0]], [CG, calibrate[1]], [CB, calibrate[2]]]) {
+      let k = 1;
+      for (let pass = 0; pass < 4; pass++) {
+        let s = 0, clipped = 0;
+        for (let i = 0; i < N; i++) { const v = ch[i] * k; if (v > 1) { s += 1; clipped++; } else s += v; }
+        k *= target / Math.max(1e-9, s / N);
+        if (!clipped) break;    // nothing is clamped, so one pass was exact
+      }
+      for (let i = 0; i < N; i++) ch[i] = clamp(ch[i] * k, 0, 1);
+    }
+  }
+
+  const albedo = new Uint8ClampedArray(N * 4);
+  const rough = new Uint8ClampedArray(N * 4);
+  for (let i = 0; i < N; i++) {
+    albedo[i * 4] = encodeSrgb(CR[i]) * 255;
+    albedo[i * 4 + 1] = encodeSrgb(CG[i]) * 255;
+    albedo[i * 4 + 2] = encodeSrgb(CB[i]) * 255;
+    albedo[i * 4 + 3] = 255;
+    // three's packed workflow: G = roughness, B = metalness
+    rough[i * 4] = 255; rough[i * 4 + 1] = RO[i] * 255; rough[i * 4 + 2] = ME[i] * 255; rough[i * 4 + 3] = 255;
+  }
+
+  /* ── normals ─────────────────────────────────────────────────────────
+   * Sobel on the wrapped height. The gain carries size/512 so a map can change
+   * resolution without its bumps changing depth. */
+  const nrm = new Uint8ClampedArray(N * 4);
+  const at = (x, y) => H[wrapi(y, size) * size + wrapi(x, size)];
+  const gain = normalStrength * size / 512;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1))
+               - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
+      const dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1))
+               - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
+      let nx = -dx * gain, ny = -dy * gain;
+      const len = Math.hypot(nx, ny, 1);
+      nrm[i * 4] = (nx / len * 0.5 + 0.5) * 255;
+      nrm[i * 4 + 1] = (ny / len * 0.5 + 0.5) * 255;
+      nrm[i * 4 + 2] = (1 / len * 0.5 + 0.5) * 255;
+      nrm[i * 4 + 3] = 255;
+    }
+  }
+
+  const mk = (data) => {
+    const c = canvasOf(size);
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(size, size);
+    img.data.set(data);
+    ctx.putImageData(img, 0, 0);
+    // Verification needs the finished bytes. In a browser they can be read back
+    // off the canvas, so keep nothing; under the headless DOM shim getImageData
+    // returns zeros, so the array has to be held. Holding it unconditionally
+    // would have doubled the foundry's footprint — 23 MB the game never reads.
+    if (!canvasReadable()) c.pixels = data;
+    return c;
+  };
+  return { albedo: mk(albedo), normal: mk(nrm), rough: mk(rough), size };
 }
 
 function toTexture(canvas, { repeat = 1, srgb = false, aniso = 8 } = {}) {
@@ -28,65 +390,6 @@ function toTexture(canvas, { repeat = 1, srgb = false, aniso = 8 } = {}) {
   return t;
 }
 
-/**
- * Build albedo / normal / roughness from a single sampler.
- * sampler(x, y) → { h, r, g, b, rough, ao }  with x,y in [0,1)
- */
-function bake(size, sampler, opts = {}) {
-  const { normalStrength = 2.0, aoStrength = 0.55 } = opts;
-  const H = new Float32Array(size * size);
-  const albedo = new Uint8ClampedArray(size * size * 4);
-  const rough = new Uint8ClampedArray(size * size * 4);
-  const inv = 1 / size;
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = y * size + x;
-      const s = sampler(x * inv, y * inv, x, y);
-      H[i] = s.h;
-      albedo[i * 4] = s.r * 255; albedo[i * 4 + 1] = s.g * 255; albedo[i * 4 + 2] = s.b * 255; albedo[i * 4 + 3] = 255;
-      const rr = clamp(s.rough ?? 0.8, 0, 1);
-      const mm = clamp(s.metal ?? 0, 0, 1);
-      // three's packed workflow: G = roughness, B = metalness
-      rough[i * 4] = 255; rough[i * 4 + 1] = rr * 255; rough[i * 4 + 2] = mm * 255; rough[i * 4 + 3] = 255;
-    }
-  }
-
-  // Sobel → normal, plus a cheap curvature AO folded into albedo
-  const nrm = new Uint8ClampedArray(size * size * 4);
-  const at = (x, y) => H[((y + size) % size) * size + ((x + size) % size)];
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = y * size + x;
-      const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1))
-               - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
-      const dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1))
-               - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
-      let nx = -dx * normalStrength, ny = -dy * normalStrength, nz = 1;
-      const len = Math.hypot(nx, ny, nz);
-      nrm[i * 4] = (nx / len * 0.5 + 0.5) * 255;
-      nrm[i * 4 + 1] = (ny / len * 0.5 + 0.5) * 255;
-      nrm[i * 4 + 2] = (nz / len * 0.5 + 0.5) * 255;
-      nrm[i * 4 + 3] = 255;
-
-      // concavity darkening
-      const lap = at(x + 1, y) + at(x - 1, y) + at(x, y + 1) + at(x, y - 1) - 4 * H[i];
-      const ao = clamp(1 + lap * aoStrength * 8, 0.55, 1.15);
-      albedo[i * 4] *= ao; albedo[i * 4 + 1] *= ao; albedo[i * 4 + 2] *= ao;
-    }
-  }
-
-  const mk = (data) => {
-    const c = canvasOf(size);
-    const ctx = c.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    img.data.set(data);
-    ctx.putImageData(img, 0, 0);
-    return c;
-  };
-  return { albedo: mk(albedo), normal: mk(nrm), rough: mk(rough) };
-}
-
 const baked = new Map();      // name → canvases, shared across tilings
 
 function materialFrom(name, size, sampler, opts = {}) {
@@ -97,146 +400,508 @@ function materialFrom(name, size, sampler, opts = {}) {
   if (cache.has(key)) return cache.get(key);
   if (!baked.has(name)) baked.set(name, bake(size, sampler, opts));
   const b = baked.get(name);
+  // One texture object serves both roughnessMap and metalnessMap: they are the
+  // same packed image, and handing three two CanvasTextures over one canvas
+  // uploaded every ORM map to the GPU twice.
+  const orm = toTexture(b.rough, { repeat });
   const set = {
     map: toTexture(b.albedo, { repeat, srgb: true }),
     normalMap: toTexture(b.normal, { repeat }),
-    roughnessMap: toTexture(b.rough, { repeat }),
-    metalnessMap: toTexture(b.rough, { repeat }),
+    roughnessMap: orm,
+    metalnessMap: orm,
   };
   cache.set(key, set);
   return set;
 }
+
+/**
+ * The contract with every consumer of these maps. Props.js and Bodies.js pick
+ * their tints as linear multipliers on these numbers, so they are calibrated,
+ * not observed — see `calibrate` in bake().
+ */
+export const MEAN_ALBEDO = {
+  sand:      [0.578, 0.399, 0.190],   // dry quartz desert sand, ~0.40 luminance
+  rock:      [0.110, 0.080, 0.059],   // dark weathered basalt; props scale it up for sandstone
+  metal:     [0.318, 0.353, 0.416],   // cool durasteel; steel F0 with the game's blue cast
+  cloth:     [0.935, 0.935, 0.935],   // near-white carrier — the robe colour is the tint
+  armor:     [0.668, 0.653, 0.623],   // aged off-white plastoid
+  duracrete: [0.332, 0.318, 0.290],   // portland concrete, 0.30-0.35 is the measured band
+  skin:      [0.780, 0.700, 0.660],   // detail carrier; the flesh tone is the tint
+};
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Surfaces                                                              */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Sand. The terrain shader uses this map's *luminance* as a multiplier on the
+ * level's own sand colour and its normal for the ripples, so what matters here
+ * is the shape and the spread, not the hue — but props never touch it and the
+ * hue is measured anyway.
+ *
+ * Aeolian ripples are asymmetric (long stoss, short lee) and come in two sets
+ * crossing at a shallow angle wherever the wind has shifted; their beat is the
+ * "fingerprint" pattern you actually see on a dune. Coarse grains armour the
+ * crests — that is a real sorting effect, and it is why ripple crests are pale
+ * and the troughs, which hold iron-stained fines, are dark. Both directions are
+ * integer lattice vectors so the whole field wraps.
+ */
 export function sandMaps(repeat = 26) {
+  const QUARTZ = [0.700, 0.605, 0.430];   // pale, weakly coloured grains
+  const FINES  = [0.430, 0.250, 0.098];   // iron-oxide coated silt in the troughs
+  const HEAVY  = [0.055, 0.050, 0.046];   // magnetite / ilmenite, the dark specks
   return materialFrom('sand', 512, (u, v) => {
-    // fine grain over wind ripples
-    const ripple = Math.sin((u * 34 + fbm2(u * 5, v * 5, 3) * 3.4) * Math.PI * 2) * 0.5 + 0.5;
-    const grain = fbm2(u * 190, v * 190, 3) * 0.5 + 0.5;
-    const macro = fbm2(u * 7, v * 7, 4) * 0.5 + 0.5;
-    const h = ripple * 0.42 + grain * 0.34 + macro * 0.24;
-    const tint = 0.86 + macro * 0.2 + grain * 0.09;
+    // One dominant train with a weaker, longer secondary. Two sets of similar
+    // wavelength crossing at 35° interfere into a diamond lattice, and once the
+    // terrain shader stacks three rotated taps of this map on top of each other
+    // the dune sea reads as a woven mat. Real ripples have a clear grain.
+    const warp = pfbm(u, v, 8, 4, 0.5, 11) * 0.45;
+    const rippA = ridgeWave(u, v, 26, 5, warp, 0.72);
+    const rippB = ridgeWave(u, v, 15, -6, warp * 1.5 + 0.31, 0.66);
+    const ripple = rippA * 0.76 + rippB * 0.24;
+    // patch scale — where the surface is rippled at all vs. smoothed over
+    const patch = pfbm(u, v, 11, 3, 0.5, 61) * 0.5 + 0.5;
+    const rip = lerp(ripple, ripple * 0.45 + 0.28, sstep(0.62, 0.18, patch));
+
+    const grain = (pnoise(u * 96, v * 96, 96, 96, 5) * 0.62
+                 + pnoise(u * 176, v * 176, 176, 176, 71) * 0.38) * 0.5 + 0.5;
+    // coarse granules, sorted onto the crests
+    const gw = pworley(u, v, 54, 3);
+    const granule = sstep(0.30, 0.05, gw[0]) * sstep(0.34, 0.80, rip);
+    // heavy-mineral specks: sparse, dark, and they sit in the troughs
+    // sized so a speck is one to three texels across; at 88 cells they were a
+    // quarter of a texel, which is not a grain of magnetite, it is shimmer
+    const hw = pworley(u, v, 64, 29);
+    const speck = sstep(0.16, 0.06, hw[0]) * sstep(0.72, 0.22, rip);
+
+    const h = rip * 0.62 + granule * 0.26 + grain * 0.11 + (patch - 0.5) * 0.05;
+    // pale on the crests and on the coarse grains, dark in the fines
+    const t = clamp(rip * 0.68 + granule * 0.55 + (grain - 0.5) * 0.7 + 0.06, 0, 1);
+    const r = lerp(FINES[0], QUARTZ[0], t), g = lerp(FINES[1], QUARTZ[1], t), b = lerp(FINES[2], QUARTZ[2], t);
+    return {
+      h: h * 0.075,
+      r: lerp(r, HEAVY[0], speck), g: lerp(g, HEAVY[1], speck), b: lerp(b, HEAVY[2], speck),
+      // fines pack down smoother than the loose coarse crest material
+      rough: clamp(0.86 + granule * 0.14 - (1 - rip) * 0.13 + (grain - 0.5) * 0.13 - speck * 0.10, 0, 1),
+      metal: 0,
+    };
+  }, {
+    repeat, normalStrength: 8.0, ao: 0.55, aoFloor: 0.62, calibrate: MEAN_ALBEDO.sand,
+  });
+}
+
+/**
+ * Rock. 1024² because this is the coarsest-tiled map in the game — the terrain
+ * projects it at roughly one tile per 9 m, so at 512 a texel was 17 mm and the
+ * map measured 0.004 rms of texel-scale detail, i.e. none. It was soft blobs.
+ *
+ * Structure is a two-scale fracture network (F2−F1 cellular, which puts the
+ * ridge on the cell *border* where a joint actually is), bedding planes with
+ * per-bed thickness and tone, spalled faces and real grain.
+ */
+export function rockMaps(repeat = 8) {
+  const FRESH = [0.104, 0.097, 0.092];   // clean fracture face, near neutral
+  const IRON  = [0.185, 0.108, 0.056];   // oxide staining out of the joints
+  const CRUST = [0.215, 0.208, 0.183];   // caliche / lichen on the weathered faces
+  return materialFrom('rock', 1024, (u, v) => {
+    const warp = pfbm(u, v, 6, 2, 0.5, 17) * 0.09;
+    const uu = u + warp, vv = v - warp * 0.8;
+
+    /* Rock breaks into pieces. A ridged multifractal on its own gives sinuous
+     * ropes — a first pass at this read as tree bark — because nothing in it is
+     * ever discontinuous. The structure has to come from the cellular id: each
+     * block sits at its own height and its own tone, the joints between them
+     * are recessed, and the fractal only supplies relief *within* a block. */
+    const j1 = pworley(uu, vv, 11, 5);
+    const joint1 = sstep(0.13, 0.0, j1[1] - j1[0]);
+    const b1 = j1[2];
+    const j2 = pworley(uu, vv, 27, 41);
+    const joint2 = sstep(0.085, 0.0, j2[1] - j2[0]) * 0.7;
+    const b2 = j2[2];
+    const joints = clamp(joint1 + joint2 * (1 - joint1), 0, 1);
+    // the smaller blocks only step where the big block is already broken
+    const block = (b1 - 0.5) + (b2 - 0.5) * (0.35 + b1 * 0.5);
+
+    // Bedding: a shallow dip, with thickness and tone varying along the bed.
+    // The variation has to come from a periodic field, not from hash(bandIndex)
+    // — a band index built from a mixed lattice direction gains 4 in u and 26
+    // in v across the tile, so no per-index hash can meet itself at the seam.
+    const bp = uu * 4 + vv * 26;
+    const bf = bp - Math.floor(bp);
+    const bh = pnoise(u * 4, v * 8, 4, 8, 7) * 0.5 + 0.5;
+    const seam = sstep(0.10 + bh * 0.06, 0.0, Math.min(bf, 1 - bf));
+
+    const massif = pridged(uu, vv, 13, 4, 5);
+    const spall = sstep(0.40, 0.12, j2[0]) * sstep(0.35, 0.68, massif);
+    const grit = (pnoise(u * 190, v * 190, 190, 190, 13) * 0.6
+                + pnoise(u * 96, v * 96, 96, 96, 91) * 0.4) * 0.5 + 0.5;
+    const micro = pfbm(u, v, 46, 3, 0.55, 131) * 0.5 + 0.5;
+
+    const h = block * 0.46 + massif * 0.16 + micro * 0.16 + grit * 0.10 + bh * 0.05
+            - joints * 0.55 - seam * 0.14 - spall * 0.18;
+
+    // hue, not just value: iron follows the joints and the bedding seams,
+    // crust takes the high weathered faces, fresh rock is what is left.
+    const ironW = clamp(joints * 0.60 + seam * 0.45 + micro * 0.30 - 0.18, 0, 1);
+    const crustW = clamp((0.55 + b1 * 0.5) * sstep(0.35, 0.85, massif * 0.5 + micro * 0.7) - spall * 0.9, 0, 1);
+    let r = lerp(FRESH[0], IRON[0], ironW), g = lerp(FRESH[1], IRON[1], ironW), b = lerp(FRESH[2], IRON[2], ironW);
+    r = lerp(r, CRUST[0], crustW); g = lerp(g, CRUST[1], crustW); b = lerp(b, CRUST[2], crustW);
+    const shade = 0.78 + block * 0.10 + massif * 0.22 + (grit - 0.5) * 0.44 - spall * 0.20;
+    return {
+      h: h * 0.10,
+      r: r * shade, g: g * shade, b: b * shade,
+      // a fresh spall is smoother than a wind-blasted crust
+      rough: clamp(0.93 + joints * 0.05 - spall * 0.16 - crustW * 0.04 + (grit - 0.5) * 0.06, 0, 1),
+      metal: 0,
+    };
+  }, {
+    repeat, normalStrength: 3.1, ao: 0.85, aoFloor: 0.40, aoRough: 0.05,
+    calibrate: MEAN_ALBEDO.rock,
+  });
+}
+
+/**
+ * Scratches, rasterised. The old version tested all 160 scratches at every one
+ * of 262 144 texels — 42 M segment tests, 1.6 s of the boot — and the segments
+ * did not wrap, so every scratch was cut off at the tile edge. Walking the line
+ * into a buffer instead is ~0.4 M writes and wraps for free.
+ */
+function scratchBuffer(size, count, seed) {
+  const buf = new Float32Array(size * size);
+  const rng = makeRng(seed);
+  for (let i = 0; i < count; i++) {
+    const a = rng() * Math.PI * 2;
+    const len = (rng() * rng() * 0.38 + 0.02) * size;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    let px = rng() * size, py = rng() * size;
+    const wide = rng() * 1.5 + 0.5;
+    const amp = rng() * 0.65 + 0.35;
+    const steps = Math.max(2, Math.ceil(len));
+    const ri = Math.ceil(wide);
+    for (let s = 0; s <= steps; s++) {
+      const taper = amp * Math.sin((s / steps) * Math.PI) ** 0.45;
+      const cx = px + dx * s, cy = py + dy * s;
+      const ix = Math.round(cx), iy = Math.round(cy);
+      for (let oy = -ri; oy <= ri; oy++) {
+        for (let ox = -ri; ox <= ri; ox++) {
+          const qx = ix + ox, qy = iy + oy;
+          const d = Math.hypot(qx - cx, qy - cy);
+          const val = taper * clamp(1 - d / wide, 0, 1);
+          const k = wrapi(qy, size) * size + wrapi(qx, size);
+          if (val > buf[k]) buf[k] = val;
+        }
+      }
+    }
+  }
+  return buf;
+}
+
+// Built on first use and shared by every tiling; disposeTextureCache drops it.
+let _scratches = null;
+const scratches = () => (_scratches ||= scratchBuffer(512, 240, 77));
+
+/**
+ * Durasteel. Panelled, brushed, riveted and scratched.
+ *
+ * The thing that stops big machined surfaces reading as one plastic sheet is
+ * per-panel variation: adjacent plates were cast in different batches, wear
+ * differently, and get painted at different times. Each panel here draws its
+ * own tone, roughness and brush angle from a hash of its index, so the seams
+ * read as construction rather than as a texture repeat.
+ */
+export function metalMaps(repeat = 4) {
+  const SIZE = 512, PANELS = 4, RIVETS = 5;
+  const STEEL = [0.335, 0.372, 0.438];
+  const OXIDE = [0.250, 0.196, 0.150];
+  return materialFrom('metal', SIZE, (u, v, px, py) => {
+    // panel seams — a bevelled channel, not a drawn line
+    const gu = u * PANELS, gv = v * PANELS;
+    const pu = Math.floor(gu), pv = Math.floor(gv);
+    const du = Math.min(gu - pu, 1 - (gu - pu)), dv = Math.min(gv - pv, 1 - (gv - pv));
+    const dSeam = Math.min(du, dv);
+    const seam = sstep(0.035, 0.0, dSeam);
+    const bevel = sstep(0.075, 0.02, dSeam) - seam;
+
+    // per-panel identity — indices wrapped, or the panels at u=0 and u=1 are
+    // different plates and the tile shows a step down its edge
+    const wu = wrapi(pu, PANELS), wv = wrapi(pv, PANELS);
+    const pa = hash2(wu, wv, 3), pb = hash2(wu, wv, 131), pc = hash2(wu, wv, 197);
+
+    // Everything that is per-panel has to die inside the seam channel, or two
+    // plates meet in a one-texel step of tone, roughness and brush angle right
+    // down the middle of the groove — which under a moving specular reads as a
+    // crawling line. `plate` is 1 out on the plate and 0 in the seam, so the
+    // change happens where the surface is already in shadow.
+    const plate = 1 - seam;
+
+    // brushed grain, its direction set per panel
+    const along = pb < 0.5
+      ? pstretch(u, v, 112, 7, 23)
+      : pstretch(u, v, 7, 112, 23);
+    const fine = pstretch(u, v, pb < 0.5 ? 224 : 11, pb < 0.5 ? 13 : 224, 59);
+    const brushed = ((along * 0.66 + fine * 0.34) * 0.5 + 0.5 - 0.5) * plate + 0.5;
+
+    // rivets down every seam
+    const rr = (a) => { const t = a * RIVETS; return Math.abs(t - Math.floor(t) - 0.5) / RIVETS; };
+    const rivU = Math.hypot(du / PANELS, rr(gv));
+    const rivV = Math.hypot(dv / PANELS, rr(gu));
+    const rivet = sstep(0.0075, 0.0035, Math.min(rivU, rivV));
+
+    const blotch = pfbm(u, v, 13, 4, 0.5, 151) * 0.5 + 0.5;
+    const oxide = clamp(sstep(0.56, 0.86, blotch) * (0.5 + pc * 0.9), 0, 1);
+    const s = scratches()[py * SIZE + px];
+
+    const h = -seam * 0.62 - bevel * 0.18 + rivet * 0.55 + brushed * 0.26 + s * 0.16
+            + (pa - 0.5) * 0.05 * plate - oxide * 0.05;
+    // a scratch cuts through the oxide to bright metal; the seam is in shadow
+    const shade = (0.80 + (pa - 0.5) * 0.05 * plate) * (1 + (brushed - 0.5) * 0.20)
+                + s * 0.42 + rivet * 0.10 - seam * 0.22;
+    return {
+      h: h * 0.055,
+      r: lerp(STEEL[0], OXIDE[0], oxide) * shade,
+      g: lerp(STEEL[1], OXIDE[1], oxide) * shade,
+      b: lerp(STEEL[2], OXIDE[2], oxide) * shade,
+      // polished where it is rubbed and scratched, matte where it has oxidised
+      rough: clamp(0.45 + (pa - 0.5) * 0.30 * plate + oxide * 0.42 + seam * 0.22 - s * 0.20 + (brushed - 0.5) * 0.12, 0.06, 1),
+      metal: clamp(0.97 - oxide * 0.42 - seam * 0.22, 0, 1),
+    };
+  }, {
+    repeat, normalStrength: 4.4, ao: 0.7, aoFloor: 0.5, aoRough: 0.10,
+    grime: [0.055, 0.048, 0.042], grimeAmount: 0.5,
+    calibrate: MEAN_ALBEDO.metal,
+  });
+}
+
+/**
+ * Cloth. A real plain weave: warp and weft alternate over and under on a
+ * checkerboard, each thread carries its own width and tone (slubs), and the
+ * interstices between them are occluded holes rather than a darker shade.
+ *
+ * The old version was sin(u) × sin(v) — a perfectly regular grid with a mean
+ * surface tilt of 1.1°, which is to say the normal map did nothing at all and
+ * the robes were flat sheets of colour.
+ *
+ * Two constraints fight here. The thread count has to divide the texture size
+ * exactly (512/64 = 8 texels a thread) or the wrap lands mid-thread and every
+ * tile edge is a thread boundary at maximum contrast. And the albedo has to
+ * stay near white with a mean of 0.935, because it is a *carrier* — the robe
+ * colour multiplies it — which leaves almost no room to darken: a first pass at
+ * this drove the crowns of 70% of the texels into a hard white clip. So the
+ * weave lives in the normal, the roughness and a light touch of occlusion, and
+ * the albedo only whispers.
+ */
+export function clothMaps(repeat = 3) {
+  const TH = 64;   // threads across the tile — must divide 512
+  return materialFrom('cloth', 512, (u, v) => {
+    const fu = u * TH, fv = v * TH;
+    const iu = Math.floor(fu), iv = Math.floor(fv);
+    let su = fu - iu, sv = fv - iv;
+    // Each thread sits slightly off its slot, so the grid is a weave and not a
+    // screen. Left unclamped on purpose — the cross-section below clamps its
+    // own argument, so a thread can lean into its neighbour's gap.
+    su += (hash2(wrapi(iu, TH), 43, 71) - 0.5) * 0.24;
+    sv += (hash2(wrapi(iv, TH), 17, 71) - 0.5) * 0.24;
+    // per-thread character: width, height and tone all vary, which is the
+    // difference between homespun and nylon mesh
+    const ju = wrapi(iu, TH), jv = wrapi(iv, TH);
+    const wu = 0.76 + hash2(ju, 11, 5) * 0.30;
+    const wv = 0.76 + hash2(jv, 29, 5) * 0.30;
+    const tu = 0.965 + hash2(ju, 61, 17) * 0.07;
+    const tv = 0.965 + hash2(jv, 97, 17) * 0.07;
+    // cross-section of each thread; clamped so the gap between them is real
+    const cu = Math.cos(clamp((su - 0.5) / wu, -0.5, 0.5) * Math.PI);
+    const cv = Math.cos(clamp((sv - 0.5) / wv, -0.5, 0.5) * Math.PI);
+    const overWarp = ((iu + iv) & 1) === 0;
+    const top = overWarp ? cu : cv;
+    const under = overWarp ? cv : cu;
+    const weave = top * 0.85 + under * 0.28;
+    // the hole where neither thread is
+    const gap = clamp(1 - (cu + cv) * 1.2, 0, 1);
+    // fibres standing off the cloth; they scatter light, so they brighten
+    const fuzz = pfbm(u, v, 160, 2, 0.45, 37) * 0.5 + 0.5;
+    const nap = pstretch(u, v, 32, 192, 83) * 0.5 + 0.5;
+
+    const h = weave * 0.78 + (fuzz - 0.5) * 0.12 - gap * 0.70;
+    const shade = (overWarp ? tu : tv) * (0.985 + top * 0.02 + (fuzz - 0.5) * 0.05 + (nap - 0.5) * 0.03)
+                * (1 - gap * 0.20);
     return {
       h: h * 0.06,
-      r: clamp(0.78 * tint, 0, 1), g: clamp(0.66 * tint, 0, 1), b: clamp(0.47 * tint, 0, 1),
-      rough: 0.92 - grain * 0.12, metal: 0,
+      r: shade, g: shade, b: shade,
+      // the crown of a thread is where cloth gets its sheen
+      rough: clamp(0.94 - top * 0.13 + gap * 0.05 + (fuzz - 0.5) * 0.08, 0, 1),
+      metal: 0,
     };
-  }, { repeat, normalStrength: 5.5, aoStrength: 0.5 });
+  }, {
+    repeat, normalStrength: 3.0, ao: 0.30, aoFloor: 0.80, calibrate: MEAN_ALBEDO.cloth,
+  });
 }
 
-export function rockMaps(repeat = 8) {
-  return materialFrom('rock', 512, (u, v) => {
-    const cell = worley2(u * 9, v * 9);
-    const crack = 1 - clamp(cell * 3.4, 0, 1);
-    const detail = ridged2(u * 15, v * 15, 5) ;
-    const grit = fbm2(u * 120, v * 120, 3) * 0.5 + 0.5;
-    const h = detail * 0.6 + grit * 0.18 - crack * 0.5;
-    const t = 0.5 + detail * 0.45 + grit * 0.16 - crack * 0.3;
-    return {
-      h: h * 0.09,
-      r: clamp(0.42 * t + 0.06, 0, 1), g: clamp(0.36 * t + 0.05, 0, 1), b: clamp(0.30 * t + 0.05, 0, 1),
-      rough: clamp(0.94 - detail * 0.12, 0, 1), metal: 0,
-    };
-  }, { repeat, normalStrength: 4.0 });
-}
-
-export function metalMaps(repeat = 4, opts = {}) {
-  const key = 'metal@' + repeat + (opts.tint || '');
-  const tintR = opts.tintR ?? 0.62, tintG = opts.tintG ?? 0.65, tintB = opts.tintB ?? 0.70;
-  if (cache.has(key)) return cache.get(key);
-  const rng = makeRng(77);
-  const scratches = [];
-  for (let i = 0; i < 160; i++) scratches.push({ x: rng(), y: rng(), a: rng() * Math.PI, l: rng() * 0.4 + 0.03, w: rng() * 0.0016 + 0.0004 });
-  const bakedMetal = bake(512, (u, v) => {
-    // panel seams
-    const gx = Math.abs(((u * 4) % 1) - 0.5), gy = Math.abs(((v * 4) % 1) - 0.5);
-    const seam = clamp(1 - Math.min(gx, gy) * 44, 0, 1);
-    const brushed = fbm2(u * 300, v * 6, 3) * 0.5 + 0.5;
-    const blotch = fbm2(u * 12, v * 12, 4) * 0.5 + 0.5;
-    let scr = 0;
-    for (const s of scratches) {
-      const dx = u - s.x, dy = v - s.y;
-      const along = dx * Math.cos(s.a) + dy * Math.sin(s.a);
-      const perp = -dx * Math.sin(s.a) + dy * Math.cos(s.a);
-      if (along > 0 && along < s.l && Math.abs(perp) < s.w) scr = Math.max(scr, 1 - Math.abs(perp) / s.w);
-    }
-    const h = -seam * 0.55 + brushed * 0.1 + scr * 0.22 + blotch * 0.06;
-    const shade = 0.78 + brushed * 0.22 + blotch * 0.16 - seam * 0.28 + scr * 0.25;
-    return {
-      h: h * 0.05,
-      r: clamp(tintR * shade, 0, 1), g: clamp(tintG * shade, 0, 1), b: clamp(tintB * shade, 0, 1),
-      rough: clamp(0.42 + blotch * 0.3 - scr * 0.26 + seam * 0.2, 0.06, 1),
-      metal: clamp(0.94 - seam * 0.35 - blotch * 0.12, 0, 1),
-    };
-  }, { normalStrength: 3.2 });
-  const set = {
-    map: toTexture(bakedMetal.albedo, { repeat, srgb: true }),
-    normalMap: toTexture(bakedMetal.normal, { repeat }),
-    roughnessMap: toTexture(bakedMetal.rough, { repeat }),
-    metalnessMap: toTexture(bakedMetal.rough, { repeat }),
-  };
-  cache.set(key, set);
-  return set;
-}
-
-export function clothMaps(repeat = 3) {
-  return materialFrom('cloth', 512, (u, v) => {
-    // A woven twill: two interleaved thread directions plus fine fuzz.
-    //
-    // The large-scale `wear` term is deliberately almost invisible in the
-    // albedo. It used to swing the base tone by ±25% at 8 cycles across the
-    // sheet, which — tiled twice over a cape — baked soft grey-brown blotches
-    // into every robe in the game. On a moving cloak they read as water
-    // condensation on the lens rather than as fabric. Cloth wants tight, high
-    // frequency structure and a nearly flat base tone; the character comes
-    // from the weave, not from big soft stains.
-    const threadU = Math.sin(u * Math.PI * 2 * 48) * 0.5 + 0.5;
-    const threadV = Math.sin(v * Math.PI * 2 * 48) * 0.5 + 0.5;
-    const weave = Math.max(threadU, threadV);
-    const wear = fbm2(u * 8, v * 8, 4) * 0.5 + 0.5;
-    const fuzz = fbm2(u * 200, v * 200, 2) * 0.5 + 0.5;
-    const h = weave * 0.55 + fuzz * 0.26 + wear * 0.06;
-    const t = 0.94 + weave * 0.06 + fuzz * 0.03 - wear * 0.05;
-    return {
-      h: h * 0.04,
-      r: clamp(t, 0, 1), g: clamp(t, 0, 1), b: clamp(t, 0, 1),
-      rough: clamp(0.88 + fuzz * 0.06 - wear * 0.03, 0, 1), metal: 0,
-    };
-  }, { repeat, normalStrength: 2.0 });
-}
-
+/**
+ * Plastoid armour, and by extension every strap, boot and scorch mark on a
+ * trooper — Bodies.js re-tiles this map from 1.6 to 6.0, so it deliberately
+ * spreads its energy across frequencies rather than owning one feature size.
+ *
+ * Moulded plastic has orange peel; used plastic has chips that show the darker
+ * substrate, fine crazing, and directional scuffing. What it does not have is
+ * the six-cycle grey blotch this map used to carry, which at any tiling read as
+ * damp patches — the same mistake that once put condensation on the robes.
+ */
 export function armorMaps(repeat = 2) {
+  // Plastoid does not weather by going grey; it yellows. UV-aged panels go
+  // cream, the substrate under a chip is a cool dark grey, and the dust it
+  // picks up is warm — three different hues, which is what stops a trooper
+  // reading as a single moulded lump of off-white.
+  const SHELL = [0.730, 0.722, 0.708];   // clean plastoid, faintly cool
+  const AGED  = [0.755, 0.688, 0.545];   // sun-yellowed
+  const CORE  = [0.240, 0.238, 0.232];   // the cool substrate a chip exposes
   return materialFrom('armor', 512, (u, v) => {
-    const scuff = fbm2(u * 26, v * 26, 4) * 0.5 + 0.5;
-    const dirt = clamp(fbm2(u * 6 + 11, v * 6, 4) * 0.5 + 0.5, 0, 1);
-    const nick = worley2(u * 26, v * 26) < 0.13 ? 1 : 0;
-    const h = scuff * 0.24 - nick * 0.5;
-    const t = 0.92 + scuff * 0.12 - dirt * 0.26 - nick * 0.3;
-    return {
-      h: h * 0.04,
-      r: clamp(t, 0, 1), g: clamp(t * 0.99, 0, 1), b: clamp(t * 0.97, 0, 1),
-      rough: clamp(0.34 + dirt * 0.45 + nick * 0.3, 0.05, 1),
-      metal: clamp(0.06 + nick * 0.5, 0, 1),
-    };
-  }, { repeat, normalStrength: 3.0 });
-}
+    // Injection-moulded orange peel. The cellular lattice has to be warped or
+    // the dimples line up in rows and the plate reads as pegboard — which is
+    // exactly what a first pass at this looked like.
+    const w = pfbm(u, v, 9, 3, 0.5, 211) * 0.10;
+    const peel = pworley(u + w, v - w * 0.8, 58, 9)[0];
+    const orange = (1 - sstep(0.0, 0.62, peel)) * 0.5;
+    const grain = pfbm(u, v, 128, 2, 0.5, 43) * 0.5 + 0.5;
+    // crazing: fine stress cracks, low amplitude, everywhere
+    const craze = pridged(u, v, 44, 3, 67);
 
-export function duracreteMaps(repeat = 6) {
-  return materialFrom('duracrete', 512, (u, v) => {
-    const agg = worley2(u * 22, v * 22);
-    const grain = fbm2(u * 90, v * 90, 3) * 0.5 + 0.5;
-    const stain = fbm2(u * 4, v * 4, 4) * 0.5 + 0.5;
-    const h = agg * 0.35 + grain * 0.2;
-    const t = 0.52 + agg * 0.28 + grain * 0.12 - stain * 0.18;
+    // scuffing runs in a direction
+    const scuffA = pstretch(u, v, 96, 15, 71) * 0.5 + 0.5;
+    const scuffB = pstretch(u, v, 15, 96, 113) * 0.5 + 0.5;
+    const scuff = Math.max(scuffA, scuffB);
+    const patch = pfbm(u, v, 19, 3, 0.5, 149) * 0.5 + 0.5;
+    const wear = clamp((scuff - 0.52) * 1.6 * (0.4 + patch), 0, 1);
+
+    /* Chips. One threshold on one cellular field puts exactly one chip in every
+     * cell, evenly spaced — a peg board, not battle damage. Two things break
+     * that up: chips only appear where the plate is already worn (they cluster
+     * along the same edges the scuffing follows), and the radius is driven by
+     * its own field so they come in a range of sizes instead of one. */
+    const cw = pworley(u + w * 0.5, v, 21, 101);
+    const chipWear = sstep(0.52, 0.92, wear * 0.6 + patch * 0.8);
+    const rad = 0.09 + (pfbm(u, v, 26, 2, 0.5, 307) * 0.5 + 0.5) * 0.20;
+    const chip = sstep(rad, rad * 0.28, cw[0]) * chipWear;
+    const deepChip = sstep(rad * 0.5, rad * 0.15, cw[0]) * chipWear;
+
+    const h = orange * 0.34 + (grain - 0.5) * 0.16 + craze * 0.07 - chip * 0.62 - deepChip * 0.35;
+    const shade = 0.96 + (grain - 0.5) * 0.07 + orange * 0.04 + wear * 0.08 - craze * 0.035;
+    const t = clamp(chip * 0.85 + deepChip * 0.4, 0, 1);
+    const age = clamp(patch * 1.5 - 0.35, 0, 1);
     return {
       h: h * 0.045,
-      r: clamp(t * 1.0, 0, 1), g: clamp(t * 0.98, 0, 1), b: clamp(t * 0.94, 0, 1),
-      rough: clamp(0.88 - agg * 0.1, 0, 1), metal: 0,
+      r: lerp(lerp(SHELL[0], AGED[0], age), CORE[0], t) * shade,
+      g: lerp(lerp(SHELL[1], AGED[1], age), CORE[1], t) * shade,
+      b: lerp(lerp(SHELL[2], AGED[2], age), CORE[2], t) * shade,
+      // clean plate is nearly glossy, scuffs and chips kill it stone dead
+      rough: clamp(0.30 + wear * 0.34 + chip * 0.42 + craze * 0.16 + (grain - 0.5) * 0.10, 0.06, 1),
+      metal: clamp(0.04 + deepChip * 0.22, 0, 1),
     };
-  }, { repeat, normalStrength: 3.4 });
+  }, {
+    // Plastoid is moulded plastic, not a cavity-rich surface. A first pass ran
+    // the occlusion at 0.8 with a floor of 0.5, which turned the low-amplitude
+    // crazing into a network of dark worms and made every plate read as
+    // speckled terrazzo. It belongs in the chips and the deep scuffs only.
+    repeat, normalStrength: 6.4, ao: 0.38, aoFloor: 0.62, aoRough: 0.14,
+    grime: [0.148, 0.118, 0.082], grimeAmount: 0.30,
+    calibrate: MEAN_ALBEDO.armor,
+  });
+}
+
+/**
+ * Duracrete.
+ *
+ * Concrete is mostly cement paste. That is the whole trick, and the reason a
+ * first pass at this read as crazy paving: covering the surface in aggregate at
+ * three sizes and then letting the cavity occlusion outline every stone gives
+ * you terrazzo with black grout, not a cast wall. So the paste is the surface,
+ * aggregate only shows through where the skin has worn or spalled off, and the
+ * one thing that unmistakably says "this was poured" — entrained air voids,
+ * sparse round pits with a dark floor — is the loudest feature.
+ *
+ * It also used to have a mean surface tilt of 0.0°: 99.8% of its normal map was
+ * dead flat, so every wall in the hangar and every plinth in the dojo was a
+ * painted card.
+ */
+export function duracreteMaps(repeat = 6) {
+  const PASTE  = [0.330, 0.326, 0.318];   // portland cement, near neutral
+  const AGG    = [0.400, 0.352, 0.278];   // warm sandy aggregate
+  const DAMP   = [0.130, 0.130, 0.138];   // the cold shadow inside a void
+  return materialFrom('duracrete', 512, (u, v) => {
+    const warp = pfbm(u, v, 9, 3, 0.5, 19) * 0.045;
+    const uu = u + warp, vv = v - warp;
+
+    // Where the laitance has worn through. Everything below is gated on this,
+    // so most of the wall stays smooth paste and the aggregate reads as damage.
+    const expose = sstep(0.46, 0.80, pfbm(uu, vv, 11, 3, 0.5, 233) * 0.5 + 0.5);
+    const a1 = pworley(uu, vv, 13, 7)[0];     // coarse stones
+    const a2 = pworley(uu, vv, 31, 53)[0];    // medium
+    const a3 = pworley(uu, vv, 44, 97)[0];    // sand fraction
+    const stone = sstep(0.26, 0.09, a1) * expose;
+    const med = sstep(0.22, 0.07, a2) * (0.25 + expose * 0.75) * 0.6;
+    const fine = sstep(0.26, 0.10, a3) * 0.30;
+    const aggregate = clamp(stone + med * (1 - stone) + fine * (1 - stone), 0, 1);
+
+    // entrained air voids: sparse round pits, the signature of cast concrete
+    const voidP = sstep(0.165, 0.060, pworley(uu, vv, 27, 181)[0]);
+    const pin = sstep(0.135, 0.055, pworley(uu, vv, 39, 211)[0]) * 0.35;
+
+    // paste grain, and the straight faint ridges the shuttering left
+    const paste = (pnoise(u * 124, v * 124, 124, 124, 29) * 0.6
+                 + pnoise(u * 62, v * 62, 62, 62, 103) * 0.4) * 0.5 + 0.5;
+    const board = sstep(0.055, 0.0, Math.abs((v * 9) % 1 - 0.5) - 0.44) * 0.5;
+
+    const h = aggregate * 0.30 + (paste - 0.5) * 0.22 + board * 0.10
+            - expose * 0.16 - voidP * 0.95 - pin * 0.50;
+    const shade = 0.90 + aggregate * 0.18 + (paste - 0.5) * 0.26 - expose * 0.08;
+    const t = clamp(aggregate * 0.85, 0, 1);
+    let r = lerp(PASTE[0], AGG[0], t) * shade;
+    let g = lerp(PASTE[1], AGG[1], t) * shade;
+    let b = lerp(PASTE[2], AGG[2], t) * shade;
+    const d = clamp(voidP + pin * 0.7, 0, 1);
+    return {
+      h: h * 0.055,
+      r: lerp(r, DAMP[0], d), g: lerp(g, DAMP[1], d), b: lerp(b, DAMP[2], d),
+      // polished aggregate against matte paste is what makes concrete glitter
+      rough: clamp(0.94 - stone * 0.22 - med * 0.10 + voidP * 0.05 + (paste - 0.5) * 0.12, 0, 1),
+      metal: 0,
+    };
+  }, {
+    repeat, normalStrength: 4.4, ao: 0.55, aoFloor: 0.52, aoRough: 0.06,
+    grime: [0.105, 0.103, 0.100], grimeAmount: 0.45,
+    calibrate: MEAN_ALBEDO.duracrete,
+  });
+}
+
+/**
+ * Skin. A near-white detail carrier — pores, fine creases and the mottling of
+ * blood under the surface — meant to be multiplied by a flesh tone the way
+ * clothMaps is multiplied by a robe colour. Untextured skin is the one thing
+ * on a character that unavoidably reads as vinyl.
+ */
+export function skinMaps(repeat = 4) {
+  return materialFrom('skin', 512, (u, v) => {
+    const pore = pworley(u, v, 64, 13)[0];
+    const pores = sstep(0.30, 0.10, pore);
+    const crease = pridged(u, v, 26, 4, 47);
+    const fine = pridged(u, v, 60, 2, 149) * 0.6;
+    // subsurface mottling: redder where the capillaries are close
+    const mottle = pfbm(u, v, 22, 3, 0.5, 199) * 0.5 + 0.5;
+    const grain = pfbm(u, v, 76, 2, 0.5, 251) * 0.5 + 0.5;
+
+    const h = -pores * 0.55 - crease * 0.30 - fine * 0.16 + (grain - 0.5) * 0.14;
+    const shade = 0.95 + (grain - 0.5) * 0.09 - crease * 0.06;
+    return {
+      h: h * 0.05,
+      r: shade * (1.0 + (mottle - 0.5) * 0.10),
+      g: shade * (1.0 - (mottle - 0.5) * 0.05),
+      b: shade * (1.0 - (mottle - 0.5) * 0.07),
+      // oily on the crowns, matte in the pores
+      rough: clamp(0.56 + pores * 0.22 + (mottle - 0.5) * 0.14 + (grain - 0.5) * 0.08, 0, 1),
+      metal: 0,
+    };
+  }, {
+    repeat, normalStrength: 2.2, ao: 0.5, aoFloor: 0.68, calibrate: MEAN_ALBEDO.skin,
+  });
 }
 
 /* ── small utility textures ──────────────────────────────────────────── */
@@ -346,8 +1011,29 @@ export function noiseTexture(size = 256) {
   return t;
 }
 
+/**
+ * Raw baked bytes for a surface, for measurement. Canvases are opaque under the
+ * headless DOM shim — getImageData returns zeros there — so every numeric claim
+ * about these maps has to come from the arrays the bake actually wrote, not
+ * from a canvas readback that quietly reports black.
+ */
+export function rawMaps(name) {
+  if (!baked.has(name)) {
+    const build = { sand: sandMaps, rock: rockMaps, metal: metalMaps, cloth: clothMaps,
+                    armor: armorMaps, duracrete: duracreteMaps, skin: skinMaps }[name];
+    if (!build) return null;
+    build();
+  }
+  const b = baked.get(name);
+  if (!b) return null;
+  const px = (c) => c.pixels
+    || c.getContext('2d').getImageData(0, 0, b.size, b.size).data;
+  return { size: b.size, albedo: px(b.albedo), normal: px(b.normal), rough: px(b.rough) };
+}
+
 export function disposeTextureCache() {
   for (const set of cache.values()) for (const t of Object.values(set)) t.dispose?.();
   cache.clear();
   baked.clear();
+  _scratches = null;
 }

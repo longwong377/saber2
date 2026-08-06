@@ -579,7 +579,7 @@ export class GrassField {
     this.terrain = terrain;
     if (terrain) ground.terrain = terrain;
     this.radius = opts.radius ?? 42;
-    this.nearRadius = Math.min(opts.nearRadius ?? 10, this.radius * 0.5);
+    this.nearRadius = Math.min(opts.nearRadius ?? 7.5, this.radius * 0.5);
     this.time = 0;
     this.meshes = [];
     this.tracker = new PusherTracker();
@@ -593,25 +593,38 @@ export class GrassField {
     this.tintB = new THREE.Color(opts.tintB ?? 0x5d6b34);
     this.dry = new THREE.Color(opts.dry ?? 0x6a6142);
 
+    // The ground has to know it is covered. Litter is the darker, browner end
+    // of the living blade, never the blade colour itself — soil under grass is
+    // not green, it is what green rots into.
+    if (terrain && terrain.setGroundCover) {
+      const litter = this.tintB.clone().lerp(this.dry, 0.55).multiplyScalar(0.46);
+      terrain.setGroundCover(clamp(0.62 * density, 0, 0.8), litter, 30);
+    }
+
     this._buildTrail();
 
-    // Half the instances go to the near ring, which is deliberately small: a
-    // field only reads as grass if the blades you can actually resolve are
-    // packed, and packing ten metres costs a fifth of what packing twenty does.
-    const nearCount = Math.max(1, Math.round(total * 0.5));
+    // Most of the instances go to the near ring, which is deliberately small.
+    // What decides whether a field reads as COVER or as spikes stuck in a beach
+    // is the fraction of the ground its silhouette covers, and that is the
+    // instance budget divided by the ring's area. At a 10 m ring and half the
+    // budget the near field covered 6.8% of its own ground — nine parts bare
+    // sand to one part grass, which no amount of blade detail can rescue.
+    // Pulling the ring in to 7.5 m and taking 60% of the budget is 2.8× the
+    // areal density for nothing; the card ring picks up where it stops.
+    const nearCount = Math.max(1, Math.round(total * 0.6));
     const farCount = Math.max(1, total - nearCount);
 
     this.near = this._buildRing({
       count: nearCount, card: false,
       geometry: bladeGeometry(4),
       near: 0, far: this.nearRadius,
-      width: 0.048, bendGain: 0.23, translucency: 0.9,
+      width: 0.070, bendGain: 0.23, translucency: 0.9,
     });
     this.far = this._buildRing({
       count: farCount, card: true,
       geometry: new THREE.PlaneGeometry(1, 1, 1, 2),
       near: this.nearRadius * 0.66, far: this.radius,
-      width: 0.95, bendGain: 0.34, translucency: 0.55,
+      width: 1.05, bendGain: 0.34, translucency: 0.55,
       map: repeating(grassSprite(96)),
     });
     this.mesh = this.near.mesh;     // kept for anything that pokes at `.mesh`
@@ -855,36 +868,58 @@ export class GrassField {
   _scatterRing(ring, center) {
     const a = ring.aInst.array, o = ring.aOrient.array, t = ring.aTint.array;
     const inner = ring.card ? this.nearRadius * 0.62 : 0;
-    const outer = ring.far;
+    // Tuft ANCHORS go inside the annulus by half a tuft, so the blades that
+    // scatter around them still land inside the ring their shader fades. A
+    // blade outside its own ring is a blade the fade never reaches.
+    const outer = Math.max(inner + 0.5, ring.far - (ring.card ? 0.75 : 0.26) * 0.5);
     const span = outer * outer - inner * inner;
     const waterLine = ground.water ? ground.water.level : null;
-    const perTuft = ring.card ? 2 : 6;
-    const spread = ring.card ? 0.55 : 0.11;
+    // A tuft of six blades in a 11 cm circle, one every half metre, is exactly
+    // what "isolated spikes" looks like from standing height. Ten blades over
+    // 26 cm puts the tufts within touching distance of each other, which is
+    // where a scatter stops reading as dots and starts reading as sward.
+    const perTuft = ring.card ? 3 : 10;
+    const spread = ring.card ? 0.75 : 0.26;
 
-    let left = 0, tx = 0, tz = 0, density = 0, live = false, lean = 0;
+    let left = 0, tx = 0, tz = 0, density = 0, live = false, lean = 0, inTuft = 0;
     for (let i = 0; i < ring.count; i++) {
       if (left <= 0) {
-        const ang = rng() * TAU;
-        const rad = Math.sqrt(inner * inner + rng() * span);
-        tx = center.x + Math.cos(ang) * rad;
-        tz = center.z + Math.sin(ang) * rad;
-        const slope = this.terrain ? this.terrain.slopeAt(tx, tz) : 0;
-        const y = this.terrain ? this.terrain.height(tx, tz) : 0;
-        // Steep ground carries little, and clumping comes from a low-frequency
-        // field so the cover reads as patches. Water thins it rather than
-        // cutting it dead: the interesting grass in a river wash is the reeds
-        // standing in the shallows along the margin.
-        const clump = clamp(fbm2(tx * 0.028, tz * 0.028, 3) * 1.15 + 0.58, 0, 1);
-        const wet = waterLine === null ? 1 : clamp((y - (waterLine - 0.30)) / 0.45, 0, 1);
-        density = clamp(1 - slope * 1.7, 0, 1) * clump * wet;
-        live = density > 0.14;
+        inTuft = 0;
+        // Three tries at a site before giving up on the tuft. A third of the
+        // far ring's budget used to be spent on instances that landed on a
+        // cliff or in the river and rendered as nothing at all — the field paid
+        // for them and the player never saw them. Retrying puts them where
+        // grass would actually be, and three tries is few enough that ground
+        // which is genuinely hostile still comes out bare.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const ang = rng() * TAU;
+          const rad = Math.sqrt(inner * inner + rng() * span);
+          tx = center.x + Math.cos(ang) * rad;
+          tz = center.z + Math.sin(ang) * rad;
+          const slope = this.terrain ? this.terrain.slopeAt(tx, tz) : 0;
+          const y = this.terrain ? this.terrain.height(tx, tz) : 0;
+          // Steep ground carries little, and clumping comes from a low-frequency
+          // field so the cover reads as patches. Water thins it rather than
+          // cutting it dead: the interesting grass in a river wash is the reeds
+          // standing in the shallows along the margin.
+          const clump = clamp(fbm2(tx * 0.028, tz * 0.028, 3) * 1.15 + 0.58, 0, 1);
+          const wet = waterLine === null ? 1 : clamp((y - (waterLine - 0.30)) / 0.45, 0, 1);
+          density = clamp(1 - slope * 1.7, 0, 1) * clump * wet;
+          live = density > 0.14;
+          if (live) break;
+        }
         lean = 0.16 + rng() * 0.42;      // a tuft leans together, not per blade
         left = perTuft;
       }
       left--;
+      inTuft++;
 
-      const x = tx + (rng() - 0.5) * spread;
-      const z = tz + (rng() - 0.5) * spread;
+      // Blades crowd the middle of their tuft and thin out at its skirt, which
+      // is what gives a clump a soft edge instead of a hard disc of spikes.
+      const rr = Math.sqrt(rng()) * 0.5 * spread;
+      const ra = rng() * TAU;
+      const x = tx + Math.cos(ra) * rr;
+      const z = tz + Math.sin(ra) * rr;
       const y = this.terrain ? this.terrain.height(x, z) : 0;
       // Height matters more than it looks. A 1.4m blade beside a 1.78m
       // character reads as scratchy weeds however many of them there are;
@@ -896,7 +931,13 @@ export class GrassField {
       // wet margin still earns its taller reeds from the density term above.
       const base = ring.card ? 0.26 : 0.20;
       const varies = ring.card ? 0.26 : 0.26;
-      const scale = live ? (base + rng() * varies) * clamp(density * 1.8, 0.5, 1.15) : 0;
+      // A third of every tuft is sward: short blades filling the base, which is
+      // the part of a clump the eye actually reads density from. All blades the
+      // same height gives a bristle brush.
+      const shortling = !ring.card && (inTuft % 3) === 0 ? 0.48 : 1;
+      const scale = live
+        ? (base + rng() * varies) * clamp(density * 1.8, 0.5, 1.15) * shortling
+        : 0;
 
       a[i * 4] = x;
       a[i * 4 + 1] = y - 0.02;
@@ -1001,6 +1042,7 @@ export class GrassField {
     // the next level builds its own; leaving this pointing at a disposed
     // heightfield makes every chip and decal land at the wrong altitude
     if (ground.terrain === this.terrain) ground.terrain = null;
+    this.terrain?.setGroundCover?.(0);
     if (!this.mesh) return;
     for (const m of this.meshes) {
       m.geometry.dispose();
@@ -1094,8 +1136,13 @@ const WATER_FRAG = /* glsl */`
   #include <common>
   #include <fog_pars_fragment>
   uniform float uTime; uniform vec3 uShallow; uniform vec3 uDeep; uniform vec3 uSunDir; uniform vec3 uSky;
+  uniform vec3 uBed;                        // what the bed looks like through 10cm
   uniform vec4 uRipples[${MAX_RIPPLES}];    // world x, world z, start time, strength
   uniform float uRippleActive;
+  #ifdef WATER_DEPTH
+    uniform sampler2D uDepth;
+    uniform vec3 uField;                    // 1/size, half extent, depth range (m)
+  #endif
   varying vec3 vW; varying vec2 vUv; varying float vWave;
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
   float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -1106,6 +1153,18 @@ const WATER_FRAG = /* glsl */`
     float n1 = vnoise(q + vec2(uTime*0.35, uTime*0.21));
     float n2 = vnoise(q*2.3 - vec2(uTime*0.27, uTime*0.41));
     vec3 N = normalize(vec3((n1-n2)*0.55, 1.0, (n2-n1)*0.55));
+
+    /*
+     * How deep the water is here, read off a byte-per-texel map of the bed.
+     * Without it the river is one flat sheet that meets the sand along a hard
+     * straight line, which is the single thing that gives away a water plane:
+     * a real edge is where the depth goes to zero, so it wanders with the bed,
+     * fades out instead of stopping, and has a lap of foam running along it.
+     */
+    float depth = 4.0;
+    #ifdef WATER_DEPTH
+      depth = texture2D(uDepth, vW.xz * uField.x + 0.5).r * uField.z;
+    #endif
 
     // ── impact rings. Expanding wave fronts, tilting the surface along the
     // radius and throwing foam at the crest. Doing this here rather than in the
@@ -1133,16 +1192,55 @@ const WATER_FRAG = /* glsl */`
     N = normalize(N);
 
     float fres = pow(1.0 - clamp(dot(N,V),0.0,1.0), 3.2);
-    vec3 base = mix(uDeep, uShallow, clamp(vWave*3.0+0.5,0.0,1.0));
-    vec3 col = mix(base, uSky, fres*0.86);
+    // Beer's law, near enough: the colour is what is LEFT of the bed after the
+    // water has taken its bite out of it, so an inch of river reads as wet
+    // gravel and a metre reads as river.
+    float dw = 1.0 - exp(-depth * 1.5);
+    vec3 body = mix(uShallow, uDeep, 1.0 - exp(-depth * 0.55));
+    vec3 col = mix(uBed, body, dw);
+    /*
+     * What the surface mirrors. Seen along the water — which is how you always
+     * see a river — a level facet reflects the sky and a tilted one reflects
+     * whatever is standing on the far bank, so a real river reads as bands of
+     * bright and dark travelling with the ripples. Reflecting only the sky
+     * gives one flat sheet of milk, which is what this was.
+     */
+    float facet = smoothstep(0.90, 0.999, N.y);
+    // and what it mirrors along the water is the HORIZON, not the zenith: the
+    // reflected ray at a grazing angle leaves nearly level and lands on the far
+    // bank, so it comes back the colour of the distance. Reflecting the sky
+    // tint made the whole river read 93% as bright as the sky — a sheet of
+    // milk with a shoreline drawn on it.
+    vec3 mirror = mix(uDeep * 1.35, mix(fogColor, uSky, 0.45), facet);
+    // capped well under 1: a rough surface never mirrors cleanly, and leaving
+    // a third of the body colour showing is what gives the channel a spine
+    col = mix(col, mirror, fres * 0.62 * (0.45 + dw * 0.55));
     float spec = pow(max(dot(reflect(-normalize(uSunDir), N), V), 0.0), 90.0);
-    col += vec3(1.0,0.95,0.85) * spec * 2.4;
-    float foam = smoothstep(0.06, 0.12, abs(vWave)) * 0.16 + clamp(foamRing, 0.0, 1.4) * 0.5;
+    col += vec3(1.0,0.95,0.85) * spec * 2.4 * (0.4 + dw * 0.6);
+
+    // The lap: a band of broken water that follows the shoreline contour,
+    // travelling up the beach and back. It is the thing that says "this is a
+    // river running over that", and it costs one noise.
+    float shore = smoothstep(0.30, 0.03, depth) * smoothstep(0.0, 0.025, depth);
+    float lap = sin(depth * 26.0 - uTime * 1.9 + vnoise(vW.xz * 0.55) * 8.0) * 0.5 + 0.5;
+    // The long swell used to throw foam wherever it crested, which on a 580 m
+    // sheet with a 20 m swell is white blobs the size of a barge. Ankle-deep
+    // rivers do not have whitecaps; they have a lap at the edge.
+    float foam = smoothstep(0.08, 0.15, abs(vWave)) * 0.045
+               + clamp(foamRing, 0.0, 1.4) * 0.5
+               + shore * (0.26 + lap * 0.60);
     col += foam;
-    gl_FragColor = vec4(col, clamp(0.86 + fres*0.14 + foamRing*0.25, 0.0, 1.0));
+    // and the edge itself is where the depth runs out, not where the sheet does
+    float edge = smoothstep(0.0, 0.06, depth);
+    gl_FragColor = vec4(col, clamp((0.40 + dw * 0.46 + fres*0.14 + foamRing*0.25 + shore * 0.25)
+                                   * edge, 0.0, 1.0));
     #include <fog_fragment>
   }
 `;
+
+/** Metres of water the depth map can describe. 3 m is a river, not an ocean. */
+const WATER_DEPTH_RANGE = 3.0;
+const WATER_DEPTH_RES = 256;
 
 export class Water {
   constructor(scene, opts = {}) {
@@ -1150,10 +1248,19 @@ export class Water {
     const geo = new THREE.PlaneGeometry(size, size, 96, 96);
     this.time = 0;
     this._ripple = 0;
+    this.level = opts.level ?? 0;
     const ripples = [];
     for (let i = 0; i < MAX_RIPPLES; i++) ripples.push(new THREE.Vector4(0, 0, -99, 0));
+
+    // The bed. Everything interesting about a river — where its edge is, how
+    // the colour deepens, where the lap breaks — is a function of depth, and
+    // depth is the terrain the sheet is lying on.
+    const terrain = opts.terrain ?? ground.terrain;
+    this._bakeDepth(terrain);
+
     this.mat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]),
+      defines: this.depthTex ? { WATER_DEPTH: '' } : {},
       vertexShader: WATER_VERT, fragmentShader: WATER_FRAG,
       transparent: true, side: THREE.DoubleSide, depthWrite: false, fog: true,
     });
@@ -1163,16 +1270,63 @@ export class Water {
       uDeep: { value: new THREE.Color(opts.deep ?? 0x0c2a3c) },
       uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3) },
       uSky: { value: new THREE.Color(opts.sky ?? 0x9fc4e4) },
+      // what you see through an inch of it: the wet bed, not the water
+      uBed: { value: new THREE.Color(opts.bed ?? 0x6b5a41) },
       uRipples: { value: ripples },
       uRippleActive: { value: 0 },
     });
+    if (this.depthTex) {
+      this.mat.uniforms.uDepth = { value: this.depthTex };
+      this.mat.uniforms.uField = {
+        value: new THREE.Vector3(1 / this._fieldSize, this._fieldSize * 0.5, WATER_DEPTH_RANGE),
+      };
+    }
     this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.rotation.x = -Math.PI / 2;
-    this.mesh.position.y = opts.level ?? 0;
+    this.mesh.position.y = this.level;
     this.mesh.renderOrder = 3;
-    this.level = opts.level ?? 0;
     scene.add(this.mesh);
     ground.water = this;
+  }
+
+  /**
+   * One byte per texel of "how deep is it here", clamped to 3 m. A byte is
+   * 1.2 cm of resolution, which is finer than the shoreline band it is there
+   * to draw, and it filters linearly — a packed float would not.
+   *
+   * Clamped at the edges on purpose: past the heightfield the map holds
+   * whatever the rim held, so the river runs off the map instead of stopping
+   * at a line.
+   */
+  _bakeDepth(terrain) {
+    this.depthTex = null;
+    if (!terrain || typeof terrain.height !== 'function' || !(terrain.size > 0)) return;
+    const N = WATER_DEPTH_RES;
+    this._fieldSize = terrain.size;
+    const half = terrain.size / 2;
+    const data = new Uint8Array(N * N);
+    let wet = 0;
+    // texel centres, so uv = world/size + 0.5 lands exactly on the sample
+    for (let j = 0; j < N; j++) {
+      const z = -half + ((j + 0.5) / N) * terrain.size;
+      for (let i = 0; i < N; i++) {
+        const x = -half + ((i + 0.5) / N) * terrain.size;
+        const d = clamp((this.level - terrain.height(x, z)) / WATER_DEPTH_RANGE, 0, 1);
+        data[j * N + i] = Math.round(d * 255);
+        if (d > 0) wet++;
+      }
+    }
+    // A sheet with no bed under it anywhere is a level whose "water" is a
+    // decoration; leave it on the flat path rather than paying for a map.
+    if (wet === 0) return;
+    this.wetFraction = wet / (N * N);
+    const tex = new THREE.DataTexture(data, N, N, THREE.RedFormat);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.unpackAlignment = 1;
+    tex.needsUpdate = true;
+    this.depthTex = tex;
   }
 
   /** Something entered the water here. Rings spread from it and fade. */
@@ -1196,6 +1350,8 @@ export class Water {
 
   dispose() {
     if (ground.water === this) ground.water = null;
+    this.depthTex?.dispose();
+    this.depthTex = null;
     this.mesh.geometry.dispose(); this.mat.dispose(); this.mesh.parent?.remove(this.mesh);
   }
 }

@@ -17,7 +17,7 @@
 
 import * as THREE from 'three';
 import { Rig, humanoidSkeleton, walkerSkeleton, aimY } from './Rig.js';
-import { clothMaps, armorMaps, metalMaps, rockMaps, duracreteMaps } from '../engine/Textures.js';
+import { clothMaps, armorMaps, metalMaps, duracreteMaps, skinMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { makeRng, lerp, clamp } from '../engine/MathUtil.js';
 
 const rng = makeRng(5150);
@@ -76,7 +76,107 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   // rescale in place without touching the directions.
   const g = new THREE.LatheGeometry(profile, seg);
   g.normalizeNormals();
+  if (opts.section) reshape(g, opts.section, len);
   return g;
+}
+
+/**
+ * Bend a lathe's circular plan into a real cross-section.
+ *
+ * A body of revolution is a barrel, and a barrel is most of what still read as
+ * "not a person" once the radii were right: a ribcage is a rounded rectangle
+ * about 32cm across and 22 deep, a shin is flat down the front of the tibia and
+ * carries the whole calf behind it, and a forearm is an oval. Squashing the
+ * mesh on Z — which is what the torsos did — only ever gets you an ellipse,
+ * whichever way you scale it.
+ *
+ * `sect(theta, t)` returns a radius multiplier, theta measured from +Z (front,
+ * the way the character faces) and t running 0→1 up the shaft.
+ *
+ * The normals are transported through the deformation analytically rather than
+ * recomputed. computeVertexNormals() would average per index, and the lathe
+ * duplicates its seam column, so every seam vertex would only see the faces on
+ * its own side — a lighting crease down the front of every torso. In the
+ * cylindrical frame the map is r' = s(θ)·r, so the Jacobian is [[s, s'],[0, s]]
+ * on (radial, tangential) and the normal picks up the off-diagonal term:
+ * wherever the section changes width the surface tilts, which is precisely
+ * what makes a flat back read as flat instead of as a dark side of a cylinder.
+ */
+function reshape(g, sect, len) {
+  const pos = g.attributes.position, nrm = g.attributes.normal;
+  const h = 1e-3;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 1e-9) continue;                 // the cap poles stay on the axis
+    const th = Math.atan2(x, z);
+    const t = len > 1e-9 ? clamp(y / len, 0, 1) : 0;
+    const s = sect(th, t);
+    pos.setXYZ(i, x * s, y, z * s);
+    const ds = (sect(th + h, t) - sect(th - h, t)) / (2 * h);
+    const erx = x / r, erz = z / r;         // radial unit
+    const eux = erz, euz = -erx;            // tangential unit, dθ increasing
+    const nx = nrm.getX(i), ny = nrm.getY(i), nz = nrm.getZ(i);
+    const nr = nx * erx + nz * erz, nu = nx * eux + nz * euz;
+    const nr2 = nr / s, nu2 = -nr * ds / (s * s) + nu / s;
+    const ox = nr2 * erx + nu2 * eux, oz = nr2 * erz + nu2 * euz;
+    const l = Math.hypot(ox, ny, oz) || 1;
+    nrm.setXYZ(i, ox / l, ny / l, oz / l);
+  }
+  pos.needsUpdate = true; nrm.needsUpdate = true;
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
+ * The plan section of a torso: a rounded rectangle, not an ellipse.
+ *
+ * `n` is the superellipse exponent — 2 is the circle the lathe already makes,
+ * 3 fills the corners out about 9% while leaving the width and the depth
+ * exactly where they were, which is what a ribcage or a chest plate does.
+ * `back` flattens the rear half (a spine is a groove between two erector
+ * masses, not the front of the chest mirrored) and `keel` is the sternum or
+ * chest-plate crown that catches the light down the centre line.
+ */
+function bodySection(o = {}) {
+  const n0 = o.n0 ?? 2.2, n1 = o.n1 ?? 3.0;
+  const back = o.back ?? 0.05, keel = o.keel ?? 0.02;
+  const waist = o.waist ?? 0;              // flank pinch, peaking mid-shaft
+  return (th, t) => {
+    const n = lerp(n0, n1, t);
+    const si = Math.abs(Math.sin(th)), co = Math.abs(Math.cos(th));
+    let r = Math.pow(Math.pow(si, n) + Math.pow(co, n), -1 / n);
+    const c = Math.cos(th);                 // +1 dead ahead, -1 behind
+    if (back) r *= 1 - back * Math.max(0, -c) ** 1.6;
+    if (keel) r *= 1 + keel * Math.max(0, c) ** 3;
+    if (waist) r *= 1 - waist * si ** 2 * Math.sin(clamp(t, 0, 1) * Math.PI);
+    return r;
+  };
+}
+
+/**
+ * The plan section of a lower leg. The tibia's front edge is a hard flat ridge
+ * you can feel through the skin; everything behind it is calf. Without this a
+ * shin is a cone, which is what the troopers' legs read as from thirty metres —
+ * two black pipes with a white cuff.
+ */
+function calfSection(o = {}) {
+  const flat = o.flat ?? 0.10, mass = o.mass ?? 0.26, at = o.at ?? 0.30;
+  return (th, t) => {
+    const c = Math.cos(th);
+    const u = (clamp(t, 0, 1) - at) / 0.34;
+    const swell = Math.exp(-(u * u));
+    return (1 - flat * Math.max(0, c) ** 2) * (1 + mass * Math.max(0, -c) ** 1.4 * swell);
+  };
+}
+
+/** An oval limb — forearms, and any sleeve that has to match one. */
+function ovalSection(depth = 0.86, n = 2.4) {
+  return (th) => {
+    const si = Math.abs(Math.sin(th)), co = Math.abs(Math.cos(th));
+    const r = Math.pow(Math.pow(si, n) + Math.pow(co, n), -1 / n);
+    return r * (depth + (1 - depth) * si * si);
+  };
 }
 
 /** A rounded slab — armour plates, boxes, panels. */
@@ -254,14 +354,23 @@ const _ZERO = new THREE.Vector3();
  * photoreceptors, grilles and vents sit ON the surface by construction rather
  * than by arithmetic nobody checks.
  *
- * Möller–Trumbore, both faces, nearest positive hit. It runs over a few
- * hundred triangles at build time and costs nothing at runtime.
+ * Möller–Trumbore, both faces. `far` picks the LAST exit rather than the
+ * first, which is the difference between "where does this piece end" and
+ * "where does the whole head end". A head shell is a union of overlapping
+ * ellipsoids and boxes, and a ray leaving a point inside three of them exits
+ * the smallest one first: probed with the nearest hit, the player's eyes,
+ * brows and lips all seated on the inside wall of the nose, 5cm behind the
+ * face. Anything seating a feature on the outside of an assembly wants `far`;
+ * onLimb, which probes a single closed lathe, does not care.
+ *
+ * It runs over a few hundred triangles at build time and costs nothing at
+ * runtime.
  */
-export function surfacePoint(geo, dir, origin = _ZERO, out = new THREE.Vector3()) {
+export function surfacePoint(geo, dir, origin = _ZERO, out = new THREE.Vector3(), far = false) {
   const pos = geo.attributes.position, idx = geo.index;
   const n = idx ? idx.count : pos.count;
   const d = _pp.copy(dir).normalize();
-  let best = Infinity;
+  let best = far ? -Infinity : Infinity;
   for (let i = 0; i + 2 < n; i += 3) {
     _pa.fromBufferAttribute(pos, idx ? idx.getX(i) : i);
     _pb.fromBufferAttribute(pos, idx ? idx.getX(i + 1) : i + 1);
@@ -278,9 +387,9 @@ export function surfacePoint(geo, dir, origin = _ZERO, out = new THREE.Vector3()
     const v = d.dot(_pq) * inv;
     if (v < 0 || u + v > 1) continue;
     const t = _pe2.dot(_pq) * inv;
-    if (t > 1e-6 && t < best) best = t;
+    if (t > 1e-6 && (far ? t > best : t < best)) best = t;
   }
-  if (best === Infinity) return null;
+  if (!isFinite(best)) return null;
   return out.copy(origin).addScaledVector(d, best);
 }
 
@@ -291,7 +400,7 @@ export function surfacePoint(geo, dir, origin = _ZERO, out = new THREE.Vector3()
  * sink stands it proud.
  */
 function onSurface(geo, dir, sink = 0, origin = _ZERO) {
-  const p = surfacePoint(geo, dir, origin, new THREE.Vector3());
+  const p = surfacePoint(geo, dir, origin, new THREE.Vector3(), true);
   if (!p) return [origin.x, origin.y, origin.z];
   const d = _pp.copy(dir).normalize();
   return [p.x - d.x * sink, p.y - d.y * sink, p.z - d.z * sink];
@@ -493,6 +602,28 @@ class Kit {
     return this.add(mat, geo, pos, [_kitE.x, _kitE.y, _kitE.z], scale);
   }
 
+  /**
+   * Place a flat panel ON a surface: local +Z along `dir`, local +X across it
+   * horizontally, local +Y up the surface.
+   *
+   * This is the frame plateGeo and ventGeo are authored in — width, height,
+   * then thickness — and aim() is not: aim() puts local +Y along the normal,
+   * so a vent authored 3.4cm wide, 5.6cm tall and 1cm thick came out 5.6cm
+   * THICK, a black wedge standing two inches out of the side of a trooper's
+   * helmet. Panels want this; cylinders, rivets and domes want aim().
+   */
+  face(mat, geo, pos, dir, scale) {
+    if (Array.isArray(dir)) _kitD.set(dir[0], dir[1], dir[2]); else _kitD.copy(dir);
+    _kitD.normalize();
+    _kitX.crossVectors(_kitUP, _kitD);
+    if (_kitX.lengthSq() < 1e-8) _kitX.set(1, 0, 0);
+    _kitX.normalize();
+    _kitY.crossVectors(_kitD, _kitX).normalize();
+    _kitM.makeBasis(_kitX, _kitY, _kitD);
+    _kitE.setFromRotationMatrix(_kitM, 'XYZ');
+    return this.add(mat, geo, pos, [_kitE.x, _kitE.y, _kitE.z], scale);
+  }
+
   /** Take one bucket away as a single geometry, for single-material assemblies. */
   merge(mat) {
     const parts = this.buckets.get(mat);
@@ -516,6 +647,8 @@ class Kit {
   }
 }
 const _kitD = new THREE.Vector3();
+const _kitX = new THREE.Vector3(), _kitY = new THREE.Vector3();
+const _kitM = new THREE.Matrix4();
 const _kitUP = new THREE.Vector3(0, 1, 0);
 const ONE = Symbol('assembly');
 
@@ -691,32 +824,97 @@ export const ROBE_COLORS = [
   { name: 'Ochre',   outer: 0x8a6a34, inner: 0xc4a86a, trim: 0x4a3718 },
 ];
 
+/**
+ * A tint that survives its own texture.
+ *
+ * MeshStandardMaterial multiplies `color` by `map`, so the number you type is
+ * never the colour you get — it is the colour times whatever that bake's mean
+ * albedo happens to be. The rock bake means 0.110/0.080/0.059 because rock is
+ * dark, so the beast's carapace, authored at 0x8f7a63, was rendering at a
+ * linear 0.030/0.016/0.008: **eleven times darker than it was written**, which
+ * is why an animal made out of it read as a hole in the desert.
+ *
+ * `lit` divides the tint through by the bake's own measured mean and records
+ * what it was aiming at, so tools/checks/characters.mjs can hold every body
+ * material to the colour it was named for. Where the correction would need a
+ * multiplier above 1 the map is simply too dark to carry that colour and the
+ * material says so by clamping — which the check reports rather than hides.
+ */
+function lit(color, mean, mat) {
+  const want = new THREE.Color(color);
+  const c = new THREE.Color(
+    Math.min(1, want.r / mean[0]), Math.min(1, want.g / mean[1]), Math.min(1, want.b / mean[2]));
+  mat.color.copy(c);
+  mat.userData.authored = [want.r, want.g, want.b];
+  mat.userData.mapMean = mean;
+  return mat;
+}
+/**
+ * The same bookkeeping without the correction, for the hard-surface families.
+ * armour and metal are not carriers — their bakes are the paint and the
+ * machined steel, and every tint in this file was picked looking at the result,
+ * so dividing them out now would turn a whole legion of white plastoid a
+ * quarter brighter for nothing. Recorded so the check can pin what they do
+ * render as and catch the bake drifting under them.
+ */
+function note(color, mean, mat) {
+  const c = new THREE.Color(color);
+  mat.color.copy(c);
+  mat.userData.authored = [c.r, c.g, c.b];
+  mat.userData.mapMean = mean;
+  return mat;
+}
+
 function clothMat(color, rough = 0.92) {
   const maps = clothMaps(2.2);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: 0, normalScale: new THREE.Vector2(0.85, 0.85),
-  });
+  }));
 }
 // `repeat` is additive: at the shipped 1.6 the scuff bake tiles about once per
 // 40cm, which on a droid's flat tan panels reads as chipboard rather than as
 // paint. Machinery wants it three times finer; cloth and skin do not.
 function armorMat(color, metal = 0.1, rough = 0.42, repeat = 1.6) {
   const maps = armorMaps(repeat);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return note(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: metal, normalScale: new THREE.Vector2(0.9, 0.9),
-  });
+  }));
 }
+/**
+ * Machined metal. `lit` rather than `note`: for a metal the base colour is the
+ * specular F0, not a diffuse tint, and the metal bake means 0.318/0.353/0.416
+ * — so a mask authored as 0x767b87 grey steel was reflecting at a linear
+ * 0.058, which is charcoal. Every droid joint, every frame member and the one
+ * mask the player duels nose-to-nose was three times too dark.
+ */
 function metalMat(color, rough = 0.38, metal = 0.95, repeat = 2.4) {
   const maps = metalMaps(repeat);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return lit(color, MEAN_ALBEDO.metal, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: metal, normalScale: new THREE.Vector2(0.8, 0.8),
-  });
+  }));
 }
-function skinMat(color = 0xc79a76) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.66, metalness: 0 });
+/**
+ * Skin.
+ *
+ * This was a bare MeshStandardMaterial — one flat colour with no pores, no
+ * creases and no specular break-up — on the face, the neck and both hands of
+ * the character the player looks at from forty centimetres in first person,
+ * while skinMaps() sat baked and unused in the foundry. The map is a
+ * near-white carrier (mean 0.78/0.70/0.66), so the tint is divided through by
+ * it and the caller still names the colour the skin should BE.
+ *
+ * roughness 0.95 against a map that means about 0.64 lands the surface at
+ * ~0.60: skin, not the wet 0.43 the raw multiply would have given.
+ */
+function skinMat(color = 0xc79a76, repeat = 3.0) {
+  const maps = skinMaps(repeat);
+  return lit(color, MEAN_ALBEDO.skin, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+    roughness: 0.95, metalness: 0, normalScale: new THREE.Vector2(0.5, 0.5),
+  }));
 }
 /**
  * Battle damage. Cauterised carbon over paint: near-black, matte, and it
@@ -725,10 +923,10 @@ function skinMat(color = 0xc79a76) {
  */
 function scorchMat() {
   const maps = armorMaps(6.0);
-  return new THREE.MeshStandardMaterial({
-    color: 0x14120f, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return note(0x14120f, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: 0.94, metalness: 0.04, normalScale: new THREE.Vector2(1.1, 1.1),
-  });
+  }));
 }
 
 /**
@@ -757,34 +955,52 @@ function scorchBone(kit, mat, bone, n, y0, y1, size) {
  */
 function leatherMat(color, rough = 0.66) {
   const maps = armorMaps(4.5);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return note(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: 0.04, normalScale: new THREE.Vector2(0.7, 0.7),
-  });
+  }));
 }
 /** Visor glass, sensor lenses — scratched, dark and nearly specular. */
 function glassMat(color, rough = 0.14) {
   const maps = metalMaps(3.4);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return lit(color, MEAN_ALBEDO.metal, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: 0.62, normalScale: new THREE.Vector2(0.22, 0.22),
-  });
+  }));
 }
-/** Chitin and bone — the worley cracks in the rock bake read as plate scale. */
-function chitinMat(color, rough = 0.58) {
-  const maps = rockMaps(3.2);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.03, normalScale: new THREE.Vector2(0.85, 0.85),
-  });
+/**
+ * Chitin and bone. This was on the rock bake, whose mean albedo is 0.110 —
+ * because rock, in this game, is nearly black. A carapace authored as a warm
+ * tan came out at a linear 0.030/0.016/0.008 and the boss was a silhouette
+ * with legs. Duracrete's aggregate carries the same pebbled cell structure at
+ * three times the albedo, so the tint can actually be corrected onto it.
+ */
+function chitinMat(color, rough = 0.46) {
+  const maps = duracreteMaps(4.2);
+  return lit(color, MEAN_ALBEDO.duracrete, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+    roughness: rough, metalness: 0.05, normalScale: new THREE.Vector2(1.0, 1.0),
+  }));
+}
+/**
+ * Tooth, tusk and bare bone. Not chitin: the duracrete bake means 0.332, and
+ * a tooth is authored at a linear 0.69 — it simply cannot carry that colour,
+ * so a beast's fangs came out mid-grey. The armour bake means 0.668 and can.
+ */
+function boneMat(color, rough = 0.34) {
+  const maps = armorMaps(5.0);
+  return lit(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+    roughness: rough, metalness: 0.02, normalScale: new THREE.Vector2(0.5, 0.5),
+  }));
 }
 /** Pebbled animal hide — duracrete's aggregate at a tight tiling. */
 function hideMat(color, rough = 0.9) {
   const maps = duracreteMaps(5.5);
-  return new THREE.MeshStandardMaterial({
-    color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  return lit(color, MEAN_ALBEDO.duracrete, new THREE.MeshStandardMaterial({
+    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: 0, normalScale: new THREE.Vector2(0.75, 0.75),
-  });
+  }));
 }
 function emissiveMat(color, intensity = 3) {
   return new THREE.MeshStandardMaterial({
@@ -795,6 +1011,31 @@ function emissiveMat(color, intensity = 3) {
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Humanoid assembly                                                     */
 /* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Cross-sections for a body of flesh: a rounded-rectangle ribcage, a pelvis
+ * block, oval arms and a shin with a calf behind it. Keyed by bone name with
+ * the L/R suffix dropped; an archetype replaces the whole table via
+ * `style.sections`, or one entry by putting `section` in its `limbOpts`.
+ */
+const FLESH_SECTIONS = {
+  hips:  bodySection({ n0: 2.7, n1: 2.4, back: 0.05, keel: 0 }),
+  spine: bodySection({ n0: 2.4, n1: 2.8, back: 0.07, keel: 0.02, waist: 0.055 }),
+  chest: bodySection({ n0: 2.8, n1: 3.3, back: 0.085, keel: 0.035 }),
+  arm:   ovalSection(0.93, 2.3),
+  fore:  ovalSection(0.86, 2.4),
+  shin:  calfSection({ flat: 0.10, mass: 0.28, at: 0.28 }),
+};
+
+/** The same idea for a machine: squarer plate, a flatter back, no muscle. */
+const CHASSIS_SECTIONS = {
+  hips:  bodySection({ n0: 3.2, n1: 3.0, back: 0.04, keel: 0 }),
+  spine: bodySection({ n0: 2.8, n1: 3.2, back: 0.05, keel: 0.02 }),
+  chest: bodySection({ n0: 3.2, n1: 3.6, back: 0.06, keel: 0.03 }),
+  arm:   ovalSection(0.92, 2.8),
+  fore:  ovalSection(0.88, 2.8),
+  shin:  calfSection({ flat: 0.12, mass: 0.16, at: 0.24 }),
+};
 
 /**
  * Attach limb meshes to every bone of a humanoid rig.
@@ -810,11 +1051,14 @@ export function dressHumanoid(rig, style) {
   // archetype's proportions moving.
   const LIMB = style.limbOpts || {};
   const tune = (n) => LIMB[n] || LIMB[n.replace(/[LR]$/, '')] || null;
+  const SECT = style.sections === false ? {} : (style.sections || FLESH_SECTIONS);
 
   const addLimb = (boneName, r0, r1, mat, opts = {}) => {
     const b = rig.get(boneName);
     if (!b) return null;
     const t = tune(boneName);
+    const sect = SECT[boneName] || SECT[boneName.replace(/[LR]$/, '')];
+    if (sect) opts = Object.assign({ section: sect }, opts);
     if (t) opts = Object.assign({}, opts, t);
     const seg = opts.seg ?? 10;
     const geo = limbGeo(b.length, r0 * S, r1 * S, seg, opts.cap !== false, opts);
@@ -919,6 +1163,30 @@ export function dressHumanoid(rig, style) {
     }
   }
 
+  // ── shoulder girdle ────────────────────────────────────────────────
+  // The chest lathe ends in a flat disc with the neck coming straight out of
+  // the middle of it, so there is no line from the ear to the point of the
+  // shoulder — and that line is the first thing a human silhouette is read by.
+  // It is also why the head looked bolted on however carefully the collar was
+  // sized. One trapezius mass per side, positioned off the clavicle the rig
+  // actually has rather than off a typed-in number, so it lands on the
+  // acromion for every archetype's proportions.
+  if (style.yoke) {
+    const Y = style.yoke === true ? {} : style.yoke;
+    const cb = rig.get('chest'), cl = rig.get('clavL');
+    if (cb && cl) {
+      const tip = new THREE.Vector3(0, cl.length, 0).applyQuaternion(cl.restQuat).add(cl.offset);
+      const k = new Kit();
+      const w = (Y.reach ?? 0.60) * tip.x, rise = (Y.rise ?? 0.030) * S;
+      k.pair((sx) => k.add(style.yokeMat || style.body,
+        (() => { const g = new THREE.SphereGeometry(1, 12, 8);
+          g.scale(w, rise, (Y.depth ?? 0.062) * S); return g; })(),
+        [sx * tip.x * (Y.at ?? 0.50), tip.y - (Y.drop ?? 0.014) * S, (Y.z ?? -0.018) * S],
+        [0, 0, -sx * (Y.slope ?? 0.20)]));
+      k.bake(cb.obj);
+    }
+  }
+
   if (style.dress) style.dress(rig, S);
   return rig;
 }
@@ -933,12 +1201,16 @@ export function buildJedi(opts = {}) {
   const tunic = clothMat(robe.inner);
   const outer = clothMat(robe.outer);
   const trim = clothMat(robe.trim, 0.85);
-  const leather = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 0.55, metalness: 0.05 });
+  // Was bare: the player's gloves, boots, bracers, belt pouches and obi clasp
+  // — everything on the figure that is not cloth or skin — rendered as one
+  // flat brown vinyl, and gloves are 20% of the first-person frame.
+  const leather = leatherMat(0x53412f, 0.62);
   const skin = skinMat(opts.skinColor ?? 0xc79a76);
-  // DoubleSide: the hair cap is an open shell, and at the hairline you look
-  // straight at its inside face
-  const hair = new THREE.MeshStandardMaterial({
-    color: opts.hairColor ?? 0x2a1d14, roughness: 0.78, side: THREE.DoubleSide });
+  // The cap is an open shell, so it has to be lit from the inside too. On the
+  // cloth bake rather than bare: hair with no normal detail at all is a
+  // moulded plastic wig, and it is 20cm from the camera in every menu shot.
+  const hair = clothMat(opts.hairColor ?? 0x2a1d14, 0.76);
+  hair.side = THREE.DoubleSide;
 
   dressHumanoid(rig, {
     scale: S,
@@ -949,67 +1221,115 @@ export function buildJedi(opts = {}) {
     parts: { chestR: 0.162, shoulderR: 0.138, hipR: 0.138, waistR: 0.122,
              armR: 0.045, clavR: 0.062, thighR: 0.088, neckR: 0.060, torsoDepth: 0.76 },
     hands: { curl: 0.95 },
-    buildHead(headObj, s) {
-      // The skull is a sphere of x-radius 9.9cm and z-radius 10.8cm. Every
-      // feature below used to be authored a centimetre or so *inside* that —
-      // both eyes, both pupils, both brows and the nose had literally never
-      // been drawn, which is most of why the face read as a blank egg. The z
-      // values here are measured against the skull surface, not eyeballed.
-      const jaw = new THREE.SphereGeometry(0.082 * s, 12, 10);
-      jaw.scale(0.94, 0.78, 1.06); jaw.translate(0, 0.046 * s, 0.014 * s);
-      mesh(jaw, skin, headObj);
+    headRadius: 0.098,
+    yoke: { reach: 0.62, rise: 0.031, depth: 0.064, at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
+    yokeMat: outer,
+    // The skull.
+    //
+    // What was here was a sphere of x-radius 9.9cm with a jaw ellipsoid inside
+    // it: a head 22.6cm across and 28.2cm tall on a 1.69m body, which is 6.1
+    // heads to the figure. An adult is seven and a half, and head breadth is
+    // 15.5cm, not 22.6 — that single number is most of why the player read as
+    // a toy. This is 15.1 × 21.0 × 19.6, which is a head.
+    //
+    // It is also one assembled shell rather than a loose pile of meshes, for
+    // the reason every other archetype already is: `surfacePoint` can only
+    // answer "where does the face actually end" if there is one thing to ask.
+    headGeo: (s) => {
+      const ball = (rx, ry, rz, w = 12, h = 9) => {
+        const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
+      };
+      return assemble([
+        // cranium, then the face mass carried forward of it — a brow, a cheek
+        // and a chin in profile instead of one ball with features drawn on
+        [ball(0.0755, 0.0985, 0.0930, 18, 13), [0, 0.098 * s, -0.012 * s]],
+        [ball(0.0680, 0.0700, 0.0780, 14, 10), [0, 0.062 * s, 0.014 * s]],
+        [ball(0.0505, 0.0420, 0.0575, 12, 8),  [0, 0.024 * s, 0.030 * s]],
+        // brow ridge and the bridge of the nose
+        [ball(0.0575, 0.0165, 0.0300, 12, 6),  [0, 0.116 * s, 0.058 * s]],
+        [ball(0.0130, 0.0330, 0.0210, 8, 6),   [0, 0.098 * s, 0.070 * s]],
+        // the nose itself: a wedge running down off the bridge, not a cone
+        [ball(0.0135, 0.0225, 0.0195, 8, 6),   [0, 0.070 * s, 0.078 * s]],
+        [ball(0.0170, 0.0110, 0.0155, 8, 6),   [0, 0.056 * s, 0.077 * s]],
+        // cheekbones, which is what stops the face being a smooth egg in
+        // three-quarter light
+        [ball(0.0250, 0.0190, 0.0260, 8, 6),   [0.0455 * s, 0.084 * s, 0.052 * s]],
+        [ball(0.0250, 0.0190, 0.0260, 8, 6),   [-0.0455 * s, 0.084 * s, 0.052 * s]],
+      ], 'head');
+    },
+    buildHead(headObj, s, hg) {
+      // Every feature is raycast onto the assembled skull. Authored against a
+      // nominal sphere radius they went missing four separate times — both
+      // eyes, both pupils, both brows and the nose had literally never been
+      // drawn — because the face mass reaches further forward than the cranium
+      // at eye height, so clearing one still leaves you inside the other.
+      const white = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 0.24 });
+      const iris = new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.18 });
+      const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.70 });
+      // Kit.aim's frame, which every offset below depends on: local +Y goes
+      // along the normal, local +X is ref × normal and local +Z closes the
+      // basis. For a sideways normal and world-up as the reference that puts
+      // local X front-to-back and local Z straight DOWN — so an ear authored
+      // as (thin, tall, deep) comes out (deep, thin, tall) and sticks 5cm out
+      // of the skull, which is exactly what the first pass did.
+      //
+      // One Kit per side rather than one for the pair. Merging both eyes into
+      // a single mesh puts that mesh's centre on the nose, which is neither
+      // where it is nor anywhere a burial check can reason about.
+      const eyeD = new THREE.Vector3(0, 0, 1);
       for (const sx of [-1, 1]) {
-        // A real eyeball is ~12mm across and mostly buried; sitting proud of the
-        // skull at 14.6mm it read as a bug's eye. Set into a socket instead, so
-        // the brow above it does the work.
-        // Depths measured by raycasting the assembled skull AND jaw, not by
-        // eyeballing an offset against the sphere's nominal radius: the jaw
-        // ellipsoid reaches further forward than the cranium at this height, so
-        // clearing one still leaves you inside the other. At 0.0865 the eyes
-        // sat 3.9mm INSIDE the shell and the pupils 0.3mm inside, which is why
-        // the face read as blank with two faint dots.
-        mesh(new THREE.SphereGeometry(0.0112 * s, 8, 6), new THREE.MeshStandardMaterial({ color: 0xf3f0ea, roughness: 0.28 }),
-          headObj, [sx * 0.033 * s, 0.104 * s, 0.0915 * s], null, [1, 0.85, 0.8]);
-        mesh(new THREE.SphereGeometry(0.0058 * s, 6, 5), new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.2 }),
-          headObj, [sx * 0.033 * s, 0.103 * s, 0.0985 * s]);
-        mesh(plateGeo(0.034 * s, 0.007 * s, 0.012 * s, 0.003 * s, 1), hair,
-          headObj, [sx * 0.036 * s, 0.1245 * s, 0.0935 * s], [0.2, 0, sx * 0.12]);
-        // ears
-        mesh(new THREE.SphereGeometry(0.019 * s, 8, 6), skin, headObj, [sx * 0.098 * s, 0.093 * s, 0.0], null, [0.5, 1, 0.8]);
+        const k = new Kit();
+        // Probed straight forward from a point directly behind the eye. An
+        // angled ray exits off the meridian and lands the eyeball on the side
+        // of the nose, which is what the first pass did; forward, the exit is
+        // by construction the frontmost point of the face at that x and y.
+        const o = new THREE.Vector3(sx * 0.0335 * s, 0.100 * s, 0.010 * s);
+        // A real eyeball is 12mm across and mostly buried; a ball sitting proud
+        // of the skull reads as an insect. Set into the socket so the brow does
+        // the work, with only the iris standing clear.
+        k.aim(white, new THREE.SphereGeometry(1, 8, 6),
+          onSurface(hg, eyeD, 0.0058 * s, o), eyeD,
+          [0.0108 * s, 0.0082 * s, 0.0098 * s]);
+        k.aim(iris, new THREE.SphereGeometry(1, 6, 5),
+          onSurface(hg, eyeD, 0.0022 * s, o), eyeD,
+          [0.0050 * s, 0.0050 * s, 0.0050 * s]);
+        // brow, laid on the ridge above the eye and swept in toward the nose
+        const b = new THREE.Vector3(sx * 0.13, 0.17, 0.98).normalize();
+        k.aim(hair, plateGeo(0.030 * s, 0.005 * s, 0.010 * s, 0.002 * s, 1),
+          onSurface(hg, b, -0.0026 * s, new THREE.Vector3(sx * 0.032 * s, 0.107 * s, 0.020 * s)), b);
+        // ear, on the side of the cranium where the cranium actually is
+        const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
+        k.aim(skin, (() => { const g = new THREE.SphereGeometry(1, 8, 6);
+          g.scale(0.0150 * s, 0.0080 * s, 0.0230 * s); return g; })(),
+          onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.086 * s, -0.012 * s)), e);
+        k.bake(headObj);
       }
-      // Nose: a wedge blended back into the cheeks, not a cone stuck on. And
-      // the mouth is a shallow crease in the skin's own colour — as a separate
-      // coloured slab it read as a sticker applied to the face.
-      const nose = new THREE.ConeGeometry(0.016 * s, 0.042 * s, 8);
-      nose.scale(0.85, 1, 0.7);
-      mesh(nose, skin, headObj, [0, 0.081 * s, 0.0975 * s], [Math.PI / 2.25, 0, 0]);
-      // The jaw ellipsoid's surface is at z=0.0995 at this height — measured by
-      // raycast, not guessed — so anything behind that is inside the face.
-      const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.72 });
-      mesh(plateGeo(0.030 * s, 0.0055 * s, 0.007 * s, 0.002 * s, 1), lip,
-        headObj, [0, 0.0575 * s, 0.0985 * s]);
-      // Hair. The cap used to run 111° down from the crown all the way round,
-      // which put a dead-level ring below the eyeline and shrouded the whole
-      // face. Shortened to 95° and tipped forward *about its own centre* —
-      // rotating the mesh instead would swing the cap 2cm off the skull — it
-      // clears the brow at the front and reaches the nape at the back.
-      // NB the sign: +0.38 tips the cap's axis *forward*, which drags the rim
-      // down over the eyes — the opposite of what is wanted.
-      const cap = new THREE.SphereGeometry(0.113 * s, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.53);
-      cap.scale(1, 1.12, 1.07);
-      cap.rotateX(-0.38);
-      cap.translate(0, 0.105 * s, -0.004 * s);
+      // The mouth is a shallow crease with a lip over it. As a separate
+      // coloured slab standing off the face it read as a sticker.
+      const m = new THREE.Vector3(0, -0.05, 1).normalize();
+      mesh(plateGeo(0.026 * s, 0.0050 * s, 0.006 * s, 0.002 * s, 1), lip, headObj,
+        onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.048 * s, 0.030 * s)),
+        [0.06, 0, 0]);
+
+      // Hair. The cap runs 95° down from the crown and is tipped forward about
+      // its OWN centre — rotating the mesh instead swings the cap 2cm off the
+      // skull. NB the sign: +0.38 tips the axis forward, which drags the rim
+      // down over the eyes, the opposite of what is wanted.
+      const cap = new THREE.SphereGeometry(0.0855 * s, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
+      cap.scale(1.02, 1.30, 1.14);
+      cap.rotateX(-0.34);
+      cap.translate(0, 0.093 * s, -0.008 * s);
       mesh(cap, hair, headObj);
       // the mass at the nape, filling in under the cap's back edge
       mesh(new THREE.SphereGeometry(1, 8, 6), hair, headObj,
-        [0, 0.058 * s, -0.052 * s], null, [0.075 * s, 0.058 * s, 0.062 * s]);
+        [0, 0.052 * s, -0.056 * s], null, [0.058 * s, 0.050 * s, 0.052 * s]);
       // a short braid, because of course — one tapered strand rather than the
       // five spheres it used to be, which cost 400 triangles on their own
       const braid = new THREE.Group(); headObj.add(braid);
-      braid.position.set(0.080 * s, 0.085 * s, 0.006 * s);
+      braid.position.set(0.064 * s, 0.078 * s, 0.008 * s);
       braid.rotation.set(0.10, 0, 0.09);
-      mesh(limbGeo(0.125 * s, 0.0085 * s, 0.0045 * s, 7, true, { rings: 6, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
-        hair, braid, [0, -0.125 * s, 0]);
+      mesh(limbGeo(0.115 * s, 0.0080 * s, 0.0042 * s, 7, true, { rings: 6, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
+        hair, braid, [0, -0.115 * s, 0]);
     },
     dress(r, s) {
       const chest = r.get('chest').obj;
@@ -1470,22 +1790,31 @@ export function buildB2(opts = {}) {
       // The lathe is 25cm in radius at the sternum — the 34cm slab that used
       // to be here was inside its own body with four corners poking out.
       const chestB = r.get('chest');
+      const D = 0.86;      // the torso's own z squash — the shells match it
       const at = (y, d, sink) => onLimb(chestB, y * s, d, sink * s);
-      k.add(shell, plateGeo(0.300 * s, 0.250 * s, 0.070 * s, 0.024 * s, 2), at(0.100, [0, 0, 1], 0.026));
-      k.add(shell, plateGeo(0.110 * s, 0.290 * s, 0.070 * s, 0.020 * s, 1), at(0.100, [0, 0, 1], 0.012));
-      k.add(shell, plateGeo(0.330 * s, 0.070 * s, 0.090 * s, 0.020 * s, 1), at(0.238, [0, 0.5, 1], 0.024));
+      // Chest armour that WRAPS. What was here was a flat slab 30cm across
+      // laid on a barrel 25cm in radius: dead flat across the front, and at
+      // its own corners it stood five centimetres off the body it was bolted
+      // to. From any angle but head-on it read as a board nailed to a drum.
+      // These are arcs of the ribcage's own section, so the plate curves with
+      // the chest and its edges land on it.
+      k.add(shell, arcGeo(0.218 * s, 0.196 * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
+      k.add(shell, arcGeo(0.212 * s, 0.192 * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
+      k.add(shell, arcGeo(0.214 * s, 0.206 * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
-        k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], -0.036));
+        k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], -0.014), [0, sx * 0.85, 0]);
         k.row(3, (i) => k.add(dark, riv, at(0.030 + i * 0.070, [sx, 0, 0.15], -0.050), [0, 0, -sx * 1.5708]));
         k.add(dark, bolt, at(0.234, [sx * 0.44, 0.2, 1], -0.030), [1.5708, 0, 0]);
         // flank plates, so the barrel does not read as a barrel from the side
-        k.add(shell, plateGeo(0.070 * s, 0.230 * s, 0.180 * s, 0.020 * s, 1), at(0.110, [sx, 0, 0], 0.026));
+        k.add(shell, arcGeo(0.216 * s, 0.196 * s, 0.230 * s, 1.05, 0.026 * s, 6),
+          [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
       });
       scorchBone(k, scorch, chestB, 5, 0.02 * s, 0.24 * s, 0.115 * s);
       // Back: a vented dorsal block and two exhaust stacks, seated on the
       // ribcage's real back surface (it is 15cm deep here, not 5.8).
       const back = at;
-      k.add(dark, plateGeo(0.230 * s, 0.150 * s, 0.120 * s, 0.024 * s, 1), back(0.200, [0, 0, -1], 0.034));
+      k.add(dark, arcGeo(0.212 * s, 0.196 * s, 0.170 * s, 1.70, 0.040 * s, 8),
+        [0, 0.120 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       k.pair((sx) => {
         const p = back(0.230, [sx * 0.34, 0, -1], 0.010);
         k.add(dark, new THREE.CylinderGeometry(0.030 * s, 0.034 * s, 0.150 * s, 8), [p[0], p[1], p[2]]);
@@ -1517,11 +1846,14 @@ export function buildB2(opts = {}) {
           // the shoulder, and the clavicle's own tube is fatter than it is.
           // The sphere's pole is at +Y, so the cap is turned over to close at
           // the shoulder and flare down the arm.
-          const cap = new THREE.SphereGeometry(0.128 * s, 12, 7, 0, Math.PI * 2, 0, Math.PI * 0.60);
+          const cap = new THREE.SphereGeometry(0.128 * s, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.60);
           cap.scale(1.0, 1.05, 1.14);
           ka.add(shell, cap, [0, 0.026 * s, 0], [Math.PI, 0, 0]);
-          ka.add(dark, bandGeo(0.118 * s, 0.136 * s, 0.114 * s, 0.132 * s, 0.024 * s, 12),
-            [0, 0.098 * s, 0], null, [1, 1, 1.14]);
+          // rolled rim on the pauldron's real open edge — y = 0.068, radius
+          // 0.122. The band was at y = 0.098 and outer 0.136, a hoop hanging
+          // in mid-air three centimetres below the shell it was meant to close.
+          ka.add(dark, bandGeo(0.112 * s, 0.1265 * s, 0.116 * s, 0.1265 * s, 0.036 * s, 14),
+            [0, 0.042 * s, 0], null, [1, 1, 1.14]);
           // on the pauldron's own shell — its equator is at 12.8cm across and
           // 14.6 deep, so a ring at 11.8 was inside the dome it fastens
           ka.row(4, (i, t) => {
@@ -1612,22 +1944,36 @@ export function buildTrooper(opts = {}) {
 
   const riv = rivet(0.005 * S);
 
-  // The cranium is pulled BACK to z = -0.030 so the face block in front of it
-  // is a mass in its own right. Authored concentric, as it was, the brow was
-  // 59% inside the dome and the cheeks and chin were entirely inside it: from
-  // any distance the helmet was a smooth white egg.
+  // The helmet.
+  //
+  // What was here measured 22.4cm across, 24.9 tall and 28.2 deep: WIDER than
+  // it was tall, which is the one proportion a helmet can never be, and the
+  // reason it read as a fridge with slots in it. A cranium 20.8cm across with
+  // a 15.8cm brick bolted to the front of it will always read as two objects.
+  //
+  // This is 19.2 across, 26.4 tall, 28 deep. The dome is narrow and long
+  // front-to-back, the face is a shallower mass that shares the dome's width
+  // rather than sitting inside it, and the cheeks flare OUTBOARD and DOWN off
+  // the dome's own widest point instead of standing beside it. The step from
+  // brow to cheek is what a T-visor is read against.
   const headShell = (s) => assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.104 * s, 14, 11); g.scale(0.96, 1.06, 0.96); return g; })(),
-      [0, 0.110 * s, -0.030 * s]],
-    // face block: brow, faceplate and jaw in one forward mass
-    [plateGeo(0.158 * s, 0.150 * s, 0.115 * s, 0.030 * s, 3), [0, 0.108 * s, 0.046 * s], [-0.05, 0, 0]],
-    // cheeks flaring outboard of it, below the dome's widest point
-    [plateGeo(0.034 * s, 0.115 * s, 0.108 * s, 0.014 * s, 1), [0.094 * s, 0.070 * s, 0.028 * s], [0, 0, 0.14]],
-    [plateGeo(0.034 * s, 0.115 * s, 0.108 * s, 0.014 * s, 1), [-0.094 * s, 0.070 * s, 0.028 * s], [0, 0, -0.14]],
+    // Cranium. A SPHERE was the problem, not the size of it: a ball is wider
+    // than the face at every height, so however the faceplate is sized the
+    // dome bulges out past it on both sides and the helmet reads as an egg
+    // with a box stuck on the front. A heavily rounded block is the same
+    // volume with the same soft top and a FLANK — the cheek can continue it
+    // instead of interrupting it.
+    [plateGeo(0.184 * s, 0.158 * s, 0.198 * s, 0.048 * s, 4), [0, 0.136 * s, -0.030 * s]],
+    // faceplate: brow, cheekline and jaw in one forward mass, carried at very
+    // nearly the cranium's own width so the join is a corner and not a step
+    [plateGeo(0.170 * s, 0.152 * s, 0.124 * s, 0.044 * s, 3), [0, 0.096 * s, 0.044 * s], [-0.06, 0, 0]],
+    // cheeks flaring outboard and down off the flank of the dome
+    [plateGeo(0.032 * s, 0.104 * s, 0.126 * s, 0.015 * s, 1), [0.085 * s, 0.056 * s, 0.016 * s], [0, 0, 0.24]],
+    [plateGeo(0.032 * s, 0.104 * s, 0.126 * s, 0.015 * s, 1), [-0.085 * s, 0.056 * s, 0.016 * s], [0, 0, -0.24]],
     // chin, rear flare and the dorsal fin
-    [plateGeo(0.116 * s, 0.056 * s, 0.106 * s, 0.014 * s, 1), [0, 0.030 * s, 0.044 * s], [0.28, 0, 0]],
-    [plateGeo(0.138 * s, 0.086 * s, 0.060 * s, 0.014 * s, 1), [0, 0.062 * s, -0.132 * s], [0.30, 0, 0]],
-    [plateGeo(0.026 * s, 0.095 * s, 0.185 * s, 0.008 * s, 1), [0, 0.180 * s, -0.014 * s], [0.04, 0, 0]],
+    [plateGeo(0.126 * s, 0.058 * s, 0.106 * s, 0.024 * s, 1), [0, 0.020 * s, 0.038 * s], [0.30, 0, 0]],
+    [plateGeo(0.150 * s, 0.096 * s, 0.070 * s, 0.024 * s, 1), [0, 0.056 * s, -0.126 * s], [0.30, 0, 0]],
+    [plateGeo(0.026 * s, 0.058 * s, 0.190 * s, 0.010 * s, 1), [0, 0.204 * s, -0.016 * s], [0.04, 0, 0]],
     [bandGeo(0.052 * s, 0.070 * s, 0.056 * s, 0.078 * s, 0.030 * s, 12), [0, -0.008 * s, 0]],
   ], 'head');
 
@@ -1636,18 +1982,26 @@ export function buildTrooper(opts = {}) {
     body: under, arm: under, leg: under, hand: plate, boot: gear, head: plate,
     // the shoulder bell does the deltoid's job and then some
     deltoid: false,
+    // A soldier in full plate, and he has to read as one from thirty metres
+    // against a Jedi and a Sith wearing the same skeleton. Measured in a shared
+    // world frame the trooper's front silhouette overlapped the Jedi's 84%:
+    // same height, same width, same everything but the colour. So the bulk is
+    // real — a deeper ribcage, heavier arms and legs, a wider collarbone and a
+    // shoulder bell 23% bigger — rather than a paint difference.
     parts: { chestR: 0.140, shoulderR: 0.124, hipR: 0.122, waistR: 0.108,
-             armR: 0.048, clavR: 0.058, thighR: 0.086, neckR: 0.060, torsoDepth: 0.78 },
-    seg: { torso: 12, arm: 12, leg: 10, clav: 10, neck: 10 },
+             armR: 0.057, clavR: 0.074, thighR: 0.100, neckR: 0.062, torsoDepth: 0.88 },
+    seg: { torso: 16, arm: 12, leg: 12, clav: 10, neck: 10 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
       neck: { capN: 2 }, clav: { capN: 2 },
       arm: { capN: 3 }, fore: { capN: 3 }, thigh: { capN: 3 }, shin: { capN: 3 },
     },
     headGeo: headShell,
+    yoke: { reach: 0.66, rise: 0.034, depth: 0.070, at: 0.50, drop: 0.012, z: -0.014, slope: 0.20 },
+    yokeMat: under,
     // gauntlets: a little bulkier than bare hands, and firmly closed
-    hands: { palmW: 0.092, palmL: 0.076, palmT: 0.034, fingerR: 0.0107, wristR: 0.031, curl: 0.95 },
-    feet: { w: 0.094, len: 0.205, h: 0.11 },
+    hands: { palmW: 0.098, palmL: 0.080, palmT: 0.038, fingerR: 0.0115, wristR: 0.034, curl: 0.95 },
+    feet: { w: 0.104, len: 0.215, h: 0.118 },
 
     buildHead(headObj, s, hg) {
       const k = new Kit();
@@ -1659,48 +2013,58 @@ export function buildTrooper(opts = {}) {
       // helmet whose surface is at 0.122 — inside its own helmet, all of it.
       // Both bars are now raycast onto the brow and set into it, so the visor
       // is a recess rather than a sticker.
-      const brow = new THREE.Vector3(0, 0.26, 1).normalize();
-      // h is the extent ALONG the normal once aimed, so 0.048 sunk 0.011 stood
-      // 13mm proud of the helmet — a slab bolted on rather than a slot cut in.
-      k.aim(visor, plateGeo(0.126 * s, 0.048 * s, 0.034 * s, 0.006 * s, 1),
-        onSurface(hg, brow, 0.028 * s, new THREE.Vector3(0, 0.112 * s, 0.070 * s)), brow);
-      const nose = new THREE.Vector3(0, -0.22, 1).normalize();
-      k.aim(visor, plateGeo(0.050 * s, 0.048 * s, 0.104 * s, 0.006 * s, 1),
-        onSurface(hg, nose, 0.028 * s, new THREE.Vector3(0, 0.070 * s, 0.070 * s)), nose);
+      // The T. Every part of it used to be authored at z = 0.10 against a
+      // helmet whose surface is at 0.122 — inside its own helmet, all of it.
+      // Both bars are raycast onto the brow and laid ON it with face(), whose
+      // frame is the one plateGeo is authored in: width, height, thickness.
+      // aim() puts the HEIGHT along the normal, which is how a visor authored
+      // 4.8cm tall became a 4.8cm-deep slab bolted to the front of the face.
+      const brow = new THREE.Vector3(0, 0.22, 1).normalize();
+      k.face(visor, plateGeo(0.128 * s, 0.036 * s, 0.026 * s, 0.005 * s, 1),
+        onSurface(hg, brow, 0.010 * s, new THREE.Vector3(0, 0.108 * s, 0.055 * s)), brow);
+      const nose = new THREE.Vector3(0, -0.20, 1).normalize();
+      k.face(visor, plateGeo(0.046 * s, 0.098 * s, 0.026 * s, 0.005 * s, 1),
+        onSurface(hg, nose, 0.010 * s, new THREE.Vector3(0, 0.070 * s, 0.055 * s)), nose);
       // the frown line under the visor, and the mouth grille
-      const frown = new THREE.Vector3(0, -0.30, 1).normalize();
-      k.aim(under, plateGeo(0.110 * s, 0.012 * s, 0.016 * s, 0.003 * s, 1),
-        onSurface(hg, frown, 0.003 * s, new THREE.Vector3(0, 0.052 * s, 0.080 * s)), frown);
-      const mouth = new THREE.Vector3(0, -0.52, 1).normalize();
-      k.aim(visor, ventGeo(0.056 * s, 0.028 * s, 0.010 * s, 3),
-        onSurface(hg, mouth, 0.002 * s, new THREE.Vector3(0, 0.040 * s, 0.070 * s)), mouth);
+      const frown = new THREE.Vector3(0, -0.34, 1).normalize();
+      k.face(under, plateGeo(0.112 * s, 0.014 * s, 0.010 * s, 0.003 * s, 1),
+        onSurface(hg, frown, 0.002 * s, new THREE.Vector3(0, 0.046 * s, 0.055 * s)), frown);
+      const mouth = new THREE.Vector3(0, -0.56, 1).normalize();
+      k.face(visor, ventGeo(0.052 * s, 0.026 * s, 0.008 * s, 3),
+        onSurface(hg, mouth, 0.002 * s, new THREE.Vector3(0, 0.032 * s, 0.050 * s)), mouth);
       k.pair((sx) => {
-        // breather cylinders on the cheeks, on the surface they belong to
         // breather cylinder, probed from inside the cheek flare
-        const cheek = new THREE.Vector3(sx * 0.090 * s, 0.070 * s, 0.030 * s);
-        const d = new THREE.Vector3(sx * 0.72, -0.30, 0.62).normalize();
-        k.aim(visor, new THREE.CylinderGeometry(0.013 * s, 0.015 * s, 0.022 * s, 8),
-          onSurface(hg, d, 0.007 * s, cheek), d);
-        const e = new THREE.Vector3(sx * 0.98, 0.10, -0.10).normalize();
-        k.aim(under, ventGeo(0.034 * s, 0.056 * s, 0.010 * s, 3),
-          onSurface(hg, e, 0.003 * s, cheek), e);
+        const cheek = new THREE.Vector3(sx * 0.080 * s, 0.058 * s, 0.018 * s);
+        const d = new THREE.Vector3(sx * 0.72, -0.34, 0.60).normalize();
+        k.aim(visor, new THREE.CylinderGeometry(0.012 * s, 0.014 * s, 0.020 * s, 8),
+          onSurface(hg, d, 0.006 * s, cheek), d);
+        // ear vent, LAID ON the side of the helmet. As an aim() it stood 5.6cm
+        // proud — a black wedge two inches out of the side of the head, which
+        // is the single loudest thing in every close shot of a trooper.
+        const e = new THREE.Vector3(sx * 0.98, 0.10, -0.14).normalize();
+        k.face(under, ventGeo(0.048 * s, 0.062 * s, 0.008 * s, 3),
+          onSurface(hg, e, 0.002 * s, cheek), e);
         const f = new THREE.Vector3(sx * 0.86, 0.48, 0.14).normalize();
-        k.aim(plate, riv, onSurface(hg, f, -0.003 * s, new THREE.Vector3(0, 0.110 * s, -0.030 * s)), f);
+        k.aim(plate, riv, onSurface(hg, f, -0.003 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), f);
       });
       // Crest: the fin along the crown, in unit colour, plus the stripes that
       // actually get painted on a helmet.
-      k.add(accent, plateGeo(0.030 * s, 0.030 * s, 0.190 * s, 0.006 * s, 1), [0, 0.222 * s, -0.014 * s], [0.04, 0, 0]);
+      k.add(accent, plateGeo(0.032 * s, 0.020 * s, 0.174 * s, 0.007 * s, 1), [0, 0.226 * s, -0.016 * s], [0.04, 0, 0]);
       k.pair((sx) => {
+        // aim()'s local X is ref × dir, which for a crown normal runs
+        // front-to-back, and its local Z runs across. Authored the other way
+        // round, this stripe was 13cm WIDE and 2cm long: a blue slab on each
+        // side of the helmet rather than a stripe over the crown.
         const d = new THREE.Vector3(sx * 0.50, 0.86, 0.10).normalize();
-        k.aim(accent, plateGeo(0.022 * s, 0.006 * s, 0.130 * s, 0.002 * s, 1),
-          onSurface(hg, d, 0.001 * s, new THREE.Vector3(0, 0.110 * s, -0.030 * s)), d);
+        k.aim(accent, plateGeo(0.130 * s, 0.006 * s, 0.022 * s, 0.002 * s, 1),
+          onSurface(hg, d, 0.001 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), d);
       });
       k.bake(headObj);
     },
 
     dress(r, s) {
       const chestB = r.get('chest'), spineB = r.get('spine'), hipsB = r.get('hips');
-      const D = 0.78;   // the torso's z squash — the plates have to match it
+      const D = 0.88;   // the torso's z squash — the plates have to match it
 
       /* ── torso: separate front, back and abdominal plates ── */
       const k = new Kit();
@@ -1752,11 +2116,18 @@ export function buildTrooper(opts = {}) {
           const L = arm.length;
           // Shoulder bell on the humerus, so it rolls with the shoulder. The
           // sphere's pole is +Y, i.e. down the arm, so it is turned over.
-          const bell = new THREE.SphereGeometry(0.098 * s, 11, 6, 0, Math.PI * 2, 0, Math.PI * 0.56);
+          const bell = new THREE.SphereGeometry(0.106 * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
           bell.scale(1.0, 1.02, 1.06);
           ka.add(plate, bell, [0, 0.030 * s, 0], [Math.PI, 0, 0]);
-          ka.add(plate, bandGeo(0.088 * s, 0.100 * s, 0.086 * s, 0.098 * s, 0.020 * s, 12), [0, 0.086 * s, 0], null, [1, 1, 1.06]);
-          ka.add(accent, arcGeo(0.092 * s, 0.092 * s, 0.026 * s, 1.9, 0.006 * s, 7), [0, 0.040 * s, 0], null, [1, 1, 1.06]);
+          // The rolled rim, ON the bell's own open edge — which is at y =
+          // 0.049 and radius 0.096, measured off the sphere rather than
+          // guessed. The band that was here sat at y = 0.086 with an outer
+          // radius of 0.100 around an arm of radius 0.048: a white hoop
+          // floating four centimetres off the bicep, while the bell itself
+          // stayed a zero-thickness shell you could see the inside of.
+          ka.add(plate, bandGeo(0.0930 * s, 0.1095 * s, 0.0965 * s, 0.1095 * s, 0.032 * s, 14),
+            [0, 0.030 * s, 0], null, [1, 1, 1.06]);
+          ka.add(accent, arcGeo(0.1035 * s, 0.1035 * s, 0.028 * s, 1.9, 0.006 * s, 7), [0, 0.004 * s, 0], null, [1, 1, 1.06]);
           // biceps plate over the suit
           ka.add(plate, limbPlate(arm, L * 0.34, L * 0.78, 3.1, { thick: 0.012 * s, seg: 7, gap: 0.005 * s }),
             [0, L * 0.34, 0]);
@@ -1862,9 +2233,14 @@ export function buildAcolyte(opts = {}) {
     scale: S,
     body: robe, arm: inner, leg: robe, hand: leather, boot: leather, head: maskMat,
     deltoid: false,
-    parts: { chestR: 0.158, shoulderR: 0.136, hipR: 0.132, waistR: 0.118,
-             armR: 0.048, clavR: 0.062, thighR: 0.090, neckR: 0.060, torsoDepth: 0.76 },
-    seg: { torso: 14, arm: 14, leg: 10, clav: 10, neck: 10 },
+    // Lean, where the trooper is heavy. These two and the Jedi share one
+    // skeleton and one standing height, so the only thing that can separate
+    // them at range is mass distribution: the acolyte is narrow through the
+    // chest and the limbs and carries all of its width low, in a coat that
+    // flares to 46cm at the hem.
+    parts: { chestR: 0.146, shoulderR: 0.126, hipR: 0.124, waistR: 0.106,
+             armR: 0.042, clavR: 0.056, thighR: 0.080, neckR: 0.055, torsoDepth: 0.72 },
+    seg: { torso: 16, arm: 14, leg: 10, clav: 10, neck: 10 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
       neck: { capN: 2 }, clav: { capN: 2 },
@@ -1902,10 +2278,12 @@ export function buildAcolyte(opts = {}) {
         k.aim(maskMat, plateGeo(0.088 * s, 0.020 * s, 0.026 * s, 0.004 * s, 1),
           onSurface(hg, c, -0.004 * s, at(0.030, 0.080, 0.040)), c);
       });
-      // breathing grille across the respirator
+      // Breathing grille across the respirator, LAID ON it. aim() puts the
+      // panel's height along the normal, so this stood 4.2cm proud of the mask
+      // — a gold brick where the mouth should be.
       const m = new THREE.Vector3(0, -0.30, 1).normalize();
-      k.aim(trim, ventGeo(0.058 * s, 0.042 * s, 0.012 * s, 4),
-        onSurface(hg, m, 0.003 * s, new THREE.Vector3(0, 0.050 * s, 0.070 * s)), m);
+      k.face(trim, ventGeo(0.058 * s, 0.042 * s, 0.010 * s, 4),
+        onSurface(hg, m, 0.002 * s, new THREE.Vector3(0, 0.050 * s, 0.060 * s)), m);
       // centre crest from the brow over the crown
       k.add(trim, plateGeo(0.016 * s, 0.060 * s, 0.150 * s, 0.005 * s, 1), [0, 0.192 * s, 0.010 * s], [0.16, 0, 0]);
 
@@ -1938,45 +2316,56 @@ export function buildAcolyte(opts = {}) {
 
       /* ── coat: an asymmetric wrap, right lapel over left ── */
       const k = new Kit();
-      k.add(robe, arcGeo(0.150 * s, 0.140 * s, 0.250 * s, 3.4, 0.016 * s, 9), [0, -0.020 * s, 0], null, [1, 1, 0.78]);
-      k.add(robe, arcGeo(0.152 * s, 0.142 * s, 0.240 * s, 2.0, 0.020 * s, 7), [0, -0.014 * s, 0], [0, 0.42, 0], [1, 1, 0.78]);
-      k.add(inner, arcGeo(0.146 * s, 0.138 * s, 0.180 * s, 1.1, 0.010 * s, 5), [0, 0.030 * s, 0], [0, -0.30, 0], [1, 1, 0.78]);
-      // mantle across the shoulders — the cowl has to come from somewhere
-      k.add(robe, bandGeo(0.122 * s, 0.176 * s, 0.088 * s, 0.124 * s, 0.155 * s, 16), [0, 0.092 * s, 0], null, [1, 1, 0.80]);
-      k.add(leather, bandGeo(0.166 * s, 0.184 * s, 0.164 * s, 0.182 * s, 0.022 * s, 16), [0, 0.096 * s, 0], null, [1, 1, 0.80]);
+      k.add(robe, arcGeo(0.140 * s, 0.130 * s, 0.250 * s, 3.4, 0.016 * s, 9), [0, -0.020 * s, 0], null, [1, 1, 0.74]);
+      k.add(robe, arcGeo(0.142 * s, 0.132 * s, 0.240 * s, 2.0, 0.020 * s, 7), [0, -0.014 * s, 0], [0, 0.42, 0], [1, 1, 0.74]);
+      k.add(inner, arcGeo(0.136 * s, 0.128 * s, 0.180 * s, 1.1, 0.010 * s, 5), [0, 0.030 * s, 0], [0, -0.30, 0], [1, 1, 0.74]);
+      // Mantle across the shoulders — the cowl has to come from somewhere, and
+      // it is the one place the acolyte is allowed to be wide.
+      k.add(robe, bandGeo(0.112 * s, 0.196 * s, 0.082 * s, 0.120 * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
+      k.add(leather, bandGeo(0.186 * s, 0.206 * s, 0.184 * s, 0.204 * s, 0.024 * s, 18), [0, 0.088 * s, 0], null, [1, 1, 0.78]);
       // studs on the collar band's own outer face — the band is 18.4cm across
       // and 14.7 deep after the torso squash, so a circle of 17.2 is inside it
       k.row(9, (i, t) => {
         const a = t * Math.PI * 2;
-        k.add(trim, stud, [Math.sin(a) * 0.188 * s, 0.108 * s, Math.cos(a) * 0.152 * s], [1.5708, a, 0]);
+        k.add(trim, stud, [Math.sin(a) * 0.210 * s, 0.100 * s, Math.cos(a) * 0.164 * s], [1.5708, a, 0]);
       });
       k.bake(chestB.obj);
 
       /* ── sash across the ribs ── */
       const ks = new Kit();
-      ks.add(inner, arcGeo(0.128 * s, 0.140 * s, 0.190 * s, 2.2, 0.012 * s, 7), [0, 0.010 * s, 0], [0, 0.5, 0], [1, 1, 0.78]);
+      ks.add(inner, arcGeo(0.116 * s, 0.130 * s, 0.190 * s, 2.2, 0.012 * s, 7), [0, 0.010 * s, 0], [0, 0.5, 0], [1, 1, 0.74]);
       ks.bake(spineB.obj);
 
       /* ── belt, tassets, skirt ── */
       const kh = new Kit();
-      kh.add(leather, bandGeo(0.126 * s, 0.148 * s, 0.126 * s, 0.148 * s, 0.078 * s, 18), [0, 0.028 * s, 0], null, [1, 1, 0.82]);
+      kh.add(leather, bandGeo(0.118 * s, 0.140 * s, 0.118 * s, 0.140 * s, 0.078 * s, 18), [0, 0.028 * s, 0], null, [1, 1, 0.80]);
       kh.add(trim, plateGeo(0.070 * s, 0.056 * s, 0.028 * s, 0.008 * s, 2), onLimb(hipsB, 0.062 * s, [0, 0, 1], -0.008 * s));
       // on the belt's outer face (14.8cm across, 12.1 deep after the squash)
       kh.row(6, (i, t) => {
         const a = (t - 0.5) * 2.4;
-        kh.add(trim, stud, [Math.sin(a) * 0.152 * s, 0.062 * s, Math.cos(a) * 0.126 * s], [1.5708, a, 0]);
+        kh.add(trim, stud, [Math.sin(a) * 0.144 * s, 0.062 * s, Math.cos(a) * 0.116 * s], [1.5708, a, 0]);
       });
       // hanging tassets, longest at the front
       kh.row(5, (i, t) => {
         const a = (t - 0.5) * 2.0;
-        kh.add(leather, plateGeo(0.052 * s, 0.190 * s - Math.abs(a) * 0.030 * s, 0.014 * s, 0.005 * s, 1),
-          [Math.sin(a) * 0.128 * s, -0.078 * s, Math.cos(a) * 0.108 * s], [0.06, a, 0]);
+        kh.add(leather, plateGeo(0.052 * s, 0.200 * s - Math.abs(a) * 0.030 * s, 0.014 * s, 0.005 * s, 1),
+          [Math.sin(a) * 0.122 * s, -0.082 * s, Math.cos(a) * 0.102 * s], [0.10, a, 0]);
       });
-      // skirt panels of the coat
+      // Skirt panels of the coat. Hung dead vertical they made a 24cm tube —
+      // the same width as the hips, so from any distance the coat was invisible
+      // and the acolyte was a Jedi in black. Raked out at 0.20 they open to a
+      // 46cm hem, which is the shape that reads: narrow shoulders over a bell.
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-        const m = mesh(plateGeo(0.135 * s, 0.52 * s, 0.020 * s, 0.010 * s, 1), robe, hipsB.obj,
-          [Math.sin(a) * 0.118 * s, -0.180 * s, Math.cos(a) * 0.098 * s], [0.05, a, 0]);
+        const m = mesh(plateGeo(0.150 * s, 0.58 * s, 0.020 * s, 0.010 * s, 1), robe, hipsB.obj,
+          [Math.sin(a) * 0.116 * s, -0.196 * s, Math.cos(a) * 0.096 * s]);
+        // YXZ, not the default XYZ. Yaw the panel to its station first and THEN
+        // rake it outward about its own tangential axis; composed the other way
+        // round the rake is applied about the pelvis's X for every panel, so
+        // the two at the sides spin in their own plane and the skirt stays a
+        // tube however far the rake is pushed.
+        m.rotation.order = 'YXZ';
+        m.rotation.set(0.22, a, 0);
         m.userData.skirt = { angle: a, index: i };
       }
       kh.bake(hipsB.obj);
@@ -1988,9 +2377,14 @@ export function buildAcolyte(opts = {}) {
           const ka = new Kit();
           const L = arm.length;
           // a heavy cap with two lames hanging off it — layered, not a box
-          const cap = new THREE.SphereGeometry(0.104 * s, 11, 6, 0, Math.PI * 2, 0, Math.PI * 0.52);
+          const cap = new THREE.SphereGeometry(0.104 * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.52);
           cap.scale(1.0, 1.06, 1.06);
           ka.add(leather, cap, [0, 0.026 * s, 0], [Math.PI, 0, 0]);
+          // welted edge on the cap's own rim (y = 0.033, radius 0.104) — a
+          // sphere section has no thickness, and a pauldron you can see the
+          // inside of is a bowl on a shoulder
+          ka.add(trim, bandGeo(0.098 * s, 0.1075 * s, 0.100 * s, 0.1075 * s, 0.022 * s, 14),
+            [0, 0.018 * s, 0], null, [1, 1, 1.06]);
           ka.add(leather, limbPlate(arm, 0.070 * s, 0.132 * s, 3.6, { thick: 0.014 * s, seg: 8, gap: 0.040 * s }),
             [0, 0.070 * s, 0]);
           ka.add(leather, limbPlate(arm, 0.122 * s, 0.180 * s, 3.2, { thick: 0.014 * s, seg: 8, gap: 0.032 * s }),
@@ -2385,7 +2779,7 @@ export function buildBeast(opts = {}) {
   const chitin = chitinMat(0x8f7a63, 0.55);
   const belly = hideMat(0xa8907a, 0.92);
   const eye = emissiveMat(0xffdd44, 2.6);
-  const tooth = new THREE.MeshStandardMaterial({ color: 0xd8cdb4, roughness: 0.45, metalness: 0 });
+  const tooth = boneMat(0xd8cdb4, 0.34);
 
   /* ── carapace ── */
   const body = rig.get('body');

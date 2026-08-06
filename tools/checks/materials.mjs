@@ -1,0 +1,364 @@
+/**
+ * Procedural PBR material checks — src/engine/Textures.js.
+ *
+ * These read the bytes the baker actually wrote, via rawMaps. Under the headless
+ * DOM shim a canvas readback returns zeros, so a suite that measured the maps
+ * through getImageData would see a perfectly black, perfectly seamless, perfectly
+ * uniform texture and pass every test in this file for the wrong reason. The
+ * first check below exists to make that impossible to do by accident.
+ *
+ * What is pinned:
+ *   · the mean LINEAR albedo of every map, because Props.js and Bodies.js pick
+ *     their tints as linear multipliers on exactly these numbers;
+ *   · that every tiling map actually wraps;
+ *   · that the noise primitives underneath are periodic, which is what makes
+ *     the wrap possible in the first place;
+ *   · that normals, roughness and hue are not flat, which is the difference
+ *     between a material and a sheet of coloured plastic.
+ */
+
+import { rawMaps, MEAN_ALBEDO, PERIODIC, sandMaps, rockMaps, metalMaps, clothMaps, armorMaps,
+         duracreteMaps, skinMaps, disposeTextureCache } from '../../src/engine/Textures.js';
+
+const SURFACES = ['sand', 'rock', 'metal', 'cloth', 'armor', 'duracrete', 'skin'];
+const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+
+/** Everything any check needs, measured once off the real bytes. */
+const M = new Map();
+function measure(name) {
+  if (M.has(name)) return M.get(name);
+  const m = rawMaps(name);
+  const S = m.size, N = S * S, A = m.albedo, Nm = m.normal, R = m.rough;
+
+  const lum = new Float64Array(N);
+  let sr = 0, sg = 0, sb = 0, satSum = 0;
+  const ratio = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = toLin(A[i * 4]), g = toLin(A[i * 4 + 1]), b = toLin(A[i * 4 + 2]);
+    sr += r; sg += g; sb += b;
+    lum[i] = (r + g + b) / 3;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    satSum += mx > 1e-6 ? (mx - mn) / mx : 0;
+    ratio[i] = r / Math.max(1e-6, b);
+  }
+  let lm = 0; for (let i = 0; i < N; i++) lm += lum[i];
+  lm /= N;
+  let lv = 0; for (let i = 0; i < N; i++) lv += (lum[i] - lm) ** 2;
+  const lsd = Math.sqrt(lv / N);
+
+  // normal deviation from flat, and roughness spread
+  let ang = 0, flat = 0, rm = 0, rv = 0;
+  const rough = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const nz = Nm[i * 4 + 2] / 255 * 2 - 1;
+    const a = Math.acos(Math.min(1, Math.max(-1, nz))) * 180 / Math.PI;
+    ang += a; if (a < 1) flat++;
+    rough[i] = R[i * 4 + 1] / 255; rm += rough[i];
+  }
+  rm /= N;
+  for (let i = 0; i < N; i++) rv += (rough[i] - rm) ** 2;
+
+  // hue spread: the p5..p95 range of the red/blue ratio. A material whose only
+  // variation is a scalar on one colour has a ratio that never moves.
+  const rs = Float64Array.from(ratio).sort();
+  const hueSpread = rs[(N * 0.95) | 0] / Math.max(1e-6, rs[(N * 0.05) | 0]);
+
+  // 1-texel rms vs total sd: at 1.0 the map is white noise at Nyquist and the
+  // "detail" is aliasing, not structure.
+  let hi = 0;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    hi += (lum[i] - lum[y * S + ((x + 1) % S)]) ** 2;
+  }
+  hi = Math.sqrt(hi / N);
+
+  const out = {
+    size: S, albedo: [sr / N, sg / N, sb / N], lum: lm, lumSd: lsd,
+    tiltMean: ang / N, flatFrac: flat / N,
+    roughMean: rm, roughSd: Math.sqrt(rv / N),
+    sat: satSum / N, hueSpread, microRms: hi, aliasRatio: hi / Math.max(1e-9, lsd),
+    A, Nm, R,
+  };
+  M.set(name, out);
+  return out;
+}
+
+/**
+ * Seam statistic. Take the mean absolute step for all S adjacent column pairs —
+ * the wrap pair included — and compare the wrap pair with the strongest and the
+ * typical interior pair.
+ *
+ * Ratio to the strongest interior edge is the structural test: a map built from
+ * non-periodic noise puts a full noise-amplitude jump at the boundary and
+ * nowhere else, so it dwarfs everything inside. A map whose features genuinely
+ * continue across the boundary — metal's four panel seams a tile, cloth's
+ * threads every eight texels — is at most as strong as its own kind, and a
+ * plain percentile would flag it one time in four for nothing more than being
+ * the largest of four identical events.
+ *
+ * Ratio to the median is the softer backstop, for a seam too small to beat the
+ * map's own hard features but still visible against its ordinary grain.
+ *
+ * Returns [wrap ÷ strongest interior, wrap ÷ median] for columns and for rows.
+ */
+function seamOutlier(buf, S, ch) {
+  const col = new Float64Array(S), row = new Float64Array(S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = (y * S + x) * 4 + ch;
+    col[x] += Math.abs(buf[i] - buf[(y * S + (x + 1) % S) * 4 + ch]) / S;
+    row[y] += Math.abs(buf[i] - buf[(((y + 1) % S) * S + x) * 4 + ch]) / S;
+  }
+  const score = (arr) => {
+    const wrap = arr[arr.length - 1];
+    let hi = 0;
+    for (let i = 0; i < arr.length - 1; i++) if (arr[i] > hi) hi = arr[i];
+    const sorted = Float64Array.from(arr).sort();
+    return [wrap / Math.max(1e-6, hi), wrap / Math.max(1e-6, sorted[arr.length >> 1])];
+  };
+  return [score(col), score(row)];
+}
+
+export function run({ check, assert, near }) {
+
+  check('materials: the baker hands back real pixels, not a black canvas', () => {
+    // Guard for every other check in this file. The DOM shim's canvas discards
+    // putImageData and returns zeros from getImageData, so a suite that read
+    // maps through the canvas would measure a uniformly black texture and call
+    // it seamless, flat-albedo perfect. Everything here reads rawMaps instead.
+    const m = rawMaps('sand');
+    assert(m && m.albedo && m.albedo.length === m.size * m.size * 4, 'no raw albedo bytes');
+    let nz = 0;
+    for (let i = 0; i < m.albedo.length; i += 4) if (m.albedo[i]) nz++;
+    assert(nz > m.size * m.size * 0.99, `${nz} of ${m.size ** 2} albedo texels are non-zero`);
+    return `${SURFACES.length} surfaces, sand ${m.size}² with ${nz} live texels`;
+  });
+
+  check('materials: every map lands on its measured linear albedo', () => {
+    // Props.js and Bodies.js multiply these maps by linear tints chosen against
+    // these exact numbers — the reason `stone` is lit(1.90, 2.10, 2.20) is that
+    // the rock map means 0.110. Drift here silently re-lights the whole game,
+    // which is how boulders once ended up 26× darker than the sand.
+    const lines = [];
+    for (const name of SURFACES) {
+      const m = measure(name);
+      const want = MEAN_ALBEDO[name];
+      assert(want, `${name} has no declared mean albedo`);
+      for (let c = 0; c < 3; c++) {
+        const err = Math.abs(m.albedo[c] - want[c]) / want[c];
+        assert(err < 0.03, `${name} channel ${'RGB'[c]} is ${m.albedo[c].toFixed(4)}, declared ${want[c]} (${(err * 100).toFixed(1)}% off)`);
+      }
+      lines.push(`${name} ${m.albedo.map(v => v.toFixed(3)).join('/')}`);
+    }
+    return lines.join('  ');
+  });
+
+  check('materials: the periodic noise meets itself after exactly one tile', () => {
+    // The property the whole file rests on, and the only one that can be
+    // checked exactly rather than inferred: called with period == frequency,
+    // every primitive is a function on a torus, so f(u, v) must equal f(u+1, v)
+    // and f(u, v+1) to the last bit. MathUtil's noise — which these maps used
+    // to be built from — fails this by construction, which is why the wrap
+    // discontinuity measured 6.5× the local gradient on duracrete and 5.0× on
+    // armour, one hard line across every wall and every stormtrooper.
+    const { pnoise, pfbm, pridged, pworley, pstretch, ridgeWave } = PERIODIC;
+    const cases = [
+      ['pnoise 7',   (u, v) => pnoise(u * 7, v * 7, 7, 7, 3)],
+      ['pnoise 190', (u, v) => pnoise(u * 190, v * 190, 190, 190, 13)],
+      ['pfbm 13×4',  (u, v) => pfbm(u, v, 13, 4, 0.5, 151)],
+      ['pfbm 46×3',  (u, v) => pfbm(u, v, 46, 3, 0.55, 131)],
+      ['pridged 13', (u, v) => pridged(u, v, 13, 4, 5)],
+      ['pworley F1', (u, v) => pworley(u, v, 19, 41)[0]],
+      ['pworley F2', (u, v) => pworley(u, v, 7, 5)[1]],
+      ['pstretch',   (u, v) => pstretch(u, v, 112, 7, 23)],
+      ['ridgeWave',  (u, v) => ridgeWave(u, v, 26, 5, 0.13, 0.72)],
+    ];
+    let worst = 0, who = '';
+    for (const [name, f] of cases) {
+      for (let i = 0; i < 400; i++) {
+        const u = (i * 0.6180339887) % 1, v = ((i * 0.4142135624) % 1) * 0.97 + 0.01;
+        const base = f(u, v);
+        const e = Math.max(Math.abs(f(u + 1, v) - base), Math.abs(f(u, v + 1) - base),
+                           Math.abs(f(u - 3, v + 2) - base));
+        if (e > worst) { worst = e; who = name; }
+      }
+    }
+    assert(worst < 1e-12, `${who} is not periodic: ${worst.toExponential(2)} across a tile`);
+    return `${cases.length} primitives × 1200 shifted samples, worst error ${worst.toExponential(1)}`;
+  });
+
+  check('materials: no baked map has a step at its wrap', () => {
+    // The primitive test above proves the maths; this proves the maps actually
+    // built out of it, including the places a sampler could still combine
+    // periodic pieces aperiodically — a cellular field scaled by 1.3, or a
+    // per-band hash whose index gains 4 across the tile. Both of those were
+    // live in this file an hour ago and both show up here.
+    // The percentile carries the test. The ratio to the median edge is a
+    // backstop, and it is loose for metal on purpose: metal's median column is
+    // flat machined plate, so anything that lands on one of its four panel
+    // seams — which by construction includes the tile boundary — is a large
+    // multiple of the median while being completely ordinary for that map.
+    const MAX_MEDIAN = { metal: 8.0, cloth: 4.5 };
+    const rows = [];
+    for (const name of SURFACES) {
+      const m = measure(name);
+      let worstH = 0, worstM = 0;
+      for (const [buf, ch, what] of [[m.A, 0, 'albedo'], [m.Nm, 0, 'normal'], [m.R, 1, 'rough']]) {
+        for (const [vsMax, vsMed] of seamOutlier(buf, m.size, ch)) {
+          assert(vsMax < 1.25, `${name} ${what}: the wrap steps ${vsMax.toFixed(2)}× the strongest edge inside the map`);
+          assert(vsMed < (MAX_MEDIAN[name] ?? 4.0), `${name} ${what}: the wrap steps ${vsMed.toFixed(2)}× the median edge`);
+          worstH = Math.max(worstH, vsMax); worstM = Math.max(worstM, vsMed);
+        }
+      }
+      rows.push(`${name} ${worstH.toFixed(2)}×peak ${worstM.toFixed(1)}×med`);
+    }
+    return rows.join('  ');
+  });
+
+  check('materials: no map is a flat plastic sheet', () => {
+    // Three ways a procedural material reads as plastic, all of them things
+    // this file has actually shipped: a normal map that is dead flat (duracrete
+    // measured 0.0° mean tilt with 99.8% of texels under one degree), a
+    // roughness channel that is a constant, and an albedo that is one hue
+    // scaled by a scalar so nothing ever shifts colour.
+    const rows = [];
+    const MIN_TILT = { sand: 6, rock: 6, metal: 1.5, cloth: 8, armor: 2, duracrete: 3, skin: 1.5 };
+    for (const name of SURFACES) {
+      const m = measure(name);
+      assert(m.tiltMean > MIN_TILT[name],
+        `${name} normal map is flat: ${m.tiltMean.toFixed(1)}° mean tilt`);
+      assert(m.roughSd > 0.02, `${name} roughness is a constant (sd ${m.roughSd.toFixed(3)})`);
+      rows.push(`${name} ${m.tiltMean.toFixed(1)}° r±${m.roughSd.toFixed(2)}`);
+    }
+    // Hue has to move on the materials that are meant to be coloured. Cloth and
+    // skin are near-white carriers for a tint applied by the consumer, so they
+    // are exempt from the hue test but not from the other two.
+    for (const name of ['sand', 'rock', 'metal', 'armor', 'duracrete']) {
+      const m = measure(name);
+      assert(m.hueSpread > 1.10,
+        `${name} never changes hue: R/B ratio spans only ${m.hueSpread.toFixed(3)}× from p5 to p95`);
+    }
+    return rows.join('  ');
+  });
+
+  check('materials: microdetail is structure, not aliasing', () => {
+    // A map whose 1-texel rms equals its total spread is white noise at Nyquist:
+    // it shimmers when you move and turns to flat grey two metres away. A map
+    // with almost no 1-texel energy is a blur — rock measured 0.004 rms against
+    // an 0.020 spread and had no grain at all. Both are failures; the band
+    // between them is a surface.
+    const rows = [];
+    for (const name of SURFACES) {
+      const m = measure(name);
+      assert(m.aliasRatio > 0.15, `${name} has no texel-scale grain (rms ${m.microRms.toFixed(4)} vs sd ${m.lumSd.toFixed(4)})`);
+      assert(m.aliasRatio < 0.90, `${name} is aliased noise (rms ${m.microRms.toFixed(4)} vs sd ${m.lumSd.toFixed(4)})`);
+      rows.push(`${name} ${(m.aliasRatio * 100).toFixed(0)}%`);
+    }
+    return rows.join('  ');
+  });
+
+  check('materials: cavity occlusion darkens and never haloes', () => {
+    // The old AO was a Laplacian clamped to [0.55, 1.15], so every crack got a
+    // bright ring around it — the cheapest tell that a texture was generated
+    // rather than measured. The replacement is a three-scale "how far below my
+    // neighbourhood am I", which can only subtract. Proved on the map that
+    // carries the most cavities: the darkest texels must sit in the places the
+    // height field is most concave, and the mean must be pulled down.
+    const m = measure('duracrete');
+    assert(m.lum < 0.36 && m.lum > 0.28, `duracrete luminance drifted to ${m.lum.toFixed(3)}`);
+    // occlusion shows up as a long dark tail with no matching bright tail
+    const S = m.size, N = S * S;
+    const lum = [];
+    for (let i = 0; i < N; i += 3) lum.push(toLin(m.A[i * 4 + 1]));
+    lum.sort((a, b) => a - b);
+    const p1 = lum[(lum.length * 0.01) | 0], p50 = lum[lum.length >> 1], p99 = lum[(lum.length * 0.99) | 0];
+    assert(p50 - p1 > (p99 - p50) * 1.4,
+      `duracrete has no occlusion tail: p1 ${p1.toFixed(3)} p50 ${p50.toFixed(3)} p99 ${p99.toFixed(3)}`);
+    return `p1 ${p1.toFixed(3)} · p50 ${p50.toFixed(3)} · p99 ${p99.toFixed(3)} — dark tail ${((p50 - p1) / (p99 - p50)).toFixed(1)}× the bright one`;
+  });
+
+  check('materials: the maps modulate the terrain around 1.0, not 1.3', () => {
+    // Terrain.js does `col *= 0.55 + dot(albedo, 1/3) * 1.15`, so the sand and
+    // rock maps are gain, not colour: their luminance decides whether a level's
+    // authored sand colour arrives intact or 20% hot. Sand must sit on 1.0.
+    const s = measure('sand');
+    const gain = 0.55 + s.lum * 1.15;
+    near(gain, 1.0, 0.06, 'sand terrain gain');
+    // and it has to have somewhere to swing, or the desert is one flat colour
+    assert(s.lumSd / s.lum > 0.12, `sand is tonally flat: sd/mean ${(s.lumSd / s.lum).toFixed(3)}`);
+    const r = measure('rock');
+    return `sand gain ${gain.toFixed(3)} ±${(s.lumSd * 1.15).toFixed(3)}, rock gain ${(0.55 + r.lum * 1.15).toFixed(3)}`;
+  });
+
+  check('materials: the packed ORM map is uploaded once, not twice', () => {
+    // roughnessMap and metalnessMap are the same packed image. Handing three
+    // two CanvasTextures over one canvas cost a second GPU upload and a second
+    // mip chain for every material in the game.
+    const sets = [sandMaps(3), rockMaps(3), metalMaps(3), clothMaps(3),
+                  armorMaps(3), duracreteMaps(3), skinMaps(3)];
+    let bytes = 0;
+    for (const s of sets) {
+      assert(s.roughnessMap === s.metalnessMap, 'ORM map is duplicated');
+      assert(s.map.colorSpace === 'srgb', 'albedo must be tagged sRGB');
+      assert(s.normalMap.colorSpace !== 'srgb', 'a normal map must not be sRGB decoded');
+      assert(s.roughnessMap.colorSpace !== 'srgb', 'a roughness map must not be sRGB decoded');
+      bytes += s.map.image.width ** 2 * 4;
+    }
+    return `${sets.length} sets share one ORM texture each — ${(bytes / 1048576).toFixed(1)} MB of albedo saved a duplicate`;
+  });
+
+  check('materials: a surface bakes once however many tilings ask for it', () => {
+    // Terrain, props and bodies all want the same maps at different repeats.
+    // The texture objects differ; the 512²/1024² bake must not.
+    const a = sandMaps(11), b = sandMaps(12);
+    assert(a.map !== b.map, 'distinct repeats must get distinct textures');
+    assert(a.map.image === b.map.image, 'the same surface re-baked for a second tiling');
+    assert(a.map.repeat.x === 11 && b.map.repeat.x === 12, 'repeat not applied');
+    const t0 = Date.now();
+    for (let i = 20; i < 40; i++) { sandMaps(i); rockMaps(i); armorMaps(i); }
+    return `60 extra tilings in ${Date.now() - t0}ms, zero re-bakes`;
+  });
+
+  check('materials: nothing sits at the frequency that makes tiling obvious', () => {
+    // Rule 2 of the file: no feature below ~8 cycles per tile. A soft blob at
+    // 4-6 cycles is what turns a repeat into a visible grid — it is the bug
+    // that put "condensation" on every robe and damp patches on every plate.
+    // Measured as the energy in a 4×4 downsample (≈4 cycles) against the energy
+    // in a 16×16 one (≈16 cycles): the coarse band must be the quieter of the two.
+    const rows = [];
+    for (const name of SURFACES) {
+      const m = measure(name);
+      const S = m.size;
+      const band = (blocks) => {
+        const b = S / blocks, acc = new Float64Array(blocks * blocks);
+        for (let y = 0; y < S; y++) for (let x = 0; x < S; x++)
+          acc[((y / b) | 0) * blocks + ((x / b) | 0)] += toLin(m.A[(y * S + x) * 4 + 1]);
+        let mu = 0; for (const v of acc) mu += v / (b * b);
+        mu /= acc.length;
+        let sd = 0; for (const v of acc) sd += (v / (b * b) - mu) ** 2;
+        return Math.sqrt(sd / acc.length) / Math.max(1e-9, mu);
+      };
+      const coarse = band(4), fine = band(16);
+      assert(coarse < fine, `${name} has more energy at 4 cycles (${coarse.toFixed(4)}) than at 16 (${fine.toFixed(4)}) — that reads as a repeating blob`);
+      assert(coarse < 0.05, `${name} carries a ${(coarse * 100).toFixed(1)}% swing at 4 cycles; the tile will be visible`);
+      rows.push(`${name} ${(coarse * 100).toFixed(2)}%`);
+    }
+    return `4-cycle swing — ${rows.join('  ')}`;
+  });
+
+  check('materials: the whole foundry bakes inside its boot budget', () => {
+    // Six surfaces are baked on the loading screen. Rock is 1024² because it is
+    // the coarsest-tiled map in the game (one tile per ~9 m of terrain) and at
+    // 512 its grain aliased; everything else is 512².
+    disposeTextureCache();
+    M.clear();
+    const times = [];
+    for (const [n, f] of [['sand', sandMaps], ['rock', rockMaps], ['metal', metalMaps],
+                          ['cloth', clothMaps], ['armor', armorMaps], ['duracrete', duracreteMaps]]) {
+      const t = Date.now(); f(); times.push([n, Date.now() - t]);
+    }
+    const total = times.reduce((s, t) => s + t[1], 0);
+    assert(total < 12000, `the foundry takes ${total}ms to bake`);
+    assert(rawMaps('rock').size === 1024, 'rock must stay at 1024²');
+    return times.map(([n, t]) => `${n} ${t}ms`).join(' ') + ` — ${total}ms total`;
+  });
+}
