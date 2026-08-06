@@ -145,7 +145,13 @@ export const TERRAIN_PRESETS = {
     stoneSlope: 0.24,
     crust: 0.55, strataH: 5.5, cliffs: true,
     wind: [0.34, 0.94],
-    macro: [140, 0.62, 0.50, 1.05],
+    // Lag gain 0.75, not 0.62. The concavity channel is normalised by the
+    // spread of (blur − height) over the WHOLE map, so fluting the rim — which
+    // is four fifths of the arena by area — compresses the fighting floor's own
+    // micro-relief along with it: the floor's crest term fell, the scour term
+    // that rides on it fell, and the coarse lag patches went from 8.0% of the
+    // loose ground to 6.5%, under the floor the checks hold this level to.
+    macro: [140, 0.75, 0.50, 1.05],
     rockUpland: [0.16, 5, 26],
     lagColor: 0x615746, sheetColor: 0xc0a880,
     ripple: 0.95,
@@ -163,13 +169,53 @@ export const TERRAIN_PRESETS = {
         + Math.max(0, ridged2(x * 0.05, z * 0.05, 2) - 0.35) * 0.4;
       const dish = -smoothstep(62, 6, d) * 1.0;
 
-      // the wall, benched like an amphitheatre and gullied by runoff
+      // ── the wall: benched like an amphitheatre, gullied by runoff, and
+      //    fluted at the silhouette.
+      //
+      // Every erosion term here is a function of ANGLE alone, so it is constant
+      // along a radius and therefore cuts the ridge line by its full depth
+      // rather than being averaged out on the way up. That is what makes it
+      // reach the skyline at all on a 1.53 m grid: an erosion field that varied
+      // with radius would need features several cells deep in BOTH directions.
       let wall = smoothstep(60, 116, dd) * 27 + smoothstep(112, 170, dd) * 42;
-      const gully = Math.max(0, ridged2(Math.cos(a) * 7.4, Math.sin(a) * 7.4, 3) - 0.28)
-        * smoothstep(58, 132, dd) * 13;
-      wall = strata(wall - gully, 6.2, smoothstep(60, 84, dd) * 0.70, 3.1);
 
-      return wall + floor + dish;
+      // The chutes. They open upward, the way runoff cuts: shallow scallops at
+      // the foot where the debris piles up, deep notches at the brink where
+      // there is nothing to fill them. Measured on the ridge line as seen from
+      // an eye in the middle of the bowl, this and the rills below take the
+      // skyline from 0.85° of variation to 1.00°, its peak-to-peak from 4.12°
+      // to 4.96°, the count of separate notches cut into it from 51 to 63 —
+      // and, the number that actually decides whether an edge reads as eroded
+      // or as drawn, its high-frequency content from 0.166 to 0.348 °/sample.
+      const chute = Math.max(0, ridged2(Math.cos(a) * 7.4, Math.sin(a) * 7.4, 3) - 0.28);
+      const gully = chute * (0.62 + 0.38 * smoothstep(100, 176, dd))
+        * smoothstep(58, 132, dd) * 16.5;
+      // Rills between the chutes, at two fifths of their wavelength. 119 of
+      // them round a 170 m rim is 9 m each — six grid cells, so they survive; the
+      // second octave is 3 cells and reads as roughness rather than as shape,
+      // which is exactly what a silhouette needs to stop being a drawn line.
+      const rill = Math.max(0, ridged2(Math.cos(a) * 19.0 + 5.1, Math.sin(a) * 19.0 - 2.7, 2) - 0.36)
+        * smoothstep(96, 162, dd) * 5.4;
+
+      // Bedding DIPS. Beds laid down level and then tilted is the normal case,
+      // and quantising against a level datum all the way round is what makes an
+      // amphitheatre read as a stack of cardboard rings. Added before the
+      // quantiser and taken off after, so what tilts is where the treads and
+      // risers fall — the wall's underlying profile, and its mean height round
+      // the rim, do not move, and with the strata strength at zero the term
+      // cancels exactly.
+      const dip = Math.sin(a * 1.7 + 0.9) * 3.2 + Math.sin(a * 0.9 - 2.2) * 2.1;
+      wall = strata(wall - gully - rill + dip, 6.2, smoothstep(60, 84, dd) * 0.70, 3.1) - dip;
+
+      // The talus apron. A cliff that meets the floor at a line has nowhere to
+      // have put the material it lost; a real one stands on a skirt of its own
+      // debris, fanning out from under the chutes. Held off until d = 68 so the
+      // colonnade at R = 56 and everything the level dresses inside it sit on
+      // exactly the ground they sat on before.
+      const talus = smoothstep(68, 90, d) * smoothstep(132, 94, dd)
+        * (0.45 + 0.85 * chute) * 3.4;
+
+      return wall + talus + floor + dish;
     },
     rockAt(x, z, slope) { return clamp(slope * 2.4 - 0.2, 0, 1); },
   },
@@ -303,6 +349,7 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform vec4 uMacro;       // patch freq (1/m), lag gain, sheet gain, occlusion gain
   uniform vec4 uRip;         // wind axis x, z, crest bend (m), ripple gain
   uniform float uRipAspect;  // how far the ripple frame is stretched along the crest
+  uniform vec2 uHex;         // stochastic tile: cell size (m), bearing gain
   uniform vec3 uRockUp;      // rock-with-height: gain, y start, y end
   uniform vec3 uCover;       // amount, freq (1/m), threshold
   uniform vec3 uNrmScale;    // base, near detail, rock
@@ -333,6 +380,79 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   // to each other.
   const mat2 TB_R1 = mat2( 0.9689, 0.2474, -0.2474, 0.9689);
   const mat2 TB_R2 = mat2(-0.1219, 0.9925, -0.9925, -0.1219);
+
+  /* ── stochastic tiling ────────────────────────────────────────────────
+   *
+   * The ripple map is a 3.3 m tile on a fixed lattice: the same crest breaks,
+   * the same pale granule patch, the same dark speck, every 3.3 m along the
+   * wind and every 7.9 m across it, over the whole 460 m field. Displacing the
+   * sampling phase with a noise (which is what the bend does) moves the repeat
+   * but does not remove it — bend varies on a 74 m fbm, so inside any 10 m of
+   * ground it is a constant and the repeat there is exact.
+   *
+   * What the eye actually convicts it on is not the seam, it is that the whole
+   * field runs one way at one wavelength — 1.74° of bearing variation across
+   * 16 m of floor, measured. So the lattice has to stop existing, and the
+   * bearing has to stop being a constant. These two build a hex grid over
+   * the ground and give every cell its own phase into the map, its own
+   * bearing and its own wavelength. Rotating per CELL is what makes it safe:
+   * the frame is rigid inside a cell — the rotation is about the cell centre,
+   * so the shear a global spin would introduce, |p|·dθ, is bounded by the cell
+   * radius instead of growing with distance from the world origin. (That spin,
+   * with its visible eye 150 m out, is the thing this file has already been
+   * burned by once.)
+   *
+   * Hex rather than square because three overlapping cells always cover a
+   * point and their barycentric weights are continuous, so there is no seam to
+   * place — and the cells that meet at a boundary meet where the third weight
+   * is zero, which is also why sampling with explicit gradients is enough to
+   * keep the mip chain honest across the join.
+   */
+  const mat2 TER_SKEW   = mat2(1.0, 0.0, -0.5773503, 1.1547005);
+  const mat2 TER_UNSKEW = mat2(1.0, 0.0,  0.5,       0.8660254);
+
+  void terHex(vec2 p, out vec2 c1, out vec2 c2, out vec2 c3, out vec3 w) {
+    vec2 s = TER_SKEW * p;
+    vec2 b = floor(s);
+    vec3 f = vec3(s - b, 0.0);
+    f.z = 1.0 - f.x - f.y;
+    if (f.z > 0.0) {
+      w = vec3(f.z, f.y, f.x);
+      c1 = b; c2 = b + vec2(0.0, 1.0); c3 = b + vec2(1.0, 0.0);
+    } else {
+      w = vec3(-f.z, 1.0 - f.y, 1.0 - f.x);
+      c1 = b + vec2(1.0, 1.0); c2 = b + vec2(1.0, 0.0); c3 = b + vec2(0.0, 1.0);
+    }
+  }
+
+  /**
+   * One cell's tap of the ripple map.
+   *
+   * The bearing is the sum of a LOW-FREQUENCY FLOW FIELD sampled at the cell
+   * centre — ~120 m, so the crest lines sweep across the field the way a real
+   * ripple train curves round the ground it is crossing — and a few degrees of
+   * per-cell jitter. The wavelength is drawn per cell as well, because ripple
+   * spacing tracks grain size and grain size varies patch to patch; a field at
+   * one wavelength everywhere is corduroy however well its phase is scrambled.
+   *
+   * dqx and dqy are the screen-space derivatives of the SHARED pre-rotation
+   * coordinate, carried through each cell's own frame, so every tap gets the
+   * gradient it would have had if its frame were the only one in the shader.
+   */
+  void terRipTap(vec2 q, vec2 id, vec2 dqx, vec2 dqy, vec2 aspect,
+                 out vec3 col, out vec2 tn, out mat2 frame) {
+    vec2 c = (TER_UNSKEW * id) * uHex.x;
+    float h1 = thash(id + 0.37), h2 = thash(id * 1.71 + 9.13), h3 = thash(id - 4.21);
+    float ang = ((tfbm(c * uMix.x * 0.62 + 31.7) - 0.5) * 0.62 + (h1 - 0.5) * 0.20) * uHex.y;
+    float sc = uScales.x * (0.87 + h3 * 0.28);
+    float ca = cos(ang), sa = sin(ang);
+    frame = mat2(ca, -sa, sa, ca);
+    vec2 uv = ((frame * (q - c)) * sc) * aspect + vec2(h1, h2) * 23.0;
+    vec2 dx = ((frame * dqx) * sc) * aspect;
+    vec2 dy = ((frame * dqy) * sc) * aspect;
+    col = texture2DGradEXT(uBaseAlb, uv, dx, dy).rgb;
+    tn = texture2DGradEXT(uBaseNrm, uv, dx, dy).xy * 2.0 - 1.0;
+  }
 
   /**
    * Texture bombing. Two taps of the same map at different scales, chosen per
@@ -438,34 +558,82 @@ const TERRAIN_FRAG_MAP = /* glsl */`
    * ripple field does — and leaves the scale exactly alone.
    */
   mat2 fA = tframe(uRip.xy);
-  mat2 fB = tframe(tswing(uRip.xy, 0.09));
   float bend = ((mB - 0.5) * 1.4 + (mA - 0.5) * 5.5) * uRip.z;
 
   /* ── the base coat and its ripples.
    *
    * ONE ripple field, running one way, curving with the ground. Bombing two
    * rotated taps of this map and picking the brighter one per pixel — which is
-   * what the albedo-sharpened blend amounts to — multiplies the map's two
+   * what an albedo-sharpened blend amounts to — multiplies the map's two
    * crossing ripple trains into a lattice, and the dune sea comes out as woven
-   * matting. What breaks the 3.3 m tile instead is that the FRAME swings with
-   * a 9 m noise, so the tile never repeats at the same angle twice.
+   * matting. So the taps below all sit on the SAME bearing to within a few
+   * degrees; what varies between them is phase, wavelength and that handful of
+   * degrees, never the axis.
    *
-   * The second tap is a longer train mixed in at low weight, along nearly the
-   * same axis. Averaging two near-parallel ripple fields of different
-   * wavelength modulates the crest amplitude along its length, which is how a
-   * real ripple field dies out and picks up again — not how it cross-hatches.
+   * Measured on top-down ground plates, block by block through the structure
+   * tensor of the gradient — the same shader, the same light, the hex cell
+   * simply widened past the map to collapse it back to one lattice:
+   *
+   *                              arena floor        dune sea
+   *   ripple bearing, sd       1.74° → 7.46°     20.1° → 14.2°
+   *   amplitude, coeff. of var. 0.118 → 0.148     0.167 → 0.196
+   *   gradient coherence         0.87 → 0.75       0.34 → 0.42
+   *
+   * The arena floor is where the bearing number means anything: coherence 0.87
+   * says the field there is one clean directional train, so 1.74° of variation
+   * across it is a printed pattern and 7.46° is not. The dune sea reads the
+   * other way round because it starts at coherence 0.34 — its bearing estimate
+   * is mostly noise before the change and mostly signal after, which is what
+   * the coherence rising to 0.42 says.
+   *
+   * (What is NOT claimed: neither version shows a peak in the lag plane at the
+   * 3.3 m tile distance. The strongest off-centre correlation in all four
+   * plates is the ripple harmonic at about a metre. The tile was not visible as
+   * a seam at this range; it was visible as one bearing everywhere.)
    */
   vec2 aspect = vec2(1.0, uRipAspect);
   vec2 pA = fA * wp;  pA.x += bend;
-  vec2 uA = (pA * uScales.x) * aspect;
-  vec3 baseC = texture2D(uBaseAlb, uA).rgb;
-  vec2 baseN = ((texture2D(uBaseNrm, uA).xy * 2.0 - 1.0) * aspect) * fA;
-  #ifdef TERRAIN_BOMB_NORMAL
-    vec2 pB = fB * wp;  pB.x += bend * 0.7;
-    vec2 uB = (pB * uScales.y) * aspect + vec2(0.41, 0.73);
-    float w2 = 0.18 + mB * 0.26;
-    baseC = mix(baseC, texture2D(uBaseAlb, uB).rgb, w2);
-    baseN = mix(baseN, ((texture2D(uBaseNrm, uB).xy * 2.0 - 1.0) * aspect) * fB, w2);
+  vec3 baseC;
+  vec2 baseN;
+  #ifdef TERRAIN_HEX
+    // Three cells of the hex grid, blended by a HEIGHT blend rather than by
+    // the barycentric weights alone. A straight barycentric mix averages three
+    // ripple fields and the desert goes flat and grey in a band round every
+    // cell — the same failure the old two-tap bombing had, one dimension up.
+    // Adding the tap's own value to its weight and keeping only what is within
+    // 0.17 of the winner narrows the transition to a couple of crest widths,
+    // where the two fields interfinger the way drifting sand does.
+    vec2 dqx = dFdx(pA), dqy = dFdy(pA);
+    vec2 id1, id2, id3; vec3 hw;
+    terHex(pA / uHex.x, id1, id2, id3, hw);
+    vec3 c1, c2, c3; vec2 n1, n2, n3; mat2 fr1, fr2, fr3;
+    terRipTap(pA, id1, dqx, dqy, aspect, c1, n1, fr1);
+    terRipTap(pA, id2, dqx, dqy, aspect, c2, n2, fr2);
+    terRipTap(pA, id3, dqx, dqy, aspect, c3, n3, fr3);
+    vec3 hb = hw + vec3(c1.g, c2.g, c3.g) * 0.55;
+    vec3 bw = max(hb - (max(hb.x, max(hb.y, hb.z)) - 0.17), 0.0);
+    bw /= max(1e-4, bw.x + bw.y + bw.z);
+    baseC = c1 * bw.x + c2 * bw.y + c3 * bw.z;
+    baseN = (((n1 * aspect) * fr1) * bw.x
+           + ((n2 * aspect) * fr2) * bw.y
+           + ((n3 * aspect) * fr3) * bw.z) * fA;
+  #else
+    // Low quality: one tap on the fixed lattice, phase-displaced only. One
+    // bearing over the whole map, and that is the price of the tier — the
+    // stochastic path is six taps against this one. The second bombing tap
+    // below only builds if something enables BOMB_NORMAL without HEX; the
+    // shipped tiers turn both on together.
+    vec2 uA = (pA * uScales.x) * aspect;
+    baseC = texture2D(uBaseAlb, uA).rgb;
+    baseN = ((texture2D(uBaseNrm, uA).xy * 2.0 - 1.0) * aspect) * fA;
+    #ifdef TERRAIN_BOMB_NORMAL
+      mat2 fB = tframe(tswing(uRip.xy, 0.09));
+      vec2 pB = fB * wp;  pB.x += bend * 0.7;
+      vec2 uB = (pB * uScales.y) * aspect + vec2(0.41, 0.73);
+      float w2 = 0.18 + mB * 0.26;
+      baseC = mix(baseC, texture2D(uBaseAlb, uB).rgb, w2);
+      baseN = mix(baseN, ((texture2D(uBaseNrm, uB).xy * 2.0 - 1.0) * aspect) * fB, w2);
+    #endif
   #endif
 
   // ── detail near the feet: the same map an octave up, gone by ~30 m, so the
@@ -503,8 +671,23 @@ const TERRAIN_FRAG_MAP = /* glsl */`
               * smoothstep(uGround.x - 0.35, uGround.x + 0.45, vWPos.y);
     col = mix(col, uCoverCol, cov);
   }
-  // cavity: the map's own troughs, which is what the ripple relief is made of
-  float baseLum = dot(baseC, vec3(0.3333));
+  /* How hard this patch of ground is combed at all.
+   *
+   * Amplitude is the other half of breaking a repeat, and it is the half a
+   * stochastic lookup cannot do: scramble the phase all you like and a field
+   * that ripples equally hard from the toe of the dune to the horizon still
+   * reads as one printed pattern. Real ripple fields die out over smooth
+   * sheets and pick up again over coarser ground, at the scale of the grain
+   * sorting — which is exactly what mD already measures, so the mask costs
+   * nothing and agrees with the lag and sheet patches instead of fighting them.
+   */
+  float ripMask = 0.45 + 0.95 * smoothstep(0.22, 0.74, mD + (mA - 0.5) * 0.22);
+
+  // cavity: the map's own troughs, which is what the ripple relief is made of.
+  // Pulled toward the map's own mean (0.389 by calibration) where the field is
+  // barely rippled, so a smooth sheet loses its tonal banding as well as its
+  // relief rather than staying a flat-lit corduroy.
+  float baseLum = mix(0.389, dot(baseC, vec3(0.3333)), 0.62 + ripMask * 0.27);
   col *= 0.55 + baseLum * 1.15;
 
   // ── rock, and the strata it is bedded in. Skipped wholesale where nothing is
@@ -525,7 +708,7 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // Ripples are a windward phenomenon: the slip face avalanches smooth, the
   // hollows fill with fines, a crust does not ripple at all, and sand the river
   // has been over is packed flat.
-  float baseAmp = uRip.w * mix(1.0, 0.45, driftW) * mix(1.0, 1.3, scour)
+  float baseAmp = uRip.w * ripMask * mix(1.0, 0.45, driftW) * mix(1.0, 1.3, scour)
                 * mix(1.0, 0.5, crustW) * nFade * (1.0 - wet * 0.85)
                 * mix(1.0, 0.42, lee * smoothstep(0.05, 0.17, slope));
   vec3 terNrmOff = (Txz * baseN.x + Bxz * baseN.y) * (baseAmp * (1.0 - rockW));
@@ -624,22 +807,75 @@ const TERRAIN_FRAG_NORMAL = /* glsl */`
 `;
 
 /**
- * Aerial perspective. scene.fog never touches the Sky material, so a rim 200 m
- * out was meeting the sky as a hard faceted polyline — the one thing that gives
- * away a 1.5 m quad grid. Extra density with range plus a blend toward the
- * horizon colour dissolves the silhouette instead of outlining it.
+ * Aerial perspective — the ground has to sit in the SAME air as everything
+ * standing on it.
+ *
+ * The engine replaces three's fog chunk wholesale (see AERIAL in Engine.js):
+ * extinction is integrated along the view ray through an exponential haze
+ * layer, because haze is a fluid in a gravity well and a rim 68 m up sits in a
+ * column a third as deep as the valley floor, and the tone carries a lit
+ * forward-scatter lobe. Every other material in the frame gets that.
+ *
+ * This chunk used to ignore all of it: uniform density integrated along the raw
+ * view depth, then multiplied by up to 1.8 again with range. Measured against
+ * the engine's own integral on the arena rim, from an eye 3.2 m up, with the
+ * level's fogDensity of 0.0034:
+ *
+ *   mid-wall, 184 m out, 40 m up    fogFactor 0.427   engine 0.127
+ *   the brink, 215 m out, 68 m up   fogFactor 0.621   engine 0.099
+ *
+ * — so the ground was three to six times more fogged than the colonnade
+ * standing in front of it, and worse the higher it went, which is backwards.
+ * With scene.fog metered off the sky (linear luminance 3.19, near neutral) that
+ * took the amphitheatre wall from 0.399 display luminance / 0.541 saturation —
+ * warm sandstone, the sand's own hue family, correctly a shade darker than the
+ * floor, which is what it renders as with the fog off — to 0.781 / 0.149 at the
+ * near end of the wall and 0.930 / 0.124 at the far end. Chalk. The albedo was
+ * never the problem; the air in front of it was.
+ *
+ * So: the engine's integral verbatim, and the ground keeps exactly one licence
+ * to differ — a slow lift in density past 160 m. It needs that because
+ * scene.fog never touches the Sky material, so a rim meeting the sky with no
+ * extra veil at all is a hard faceted polyline against it, which is the one
+ * thing that gives away a 1.5 m quad grid.
  */
 const TERRAIN_FRAG_FOG = /* glsl */`
   #ifdef USE_FOG
+    float fogRadial = length(vFogRay);
+    float fogPath = vFogDepth;
+    if (uAerialShape.x > 0.0) {
+      float y0 = clamp(cameraPosition.y - uAerialShape.y, -40.0, 600.0);
+      float k = vFogRay.y * uAerialShape.x;
+      float t0 = exp(-y0 * uAerialShape.x);
+      float m = abs(k) < 1.0e-3 ? t0 : t0 * (1.0 - exp(-k)) / k;
+      fogPath = fogRadial * clamp(m, 0.0, 6.0) * uAerialShape.w;
+    }
     #ifdef FOG_EXP2
-      float hazeD = fogDensity * (1.0 + uHaze.x * smoothstep(110.0, 340.0, vFogDepth));
-      float fogFactor = 1.0 - exp(-hazeD * hazeD * vFogDepth * vFogDepth);
+      float hazeD = fogDensity * (1.0 + uHaze.x * smoothstep(160.0, 460.0, fogRadial));
+      float fogFactor = 1.0 - exp(-hazeD * hazeD * fogPath * fogPath);
     #else
-      float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+      float fogFactor = smoothstep(fogNear, fogFar, fogPath);
     #endif
-    vec3 hazeCol = mix(fogColor, uSkyCol,
-                       smoothstep(90.0, 340.0, vFogDepth) * uHaze.y);
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, hazeCol, fogFactor);
+    vec3 fogTone = fogColor;
+    if (uAerialSun.w > 0.0) {
+      vec3 fogDir = vFogRay / max(fogRadial, 1.0e-4);
+      float fogCos = dot(fogDir, uAerialSun.xyz);
+      float g = uAerialTint.w, g2 = g * g;
+      float phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * fogCos, 1.0e-4), 1.5);
+      fogTone += uAerialTint.xyz * uAerialSun.w * (phase + 0.75 * (1.0 + fogCos * fogCos) * 0.16);
+    }
+    // What the far ground actually converges ON.
+    //
+    // scene.fog is not the sky. The engine meters the fog swatch off the sky's
+    // radiance at the skyline and then renormalises it, and on the arena that
+    // lands at linear luminance 3.19 while the sky RENDERS in the same frame at
+    // 0.67 display luminance — the rim wall dissolving into it came out at
+    // 0.80, brighter than the sky immediately above it, which is not something
+    // a passive surface behind a scattering medium can be. So the near field
+    // takes the haze's tone, which is right, and the far field is walked onto
+    // uSkyCol, which carries the haze's hue at the SKY's level.
+    fogTone = mix(fogTone, uSkyCol, smoothstep(50.0, 230.0, fogRadial) * uHaze.y);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogTone, fogFactor);
   #endif
 `;
 
@@ -856,6 +1092,14 @@ export class Terrain {
       // is also the right shape: an aeolian ripple crest is ten times longer
       // than the ripple is wide, and the map's are two wavelengths long.
       uRipAspect: { value: P.ripAspect ?? 0.42 },
+      // The stochastic tile: cell size in metres, and how much of a bearing
+      // the cells are allowed to draw. 2.4 tiles per cell is the compromise —
+      // wider and the same motif still turns up twice inside one glance,
+      // narrower and you spend the blend band, which is ~15% of the area, on
+      // ground that is a mix of three taps rather than one clean field.
+      // A poured deck is not blown by anything, so it gets the phase scramble
+      // and none of the bearing: panels at random angles is a different lie.
+      uHex: { value: new THREE.Vector2(2.4 / (P.texScale ? P.texScale[0] : 0.30), P.flat ? 0.0 : 1.0) },
       uRockUp: { value: new THREE.Vector3(...(P.rockUpland || [0, 0, 1])) },
       uCover: { value: new THREE.Vector3(0, 1 / 30, 0.42) },
       uCoverCol: { value: new THREE.Color(0x3c4223) },
@@ -878,6 +1122,11 @@ export class Terrain {
     const defs = [];
     if (this.quality >= 0.7) defs.push('#define TERRAIN_BOMB_NORMAL');
     if (this.quality >= 0.7) defs.push('#define TERRAIN_DETAIL');
+    // Stochastic tiling is three taps of the albedo and three of the normal
+    // against the fixed lattice's one and one, and it replaces the second
+    // bombing tap outright — so the ground goes from four base taps to six at
+    // this tier, and stays at one below it.
+    if (this.quality >= 0.7) defs.push('#define TERRAIN_HEX');
     if (this.quality >= 0.95 && this.preset.cliffs) defs.push('#define TERRAIN_CLIFF');
     const prelude = defs.join('\n') + (defs.length ? '\n' : '');
 
@@ -928,19 +1177,49 @@ export class Terrain {
    * The horizon colour the far ground dissolves into, taken from the level.
    * The atmosphere is applied after the terrain is built and can change between
    * levels, so this is re-read rather than captured.
+   *
+   * The LEVEL comes from the sky and the HUE is half sky, half dust — and the
+   * dust half is renormalised to the sky's luminance before it is mixed in, so
+   * it can only ever swing the cast.
+   *
+   * It cannot come from scene.fog, which is the obvious place to look for it.
+   * The engine meters that swatch off the sky's radiance at the skyline and
+   * then renormalises it, and on the arena it lands at linear luminance 3.19
+   * while the sky RENDERS at 0.67 display luminance in the same frame — five
+   * times the level of the thing it is standing in for. Anchored there, the far
+   * rim came out at 0.80 against a 0.69 sky: brighter than what it was
+   * dissolving into, which for a passive surface behind a scattering medium is
+   * not a matter of taste, it is impossible.
+   *
+   * The old ×1.55 on the hemisphere light was much closer to the truth than the
+   * fog was — it just never had the weight to matter, because the blend that
+   * used it topped out at 22% by 200 m and the extinction in front of it was
+   * four times too strong.
    */
   _syncAtmosphere() {
     const u = this._uniforms;
     if (!u) return;
-    // The Preetham sky renders brighter than the level's nominal sky tint, so
-    // lift it — otherwise the dissolve reads as a grey band under the sky
-    // instead of the ground disappearing into it.
-    if (this._hemi) u.uSkyCol.value.copy(this._hemi.color).multiplyScalar(1.55);
+    const fog = this._scene && this._scene.fog;
+    if (this._hemi) {
+      // The LEVEL comes from the sky the level authored, not from the fog.
+      const s = u.uSkyCol.value.copy(this._hemi.color).multiplyScalar(SKY_GAIN);
+      if (fog) {
+        // Half the HUE is the dust, though: a desert skyline is not the blue
+        // overhead. Matched to s's own luminance first so the lerp cannot move
+        // the level, only the cast.
+        const L = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+        _tc.copy(fog.color).multiplyScalar(L(s) / Math.max(1e-3, L(fog.color)));
+        s.lerp(_tc, 0.5);
+      }
+    }
     // Indoors there is no horizon to dissolve into, and the level's fog is
     // already thick enough to close the room off; leave it alone.
-    const fog = this._scene && this._scene.fog;
     const indoor = this.preset.flat || (fog && fog.density > 0.01);
-    u.uHaze.value.set(indoor ? 0 : 0.8, indoor ? 0 : 0.7);
+    // 0.30, not 0.80. This is a nudge to keep the skyline from reading as a
+    // cut edge against a sky the fog cannot reach; at 0.80 it was doubling the
+    // optical depth of everything past 250 m on top of an integral that was
+    // already right, which is how the rim turned to chalk.
+    u.uHaze.value.set(indoor ? 0 : 0.30, indoor ? 0 : SKY_BLEND);
   }
 
   /**
@@ -1152,3 +1431,29 @@ export class Terrain {
 }
 
 const _tv = new THREE.Vector3();
+const _tc = new THREE.Color();
+
+/**
+ * What the far ground dissolves into: the level's own sky tint at SKY_GAIN,
+ * and how completely the haze tone is walked onto it by 230 m.
+ *
+ * Swept on the arena rim against the one criterion here that is not a matter of
+ * taste — a passive surface behind a scattering medium cannot come out brighter
+ * than the medium, so the wall may not render brighter than the sky directly
+ * above it. Measured at 215 m — far rim wall / the sky just over it / the sand
+ * floor, as display luminance, and the wall's saturation:
+ *
+ *   gain 1.55 blend 0.85   0.683 / 0.693 / 0.631   sat 0.29
+ *   gain 1.55 blend 1.00   0.654 / 0.695 / 0.631   sat 0.31
+ *   gain 1.00 blend 1.00   0.619 / 0.698 / 0.631   sat 0.35   ← here
+ *   gain 0.65 blend 1.00   0.594 / 0.702 / 0.631   sat 0.38
+ *
+ * 1.00/1.00 is the shallowest setting that puts the wall under BOTH the sky and
+ * the sand it is supposed to be carved from — which is what the level's own
+ * blurb claims it is, and the property the eye actually reads. Everything below
+ * that is buying saturation by darkening the far ground further, and there is
+ * no measurement that says where to stop; 0.65 already reads as a band rather
+ * than as distance.
+ */
+const SKY_GAIN = 1.00;
+const SKY_BLEND = 1.00;

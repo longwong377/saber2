@@ -358,6 +358,8 @@ export class ParticlePool {
 }
 
 const _col = new THREE.Color();
+const _col2 = new THREE.Color();
+const WHITE_C = new THREE.Color(1, 1, 1);
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
@@ -367,6 +369,46 @@ const _scl = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _shadeA = new THREE.Vector3();
 const _shadeB = new THREE.Vector3();
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  What the surface under a strike is made of                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The albedo of whatever the ground is wearing at (x, z), as a hex.
+ *
+ * Read off the live terrain's own preset rather than passed in, because every
+ * caller of a spark burst knows where the hit was and none of them knows what
+ * the level's dirt is made of. Returns null with no terrain published, so the
+ * recipes fall back to their own defaults instead of inventing a colour.
+ */
+export function surfaceTint(x, z) {
+  const t = ground.terrain;
+  if (!t || !t.preset) return null;
+  const kind = t.surfaceAt ? t.surfaceAt(x, z) : 'sand';
+  if (kind === 'water') return 0x9fd8ff;
+  if (kind === 'stone') return t.preset.rockColor ?? t.preset.sandColor ?? null;
+  if (kind === 'metal') return t.preset.sandColor ?? 0x9aa2ad;
+  return t.preset.sandColor ?? null;
+}
+
+/**
+ * What a piece of that surface looks like while it is still glowing.
+ *
+ * The surface's HUE, not its brightness: an albedo carries how dark a rock is,
+ * and a spark thrown off it is not dark — it is incandescent. Normalising to a
+ * peak of 1 first is the whole trick; without it a cut into basalt (albedo
+ * 0.06) throws sparks twenty times dimmer than a cut into sand right beside it,
+ * which is exactly the class of bug this codebase keeps producing. `heat` then
+ * runs that hue toward white, because hot enough is white whatever it started
+ * as, and a saber cut is hot enough that only a memory of the material is left.
+ */
+export function incandescent(surfaceHex, heat = 0.55) {
+  _col2.set(surfaceHex);
+  const peak = Math.max(_col2.r, _col2.g, _col2.b, 1e-4);
+  _col2.multiplyScalar(1 / peak);
+  return _col2.lerp(WHITE_C, clamp(heat, 0, 1)).getHex();
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Chips — debris with actual physics                                    */
@@ -843,6 +885,12 @@ export class Particles {
     // One heightfield lookup per burst, not per spark. Without it every spark
     // in the game falls through the world instead of skittering along it.
     const floor = opts.floor ?? (ground.heightAt(pos.x, pos.z) ?? -999);
+    // What was struck, if the caller knows; the ground it was struck over if
+    // not. Every second spark carries it, so a strike on red canyon rock and a
+    // strike on grey plate throw visibly different showers.
+    const surf = opts.surface ?? (floor > -900 && Math.abs(pos.y - floor) < 1.2
+      ? surfaceTint(pos.x, pos.z) : null);
+    const surfHot = surf !== null ? incandescent(surf, 0.5) : color;
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       if (normal) _v.lerp(normal, 0.45).normalize();
@@ -852,7 +900,18 @@ export class Particles {
       _v.multiplyScalar(speed * (0.3 + r * r * r * 2.6));
       this.sparks.spawn(pos, _v, {
         life: 0.3 + rng() * 0.5 + r * 0.5, size: 0.008 + rng() * 0.013,
-        drag: 1.5, gravity: 15, color, alpha: 1, hdr, floor,
+        drag: 1.5, gravity: 15, color: i % 2 ? surfHot : color, alpha: 1, hdr, floor,
+      });
+    }
+    // The flash. An impact is an event with a moment of light in it, not a
+    // shower of dots: without this a deflection, a grind and a clash all put
+    // sparks into the frame and nothing at all into the exposure. Kept to a
+    // twentieth of a second and to real strikes only (a three-spark decorative
+    // tick does not get one) so a continuous grind flickers rather than glares.
+    if (opts.flash !== false && count >= 6) {
+      this.plasma.spawn(pos, _v2.set(0, 0, 0), {
+        life: 0.05, size: 0.10 + Math.min(count, 40) * 0.004, drag: 1, gravity: 0,
+        color: 0xfff2dc, alpha: 1, hdr: 4.2,
       });
     }
     if (opts.embers !== false) {
@@ -888,29 +947,56 @@ export class Particles {
     const n = Math.max(3, Math.round(count * 1.6 * this.scale));
     const gh = ground.heightAt(pos.x, pos.z);
     const floor = gh ?? -999;
+    // The material that was parted. Callers that know pass it; the rest get
+    // the ground they are standing on, which is right for the overwhelming
+    // majority of cuts and wrong in a way nobody can see for the others.
+    const surf = opts.surface ?? (gh !== null && pos.y - gh < 1.6
+      ? surfaceTint(pos.x, pos.z) : null);
+    const surfHot = surf !== null ? incandescent(surf, 0.42) : 0xfff0c0;
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       const r = rng();
       _v.multiplyScalar(1.6 + r * r * 11);
       if (dir) _v.addScaledVector(dir, 3 * rng());
       // Every third spark carries the BLADE's colour, not the metal's: what
-      // comes off a saber cut is partly the blade itself.
+      // comes off a saber cut is partly the blade itself. Of the rest, half
+      // are white-hot and half still remember what they were made of.
       this.sparks.spawn(pos, _v, { life: 0.26 + rng() * 0.5, size: 0.008 + rng() * 0.012,
-        drag: 2.0, gravity: 14, color: i % 3 === 0 ? color : 0xfff0c0,
+        drag: 2.0, gravity: 14,
+        color: i % 3 === 0 ? color : (i % 3 === 1 ? 0xfff0c0 : surfHot),
         alpha: 1, hdr: i % 3 === 0 ? 4.2 : 3.6, floor });
     }
-    this.spatter(pos, dir, Math.round(n * 0.16), 0xffc070, { speed: 2.6, floor });
+    this.spatter(pos, dir, Math.round(n * 0.16),
+      surf !== null ? incandescent(surf, 0.30) : 0xffc070, { speed: 2.6, floor });
     for (let i = 0; i < n * 0.22; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.5 + 0.3, rng() * 2 - 1).normalize().multiplyScalar(0.7 + rng());
       this.smoke.spawn(pos, _v, { life: 1.4 + rng() * 1.2, size: 0.12 + rng() * 0.12,
         drag: 1.4, gravity: -0.5, color: 0x6a6f76, alpha: 0.40 });
     }
-    // The flash. Two lobes: a small white-hot one that is over in a twelfth of
-    // a second, and a wider one in the blade's colour behind it.
-    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.09, size: 0.30, drag: 1, gravity: 0,
+    // The flash. Three lobes now: a pinpoint that is over in a thirtieth of a
+    // second and is the thing that actually lands on the exposure, the
+    // white-hot ball behind it, and a wide one in the blade's colour. The
+    // pinpoint exists because the contact is the brightest instant in the
+    // shot and a 90 ms lobe reads as a lamp being switched on, not as a strike.
+    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.035, size: 0.14, drag: 1, gravity: 0,
+      color: 0xffffff, alpha: 1, hdr: 9.0 });
+    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.09, size: 0.32, drag: 1, gravity: 0,
       color: 0xfff4e0, alpha: 1, hdr: 5.5 });
-    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.22, size: 0.62, drag: 1, gravity: 0,
-      color, alpha: 0.9, hdr: 2.6 });
+    this.plasma.spawn(pos, _v2.set(0, 0, 0), { life: 0.22, size: 0.66, drag: 1, gravity: 0,
+      color, alpha: 0.9, hdr: 2.8 });
+
+    // The mark. A blade parts things by BURNING through them, so a cut that
+    // happened against a surface has to leave one — cutFlare was the only
+    // impact recipe in the file that left nothing behind, which is why saber
+    // work on the ground read as sparks over undisturbed sand.
+    if (opts.scorch !== false) {
+      const nrm = opts.normal ?? (gh !== null && pos.y - gh < 0.45 ? UP : null);
+      if (nrm) {
+        const at = nrm === UP ? _v3.set(pos.x, gh + 0.02, pos.z) : pos;
+        this.scorch(at, nrm, 0.10 + rng() * 0.10 + count * 0.002,
+          { heat: 1, life: 15, alpha: 0.85 });
+      }
+    }
 
     // a blade parting something a hand's width off the deck takes the cover
     // with it — this is the only place the world hears about most saber swings

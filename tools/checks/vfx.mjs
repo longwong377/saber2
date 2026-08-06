@@ -134,19 +134,36 @@ export function run({ check, assert, near }) {
         if (k < 0.25) white = d;                                        // blown to white
         if (k > 0.75 && lum(...aces(emissionRGB(s, d))) > 0.05) coloured = d;
       }
-      assert(white > 0.0015 && white < 0.013,
+      /* The bounds are a real blade's dimensions, not the old build's.
+       *
+       * A lightsaber's blown core is CENTIMETRES across — the prop is about
+       * 4 cm of glass and the over-exposed part of it a good half of that. The
+       * previous ceiling here was 13 mm of RADIUS, which the shipped profile
+       * met by having an 8 mm one: at a blade 227 px long in a 1280-wide frame
+       * that is a core 1.2 px wide, i.e. the "thin white line" complaint,
+       * expressed as a passing test. Measured under the same probe now:
+       * red 13 mm, amber 18 mm, purple 19 mm, blue 23 mm, green 37 mm — green
+       * widest because its hue carries 2.5× the luminance of blue's and so
+       * saturates the curve further out, which is physics and not a fault.
+       *
+       * The floor matters as much: under 3.5 mm and the core is back to being
+       * a hairline that vanishes the moment the blade is more than a few
+       * metres away. */
+      assert(white > 0.0035 && white < 0.042,
         `${key}: the blade comes out white to a radius of ${(white * 1000).toFixed(1)}mm`);
-      assert(coloured > 0.045,
+      assert(coloured > 0.12,
         `${key}: the coloured band dies at ${(coloured * 1000).toFixed(0)}mm from the axis`);
       assert(coloured / white > 5,
         `${key}: only ${(coloured / white).toFixed(1)}× more coloured blade than white blade`);
 
       // and the transition has to be somewhere a player is looking, not out in
-      // the wash where the emission is already invisible
-      assert(kept(0.020) > 0.42, `${key}: only ${(kept(0.020) * 100).toFixed(0)}% of the hue survives at 20mm`);
-      assert(kept(0.040) > 0.72, `${key}: only ${(kept(0.040) * 100).toFixed(0)}% of the hue survives at 40mm`);
+      // the wash where the emission is already invisible. The probes moved out
+      // with the core: 20 mm is now INSIDE the white on half the palette, so
+      // asking what the hue is doing there is asking the wrong question.
+      assert(kept(0.045) > 0.30, `${key}: only ${(kept(0.045) * 100).toFixed(0)}% of the hue survives at 45mm`);
+      assert(kept(0.080) > 0.70, `${key}: only ${(kept(0.080) * 100).toFixed(0)}% of the hue survives at 80mm`);
       lines.push(`${key} white≤${(white * 1000).toFixed(1)}mm colour≥${(coloured * 1000).toFixed(0)}mm `
-        + `hue@20mm ${(kept(0.02) * 100).toFixed(0)}%`);
+        + `hue@45mm ${(kept(0.045) * 100).toFixed(0)}%`);
       s.dispose();
     }
     return lines.join(', ');
@@ -166,9 +183,14 @@ export function run({ check, assert, near }) {
       assert(L > 1.8 * 1.6, `${SABER_COLORS[i].name} peaks at luminance ${L.toFixed(2)} — it will not bloom`);
       // and the bloom must not be a white ball: the emission has to have fallen
       // back under the threshold within a couple of centimetres
+      // The ceiling is 60 mm, not the old 30: the bloom halo IS the look, and
+      // the pass only sees what crosses 1.8, so the over-threshold band has to
+      // be wide enough to give the blur something to work with. It still has
+      // to die well inside the 360 mm quad, or the blade is a ball of light
+      // rather than a blade with a halo.
       let over = 0;
       for (let d = 0; d < 0.3; d += 0.0005) if (lum(...emissionRGB(s, d)) > 1.8) over = d;
-      assert(over < 0.030, `${SABER_COLORS[i].name} is over the bloom line out to ${(over * 1000).toFixed(0)}mm`);
+      assert(over < 0.060, `${SABER_COLORS[i].name} is over the bloom line out to ${(over * 1000).toFixed(0)}mm`);
       worst.push([SABER_COLORS[i].name, L, over]);
       s.dispose();
     }
@@ -223,18 +245,21 @@ export function run({ check, assert, near }) {
     const sharp = integral(0);
     // 15 mm per pixel is a blade seen at about eight metres in a 600px frame
     const coarse = integral(0.015);
-    const veryCoarse = integral(0.04);
+    // 70 mm/px is thirty metres out. It used to be 40, which was three times
+    // the OLD core sigma; the core is 11 mm now, so 40 mm no longer clears the
+    // clamp by enough for the guard below to mean anything.
+    const veryCoarse = integral(0.07);
     near(coarse / sharp, 1, 0.02, 'light lost or gained at 15mm/px');
-    near(veryCoarse / sharp, 1, 0.05, 'light lost or gained at 40mm/px');
+    near(veryCoarse / sharp, 1, 0.05, 'light lost or gained at 70mm/px');
     // and it must actually be widening, or the test proves nothing
     const w0 = s.bladeMat.uniforms.uWidth.value.x;
-    assert(0.04 * 0.62 > w0 * 3, 'the coarse case is not wide enough to trigger the clamp');
+    assert(0.07 * 0.62 > w0 * 3, 'the coarse case is not wide enough to trigger the clamp');
     const peakSharp = emission(s.bladeMat, 0, 0);
-    const peakCoarse = emission(s.bladeMat, 0, 0.04);
+    const peakCoarse = emission(s.bladeMat, 0, 0.07);
     assert(peakCoarse < peakSharp * 0.6,
       'the peak did not come down, so the amplitude is not being compensated');
     s.dispose();
-    return `∫ ratio ${(coarse / sharp).toFixed(4)} at 15mm/px, ${(veryCoarse / sharp).toFixed(4)} at 40mm/px; `
+    return `∫ ratio ${(coarse / sharp).toFixed(4)} at 15mm/px, ${(veryCoarse / sharp).toFixed(4)} at 70mm/px; `
       + `peak ${peakSharp.toFixed(1)} → ${peakCoarse.toFixed(1)}`;
   });
 

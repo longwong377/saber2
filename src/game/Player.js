@@ -695,7 +695,10 @@ export class Player {
 
     if (this.isLocal && this.difficulty && this.difficulty.assist > 0) {
       this.control.assist = this.difficulty.assist;
-      const threats = ctx.bolts ? ctx.bolts.threatsNear(this.chest, 26) : [];
+      // 34 m, not 26: the assist works to a fixed 0.9 s of warning, and at
+      // Padawan's 30 m/s a 26 m search only ever handed it 0.87 s — so the one
+      // tier that most needs the full lead was the one being clipped.
+      const threats = ctx.bolts ? ctx.bolts.threatsNear(this.chest, 34) : [];
       this.control.applyAssist(threats.filter(t => t.bolt.team !== this.team), this.chest, this.camera.aimQuat, dt);
     } else this.control.assist = 0;
 

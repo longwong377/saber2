@@ -32,6 +32,15 @@ const GX_MAX = 1.0, GY_MAX = 1.05, GY_MIN = 1.0;
 const YAXIS = new THREE.Vector3(0, 1, 0);
 
 /**
+ * How much warning the deflection assist works with, in seconds. Everything
+ * about the assist is expressed against this: `DIFFICULTY.assist` is the share
+ * of your aiming error it closes across one of these. 0.9 s is a little over
+ * human reaction time, so the assist is finishing a movement you have started
+ * rather than making one you never began.
+ */
+const ASSIST_LEAD = 0.9;
+
+/**
  * The angular term integrates as  θ'' = (kP/I)·θ_err − kD·θ'.
  * Critical damping is therefore kD = 2·√(kP/I); everything here sits around a
  * damping ratio of 0.6, which is what gives the blade its weight — a flick
@@ -368,31 +377,68 @@ export class SaberController {
   }
 
   /**
-   * Difficulty assist: gently bias the guard toward an incoming threat. At
-   * Grandmaster this is zero and the blade is entirely yours.
+   * Difficulty assist: bias the guard toward an incoming threat. At Grandmaster
+   * this is zero and the blade is entirely yours.
+   *
+   * `this.assist` is the FRACTION OF THE GUARD ERROR CLOSED over one full
+   * ASSIST_LEAD of approach. 0.92 means a bolt you had 0.9 s of warning about
+   * arrives with 8% of your original aiming error left. That is a number you can
+   * reason about and tune against the ±12.5 cm capture window, which the old
+   * formula was not: it was `assist · urgency · clamp(dt·5.5, 0, 0.4)`, which at
+   * Knight closed 26% of the error over a whole flight and at Master 6%. The
+   * tiers all claimed to guide your guard and none of them did.
+   *
+   * Two things were wrong beyond the gain, and both inverted the feature:
+   *
+   *   • Threats were SCORED BY ALIGNMENT WITH THE GUARD YOU ALREADY HAD, then
+   *     vetoed outright on `bestScore <= 0`. So the further your guard was from
+   *     the bolt — the only situation where assist is worth anything — the less
+   *     it did, and past 123° off it switched itself off completely.
+   *   • The engagement gate was 12 m of DISTANCE, which is 0.40 s of warning at
+   *     Padawan's 30 m/s but only 0.19 s at Grandmaster's 63 m/s. Difficulty
+   *     was silently shortening the assist window on top of everything else.
+   *
+   * Selection is now by time-to-impact among threats that are actually in front
+   * of you, and the gate is in seconds, so every tier gets the same warning and
+   * the tier number alone decides how much of the work is done for you.
    */
   applyAssist(threats, chest, aimQuat, dt) {
-    if (this.assist <= 0.001 || !threats.length) return;
-    const gd = this.guardDir(aimQuat, _v1);
-    let best = null, bestScore = -1;
+    if (this.assist <= 0.001 || !threats.length || dt <= 0) return;
+
+    // Forward is the AIM direction, never the guard direction — a bolt coming
+    // at your face is equally your problem whichever way the blade is pointing.
+    _v4.set(0, 0, -1).applyQuaternion(aimQuat);
+    let best = null, bestEta = Infinity;
     for (const t of threats) {
+      if (!(t.eta >= 0) || t.eta > ASSIST_LEAD || t.eta >= bestEta) continue;
       _v2.subVectors(t.point, chest);
       const d = _v2.length();
-      if (d < 0.4 || d > 12) continue;
+      if (d < 0.4) continue;                       // already on top of you
+      // A bolt that has gone past is not a threat, whatever its eta says.
+      // threatsNear() already drops these, but the guard is one line and this
+      // function should not be able to chase a receding bolt because a caller
+      // handed it a stale list.
+      if (t.bolt && t.bolt.vel && _v2.dot(t.bolt.vel) > 0) continue;
       _v2.multiplyScalar(1 / d);
-      const align = _v2.dot(gd);
-      const urgency = 1 - clamp(t.eta / 0.55, 0, 1);
-      const score = urgency * (0.35 + align * 0.65);
-      if (score > bestScore) { bestScore = score; best = { dir: _v2.clone(), urgency }; }
+      // Nothing behind the shoulder line: you cannot bring a guard there, and
+      // dragging toward it would only pull you off the bolts you can answer.
+      if (_v2.dot(_v4) < -0.17) continue;          // 100° half-cone
+      bestEta = t.eta;
+      best = _v5.copy(_v2);
     }
-    if (!best || bestScore <= 0) return;
+    if (!best) return;
+
     // convert the threat direction into guard coordinates
-    _v3.copy(best.dir).applyQuaternion(_q1.copy(aimQuat).invert());
+    _v3.copy(best).applyQuaternion(_q1.copy(aimQuat).invert());
     const yaw = Math.atan2(_v3.x, -_v3.z);
     const pitch = Math.asin(clamp(_v3.y, -1, 1));
     const tx = clamp(yaw / this.maxYaw, -GX_MAX, GX_MAX);
     const ty = clamp(pitch / this.maxPitch, -GY_MIN, GY_MAX);
-    const k = this.assist * best.urgency * clamp(dt * 5.5, 0, 0.4);
+
+    // Exponential approach expressed so that a full ASSIST_LEAD of it closes
+    // exactly `assist` of the error, whatever the frame rate: compounding
+    // (1 − k) over ASSIST_LEAD/dt frames returns (1 − assist) by construction.
+    const k = 1 - Math.pow(1 - clamp(this.assist, 0, 0.999), dt / ASSIST_LEAD);
     this.gx = lerp(this.gx, tx, k);
     this.gy = lerp(this.gy, ty, k);
   }

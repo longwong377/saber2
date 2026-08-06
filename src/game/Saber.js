@@ -268,14 +268,26 @@ export class Saber {
     this._buildBlade();
     this._buildTrail();
 
-    // A metre of plasma is a LINE light. Two point lights is the cheapest
-    // approximation that still has a gradient along it: one carrying the bulk
-    // of the wash from the middle of the blade, one at the tip so the thing
-    // the tip is nearest is the thing that lights up.
-    this.light = new THREE.PointLight(0xffffff, 0, 7, 2);
+    // A metre of plasma is a LINE light, and the decay exponent is where that
+    // gets said. An infinite line falls off as 1/r near it and only reaches
+    // 1/r² far away, so `decay = 1` with the cutoff window doing the far end is
+    // a better model of a blade than `decay = 2` is — and the difference is not
+    // cosmetic. Measured on a blade held 24 cm off the sand, the old inverse
+    // square put 35 units of irradiance on the ground directly under the tip
+    // (the sun is 7) and clipped it to (1.00, 0.98, 0.91): the hue was
+    // destroyed by the very brightness that was supposed to carry it, while
+    // the wielder's chest a metre and a half away moved by 0.016. 1/r closes
+    // that ratio by a factor of r: six times less light at the tip, the same at
+    // the chest, twice as much three metres out.
+    //
+    // Two lights, not more, on purpose: every enemy in a wave carries one of
+    // these, and NUM_POINT_LIGHTS is a per-fragment unrolled loop in every lit
+    // material in the game.
+    this.light = new THREE.PointLight(0xffffff, 0, 7, 1);
     this.light.castShadow = false;
     scene.add(this.light);
-    this.tipLight = new THREE.PointLight(0xffffff, 0, 4.5, 2);
+    this.tipLight = new THREE.PointLight(0xffffff, 0, 4.5, 1);
+    this.tipLight.castShadow = false;
     scene.add(this.tipLight);
 
     this._applyColour();
@@ -305,9 +317,17 @@ export class Saber {
     const peak = Math.max(c.r, c.g, c.b, 1e-4);
     this.hue.copy(c).multiplyScalar(1 / peak);
     this.punch = 0.62 + 0.38 * Math.pow(peak, 0.6);
-    // The light the blade throws is the same hue, kept a little paler than the
-    // emission because bounce light has been through a surface.
-    _c.copy(this.hue).lerp(WHITE, 0.22);
+    // The light the blade throws is the crystal's hue, and very nearly ALL of
+    // it. The old 22% lift toward white was reasoning about bounce — but bounce
+    // through a surface is what multiplying by that surface's albedo already
+    // does, so the lift was double-counting it, and on sand it was fatal:
+    // sand's blue albedo is 0.109 against 0.51 in red, so a light of
+    // (0.25, 0.52, 1.00) lands on it as (0.128, 0.146, 0.109) — RED-dominant.
+    // The blade lit the ground with its own colour and the ground handed back
+    // white. At the crystal's own (0.044, 0.386, 1.00) the same sand returns
+    // (0.022, 0.108, 0.109): blue outruns red five to one and the hue survives
+    // the trip. The 6% that is left is the plasma's own continuum, not a fudge.
+    _c.copy(this.hue).lerp(WHITE, 0.06);
     this.light.color.copy(_c);
     this.tipLight.color.copy(_c);
     if (this.bladeMat) this.bladeMat.uniforms.uHue.value.copy(this.hue);
@@ -385,26 +405,52 @@ export class Saber {
   /**
    * The emission profile, in metres of gaussian sigma and in linear radiance.
    *
-   * Amplitudes span 28 → 0.44 → 0.075, which is what puts the white/coloured
-   * boundary where it belongs. Worked through for a cerulean crystal, hue
-   * (0.23, 0.65, 1.00):
+   * These numbers are not taste. They were solved against the arena's actual
+   * back end — exposure 0.68, ACES in its MATRIX form, the composite grade
+   * (gain 1.04/1.00/0.95, saturation 1.06) — over the sand radiance measured
+   * out of a real capture with the blade hidden, (0.73, 0.40, 0.156).
    *
-   *   d = 0      28.6  → (6.6, 18.6, 28.6)  every channel saturates: white
-   *   d = 8 mm    6.4  → (1.5,  4.2,  6.4)  pale blue, still over the bloom line
-   *   d = 20 mm   1.1  → (0.25, 0.71, 1.10) the blade's colour, at full chroma
-   *   d = 40 mm   0.24 → (0.06, 0.16, 0.24) the wash
-   *   d = 90 mm   0.05
+   * The matrix is the whole reason a blade goes white, and it is not obvious:
+   * ACES mixes 0.355·G + 0.048·B into the RED input channel before the curve.
+   * A cerulean crystal has hue.r = 0.044, so per-channel arithmetic says its
+   * core can never blow out red — and yet it does, because the green and blue
+   * leak sideways. Solving that properly is what lets the core width be chosen
+   * rather than discovered.
    *
-   * The bloom pass thresholds on LUMINANCE at 1.8, and blue carries 7% of
-   * luminance — so a blue blade can only ever bloom by being bright enough in
-   * green as well, i.e. by having a genuinely over-exposed core. That is why
-   * the amplitude has to reach 28 and not 7.
+   * What the old numbers (5.6/23/88 mm at 30/2.75/0.50) actually produced, at
+   * a blade 227 px long — measured, not assumed:
+   *
+   *   fully clipped core   ±0.6 px   ~3 mm    — a hairline, i.e. "a white line"
+   *   near-white core      ±1.2 px
+   *   blue-dominant out to  5 px    ~25 mm
+   *   over the bloom line   9 mm             — almost nothing for bloom to find
+   *
+   * and with these:
+   *
+   *   fully clipped core   ±2.3 px  ~12 mm    a 23 mm blown core: a real blade
+   *   near-white core      ±3.4 px  ~17 mm
+   *   blue-dominant out to 12 px    ~61 mm    five core widths of colour
+   *   over the bloom line  25 mm              a coloured halo bloom can chew on
+   *
+   * The halo lobe is deliberately NOT allowed to clip: it tops out around 1.5,
+   * which lands mid-curve where ACES still keeps chroma. The core is 39× that,
+   * which is what buys the white.
+   *
+   * One thing this cannot fix, and it is worth writing down so nobody chases
+   * it: over sunlit sand, screen B−R for an additive blue emitter maxes out at
+   * 0.084 whatever the amplitude, because red is already at 0.73 radiance
+   * before the blade adds anything. On the wielder's dark robe the same profile
+   * reaches B−R = 0.53. Saturated halos live against dark, never against sun.
    */
   static PROFILE = {
-    width: [0.0056, 0.0230, 0.088],
-    amp:   [30.0,   2.75,   0.50],
-    radius: 0.32,
+    width: [0.0110, 0.0330, 0.105],
+    amp:   [58.0,   6.50,   1.50],
+    radius: 0.36,
   };
+
+  /** The smear's amplitudes, tied to the blade's own lobes. See _buildTrail. */
+  static TRAIL_HOT = Saber.PROFILE.amp[1] * 0.85;
+  static TRAIL_GLOW = Saber.PROFILE.amp[2] * 1.5;
 
   _buildBlade() {
     this.bladeGroup = new THREE.Group();
@@ -460,8 +506,10 @@ export class Saber {
   _buildTrail() {
     this.trailSegments = 30;
     this.trailSheets = 3;
-    // half the thickness of the swept slab — the blade's own glow radius
-    this.trailThickness = 0.045 * this.coreWidth;
+    // Half the thickness of the swept slab. It is the blade's own glow radius,
+    // read off PROFILE rather than typed again, because a smear thinner than
+    // the thing that made it reads as a decal stuck behind the blade.
+    this.trailThickness = Saber.PROFILE.width[1] * 1.6 * this.coreWidth;
     const n = this.trailSegments, S = this.trailSheets;
     const verts = n * S * 2;
     const geo = new THREE.BufferGeometry();
@@ -492,11 +540,17 @@ export class Saber {
     geo.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
     geo.setAttribute('aThick', new THREE.BufferAttribute(thick, 1));
 
+    // The smear's two amplitudes are derived from the blade's own lobes so the
+    // two cannot drift apart: the freshest slice runs at the GLOW lobe's
+    // temperature (which puts it over the bloom line — luminance 2.3 for a
+    // cerulean crystal against a threshold of 1.8, so a fast cut leaves a
+    // glowing arc and not a coloured film), and the body of the smear settles
+    // above the HALO lobe, where ACES still keeps its chroma.
     this.trailMat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
         uHue: { value: new THREE.Color(1, 1, 1) },
-        uGlow: { value: 1.15 },
-        uHot: { value: 2.6 },
+        uGlow: { value: Saber.TRAIL_GLOW },
+        uHot: { value: Saber.TRAIL_HOT },
       }]),
       vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -605,14 +659,23 @@ export class Saber {
     const on = this.ignition > 0.05;
     if (on) {
       // The wash is split along the blade rather than pinned to its middle, so
-      // a blade held low lights the floor and a blade held high does not.
-      this.pointAt(0.36, _v1);
+      // a blade held low lights the floor and a blade held high does not. The
+      // second sample sits at 88% rather than ON the tip: a point light exactly
+      // at the tip of a blade laid on the deck is a singularity sitting on the
+      // deck, and no decay exponent saves you from that.
+      this.pointAt(0.42, _v1);
       this.light.position.copy(_v1);
-      this.light.intensity = 5.2 * this.ignition * (1 + this.contactStrain * 1.6) * flick * this.punch;
-      this.light.distance = 4.6 + len * 3.0;
-      this.tipLight.position.copy(this.tip);
-      this.tipLight.intensity = 2.1 * this.ignition * flick * this.punch;
-      this.tipLight.distance = 3.0 + len * 1.5;
+      // 5.4 and 2.4 candela. Under 1/r these cross the old inverse-square rig
+      // at 0.95 m: closer than that the blade throws less light than it used to
+      // (which is the point — 55 units of irradiance on sand 30 cm away was
+      // what clipped the ground to white and threw the hue away), further out
+      // it throws more, and at three metres it throws three times more.
+      this.light.intensity = 5.4 * this.ignition * (1 + this.contactStrain * 1.6) * flick * this.punch;
+      this.light.distance = 5.6 + len * 3.6;
+      this.pointAt(0.88, _v1);
+      this.tipLight.position.copy(_v1);
+      this.tipLight.intensity = 2.4 * this.ignition * (1 + this.contactStrain * 0.9) * flick * this.punch;
+      this.tipLight.distance = 3.8 + len * 2.2;
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;
@@ -704,8 +767,8 @@ export class Saber {
     this.trail.geometry.attributes.position.needsUpdate = true;
     this.trail.geometry.attributes.aAge.needsUpdate = true;
     this.trail.geometry.attributes.aPunch.needsUpdate = true;
-    this.trailMat.uniforms.uHot.value = 2.6 * this.punch;
-    this.trailMat.uniforms.uGlow.value = 1.15 * this.punch;
+    this.trailMat.uniforms.uHot.value = Saber.TRAIL_HOT * this.punch;
+    this.trailMat.uniforms.uGlow.value = Saber.TRAIL_GLOW * this.punch;
     this.trail.visible = this.ignition > 0.2 && live > 1;
   }
 

@@ -30,6 +30,14 @@ const rng = makeRng(5150);
  * opts.rings   — how many rings the shaft is built from (3 = the old cone)
  * opts.bulge   — height of a single smooth swell, as a fraction of the radius
  * opts.bulgeAt — where along the shaft that swell peaks (0.32 ≈ a bicep)
+ * opts.swells  — [[at, amp, width], …]: several NARROW swells instead of one
+ *                broad one. A limb has more than one muscle on it and the
+ *                single-hump form cannot express that: `bulge` decays over the
+ *                whole remaining length of the shaft, so a deltoid at t=0.14
+ *                and a bicep at t=0.40 smear into one sausage. Each entry here
+ *                is a gaussian of half-width `width`, forced to exactly zero at
+ *                both ends of the shaft (see below) so r0 and r1 are still the
+ *                endpoint radii Ragdoll rebuilds a severed stub against.
  * opts.capY0/1 — how far the end caps dome out, ×r. 0.62 is a hemisphere-ish
  *                ball joint; the top of a chest wants ~0.2 or the shoulders
  *                swallow the neck whole.
@@ -43,12 +51,31 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   const rings = Math.max(2, Math.round(opts.rings ?? 3));
   const bulge = opts.bulge ?? 0.04;
   const bulgeAt = clamp(opts.bulgeAt ?? 0.5, 0.04, 0.96);
+  const swells = opts.swells || null;
+  // A gaussian with its own endpoint values subtracted off linearly, so it is
+  // identically zero at t=0 and t=1 whatever width it is given, and still peaks
+  // at 1 where it is centred. Without that subtraction a deltoid swell 14% up
+  // the humerus leaves 0.37 of itself sitting on the shoulder cap, and the cut
+  // path — which rebuilds a stub from r0 and r1 alone — produces a tube that
+  // does not line up with the limb it came out of.
+  const hump = (t, at, w) => {
+    const g = (x) => Math.exp(-(((x - at) / w) ** 2));
+    const ped = lerp(g(0), g(1), t);
+    const norm = 1 - lerp(g(0), g(1), at);
+    return Math.max(0, g(t) - ped) / Math.max(1e-4, norm);
+  };
   // The taper, times one hump that falls to zero at both ends so the shaft
   // still meets its caps at exactly r0 and r1 — otherwise the cut/rebuild path
   // in Ragdoll produces a stub that does not line up with what it came from.
   const rAt = (t) => {
+    const base = lerp(r0, r1, t);
+    if (swells) {
+      let k = 1;
+      for (let i = 0; i < swells.length; i++) k += swells[i][1] * hump(t, swells[i][0], swells[i][2]);
+      return base * k;
+    }
     const u = t < bulgeAt ? t / bulgeAt : (1 - t) / (1 - bulgeAt);
-    return lerp(r0, r1, t) * (1 + bulge * Math.sin(clamp(u, 0, 1) * Math.PI * 0.5));
+    return base * (1 + bulge * Math.sin(clamp(u, 0, 1) * Math.PI * 0.5));
   };
 
   // Ascending, starting AT the pole. Counting down from capN skipped i = 0
@@ -77,8 +104,82 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   const g = new THREE.LatheGeometry(profile, seg);
   g.normalizeNormals();
   if (opts.section) reshape(g, opts.section, len);
+  // Every limb carries a white vertex-colour channel whether or not anything
+  // shades it. shadeAO() writes into this one, and the materials that read it
+  // have `vertexColors: true` set once, for good — but Ragdoll rebuilds a
+  // severed stub by calling straight back into limbGeo with no options at all,
+  // and a mesh whose material declares vertex colours over a geometry that has
+  // none renders BLACK. Handing every limb a neutral channel is what makes the
+  // cut path survive shading it never asked for. Twelve bytes a vertex, and
+  // three.js never uploads an attribute the bound program does not read.
+  return white(g);
+}
+
+/** Attach (or reset) a neutral white vertex-colour channel. */
+function white(g) {
+  const n = g.attributes.position.count;
+  const c = new Float32Array(n * 3).fill(1);
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
   return g;
 }
+
+/**
+ * Bake occlusion into a geometry's vertex colours.
+ *
+ * These characters are lit by one sun, one hemisphere fill and nothing else,
+ * and a MeshStandardMaterial with no aoMap has no way to know that the inside
+ * of an elbow sees a tenth of the sky the outside of it does. The result is
+ * the thing the player kept calling "plastic": every surface at the same
+ * brightness, so a neck reads as a tube stuck into a hole rather than as a
+ * neck sitting in a collar. There is no second UV set to hang an aoMap on and
+ * no room in the budget to bake one, but there IS a vertex per 2cm of surface,
+ * which is enough to carry a crease.
+ *
+ * `fn(x, y, z, nx, ny, nz)` returns the multiplier for that vertex — 1 is open
+ * sky, and the darkest anything gets is `floor` (0.34 by default: linear, so
+ * it is a two-and-a-half stop drop, roughly what a real armpit measures).
+ * Values are linear because three multiplies vertex colours into the diffuse
+ * before tonemapping, so 0.5 here really is half the light.
+ */
+function shadeAO(geo, fn, opts = {}) {
+  const floor = opts.floor ?? 0.34;
+  if (!geo.attributes.color) white(geo);
+  const c = geo.attributes.color, p = geo.attributes.position, nr = geo.attributes.normal;
+  for (let i = 0; i < c.count; i++) {
+    const k = clamp(fn(p.getX(i), p.getY(i), p.getZ(i),
+      nr ? nr.getX(i) : 0, nr ? nr.getY(i) : 1, nr ? nr.getZ(i) : 0), floor, 1);
+    c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k);
+  }
+  c.needsUpdate = true;
+  return geo;
+}
+
+/**
+ * A crease: everything within `r` of the point `p` darkens toward `k`, and
+ * surfaces that FACE the crease darken hardest. Composable — call it once per
+ * armpit, knee-back and waist fold and multiply the results together.
+ */
+function creaseAt(px, py, pz, r, k = 0.45, dirBias = 0.55) {
+  const r2 = r * r;
+  return (x, y, z, nx, ny, nz) => {
+    const dx = px - x, dy = py - y, dz = pz - z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= r2) return 1;
+    const d = Math.sqrt(d2) || 1e-6;
+    const t = 1 - d / r;
+    let f = t * t * (3 - 2 * t);
+    // a surface with its back to the crease is not occluded by it
+    const facing = (nx * dx + ny * dy + nz * dz) / d;
+    f *= clamp((1 - dirBias) + dirBias * (0.5 + 0.5 * facing), 0, 1);
+    return 1 - (1 - k) * f;
+  };
+}
+/** Multiply a list of shaders into one. */
+const ao = (...fns) => (x, y, z, nx, ny, nz) => {
+  let v = 1;
+  for (let i = 0; i < fns.length; i++) v *= fns[i](x, y, z, nx, ny, nz);
+  return v;
+};
 
 /**
  * Bend a lathe's circular plan into a real cross-section.
@@ -162,11 +263,25 @@ function bodySection(o = {}) {
  */
 function calfSection(o = {}) {
   const flat = o.flat ?? 0.10, mass = o.mass ?? 0.26, at = o.at ?? 0.30;
+  // The popliteal fossa: the hollow behind the knee. Without it the calf mass
+  // runs straight up into the joint, and at 120° of knee flex — a sprint
+  // stride, a kneel, a crouch — the top of the shin is drawn 12cm INSIDE the
+  // thigh, which is a rigid-tube artefact no amount of soft-tissue hand-waving
+  // covers. Scooping the back of the leg where a real one is scooped moves the
+  // geometry out of the way and looks like a knee while it is at it.
+  const hollow = o.hollow ?? 0, hollowAt = o.hollowAt ?? 0.06, hollowW = o.hollowW ?? 0.16;
   return (th, t) => {
     const c = Math.cos(th);
-    const u = (clamp(t, 0, 1) - at) / 0.34;
+    const tc = clamp(t, 0, 1);
+    const u = (tc - at) / 0.34;
     const swell = Math.exp(-(u * u));
-    return (1 - flat * Math.max(0, c) ** 2) * (1 + mass * Math.max(0, -c) ** 1.4 * swell);
+    const back = Math.max(0, -c);
+    let r = (1 - flat * Math.max(0, c) ** 2) * (1 + mass * back ** 1.4 * swell);
+    if (hollow) {
+      const v = (tc - hollowAt) / hollowW;
+      r *= 1 - hollow * back ** 1.2 * Math.exp(-(v * v));
+    }
+    return r;
   };
 }
 
@@ -480,6 +595,11 @@ function mergeGeos(parts) {
   const pos = new Float32Array(vTotal * 3);
   const nrm = new Float32Array(vTotal * 3);
   const uvs = new Float32Array(vTotal * 2);
+  // Only if something in the pile is actually shaded — a hand assembled from
+  // nineteen unshaded pieces should not pay for a channel of solid white.
+  let anyC = false;
+  for (const p of parts) if (p.geo.attributes.color) { anyC = true; break; }
+  const col = anyC ? new Float32Array(vTotal * 3).fill(1) : null;
   const idx = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
   const nm = new THREE.Matrix3();
   const v = new THREE.Vector3();
@@ -488,6 +608,10 @@ function mergeGeos(parts) {
     const g = p.geo;
     nm.getNormalMatrix(p.matrix);
     const gp = g.attributes.position, gn = g.attributes.normal, gu = g.attributes.uv;
+    const gc = col && g.attributes.color;
+    if (gc) for (let i = 0; i < gp.count; i++) {
+      col[(vo + i) * 3] = gc.getX(i); col[(vo + i) * 3 + 1] = gc.getY(i); col[(vo + i) * 3 + 2] = gc.getZ(i);
+    }
     for (let i = 0; i < gp.count; i++) {
       v.fromBufferAttribute(gp, i).applyMatrix4(p.matrix);
       pos[(vo + i) * 3] = v.x; pos[(vo + i) * 3 + 1] = v.y; pos[(vo + i) * 3 + 2] = v.z;
@@ -507,6 +631,7 @@ function mergeGeos(parts) {
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setIndex(new THREE.BufferAttribute(idx, 1));
   out.computeBoundingSphere();
   return out;
@@ -526,6 +651,12 @@ function bakeTree(group) {
 }
 
 function mesh(geo, mat, parentObj, pos, rot, scale) {
+  // A material that declares `vertexColors` over a geometry that carries none
+  // does not fall back to white — three leaves the attribute unbound and the
+  // mesh renders BLACK. Every mesh in this file is created here, so this is
+  // the one place that can guarantee the channel exists; anything shadeAO()
+  // has already touched keeps what it was given.
+  if (mat && mat.vertexColors && geo && geo.attributes && !geo.attributes.color) white(geo);
   const m = new THREE.Mesh(geo, mat);
   if (pos) m.position.set(pos[0], pos[1], pos[2]);
   if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
@@ -865,12 +996,44 @@ function note(color, mean, mat) {
   return mat;
 }
 
-function clothMat(color, rough = 0.92) {
-  const maps = clothMaps(2.2);
-  return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshStandardMaterial({
+/**
+ * Cloth.
+ *
+ * `o.repeat` is the weave's tiling — the shipped 2.2 puts a thread about every
+ * 3mm on a torso, which is homespun; a fine tunic wants it tighter and a heavy
+ * robe looser, and having all of it at one pitch is part of why the layers read
+ * as one printed surface rather than as three garments.
+ *
+ * `o.sheen` swaps in a MeshPhysicalMaterial with a retroreflective sheen lobe.
+ * That is what wool and heavy cotton actually do — they go BRIGHTER at grazing
+ * angles, where a dielectric GGX lobe goes darker — and it is most of the
+ * difference between cloth and painted plastic on a rounded limb. It is not
+ * free (physical compiles a heavier fragment shader), so it is asked for by
+ * name: the player, who is on screen for the whole game and four hundred
+ * millimetres from the camera in first person, gets it; a wave of droids does
+ * not.
+ *
+ * `o.vc` turns on the vertex-colour channel that shadeAO() writes the creases
+ * into. mesh() guarantees every geometry handed such a material has one.
+ */
+function clothMat(color, rough = 0.92, o = {}) {
+  const maps = clothMaps(o.repeat ?? 2.2);
+  const spec = {
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0, normalScale: new THREE.Vector2(0.85, 0.85),
-  }));
+    roughness: rough, metalness: 0,
+    normalScale: new THREE.Vector2(o.normal ?? 0.85, o.normal ?? 0.85),
+    vertexColors: !!o.vc,
+  };
+  if (o.sheen) {
+    spec.sheen = o.sheen;
+    // The sheen tint is the colour of the light scattered off the fibre ends,
+    // not of the cloth: warm and desaturated, or the robe picks up a coloured
+    // rim that reads as a shader bug.
+    spec.sheenColor = new THREE.Color(o.sheenColor ?? 0xd8cdbc);
+    spec.sheenRoughness = o.sheenRough ?? 0.62;
+    return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshPhysicalMaterial(spec));
+  }
+  return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshStandardMaterial(spec));
 }
 // `repeat` is additive: at the shipped 1.6 the scuff bake tiles about once per
 // 40cm, which on a droid's flat tan panels reads as chipboard rather than as
@@ -909,11 +1072,12 @@ function metalMat(color, rough = 0.38, metal = 0.95, repeat = 2.4) {
  * roughness 0.95 against a map that means about 0.64 lands the surface at
  * ~0.60: skin, not the wet 0.43 the raw multiply would have given.
  */
-function skinMat(color = 0xc79a76, repeat = 3.0) {
+function skinMat(color = 0xc79a76, repeat = 3.0, o = {}) {
   const maps = skinMaps(repeat);
   return lit(color, MEAN_ALBEDO.skin, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: 0.95, metalness: 0, normalScale: new THREE.Vector2(0.5, 0.5),
+    vertexColors: !!o.vc,
   }));
 }
 /**
@@ -953,11 +1117,12 @@ function scorchBone(kit, mat, bone, n, y0, y1, size) {
  * plate. Untextured these read as vinyl toys — armour maps at a tight tiling
  * give the grain without the panel seams reading as stitching.
  */
-function leatherMat(color, rough = 0.66) {
-  const maps = armorMaps(4.5);
+function leatherMat(color, rough = 0.66, o = {}) {
+  const maps = armorMaps(o.repeat ?? 4.5);
   return note(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.04, normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: rough, metalness: 0.04, normalScale: new THREE.Vector2(o.normal ?? 0.7, o.normal ?? 0.7),
+    vertexColors: !!o.vc,
   }));
 }
 /** Visor glass, sensor lenses — scratched, dark and nearly specular. */
@@ -1121,24 +1286,30 @@ export function dressHumanoid(rig, style) {
   const armR = P.armR ?? 0.046;
   const clavR = P.clavR ?? 0.062;
   const armSeg = SEG.arm ?? 16;
+  // The deltoid.
+  //
+  // This was a squashed sphere parented to the humerus and dropped on top of
+  // the arm tube. Measured on the built rig: 21% of its 168 triangles were
+  // buried inside the arm and the rest stood 13.6mm proud of it, so what the
+  // player actually saw was a ball welded onto a pipe with a hard intersection
+  // line running right round the shoulder — the single loudest piece of the
+  // "arms look like sphatti" complaint, and visible in every third-person shot.
+  //
+  // A deltoid is not a separate object; it is the top of the humerus being
+  // thicker. It is now a swell in the arm's OWN lathe, which makes the surface
+  // C1 by construction, kills the intersection line, and costs 168 triangles
+  // per arm less than the ball did. `deltoid` may be false (a droid strut),
+  // true, or [amp, at, width] to tune it.
+  const delt = style.deltoid === false ? null
+    : (Array.isArray(style.deltoid) ? style.deltoid : [0.30, 0.15, 0.17]);
+  const armSwells = delt ? [[delt[1], delt[0], delt[2]], [0.42, 0.085, 0.20]] : null;
   for (const side of ['L', 'R']) {
     addLimb('clav' + side, clavR, clavR * 0.72, style.body, { seg: SEG.clav ?? 10, rings: 3, bulge: 0.02 });
-    addLimb('arm' + side, armR, armR * 0.77, style.arm || style.body,
-      { seg: armSeg, rings: 5, bulge: 0.10, bulgeAt: 0.30 });
-    addLimb('fore' + side, armR * 0.89, armR * 0.61, style.arm || style.body,
+    addLimb('arm' + side, P.armR0 ?? armR, P.armR1 ?? armR * 0.77, style.arm || style.body,
+      armSwells ? { seg: armSeg, rings: 11, swells: armSwells }
+                : { seg: armSeg, rings: 5, bulge: 0.10, bulgeAt: 0.30 });
+    addLimb('fore' + side, P.foreR0 ?? armR * 0.89, P.foreR1 ?? armR * 0.61, style.arm || style.body,
       { seg: armSeg, rings: 5, bulge: 0.13, bulgeAt: 0.22 });
-
-    // The deltoid rides the humerus, not the clavicle, so it rolls with the
-    // shoulder the way it does on a body. It is also what puts the figure's
-    // shoulders out past its ribcage — the clavicle bone only reaches 16cm.
-    if (style.deltoid !== false) {
-      const ab = rig.get('arm' + side);
-      if (ab) {
-        mesh(new THREE.SphereGeometry(1, 12, 8), style.arm || style.body, ab.obj,
-          [0, armR * 0.85 * S, 0], null,
-          [armR * 1.32 * S, armR * 1.70 * S, armR * 1.16 * S]);
-      }
-    }
 
     const hand = rig.get('hand' + side);
     if (hand) {
@@ -1178,8 +1349,12 @@ export function dressHumanoid(rig, style) {
       const tip = new THREE.Vector3(0, cl.length, 0).applyQuaternion(cl.restQuat).add(cl.offset);
       const k = new Kit();
       const w = (Y.reach ?? 0.60) * tip.x, rise = (Y.rise ?? 0.030) * S;
+      // 10×6 rather than 12×8: measured, 84% of this mesh's vertices sit inside
+      // the ribcage it is blending into, so two thirds of the tessellation was
+      // paying for surface nobody has ever seen. Only the 37mm that stands
+      // proud of the chest is the trapezius.
       k.pair((sx) => k.add(style.yokeMat || style.body,
-        (() => { const g = new THREE.SphereGeometry(1, 12, 8);
+        (() => { const g = new THREE.SphereGeometry(1, 10, 6);
           g.scale(w, rise, (Y.depth ?? 0.062) * S); return g; })(),
         [sx * tip.x * (Y.at ?? 0.50), tip.y - (Y.drop ?? 0.014) * S, (Y.z ?? -0.018) * S],
         [0, 0, -sx * (Y.slope ?? 0.20)]));
@@ -1198,28 +1373,110 @@ export function buildJedi(opts = {}) {
   const robe = ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0];
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
 
-  const tunic = clothMat(robe.inner);
-  const outer = clothMat(robe.outer);
-  const trim = clothMat(robe.trim, 0.85);
+  /**
+   * Five cloth tones off a two-tone palette, not two.
+   *
+   * The figure had exactly one garment colour on the body and one on the arms,
+   * and at any range past three metres that reads as a single painted
+   * surface — a cone with tubes coming out of it. What sells layered cloth is
+   * a TONAL ladder between the layers: the over-robe darker than the body, the
+   * body darker than the sleeve, and the trim darker than all of them. Each
+   * step is derived from the palette the player picked rather than typed, so
+   * every robe colour in ROBE_COLORS gets the same reading.
+   *
+   * Each layer also gets its own weave pitch. A tabard woven at the same
+   * threads-per-metre as the shirt under it is the same cloth, and the eye
+   * knows it.
+   */
+  const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
+  // sheen: wool goes BRIGHTER at grazing angles. Only the player pays for the
+  // physical shader — see clothMat.
+  const W = { vc: true, sheen: 0.40 };
+  const tunic = clothMat(robe.inner, 0.90, { ...W, repeat: 3.6 });
+  const outer = clothMat(robe.outer, 0.93, { ...W, repeat: 2.4 });
+  const over = clothMat(mix(robe.outer, robe.trim, 0.46), 0.95,
+    { ...W, repeat: 1.6, normal: 1.05, sheen: 0.30 });
+  const sleeve = clothMat(mix(robe.outer, robe.inner, 0.44), 0.90, { ...W, repeat: 3.2 });
+  const trim = clothMat(robe.trim, 0.84, { ...W, repeat: 4.6, sheen: 0.24 });
   // Was bare: the player's gloves, boots, bracers, belt pouches and obi clasp
   // — everything on the figure that is not cloth or skin — rendered as one
-  // flat brown vinyl, and gloves are 20% of the first-person frame.
-  const leather = leatherMat(0x53412f, 0.62);
-  const skin = skinMat(opts.skinColor ?? 0xc79a76);
+  // flat brown vinyl, and gloves are 20% of the first-person frame. Tighter
+  // tiling than the default 4.5: leather grain is finer than plate scuffing.
+  const leather = leatherMat(0x53412f, 0.58, { vc: true, repeat: 5.4 });
+  const skin = skinMat(opts.skinColor ?? 0xc79a76, 3.0, { vc: true });
   // The cap is an open shell, so it has to be lit from the inside too. On the
   // cloth bake rather than bare: hair with no normal detail at all is a
   // moulded plastic wig, and it is 20cm from the camera in every menu shot.
-  const hair = clothMat(opts.hairColor ?? 0x2a1d14, 0.76);
+  // Tiled hard so the weave reads as strands rather than as burlap.
+  const hair = clothMat(opts.hairColor ?? 0x2a1d14, 0.72,
+    { vc: true, repeat: 8.0, normal: 1.25, sheen: 0.34, sheenColor: 0x6b5540, sheenRough: 0.58 });
   hair.side = THREE.DoubleSide;
+  // Brows and lashes are two square centimetres of nearly-flat plate facing
+  // the sun, and on the hair material's sheen lobe they rendered BRIGHTER than
+  // the forehead behind them — a pale bar across the face, which is the
+  // opposite of what a brow is for. Matte, and a third darker than the hair.
+  const brow = clothMat(mix(opts.hairColor ?? 0x2a1d14, 0x000000, 0.32), 0.86,
+    { vc: true, repeat: 9.0 });
+
+  /* The torso lathe is circular and the mesh is squashed on Z, so a garment
+   * revolved about the same axis follows the body EXACTLY when it is stretched
+   * on X by the inverse of that squash — the two ellipses are then concentric
+   * and similar. This one number is why the tabards can wrap instead of
+   * standing off the flanks like a sandwich board. */
+  const DEPTH = 0.76, XK = 1 / DEPTH;
 
   dressHumanoid(rig, {
     scale: S,
-    body: outer, arm: tunic, leg: outer, hand: leather, boot: leather,
+    body: outer, arm: sleeve, leg: outer, hand: leather, boot: leather,
     head: skin, skin,
-    // armR is the humerus at the deltoid; everything else on the arm is derived
-    // from it, so 0.045 lands the arm at 4.5→3.5cm and the forearm at 4.0→2.7cm.
+    // The arm, measured over a sleeve rather than on bare skin: 5.2cm at the
+    // shoulder joint, 3.9 at the elbow, 4.4 just below it where the flexor
+    // mass sits, 3.0 at the wrist where the bracer closes on it. It used to
+    // run one near-constant sweep at 4.5→3.5, which is a length of pipe.
     parts: { chestR: 0.162, shoulderR: 0.138, hipR: 0.138, waistR: 0.122,
-             armR: 0.045, clavR: 0.062, thighR: 0.088, neckR: 0.060, torsoDepth: 0.76 },
+             armR: 0.045, armR0: 0.052, armR1: 0.039, foreR0: 0.044, foreR1: 0.030,
+             clavR: 0.062, thighR: 0.090, neckR: 0.058, torsoDepth: DEPTH },
+    // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
+    // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
+    // instead of bolted on as a ball — see dressHumanoid.
+    deltoid: [0.34, 0.15, 0.155],
+    seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
+    limbOpts: {
+      // The thigh carries the quadriceps high and the condyles at the knee;
+      // the shin carries the calf a THIRD of the way down (not a fifth, which
+      // put the belly of it inside the knee joint) over a scooped popliteal
+      // fossa. Both are what stop a leg being two cones with a ring between.
+      thigh: { rings: 6, swells: [[0.26, 0.105, 0.24], [0.90, 0.055, 0.10]] },
+      // Tuned, not chosen. Swept against the deepest knee the gait solver
+      // actually produces (125° at a crouch-walk, measured) and against the
+      // three shin tests in tools/checks: this lands the worst calf-into-
+      // hamstring penetration at 16mm where the shipped shaping gave 31mm,
+      // while carrying MORE calf (mass 0.36 against 0.28) rather than less.
+      shin: { rings: 8, swells: [[0.33, 0.22, 0.16]],
+              section: calfSection({ flat: 0.11, mass: 0.36, at: 0.33,
+                                     hollow: 0.28, hollowAt: 0.03, hollowW: 0.25 }) },
+    },
+    // The boot is one merged geometry on one material, so a sole cannot be a
+    // second colour without a second draw call — but it CAN be a second value.
+    // Beware the foot bone's frame (see buildFoot): local +Z points DOWN, so
+    // the sole plane is at +0.062·S and the instep is at negative z. Dropping
+    // the tread to 0.42 and the welt to 0.66 is what turns a rounded pillow
+    // into a boot with a sole under it.
+    footGeo: (sc) => shadeAO(buildFoot(sc, { w: 0.092, len: 0.205, h: 0.104 }), ao(
+      (x, y, z) => 1 - 0.58 * clamp((z / sc - 0.030) / 0.020, 0, 1),
+      // and the crease where the toe box breaks over the ball of the foot
+      creaseAt(0, 0.135 * sc, 0.010 * sc, 0.028 * sc, 0.60, 0.4),
+    ), { floor: 0.34 }),
+    // The glove is the largest single object in a first-person frame and it
+    // was one flat value: a mitten. Hand-bone frame is +Y wrist→knuckles and
+    // +Z the way the palm faces, so the shading below is the shadow the curled
+    // fingers throw back onto the palm and the dark between each digit.
+    handGeo: (side, sc) => shadeAO(buildHand(side, sc, { curl: 0.95 }), ao(
+      creaseAt(0, 0.058 * sc, 0.030 * sc, 0.034 * sc, 0.52, 0.5),
+      (x, y, z) => 1 - 0.34 * clamp((z / sc - 0.016) / 0.026, 0, 1) * clamp((y / sc - 0.030) / 0.030, 0, 1),
+      // the web at the base of the thumb
+      creaseAt((side === 'L' ? 1 : -1) * 0.030 * sc, 0.028 * sc, 0.016 * sc, 0.024 * sc, 0.58, 0.4),
+    ), { floor: 0.38 }),
     hands: { curl: 0.95 },
     headRadius: 0.098,
     yoke: { reach: 0.62, rise: 0.031, depth: 0.064, at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
@@ -1239,23 +1496,82 @@ export function buildJedi(opts = {}) {
       const ball = (rx, ry, rz, w = 12, h = 9) => {
         const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
       };
-      return assemble([
-        // cranium, then the face mass carried forward of it — a brow, a cheek
-        // and a chin in profile instead of one ball with features drawn on
-        [ball(0.0755, 0.0985, 0.0930, 18, 13), [0, 0.098 * s, -0.012 * s]],
-        [ball(0.0680, 0.0700, 0.0780, 14, 10), [0, 0.062 * s, 0.014 * s]],
-        [ball(0.0505, 0.0420, 0.0575, 12, 8),  [0, 0.024 * s, 0.030 * s]],
-        // brow ridge and the bridge of the nose
-        [ball(0.0575, 0.0165, 0.0300, 12, 6),  [0, 0.116 * s, 0.058 * s]],
-        [ball(0.0130, 0.0330, 0.0210, 8, 6),   [0, 0.098 * s, 0.070 * s]],
-        // the nose itself: a wedge running down off the bridge, not a cone
-        [ball(0.0135, 0.0225, 0.0195, 8, 6),   [0, 0.070 * s, 0.078 * s]],
-        [ball(0.0170, 0.0110, 0.0155, 8, 6),   [0, 0.056 * s, 0.077 * s]],
+      // A union of ellipsoids is only smooth where the ellipsoids OVERLAP.
+      //
+      // The first pass at a jaw here was anatomically literal — a ramus each
+      // side, a jaw body, a chin, a muzzle, an ala each side of the nose — and
+      // rendered, it was a bag of marbles: every small ball that did not reach
+      // deep inside its neighbour showed up as a separate bump, and the face
+      // was worse than the featureless egg it replaced. Each mass below now
+      // reaches at least a third of the way into the next one down the chain,
+      // so the surface between them is a fillet rather than a seam, and there
+      // are five masses in the lower face instead of nine.
+      //
+      // The proportions are still the ones that matter: head breadth 15.1cm on
+      // a 1.78m figure (not the 22.6 this file once shipped), the jaw carried
+      // BELOW the maxilla so there is a line from the earlobe to the chin, and
+      // a nose 3.5cm wide standing 2cm off the face instead of a 1.35cm stud.
+      const g = assemble([
+        // braincase, and the occiput carried back off it
+        [ball(0.0755, 0.0985, 0.0930, 14, 10), [0, 0.098 * s, -0.012 * s]],
+        [ball(0.0640, 0.0620, 0.0700, 8, 6),   [0, 0.104 * s, -0.048 * s]],
+        // maxilla — the mid-face, forward of the braincase
+        [ball(0.0705, 0.0780, 0.0820, 12, 9),  [0, 0.055 * s, 0.012 * s]],
+        // the jaw, as ONE wide mass overlapping the maxilla by most of its own
+        // height, then tapering forward and down to the chin
+        [ball(0.0600, 0.0560, 0.0690, 12, 8),  [0, 0.026 * s, 0.022 * s]],
+        [ball(0.0455, 0.0390, 0.0570, 10, 7),  [0, 0.008 * s, 0.034 * s]],
+        [ball(0.0250, 0.0285, 0.0330, 8, 6),   [0, -0.006 * s, 0.044 * s]],
+        // brow ridge and the root of the nose
+        [ball(0.0580, 0.0210, 0.0330, 10, 5),  [0, 0.101 * s, 0.055 * s]],
+        [ball(0.0180, 0.0350, 0.0270, 8, 6),   [0, 0.086 * s, 0.064 * s]],
+        // the nose: a dorsum running down off the root, and a tip wide enough
+        // to carry the wings without needing two more balls for them
+        [ball(0.0175, 0.0280, 0.0270, 8, 6),   [0, 0.065 * s, 0.074 * s]],
+        [ball(0.0200, 0.0165, 0.0205, 8, 6),   [0, 0.049 * s, 0.076 * s]],
         // cheekbones, which is what stops the face being a smooth egg in
         // three-quarter light
-        [ball(0.0250, 0.0190, 0.0260, 8, 6),   [0.0455 * s, 0.084 * s, 0.052 * s]],
-        [ball(0.0250, 0.0190, 0.0260, 8, 6),   [-0.0455 * s, 0.084 * s, 0.052 * s]],
+        [ball(0.0270, 0.0250, 0.0270, 7, 5),   [0.0390 * s, 0.073 * s, 0.0400 * s]],
+        [ball(0.0270, 0.0250, 0.0270, 7, 5),   [-0.0390 * s, 0.073 * s, 0.0400 * s]],
       ], 'head');
+      // Occlusion, baked where a face has it: under the jaw and the cheekbones,
+      // in the eye sockets, at the temples and at the wings of the nose. Skin
+      // on a single sun with a hemisphere fill has no other way to know that
+      // an eye socket is a hole, and a face with no sockets is a doll.
+      return shadeAO(g, ao(
+        // under the jaw and back under its angle — the deepest shadow on a head
+        creaseAt(0, -0.008 * s, -0.006 * s, 0.080 * s, 0.42, 0.75),
+        creaseAt(0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
+        creaseAt(-0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
+        // eye sockets. The eye line is at HALF the head's height — crown
+        // 19.7cm, menton -3.5cm, so 8.4cm — not the 10.0 the features here
+        // were laid out at, which gave a forehead a third too short and put
+        // the whole face too high in the skull.
+        creaseAt(0.0335 * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+        creaseAt(-0.0335 * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+        // temples
+        creaseAt(0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
+        creaseAt(-0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
+        // either side of the nose, and the crease under the lower lip
+        creaseAt(0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
+        creaseAt(-0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
+        creaseAt(0, 0.022 * s, 0.064 * s, 0.019 * s, 0.66, 0.5),
+        // THE SCALP.
+        //
+        // This is not subtle occlusion, it is insurance. The hair is a union of
+        // seven low-poly shells over a low-poly braincase, and wherever a facet
+        // of one sags inside a facet of the other a patch of skull shows
+        // through — measured at luminance 0.80 against hair at 0.03 in the
+        // head portrait, which is a cream pentagon stamped on the back of a
+        // dark head and is impossible to miss. Everything above the ear line
+        // and behind the hairline is driven to 0.28, so a poke-through reads
+        // as a dark root rather than as bare bone.
+        (x, y, z) => {
+          const above = clamp((y / s - 0.062) / 0.030, 0, 1);
+          const face = clamp((z / s - 0.030) / 0.030, 0, 1) * clamp((0.112 - y / s) / 0.030, 0, 1);
+          return 1 - 0.72 * above * (1 - face);
+        },
+      ), { floor: 0.30 });
     },
     buildHead(headObj, s, hg) {
       // Every feature is raycast onto the assembled skull. Authored against a
@@ -1263,7 +1579,7 @@ export function buildJedi(opts = {}) {
       // eyes, both pupils, both brows and the nose had literally never been
       // drawn — because the face mass reaches further forward than the cranium
       // at eye height, so clearing one still leaves you inside the other.
-      const white = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 0.24 });
+      const sclera = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 0.24 });
       const iris = new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.18 });
       const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.70 });
       // Kit.aim's frame, which every offset below depends on: local +Y goes
@@ -1283,46 +1599,97 @@ export function buildJedi(opts = {}) {
         // angled ray exits off the meridian and lands the eyeball on the side
         // of the nose, which is what the first pass did; forward, the exit is
         // by construction the frontmost point of the face at that x and y.
-        const o = new THREE.Vector3(sx * 0.0335 * s, 0.100 * s, 0.010 * s);
+        const o = new THREE.Vector3(sx * 0.0335 * s, 0.084 * s, 0.010 * s);
         // A real eyeball is 12mm across and mostly buried; a ball sitting proud
         // of the skull reads as an insect. Set into the socket so the brow does
         // the work, with only the iris standing clear.
-        k.aim(white, new THREE.SphereGeometry(1, 8, 6),
+        k.aim(sclera, new THREE.SphereGeometry(1, 8, 6),
           onSurface(hg, eyeD, 0.0058 * s, o), eyeD,
           [0.0108 * s, 0.0082 * s, 0.0098 * s]);
         k.aim(iris, new THREE.SphereGeometry(1, 6, 5),
           onSurface(hg, eyeD, 0.0022 * s, o), eyeD,
           [0.0050 * s, 0.0050 * s, 0.0050 * s]);
+        // The lash line — the single feature that stops an eye being a bead in
+        // a hole. On a real face the upper lid overhangs the cornea and lays a
+        // hard dark edge across the top third of it; without one the eyeball is
+        // a full sphere sitting in a socket and reads as a doll's, which is
+        // exactly what the portrait showed. Two millimetres of geometry.
+        //
+        // Kit.aim's frame again: local +Y goes along the normal and local +Z
+        // points DOWN, so a slab authored (w, h, d) comes out (across the
+        // face, out of it, down it). Authored the other way round it is a
+        // 5mm spike standing out of the eye.
+        const ld = new THREE.Vector3(sx * 0.06, 0.30, 0.95).normalize();
+        k.aim(brow, plateGeo(0.0200 * s, 0.0032 * s, 0.0036 * s, 0.0010 * s, 1),
+          onSurface(hg, ld, 0.0018 * s, o), ld);
         // brow, laid on the ridge above the eye and swept in toward the nose
         const b = new THREE.Vector3(sx * 0.13, 0.17, 0.98).normalize();
-        k.aim(hair, plateGeo(0.030 * s, 0.005 * s, 0.010 * s, 0.002 * s, 1),
-          onSurface(hg, b, -0.0026 * s, new THREE.Vector3(sx * 0.032 * s, 0.107 * s, 0.020 * s)), b);
+        k.aim(brow, plateGeo(0.0265 * s, 0.0045 * s, 0.0085 * s, 0.0018 * s, 1),
+          onSurface(hg, b, -0.0022 * s, new THREE.Vector3(sx * 0.032 * s, 0.093 * s, 0.020 * s)), b);
         // ear, on the side of the cranium where the cranium actually is
         const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
         k.aim(skin, (() => { const g = new THREE.SphereGeometry(1, 8, 6);
           g.scale(0.0150 * s, 0.0080 * s, 0.0230 * s); return g; })(),
-          onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.086 * s, -0.012 * s)), e);
+          onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.076 * s, -0.012 * s)), e);
         k.bake(headObj);
       }
       // The mouth is a shallow crease with a lip over it. As a separate
       // coloured slab standing off the face it read as a sticker.
       const m = new THREE.Vector3(0, -0.05, 1).normalize();
       mesh(plateGeo(0.026 * s, 0.0050 * s, 0.006 * s, 0.002 * s, 1), lip, headObj,
-        onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.048 * s, 0.030 * s)),
+        onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.030 * s, 0.030 * s)),
         [0.06, 0, 0]);
 
-      // Hair. The cap runs 95° down from the crown and is tipped forward about
-      // its OWN centre — rotating the mesh instead swings the cap 2cm off the
-      // skull. NB the sign: +0.38 tips the axis forward, which drags the rim
-      // down over the eyes, the opposite of what is wanted.
-      const cap = new THREE.SphereGeometry(0.0855 * s, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
-      cap.scale(1.02, 1.30, 1.14);
-      cap.rotateX(-0.34);
-      cap.translate(0, 0.093 * s, -0.008 * s);
-      mesh(cap, hair, headObj);
-      // the mass at the nape, filling in under the cap's back edge
-      mesh(new THREE.SphereGeometry(1, 8, 6), hair, headObj,
-        [0, 0.052 * s, -0.056 * s], null, [0.058 * s, 0.050 * s, 0.052 * s]);
+      // ── hair ─────────────────────────────────────────────────────────
+      // What was here was one smooth spherical cap. A sphere sector laid on a
+      // sphere is a swimming cap, and that is precisely what the portrait
+      // showed: a dark, perfectly circular helmet with a hard rim. Hair is
+      // read at silhouette range by its OUTLINE, and an outline needs to be
+      // broken — a parting, a fringe with a corner in it, a mass over each
+      // ear, a tail at the nape. Six pieces, still one geometry and one mesh.
+      const cap = new THREE.SphereGeometry(0.0890 * s, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
+      cap.scale(1.02, 1.32, 1.24);
+      // Tipped about its OWN centre — rotating the mesh instead swings the cap
+      // 2cm off the skull. NB the sign: +0.38 tips the axis forward, which
+      // drags the rim down over the eyes, the opposite of what is wanted.
+      // Swept BACK 43 degrees, not 17. The sign and the size of this are both
+      // measurable: the rim has to land above the brow at the front (0.130,
+      // against a brow ridge topping out at 0.122 and an eye centred at 0.084 —
+      // at -0.30 rad it came down to 0.081 and the fringe hung over both eyes,
+      // which tools/verify caught as a face feature buried in the head) and
+      // below the ear line at the sides (0.060). Measured across the whole
+      // braincase behind the hairline, 0% of it is now left bare; the shape
+      // this replaced left 0.5%, and every one of those patches rendered as a
+      // cream pentagon at luminance 0.80 against hair at 0.03.
+      cap.rotateX(-0.75);
+      cap.translate(0, 0.092 * s, -0.010 * s);
+      const lump = (rx, ry, rz, w = 8, h = 6) => {
+        const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
+      };
+      const hairGeo = assemble([
+        [cap],
+        // the swept fringe: a wedge over the brow, heavier on one side, which
+        // is what puts an asymmetric corner in the outline
+        [lump(0.052, 0.026, 0.030, 8, 5),  [0.020 * s, 0.150 * s, 0.050 * s], [0.36, 0.22, -0.14]],
+        [lump(0.030, 0.021, 0.024, 7, 4),  [-0.040 * s, 0.143 * s, 0.042 * s], [0.30, -0.30, 0.20]],
+        // a mass over each ear, covering the top of it the way hair does
+        [lump(0.030, 0.050, 0.054, 7, 5),  [0.066 * s, 0.092 * s, -0.012 * s], [0, 0, 0.16]],
+        [lump(0.030, 0.050, 0.054, 7, 5),  [-0.066 * s, 0.092 * s, -0.012 * s], [0, 0, -0.16]],
+        // the nape, filling in under the cap's back edge and running down to
+        // the collar rather than stopping in mid-air
+        [lump(0.066, 0.062, 0.062, 8, 6),  [0, 0.056 * s, -0.052 * s]],
+        [lump(0.042, 0.034, 0.032, 7, 4),  [0, 0.014 * s, -0.058 * s], [0.35, 0, 0]],
+      ], 'hair');
+      // Hair is self-shadowing and nearly black at the roots: dark under the
+      // fringe, dark at the nape, lit along the crown. On a single sun this is
+      // the only thing that separates the strands from one another at all.
+      shadeAO(hairGeo, ao(
+        creaseAt(0, 0.040 * s, -0.050 * s, 0.070 * s, 0.46, 0.5),
+        creaseAt(0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
+        creaseAt(-0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
+        (x, y) => 0.62 + 0.38 * clamp((y / s - 0.045) / 0.11, 0, 1),
+      ), { floor: 0.26 });
+      mesh(hairGeo, hair, headObj);
       // a short braid, because of course — one tapered strand rather than the
       // five spheres it used to be, which cost 400 triangles on their own
       const braid = new THREE.Group(); headObj.add(braid);
@@ -1332,83 +1699,328 @@ export function buildJedi(opts = {}) {
         hair, braid, [0, -0.115 * s, 0]);
     },
     dress(r, s) {
-      const chest = r.get('chest').obj;
-      const hips = r.get('hips').obj;
+      const chestB = r.get('chest'), chest = chestB.obj;
+      const hipsB = r.get('hips'), hips = hipsB.obj;
       const neck = r.get('neck');
 
-      // Tabards over the shoulders. The torso is an ellipse 0.76 as deep as it
-      // is wide, so anything worn on the chest has to sit at z ≈ chestR·0.76
-      // or it is simply inside the body — which is where the old z = 0.10
-      // now puts it.
+      /**
+       * A garment panel that WRAPS the torso.
+       *
+       * arcGeo is authored about +Z with circular radii. The torso lathe is
+       * also circular and its MESH is squashed on Z by DEPTH, so stretching
+       * the panel on X by 1/DEPTH makes it a scaled copy of exactly the same
+       * ellipse — concentric and similar, which is the only way an arc can
+       * follow a squashed body all the way to the flank. The old tabards were
+       * flat slabs, and measured on the built rig they stood 92mm off the
+       * chest at the centre line while sinking into it at the edges: a
+       * sandwich board, not a garment.
+       *
+       * The radius is not typed either — it is raycast against the ribcage in
+       * the panel's own three extreme directions and the largest is taken, so
+       * the panel clears the body it is worn on by `clear` everywhere along
+       * its arc whatever the section under it is doing.
+       */
+      const wrap = (mat, bone, yLo, yHi, yaw, halfArc, clear, thick, capLo) => {
+        // the stretch factors at the three extremes of the arc
+        const Ls = [-halfArc, 0, halfArc].map((a) => {
+          const th = yaw + a;
+          return Math.hypot(XK * Math.sin(th), Math.cos(th));
+        });
+        const fit = (y) => {
+          let need = 0;
+          for (let i = 0; i < 3; i++) {
+            const th = yaw + [-halfArc, 0, halfArc][i];
+            const dx = XK * Math.sin(th) / Ls[i], dz = Math.cos(th) / Ls[i];
+            const p = onLimb(bone, clamp(y, 0.004 * s, bone.length - 0.004 * s), [dx, 0, dz], 0);
+            need = Math.max(need, (Math.hypot(p[0], p[2]) + clear * s) / Ls[i]);
+          }
+          return need;
+        };
+        // `capLo` is an absolute distance from the axis that the panel's OUTER
+        // face may not exceed at its bottom edge — how a tabard is tucked
+        // under an obi. Without it the panel is fitted against the ribcage all
+        // the way down and ends up hanging 25mm outside the belt that is
+        // supposed to be holding it.
+        const rHi = fit(yHi);
+        const rLo = capLo != null
+          ? Math.min(fit(yLo), capLo * s / Math.max(...Ls) - thick * s)
+          : fit(yLo);
+        const g = arcGeo(rLo, rHi, yHi - yLo, halfArc * 2, thick * s, 9);
+        g.rotateY(yaw);
+        const m = mesh(g, mat, bone.obj, [0, yLo, 0]);
+        m.scale.x = XK;
+        return m;
+      };
+
+      // ── the tabard ─────────────────────────────────────────────────────
+      // Two panels down the front with a gap between them, one across the
+      // back, all hung from the shoulders and running past the belt. This is
+      // the layer that gives the torso a second silhouette; without it the
+      // figure is one smooth barrel from the collar to the obi.
+      // The bottom edge runs down INSIDE the obi (whose outer face sits at
+      // 0.124 from the axis at the panels' own bearing), so the belt reads as
+      // holding the tabard rather than as a hoop in front of it.
+      const tabTop = 0.185 * s, tabBot = -0.200 * s;
+      const tabAO = ao(
+        // the shoulders it folds over, and the shadow the belt casts up it
+        (x, y) => 1 - 0.30 * clamp((y / s - 0.10) / 0.09, 0, 1),
+        (x, y) => 1 - 0.36 * clamp(1 - Math.abs(y / s + 0.165) / 0.075, 0, 1),
+      );
       for (const sx of [-1, 1]) {
-        const tab = plateGeo(0.085 * s, 0.40 * s, 0.026 * s, 0.011 * s);
-        mesh(tab, outer, chest, [sx * 0.058 * s, 0.055 * s, 0.112 * s], [0.10, sx * 0.06, sx * 0.05]);
-        const tabBack = plateGeo(0.10 * s, 0.34 * s, 0.024 * s, 0.011 * s);
-        mesh(tabBack, outer, chest, [sx * 0.052 * s, 0.06 * s, -0.110 * s], [-0.08, 0, sx * 0.04]);
+        const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108);
+        shadeAO(m.geometry, tabAO, { floor: 0.45 });
       }
-      // the V of the crossed tunic
+      const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104);
+      shadeAO(back.geometry, tabAO, { floor: 0.45 });
+      // the V of the crossed tunic, showing between the two front panels
       for (const sx of [-1, 1]) {
-        mesh(plateGeo(0.13 * s, 0.24 * s, 0.02 * s, 0.01 * s), trim, chest,
-          [sx * 0.042 * s, 0.09 * s, 0.114 * s], [0.1, 0, sx * 0.38]);
+        mesh(plateGeo(0.115 * s, 0.215 * s, 0.018 * s, 0.009 * s), tunic, chest,
+          [sx * 0.036 * s, 0.098 * s, 0.112 * s], [0.10, 0, sx * 0.42]);
       }
-      // collar — rides the neck so it clears the shoulder line and gives the
-      // head something to sit in rather than on. Kept nearly straight: flared
-      // hard it reads as a funnel round the throat, not a folded collar.
+      // ── collar ─────────────────────────────────────────────────────────
+      // Rides the neck so it clears the shoulder line and gives the head
+      // something to sit IN rather than on. Kept nearly straight: flared hard
+      // it reads as a funnel round the throat, not a folded collar. Two bands
+      // now — the tunic's own standing collar inside the robe's fold-over,
+      // because a single ring round a neck is a napkin holder.
       if (neck) {
-        mesh(bandGeo(0.058 * s, 0.070 * s, 0.064 * s, 0.084 * s, 0.058 * s, 14), trim, neck.obj,
-          [0, -0.008 * s, 0], [0.08, 0, 0]);
+        // The pale liner is 3cm tall, not 5: at 5 it stood a full 2.4cm proud
+        // of the dark fold-over and the whole collar read as one cream ring —
+        // a neck brace. The dark layer is the collar; the tunic is a hint of
+        // lining at the top of it.
+        mesh(bandGeo(0.056 * s, 0.063 * s, 0.058 * s, 0.066 * s, 0.030 * s, 12), tunic, neck.obj,
+          [0, 0.010 * s, 0], [0.06, 0, 0]);
+        const col = mesh(bandGeo(0.060 * s, 0.076 * s, 0.064 * s, 0.086 * s, 0.052 * s, 12), trim, neck.obj,
+          [0, -0.014 * s, 0], [0.10, 0, 0]);
+        shadeAO(col.geometry, (x, y) => 0.56 + 0.44 * clamp(y / (0.052 * s), 0, 1), { floor: 0.4 });
       }
-      // obi / belt — a rolled band, not an open cylinder you can see through
-      mesh(bandGeo(0.126 * s, 0.146 * s, 0.124 * s, 0.142 * s, 0.105 * s, 18), trim, hips,
-        [0, 0.022 * s, 0], null, [1, 1, 0.82]);
-      mesh(plateGeo(0.062 * s, 0.05 * s, 0.022 * s, 0.008 * s), metalMat(0x9a8a6a), hips,
-        [0, 0.075 * s, 0.126 * s]);
-      // pouches
-      for (const sx of [-1, 1]) mesh(plateGeo(0.05 * s, 0.055 * s, 0.035 * s, 0.01 * s), leather, hips,
-        [sx * 0.102 * s, 0.055 * s, 0.098 * s]);
-      // The robe's skirt.
+      // ── belt ───────────────────────────────────────────────────────────
+      // An obi with a utility belt buckled over it, a clasp, pouches, and two
+      // ends hanging off the knot. The hanging ends are the point: a closed
+      // ring round a waist is a hoop, and every reference for this character
+      // has cloth falling off the front of the belt.
+      const obi = mesh(bandGeo(0.126 * s, 0.148 * s, 0.124 * s, 0.144 * s, 0.108 * s, 18), trim, hips,
+        [0, 0.020 * s, 0], null, [1, 1, DEPTH + 0.06]);
+      shadeAO(obi.geometry, (x, y) => 0.66 + 0.34 * Math.sin(clamp(y / (0.108 * s), 0, 1) * Math.PI), { floor: 0.5 });
+      mesh(bandGeo(0.140 * s, 0.152 * s, 0.140 * s, 0.152 * s, 0.038 * s, 18), leather, hips,
+        [0, 0.036 * s, 0], null, [1, 1, DEPTH + 0.06]);
+      mesh(plateGeo(0.058 * s, 0.044 * s, 0.020 * s, 0.007 * s), metalMat(0x9a8a6a), hips,
+        [0, 0.055 * s, 0.121 * s]);
+      // pouches, and a capsule bar on the left hip
+      for (const sx of [-1, 1]) mesh(plateGeo(0.048 * s, 0.056 * s, 0.034 * s, 0.010 * s), leather, hips,
+        [sx * 0.104 * s, 0.036 * s, 0.086 * s], [0, sx * 0.35, 0]);
+      mesh(plateGeo(0.070 * s, 0.024 * s, 0.026 * s, 0.008 * s), leather, hips,
+        [-0.058 * s, 0.028 * s, -0.104 * s], [0, 0.10, 0]);
+      // The two ends: flattened straps hanging off the knot, lightly splayed.
+      // limbGeo spans +Y, so they are turned over to hang.
+      for (const [sx, len, lean] of [[1, 0.30, 0.10], [-1, 0.22, -0.07]]) {
+        const g = limbGeo(len * s, 0.030 * s, 0.020 * s, 8, false,
+          { rings: 5, swells: [[0.30, 0.06, 0.4]], section: ovalSection(0.30, 2.6) });
+        shadeAO(g, (x, y) => 0.72 + 0.28 * clamp(y / (len * s), 0, 1), { floor: 0.55 });
+        mesh(g, trim, hips, [sx * 0.052 * s, 0.024 * s, 0.104 * s],
+          [Math.PI - 0.14, 0, lean]);
+      }
+
+      // ── the robe's skirt ───────────────────────────────────────────────
       //
-      // This used to be eight flat plates spaced evenly around a full circle.
-      // Eight panels 0.15 wide is 1.2m of plate wrapped around a 0.63m
-      // circumference, so they overlapped into a closed barrel with a vertical
-      // ridge every 45 degrees — from any distance it read as a corrugated
-      // cylinder or a screw thread hanging under the character, which is
-      // exactly what it looked like.
+      // This used to be a 16-sided cone, and it read as exactly that: a smooth
+      // featureless funnel that made up a third of the figure's silhouette.
+      // Cloth hanging off a waist does not do that — it gathers into vertical
+      // folds, and the folds are the whole reason a robe reads as cloth at
+      // fifty metres.
       //
-      // A skirt is a flared tube with a couple of overlapping panels for
-      // depth, not a ring of boxes.
-      const skirtH = 0.46 * s;
-      const skirt = new THREE.CylinderGeometry(0.135 * s, 0.215 * s, skirtH, 16, 1, true);
-      skirt.translate(0, -skirtH * 0.5 - 0.015 * s, 0);
+      // So the skirt is a lathe with an angular SECTION on it: three cosine
+      // harmonics, all integer so the profile closes on itself exactly, and
+      // all scaled by t^1.25 so the folds are nothing at the belt and ±2cm at
+      // the hem, which is how gathered cloth actually behaves. reshape()
+      // transports the normals through analytically, so the ridges light
+      // correctly instead of showing a crease down every seam.
+      const skirtH = 0.50 * s;
+      const foldAmt = (th) => 0.055 * Math.cos(7 * th + 0.4)
+        + 0.030 * Math.cos(3 * th - 1.1) + 0.014 * Math.cos(11 * th + 2.3);
+      const foldT = (t) => Math.pow(clamp(t, 0, 1), 1.25);
+      // The last swell is NEGATIVE: the profile pinches 6% just short of the
+      // hem and comes back out to r1 at it, which with a double-sided lathe is
+      // a rolled edge. The first attempt at a hem was a separate horizontal
+      // band and it read as a flying saucer round the character's ankles.
+      const skirtGeo = limbGeo(skirtH, 0.140 * s, 0.238 * s, 36, false, {
+        rings: 9, bulge: 0, swells: [[0.93, -0.065, 0.055]],
+        section: (th, t) => 1 + foldT(t) * foldAmt(th),
+      });
+      // The valleys of those folds are in shadow and the ridges catch the sun.
+      // Geometry alone would give a fold a lit side and a dark side; only the
+      // occlusion term makes the bottom of a fold read as a fold rather than
+      // as a facet. Plus the whole top under the belt and the tabard.
+      shadeAO(skirtGeo, (x, y, z) => {
+        const th = Math.atan2(x, z), t = clamp(y / skirtH, 0, 1);
+        const valley = clamp(-foldAmt(th) / 0.075, 0, 1);
+        return (1 - 0.46 * foldT(t) * valley) * (0.60 + 0.40 * clamp(t / 0.28, 0, 1));
+      }, { floor: 0.30 });
       const skirtMat = outer.clone();
       skirtMat.side = THREE.DoubleSide;
-      mesh(skirt, skirtMat, hips);
-      // two front panels overlapping the tube, so the silhouette has a seam and
-      // a bit of layering instead of being a perfect cone
-      for (const sx of [-1, 1]) {
-        const a = sx * 0.42;
-        const panel = plateGeo(0.17 * s, 0.44 * s, 0.02 * s, 0.012 * s, 3);
-        mesh(panel, outer, hips,
-          [Math.sin(a) * 0.145 * s, -0.145 * s, Math.cos(a) * 0.145 * s], [0.05, a, 0]);
+      // Turned over about Z, not X. Both flips hang the lathe downward, but a
+      // flip about X also sends local +Z to the BACK — so anything with a
+      // front to it (these panels have a lobe on the centre line) ends up
+      // facing the wrong way, which is a mistake that costs an hour to find in
+      // a screenshot. About Z the front stays the front.
+      mesh(skirtGeo, skirtMat, hips, [0, -0.012 * s, 0], [0, 0, Math.PI]);
+      // Two over-panels down the front in the darker cloth, so the layering
+      // carries all the way down the figure instead of stopping at the belt.
+
+      // A panel is a lathe with a LOBE in its section: full radius over a 70°
+      // wedge on the centre line and a third of it everywhere else, so the
+      // back three quarters of the tube is tucked inside the skirt and only
+      // the wedge is ever drawn. That gets a curved, folded, correctly-lit
+      // panel out of one lathe instead of out of a flat slab with hard edges,
+      // which is what the two front plates here used to be.
+      const lobe = (w) => (th) => 0.28 + 0.72 / (1 + (th / w) ** 6);
+      for (const [sx, r0, r1, ln] of [[1, 0.150, 0.258, 0.45], [-1, 0.124, 0.226, 0.37]]) {
+        const g = limbGeo(ln * s, r0 * s, r1 * s, 14, false,
+          { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
+        shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
+        mesh(g, over, hips, [0, -0.026 * s, 0], [0, sx * 0.42, Math.PI]);
       }
-      // boots — the shaft has to reach the ankle at y = shin.length, or a
-      // stripe of bare leg shows between the boot top and the foot
+
+      // ── boots ──────────────────────────────────────────────────────────
+      // The shaft has to reach the ankle at y = shin.length or a stripe of
+      // bare leg shows between the boot top and the foot. It gets a fold-over
+      // cuff at the knee end: the old shaft simply stopped, which measured as
+      // a 25mm step in the leg's outline with nothing to explain it.
       for (const side of ['L', 'R']) {
         const sh = r.get('shin' + side);
-        if (sh) mesh(bandGeo(0.056 * s, 0.078 * s, 0.048 * s, 0.068 * s, sh.length - 0.185 * s, 12),
-          leather, sh.obj, [0, 0.185 * s, 0]);
+        if (!sh) continue;
+        const shaftY = 0.170 * s;
+        const shaft = mesh(bandGeo(0.058 * s, 0.076 * s, 0.048 * s, 0.068 * s, sh.length - shaftY, 14),
+          leather, sh.obj, [0, shaftY, 0]);
+        shadeAO(shaft.geometry, (x, y) => 0.62 + 0.38 * clamp((y - shaftY) / (0.10 * s), 0, 1), { floor: 0.45 });
+        // the cuff, turned down over the top of the shaft
+        mesh(bandGeo(0.070 * s, 0.086 * s, 0.062 * s, 0.079 * s, 0.048 * s, 12),
+          leather, sh.obj, [0, shaftY - 0.006 * s, 0]);
+        // a strap round the ankle end of the shaft. Sized off the shaft's own
+        // taper, not off the shin: at this height the leather is already 70mm
+        // out and a strap typed at 58 disappears inside the boot it is meant
+        // to be buckling.
+        mesh(bandGeo(0.066 * s, 0.077 * s, 0.065 * s, 0.076 * s, 0.020 * s, 10),
+          trim, sh.obj, [0, sh.length - 0.055 * s, 0]);
       }
-      // bracers, and the hem of the robe's sleeve above them
+
+      // ── sleeve and bracer ──────────────────────────────────────────────
+      // Three layers down the forearm and they have to read in that order:
+      // the robe's sleeve ends in a flared hem just below the elbow, the
+      // tunic's cuff shows under it, and a leather bracer closes over the
+      // bottom two thirds. Before this the whole arm was one pale tube.
       for (const side of ['L', 'R']) {
         const f = r.get('fore' + side);
+        const a = r.get('arm' + side);
+        if (a) {
+          // the mantle: a short cape of the over-cloth off the point of the
+          // shoulder, which is what actually separates the arm from the torso
+          // in silhouette
+          // r0 is measured against the humerus at the height it starts, plus
+           // 3mm of cloth: typed at 62mm it stood a full centimetre off a 52mm
+           // arm and the gap between the two showed as a hole in the shoulder.
+          const g = limbGeo(0.098 * s, 0.0555 * s, 0.0715 * s, 18, false,
+            { rings: 4, bulge: 0, section: (th, t) => 1 + 0.030 * t * Math.cos(4 * th + 0.5) });
+          shadeAO(g, (x, y) => 0.68 + 0.32 * clamp(y / (0.098 * s), 0, 1), { floor: 0.42 });
+          mesh(g, over, a.obj, [0, 0.004 * s, 0]);
+        }
         if (!f) continue;
-        mesh(bandGeo(0.036 * s, 0.048 * s, 0.030 * s, 0.042 * s, 0.135 * s, 12), leather, f.obj, [0, 0.105 * s, 0]);
-        mesh(bandGeo(0.040 * s, 0.048 * s, 0.042 * s, 0.064 * s, 0.055 * s, 12), tunic, f.obj, [0, 0.030 * s, 0]);
+        // the robe sleeve's flared hem, just below the elbow
+        const hem = mesh(bandGeo(0.041 * s, 0.050 * s, 0.044 * s, 0.066 * s, 0.052 * s, 14),
+          over, f.obj, [0, 0.020 * s, 0]);
+        shadeAO(hem.geometry, (x, y) => 0.60 + 0.40 * clamp(y / (0.052 * s), 0, 1), { floor: 0.42 });
+        // the tunic cuff under it
+        // sized off the forearm's measured surface at that height (45.3mm),
+        // not off its nominal taper — typed at 45 the cuff was 46% buried in
+        // the arm it was supposed to be hanging off
+        mesh(bandGeo(0.044 * s, 0.053 * s, 0.042 * s, 0.050 * s, 0.030 * s, 12), tunic, f.obj,
+          [0, 0.072 * s, 0]);
+        // the bracer, and a strap round each end of it
+        const br = mesh(bandGeo(0.036 * s, 0.047 * s, 0.030 * s, 0.041 * s, 0.145 * s, 14),
+          leather, f.obj, [0, 0.100 * s, 0]);
+        shadeAO(br.geometry, (x, y) => 0.66 + 0.34 * clamp((y - 0.100 * s) / (0.05 * s), 0, 1), { floor: 0.45 });
+        mesh(bandGeo(0.036 * s, 0.045 * s, 0.035 * s, 0.044 * s, 0.014 * s, 10),
+          trim, f.obj, [0, 0.222 * s, 0]);
+      }
+
+      // ── occlusion on the body itself ───────────────────────────────────
+      // Every limb here is a single lathe under a single sun with a hemisphere
+      // fill, so nothing in the lighting knows that an armpit sees a tenth of
+      // the sky a shoulder does. This is the difference between a figure made
+      // of cloth and a figure made of plastic, and it is baked per vertex
+      // because there is no second UV set to hang an aoMap on.
+      //
+      // Bone frames, which every offset below depends on: +Y runs along the
+      // bone from its root, and local +Z is the FRONT of the character for
+      // every bone in the humanoid skeleton (Rig builds the rest pose with -Z
+      // as the roll reference). The geometry is pre-scale, so the torso's z
+      // here is 1/0.76 of what is drawn.
+      const R = (n) => r.get(n);
+      const chestGeo = chestB.primary.geometry;
+      shadeAO(chestGeo, ao(
+        // armpits, the deepest crease on a dressed torso
+        creaseAt(0.150 * s, 0.180 * s, -0.010 * s, 0.095 * s, 0.42, 0.7),
+        creaseAt(-0.150 * s, 0.180 * s, -0.010 * s, 0.095 * s, 0.42, 0.7),
+        // the hollows above the collarbones, and the sternum between the pecs
+        creaseAt(0.060 * s, 0.205 * s, 0.090 * s, 0.055 * s, 0.60, 0.6),
+        creaseAt(-0.060 * s, 0.205 * s, 0.090 * s, 0.055 * s, 0.60, 0.6),
+        creaseAt(0, 0.120 * s, 0.215 * s, 0.055 * s, 0.62, 0.55),
+        // the spinal groove
+        creaseAt(0, 0.100 * s, -0.205 * s, 0.070 * s, 0.66, 0.55),
+        // under the tabard panels, which hang over most of this
+        (x, y, z) => (z > 0.03 * s && Math.abs(x) < 0.14 * s ? 0.72 : 1),
+      ), { floor: 0.34 });
+      const spineB = R('spine');
+      if (spineB) shadeAO(spineB.primary.geometry, ao(
+        creaseAt(0, 0.020 * s, 0.190 * s, 0.075 * s, 0.66, 0.5),
+        creaseAt(0, 0.030 * s, -0.190 * s, 0.075 * s, 0.64, 0.5),
+        // the whole waist is inside the obi
+        (x, y) => 1 - 0.30 * clamp(1 - Math.abs(y / s - 0.02) / 0.075, 0, 1),
+      ), { floor: 0.38 });
+      shadeAO(hipsB.primary.geometry, ao(
+        creaseAt(0, 0, 0.060 * s, 0.090 * s, 0.55, 0.5),
+        // everything below the belt is under the skirt
+        (x, y) => 0.52 + 0.48 * clamp(y / (0.09 * s), 0, 1),
+      ), { floor: 0.34 });
+      if (neck) shadeAO(neck.primary.geometry, ao(
+        // down into the collar, and up under the jaw
+        (x, y) => 0.44 + 0.56 * clamp(y / (0.045 * s), 0, 1),
+        (x, y) => 1 - 0.34 * clamp((y / s - 0.045) / 0.03, 0, 1),
+        creaseAt(0, 0.070 * s, -0.055 * s, 0.055 * s, 0.62, 0.5),
+      ), { floor: 0.30 });
+      for (const side of ['L', 'R']) {
+        const a = R('arm' + side), f = R('fore' + side);
+        const th = R('thigh' + side), sh = R('shin' + side);
+        if (a) shadeAO(a.primary.geometry, ao(
+          // the root of the shoulder, which is buried in the torso and the
+          // mantle whichever way the arm is swinging
+          (x, y) => 0.50 + 0.50 * clamp(y / (0.075 * s), 0, 1),
+          // and the inside of the elbow, on the anterior (+Z) face
+          (x, y, z) => 1 - 0.34 * clamp((y / s - 0.20) / 0.085, 0, 1) * clamp(z / (0.03 * s), 0, 1),
+        ), { floor: 0.36 });
+        if (f) shadeAO(f.primary.geometry, ao(
+          (x, y, z) => 1 - 0.40 * (1 - clamp(y / (0.055 * s), 0, 1)) * clamp(z / (0.03 * s), 0, 1),
+          // under the sleeve hem and inside the bracer
+          (x, y) => 1 - 0.30 * clamp(1 - Math.abs(y / s - 0.055) / 0.045, 0, 1),
+          (x, y) => 0.74 + 0.26 * clamp(1 - (y / s - 0.10) / 0.10, 0, 1),
+        ), { floor: 0.36 });
+        if (th) shadeAO(th.primary.geometry, ao(
+          // the crotch
+          creaseAt(0, 0.010 * s, 0.020 * s, 0.115 * s, 0.52, 0.45),
+          // and the whole upper half, which the skirt hangs over
+          (x, y) => 0.44 + 0.56 * clamp((y / s - 0.02) / 0.42, 0, 1),
+        ), { floor: 0.30 });
+        if (sh) shadeAO(sh.primary.geometry, ao(
+          // the back of the knee, on the posterior (-Z) face
+          (x, y, z) => 1 - 0.42 * (1 - clamp(y / (0.075 * s), 0, 1)) * clamp(-z / (0.035 * s), 0, 1),
+          // and everything inside the boot shaft
+          (x, y) => 0.66 + 0.34 * clamp(1 - (y / s - 0.10) / 0.09, 0, 1),
+        ), { floor: 0.32 });
       }
     },
   });
 
-  return { rig, palette: { robe, tunic, outer, trim, leather, skin } };
+  return { rig, palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
 }
 
 /* ── battle droids ───────────────────────────────────────────────────── */
@@ -1753,7 +2365,10 @@ export function buildB2(opts = {}) {
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
       neck: { capN: 2 }, clav: { capN: 2 },
-      arm: { rings: 4, bulge: 0.06, bulgeAt: 0.34, capN: 3 },
+      // rings 12 on the humerus because the deltoid is a swell in the lathe
+      // now rather than a ball bolted to it, and a two-hump profile needs
+      // enough rings to resolve both humps — at the old 4 they smear into one.
+      arm: { rings: 12, capN: 3 },
       fore: { rings: 4, bulge: 0.07, bulgeAt: 0.24, capN: 3 },
       thigh: { rings: 4, bulge: 0.05, bulgeAt: 0.30, capN: 3 },
       shin: { rings: 4, bulge: 0.09, bulgeAt: 0.20, capN: 3 },

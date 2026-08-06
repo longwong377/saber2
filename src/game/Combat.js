@@ -28,21 +28,40 @@ export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
  * ten metres in 0.13s, which is inside human reaction time — you could not
  * block, only guess. The tiers now span genuinely learnable to genuinely
  * brutal, and the ramp across a run does the rest.
+ *
+ * `assist` is the share of your guard-aiming error the deflection assist closes
+ * across 0.9 s of approach (see ASSIST_LEAD in SaberController). It is worth
+ * knowing what these buy, because the blade's capture window is ±12.5 cm and
+ * the guard's travel is ±93°, so unaided you must place the guard within about
+ * 13° of a bolt's line to touch it at all:
+ *
+ * Measured at the 34 m Player.js actually searches (tools/checks/deflection.mjs):
+ *
+ *   Padawan 0.92 — 40° off arrives 3.5 cm out. Genuinely guides your guard.
+ *   Knight  0.70 — 30° off arrives 10.5 cm out; past about 33° you are on your
+ *                  own. Get roughly there and the assist finishes it.
+ *   Master  0.30 — you must be within ~18° yourself.
+ *   Grandmaster 0 — every bolt is yours.
+ *
+ * The old values (0.55/0.26/0.07/0) were on a formula that closed 53%/26%/6%/0%
+ * of the error over a whole flight, so even Padawan — whose blurb promises the
+ * assist guides your guard — missed a bolt you were 40° off. They are not
+ * comparable to these and must not be read as a difficulty increase.
  */
 export const DIFFICULTY = {
   padawan: {
     name: 'Padawan', blurb: 'The blade is forgiving. Assist guides your guard.',
-    assist: 0.55, enemyAccuracy: 0.42, enemyAggression: 0.55, damageTaken: 0.55,
+    assist: 0.92, enemyAccuracy: 0.42, enemyAggression: 0.55, damageTaken: 0.55,
     deflectWindow: 1.6, boltSpeed: 0.34, fireRate: 0.5, chamberWindow: 0.22, staminaDrain: 0.7,
   },
   knight: {
     name: 'Knight', blurb: 'A fair fight. Light assist, honest bolts.',
-    assist: 0.26, enemyAccuracy: 0.62, enemyAggression: 0.78, damageTaken: 0.85,
+    assist: 0.70, enemyAccuracy: 0.62, enemyAggression: 0.78, damageTaken: 0.85,
     deflectWindow: 1.25, boltSpeed: 0.46, fireRate: 0.65, chamberWindow: 0.17, staminaDrain: 0.9,
   },
   master: {
     name: 'Master', blurb: 'No hand on your wrist. They shoot to kill.',
-    assist: 0.07, enemyAccuracy: 0.8, enemyAggression: 1.0, damageTaken: 1.15,
+    assist: 0.30, enemyAccuracy: 0.8, enemyAggression: 1.0, damageTaken: 1.15,
     deflectWindow: 1.0, boltSpeed: 0.63, fireRate: 0.85, chamberWindow: 0.14, staminaDrain: 1.0,
   },
   grandmaster: {

@@ -68,6 +68,34 @@ export class Cloak {
     // PlaneGeometry's rows run bottom-to-top; ours run top-to-bottom
     this.geometry = geo;
     this.attrPos = geo.attributes.position;
+    /*
+     * A vertex-colour channel, for two reasons.
+     *
+     * The first is defensive: the wearer's own robe material is what gets
+     * cloned onto this cloth, and Bodies.js now declares `vertexColors` on the
+     * cloth family so it can carry baked creases. A material that declares
+     * vertex colours over a geometry that has none renders BLACK — three
+     * leaves the attribute unbound rather than falling back to white — so a
+     * cloak with no channel would be a hole in the character.
+     *
+     * The second is that the channel is worth having anyway. A cloak is lit
+     * from outside only; the inside of the collar and the folds behind the
+     * shoulders never see the sky, and a flat gradient down the first fifth of
+     * the cloth is what stops the whole thing reading as one bright sheet
+     * pinned to a back. Values are linear, so 0.55 is 55% of the light.
+     */
+    const col = new Float32Array(this.cols * this.rows * 3);
+    for (let r = 0; r < this.rows; r++) {
+      const t = this.rows === 1 ? 1 : r / (this.rows - 1);
+      // dark at the collar where the cloth is bunched under its own pins,
+      // opening out to full light by a fifth of the way down
+      const v = 0.55 + 0.45 * clamp(t / 0.20, 0, 1);
+      for (let c = 0; c < this.cols; c++) {
+        const i = (r * this.cols + c) * 3;
+        col[i] = col[i + 1] = col[i + 2] = v;
+      }
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.mat = opts.material || new THREE.MeshStandardMaterial({
       color: opts.color ?? 0x5a4530, roughness: 0.94, metalness: 0,
       side: THREE.DoubleSide,

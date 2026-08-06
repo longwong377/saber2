@@ -4,6 +4,28 @@
  * of the logic under test cares what those pixels look like.
  */
 
+/**
+ * Map the browser's bare specifiers before anything asks for one.
+ *
+ * `npm run verify` passes --import ./tools/register.mjs and everything resolves.
+ * Run the file the obvious way — `node tools/verify.mjs` — and it does not, and
+ * the failure is quiet in the worst possible way: `three` still resolves, out of
+ * node_modules, so the suite runs and reports; only `rapier` is missing, and
+ * initPhysics() deliberately swallows its own failure so a browser without WASM
+ * can still reach the menu. The result was 34 physics tests all failing with
+ * "Rapier is not initialised" and nothing on screen saying why.
+ *
+ * Registering here fixes it because every entry point imports this module first
+ * and Rapier is reached through a DYNAMIC import, which resolves after this has
+ * run. Static `three` imports are already resolved by now, but the vendored
+ * build and the node_modules one are both r169, so that path was never the bug.
+ */
+import { register } from 'node:module';
+if (!globalThis.__saberResolverRegistered) {
+  globalThis.__saberResolverRegistered = true;
+  register('./three-resolver.mjs', import.meta.url);
+}
+
 class Ctx2D {
   constructor(canvas) { this.canvas = canvas; }
   createImageData(w, h) { return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }; }
