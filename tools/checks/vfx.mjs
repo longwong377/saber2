@@ -25,7 +25,19 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from '../../src/game/Saber.js';
-import { Particles, ParticlePool, ChipField } from '../../src/world/Particles.js';
+import { Particles, ParticlePool, ChipField, surfaceTint, incandescent, ground }
+  from '../../src/world/Particles.js';
+
+/**
+ * three's own punctual falloff, from lights_pars_begin. The blade's wash is
+ * judged against this and not against 1/d², because the decay exponent is the
+ * whole point of the rig.
+ */
+const atten = (d, cutoff, decay) => {
+  let f = 1 / Math.max(Math.pow(d, decay), 0.01);
+  if (cutoff > 0) f *= Math.pow(Math.max(0, Math.min(1, 1 - Math.pow(d / cutoff, 4))), 2);
+  return f;
+};
 
 const lum = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const chroma = (r, g, b) => {
@@ -98,6 +110,9 @@ function aces(rgb, exposure = 0.9) {
   v = v.map(x => (x * (x + 0.0245786) - 0.000090537) / (x * (0.983729 * x + 0.4329510) + 0.238081));
   return mul(OUT, v).map(x => Math.min(1, Math.max(0, x)));
 }
+
+/** Linear → sRGB, so a claim about "white" is made in the space a screen is in. */
+const srgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
 
 export function run({ check, assert, near }) {
 
@@ -315,6 +330,101 @@ export function run({ check, assert, near }) {
       'haze must take light AWAY from an emitter, not mix it toward the fog colour');
     s.dispose();
     return '1 mesh, 2 triangles, additive, fogged by attenuation';
+  });
+
+  check('blade: the wash is a LINE light, in the crystal\'s own colour', () => {
+    /* Two faults, one cause, both measured in the arena before this existed.
+     *
+     * A 1.15 m column of plasma was being lit as a POINT: decay 2. Held 24 cm
+     * off the sand that put 35 units of irradiance on the ground directly
+     * under the tip — the sun in that level is 7 — and the ground came back
+     * (1.00, 0.98, 0.91): clipped, i.e. the blade's own colour destroyed by
+     * the blade's own brightness. A metre and a half away, on the wielder's
+     * chest, the same light moved the pixel by 0.016.
+     *
+     * And what it threw was (0.25, 0.52, 1.00) — the hue lifted 22% toward
+     * white "because bounce light has been through a surface". Bounce through
+     * a surface IS the albedo multiply, so that lift was counted twice, and on
+     * sand it inverted the result: sand's blue albedo is 0.109 against 0.51 in
+     * red, so a light that pale lands RED-dominant. The blade lit the ground
+     * with its own colour and the ground handed back white.
+     */
+    const scene = new THREE.Scene();
+    const s = new Saber(scene, { colorIndex: 0 });      // Cerulean
+    s.ignite(); s.ignition = 1;
+    const q = new THREE.Quaternion(), p = new THREE.Vector3(0, 1.1, 0);
+    for (let i = 0; i < 6; i++) { s.setHiltPose(p, q); s.update(1 / 60, i / 60); }
+
+    for (const [name, l] of [['main', s.light], ['tip', s.tipLight]]) {
+      assert(l.decay === 1, `the ${name} light still falls off as 1/d^${l.decay}`);
+      assert(l.intensity > 0.5, `the ${name} light is dark on a lit blade`);
+      // and it must be the crystal, not a pale wash of it
+      const kept = chroma(l.color.r, l.color.g, l.color.b) / chroma(s.hue.r, s.hue.g, s.hue.b);
+      assert(kept > 0.9, `the ${name} light keeps only ${(kept * 100).toFixed(0)}% of the crystal's chroma`);
+      // blue has to outrun red on SAND, which is the surface that broke it
+      const sand = [0.51, 0.28, 0.109];                 // measured arena albedo
+      const ratio = (sand[2] * l.color.b) / (sand[0] * l.color.r);
+      assert(ratio > 3, `on sand this light returns only ${ratio.toFixed(2)}× as much blue as red`);
+    }
+    // neither sample sits ON the tip: a point light at the tip of a blade laid
+    // on the deck is a singularity sitting on the deck
+    assert(s.tipLight.position.distanceTo(s.tip) > 0.05,
+      'the second light is sitting exactly on the tip');
+    assert(s.tipLight.position.distanceTo(s.base) > s.light.position.distanceTo(s.base),
+      'the two lights are not spread along the blade');
+
+    // The shape, as a ratio. A point source is 25:1 between 0.3 m and 1.5 m; a
+    // line source near it is 5:1. Anything near 25 has quietly gone back to
+    // inverse square and the ground will clip again.
+    const near = atten(0.3, s.light.distance, s.light.decay);
+    const far = atten(1.5, s.light.distance, s.light.decay);
+    const shape = near / far;
+    assert(shape < 8, `the wash is ${shape.toFixed(1)}:1 between 0.3 m and 1.5 m — that is a point light`);
+    // and the near field must genuinely be gentler than the old rig's
+    const oldNear = 5.2 * atten(0.3, 8.05, 2);
+    const nowNear = s.light.intensity * near;
+    assert(nowNear < oldNear / 3,
+      `the ground 30 cm from the blade still gets ${nowNear.toFixed(1)} against the old ${oldNear.toFixed(1)}`);
+    // ...while the reach is not worse where a body actually stands
+    const oldFar = 5.2 * atten(1.5, 8.05, 2);
+    assert(s.light.intensity * far > oldFar,
+      `a chest 1.5 m away now gets ${(s.light.intensity * far).toFixed(2)} against the old ${oldFar.toFixed(2)}`);
+    s.dispose();
+    return `decay 1, ${shape.toFixed(1)}:1 over 0.3→1.5 m (point light: 25:1), `
+      + `30 cm ${oldNear.toFixed(0)}→${nowNear.toFixed(1)}, 1.5 m ${oldFar.toFixed(2)}→${(s.light.intensity * far).toFixed(2)}`;
+  });
+
+  check('blade: the core clips and the halo does not', () => {
+    // The look, stated as the two things that have to be simultaneously true.
+    // A halo that clips is a white ball; a core that does not is a coloured
+    // stick. Both were true of earlier builds, at different times.
+    const scene = new THREE.Scene();
+    const rows = [];
+    for (let i = 0; i < SABER_COLORS.length; i++) {
+      const s = new Saber(scene, { colorIndex: i });
+      // Judged in sRGB, which is what a screen shows and what pixels.mjs
+      // reports — 0.93 of post-tone-curve LINEAR is 0.97 on screen, and the
+      // difference between those two numbers is the difference between
+      // "not white" and "white". A monochromatic crystal cannot drive its
+      // opposite channel all the way: Crimson's core lands at
+      // (1.00, 0.99, 0.97) on screen, a warm white, which is correct.
+      const on = aces(emissionRGB(s, 0)).map(srgb);
+      assert(Math.min(...on) > 0.95,
+        `${SABER_COLORS[i].name}'s core comes out ${on.map(v => v.toFixed(2))} — it is not blown out`);
+      // the halo lobe on its own must sit where the curve still has slope
+      const halo = s.bladeMat.uniforms.uAmp.value.z * s.punch;
+      const haloL = lum(s.hue.r * halo, s.hue.g * halo, s.hue.b * halo);
+      assert(haloL < 3.0, `${SABER_COLORS[i].name}'s halo peaks at luminance ${haloL.toFixed(2)} — it will clip too`);
+      const out = aces(emissionRGB(s, s.bladeMat.uniforms.uWidth.value.z * 1.5)).map(srgb);
+      assert(Math.max(...out) < 0.995,
+        `${SABER_COLORS[i].name} is still clipped a halo and a half out`);
+      rows.push([SABER_COLORS[i].key, haloL]);
+      s.dispose();
+    }
+    const core = Saber.PROFILE.amp[0] / Saber.PROFILE.amp[2];
+    assert(core > 20, `the core is only ${core.toFixed(0)}× the halo — that is one lobe, not three`);
+    return `10 crystals: core blown in every channel, halo peaks ${Math.min(...rows.map(r => r[1])).toFixed(2)}`
+      + `…${Math.max(...rows.map(r => r[1])).toFixed(2)} (clip line ~3), core ${core.toFixed(0)}× halo`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════ */
@@ -657,6 +767,102 @@ export function run({ check, assert, near }) {
     }
     p.dispose();
     return 'cutFlare, boltImpact and explosion each flash hot-and-brief over wide-and-dim';
+  });
+
+  check('sparks: a strike inherits the colour of what it struck', () => {
+    /* Two failure modes, both of which this codebase has shipped before.
+     *
+     * The first is inheriting nothing: every impact in the game threw the same
+     * straw-white shower whether the blade went through sandstone, plate steel
+     * or a droid, so nothing on screen ever told you what you were cutting.
+     *
+     * The second is worse and subtler: inheriting the ALBEDO. A rock 26× darker
+     * than the sand beside it is not a rock that throws 26× dimmer sparks — it
+     * throws sparks of the same temperature in a different hue. `incandescent`
+     * exists to normalise that away, and this is the check that it does.
+     */
+    // The pair is built in LINEAR and handed over as Colors, not as 8-bit
+    // hexes: a 26:1 ratio puts the dark one's blue channel at 0.003, where the
+    // sRGB byte grid is coarse enough to move it 60% and the test would be
+    // measuring quantisation instead of the thing it is about.
+    const bright = new THREE.Color().setRGB(0.36, 0.20, 0.08);
+    const dark = bright.clone().multiplyScalar(1 / 26);
+    assert(incandescent(dark, 0.5) === incandescent(bright, 0.5),
+      'a surface 26× darker throws a different spark from one of the same hue');
+    const dl = lum(...new THREE.Color(incandescent(dark, 0.5)).toArray());
+    const bl = lum(...new THREE.Color(incandescent(bright, 0.5)).toArray());
+    // and the hue does survive: a red rock and a blue-grey plate differ
+    const warm = new THREE.Color(incandescent(0x8a3a18, 0.45));
+    const cold = new THREE.Color(incandescent(0x3a4a68, 0.45));
+    assert(warm.r / warm.b > 1.35 && cold.b / cold.r > 1.35,
+      `warm ${warm.r / warm.b} / cold ${cold.b / cold.r} — the material hue did not survive`);
+
+    // with no terrain published there is nothing to inherit, and it must say so
+    const keep = ground.terrain;
+    ground.terrain = null;
+    assert(surfaceTint(0, 0) === null, 'surfaceTint invented a colour with no terrain');
+    // ...and with one, it reads that level's own dirt
+    ground.terrain = {
+      preset: { sandColor: 0x9c7b48, rockColor: 0x6e4028 },
+      surfaceAt: (x) => (x > 5 ? 'stone' : 'sand'),
+      height: () => 0,
+    };
+    assert(surfaceTint(0, 0) === 0x9c7b48 && surfaceTint(9, 0) === 0x6e4028,
+      'surfaceTint is not reading the terrain preset');
+
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const head = p.sparks.head;
+    p.cutFlare(new THREE.Vector3(0, 0.3, 0), new THREE.Vector3(1, 0, 0), 0x3ba7ff, 30);
+    const n = (p.sparks.head - head + p.sparks.max) % p.sparks.max;
+    const seen = new Set();
+    let coldest = 99;
+    for (let i = 0; i < n; i++) {
+      const j = ((head + i) % p.sparks.max) * 4;
+      const c = [p.sparks.aColor.array[j], p.sparks.aColor.array[j + 1], p.sparks.aColor.array[j + 2]];
+      seen.add(c.map(v => v.toFixed(2)).join(','));
+      coldest = Math.min(coldest, lum(...c));
+    }
+    assert(seen.size >= 3, `a cut threw ${seen.size} distinct spark colours`);
+    // every one of them still has to reach the bloom pass, or the "material"
+    // sparks are the dull ones and the effect reads as a bug
+    assert(coldest > 1.8, `the dimmest spark off the cut is at luminance ${coldest.toFixed(2)}`);
+    ground.terrain = keep;
+    p.dispose();
+    return `${seen.size} spark colours off one cut, dimmest L=${coldest.toFixed(1)}; `
+      + `albedo normalised (dark/bright ${(dl / bl).toFixed(3)})`;
+  });
+
+  check('impacts: a saber cut burns a mark into what it cut', () => {
+    // cutFlare was the only impact recipe in the file that left nothing behind.
+    // A blade parts things by burning through them; sparks over undisturbed
+    // sand is the read of a sparkler, not a plasma blade.
+    const keep = ground.terrain;
+    ground.terrain = { preset: { sandColor: 0x9c7b48 }, surfaceAt: () => 'sand', height: () => 0 };
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const at = (h) => new THREE.Vector3(0, h, 0);
+
+    const marks = (fn) => { const h = p.decals.head; fn(); return (p.decals.head - h + p.decals.max) % p.decals.max; };
+    assert(marks(() => p.cutFlare(at(0.1), null, 0x3ba7ff, 20)) >= 1, 'a cut against the deck left no mark');
+    assert(marks(() => p.cutFlare(at(6.0), null, 0x3ba7ff, 20)) === 0,
+      'a cut six metres in the air scorched the ground under it');
+    assert(marks(() => p.cutFlare(at(6.0), null, 0x3ba7ff, 20, { normal: new THREE.Vector3(1, 0, 0) })) >= 1,
+      'a cut with a surface normal left no mark on that surface');
+    assert(marks(() => p.cutFlare(at(0.1), null, 0x3ba7ff, 20, { scorch: false })) === 0,
+      'scorch:false still scorched');
+
+    // and the mark must start molten and be told to outlive the sparks
+    const i = (p.decals.head - 1 + p.decals.max) % p.decals.max;
+    void i;
+    // every strike also gets its moment of light, including the plain bursts
+    const flashes = (fn) => { const h = p.plasma.head; fn(); return (p.plasma.head - h + p.plasma.max) % p.plasma.max; };
+    assert(flashes(() => p.sparkBurst(at(1), null, 12)) >= 1, 'a 12-spark strike had no flash');
+    assert(flashes(() => p.sparkBurst(at(1), null, 3)) === 0, 'a 3-spark decorative tick flashed');
+    assert(flashes(() => p.sparkBurst(at(1), null, 12, { flash: false })) === 0, 'flash:false still flashed');
+    ground.terrain = keep;
+    p.dispose();
+    return 'cuts scorch the deck and named surfaces, not thin air; strikes ≥6 sparks carry a flash';
   });
 
   check('particles: every recipe still runs, and none of them emits a NaN', () => {

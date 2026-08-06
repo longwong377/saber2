@@ -953,6 +953,16 @@ export class Particles {
     const surf = opts.surface ?? (gh !== null && pos.y - gh < 1.6
       ? surfaceTint(pos.x, pos.z) : null);
     const surfHot = surf !== null ? incandescent(surf, 0.42) : 0xfff0c0;
+    // A spark carrying the blade's own hue has to cross the bloom threshold
+    // like every other spark, and a cerulean crystal carries 7% of its
+    // luminance in blue: at the flat hdr of 4.2 this used to use, that spark
+    // measured 1.50 against a threshold of 1.8. The one spark in three whose
+    // whole job is to say "a lightsaber did this" was the only one in the
+    // burst that did not glow. So solve for the amplitude instead of picking
+    // it, and let a dim crystal pay for its own dimness.
+    _col.set(color);
+    const bladeHdr = clamp(2.8 / Math.max(0.10,
+      _col.r * 0.2126 + _col.g * 0.7152 + _col.b * 0.0722), 3, 10);
     for (let i = 0; i < n; i++) {
       _v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1).normalize();
       const r = rng();
@@ -964,10 +974,10 @@ export class Particles {
       this.sparks.spawn(pos, _v, { life: 0.26 + rng() * 0.5, size: 0.008 + rng() * 0.012,
         drag: 2.0, gravity: 14,
         color: i % 3 === 0 ? color : (i % 3 === 1 ? 0xfff0c0 : surfHot),
-        alpha: 1, hdr: i % 3 === 0 ? 4.2 : 3.6, floor });
+        alpha: 1, hdr: i % 3 === 0 ? bladeHdr : 3.6, floor });
     }
     this.spatter(pos, dir, Math.round(n * 0.16),
-      surf !== null ? incandescent(surf, 0.30) : 0xffc070, { speed: 2.6, floor });
+      surf !== null ? incandescent(surf, 0.30) : 0xffc070, { speed: 2.6, floor, hdr: 3.0 });
     for (let i = 0; i < n * 0.22; i++) {
       _v.set(rng() * 2 - 1, rng() * 1.5 + 0.3, rng() * 2 - 1).normalize().multiplyScalar(0.7 + rng());
       this.smoke.spawn(pos, _v, { life: 1.4 + rng() * 1.2, size: 0.12 + rng() * 0.12,

@@ -13,8 +13,6 @@ import { clamp, lerp } from '../engine/MathUtil.js';
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
-const _c = new THREE.Color();
-const WHITE = new THREE.Color(1, 1, 1);
 
 export const SABER_COLORS = [
   { name: 'Cerulean',  hex: 0x3ba7ff, glow: 0x8fd8ff, key: 'blue' },
@@ -305,7 +303,7 @@ export class Saber {
   /**
    * The blade emits ONE colour. Everything else about how it reads — white
    * core, coloured halo, coloured bloom — comes from the amplitude profile
-   * running that colour from ~28 down to ~0.01 across four centimetres.
+   * running that colour from 66 down to 0.01 over a quarter of a metre.
    *
    * So the hue is normalised to a peak channel of 1: a crystal is a hue, not a
    * brightness. `punch` then puts the brightness back, but only partly, so a
@@ -317,8 +315,8 @@ export class Saber {
     const peak = Math.max(c.r, c.g, c.b, 1e-4);
     this.hue.copy(c).multiplyScalar(1 / peak);
     this.punch = 0.62 + 0.38 * Math.pow(peak, 0.6);
-    // The light the blade throws is the crystal's hue, and very nearly ALL of
-    // it. The old 22% lift toward white was reasoning about bounce — but bounce
+    // The light the blade throws is the crystal's hue, exactly and entirely.
+    // The old 22% lift toward white was reasoning about bounce — but bounce
     // through a surface is what multiplying by that surface's albedo already
     // does, so the lift was double-counting it, and on sand it was fatal:
     // sand's blue albedo is 0.109 against 0.51 in red, so a light of
@@ -326,10 +324,14 @@ export class Saber {
     // The blade lit the ground with its own colour and the ground handed back
     // white. At the crystal's own (0.044, 0.386, 1.00) the same sand returns
     // (0.022, 0.108, 0.109): blue outruns red five to one and the hue survives
-    // the trip. The 6% that is left is the plasma's own continuum, not a fudge.
-    _c.copy(this.hue).lerp(WHITE, 0.06);
-    this.light.color.copy(_c);
-    this.tipLight.color.copy(_c);
+    // the trip.
+    //
+    // It is not lifted toward white AT ALL, and the reason is worth a line: the
+    // crystal's red channel is 0.044, so even a 6% white lift more than doubles
+    // it and drops that sand ratio from 4.9 back to 2.1. Down here a "barely
+    // perceptible" desaturation is not barely anything.
+    this.light.color.copy(this.hue);
+    this.tipLight.color.copy(this.hue);
     if (this.bladeMat) this.bladeMat.uniforms.uHue.value.copy(this.hue);
     if (this.trailMat) this.trailMat.uniforms.uHue.value.copy(this.hue);
     this.hiltAccent.emissive.copy(this.color);
