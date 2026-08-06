@@ -22,6 +22,28 @@ import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/
 import { audio } from '../engine/Audio.js';
 
 const rng = makeRng(4711);
+
+/**
+ * How fast a body gives ground, as a share of its forward speed. Sprinters
+ * backpedal at roughly half their forward pace and fighters rather less, since
+ * they are also keeping their guard up. At 1.0 — which is what this was, by
+ * omission — an enemy retreated as fast as it charged, and that reads as
+ * unnatural at any approach speed.
+ */
+const BACKPEDAL = 0.5;
+
+/**
+ * Slow the part of a desired velocity that points AWAY from `toTarget`, leaving
+ * everything across that line alone. Exported because it is a numeric law and
+ * numeric laws in this codebase get measured, not eyeballed: a sidestep must
+ * keep its full pace while a retreat loses half of it, and the only way to know
+ * that is still true is to assert it.
+ */
+export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
+  const away = -(vel.x * toTarget.x + vel.y * toTarget.y + vel.z * toTarget.z);
+  if (away > 0) vel.addScaledVector(toTarget, away * (1 - factor));
+  return vel;
+}
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
@@ -584,9 +606,23 @@ export class Enemy {
     const side = _v2.set(-this.toTarget.z, 0, this.toTarget.x).multiplyScalar(this.strafeDir);
     const wish = _v3.set(0, 0, 0);
 
+    // Giving ground is a BAND, not a threshold. The old form was
+    //     dist < near  ->  wish = -toTarget
+    // which flipped the wish through 180 degrees on the single frame the player
+    // crossed `near`, pointed it exactly back down the line they came in on, and
+    // ran it at full forward speed. Three separate tells, and together they read
+    // as the enemy being shoved rather than choosing to retreat.
+    //
+    // Now the circling wish and the yielding wish are blended over the inner
+    // half of the preferred band, so the enemy eases out of holding its line;
+    // and because the lateral term survives the blend, ground is given at an
+    // angle the way a real fighter backs off, not straight away from the camera.
+    const yieldAmt = smoothstep(near, near * 0.55, dist);
     if (dist > far) wish.copy(this.toTarget);
-    else if (dist < near) wish.copy(this.toTarget).negate();
-    else wish.copy(side).addScaledVector(this.toTarget, A.melee ? 0.35 : 0.08);
+    else {
+      wish.copy(side).addScaledVector(this.toTarget, A.melee ? 0.35 : 0.08);
+      if (yieldAmt > 0) wish.addScaledVector(this.toTarget, -yieldAmt * 1.35);
+    }
 
     // spread out — a horde that clumps looks like a bug
     for (const other of ctx.enemies) {
@@ -869,8 +905,17 @@ export class Enemy {
     if (canMove && this.wish) {
       const speed = this.speed * (this.legsLost ? 0.45 : 1);
       _v1.copy(this.wish).multiplyScalar(speed);
-      this.velocity.x = damp(this.velocity.x, _v1.x, 8, dt);
-      this.velocity.z = damp(this.velocity.z, _v1.z, 8, dt);
+      // Nobody backpedals as fast as they run. Only the component pointing AWAY
+      // from the target is scaled, so a sidestep keeps its full pace and only
+      // the retreat slows — which is both what a body does and what makes a
+      // retreat legible instead of looking like the enemy is on rails.
+      if (this.toTarget) limitBackpedal(_v1, this.toTarget);
+      // Reversing is slower to build than pressing forward: pushing off the back
+      // foot cannot produce the acceleration that pushing off the front one does,
+      // and an instant reversal is the single biggest "unnatural" tell there is.
+      const rate = (this.velocity.x * _v1.x + this.velocity.z * _v1.z) < 0 ? 5.0 : 8;
+      this.velocity.x = damp(this.velocity.x, _v1.x, rate, dt);
+      this.velocity.z = damp(this.velocity.z, _v1.z, rate, dt);
     } else if (this.knockTimer <= 0) {
       this.velocity.x = damp(this.velocity.x, 0, 6, dt);
       this.velocity.z = damp(this.velocity.z, 0, 6, dt);
