@@ -886,6 +886,25 @@ export class Kit {
     this.bins = new Map();
     this.boxes = [];
     this.lights = [];
+    /* Sub-assemblies that keep their own identity through the merge.
+     *
+     * A kit bins by material and comes out as one mesh per material, which is
+     * the whole point of it — a ruined hall costs six draw calls and not two
+     * hundred. A destructible piece composed into one used to be given up on
+     * for that reason: "half a merged mesh cannot be hidden when it breaks", so
+     * a hall was one indestructible object, colonnade and all, while the
+     * identical column a level placed on its own could be cut down.
+     *
+     * Half a merged mesh CAN be hidden. Every geometry a maker contributes
+     * occupies one contiguous run of vertices and one of indices in the merge,
+     * so a part only has to remember where its run starts and ends; breaking it
+     * collapses those vertices onto a point and the triangles rasterise to
+     * nothing, leaving every other stone in the mesh alone. Measured on
+     * addRuin: 9 separately destructible pieces for the same 6 draw calls and
+     * the same 30598 triangles it always cost. Lifting them into meshes of
+     * their own instead cost 53. */
+    this.parts = [];
+    this._part = null;
     this.rng = makeRng(seed);
     this.tris = 0;
     this._pm = new THREE.Matrix4();
@@ -998,6 +1017,39 @@ export class Kit {
   }
 
   /**
+   * Where the bins and the collider list stand right now — or null if a part
+   * is already open, in which case a destructible maker nested inside another
+   * one is simply part of it. Marks cannot nest: closing the inner part
+   * splices the arrays the outer mark is counting from.
+   */
+  partOpen() {
+    if (this._part) return null;
+    const at = new Map();
+    for (const [mat, arr] of this.bins) at.set(mat, arr.length);
+    return (this._part = { at, boxes: this.boxes.length });
+  }
+
+  /**
+   * Note everything binned since `mark` as a part of its own. Nothing moves —
+   * the geometry stays in the shared bins and merges with the rest; what is
+   * recorded is which of each material's geometries belong to this part, which
+   * is enough to work out its vertex run once the merge has happened.
+   * `spec` is whatever registerDestructible wants beyond meshes and boxes.
+   */
+  partClose(mark, spec) {
+    if (this._part === mark) this._part = null;
+    const ranges = [];
+    for (const [mat, arr] of this.bins) {
+      const from = mark.at.get(mat) || 0;
+      if (arr.length > from) ranges.push({ mat, from, to: arr.length });
+    }
+    if (ranges.length) {
+      this.parts.push({ spec, ranges, boxFrom: mark.boxes, boxTo: this.boxes.length });
+    }
+    return this;
+  }
+
+  /**
    * Merge, place and register. Returns { meshes, triangles, draws, boxes } so
    * a level (or a measuring script) can see what it just paid for — and so a
    * destructible piece can be handed the colliders it will have to give back
@@ -1007,6 +1059,24 @@ export class Kit {
     const meshes = [];
     const madeBoxes = [];
     let triangles = 0;
+    // Where every contributed geometry will land in its material's merge.
+    // mergeGeos concatenates in array order, so the k'th geometry owns vertices
+    // [v[k], v[k+1]) and indices [i[k], i[k+1]) — computed here because the
+    // merge disposes the sources as it goes.
+    const cum = this.parts.length ? new Map() : null;
+    if (cum) {
+      for (const [mat, geos] of this.bins) {
+        const v = [0], ix = [0];
+        for (const g of geos) {
+          const ok = g && g.attributes && g.attributes.position;
+          const nv = ok ? g.attributes.position.count : 0;
+          v.push(v[v.length - 1] + nv);
+          ix.push(ix[ix.length - 1] + (ok ? (g.index ? g.index.count : nv) : 0));
+        }
+        cum.set(mat, { v, ix });
+      }
+    }
+    const meshOf = cum ? new Map() : null;
     for (const [mat, geos] of this.bins) {
       const geo = mergeGeos(geos);
       if (!geo) continue;
@@ -1016,15 +1086,33 @@ export class Kit {
       if (opts.receiveShadow === false) mesh.receiveShadow = false;
       if (opts.castShadow === false) mesh.castShadow = false;
       meshes.push(mesh);
+      meshOf?.set(mat, mesh);
     }
     this.bins.clear();
+    const recOf = [];
     if (opts.collide !== false) {
       for (const b of this.boxes) {
         const c = b.c.clone().applyQuaternion(quaternion).add(position);
         const rec = world.physics.addStaticBox(c, b.he, quaternion.clone().multiply(b.q), { friction: b.friction });
+        recOf.push(rec || null);
         if (rec) madeBoxes.push(rec);
       }
     }
+    // each destructible part, as the runs of the merged meshes it owns
+    const pending = [];
+    for (const part of this.parts) {
+      const spans = [];
+      for (const r of part.ranges) {
+        const mesh = meshOf.get(r.mat), c = cum.get(r.mat);
+        if (!mesh || !c || c.v[r.to] <= c.v[r.from]) continue;
+        spans.push({ mesh, v0: c.v[r.from], v1: c.v[r.to], i0: c.ix[r.from], i1: c.ix[r.to] });
+      }
+      if (!spans.length) continue;
+      const pb = [];
+      for (let i = part.boxFrom; i < part.boxTo && i < recOf.length; i++) if (recOf[i]) pb.push(recOf[i]);
+      pending.push({ ...part.spec, spans, boxes: pb, position, quaternion: quaternion.clone() });
+    }
+    this.parts.length = 0;
     this.boxes.length = 0;
     for (const l of this.lights) {
       const light = new THREE.PointLight(l.color, l.intensity, l.distance, 2);
@@ -1034,7 +1122,11 @@ export class Kit {
     }
     this.lights.length = 0;
     this.tris += triangles;
-    return { meshes, triangles, draws: meshes.length, boxes: madeBoxes };
+    // registered last, so every piece's colliders exist before anything works
+    // out which piece rests on which
+    let parts = 0;
+    for (const spec of pending) if (registerDestructible(world, spec)) parts++;
+    return { meshes, triangles, draws: meshes.length, boxes: madeBoxes, parts };
   }
 }
 
@@ -2236,7 +2328,7 @@ export const ARCH = {
 /** Open a maker: returns the Kit to build into, with its frame pushed. */
 function kitOpen(pos, opts, seed) {
   const kit = opts.kit || new Kit(opts.seed ?? seed);
-  if (opts.kit) kit.push(pos.x, pos.y, pos.z, opts.yaw || 0);
+  if (opts.kit) { kit.push(pos.x, pos.y, pos.z, opts.yaw || 0); opts._mark = kit.partOpen(); }
   else kit.push(0, 0, 0, opts.yaw || 0);
   return kit;
 }
@@ -2249,17 +2341,33 @@ function kitOpen(pos, opts, seed) {
  * threatens it. Registration costs a bounds computation and nothing else — the
  * meshes, the draw calls and the colliders are exactly what they were.
  *
- * A maker composed into a PARENT kit (`opts.kit`) is deliberately not
- * registered: its geometry has been merged into somebody else's mesh by then,
- * and half a merged mesh cannot be hidden when it breaks. Pieces a level wants
- * destructible are the ones it places on their own, which is how every level
- * already places its walls, columns and arches.
+ * A maker composed into a PARENT kit (`opts.kit`) used to be dropped on the
+ * floor here: its geometry had been merged into somebody else's mesh by then,
+ * and half a merged mesh cannot be hidden when it breaks. So a ruined hall was
+ * one indestructible object, colonnade and all, while the identical column
+ * placed by a level on its own could be cut down. It is now lifted back out of
+ * the shared bins as its own part (Kit.partClose) and registered at emit, at a
+ * cost of one draw call per material it uses — which is why only the makers
+ * that NAME a material get one, and the stair, the railing and the debris field
+ * stay merged into the hall the way they always were.
  */
 function kitClose(world, kit, pos, opts, destructible = null) {
   kit.pop();
-  if (opts.kit) return kit;
-  const res = kit.emit(world, pos, opts.quaternion || IDENT, opts);
   const profile = opts.destructible ?? destructible;
+  if (opts.kit) {
+    if (opts._mark) {
+      if (profile) kit.partClose(opts._mark, { kind: opts.kind || 'piece', profile, seed: opts.seed ?? 1 });
+      else if (kit._part === opts._mark) kit._part = null;      // nothing to lift out
+    }
+    opts._mark = null;
+    return kit;
+  }
+  // This maker owns the whole kit. If IT is the destructible piece, then any
+  // parts its own sub-makers recorded are parts of it, not pieces beside it —
+  // an arch registered its two piers and then itself, so the same stone was in
+  // three structures at once and each of them removed the others' colliders.
+  if (profile) { kit.parts.length = 0; kit._part = null; }
+  const res = kit.emit(world, pos, opts.quaternion || IDENT, opts);
   if (profile && res && res.meshes.length) {
     registerDestructible(world, {
       kind: opts.kind || 'piece', profile, seed: opts.seed ?? 1,

@@ -10,13 +10,38 @@ import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS } from '../game/Bodies.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
-import { MODES } from '../game/Waves.js';
+import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
 import { ACTIONS, MOUSE, keyLabel, loadBindings, saveBindings, defaultBindings, findConflict } from '../engine/Bindings.js';
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
-const STORE_KEY = 'saber.settings.v2';
+// v3: the training block below is new, and a v2 blob spread over these
+// defaults would be fine — but `bladeLength` changed its legal range, and a
+// stored 1.45 has to be re-read against a cap that now moves.
+const STORE_KEY = 'saber.settings.v3';
+const LEGACY_KEYS = ['saber.settings.v2'];
+
+/**
+ * The blade length the forge slider stops at, and the length it stops at when
+ * the training leash comes off.
+ *
+ * 4 m is not arbitrary. World.js culls blade-vs-body candidates at 6 m from the
+ * blade's MIDPOINT (`distanceToSquared(bladeMid) > 36`) and props at 5 m, so
+ * every metre of blade eats half a metre of that budget. Measured across
+ * lengths, the slack left around the tip is:
+ *
+ *   1.15 m -> 5.42 m enemy / 4.42 m prop      4 m -> 4.00 / 3.00
+ *   6.00 m -> 3.00 m / 2.00 m                 10 m -> 1.00 / 0.00
+ *   12.0 m -> 0.00 m / -1.00 m  (the tip can no longer touch anything)
+ *
+ * At 4 m there are still three clear metres of slack on the tightest of those,
+ * the capture window along the blade is +/-212 cm against the stock +/-70, and
+ * the trail keeps 113 ms of its 150 ms span. Past about 6 m the trail starts
+ * visibly shortening and past 10 the cull begins eating real hits.
+ */
+export const BLADE_CAP = 1.45;
+export const BLADE_MAX = 4.0;
 
 export const DEFAULT_SETTINGS = {
   level: 'dunes',
@@ -27,6 +52,15 @@ export const DEFAULT_SETTINGS = {
   robeIndex: 1,
   bladeLength: 1.15,
   coreWidth: 1,
+  // ── training ──────────────────────────────────────────────────────────
+  // These bite in Sandbox mode and in the dojo, and nowhere else: they are
+  // practice controls, not difficulty controls. Zero is legal for both
+  // numbers — an empty arena and a room of droids that never fire are both
+  // things a player asked for and could not have.
+  sandboxCount: 5,
+  sandboxFire: 1,
+  sandboxType: 'mixed',
+  unlimitedBlade: false,
   sensitivity: 1,
   camFollow: 0,
   fov: 60,
@@ -48,11 +82,41 @@ export const DEFAULT_SETTINGS = {
   particleScale: 1,
 };
 
+/** The blade may only be long while the training leash is off. */
+export function bladeCeiling(s) { return s.unlimitedBlade ? BLADE_MAX : BLADE_CAP; }
+
+/**
+ * An older blob speaks once, and then it is retired.
+ *
+ * Bumping the key without this would not only forget a returning player's
+ * crystal — tools/smoke.mjs presets a level by writing the v2 key and
+ * reloading, so `--level canyon` would have silently booted the dunes and every
+ * screenshot in the project would have been of the wrong place. Reading the old
+ * key last (it wins over anything already under the new one) and deleting it is
+ * what makes that write-then-reload still mean what it says, exactly once.
+ */
+function drainLegacy() {
+  let out = null;
+  for (const k of LEGACY_KEYS) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) out = { ...(out || {}), ...JSON.parse(raw) };
+      localStorage.removeItem(k);
+    } catch {}
+  }
+  return out;
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const legacy = drainLegacy();
+    if (!raw && !legacy) return { ...DEFAULT_SETTINGS };
+    const s = { ...DEFAULT_SETTINGS, ...(raw ? JSON.parse(raw) : null), ...legacy };
+    // A blob written with the leash off and then read with it on would carry a
+    // 4 m blade into a normal run without a single control saying so.
+    s.bladeLength = Math.min(s.bladeLength, bladeCeiling(s));
+    return s;
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
 export function saveSettings(s) {
@@ -90,6 +154,12 @@ export class Menu {
       gpu: document.getElementById('gpu-line'),
       build: document.getElementById('build-id'),
     };
+    // Blade length is reachable from the forge AND from the training panel, so
+    // every control bound to a setting is registered and they all refresh
+    // together. Two inputs quietly disagreeing about one number is exactly the
+    // kind of bug this codebase specialises in.
+    this._bound = new Map();
+    this._buildTraining();          // must exist before the tab wiring runs
     this._buildTabs();
     this._buildLevels();
     this._buildDifficulty();
@@ -97,6 +167,8 @@ export class Menu {
     this._buildSaber();
     this._buildOptions();
     this._buildButtons();
+    // after _buildSaber, so the forge's own Length slider gets the ceiling too
+    this._applyBladeCeiling?.(this.s.unlimitedBlade);
     this.el.build.textContent = 'r1.0';
   }
 
@@ -204,18 +276,25 @@ export class Menu {
 
   _buildModes() {
     this.el.modes.innerHTML = '';
+    this._modeCards = new Map();
     for (const [key, M] of Object.entries(MODES)) {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.mode === key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${M.name}</b><span>${M.blurb}</span></div>`;
-      d.addEventListener('click', () => {
-        audio.ui('click');
-        this.s.mode = key;
-        [...this.el.modes.children].forEach(c => c.classList.toggle('sel', c === d));
-        saveSettings(this.s);
-      });
+      d.addEventListener('click', () => { audio.ui('click'); this.selectMode(key); });
+      this._modeCards.set(key, d);
       this.el.modes.appendChild(d);
     }
+  }
+
+  /** Set the mode from anywhere and leave the Deploy panel telling the truth. */
+  selectMode(key) {
+    if (!MODES[key]) return;
+    this.s.mode = key;
+    if (this._modeCards) {
+      for (const [k, card] of this._modeCards) card.classList.toggle('sel', k === key);
+    }
+    saveSettings(this.s);
   }
 
   /* ── saber forge ─────────────────────────────────────────────────── */
@@ -278,17 +357,32 @@ export class Menu {
   _slider(id, key, fmt, onChange) {
     const input = document.getElementById(id);
     if (!input) return;
-    const label = input.parentElement.querySelector('b');
-    input.value = this.s[key];
-    const apply = () => {
-      const v = parseFloat(input.value);
-      this.s[key] = v;
-      if (label) label.textContent = fmt ? fmt(v) : v.toFixed(2);
-      saveSettings(this.s);
-      onChange?.(v);
-    };
-    input.addEventListener('input', apply);
-    apply();
+    const entry = this._bound.get(key) || { inputs: [], fmt, onChange };
+    // First registration owns the formatter and the side effect; later ones are
+    // extra handles on the same number.
+    if (fmt && !entry.fmt) entry.fmt = fmt;
+    if (onChange && !entry.onChange) entry.onChange = onChange;
+    entry.inputs.push(input);
+    this._bound.set(key, entry);
+    input.addEventListener('input', () => this._set(key, parseFloat(input.value)));
+    // The first paint runs onChange on purpose — that is what pushes the stored
+    // volume into the mixer and the stored resolution into the renderer.
+    this._set(key, this.s[key]);
+  }
+
+  /** Write a setting and bring every control bound to it back in step. */
+  _set(key, value, silent = false) {
+    const entry = this._bound.get(key);
+    this.s[key] = value;
+    if (entry) {
+      for (const input of entry.inputs) {
+        if (parseFloat(input.value) !== value) input.value = value;
+        const label = input.parentElement?.querySelector('b');
+        if (label) label.textContent = entry.fmt ? entry.fmt(value) : Number(value).toFixed(2);
+      }
+    }
+    saveSettings(this.s);
+    if (!silent) entry?.onChange?.(value);
   }
 
   _check(id, key, onChange) {
@@ -360,8 +454,31 @@ export class Menu {
 
   _stopPreview() { if (this.preview) this.preview.running = false; }
 
+  /**
+   * The forge shot is framed on the HILT: at the stock 1.15 m the tip already
+   * projects to NDC y = 2.53, two and a half screens above the top of the
+   * frame, and that crop is the intent — you are choosing a hilt here.
+   *
+   * An unlimited blade would simply crop identically (4 m puts the tip at NDC
+   * 10.9) and the setting would be invisible in the one place that shows you
+   * the weapon. So past the stock cap the camera walks back in proportion,
+   * which holds the crop steady instead: 42% of the blade stays in frame at any
+   * length, against 53% at 1.15 m, and the hilt shrinks by the same factor
+   * rather than vanishing.
+   */
+  _framePreview() {
+    const p = this.preview;
+    if (!p) return;
+    const pull = Math.max(1, this.s.bladeLength / BLADE_CAP);
+    p.camera.position.set(0.55 * pull, 0.35 * pull, 1.1 * pull);
+    p.camera.far = 40 * pull;
+    p.camera.lookAt(0, 0.32 * pull, 0);
+    p.camera.updateProjectionMatrix();
+  }
+
   _refreshPreview(rebuild = false) {
     if (!this.preview) return;
+    this._framePreview();
     const p = this.preview;
     if (rebuild || !p.saber) {
       if (p.saber) { p.saber.dispose(); }
@@ -379,6 +496,147 @@ export class Menu {
     } else {
       p.saber.setColor(this.s.colorIndex);
     }
+  }
+
+  /* ── training ────────────────────────────────────────────────────── */
+
+  /**
+   * The practice panel.
+   *
+   * It is built here rather than in index.html for the same reason the boon
+   * cards and the key bindings are: the archetype list has to come from
+   * ARCHETYPES, and a hand-written copy of it in the markup would be wrong the
+   * first time somebody adds a droid.
+   *
+   * It has to exist before _buildTabs runs — that is what collects .tab and
+   * .panel — hence the call order in the constructor.
+   */
+  _buildTraining() {
+    const tabs = document.querySelector('.menu-tabs');
+    const wrap = document.querySelector('.menu-wrap');
+    if (!tabs || !wrap) return;                       // stripped DOM (tests)
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.dataset.tab = 'training';
+    tab.textContent = 'Training';
+    // second, right after Deploy: this is where a player who is being shot to
+    // pieces goes looking, and the last tab is where nobody looks.
+    tabs.insertBefore(tab, tabs.children[1] || null);
+
+    const panel = document.createElement('section');
+    panel.className = 'panel';
+    panel.dataset.panel = 'training';
+    panel.innerHTML = `
+      <div class="col">
+        <h3>The room</h3>
+        <p class="hint" style="margin-bottom:14px">Two numbers you own outright. They apply in
+          <b>Sandbox</b> mode in any theatre and in <b>the Dojo</b>, and nowhere else —
+          they are practice controls, not a difficulty.</p>
+        <label class="slider">Enemies <input type="range" id="opt-sandbox-count"
+          min="0" max="${SANDBOX_MAX_ENEMIES}" step="1" value="5"><b></b></label>
+        <label class="slider">Incoming fire <input type="range" id="opt-sandbox-fire"
+          min="0" max="2" step="0.05" value="1"><b></b></label>
+        <p class="hint">Zero enemies is an empty arena to move around in. Zero fire is a room
+          full of droids that walk, dodge and never pull a trigger — the two are independent on
+          purpose, because reading a swing and reading a bolt are different lessons.</p>
+        <p class="hint" style="margin-top:14px">All three are <b>live</b>: they are repeated on the
+          pause screen, and the room reshapes itself the moment you resume — change the opponent
+          and the wrong droids are retired, no kills required.</p>
+      </div>
+      <div class="col">
+        <h3>Opponent</h3>
+        <p class="hint" style="margin-bottom:14px">Practise against exactly one kind of droid.</p>
+        <div id="opt-sandbox-type" class="difflist"></div>
+      </div>
+      <div class="col narrow">
+        <h3>Blade</h3>
+        <label class="check"><input type="checkbox" id="opt-unlimited-blade"> Unlimited blade length</label>
+        <label class="slider">Length <input type="range" id="opt-train-bladelen"
+          min="0.85" max="${BLADE_CAP}" step="0.01" value="1.15"><b></b></label>
+        <p class="hint">Off the leash the blade reaches ${BLADE_MAX.toFixed(2)} m instead of
+          ${BLADE_CAP.toFixed(2)}. The capture window along the blade grows with it — ±70 cm at
+          the stock 1.15 m, ±212 cm at 4 m — which is the point: a bolt you cannot yet meet with
+          a hand-span of plasma, you can meet with a pike, and then shorten it back.</p>
+        <p class="hint">The same slider lives in <b>Saber</b>; they are one number. Unlike the
+          two above it, length is read when the blade is <i>built</i> — a change lands on your
+          next Ignite, not mid-fight.</p>
+        <p class="hint" style="margin-top:auto">Deploys the theatre picked under <b>Deploy</b>,
+          in Sandbox mode. The Dojo is the quiet one.</p>
+        <button id="btn-sandbox" class="primary">Enter the sandbox</button>
+      </div>`;
+    wrap.insertBefore(panel, document.querySelector('.menu-foot'));
+
+    this._slider('opt-sandbox-count', 'sandboxCount',
+      v => (v <= 0 ? 'empty' : String(Math.round(v))));
+    this._slider('opt-sandbox-fire', 'sandboxFire',
+      v => (v <= 0 ? 'held' : `${v.toFixed(2)}×`));
+    this._slider('opt-train-bladelen', 'bladeLength', v => `${v.toFixed(2)}m`, (v) => {
+      this._refreshPreview(true);
+      // The seam for making length live. World.spawnPlayer reads bladeLength
+      // once, at construction, so today this lands on the next Ignite — but the
+      // Saber itself reads this.bladeLength every frame, so one line in main.js
+      // (`onBladeLength: v => world.player?.saber && (…bladeLength = v)`) is the
+      // whole fix, and it belongs on that side of the wall.
+      this.hooks.onBladeLength?.(v);
+    });
+
+    this._buildSandboxUnits();
+    this._buildUnlimitedBlade();
+
+    const go = document.getElementById('btn-sandbox');
+    if (go) go.addEventListener('click', () => {
+      audio.ui('click');
+      this.selectMode('sandbox');
+      this.hooks.onDeploy?.(this.s);
+    });
+  }
+
+  _buildSandboxUnits() {
+    const host = document.getElementById('opt-sandbox-type');
+    if (!host) return;
+    const cfg = sandboxConfig(this.s);
+    host.innerHTML = '';
+    for (const u of sandboxUnits()) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (cfg.type === u.key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${u.name}</b><span>${u.blurb}</span></div>`;
+      d.addEventListener('click', () => {
+        audio.ui('click');
+        this.s.sandboxType = u.key;
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        saveSettings(this.s);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /**
+   * The leash.
+   *
+   * There is only ONE blade length setting; the checkbox moves the ceiling on
+   * every control bound to it. Turning it back off has to shorten a blade that
+   * is already past the stock cap, or the setting would be a one-way door that
+   * left a 4 m blade in a ranked run with nothing on screen admitting it.
+   */
+  _buildUnlimitedBlade() {
+    const box = document.getElementById('opt-unlimited-blade');
+    if (!box) return;
+    const apply = (on) => {
+      const cap = on ? BLADE_MAX : BLADE_CAP;
+      for (const input of this._bound.get('bladeLength')?.inputs || []) input.max = String(cap);
+      if (this.s.bladeLength > cap) this._set('bladeLength', cap);
+      else this._set('bladeLength', this.s.bladeLength, true);   // re-sync the labels
+    };
+    box.checked = !!this.s.unlimitedBlade;
+    box.addEventListener('change', () => {
+      audio.ui('click');
+      this.s.unlimitedBlade = box.checked;
+      saveSettings(this.s);
+      apply(box.checked);
+      this._refreshPreview(true);
+    });
+    this._applyBladeCeiling = apply;
   }
 
   /* ── options ─────────────────────────────────────────────────────── */
@@ -635,8 +893,66 @@ export class Menu {
     this.el.draft.classList.remove('hidden');
   }
 
+  /**
+   * The two sandbox numbers, repeated where you can actually reach them.
+   *
+   * "Live" is worth nothing if the only copy of the control is behind Abandon
+   * Run. Both directors re-read world.settings every frame and the menu writes
+   * to that same object, so a slider moved here has already taken effect by the
+   * time the fade finishes.
+   */
+  _buildPauseTraining() {
+    if (this._pauseTraining !== undefined) return this._pauseTraining;
+    const host = this.el.pause?.querySelector('.pause-wrap');
+    if (!host || !this.el.pauseStats) { this._pauseTraining = null; return null; }
+    const box = document.createElement('div');
+    box.style.cssText = 'text-align:left;margin:18px 0;padding-top:16px;border-top:1px solid rgba(255,255,255,.08)';
+    // The opponent picker is a dozen rows of prose in the menu, which does not
+    // fit a 400 px pause card — but the room converges on whatever is chosen,
+    // so it has to be reachable without abandoning the run. Same setting, one
+    // line instead of twelve.
+    box.innerHTML = `
+      <label class="slider">Enemies <input type="range" id="opt-pause-count"
+        min="0" max="${SANDBOX_MAX_ENEMIES}" step="1" value="5"><b></b></label>
+      <label class="slider">Incoming fire <input type="range" id="opt-pause-fire"
+        min="0" max="2" step="0.05" value="1"><b></b></label>
+      <label class="slider">Opponent <select id="opt-pause-type" style="flex:1;min-width:0;
+        background:#10151d;color:#dfe6f0;border:1px solid rgba(255,255,255,.14);border-radius:6px;
+        padding:4px 6px;font:inherit;font-size:11.5px"></select></label>`;
+    this.el.pauseStats.after(box);
+    this._slider('opt-pause-count', 'sandboxCount');
+    this._slider('opt-pause-fire', 'sandboxFire');
+
+    const sel = box.querySelector('#opt-pause-type');
+    for (const u of sandboxUnits()) {
+      const o = document.createElement('option');
+      o.value = u.key; o.textContent = u.name;
+      // the popup list is drawn by the OS and does not inherit the select's
+      // colours everywhere, so each row carries them
+      o.style.cssText = 'background:#10151d;color:#dfe6f0';
+      sel.appendChild(o);
+    }
+    sel.value = sandboxConfig(this.s).type;
+    sel.addEventListener('change', () => {
+      this.s.sandboxType = sel.value;
+      saveSettings(this.s);
+      this._buildSandboxUnits();          // keep the menu's own picker in step
+    });
+    this._pauseType = sel;
+    this._pauseTraining = box;
+    return box;
+  }
+
   showPause(stats) {
     this.el.pauseStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    // Only where the numbers actually bite; everywhere else they would be two
+    // sliders that do nothing, which is worse than no sliders at all.
+    const live = this.s.mode === 'sandbox' || this.s.level === 'dojo';
+    const box = this._buildPauseTraining();
+    if (box) {
+      box.style.display = live ? '' : 'none';
+      if (this._pauseType) this._pauseType.value = sandboxConfig(this.s).type;
+    }
     this.el.pause.classList.remove('hidden');
   }
   hidePause() { this.el.pause.classList.add('hidden'); }

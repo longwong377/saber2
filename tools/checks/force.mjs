@@ -1,0 +1,756 @@
+/**
+ * SABER — the Force.
+ *
+ * Six complaints, all of them measurable, all of them from the player:
+ *
+ *   "when you use force powers there should be associated body movements"
+ *   "even at max force powers there's a limit to the size of things that move"
+ *   "everything feasible should be able to be picked up via the force"
+ *   "when I pick up something how do I control the distance and how do I throw"
+ *   "I should be able to with the force stop bolts mid air and send them back"
+ *   "I need an option to force disassemble a droid into parts"
+ *
+ * Every one of them was a plausible-looking number underneath. The grip wrote a
+ * held body's VELOCITY directly, so a 900 kg pillar and a 22 kg crate both
+ * travelled 5.01 m in the first second and a hurl launched every mass in the
+ * game at exactly 26.0 m/s — mass was not modelled at all, it was cancelled.
+ * The only real size cap was Enemy.grippable, a flat `!A.big && !A.boss` that
+ * no setting could reach. The wheel was already read for grip distance and was
+ * ALSO read by SaberController for wrist roll, one notch doing two things. And
+ * no power posed a single bone.
+ *
+ * So these tests assert the numbers, not the shapes: that the cap moves with
+ * the setting and clears the heaviest body in the game at the top of it, that a
+ * heavy thing measurably lags a light one everywhere, that a throw goes where
+ * the crosshair is rather than where the camera ray is, that a frozen bolt does
+ * not drift by a millimetre, and that every power moves the arm.
+ */
+
+import * as THREE from 'three';
+import { initPhysics } from '../../src/physics/Rapier.js';
+import { RapierWorld, Body as RBody, LAYER, box as boxShape } from '../../src/physics/RapierWorld.js';
+import { Player } from '../../src/game/Player.js';
+import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
+import { BoltPool } from '../../src/game/Bolts.js';
+import { buildJedi } from '../../src/game/Bodies.js';
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const DEG = 180 / Math.PI;
+
+/** The real mass spectrum, straight out of Props.js. */
+const PROPS = { crate: 22, barrel: 30, console: 90, vaporator: 180, spire: 500, pillar: 900 };
+
+const flatGround = () => ({
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+  size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand', crater() {}, flush() {},
+});
+
+function physicsWorld() {
+  const w = new RapierWorld({ gravity: -24 });
+  w.terrain = flatGround();
+  return w;
+}
+
+/** A world stub wide enough for a real Enemy and a real Player's Force code. */
+function gameWorld(physics) {
+  return {
+    scene: new THREE.Scene(), physics, terrain: physics.terrain,
+    difficulty: null, hpScale: 1, dmgScale: 1,
+    settings: { forcePower: 1, forceDrain: 1 },
+    engine: { flash() {}, setRadial() {}, setSense() {} },
+    particles: null, severs: 0,
+    addHitstop() {}, report() {}, notify() {},
+    onLimbSevered() { this.severs++; }, onEnemyKilled() {}, onHitmark() {}, spawnDebrisGroup() {},
+  };
+}
+
+/**
+ * A real Player prototype over hand-made state. Constructing a whole Player
+ * needs a renderer, an audio graph and a level; the Force code only needs the
+ * fifteen fields below, and using the prototype means these tests run the
+ * shipping methods rather than a copy of them.
+ */
+function player(world, over = {}) {
+  return Object.assign(Object.create(Player.prototype), {
+    world, force: 1e9, maxForce: 1e9, score: 0, limbsRemoved: 0, flow: 0, team: 0,
+    gripBody: null, gripEnemy: null, gripDistance: 4, _liftPoint: new THREE.Vector3(),
+    lastGripRefusal: null, _wheel: 0, hurled: [], cloak: null,
+    gesture: { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false },
+    stasis: {
+      active: false, timer: 0, radius: 0, fireT: 0, target: null, held: [], firing: [],
+      bodies: new Set(), centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
+    },
+    chest: V(0, 1.35, 0), aimDir: V(0, 0, -1),
+    camera: { pos: V(0, 1.6, 3), addShake() {}, addYaw() {}, addPitch() {}, firstPerson: false },
+    boonMods: { forceCost: 1, flowGain: 1 },
+    cooldowns: { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 },
+    ...over,
+  });
+}
+
+function prop(w, mass, pos = V(0, 1.35, -6)) {
+  const b = new RBody({ position: pos, shape: boxShape(0.4, 0.5, 0.4), mass,
+    layer: LAYER.PROP, mask: LAYER.WORLD });
+  w.add(b);
+  return b;
+}
+
+/** One update, so the rig is solved exactly as it always is in-game. */
+function settle(e, world) {
+  e.update(1 / 60, {
+    time: 0, dt: 1 / 60, players: [], enemies: [e], physics: world.physics,
+    terrain: world.terrain, particles: null, bolts: null,
+    camera: { position: V(0, 1.6, 3) }, pickTarget: () => null,
+  });
+}
+
+export async function run({ check, assert, near }) {
+  await initPhysics();
+
+  /* ── the cap ─────────────────────────────────────────────────────── */
+
+  check('force: the lift cap is a real number and the setting moves it', () => {
+    const w = gameWorld(physicsWorld());
+    const p = player(w);
+    const rungs = [0.25, 0.5, 1, 2, 3, 4];
+    const caps = {};
+    for (const P of rungs) { w.settings.forcePower = P; caps[P] = p.liftCapacity; }
+    // Monotone, and spanning the whole mass table rather than sitting past the
+    // end of it — a cap nothing can reach is the same as no cap.
+    for (let i = 1; i < rungs.length; i++) {
+      assert(caps[rungs[i]] > caps[rungs[i - 1]],
+        `cap is not monotone: ${rungs[i - 1]}x=${caps[rungs[i - 1]].toFixed(0)} ${rungs[i]}x=${caps[rungs[i]].toFixed(0)}`);
+    }
+    assert(caps[0.25] < PROPS.barrel, `0.25x lifts a ${PROPS.barrel} kg barrel (cap ${caps[0.25].toFixed(0)})`);
+    assert(caps[1] >= ARCHETYPES.droideka.mass && caps[1] < PROPS.spire,
+      `1x cap ${caps[1].toFixed(0)} does not sit between a droideka and a spire`);
+    // The whole point of the complaint: the top of the slider must clear the
+    // heaviest body in the game.
+    const heaviest = Math.max(...Object.values(PROPS), ...Object.values(ARCHETYPES).map(a => a.mass));
+    assert(caps[4] > heaviest, `max cap ${caps[4].toFixed(0)} kg cannot lift the heaviest thing there is (${heaviest} kg)`);
+    return `0.25x ${caps[0.25].toFixed(0)} kg → 1x ${caps[1].toFixed(0)} → 4x ${caps[4].toFixed(0)}; heaviest body ${heaviest} kg`;
+  });
+
+  check('force: the biggest enemies are a setting away, not a permanent no', () => {
+    const out = [];
+    for (const type of ['b1', 'droideka', 'walker', 'beast']) {
+      const w = physicsWorld();
+      const world = gameWorld(w);
+      const e = new Enemy(world, type, V(0, 0, -6));
+      settle(e, world);
+      w.step(1 / 60);
+      const at = [];
+      for (const P of [1, 2, 3, 4]) {
+        world.settings.forcePower = P;
+        const p = player(world);
+        p.toggleGrip({ physics: w, enemies: [e], particles: null });
+        if (p.gripEnemy) at.push(P);
+        p.releaseGrip();
+      }
+      out.push(`${type}@${at.length ? at[0] + 'x' : 'never'}`);
+      // Enemy.grippable is `!A.big && !A.boss`: false for exactly these two, at
+      // every forcePower there is. The Force powers must not consult it.
+      const A = ARCHETYPES[type];
+      if (A.big || A.boss) assert(at.length > 0, `${type} is still un-liftable at every setting`);
+      assert(at.includes(4), `${type} cannot be lifted even at forcePower 4`);
+    }
+    return `first forcePower that lifts it — ${out.join(', ')}`;
+  });
+
+  check('force: the grip refuses what it cannot hold, and says why', () => {
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 1;
+    const b = prop(w, PROPS.pillar);
+    w.step(1 / 60);
+    const p = player(world);
+    const cap1 = p.liftCapacity;
+    p.toggleGrip({ physics: w, enemies: [], particles: null });
+    assert(!p.gripBody, 'a 900 kg pillar was lifted at forcePower 1');
+    assert(p.lastGripRefusal && p.lastGripRefusal.mass === PROPS.pillar,
+      'the refusal was silent — nothing recorded why');
+    world.settings.forcePower = 4;
+    const p2 = player(world);
+    p2.toggleGrip({ physics: w, enemies: [], particles: null });
+    assert(p2.gripBody === b, 'the same pillar is still refused at forcePower 4');
+    return `pillar 900 kg: refused at 1x (cap ${cap1.toFixed(0)}), lifted at 4x (cap ${p2.liftCapacity.toFixed(0)})`;
+  });
+
+  /* ── mass is visible ─────────────────────────────────────────────── */
+
+  check('force: a heavy thing measurably lags a light one', () => {
+    const peaks = {};
+    for (const [name, mass] of Object.entries(PROPS)) {
+      const w = physicsWorld();
+      const world = gameWorld(w);
+      world.settings.forcePower = 4;                  // so everything is liftable
+      const b = prop(w, mass, V(0, 1.35, -4));
+      b.gravityScale = 0;
+      const p = player(world, { gripBody: b });
+      p.gripDistance = p.camera.pos.distanceTo(p.chest) + 16;
+      let peak = 0;
+      for (let i = 0; i < 120; i++) {
+        p._updateGrip(1 / 60, { physics: w });
+        w.step(1 / 60);
+        peak = Math.max(peak, b.velocity.length());
+      }
+      peaks[name] = peak;
+    }
+    // Before this the grip wrote velocity with no mass term at all and every
+    // one of these was identical to three decimal places.
+    assert(peaks.crate > peaks.pillar * 1.4,
+      `a 22 kg crate (${peaks.crate.toFixed(1)}) barely outruns a 900 kg pillar (${peaks.pillar.toFixed(1)})`);
+    assert(peaks.crate > peaks.console && peaks.console > peaks.spire, 'lift speed is not monotone in mass');
+    return `peak lift speed 22 kg ${peaks.crate.toFixed(1)} m/s → 900 kg ${peaks.pillar.toFixed(1)} m/s`;
+  });
+
+  check('force: a push shoves a crate further than it shoves a pillar', () => {
+    const speeds = {};
+    for (const P of [1, 4]) {
+      speeds[P] = {};
+      for (const [name, mass] of Object.entries(PROPS)) {
+        const w = physicsWorld();
+        const world = gameWorld(w);
+        world.settings.forcePower = P;
+        const b = prop(w, mass);
+        const p = player(world);
+        p.forcePush({ physics: w, enemies: [], particles: null, bolts: null, terrain: null });
+        w.step(1 / 60);
+        speeds[P][name] = b.velocity.length();
+      }
+    }
+    // Impulse ∝ mass cancels mass exactly, which is why every prop in the game
+    // used to take the same 8.6 m/s off a default push.
+    assert(speeds[1].crate > speeds[1].pillar * 2.4,
+      `crate ${speeds[1].crate.toFixed(1)} vs pillar ${speeds[1].pillar.toFixed(1)} — the push still ignores mass`);
+    assert(speeds[4].pillar > speeds[1].pillar * 4,
+      'turning the setting up does not move a heavy thing appreciably harder');
+    return `1x: crate ${speeds[1].crate.toFixed(1)} / pillar ${speeds[1].pillar.toFixed(1)} m/s; ` +
+      `4x: crate ${speeds[4].crate.toFixed(1)} / pillar ${speeds[4].pillar.toFixed(1)}`;
+  });
+
+  /* ── the throw ───────────────────────────────────────────────────── */
+
+  check('force: a throw is aimed at the crosshair, not down the camera ray', () => {
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const p = player(world);
+    // The object is held well off to one side. The old code aimed everything at
+    // camera.pos + aim·40, so the launch direction was the line from the OBJECT
+    // to that point — several degrees wide, and worse the further out you held
+    // it. Here the wall is 20 m away, so the parallax error is large.
+    const b = prop(w, PROPS.crate, V(-6, 1.35, -12));
+    w.step(1 / 60);
+    p.gripBody = b;
+    const aim = p._aimTarget({ physics: w, enemies: [] }, new THREE.Vector3());
+    p.hurlGripped({ physics: w, enemies: [], particles: null });
+    w.step(1 / 60);
+    const want = aim.point.clone().sub(b.position).normalize();
+    const got = b.velocity.clone().normalize();
+    const err = Math.acos(Math.min(1, got.dot(want))) * DEG;
+    const legacy = p.camera.pos.clone().addScaledVector(p.aimDir, 40).sub(V(-6, 1.35, -12)).normalize();
+    const legacyErr = Math.acos(Math.min(1, legacy.dot(want))) * DEG;
+    assert(err < 1.5, `the throw left ${err.toFixed(1)}° off the aim point`);
+    return `launch is ${err.toFixed(2)}° off the aim point; the old fixed-40 m target was ${legacyErr.toFixed(1)}° off`;
+  });
+
+  check('force: throw speed depends on what you are throwing', () => {
+    const out = {};
+    for (const P of [1, 4]) {
+      out[P] = {};
+      for (const [name, mass] of Object.entries(PROPS)) {
+        const w = physicsWorld();
+        const world = gameWorld(w);
+        world.settings.forcePower = P;
+        const b = prop(w, mass);
+        const p = player(world, { gripBody: b });
+        if (mass > p.liftCapacity) continue;
+        p.hurlGripped({ physics: w, enemies: [], particles: null });
+        w.step(1 / 60);
+        out[P][name] = b.velocity.length();
+      }
+    }
+    // Every mass used to leave at exactly 26.0 m/s (104.0 at forcePower 4).
+    assert(out[1].crate > out[1].vaporator * 1.6,
+      `22 kg leaves at ${out[1].crate.toFixed(1)} and 180 kg at ${out[1].vaporator.toFixed(1)} — mass still cancels`);
+    assert(out[4].crate > out[4].pillar * 1.3, 'at max power mass stops mattering again');
+    assert(out[4].crate > out[1].crate * 1.8, 'forcePower barely changes throw speed');
+    return `1x: 22 kg ${out[1].crate.toFixed(1)} → 180 kg ${out[1].vaporator.toFixed(1)} m/s; ` +
+      `4x: 22 kg ${out[4].crate.toFixed(1)} → 900 kg ${out[4].pillar.toFixed(1)}`;
+  });
+
+  check('force: a thrown crate actually hurts what it lands on', () => {
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const e = new Enemy(world, 'b1', V(0, 0, -14));
+    settle(e, world);
+    const b = prop(w, PROPS.crate, V(0, 1.2, -6));
+    const p = player(world, { gripBody: b });
+    const hp0 = e.hp;
+    p.hurlGripped({ physics: w, enemies: [e], particles: null });
+    for (let i = 0; i < 120; i++) {
+      w.step(1 / 60);
+      p._updateHurled(1 / 60, { enemies: [e], particles: null });
+    }
+    // RapierWorld stores Body.onContact and never dispatches it, so the
+    // userData.hurledBy this code has always set was read by nobody.
+    assert(e.hp < hp0 - 5, `the crate passed through the droid (hp ${hp0} → ${e.hp.toFixed(1)})`);
+    assert(p.hurled.length === 0 || p.hurled[0].hit.has(e.id), 'the same throw could hit twice');
+    return `B1 hp ${hp0} → ${e.hp.toFixed(1)} from one thrown crate`;
+  });
+
+  /* ── distance control ────────────────────────────────────────────── */
+
+  check('force: the wheel controls hold distance, in front of the body', () => {
+    const rows = [];
+    for (const P of [0.25, 1, 4]) {
+      const w = physicsWorld();
+      const world = gameWorld(w);
+      world.settings.forcePower = P;
+      const b = prop(w, PROPS.crate);
+      const p = player(world, { gripBody: b });
+      const lead = p.camera.pos.distanceTo(p.chest);
+      // wind all the way in, then count notches back out to the far stop
+      for (let i = 0; i < 200; i++) { p._wheel = 1; p._updateGrip(1 / 60, { physics: w }); }
+      const near = p.gripDistance - lead;
+      let n = 0;
+      while (n < 400) {
+        p._wheel = -1;
+        p._updateGrip(1 / 60, { physics: w });
+        if (p.gripDistance - lead >= p.forceReach - 1e-6) break;
+        n++;
+      }
+      const far = p.gripDistance - lead;
+      // The hold point is measured from the CAMERA, which in third person is
+      // 3.05 m behind the chest: the old floor of 1.6 m from there put the
+      // object 1.45 m BEHIND the player.
+      assert(near > 0.9, `the near stop is only ${near.toFixed(2)} m in front of the chest`);
+      near_far_ok(near, far, p.forceReach, assert);
+      assert(n > 8 && n < 60, `${n} notches to cross the reach is unusable`);
+      rows.push(`${P}x ${near.toFixed(1)}→${far.toFixed(1)} m in ${n} notches`);
+    }
+    return rows.join(', ');
+  });
+
+  check('force: gripping takes the wheel away from the wrist roll', () => {
+    // SaberController does `rollInput += input.mouse.wheel * 0.55` and runs
+    // FIRST, so before this one notch both rolled the blade and moved the held
+    // object. _readInput claims it while something is held and only then.
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const p = player(world);
+    const input = {
+      mouse: { wheel: 3, dx: 0, dy: 0 }, bindings: {}, act: () => false, actHit: () => false,
+      _codeHit: () => false, moveAxis: (o) => o,
+    };
+    p.saberThrown = false;
+    p.isLocal = true;
+    p.saber = { lit: true, toggle() {}, base: V(0, 0, 0) };
+    p.control = { applyInput: () => ({ yaw: 0, pitch: 0 }), grip: 'two' };
+    p.stamina = 100; p.maxStamina = 100;
+    p._readInput(1 / 60, { input });
+    assert(input.mouse.wheel === 3, 'the wheel was stolen from the blade while nothing was held');
+    assert(p._wheel === 0, 'the grip took a wheel it has no use for');
+    p.gripBody = prop(w, PROPS.crate);
+    input.mouse.wheel = 3;
+    p._readInput(1 / 60, { input });
+    assert(p._wheel === 3, 'the grip did not receive the wheel');
+    assert(input.mouse.wheel === 0, 'the blade will roll on the same notch that moved the object');
+    return 'wheel goes to the wrist when free, to the grip when holding — never to both';
+  });
+
+  /* ── gestures ────────────────────────────────────────────────────── */
+
+  check('force: every power sends the hand somewhere', () => {
+    const world = gameWorld(physicsWorld());
+    const p = player(world);
+    const chest = V(0, 1.35, 0), fwd = V(0, 0, -1), right = V(1, 0, 0);
+    const rest = () => V(-0.34, 0.73, -0.05);
+    const rows = [];
+    const kinds = ['push', 'pull', 'grip', 'hurl', 'stasis', 'unleash', 'rend', 'lightning', 'sense', 'cast'];
+    for (const kind of kinds) {
+      p.gesture = { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false };
+      p._gesture(kind);
+      assert(p.gesture.kind === kind, `${kind} did not start a gesture`);
+      let peak = 0, peakT = 0, alive = 0;
+      for (let i = 0; i < 180; i++) {
+        p._advanceGesture(1 / 60);
+        const target = rest(), pole = V(-0.85, 0.65, 0);
+        const palm = p._gesturePose(target, pole, chest, fwd, right);
+        if (palm) near(palm.length(), 1, 1e-6, `${kind} returned a non-unit palm direction`);
+        const travel = target.distanceTo(rest());
+        assert(isFinite(travel), `${kind} produced a non-finite hand position`);
+        if (travel > peak) { peak = travel; peakT = (i + 1) / 60; }
+        if (p.gesture.kind) alive++;
+        if (p.gesture.sustain && i === 40) p._endGesture(kind);
+      }
+      // Readable means readable from across the room: an arm that moves 10 cm
+      // is not an animation, it is a twitch.
+      assert(peak > 0.5, `${kind} sends the hand only ${(peak * 100).toFixed(0)} cm`);
+      // Snap, not wave: the reach has to be over well inside the gesture.
+      assert(peakT < 0.30, `${kind} takes ${(peakT * 1000).toFixed(0)} ms to reach full extension`);
+      assert(p.gesture.kind === '', `${kind} never let go of the arm`);
+      rows.push(`${kind} ${(peak * 100).toFixed(0)}cm@${(peakT * 1000).toFixed(0)}ms`);
+    }
+    return rows.join(' ');
+  });
+
+  check('force: the powers actually fire their gestures', () => {
+    const seen = {};
+    const mk = () => {
+      const w = physicsWorld();
+      const world = gameWorld(w);
+      const p = player(world);
+      return { w, world, p };
+    };
+    {
+      const { w, p } = mk();
+      p.forcePush({ physics: w, enemies: [], particles: null, bolts: null, terrain: null });
+      seen.push = p.gesture.kind;
+    }
+    {
+      const { w, p } = mk();
+      p.forcePull({ physics: w, enemies: [], particles: null });
+      seen.pull = p.gesture.kind;
+    }
+    {
+      const { w, p } = mk();
+      prop(w, PROPS.crate); w.step(1 / 60);
+      p.toggleGrip({ physics: w, enemies: [], particles: null });
+      seen.grip = p.gesture.kind;
+      p.hurlGripped({ physics: w, enemies: [], particles: null });
+      seen.hurl = p.gesture.kind;
+    }
+    {
+      const { w, p } = mk();
+      p.boonMods.lightning = true;
+      p.force = 1e9;
+      p.forceLightning({ physics: w, enemies: [], particles: null });
+      seen.lightning = p.gesture.kind;
+    }
+    for (const [k, v] of Object.entries(seen)) assert(v === k, `${k} fired gesture "${v}"`);
+    return Object.entries(seen).map(([k, v]) => `${k}→${v}`).join(' ');
+  });
+
+  /* ── force stop ──────────────────────────────────────────────────── */
+
+  check('force: stasis freezes hostile bolts dead, and only hostile ones', () => {
+    const scene = new THREE.Scene();
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const pool = new BoltPool(scene, 40);
+    const p = player(world);
+    const ctx = { physics: w, bolts: pool, enemies: [], particles: null };
+    for (let i = 0; i < 8; i++) {
+      pool.fire(V(i * 0.3 - 1, 1.4, -4 - i * 0.3), V(0, 0, 1), { speed: 80, team: 1, damage: 9 });
+    }
+    const mine = pool.fire(V(0, 1.4, -3), V(0, 0, -1), { speed: 80, team: 0, damage: 9 });
+    const far = pool.fire(V(0, 1.4, -60), V(0, 0, 1), { speed: 80, team: 1, damage: 9 });
+    const took = p.toggleStasis(ctx);
+    assert(took === 8, `stasis took ${took} bolts, expected the 8 hostile ones in range`);
+    assert(!mine.held, 'stasis froze the player’s own returned fire');
+    assert(!far.held, `stasis reached a bolt ${(60 - p.stasis.radius).toFixed(0)} m outside its own radius`);
+
+    const frozen = pool.bolts.filter(b => b.held);
+    const at = frozen.map(b => b.pos.clone());
+    const life0 = frozen.map(b => b.life);
+    for (let i = 0; i < 60; i++) {
+      pool.update(1 / 60, { blades: [], hitTest: () => null });
+      p._updateStasis(1 / 60, ctx);
+    }
+    const drift = Math.max(...frozen.map((b, i) => b.pos.distanceTo(at[i])));
+    const aged = Math.max(...frozen.map((b, i) => life0[i] - b.life));
+    assert(drift < 1e-6, `a frozen bolt drifted ${drift.toFixed(4)} m in a second`);
+    assert(aged < 1e-9, 'a frozen bolt aged out while it was being held');
+    assert(frozen.every(b => b.held), 'the field dropped a bolt it was holding');
+    pool.dispose();
+    return `8 of 8 hostile bolts arrested in a ${p.stasis.radius.toFixed(1)} m field, 0.0000 m drift over 1 s, no ageing`;
+  });
+
+  check('force: released bolts fly at whoever you picked, and can hurt them', () => {
+    const scene = new THREE.Scene();
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const pool = new BoltPool(scene, 40);
+    const e = new Enemy(world, 'b1', V(4, 0, -12));
+    settle(e, world);
+    const p = player(world);
+    const ctx = { physics: w, bolts: pool, enemies: [e], particles: null };
+    for (let i = 0; i < 6; i++) pool.fire(V(i * 0.4 - 1, 1.4, -4), V(0, 0, 1), { speed: 80, team: 1, damage: 9 });
+    p.toggleStasis(ctx);
+    // Look at the droid, then let go. The bolts came in from straight ahead;
+    // the droid is 18° off to the right, so a volley that merely resumed its
+    // old course would fail this.
+    p.aimDir.copy(p._enemyPoint(e, new THREE.Vector3()).sub(p.camera.pos).normalize());
+    p.releaseStasis(ctx, true);
+    for (let i = 0; i < 60; i++) p._updateStasis(1 / 60, ctx);
+    const sent = pool.bolts.filter(b => b.active && !b.held && b.team === 0);
+    assert(sent.length === 6, `${sent.length} of 6 bolts were sent back`);
+    const target = p._enemyPoint(e, new THREE.Vector3());
+    let worst = 0;
+    for (const b of sent) {
+      const want = target.clone().sub(b.pos).normalize();
+      worst = Math.max(worst, Math.acos(Math.min(1, b.vel.clone().normalize().dot(want))) * DEG);
+      // World._boltHitTest only lets a team-1 bolt touch an enemy when it was
+      // deflected, and only lets a bolt touch the player when it is not team 0.
+      // Both flags, or a returned volley passes straight through everybody.
+      assert(b.deflected && b.deflector === p && b.owner === p, 'the returned bolt is not the player’s');
+      assert(b.damage > 9, 'the returned bolt lost its damage');
+      assert(b.vel.length() > 50, `a returned bolt left at ${b.vel.length().toFixed(0)} m/s`);
+    }
+    assert(worst < 1, `worst return was ${worst.toFixed(1)}° off the target`);
+    pool.dispose();
+    return `6 bolts returned to a droid 18° off the incoming line, worst error ${worst.toFixed(2)}°`;
+  });
+
+  check('force: a dropped stasis field does not fire a free volley', () => {
+    const scene = new THREE.Scene();
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const pool = new BoltPool(scene, 20);
+    const p = player(world);
+    const ctx = { physics: w, bolts: pool, enemies: [], particles: null };
+    for (let i = 0; i < 4; i++) pool.fire(V(i * 0.4 - 1, 1.4, -4), V(0, 0, 1), { speed: 80, team: 1 });
+    p.toggleStasis(ctx);
+    p.releaseStasis(ctx, false);
+    for (let i = 0; i < 20; i++) p._updateStasis(1 / 60, ctx);
+    const live = pool.bolts.filter(b => b.active);
+    assert(live.length === 0, `${live.length} bolts survived a dropped field`);
+    assert(p.stasis.held.length === 0 && p.stasis.firing.length === 0, 'the field kept its bookkeeping');
+    pool.dispose();
+    return 'running the bar dry drops the bolts; only a deliberate release fires them';
+  });
+
+  /* ── disassembly ─────────────────────────────────────────────────── */
+
+  check('force: a droid comes apart, and how far scales with the setting', () => {
+    const rows = [];
+    for (const type of ['b1', 'walker', 'droideka']) {
+      const counts = [];
+      for (const P of [0.25, 1, 2, 4]) {
+        const w = physicsWorld();
+        const world = gameWorld(w);
+        world.settings.forcePower = P;
+        const e = new Enemy(world, type, V(0, 0, -6));
+        settle(e, world);
+        const p = player(world);
+        p.forceDisassemble({ enemies: [e], particles: null, physics: w });
+        counts.push(p.limbsRemoved);
+        // A rig enemy routes every joint through Actor + world.onLimbSevered.
+        // A droideka has no rig — Enemy._cutDroideka takes its legs off without
+        // an actor and without reporting, which is that file's business.
+        if (e.rig) assert(world.severs === p.limbsRemoved, 'a joint came off without telling the world');
+        else assert(world.severs === 0 && p.limbsRemoved > 0, 'the droideka path changed shape');
+      }
+      assert(counts[0] >= 1, `${type} lost nothing at all at forcePower 0.25`);
+      assert(counts[3] > counts[0], `${type} comes apart no further at 4x than at 0.25x`);
+      rows.push(`${type} ${counts.join('/')}`);
+    }
+    return `joints taken at 0.25/1/2/4x — ${rows.join(', ')}`;
+  });
+
+  check('force: disassembly makes real pieces, through the real sever path', () => {
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 4;
+    const e = new Enemy(world, 'b1', V(0, 0, -6));
+    settle(e, world);
+    const p = player(world);
+    const got = [];
+    e.actor.onSever = (bone) => got.push(bone);
+    p.forceDisassemble({ enemies: [e], particles: null, physics: w });
+    let bodies = 0;
+    for (const piece of e.actor.pieces) bodies += piece.entries.length;
+    assert(e.actor.pieces.length >= 2, `only ${e.actor.pieces.length} pieces detached`);
+    assert(bodies >= e.actor.pieces.length, 'a detached piece is not a physics body');
+    // Extremities first. A disassembly that opens on the chest is an execution.
+    assert(!got.includes('chest') && !got.includes('hips'), `it went for the core first: ${got.join(',')}`);
+    return `${p.limbsRemoved} joints, ${e.actor.pieces.length} detached pieces made of ${bodies} rigid bodies (${got.join(', ')})`;
+  });
+
+  check('force: flesh does not disassemble', () => {
+    for (const type of ['trooper', 'acolyte', 'beast']) {
+      const w = physicsWorld();
+      const world = gameWorld(w);
+      world.settings.forcePower = 4;
+      const e = new Enemy(world, type, V(0, 0, -5));
+      settle(e, world);
+      const p = player(world);
+      const f0 = p.force;
+      p.forceDisassemble({ enemies: [e], particles: null, physics: w });
+      assert(p.limbsRemoved === 0, `a ${type} came apart at the joints`);
+      assert(p.force === f0, `the power charged ${(f0 - p.force).toFixed(0)} Force for doing nothing`);
+      assert(p.cooldowns.rend === 0, 'a no-op still went on cooldown');
+    }
+    return 'troopers, acolytes and the Acklay are cut, not dismantled — and a miss costs nothing';
+  });
+
+  /* ── what is grippable at all ────────────────────────────────────── */
+
+  check('force: the grip sees every loose thing, and enemies in the same pass', () => {
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 2;
+    const kinds = [];
+    for (const layer of [LAYER.PROP, LAYER.DEBRIS, LAYER.RAGDOLL]) {
+      const w2 = physicsWorld();
+      const world2 = gameWorld(w2);
+      world2.settings.forcePower = 2;
+      const b = new RBody({ position: V(0, 1.35, -6), shape: boxShape(0.4, 0.5, 0.4), mass: 30,
+        layer, mask: LAYER.WORLD });
+      w2.add(b);
+      w2.step(1 / 60);
+      const p = player(world2);
+      p.toggleGrip({ physics: w2, enemies: [], particles: null });
+      assert(p.gripBody === b, `layer ${layer} is not grippable`);
+      kinds.push(layer === LAYER.PROP ? 'props' : layer === LAYER.DEBRIS ? 'debris' : 'ragdolls');
+    }
+
+    // The case that used to fail: a droid standing in front of a crate. The old
+    // filter could not see a kinematic enemy proxy, so the ray went through the
+    // droid and handed you the crate behind it.
+    const e = new Enemy(world, 'b1', V(0, 0, -6));
+    settle(e, world);
+    const crate = prop(w, PROPS.crate, V(0, 1.35, -12));
+    w.step(1 / 60);
+    const p = player(world);
+    p.toggleGrip({ physics: w, enemies: [e], particles: null });
+    assert(p.gripEnemy === e, 'the droid in front was ignored in favour of the crate behind it');
+    assert(p.gripBody !== crate, 'the grip reached through a body to a prop');
+
+    // And the crosshair does not have to be exactly on it.
+    const w3 = physicsWorld();
+    const world3 = gameWorld(w3);
+    world3.settings.forcePower = 2;
+    const off = prop(w3, PROPS.crate, V(1.0, 1.35, -12));       // ≈4° off the aim
+    w3.step(1 / 60);
+    const p3 = player(world3);
+    p3.toggleGrip({ physics: w3, enemies: [], particles: null });
+    assert(p3.gripBody === off, 'a crate 4° off the crosshair could not be picked up');
+    return `${kinds.join(', ')} and enemies all pick up; a target 4° off the crosshair still selects`;
+  });
+  check('force: stasis stops what is in flight, and lets go of what it took', () => {
+    const scene = new THREE.Scene();
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 2;
+    const pool = new BoltPool(scene, 8);
+    const p = player(world);
+    const resting = prop(w, PROPS.crate, V(-1, 0.5, -4));
+    for (let i = 0; i < 60; i++) w.step(1 / 60);     // let it come to rest first
+    const flying = prop(w, PROPS.barrel, V(1, 2.0, -5));
+    flying.velocity.set(0, 0, 9);                    // hurled at the player
+    w.step(1 / 60);
+    const ctx = { physics: w, bolts: pool, enemies: [], particles: null };
+    p.toggleStasis(ctx);
+    assert(p.stasis.bodies.has(flying), 'a barrel thrown at the player was not stopped');
+    // Freezing the crate you are standing next to is not a moment, it is a
+    // bug report — the field only takes what is actually moving.
+    assert(!p.stasis.bodies.has(resting), 'stasis froze a crate that was just sitting there');
+    assert(flying.gravityScale === 0, 'the frozen barrel is still falling');
+    for (let i = 0; i < 30; i++) { p._updateStasis(1 / 60, ctx); w.step(1 / 60); }
+    assert(flying.velocity.length() < 1e-6, `the frozen barrel is moving at ${flying.velocity.length().toFixed(3)} m/s`);
+    assert(!p.stasis.bodies.has(resting), 'the field crept onto a crate that never moved');
+    p.releaseStasis(ctx, true);
+    for (let i = 0; i < 30; i++) { p._updateStasis(1 / 60, ctx); w.step(1 / 60); }
+    assert(flying.gravityScale === 1, 'a released body never got its gravity back');
+    assert(flying.velocity.length() > 20, `the released barrel left at ${flying.velocity.length().toFixed(1)} m/s`);
+    assert(p.hurled.length === 1 && p.hurled[0].body === flying,
+      'a stasis-launched body cannot hurt what it hits');
+    pool.dispose();
+    return 'a barrel in flight is caught, held to 0.000 m/s, then launched with its gravity restored';
+  });
+
+  check('force: dying does not strand what the Force was holding', () => {
+    const scene = new THREE.Scene();
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    const pool = new BoltPool(scene, 8);
+    const p = player(world);
+    const ctx = { physics: w, bolts: pool, enemies: [], particles: null };
+    for (let i = 0; i < 3; i++) pool.fire(V(i * 0.4, 1.4, -4), V(0, 0, 1), { speed: 80, team: 1 });
+    const b = prop(w, PROPS.crate);
+    w.step(1 / 60);
+    p.toggleGrip(ctx);
+    assert(p.gripBody === b && b.gravityScale === 0, 'setup: nothing was gripped');
+    p.toggleStasis(ctx);
+    // die() needs only these; the ragdoll import is async and irrelevant here.
+    Object.assign(p, {
+      alive: true, saber: { retract() {}, color: { getHex: () => 0 } }, hum: { retract() {} },
+      senseActive: false, position: V(0, 0, 0), velocity: V(0, 0, 0),
+      // die() collapses the body into an Actor; an empty rig is enough for it.
+      rig: { root: new THREE.Object3D(), list: [], updateMatrices() {}, get: () => null, dispose() {} },
+    });
+    p.die(null);
+    assert(b.gravityScale === 1, 'the gripped crate is still weightless with the player dead');
+    assert(pool.bolts.every(x => !x.held), 'bolts are still pinned to a dead player’s stasis field');
+    assert(p.stasis.held.length === 0 && p.stasis.firing.length === 0, 'the field kept its bookkeeping');
+    pool.dispose();
+    return 'grip released, gravity restored, no bolt left hanging in the air';
+  });
+  check('force: the gesture lands on a real arm, not just on a number', () => {
+    // Everything above tests the target the gesture asks for. This one drives
+    // an actual built Jedi through the same two calls _updateBody makes, so a
+    // renamed bone, an inverted elbow or a degenerate palm direction fails here
+    // rather than as a limb folded inside out on screen — and it measures where
+    // the HAND ends up, which is not the same thing as where it was sent: the
+    // committed gestures deliberately aim past the end of a 55 cm arm, so the
+    // arm reaches full extension and stops, which is what a thrown palm does.
+    const { rig } = buildJedi({ robeIndex: 0, scale: 1 });
+    rig.updateMatrices();
+    const world = gameWorld(physicsWorld());
+    const p = player(world);
+    const chest = rig.worldPos('chest', new THREE.Vector3());
+    const fwd = V(0, 0, -1), right = V(1, 0, 0);
+    const armL = rig.get('armL'), foreL = rig.get('foreL');
+    const span = armL.length * armL.cutT + foreL.length * foreL.cutT;
+    const restTarget = () => chest.clone().add(V(-0.34, -0.62, -0.05));
+    const restPole = () => chest.clone().add(V(-0.85, -0.7, 0));
+
+    // where the hand hangs with no gesture running
+    rig.solveIK('armL', 'foreL', restTarget(), restPole());
+    rig.updateMatrices();
+    const rest = rig.worldPos('handL', new THREE.Vector3());
+
+    const rows = [];
+    for (const kind of ['push', 'pull', 'grip', 'hurl', 'stasis', 'unleash', 'rend', 'lightning', 'sense', 'cast']) {
+      p.gesture = { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false };
+      p._gesture(kind);
+      let travel = 0, worstAim = 0, worstStretch = 0;
+      for (let i = 0; i < 60; i++) {
+        p._advanceGesture(1 / 60);
+        const target = restTarget(), pole = restPole();
+        const palm = p._gesturePose(target, pole, chest, fwd, right);
+        rig.solveIK('armL', 'foreL', target, pole);
+        if (palm) rig.aimBoneWorld('handL', palm, right);
+        rig.updateMatrices();
+        const hand = rig.worldPos('handL', new THREE.Vector3());
+        assert(isFinite(hand.x) && isFinite(hand.y) && isFinite(hand.z), `${kind} put the hand at NaN`);
+        travel = Math.max(travel, hand.distanceTo(rest));
+        const shoulder = rig.worldPos('armL', new THREE.Vector3());
+        // the wrist can never be further from the shoulder than the arm is long
+        worstStretch = Math.max(worstStretch, hand.distanceTo(shoulder) / span);
+        // and it has to be pointing the way the gesture asked
+        const want = target.clone().sub(shoulder);
+        const got = hand.clone().sub(shoulder);
+        if (want.length() > 0.1 && got.length() > 0.1) {
+          worstAim = Math.max(worstAim,
+            Math.acos(Math.min(1, got.normalize().dot(want.normalize()))) * DEG);
+        }
+      }
+      assert(travel > 0.32, `${kind} moves the real hand only ${(travel * 100).toFixed(0)} cm`);
+      assert(worstStretch < 1.001, `${kind} straightened the arm past its own length (${worstStretch.toFixed(3)}x)`);
+      assert(worstAim < 8, `${kind} put the hand ${worstAim.toFixed(1)}° off the direction it was sent`);
+      rows.push(`${kind} ${(travel * 100).toFixed(0)}cm`);
+    }
+    rig.dispose();
+    return `real handL travel on a ${(span * 100).toFixed(0)} cm arm — ${rows.join(' ')}`;
+  });
+
+}
+
+/** The hold range has to span the reach, not a slice of it. */
+function near_far_ok(near, far, reach, assert) {
+  assert(Math.abs(far - reach) < 0.05, `the far stop is ${far.toFixed(2)} m, not the ${reach.toFixed(2)} m reach`);
+  assert(far > near * 3, `the hold range ${near.toFixed(2)}→${far.toFixed(2)} m barely moves`);
+}

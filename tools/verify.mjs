@@ -2567,15 +2567,17 @@ check('scenery: the air adapts to the level and gives every mesh back on dispose
   const outdoor = litScene();
   const before = outdoor.children.length;
   const a = new Atmosphere(outdoor, { count: 300, density: 1 });
-  assert(a.motes.mesh && a.windborne.mesh && a.haze.mesh && a.shimmer.mesh,
+  assert(a.motes.mesh && a.windborne.mesh && a.haze.mesh && a.shimmer.mesh && a.banks.mesh,
     'the open air is missing one of its layers');
   assert(a.windborne.sheets > 0, 'no blowing sand outdoors');
-  assert(outdoor.children.length === before + 4, 'the air is not four draw calls');
+  // motes, windborne, haze, shimmer, fog banks
+  assert(outdoor.children.length === before + 5, 'the air is not five draw calls');
 
   const indoor = litScene();
   indoor.background = new THREE.Color(0x0a0d13);      // no sky: a hangar
   const b = new Atmosphere(indoor, { count: 300, density: 1 });
-  assert(!b.haze.mesh && !b.shimmer.mesh, 'a hangar got horizon haze and a mirage');
+  assert(!b.haze.mesh && !b.shimmer.mesh && !b.banks.mesh,
+    'a hangar got horizon haze, a mirage and weather');
   assert(b.windborne.sheets === 0, 'sand is blowing across a hangar floor');
   assert(b.motes.mesh, 'a hangar has no motes at all');
 
@@ -2588,7 +2590,7 @@ check('scenery: the air adapts to the level and gives every mesh back on dispose
   g.dispose(); w.dispose(); p.dispose();
   assert(ground.grass === null && ground.water === null && ground.fx === null,
     'the broker holds a reference to a disposed system');
-  return '4 air layers outdoors, motes only indoors, nothing leaked';
+  return '5 air layers outdoors, motes only indoors, nothing leaked';
 });
 
 check('source: no stray backtick inside a GLSL template literal', async () => {

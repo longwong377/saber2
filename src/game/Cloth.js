@@ -278,6 +278,30 @@ export function attachCloak(scene, rig, opts = {}) {
 
   const bones = ['chest', 'spine', 'hips', 'thighL', 'thighR', 'shinL', 'shinR'];
   const radii = [0.20, 0.19, 0.20, 0.13, 0.13, 0.10, 0.10];
+
+  /**
+   * THE SKIRT the cape actually hangs over.
+   *
+   * The list above models a body with BARE LEGS: a 13cm thigh and a 10cm shin.
+   * Everyone who gets a cloak in this game is wearing a robe, and that robe is
+   * a 19-26cm tube round the same legs — so the cloth was settling against a
+   * surface 6-9cm inside the one the player can see. Measured on a standing
+   * Jedi: cloak particles up to 47mm inside the robe's own surface, on 164 of
+   * 180 frames. A cape passing through a skirt.
+   *
+   * Sampled off the built robe rather than typed: local y is measured DOWN
+   * from the hips bone, and the radii are the over-skirt (belling from the belt
+   * to a hem just above the knee) and the under-robe below it. Spaced 11cm
+   * apart with radii twice that, so consecutive spheres overlap heavily and
+   * the cloth cannot dip between them. `skirt: false` turns it off for anything
+   * that really is wearing trousers.
+   */
+  const skirt = opts.skirt === false ? null : (opts.skirt ?? [
+    [-0.04, 0.205], [-0.15, 0.225], [-0.26, 0.255], [-0.37, 0.235],
+    [-0.48, 0.205], [-0.59, 0.205], [-0.68, 0.210],
+  ]);
+  const hipsB = rig.get('hips');
+
   cloak.refreshColliders = () => {
     const out = cloak.colliders;
     out.length = 0;
@@ -289,6 +313,13 @@ export function attachCloak(scene, rig, opts = {}) {
       for (const t of [0.25, 0.8]) {
         _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
         out.push({ c: _v3.clone(), r: radii[i] * S });
+      }
+    }
+    if (skirt && hipsB && !hipsB.severed) {
+      hipsB.obj.updateMatrixWorld(false);
+      for (let i = 0; i < skirt.length; i++) {
+        _v3.set(0, skirt[i][0] * S, 0).applyMatrix4(hipsB.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: skirt[i][1] * S });
       }
     }
     return out;

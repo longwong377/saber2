@@ -71,11 +71,19 @@ function walk(opts = {}) {
         // a slide only counts if the foot claimed to be planted on both frames
         slide: [0, 1].map(k => (anim.feet[k].grounded && pg[k]) ? prev[k].distanceTo(anim.feet[k].pos) : 0),
         foot: [anim.feet[0].pos.clone(), anim.feet[1].pos.clone()],
-        // the ankle target the solver built, and where the leg actually put it
+        // The ankle target the solver built, and where the leg actually put it.
+        // `ankleFwd` is part of that target: a rolling foot pivots on the end
+        // of it that is still down, so the joint travels forward over the ball
+        // at toe-off and back over the heel at strike instead of the whole
+        // sole sweeping about a pinned ankle. Reconstructing the target
+        // WITHOUT it scores a leg that reaches its goal to 0.000mm as 68mm of
+        // detachment — a model mismatch, not a stretch. The 6mm bound this
+        // feeds is unchanged.
         ankleWant: [0, 1].map(k => {
           const f = anim.feet[k];
           return V3().copy(f.pos).addScaledVector(f.normal, anim.ankleY).setY(
-            f.pos.y + f.normal.y * anim.ankleY + f.ankleRise);
+            f.pos.y + f.normal.y * anim.ankleY + f.ankleRise)
+            .add(V3(Math.sin(f.yaw) * f.ankleFwd, 0, Math.cos(f.yaw) * f.ankleFwd));
         }),
         ankleGot: [rig.tipPos('shinL', V3()), rig.tipPos('shinR', V3())],
         hip: rig.worldPos('hips', V3()),

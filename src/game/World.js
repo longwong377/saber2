@@ -13,7 +13,7 @@ import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, gradeDeflection, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector } from './Waves.js';
@@ -142,6 +142,13 @@ export class World {
     });
     p.camera.firstPerson = !!this.settings.firstPerson;
     p._applyViewMode();
+    // Catch-and-throw state lives out here rather than on the Player, because
+    // it is a property of the fight (bolts, blades, the camera) rather than of
+    // the body, and World is what owns all three.
+    p.boltCatch = new CatchWindow();
+    // "Blade holds position": leave the blade where the last flick left it
+    // instead of easing back to the ready guard. Off unless asked for.
+    p.control.holdPosition = !!this.settings.bladeHold;
     this.players.push(p);
     if (!this.player) this.player = p;
     p.saber.ignite();
@@ -349,6 +356,11 @@ export class World {
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
     };
 
+    // 0 — the catch window, BEFORE the players read input. That order is the
+    // feature: control.catchHold has to be true when applyInput runs or the
+    // camera does not come back until the frame after the catch.
+    this._updateCatch(dt);
+
     // 1 — players. The local player gets time back that Focus took away; that
     // asymmetry between the player's clock and the world's IS the ability.
     for (const p of this.players) {
@@ -426,9 +438,128 @@ export class World {
 
   _bladeEntries() {
     const out = [];
-    for (const p of this.players) if (p.alive && p.saber.ignition > 0.5) out.push({ saber: p.saber, owner: p, team: 0 });
+    for (const p of this.players) {
+      if (!p.alive || p.saber.ignition <= 0.5) continue;
+      // `guard` is the auto-guard cone a successful deflect opened. Null when
+      // shut, which is most of the time — it is 0.40 s off a manual catch.
+      out.push({ saber: p.saber, owner: p, team: 0, guard: p.boltCatch ? p.boltCatch.guard() : null });
+    }
     for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: 1 });
     return out;
+  }
+
+  /* ── catch and throw ─────────────────────────────────────────────── */
+
+  /**
+   * Tick every open catch window: crackle the held bolts, hand the controller
+   * the flag that gives the camera back, and fire the throw when the player
+   * lets go or the window runs out.
+   */
+  _updateCatch(dt) {
+    for (const p of this.players) {
+      const cw = p.boltCatch;
+      if (!cw) continue;
+
+      // A bolt cannot stay caught on a blade that went out, and a dead player
+      // is not holding anything.
+      if (cw.open && (!p.alive || p.saber.ignition < 0.4)) {
+        for (const h of cw.held) { h.bolt.held = null; h.bolt.active = false; }
+        cw.clear();
+      }
+
+      const fire = cw.update(dt, p.control ? p.control.bladeHeld : false);
+      if (p.control) p.control.catchHold = cw.t;
+
+      if (cw.open && this.particles) {
+        // Crackle. Throttled per WINDOW rather than per bolt, because three
+        // caught at once is exactly when the particle pool can least afford it.
+        // 30 Hz is the slowest rate that still reads as arcing rather than as
+        // a blinking light.
+        cw.vfx -= dt;
+        if (cw.vfx <= 0) {
+          cw.vfx = 0.033;
+          for (const h of cw.held) {
+            this.particles.sparkBurst(h.bolt.pos, null, 3, { speed: 4.5, embers: false, color: 0xfff2c0 });
+            this.particles.plasma.spawn(h.bolt.pos, _v1.set(0, 0, 0), {
+              life: 0.07, size: 0.15, drag: 1, gravity: 0,
+              color: h.bolt.color.getHex(), alpha: 0.85, hdr: 3.2,
+            });
+          }
+        }
+      }
+      if (fire) this._throwCaught(p);
+    }
+  }
+
+  /**
+   * Let go of everything on the blade. This is where the aim finally gets read
+   * — not at the moment of contact — which is the entire point of the window:
+   * the blade decided IF, and the camera you have had back for up to 250 ms
+   * decides WHERE.
+   */
+  _throwCaught(player) {
+    const cw = player.boltCatch;
+    // clear() unconditionally: it is what resets `age`, and a window left with a
+    // spent age can never open wide again.
+    if (!cw.held.length) { cw.clear(); return; }
+    const candidates = this.enemies.filter(e => !e.dead);
+    let best = -1, bestPoint = null;
+    const n = cw.held.length;
+
+    for (const h of cw.held) {
+      const bolt = h.bolt;
+      if (!bolt.active) continue;
+      const res = gradeCaught(h.snap, {
+        aimOrigin: player.camera.pos,
+        aimDir: player.aimDir,
+        candidates,
+        flow: player.flow,
+        returnCone: player.boonMods.returnCone,
+        aimMode: this.settings.deflectAim || 'reticle',
+        caught: true,
+      });
+      const from = bolt.pos.clone();
+      this.bolts.release(bolt, res.dir, bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
+      this._creditDeflect(player, bolt, res, from);
+      if (res.grade > best) { best = res.grade; bestPoint = from; }
+    }
+    cw.clear();
+
+    // One piece of feedback for the whole throw, not one per bolt: a flurry of
+    // three that all go back should read as one act, because it was one.
+    if (bestPoint) {
+      audio.deflect(bestPoint, best);
+      this.onDeflectFeedback?.(best, bestPoint, n > 1 ? `${n} bolts sent back` : DEFLECT_WHY[best]);
+      if (n > 1) this.notifyFloating(bestPoint, `${n}× ${GRADE_NAME[best]}`, '#ffe9a0');
+      else if (best >= GRADE.RETURN) this.notifyFloating(bestPoint, GRADE_NAME[best], '#a8f0ff');
+      if (best === GRADE.PERFECT) { this.addHitstop(0.07); this.engine.flash(0.09); }
+    }
+  }
+
+  /** Score, flow, strain and sparks for one bolt that has just left the blade. */
+  _creditDeflect(owner, bolt, res, point) {
+    bolt.damage *= res.damageMul * owner.boonMods.deflectDamage;
+    bolt.team = 0;
+    bolt.owner = owner;
+    bolt.deflected = true;
+    bolt.deflector = owner;
+    if (res.grade >= GRADE.RETURN) bolt.color.setHex(0xfff0a0);
+    bolt.life = Math.max(bolt.life, 2.2);
+
+    owner.saber.strain(0.45 + res.grade * 0.15);
+    owner.deflects++;
+    owner.combo++;
+    owner.comboTimer = 3.2;
+    this.particles.sparkBurst(point, res.normal, 8 + res.grade * 8, { speed: 6 + res.grade * 4 });
+    this.particles.plasma.spawn(point, _v1.set(0, 0, 0),
+      { life: 0.16, size: 0.34 + res.grade * 0.16, drag: 1, gravity: 0, color: owner.saber.color.getHex(), alpha: 0.9 });
+
+    owner.addFlow([0.03, 0.06, 0.13, 0.24][res.grade]);
+    owner.score += [10, 25, 70, 160][res.grade];
+    owner.camera.addShake(0.03 + res.grade * 0.02);
+    if (res.grade === GRADE.PERFECT) owner.perfects++;
+    else if (res.grade === GRADE.BLOCK) owner.stamina = Math.max(0, owner.stamina - 4);
+    this.report({ type: 'deflect', grade: res.grade });
   }
 
   /* ── blade resolution ────────────────────────────────────────────── */
@@ -686,52 +817,59 @@ export class World {
     }
     if (bolt.team === 0) return;    // already ours
 
-    const candidates = this.enemies.filter(e => !e.dead);
-    const res = gradeDeflection(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint }, {
+    // Freeze the blade half of the grade NOW; the aim half waits for the throw.
+    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto });
+    const cw = owner.boltCatch;
+
+    // ── CAUGHT. Only a driven blade takes hold of a bolt: `snap.caught` is the
+    // same speed/closing test that has always separated a DEFLECT from a BLOCK.
+    // A blade you merely parked in the way still blocks, and a block still
+    // scatters — which is precisely what stops catch-and-throw from collapsing
+    // into hold-the-button-and-win.
+    if (cw && snap.caught) {
+      // Stack them along the blade so three caught in a flurry are three
+      // visible objects and not one. add() has to come FIRST: it is the thing
+      // that can refuse (the blade is already carrying maxHeld), and a bolt
+      // pinned to a blade that no window is tracking never gets thrown at all.
+      const slot = cw.count;
+      _v2.set(Math.cos(slot * 2.4) * 0.055, 0, Math.sin(slot * 2.4) * 0.055);
+      const accepted = cw.add({ bolt, snap }, {
+        manual: !hit.auto,
+        bladeHeld: owner.control ? owner.control.bladeHeld : false,
+        chest: owner.chest,
+        incoming: snap.boltDir,
+      });
+      if (accepted) {
+        this.bolts.hold(bolt, owner.saber, clamp(hit.auto ? 0.55 : snap.bladeT, 0.15, 0.92), _v2);
+        if (owner.control) owner.control.catchHold = cw.t;
+        owner.saber.strain(0.35);
+        this.particles.sparkBurst(bladePoint, snap.normal, hit.auto ? 6 : 12, { speed: 5.5 });
+        audio.deflect(bladePoint, hit.auto ? 0 : 1);
+        this.onDeflectFeedback?.(GRADE.DEFLECT, bladePoint,
+          hit.auto ? 'auto-guard caught it — aim and release' : 'caught — look where you want it');
+        return;
+      }
+    }
+
+    // ── BLOCK. Not caught, not aimed: it goes somewhere and that is the point.
+    const res = gradeCaught(snap, {
       aimOrigin: owner.camera.pos,
       aimDir: owner.aimDir,
-      candidates,
+      candidates: this.enemies.filter(e => !e.dead),
       flow: owner.flow,
       returnCone: owner.boonMods.returnCone,
       aimMode: this.settings.deflectAim || 'reticle',
     });
-
     bolt.pos.copy(bladePoint);
     bolt.prev.copy(bladePoint);
     bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
-    bolt.damage *= res.damageMul * owner.boonMods.deflectDamage;
-    bolt.team = 0;
-    bolt.owner = owner;
-    bolt.deflected = true;
-    bolt.deflector = owner;
-    bolt.color.setHex(res.grade >= GRADE.RETURN ? 0xfff0a0 : bolt.color.getHex());
-    bolt.life = Math.max(bolt.life, 2.2);
-
-    owner.saber.strain(0.45 + res.grade * 0.15);
-    owner.deflects++;
-    owner.combo++;
-    owner.comboTimer = 3.2;
-    this.particles.sparkBurst(bladePoint, res.normal, 8 + res.grade * 8, { speed: 6 + res.grade * 4 });
-    this.particles.plasma.spawn(bladePoint, _v1.set(0, 0, 0),
-      { life: 0.16, size: 0.34 + res.grade * 0.16, drag: 1, gravity: 0, color: owner.saber.color.getHex(), alpha: 0.9 });
+    this._creditDeflect(owner, bolt, res, bladePoint);
     audio.deflect(bladePoint, res.grade);
-
-    const gain = [0.03, 0.06, 0.13, 0.24][res.grade];
-    owner.addFlow(gain);
-    owner.score += [10, 25, 70, 160][res.grade];
-    owner.camera.addShake(0.03 + res.grade * 0.02);
-    if (res.grade === GRADE.PERFECT) {
-      owner.perfects++;
-      this.addHitstop(0.07);
-      this.engine.flash(0.09);
-      this.notifyFloating(bladePoint, 'PERFECT RETURN', '#ffe9a0');
-    } else if (res.grade === GRADE.RETURN) {
-      this.notifyFloating(bladePoint, 'RETURN', '#a8f0ff');
-    } else if (res.grade === GRADE.BLOCK) {
-      owner.stamina = Math.max(0, owner.stamina - 4);
+    if (res.grade >= GRADE.RETURN) {
+      this.notifyFloating(bladePoint, GRADE_NAME[res.grade], '#a8f0ff');
+      if (res.grade === GRADE.PERFECT) { this.addHitstop(0.07); this.engine.flash(0.09); }
     }
     this.onDeflectFeedback?.(res.grade, bladePoint, DEFLECT_WHY[res.grade]);
-    this.report({ type: 'deflect', grade: res.grade });
   }
 
   _boltHitTest(bolt, from, to) {

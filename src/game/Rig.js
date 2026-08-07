@@ -362,11 +362,23 @@ function swingEase(t) {
 }
 
 /**
- * Neutral toe-down bias, radians. The boot is authored around the bone, and a
- * bone 3.05° below the contact plane is what puts the sole flat on it —
- * measured off the boot mesh's world AABB in a stance pose, not chosen.
+ * Neutral toe-down bias, radians.
+ *
+ * This was 0.0532 — 3.05° — and it was not a bias, it was a patch. The boot
+ * used to hang entirely in FRONT of the ankle (measured: the joint sat 14.5mm
+ * behind a 214mm boot), so raking the toe down was the only way to get the far
+ * end of it anywhere near the floor. It never laid the sole flat: measured on
+ * a standing figure, the sole met the ground at the toe with the heel 12.5mm
+ * in the air, a 1.2° rake on a foot that is supposed to be standing on it.
+ *
+ * buildFoot now carries a quarter of its length behind the ankle and puts its
+ * underside at the animator's own contact plane, so the sole is level at a
+ * bias of zero and the number goes back to being what it says it is: a few
+ * tenths of a degree of toe-down, small enough that the toe of a 157mm
+ * forefoot drops 1.3mm — inside the 1.5mm of clearance the sole is built with,
+ * so no part of a boot is ever under the floor.
  */
-const SOLE_BIAS = 0.0532;
+const SOLE_BIAS = 0.008;
 
 export class BipedAnimator {
   constructor(rig, opts = {}) {
@@ -378,15 +390,61 @@ export class BipedAnimator {
     this.legLen = (rig.get('thighL')?.length ?? 0.44 * s) + (rig.get('shinL')?.length ?? 0.42 * s);
     this.ankleY = 0.072 * s;                 // ankle above the contact point
     this.footLen = 0.19 * s;
+    // Where the sole rolls over. Read off the boot buildFoot now produces: on
+    // a 214mm boot the ankle sits 57mm behind the heel and 157mm ahead of the
+    // toe, and the metatarsal heads — the ball, which is what a heel-off
+    // actually pivots on — are a bit under half the foot's length forward.
+    this.footBall = 0.45 * this.footLen;
+    this.footHeel = 0.30 * this.footLen;
     this.legRef = this.legLen / (0.86 * s);  // these legs against a reference adult's
 
     // A hip height the legs can actually hold. `hipHeight: 0.95` is what every
     // caller asks for and 0.880 is what the reach clamp silently served, which
     // pinned the standing knee at 94% extension and clipped the whole upward
     // half of the walk bob away. Ask for what is reachable and bob about that.
-    this.standHip = Math.min((opts.hipHeight ?? 0.95) * s, this.ankleY + this.legLen * 0.94);
+    //
+    // 0.965, not 0.94, and the difference is a whole gait's worth of posture.
+    // Knee angle is brutally non-linear in extension: on a 0.44 + 0.42 chain,
+    // 94% of reach is 34.0° of flexion, and the figure carried all 34 of them
+    // through mid-stance at every speed — a permanent half-crouch that no
+    // amount of work on the feet was ever going to stop reading as awkward.
+    // 96.5% takes it to 26.3°. It cannot go much further: a human's stance
+    // knee is ~5° off straight, which needs 99.5% of reach, and solveIK clamps
+    // at 98.5% — past that the drawn foot leaves the point it is standing on,
+    // which is the far worse of the two artefacts and is what `legUse < 0.985`
+    // in tools/checks/animation.mjs exists to forbid.
+    this.standHip = Math.min((opts.hipHeight ?? 0.95) * s, this.ankleY + this.legLen * 0.965);
     this.hipHeight = this.standHip;
-    this.stanceWidth = 0.115 * s;
+
+    // BASE OF SUPPORT — one number per gait, not one number.
+    //
+    // This was a single 0.115 at every speed, which drew a 23.0cm track at a
+    // walk. A human walks on an 8-13cm track: the swing foot passes INSIDE the
+    // stance leg, and a runner lands very nearly on the midline. 23cm is
+    // double the top of the human band, and a figure translating forward with
+    // its feet that far apart is the literal definition of the scuttle the
+    // player kept calling a crab. Standing is the widest of the three, because
+    // that is the order a real base of support goes in — you stand hip-width
+    // and you walk narrower than you stand.
+    this.stanceWidth = 0.090 * s;            // ankles at rest: hip-width, 18cm track
+    this.walkTrack = 0.058 * s;              // 11.6cm — mid-band for a human walk
+    this.runTrack = 0.048 * s;               // 9.6cm; a real runner is narrower
+    // still, but the boot is 12.4cm across and two of them cannot occupy a
+    // 5cm track without being drawn through each other.
+
+    // How far INSIDE the hip joint the knee is poled. A femur adducts: on a
+    // 19.0cm pelvis the knees sit ~15cm apart, closer together than the hips
+    // they hang from. The pole used to be planted 10cm OUTBOARD of a foot that
+    // was already 11.5cm out, which splayed the femur 9.1° the wrong way and
+    // left the knees 34.7cm apart — wider than the pelvis, wider than the
+    // shoulders, and the widest thing in the whole silhouette.
+    this.kneeIn = 0.030 * s;
+    // Lateral narrowing at mid-swing. Without it every foot travels a straight
+    // line between two points at the same offset from the midline, so its
+    // lateral position over a whole cycle is CONSTANT — measured 0.0cm of
+    // travel — and the two feet run on parallel rails.
+    this.swingNarrow = 0.026 * s;
+
     this.stepTrigger = 0.105 * s;            // stance error that provokes a step
 
     this.phase = 0;
@@ -425,7 +483,7 @@ export class BipedAnimator {
       from: new THREE.Vector3(), to: new THREE.Vector3(),
       normal: new THREE.Vector3(0, 1, 0), toN: new THREE.Vector3(0, 1, 0),
       yaw: 0, fromYaw: 0, toYaw: 0,
-      lift: 0, pitch: 0, ankleRise: 0,
+      lift: 0, pitch: 0, ankleRise: 0, ankleFwd: 0,
       grounded: true, air: false, t: 1, dur: 0.3, sinceStep: 9,
     };
   }
@@ -543,10 +601,16 @@ export class BipedAnimator {
     // are the same line, so the swing foot has to pass the planted one. Widen
     // the stance and lift the swing higher for it, exactly as a person does
     // when they cross-step: measured shin-to-shin 0.0cm at a 3 m/s strafe
-    // without it, one leg drawn inside the other.
-    this._gSep = this.stanceWidth * lerp(1, 0.55, runness) * lerp(1, 1.7, lateral);
+    // without it, one leg drawn inside the other. The lateral multiplier is
+    // 2.4 rather than the old 1.7 because it now multiplies a walking track
+    // half the size, and it is the absolute clearance that has to survive.
+    this._gSep = lerp(this.stanceWidth, lerp(this.walkTrack, this.runTrack, runness), moveGate)
+      * lerp(1, 2.4, lateral);
     this._gLift = lerp(1, 2.0, lateral);
     this._gToeOut = lerp(0.13, 0.03, runness);
+    // A sidestep already has to cross one leg past the other and has had its
+    // stance widened for it; do not also drag the swing foot inward there.
+    this._gNarrow = this.swingNarrow * moveGate * (1 - lateral);
 
     // Starting to walk should start on the foot a person would start on — the
     // one already furthest behind — not wherever the frozen phase left off.
@@ -649,6 +713,17 @@ export class BipedAnimator {
         // hip — that is what a flexed knee is for — and comes down over the
         // last fifth of the swing.
         const u = clamp(f.t / 0.97, 0, 1);
+        // THE SWING FOOT PASSES INSIDE THE STANCE LEG.
+        //
+        // from and to sit at the same distance from the midline, so a straight
+        // lerp between them holds the foot's lateral offset EXACTLY constant:
+        // measured 0.0cm of lateral travel per foot over a whole cycle, at
+        // every speed. Two feet on two parallel rails is a crab, whatever the
+        // rest of the body is doing. A real swing leg is drawn in under the
+        // pelvis as it passes the stance leg and swings back out to plant, and
+        // sin(pi*u) is zero at both ends of that, so the plant still lands on
+        // the fixed world point the gait chose.
+        f.pos.addScaledVector(left, -side * this._gNarrow * Math.sin(Math.PI * u));
         const arc = Math.sin(Math.PI * Math.pow(u, 1.3)) * (1 - smoothstep(0.80, 1, u));
         f.lift = arc * clamp(0.055 + 0.05 * vn, 0.05, 0.30) * s * this._gLift;
         f.pos.y = lerp(f.from.y, f.to.y, e) + f.lift;
@@ -689,6 +764,27 @@ export class BipedAnimator {
       // rolls: pitch the sole and the ankle lifts by the length of whichever
       // end of it is still down. That is where a long stride finds its reach.
       f.ankleRise = this.footLen * Math.sin(Math.abs(f.pitch)) * (f.pitch < 0 ? 0.85 : 0.4);
+
+      // A ROLLING FOOT PIVOTS ON THE END THAT IS DOWN, NOT ON THE ANKLE.
+      //
+      // The contact point is pinned and the ankle sat directly over it, so the
+      // whole sole swept about the ankle as the foot pitched — and the part of
+      // it touching the ground swept with it. Measured on the drawn boot, the
+      // vertices actually in contact: 4.4mm per frame through MID-stance at a
+      // 4.6 m/s run with the sole flat and the full weight on it (0.31 m/s of
+      // ground speed), 15.0mm at toe-off, 1.5mm at a 1.6 m/s walk. The
+      // solver's own slide number reads 0.00mm for every one of those frames,
+      // because `f.pos` is copied verbatim and cannot move by construction —
+      // it is the geometry hung off it that was skating.
+      //
+      // A real foot rolls over the heel until it is flat and over the ball
+      // after that, and the joint travels on an arc about whichever it is.
+      // Ankle relative to the pivot is (-d, ankleY) with d the pivot's distance
+      // ahead of the ankle; rotating that by the pitch and adding d back gives
+      // the two terms below. Both branches share -ankleY·sin(pitch), which is
+      // the shin simply leaning over its own contact.
+      const pivot = f.pitch < 0 ? this.footBall : -this.footHeel;
+      f.ankleFwd = pivot * (1 - Math.cos(f.pitch)) - this.ankleY * Math.sin(f.pitch);
     }
 
     /* ── pelvis ───────────────────────────────────────────────────────── */
@@ -719,8 +815,11 @@ export class BipedAnimator {
     // ground constrains the pelvis exactly as hard as a planted one does.
     if (p.grounded) {
       for (const f of this.feet) {
-        const ax = hipX + left.x * f.side * 0.095 * s - f.pos.x;
-        const az = hipZ + left.z * f.side * 0.095 * s - f.pos.z;
+        // against where the ANKLE is, roll included — a foot up on its ball at
+        // toe-off has carried its joint 35mm further forward than the point it
+        // is standing on, and that is exactly the frame the reach is tightest.
+        const ax = hipX + left.x * f.side * 0.095 * s - (f.pos.x + Math.sin(f.yaw) * f.ankleFwd);
+        const az = hipZ + left.z * f.side * 0.095 * s - (f.pos.z + Math.cos(f.yaw) * f.ankleFwd);
         const vmax = Math.sqrt(Math.max(0, R * R - (ax * ax + az * az)));
         hipY = Math.min(hipY, f.pos.y + this.ankleY + f.ankleRise + vmax + 0.02 * s);
       }
@@ -745,7 +844,10 @@ export class BipedAnimator {
     // Transverse pelvis rotation: the swing leg's hip leads. Frontal list: the
     // unsupported side drops. Between them they are most of what makes a walk
     // read as weight being carried rather than two legs on a rail.
-    const pelvisYaw = -lerp(0.055, 0.12, runness) * moveGate * Math.cos(this.phase * TAU);
+    // 0.085 at a walk, not 0.055: that read 6.3° of total transverse rotation
+    // where a person walking comfortably turns the pelvis about 10°, and a
+    // pelvis that does not turn is a pelvis being carried sideways.
+    const pelvisYaw = -lerp(0.085, 0.12, runness) * moveGate * Math.cos(this.phase * TAU);
     const pelvisList = lerp(0.055, 0.030, runness) * moveGate * swayPh
       + Math.sin(this.idlePhase * TAU) * 0.022 * idleGate;
     this.spineTwist = pelvisYaw;
@@ -800,10 +902,28 @@ export class BipedAnimator {
       // Knee poled along the foot's OWN heading, so on a turn the knee tracks
       // the foot instead of the chest.
       _b5.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
-      _b6.copy(f.pos).addScaledVector(_b5, 0.34 * s)
-        .addScaledVector(left, f.side * 0.10 * s).setY(f.pos.y + 0.46 * s);
+      _b6.copy(f.pos).addScaledVector(_b5, 0.34 * s).setY(f.pos.y + 0.46 * s);
+      // THE FEMUR ADDUCTS.
+      //
+      // The pole's lateral place used to be the foot's plus 10cm OUTBOARD, so
+      // it stood at ±21.5cm and dragged the knee out to ±17.3cm: knees 34.7cm
+      // apart on a 19.0cm pelvis, a femur splayed 9.1° out of vertical where a
+      // real one leans about 6° IN, and — measured off the built figure — the
+      // widest point of the entire silhouette from the ankle to the hip, wider
+      // than the robe hem and wider than the shoulders. That one number is why
+      // the legs read as bow-legged and why the body read as a cone standing
+      // on an A-frame.
+      //
+      // Anchored to the HIP rather than to the foot: a knee belongs under the
+      // joint it hangs from whatever the foot below it is doing, which also
+      // keeps the pole sane when the foot is out at the end of a long stride.
+      rig.worldPos(upper, _b4);
+      _b6.addScaledVector(left,
+        -_b3.subVectors(_b6, _b4).dot(left) - f.side * this.kneeIn);
       const ankle = _b7.copy(f.pos).addScaledVector(f.normal, this.ankleY);
       ankle.y += f.ankleRise;
+      // and forward along the foot's own heading as it rolls over its contact
+      ankle.addScaledVector(_b5, f.ankleFwd);
       rig.solveIK(upper, lower, ankle, _b6);
 
       if (rig.get(foot)) {

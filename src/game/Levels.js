@@ -13,11 +13,13 @@ import {
   addColumn, addArch, addBrokenWall, addColossus, addOutcrop, addScree,
   addDebrisField, addCrateStack, addRuin, addOutpost, addGantry, addPipeRun,
   addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
+  addAntenna, addPlinth,
 } from '../world/Props.js';
+import { addHorizon } from '../world/Scenery.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { DOJO_LEVEL } from './Dojo.js';
 
-const rng = makeRng(20250805);
+let rng = makeRng(20250805);
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Composition                                                           */
@@ -128,8 +130,157 @@ export function run(world, from, to, count, place, opts = {}) {
   return placed;
 }
 
-/** Reset the occupancy grid at the start of a dressing pass. */
-export function beginDressing(world) { world._siteTaken = []; }
+/**
+ * Reset the occupancy grid at the start of a dressing pass — and the stream
+ * the whole pass draws from.
+ *
+ * The reseed is not tidiness. The generator is module scope and was never
+ * reset, so a level's layout was a function of HOW MANY TIMES ANYTHING HAD
+ * DRESSED ITSELF SINCE THE PAGE LOADED. Measured: the dune sea's fraction of
+ * walkable ground with nothing over 1.2 m within 25 m came out at 6.6% dressed
+ * on its own and 15.5% dressed after three other levels had run — a 2.4× swing
+ * with no code change between the two. That means a player who quits to the
+ * menu and redeploys gets a different, and possibly much emptier, level, and it
+ * means no measurement of a dressing pass can be trusted or repeated.
+ *
+ * @param {number} [seed]  the level's own; omit for the shared default.
+ */
+export function beginDressing(world, seed) {
+  world._siteTaken = [];
+  rng = makeRng(seed ?? 20250805);
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Ground                                                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * NOWHERE BARREN, and the measurement that says so.
+ *
+ * Sampled on a 4 m grid over the walkable r = 90 m disc, asking how far the
+ * nearest object with a silhouette (radius ≥ 0.35 m) is:
+ *
+ *     dunes  55.1% of the ground had NOTHING within 12 m, median gap 13.4 m
+ *     canyon 36.2%,  median 8.7 m
+ *     arena  33.1%,  median 6.2 m
+ *     hangar  1.0%,  median 0.0 m
+ *
+ * A third to a half of every outdoor level was ground you could stand on with
+ * nothing in reach — while the hangar, which nobody complained about, was at
+ * one per cent. That is what "barren" means numerically, and no amount of
+ * architecture at the rim fixes it: the fix has to be ON the floor.
+ *
+ * It also has to be nearly free, which is what makes `addScree` the right tool
+ * rather than the obvious one: it is ONE instanced draw call for hundreds of
+ * stones, it beds every one onto the heightfield, and it adds no colliders and
+ * casts no shadows. The whole ground of a level is four draw calls.
+ *
+ * The grain LADDER is the part that matters, and it is why this is a helper
+ * rather than four copy-pasted calls: real ground is graded, and each grade
+ * answers a different question. Landmarks are what you see across the level,
+ * boulders are what you fight around, cobble is what you read as ground while
+ * standing on it, grit is what you only ever see at your own feet. One size at
+ * one density reads as gravel texture sprayed onto a plane.
+ *
+ * `addScree` shrinks its chips toward the rim (×0.45 at the edge against ×1.5
+ * at the centre), so each grade's disc is deliberately centred somewhere
+ * DIFFERENT: four concentric discs is a target, four offset ones is a landscape
+ * whose coarse ground is over there and whose fine ground is here.
+ *
+ * FOUR draw calls, and that is the whole budget — which is why the grades are
+ * fixed passes rather than a loop somebody can turn up. The first version of
+ * this used seven per call and put the arena at 502 draw calls against a
+ * starting 351.
+ */
+function strewGround(world, opts = {}) {
+  const T = world.terrain;
+  const at = (x, z) => new THREE.Vector3(x, T ? T.height(x, z) : 0, z);
+  const seed = opts.seed ?? 3300;
+  const R = opts.radius ?? 130;
+  const mat = opts.mat || null;
+  const bearing = opts.bearing ?? 0.7;
+  const put = (k, rad, count, size, s) => {
+    const a = bearing + (k / 3) * TAU;
+    addScree(world, at(Math.cos(a) * R * 0.3, Math.sin(a) * R * 0.3), {
+      radius: rad, count, size, inner: opts.inner ?? 0, seed: seed + s, mat,
+    });
+  };
+  /* Landmarks — the grade the SILHOUETTE measurement is about. With only the
+   * three scree grades below, 16% of the dune sea still had nothing over 1.2 m
+   * within 25 m of it: everything else here is ankle to knee, and every big
+   * thing on the level is in a CLUSTER. Clustering is right — things gather
+   * because something gathered them — but it leaves voids between the clusters
+   * by construction, and this is what fills them.
+   *
+   * NOT scree. `addScree` orients its chips on all three axes with no limit,
+   * which is exactly right for a 20 cm chip and catastrophic at three metres:
+   * its geometry is an icosahedron flattened to 0.52, so a large one landing
+   * edge-on is a five-metre blade standing vertically in the sand. That is
+   * what the first screenshot of this pass showed, unmistakably, and it is why
+   * this grade is the boulder maker instead — real broken shapes, tilt capped
+   * at ±0.35 rad, and each one bedded to its own depth. Five draw calls for
+   * fifty stones, against one for the scree it replaces.
+   */
+  {
+    const a = bearing + 1.7;
+    addBoulderCluster(world, at(Math.cos(a) * R * 0.22, Math.sin(a) * R * 0.22), {
+      radius: R * 0.94, count: Math.round(50 * (opts.landmarks ?? 1)),
+      size: 2.3, seed: seed + 61, mat,
+    });
+  }
+  // Boulders — the grade that reads as cover from across the level. Held at
+  // 0.95 for the same reason: past about 1.5 m across, a scree chip stops
+  // reading as a stone lying on the ground and starts reading as a shard.
+  put(1, R * 0.94, Math.round(220 * (opts.boulders ?? 1)), 0.95, 11);
+  // Cobble — the grade you read as ground while standing on it.
+  put(2, R * 0.98, Math.round(460 * (opts.cobble ?? 1)), 0.62, 17);
+  // Grit — only worth drawing where it can be seen, so it stays near the fight.
+  put(0.5, R * 0.55, Math.round(520 * (opts.grit ?? 1)), 0.22, 31);
+  return 8;
+}
+
+/**
+ * WRECKAGE AND BONES scattered over the mid distance: the things that are too
+ * small to be architecture and too big to be litter, which is exactly the size
+ * band an empty level is missing. Placed as clusters, because a hull plate does
+ * not land on its own — whatever tore it off scattered the rest of it nearby.
+ */
+function strewWrecks(world, opts = {}) {
+  const n = opts.count ?? 5;
+  let placed = 0;
+  for (let k = 0; k < n; k++) {
+    const site = findSite(world, opts.rmin ?? 55, opts.rmax ?? 150, {
+      clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20,
+    });
+    if (!site) continue;
+    placed++;
+    // A ribcage of hull frames, half swallowed: the vertical members are what
+    // give it a silhouette at range, and the silhouette is the whole point.
+    const yaw = rng() * TAU;
+    for (let i = 0; i < 3 + (rng() * 3 | 0); i++) {
+      const d = (i - 1.5) * (2.2 + rng() * 1.6);
+      const px = site.pos.x + Math.cos(yaw) * d, pz = site.pos.z + Math.sin(yaw) * d;
+      const y = world.terrain ? world.terrain.height(px, pz) : 0;
+      const h = 1.4 + rng() * 2.6;
+      const len = 3.0 + rng() * 2.4;
+      /* Buried to a quarter of its height and tilted no more than 0.16 rad
+       * about its long axis. Both numbers come off the same arithmetic: a plate
+       * `len` long tilted by t lifts one end by len·sin(t)/2, and it only stops
+       * floating if that is less than how deep the plate sits. At the first
+       * version's 0.34 centre height and ±0.30 rad, a 5.4 m plate raised an end
+       * 0.80 m out of ground it was only sunk 0.22-0.64 m into — visible in the
+       * first screenshot as slabs hanging over the sand. 0.25·h against
+       * 5.4·sin(0.16)/2 = 0.43 m keeps the worst case buried. */
+      addWall(world, new THREE.Vector3(px, y + h * 0.25, pz),
+        new THREE.Vector3(0.5 + rng() * 0.6, h, len),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(
+          (rng() - 0.5) * 0.32, yaw + (rng() - 0.5) * 0.5, (rng() - 0.5) * 0.32)),
+        propMaterials().hull);
+    }
+    addDebrisField(world, site.pos, { radius: 9 + rng() * 5, seed: (opts.seed ?? 2600) + k, count: 30 });
+  }
+  return placed;
+}
 
 
 export const LEVELS = {
@@ -156,12 +307,39 @@ export const LEVELS = {
       horizonAmount: 0.85, horizonScale: 0.75, horizonColor: 0x9a7f5c,
     },
     ambience: { wind: 0.12, windFreq: 520, drone: 0.05 },
-    dust: { count: 1300, color: 0xd8c8a8, opacity: 0.34, size: 26 },
-    grass: 0,
+    dust: {
+      count: 1300, color: 0xd8c8a8, opacity: 0.34, size: 26,
+      // The dune sea is where weather belongs hardest: nothing here blocks it,
+      // so a front arrives across the whole skyline at once. At the peak the
+      // fog goes 0.0042 → 0.0098 (the cap — see FOG_INDOOR_LIMIT in Scenery),
+      // which takes the range at which half the light survives from 198 m to
+      // 85 m: the far ranges go, and the level is a different place for forty
+      // seconds. The wind more than triples, which is what lays the tussock
+      // flat and turns the sand sheets on.
+      weather: { peak: 1.0, period: 118, duration: 44, fogGain: 3.6, windGain: 2.6, unrest: 0.16 },
+    },
+    // A dune sea is not bare sand, it is bare sand with dry tussock in the
+    // troughs where the little water there is collects. Sparse on purpose — the
+    // clump field puts it in 36 m patches, and the slope term keeps it off the
+    // slip faces, so it reads as the desert having a grain rather than a lawn.
+    grass: 0.34,
+    grassTint: [0xb9a463, 0x7d6c3a],
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
-      beginDressing(world);
+      beginDressing(world, 20250805 + 11);
+
+      // ── The land beyond the land, first: three dune ranges at 168/246/336 m,
+      // low and long rather than craggy. The heightfield is 560 m across and the
+      // camera sees 520, so without these you can see where the world stops.
+      addHorizon(world, {
+        seed: 4401,
+        layers: [
+          { radius: 168, low: 9, high: 24, shade: 0.60 },
+          { radius: 246, low: 17, high: 42, shade: 0.68 },
+          { radius: 336, low: 30, high: 74, shade: 0.76 },
+        ],
+      });
 
       // ── Landmarks first. Three big wrecks, spread apart so that wherever you
       // stand at least one is on your skyline and you can navigate by it. A
@@ -211,21 +389,48 @@ export const LEVELS = {
       });
 
       // ── Rock. Outcrops come in groups along a fault, with scree trailing off
-      // downslope — not as evenly spaced lumps.
-      for (let g = 0; g < 5; g++) {
-        cluster(world, { rmin: 18, rmax: 92, count: 7, spread: 11, falloff: 0.6,
-          satClearance: 2.0, maxSlope: 0.5 }, (pos, i2, d) => {
-          const sz = lerp(2.6, 0.5, clamp(d / 11, 0, 1)) * (0.75 + rng() * 0.5);
+      // downslope — not as evenly spaced lumps. Eight groups, not five, and out
+      // to 155 m rather than 92: the old range stopped at the edge of the fight,
+      // which is precisely why everything past it measured as empty. Capped at
+      // eight because `addRock` is ONE DRAW CALL PER ROCK — the instanced pass
+      // below is what actually fills the map, this is what gives it shape.
+      for (let g = 0; g < 8; g++) {
+        cluster(world, { rmin: 18, rmax: 155, count: 8, spread: 12, falloff: 0.6,
+          satClearance: 2.0, maxSlope: 0.5, tries: 20 }, (pos, i2, d) => {
+          const sz = lerp(2.6, 0.5, clamp(d / 12, 0, 1)) * (0.75 + rng() * 0.5);
           addRock(world, pos.clone().setY(pos.y + sz * 0.22),
             new THREE.Vector3(sz * 1.5, sz * 1.0, sz * 1.3), g * 17 + i2 + 1);
         });
       }
 
-      // ── Loose cover, thinned deliberately: it exists to break sight-lines
-      // near the fight, not to fill the map.
+      // ── The floor itself. See strewGround: this is the pass that takes the
+      // dune sea from "55% of it has nothing within 12 m" to something you can
+      // stand anywhere on and see the ground has a history.
+      strewGround(world, { seed: 3301, radius: 150, inner: 5, landmarks: 1.3 });
+
+      // ── Wrecks in the middle distance. A desert collects them, and each one
+      // is a silhouette to steer by from a long way off.
+      strewWrecks(world, { count: 5, rmin: 60, rmax: 165, seed: 2610 });
+
+      // ── Two masts on the skyline. Verticals read at range where a horizontal
+      // does not, and a desert with nothing standing up in it has no scale.
+      for (let k = 0; k < 2; k++) {
+        const site = findSite(world, 90, 175, { clearance: 14, maxSlope: 0.28, tries: 24 });
+        if (site) addAntenna(world, site.pos, { height: 15 + rng() * 9, seed: 2700 + k });
+      }
+
+      // ── Loose cover near the fight, and dead scrub between it and the rim so
+      // there is no band of ground with nothing on it at all.
       for (let i = 0; i < 10; i++) {
         const site = findSite(world, 14, 46, { bias: 0.7, clearance: 4 });
         if (site) world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.85));
+      }
+      // Broken rock in the middle distance, where the eye needs something to
+      // land on between the fight and the ranges. Real boulder geometry rather
+      // than scree chips, because at 30–120 m the facets still read.
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 30, 150, { clearance: 9, maxSlope: 0.5, tries: 22 });
+        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.7, seed: 4500 + k });
       }
     },
   },
@@ -251,14 +456,42 @@ export const LEVELS = {
       horizonAmount: 1.15, horizonScale: 1.25, horizonColor: 0x8d7452,
     },
     ambience: { wind: 0.07, windFreq: 340, drone: 0.10 },
-    dust: { count: 800, color: 0xd0bc94, opacity: 0.24, size: 22 },
-    grass: 0,
+    dust: {
+      count: 800, color: 0xd0bc94, opacity: 0.24, size: 22,
+      // A bowl ringed by stone is sheltered: the fronts that cross the dune sea
+      // arrive here broken up, so the arena's weather is half the strength and
+      // twice as frequent — squalls that dust the ring and pass, rather than a
+      // wall that swallows the level.
+      weather: { peak: 0.62, period: 86, duration: 30, fogGain: 3.0, windGain: 1.9, unrest: 0.20 },
+    },
+    // Dry scrub in the sand — the stuff that grows in a place people only visit
+    // to kill each other in. Thin: this floor is fought on.
+    grass: 0.26,
+    grassTint: [0xa9985c, 0x6f6234],
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
-      beginDressing(world);
+      beginDressing(world, 20250805 + 23);
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      // ── Mesas behind the ring, at three ranges. The atmosphere block already
+      // says the arena sits INSIDE a landscape; this is the geometry that makes
+      // that true rather than painted, because it moves as you cross the bowl.
+      // Measured before choosing these: the arena's own heightfield already
+      // climbs from -0.8 m at the centre to 64 m of rim at 172 m out. So the
+      // ranges are DELIBERATELY lower here than on the dune sea — they stand
+      // on top of a bowl wall that is doing most of the enclosing already, and
+      // the dune sea's numbers would have put a 29° wall of stone all the way
+      // round the sky.
+      addHorizon(world, {
+        seed: 4402,
+        layers: [
+          { radius: 176, low: 11, high: 26, shade: 0.52 },
+          { radius: 254, low: 20, high: 46, shade: 0.60 },
+          { radius: 348, low: 34, high: 76, shade: 0.70 },
+        ],
+      });
 
       // ── The ring. Still a ring — it is what makes the arena an arena — but
       // built as ARCHITECTURE rather than 44 identical slabs: a colonnade on a
@@ -351,6 +584,65 @@ export const LEVELS = {
           ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
           : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.75));
       }
+
+      // ── The sand of the bowl itself. Nothing here takes a collider, because
+      // this is the floor of the fight and a shin-high rock you cannot see past
+      // your own blade is worse than bare ground. Purely what the eye reads.
+      strewGround(world, { seed: 3302, radius: 108, inner: 4, boulders: 0.85 });
+
+      // ── Rubble banked against the foot of the ring, where thirty-six bays'
+      // worth of fallen masonry would actually be. A wall standing on clean
+      // sand is a wall that was put there this morning. Five arcs of it rather
+      // than one per bay: each covers 72° of the circumference, and five
+      // instanced calls buy what thirty-six would have cost in draw calls.
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * TAU + 0.21;
+        addScree(world, at(Math.cos(a) * (R - 4) * 0.62, Math.sin(a) * (R - 4) * 0.62),
+          { radius: R - 2, inner: R * 0.62, count: 380, size: 0.62, seed: 3400 + i });
+      }
+
+      // ── Fallen columns and broken plinths lying in the sand across the bowl.
+      // Horizontal masonry at ground level is exactly the size band the floor
+      // was missing: too big to be litter, too small to be architecture.
+      for (let k = 0; k < 7; k++) {
+        const site = findSite(world, 20, 50, { clearance: 6, maxSlope: 0.4, tries: 20 });
+        if (!site) continue;
+        // `standing` below about 0.4 is a stump with its shaft lying beside it
+        addColumn(world, site.pos, {
+          height: 5.4 + rng() * 2.4, radius: 0.42 + rng() * 0.18,
+          yaw: rng() * TAU, seed: 3500 + k, standing: 0.14 + rng() * 0.22,
+          mat: M.sandstone,
+        });
+      }
+      for (let k = 0; k < 2; k++) {
+        const site = findSite(world, 24, 52, { clearance: 7, maxSlope: 0.35, tries: 20 });
+        if (site) addPlinth(world, site.pos, { width: 2.6 + rng() * 1.6, height: 1.1 + rng() * 0.7, seed: 3600 + k });
+      }
+
+      // ── And outside the ring: the ground the horde walks in over. It was
+      // completely bare, which is what you saw through every broken bay.
+      strewGround(world, { seed: 3303, radius: 165, inner: 62, boulders: 1.1, grit: 0.3 });
+      strewWrecks(world, { count: 4, rmin: 74, rmax: 168, seed: 2640 });
+      // Two groups, not four: `addRock` is a draw call apiece and the instanced
+      // landmark grade inside strewGround already covers this ground. These are
+      // here for SHAPE — a few hand-sized-to-house-sized rocks with real
+      // silhouettes among the instanced ones — not for coverage.
+      for (let g = 0; g < 2; g++) {
+        cluster(world, { rmin: 66, rmax: 165, count: 7, spread: 13, falloff: 0.6,
+          satClearance: 2.2, maxSlope: 0.55, tries: 20 }, (pos, i2, d) => {
+          const sz = lerp(3.0, 0.6, clamp(d / 13, 0, 1)) * (0.7 + rng() * 0.6);
+          addRock(world, pos.clone().setY(pos.y + sz * 0.2),
+            new THREE.Vector3(sz * 1.5, sz * 1.05, sz * 1.3), 3700 + g * 13 + i2);
+        });
+      }
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 66, 168, { clearance: 11, maxSlope: 0.5, tries: 20 });
+        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.5, seed: 4600 + k });
+      }
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 80, 170, { clearance: 16, maxSlope: 0.55, tries: 24 });
+        if (site) addOutcrop(world, site.pos, { size: 7 + rng() * 5, seed: 3800 + k });
+      }
     },
   },
 
@@ -398,7 +690,7 @@ export const LEVELS = {
       // aisle down the middle to the door, and the clutter of people who work
       // there. Sixteen randomly-rotated concrete blocks scattered over the
       // floor is what a generated level looks like, not what a hangar does.
-      beginDressing(world);
+      beginDressing(world, 20250805 + 37);
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
 
@@ -488,15 +780,33 @@ export const LEVELS = {
       horizonAmount: 1.4, horizonScale: 1.6, horizonColor: 0x5e5347,
     },
     ambience: { wind: 0.09, windFreq: 300, drone: 0.08 },
-    dust: { count: 700, color: 0xc8bca8, opacity: 0.2, size: 18 },
+    dust: {
+      count: 700, color: 0xc8bca8, opacity: 0.2, size: 18,
+      // A gorge funnels weather rather than sheltering from it: the fronts are
+      // narrower and come more often, and what they carry is river haze rather
+      // than sand — so the fog gain is high and the wind gain is not.
+      weather: { peak: 0.78, period: 96, duration: 36, fogGain: 3.4, windGain: 1.6, unrest: 0.24 },
+    },
     grass: 1.0,
     grassTint: [0x8a9a58, 0x4d5c2e],
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
-      beginDressing(world);
+      beginDressing(world, 20250805 + 53);
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      // ── The rim country, beyond the gorge. Tall: the whole read of a canyon
+      // is that you are DOWN in something, and that only works if there is
+      // higher ground behind the walls at more than one distance.
+      addHorizon(world, {
+        seed: 4403,
+        layers: [
+          { radius: 182, low: 26, high: 52, shade: 0.48 },
+          { radius: 262, low: 40, high: 82, shade: 0.56 },
+          { radius: 352, low: 58, high: 124, shade: 0.66 },
+        ],
+      });
 
       // The canyon runs roughly along x, with a water course down the middle.
       // Everything here is placed relative to that axis rather than sprinkled
@@ -570,6 +880,80 @@ export const LEVELS = {
         world.addProp(rng() < 0.3
           ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
           : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.8));
+      }
+
+      // ── The bed of the wash. A river bed is the single most cluttered
+      // surface in any landscape — everything upstream ends up on it, graded by
+      // size — and this one was the emptiest floor in the game at 37% of it
+      // with nothing within 12 m. Three grain sizes, laid along the channel
+      // rather than on a disc, because the water sorted them that way.
+      /* `addScree` beds its chips on the heightfield with no slope test, which
+       * looked like a problem here: a screenshot showed stones apparently
+       * pasted onto a wall. Measured, it is not — nothing inside 90 m of the
+       * wash is steeper than 0.75 (41°) and the steepest BAND, |z| 24-36 m,
+       * averages 0.30, which is 29°. Stones lying at 29° in a gorge are talus,
+       * and talus is what should be there. Pulling this disc in to 74 m to
+       * "fix" it took the fraction of walkable ground with nothing within 12 m
+       * from 0.6% straight back to 14.5%, which is the actual cost of acting
+       * on a screenshot instead of a number. */
+      strewGround(world, { seed: 3310, radius: 118, boulders: 1.1, cobble: 1.4, grit: 1.0,
+        landmarks: 1.4, mat: M.stone });
+      // Along the CHANNEL rather than on a disc. Kept inside |z| < 50 so a band
+      // reaches the FOOT of a wall, where talus belongs, and not up its face.
+      for (let k = 0; k < 8; k++) {
+        const cx = (k - 3.5) * 26;
+        addScree(world, at(cx, (rng() - 0.5) * 22),
+          { radius: 30, count: 300, size: 0.72, seed: 3900 + k, mat: M.stone });
+      }
+
+      // ── Boulders shed off both walls, all the way down the gorge. Seven
+      // outcrops was one every 24 m of a 165 m canyon; this is the talus that
+      // should be lying between them.
+      for (let k = 0; k < 8; k++) {
+        const x = (rng() - 0.5) * 180;
+        const side = rng() < 0.5 ? -1 : 1;
+        const z = side * (14 + rng() * 32);
+        if (!siteOk(world, x, z, { clearance: 7, maxSlope: 0.9 })) continue;
+        addBoulderCluster(world, at(x, z), { radius: 8, count: 12, size: 1.45, seed: 4000 + k });
+      }
+
+      // ── Driftwood and wreck plate stranded along the high-water line. This
+      // is the band the eye follows down a canyon, and it was bare.
+      for (let k = 0; k < 12; k++) {
+        const x = (rng() - 0.5) * 185;
+        const side = rng() < 0.5 ? -1 : 1;
+        const z = side * (5 + rng() * 13);
+        const y = T.height(x, z);
+        if (y < wet - 0.2 || y > wet + 1.8) continue;
+        if (!siteOk(world, x, z, { clearance: 3.4, maxSlope: 0.5 })) continue;
+        const yaw = rng() * TAU;
+        // flat and low, lying with the current rather than standing in it
+        addWall(world, V(x, y + 0.22, z),
+          new THREE.Vector3(2.4 + rng() * 4.5, 0.4 + rng() * 0.4, 0.7 + rng() * 1.1),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler((rng() - 0.5) * 0.3, yaw, (rng() - 0.5) * 0.4)),
+          rng() < 0.5 ? M.hull : M.wood);
+      }
+      // the shingle bank the strandline sits on, as two wide passes rather than
+      // one per piece of driftwood
+      for (let k = 0; k < 2; k++) {
+        addScree(world, at((rng() - 0.5) * 120, (k ? 1 : -1) * (9 + rng() * 8)),
+          { radius: 58, count: 420, size: 0.34, seed: 4100 + k, mat: M.stone });
+      }
+
+      // ── More spires, and a second rock arch further down: navigating a
+      // corridor needs landmarks along it, not one at the middle.
+      for (let i = 0; i < 14; i++) {
+        const x = (rng() - 0.5) * 190, z = (rng() - 0.5) * 96;
+        const y = T.height(x, z);
+        if (y < wet + 2.5) continue;
+        if (!siteOk(world, x, z, { clearance: 6, maxSlope: 0.85 })) continue;
+        world.addProp(makeSpire(world, V(x, y + 3, z), 4 + rng() * 5));
+      }
+      const arch2 = findSite(world, 60, 130, { clearance: 18, maxSlope: 0.7, tries: 22 });
+      if (arch2) addRockArch(world, arch2.pos, { span: 19, height: 14, seed: 4200 });
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 70, 160, { clearance: 16, maxSlope: 0.8, tries: 24 });
+        if (site) addOutcrop(world, site.pos, { size: 6.5 + rng() * 6, seed: 4300 + k });
       }
     },
   },

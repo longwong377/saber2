@@ -53,6 +53,7 @@
  */
 
 import * as THREE from 'three';
+import { ground } from '../world/Scenery.js';
 
 const _lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const _WHITE = new THREE.Color(1, 1, 1);
@@ -116,6 +117,7 @@ const FRAG = /* glsl */`
   uniform float uCloudSun;     // radiance of a white cloud face square to the sun
   uniform float uCloudAmb;     // radiance of a white cloud face lit by sky + ground
   uniform vec3  uSkyAmb;       // colour of the skylight falling on the deck
+  uniform float uStorm;        // 0 clear .. 1 the front is on top of you
 
   varying vec3 vDir;
 
@@ -171,27 +173,41 @@ const FRAG = /* glsl */`
 
     // ── horizon silhouette ────────────────────────────────────────────
     // A ridge line as a function of compass bearing, sitting just above the
-    // true horizon and fading into haze. Three scales so it reads as ranges
-    // behind ranges rather than one sawtooth.
+    // true horizon and fading into haze. FOUR scales, because three is not
+    // enough to read as ranges: what the eye counts is not ridges, it is
+    // OVERLAPS — each range has to be seen crossing in front of the one behind
+    // it, and with three layers there are only two such crossings anywhere in
+    // the frame. The fourth sits highest, hazes hardest and moves least, which
+    // is what a range twenty kilometres out actually does.
+    //
+    // Scenery.js now puts REAL ridges at 170/250/340 m with real parallax.
+    // These are what stands behind those, so they are deliberately pushed
+    // further toward the haze than they used to be: the near end of the
+    // distance is geometry's job now, and a painted range competing with a
+    // solid one at the same tone is what makes a backdrop look like a backdrop.
     if (uHorizonAmt > 0.001) {
       float bearing = atan(dir.z, dir.x);
+      float vfar = fbm3(vec2(bearing * 1.4 + 21.0, 6.5));
       float far  = fbm3(vec2(bearing * 2.1, 0.0));
       float mid  = fbm3(vec2(bearing * 3.4 + 5.0, 1.5));
       float near = fbm3(vec2(bearing * 5.3 + 11.0, 3.0));
 
+      float ridgeVF   = (vfar - 0.28) * 0.38 * uHorizonScale * uHorizonAmt;
       float ridgeFar  = (far  - 0.30) * 0.30 * uHorizonScale * uHorizonAmt;
       float ridgeMid  = (mid  - 0.32) * 0.24 * uHorizonScale * uHorizonAmt;
       float ridgeNear = (near - 0.34) * 0.19 * uHorizonScale * uHorizonAmt;
 
       // The far range is hazier and higher; the near one is darker and lower.
       float aaF = fwidth(el) * 1.5 + 0.0006;
+      float mV = smoothstep(ridgeVF + aaF, ridgeVF - aaF, el);
       float mF = smoothstep(ridgeFar + aaF, ridgeFar - aaF, el);
       float mM = smoothstep(ridgeMid + aaF, ridgeMid - aaF, el);
       float mN = smoothstep(ridgeNear + aaF, ridgeNear - aaF, el);
       // only below the skyline, and only just above it
       float win = smoothstep(-0.05, 0.01, el);
-      mF *= win; mM *= win; mN *= win;
+      mV *= win; mF *= win; mM *= win; mN *= win;
 
+      vec3 cVFar = mix(uHazeColor, uHorizonColor, 0.08);
       vec3 cFar  = mix(uHazeColor, uHorizonColor, 0.18);
       vec3 cMid  = mix(uHazeColor, uHorizonColor, 0.32);
       vec3 cNear = mix(uHazeColor, uHorizonColor, 0.50);
@@ -199,13 +215,21 @@ const FRAG = /* glsl */`
       float lit = clamp(dot(normalize(vec3(dir.x, 0.0, dir.z)),
                             normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0, 1.0);
       lit = lit * lit;
+      cVFar *= 1.0 + lit * 0.18;
       cFar  *= 1.0 + lit * 0.16;
       cMid  *= 1.0 + lit * 0.14;
       cNear *= 1.0 + lit * 0.12;
 
+      col = mix(col, cVFar, mV);  alpha = max(alpha, mV * 0.80);
       col = mix(col, cFar, mF);   alpha = max(alpha, mF * 0.88);
       col = mix(col, cMid, mM);   alpha = max(alpha, mM * 0.93);
       col = mix(col, cNear, mN);  alpha = max(alpha, mN * 0.96);
+
+      // A front takes the distance out. This is the term that makes a squall
+      // change what the level IS rather than just what is floating in it: the
+      // ranges go first, from the bottom up, and come back as it passes.
+      float eaten = uStorm * (1.0 - smoothstep(0.0, 0.16, el));
+      col = mix(col, uHazeColor, clamp(eaten * 1.25, 0.0, 1.0));
     }
 
     // ── clouds ────────────────────────────────────────────────────────
@@ -327,10 +351,14 @@ const FRAG = /* glsl */`
       alpha = max(alpha, cw);
 
       // and a wash of haze right at the skyline so the deck, the silhouette
-      // and the sky all meet in the same colour
-      float band = (1.0 - smoothstep(0.0, 0.10, el));
+      // and the sky all meet in the same colour. A front lifts that band a long
+      // way up the dome — dust does not stay near the ground, and a storm that
+      // only fogs the bottom four degrees of the sky reads as a bug in the fog.
+      float bandTop = mix(0.10, 0.62, uStorm);
+      float band = (1.0 - smoothstep(0.0, bandTop, el));
       band *= band;
-      col = mix(col, uHazeColor, band * 0.92);
+      float wash = band * mix(0.92, 1.0, uStorm);
+      col = mix(col, uHazeColor, wash);
       alpha = max(alpha, band * 0.86);
     }
 
@@ -363,6 +391,7 @@ export class SkyDome {
         uCloudSun:     { value: 1.0 },
         uCloudAmb:     { value: 0.42 },
         uSkyAmb:       { value: new THREE.Color(1, 1, 1) },
+        uStorm:        { value: 0 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -446,9 +475,20 @@ export class SkyDome {
 
   setSun(dir) { this.mat.uniforms.uSunDir.value.copy(dir).normalize(); }
 
-  /** Keep the dome centred on the camera so it never has parallax. */
+  /**
+   * Keep the dome centred on the camera so it never has parallax, and read the
+   * weather.
+   *
+   * The dome PULLS the storm rather than being pushed it, on purpose: there is
+   * exactly one weather scheduler (Scenery's `ground.weather`) and everything
+   * downstream of it reads the same number in the same frame. Handing the sky
+   * its own copy through Engine would be a second place that could disagree,
+   * and two systems each deciding independently how stormy it is is precisely
+   * what reads as fake.
+   */
   update(dt, camera) {
     this.mat.uniforms.uTime.value += dt;
+    this.mat.uniforms.uStorm.value = ground.weather ? ground.weather.intensity : 0;
     if (camera) this.mesh.position.copy(camera.position);
   }
 

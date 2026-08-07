@@ -14,7 +14,7 @@
  */
 
 import * as THREE from 'three';
-import { clamp, lerp, damp, smoothstep, shortestArc, quatToRotVec, Ema } from '../engine/MathUtil.js';
+import { clamp, lerp, damp, smoothstep, shortestArc, quatToRotVec, Ema, TAU } from '../engine/MathUtil.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
@@ -39,6 +39,39 @@ const YAXIS = new THREE.Vector3(0, 1, 0);
  * rather than making one you never began.
  */
 const ASSIST_LEAD = 0.9;
+
+/**
+ * THRUST envelope, in seconds. The old thrust was `this.thrust = 1` followed by
+ * `damp(thrust, 0, 9, dt)` every frame — an instantaneous spike that had decayed
+ * to 22% by 150 ms. The hands chase it through a spring whose own rise time is
+ * ~400 ms (lin 118, linD 15 → ω 10.9 rad/s, ζ 0.69), so the target was gone
+ * before the hands could get anywhere near it: a standing thrust moved the tip
+ * 11.5 cm. That is not a stab, and it is exactly why "how do you stab when
+ * standing still?" has no answer in the current build.
+ *
+ * A real envelope instead: drive to full in `rise`, HOLD there through `hold` so
+ * the spring has time to arrive, then recover. The hold is the part that makes
+ * it read as a lunge rather than a twitch.
+ */
+const THRUST = { rise: 0.07, hold: 0.13, fall: 0.20 };
+
+/**
+ * How far a thrust drives the hands and the guard point, in metres, at full
+ * extension. 0.30/0.34 was the old pair and it was never reached; these are
+ * reached, so they are the numbers that actually set the reach.
+ *
+ * A standing thrust gets the LONGER of the two: with no legs behind it the
+ * whole lunge has to come from the arms and shoulders, and a stab you take from
+ * a standstill should still cross the gap a walking one covers with its feet.
+ */
+const THRUST_REACH = { hand: 0.34, guard: 0.40, standing: 1.55 };
+
+/**
+ * FLOURISH — an idle twirl. Purely cosmetic: it drives roll and traces the
+ * guard round a small circle, and it touches nothing that grades a contact.
+ * 0.62 s is two full wrist rotations at a speed a hand can actually make.
+ */
+const FLOURISH = { dur: 0.62, turns: 2, radius: 0.30 };
 
 /**
  * The angular term integrates as  θ'' = (kP/I)·θ_err − kD·θ'.
@@ -113,9 +146,55 @@ export class SaberController {
     this.lastGestureDir = new THREE.Vector2();
     this.gestureDir = new THREE.Vector2();
 
-    // thrust / lunge
+    // thrust / lunge. `thrust` is the 0..1 envelope the solver reads; `thrustT`
+    // is where we are along it in seconds, and `thrustStanding` is latched at
+    // the press so a lunge that starts still stays a standing lunge even if you
+    // begin walking halfway through it.
     this.thrust = 0;
+    this.thrustT = -1;
+    this.thrustStanding = 0;
     this.thrustCooldown = 0;
+
+    // Flourish — an idle twirl with no combat effect at all. It is carried as an
+    // ADDITIVE offset on the guard and the wrist (_flX/_flY/_flRoll), removed
+    // and re-applied every frame, so starting one does not snap the guard to the
+    // middle of the circle and finishing one does not snap it back.
+    this.flourishT = -1;
+    this.flourish = 0;
+    this._flX = 0; this._flY = 0; this._flRoll = 0;
+
+    /**
+     * LATERAL GUARD. "How do I position the blade laterally? Imagine a guard
+     * stance?" — you could not, and the reason was geometric rather than a
+     * missing keybind. Both the hands and the guard point sit along the SAME
+     * ray out of the chest, so the blade always pointed radially outward: it
+     * could be aimed anywhere on the sphere but never laid ACROSS the body.
+     * Measured over the whole reachable guard, the blade never once crossed the
+     * player's own centreline.
+     *
+     * `stance` splits that ray. The hands go one way off it and the guard point
+     * the other, so the blade lies across the chest — a horizontal guard you can
+     * hold. -1 is hands-left/tip-right, +1 is the mirror.
+     */
+    this.stance = 0;
+    this.stanceTarget = 0;
+    this.stanceRate = 9;
+
+    /**
+     * Catch window. Set from outside (World) to the seconds left on a caught
+     * bolt. While it is positive the camera comes BACK to the player even with
+     * the blade button held, and the guard freezes where it is — it is holding
+     * something.
+     */
+    this.catchHold = 0;
+    this.bladeHeld = false;
+
+    /**
+     * "Blade holds position": on release the blade stays where you left it
+     * instead of easing back to the ready guard. Off by default, because the
+     * recentre is what makes the blade cursor a cursor.
+     */
+    this.holdPosition = opts.holdPosition ?? false;
 
     // bind (blade lock) state
     this.bindContact = null;
@@ -134,6 +213,11 @@ export class SaberController {
   reset(chest, aimQuat) {
     this.gx = this.readyX; this.gy = this.readyY; this.roll = 0;
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
+    this.stance = 0; this.stanceTarget = 0;
+    this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
+    this.flourish = 0; this.flourishT = -1;
+    this._flX = 0; this._flY = 0; this._flRoll = 0;
+    this.catchHold = 0; this.bladeHeld = false;
     this.initialised = false;
     this.solveTargets(chest, aimQuat, 0);
     this.handLocal.subVectors(this._handTarget, chest);
@@ -155,19 +239,42 @@ export class SaberController {
   /* ── input ─────────────────────────────────────────────────────────── */
 
   /**
+   * Two actions this file introduces — a lateral guard stance and a flourish —
+   * have no entry in Bindings.js yet, and an unbound action is silently dead.
+   * Seeding the defaults here keeps them rebindable through `input.bindings`
+   * and keeps the game playable in the meantime; the permanent home for them is
+   * the ACTIONS table, which is another lane's file.
+   */
+  _ensureBindings(input) {
+    const b = input.bindings;
+    if (!b || this._boundOnce) return;
+    this._boundOnce = true;
+    if (!b.stance) b.stance = ['KeyB'];        // hold: lay the blade across the body
+    if (!b.flourish) b.flourish = ['KeyN'];    // tap: idle twirl, no combat effect
+  }
+
+  /**
    * Consume mouse motion. Returns the camera yaw/pitch delta the blade wants
    * the view to follow (Free Blade) — the caller applies it to the camera.
    */
   applyInput(input, dt, ctx) {
     const cam = { yaw: 0, pitch: 0 };
     if (this.locked) return cam;
+    this._ensureBindings(input);
 
     // One control at a time. Hold the mouse button and the mouse IS the blade —
     // the camera does not move. Let go and the mouse is the camera again, and
     // the blade settles back to guard. Driving both at once, which is what the
     // old blade-leads-camera scheme did, makes neither of them legible.
     // 'blade' is a rebindable action, so the player can move it off LMB.
-    const bladeMode = this.scheme === 'free' ? !input.act('thrust') : input.act('blade');
+    const bladeHeld = this.scheme === 'free' ? !input.act('thrust') : input.act('blade');
+    this.bladeHeld = bladeHeld;
+    // …except while a bolt is caught. Then the camera comes back immediately and
+    // fully, button or no button, because the whole reason the bolt is stuck to
+    // the blade is to give you the camera back long enough to aim the throw.
+    // This is the one line that turns block-and-aim from simultaneous — which is
+    // impossible — into sequential.
+    const bladeMode = bladeHeld && this.catchHold <= 0;
     // Two separate gains: the blade needs a full arc inside one sweep, the
     // camera needs shooter-normal turn rates. Sharing one number made the blade
     // sluggish or the camera twitchy, depending which you tuned for.
@@ -220,9 +327,13 @@ export class SaberController {
       // turning ninety degrees pins the blade against its own travel limit.
       cam.yaw = -dx * cs;
       cam.pitch = -dy * cs;
-      const k = clamp(dt * this.recentre, 0, 1);
-      this.gx = lerp(this.gx, this.readyX, k);
-      this.gy = lerp(this.gy, this.readyY, k);
+      // The blade does not drift home while it is holding a caught bolt, and it
+      // does not drift home at all if the player asked it not to.
+      if (this.catchHold <= 0 && !this.holdPosition) {
+        const k = clamp(dt * this.recentre, 0, 1);
+        this.gx = lerp(this.gx, this.readyX, k);
+        this.gy = lerp(this.gy, this.readyY, k);
+      }
     }
 
     // wrist roll
@@ -237,6 +348,49 @@ export class SaberController {
     this.rollVel = damp(this.rollVel, rollInput * 5.4, 14, dt);
     this.roll += this.rollVel * dt;
 
+    // ── LATERAL GUARD. Held, not toggled: a guard stance is a thing you stand
+    // in. Which side leads comes from where the guard already is, so one binding
+    // reaches both the left-lead and the right-lead horizontal guard — drift the
+    // cursor across the centre and the blade turns over with you.
+    if (input.act('stance')) {
+      const side = Math.abs(this.gx) > 0.06 ? Math.sign(this.gx) : (this.stanceTarget || 1);
+      this.stanceTarget = side;
+    } else this.stanceTarget = 0;
+    this.stance = damp(this.stance, this.stanceTarget, this.stanceRate, dt);
+
+    // ── FLOURISH. No combat effect: it drives roll and the guard point and
+    // nothing else, and any real intent — steering, stancing, stabbing —
+    // cancels it on the spot.
+    //
+    // Take last frame's twirl back off the guard and the wrist before anything
+    // else touches them. The flourish is decoration ON TOP of whatever the blade
+    // is already doing, so it must never leave a residue: without this, starting
+    // one snapped the guard to the centre of the circle and cancelling one left
+    // the wrist wherever the twirl had got to.
+    this.gx -= this._flX; this.gy -= this._flY; this.roll -= this._flRoll;
+    this._flX = 0; this._flY = 0; this._flRoll = 0;
+    if (input.actHit('flourish') && this.flourishT < 0 && !bladeHeld) this.flourishT = 0;
+    if (this.flourishT >= 0) {
+      if (bladeHeld || this.stanceTarget || this.thrustT >= 0) this.flourishT = -1;
+      else {
+        this.flourishT += dt;
+        if (this.flourishT >= FLOURISH.dur) this.flourishT = -1;
+      }
+    }
+    // Ease in and out so the twirl grows out of the guard and settles back into
+    // it rather than snapping onto a circle and snapping off it again.
+    this.flourish = this.flourishT < 0 ? 0
+      : Math.sin(Math.PI * clamp(this.flourishT / FLOURISH.dur, 0, 1));
+    if (this.flourishT >= 0) {
+      const ph = TAU * FLOURISH.turns * (this.flourishT / FLOURISH.dur);
+      this._flRoll = ph;
+      // Clamp the OFFSET rather than the result, so next frame's subtraction is
+      // still exact and the guard cannot be twirled outside its own travel.
+      this._flX = clamp(this.gx + Math.sin(ph) * FLOURISH.radius * this.flourish, -GX_MAX, GX_MAX) - this.gx;
+      this._flY = clamp(this.gy + Math.cos(ph) * FLOURISH.radius * this.flourish, -GY_MIN, GY_MAX) - this.gy;
+    }
+    this.gx += this._flX; this.gy += this._flY; this.roll += this._flRoll;
+
     // gesture signal
     const gspeed = Math.hypot(dx, dy) / Math.max(dt, 1e-4);
     this.mouseSpeed.push(gspeed, dt);
@@ -249,15 +403,32 @@ export class SaberController {
     }
     this.mouseAccel.push(Math.hypot(input.accel.x, input.accel.y), dt);
 
-    // thrust — a genuine forward drive of the hands along the blade
+    // ── THRUST. A genuine forward drive of the hands along the blade, run off a
+    // rise/hold/fall envelope rather than a spike, because the hands are on a
+    // spring that takes ~400 ms to arrive and a spike is gone before they do.
     this.thrustCooldown = Math.max(0, this.thrustCooldown - dt);
     const stabPressed = this.scheme === 'free' ? input.actHit('blade') : input.actHit('thrust');
     if (stabPressed && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
-      this.thrust = 1;
+      this.thrustT = 0;
+      // A lunge with no feet behind it has to come entirely out of the arms, so
+      // it gets more of them. The controller works this out from how fast the
+      // chest anchor it is handed each frame is actually travelling — 1.2 m/s
+      // is a quarter of walking pace, i.e. genuinely planted. Callers may say so
+      // explicitly with ctx.moving, but none has to.
+      this.thrustStanding = (ctx.moving ?? this.carrierSpeed > 1.2) ? 0 : 1;
       this.thrustCooldown = 0.42;
       if (ctx.onThrust) ctx.onThrust();
     }
-    this.thrust = damp(this.thrust, 0, 9, dt);
+    if (this.thrustT >= 0) {
+      this.thrustT += dt;
+      const T = THRUST;
+      if (this.thrustT < T.rise) this.thrust = smoothstep(0, T.rise, this.thrustT);
+      else if (this.thrustT < T.rise + T.hold) this.thrust = 1;
+      else {
+        this.thrust = 1 - smoothstep(T.rise + T.hold, T.rise + T.hold + T.fall, this.thrustT);
+        if (this.thrustT >= T.rise + T.hold + T.fall) { this.thrust = 0; this.thrustT = -1; }
+      }
+    } else this.thrust = 0;
 
     return cam;
   }
@@ -268,16 +439,50 @@ export class SaberController {
     const g = GRIPS[this.grip];
     this._grip = g;
 
+    // A standing stab gets THRUST_REACH.standing times the reach of a moving
+    // one; a moving one has a body behind it already.
+    const reach = this.thrust * lerp(1, THRUST_REACH.standing, this.thrustStanding);
     const gd = this.guardDir(aimQuat, _v1);
-    const guardWorld = _v2.copy(chest).addScaledVector(gd, g.guardR + this.thrust * 0.34);
+    // In a lateral guard the guard point comes back IN to the hands' own radius.
+    // What is then left between hands and guard is almost purely the sideways
+    // offset applied below — which is the difference between a blade angled
+    // across you (64 deg, what a bare lateral offset gives) and a bar laid
+    // across you (85 deg). 5 cm of forward gap is all that is kept, and only so
+    // the blade still has a direction to point in.
+    const sAbs = Math.abs(this.stance);
+    const guardR = lerp(g.guardR, g.handExtend + 0.05, sAbs) + reach * THRUST_REACH.guard;
+    const guardWorld = _v2.copy(chest).addScaledVector(gd, guardR);
 
     // hands: partway along the guard direction, offset into the body
     _v3.copy(g.offset).applyQuaternion(aimQuat);
-    const handTarget = _v4.copy(chest).add(_v3).addScaledVector(gd, g.handExtend + this.thrust * 0.30);
+    const handTarget = _v4.copy(chest).add(_v3).addScaledVector(gd, g.handExtend + reach * THRUST_REACH.hand);
 
-    // never let the hands leave arm's reach
+    // ── LATERAL GUARD. Split the hands off the guard ray in one direction and
+    // the guard point in the other, about an axis perpendicular to both the
+    // guard direction and world up. That is what lays the blade across the body
+    // instead of along a spoke out of it: at |stance| = 1 the hilt sits on one
+    // side of your centreline and the tip on the other.
+    //
+    // 0.30 m of hand and 0.34 m of guard is the whole travel. Bigger and the
+    // arms cross the ribs; smaller and the blade is merely tilted, not laid
+    // across — measured, |stance| = 1 puts the blade 8.5 deg off horizontal.
+    if (sAbs > 0.001) {
+      _v3.crossVectors(gd, UP);
+      if (_v3.lengthSq() < 1e-6) _v3.set(1, 0, 0).applyQuaternion(aimQuat);
+      _v3.normalize();
+      handTarget.addScaledVector(_v3, -this.stance * 0.30);
+      guardWorld.addScaledVector(_v3, this.stance * 0.34);
+      // A guard across the body is carried level. Without this the hands' own
+      // 20 cm drop below the guard point tilts the bar 17 deg, and the blade
+      // rides up with whatever elevation the cursor happened to have.
+      guardWorld.y = handTarget.y + (guardWorld.y - handTarget.y) * (1 - sAbs * 0.85);
+    }
+
+    // Never let the hands leave arm's reach — except that a lunge is exactly the
+    // move where the shoulder and the torso add to the arm, so the ceiling
+    // lifts with the thrust rather than clipping the one action that needs it.
     _v5.subVectors(handTarget, chest);
-    const armMax = 0.78;
+    const armMax = 0.78 + this.thrust * 0.10;
     if (_v5.length() > armMax) { _v5.setLength(armMax); handTarget.copy(chest).add(_v5); }
 
     this._handTarget = this._handTarget || new THREE.Vector3();
@@ -301,6 +506,16 @@ export class SaberController {
   /* ── integration ───────────────────────────────────────────────────── */
 
   update(dt, chest, aimQuat, ctx = {}) {
+    // How fast the body carrying the blade is moving. Read here rather than
+    // asked for, so a standing thrust is detected without every caller having
+    // to remember to say so.
+    this._prevChest = this._prevChest || new THREE.Vector3().copy(chest);
+    if (dt > 1e-5) {
+      const v = _v1.subVectors(chest, this._prevChest).length() / dt;
+      this.carrierSpeed = damp(this.carrierSpeed ?? 0, v, 12, dt);
+    }
+    this._prevChest.copy(chest);
+
     this.solveTargets(chest, aimQuat, dt);
     if (!this.initialised) {
       this.handLocal.subVectors(this._handTarget, chest);

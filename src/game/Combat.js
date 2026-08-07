@@ -78,8 +78,184 @@ export const TOUGHNESS = {
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Catch and throw                                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The contradiction this exists to remove.
+ *
+ * The control scheme says: hold the button and the mouse IS the blade, the
+ * camera is frozen. The deflection model says: where you LOOK decides where a
+ * deflected bolt goes. Together they demanded that you aim with the camera at
+ * the exact moment the game had taken the camera away from you — "I don't
+ * understand how you're supposed to block and also aim at an enemy in the same
+ * motion because when you're moving the blade to specifically deflect the
+ * cursor can't move." No amount of tuning fixes that; the two halves have to
+ * stop being simultaneous.
+ *
+ * So a bolt that meets the blade does not leave. It STICKS for `hold`, visibly
+ * caught, and for exactly that long the camera comes back to the player even
+ * with the blade button still down. Where you are looking when you let go — or
+ * when the window expires — is where every bolt you are holding goes.
+ *
+ *   hold      0.25 s. The camera gain is 0.0024 rad per pixel, so an ordinary
+ *             400 px flick inside that window swings the reticle 55° — right
+ *             across the screen and past it. Anything shorter and you would be
+ *             aiming at what happened to be in front of you already.
+ *
+ *             Note what it is NOT longer than: the gap inside an enemy burst is
+ *             0.07–0.22 s (Enemy.js, `burstGap`), so the next bolt of the same
+ *             burst WILL arrive while you are still holding this one and unable
+ *             to steer the blade. That is not an oversight — it is exactly the
+ *             shot the auto-guard cone below exists to take.
+ *   maxOpen   0.60 s. A stack refreshes `hold` on every new catch, and without
+ *             a ceiling a dense enough stream would keep the camera unlocked
+ *             forever. 0.60 s caps it at roughly two refreshes.
+ *   maxHeld   6 bolts. Past that the blade is a bouquet and nothing reads.
+ */
+export const CATCH = {
+  hold: 0.25,
+  maxOpen: 0.60,
+  maxHeld: 6,
+
+  /**
+   * The auto-guard: the answer to "what about the shot arriving while I'm
+   * mid-deflect". A MANUAL catch opens a cone in front of you for `autoGuard`
+   * seconds, and anything arriving inside it is caught for free.
+   *
+   * cone is a HALF-angle: 20° here, so a 40° cone. Narrow on purpose. A shooter
+   * 20 m away has to stand within 20·tan20° = 7.3 m of the one you just
+   * answered to qualify — that is "the rest of this volley", not "the field".
+   *
+   * autoGuard is 0.40 s: comfortably over the 0.22 s worst-case gap inside a
+   * burst, so it covers the follow-up shots of the burst you just answered, and
+   * under the 0.40–3.5 s every archetype takes between bursts at the most
+   * aggressive tier, so it has almost always shut again before the next one
+   * starts. And crucially an AUTO catch does not re-open it: only a manual one
+   * does. Without that rule a single good deflect chains through a stream
+   * forever and the whole mechanic becomes hold-to-win.
+   */
+  autoGuard: 0.40,
+  autoCone: 20 * Math.PI / 180,
+  autoRadius: 1.25,
+};
+
+/**
+ * One catch window per fighter. Holds the bolts, owns the two timers, and
+ * decides when the throw happens.
+ *
+ * `heldAtCatch` is why letting go fires the throw only when the button was
+ * actually down at the moment of the catch: a bolt caught with the mouse
+ * already released has nothing to release, and must simply expire.
+ */
+export class CatchWindow {
+  constructor() {
+    this.held = [];
+    this.t = 0;             // seconds left in the hold
+    this.age = 0;           // seconds this window has been open
+    this.auto = 0;          // seconds left on the auto-guard cone
+    this.heldAtCatch = false;
+    this.origin = new THREE.Vector3();
+    this.axis = new THREE.Vector3(0, 0, -1);
+    this.caught = 0;        // lifetime counters, for the HUD and for tests
+    this.autoCaught = 0;
+    this.vfx = 0;           // crackle throttle, drained by the owner
+  }
+
+  get open() { return this.t > 0; }
+  get count() { return this.held.length; }
+
+  /** A guard descriptor for guardIntercept, or null when the cone is shut. */
+  guard() {
+    if (this.auto <= 0) return null;
+    return { origin: this.origin, axis: this.axis, cone: CATCH.autoCone, radius: CATCH.autoRadius };
+  }
+
+  /**
+   * Add a bolt. `manual` means the player put the blade on it themselves, which
+   * is the only thing that opens (or re-opens) the auto-guard cone.
+   */
+  add(entry, { manual = true, bladeHeld = false, chest = null, incoming = null } = {}) {
+    if (this.held.length >= CATCH.maxHeld) return false;
+    if (!this.open) { this.age = 0; this.heldAtCatch = bladeHeld; }
+    this.held.push(entry);
+    // Refresh the hold, but never past the ceiling on the whole window.
+    this.t = Math.max(this.t, Math.min(CATCH.hold, Math.max(0, CATCH.maxOpen - this.age)));
+    this.caught++;
+    if (manual) {
+      if (chest && incoming) {
+        this.origin.copy(chest);
+        // The cone points back down the line the bolt came in on, and it stays
+        // there. It cannot follow the camera: the entire point of the window is
+        // that you turn to look somewhere else, and a cone that turned with you
+        // would evaporate exactly when the mechanic asks you to look away.
+        this.axis.copy(incoming).negate().normalize();
+      }
+      this.auto = CATCH.autoGuard;
+    } else this.autoCaught++;
+    return true;
+  }
+
+  /** @returns true on the frame the throw should happen. */
+  update(dt, bladeHeld) {
+    if (this.auto > 0) this.auto = Math.max(0, this.auto - dt);
+    if (!this.open) return false;
+    this.age += dt;
+    this.t -= dt;
+    if (this.heldAtCatch && !bladeHeld) { this.t = 0; return true; }
+    if (this.t <= 0) { this.t = 0; return true; }
+    if (this.age >= CATCH.maxOpen) { this.t = 0; return true; }
+    return false;
+  }
+
+  clear() { this.held.length = 0; this.t = 0; this.age = 0; this.heldAtCatch = false; }
+  reset() { this.clear(); this.auto = 0; this.caught = 0; this.autoCaught = 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Deflection                                                            */
 /* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Freeze everything about a contact that depends on the blade, at the instant
+ * the blade and the bolt met.
+ *
+ * This is a separate step because of the catch window: a caught bolt is thrown
+ * up to 250 ms later, by which time the blade may be parked and the camera has
+ * moved. The blade half of the grade has to be the blade you actually hit with,
+ * and the aim half has to be the aim you actually have on release.
+ *
+ * `caught` is the gate: only a driven blade takes hold of a bolt. A blade you
+ * merely got in the way still BLOCKS, and a block scatters immediately as it
+ * always has. That is what stops catch-and-throw becoming hold-to-win — a
+ * parked blade cannot catch anything at all.
+ */
+export function captureSnapshot(bolt, saber, hit) {
+  const bladeT = clamp(hit.bladeT, 0, 1);
+  const bladeSpeed = hit.bladeSpeed ?? saber.speedAt(bladeT);
+  const boltDir = new THREE.Vector3().copy(bolt.vel).normalize();
+
+  // surface normal: radial from the blade axis out toward the bolt
+  _v2.subVectors(hit.point, saber.base);
+  const along = _v2.dot(saber.axis);
+  _v3.copy(saber.base).addScaledVector(saber.axis, along);
+  const normal = new THREE.Vector3().subVectors(hit.point, _v3);
+  if (normal.lengthSq() < 1e-8) normal.copy(boltDir).negate().projectOnPlane(saber.axis);
+  if (normal.lengthSq() < 1e-8) normal.set(1, 0, 0);
+  normal.normalize();
+  if (normal.dot(boltDir) > 0) normal.negate();     // normal must face the bolt
+
+  // blade velocity at the contact point
+  const bladeVel = new THREE.Vector3().lerpVectors(saber.baseVelocity, saber.tipVelocity, bladeT);
+  const closing = -bladeVel.dot(boltDir);           // >0 means driving into the bolt
+
+  return {
+    bladeT, bladeSpeed, closing, boltDir, normal, bladeVel,
+    point: new THREE.Vector3().copy(hit.point),
+    caught: hit.auto === true || bladeSpeed > 3.2 || closing > 1.6,
+    auto: hit.auto === true,
+  };
+}
 
 /**
  * @param bolt      the incoming bolt
@@ -89,37 +265,41 @@ export const TOUGHNESS = {
  * @returns { grade, dir, damageMul, target }
  */
 export function gradeDeflection(bolt, saber, hit, ctx) {
-  const bladeT = clamp(hit.bladeT, 0, 1);
-  const bladeSpeed = saber.speedAt(bladeT);
-  const boltDir = _v1.copy(bolt.vel).normalize();
+  return gradeCaught(captureSnapshot(bolt, saber, hit), ctx);
+}
 
-  // surface normal: radial from the blade axis out toward the bolt
-  _v2.subVectors(hit.point, saber.base);
-  const along = _v2.dot(saber.axis);
-  _v3.copy(saber.base).addScaledVector(saber.axis, along);
-  _v4.subVectors(hit.point, _v3);
-  if (_v4.lengthSq() < 1e-8) _v4.copy(boltDir).negate().projectOnPlane(saber.axis);
-  if (_v4.lengthSq() < 1e-8) _v4.set(1, 0, 0);
-  _v4.normalize();
-  if (_v4.dot(boltDir) > 0) _v4.negate();     // normal must face the bolt
+/**
+ * Turn a frozen contact into an outgoing bolt, using the aim you have NOW.
+ *
+ * `ctx.caught` says the bolt was held and is being thrown deliberately, which
+ * changes exactly one thing and it is the whole point: the direction is your
+ * sightline, not a compromise between your sightline and a mirror. You caught
+ * it, you looked somewhere, it goes there.
+ */
+export function gradeCaught(snap, ctx) {
+  const { bladeT, bladeSpeed, closing, boltDir } = snap;
+  const _v4 = snap.normal;
 
-  // blade velocity at the contact point
-  _v5.lerpVectors(saber.baseVelocity, saber.tipVelocity, bladeT);
-  const closing = -_v5.dot(boltDir);           // >0 means driving into the bolt
-
-  let grade = GRADE.BLOCK;
-  if (bladeSpeed > 3.2 || closing > 1.6) grade = GRADE.DEFLECT;
+  let grade = snap.caught ? GRADE.DEFLECT : GRADE.BLOCK;
 
   // Return: a fast tip, and somewhere worth sending it
   const mode = ctx.aimMode || 'reticle';
+  const thrown = !!(ctx.caught && snap.caught);
   let target = null;
   const tipZone = bladeT > 0.42;
+  // A thrown bolt always LOOKS for the victim under the reticle, because that
+  // is the promise the window made. What it does not get for free is the RETURN
+  // grade: the tip-speed gate is unchanged, so the 1.5x still has to be earned
+  // by meeting the bolt properly. An auto-guard catch off a parked blade is
+  // aimed and worth 1.0x — help, not a reward.
+  //
   // Only the reticle model promotes a deflect to a RETURN by finding a victim;
   // under the physical and sweep models a bolt reaches an enemy because you
   // pointed the blade at them, not because the game looked for one.
-  if (mode === 'reticle' && grade === GRADE.DEFLECT && bladeSpeed > 7.5 && tipZone && ctx.candidates) {
+  if ((mode === 'reticle' || thrown) && grade === GRADE.DEFLECT && ctx.candidates
+      && (thrown || (bladeSpeed > 7.5 && tipZone))) {
     target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? 0.42);
-    if (target) grade = GRADE.RETURN;
+    if (target && bladeSpeed > 7.5 && tipZone) grade = GRADE.RETURN;
   }
   if (grade === GRADE.RETURN && bladeSpeed > 15 && closing > 5 && bladeT > 0.55) grade = GRADE.PERFECT;
 
@@ -127,7 +307,19 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
   const out = new THREE.Vector3();
   const mirror = _a.copy(boltDir).reflect(_v4).normalize();
 
-  if (grade === GRADE.BLOCK) {
+  if (thrown) {
+    // CAUGHT — held on the blade, then thrown. The camera has been yours for
+    // the whole window, so there is no excuse left and no compromise: straight
+    // at the victim under the reticle, or straight down the sightline.
+    if (target) out.subVectors(target.point, snap.point).normalize();
+    else if (ctx.aimDir) out.copy(ctx.aimDir).normalize();
+    else out.copy(mirror);
+    const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.006 : 0.018);
+    out.x += (Math.random() - 0.5) * jitter;
+    out.y += (Math.random() - 0.5) * jitter;
+    out.z += (Math.random() - 0.5) * jitter;
+    out.normalize();
+  } else if (grade === GRADE.BLOCK) {
     // A block is not aimed under any model — you got the blade in the way and
     // the bolt went somewhere. That is the whole difference from a deflect.
     out.copy(mirror);
@@ -141,14 +333,14 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
     // else. Completely honest, completely unforgiving: to place a bolt you
     // must set the blade's angle in three dimensions inside the contact
     // window. You will hit things, but mostly by accident.
-    out.copy(mirror).addScaledVector(_v5, 0.018).normalize();
+    out.copy(mirror).addScaledVector(snap.bladeVel, 0.018).normalize();
   } else if (mode === 'sweep') {
     // SWEEP — the bolt goes where you SWUNG. Drag the blade left and it flies
     // left. Very physical to read, and it uses the motion you were already
     // making, but it welds aiming to the same input that does the blocking:
     // the swing that blocks best is not the swing that aims best.
-    if (_v5.lengthSq() > 1e-6) {
-      out.copy(_v5).normalize().multiplyScalar(clamp(bladeSpeed / 14, 0.25, 1));
+    if (snap.bladeVel.lengthSq() > 1e-6) {
+      out.copy(snap.bladeVel).normalize().multiplyScalar(clamp(bladeSpeed / 14, 0.25, 1));
       out.addScaledVector(mirror, 0.55).normalize();
     } else out.copy(mirror);
   } else {
@@ -158,7 +350,7 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
     // the victim with the camera. Meet the bolt cleanly with nothing under the
     // crosshair and you still get an honest mirror.
     if (target) {
-      out.subVectors(target.point, hit.point).normalize();
+      out.subVectors(target.point, snap.point).normalize();
       const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.008 : 0.028);
       out.x += (Math.random() - 0.5) * jitter;
       out.y += (Math.random() - 0.5) * jitter;
@@ -175,8 +367,8 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
   // Under the physical and sweep models nothing has claimed a target yet, so
   // check whether the bolt we just produced is actually going to reach one —
   // earning the same RETURN credit by aim rather than by assist.
-  if (mode !== 'reticle' && grade === GRADE.DEFLECT && ctx.candidates) {
-    const hitting = pickReturnTarget(hit.point, out, ctx.candidates, 0.06);
+  if (mode !== 'reticle' && !thrown && grade === GRADE.DEFLECT && ctx.candidates) {
+    const hitting = pickReturnTarget(snap.point, out, ctx.candidates, 0.06);
     if (hitting) {
       target = hitting;
       grade = bladeSpeed > 15 && closing > 5 && bladeT > 0.55 ? GRADE.PERFECT : GRADE.RETURN;

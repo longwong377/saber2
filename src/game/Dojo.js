@@ -16,6 +16,8 @@ import { plateGeo } from './Bodies.js';
 import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';
 import { GRADE } from './Combat.js';
+import { ARCHETYPES } from './Enemy.js';
+import { sandboxConfig, holdFire, tuneFireRate, DOJO_MIX } from './Waves.js';
 import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -155,6 +157,18 @@ export const LESSONS = [
     setup: { remotes: 3, fireRate: 1.4, boltSpeed: 38, dummies: 3, spar: true, sparForm: 'juyo', sparSpeed: 0.85 },
     check: () => false,
   },
+  {
+    // The lessons above each pin the room to what they are teaching, which is
+    // exactly what makes them lessons and exactly why none of them is a place
+    // to just mess about. This one hands the room over: it reads the sandbox
+    // numbers off the settings every second, so the count and the fire rate
+    // are live from the pause screen.
+    id: 'sandbox', title: 'Sandbox', need: Infinity,
+    brief: 'Your room. Set how many droids and how fast they shoot in the Training tab — zero of either is allowed.',
+    hint: 'Blade length can be taken off its leash in there too. Nothing here can kill you.',
+    setup: { sandbox: true },
+    check: () => false,
+  },
 ];
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -179,12 +193,23 @@ export class DojoDirector {
     this.onLesson = null;
     this.totalSpawned = 0;
     this.streak = 0;
+    // sandbox bookkeeping — see _sandboxRoom
+    this.sandboxUnits = [];
+    this._mixCursor = 0;
+    this._sandboxFire = null;
+    this._sandboxSaid = -1;
   }
 
   get lesson() { return LESSONS[Math.min(this.index, LESSONS.length - 1)]; }
   get remaining() { return this.lesson.need === Infinity ? 0 : Math.max(0, this.lesson.need - this.progress); }
+  get inSandbox() { return !!this.lesson.setup?.sandbox; }
 
-  start() { this._applyLesson(); }
+  start() {
+    // Picking Sandbox on the Deploy screen and then landing on lesson one
+    // would be a lie about what the player asked for.
+    if (this.world.settings?.mode === 'sandbox') this.index = LESSONS.length - 1;
+    this._applyLesson();
+  }
 
   /** Any world event that a lesson might care about. */
   report(ev) {
@@ -221,9 +246,14 @@ export class DojoDirector {
     w.enemies.length = 0;
     w.locks.length = 0;
     this.remotes.length = 0; this.dummies.length = 0; this.spar = null;
+    this.sandboxUnits.length = 0;
+    this._mixCursor = 0;
+    this._sandboxFire = null;
     w.bolts?.clear();
 
     const anchor = w.player ? w.player.position : _v1.set(0, 0, 0);
+
+    if (s.sandbox) { this._sandboxRoom(anchor); this.onLesson?.(this.state()); return; }
 
     for (let i = 0; i < (s.remotes || 0); i++) {
       const a = (i / Math.max(1, s.remotes)) * TAU + 0.5;
@@ -251,6 +281,114 @@ export class DojoDirector {
     this.onLesson?.(this.state());
   }
 
+  /* ── the sandbox room ────────────────────────────────────────────── */
+
+  /** Ring radius for a sandbox unit: remotes orbit wide, dummies stand close. */
+  _sandboxRadius(type) {
+    const A = ARCHETYPES[type];
+    if (!A) return 5.0;
+    if (A.inert) return 3.4;                    // walk-up-and-cut range
+    if (A.melee) return 3.2;
+    return A.custom === 'remote' ? 5.5 : 8.0;   // the hall is 22 m to the wall
+  }
+
+  /** One more opponent, placed on its own ring so the room stays readable. */
+  _spawnSandboxUnit(anchor, type, index) {
+    const w = this.world;
+    // Golden-angle spacing, on five nested rings: consecutive spawns never land
+    // on top of each other however many there are, which a fixed i/n fan cannot
+    // promise when n grows — and forty bodies on ONE circle 8 m out is 1.25 m
+    // apart, which the separation steering then spends the whole session
+    // untangling. The rings spread that over 8.0 to 9.9 m instead.
+    const r = this._sandboxRadius(type) * (1 + 0.06 * (index % 5));
+    const a = index * 2.39996 + 0.5;
+    const e = w.spawnEnemy(type, _v2.set(anchor.x + Math.cos(a) * r, 0, anchor.z + Math.sin(a) * r));
+    const cfg = sandboxConfig(w.settings);
+    // The remotes throw the slow, fat bolts the deflection lessons use — 30 m/s
+    // against the 88 m/s a real blaster fires, which is the difference between
+    // a bolt you can read and one you can only guess at.
+    if (ARCHETYPES[type]?.custom === 'remote') e.trainingBoltSpeed = 30;
+    if (e.duel) {
+      e.duel.formKey = 'makashi';
+      e.duel.form = FORMS.makashi;
+      e.formName = e.duel.describe();
+      e.trainingSpeed = 0.7;
+    }
+    tuneFireRate(e, cfg.fire);
+    if (cfg.fire <= 0) holdFire(e);
+    this.sandboxUnits.push(e);
+    this.totalSpawned++;
+    return e;
+  }
+
+  _sandboxType(cfg) {
+    if (cfg.type !== 'mixed') return cfg.type;
+    return DOJO_MIX[(this._mixCursor++) % DOJO_MIX.length];
+  }
+
+  _sandboxRoom(anchor) {
+    const cfg = sandboxConfig(this.world.settings);
+    // Only the first handful on this frame. Each unit builds a rig, an actor
+    // and a physics proxy; forty of those in one call is a visible freeze the
+    // moment you walk in. The 0.12 s reconcile in update() brings the rest in
+    // over the next few seconds, which reads as them arriving rather than as a
+    // stall — and is the same rate the arena sandbox fills at.
+    const now = Math.min(cfg.count, 6);
+    for (let i = 0; i < now; i++) this._spawnSandboxUnit(anchor, this._sandboxType(cfg), i);
+    this._sandboxFire = cfg.fire;
+    if (cfg.type === 'mixed') this.spar = this.sandboxUnits.find(e => e.duel) || null;
+  }
+
+  /**
+   * Keep the room matching the numbers, every frame the settle timer fires.
+   * The player is expected to move these sliders mid-session — that is the
+   * whole feature — so the count is reconciled rather than applied once.
+   */
+  _sandboxTick() {
+    const w = this.world;
+    const cfg = sandboxConfig(w.settings);
+    const anchor = w.player ? w.player.position : _v1.set(0, 0, 0);
+
+    // Drop the corpses out of the ledger first. 2.2 s is the same settle the
+    // lessons use, and it always fires: Enemy.update only retires itself from
+    // world.enemies at `dying > 40`, so a body is never gone before this sees it.
+    for (let i = this.sandboxUnits.length - 1; i >= 0; i--) {
+      const e = this.sandboxUnits[i];
+      if (e.dead && e.dying > 2.2) this.sandboxUnits.splice(i, 1);
+    }
+
+    // Same rule as the arena sandbox: decide what stays. Keep up to `count` of
+    // the archetype currently asked for, oldest first, and retire everything
+    // else — so changing the opponent picker reshapes the room instead of
+    // waiting for you to cut the previous one down.
+    const live = this.sandboxUnits.filter(e => !e.dead);
+    const right = cfg.type === 'mixed' ? live : live.filter(e => e.type === cfg.type);
+    const keep = new Set(right.slice(0, cfg.count));
+    if (keep.size < live.length) {
+      for (const e of live) {
+        if (keep.has(e)) continue;
+        const idx = w.enemies.indexOf(e);
+        if (idx >= 0) w.enemies.splice(idx, 1);
+        const j = this.sandboxUnits.indexOf(e);
+        if (j >= 0) this.sandboxUnits.splice(j, 1);
+        w.bladeSolver?.clearTarget?.(e.id);
+        e.dispose();
+      }
+    } else if (live.length < cfg.count) {
+      this._spawnSandboxUnit(anchor, this._sandboxType(cfg), this.totalSpawned);
+    }
+
+    if (this._sandboxFire !== cfg.fire) {
+      this._sandboxFire = cfg.fire;
+      for (const e of this.sandboxUnits) tuneFireRate(e, cfg.fire);
+      this.onLesson?.(this.state());          // the coach panel quotes the numbers
+    }
+    if (this._sandboxSaid !== cfg.count) { this._sandboxSaid = cfg.count; this.onLesson?.(this.state()); }
+    if (cfg.type === 'mixed' && (!this.spar || this.spar.dead)) {
+      this.spar = this.sandboxUnits.find(e => e.duel && !e.dead) || this.spar;
+    }
+  }
+
   setSparForm(key) {
     if (!this.spar || !FORMS[key]) return;
     this.spar.duel.formKey = key;
@@ -261,15 +399,42 @@ export class DojoDirector {
 
   state() {
     const L = this.lesson;
-    return {
+    const out = {
       index: this.index, total: LESSONS.length,
       id: L.id, title: L.title, brief: L.brief, hint: L.hint,
       progress: this.progress, need: L.need,
       form: this.spar ? this.spar.formName : null,
     };
+    if (L.setup?.sandbox) {
+      // The coach panel is the only place the player sees the room described,
+      // so in the sandbox it describes the numbers they actually chose.
+      const cfg = sandboxConfig(this.world.settings);
+      const who = cfg.type === 'mixed' ? 'mixed' : (ARCHETYPES[cfg.type]?.label ?? cfg.type);
+      out.brief = cfg.count === 0
+        ? 'An empty hall. Move, swing, feel the weight of it — nothing is coming.'
+        : `${cfg.count} × ${who}, firing at ${cfg.fire <= 0 ? 'nothing at all' : `${cfg.fire.toFixed(2)}× rate`}.`;
+    }
+    return out;
   }
 
   update(dt, ctx) {
+    if (this.inSandbox) {
+      // The fuse has to be pushed back EVERY frame, not on the settle tick:
+      // holdFire only guarantees half a second of silence, and a one-second
+      // reconcile would let every droid in the room get a volley away between
+      // ticks — which is exactly the "too much fire to practise" complaint.
+      const cfg = sandboxConfig(this.world.settings);
+      if (cfg.fire <= 0) for (const e of this.sandboxUnits) holdFire(e);
+      this._settleTimer -= dt;
+      if (this._settleTimer <= 0) {
+        // 0.12 s, not the lessons' 1.0 s: dragging the count from 0 to 40 has
+        // to fill the room while your hand is still on the slider.
+        this._settleTimer = 0.12;
+        this._sandboxTick();
+      }
+      return;
+    }
+
     // dummies and remotes come back so the lesson never stalls
     this._settleTimer -= dt;
     if (this._settleTimer <= 0) {

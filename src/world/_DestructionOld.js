@@ -68,7 +68,6 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const _v4 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _box = new THREE.Box3();
-const _boxA = new THREE.Box3(), _boxB = new THREE.Box3(), _cellBox = new THREE.Box3();
 const IDENT = new THREE.Quaternion();
 
 let _structId = 1;
@@ -335,131 +334,6 @@ export function polyGeometry(poly, origin, uvScale = 0.22) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * The thirteen axes of a 26-DOP: three faces, six edges, four corners of a
- * cube, each as a unit vector. Clipping a cell to the extent of its own
- * surface along all thirteen is what makes a fractured column round.
- *
- * Measured, on the column the player complained about: clipped to the AABB of
- * its samples the cells summed to 15.6 m³ against the mesh's 8.3 — a shaft
- * 1.10 m across became a post 1.32 m square, which is the "volume looked
- * larger than what it was" pop. The same cells clipped to this DOP sum to
- * 9.0 m³. Six planes cannot describe a cylinder; twenty-six nearly can, and
- * the error left is the 1.055 an octagon circumscribing a circle costs.
- */
-const DOP_AXES = (() => {
-  const r2 = Math.SQRT1_2, r3 = 1 / Math.sqrt(3);
-  return [
-    new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1),
-    new THREE.Vector3(r2, r2, 0), new THREE.Vector3(r2, -r2, 0),
-    new THREE.Vector3(r2, 0, r2), new THREE.Vector3(r2, 0, -r2),
-    new THREE.Vector3(0, r2, r2), new THREE.Vector3(0, r2, -r2),
-    new THREE.Vector3(r3, r3, r3), new THREE.Vector3(r3, r3, -r3),
-    new THREE.Vector3(r3, -r3, r3), new THREE.Vector3(-r3, r3, r3),
-  ];
-})();
-const DOP_N = DOP_AXES.length;
-
-/**
- * Support intervals per axis, four numbers each:
- *
- *   [4a]   min over every sample          the plane, on the low side
- *   [4a+1] max over every sample          the plane, on the high side
- *   [4a+2] min over samples FACING -axis   is there a face capping the low side?
- *   [4a+3] max over samples FACING +axis   … and the high side?
- *
- * The second pair is what keeps a cell solid. A quarter of a column's shaft
- * has samples only on its arc, and the convex hull of an arc is the segment
- * behind its chord — so clipping to the samples alone cut the middle out of
- * the shaft and left four crescents around a hole. Measured on the column:
- * 90.6% of the intact solid covered, and 77% of what was missing sat within a
- * third of a radius of the axis, which is exactly the inscribed square the
- * four chords sliced off. The arc's normals all point outward from the axis,
- * so nothing on that arc caps the cell in the direction of the axis — the
- * Voronoi wall does, and the material runs right up to it.
- */
-const FACE_COS = 0.35;      // ~70° — a face still counts as capping when oblique
-const FACE_TOL = 0.05;      // the outermost sample must be front-facing to 5 cm
-// flat copy of the axes: this is called a few hundred thousand times per
-// fracture and the property loads off thirteen Vector3s were most of it
-const DOP_F = (() => {
-  const f = new Float64Array(DOP_N * 3);
-  for (let a = 0; a < DOP_N; a++) { f[a * 3] = DOP_AXES[a].x; f[a * 3 + 1] = DOP_AXES[a].y; f[a * 3 + 2] = DOP_AXES[a].z; }
-  return f;
-})();
-function newDop() {
-  const d = new Float32Array(DOP_N * 4);
-  for (let a = 0; a < DOP_N; a++) {
-    d[a * 4] = Infinity; d[a * 4 + 1] = -Infinity;
-    d[a * 4 + 2] = Infinity; d[a * 4 + 3] = -Infinity;
-  }
-  return d;
-}
-function dopAdd(d, x, y, z, nx, ny, nz) {
-  for (let a = 0, o = 0; a < DOP_N; a++, o += 3) {
-    const ax = DOP_F[o], ay = DOP_F[o + 1], az = DOP_F[o + 2];
-    const t = ax * x + ay * y + az * z;
-    const i = a * 4;
-    if (t < d[i]) d[i] = t;
-    if (t > d[i + 1]) d[i + 1] = t;
-    const f = ax * nx + ay * ny + az * nz;
-    if (f <= -FACE_COS && t < d[i + 2]) d[i + 2] = t;
-    if (f >= FACE_COS && t > d[i + 3]) d[i + 3] = t;
-  }
-}
-/**
- * Trim `poly` to the DOP, grown by `pad`. Returns null if nothing survives.
- *
- * The negated axes are kept rather than made per call: clipPoly clobbers _v1
- * and _v2 while it sorts the cap ring, so a normal handed to it out of module
- * scratch changes under its feet halfway through the call.
- */
-const DOP_NEG = DOP_AXES.map((n) => n.clone().negate());
-
-/**
- * Keep the half-space `s·(p[ax] − c) <= 0` of a polygon held flat as xyz triples.
- * Sutherland–Hodgman again, but against an axis-aligned plane, so the only work
- * per vertex is one subtraction and one lerp.
- */
-function clipAxisPoly(src, n, ax, s, c, dst) {
-  let m = 0;
-  for (let i = 0; i < n; i++) {
-    const a = i * 3, b = ((i + 1) % n) * 3;
-    const da = s * (src[a + ax] - c), db = s * (src[b + ax] - c);
-    if (da <= 0) { dst[m * 3] = src[a]; dst[m * 3 + 1] = src[a + 1]; dst[m * 3 + 2] = src[a + 2]; m++; }
-    if ((da > 0) !== (db > 0)) {
-      const u = da / (da - db);
-      dst[m * 3] = src[a] + (src[b] - src[a]) * u;
-      dst[m * 3 + 1] = src[a + 1] + (src[b + 1] - src[a + 1]) * u;
-      dst[m * 3 + 2] = src[a + 2] + (src[b + 2] - src[a + 2]) * u;
-      m++;
-    }
-  }
-  return m;
-}
-
-function dopClip(poly, d, pad) {
-  for (let a = 0; a < DOP_N && poly; a++) {
-    const lo = d[a * 4], hi = d[a * 4 + 1], loF = d[a * 4 + 2], hiF = d[a * 4 + 3];
-    if (!isFinite(lo)) continue;
-    if (hi - hiF <= FACE_TOL) {
-      poly = clipPoly(poly, DOP_AXES[a], -(hi + pad));
-      if (!poly) return null;
-    }
-    if (loF - lo <= FACE_TOL) poly = clipPoly(poly, DOP_NEG[a], lo - pad);
-  }
-  return poly;
-}
-
-/**
- * How far a site may wander off its lattice centre, as a fraction of the step.
- * Under one, so a cell is still built from its 26 lattice neighbours alone and
- * is still the exact Voronoi cell; and the half of it bounds how far a cell can
- * reach past its own lattice box, which is what the triangle support below is
- * clipped to.
- */
-const GRID_JITTER = 0.62;
-
-/**
  * Split a solid into convex cells.
  *
  * Sites are a jittered lattice, so cells come out roughly the size asked for
@@ -480,34 +354,20 @@ export function fractureSolid(bounds, samples, opts = {}) {
 
   const size = bounds.getSize(new THREE.Vector3());
   const min = bounds.min;
-  // Two cells across anything thicker than SPLIT_MIN, whatever the target
-  // says. One cell spanning the piece on an axis means there is no such thing
-  // as a partial cut across that axis: a 1.66 m column rounded to a single
-  // 1.66 m cell, so the blade could only ever take the whole section at a
-  // level, and a third of the way in dropped the top exactly as a clean cut
-  // did. 0.7 m is the floor because half of that is a 0.35 m chunk, the
-  // smallest lump worth a rigid body of its own. The cap below walks this
-  // back down, so nothing gets more cells than it is allowed.
-  const SPLIT_MIN = 0.7;
-  const floorOf = (l) => (l > SPLIT_MIN ? 2 : 1);
-  const fx = floorOf(size.x), fy = floorOf(size.y), fz = floorOf(size.z);
-  const span = (l, f) => Math.max(f, Math.round(l / target));
-  const nx = span(size.x, fx), ny = span(size.y, fy), nz = span(size.z, fz);
+  const nx = Math.max(1, Math.round(size.x / target));
+  const ny = Math.max(1, Math.round(size.y / target));
+  const nz = Math.max(1, Math.round(size.z / target));
   let scale = 1;
   if (nx * ny * nz > maxCells) scale = Math.cbrt((nx * ny * nz) / maxCells);
-  let gx = Math.max(fx, Math.round(nx / scale));
-  let gy = Math.max(fy, Math.round(ny / scale));
-  let gz = Math.max(fz, Math.round(nz / scale));
+  let gx = Math.max(1, Math.round(nx / scale));
+  let gy = Math.max(1, Math.round(ny / scale));
+  let gz = Math.max(1, Math.round(nz / scale));
   // rounding three axes up can overshoot the cap by half again; walk the
-  // longest axis down until it fits, so `maxCells` is a real ceiling. The
-  // two-across floor survives the walk: 2×2×2 is eight, so a piece can always
-  // afford to be carvable on every axis it is thick enough to carve.
+  // longest axis down until it fits, so `maxCells` is a real ceiling
   while (gx * gy * gz > maxCells) {
-    if (gx >= gy && gx >= gz && gx > fx) gx--;
-    else if (gy >= gz && gy > fy) gy--;
-    else if (gz > fz) gz--;
-    else if (gx > fx) gx--;
-    else if (gy > fy) gy--;
+    if (gx >= gy && gx >= gz && gx > 1) gx--;
+    else if (gy >= gz && gy > 1) gy--;
+    else if (gz > 1) gz--;
     else break;
   }
   const sx = size.x / gx, sy = size.y / gy, sz = size.z / gz;
@@ -519,11 +379,11 @@ export function fractureSolid(bounds, samples, opts = {}) {
       for (let i = 0; i < gx; i++) {
         const idx = (k * gy + j) * gx + i;
         const p = new THREE.Vector3(
-          min.x + (i + 0.5 + (rng() - 0.5) * GRID_JITTER) * sx,
-          min.y + (j + 0.5 + (rng() - 0.5) * GRID_JITTER) * sy,
-          min.z + (k + 0.5 + (rng() - 0.5) * GRID_JITTER) * sz);
+          min.x + (i + 0.5 + (rng() - 0.5) * 0.62) * sx,
+          min.y + (j + 0.5 + (rng() - 0.5) * 0.62) * sy,
+          min.z + (k + 0.5 + (rng() - 0.5) * 0.62) * sz);
         P[idx * 3] = p.x; P[idx * 3 + 1] = p.y; P[idx * 3 + 2] = p.z;
-        sites.push({ i, j, k, index: idx, p, n: 0, dop: null, mats: null, nbrs: null, list: null });
+        sites.push({ i, j, k, index: idx, p, n: 0, box: new THREE.Box3(), mats: null, nbrs: null });
       }
     }
   }
@@ -532,9 +392,7 @@ export function fractureSolid(bounds, samples, opts = {}) {
 
   // ── which cell does each surface sample belong to? (nearest site = Voronoi)
   const matOf = opts.matOf;
-  const nrm = opts.normals || null;
   const cnt = samples ? samples.length / 3 : 0;
-  const siteOf = cnt ? new Int32Array(cnt).fill(-1) : null;
   const lo = [min.x, min.y, min.z], inv = [1 / sx, 1 / sy, 1 / sz];
   for (let s = 0; s < cnt; s++) {
     const x = samples[s * 3], y = samples[s * 3 + 1], z = samples[s * 3 + 2];
@@ -554,20 +412,18 @@ export function fractureSolid(bounds, samples, opts = {}) {
     if (bestI < 0) continue;
     const best = sites[bestI];
     best.n++;
-    siteOf[s] = bestI;
-    (best.list || (best.list = [])).push(s);
-    dopAdd(best.dop || (best.dop = newDop()), x, y, z,
-      nrm ? nrm[s * 3] : 0, nrm ? nrm[s * 3 + 1] : 0, nrm ? nrm[s * 3 + 2] : 0);
+    best.box.expandByPoint(_v1.set(x, y, z));
     if (matOf) {
       const m = matOf(s);
       (best.mats || (best.mats = new Map())).set(m, (best.mats.get(m) || 0) + 1);
     }
   }
+
   // A cell that holds none of the piece's surface is empty space — the hole in
   // an arch, the air above a broken wall's jagged top — and must not become a
   // block of stone hanging in it.
   const floor = cnt ? Math.max(1, Math.floor(cnt / (sites.length * 26))) : 0;
-  const kept = [];
+  const out = [];
   for (const s of sites) {
     if (cnt && s.n < floor) continue;
     let poly = boxPoly(bounds.getCenter(new THREE.Vector3()), size.clone().multiplyScalar(0.5));
@@ -591,80 +447,23 @@ export function fractureSolid(bounds, samples, opts = {}) {
       if (next !== poly) { poly = next; nbrs.push(o.index); if (poly) far = polyRadius(poly, s.p); }
     }
     if (!poly) continue;
-    s.poly = poly;
-    s.keptNbrs = nbrs;
-    s.aabb = polyBounds(poly, new THREE.Box3());
-    kept.push(s);
-  }
-
-  /* Each triangle's own surface, clipped to the cell, as support — not its
-   * corners.
-   *
-   * The corners were the obvious thing and they are wrong twice over. A corner
-   * across the wall belongs to the neighbour: fed to this cell it pushes the
-   * clip plane out past the wall, where it can never bite, and the cell goes
-   * slack (measured on the column, 1.37 → 1.52 on the volume ratio). Dropped
-   * instead — which is what this did — a triangle that spans two cells supports
-   * NEITHER of them, so the only thing describing the surface across the middle
-   * of a big face is the barycentric lattice, whose step is ~15 cm at this
-   * budget. Measured on the lintel, whose beam is two triangles 6.4 m long: the
-   * cells covered 91.2% of the intact solid, the missing 8.8% a 3 cm skin spread
-   * evenly over every face of every cell, and the 2 cm pad covering none of it.
-   *
-   * What a cell wants is the extreme of (triangle ∩ cell), so that is what it
-   * gets: the triangle clipped to the cell's own bounding box, which is why the
-   * cells are built first and trimmed second. Every vertex of the clipped
-   * polygon lies ON the triangle, so it can never claim material the surface
-   * does not have, and inside the box, so it can never reach across the wall.
-   * Measured, against dropping the corner: column 95.6 → 99.8% covered, lintel
-   * 91.2 → 96.3%, wall 98.5 → 99.6%, and the volume ratio pays 1.25 → 1.33 on
-   * the column, all of it the difference between the cell and its box. It costs
-   * six axis-aligned plane tests on a polygon of three to nine points — 4.4 ms
-   * on the 10274-triangle gate, and nothing at all on a piece that is mostly
-   * bevels, whose triangles are all below the size cut-off.
-   */
-  const corners = opts.corners, triAt = opts.triAt;
-  if (corners && triAt && nrm) {
-    let A = new Float64Array(48), B = new Float64Array(48);
-    for (let t = 0; t < triAt.length; t++) {
-      const s = triAt[t], si = siteOf[s];
-      if (si < 0) continue;
-      const site = sites[si];
-      const d = site.dop, bb = site.aabb;
-      if (!d || !bb) continue;
-      const nx = nrm[s * 3], ny = nrm[s * 3 + 1], nz = nrm[s * 3 + 2], o = t * 9;
-      let n = 3;
-      for (let i = 0; i < 9; i++) A[i] = corners[o + i];
-      for (let ax = 0; ax < 3 && n; ax++) {
-        const c0 = ax === 0 ? bb.min.x : ax === 1 ? bb.min.y : bb.min.z;
-        const c1 = ax === 0 ? bb.max.x : ax === 1 ? bb.max.y : bb.max.z;
-        n = clipAxisPoly(A, n, ax, 1, c1, B); let tmp = A; A = B; B = tmp;
-        if (!n) break;
-        n = clipAxisPoly(A, n, ax, -1, c0, B); tmp = A; A = B; B = tmp;
-      }
-      for (let i = 0; i < n; i++) dopAdd(d, A[i * 3], A[i * 3 + 1], A[i * 3 + 2], nx, ny, nz);
-    }
-  }
-
-  const out = [];
-  for (const s of kept) {
-    const nbrs = s.keptNbrs;
     // Shrink the cell onto the surface it actually holds, so a chunk of arch
-    // is arch-shaped rather than a brick from the bounding box — and so the
-    // fractured piece occupies the space the intact mesh did and not the space
-    // its bounding box did.
-    //
-    // `pad` is 2 cm and not a fraction of the cell, which is what it used to
-    // be. It only has to cover the gap between the outermost support on a face
-    // and the true edge of that face, and the triangle clip above makes that gap
-    // zero for every triangle big enough to matter. Scaled to the cell it was
-    // 16 cm on a stone column and grew a 1.10 m shaft into a 1.42 m one all by
-    // itself. Swept with the clip in place: 0.5 cm leaves the column 99.7%
-    // covered at 1.30× the mesh's volume, 2 cm 99.8% at 1.33×, 8 cm 100% at
-    // 1.53× — and the silhouette 1.11× at two, 1.21× at eight. Two is where the
-    // last of the shrinking has gone and none of the growing has started.
-    let poly = s.poly;
-    if (cnt && s.dop) poly = dopClip(poly, s.dop, 0.02);
+    // is arch-shaped rather than a brick from the bounding box.
+    if (cnt && s.n > 0) {
+      const pad = Math.max(0.05, Math.min(sx, sy, sz) * 0.12);
+      const lo = s.box.min, hi = s.box.max;
+      // keep n·p + d <= 0, so d = -n·(a point on the plane)
+      const planes = [
+        [new THREE.Vector3(-1, 0, 0), lo.x - pad], [new THREE.Vector3(1, 0, 0), hi.x + pad],
+        [new THREE.Vector3(0, -1, 0), lo.y - pad], [new THREE.Vector3(0, 1, 0), hi.y + pad],
+        [new THREE.Vector3(0, 0, -1), lo.z - pad], [new THREE.Vector3(0, 0, 1), hi.z + pad],
+      ];
+      for (const [n, cut] of planes) {
+        if (!poly) break;
+        // n is a signed unit axis: n·P where P lies on the plane is ±cut
+        poly = clipPoly(poly, n, -(n.x + n.y + n.z) * cut);
+      }
+    }
     if (!poly) continue;
     const volume = polyVolume(poly);
     if (!(volume > 1e-5)) continue;
@@ -672,132 +471,9 @@ export function fractureSolid(bounds, samples, opts = {}) {
     if (!isFinite(centre.x) || !isFinite(centre.y) || !isFinite(centre.z)) continue;
     let mat = null, bestN = 0;
     if (s.mats) for (const [m, n] of s.mats) if (n > bestN) { bestN = n; mat = m; }
-    out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat,
-      site: s.index, nbrs, list: s.list });
+    out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat, site: s.index, nbrs });
   }
-
-  if (nrm && cnt) splitVoids(out, samples, nrm, matOf, sites.length, maxCells);
-  for (const c of out) c.list = null;             // the sample lists are scratch
   return out;
-}
-
-/* ── voids ───────────────────────────────────────────────────────────────
- *
- * A convex cell that straddles a doorway fills the doorway in. That is the
- * whole of the remaining error on the big pieces: measured, a ruined gate's
- * cells summed to 3.4× the volume of the mesh they replace and its front
- * silhouette to 2.4×, almost all of it the archway packed solid.
- *
- * The gap is found from the samples themselves. Project a cell's surface
- * samples onto an axis and bin them: a run of empty bins in the middle is
- * either a hole or the inside of a solid slab, and the sample NORMALS say
- * which. Crossing a hole you leave material (a face pointing along +axis) and
- * then enter it again (a face pointing along −axis); crossing solid stone you
- * see the opposite pair. Only the first is a void, and the cell is cut in two
- * at the middle of it. Each half is then re-clipped to its own samples, so
- * neither half reaches back across the gap.
- */
-const VOID_MIN = 0.55;      // narrower than this is sampling noise, not a hole
-function findVoid(cell, samples, nrm) {
-  const list = cell.list;
-  if (!list || list.length < 24) return null;
-  let best = null;
-  for (let a = 0; a < 3; a++) {                    // holes in architecture are
-    const n = DOP_AXES[a];                         // square to the piece
-    let lo = Infinity, hi = -Infinity;
-    for (const s of list) {
-      const t = n.x * samples[s * 3] + n.y * samples[s * 3 + 1] + n.z * samples[s * 3 + 2];
-      if (t < lo) lo = t;
-      if (t > hi) hi = t;
-    }
-    const span = hi - lo;
-    if (!(span > VOID_MIN * 3)) continue;
-    const B = clamp(Math.round(span / 0.3), 6, 32);
-    const w = span / B;
-    const cntB = new Int32Array(B), face = new Float32Array(B);
-    for (const s of list) {
-      const t = n.x * samples[s * 3] + n.y * samples[s * 3 + 1] + n.z * samples[s * 3 + 2];
-      const b = clamp(Math.floor((t - lo) / w), 0, B - 1);
-      cntB[b]++;
-      face[b] += n.x * nrm[s * 3] + n.y * nrm[s * 3 + 1] + n.z * nrm[s * 3 + 2];
-    }
-    let i = 1;
-    while (i < B - 1) {
-      if (cntB[i]) { i++; continue; }
-      let j = i;
-      while (j < B - 1 && !cntB[j]) j++;
-      const width = (j - i) * w;
-      // the bin below must be material ending (+axis faces) and the bin above
-      // material beginning (−axis faces), or this is the inside of a slab
-      const below = face[i - 1] / Math.max(1, cntB[i - 1]);
-      const above = face[j] / Math.max(1, cntB[j]);
-      if (width >= VOID_MIN && below > 0.12 && above < -0.12
-        && (!best || width > best.width)) {
-        best = { axis: a, at: lo + (i + (j - i) * 0.5) * w, width };
-      }
-      i = j + 1;
-    }
-  }
-  return best;
-}
-
-/** Cut `cell` in two at `v`, each half re-clipped to the samples it keeps. */
-function splitCell(cell, v, samples, nrm, matOf, newSite) {
-  const n = DOP_AXES[v.axis];
-  const lists = [[], []];
-  for (const s of cell.list) {
-    const t = n.x * samples[s * 3] + n.y * samples[s * 3 + 1] + n.z * samples[s * 3 + 2];
-    lists[t <= v.at ? 0 : 1].push(s);
-  }
-  if (lists[0].length < 8 || lists[1].length < 8) return null;
-  const halves = [];
-  for (let h = 0; h < 2; h++) {
-    let poly = h === 0 ? clipPoly(cell.poly, n, -v.at) : clipPoly(cell.poly, DOP_NEG[v.axis], v.at);
-    if (!poly) return null;
-    const dop = newDop();
-    const mats = matOf ? new Map() : null;
-    for (const s of lists[h]) {
-      dopAdd(dop, samples[s * 3], samples[s * 3 + 1], samples[s * 3 + 2],
-        nrm[s * 3], nrm[s * 3 + 1], nrm[s * 3 + 2]);
-      if (mats) { const m = matOf(s); mats.set(m, (mats.get(m) || 0) + 1); }
-    }
-    poly = dopClip(poly, dop, 0.02);
-    if (!poly) return null;
-    const volume = polyVolume(poly);
-    if (!(volume > 1e-5)) return null;
-    const centre = polyCentroid(poly);
-    if (!isFinite(centre.x) || !isFinite(centre.y) || !isFinite(centre.z)) return null;
-    let mat = null, bestN = 0;
-    if (mats) for (const [m, c] of mats) if (c > bestN) { bestN = c; mat = m; }
-    halves.push({ poly, centre, volume, bounds: polyBounds(poly), samples: lists[h].length,
-      mat, site: h === 0 ? cell.site : newSite, nbrs: cell.nbrs.slice(), list: lists[h] });
-  }
-  // the halves share a face, and each inherits whatever the parent touched
-  halves[0].nbrs.push(halves[1].site);
-  halves[1].nbrs.push(halves[0].site);
-  return halves;
-}
-
-/** Split the hollowest cell, over and over, while there is cell budget left. */
-function splitVoids(out, samples, nrm, matOf, siteCount, maxCells) {
-  let nextSite = siteCount;
-  const seen = new Map();          // cell → the void it has, or null if none
-  for (let guard = 0; out.length < maxCells && guard < maxCells; guard++) {
-    let pick = null, pickV = null;
-    for (const c of out) {
-      if (!seen.has(c)) seen.set(c, findVoid(c, samples, nrm));
-      const v = seen.get(c);
-      if (v && (!pickV || v.width > pickV.width)) { pick = c; pickV = v; }
-    }
-    if (!pick) break;
-    const halves = splitCell(pick, pickV, samples, nrm, matOf, nextSite);
-    seen.set(pick, null);                       // do not try this one again
-    if (!halves) continue;
-    nextSite++;
-    out[out.indexOf(pick)] = halves[0];
-    out.push(halves[1]);
-    seen.delete(pick);
-  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -858,39 +534,18 @@ export class Structure {
     this.seed = spec.seed ?? 1;
 
     this.meshes = spec.meshes || [];
-    /**
-     * The geometry this piece owns, as runs of the meshes it is drawn in.
-     *
-     * A maker that emits on its own owns its meshes whole. One composed into
-     * somebody else's Kit owns a contiguous run of vertices and indices in a
-     * mesh full of other pieces — `whole` is false for those, and everything
-     * downstream (the bounds, the surface samples, the hide on conversion)
-     * works off the run instead of the mesh. It is the same code either way,
-     * which is what makes a column in a colonnade behave exactly like a column
-     * a level placed itself.
-     */
-    this.spans = (spec.spans || []).filter((s) => s && s.mesh && s.mesh.geometry);
-    if (!this.spans.length) {
-      for (const m of this.meshes) {
-        const g = m && m.geometry;
-        if (!g || !g.attributes.position) continue;
-        this.spans.push({ mesh: m, v0: 0, v1: g.attributes.position.count,
-          i0: 0, i1: g.index ? g.index.count : g.attributes.position.count, whole: true });
-      }
-    }
-    if (!this.meshes.length) this.meshes = [...new Set(this.spans.map((s) => s.mesh))];
     this.boxes = (spec.boxes || []).filter(Boolean);
     this.position = (spec.position || new THREE.Vector3()).clone();
     this.quaternion = (spec.quaternion || IDENT).clone();
     this._invQ = this.quaternion.clone().invert();
 
-    // local bounds, over the vertices this piece actually owns
+    // local bounds, from the geometry the maker actually emitted
     this.local = new THREE.Box3();
-    for (const s of this.spans) {
-      const p = s.mesh.geometry.attributes.position;
-      if (!p) continue;
-      const a = p.array;
-      for (let i = s.v0; i < s.v1; i++) this.local.expandByPoint(_v1.set(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]));
+    for (const m of this.meshes) {
+      const g = m.geometry;
+      if (!g) continue;
+      if (!g.boundingBox) g.computeBoundingBox();
+      if (g.boundingBox) this.local.union(g.boundingBox);
     }
     if (this.local.isEmpty()) {
       for (const b of this.boxes) {
@@ -905,9 +560,7 @@ export class Structure {
     this.baseY = this.position.y + this.local.min.y;
     this.volume = Math.max(0.01, this.size.x * this.size.y * this.size.z * 0.55);
 
-    this.material = this.spans.length ? this.spans[0].mesh.material : null;
-    // a piece that only owns part of a shared mesh must never move or hide it
-    this.owns = this.spans.every((s) => s.whole);
+    this.material = this.meshes.length ? this.meshes[0].material : null;
     this.maxHp = cellHp(this.volume, this.profile) * 2;
     this.hp = this.maxHp;
     this.stress = 0;                 // 0..1, how close to failure — drives the shake
@@ -943,22 +596,9 @@ export class Structure {
         if (c.state !== 'attached') continue;
         c.worldCentre(_v1);
         if (_v1.distanceToSquared(near) > r2 + c.half.lengthSq()) continue;
-        /* A capsule down the cell's longest axis, not a ball at its centre.
-         * As a ball, the blade had to pass within 20 cm of a cell's CENTRE to
-         * touch it — so carving into a broken wall worked at some heights and
-         * did nothing at others, and a notch stopped getting deeper the moment
-         * the cells behind it happened to sit between blade passes. Measured on
-         * a column: the notch plateaued at 10 of 22 cells however long the
-         * blade was held there. */
-        const h = c.half;
-        const ax = h.x >= h.y && h.x >= h.z ? 0 : (h.y >= h.z ? 1 : 2);
-        const rad = Math.max(0.18, ax === 0 ? Math.min(h.y, h.z) : ax === 1 ? Math.min(h.x, h.z) : Math.min(h.x, h.y));
-        _v3.set(ax === 0 ? 1 : 0, ax === 1 ? 1 : 0, ax === 2 ? 1 : 0).applyQuaternion(this.quaternion);
-        const arm = Math.max(0, (ax === 0 ? h.x : ax === 1 ? h.y : h.z) - rad * 0.5);
+        const rad = Math.max(0.18, Math.min(c.half.x, c.half.y, c.half.z));
         out.push({
-          name: this.id + 'c' + c.index,
-          p0: _v1.clone().addScaledVector(_v3, -arm), p1: _v1.clone().addScaledVector(_v3, arm),
-          r: rad * 1.15,
+          name: this.id + 'c' + c.index, p0: _v1.clone(), p1: _v1.clone(), r: rad * 1.15,
           toughness: this.profile.toughness, structure: this, chunk: c,
         });
       }
@@ -980,33 +620,16 @@ export class Structure {
       const half = dims[ax], span = dims[sec];
       const step = Math.max(0.5, rad * 1.25);
       const rows = clamp(Math.round((span * 2) / step), 1, 8);
-      /* The long axis is cut into segments rather than published as one
-       * capsule, because the solver books its cut work PER CAPSULE and hands
-       * the wear back at the capsule's midpoint. One capsule the height of a
-       * column meant grinding at the plinth and grinding at the capital went
-       * into the same counter, and the damage it eventually produced always
-       * landed at y = half the column, wherever the blade actually was —
-       * measured, the wear point never moved off the box centre by more than
-       * the row offset. A segment is one cell long, so the piece fails where
-       * the blade is holding it. */
-      const segLen = Math.max(0.8, this.profile.cell);
-      const segs = clamp(Math.round((half * 2) / segLen), 1, 8);
-      const segH = half / segs;                      // half-length of one segment
       for (let i = 0; i < rows; i++) {
         const t = rows === 1 ? 0 : (i / (rows - 1)) * 2 - 1;
-        _v2.copy(b.center).addScaledVector(secV, t * Math.max(0, span - rad * 0.5));
-        if (_v2.distanceToSquared(near) > r2 + half * half) continue;
-        for (let sgi = 0; sgi < segs; sgi++) {
-          const c0 = -half + (sgi * 2 + 1) * segH;
-          _v1.copy(_v2).addScaledVector(axisV, c0);
-          if (_v1.distanceToSquared(near) > r2 + segH * segH * 4) continue;
-          out.push({
-            name: this.id + 'b' + bi + 'r' + i + 's' + sgi,
-            p0: _v1.clone().addScaledVector(axisV, -Math.max(0, segH - rad * 0.4)),
-            p1: _v1.clone().addScaledVector(axisV, Math.max(0, segH - rad * 0.4)),
-            r: rad * 1.05, toughness: this.profile.toughness, structure: this, box: bi,
-          });
-        }
+        _v1.copy(b.center).addScaledVector(secV, t * Math.max(0, span - rad * 0.5));
+        if (_v1.distanceToSquared(near) > r2 + half * half) continue;
+        out.push({
+          name: this.id + 'b' + bi + 'r' + i,
+          p0: _v1.clone().addScaledVector(axisV, -Math.max(0, half - rad * 0.4)),
+          p1: _v1.clone().addScaledVector(axisV, Math.max(0, half - rad * 0.4)),
+          r: rad * 1.05, toughness: this.profile.toughness, structure: this, box: bi,
+        });
       }
     }
     return out;
@@ -1034,7 +657,7 @@ export class Structure {
     if (this.chunks || this.state === 'gone') return this.chunks;
     const t0 = now();
 
-    const { samples, mats, normals, corners, triAt } = this._surfaceSamples();
+    const { samples, mats } = this._surfaceSamples();
     const bounds = this.local.clone();
     if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
     const cells = fractureSolid(bounds, samples, {
@@ -1042,7 +665,6 @@ export class Structure {
       seed: this.seed * 131 + 7,
       maxCells: this.manager.maxCellsPerPiece,
       matOf: (i) => mats[i],
-      normals, corners, triAt,
     });
 
     this.chunks = [];
@@ -1078,20 +700,20 @@ export class Structure {
    */
   _surfaceSamples(budget = 1600) {
     const bins = [];
-    for (const s of this.spans) {
-      const g = s.mesh.geometry;
+    for (const m of this.meshes) {
+      const g = m.geometry;
       if (!g || !g.attributes.position) continue;
       bins.push({
         pos: g.attributes.position.array,
         idx: g.index ? g.index.array : null,
-        i0: s.i0, n: s.i1,
-        mat: s.mesh.material,
+        n: g.index ? g.index.count : g.attributes.position.count,
+        mat: m.material,
       });
     }
     let area = 0, count = 0;
     for (const b of bins) {
       const { pos, idx, n } = b;
-      for (let i = b.i0; i + 2 < n; i += 3) {
+      for (let i = 0; i + 2 < n; i += 3) {
         const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
         const ux = pos[b0] - pos[a0], uy = pos[b0 + 1] - pos[a0 + 1], uz = pos[b0 + 2] - pos[a0 + 2];
         const vx = pos[c0] - pos[a0], vy = pos[c0 + 1] - pos[a0 + 1], vz = pos[c0 + 2] - pos[a0 + 2];
@@ -1104,60 +726,34 @@ export class Structure {
     // one extra sample per `per` m² of face, on top of one centroid per triangle
     const per = Math.max(1e-6, area) / Math.max(1, budget - Math.min(count, budget * 0.6));
 
-    // pre-sized: the corner stream is nine floats a triangle and pushing them
-    // onto a plain array was most of the GC this path produced
-    const pts = [], mats = [], nrm = [];
-    const corn = new Float32Array(count * 9), triAt = new Int32Array(count);
-    let nTri = 0;
+    const pts = [], mats = [];
     for (const b of bins) {
       const { pos, idx, n, mat } = b;
-      for (let i = b.i0; i + 2 < n; i += 3) {
+      for (let i = 0; i + 2 < n; i += 3) {
         const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
         const ax = pos[a0], ay = pos[a0 + 1], az = pos[a0 + 2];
         const bx = pos[b0], by = pos[b0 + 1], bz = pos[b0 + 2];
         const cx0 = pos[c0], cy0 = pos[c0 + 1], cz0 = pos[c0 + 2];
         if (!isFinite(ax) || !isFinite(bx) || !isFinite(cx0)) continue;
+        pts.push((ax + bx + cx0) / 3, (ay + by + cy0) / 3, (az + bz + cz0) / 3);
+        mats.push(mat);
         const ux = bx - ax, uy = by - ay, uz = bz - az;
         const vx = cx0 - ax, vy = cy0 - ay, vz = cz0 - az;
-        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        const t2 = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        const t = t2 * 0.5;
-        if (t2 > 1e-12) { nx /= t2; ny /= t2; nz /= t2; } else { nx = 0; ny = 1; nz = 0; }
-        const put = (x, y, z) => { pts.push(x, y, z); nrm.push(nx, ny, nz); mats.push(mat); };
-        // The three corners ride along as SUPPORT for whichever cell the
-        // centroid lands in, not as samples of their own. The lattice below
-        // never reaches a corner — its innermost barycentric is a third of a
-        // step in from every edge — so a cell clipped to its samples alone
-        // stopped short of the true edge of every face it held, and the pad
-        // that covered that was what inflated the piece. Run through the
-        // Voronoi search as ordinary samples they quadrupled the sample count
-        // and took the wall's fracture from 4.4 ms to 21.9; hung off the
-        // centroid they cost three support updates and no search at all.
-        // …and only for a triangle big enough for its corners to matter: below
-        // a 9 cm edge no corner can move a clip plane further than the 3 cm pad
-        // already allows, and skipping those is half the triangles on a wall.
-        const e2 = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz);
-        if (e2 > 0.008) {
-          const o = nTri * 9;
-          corn[o] = ax; corn[o + 1] = ay; corn[o + 2] = az;
-          corn[o + 3] = bx; corn[o + 4] = by; corn[o + 5] = bz;
-          corn[o + 6] = cx0; corn[o + 7] = cy0; corn[o + 8] = cz0;
-          triAt[nTri++] = pts.length / 3;
-        }
-        put((ax + bx + cx0) / 3, (ay + by + cy0) / 3, (az + bz + cz0) / 3);
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const t = Math.sqrt(nx * nx + ny * ny + nz * nz) * 0.5;
         const k = clamp(Math.round(Math.sqrt(t / per)), 1, 6);
         if (k < 2) continue;
         for (let u = 0; u < k; u++) {
           for (let v = 0; v + u < k; v++) {
             const bu = (u + 0.333) / k, bv = (v + 0.333) / k, bw = 1 - bu - bv;
             if (bw <= 0) continue;
-            put(ax * bw + bx * bu + cx0 * bv, ay * bw + by * bu + cy0 * bv, az * bw + bz * bu + cz0 * bv);
+            pts.push(ax * bw + bx * bu + cx0 * bv, ay * bw + by * bu + cy0 * bv, az * bw + bz * bu + cz0 * bv);
+            mats.push(mat);
           }
         }
       }
     }
-    return { samples: new Float32Array(pts), mats, normals: new Float32Array(nrm),
-      corners: corn, triAt: triAt.subarray(0, nTri) };
+    return { samples: new Float32Array(pts), mats };
   }
 
   /**
@@ -1175,17 +771,7 @@ export class Structure {
     const bySite = new Map();
     for (const c of cs) bySite.set(c.cell.site, c);
     const groundTol = Math.max(0.22, this.size.y * 0.06);
-    /* How much air two cells may have between them and still be holding each
-     * other up. It was 0.55 of a cell — 74 cm on stone, over half the width of
-     * the chunks it is judging — because the cells it was judging were the
-     * bounding box's, not the stone's, and their bounds had to be that loose.
-     * Measured on a column carved through at mid height: two cells 48 cm apart
-     * with nothing between them counted as neighbours, so the flood fill still
-     * found a path to the ground and the severed top stayed up. Now that a cell
-     * is clipped to the geometry it holds, adjacent cells that really share
-     * stone have bounds that touch, and the slack only has to cover the 2 cm
-     * pad and the sampling. */
-    const gap = Math.max(0.08, this.profile.cell * 0.30);
+    const gap = Math.max(0.12, this.profile.cell * 0.55);
     for (const a of cs) {
       a.grounded = a.bounds.min.y <= this.local.min.y + groundTol;
       for (const site of (a.cell.nbrs || [])) {
@@ -1239,7 +825,7 @@ export class Structure {
     this.prepareAll();
     if (!this.chunks || !this.chunks.length) { this.state = 'broken'; return; }
 
-    this._hide();
+    for (const m of this.meshes) m.visible = false;
     for (const b of this.boxes) this.world.physics?.removeStaticBox?.(b);
 
     for (const c of this.chunks) {
@@ -1254,29 +840,6 @@ export class Structure {
     this.shellDirty = true;
     this.rebuildShell();
     this.manager._linkSupports();
-  }
-
-  /**
-   * The intact geometry goes away — the whole mesh when this piece is the only
-   * thing in it, otherwise just the vertices it owns.
-   *
-   * Collapsing a run onto a single point makes every triangle in it degenerate,
-   * so it covers no pixels and costs no fill, while the stones either side of
-   * it in the same buffer are untouched. One position upload of the run, once,
-   * on the frame the piece first breaks. It is one-way: the cells have been
-   * built from these vertices by now and are what gets drawn from here on.
-   */
-  _hide() {
-    if (this.owns) { for (const m of this.meshes) m.visible = false; return; }
-    for (const s of this.spans) {
-      const p = s.mesh.geometry.attributes.position;
-      if (!p || s.v1 <= s.v0) continue;
-      const a = p.array;
-      const x = a[s.v0 * 3], y = a[s.v0 * 3 + 1], z = a[s.v0 * 3 + 2];
-      for (let i = s.v0; i < s.v1; i++) { a[i * 3] = x; a[i * 3 + 1] = y; a[i * 3 + 2] = z; }
-      p.needsUpdate = true;
-      p.addUpdateRange?.(s.v0 * 3, (s.v1 - s.v0) * 3);
-    }
   }
 
   /**
@@ -1353,22 +916,8 @@ export class Structure {
     return true;
   }
 
-  /**
-   * A straight blade cut: what the blade was actually in was parted on the
-   * plane it swept, and nothing else.
-   *
-   * This used to take every attached cell within 3.24 m of the hit whose
-   * centre was within a metre of the plane, which on a column was two or three
-   * whole layers — so the shallowest touch severed the shaft and there was no
-   * such thing as carving into something. A cut event is per capsule and, once
-   * a piece has converted, a capsule IS a cell, so the blade names the cell it
-   * parted; on the first cut, before conversion, the capsule is a segment of
-   * the maker's collider and the plane picks out the cells it crosses within
-   * one cell of the hit. Either way a swing takes what it reached, holding the
-   * blade there takes more, and what is left standing is decided downstream by
-   * settleSupport rather than here.
-   */
-  cutBy(point, normal, impulse, chunk = null) {
+  /** A straight blade cut: everything the plane parted lets go, and then some. */
+  cutBy(point, normal, impulse) {
     if (this.state === 'gone') return false;
     this.prefracture();
     if (!this.chunks || !this.chunks.length) return false;
@@ -1376,23 +925,17 @@ export class Structure {
     // a real vector, not module scratch: this call reaches deep enough that
     // shared temporaries get clobbered under it
     const n = new THREE.Vector3().copy(normal).normalize();
-    const nl = new THREE.Vector3().copy(n).applyQuaternion(this._invQ);   // piece-local
     const d = -n.dot(point);
+    const band = Math.max(0.35, this.profile.cell * 0.75);
+    const reach = Math.max(2.2, this.profile.cell * 2.4);
     const hits = [];
-    if (chunk && chunk.structure === this && chunk.state === 'attached') {
-      hits.push(chunk);
-    } else {
-      const reach = Math.max(0.45, this.profile.cell * 0.35);
-      for (const c of this.chunks) {
-        if (c.state !== 'attached') continue;
-        c.worldCentre(_v1);
-        if (_v1.distanceTo(point) > reach + c.half.length()) continue;
-        // does the plane actually pass through this cell? the cell's box is
-        // axis-aligned in piece space, so its extent along n is exact
-        const proj = Math.abs(nl.x) * c.half.x + Math.abs(nl.y) * c.half.y + Math.abs(nl.z) * c.half.z;
-        if (Math.abs(n.dot(_v1) + d) > proj) continue;
-        hits.push(c);
-      }
+    for (const c of this.chunks) {
+      if (c.state !== 'attached') continue;
+      c.worldCentre(_v1);
+      if (_v1.distanceTo(point) > reach) continue;
+      const dist = Math.abs(n.dot(_v1) + d);
+      if (dist > band + Math.max(c.half.x, c.half.y, c.half.z)) continue;
+      hits.push(c);
     }
     if (!hits.length) {
       // the blade parted a face the cells do not straddle — take the nearest
@@ -1424,14 +967,6 @@ export class Structure {
    */
   _partChunk(chunk, point, normal, impulse) {
     if (!chunk || chunk.state !== 'attached' || !chunk.geo) return false;
-    // Two floors on how far carving may subdivide a piece. Halves stay attached
-    // now, so the blade can keep working on them, and without these a player
-    // grinding at one spot for a minute turns one cell into a hundred: each of
-    // them a static box and a run of the standing shell. Below 12 cm a chunk is
-    // rubble rather than a block, and two and a half times the piece's own cell
-    // budget is more carving than anything in the game asks for.
-    if (Math.min(chunk.half.x, chunk.half.y, chunk.half.z) < 0.12) return false;
-    if (this.chunks.length >= this.manager.maxCellsPerPiece * 2.5) return false;
     const q = this.quaternion;
     const inv = _q1.copy(q).invert();
     const origin = chunk.worldCentre(new THREE.Vector3());
@@ -1448,9 +983,7 @@ export class Structure {
     this.manager._forget(chunk, true);            // the whole cell is spent
 
     const scratch = new THREE.Vector3();
-    const gap = Math.max(0.08, this.profile.cell * 0.30);
-    const kin = chunk.neighbours.filter((n) => n.state === 'attached');
-    const made = [];
+    let made = 0;
     for (const [geo, sign] of [[res.front, 1], [res.back, -1]]) {
       const off = new THREE.Vector3();
       geo.computeBoundingBox();
@@ -1469,35 +1002,20 @@ export class Structure {
         || boxShape(Math.max(0.02, frag.half.x), Math.max(0.02, frag.half.y), Math.max(0.02, frag.half.z));
       frag.tris = geo.attributes.position.count / 3;
       this.manager.stats.chunkTris += frag.tris;
-      /* Both halves stay ATTACHED, and support decides what happens to them.
-       *
-       * They used to be flung apart the instant the blade parted the cell, and
-       * that is what made a partial cut impossible: whatever the blade actually
-       * reached, the whole cell left the piece, so the shallowest touch that
-       * produced a cut event severed the section. Measured on a column carved
-       * at mid height, every depth from a graze to right through gave the
-       * identical result. Left standing, the near half is joined to whatever it
-       * still touches and the far half to whatever IT still touches, the two of
-       * them are joined to nothing — that is the kerf — and settleSupport is
-       * what works out whether there is still a way to the ground. */
-      frag.neighbours = kin.filter((n) => !(
-        bb.max.x + gap < n.bounds.min.x || n.bounds.max.x + gap < bb.min.x
-        || bb.max.y + gap < n.bounds.min.y || n.bounds.max.y + gap < bb.min.y
-        || bb.max.z + gap < n.bounds.min.z || n.bounds.max.z + gap < bb.min.z));
-      for (const n of frag.neighbours) n.neighbours.push(frag);
-      frag.grounded = bb.min.y <= this.local.min.y + Math.max(0.22, this.size.y * 0.06);
+      frag.mesh = new THREE.Mesh(geo, mat);
+      frag.mesh.castShadow = true; frag.mesh.receiveShadow = true;
+      frag.mesh.matrixAutoUpdate = false;
+      frag.mesh.position.copy(off).applyQuaternion(q).add(origin);
+      frag.mesh.quaternion.copy(q);
+      frag.mesh.updateMatrix();
+      this.world.scene?.add(frag.mesh);
       frag.state = 'attached';
-      frag.staticBox = this.world.physics?.addStaticBox?.(
-        frag.worldCentre(new THREE.Vector3()), frag.half.clone().max(_v1.set(0.03, 0.03, 0.03)),
-        this.quaternion.clone(), { friction: 0.85 }) || null;
       this.chunks.push(frag);
       this.attached++;
-      // a shove, so whichever half is loose already goes the right way
-      frag._kick = new THREE.Vector3().copy(point).addScaledVector(normal, -sign * 0.35);
-      made.push(frag);
+      this.detach(frag, impulse, new THREE.Vector3().copy(point).addScaledVector(normal, -sign * 0.35));
+      made++;
     }
-    this.shellDirty = true;
-    return made.length > 0;
+    return made > 0;
   }
 
   /**
@@ -1511,11 +1029,7 @@ export class Structure {
     this.stress = clamp(1 - this.hp / Math.max(1e-3, this.maxHp), 0, 1);
     if (this.hp > 0) return false;
     const p = point ? point.clone() : this.centre.clone();
-    // Enough to part the cells under the blade and no more. This was 1.75 m on
-    // stone, a sphere wider than a column, so a piece that failed under
-    // grinding lost everything within nearly two metres of the blade in one
-    // frame — a bite, not a cut. Half a cell across is one or two cells.
-    const r = Math.max(0.40, this.profile.cell * 0.3);
+    const r = Math.max(1.4, this.profile.cell * 1.3);
     // enough to part the cells under the blade, not the whole piece
     let amount = 0;
     for (const c of this.chunks || []) amount = Math.max(amount, c.hp);
@@ -1529,9 +1043,6 @@ export class Structure {
   /** A cell becomes a real body — and, at that moment, its own mesh. */
   detach(chunk, impulse, point) {
     if (!chunk || chunk.state !== 'attached') return null;
-    // a half the blade parted remembers which way the blade was going, so it
-    // still falls away from the kerf when it is support that lets it go
-    if (!point && chunk._kick) { point = chunk._kick; chunk._kick = null; }
     if (chunk.staticBox) { this.world.physics?.removeStaticBox?.(chunk.staticBox); chunk.staticBox = null; }
     chunk.state = 'live';
     this.attached--;
@@ -1588,232 +1099,56 @@ export class Structure {
    */
   settleSupport() {
     if (!this.chunks) return 0;
-    let dropped = 0;
-    // Connectivity first, then statics, then connectivity again: dropping the
-    // overhanging half of a piece can disconnect what was hanging off IT, and
-    // an arch that loses a voussoir has to be allowed to unzip.
-    for (let pass = 0; pass < 4; pass++) {
-      const grounded = this.groundedByCarrier();
-      const seen = new Set();
-      const queue = [];
-      for (const c of this.chunks) {
-        if (c.state !== 'attached') continue;
-        if (grounded && c.grounded) { seen.add(c); queue.push(c); }
-      }
-      while (queue.length) {
-        const c = queue.pop();
-        for (const n of c.neighbours) {
-          if (n.state !== 'attached' || seen.has(n)) continue;
-          seen.add(n); queue.push(n);
-        }
-      }
-      let n = 0;
-      for (const c of this.chunks) {
-        if (c.state !== 'attached' || seen.has(c)) continue;
-        this.detach(c, null, null);
-        if (c.body) c.body.velocity.y -= 0.4;
-        n++;
-      }
-      n += this._toppleScan();
-      dropped += n;
-      if (!n) break;
+    const grounded = this.groundedByCarrier();
+    const seen = new Set();
+    const queue = [];
+    for (const c of this.chunks) {
+      if (c.state !== 'attached') continue;
+      if (grounded && c.grounded) { seen.add(c); queue.push(c); }
     }
-    this._afterSupport();
+    while (queue.length) {
+      const c = queue.pop();
+      for (const n of c.neighbours) {
+        if (n.state !== 'attached' || seen.has(n)) continue;
+        seen.add(n); queue.push(n);
+      }
+    }
+    let dropped = 0;
+    for (const c of this.chunks) {
+      if (c.state !== 'attached' || seen.has(c)) continue;
+      this.detach(c, null, null);
+      if (c.body) c.body.velocity.y -= 0.4;
+      dropped++;
+    }
+    if (this.attached <= 0 && this.state !== 'collapsed') {
+      this.state = 'collapsed';
+      for (const s of this.carries) s.collapse();
+    }
     return dropped;
   }
 
-  /**
-   * Overturning: the stone that is left has to be UNDER what is standing on it.
-   *
-   * Connectivity alone says a piece stands while one grain of it still touches
-   * the ground, which is why carving a column three-quarters through used to
-   * leave the shaft balanced on a slice a hand wide. This is the other half of
-   * the statics and it is the ordinary rigid-body one: take a horizontal joint,
-   * work out everything the joint carries, and ask whether that mass's centre
-   * of gravity falls inside the convex hull of the contacts still bearing on
-   * it. Outside, and it topples. That is why a shallow notch changes nothing
-   * and a deeper one drops the top — no rule anywhere says "column".
-   *
-   * The hull is drawn in (planInset) because stone crushes at the toe well
-   * before the resultant reaches the literal edge of the bearing.
-   */
-  _toppleScan() {
-    const att = [];
-    for (const c of this.chunks) if (c.state === 'attached') att.push(c);
-    if (att.length < 2) return 0;
-    const levels = [];
-    for (const c of att) {
-      const y = c.bounds.min.y;
-      let near = false;
-      for (const l of levels) if (Math.abs(l - y) < 0.05) { near = true; break; }
-      if (!near) levels.push(y);
-    }
-    levels.sort((a, b) => a - b);
-
-    const pts = [];
-    for (let li = 1; li < levels.length; li++) {
-      const y = levels[li] - 0.02;
-      const low = new Set();
-      let above = 0;
-      for (const c of att) { if (c.centre.y < y) low.add(c); else above++; }
-      if (!low.size || !above) continue;
-
-      // what still reaches the ground WITHOUT crossing this joint
-      const base = new Set(), q = [];
-      for (const c of low) if (c.grounded) { base.add(c); q.push(c); }
-      while (q.length) {
-        const c = q.pop();
-        for (const n of c.neighbours) {
-          if (!low.has(n) || base.has(n)) continue;
-          base.add(n); q.push(n);
-        }
-      }
-      if (!base.size) continue;                     // nothing below is standing
-      const carried = att.filter((c) => !base.has(c));
-      if (!carried.length) continue;
-
-      // the joint: wherever a bearing cell touches a carried one
-      pts.length = 0;
-      let mass = 0, cx = 0, cz = 0;
-      for (const c of carried) {
-        mass += c.mass; cx += c.mass * c.centre.x; cz += c.mass * c.centre.z;
-        for (const n of c.neighbours) {
-          if (!base.has(n)) continue;
-          const x0 = Math.max(c.bounds.min.x, n.bounds.min.x), x1 = Math.min(c.bounds.max.x, n.bounds.max.x);
-          const z0 = Math.max(c.bounds.min.z, n.bounds.min.z), z1 = Math.min(c.bounds.max.z, n.bounds.max.z);
-          if (x1 < x0 || z1 < z0) continue;
-          pts.push(x0, z0, x1, z0, x1, z1, x0, z1);
-        }
-      }
-      if (pts.length < 6 || mass <= 0) continue;
-      if (planInside(pts, cx / mass, cz / mass, planInset(pts))) continue;
-
-      for (const c of carried) {
-        this.detach(c, null, null);
-        // the overturning it just failed, made visible: a shove off the hull
-        if (c.body) {
-          _v1.set(c.centre.x - cx / mass, 0, c.centre.z - cz / mass);
-          if (_v1.lengthSq() < 1e-4) _v1.set(0, 0, 0); else _v1.normalize();
-          c.body.velocity.addScaledVector(_v1, 0.8).y -= 0.3;
-        }
-      }
-      return carried.length;
-    }
-    return 0;
-  }
-
-  /** State bookkeeping after anything let go, and the pieces this one carries. */
-  _afterSupport() {
-    if (this._settling) return;
-    this._settling = true;
-    // Collapsed is about the silhouette, not the census. A column ground away
-    // to two wedges of drift round its ankles has collapsed even though two of
-    // its cells are exactly where they always were; a quarter of the original
-    // height is where a piece stops reading as standing and starts reading as
-    // a heap, and it is the height the pieces it used to carry care about.
-    if (this.state !== 'collapsed' && this.state !== 'gone') {
-      let top = -Infinity;
-      for (const c of this.chunks || []) if (c.state === 'attached') top = Math.max(top, c.bounds.max.y);
-      if (this.attached <= 0 || top < this.local.min.y + this.size.y * 0.25) this.state = 'collapsed';
-    }
-    // Everything above is re-checked, not just told to fall: a piece carried on
-    // two columns survives losing one only if it is still over the other.
-    for (const s of this.carries) {
-      if (s.state === 'gone' || s.state === 'collapsed') continue;
-      if (s.groundedByCarrier()) { if (s.chunks) s.settleSupport(); continue; }
-      s.collapse();
-    }
-    this._settling = false;
-  }
-
-  /**
-   * Whether this piece still has something under it — and still sits over it.
-   *
-   * "Has my carrier collapsed entirely" was the old test, and it is not the
-   * physics. A column ground away to two wedges of drift at its ankles is not
-   * holding up a lintel six metres over its head, and a lintel that has lost
-   * one of its two columns is not standing just because the other one is fine:
-   * its weight is now a metre and a half off the stone that is left.
-   */
+  /** Whether this piece still has ground to stand on at all. */
   groundedByCarrier() {
-    if (!this.restsOn.length) return true;         // it stands on the ground
-    const pts = [];
-    for (const s of this.restsOn) s.bearingPlan(this, pts);
-    if (pts.length < 6) return false;
-    return planInside(pts, this.centre.x, this.centre.z, planInset(pts));
+    for (const s of this.restsOn) if (s.state === 'collapsed') return false;
+    return true;
   }
 
-  /**
-   * The plan patch this piece still offers `carried` to stand on: the overlap
-   * of the two footprints, but only where material is still standing high
-   * enough to reach it. 0.9 m of slack is the same slack _linkSupports used to
-   * decide the two were touching in the first place.
-   */
-  bearingPlan(carried, out) {
-    if (this.state === 'gone' || this.state === 'collapsed') return out;
-    const a = _worldBox(this, _boxA);
-    const b = _worldBox(carried, _boxB);
-    const x0 = Math.max(a.min.x, b.min.x), x1 = Math.min(a.max.x, b.max.x);
-    const z0 = Math.max(a.min.z, b.min.z), z1 = Math.min(a.max.z, b.max.z);
-    if (x1 < x0 || z1 < z0) return out;
-    const need = b.min.y - 0.9;                    // how high the stone must reach
-    if (this.state === 'intact' || !this.chunks) {
-      if (a.max.y >= need) out.push(x0, z0, x1, z0, x1, z1, x0, z1);
-      return out;
-    }
-    for (const c of this.chunks) {
-      if (c.state !== 'attached') continue;
-      _cellBox.copy(c.bounds).applyMatrix4(_m4From(this.position, this.quaternion));
-      if (_cellBox.max.y < need) continue;
-      const u0 = Math.max(x0, _cellBox.min.x), u1 = Math.min(x1, _cellBox.max.x);
-      const v0 = Math.max(z0, _cellBox.min.z), v1 = Math.min(z1, _cellBox.max.z);
-      if (u1 < u0 || v1 < v0) continue;
-      out.push(u0, v0, u1, v0, u1, v1, u0, v1);
-    }
-    return out;
-  }
-
-  /**
-   * Everything lets go — used when whatever was holding this piece up is gone.
-   *
-   * It goes over the bearing it has LEFT, not away from its own middle. A
-   * lintel that has lost its left column is pivoting about its right one, so
-   * every part of it moves away from that column; shoved from the lintel's own
-   * centre instead, the stone nearest the surviving column moved TOWARDS it and
-   * came to rest on the capital, still six metres up, which is the one place
-   * the collapse must not leave anything.
-   */
+  /** Everything lets go — used when whatever was holding this piece up is gone. */
   collapse(dir = null) {
     if (this.state === 'gone' || this.state === 'collapsed') return;
     this.prefracture();
     if (this.state === 'intact') this.convert();
     if (!this.chunks) return;
-    const from = this._bearingCentre() || this.centre;
-    for (const c of this.chunks) if (c.state === 'attached') this.detach(c, dir, from);
+    for (const c of this.chunks) if (c.state === 'attached') this.detach(c, dir, this.centre);
     this.state = 'collapsed';
     for (const s of this.carries) s.collapse();
     this.manager._breakFx(this.centre, 6, this.profile);
   }
 
-  /** Plan centre of whatever is still bearing under this piece, at its base. */
-  _bearingCentre() {
-    if (!this.restsOn.length) return null;
-    const pts = [];
-    for (const s of this.restsOn) s.bearingPlan(this, pts);
-    if (!pts.length) return null;
-    let x = 0, z = 0;
-    for (let i = 0; i < pts.length; i += 2) { x += pts[i]; z += pts[i + 1]; }
-    const n = pts.length / 2;
-    return new THREE.Vector3(x / n, this.position.y + this.local.min.y, z / n);
-  }
-
   /** The piece nudges and sheds dust when it is close to letting go. */
   updateStress(dt) {
-    // a piece sharing a mesh with the rest of a building cannot shake: moving
-    // the mesh would shake the building
-    if (this.stress <= 0.05 || this.state !== 'intact' || !this.owns) {
+    if (this.stress <= 0.05 || this.state !== 'intact') {
       if (this._shakeBase) this._unshake();
-      this.stress = Math.max(0, this.stress - dt * 0.12);
       return;
     }
     const k = this.stress;
@@ -1885,7 +1220,7 @@ export class Destruction {
     const q = world.settings?.quality;
     this.maxLive = opts.maxLive ?? (q === 'low' ? 36 : q === 'high' ? 96 : 64);
     this.maxChunks = opts.maxChunks ?? this.maxLive * 3;
-    this.maxCellsPerPiece = opts.maxCellsPerPiece ?? (q === 'low' ? 18 : q === 'high' ? 28 : 22);
+    this.maxCellsPerPiece = opts.maxCellsPerPiece ?? 18;
     this.prepareBudgetMs = opts.prepareBudgetMs ?? 1.2;
     this.settleSpeed = opts.settleSpeed ?? 0.4;
     this.settleTime = opts.settleTime ?? 1.4;
@@ -2108,28 +1443,6 @@ export class Destruction {
         if (!solver.progress.has(k)) { this._bladeSeen.delete(k); this._bladeMark.delete(k); }
       }
     }
-  }
-
-  /**
-   * The capsule a cut event came out of, recovered from its point.
-   *
-   * World hands `cut` only (point, normal, impulse) — the event's own capsule
-   * never reaches the prop. It does not have to: the solver puts the cut point
-   * exactly ON the capsule segment it crossed, so the segment through the point
-   * is the capsule, and for a cell capsule (p0 === p1 === the cell's centre)
-   * that is an exact identification of the cell the blade was in.
-   */
-  capsuleAt(point) {
-    let best = null, bestD = 1e-4;
-    for (const cap of this._caps.values()) {
-      _v1.subVectors(cap.p1, cap.p0);
-      const len2 = _v1.lengthSq();
-      let t = 0;
-      if (len2 > 1e-12) t = clamp(_v2.subVectors(point, cap.p0).dot(_v1) / len2, 0, 1);
-      const d = _v2.copy(cap.p0).addScaledVector(_v1, t).distanceToSquared(point);
-      if (d < bestD) { bestD = d; best = cap; }
-    }
-    return best;
   }
 
   /** The piece the blade actually parted. */
@@ -2408,9 +1721,8 @@ class DestructionProxy {
 
   /** The blade got through. Returns [] — there are no halves to hand back. */
   cut(planePoint, planeNormal, impulse) {
-    const cap = this.manager.capsuleAt(planePoint);
-    const s = (cap && cap.structure) || this.manager.structureAt(planePoint, 3.2);
-    if (s) s.cutBy(planePoint, planeNormal, impulse, cap ? cap.chunk : null);
+    const s = this.manager.structureAt(planePoint, 3.2);
+    if (s) s.cutBy(planePoint, planeNormal, impulse);
     return [];
   }
 
@@ -2444,8 +1756,7 @@ export function attachDestruction(world, opts = {}) {
  */
 export function registerDestructible(world, spec) {
   if (!spec || !spec.profile) return null;
-  // either whole meshes, or runs of somebody else's (a piece composed into a Kit)
-  if (!(spec.meshes && spec.meshes.length) && !(spec.spans && spec.spans.length)) return null;
+  if (!spec.meshes || !spec.meshes.length) return null;
   const m = attachDestruction(world);
   return m ? m.register(spec) : null;
 }
@@ -2474,81 +1785,4 @@ const _m4 = new THREE.Matrix4();
 const _ONE = new THREE.Vector3(1, 1, 1);
 function _m4From(p, q) { return _m4.compose(p, q, _ONE); }
 function _worldBox(s, out) { return out.copy(s.local).applyMatrix4(_m4From(s.position, s.quaternion)); }
-
-/**
- * How far inside the support polygon the weight has to be, on ONE edge.
- *
- * Not a fixed margin, because the criterion is not about a fixed margin: an
- * unreinforced masonry joint opens as soon as the resultant leaves the middle
- * third of it, and once it opens the remaining bearing is a fraction of the
- * stone and crushes. So the effective support is the geometric one pulled in by
- * roughly a sixth of its own size — measured on a stone column carved at mid
- * height, that is what tells 27% of the section cut away (the weight is still
- * a quarter of a metre inside what is left, and it stands) from 41% (a hand's
- * width outside, and the top goes over).
- *
- * "Its own size" has to be read PER EDGE — the depth of the bearing behind that
- * edge — and not off the polygon's diagonal, which is what this was. Read off
- * the diagonal, a lintel resting on two columns 5.2 m apart got a 0.60 m margin
- * applied to a bearing 0.72 m deep, so a lintel sitting square on two untouched
- * columns was already falling: its weight is 0.36 m from the long edge, and 0.36
- * is less than 0.60. Per edge it is 0.11 m against the 0.72 m depth, and the
- * same lintel with one column shot out from under it still goes over, because
- * across the span the depth is 5.2 m and the margin 0.6.
- */
-const PLAN_KERN = 0.156;
-function edgeInset(depth) { return clamp(PLAN_KERN * depth, 0.04, 0.6); }
-export function planInside(pts, px, pz, inset = 0) {
-  const n = pts.length / 2;
-  if (n < 3) {
-    // a line or a point: stable only if the weight is essentially on it
-    for (let i = 0; i < n; i++) {
-      if (Math.hypot(pts[i * 2] - px, pts[i * 2 + 1] - pz) <= inset) return true;
-    }
-    return false;
-  }
-  // monotone chain, on indices so the coordinates stay in the flat array
-  const idx = [];
-  for (let i = 0; i < n; i++) idx.push(i);
-  idx.sort((a, b) => (pts[a * 2] - pts[b * 2]) || (pts[a * 2 + 1] - pts[b * 2 + 1]));
-  const cross = (o, a, b) => (pts[a * 2] - pts[o * 2]) * (pts[b * 2 + 1] - pts[o * 2 + 1])
-    - (pts[a * 2 + 1] - pts[o * 2 + 1]) * (pts[b * 2] - pts[o * 2]);
-  const hull = [];
-  for (let pass = 0; pass < 2; pass++) {
-    const start = hull.length;
-    const src = pass ? idx.slice().reverse() : idx;
-    for (const i of src) {
-      while (hull.length >= start + 2 && cross(hull[hull.length - 2], hull[hull.length - 1], i) <= 0) hull.pop();
-      hull.push(i);
-    }
-    hull.pop();
-  }
-  if (hull.length < 3) {
-    // degenerate — every point collinear; fall back to the segment test
-    let lo = Infinity, hi = -Infinity, dx = 0, dz = 0;
-    const a = idx[0], b = idx[idx.length - 1];
-    dx = pts[b * 2] - pts[a * 2]; dz = pts[b * 2 + 1] - pts[a * 2 + 1];
-    const len = Math.hypot(dx, dz);
-    if (len < 1e-6) return Math.hypot(pts[a * 2] - px, pts[a * 2 + 1] - pz) <= inset;
-    dx /= len; dz /= len;
-    for (let i = 0; i < n; i++) {
-      const t = (pts[i * 2] - pts[a * 2]) * dx + (pts[i * 2 + 1] - pts[a * 2 + 1]) * dz;
-      lo = Math.min(lo, t); hi = Math.max(hi, t);
-    }
-    const t = (px - pts[a * 2]) * dx + (pz - pts[a * 2 + 1]) * dz;
-    const off = Math.abs((px - pts[a * 2]) * -dz + (pz - pts[a * 2 + 1]) * dx);
-    return off <= inset && t >= lo + inset && t <= hi - inset;
-  }
-  // inside every edge, pulled in by `inset`
-  for (let i = 0; i < hull.length; i++) {
-    const a = hull[i], b = hull[(i + 1) % hull.length];
-    const ex = pts[b * 2] - pts[a * 2], ez = pts[b * 2 + 1] - pts[a * 2 + 1];
-    const len = Math.hypot(ex, ez);
-    if (len < 1e-9) continue;
-    // counter-clockwise hull: inside is to the left, so this is +ve inside
-    const d = ((px - pts[a * 2]) * ez - (pz - pts[a * 2 + 1]) * ex) / len;
-    if (-d < inset) return false;
-  }
-  return true;
-}
 function now() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
