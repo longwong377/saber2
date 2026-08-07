@@ -72,7 +72,13 @@ export class SaberController {
     // Releasing the mouse returns to this, rather than leaving the blade
     // wherever the last flick abandoned it.
     this.readyX = 0.30;
-    this.readyY = 0.30;
+    // 0.30 rested the guard 22 degrees ABOVE screen centre, which is where "the
+    // cursor feels way too high" came from: every deflection started by dragging
+    // back down to the middle before you could even begin aiming. A guard is
+    // carried high, but the blade cursor is what you aim with, so it belongs
+    // near the middle of the screen — 0.08 is 6 degrees up, a hint of high
+    // guard rather than a handicap.
+    this.readyY = 0.08;
     this.recentre = 5.5;     // rad/s of easing back to the ready guard
     // The camera does NOT move while you are steering the blade. A full
     // left-to-right slash has to fit INSIDE the cone, or every slash spills
@@ -178,8 +184,15 @@ export class SaberController {
       // slash overshoots the cone every time, every slash spun the view and
       // horizontal attacks while strafing were impossible. overflowTurn is kept
       // as a knob but ships at zero.
+      // gx and gy are in units of their OWN max deflection, and those maxima are
+      // not equal: yaw reaches 1.62 rad, pitch only 1.28. Sharing one gain
+      // therefore turned one pixel of mouse into 1.27x more ANGLE sideways than
+      // vertically, so a straight overhead pull curved off to the side under
+      // nothing worse than normal hand wobble, and a diagonal never went where
+      // it was aimed. Scaling the vertical term by the ratio makes a pixel mean
+      // the same angle whichever way you move it.
       const wantX = this.gx + dx * s;
-      const wantY = this.gy - dy * s;
+      const wantY = this.gy - dy * s * (this.maxYaw / this.maxPitch);
       this.gx = clamp(wantX, -GX_MAX, GX_MAX);
       this.gy = clamp(wantY, -GY_MIN, GY_MAX);
       cam.yaw -= (wantX - this.gx) * this.maxYaw * this.overflowTurn;

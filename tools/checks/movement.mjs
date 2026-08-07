@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { limitBackpedal, ARCHETYPES } from '../../src/game/Enemy.js';
+import { SaberController } from '../../src/game/SaberController.js';
 import { smoothstep } from '../../src/engine/MathUtil.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -76,5 +77,43 @@ export async function run({ check, assert }) {
       rows.push(`${key} ${near}-${far}`);
     }
     return `${rows.length} archetypes`;
+  });
+
+  /* ── the blade cursor itself ───────────────────────────────────────── */
+
+  check('blade: a pixel of mouse means the same angle whichever way you push it', () => {
+    // gx and gy are each in units of their OWN maximum, and those maxima differ
+    // (yaw 1.62 rad, pitch 1.28). Sharing one gain made sideways travel 1.27x
+    // faster in ANGLE than vertical, so a straight overhead pull curved off to
+    // the side and diagonals never went where they were aimed.
+    const c = new SaberController();
+    const PX = 100;
+    c.gx = 0; c.gy = 0;
+    const fake = (dx, dy) => ({
+      mouse: { dx, dy, wheel: 0, down: true },
+      accel: { x: 0, y: 0 },
+      act: (id) => id === 'blade',
+      actHit: () => false,
+    });
+    c.applyInput(fake(PX, 0), 1 / 60, {});
+    const yawDeg = Math.abs(c.gx * c.maxYaw) * 180 / Math.PI;
+    c.gx = 0; c.gy = 0;
+    c.applyInput(fake(0, -PX), 1 / 60, {});
+    const pitchDeg = Math.abs(c.gy * c.maxPitch) * 180 / Math.PI;
+    const ratio = yawDeg / pitchDeg;
+    assert(Math.abs(ratio - 1) < 0.02,
+      `${PX} px gives ${yawDeg.toFixed(1)} deg of yaw but ${pitchDeg.toFixed(1)} deg of pitch (${ratio.toFixed(2)}x) — an overhead will curve`);
+    return `${PX} px -> ${yawDeg.toFixed(1)} deg either way`;
+  });
+
+  check('blade: the guard rests near the middle of the screen, not above it', () => {
+    const c = new SaberController();
+    const upDeg = c.readyY * c.maxPitch * 180 / Math.PI;
+    const rightDeg = c.readyX * c.maxYaw * 180 / Math.PI;
+    // At 0.30 this rested 22 degrees high, so every deflection began by dragging
+    // back down to centre before you could start aiming.
+    assert(upDeg < 10,
+      `the blade cursor rests ${upDeg.toFixed(0)} deg above centre — that is a handicap, not a guard`);
+    return `rests ${rightDeg.toFixed(0)} deg right, ${upDeg.toFixed(0)} deg up`;
   });
 }
