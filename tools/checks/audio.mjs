@@ -1,0 +1,367 @@
+/**
+ * SABER — can the game still be heard?
+ *
+ * "The sound is really buggy and totally silent in most situations, comes in
+ * and out." Twice now this file has been declared fixed by reading it, and
+ * twice the game has gone quiet again, so these checks are deliberately not
+ * about the shape of the code. They drive the real AudioEngine against a fake
+ * WebAudio that behaves like the real one where it matters — every AudioParam
+ * rejects a non-finite value with a TypeError, an exponential ramp to zero is a
+ * RangeError, a source fires `ended` on the audio clock and not on the wall
+ * clock, and a suspended context refuses to resume without a gesture — and then
+ * assert on numbers.
+ *
+ * What actually went wrong, measured with tools/audiowatch.mjs on a real
+ * session: 94% of every voice request in the game was a footstep, the pool of
+ * 44 sat completely full for nine seconds at a time, and the requests that
+ * arrived in that window were dropped on the floor — bolt impacts, blaster
+ * shots and deflections among them. Nothing threw. Nothing leaked. No gain was
+ * zero. The only way to see it was to count.
+ */
+
+import * as THREE from 'three';
+import { AudioEngine, PRIO } from '../../src/engine/Audio.js';
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/* ── a WebAudio that is as unforgiving as the browser's ─────────────── */
+
+const chk = (v) => {
+  if (!Number.isFinite(v)) throw new TypeError('The provided float value is non-finite.');
+  return v;
+};
+
+class Param {
+  constructor(v = 0) { this._v = v; }
+  get value() { return this._v; }
+  set value(v) { this._v = chk(v); }
+  setValueAtTime(v, t) { chk(v); chk(t); return this; }
+  linearRampToValueAtTime(v, t) { chk(v); chk(t); return this; }
+  exponentialRampToValueAtTime(v, t) {
+    chk(v); chk(t);
+    // The real node throws here, and this file used to reach it with a zero.
+    if (v === 0) throw new RangeError('exponentialRampToValueAtTime: target must not be 0');
+    return this;
+  }
+  setTargetAtTime(v, t, tc) { chk(v); chk(t); chk(tc); return this; }
+  cancelScheduledValues(t) { chk(t); return this; }
+}
+
+class Node {
+  constructor(ctx, kind) { this.ctx = ctx; this.kind = kind; this.outs = new Set(); }
+  connect(d) { this.outs.add(d); this.ctx.connects++; return d; }
+  disconnect(d) {
+    this.ctx.disconnected.push(this);
+    if (d) this.outs.delete(d); else this.outs.clear();
+  }
+}
+
+class Src extends Node {
+  constructor(ctx, kind) { super(ctx, kind); this.onended = null; this._started = false; }
+  start(when = 0) {
+    chk(when);
+    if (when < 0) throw new RangeError('start time must not be negative');
+    this._started = true;
+  }
+  stop(when = 0) {
+    chk(when);
+    if (!this._started) throw new Error('stop called before start');
+    this._stopAt = when;
+    this.ctx.running.push(this);
+  }
+}
+
+class FakeCtx {
+  constructor() {
+    this.sampleRate = 48000;
+    this.currentTime = 0;
+    this.state = 'running';
+    this.connects = 0;
+    this.disconnected = [];
+    this.running = [];        // sources with a scheduled stop, awaiting `ended`
+    this.panners = 0;
+    this.resumeCalls = 0;
+    this.allowResume = true;
+    this.destination = new Node(this, 'destination');
+    this.listener = {
+      positionX: new Param(), positionY: new Param(), positionZ: new Param(),
+      forwardX: new Param(), forwardY: new Param(), forwardZ: new Param(),
+      upX: new Param(), upY: new Param(), upZ: new Param(),
+    };
+  }
+  createGain() { const n = new Node(this, 'gain'); n.gain = new Param(1); return n; }
+  createBiquadFilter() {
+    const n = new Node(this, 'biquad');
+    n.type = 'lowpass'; n.frequency = new Param(350); n.Q = new Param(1); n.detune = new Param(0);
+    return n;
+  }
+  createDynamicsCompressor() {
+    const n = new Node(this, 'comp');
+    for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n[k] = new Param(0);
+    n.reduction = 0;
+    return n;
+  }
+  createConvolver() { const n = new Node(this, 'convolver'); n.buffer = null; n.normalize = true; return n; }
+  createPanner() {
+    this.panners++;
+    const n = new Node(this, 'panner');
+    n.panningModel = 'equalpower'; n.distanceModel = 'inverse';
+    n.refDistance = 1; n.maxDistance = 10000; n.rolloffFactor = 1;
+    n.positionX = new Param(); n.positionY = new Param(); n.positionZ = new Param();
+    return n;
+  }
+  createOscillator() {
+    const n = new Src(this, 'osc');
+    n.type = 'sine'; n.frequency = new Param(440); n.detune = new Param(0);
+    return n;
+  }
+  createBufferSource() {
+    const n = new Src(this, 'bufsrc');
+    n.buffer = null; n.loop = false; n.playbackRate = new Param(1);
+    return n;
+  }
+  createBuffer(channels, length, rate) {
+    chk(length); chk(rate);
+    const data = [];
+    for (let i = 0; i < channels; i++) data.push(new Float32Array(length));
+    return { numberOfChannels: channels, length, sampleRate: rate,
+      duration: length / rate, getChannelData: (i) => data[i] };
+  }
+  /** Move the audio clock and fire `ended` for everything that has finished. */
+  advance(dt) {
+    this.currentTime += dt;
+    const still = [];
+    for (const s of this.running) {
+      if (s._stopAt <= this.currentTime) { try { s.onended?.(); } catch {} }
+      else still.push(s);
+    }
+    this.running = still;
+  }
+  resume() {
+    this.resumeCalls++;
+    // A browser that has not seen a gesture rejects this and stays suspended,
+    // which is the whole reason the engine has to cope with being stopped.
+    if (this.allowResume) this.state = 'running';
+    return Promise.resolve();
+  }
+  suspend() { this.state = 'suspended'; return Promise.resolve(); }
+}
+
+/** A fully initialised engine on a fake context. */
+function engine() {
+  const prevAC = globalThis.AudioContext;
+  let made = null;
+  globalThis.AudioContext = function () { made = new FakeCtx(); return made; };
+  const a = new AudioEngine();
+  try { a.init(); } finally { globalThis.AudioContext = prevAC; }
+  a._listenerPos.set(0, 0, 0);
+  // resume() rate-limits itself off the wall clock; start every test past it.
+  a._lastWake = -1e9;
+  return { a, ctx: made };
+}
+
+export async function run({ check, assert }) {
+
+  check('audio: the engine comes up with a live graph and a full master', () => {
+    const { a, ctx } = engine();
+    assert(a.ready, 'init() did not finish — every sound in the game is a no-op');
+    assert(a.master.gain.value === 0.8, `master is at ${a.master.gain.value}`);
+    assert(a.sfxBus.gain.value === 1 && a.ambBus.gain.value === 1,
+      `a bus came up muted: sfx ${a.sfxBus.gain.value}, amb ${a.ambBus.gain.value}`);
+    assert(a.master.outs.has(ctx.destination), 'master never reached the destination');
+    assert(ctx.disconnected.length === 0, 'init() disconnected something');
+    return `${ctx.connects} edges, master ${a.master.gain.value}, sfx ${a.sfxBus.gain.value}`;
+  });
+
+  check('audio: a NaN volume setting cannot mute the game for good', () => {
+    // A stored setting is whatever is in localStorage. master.gain.value = NaN
+    // throws inside init(), which leaves ctx set and `ready` false, and every
+    // later init() returns early on the ctx it already has. Permanent silence,
+    // nothing in the console.
+    const prevAC = globalThis.AudioContext;
+    globalThis.AudioContext = function () { return new FakeCtx(); };
+    const a = new AudioEngine();
+    a.setVolume(undefined); a.setMusicVolume(NaN);
+    try { a.init(); } finally { globalThis.AudioContext = prevAC; }
+    assert(a.ready, 'a NaN volume killed init() — the whole session is silent');
+    assert(Number.isFinite(a.master.gain.value) && a.master.gain.value > 0,
+      `master came up at ${a.master.gain.value}`);
+    assert(Number.isFinite(a.musicBus.gain.value), `musicBus came up at ${a.musicBus.gain.value}`);
+    return `volume NaN → ${a.master.gain.value}, music NaN → ${a.musicBus.gain.value}`;
+  });
+
+  check('audio: the voice bands reserve real room above the chatter', () => {
+    const { a } = engine();
+    const caps = [PRIO.chatter, PRIO.world, PRIO.combat, PRIO.critical].map(p => a.bandCap(p));
+    for (let i = 1; i < caps.length; i++) {
+      assert(caps[i] > caps[i - 1], `band ${i} (${caps[i]}) does not sit above band ${i - 1} (${caps[i - 1]})`);
+    }
+    assert(caps[3] === a.maxVoices, `the top band is ${caps[3]} of ${a.maxVoices} — it must be the whole pool`);
+    // A clash costs three voices and a deflection up to three. Whatever the
+    // chatter is doing, there has to be room for several of them.
+    const reserve = a.maxVoices - caps[0];
+    assert(reserve >= 12, `only ${reserve} voices are held back from chatter — four clashes is 12`);
+    return `caps ${caps.join('/')} of ${a.maxVoices}, ${reserve} reserved above chatter`;
+  });
+
+  check('audio: a storm of footsteps cannot silence a clash', () => {
+    const { a } = engine();
+    const near = V(2, 0, 0);
+    // 400 footsteps on a single timestamp: worse than the 143/s the game
+    // actually produces, and the pool must still not be theirs to fill.
+    for (let i = 0; i < 400; i++) a.step(near, 'sand');
+    const chatter = a.voices;
+    assert(chatter <= a.bandCap(PRIO.chatter),
+      `footsteps took ${chatter} of ${a.maxVoices} voices — the band cap is ${a.bandCap(PRIO.chatter)}`);
+
+    const before = a.voices;
+    a.clash(near, 1);
+    assert(a.voices - before === 3, `the clash got ${a.voices - before} of its 3 voices`);
+    const afterClash = a.voices;
+    a.deflect(near, 3);
+    assert(a.voices - afterClash === 3, `the deflection got ${a.voices - afterClash} of its 3 voices`);
+    const afterDeflect = a.voices;
+    a.ui('click');
+    assert(a.voices - afterDeflect === 1, 'a menu blip was refused');
+    return `400 footsteps held ${chatter}/${a.maxVoices}; clash, deflect and UI all still played`;
+  });
+
+  check('audio: the pool drains back to empty over a long fight', () => {
+    const { a, ctx } = engine();
+    const near = V(3, 1, 0);
+    for (let f = 0; f < 1800; f++) {           // 30 s at 60 Hz
+      for (let k = 0; k < 2; k++) a.step(near, 'sand');
+      if (f % 7 === 0) a.blaster(near, false);
+      if (f % 11 === 0) a.boltHit(near);
+      if (f % 23 === 0) a.clash(near, 1);
+      if (f % 97 === 0) a.explosion(near, 1);
+      ctx.advance(1 / 60);
+    }
+    const mid = a.voices;
+    ctx.advance(5);                            // let everything in flight finish
+    assert(a.voices === 0, `${a.voices} of ${a.maxVoices} voices never came back — the game goes mute`);
+    assert(a.stats.alloc === a.stats.freed,
+      `allocated ${a.stats.alloc} but freed ${a.stats.freed} — ${a.stats.alloc - a.stats.freed} stranded`);
+    assert(a.stats.threw === 0, `${a.stats.threw} voices threw mid-build`);
+    return `${a.stats.alloc} voices over 30 s, ${mid} live at the end of the fight, 0 after it`;
+  });
+
+  check('audio: a refused sound does not leave a panner on the effects bus', () => {
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    const p0 = ctx.panners;
+    const v0 = a.stats.alloc;
+    for (let i = 0; i < 400; i++) a.step(near, 'sand');
+    const built = ctx.panners - p0, took = a.stats.alloc - v0;
+    assert(built === took,
+      `${built} panners were built for ${took} voices — ${built - took} are orphaned on sfxBus forever`);
+    assert(a.stats.denied > 0, 'the pool was never actually saturated, so this proves nothing');
+    return `${a.stats.denied} refusals, ${built} panners for ${took} voices`;
+  });
+
+  check('audio: a sound too far away to hear is not worth a voice', () => {
+    const { a, ctx } = engine();
+    const p0 = ctx.panners;
+    // At 80 m the inverse law leaves 2.05% of a source's amplitude, so a 0.09
+    // footstep arrives at 0.0018 — under the 0.013 RMS the empty room already
+    // makes on its own — while a 0.5 detonation still lands at 0.0103 and
+    // belongs in the mix. The old flat 190 m cull gave both the same range.
+    a.step(V(80, 0, 0), 'sand');
+    assert(a.voices === 0, 'a footstep 80 m away took a voice');
+    assert(ctx.panners === p0, 'a footstep 80 m away built a panner');
+    a.explosion(V(80, 0, 0), 1);
+    assert(a.voices === 3, `the distant explosion got ${a.voices} of its 3 voices`);
+
+    // and near sounds are untouched
+    const { a: b } = engine();
+    b.step(V(2, 0, 0), 'sand');
+    assert(b.voices === 1, 'a footstep two metres away was culled');
+    return `footstep culled at 80 m, explosion kept, footstep at 2 m kept`;
+  });
+
+  check('audio: a stopped context is not fed sounds it cannot play', () => {
+    const { a, ctx } = engine();
+    ctx.allowResume = false;                   // a browser with no gesture yet
+    ctx.state = 'suspended';
+    const t = ctx.currentTime;
+    const near = V(2, 0, 0);
+    for (let i = 0; i < 200; i++) { a.clash(near, 1); a.step(near, 'sand'); }
+    assert(a.voices === 0,
+      `${a.voices} voices were taken while the context was stopped — none of them can ever fire 'ended'`);
+    assert(ctx.currentTime === t, 'the fake clock moved; this test is not measuring what it thinks');
+    assert(ctx.resumeCalls > 0, 'nothing ever asked the context to come back — that is the permanent mute');
+    assert(a.stats.dropped >= 200, `only ${a.stats.dropped} sounds were dropped out of 800 scheduled`);
+
+    // and it plays again the moment the context does
+    ctx.allowResume = true;
+    a._lastWake = -1e9;
+    a.resume();
+    assert(ctx.state === 'running', 'resume() did not restart the context');
+    a.clash(near, 1);
+    assert(a.voices === 3, `after resuming, the clash got ${a.voices} of its 3 voices`);
+    return `800 sounds dropped while suspended, ${ctx.resumeCalls} resume attempts, full voices after`;
+  });
+
+  check('audio: a throw mid-build releases the voice and its panner', () => {
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    const p0 = ctx.panners, d0 = ctx.disconnected.length;
+    const realGain = ctx.createGain.bind(ctx);
+    ctx.createGain = () => { throw new TypeError('the browser said no'); };
+    for (let i = 0; i < 60; i++) { a.clash(near, 1); a.blaster(near, true); }
+    ctx.createGain = realGain;
+    assert(a.voices === 0, `${a.voices} voices leaked through a throw — 44 of these and the game is mute`);
+    assert(a.stats.threw > 0, 'nothing actually threw, so this proves nothing');
+    const built = ctx.panners - p0, freed = ctx.disconnected.length - d0;
+    assert(freed >= built, `${built} panners were built and only ${freed} disconnected`);
+    // and the engine is still usable afterwards
+    a.clash(near, 1);
+    assert(a.voices === 3, `the engine did not recover: ${a.voices} of 3 voices`);
+    return `${a.stats.threw} throws, 0 voices leaked, ${freed} panners released, engine still plays`;
+  });
+
+  check('audio: retiring a voice never disconnects a shared bus', () => {
+    const { a, ctx } = engine();
+    const shared = new Set([a.sfxBus, a.musicBus, a.master, a.ambBus, a.comp]);
+    // Non-positional sounds route straight to sfxBus. Calling disconnect() on
+    // that unplugs every sound in the game from the compressor, permanently.
+    for (let f = 0; f < 600; f++) {
+      a.ui(['hover', 'click', 'good', 'bad'][f & 3]);
+      a.force(null, 'sense');
+      ctx.advance(1 / 60);
+    }
+    ctx.advance(5);
+    const bad = ctx.disconnected.filter(n => shared.has(n));
+    assert(bad.length === 0, `${bad.length} shared buses were torn down (${bad.map(n => n.kind).join(', ')})`);
+    assert(a.voices === 0, `${a.voices} voices leaked from non-positional sounds`);
+    assert(a.master.outs.has(ctx.destination) && a.sfxBus.outs.has(a.comp),
+      'the graph came apart: sfx no longer reaches the compressor');
+    return `${a.stats.alloc} bus-routed voices, 0 bus disconnects, graph intact`;
+  });
+
+  check('audio: a hum is an instrument, not a voice, and disposes cleanly', () => {
+    const { a, ctx } = engine();
+    const v0 = a.voices;
+    const hums = [];
+    for (let i = 0; i < 10; i++) { const h = a.createHum(0x57c9ff); h.ignite(); hums.push(h); }
+    assert(a.voices === v0, `${a.voices - v0} one-shot voices were spent on hums`);
+    for (const h of hums) { h.set(18, 0.4); h.move(V(1, 1, 1)); }
+    const d0 = ctx.disconnected.length;
+    for (const h of hums) h.dispose();
+    // panner, hp, lp, bus, nsG, nsF, lfoG and five osc gains = 12 per hum
+    assert(ctx.disconnected.length - d0 >= 10 * 12,
+      `only ${ctx.disconnected.length - d0} nodes released for 10 hums — a hum stays audible forever`);
+    assert(a.voices === v0, 'disposing a hum moved the one-shot pool');
+    return `10 hums, 0 pool voices, ${ctx.disconnected.length - d0} nodes released on dispose`;
+  });
+
+  check('audio: the score pulses without touching the one-shot pool', () => {
+    const { a, ctx } = engine();
+    const v0 = a.voices;
+    for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, 1); ctx.advance(1 / 60); }
+    ctx.advance(2);
+    assert(a.voices === v0, `the score took ${a.voices - v0} voices from the one-shot pool`);
+    assert(a.intensity > 0.9, `intensity only reached ${a.intensity.toFixed(2)} at full drive`);
+    return `10 s at full intensity, pool untouched`;
+  });
+}

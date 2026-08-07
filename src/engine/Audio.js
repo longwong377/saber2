@@ -6,6 +6,14 @@
  * instrument: its pitch, its amplitude and its filter all track how fast the
  * blade is actually moving, so the weapon sings when you move it and settles
  * when you hold a guard.
+ *
+ * Synthesis costs a voice, and voices are finite, so the other half of this
+ * file is about who gets one. Three questions are asked of every one-shot, in
+ * this order, and all three of them before a single node is built: is the
+ * context running (a stopped one turns scheduling into a pile-up), would this
+ * be loud enough at the listener to hear, and is its band of the pool free.
+ * tools/audiowatch.mjs is the instrument that settles all three, and
+ * tools/checks/audio.mjs is what stops them regressing.
  */
 
 import * as THREE from 'three';
@@ -15,6 +23,50 @@ import { clamp, makeRng } from './MathUtil.js';
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 
 const rng = makeRng(4242);
+
+/**
+ * What a sound is allowed to cost.
+ *
+ * The pool was first-come-first-served, and that is why the game went quiet.
+ * Measured with tools/audiowatch.mjs over 24 s of a real dunes fight: the game
+ * asked for 3435 sounds, and 3230 of them — 94% — were footsteps. The pool of
+ * 44 sat completely full from t=11.6 s to t=20.2 s, and every request that
+ * arrived in that window was thrown away: 37 bolt impacts, 14 blaster shots and
+ * 12 deflections among them. The arena run was worse, 1331 refusals. Nothing
+ * threw, nothing leaked, no gain was zero — the loudest events in the game were
+ * simply queued behind boots on sand. That is "the sound comes in and out".
+ *
+ * So the pool is banded. A footstep may only ever fill the bottom third of it;
+ * a clash may take the lot. The bands are ceilings on the LIVE count rather
+ * than separate pools, so a quiet moment still lends the whole engine to a
+ * footstep — they only bite while the pool is filling, which is the only moment
+ * the question is worth asking.
+ */
+export const PRIO = { chatter: 0, world: 1, combat: 2, critical: 3 };
+const BAND = [0.34, 0.68, 0.88, 1];
+
+/**
+ * The panner's inverse distance law, as a plain number.
+ *
+ * _panner() builds every positional voice with the same refDistance 1.8 and
+ * rolloffFactor 1.1, so the amplitude a sound arrives at is knowable before a
+ * single node exists — which is what lets a sound be refused for being
+ * inaudible instead of for being late.
+ */
+const REF_DIST = 1.8, ROLLOFF = 1.1;
+const attenuation = (d) => (d <= REF_DIST ? 1 : REF_DIST / (REF_DIST + ROLLOFF * (d - REF_DIST)));
+
+/**
+ * Below this amplitude at the listener, a one-shot is not a sound, it is a
+ * voice being spent. The room's own bed — wind, drone, one idle hum — measures
+ * 0.013 RMS with nothing happening at all, so 0.004 is about 11 dB under the
+ * floor of a silent level. In practice that retires a 0.09 footstep at 37 m and
+ * a 0.5 explosion at 190 m: each sound gets the range its own level earns,
+ * where the flat 190 m cull gave the footstep and the detonation the same one.
+ */
+const HEARING_FLOOR = 0.004;
+/** And an absolute backstop, because HRTF panning is not free even at -70 dB. */
+const MAX_RANGE = 190;
 
 // listener scratch — updateListener runs every frame
 const _lq = new THREE.Quaternion(), _lf = new THREE.Vector3(), _lu = new THREE.Vector3();
@@ -31,16 +83,30 @@ export class AudioEngine {
     this._listenerPos = new THREE.Vector3();
     this._noiseBuf = null;
     this._pinkBuf = null;
+    /**
+     * Voice-pool telemetry. This file has been declared fixed twice by reading
+     * it, so it now keeps its own books: `alloc - freed` is the live count and
+     * must return to zero when the fight stops, `denied` is sound the player
+     * asked for and did not get, and `dropped` is sound thrown away because the
+     * context was not running. tools/audiowatch.mjs tabulates all of it.
+     */
+    this.stats = { req: 0, alloc: 0, freed: 0, denied: 0, culled: 0, dropped: 0, threw: 0, peak: 0 };
   }
 
+  /** The live-voice ceiling for a band, so a caller can state what it expects. */
+  bandCap(prio) { return Math.max(1, Math.round((BAND[prio] ?? 1) * this.maxVoices)); }
+
   init() {
-    if (this.ctx) return;
+    if (this.ctx) { this.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC({ latencyHint: 'interactive' });
 
     this.master = this.ctx.createGain();
-    this.master.gain.value = this.volume;
+    // num() and not this.volume directly: a stored setting is whatever was in
+    // localStorage, and `gain.value = NaN` throws here, halfway through the
+    // graph, leaving ctx set and ready false — permanent silence, no console.
+    this.master.gain.value = num(this.volume, 0.8);
 
     // A gentle bus compressor keeps a hundred droids from clipping the mix.
     this.comp = this.ctx.createDynamicsCompressor();
@@ -55,7 +121,7 @@ export class AudioEngine {
     this.comp.release.value = 0.12;
 
     this.sfxBus = this.ctx.createGain(); this.sfxBus.gain.value = 1;
-    this.musicBus = this.ctx.createGain(); this.musicBus.gain.value = this.musicVolume;
+    this.musicBus = this.ctx.createGain(); this.musicBus.gain.value = num(this.musicVolume, 0.45);
     // Wind and drone are the world, not the score. On musicBus, turning the
     // music down muted the level's own atmosphere along with it.
     this.ambBus = this.ctx.createGain(); this.ambBus.gain.value = 1;
@@ -81,14 +147,55 @@ export class AudioEngine {
     this._startAmbience();
   }
 
-  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+  /**
+   * Ask the context to come back, at most four times a second.
+   *
+   * `suspended` is not the only stopped state — Safari parks a context in
+   * `interrupted` when a phone call or another tab takes the audio session, and
+   * the old check for `=== 'suspended'` left those muted for good. resume()
+   * returns a promise that is rejected outright when there has been no user
+   * gesture yet, and an unhandled rejection there used to show up in the
+   * console as the only sign anything was wrong.
+   */
+  resume() {
+    if (!this.ctx || this.ctx.state === 'running' || this.ctx.state === 'closed') return;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - (this._lastWake || -1e9) < 250) return;
+    this._lastWake = now;
+    try { this.ctx.resume()?.catch?.(() => {}); } catch {}
+  }
+
+  /**
+   * Is it worth scheduling anything right now?
+   *
+   * A stopped context freezes currentTime, so every sound scheduled while it is
+   * down lands on the same timestamp and arrives as one crack when it comes
+   * back; and none of those sources can fire `ended` in the meantime, so the
+   * pool fills with voices that only the wall-clock backstop can retire. A
+   * browser that blocked autoplay therefore produced exactly the reported
+   * symptom — nothing for a while, then a burst, then nothing again. Dropping
+   * the sound and nudging the context is strictly better than both halves.
+   *
+   * A context with no `state` at all is a stub in a test; let it through.
+   */
+  _live() {
+    const s = this.ctx.state;
+    if (!s || s === 'running') return true;
+    this.stats.dropped++;
+    this.resume();
+    return false;
+  }
+
   setVolume(v) {
-    this.volume = v;
-    if (this.master) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+    // A NaN here is a permanent, silent mute: master.gain.value = NaN throws
+    // inside init(), which leaves `ready` false and every sound a no-op with
+    // nothing in the console to say why.
+    this.volume = num(v, 0.8);
+    if (this.master) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
   }
   setMusicVolume(v) {
-    this.musicVolume = v;
-    if (this.musicBus) this.musicBus.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+    this.musicVolume = num(v, 0.45);
+    if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
   }
 
   _makeNoise(seconds, pink) {
@@ -130,9 +237,10 @@ export class AudioEngine {
     if (!this.ready) return;
     // The context gets suspended by the browser on tab-switch, on losing
     // pointer lock, and on some autoplay heuristics. Nothing re-arms it on its
-    // own, so a silent watchdog does — cheaply, twice a second.
+    // own, so a silent watchdog does — cheaply, twice a second. resume() rate
+    // limits itself, so this only needs to stop the state read being per-frame.
     this._resumeCheck = (this._resumeCheck || 0) + 1;
-    if ((this._resumeCheck & 31) === 0 && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    if ((this._resumeCheck & 31) === 0) this.resume();
     const l = this.ctx.listener;
     camera.getWorldPosition(this._listenerPos);
     const q = camera.getWorldQuaternion(_lq);
@@ -165,25 +273,55 @@ export class AudioEngine {
     return p;
   }
 
-  _out(pos) {
-    if (!pos) return this.sfxBus;
-    // A NaN anywhere in a position makes PannerNode throw, which used to leak
-    // the voice that was already taken. Fall back to a non-positional play.
-    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return this.sfxBus;
-    // Cull distant one-shots before they cost anything.
-    if (this._listenerPos.distanceToSquared(pos) > 190 * 190) return null;
+  /**
+   * Where does this sound play, and is it worth playing at all?
+   *
+   *   0 — inaudible. Do not spend a voice on it.
+   *   1 — flat into the effects bus: no position, or one with a NaN in it. A
+   *       NaN anywhere in a position makes PannerNode throw, which used to leak
+   *       the voice that had already been taken.
+   *   2 — through a panner of its own.
+   *
+   * This has to be answerable BEFORE a voice is taken and before any node
+   * exists, which is the whole reason it is separate from _out().
+   */
+  _reach(pos, gain = 1) {
+    if (!pos) return 1;
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return 1;
+    const d = this._listenerPos.distanceTo(pos);
+    if (!(d <= MAX_RANGE)) return 0;
+    return num(gain, 1) * attenuation(d) >= HEARING_FLOOR ? 2 : 0;
+  }
+
+  _out(pos, gain = 1) {
+    const r = this._reach(pos, gain);
+    if (r === 0) return null;
+    if (r === 1) return this.sfxBus;
     const p = this._panner(pos);
     p.connect(this.sfxBus);
     return p;
   }
 
-  _voice() {
-    if (this.voices >= this.maxVoices) return false;
+  /**
+   * Take a voice from the band this sound is allowed to draw on.
+   *
+   * The ceiling is recomputed rather than cached so that changing maxVoices at
+   * runtime keeps the shape of the bands instead of stranding them.
+   */
+  _voice(prio = PRIO.world) {
+    this.stats.req++;
+    if (this.voices >= this.bandCap(prio)) { this.stats.denied++; return false; }
     this.voices++;
+    this.stats.alloc++;
+    if (this.voices > this.stats.peak) this.stats.peak = this.voices;
     return true;
   }
   /** Hand a voice back to the pool. Idempotent — callers may race. */
-  _release() { this.voices = Math.max(0, this.voices - 1); }
+  _release() {
+    if (this.voices <= 0) { this.voices = 0; return; }
+    this.voices--;
+    this.stats.freed++;
+  }
 
   /**
    * Retire a voice once its source has actually finished.
@@ -205,23 +343,29 @@ export class AudioEngine {
    * session after the first UI blip.
    */
   _freeOnEnd(src, node, dur) {
-    let done = false;
+    let done = false, timer = 0;
     const release = () => {
       if (done) return;
       done = true;
+      if (timer) { clearTimeout(timer); timer = 0; }
       this._release();
       if (!node || node === this.sfxBus || node === this.musicBus || node === this.master) return;
       try { node.disconnect(); } catch {}
     };
     try { src.onended = release; } catch { /* fall through to the backstop */ }
-    setTimeout(release, (dur + 1.2) * 1000);
+    // Cancelling the backstop the moment `ended` lands matters at this rate. A
+    // busy arena grants 60 voices a second now and granted 150 before the pool
+    // was banded, so leaving each 1.3 s timer to expire on its own left 80 to
+    // 200 dead timers pending at all times, each holding its closure — and its
+    // panner — alive long after the sound had finished.
+    timer = setTimeout(release, (num(dur, 0.2) + 1.2) * 1000);
   }
 
   /* ── primitives ────────────────────────────────────────────────────── */
 
   noise({ dur = 0.2, gain = 0.4, type = 'bandpass', freq = 1200, q = 1.2, freqEnd = null,
-          pos = null, pink = false, attack = 0.002, curve = 2.2 } = {}) {
-    if (!this.ready) return;
+          pos = null, pink = false, attack = 0.002, curve = 2.2, prio = PRIO.world } = {}) {
+    if (!this.ready || !this._live()) return;
     // Sanitise BEFORE taking a voice. Every AudioParam below rejects a
     // non-finite value with a TypeError, and a throw between _voice() and the
     // release leaks that voice permanently — 44 of them and the game is mute.
@@ -229,11 +373,17 @@ export class AudioEngine {
     attack = num(attack, 0.002); curve = num(curve, 2.2) || 2.2;
     if (freqEnd !== null) freqEnd = num(freqEnd, freq);
 
-    // Cull before allocating anything: _out decides whether this is even
-    // audible, and building three nodes first was pure waste.
-    const out = this._out(pos);
-    if (!out || !this._voice()) return;
+    // Decide, then allocate, and in that order. _out() used to build and
+    // connect the panner and only then ask for a voice, so every refusal left a
+    // live HRTF panner hanging off the effects bus: 1330 of them over 24 s of
+    // an arena fight, one for every sound the full pool turned away.
+    const reach = this._reach(pos, gain);
+    if (!reach) { this.stats.culled++; return; }
+    if (!this._voice(prio)) return;
+    let out = null;
     try {
+      out = reach === 2 ? this._panner(pos) : this.sfxBus;
+      if (out !== this.sfxBus) out.connect(this.sfxBus);
       const t = this.ctx.currentTime;
       const stopAt = t + dur + 0.06;
       const src = this.ctx.createBufferSource();
@@ -254,19 +404,28 @@ export class AudioEngine {
       src.start(t + rng() * 0.004);
       src.stop(stopAt + 0.01);
       this._freeOnEnd(src, out, dur);
-    } catch { this._release(); }
+    } catch {
+      this.stats.threw++;
+      this._release();
+      // A half-built voice must not leave its panner on the bus either.
+      if (out && out !== this.sfxBus) { try { out.disconnect(); } catch {} }
+    }
   }
 
   tone({ freq = 440, freqEnd = null, dur = 0.2, gain = 0.25, type = 'sine', pos = null,
-         attack = 0.004, detune = 0, filter = null } = {}) {
-    if (!this.ready) return;
+         attack = 0.004, detune = 0, filter = null, prio = PRIO.world } = {}) {
+    if (!this.ready || !this._live()) return;
     dur = num(dur, 0.2); gain = num(gain, 0.25); freq = num(freq, 440);
     attack = num(attack, 0.004); detune = num(detune, 0);
     if (freqEnd !== null) freqEnd = num(freqEnd, freq);
 
-    const out = this._out(pos);
-    if (!out || !this._voice()) return;
+    const reach = this._reach(pos, gain);
+    if (!reach) { this.stats.culled++; return; }
+    if (!this._voice(prio)) return;
+    let out = null;
     try {
+      out = reach === 2 ? this._panner(pos) : this.sfxBus;
+      if (out !== this.sfxBus) out.connect(this.sfxBus);
       const t = this.ctx.currentTime;
       const stopAt = t + dur + 0.05;
       const o = this.ctx.createOscillator();
@@ -288,7 +447,11 @@ export class AudioEngine {
       node.connect(g); g.connect(out);
       o.start(t); o.stop(stopAt + 0.01);
       this._freeOnEnd(o, out, dur);
-    } catch { this._release(); }
+    } catch {
+      this.stats.threw++;
+      this._release();
+      if (out && out !== this.sfxBus) { try { out.disconnect(); } catch {} }
+    }
   }
 
   /* ── the saber ─────────────────────────────────────────────────────── */
@@ -399,66 +562,79 @@ export class AudioEngine {
     return api;
   }
 
-  /* ── one-shots ─────────────────────────────────────────────────────── */
+  /* ── one-shots ─────────────────────────────────────────────────────────
+   * Every one of these declares what it is worth. The rule that decides the
+   * band is simply: would the player notice its absence? A clash, a deflection
+   * and a menu blip are the game answering an input, so they are `critical` and
+   * may take the last free voice in the engine. Blaster fire and bolt impacts
+   * are combat, and hold their own band above the room. Swings, thuds and stray
+   * layers are `world`. Footsteps are `chatter` — texture, and the only sound
+   * numerous enough to have starved everything else.
+   */
 
   swing(speed, pos) {
     const s = clamp(speed / 30, 0, 1.4);
     this.noise({ dur: 0.16 + s * 0.13, gain: 0.05 + s * 0.30, type: 'bandpass',
-      freq: 420 + s * 1500, freqEnd: 180 + s * 420, q: 1.5, pos, pink: true });
+      freq: 420 + s * 1500, freqEnd: 180 + s * 420, q: 1.5, pos, pink: true, prio: PRIO.world });
   }
 
   clash(pos, power = 1) {
-    this.noise({ dur: 0.28, gain: 0.34 * power, type: 'bandpass', freq: 3200, freqEnd: 700, q: 0.7, pos });
-    this.tone({ freq: 1900 + rng() * 700, freqEnd: 420, dur: 0.24, gain: 0.20 * power, type: 'sawtooth', pos });
-    this.tone({ freq: 160, freqEnd: 70, dur: 0.3, gain: 0.24 * power, type: 'sine', pos });
+    const P = PRIO.critical;
+    this.noise({ dur: 0.28, gain: 0.34 * power, type: 'bandpass', freq: 3200, freqEnd: 700, q: 0.7, pos, prio: P });
+    this.tone({ freq: 1900 + rng() * 700, freqEnd: 420, dur: 0.24, gain: 0.20 * power, type: 'sawtooth', pos, prio: P });
+    this.tone({ freq: 160, freqEnd: 70, dur: 0.3, gain: 0.24 * power, type: 'sine', pos, prio: P });
   }
 
   deflect(pos, grade = 1) {
-    this.noise({ dur: 0.13, gain: 0.22, type: 'bandpass', freq: 2600, freqEnd: 1100, q: 1.6, pos });
+    const P = PRIO.critical;
+    this.noise({ dur: 0.13, gain: 0.22, type: 'bandpass', freq: 2600, freqEnd: 1100, q: 1.6, pos, prio: P });
     this.tone({ freq: 780 + grade * 480, freqEnd: 2400 + grade * 900, dur: 0.13, gain: 0.14 + grade * 0.07,
-      type: 'square', pos, filter: { type: 'lowpass', freq: 4200 } });
-    if (grade >= 2) this.tone({ freq: 2600, freqEnd: 5200, dur: 0.22, gain: 0.12, type: 'sine', pos });
+      type: 'square', pos, filter: { type: 'lowpass', freq: 4200 }, prio: P });
+    if (grade >= 2) this.tone({ freq: 2600, freqEnd: 5200, dur: 0.22, gain: 0.12, type: 'sine', pos, prio: P });
   }
 
   cut(pos, heavy = false) {
     this.noise({ dur: heavy ? 0.42 : 0.24, gain: heavy ? 0.34 : 0.22, type: 'bandpass',
-      freq: 2400, freqEnd: 300, q: 0.9, pos });
-    this.tone({ freq: 220, freqEnd: 60, dur: 0.26, gain: 0.16, type: 'sawtooth', pos });
+      freq: 2400, freqEnd: 300, q: 0.9, pos, prio: PRIO.combat });
+    this.tone({ freq: 220, freqEnd: 60, dur: 0.26, gain: 0.16, type: 'sawtooth', pos, prio: PRIO.combat });
   }
 
   blaster(pos, big = false) {
-    const f = big ? 1500 : 2600;
+    const f = big ? 1500 : 2600, P = PRIO.combat;
     this.tone({ freq: f, freqEnd: f * 0.16, dur: big ? 0.24 : 0.14, gain: big ? 0.3 : 0.20,
-      type: 'sawtooth', pos, filter: { type: 'lowpass', freq: 5200, q: 3 } });
-    this.noise({ dur: 0.09, gain: 0.12, type: 'highpass', freq: 2400, pos });
+      type: 'sawtooth', pos, filter: { type: 'lowpass', freq: 5200, q: 3 }, prio: P });
+    this.noise({ dur: 0.09, gain: 0.12, type: 'highpass', freq: 2400, pos, prio: P });
   }
 
   boltHit(pos) {
-    this.noise({ dur: 0.16, gain: 0.2, type: 'bandpass', freq: 1400, freqEnd: 260, q: 0.9, pos });
-    this.tone({ freq: 130, freqEnd: 52, dur: 0.18, gain: 0.2, type: 'sine', pos });
+    const P = PRIO.combat;
+    this.noise({ dur: 0.16, gain: 0.2, type: 'bandpass', freq: 1400, freqEnd: 260, q: 0.9, pos, prio: P });
+    this.tone({ freq: 130, freqEnd: 52, dur: 0.18, gain: 0.2, type: 'sine', pos, prio: P });
   }
 
   explosion(pos, size = 1) {
-    this.noise({ dur: 0.9 * size, gain: 0.5, type: 'lowpass', freq: 1800, freqEnd: 120, q: 0.6, pos, pink: true });
-    this.tone({ freq: 90, freqEnd: 28, dur: 0.85 * size, gain: 0.45, type: 'sine', pos });
-    this.tone({ freq: 220, freqEnd: 60, dur: 0.4 * size, gain: 0.22, type: 'triangle', pos });
+    const P = PRIO.critical;
+    this.noise({ dur: 0.9 * size, gain: 0.5, type: 'lowpass', freq: 1800, freqEnd: 120, q: 0.6, pos, pink: true, prio: P });
+    this.tone({ freq: 90, freqEnd: 28, dur: 0.85 * size, gain: 0.45, type: 'sine', pos, prio: P });
+    this.tone({ freq: 220, freqEnd: 60, dur: 0.4 * size, gain: 0.22, type: 'triangle', pos, prio: P });
   }
 
   force(pos, kind = 'push') {
+    const P = PRIO.critical;
     if (kind === 'push') {
-      this.noise({ dur: 0.55, gain: 0.34, type: 'lowpass', freq: 900, freqEnd: 130, q: 0.7, pos, pink: true });
-      this.tone({ freq: 74, freqEnd: 34, dur: 0.6, gain: 0.34, type: 'sine', pos });
+      this.noise({ dur: 0.55, gain: 0.34, type: 'lowpass', freq: 900, freqEnd: 130, q: 0.7, pos, pink: true, prio: P });
+      this.tone({ freq: 74, freqEnd: 34, dur: 0.6, gain: 0.34, type: 'sine', pos, prio: P });
     } else if (kind === 'pull') {
-      this.noise({ dur: 0.5, gain: 0.24, type: 'bandpass', freq: 180, freqEnd: 1400, q: 1.1, pos, pink: true });
-      this.tone({ freq: 60, freqEnd: 190, dur: 0.5, gain: 0.24, type: 'sine', pos });
+      this.noise({ dur: 0.5, gain: 0.24, type: 'bandpass', freq: 180, freqEnd: 1400, q: 1.1, pos, pink: true, prio: P });
+      this.tone({ freq: 60, freqEnd: 190, dur: 0.5, gain: 0.24, type: 'sine', pos, prio: P });
     } else if (kind === 'jump') {
-      this.noise({ dur: 0.4, gain: 0.22, type: 'bandpass', freq: 300, freqEnd: 1800, q: 1.4, pos, pink: true });
+      this.noise({ dur: 0.4, gain: 0.22, type: 'bandpass', freq: 300, freqEnd: 1800, q: 1.4, pos, pink: true, prio: P });
     } else if (kind === 'sense') {
-      this.tone({ freq: 1400, freqEnd: 200, dur: 1.1, gain: 0.16, type: 'sine' });
-      this.tone({ freq: 700, freqEnd: 100, dur: 1.3, gain: 0.12, type: 'triangle' });
+      this.tone({ freq: 1400, freqEnd: 200, dur: 1.1, gain: 0.16, type: 'sine', prio: P });
+      this.tone({ freq: 700, freqEnd: 100, dur: 1.3, gain: 0.12, type: 'triangle', prio: P });
     } else if (kind === 'lightning') {
-      this.noise({ dur: 0.6, gain: 0.3, type: 'highpass', freq: 2600, q: 1.0, pos });
-      this.tone({ freq: 60, freqEnd: 40, dur: 0.6, gain: 0.2, type: 'square', pos });
+      this.noise({ dur: 0.6, gain: 0.3, type: 'highpass', freq: 2600, q: 1.0, pos, prio: P });
+      this.tone({ freq: 60, freqEnd: 40, dur: 0.6, gain: 0.2, type: 'square', pos, prio: P });
     }
   }
 
@@ -470,12 +646,12 @@ export class AudioEngine {
       water: { freq: 1900, q: 0.9, gain: 0.14 },
     }[surface] || { freq: 1800, q: 1, gain: 0.1 };
     this.noise({ dur: run ? 0.13 : 0.1, gain: cfg.gain * (run ? 1.5 : 1), type: 'bandpass',
-      freq: cfg.freq, freqEnd: cfg.freq * 0.3, q: cfg.q, pos });
+      freq: cfg.freq, freqEnd: cfg.freq * 0.3, q: cfg.q, pos, prio: PRIO.chatter });
   }
 
   thud(pos, power = 1) {
-    this.noise({ dur: 0.2, gain: 0.16 * power, type: 'lowpass', freq: 700, freqEnd: 130, pos, pink: true });
-    this.tone({ freq: 110, freqEnd: 44, dur: 0.22, gain: 0.2 * power, type: 'sine', pos });
+    this.noise({ dur: 0.2, gain: 0.16 * power, type: 'lowpass', freq: 700, freqEnd: 130, pos, pink: true, prio: PRIO.world });
+    this.tone({ freq: 110, freqEnd: 44, dur: 0.22, gain: 0.2 * power, type: 'sine', pos, prio: PRIO.world });
   }
 
   ui(kind = 'hover') {
@@ -486,7 +662,9 @@ export class AudioEngine {
       good:  { freq: 620, end: 1240, dur: 0.3, gain: 0.14, type: 'sine' },
       bad:   { freq: 300, end: 90, dur: 0.5, gain: 0.18, type: 'sawtooth' },
     }[kind];
-    if (map) this.tone({ freq: map.freq, freqEnd: map.end, dur: map.dur, gain: map.gain, type: map.type });
+    // The menu is the one place where a dropped sound reads as a broken button.
+    if (map) this.tone({ freq: map.freq, freqEnd: map.end, dur: map.dur, gain: map.gain,
+      type: map.type, prio: PRIO.critical });
   }
 
   /* ── ambience & score ──────────────────────────────────────────────── */
@@ -527,14 +705,19 @@ export class AudioEngine {
   setAmbience({ wind = 0.1, windFreq = 420, drone = 0.1 } = {}) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.windGain.gain.setTargetAtTime(wind, t, 1.2);
-    this.windFilter.frequency.setTargetAtTime(windFreq, t, 1.2);
-    this.droneGain.gain.setTargetAtTime(drone, t, 2.0);
+    // These come out of level data. A throw here is thrown from World's
+    // constructor, which would take the whole level down with it.
+    this.windGain.gain.setTargetAtTime(num(wind, 0.1), t, 1.2);
+    this.windFilter.frequency.setTargetAtTime(num(windFreq, 420), t, 1.2);
+    this.droneGain.gain.setTargetAtTime(num(drone, 0.1), t, 2.0);
   }
 
   /** Drives the percussive pulse under combat. */
   updateScore(dt, intensity) {
-    if (!this.ready) return;
+    // The same reason the one-shots refuse a stopped context: a frozen clock
+    // stacks every pulse on one timestamp and none of them can end.
+    if (!this.ready || !this._live()) return;
+    dt = num(dt, 1 / 60); intensity = num(intensity, 0);
     this.intensity += (intensity - this.intensity) * Math.min(1, dt * 0.6);
     if (this.intensity < 0.12) return;
     this._pulseTimer -= dt;

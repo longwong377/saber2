@@ -23,7 +23,7 @@
 
 import * as THREE from 'three';
 import { grassSprite, smokeSprite } from '../engine/Textures.js';
-import { makeRng, clamp, fbm2, TAU } from '../engine/MathUtil.js';
+import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng(70707);
 const _v1 = new THREE.Vector3();
@@ -48,6 +48,33 @@ const GUST_K = 0.055;      // 1/m along the wind — front spacing ≈ 114m
 const GUST_W = 0.62;       // rad/s — fronts travel at GUST_W/GUST_K ≈ 11 m/s
 const GUST_CROSS = 0.037;  // 1/m across the wind, breaks up straight fronts
 const SWIRL_K = 0.019, SWIRL_W = 0.21, SWIRL_A = 0.34;
+
+/*
+ * The SECOND scale, and the reason a grass field used to read as ten thousand
+ * blades each wobbling on its own timer.
+ *
+ * The gust field above has fronts 114 m apart (2π/GUST_K). A grass ring is 46 m
+ * across, so LESS THAN HALF A WAVELENGTH is ever on screen: the whole field
+ * leans one way together and then the other, which is a slider being moved, not
+ * wind crossing a meadow. What the eye actually reads as "wind on a field" is a
+ * band of laid-over blades about fifteen metres wide travelling downwind at
+ * roughly walking-to-jogging pace, several bands visible at once.
+ *
+ * So: the same wind, one octave finer. Same direction, same clock, same
+ * downwind travel — it is the turbulent spectrum of the one wind, not a second
+ * wind — at 2π/WAVE_K ≈ 15 m spacing moving at WAVE_W/WAVE_K ≈ 6.9 m/s, which
+ * is slower than the 11 m/s gust fronts so the two scales beat against each
+ * other instead of locking into one scrolling texture.
+ *
+ * `sin(a + sin(b) * 1.6)` rather than `sin(a) + sin(b)`: phase-modulating along
+ * the crest BENDS it. Real wind waves are curved bands with ragged ends, and
+ * additive cross terms give you a checkerboard instead.
+ *
+ * Duplicated verbatim in WIND_GLSL, same as the gust constants.
+ */
+const WAVE_K = 0.42;       // 1/m along the wind — crests ≈ 15 m apart
+const WAVE_W = 2.9;        // rad/s — crests travel at WAVE_W/WAVE_K ≈ 6.9 m/s
+const WAVE_CROSS = 0.115;  // 1/m across the wind — crests bend every ~55 m
 
 export class WindField {
   constructor(opts = {}) {
@@ -98,6 +125,18 @@ export class WindField {
          + Math.sin(a * 0.47 - b * 0.83 - 0.7) * 0.17;
   }
 
+  /**
+   * The fine scale, in [-1, 1]: the bands of laid-over cover that cross a field
+   * every fifteen metres. Signed, so a crest lays the grass down and a trough
+   * lets it stand back up.
+   */
+  wave(x, z, t = this.time) {
+    const a = (x * this.dir.x + z * this.dir.y) * WAVE_K - t * WAVE_W;
+    const b = (-x * this.dir.y + z * this.dir.x) * WAVE_CROSS;
+    return Math.sin(a + Math.sin(b) * 1.6) * 0.62
+         + Math.sin(a * 0.61 - b * 1.3 + 2.1) * 0.38;
+  }
+
   /** Wind speed at a point — never negative. */
   strengthAt(x, z, t = this.time) {
     return Math.max(0, this.strength * (1 + this.gustiness * this.gust(x, z, t)));
@@ -133,6 +172,13 @@ export const WIND_GLSL = /* glsl */`
          + sin(a * 1.93 + b * 1.7 + 1.3) * 0.28
          + sin(a * 0.47 - b * 0.83 - 0.7) * 0.17;
   }
+  float windWave(vec2 p){
+    vec2 D = uWind.xy;
+    float a = dot(p, D) * ${WAVE_K.toFixed(6)} - uWind.w * ${WAVE_W.toFixed(6)};
+    float b = dot(p, vec2(-D.y, D.x)) * ${WAVE_CROSS.toFixed(6)};
+    return sin(a + sin(b) * 1.6) * 0.62
+         + sin(a * 0.61 - b * 1.3 + 2.1) * 0.38;
+  }
   vec3 windAt(vec2 p){
     float g = windGust(p);
     float s = max(0.0, uWind.z * (1.0 + uGustiness * g));
@@ -157,6 +203,176 @@ export function syncWind(uniforms) {
   if (!uniforms || !uniforms.uWind) return;
   wind.writeUniform(uniforms.uWind.value);
   uniforms.uGustiness.value = wind.gustiness;
+  if (uniforms.uStorm) weather.writeUniform(uniforms.uStorm.value);
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Weather                                                               */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Weather is an EVENT THAT ARRIVES, not a slider somebody left half-way up.
+ *
+ * A static particle field at a fixed density is the thing every procedural
+ * outdoor scene does and the thing that reads, instantly, as decoration: it is
+ * the same in the first second and the ten-thousandth, so the eye files it as
+ * texture and stops seeing it. What makes weather read as weather is that it
+ * has a BEFORE and an AFTER — the air goes still, then a line of dust comes up
+ * out of the distance, the light goes flat and brown as it crosses you, the far
+ * ridges disappear, and twenty seconds later they are back.
+ *
+ * So this is a scheduler, and everything else in the frame is downstream of it:
+ *
+ *   · the wind gets stronger and gustier, which drives the grass, the sand
+ *     sheets, the smoke and the embers — all of them read the one WindField;
+ *   · the fog thickens, which is what actually cuts visibility. Measured as the
+ *     range at which half the light survives: the dune sea sits at 198 m calm
+ *     and 47 m at the peak of a squall;
+ *   · the sun loses half its punch and takes the colour of what is in the air,
+ *     while the sky fill comes UP — a dust storm is not a dimmer, it is a
+ *     conversion of direct light into ambient;
+ *   · the dust layers thicken and the fog banks close in.
+ *
+ * And the front TRAVELS. `frontOffset` is the leading edge's position along the
+ * wind axis relative to the camera, in metres: it starts well upwind, crosses
+ * you at the wind's own front speed and carries on downwind. Anything that can
+ * read a position asks `localAt` and gets a wall of dust that is somewhere
+ * else, then here, then gone — rather than a global fade.
+ */
+const FRONT_SPEED = GUST_W / GUST_K;    // 11.3 m/s, the gust fronts' own speed
+const FRONT_REACH = 300;                // metres up/downwind a squall is tracked over
+const SQUALL_RISE = 0.24;               // share of a pass spent building; the rest is the tail
+/* Terrain._syncAtmosphere reads `fog.density > 0.01` as "this is an interior"
+ * and drops the ground's sky-blend haze to zero. Nothing may push the fog over
+ * that line at runtime. See _applyWeather. */
+const FOG_INDOOR_LIMIT = 0.0098;
+
+export class Weather {
+  constructor(opts = {}) {
+    this.time = 0;
+    this.configure(opts);
+  }
+
+  configure(opts = {}) {
+    // A squall every two minutes, taking forty seconds to pass. Long enough
+    // that calm is the normal state and the storm is an event; short enough
+    // that a player sees one inside a wave or two.
+    this.period = opts.period ?? 124;
+    this.duration = opts.duration ?? 42;
+    this.peak = clamp(opts.peak ?? 0, 0, 1);        // 0 = this level has no weather
+    // The air is never perfectly still. A slow, bounded unrest keeps the calm
+    // between fronts from being a flat line — which is its own kind of tell.
+    this.unrest = clamp(opts.unrest ?? 0.14, 0, 0.6);
+    // Where in the cycle the level starts. Not zero: loading straight into the
+    // teeth of a storm is a worse first impression than loading into calm.
+    this.phase = opts.phase ?? 0.55;
+    this.span = opts.span ?? 85;                    // depth of the leading wall, metres
+    // How much of each downstream quantity the peak of a squall is worth.
+    this.fogGain = opts.fogGain ?? 3.2;             // × the level's own fog density
+    this.windGain = opts.windGain ?? 2.4;           // × the level's own wind speed
+    this.sunLoss = clamp(opts.sunLoss ?? 0.50, 0, 0.9);
+    this.fillGain = opts.fillGain ?? 0.55;
+    this.intensity = 0;
+    this.frontOffset = -FRONT_REACH;
+    return this;
+  }
+
+  /** Seconds into the current cycle. */
+  _cycle() {
+    const u = (this.time / this.period + this.phase) % 1;
+    return (u < 0 ? u + 1 : u) * this.period;
+  }
+
+  /**
+   * The envelope of one pass. Asymmetric on purpose: a squall line hits in a
+   * few seconds and takes a long time to blow itself out, so the rise is a
+   * quarter of the pass and the tail is the rest. A symmetric bump reads as a
+   * fade-in/fade-out, which is a transition, not weather.
+   */
+  _envelope() {
+    if (this.peak <= 0) return 0;
+    const u = this._cycle();
+    if (u > this.duration) return 0;
+    const t = u / this.duration;
+    return t < SQUALL_RISE
+      ? smooth01(t / SQUALL_RISE)
+      : 1 - smooth01((t - SQUALL_RISE) / (1 - SQUALL_RISE));
+  }
+
+  update(dt) {
+    this.time += dt;
+    const e = this._envelope();
+    // unrest rides underneath, never on top: the peak of a squall is 1, not 1.14
+    const calm = this.unrest * (0.5 + 0.5 * Math.sin(this.time * 0.061 + 1.9));
+    this.intensity = this.peak * clamp(e + calm * (1 - e), 0, 1);
+    /* The leading edge sweeps from upwind to downwind at the speed the gust
+     * fronts travel — it IS a gust front, the one at the head of the squall.
+     *
+     * It is zeroed on the PEAK of the envelope, not on the start of the pass.
+     * Anchored to the start, the wall reached the camera at u = 38.8 s of a 40 s
+     * pass, by which time the envelope had decayed to 0.005: the storm blew
+     * itself out before its own front arrived, so the wall was never once
+     * visible over the player. Measured, and the reason this line has an
+     * offset in it at all. */
+    const u = this._cycle();
+    this.frontOffset = clamp((u - this.duration * SQUALL_RISE) * FRONT_SPEED,
+      -FRONT_REACH, FRONT_REACH);
+    return this;
+  }
+
+  /**
+   * How much dust is in the air at a point, relative to the camera. Ahead of
+   * the leading edge the air is clear; behind it the wall has arrived. `span`
+   * is how deep the leading wall is, so the transition takes span/FRONT_SPEED
+   * ≈ 7.5 seconds to cross you.
+   */
+  localAt(dx, dz) {
+    if (this.intensity <= 0) return 0;
+    const s = dx * wind.dir.x + dz * wind.dir.y;
+    // 1 well behind the front, 0 ahead of it
+    const lead = 1 - smooth01((s - (this.frontOffset - this.span)) / this.span);
+    return this.intensity * (0.25 + 0.75 * lead);
+  }
+
+  /**
+   * Metres at which half the light from a surface survives the haze, given the
+   * level's own base fog density. This is what "cuts visibility" MEANS, and it
+   * is the number to quote — density is not legible on its own.
+   */
+  visibility(baseDensity) {
+    const d = Math.max(baseDensity,
+      Math.min(FOG_INDOOR_LIMIT, baseDensity * (1 + this.fogGain * this.intensity)));
+    return Math.sqrt(Math.LN2) / Math.max(1e-6, d);
+  }
+
+  /** (intensity, frontOffset, wallSpan, time) for a shader that wants the wall. */
+  writeUniform(v4) { return v4.set(this.intensity, this.frontOffset, this.span, this.time); }
+}
+
+/** The one weather every system reads. Import it; do not make another. */
+export const weather = new Weather();
+
+/**
+ * GLSL twin of `Weather.localAt`. Needs `uWind` in scope (WIND_GLSL declares
+ * it), and declares `uStorm` = (intensity, frontOffset, wallSpan, time).
+ */
+export const STORM_GLSL = /* glsl */`
+  uniform vec4 uStorm;         // intensity, front offset (m), wall span (m), time
+  float stormAt(vec2 rel){
+    float s = dot(rel, uWind.xy);
+    float lead = 1.0 - smoothstep(uStorm.y - uStorm.z, uStorm.y, s);
+    return uStorm.x * (0.25 + 0.75 * lead);
+  }
+`;
+
+/** Fresh uniform object for a material that includes STORM_GLSL. */
+export function stormUniforms() {
+  return { uStorm: { value: new THREE.Vector4(0, -FRONT_REACH, 85, 0) } };
+}
+
+function smooth01(t) {
+  const x = t < 0 ? 0 : (t > 1 ? 1 : t);
+  return x * x * (3 - 2 * x);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -171,6 +387,7 @@ export function syncWind(uniforms) {
  */
 export const ground = {
   wind,
+  weather,         // the one squall scheduler — read `.intensity`, never set it
   grass: null,     // the live GrassField, if the level has one
   water: null,     // the live Water, if the level has one
   fx: null,        // the live Particles facade
@@ -296,6 +513,7 @@ const GRASS_VERT = /* glsl */`
   uniform float uFar;        // where this ring is gone
   uniform float uWidth;
   uniform float uBendGain;
+  uniform float uWaveGain;
   uniform sampler2D uTrail;
   uniform vec2 uTrailCenter;
   uniform float uTrailSize;
@@ -306,10 +524,12 @@ const GRASS_VERT = /* glsl */`
   varying vec3 vWorld;
   varying float vHeight;
   varying float vCut;
+  varying float vWave;
 
   void main(){
     vUv = uv;
     vTint = aTint;
+    vWave = 0.0;
     vec3 base = aInst.xyz;
     float h = uv.y;
 
@@ -348,10 +568,17 @@ const GRASS_VERT = /* glsl */`
     vec3 w = windAt(base.xz);
     float wmag = length(w.xz);
     vec2 wdir = wmag > 1e-4 ? w.xz / wmag : aOrient.xy;
+    // ── the wave. Fifteen-metre bands of the SAME wind, travelling downwind:
+    // this is what turns ten thousand blades wobbling on their own timers into
+    // a field the wind is crossing. The per-tuft factor spreads the crest over
+    // a metre or so of ground so its edge is soft rather than a drawn line.
+    float wv = windWave(base.xz) * (0.75 + aOrient.w * 0.5);
+    vWave = wv;
+    float lay = 1.0 + uWaveGain * wv;      // stays positive for uWaveGain < 0.8
     float flutter = sin(uTime * (5.0 + aOrient.w * 4.0) + aOrient.w * 6.2831) * 0.09
                   * (0.25 + wmag);
 
-    vec2 bv = wdir * (uBendGain * wmag + flutter)
+    vec2 bv = wdir * (uBendGain * wmag * lay + flutter)
             + aOrient.xy * aOrient.z
             + shove * (press * 2.2)
             + wdir * (press * 0.4);
@@ -408,6 +635,7 @@ const GRASS_CARD_VERT = /* glsl */`
   uniform float uFar;
   uniform float uWidth;
   uniform float uBendGain;
+  uniform float uWaveGain;
   uniform sampler2D uTrail;
   uniform vec2 uTrailCenter;
   uniform float uTrailSize;
@@ -418,6 +646,7 @@ const GRASS_CARD_VERT = /* glsl */`
   varying vec3 vWorld;
   varying float vHeight;
   varying float vCut;
+  varying float vWave;
 
   void main(){
     // A tuft is many blades, so the sprite tiles across the card and each
@@ -425,6 +654,7 @@ const GRASS_CARD_VERT = /* glsl */`
     // visibly the same four blades.
     vUv = vec2(uv.x * 3.0 + aOrient.w * 4.0, uv.y);
     vTint = aTint;
+    vWave = 0.0;
     vec3 base = aInst.xyz;
     float h = uv.y;
 
@@ -455,9 +685,23 @@ const GRASS_CARD_VERT = /* glsl */`
     vec3 w = windAt(base.xz);
     float wmag = length(w.xz);
     vec2 wdir = wmag > 1e-4 ? w.xz / wmag : aOrient.xy;
-    vec2 bv = wdir * (uBendGain * wmag * 0.8
+    // The far ring is where the wave earns its keep: it spans 46 m, which is
+    // three crests of the fine scale, so several bands are visible at once and
+    // you can watch one travel. The near ring only ever holds half of one.
+    float wv = windWave(base.xz) * (0.75 + aOrient.w * 0.5);
+    vWave = wv;
+    float lay = 1.0 + uWaveGain * wv;
+    vec2 bv = wdir * (uBendGain * wmag * 0.8 * lay
                       + sin(uTime * 2.2 + aOrient.w * 6.2831) * 0.06 * wmag)
             + shove * (press * 1.8);
+    // CLAMPED, and the geometry ring's min(bend, 2.0) is the same guard for
+    // the same reason. This term is linear in wind speed and the weather takes
+    // the wind from 1.7 to 6.1 m/s: measured, the tip of a half-metre tuft went
+    // from 0.33 m of lean (34°, fine) to 1.36 m — nearly three times its own
+    // height, which is not a tuft leaning, it is a tuft being dragged along the
+    // ground. 3.4 caps the tip at 1.7 × the height, i.e. 60° over.
+    float bmag = length(bv);
+    if(bmag > 3.4) bv *= 3.4 / bmag;
     // a tuft is many blades: it leans, it does not curl over
     vec2 lean = bv * (h * h) * len * 0.5;
 
@@ -503,6 +747,8 @@ const GRASS_FRAG = /* glsl */`
   uniform vec3 uDry;
   uniform float uTranslucency;
   uniform float uAmbientBoost;
+  uniform float uSheen;
+  uniform float uSheenLift;
 
   varying vec2 vUv;
   varying vec3 vTint;
@@ -510,6 +756,7 @@ const GRASS_FRAG = /* glsl */`
   varying vec3 vWorld;
   varying float vHeight;
   varying float vCut;
+  varying float vWave;
 
   void main(){
     #ifdef CARD
@@ -534,6 +781,17 @@ const GRASS_FRAG = /* glsl */`
     // a cut blade shows its pale severed end
     albedo = mix(albedo, mix(albedo, vec3(0.86, 0.84, 0.62), 0.55),
                  vCut * smoothstep(0.55, 1.0, vHeight));
+
+    // ── the wave, as LIGHT. Wind crossing a field is legible from a hundred
+    // metres, and almost none of that is the motion: a band of blades laid over
+    // shows you its pale underside and its sheen at the same moment, so the
+    // wave travels as a bright ripple across the sward. Derived from the
+    // blade's OWN colour — desaturated toward its luminance and lifted — so
+    // per-blade variation survives instead of the crest going one flat silver.
+    float lay = clamp(vWave * 0.5 + 0.5, 0.0, 1.0);
+    vec3 silver = mix(albedo, vec3(dot(albedo, vec3(0.2126, 0.7152, 0.0722))), 0.45)
+                * uSheenLift;
+    albedo = mix(albedo, silver, lay * uSheen * smoothstep(0.10, 0.75, vHeight));
 
     // The terrain underneath is lit by sun, hemisphere AND a sky probe. There
     // is no probe here, so the hemisphere term stands in for it.
@@ -618,13 +876,16 @@ export class GrassField {
       count: nearCount, card: false,
       geometry: bladeGeometry(4),
       near: 0, far: this.nearRadius,
-      width: 0.070, bendGain: 0.23, translucency: 0.9,
+      // The near ring is 7.5 m across — half a wave crest — so a strong sheen
+      // there is a band sliding over your boots rather than a field moving.
+      // The bend still carries the full wave; only the light is held back.
+      width: 0.070, bendGain: 0.23, waveGain: 0.62, sheen: 0.30, translucency: 0.9,
     });
     this.far = this._buildRing({
       count: farCount, card: true,
       geometry: new THREE.PlaneGeometry(1, 1, 1, 2),
       near: this.nearRadius * 0.66, far: this.radius,
-      width: 1.05, bendGain: 0.34, translucency: 0.55,
+      width: 1.05, bendGain: 0.34, waveGain: 0.62, sheen: 0.55, translucency: 0.55,
       map: repeating(grassSprite(96)),
     });
     this.mesh = this.near.mesh;     // kept for anything that pokes at `.mesh`
@@ -797,7 +1058,7 @@ export class GrassField {
 
   /* ── scatter ───────────────────────────────────────────────────────── */
 
-  _buildRing({ count, card, geometry, near, far, width, bendGain, translucency, map }) {
+  _buildRing({ count, card, geometry, near, far, width, bendGain, waveGain, sheen, translucency, map }) {
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = geometry.index;
     geo.attributes.position = geometry.attributes.position;
@@ -821,6 +1082,11 @@ export class GrassField {
       uFar: { value: far },
       uWidth: { value: width },
       uBendGain: { value: bendGain },
+      // How deep the wave modulates the bend. Below 0.8 `1 + gain·wave` cannot
+      // go negative, which would flip the crest of every band upwind.
+      uWaveGain: { value: waveGain ?? 0.62 },
+      uSheen: { value: sheen ?? 0.5 },
+      uSheenLift: { value: 1.7 },
       uTranslucency: { value: translucency },
       // The terrain the grass grows out of is also lit by the sky probe, and
       // that probe is worth several times the hemisphere light on its own. With
@@ -1703,6 +1969,179 @@ class Haze {
 }
 
 /**
+ * Fog banks, and the wall of a dust storm — the same object, because they are
+ * the same thing at two densities.
+ *
+ * `Haze` above is a ring of very soft cards parked at distance: it gives the
+ * far field structure, but it never arrives, never leaves, and never gets
+ * between you and anything. What a squall needs is banks that are IN the world:
+ * big, low, drifting downwind at the wind's own speed, wrapping through a box
+ * around the camera so one is always coming and one is always going, and dense
+ * enough at the peak of a front to take the far ridges out entirely.
+ *
+ * The arrival is spatial, not a global fade — `stormAt` gives each bank the
+ * dust load at its own position relative to the leading edge, so the wall comes
+ * up out of the upwind distance, crosses you over about seven seconds, and
+ * leaves the downwind side still clear behind it.
+ */
+class FogBank {
+  constructor(scene, opts) {
+    this.count = Math.max(0, Math.floor(opts.count ?? 0));
+    if (this.count <= 0) { this.mesh = null; return; }
+    this.span = opts.span ?? 220;
+    const r = makeRng(opts.seed ?? 5150);
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.attributes.position = quad.attributes.position;
+    geo.attributes.uv = quad.attributes.uv;
+    geo.instanceCount = this.count;
+
+    const aHome = new Float32Array(this.count * 4);   // x, y, z, width
+    const aSeed = new Float32Array(this.count * 4);   // seed, drift, aspect, calm share
+    for (let i = 0; i < this.count; i++) {
+      aHome[i * 4] = (r() - 0.5) * this.span;
+      // Banks lie ON the ground. A fog bank whose centre is twenty metres up is
+      // a cloud, and a cloud at eighty metres reads as a bug.
+      aHome[i * 4 + 1] = 1.5 + r() * 9;
+      aHome[i * 4 + 2] = (r() - 0.5) * this.span;
+      aHome[i * 4 + 3] = 26 + r() * 52;
+      aSeed[i * 4] = r();
+      // The drift is a fraction of the wind: a bank is a body of air, so it
+      // travels WITH the wind, a little slower than the sand skimming under it.
+      aSeed[i * 4 + 1] = 0.35 + r() * 0.35;
+      aSeed[i * 4 + 2] = 0.22 + r() * 0.20;          // height as a share of width
+      // Only a third of the banks exist in fair weather; the rest are the storm.
+      aSeed[i * 4 + 3] = i % 3 === 0 ? 1 : 0;
+    }
+    geo.setAttribute('aHome', new THREE.InstancedBufferAttribute(aHome, 4));
+    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(aSeed, 4));
+
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]);
+    Object.assign(uniforms, windUniforms(), stormUniforms(), {
+      uMap: { value: opts.map || smokeSprite(128) },
+      uTime: { value: 0 },
+      uCenter: { value: new THREE.Vector3() },
+      uSpan: { value: this.span },
+      uColor: { value: new THREE.Color(opts.color ?? 0xc9b391) },
+      uDust: { value: new THREE.Color(opts.dust ?? 0xc9b391) },
+      uSunColor: { value: new THREE.Color(1, 1, 1) },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3) },
+      uOpacity: { value: opts.opacity ?? 0.10 },
+      uGround: { value: 0 },
+    });
+
+    this.mat = new THREE.ShaderMaterial({
+      // Fogged like everything else. A fair-weather bank is already the haze's
+      // own colour so the fog is a no-op on it, but a DUST wall is not — it is
+      // the ground's colour, and a wall of it a hundred metres off has to lose
+      // that colour to the air in front of it exactly as a wall of rock would.
+      uniforms, fog: true,
+      vertexShader: /* glsl */`
+        #include <common>
+        #include <fog_pars_vertex>
+        ${WIND_GLSL}
+        ${STORM_GLSL}
+        attribute vec4 aHome; attribute vec4 aSeed;
+        uniform float uTime; uniform vec3 uCenter; uniform float uSpan; uniform float uGround;
+        uniform vec3 uSunDir;
+        varying vec2 vUv; varying float vA; varying float vSun; varying float vDust;
+        void main(){
+          vUv = uv;
+          vec3 home = aHome.xyz;
+          vec3 w = windAt(home.xz + uCenter.xz);
+          vec3 p = home;
+          p.xz += w.xz * uTime * aSeed.y;
+          // one box, wrapped, so a bank leaving downwind is the bank arriving upwind
+          p.xz = mod(p.xz - uCenter.xz + uSpan * 0.5, uSpan) - uSpan * 0.5 + uCenter.xz;
+          p.y = uGround + home.y;
+
+          vec2 rel = p.xz - uCenter.xz;
+          float storm = stormAt(rel);
+          vDust = storm;
+          // A bank is either fair-weather haze or storm dust; the fair ones stay
+          // when the front has gone, the rest exist only while it is passing.
+          float load = max(aSeed.w * 0.55, storm);
+          if(load < 0.004){
+            // Every vertex of an instance takes the same branch, so the whole
+            // quad leaves the clip volume together and is never rasterised.
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            vA = 0.0; vSun = 0.0;
+            #ifdef USE_FOG
+              vFogDepth = 0.0;
+              vFogRay = vec3(0.0);
+            #endif
+            return;
+          }
+
+          // The wall is TALLER than the haze — that is most of what says storm.
+          float wide = aHome.w * (1.0 + storm * 0.55);
+          float tall = wide * aSeed.z * (1.0 + storm * 1.10);
+          vec3 camRight = vec3(modelViewMatrix[0][0], modelViewMatrix[1][0], modelViewMatrix[2][0]);
+          vec3 camUp    = vec3(modelViewMatrix[0][1], modelViewMatrix[1][1], modelViewMatrix[2][1]);
+          p += camRight * (position.x * wide) + camUp * (position.y * tall);
+
+          float dist = length(p.xz - uCenter.xz);
+          // Nothing inside arm's reach: standing inside a 40 m billboard is a
+          // grey screen, not fog. It has to hold off until it can be seen edge-on.
+          // Nothing reaches full strength inside 34 m. That is the whole of
+          // keeping a squall playable: the fight happens within about thirty
+          // metres, so the wall closes the DISTANCE and leaves sword range
+          // readable. A bank that can go opaque at 20 m is a grey screen.
+          vA = load
+             * smoothstep(8.0, 34.0, dist)
+             * (1.0 - smoothstep(uSpan * 0.34, uSpan * 0.49, dist));
+          vec3 toBank = normalize(vec3(rel.x, 0.3, rel.y));
+          vSun = pow(clamp(dot(toBank, normalize(uSunDir)), 0.0, 1.0), 3.0);
+          vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+          #include <fog_vertex>
+          gl_Position = projectionMatrix * mvPosition;
+        }`,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        #include <common>
+        #include <fog_pars_fragment>
+        uniform sampler2D uMap; uniform vec3 uColor; uniform vec3 uDust;
+        uniform vec3 uSunColor; uniform float uOpacity;
+        varying vec2 vUv; varying float vA; varying float vSun; varying float vDust;
+        void main(){
+          float t = texture2D(uMap, vUv).a;
+          float a = t * vA * uOpacity;
+          if(a < 0.002) discard;
+          // Fair-weather banks are the colour of the haze; a dust wall is the
+          // colour of the ground it picked up, which is warmer and darker.
+          vec3 c = mix(uColor, uDust, clamp(vDust, 0.0, 1.0));
+          gl_FragColor = vec4(mix(c, uSunColor, vSun * 0.45) * (1.0 + vSun * 0.5), a);
+          #include <fog_fragment>
+        }`,
+      transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.Mesh(geo, this.mat);
+    this.mesh.frustumCulled = false;
+    this.mesh.matrixAutoUpdate = false;
+    // between the far haze ring (2) and the near motes (6): banks stand in
+    // front of the distance and behind the dust in your face
+    this.mesh.renderOrder = 4;
+    scene.add(this.mesh);
+  }
+  update(t, center, sunColor, sunDir) {
+    if (!this.mesh) return;
+    const u = this.mat.uniforms;
+    u.uTime.value = t;
+    u.uCenter.value.copy(center);
+    u.uGround.value = center.y;
+    if (sunColor) u.uSunColor.value.copy(sunColor);
+    if (sunDir) u.uSunDir.value.copy(sunDir);
+    syncWind(u);
+  }
+  dispose() {
+    if (!this.mesh) return;
+    this.mesh.geometry.dispose(); this.mat.dispose(); this.mesh.parent?.remove(this.mesh);
+  }
+}
+
+/**
  * Heat shimmer. There is no scene colour to refract in a forward pass, so this
  * does what the air actually does: hot ground bends sky light up into your eye,
  * which is why a mirage is sky-coloured and only appears at a grazing angle.
@@ -1792,6 +2231,179 @@ class Shimmer {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The land beyond the land                                              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * The heightfield is 460–560 m across and the camera can see 520–900. So the
+ * player CAN see the edge of the world, and no amount of fog on the terrain
+ * itself hides it, because what gives the edge away is not brightness — it is
+ * that past a certain range there is nothing with a silhouette. The sky dome
+ * draws ridges, but they are painted at infinity: they do not move as you walk,
+ * which the eye reads within about ten seconds.
+ *
+ * These are the same ridges as real geometry, at 170 / 250 / 340 m. That is
+ * three things at once:
+ *
+ *   · PARALLAX. Walk fifty metres and the near range slides against the far
+ *     one. That single cue is what separates "a world" from "a backdrop", and
+ *     it is why this is geometry rather than another band on the dome.
+ *   · LAYERS. Three ranges at three distances go through three different
+ *     amounts of air, so the fog sorts them into three tones by itself. Nothing
+ *     here paints that gradient by hand — it emerges, which means it stays
+ *     right when a level changes its haze.
+ *   · SCALE. The far range is 40–95 m tall. Nothing inside the play space is
+ *     over 20 m, so it cannot be read as near, and something that cannot be
+ *     read as near makes everything in front of it read as closer.
+ *
+ * One mesh per range, no colliders, no shadows, no physics: three draw calls
+ * and about 2.3k triangles for the entire far distance.
+ */
+let _ridgeMat = null;
+function ridgeMaterial() {
+  if (_ridgeMat) return _ridgeMat;
+  // Basic, not standard: this is terrain seen through a kilometre of air, and
+  // at that range the only thing that survives is its mean radiance and the
+  // haze in front of it. Lighting it properly would cost the same and change
+  // nothing. `fog: true` picks up the engine's aerial-perspective chunk, which
+  // is what does all the actual work here.
+  _ridgeMat = new THREE.MeshBasicMaterial({
+    vertexColors: true, fog: true, side: THREE.DoubleSide,
+    // three feeds this to any geometry missing the attribute; without it a
+    // vertexColors material renders black.
+    depthWrite: true,
+  });
+  _ridgeMat.defaultAttributeValues = { color: [1, 1, 1] };
+  return _ridgeMat;
+}
+
+/**
+ * Build the far ranges. Pushes its meshes into `world.statics`, so the World's
+ * own unload disposes them; the material is shared and cached, exactly as the
+ * prop kit's are.
+ *
+ * @param {object} opts.layers   [{ radius, low, high, shade }]
+ * @param {number} opts.seed
+ */
+export function addHorizon(world, opts = {}) {
+  const scene = world.scene;
+  const terrain = world.terrain;
+  // The colour to converge on. scene.fog carries the engine's metered haze
+  // RADIANCE, which is the only value in the frame in the right units — an
+  // authored sRGB swatch used here would be a dark band under a bright sky,
+  // which is the exact failure SkyDome.setHaze exists to avoid.
+  const haze = fogColorOf(scene, new THREE.Color());
+  const sun = opts.sunDir || sceneLights(scene).sun?.position || new THREE.Vector3(0.4, 0.7, 0.3);
+  const sx = sun.x, sz = sun.z;
+  const sl = Math.hypot(sx, sz) || 1;
+
+  const layers = opts.layers || [
+    { radius: 172, low: 13, high: 34, shade: 0.55 },
+    { radius: 248, low: 24, high: 58, shade: 0.62 },
+    { radius: 342, low: 40, high: 96, shade: 0.70 },
+  ];
+  const seed = opts.seed ?? 4400;
+  const out = [];
+
+  for (let L = 0; L < layers.length; L++) {
+    const cfg = layers[L];
+    const R = cfg.radius;
+    // One vertex every ~2.4 m of arc: fine enough that a 40 m crest has a
+    // dozen samples across it and coarse enough to stay under a thousand
+    // triangles a range.
+    const seg = Math.max(96, Math.min(256, Math.round((TAU * R) / 2.4)));
+    const pos = new Float32Array((seg + 1) * 2 * 3);
+    const col = new Float32Array((seg + 1) * 2 * 3);
+    const idx = [];
+    /* The noise is sampled at the ring's own WORLD position, so the profile
+     * closes on itself seamlessly and no two ranges share a skyline.
+     *
+     * The frequency is set by how many peaks should go round the ring, not by a
+     * fixed 1/metres — and that is a correction, not a nicety. A fixed
+     * 0.0062/m put a 161 m feature on a 1055 m circumference: SIX AND A HALF
+     * peaks around the entire horizon, each spanning 55° of bearing. On screen
+     * that is a row of clean paper triangles, which is exactly what the first
+     * screenshot showed. Fourteen to twenty-two peaks puts each one at 16-26°,
+     * which is what a range actually subtends. */
+    const peaks = 14 + L * 4;
+    const f = peaks / (TAU * R);
+    const off = seed * 0.37 + L * 91.3;
+
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * TAU;
+      const cx = Math.cos(a), cz = Math.sin(a);
+      const x = cx * R, z = cz * R;
+      // Ridged noise, not fbm: mountains have sharp crests and broad saddles,
+      // and fbm gives you rolling lumps that read as spoil heaps. But ridged
+      // noise ALONE is a cone — the weights below keep the sum off its own
+      // ceiling (at ×1.15 it clamped to 1 across whole peaks, which flat-tops
+      // them) and two finer octaves tear the silhouette so no crest is a
+      // straight line from saddle to summit.
+      const rr = ridged2(x * f + off, z * f - off, 4);
+      const fine = fbm2(x * f * 3.7 - off, z * f * 3.7 + off, 3);
+      const rag = fbm2(x * f * 11.0 + off, z * f * 11.0 - off, 2);
+      const h = lerp(cfg.low, cfg.high, clamp(rr * 0.90 + fine * 0.45 + rag * 0.16, 0, 1));
+      const g = terrain ? terrain.height(x, z) : 0;
+      const yb = g - 45;          // rooted deep, so nothing ever shows under it
+      const yt = g + h;
+
+      // Slopes facing the sun catch a little more of it. Squared, so it is a
+      // side and not a gradient across the whole ring.
+      const lit = Math.max(0, (cx * sx + cz * sz) / sl);
+      const k = 1 + lit * lit * 0.16;
+      // The FOOT of a distant range is paler than its crest: there is more of
+      // the low haze between you and it. Everything else about the tonal
+      // separation between ranges is left to the fog, which already knows how
+      // far away each one is.
+      //
+      // Both are capped BELOW 1, and that is not a safety belt — it is the
+      // physics. These are passive surfaces behind a scattering medium, so
+      // they cannot hand back more light than the haze they are dissolving
+      // into. Uncapped, the canyon's far range came out at 1.09 × the fog and
+      // measured brighter than the sky standing over it.
+      const cap = 0.95;
+      const cTop = Math.min(cap, cfg.shade * k);
+      const cBot = Math.min(cap, cfg.shade * 1.42 * k);
+      for (let s = 0; s < 2; s++) {
+        const v = (i * 2 + s) * 3;
+        pos[v] = x; pos[v + 1] = s ? yt : yb; pos[v + 2] = z;
+        const c = s ? cTop : cBot;
+        col[v] = haze.r * c; col[v + 1] = haze.g * c; col[v + 2] = haze.b * c;
+      }
+      if (i < seg) {
+        const b0 = i * 2, t0 = i * 2 + 1, b1 = b0 + 2, t1 = t0 + 2;
+        idx.push(b0, b1, t0, t0, b1, t1);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, ridgeMaterial());
+    // The ring encloses the camera, so its bounding sphere can never be culled
+    // — the test is pure cost. The matrix is identity and stays that way, but
+    // it is composed once explicitly rather than relying on the default.
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    // 170-340 m is far outside the shadow cascade (42-96 m depending on tier),
+    // so neither casting nor receiving would do anything but cost.
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    // Behind everything in the world and in front of the sky. Depth still
+    // decides the actual order; this only keeps it out of the sorted-transparent
+    // conversation it has no business being in.
+    mesh.renderOrder = -10;
+    scene.add(mesh);
+    world.statics.push(mesh);
+    out.push(mesh);
+  }
+  return out;
+}
+
 /**
  * The air, as one object. The level only describes its dust; everything else is
  * inferred from what the level already built — whether there is a sky overhead,
@@ -1846,7 +2458,58 @@ export class Atmosphere {
       opacity: 0.10,
     });
 
-    this.parts = [this.motes, this.windborne, this.haze, this.shimmer];
+    /* The banks. Both numbers below were arrived at by measuring what actually
+     * ends up in front of the camera, because the first attempt — 30 banks in
+     * a 240 m box at 0.115 — looked entirely reasonable and rendered a squall
+     * that was invisible.
+     *
+     * A bank is only visible between where it stops being a grey screen in
+     * your face (20 m) and where it wraps out (span x 0.49). Over a 90-degree
+     * view that shell held 4.2 banks stacking to 0.41 alpha at the peak of a
+     * storm: a faint wash, not a wall. Pulling the box in to 190 m raises the
+     * areal density by 60% for the same count, and the count and opacity go up
+     * with it — 6.3 banks stacking to 0.67, which is a front you cannot see
+     * through. The near fade is what keeps the fight readable: nothing thickens
+     * inside 20 m, so an enemy at sword range is never lost in it. */
+    this.banks = new FogBank(scene, {
+      map: this.puff,
+      count: outdoor ? Math.max(18, Math.floor(44 * density)) : 0,
+      color: fog,
+      // A dust wall is the ground in the air, so it takes the ground's colour,
+      // not the haze's — that difference is what makes it read as dust rather
+      // than as the fog getting thicker.
+      dust: _col.copy(dust).multiplyScalar(0.72).clone(),
+      opacity: 0.12, span: 190, seed: 5150,
+    });
+
+    /* ── the weather itself ────────────────────────────────────────────
+     * Everything below this line is a CONSEQUENCE. The level says how hard its
+     * weather gets and the scheduler decides when; wind, fog, sun and every
+     * dust layer are then read off one number, which is the only way they can
+     * possibly agree with each other. Two systems each deciding independently
+     * how stormy it is right now is the thing that reads as fake. */
+    this.weather = weather;
+    weather.configure({ ...(opts.weather || {}), peak: outdoor ? (opts.weather?.peak ?? 0) : 0 });
+    weather.time = 0;
+    weather.update(0);
+    // The level's own settings are the CALM baseline; every storm term is
+    // relative to them, so restoring is exact and a level that never storms is
+    // bit-for-bit what it was before there was weather at all.
+    this._windBase = wind.baseHeading;
+    this._windSpeed = wind.strength;
+    this._gustBase = wind.gustiness;
+    this._fog = scene.fog || null;
+    this._fogBase = this._fog ? this._fog.density : 0;
+    this._sunBase = this.sun ? this.sun.intensity : 0;
+    this._sunTint = this.sun ? this.sun.color.clone() : null;
+    this._hemiBase = this.hemi ? this.hemi.intensity : 0;
+    this._dustTint = dust.clone();
+    // What a storm is worth, remembered so `applyWeather` is pure arithmetic.
+    this._moteOpacity = opts.opacity ?? 0.30;
+    this._bankOpacity = 0.12;
+    this._hazeOpacity = 0.075;
+
+    this.parts = [this.motes, this.windborne, this.haze, this.shimmer, this.banks];
     // the legacy handle — anything that looked for `.mesh` still finds one
     this.mesh = this.motes.mesh;
     this.count = this.motes.count;
@@ -1866,20 +2529,97 @@ export class Atmosphere {
     _col.copy(this.sun.color).multiplyScalar(clamp(this.sun.intensity / 6, 0.2, 1.6));
   }
 
+  /**
+   * Push the current weather through everything downstream of it. Called
+   * before the layers update so they all see the same frame's storm.
+   *
+   * Note what is NOT here: nothing decides independently how stormy it is.
+   * There is one intensity, and wind speed, visibility, key light, fill light
+   * and four dust layers are all functions of it.
+   */
+  _applyWeather() {
+    const W = this.weather;
+    const I = W.intensity;
+    // ── one wind. Everything that reads `wind` — grass, sand sheets, embers,
+    // smoke columns, the fog banks — leans harder because of this line alone.
+    wind.strength = this._windSpeed * (1 + W.windGain * I);
+    wind.gustiness = clamp(this._gustBase + 0.22 * I, 0, 0.95);
+    /* ── visibility. This is the term that does the real work: it is what
+     * makes the far ranges disappear and come back, and it is why a squall
+     * changes what the level IS rather than just what is floating in it.
+     *
+     * CAPPED AT 0.0098, and that number is not taste. Terrain._syncAtmosphere
+     * runs from flush() every frame and decides it is INDOORS when
+     * `fog.density > 0.01`, at which point it sets the ground's sky-blend haze
+     * to zero. Uncapped, all three outdoor levels sail past that: the dune sea
+     * asks for 0.0193 at the peak. So every squall would have hard-switched
+     * the terrain's aerial term off on the way in and back on on the way out —
+     * a pop, on a threshold, in a system that has no idea weather exists.
+     *
+     * The cap costs real range (dunes 198 m → 85 m instead of 43 m), which is
+     * why the fog banks carry more of the load than they otherwise would. */
+    // The `max` is not belt and braces: a bare `min` against the cap DROPPED
+    // the hangar's authored 0.016 to 0.0098 on a level with no weather at all,
+    // which is the storm system quietly re-lighting an interior it is not even
+    // running in. Weather may only ever ADD to what the level authored.
+    if (this._fog) {
+      this._fog.density = Math.max(this._fogBase,
+        Math.min(FOG_INDOOR_LIMIT, this._fogBase * (1 + W.fogGain * I)));
+    }
+    // ── light. A dust storm is not a dimmer, it is a converter: it takes the
+    // sun's beam apart and hands it back as sky. Direct falls, fill rises, and
+    // what is left of the sun takes the colour of what it is coming through.
+    if (this.sun) {
+      this.sun.intensity = this._sunBase * (1 - W.sunLoss * I);
+      if (this._sunTint) this.sun.color.copy(this._sunTint).lerp(this._dustTint, 0.6 * I);
+    }
+    if (this.hemi) this.hemi.intensity = this._hemiBase * (1 + W.fillGain * I);
+    // ── and the layers thicken
+    // The banks take the biggest multiplier of the three because the fog cap
+    // above stops the scene fog doing the whole job: they are the part of the
+    // visibility loss that is allowed to get as thick as a real dust wall.
+    if (this.motes.mat) this.motes.mat.uniforms.uOpacity.value = this._moteOpacity * (1 + 1.9 * I);
+    /* The banks are a SUM, not a multiplier, and the two terms are different
+     * things: 0.12 is fair-weather haze structure and 0.85 is a dust wall. As
+     * a multiplier off the calm value the peak came out at 0.60, and measured
+     * against the calm frame that moved the mid distance by 1.9% luminance —
+     * a squall you had to be told about. The blob sprite is soft (its mean
+     * alpha is a fraction of its peak), so the number that reaches a pixel is
+     * a long way under the uniform, which is exactly why this had to be
+     * measured off a frame rather than reasoned about. */
+    if (this.banks.mat) this.banks.mat.uniforms.uOpacity.value = this._bankOpacity + 0.85 * I;
+    if (this.haze.mat) this.haze.mat.uniforms.uOpacity.value = this._hazeOpacity * (1 + 1.2 * I);
+  }
+
   update(dt, center) {
     this.time += dt;
     wind.update(dt);
+    this.weather.update(dt);
+    this._applyWeather();
     this._readSun();
     this.motes.update(this.time, center, _col, this.sunDir);
     this.windborne.update(this.time, center);
     this.haze.update(this.time, center, _col, this.sunDir);
     this.shimmer.update(this.time, center);
+    this.banks.update(this.time, center, _col, this.sunDir);
   }
 
   /** Legacy hook: point the shared wind with a world vector. */
   setWind(v) { wind.setFromVector(v); }
 
   dispose() {
+    // Put back everything the weather borrowed. The next level re-authors all
+    // of it anyway, but the main menu runs on whatever the last frame left
+    // behind, and a menu lit by the tail of a dust storm is a bug report.
+    if (this._fog) this._fog.density = this._fogBase;
+    if (this.sun) {
+      this.sun.intensity = this._sunBase;
+      if (this._sunTint) this.sun.color.copy(this._sunTint);
+    }
+    if (this.hemi) this.hemi.intensity = this._hemiBase;
+    wind.strength = this._windSpeed;
+    wind.gustiness = this._gustBase;
+    weather.configure({ peak: 0 });
     for (const p of this.parts) p.dispose();
     this.parts.length = 0;
     this.puff?.dispose();

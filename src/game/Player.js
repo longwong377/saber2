@@ -21,8 +21,98 @@ const rng = makeRng(1212);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+// The Force powers get scratch of their own. _v1.._v6 are threaded through the
+// blade solve, the collide pass and the body pose in the same frame, and a
+// gesture that borrowed one of them would corrupt whichever of those ran next —
+// the exact class of bug that is invisible until an arm folds inside out.
+const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const FWD = new THREE.Vector3(0, 0, -1);
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The Force's one hard number                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * How many kilograms a grip can hold at forcePower = 1, and how that scales.
+ *
+ * Before this there was no such number, and that was the bug. The grip wrote a
+ * held body's VELOCITY directly, so — measured — a 900 kg pillar and a 22 kg
+ * crate both travelled 5.01 m in the first second and a hurl launched every
+ * mass in the game at exactly 26 m/s. Mass was invisible. The only real size
+ * limit anywhere was Enemy.grippable (`!A.big && !A.boss`), a boolean no
+ * setting could move: the 900 kg spider walker and the 1400 kg Acklay were
+ * un-liftable at forcePower 4 exactly as they were at 0.25.
+ *
+ * 220 kg at 1x is read off the real mass table — it takes a droideka (210) and
+ * a vaporator (180) but not a spire (500). The 1.5 exponent is read off the
+ * ends of the slider: 0.25x lands at 27.5 kg, which is one crate and you feel
+ * it; 4x lands at 1760 kg, which clears the heaviest body in the game with room
+ * to spare. So the top of the slider genuinely moves genuinely large things,
+ * and the middle of it is a progression rather than a switch.
+ */
+const LIFT_AT_ONE = 220;
+const LIFT_EXPONENT = 1.5;
+
+/**
+ * Force gestures — the arm that reads the power.
+ *
+ * Every offset is in the AIM frame and in metres from the chest: `out` along
+ * where you are looking, `side` to the player's right, `up` world up. `attack`
+ * and `release` are seconds and are deliberately lopsided, because a Force
+ * gesture is a snap and a settle; symmetric timing reads as a wave.
+ *
+ * `palm` rolls the hand from pointing at the target (0) to a flat palm facing
+ * it (1). `lean` and `twist` are radians added to the spine, so the whole torso
+ * commits instead of just the arm — a push you can only see in the forearm does
+ * not look like it moved a crate.
+ *
+ * The saber lives in the right hand and the blade solve owns that arm outright,
+ * so every gesture here is left-handed and pays for the rest of its read with
+ * the spine, the head and the cloak.
+ */
+const GESTURES = {
+  push:      { attack: 0.09, release: 0.40, out: 0.66, side: -0.04, up: 0.10, palm: 0.85, lean: 0.30, twist: -0.12 },
+  pull:      { attack: 0.12, release: 0.46, out: -0.24, side: -0.36, up: 0.20, palm: 0.15, lean: -0.28, twist: 0.18 },
+  grip:      { attack: 0.18, release: 0.26, out: 0.56, side: -0.14, up: 0.18, palm: 0.35, lean: 0.10, twist: -0.08, sustain: true, track: true },
+  hurl:      { attack: 0.07, release: 0.36, out: 0.78, side: 0.02, up: 0.00, palm: 0.30, lean: 0.36, twist: -0.24 },
+  stasis:    { attack: 0.13, release: 0.30, out: 0.50, side: -0.18, up: 0.36, palm: 1.00, lean: -0.10, twist: -0.06, sustain: true, track: true },
+  unleash:   { attack: 0.06, release: 0.38, out: 0.74, side: 0.08, up: 0.12, palm: 0.55, lean: 0.32, twist: -0.26 },
+  rend:      { attack: 0.22, release: 0.62, out: 0.48, side: -0.44, up: 0.28, palm: 0.60, lean: 0.06, twist: 0.30 },
+  lightning: { attack: 0.08, release: 0.52, out: 0.70, side: -0.08, up: 0.14, palm: 0.70, lean: 0.24, twist: -0.14 },
+  sense:     { attack: 0.26, release: 0.62, out: 0.10, side: -0.28, up: 0.42, palm: 0.00, lean: -0.12, twist: 0.10 },
+  cast:      { attack: 0.06, release: 0.34, out: 0.58, side: -0.30, up: 0.04, palm: 0.20, lean: 0.30, twist: -0.26 },
+};
+
+/**
+ * A pinned point in space that pretends to be a lit blade.
+ *
+ * BoltPool already knows how to arrest a bolt: while `bolt.held` is set it is
+ * placed at `held.saber.pointAt(t)` every frame, it stops moving, it stops
+ * ageing, it drops out of threatsNear so the aim assist ignores it, and it is
+ * drawn as a fat, crackling, bleached version of itself instead of a streak.
+ * That is the entire visual and behavioural vocabulary a Force-stopped bolt
+ * wants; the only difference is that this anchor does not move. So the anchor
+ * IS the blade interface, three members wide, and Force stop inherits all of it
+ * rather than growing a second, subtly different copy.
+ */
+class StasisAnchor {
+  constructor(p) { this.p = p.clone(); this.ignition = 1; this.coreWidth = 1; }
+  pointAt(t, out) { return out.copy(this.p); }
+}
+
+/**
+ * What can be taken apart. Flesh does not disassemble — an Acolyte or an Acklay
+ * has to be cut, which is what the blade is for.
+ */
+const MECHANICAL = /b1|b2|droid|deka|walker|remote|dummy/;
+
+/** Bones a droid still needs to be a droid. Never the first thing to come off. */
+const CORE_BONE = /^(hips|spine|chest|body|core|pelvis)$/;
+
+/** Anything it is standing on — see forceDisassemble for why these go last. */
+const LEG_BONE = /thigh|shin|foot|femur|tibia|tarsus|^leg/;
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Camera                                                                */
@@ -224,7 +314,12 @@ export class Player {
 
     // ── force powers
     this.gripBody = null;
+    this.gripEnemy = null;
     this.gripDistance = 4;
+    /** Where the lifted enemy is being walked to — see _updateGrip. */
+    this._liftPoint = new THREE.Vector3();
+    /** Why the last grip attempt was refused, so the refusal is measurable. */
+    this.lastGripRefusal = null;
     this.senseActive = false;
     this.senseTimer = 0;
     this.saberThrown = false;
@@ -233,7 +328,28 @@ export class Player {
     this.throwVel = new THREE.Vector3();
     this.throwSpin = 0;
     this.throwTimer = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0 };
+    /** The arm gesture currently reading out whatever the Force is doing. */
+    this.gesture = { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false };
+    /**
+     * Force stop. `held` is what is frozen right now, `firing` is what has been
+     * let go and is leaving in a ripple, and `bodies` is the membership test so
+     * the per-frame capture sweep is not quadratic.
+     */
+    this.stasis = {
+      active: false, timer: 0, radius: 0, fireT: 0, target: null,
+      held: [], firing: [], bodies: new Set(),
+      centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
+    };
+    /**
+     * Things we threw, and what they have already hit. RapierWorld stores
+     * Body.onContact and never dispatches it — only the retired sphere solver
+     * ever did — so nothing in the game reads `userData.hurledBy`, and a hurled
+     * crate passed straight through a droid. Until contacts come back the
+     * thrower owns the consequence.
+     */
+    this.hurled = [];
+    this._wheel = 0;
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 };
     this.boons = new Set();
     this.boonMods = {
       deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
@@ -321,6 +437,18 @@ export class Player {
     const input = ctx.input;
     if (!this.isLocal) return;
 
+    // ── the wheel belongs to whatever is actually being held.
+    // SaberController spends it on wrist roll (`rollInput += mouse.wheel*0.55`)
+    // and it runs first, so before this a single notch both rolled the blade
+    // AND moved the gripped object — two answers to one gesture, which is why
+    // distance control read to the player as "there isn't any". Claim it while
+    // a grip or a stasis field is live and hand it straight back otherwise.
+    this._wheel = 0;
+    if (this.gripBody || this.gripEnemy || this.stasis.active) {
+      this._wheel = input.mouse.wheel;
+      input.mouse.wheel = 0;
+    }
+
     // blade → camera coupling
     const camDelta = this.control.applyInput(input, dt, {
       stamina: this.stamina / this.maxStamina,
@@ -343,8 +471,18 @@ export class Player {
       this._applyViewMode();
     }
 
-    // grip / one-hand
-    const wantOne = input.act('grip2') || this.saberThrown;
+    // grip / one-hand.
+    //
+    // Only a SUSTAINED hold changes the blade's actual grip. GRIPS.two → one
+    // moves handExtend 0.29 → 0.36 and guardR 0.60 → 0.72 with no blend of any
+    // kind (SaberController.gripBlend is set once and never read), so switching
+    // it for a 0.4 s push gesture would jump the hilt target 7 cm out and back
+    // twice a second in the middle of a duel. Carrying a crate or holding a
+    // stasis field is a decision that lasts, and the looser one-handed blade is
+    // the honest price of it; a gesture only borrows the arm, which
+    // _updateBody handles on its own.
+    const wantOne = input.act('grip2') || this.saberThrown
+      || !!this.gripBody || !!this.gripEnemy || this.stasis.active;
     this.control.grip = wantOne ? 'one' : 'two';
 
     // force powers
@@ -354,8 +492,31 @@ export class Player {
     if (input.actHit('throw')) this.throwOrRecall(ctx);
     if (input.actHit('sense')) this.toggleSense(ctx);
     if (input.actHit('lightning') && this.boonMods.lightning) this.forceLightning(ctx);
-    if (input.actHit('hurl') && this.gripBody) this.hurlGripped(ctx);
+    if (this._powerHit(input, 'stasis', 'KeyB')) this.toggleStasis(ctx);
+    if (this._powerHit(input, 'rend', 'KeyN')) this.forceDisassemble(ctx);
+    // One meaning for Mouse2 whichever way the Force is currently full: send
+    // what I am holding at what I am looking at.
+    if (input.actHit('hurl')) {
+      if (this.gripBody || this.gripEnemy) this.hurlGripped(ctx);
+      else if (this.stasis.active) this.releaseStasis(ctx, true);
+    }
     if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
+  }
+
+  /**
+   * A power whose action does not exist in ACTIONS yet.
+   *
+   * Bindings.js is somebody else's file this pass, and gameplay here asks for
+   * ACTIONS rather than key codes for a good reason — every control is
+   * rebindable and nothing special-cases a key. So this asks for the action
+   * first and only falls back to a default code when the bindings have never
+   * heard of it. The day `stasis` and `rend` join ACTIONS, rebinding starts
+   * working with no change on this side.
+   */
+  _powerHit(input, id, fallbackCode) {
+    if (input.bindings && input.bindings[id]) return input.actHit(id);
+    // _codeHit resolves both keyboard codes and Mouse*, which input.hit() does not.
+    return input._codeHit ? input._codeHit(fallbackCode) : input.hit(fallbackCode);
   }
 
   _applyViewMode() {
@@ -771,15 +932,22 @@ export class Player {
     const spine = rig.get('spine');
     if (spine) {
       const w = this.control.angVel;
-      const twist = clamp(-w.y * 0.026, -0.32, 0.32);
-      const lean = clamp(this.control.handVel.dot(_v1.set(Math.sin(this.facing), 0, Math.cos(this.facing))) * 0.012, -0.2, 0.2);
+      let twist = clamp(-w.y * 0.026, -0.32, 0.32);
+      let lean = clamp(this.control.handVel.dot(_v1.set(Math.sin(this.facing), 0, Math.cos(this.facing))) * 0.012, -0.2, 0.2);
+      // A power moves the whole body, not just the arm. Added on top of the
+      // blade's own lean rather than replacing it, so a push thrown mid-swing
+      // keeps the swing's weight and gains the push's.
+      const g = GESTURES[this.gesture.kind];
+      if (g) { lean += g.lean * this.gesture.env; twist += g.twist * this.gesture.env; }
       spine.obj.quaternion.copy(spine.restQuat)
         .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
     }
     rig.updateMatrices();
 
     // arms to the hilt
-    const twoHanded = this.control.grip === 'two' && this.throwState === 'held';
+    // A gesture takes the off hand off the hilt without touching the blade's
+    // grip model — see the note in _readInput on why those are separate.
+    const twoHanded = this.control.grip === 'two' && this.throwState === 'held' && !this.gesture.kind;
     const chest = rig.worldPos('chest', _v1);
 
     if (this.throwState === 'held') {
@@ -807,10 +975,18 @@ export class Player {
         // back, so switching to one hand left it frozen 167 degrees off rest.
         const hl = rig.get('handL');
         if (hl) hl.obj.quaternion.copy(hl.restQuat);
+        // Rest is the hip. Everything the Force does moves the hand off it —
+        // this used to be a single `gripBody ? 0.55 : -0.05` reach that only
+        // applied while the one-hand key was ALSO held, so in practice no power
+        // in the game had a visible arm.
         const rest = _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
-          .addScaledVector(fwd, this.gripBody ? 0.55 : -0.05);
+          .addScaledVector(fwd, -0.05);
         const poleL = _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
+        const palm = this._gesturePose(rest, poleL, chest, fwd, right);
         rig.solveIK('armL', 'foreL', rest, poleL);
+        // Wrist AFTER the IK: solveIK writes armL and foreL, and the hand hangs
+        // off the end of both.
+        if (palm) rig.aimBoneWorld('handL', palm, right);
       }
       // hands take the hilt's roll
       this.saber.root.getWorldQuaternion(_q1);
@@ -827,7 +1003,13 @@ export class Player {
       const reach = _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
       rig.solveIK('armR', 'foreR', reach, _v2.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.6));
       const rest = _v6.copy(chest).addScaledVector(right, -0.3).addScaledVector(UP, -0.6);
-      rig.solveIK('armL', 'foreL', rest, _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7));
+      const poleL = _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7);
+      // The off hand still answers to the Force with the blade away — and the
+      // saber throw's own gesture lives here, since throwState leaves 'held' on
+      // the frame it fires and this is the only branch that runs afterwards.
+      const palm = this._gesturePose(rest, poleL, chest, fwd, right);
+      rig.solveIK('armL', 'foreL', rest, poleL);
+      if (palm) rig.aimBoneWorld('handL', palm, right);
     }
 
     // Head: a limited glance toward the aim, layered on the rest pose. The head
@@ -914,11 +1096,144 @@ export class Player {
     this.flow = clamp(this.flow + v * this.boonMods.flowGain, 0, 1);
   }
 
+  /* ── force powers: the shared laws ───────────────────────────────── */
+
+  /**
+   * The heaviest thing the Force can take hold of right now, in kilograms.
+   * See LIFT_AT_ONE for why these two numbers are the numbers they are.
+   */
+  get liftCapacity() { return LIFT_AT_ONE * Math.pow(this.forceScale, LIFT_EXPONENT); }
+
+  /** How far out the Force reaches to take hold of something, in metres. */
+  get forceReach() { return 18 * Math.sqrt(this.forceScale); }
+
+  /**
+   * How briskly the Force moves a given mass: 1 for something it barely
+   * notices, 0.28 for something right at the limit. Every lift, shove and throw
+   * multiplies by this, and it is the whole reason mass is now visible at all.
+   * It never reaches zero — a thing you can hold is a thing you can move, just
+   * slowly, and a lift that stalls dead reads as a broken button.
+   */
+  _heft(mass) { return lerp(1, 0.28, clamp(Math.max(0, mass) / this.liftCapacity, 0, 1)); }
+
+  /**
+   * Where an enemy's middle is, derived from its POSITION rather than from
+   * Enemy.aimPoint.
+   *
+   * aimPoint reads the chest BONE's world matrix, which is (0,0,0) until that
+   * enemy has been through one update — and the player runs before the enemies
+   * do, so on the frame a wave spawns every Force power would have aimed at the
+   * world origin. Position plus chest height is always true.
+   */
+  _enemyPoint(e, out) {
+    return out.set(e.position.x, e.position.y + 1.12 * (e.A ? e.A.scale : 1), e.position.z);
+  }
+
+  /* ── gestures ────────────────────────────────────────────────────── */
+
+  /**
+   * Start an arm gesture. Sustained ones run until _endGesture.
+   *
+   * `at` is where the hand should point for a one-shot — captured NOW, because
+   * a hurl's target has stopped existing as a held object by the time the arm
+   * finishes travelling. Sustained gestures ignore it and track their subject
+   * live instead; see GESTURES[].track.
+   */
+  _gesture(kind, at = null) {
+    const g = GESTURES[kind];
+    if (!g) return;
+    this.gesture.kind = kind;
+    this.gesture.t = 0;
+    this.gesture.sustain = !!g.sustain;
+    this.gesture.hasAt = !!at;
+    if (at) this.gesture.at.copy(at);
+  }
+
+  /** Let a held gesture go; it falls back to rest over its own release time. */
+  _endGesture(kind) {
+    const G = this.gesture;
+    if (!G.kind || (kind && G.kind !== kind) || !G.sustain) return;
+    G.sustain = false;
+    G.t = GESTURES[G.kind].attack;         // start the release from full extension
+  }
+
+  _advanceGesture(dt) {
+    const G = this.gesture;
+    const g = GESTURES[G.kind];
+    if (!g) { G.env = 0; return; }
+    G.t += dt;
+    if (G.sustain || G.t <= g.attack) { G.env = smoothstep(0, g.attack, G.t); return; }
+    G.env = 1 - smoothstep(g.attack, g.attack + g.release, G.t);
+    if (G.t >= g.attack + g.release) { G.kind = ''; G.env = 0; }
+  }
+
+  /** What the current gesture is aimed AT, if it is aimed at anything. */
+  _gestureFocus(out) {
+    const g = GESTURES[this.gesture.kind];
+    // A hold tracks its subject as it moves — the crate you are carrying does
+    // not stay where it was when you picked it up.
+    if (g && g.track) {
+      if (this.gripBody) return out.copy(this.gripBody.position);
+      if (this.gripEnemy) return this._enemyPoint(this.gripEnemy, out);
+      if (this.stasis.active && this.stasis.held.length) {
+        const h = this.stasis.held[0];
+        return out.copy(h.bolt ? h.bolt.pos : h.body.position);
+      }
+    }
+    return this.gesture.hasAt ? out.copy(this.gesture.at) : null;
+  }
+
+  /**
+   * Bend the free hand toward whatever the Force is doing, and hand back the
+   * direction the palm should face.
+   *
+   * Blended by the gesture envelope rather than switched, so the hand travels
+   * from the hip to the gesture and back instead of teleporting, and a power
+   * fired mid-swing does not snap the arm across the body.
+   */
+  _gesturePose(target, pole, chest, fwd, right) {
+    const g = GESTURES[this.gesture.kind];
+    const env = this.gesture.env;
+    if (!g || env <= 0.001) return null;
+
+    // where the gesture wants the hand, in the aim frame
+    _g1.copy(chest).addScaledVector(fwd, g.out).addScaledVector(right, g.side).addScaledVector(UP, g.up);
+
+    // A grip or a hurl points at the THING, not at the crosshair — you cannot
+    // read "he is holding that" off a hand aimed somewhere else.
+    const reach = Math.hypot(g.out, g.side, g.up);
+    const at = this._gestureFocus(_g2);
+    _g4.copy(fwd);
+    if (at) {
+      _g3.subVectors(at, chest);
+      const d = _g3.length();
+      if (d > 0.3) {
+        _g3.multiplyScalar(1 / d);
+        _g1.copy(chest).addScaledVector(_g3, reach).addScaledVector(UP, 0.05);
+        _g4.copy(_g3);
+      }
+    }
+    target.lerp(_g1, env);
+
+    // The elbow has to ride out with the hand or the forearm folds back through
+    // the ribs — the same failure the hilt poles were fixed for.
+    _g3.copy(chest).addScaledVector(right, -0.92).addScaledVector(UP, -0.40).addScaledVector(fwd, -0.12);
+    pole.lerp(_g3, env);
+
+    // Palm: 0 points the fingers at the target, 1 turns the hand flat to face
+    // it. The hand bone's +Y runs out through the fingers, so rolling the palm
+    // up IS rotating +Y toward world up.
+    _g5.copy(_g4).lerp(UP, clamp(g.palm * env, 0, 0.98));
+    if (_g5.lengthSq() < 1e-8) return null;
+    return _g5.normalize();
+  }
+
   /* ── force powers ────────────────────────────────────────────────── */
 
   forcePush(ctx) {
     if (this.cooldowns.push > 0 || !this._spend(20)) return;
     this.cooldowns.push = 0.55;
+    this._gesture('push');
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
     this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
@@ -949,7 +1264,12 @@ export class Player {
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < Math.cos(halfAngle)) continue;
       const k = 1 - d / range;
-      _v2.copy(dir).multiplyScalar(b.mass * 15 * k * P).setY(b.mass * 6 * k * P);
+      // Mass-proportional impulse cancels mass exactly, so every prop in the
+      // game took the same 8.6 m/s off a default push — a 900 kg pillar left
+      // like a 22 kg crate. `heft` puts the weight back: at forcePower 1 the
+      // pillar gets a quarter of the crate's delta-v, at 4 it gets all of it.
+      const heft = this._heft(b.mass);
+      _v2.copy(dir).multiplyScalar(b.mass * 15 * k * P * heft).setY(b.mass * 6 * k * P * heft);
       b.applyImpulse(_v2, b.position);
     }
     // architecture: a push does not move a wall, it damages it (Destruction.js)
@@ -987,8 +1307,13 @@ export class Player {
   forcePull(ctx) {
     if (this.cooldowns.pull > 0 || !this._spend(16)) return;
     this.cooldowns.pull = 0.6;
+    this._gesture('pull');
     audio.force(this.chest, 'pull');
-    const origin = this.chest, dir = this.aimDir, range = 17;
+    this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
+    // Reach scales with the setting, same law as push and grip. A pull that
+    // stayed at 17 m while the grip reached 36 was the odd one out.
+    const P = this.forceScale;
+    const origin = this.chest, dir = this.aimDir, range = 17 * Math.sqrt(P);
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
       _v1.subVectors(e.position, origin);
@@ -996,7 +1321,8 @@ export class Player {
       if (d > range || d < 1.5) continue;
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < 0.72) continue;
-      _v2.copy(_v1).multiplyScalar(-Math.min(d * 3.2, 22)).setY(4.5);
+      const heft = this._heft(e.A ? e.A.mass : 80);
+      _v2.copy(_v1).multiplyScalar(-Math.min(d * 3.2, 22) * heft).setY(4.5 * heft);
       e.applyKnockback(_v2, 2, this, true);
     }
     for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
@@ -1006,86 +1332,331 @@ export class Player {
       if (d > range || d < 1) continue;
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < 0.72) continue;
-      _v2.copy(_v1).multiplyScalar(-b.mass * Math.min(d * 2.2, 16)).setY(b.mass * 3.4);
+      const heft = this._heft(b.mass);
+      _v2.copy(_v1).multiplyScalar(-b.mass * Math.min(d * 2.2, 16) * heft).setY(b.mass * 3.4 * heft);
       b.applyImpulse(_v2, b.position);
     }
   }
 
+  /** Is this physics body something the Force is allowed to take hold of? */
+  _grippableBody(b) {
+    if (!b || b === this.body || b.dead) return false;
+    // An enemy's movement proxy is KINEMATIC, so invMass is 0 and the old
+    // filter could never see one. That is why gripping a droid only worked when
+    // the ray hit nothing at all — a crate anywhere behind it won the pick.
+    if (b.layer === LAYER.ENEMY) return !!(b.userData.enemy && !b.userData.enemy.dead);
+    return b.invMass > 0
+      && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL);
+  }
+
+  /**
+   * Everything the Force could pick up, and how heavy it is.
+   *
+   * Three widenings on what this used to be, all of them asked for by name:
+   *  · enemies are in the SAME search as props rather than a fallback that only
+   *    ran when the ray hit literally nothing;
+   *  · anything loose counts — crates, barrels, consoles, spires, pillars, cut
+   *    prop halves, wall rubble from Destruction, corpses, severed limbs, and
+   *    the enemies themselves. The only things left out are the terrain, the
+   *    static architecture (a push damages that; see Destruction.forceBlast)
+   *    and the player;
+   *  · the crosshair does not have to be ON it. The ray is tried first because
+   *    it is exact, and a cone around the aim catches everything else — pixel
+   *    accuracy on a tumbling rock at 20 m is not a skill worth testing.
+   */
+  _pickGripTarget(ctx) {
+    const reach = this.forceReach;
+    // The ray leaves the CAMERA so it agrees with the crosshair, and in third
+    // person that is ~3 m behind the head — so it has to run that much further
+    // than the reach or the far end of the reach is unreachable.
+    const lead = this.camera.pos.distanceTo(this.chest);
+    const maxD = reach + lead;
+
+    const hit = ctx.physics ? ctx.physics.raycast(this.camera.pos, this.aimDir, maxD,
+      (b) => this._grippableBody(b)) : null;
+    if (hit && hit.body && this._grippableBody(hit.body)) {
+      const e = hit.body.userData.enemy;
+      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance }
+               : { body: hit.body, mass: hit.body.mass, distance: hit.distance };
+    }
+
+    // Nothing under the crosshair. Take the best thing near it, but never
+    // through the wall the ray just stopped on.
+    const wall = hit ? hit.distance : maxD;
+    let best = null, bestDot = 0.965;              // ≈15° cone
+    const consider = (obj, point, mass, isEnemy) => {
+      _g1.subVectors(point, this.camera.pos);
+      const d = _g1.length();
+      if (d > maxD || d < 0.6 || d > wall + 1.2) return;
+      const dot = _g1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (dot < bestDot) return;
+      bestDot = dot;
+      best = isEnemy ? { enemy: obj, mass, distance: d } : { body: obj, mass, distance: d };
+    };
+    for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
+      if (!this._grippableBody(b) || b.layer === LAYER.ENEMY) continue;
+      consider(b, b.position, b.mass, false);
+    }
+    for (const e of ctx.enemies || []) {
+      if (e.dead) continue;
+      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true);
+    }
+    return best;
+  }
+
   toggleGrip(ctx) {
-    if (this.gripBody) { this.releaseGrip(); return; }
-    if (this.force < 10) return;
-    const hit = ctx.physics.raycast(this.camera.pos, this.aimDir, 32,
-      (b) => b.invMass > 0 && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL));
-    if (!hit || !hit.body) {
-      // nothing inert — try to lift an enemy instead
-      let best = null, bestD = 26;
-      for (const e of ctx.enemies || []) {
-        if (e.dead || !e.grippable) continue;
-        _v1.subVectors(e.position, this.chest);
-        const d = _v1.length();
-        if (d > bestD) continue;
-        if (_v1.normalize().dot(this.aimDir) < 0.94) continue;
-        best = e; bestD = d;
-      }
-      if (best) { this.gripEnemy = best; best.gripped = true; this.gripDistance = bestD; audio.force(this.chest, 'pull'); }
+    if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
+    if (!this._canSpend(10)) return;
+
+    const target = this._pickGripTarget(ctx);
+    this.lastGripRefusal = null;
+    if (!target) return;
+
+    // The mass gate. Note this replaces Enemy.grippable, which was a flat
+    // `!A.big && !A.boss` — a size limit no setting could reach, and precisely
+    // the cap the player hit. A walker or an Acklay is now a question of how
+    // far the Force slider is turned up, not a permanent no.
+    const cap = this.liftCapacity;
+    if (target.mass > cap) {
+      this.lastGripRefusal = { mass: target.mass, cap };
+      this._gripStrain(ctx, target);
       return;
     }
-    this.gripBody = hit.body;
-    this.gripDistance = clamp(hit.distance, 2.0, 14 * Math.sqrt(this.forceScale));
-    this.gripBody.gravityScale = 0;
+
+    this._gesture('grip');
+    const lead = this.camera.pos.distanceTo(this.chest);
+    this.gripDistance = clamp(target.distance, lead + 1.4, lead + this.forceReach);
+    if (target.enemy) {
+      this.gripEnemy = target.enemy;
+      target.enemy.gripped = true;
+      this._liftPoint.copy(target.enemy.position);
+    } else {
+      this.gripBody = target.body;
+      target.body.gravityScale = 0;
+      target.body.wake();
+    }
     audio.force(this.chest, 'pull');
+  }
+
+  /**
+   * Too heavy is a real answer and it has to SOUND like one, or the player
+   * reads it as the button not working. A groan, a shudder, and dust off the
+   * thing that would not come.
+   */
+  _gripStrain(ctx, target) {
+    const p = target.enemy ? target.enemy.position : target.body.position;
+    audio.tone({ freq: 96, freqEnd: 42, dur: 0.42, gain: 0.22, type: 'sawtooth', pos: p });
+    audio.noise({ dur: 0.34, gain: 0.14, type: 'lowpass', freq: 420, freqEnd: 110, pos: p, pink: true });
+    this.camera.addShake(0.12);
+    if (ctx.particles) {
+      for (let i = 0; i < 10; i++) {
+        _g1.set((rng() - 0.5) * 2, rng() * 0.6, (rng() - 0.5) * 2);
+        ctx.particles.dust.spawn(p, _g1, { life: 0.5, size: 0.3, drag: 3, gravity: 1.4,
+          color: 0xc8c0b0, alpha: 0.2 });
+      }
+    }
   }
 
   releaseGrip() {
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
-    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy = null; }
+    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy = null; }
+    this._endGesture('grip');
+  }
+
+  /**
+   * Where the player is actually pointing, as a world point, plus whoever is
+   * standing on it.
+   *
+   * The old hurl aimed at `camera.pos + aim * 40`, which is a point in space
+   * rather than a target: something held out to the left of the crosshair was
+   * launched along the line from IT to that point, so it landed metres wide of
+   * what the player was looking at, and the error grew with hold distance.
+   */
+  _aimTarget(ctx, out = new THREE.Vector3()) {
+    const FAR = 110;
+    let dist = FAR, enemy = null;
+    const hit = ctx.physics ? ctx.physics.raycast(this.camera.pos, this.aimDir, FAR,
+      (b) => b !== this.body && b !== this.gripBody) : null;
+    if (hit) dist = hit.distance;
+    // Someone standing near the aim line beats the wall behind them. This is
+    // the "send them back towards whoever I want" half, and it has to be
+    // forgiving or picking a target at 30 m is a coin flip.
+    let bestDot = 0.985;                             // ≈10° cone
+    for (const e of ctx.enemies || []) {
+      if (e.dead) continue;
+      _g1.subVectors(this._enemyPoint(e, _g2), this.camera.pos);
+      const d = _g1.length();
+      if (d < 1 || d > FAR) continue;
+      const dot = _g1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (dot < bestDot) continue;
+      bestDot = dot; enemy = e; dist = d;
+    }
+    out.copy(this.camera.pos).addScaledVector(this.aimDir, dist);
+    if (enemy) this._enemyPoint(enemy, out);
+    return { point: out, enemy };
   }
 
   hurlGripped(ctx) {
-    const target = _v1.copy(this.camera.pos).addScaledVector(this.aimDir, 40);
+    if (!this.gripBody && !this.gripEnemy) return;
+    const aim = this._aimTarget(ctx, _g3);
+    const P = this.forceScale;
+    const cap = this.liftCapacity;
+    this._gesture('hurl', aim.point);
+    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.3), 2.4);
+    this.camera.addShake(0.26);
+    this.world?.addHitstop?.(0.035);
+
     if (this.gripBody) {
       const b = this.gripBody;
+      const m = Math.max(1, b.mass);
       b.gravityScale = 1;
-      _v2.subVectors(target, b.position).normalize().multiplyScalar(b.mass * 26 * this.forceScale);
-      b.applyImpulse(_v2, b.position);
-      b.userData.hurledBy = this;
-      b.userData.hurlTimer = 2.4;
+      _v2.subVectors(aim.point, b.position);
+      if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
+      _v2.normalize();
+      // Speed by mass. Before this every mass in the game left at exactly the
+      // same 26 m/s (104 at forcePower 4), which is why a throw had no weight
+      // at either end of the scale. Written as a velocity rather than an
+      // impulse because that is what the number MEANS — an impulse of
+      // mass × speed is the same statement with a cancellation hidden in it.
+      const speed = 34 * Math.sqrt(P) * lerp(1.25, 0.45, clamp(m / cap, 0, 1));
+      b.velocity.copy(_v2).multiplyScalar(speed);
+      b.angularVelocity.set((rng() - .5) * 7, (rng() - .5) * 7, (rng() - .5) * 7);
+      b.wake();
+      this._trackHurl(b, speed);
+      this._hurlVfx(ctx, b.position, _v2, Math.max(0.3, b.boundingRadius), speed);
       this.gripBody = null;
-    } else if (this.gripEnemy) {
+    } else {
       const e = this.gripEnemy;
+      const m = e.A ? e.A.mass : 80;
       e.gripped = false;
-      _v2.subVectors(target, e.position).normalize().multiplyScalar(26);
-      e.applyKnockback(_v2, 12, this);
+      e.liftTarget = null;
+      _v2.subVectors(aim.point, e.position);
+      if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
+      _v2.normalize();
+      const speed = 30 * Math.sqrt(P) * lerp(1.2, 0.5, clamp(m / cap, 0, 1));
+      e.applyKnockback(_v2.clone().multiplyScalar(speed), 8 + 14 * P, this);
+      e.stun(0.9);
+      this._hurlVfx(ctx, e.position, _v2, 0.5, speed);
       this.gripEnemy = null;
     }
+    this._endGesture('grip');
     audio.force(this.chest, 'push');
   }
 
+  /** The visible half of a throw: a cone of exhaust behind it and a whoosh. */
+  _hurlVfx(ctx, pos, dir, radius, speed) {
+    audio.swing(clamp(speed * 0.7, 12, 40), pos);
+    if (!ctx.particles) return;
+    for (let i = 0; i < 18; i++) {
+      _g1.copy(dir).multiplyScalar(-(2 + rng() * 6));
+      _g1.x += (rng() - 0.5) * 5; _g1.y += (rng() - 0.5) * 4; _g1.z += (rng() - 0.5) * 5;
+      ctx.particles.dust.spawn(pos, _g1, { life: 0.55, size: radius * 0.9, drag: 3,
+        gravity: 0.3, color: 0xdce6f2, alpha: 0.16 });
+    }
+    ctx.particles.plasma.spawn(pos, _g2.set(0, 0, 0),
+      { life: 0.22, size: radius * 3.2, drag: 1, gravity: 0, color: 0x9fd8ff, alpha: 0.5 });
+  }
+
+  /**
+   * Remember what we threw, so it can hurt what it hits.
+   *
+   * `userData.hurledBy` has been set here since the beginning and is read by
+   * nobody: RapierWorld stores Body.onContact and never dispatches it — only
+   * the retired sphere solver ever did — so a hurled crate passed through a
+   * droid without touching it. Until contacts come back the thrower owns the
+   * consequence, which is also the only place that knows it was a throw.
+   */
+  _trackHurl(body, speed) {
+    body.userData.hurledBy = this;
+    body.userData.hurlTimer = 2.6;
+    this.hurled.push({ body, timer: 2.6, hit: new Set(), speed });
+    if (this.hurled.length > 12) this.hurled.shift();
+  }
+
+  _updateHurled(dt, ctx) {
+    for (let i = this.hurled.length - 1; i >= 0; i--) {
+      const h = this.hurled[i];
+      const b = h.body;
+      h.timer -= dt;
+      const speed = b.velocity.length();
+      // Spent: out of time, gone, or slowed to something that could not hurt a
+      // droid if it landed on one.
+      if (h.timer <= 0 || b.dead || speed < 7) { this.hurled.splice(i, 1); continue; }
+      for (const e of ctx.enemies || []) {
+        if (e.dead || h.hit.has(e.id)) continue;
+        const r = b.boundingRadius + (e.radius ?? 0.4) + 0.25;
+        _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
+        if (_g1.distanceToSquared(b.position) > r * r) continue;
+        h.hit.add(e.id);
+        // Kinetic energy, scaled to the damage numbers this game uses: a 22 kg
+        // crate at 40 m/s reads 21, a 210 kg droideka body at 25 reads 79, and
+        // the ceiling stops a pillar from one-shotting a boss.
+        const dmg = clamp(b.mass * speed * speed * 0.0006, 8, 140);
+        _g2.copy(b.velocity).multiplyScalar(1 / Math.max(1e-3, speed));
+        e.applyKnockback(_g2.multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
+        audio.thud(b.position, clamp(dmg / 60, 0.4, 1.4));
+        this.camera.addShake(clamp(dmg / 220, 0.04, 0.3));
+        ctx.particles?.sparkBurst(b.position, null, 14, { speed: 7 });
+        // A throw sheds most of its momentum into whatever it hit.
+        b.velocity.multiplyScalar(0.35);
+      }
+    }
+  }
+
   _updateGrip(dt, ctx) {
+    const cap = this.liftCapacity;
+
+    // ── distance control.
+    // The hold point is measured from the CAMERA, which in third person sits
+    // ~3.05 m behind the head — so the old floor of 1.6 m parked the object
+    // 1.45 m BEHIND the chest, inside the player. Everything here is therefore
+    // done on the distance in front of the CHEST and converted back, which is
+    // both the number the player perceives and the one worth clamping.
+    const lead = this.camera.pos.distanceTo(this.chest);
+    let out = this.gripDistance - lead;
+    // One notch is a fixed 12% of the current distance rather than a fixed
+    // 0.6 m. That makes it fine at arm's length (19 cm a notch at 1.4 m) and
+    // fast across the arena (2.2 m a notch at 18), and it costs a comparable
+    // number of notches to cross the whole reach at any setting — measured
+    // 14 at forcePower 0.25, 19 at 1, 25 at 4 — where the fixed step took 13,
+    // 27 and 57 for the same three ranges.
+    if (this._wheel) out *= Math.pow(0.88, this._wheel);
+    out = clamp(out, 1.4, this.forceReach);
+    this.gripDistance = lead + out;
     const hold = _v1.copy(this.camera.pos).addScaledVector(this.aimDir, this.gripDistance);
+
     if (this.gripBody) {
       const b = this.gripBody;
-      // Only drop it when the Force actually ran out. With drain disabled the
-      // bar sits wherever it was and this must not fire.
-      if (!this._spend(9 * dt)) { this.releaseGrip(); return; }
+      if (b.dead || b.mass > cap) { this.releaseGrip(); return; }
+      // Heavy things cost more to hold, which is what stops the top of the
+      // slider from being free. Only drop it when the Force actually ran out —
+      // with drain disabled the bar sits wherever it was and this must not fire.
+      if (!this._spend((7 + 6 * clamp(b.mass / cap, 0, 1)) * dt)) { this.releaseGrip(); return; }
+      const heft = this._heft(b.mass);
       b.wake();
       _v2.subVectors(hold, b.position);
-      b.velocity.copy(_v2).multiplyScalar(9).clampLength(0, 28);
+      b.velocity.copy(_v2).multiplyScalar(9 * heft).clampLength(0, 28 * heft);
       b.angularVelocity.multiplyScalar(1 - dt * 2);
-      b.angularVelocity.y += dt * 2.2;
+      b.angularVelocity.y += dt * 2.2 * heft;
       if (ctx.particles && rng() < 0.4) {
         ctx.particles.plasma.spawn(b.position, _v3.set(0, 0, 0),
           { life: 0.3, size: b.boundingRadius * 1.5, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.12 });
       }
-      // Scroll pushes the held object away and pulls it in. Range scales with
-      // forcePower so a stronger Jedi can hold something at arm's length or
-      // halfway across the arena.
-      const reach = 18 * Math.sqrt(this.forceScale);
-      this.gripDistance = clamp(this.gripDistance + (ctx.input?.mouse.wheel || 0) * -0.6, 1.6, reach);
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
-      if (e.dead || !this._spend(14 * dt)) { this.releaseGrip(); return; }
-      e.liftTarget = hold.clone();
+      const m = e.A ? e.A.mass : 80;
+      if (e.dead || m > cap) { this.releaseGrip(); return; }
+      if (!this._spend((11 + 9 * clamp(m / cap, 0, 1)) * dt)) { this.releaseGrip(); return; }
+      // Enemy.update damps its own position toward liftTarget at a fixed rate,
+      // so the only place a heavy body can be made to FEEL heavy from here is
+      // the target: walk it toward the hold point at a speed the Force can
+      // actually manage rather than teleporting it there every frame.
+      dampVec(this._liftPoint, hold, 0.8 + 3.4 * this._heft(m), dt);
+      e.liftTarget = this._liftPoint;
+      if (ctx.particles && rng() < 0.3) {
+        ctx.particles.plasma.spawn(this._enemyPoint(e, _v3), _v4.set(0, 0, 0),
+          { life: 0.3, size: 0.8, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.12 });
+      }
     }
   }
 
@@ -1094,6 +1665,7 @@ export class Player {
       if (!this.saber.lit || this.force < 14 || this.cooldowns.throw > 0) return;
       this.force -= 14 * this.boonMods.forceCost;
       this.cooldowns.throw = 0.4;
+      this._gesture('cast');
       this.throwState = 'flying';
       this.throwPos.copy(this.saber.base);
       this.throwVel.copy(this.aimDir).multiplyScalar(26);
@@ -1151,6 +1723,10 @@ export class Player {
     }
     if (this.force < 25) return;
     this.senseActive = true;
+    // A one-shot, not a hold. Sense is a mode you can leave running for a whole
+    // fight, and a sustained gesture would have the off hand raised — and the
+    // blade one-handed — for the entire duration of it.
+    this._gesture('sense');
     this.world.setTimeScale(0.42);
     this.world.engine.setSense(1);
     audio.force(this.chest, 'sense');
@@ -1161,6 +1737,7 @@ export class Player {
     if (this.force < cost || this.cooldowns.lightning > 0) return;
     this.force -= cost;
     this.cooldowns.lightning = 1.5;
+    this._gesture('lightning');
     audio.force(this.chest, 'lightning');
     const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.4);
     for (const e of ctx.enemies || []) {
@@ -1182,8 +1759,346 @@ export class Player {
     }
   }
 
+  /* ── force stop ──────────────────────────────────────────────────── */
+
+  /**
+   * FORCE STOP — freeze what is in flight, then decide where it goes.
+   *
+   * The marquee power, and the reason it earns that is the ORDER it puts things
+   * in: the blade decides nothing here. A wall of blaster fire stops dead in
+   * the air, the camera is entirely yours for as long as the field holds, and
+   * where you are looking when you let go is where all of it goes at once.
+   *
+   * It reuses BoltPool's hold/release rather than reimplementing arrest — see
+   * StasisAnchor for why that is not a hack but the point.
+   */
+  toggleStasis(ctx) {
+    if (this.stasis.active) { this.releaseStasis(ctx, true); return; }
+    if (this.cooldowns.stasis > 0 || !this._spend(26)) return;
+    const S = this.stasis;
+    const P = this.forceScale;
+    S.active = true;
+    // 9 m at 1x reaches across a firefight; 18 m at 4x swallows one whole.
+    S.radius = 9 * Math.sqrt(P);
+    S.timer = 3.2 + 1.6 * P;
+    S.centre.copy(this.chest);
+    S.target = null;
+    S.vfx = 0;
+    this._gesture('stasis');
+    const taken = this._stasisCapture(ctx);
+    audio.force(this.chest, 'sense');
+    audio.tone({ freq: 220, freqEnd: 1500, dur: 0.5, gain: 0.18, type: 'triangle', pos: this.chest });
+    this.world?.engine?.flash?.(0.05);
+    this.camera.addShake(0.14);
+    if (ctx.particles) {
+      for (let i = 0; i < 26; i++) {
+        const a = (i / 26) * TAU;
+        _g1.set(Math.cos(a), 0.15, Math.sin(a)).multiplyScalar(S.radius * 0.9);
+        ctx.particles.dust.spawn(this.chest, _g1, { life: 0.7, size: 0.5, drag: 3.4,
+          gravity: 0, color: 0xbcd8ff, alpha: 0.14 });
+      }
+    }
+    return taken;
+  }
+
+  /** Sweep the field and arrest anything hostile inside it. Returns how many. */
+  _stasisCapture(ctx) {
+    const S = this.stasis;
+    const r2 = S.radius * S.radius;
+    let taken = 0;
+    if (ctx.bolts) {
+      for (const bolt of ctx.bolts.bolts) {
+        if (!bolt.active || bolt.held || bolt.team === this.team) continue;
+        if (bolt.pos.distanceToSquared(S.centre) > r2) continue;
+        ctx.bolts.hold(bolt, new StasisAnchor(bolt.pos), 0.5);
+        S.held.push({ bolt });
+        taken++;
+      }
+    }
+    const cap = this.liftCapacity;
+    if (ctx.physics) {
+      for (const b of ctx.physics.bodies) {
+        if (b.invMass === 0 || b === this.body || b === this.gripBody || b.mass > cap) continue;
+        if (b.layer !== LAYER.PROP && b.layer !== LAYER.DEBRIS && b.layer !== LAYER.RAGDOLL) continue;
+        if (S.bodies.has(b) || b.position.distanceToSquared(S.centre) > r2) continue;
+        // Only things actually IN FLIGHT. Freezing the crate you are standing
+        // next to is not a moment, it is a bug report.
+        if (b.velocity.lengthSq() < 4) continue;
+        S.bodies.add(b);
+        S.held.push({ body: b, grav: b.gravityScale });
+        b.gravityScale = 0;
+        taken++;
+      }
+    }
+    return taken;
+  }
+
+  _updateStasis(dt, ctx) {
+    const S = this.stasis;
+    if (S.firing.length) this._flushStasisFire(dt, ctx);
+    if (!S.active) return;
+
+    // The field is centred on YOU — you are the one being shot at — so walking
+    // out of a firefight ends the capture, while anything already frozen stays
+    // frozen wherever it stopped.
+    S.centre.copy(this.chest);
+    S.timer -= dt;
+    this._stasisCapture(ctx);
+
+    // Drop anything the world took back from under us — a bolt pool cleared by
+    // a level change, a corpse culled, a prop shattered. Left in the list they
+    // would go on charging Force for holding nothing.
+    for (let i = S.held.length - 1; i >= 0; i--) {
+      const h = S.held[i];
+      if (h.bolt ? (!h.bolt.active || !h.bolt.held) : (!h.body || h.body.dead)) {
+        if (h.body) S.bodies.delete(h.body);
+        S.held.splice(i, 1);
+      }
+    }
+
+    const n = S.held.length;
+    // Holding costs more the more you are holding. Running the bar dry DROPS
+    // the field; letting the clock run out FIRES it — the two failures should
+    // not feel the same.
+    if (!this._spend((5 + 0.9 * n) * dt)) { this.releaseStasis(ctx, false); return; }
+    if (S.timer <= 0) { this.releaseStasis(ctx, true); return; }
+
+    for (const h of S.held) {
+      if (!h.body || h.body.dead) continue;
+      h.body.velocity.set(0, 0, 0);
+      h.body.angularVelocity.set(0, 0, 0);
+      h.body.wake();
+    }
+
+    // 30 Hz, throttled per FIELD rather than per bolt — twenty arrested bolts
+    // is exactly when the particle pool can least afford one burst each.
+    S.vfx -= dt;
+    if (ctx.particles && S.vfx <= 0) {
+      S.vfx = 0.033;
+      for (const h of S.held) {
+        const p = h.bolt ? h.bolt.pos : h.body.position;
+        ctx.particles.plasma.spawn(p, _g1.set(0, 0, 0),
+          { life: 0.09, size: h.bolt ? 0.2 : 0.7, drag: 1, gravity: 0, color: 0xa8d0ff, alpha: 0.5 });
+      }
+    }
+  }
+
+  /**
+   * Let the field go. `fire` sends everything at the target; otherwise it all
+   * just falls, which is what running out of Force in the middle looks like.
+   */
+  releaseStasis(ctx, fire = true) {
+    const S = this.stasis;
+    if (!S.active) return;
+    S.active = false;
+    this._endGesture('stasis');
+    this.cooldowns.stasis = 1.4;
+
+    if (!fire || !S.held.length) {
+      for (const h of S.held) {
+        if (h.bolt) { h.bolt.held = null; h.bolt.active = false; }
+        else if (h.body) h.body.gravityScale = h.grav;
+      }
+      S.held.length = 0;
+      S.bodies.clear();
+      if (!fire) audio.tone({ freq: 400, freqEnd: 90, dur: 0.4, gain: 0.14, type: 'sine', pos: this.chest });
+      return;
+    }
+
+    const aim = this._aimTarget(ctx, S.point);
+    S.target = aim.enemy;
+    this._gesture('unleash', S.point);
+    // Fired in a RIPPLE. Twenty bolts leaving on one frame is a single white
+    // flash; 28 ms apart they read as a volley, which is the entire reason it
+    // was worth stopping them.
+    S.firing = S.held;
+    S.held = [];
+    S.fireT = 0;
+    audio.force(this.chest, 'push');
+    this.camera.addShake(0.3);
+    this.cloak?.impulse(_g1.copy(this.aimDir).negate().setY(0.35), 2.6);
+    this.world?.addHitstop?.(0.05);
+  }
+
+  _flushStasisFire(dt, ctx) {
+    const S = this.stasis;
+    S.fireT -= dt;
+    let guard = 0;
+    while (S.firing.length && S.fireT <= 0 && guard++ < 10) {
+      S.fireT += 0.028;
+      this._launchStasisItem(ctx, S.firing.shift());
+    }
+    if (!S.firing.length) S.bodies.clear();
+  }
+
+  _launchStasisItem(ctx, h) {
+    const S = this.stasis;
+    const live = S.target && !S.target.dead;
+    const at = live ? this._enemyPoint(S.target, _g1) : _g1.copy(S.point);
+    const P = this.forceScale;
+
+    if (h.bolt) {
+      const b = h.bolt;
+      if (!b.active) return;
+      _g2.subVectors(at, b.pos);
+      if (_g2.lengthSq() < 1e-8) _g2.copy(this.aimDir);
+      _g2.normalize();
+      ctx.bolts.release(b, _g2, Math.max(60, b.speed) * (0.9 + 0.35 * P));
+      // team 0 AND deflected: World._boltHitTest only lets an enemy be hit by a
+      // team-1 bolt if it was deflected, and only lets the player be hit by a
+      // bolt that is not team 0. Both flags, or the volley passes through.
+      b.team = this.team;
+      b.deflected = true;
+      b.deflector = this;
+      b.owner = this;
+      b.damage *= 1.2 + 0.3 * P;
+      b.life = Math.max(b.life, 2.6);
+      b.speed = b.vel.length();
+      if (live) { b.homing = 2.4; b.target = at.clone(); }
+      ctx.particles?.sparkBurst(b.pos, null, 5, { speed: 6, embers: false, color: 0xfff2c0 });
+      return;
+    }
+    const b = h.body;
+    if (!b || b.dead) return;
+    b.gravityScale = h.grav;
+    _g2.subVectors(at, b.position);
+    if (_g2.lengthSq() < 1e-8) _g2.copy(this.aimDir);
+    _g2.normalize();
+    const speed = 34 * Math.sqrt(P) * lerp(1.25, 0.45, clamp(b.mass / this.liftCapacity, 0, 1));
+    b.velocity.copy(_g2).multiplyScalar(speed);
+    b.angularVelocity.set((rng() - .5) * 7, (rng() - .5) * 7, (rng() - .5) * 7);
+    b.wake();
+    this._trackHurl(b, speed);
+    this._hurlVfx(ctx, b.position, _g2, Math.max(0.3, b.boundingRadius), speed);
+  }
+
+  /* ── force disassemble ───────────────────────────────────────────── */
+
+  /** The nearest mechanical thing under the aim, or null. */
+  _pickMechanical(ctx) {
+    const range = 14 * Math.sqrt(this.forceScale);
+    let best = null, bestDot = 0.93;
+    for (const e of ctx.enemies || []) {
+      if (e.dead && !e.actor) continue;
+      if (!MECHANICAL.test(e.type)) continue;
+      _g1.subVectors(this._enemyPoint(e, _g2), this.chest);
+      const d = _g1.length();
+      if (d > range || d < 0.5) continue;
+      const dot = _g1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (dot < bestDot) continue;
+      bestDot = dot; best = e;
+    }
+    return best;
+  }
+
+  /**
+   * FORCE DISASSEMBLE — take a droid apart at the joints.
+   *
+   * Deliberately routed through Enemy.takeCut with the REAL cap from
+   * Enemy.capsules(), which is the same path a sabre cut takes. So every
+   * consequence a cut has happens here for free and stays in one place: the
+   * molten stub on the remaining limb, the detached piece becoming a jointed
+   * physics body, the topple when the legs go, the disarm when the arms go, the
+   * sever event the dojo grades, the droid spark burst. Not one line of that is
+   * duplicated here — a second copy of it is how the two drift apart.
+   *
+   * Extremities first, core last: a droid coming apart from the hands inward
+   * reads as disassembly, whereas going for the chest first reads as an
+   * execution and is over before you can see it.
+   */
+  forceDisassemble(ctx) {
+    if (this.cooldowns.rend > 0) return;
+    const e = this._pickMechanical(ctx);
+    if (!e || !e.capsules) return;
+
+    const P = this.forceScale;
+    const centre = this._enemyPoint(e, _g1).clone();
+    const caps = e.capsules();
+    // Bone DEPTH, used only to break ties — it keeps the order sane on the one
+    // frame after a spawn when the rig has not been solved and every capsule is
+    // sitting on top of every other.
+    const depth = (name) => { let b = e.rig ? e.rig.get(name) : null, n = 0; while (b && b.parent) { b = b.parent; n++; } return n; };
+    const live = caps
+      // vital ≥ 0.15 drops the hands and the feet. They are not worth a joint
+      // of the budget: a cut takes the whole subtree, so an elbow already
+      // brings the hand with it, and spending the entire default budget on two
+      // detached hands is not what "take it apart" looks like.
+      .filter(c => !c.shield && (c.vital ?? 0.4) >= 0.15 && (c.vital ?? 0.4) < 0.7 && !CORE_BONE.test(c.name))
+      .filter(c => !e.actor || !e.actor.isSevered(c.name))
+      .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
+      .sort((a, b) => (b.d - a.d) || (b.k - a.k))
+      .map(x => x.c);
+    if (!live.length) return;
+    if (!this._spend(38)) return;
+
+    this.cooldowns.rend = 2.4;
+    this._gesture('rend', centre);
+
+    // How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
+    // 4 at 2x and 7 at 4x — and seven joints off a humanoid frame is both arms
+    // at the elbow, both at the shoulder, both clavicles and the head, i.e. the
+    // top of the slider really does dismantle it.
+    const budget = clamp(Math.round(1.6 * P + 0.6), 1, 8);
+
+    // Legs LAST, whatever the geometry says. Enemy._loseLimbBehaviour topples
+    // on the first leg lost, and topple() ragdolls the body — after which every
+    // further cut is a broken joint rather than a detached piece with a molten
+    // stub. Taking a foot first therefore turned a seven-joint disassembly into
+    // one flying limb and a heap. Arms and head first, then it collapses.
+    const legs = live.filter(c => LEG_BONE.test(c.name));
+    const limbs = live.filter(c => !LEG_BONE.test(c.name));
+    // The head goes after the arms and before the legs: vital 0.95 makes it a
+    // lethal cut, so leading with it ends the show before it starts.
+    if (budget >= 5) {
+      const head = caps.find(c => c.name === 'head' && (!e.actor || !e.actor.isSevered('head')));
+      if (head) limbs.push(head);
+    }
+    limbs.push(...legs);
+
+    let cut = 0;
+    for (const c of limbs) {
+      if (cut >= budget) break;
+      // Re-checked INSIDE the loop, not just when the list was built. A cut
+      // takes the whole subtree below it, so severing an upper arm severs the
+      // forearm and the hand too — and without this the next two iterations
+      // spent budget on bones that were already gone, reported two sever
+      // events the actor never made, and a forcePower-4 disassembly took
+      // exactly one joint off.
+      if (e.actor && e.actor.isSevered(c.name)) continue;
+      _g3.lerpVectors(c.p0, c.p1, 0.5);
+      _g4.subVectors(_g3, centre);
+      _g4.y = _g4.y * 0.4 + 0.35;                       // bias the scatter upward
+      if (_g4.lengthSq() < 1e-8) _g4.set(0, 1, 0);
+      // Ragdoll scales this by 0.35 in takeCut and again by 0.34 in finalise,
+      // so ~28 here is the 3 m/s of drift that makes a piece leave rather than
+      // drop; the rest is what forcePower buys.
+      _g4.normalize().multiplyScalar(18 + 14 * P);
+      e.takeCut({
+        bone: c.name, cutT: 0.14, cap: c, point: _g3.clone(),
+        impulse: _g4.clone(), normal: UP.clone(), speed: 18,
+      }, this);
+      this.limbsRemoved++;
+      cut++;
+    }
+    if (!cut) return;
+
+    if (!e.dead) e.stun(1.6);
+    this.score += 40 * cut;
+    this.addFlow(0.08 * cut);
+    audio.force(this.chest, 'pull');
+    audio.noise({ dur: 0.5, gain: 0.26, type: 'bandpass', freq: 3200, freqEnd: 700, q: 1.6, pos: centre });
+    audio.tone({ freq: 150, freqEnd: 48, dur: 0.55, gain: 0.22, type: 'sawtooth', pos: centre });
+    this.camera.addShake(0.34);
+    this.world?.addHitstop?.(0.07);
+    this.cloak?.impulse(_g1.set(0, 1, 0), 2.0);
+    ctx.particles?.sparkBurst(centre, null, 30 + 8 * cut, { speed: 11 });
+  }
+
   _updateForce(dt, ctx) {
+    this._advanceGesture(dt);
     if (this.gripBody || this.gripEnemy) this._updateGrip(dt, ctx);
+    if (this.stasis.active || this.stasis.firing.length) this._updateStasis(dt, ctx);
+    if (this.hurled.length) this._updateHurled(dt, ctx);
   }
 
   /* ── damage & death ──────────────────────────────────────────────── */
@@ -1213,6 +2128,20 @@ export class Player {
     if (!this.alive) return;
     this.alive = false;
     this.releaseGrip();
+    // A corpse is not holding a stasis field. Dropped rather than fired: the
+    // bolts were never aimed, and a dying player should not get a free volley.
+    this.releaseStasis(this.world, false);
+    // A volley already in the air mid-ripple has nobody left to flush it —
+    // _updateForce stops running the moment `alive` goes false — so its bolts
+    // would hang on their anchors forever.
+    for (const h of this.stasis.firing) {
+      if (h.bolt) { h.bolt.held = null; h.bolt.active = false; }
+      else if (h.body) h.body.gravityScale = h.grav;
+    }
+    this.stasis.firing.length = 0;
+    this.stasis.bodies.clear();
+    this.hurled.length = 0;
+    this.gesture.kind = ''; this.gesture.env = 0; this.gesture.sustain = false; this.gesture.hasAt = false;
     if (this.senseActive) this.toggleSense(this.world);
     this.saber.retract();
     this.hum.retract();
@@ -1265,6 +2194,14 @@ export class Player {
   }
 
   dispose() {
+    // Anything the Force is holding has its gravity switched off and its bolt
+    // pinned to an anchor. Leaving on a level change would strand both.
+    this.releaseGrip();
+    this.releaseStasis(this.world, false);
+    for (const h of this.stasis.firing) if (h.body) h.body.gravityScale = h.grav;
+    this.stasis.firing.length = 0;
+    this.stasis.bodies.clear();
+    this.hurled.length = 0;
     this.hum.dispose();
     this.cloak?.dispose();
     this.saber.dispose();

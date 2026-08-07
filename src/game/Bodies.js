@@ -925,22 +925,62 @@ function buildFoot(S, opts = {}) {
   const w = (opts.w ?? 0.088) * S;
   const len = (opts.len ?? 0.20) * S;
   const h = (opts.h ?? 0.10) * S;
+  /**
+   * WHERE THE ANKLE SITS ALONG THE BOOT.
+   *
+   * Every offset below used to be written from the ankle with the boot in
+   * front of it, and measured on the built figure that put the joint 14.5mm
+   * behind a 214mm boot — 6.8% of the way back. The figure had no heel. The
+   * animator plants its contact point directly under the ankle, so the whole
+   * foot hung forward of the point it was standing on: the toe landed 20cm
+   * ahead of where the gait thought the step went, the body balanced on the
+   * extreme back edge of its own soles, and looking down in first person you
+   * saw two long triangles with nothing behind them.
+   *
+   * On a human the malleolus sits about a quarter of the foot's length back.
+   * Everything is therefore laid out FROM THE HEEL and the whole boot slid
+   * back by `ankleAt`; at 0.05 the numbers below reproduce exactly what this
+   * function used to return, which is how the shift was verified.
+   */
+  const back = (opts.ankleAt ?? 0.26) * len;
+  /**
+   * WHERE THE SOLE IS, relative to the ankle.
+   *
+   * Both plates' flat undersides land at z = 0.62·h, so the depth of the boot
+   * decided how far below the ankle the ground was — and every archetype picks
+   * its own h. BipedAnimator plants the ankle at a flat 0.072·scale above the
+   * contact point regardless, so the two numbers only agreed by accident.
+   * Measured, standing, over the built figures: trooper -6.9mm (sole buried in
+   * the floor), B2 -5.7mm, jedi +2.2mm, acolyte +5.0mm, B1 +19.4mm — a droid
+   * standing two centimetres off the ground.
+   *
+   * So the underside is placed against the animator's number instead of
+   * falling out of the boot's thickness. 0.0705 rather than 0.072 leaves 1.5mm
+   * of clearance, which is invisible and is never a sole through a floor.
+   */
+  const drop = (opts.sole ?? 0.0705) * S - h * 0.62;
   const g = new THREE.Group();
   const add = (geo, pos) => {
     const m = new THREE.Mesh(geo);
-    m.position.set(pos[0], pos[1], pos[2]);
+    m.position.set(pos[0], pos[1], pos[2] + drop);
     g.add(m);
   };
   // the body of the boot — unchanged in extent, so the soles still land flat
-  add(plateGeo(w, len, h, 0.024 * S, 2), [0, len * 0.45, h * 0.12]);
+  add(plateGeo(w, len, h, 0.024 * S, 2), [0, len * 0.50 - back, h * 0.12]);
   // a flat sole. The body alone is a pillow rounded at r=0.024, so it met the
   // ground at a single point; this puts a hard, near-flat plate on the bottom.
-  add(plateGeo(w * 0.99, len * 0.97, h * 0.18, 0.008 * S, 2), [0, len * 0.45, h * 0.53]);
+  add(plateGeo(w * 0.99, len * 0.97, h * 0.18, 0.008 * S, 2), [0, len * 0.50 - back, h * 0.53]);
   // ankle collar rising off the heel (negative z is up)
-  add(plateGeo(w * 0.84, len * 0.38, h * 0.74, 0.016 * S, 1), [0, len * 0.11, -h * 0.24]);
+  add(plateGeo(w * 0.84, len * 0.38, h * 0.74, 0.016 * S, 1), [0, len * 0.16 - back, -h * 0.24]);
   // toe box tapering off the front, and a heel counter
-  add(plateGeo(w * 0.84, len * 0.26, h * 0.62, 0.014 * S, 1), [0, len * 0.86, h * 0.14]);
-  add(plateGeo(w * 0.82, len * 0.24, h * 0.66, 0.012 * S, 1), [0, len * 0.05, h * 0.08]);
+  add(plateGeo(w * 0.84, len * 0.26, h * 0.62, 0.014 * S, 1), [0, len * 0.91 - back, h * 0.14]);
+  add(plateGeo(w * 0.82, len * 0.24, h * 0.66, 0.012 * S, 1), [0, len * 0.10 - back, h * 0.08]);
+  // THE HEEL BLOCK. A boot's sole is not one slab: the heel is a thicker
+  // block than the waist of the shoe, and the step off the back of it is right
+  // where the eye looks for the ground contact. Its underside is at 0.62·h,
+  // the SAME plane as the sole — a heel that hangs below the tread tips the
+  // whole foot toe-up — so what it adds is height up the back, not depth.
+  add(plateGeo(w * 0.90, len * 0.30, h * 0.26, 0.007 * S, 1), [0, len * 0.13 - back, h * 0.49]);
   return bakeTree(g);
 }
 
@@ -1464,8 +1504,14 @@ export function buildJedi(opts = {}) {
     // into a boot with a sole under it.
     footGeo: (sc) => shadeAO(buildFoot(sc, { w: 0.092, len: 0.205, h: 0.104 }), ao(
       (x, y, z) => 1 - 0.58 * clamp((z / sc - 0.030) / 0.020, 0, 1),
-      // and the crease where the toe box breaks over the ball of the foot
-      creaseAt(0, 0.135 * sc, 0.010 * sc, 0.028 * sc, 0.60, 0.4),
+      // and the crease where the toe box breaks over the ball of the foot.
+      // 0.092, not the 0.135 this was authored at: the boot moved back under
+      // the ankle (see buildFoot's ankleAt) and a crease that stays put is a
+      // crease across the wrong part of the shoe.
+      creaseAt(0, 0.092 * sc, 0.010 * sc, 0.028 * sc, 0.60, 0.4),
+      // the heel breast — the step down off the back of the heel block, which
+      // is the only thing at this range that says the sole is a separate piece
+      creaseAt(0, -0.028 * sc, 0.026 * sc, 0.020 * sc, 0.62, 0.45),
     ), { floor: 0.34 }),
     // The glove is the largest single object in a first-person frame and it
     // was one flat value: a mitten. Hand-bone frame is +Y wrist→knuckles and
@@ -1835,7 +1881,28 @@ export function buildJedi(opts = {}) {
       // the hem, which is how gathered cloth actually behaves. reshape()
       // transports the normals through analytically, so the ridges light
       // correctly instead of showing a crease down every seam.
-      const skirtH = 0.50 * s;
+      // TWO HEMS, NOT ONE — this is what breaks the cone.
+      //
+      // Folds alone did not do it. Measured on the built figure, the front-view
+      // outline from the hem at y=0.39 to the belt at y=0.89 was a single
+      // monotone ramp that sat 8.1mm rms from a straight line: geometrically a
+      // cone, whatever the surface detail on it was doing. One garment can only
+      // ever produce one ramp. What a layered costume has is a STEP — a hem
+      // line with a narrower garment continuing below it — and the eye reads
+      // that break before it reads anything else about the shape.
+      //
+      // So: a long under-robe to mid-calf, and a shorter, wider over-skirt that
+      // ends above the knee. The step between the two is 7cm of outline in the
+      // space of one edge.
+      //
+      // The over-skirt also has to actually COVER the hips. It used to start at
+      // r=0.140 while the thigh beneath it reached 0.185, so 26-58mm of bare
+      // leg stood outside the robe on each side between y=0.84 and y=0.88 —
+      // measured on a standing figure, in the coronal plane, and visible from
+      // any angle. It is tucked at r=0.142 up inside the obi and bells over the
+      // hip with a swell, which is both what covers the thigh and what puts a
+      // non-monotone bulge in the profile.
+      const skirtH = 0.44 * s;
       const foldAmt = (th) => 0.055 * Math.cos(7 * th + 0.4)
         + 0.030 * Math.cos(3 * th - 1.1) + 0.014 * Math.cos(11 * th + 2.3);
       const foldT = (t) => Math.pow(clamp(t, 0, 1), 1.25);
@@ -1843,8 +1910,13 @@ export function buildJedi(opts = {}) {
       // hem and comes back out to r1 at it, which with a double-sided lathe is
       // a rolled edge. The first attempt at a hem was a separate horizontal
       // band and it read as a flying saucer round the character's ankles.
-      const skirtGeo = limbGeo(skirtH, 0.140 * s, 0.238 * s, 36, false, {
-        rings: 9, bulge: 0, swells: [[0.93, -0.065, 0.055]],
+      // 28 segments, not 36. The tightest harmonic in the fold is the 11th and
+      // 28 samples is 2.5 per period of it at an amplitude of 14mm — the two
+      // skirts together were 316 triangles over the 13000 an archetype is
+      // allowed, and this is the cheapest 200 of them that costs nothing you
+      // can see.
+      const skirtGeo = limbGeo(skirtH, 0.142 * s, 0.262 * s, 28, false, {
+        rings: 9, bulge: 0, swells: [[0.22, 0.26, 0.20], [0.93, -0.065, 0.055]],
         section: (th, t) => 1 + foldT(t) * foldAmt(th),
       });
       // The valleys of those folds are in shadow and the ridges catch the sun.
@@ -1856,14 +1928,58 @@ export function buildJedi(opts = {}) {
         const valley = clamp(-foldAmt(th) / 0.075, 0, 1);
         return (1 - 0.46 * foldT(t) * valley) * (0.60 + 0.40 * clamp(t / 0.28, 0, 1));
       }, { floor: 0.30 });
-      const skirtMat = outer.clone();
+      // The over-skirt is the DARKER cloth — the over-robe reads darker than
+      // the body under it, which is the same tonal ladder the tabard uses. It
+      // was the mid tone, which made it and the under-layer one garment.
+      const skirtMat = over.clone();
       skirtMat.side = THREE.DoubleSide;
       // Turned over about Z, not X. Both flips hang the lathe downward, but a
       // flip about X also sends local +Z to the BACK — so anything with a
       // front to it (these panels have a lobe on the centre line) ends up
       // facing the wrong way, which is a mistake that costs an hour to find in
       // a screenshot. About Z the front stays the front.
-      mesh(skirtGeo, skirtMat, hips, [0, -0.012 * s, 0], [0, 0, Math.PI]);
+      // Hung from +0.058 rather than -0.012: the top edge now sits up inside
+      // the obi (which spans +0.020 to +0.128), so the belt holds the skirt
+      // instead of floating above a 3cm ring of bare pelvis.
+      mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]);
+
+      // ── the under-robe ─────────────────────────────────────────────────
+      // The long layer, in the mid tone, running from the belt to the ankle and
+      // showing for 32cm below the over-skirt's hem. Its own fold harmonics
+      // are 5 and 3 against the over-skirt's 7, 3 and 11: cloth woven at the
+      // same pitch as the cloth over it is the same cloth, and the eye knows.
+      // The 230mm hem is also the only free differentiator left between this
+      // figure and an armoured trooper — they share a skeleton, a stance and an
+      // arm swing, and their whole-body silhouettes overlap 0.856 of a limit of
+      // 0.86 without it. Cloth reaching where armour does not is what separates
+      // them, and it costs no triangles.
+      // Its top 60% is inside the over-skirt and is never drawn against the
+      // sky, so it is tessellated for the 26cm of it that shows: 24 segments
+      // and 7 rings against the over-skirt's 28 and 9.
+      const underH = 0.72 * s;
+      const underFold = (th) => 0.042 * Math.cos(5 * th - 0.7) + 0.020 * Math.cos(3 * th + 1.9);
+      // The swell is centred at 0.45 and worth 20%, which is not a styling
+      // choice: the over-skirt now ends ABOVE the knee, so this layer is the
+      // only cloth the knee has to swing inside. At the knee's height the old
+      // single skirt gave 219mm of radius and a plain taper here gave 186mm —
+      // 33mm less room for a joint that travels, which buys a knee through the
+      // front of the robe. With the swell it is 223mm, better than it was.
+      const underGeo = limbGeo(underH, 0.132 * s, 0.230 * s, 24, false, {
+        rings: 7, bulge: 0, swells: [[0.45, 0.20, 0.34], [0.94, -0.05, 0.05]],
+        section: (th, t) => 1 + foldT(t) * underFold(th),
+      });
+      shadeAO(underGeo, (x, y, z) => {
+        const th = Math.atan2(x, z), t = clamp(y / underH, 0, 1);
+        const valley = clamp(-underFold(th) / 0.055, 0, 1);
+        // dark for the whole length that the over-skirt hangs in front of, and
+        // darkest right under its hem, which is what makes the hem read as an
+        // edge with something behind it rather than as a change of colour
+        return (1 - 0.42 * foldT(t) * valley)
+          * (0.52 + 0.48 * clamp((t - 0.60) / 0.16, 0, 1));
+      }, { floor: 0.28 });
+      const underMat = outer.clone();
+      underMat.side = THREE.DoubleSide;
+      mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI]);
       // Two over-panels down the front in the darker cloth, so the layering
       // carries all the way down the figure instead of stopping at the belt.
 
@@ -1873,12 +1989,17 @@ export function buildJedi(opts = {}) {
       // the wedge is ever drawn. That gets a curved, folded, correctly-lit
       // panel out of one lathe instead of out of a flat slab with hard edges,
       // which is what the two front plates here used to be.
+      // Re-fitted against the new over-skirt rather than the old narrow one:
+      // at r0=0.150 against a skirt that now bells to 0.21 over the hip they
+      // would have spent their top third buried inside it. They also hang
+      // PAST the over-skirt's hem, which is the third hem line down the
+      // figure — three edges at three heights is the opposite of a cone.
       const lobe = (w) => (th) => 0.28 + 0.72 / (1 + (th / w) ** 6);
-      for (const [sx, r0, r1, ln] of [[1, 0.150, 0.258, 0.45], [-1, 0.124, 0.226, 0.37]]) {
+      for (const [sx, r0, r1, ln] of [[1, 0.212, 0.268, 0.52], [-1, 0.206, 0.248, 0.43]]) {
         const g = limbGeo(ln * s, r0 * s, r1 * s, 14, false,
           { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
         shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
-        mesh(g, over, hips, [0, -0.026 * s, 0], [0, sx * 0.42, Math.PI]);
+        mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]);
       }
 
       // ── boots ──────────────────────────────────────────────────────────
