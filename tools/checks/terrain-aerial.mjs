@@ -27,10 +27,83 @@
 
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
+import { Terrain, TERRAIN_PRESETS, writeSkyStrip, SKY_STRIP } from '../../src/world/Terrain.js';
+import { ground } from '../../src/world/Scenery.js';
+import {
+  skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection, hazeRadiance,
+} from '../../src/engine/Engine.js';
+import { LEVELS } from '../../src/game/Levels.js';
 
 const SRC = () => readFileSync(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8');
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+/** Saturation of a LINEAR radiance triple. The frame's tone curve is monotone
+ *  per channel, so an ordering that holds here holds on the screen; measuring
+ *  in linear keeps this check off a second copy of the grade. */
+const sat3 = (r, g, b) => { const mx = Math.max(r, g, b); return mx <= 1e-9 ? 0 : (mx - Math.min(r, g, b)) / mx; };
+const hue3 = (r, g, b) => {
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  if (d <= 1e-9) return 0;
+  let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h *= 60; return h < 0 ? h + 360 : h;
+};
+const hueGap = (a, b) => Math.abs(((b - a + 540) % 360) - 180);
+
+/** The band SkyDome bakes, built here from the engine's own exported sky so a
+ *  check does not need a GL context to have a sky to stand under. Mirrors
+ *  SkyDome.skyBandTexture's grid exactly — same 64 × 16, same BAND_TOP, same
+ *  texel centres — because the strip resamples it by index. */
+function bakeBand(a, AZ = 64, EL = 16, TOP = 0.72) {
+  const sun = sunDirection(a, new THREE.Vector3());
+  const disp = skyDisplayShoulder(a);
+  const rgb = new Float32Array(AZ * EL * 3), dir = new THREE.Vector3(), col = new THREE.Color();
+  for (let j = 0; j < EL; j++) {
+    const s = ((j + 0.5) / EL) * TOP, c = Math.sqrt(Math.max(0, 1 - s * s));
+    for (let i = 0; i < AZ; i++) {
+      const b = -Math.PI + ((i + 0.5) / AZ) * Math.PI * 2;
+      skyShoulder(skyRadiance(dir.set(Math.cos(b) * c, s, Math.sin(b) * c), sun, a, col), disp.knee, disp.ceil);
+      const q = (j * AZ + i) * 3;
+      rgb[q] = col.r; rgb[q + 1] = col.g; rgb[q + 2] = col.b;
+    }
+  }
+  return { az: AZ, el: EL, top: TOP, rgb };
+}
+
+/**
+ * TERRAIN_FRAG_FOG, for one ground sample, in JS.
+ *
+ * A transcription — and the source-shape assertions above are what stop it
+ * drifting from the chunk it stands for. It is here rather than in the shader
+ * because the claim being tested ("a hundred and seventy metres of air must
+ * take the chroma out of the sand") is a claim about a curve over distance, and
+ * a curve cannot be read off a GPU this build never boots.
+ */
+function groundThroughAir(d, opt) {
+  const ray = [0, -opt.eyeY, -d];
+  const radial = Math.hypot(ray[0], ray[1], ray[2]);
+  const ss = (e0, e1, x) => { const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1); return t * t * (3 - 2 * t); };
+  const y0 = Math.min(Math.max(opt.eyeY, -40), 600), k = ray[1] * opt.invH;
+  const t0 = Math.exp(-y0 * opt.invH);
+  const m = Math.abs(k) < 1e-3 ? t0 : t0 * (1 - Math.exp(-k)) / k;
+  const path = radial * Math.min(Math.max(m, 0), 6);
+  const hazeD = opt.density * (1 + 0.30 * ss(160, 460, radial));
+  const factor = 1 - Math.exp(-hazeD * hazeD * path * path);
+  const tone = opt.fog.slice();
+  if (opt.sunW > 0) {
+    const dir = ray.map((v) => v / Math.max(radial, 1e-4));
+    const cos = dir[0] * opt.sun[0] + dir[1] * opt.sun[1] + dir[2] * opt.sun[2];
+    const g = 0.5, g2 = g * g;
+    const phase = (1 - g2) / Math.pow(Math.max(1 + g2 - 2 * g * cos, 1e-4), 1.5);
+    for (let i = 0; i < 3; i++) {
+      const glow = opt.tint[i] * opt.sunW * (phase + 0.75 * (1 + cos * cos) * 0.16);
+      const cap = Math.max(opt.fog[i], 1e-4) * 0.26;
+      tone[i] += cap * (1 - Math.exp(-glow / cap));      // the engine's energy limit
+    }
+  }
+  const w = ss(50, 230, radial);
+  const out = [0, 0, 0];
+  for (let i = 0; i < 3; i++) out[i] = opt.sand[i] + ((tone[i] + (opt.sky[i] - tone[i]) * w) - opt.sand[i]) * factor;
+  return out;
+}
 
 export function run({ check, assert, near }) {
 
@@ -86,6 +159,139 @@ export function run({ check, assert, near }) {
     assert(sky > haze * 0.10, `the ground converges on ${sky.toFixed(2)} — a dark band under a bright sky`);
     t.dispose();
     return `target ${sky.toFixed(2)} vs haze ${haze.toFixed(2)}, gain ${gain}`;
+  });
+
+  check('terrain: the air over the ground is the DRAWN sky, in the view direction', () => {
+    const src = SRC();
+    const fog = src.slice(src.indexOf('const TERRAIN_FRAG_FOG'), src.indexOf('export class Terrain'));
+    // one colour for the whole dome was the fault: the far field has to look up
+    // the bearing it is actually looking down
+    assert(/atan\(vFogRay\.z, vFogRay\.x\)/.test(fog) && /texture2D\(uSkyStrip/.test(fog),
+      'the far ground converges on ONE colour again — the same air whichever way you face');
+    assert(/mix\(fogTone, fogSky, smoothstep\(50\.0, 230\.0, fogRadial\) \* uHaze\.y\)/.test(fog),
+      'the walk from the near haze onto the sky is gone');
+    // and the inscatter must carry the engine's energy limit, or the ground is
+    // the one surface free to glow past the air standing in front of it
+    assert(/vec3 fogCap = max\(fogColor, vec3\(1\.0e-4\)\) \* 0\.26/.test(fog)
+      && /fogTone \+= fogCap \* \(1\.0 - exp\(-fogGlow \/ fogCap\)\)/.test(fog),
+      'the terrain adds raw phase-function inscatter while every other material has it capped');
+
+    // the strip has to BE ground.skyBand, not a second derivation of it
+    const a = LEVELS.arena.atmosphere;
+    const band = bakeBand(a);
+    const tex = writeSkyStrip(new THREE.DataTexture(new Uint16Array(SKY_STRIP * 4), SKY_STRIP, 1,
+      THREE.RGBAFormat, THREE.HalfFloatType), band);
+    const F = THREE.DataUtils.fromHalfFloat, d = tex.image.data;
+    const texel = (i) => [F(d[i * 4]), F(d[i * 4 + 1]), F(d[i * 4 + 2])];
+    for (let i = 0; i < SKY_STRIP; i++) {
+      const j = Math.min(band.az - 1, Math.floor((i + 0.5) / SKY_STRIP * band.az)) * 3;
+      const got = texel(i);
+      for (let c = 0; c < 3; c++) {
+        assert(Math.abs(got[c] - band.rgb[j + c]) < 2e-3,
+          `strip texel ${i} channel ${c} is ${got[c].toFixed(4)} against the band's ${band.rgb[j + c].toFixed(4)}`);
+      }
+    }
+    // and it has to actually be directional — a strip that is flat round the
+    // compass is the old bug with more texels
+    let lo = 9, hi = 0, loI = 0, hiI = 0;
+    for (let i = 0; i < SKY_STRIP; i++) {
+      const L = lum({ r: texel(i)[0], g: texel(i)[1], b: texel(i)[2] });
+      if (L < lo) { lo = L; loI = i; } if (L > hi) { hi = L; hiI = i; }
+    }
+    assert(hi / lo > 1.15,
+      `the sky the ground dissolves into spans only ${(hi / lo).toFixed(3)}:1 round the compass`);
+    // the dim end must be BLUER than the bright end: that is the sun side vs
+    // the shade side, and getting it backwards would mean the strip is upside
+    // down in bearing
+    const bR = texel(loI)[2] / texel(loI)[0], sR = texel(hiI)[2] / texel(hiI)[0];
+    assert(bR > sR, `the darkest bearing (${loI}) is warmer than the brightest (${hiI}) — the strip is reversed`);
+    tex.dispose();
+    return `strip ${SKY_STRIP} bearings, ${(hi / lo).toFixed(2)}:1 across the compass, B/R ${sR.toFixed(2)}→${bR.toFixed(2)}`;
+  });
+
+  check('terrain: the air with no sky drawn still has an asymptote', () => {
+    // Every headless check, and every unit test, builds a Terrain with no
+    // Engine and therefore no band. That path must still fill the strip, or the
+    // ground converges on an uninitialised texture and the far field is grey.
+    const saved = ground.skyBand;
+    ground.skyBand = null;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0xffffff, 0.0034);
+    scene.fog.color.setRGB(3.042, 3.2302, 3.2018);
+    scene.add(new THREE.HemisphereLight(0xc0d4ee, 0x7a6244, 0.135));
+    const t = new Terrain(scene, 'arena', 0.5);
+    t._syncAtmosphere();
+    const F = THREE.DataUtils.fromHalfFloat, d = t._uniforms.uSkyStrip.value.image.data;
+    const c = t._uniforms.uSkyCol.value;
+    for (const i of [0, 17, 41, 63]) {
+      near(F(d[i * 4]), c.r, 2e-3, `strip texel ${i} red does not fall back to uSkyCol`);
+      near(F(d[i * 4 + 2]), c.b, 2e-3, `strip texel ${i} blue does not fall back to uSkyCol`);
+    }
+    t.dispose();
+    ground.skyBand = saved;
+    return `flat fallback at ${c.toArray().map((v) => v.toFixed(3)).join('/')}`;
+  });
+
+  check('terrain: 200 m of air takes the chroma out of the ground and never puts it back', () => {
+    /* THE MEASUREMENT THIS LANE IS HELD TO.
+     *
+     * Sand at 200 m must lose at least 40% of the saturation it has at 20 m,
+     * and its luminance must move TOWARD the sky's. Both are asserted, and so
+     * is a third property that is strictly stronger and that the build this
+     * replaces actually failed: the loss must be MONOTONE. Converging on the
+     * authored `skyColor` swatch — a saturated blue on the far side of neutral
+     * from the sand — took the arena's ground to 0.057 saturation at 160 m and
+     * then back UP to 0.222 by 240 m, at hue 222°. Distance was not
+     * desaturating the desert, it was re-saturating it as a different colour.
+     */
+    const rows = [];
+    for (const key of ['dunes', 'arena', 'canyon']) {
+      const a = LEVELS[key].atmosphere;
+      const band = bakeBand(a);
+      const sun = sunDirection(a, new THREE.Vector3());
+      const disp = skyDisplayShoulder(a);
+      const fogC = hazeRadiance(a, new THREE.Color(), disp);
+      const hazeSun = skyShoulder(skyRadiance(sun.clone().setY(0.03).normalize(), sun, a, new THREE.Color()));
+      const side = sun.clone().setY(0).normalize().cross(new THREE.Vector3(0, 1, 0)).setY(0.02).normalize();
+      const gain = Math.min(Math.max(lum(hazeSun) - lum(skyShoulder(skyRadiance(side, sun, a, new THREE.Color()))), 0), 12);
+      const sl = Math.max(0.02, lum(hazeSun));
+      // looking down −z, which is the pose every lane measures from
+      const bearing = Math.atan2(-1, 0);
+      const j = Math.min(band.az - 1, Math.floor(((bearing / (Math.PI * 2) + 0.5) % 1) * band.az)) * 3;
+      const sky = [band.rgb[j], band.rgb[j + 1], band.rgb[j + 2]];
+      // The terrain's own ground swatch is what the sand is made of; its
+      // absolute level does not matter to a ratio, only its chroma does.
+      const g = new THREE.Color(a.groundColor ?? 0x60482e);
+      const opt = { eyeY: 1.75, invH: 1 / (a.fogHeight ?? 38), density: a.fogDensity ?? 0.0035,
+        fog: [fogC.r, fogC.g, fogC.b], sky, sun: [sun.x, sun.y, sun.z],
+        tint: [hazeSun.r / sl, hazeSun.g / sl, hazeSun.b / sl], sunW: a.inscatter ?? gain * 0.028,
+        sand: [g.r, g.g, g.b].map((v) => v * 1.6) };
+
+      const D = [20, 40, 60, 90, 120, 160, 200, 240];
+      const out = D.map((d) => groundThroughAir(d, opt));
+      const S = out.map((c) => sat3(...c)), L = out.map((c) => lum({ r: c[0], g: c[1], b: c[2] }));
+      const skyL = lum({ r: sky[0], g: sky[1], b: sky[2] });
+      const near200 = D.indexOf(200);
+      assert(S[near200] < S[0] * 0.60,
+        `${key}: sand at 200 m keeps ${(100 * S[near200] / S[0]).toFixed(0)}% of its 20 m saturation`);
+      for (let i = 1; i < D.length; i++) {
+        assert(S[i] < S[i - 1] + 1e-4,
+          `${key}: saturation rises again from ${D[i - 1]} m (${S[i - 1].toFixed(3)}) to ${D[i]} m (${S[i].toFixed(3)}) — the air is re-saturating the ground as a new colour`);
+        // and toward the sky, monotonically, from whichever side it starts
+        const sgn = Math.sign(skyL - L[0]);
+        assert(sgn * (L[i] - L[i - 1]) > -1e-4,
+          `${key}: luminance moves AWAY from the sky between ${D[i - 1]} and ${D[i]} m`);
+        assert(sgn * (L[i] - skyL) <= 1e-4,
+          `${key}: ground at ${D[i]} m has overshot past the sky it is dissolving into`);
+      }
+      // hue must stay in the level's own family: a desert does not turn violet
+      // with range, and the swatch target took the arena to 222°
+      const drift = hueGap(hue3(...out[0]), hue3(...out[near200]));
+      assert(drift < 40, `${key}: the ground's hue swings ${drift.toFixed(0)}° between 20 m and 200 m`);
+      rows.push(`${key} S ${S[0].toFixed(3)}→${S[near200].toFixed(3)} (${(100 * (S[near200] / S[0] - 1)).toFixed(0)}%), `
+        + `L ${L[0].toFixed(3)}→${L[near200].toFixed(3)} of sky ${skyL.toFixed(3)}, Δhue ${drift.toFixed(0)}°`);
+    }
+    return rows.join('; ');
   });
 
   check('terrain: the ripple map is not one lattice at one bearing', () => {

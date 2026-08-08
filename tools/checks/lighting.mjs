@@ -12,10 +12,12 @@
  * So these assert the measurements underneath instead.
  */
 
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
   AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
+  cascadeBoxes, CASCADE_SPLIT,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -538,21 +540,75 @@ export function run({ check, assert, near, THREE: T }) {
 
   /* ══ the rig ══════════════════════════════════════════════════════════ */
 
-  check('shadows: the one cascade covers enough ground to light a landscape', () => {
+  check('shadows: the cascades cover enough ground to light a landscape', () => {
+    // This replaces "the ONE cascade covers enough ground". One box can only
+    // buy reach with texel size — they are the same number, 2·radius/mapSize —
+    // so the old bound (a single box under 9 cm) capped the world at 58 m of
+    // cast shadow at medium. The properties that matter now are per cascade,
+    // and every one of them is tighter than the number it replaces.
     const rows = [];
     for (const [name, q] of Object.entries(QUALITY)) {
-      const texel = (q.shadowDist * 2) / q.shadow;
-      assert(q.shadowDist >= 40, `${name} shadows stop at ${q.shadowDist}m`);
-      assert(texel < 0.09, `${name} shadow texels are ${(texel * 100).toFixed(1)}cm — blocky`);
+      const boxes = cascadeBoxes(name);
+      assert(boxes.length >= 3, `${name} has only ${boxes.length} cascades`);
+      // the near cascade is what the fight stands in, and it has to be FINER
+      // than the single box managed at ANY tier (4.7 cm at ultra was the best)
+      assert(boxes[0].texel < 0.045,
+        `${name}: near cascade texels are ${(boxes[0].texel * 100).toFixed(1)}cm — coarser than the one box it replaced`);
+      // the far one may be coarse, but not so coarse that a 2 m rock's shadow
+      // is a dozen texels of staircase
+      assert(boxes[boxes.length - 1].texel < 0.20,
+        `${name}: far cascade texels are ${(boxes[boxes.length - 1].texel * 100).toFixed(1)}cm`);
+      // neighbours may not be more than 2.6× apart, or the blend band cannot
+      // hide the change in penumbra width and the handover reads as a line
+      for (let i = 1; i < boxes.length; i++) {
+        const r = boxes[i].texel / boxes[i - 1].texel;
+        assert(r > 1.2 && r < 2.6, `${name}: cascades ${i - 1}→${i} step ${r.toFixed(2)}× in texel size`);
+        assert(boxes[i].radius > boxes[i - 1].radius, `${name}: cascade ${i} is not outside cascade ${i - 1}`);
+      }
+      assert(q.shadowDist >= 70, `${name} shadows stop at ${q.shadowDist}m`);
       assert(q.shadowDist < q.viewDist * 0.4, `${name} shadow frustum is a large fraction of the view`);
-      rows.push(`${name} ${q.shadowDist}m/${(texel * 100).toFixed(1)}cm`);
+      rows.push(`${name} ${q.shadowDist}m/${boxes.map((b) => (b.texel * 100).toFixed(1)).join('/')}cm`);
     }
-    // and quality has to actually be a ladder
+    // and quality has to actually be a ladder: more reach every step, and never
+    // blockier near shadows than the tier below
     const order = ['low', 'medium', 'high', 'ultra'];
     for (let i = 1; i < order.length; i++) {
       assert(QUALITY[order[i]].shadowDist > QUALITY[order[i - 1]].shadowDist,
         `${order[i]} does not extend shadows past ${order[i - 1]}`);
+      assert(cascadeBoxes(order[i])[0].texel <= cascadeBoxes(order[i - 1])[0].texel + 1e-9,
+        `${order[i]} has coarser near shadows than ${order[i - 1]}`);
     }
     return rows.join(', ');
+  });
+
+  check('shadows: the cascade rig lights the scene exactly once', () => {
+    // The cascades are three DirectionalLights sharing one direction. If any of
+    // the carriers ever gets a colour, every material that sums
+    // `directionalLights[i].color` itself — the grass does, in Scenery.js — sees
+    // two or three suns and doubles in key with nothing extra thrown.
+    const src = readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8');
+    // the DEFINITION, not the constructor's call to it
+    const at = src.indexOf('_setupLights() {');
+    const setup = src.slice(at, src.indexOf('this.pmrem = new THREE.PMREMGenerator', at));
+    assert(/i === 0 \? 0xfff0d8 : 0x000000/.test(setup) && /i === 0 \? 3\.6 : 0/.test(setup),
+      'a cascade past the first carries light — every hand-written light loop now sees two suns');
+    assert(/this\.sun = this\.cascades\[0\]/.test(setup),
+      'this.sun is no longer the lit cascade, so everything that reads the sun reads a black light');
+    // and the shader may consult exactly ONE cascade, or a coarse map's
+    // penumbra multiplies into the fine map's
+    assert(/#if UNROLLED_LOOP_INDEX == 0/.test(src),
+      'lights_fragment_begin applies a shadow for the carrier lights too');
+    assert(/saberCascadeShadow\(\)/.test(src) && /shadowmask_pars_fragment/.test(src),
+      'getShadowMask() still multiplies every cascade together');
+    assert(/float saberCascadeFit/.test(src) && /\* 12\.0/.test(src),
+      'the cascade handover has no blend band');
+    // the snap has to be in the LIGHT's basis; world x/z is only the texel grid
+    // when the sun happens to look down a world axis
+    const fit = src.slice(src.indexOf('fitShadows(center)'), src.indexOf('addHeat('));
+    assert(/Math\.round\(_fs\[2\]\.dot\(_fs\[3\]\) \/ texel\)/.test(fit),
+      'the shadow box is snapped in world coordinates, so the map still slides sub-texel as you walk');
+    assert(/addScaledVector\(fwd, d \* 0\.55\)/.test(fit),
+      'the cascades are centred on the player, so half of every map is behind the camera');
+    return 'one lit cascade, two carriers, one lookup, light-space snap';
   });
 }

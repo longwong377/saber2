@@ -398,7 +398,8 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform vec3 uRockUp;      // rock-with-height: gain, y start, y end
   uniform vec3 uCover;       // amount, freq (1/m), threshold
   uniform vec3 uNrmScale;    // base, near detail, rock
-  uniform vec3 uSkyCol;
+  uniform vec3 uSkyCol;      // the fallback asymptote, when nothing drew a sky
+  uniform sampler2D uSkyStrip;  // the DRAWN sky at the skyline, over bearing
   uniform vec2 uHaze;        // extra density gain at range, sky blend
 
   float thash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -983,6 +984,44 @@ const TERRAIN_FRAG_NORMAL = /* glsl */`
  * scene.fog never touches the Sky material, so a rim meeting the sky with no
  * extra veil at all is a hard faceted polyline against it, which is the one
  * thing that gives away a 1.5 m quad grid.
+ *
+ * ── AND THE AIR HAS A DIRECTION ───────────────────────────────────────────
+ *
+ * Two things here used to make a hundred and seventy metres of desert air do
+ * essentially nothing to the surface that fills 60% of the frame.
+ *
+ * 1. THE ASYMPTOTE WAS ONE COLOUR FOR THE WHOLE DOME — the level's authored
+ *    `skyColor` swatch, which is the blue overhead, standing in for the sky in
+ *    every direction. A skyline is not that colour anywhere. Modelled on the
+ *    arena's own atmosphere through the engine's tone curve, sand at 20 m
+ *    against sand at 200 m:
+ *
+ *                        60 m    90 m   120 m   160 m   200 m   240 m
+ *      saturation       0.337   0.252   0.151   0.057   0.164   0.222
+ *      hue                27°     25°     17°    288°    230°    222°
+ *
+ *    The saturation does not fall — it falls THROUGH zero and comes back up
+ *    the other side, because the target is a saturated blue on the far side of
+ *    neutral from the sand. Distance was not desaturating the desert, it was
+ *    re-saturating it as a different colour, and it shows on the shipped frame:
+ *    the arena's rim wall at 170 m reads hue 348° at 0.13 saturation, and the
+ *    bowl floor at 110 m reads hue 340–348° at 0.05–0.06 over two runs.
+ *    Deserts do not go magenta with range.
+ *
+ *    So the asymptote is now THE DRAWN SKY IN THE VIEW DIRECTION, read out of
+ *    ground.skyBand — the same array SkyDome bakes for its own horizon and
+ *    Scenery's far ranges converge on, so the ground and the ranges cannot
+ *    disagree about the air they are both seen through. Same sweep, after:
+ *
+ *      saturation       0.339   0.267   0.203   0.136   0.083   0.052
+ *      hue                27°     26°     26°     25°     23°     20°
+ *
+ * 2. THE INSCATTER HAD NO ENERGY LIMIT. Every other material in the game gets
+ *    the engine's capped form (see AERIAL in Engine.js): the phase function
+ *    peaks at 6.0 at g = 0.5, so an uncapped lobe lets the haze add several
+ *    times its own colour. The ground alone was adding it raw — the one
+ *    surface allowed to glow brighter, toward the sun, than the air standing
+ *    in front of the colonnade on top of it.
  */
 const TERRAIN_FRAG_FOG = /* glsl */`
   #ifdef USE_FOG
@@ -1007,9 +1046,14 @@ const TERRAIN_FRAG_FOG = /* glsl */`
       float fogCos = dot(fogDir, uAerialSun.xyz);
       float g = uAerialTint.w, g2 = g * g;
       float phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * fogCos, 1.0e-4), 1.5);
-      fogTone += uAerialTint.xyz * uAerialSun.w * (phase + 0.75 * (1.0 + fogCos * fogCos) * 0.16);
+      vec3 fogGlow = uAerialTint.xyz * uAerialSun.w * (phase + 0.75 * (1.0 + fogCos * fogCos) * 0.16);
+      // The engine's energy limit, verbatim. Uncapped, the ground was the one
+      // surface in the frame free to add several times the haze's own colour
+      // on the sunward side.
+      vec3 fogCap = max(fogColor, vec3(1.0e-4)) * 0.26;
+      fogTone += fogCap * (1.0 - exp(-fogGlow / fogCap));
     }
-    // What the far ground actually converges ON.
+    // What the far ground actually converges ON: the sky IN THIS DIRECTION.
     //
     // scene.fog is not the sky. The engine meters the fog swatch off the sky's
     // radiance at the skyline and then renormalises it, and on the arena that
@@ -1018,8 +1062,12 @@ const TERRAIN_FRAG_FOG = /* glsl */`
     // 0.80, brighter than the sky immediately above it, which is not something
     // a passive surface behind a scattering medium can be. So the near field
     // takes the haze's tone, which is right, and the far field is walked onto
-    // uSkyCol, which carries the haze's hue at the SKY's level.
-    fogTone = mix(fogTone, uSkyCol, smoothstep(50.0, 230.0, fogRadial) * uHaze.y);
+    // the strip: 64 bearings of the DRAWN sky at the skyline, straight out of
+    // ground.skyBand, so the sand and the ranges standing on the same horizon
+    // dissolve into the same air rather than into two different guesses at it.
+    float fogAz = atan(vFogRay.z, vFogRay.x) * 0.15915494 + 0.5;
+    vec3 fogSky = texture2D(uSkyStrip, vec2(fogAz, 0.5)).rgb;
+    fogTone = mix(fogTone, fogSky, smoothstep(50.0, 230.0, fogRadial) * uHaze.y);
     gl_FragColor.rgb = mix(gl_FragColor.rgb, fogTone, fogFactor);
   #endif
 `;
@@ -1253,6 +1301,7 @@ export class Terrain {
       // came out as a rope lying on the cliff rather than as a crack in it.
       uNrmScale: { value: new THREE.Vector3(1.15, 0.85, 0.70) },
       uSkyCol: { value: new THREE.Color(0xcfe0f5) },
+      uSkyStrip: { value: this._strip = skyStripTexture() },
       uHaze: { value: new THREE.Vector2(0.8, 0.7) },   // re-read every frame
     };
 
@@ -1345,6 +1394,23 @@ export class Terrain {
     const u = this._uniforms;
     if (!u) return;
     const fog = this._scene && this._scene.fog;
+    /* THE SKY THE GROUND IS SEEN THROUGH, over bearing.
+     *
+     * ground.skyBand is what SkyDome baked for its own horizon and what
+     * Scenery's far ranges converge on. Reading the DATA rather than deriving a
+     * sky of our own is the whole point: the sand at 200 m and the range behind
+     * it meet on the same line of the frame, and two derivations that could
+     * disagree would disagree exactly where the eye is already looking.
+     *
+     * Row 0 of the band is the skyline itself — sin(el) at the row centre is
+     * 0.0225, i.e. 1.3° up — which is where ground at any believable range is
+     * dissolving. Rebuilt on identity, because configure() hands over a fresh
+     * object per level and nothing else can change it. */
+    const band = ground.skyBand;
+    if (band && band !== this._bandRef) {
+      this._bandRef = band;
+      writeSkyStrip(this._strip, band);
+    }
     if (this._hemi) {
       // The LEVEL comes from the sky the level authored, not from the fog.
       const s = u.uSkyCol.value.copy(this._hemi.color).multiplyScalar(SKY_GAIN);
@@ -1356,6 +1422,19 @@ export class Terrain {
         _tc.copy(fog.color).multiplyScalar(L(s) / Math.max(1e-3, L(fog.color)));
         s.lerp(_tc, 0.5);
       }
+    }
+    // NOTHING DREW A SKY — a Terrain built without an Engine, which is every
+    // headless check and every unit test. Fall back to the authored tint, the
+    // same colour in every bearing, so the chunk still has an asymptote and this
+    // path stays the one the checks exercise. Outside the hemisphere branch on
+    // purpose: a scene with neither a band nor a hemisphere light would
+    // otherwise leave the strip at its constructed value forever, and "forever"
+    // is the kind of default that only shows up on the one level that has no
+    // hemisphere. Keyed on the colour, so a level change reaches the strip and a
+    // still frame costs nothing.
+    if (!band) {
+      const s = u.uSkyCol.value, key = s.r * 4096 + s.g * 64 + s.b;
+      if (key !== this._stripFlat) { this._stripFlat = key; writeSkyStrip(this._strip, null, s); }
     }
     /* Indoors there is no horizon to dissolve into, and the level's fog is
      * already thick enough to close the room off; leave it alone.
@@ -1588,12 +1667,68 @@ export class Terrain {
     if (ground.terrain === this) ground.terrain = null;
     this.geometry.dispose();
     this.material.dispose();
+    this._strip?.dispose();
     this.mesh.parent?.remove(this.mesh);
   }
 }
 
 const _tv = new THREE.Vector3();
 const _tc = new THREE.Color();
+
+/* ── the sky the ground dissolves into, over bearing ──────────────────────
+ *
+ * 64 texels round the compass, half-float because these are radiances over a
+ * 0.2–1.6 range and 8 bits bands visibly in a gradient this smooth — the same
+ * reasoning, and the same numbers, as SkyDome's own band map.
+ *
+ * One row, not sixteen: the far ground is at the skyline by definition, so the
+ * only elevation it can dissolve into is the first one. Taking the whole map
+ * would be 16× the upload for a lookup that never leaves row 0.
+ */
+export const SKY_STRIP = 64;
+
+function skyStripTexture() {
+  const tex = new THREE.DataTexture(new Uint16Array(SKY_STRIP * 4), SKY_STRIP, 1,
+    THREE.RGBAFormat, THREE.HalfFloatType);
+  tex.wrapS = THREE.RepeatWrapping;      // bearing is a circle
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.NoColorSpace;   // radiance, not a picture
+  // Never hand the shader a strip of zeros: a material that compiles before the
+  // first _syncAtmosphere would dissolve its distance into black, and black is
+  // the one asymptote that looks deliberate.
+  return writeSkyStrip(tex, null, new THREE.Color(0xcfe0f5));
+}
+
+/**
+ * Fill the strip from SkyDome's baked band, or — with no band — from one flat
+ * colour. Exported so the checks can build the same strip the shader samples
+ * instead of a transcription of it.
+ *
+ * @param {THREE.DataTexture} tex
+ * @param {{az:number,el:number,top:number,rgb:Float32Array}|null} band
+ * @param {THREE.Color} [flat]  the asymptote when there is no band at all
+ */
+export function writeSkyStrip(tex, band, flat = null) {
+  const H = THREE.DataUtils.toHalfFloat;
+  const d = tex.image.data;
+  for (let i = 0; i < SKY_STRIP; i++) {
+    let r, g, b;
+    if (band) {
+      // Texel centres line up: both maps put bearing i at (i + 0.5) / n of the
+      // circle, so this is a straight resample when the widths agree and a
+      // nearest read when they do not.
+      const j = Math.min(band.az - 1, Math.floor((i + 0.5) / SKY_STRIP * band.az));
+      const p = j * 3;                    // row 0 — the skyline
+      r = band.rgb[p]; g = band.rgb[p + 1]; b = band.rgb[p + 2];
+    } else if (flat) { r = flat.r; g = flat.g; b = flat.b; } else { r = g = b = 0.5; }
+    const o = i * 4;
+    d[o] = H(r); d[o + 1] = H(g); d[o + 2] = H(b); d[o + 3] = H(1);
+  }
+  tex.needsUpdate = true;
+  return tex;
+}
 
 /**
  * What the far ground dissolves into: the level's own sky tint at SKY_GAIN,

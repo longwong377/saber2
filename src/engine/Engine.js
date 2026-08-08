@@ -45,15 +45,32 @@ import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
 
 export const QUALITY = {
-  // shadowDist is the radius of the one cascade. It is also the distance at
-  // which the world visibly stops being lit: past it a colonnade throws
-  // nothing, and a landscape with no shadows in the middle distance reads as a
-  // painted backdrop. Widened at every tier — the texel cost is linear
-  // (2·d/res: 5.7 cm at medium, up from 4.5) and buys a third more depth.
-  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: true,  grass: 0.25, particles: 0.4, shadowDist: 42, viewDist: 380 },
-  medium: { shadow: 2048, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 58, viewDist: 520 },
-  high:   { shadow: 3072, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 76, viewDist: 700 },
-  ultra:  { shadow: 4096, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 96, viewDist: 900 },
+  // `shadowDist` is the REACH of the outermost cascade, and `shadow` is the map
+  // size of EACH of the three (see CASCADE_SPLIT / cascadeBoxes). It used to be
+  // the radius of the one and only box, and one box has to buy reach with texel
+  // size because they are the same number — which is why the world stopped
+  // being lit at 58 m at medium and a landscape with nothing casting in its
+  // middle distance read as a painted backdrop.
+  //
+  // Three maps per tier is three times the shadow memory, and that is simply
+  // what cascades cost; it is paid for at the top by dropping ultra's map from
+  // 4096 to 3072, which a cascaded rig no longer needs. Per tier, near/mid/far
+  // texel size and total shadow memory:
+  //
+  //   low     2.60 / 6.15 / 13.67 cm    12 MB   (was 8.2 cm, 4 MB, 42 m)
+  //   medium  2.60 / 6.15 / 13.67 cm    27 MB   (was 5.7 cm, 16 MB, 58 m)
+  //   high    2.23 / 5.27 / 11.72 cm    75 MB   (was 5.0 cm, 36 MB, 76 m)
+  //   ultra   2.23 / 5.27 / 11.72 cm   108 MB   (was 4.7 cm, 64 MB, 96 m)
+  //
+  // So every tier's NEAR shadows — the ones under the fight, where the eye is —
+  // are two to three times finer than the single box ever managed, and the
+  // reach roughly doubles again on top of that. The ladder buys reach at every
+  // step and density every other step, because reach and density are the same
+  // texel budget and there is no tier at which you get both for free.
+  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: true,  grass: 0.25, particles: 0.4, shadowDist: 70, viewDist: 380 },
+  medium: { shadow: 1536, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 105, viewDist: 520 },
+  high:   { shadow: 2560, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 150, viewDist: 700 },
+  ultra:  { shadow: 3072, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 180, viewDist: 900 },
 };
 
 /* ── aerial perspective ──────────────────────────────────────────────────
@@ -203,6 +220,158 @@ function installAerialPerspective(THREE_) {
 
 installAerialPerspective(THREE);
 
+/* ── cascaded shadows ────────────────────────────────────────────────────
+ *
+ * ONE shadow box is the reason nothing past the near field is lit.
+ *
+ * A single ortho box has to buy reach with texel size — the two are the same
+ * number, 2·radius/mapSize — so at medium it was 58 m of reach at 5.7 cm, and
+ * everything beyond 58 m threw nothing at all. In an arena frame that is
+ * roughly forty scattered rocks casting nothing between them and a whole ruin
+ * line at 70–100 m standing in flat light. A landscape whose middle distance
+ * has no cast shadow in it reads as a painted backdrop, because that is
+ * precisely what a painted backdrop is.
+ *
+ * So: three nested boxes instead of one, sized as a fraction of the reach.
+ * At medium, which is 1536² per cascade against the one 2048² box before:
+ *
+ *                 before            after
+ *   near        5.66 cm / 58 m    2.60 cm, box radius  19.95 m
+ *   middle              —         6.15 cm, box radius  47.25 m
+ *   far                 —        13.67 cm, box radius 105.00 m
+ *
+ *   a 2 m rock stops casting at   58 m in any direction
+ *                            →   at least 163 m ahead, 47 m behind
+ *
+ * — the asymmetry because the boxes are pushed forward along the view (see
+ * fitShadows), which is where the far cascade's reach actually comes from. "At
+ * least" because the box is square in LIGHT space, and its footprint on the
+ * ground is an ellipse stretched 1/sin(elevation) along the sun's bearing: at
+ * the arena's 34° sun it reaches 1.79 × its radius that way and exactly its
+ * radius across. The guaranteed number is the short axis.
+ *
+ * The middle cascade is very nearly the box that used to be the whole rig, so
+ * what this actually buys is one finer box under it and one much larger box
+ * outside it. It costs two more shadow-map renders and two more maps — that is
+ * what cascades cost everywhere, and there is no version of "shadows in the
+ * middle distance" that does not pay it.
+ *
+ * HOW IT REACHES THE SHADER, and why it is done this way. three renders one map
+ * per light, so the cascades are three DirectionalLights sharing one direction.
+ * Only the first carries the sun's colour; the other two are BLACK, so they add
+ * no light anywhere — including in the hand-written shaders that sum
+ * `directionalLights[i].color` themselves (the grass does exactly that, and a
+ * second lit sun would have tripled its key). They exist only to own a shadow
+ * map. Two stock chunks are then patched so that light 0's shadow is looked up
+ * in whichever cascade has the fragment:
+ *
+ *   · lights_fragment_begin — every lit material in the game
+ *   · shadowmask_pars_fragment — getShadowMask(), which is how the grass and
+ *     the shadow-only materials ask the same question
+ *
+ * Selection is by WHICH MAP THE FRAGMENT LANDS IN, not by view depth. The boxes
+ * are nested, so the first one that contains the fragment is always the one
+ * with the finest texels that can see it — and it needs no extra uniform, no
+ * knowledge of the split distances in the shader, and it degrades to exactly
+ * three's behaviour if a cascade's map is missing. The last 1/12 of each box is
+ * a blend band into the next one out, because a hard handover between texel
+ * sizes 2.4× apart is a visible line across the ground.
+ */
+
+/** Cascade radii as a fraction of the tier's reach, near to far. Roughly the
+ *  usual practical split — geometric enough that the texel ratio between
+ *  neighbours stays about 2.4, which is as far apart as two cascades can be
+ *  before the blend band stops hiding the change in penumbra width. */
+export const CASCADE_SPLIT = [0.19, 0.45, 1.0];
+
+/**
+ * What each cascade actually covers, for a quality tier. Exported because it is
+ * the arithmetic the whole claim rests on, and a check should assert on the
+ * engine's own numbers rather than on a copy of them that drifts.
+ *
+ * @returns {{radius:number, texel:number, map:number}[]} near → far, metres.
+ */
+export function cascadeBoxes(quality = 'high') {
+  const q = QUALITY[quality] || QUALITY.high;
+  return CASCADE_SPLIT.map((f) => {
+    const radius = q.shadowDist * f;
+    return { radius, map: q.shadow, texel: (radius * 2) / q.shadow };
+  });
+}
+
+const CSM_GLSL = /* glsl */`
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+  // How far inside its own map a fragment sits: 0 at the edge, 1 once it is a
+  // twelfth of the box in. Also 0 past the box's far plane, which is what makes
+  // a fragment the near cascade cannot see fall through to the next one.
+  // Same frustum test three's own getShadow does, so the two cannot disagree
+  // about which cascade is answering.
+  float saberCascadeFit( const in vec4 c ) {
+    if ( c.z > c.w ) return 0.0;
+    vec2 d = min( c.xy / c.w, 1.0 - c.xy / c.w );
+    return clamp( min( d.x, d.y ) * 12.0, 0.0, 1.0 );
+  }
+  #define SABER_CASCADE(i) getShadow( directionalShadowMap[ i ], directionalLightShadows[ i ].shadowMapSize, directionalLightShadows[ i ].shadowIntensity, directionalLightShadows[ i ].shadowBias, directionalLightShadows[ i ].shadowRadius, vDirectionalShadowCoord[ i ] )
+  float saberCascadeShadow() {
+    float f = saberCascadeFit( vDirectionalShadowCoord[ 0 ] );
+    if ( f >= 1.0 ) return SABER_CASCADE( 0 );
+    #if NUM_DIR_LIGHT_SHADOWS > 1
+      if ( f > 0.0 ) return mix( SABER_CASCADE( 1 ), SABER_CASCADE( 0 ), f );
+      f = saberCascadeFit( vDirectionalShadowCoord[ 1 ] );
+      #if NUM_DIR_LIGHT_SHADOWS > 2
+        if ( f >= 1.0 ) return SABER_CASCADE( 1 );
+        if ( f > 0.0 ) return mix( SABER_CASCADE( 2 ), SABER_CASCADE( 1 ), f );
+        return SABER_CASCADE( 2 );
+      #else
+        return f > 0.0 ? SABER_CASCADE( 1 ) : 1.0;
+      #endif
+    #else
+      return f > 0.0 ? SABER_CASCADE( 0 ) : 1.0;
+    #endif
+  }
+#endif
+`;
+
+let _csmInstalled = false;
+function installCascadeShadows(THREE_) {
+  if (_csmInstalled) return false;
+  _csmInstalled = true;
+  const C = THREE_.ShaderChunk;
+
+  C.shadowmap_pars_fragment += CSM_GLSL;
+
+  // lights_fragment_begin: light 0 is the sun and reads the cascade chain.
+  // Lights 1 and 2 are the black carriers — they contribute nothing to shading,
+  // so emitting nothing for them is not an optimisation, it is the correct
+  // result, and it keeps their coarse maps from also multiplying into the near
+  // field. UNROLLED_LOOP_INDEX is substituted with a literal before the
+  // preprocessor runs, so this is a compile-time choice per light.
+  const line = C.lights_fragment_begin.split('\n')
+    .find((l) => l.includes('directLight.color *=') && l.includes('vDirectionalShadowCoord'));
+  if (line) {
+    C.lights_fragment_begin = C.lights_fragment_begin.replace(line, [
+      '\t\t#if UNROLLED_LOOP_INDEX == 0',
+      '\t\tdirectLight.color *= ( directLight.visible && receiveShadow ) ? saberCascadeShadow() : 1.0;',
+      '\t\t#endif',
+    ].join('\n'));
+  }
+
+  // getShadowMask() multiplies every directional shadow together, so with three
+  // cascades a fragment inside two of them was shadowed twice — the coarse map's
+  // penumbra darkening the fine map's. Same selection, same answer as above.
+  const mask = C.shadowmask_pars_fragment;
+  const i0 = mask.indexOf('#if NUM_DIR_LIGHT_SHADOWS > 0');
+  const i1 = mask.indexOf('#if NUM_SPOT_LIGHT_SHADOWS > 0');
+  if (i0 >= 0 && i1 > i0) {
+    C.shadowmask_pars_fragment = mask.slice(0, i0)
+      + '#if NUM_DIR_LIGHT_SHADOWS > 0\n\tshadow *= receiveShadow ? saberCascadeShadow() : 1.0;\n\t#endif\n\t'
+      + mask.slice(i1);
+  }
+  return true;
+}
+
+installCascadeShadows(THREE);
+
 const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 
@@ -235,6 +404,10 @@ const ENV_INTENSITY = 0.38;
 const HEMI_TRIM = 0.45;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _sv1 = new THREE.Vector3(), _sv2 = new THREE.Vector3();
+/* fitShadows' own scratch. Deliberately not _sv1/_sv2: those belong to
+ * skyRadiance, and a shared scratch that is only safe "because the call stacks
+ * do not overlap today" is a bug with a date on it. */
+const _fs = Array.from({ length: 5 }, () => new THREE.Vector3());
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 
 /* ── the sky, evaluated on the CPU ───────────────────────────────────────
@@ -745,26 +918,52 @@ export class Engine {
   }
 
   _setupLights() {
-    this.sun = new THREE.DirectionalLight(0xfff0d8, 3.6);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(QUALITY[this.quality].shadow, QUALITY[this.quality].shadow);
-    // Ortho shadow depth is linear, so -0.0006 NDC over a 250-unit frustum was
-    // ~7.5cm of world bias — feet detached from their own shadows.
-    this.sun.shadow.bias = -0.00015;
-    this.sun.shadow.normalBias = 0.02;
-    this.sun.shadow.camera.near = 0.5;
-    this.sun.shadow.camera.far = 260;
-    // NB `radius` does NOTHING here, and the comment that used to say it did
-    // was wrong. Read three's shadowmap_pars_fragment: the SHADOWMAP_TYPE_PCF
-    // branch scales its nine taps by shadowRadius, but SHADOWMAP_TYPE_PCF_SOFT
-    // — which is what this rig uses — builds a bilinear-weighted 3×3 at exactly
-    // one texel and never mentions shadowRadius at all. It only reaches point
-    // lights, and nothing in the game casts one. The penumbra is therefore set
-    // by shadow map texel size alone: 5.7 cm at medium, which is about right
-    // for a sun. Left at 1 so nobody tunes a number that is not connected.
-    this.sun.shadow.radius = 1;
-    this.scene.add(this.sun);
-    this.scene.add(this.sun.target);
+    /* THE SUN IS THREE LIGHTS. See CASCADE_SPLIT: only `cascades[0]` — which is
+     * `this.sun`, so every caller that reaches for the sun's colour, intensity
+     * or direction still finds it — carries any light at all. The other two are
+     * black and exist only to own a shadow map for the middle and far bands.
+     *
+     * They are added consecutively and before anything else that could cast,
+     * because three sorts shadow-casting lights first and is otherwise stable,
+     * so `directionalShadowMap[0..2]` is near, middle, far in that order — which
+     * is the assumption saberCascadeShadow() is built on. */
+    this.cascades = [];
+    for (let i = 0; i < CASCADE_SPLIT.length; i++) {
+      const L = new THREE.DirectionalLight(i === 0 ? 0xfff0d8 : 0x000000, i === 0 ? 3.6 : 0);
+      L.castShadow = true;
+      L.shadow.mapSize.set(QUALITY[this.quality].shadow, QUALITY[this.quality].shadow);
+      // Ortho shadow depth is linear, so -0.0006 NDC over a 250-unit frustum was
+      // ~7.5cm of world bias — feet detached from their own shadows. This one
+      // scales with the cascade for free: it is applied in the [0,1] depth of
+      // that cascade's own camera, whose range is 4.2 × its radius.
+      L.shadow.bias = -0.00015;
+      // NORMAL BIAS BARELY MOVES WITH THE CASCADE, and that is measured, not
+      // conservative. The terrain's self-shadow at these sun angles lives
+      // inside a ~15 cm depth window (see Terrain._buildMesh), so a normal
+      // offset big enough to matter for acne on the coarse maps erases exactly
+      // the shadows it is there to clean up. Scaled with the texel — 0.02 /
+      // 0.064 / 0.108 for the three boxes — the dune sea's ground came out
+      // 5–7% BRIGHTER between 20 and 70 m in a measured frame, which is the
+      // whole of its own modelling gone. These three stay inside a quarter of
+      // that window; the depth bias above is what grows with the box.
+      L.shadow.normalBias = 0.02 * (1 + i * 0.375);
+      L.shadow.camera.near = 0.5;
+      L.shadow.camera.far = 260;
+      // NB `radius` does NOTHING here, and the comment that used to say it did
+      // was wrong. Read three's shadowmap_pars_fragment: the SHADOWMAP_TYPE_PCF
+      // branch scales its nine taps by shadowRadius, but SHADOWMAP_TYPE_PCF_SOFT
+      // — which is what this rig uses — builds a bilinear-weighted 3×3 at exactly
+      // one texel and never mentions shadowRadius at all. It only reaches point
+      // lights, and nothing in the game casts one. The penumbra is therefore set
+      // by shadow map texel size alone: 2.2 cm in the near cascade at medium,
+      // which is about right for a sun. Left at 1 so nobody tunes a number that
+      // is not connected.
+      L.shadow.radius = 1;
+      this.scene.add(L);
+      this.scene.add(L.target);
+      this.cascades.push(L);
+    }
+    this.sun = this.cascades[0];
 
     // Was 0.85, which alone put a shadowed pixel at over half the brightness of
     // a lit one. Sun and sky IBL do the lighting now; this is only a floor.
@@ -882,7 +1081,10 @@ export class Engine {
     u.sunPosition.value.copy(sunPos);
     this.sunDir = sunPos.clone();
 
-    this.sun.position.copy(sunPos).multiplyScalar(90);
+    // Every cascade points the same way; only the first one is a light. Their
+    // positions are overwritten by fitShadows on the first frame, but a level
+    // that is measured before anything moves still needs them somewhere sane.
+    for (const L of this.cascades) L.position.copy(sunPos).multiplyScalar(90);
     this.sun.color.set(a.sunColor ?? 0xfff0d8);
     this.sun.intensity = a.sunIntensity ?? 3.6;
     this.hemi.color.set(a.skyColor ?? 0xbcd8ff);
@@ -1059,8 +1261,10 @@ export class Engine {
     this.quality = name;
     const q = QUALITY[name];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio) * this.resolutionScale);
-    this.sun.shadow.mapSize.set(q.shadow, q.shadow);
-    if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+    for (const L of this.cascades) {
+      L.shadow.mapSize.set(q.shadow, q.shadow);
+      if (L.shadow.map) { L.shadow.map.dispose(); L.shadow.map = null; }
+    }
     this.camera.far = q.viewDist;
     this.camera.updateProjectionMatrix();
     this.resize();
@@ -1094,21 +1298,52 @@ export class Engine {
     this.bloom.resolution.set(size.x, size.y);
   }
 
-  /** Keep the shadow frustum tight around the action. */
+  /**
+   * Keep the shadow frusta tight around the action — three nested boxes, near
+   * to far, each centred on the slice of the view it is responsible for.
+   *
+   * TWO THINGS HERE ARE NOT DECORATION.
+   *
+   * The boxes are pushed FORWARD along the view, not centred on the player. A
+   * box centred on the player spends half its texels behind the camera; pushed
+   * out by 0.55 of its own radius it covers 1.55 radii of what is actually on
+   * screen for the same texel size. That is where most of the far cascade's
+   * reach comes from.
+   *
+   * And the snap is in LIGHT SPACE. The old one rounded world x and z, which is
+   * only the texel grid if the light happens to look down a world axis — at the
+   * arena's 248° bearing the grid is 32° off, so "snapped" positions still slid
+   * the map by a fraction of a texel every frame and the shadow edges crawled.
+   * Rounding along the shadow camera's own right/up vectors is what actually
+   * pins them.
+   */
   fitShadows(center) {
-    const d = QUALITY[this.quality].shadowDist;
-    const cam = this.sun.shadow.camera;
-    cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
-    cam.near = 1; cam.far = d * 4.2;
-    // snap to texel grid so shadows don't shimmer while walking
-    const texel = (d * 2) / QUALITY[this.quality].shadow;
-    const sx = Math.round(center.x / texel) * texel;
-    const sz = Math.round(center.z / texel) * texel;
-    this.sun.target.position.set(sx, center.y, sz);
-    this.sun.position.copy(this.sunDir || new THREE.Vector3(0.5, 0.8, 0.3))
-      .multiplyScalar(d * 2.2).add(this.sun.target.position);
-    this.sun.target.updateMatrixWorld();
-    cam.updateProjectionMatrix();
+    const dir = this.sunDir || _fs[0].set(0.5, 0.8, 0.3);
+    const boxes = cascadeBoxes(this.quality);
+    // The view forward, flattened: a box that pitches with the camera would
+    // swing its whole footprint every time the player looks at their feet.
+    const fwd = _fs[1].set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1); else fwd.normalize();
+    for (let i = 0; i < this.cascades.length; i++) {
+      const L = this.cascades[i], d = boxes[i].radius, texel = boxes[i].texel;
+      const cam = L.shadow.camera;
+      cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
+      cam.near = 1; cam.far = d * 4.2;
+      _fs[2].copy(center).addScaledVector(fwd, d * 0.55);
+      // Light-space basis: the shadow camera looks down -dir with three's
+      // default up, so right = up × dir and camUp = dir × right.
+      _fs[3].set(0, 1, 0).cross(dir);
+      if (_fs[3].lengthSq() < 1e-6) _fs[3].set(1, 0, 0); else _fs[3].normalize();
+      _fs[4].copy(dir).cross(_fs[3]).normalize();
+      const u = Math.round(_fs[2].dot(_fs[3]) / texel) * texel - _fs[2].dot(_fs[3]);
+      const v = Math.round(_fs[2].dot(_fs[4]) / texel) * texel - _fs[2].dot(_fs[4]);
+      _fs[2].addScaledVector(_fs[3], u).addScaledVector(_fs[4], v);
+      L.target.position.copy(_fs[2]);
+      L.position.copy(dir).multiplyScalar(d * 2.2).add(_fs[2]);
+      L.target.updateMatrixWorld();
+      cam.updateProjectionMatrix();
+    }
   }
 
   addHeat(screenX, screenY, radius, strength) {

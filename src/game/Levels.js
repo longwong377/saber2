@@ -343,9 +343,41 @@ export const LEVELS = {
       // the sun 59° off the view axis instead of 25°, so the sky the player is
       // looking at is the blue part of the dome rather than the aureole.
       elevation: 26, azimuth: 239,
+      // `ambient` and `fillIntensity` are SMALLER KNOBS THAN THEY LOOK, and it
+      // is worth writing down before someone reaches for them to deepen a
+      // shadow. Metered on this block: the ground takes 3.59 of irradiance, of
+      // which the hemisphere is 0.081 and the fill 0.080 — 4.5% between them.
+      // The other 1.22 of the indirect is the environment probe, which is
+      // derived from the sky rather than authored here (ENV_INTENSITY in
+      // Engine). So a level cannot buy itself blacks from these two lines; the
+      // only things that put a dark pixel in a frame made of bare sand are cast
+      // shadow and the tone curve.
       sunColor: 0xfff2d6, sunIntensity: 7.2, ambient: 0.30,
       skyColor: 0xb4cdf3, groundColor: 0x8a6a44,
       fillColor: 0x93b6ff, fillIntensity: 0.34,
+      // fogColor IS THE NEAR AIR NOW, and only that.
+      //
+      // The complaint against this pair was exact: 0xd0c6b4 is hue 38° and the
+      // sand it hazes is hue 33°, five degrees apart, so a hundred and seventy
+      // metres of desert air changed the ground by essentially nothing. Half of
+      // that was the swatch and half was where distance CONVERGED — the level's
+      // own `skyColor`, one colour for the whole dome, and a saturated blue on
+      // the far side of neutral from the sand. Modelled on this atmosphere, the
+      // ground's saturation used to fall to 0.128 by 200 m and then climb back
+      // to 0.294 by 240 m at hue 226°: distance was not desaturating the desert,
+      // it was re-saturating it as a different colour.
+      //
+      // Past 50 m the ground now walks onto the DRAWN sky in the bearing it is
+      // being looked at (Terrain's uSkyStrip, resampled from ground.skyBand, the
+      // same array the dome and the far ranges use). Same sweep, after:
+      // 0.763 → 0.228 by 200 m, monotone the whole way, hue 26° → 24°. So this
+      // swatch sets the colour of the first hundred metres of air and the sky
+      // sets where everything past that goes; it is no longer free to disagree
+      // with the horizon it is standing under.
+      //
+      // (Both sweeps are linear-radiance saturation of the level's own ground
+      // swatch through the chunk's arithmetic — the same numbers the check
+      // "200 m of air takes the chroma out of the ground" holds.)
       fogColor: 0xd0c6b4, fogDensity: 0.0042, exposure: 0.86, bloom: 0.36,
       saturation: 1.10, lift: [0.002, 0.005, 0.015], gain: [1.01, 1.0, 1.01],
       // Thin, scorched cloud and a long line of dune ranges receding into the
@@ -577,6 +609,26 @@ export const LEVELS = {
       // rim (170 m) and the near mesas — so the one thing that makes distant
       // rock desaturate and shift toward the sky was barely acting on the only
       // distant rock in the frame. 0.0040 brings it to 208 m.
+      //
+      // Same note as the dune sea's: this swatch is the NEAR air. It was the
+      // second half of a collision — 0xc4b6a4 at hue 33° over sand at hue 30° —
+      // and the half that actually showed was where distance CONVERGED, the
+      // `skyColor` swatch above. Modelled over 20–240 m — this one in DISPLAY
+      // HSV, after the exposure and the grade, unlike the dune sea's note above
+      // which is in linear radiance — the ground's saturation used to fall to
+      // 0.057 by 160 m and climb back to 0.222 by 240 m at hue 222°; it now
+      // falls monotonically to 0.052 and stays inside hue 20–28° all the way.
+      //
+      // On the frame the same fix is worth much less than that, and it is worth
+      // writing down why. The pinned pose sees its own floor only to about
+      // 110 m — past that the bowl's own rim is in the way — and the rim wall
+      // itself stands 40–68 m UP, where the exponential haze layer has thinned
+      // enough to halve the optical depth: 18% of the rim's colour is air, against
+      // 37% for floor at the same 175 m. Measured on the rim, before → after:
+      // saturation 0.132 → 0.088, luminance 0.429 → 0.436, hue 348.3° → 345.5°.
+      // The chroma comes out as it should; the residual magenta is the rim's own
+      // SHADED rock under a blue sky probe, not the air in front of it, and no
+      // aerial term can or should fix that.
       fogColor: 0xc4b6a4, fogDensity: 0.0040, exposure: 0.9, bloom: 0.38,
       // lift is ADDED after gain, so it lands hardest on the blacks — which is
       // exactly where a sky-lit shadow's colour belongs. 0.014 in blue and not
