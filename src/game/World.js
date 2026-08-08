@@ -611,7 +611,11 @@ export class World {
           _v2.copy(p.position).setY(p.position.y + 1.7);
           const hit = segmentNear(e.saber.prevTip, e.saber.tip, _v1, _v2, 0.44);
           if (hit) {
-            p.damage(e.damage * e.duel.damageScale, hit, e, 'saber');
+            // attackDamage, NOT damage: damage() is Enemy's METHOD. The number
+            // it deals was renamed out of the way precisely because the two
+            // collided, and this caller was left behind — function * number is
+            // NaN, and Player.damage subtracts it straight into hp.
+            p.damage(e.attackDamage * e.duel.damageScale, hit, e, 'saber');
             _v3.subVectors(p.position, e.position).setY(0.3).normalize().multiplyScalar(6);
             p.velocity.add(_v3);
             this.particles.cutFlare(hit, null, e.saber.color.getHex(), 20);

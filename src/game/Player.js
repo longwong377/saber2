@@ -2101,6 +2101,20 @@ export class Player {
     if (!this.alive || this.invuln > 0) return false;
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
+    // A NaN here is unrecoverable and SILENT: hp becomes NaN, every later
+    // `hp <= 0` is false, and the player is immortal with a blank health bar
+    // for the rest of the run. It has happened — a caller passed Enemy's
+    // damage() method where it meant attackDamage. Refuse the hit instead of
+    // poisoning hp, and say so once, loudly, rather than throwing inside the
+    // frame (a throw here abandons the rest of the update and freezes the game
+    // while rAF keeps drawing — that has also happened).
+    if (!Number.isFinite(dmg)) {
+      if (!Player._warnedBadDamage) {
+        Player._warnedBadDamage = true;
+        console.error('Player.damage got a non-finite amount', amount, 'from', kind, source);
+      }
+      return false;
+    }
     this.hp -= dmg;
     // the dojo promises nothing there can kill you, and means it
     if (this.world.training) this.hp = Math.max(this.hp, 1);
