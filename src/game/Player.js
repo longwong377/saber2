@@ -492,8 +492,8 @@ export class Player {
     if (input.actHit('throw')) this.throwOrRecall(ctx);
     if (input.actHit('sense')) this.toggleSense(ctx);
     if (input.actHit('lightning') && this.boonMods.lightning) this.forceLightning(ctx);
-    if (this._powerHit(input, 'stasis', 'KeyB')) this.toggleStasis(ctx);
-    if (this._powerHit(input, 'rend', 'KeyN')) this.forceDisassemble(ctx);
+    if (input.actHit('stasis')) this.toggleStasis(ctx);
+    if (input.actHit('rend')) this.forceDisassemble(ctx);
     // One meaning for Mouse2 whichever way the Force is currently full: send
     // what I am holding at what I am looking at.
     if (input.actHit('hurl')) {
@@ -501,22 +501,6 @@ export class Player {
       else if (this.stasis.active) this.releaseStasis(ctx, true);
     }
     if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
-  }
-
-  /**
-   * A power whose action does not exist in ACTIONS yet.
-   *
-   * Bindings.js is somebody else's file this pass, and gameplay here asks for
-   * ACTIONS rather than key codes for a good reason — every control is
-   * rebindable and nothing special-cases a key. So this asks for the action
-   * first and only falls back to a default code when the bindings have never
-   * heard of it. The day `stasis` and `rend` join ACTIONS, rebinding starts
-   * working with no change on this side.
-   */
-  _powerHit(input, id, fallbackCode) {
-    if (input.bindings && input.bindings[id]) return input.actHit(id);
-    // _codeHit resolves both keyboard codes and Mouse*, which input.hit() does not.
-    return input._codeHit ? input._codeHit(fallbackCode) : input.hit(fallbackCode);
   }
 
   _applyViewMode() {
@@ -541,10 +525,13 @@ export class Player {
       neck.obj.traverse((o) => { if (o.isMesh) o.visible = !fp; });
     }
     this.camera.targetDistance = fp ? 0 : 3.05;
-    // A high guard reads well over the shoulder but leaves first person staring
-    // at the flat of the blade; drop it so the weapon crosses the lower view.
-    this.control.readyX = fp ? 0.26 : 0.30;
-    this.control.readyY = fp ? 0.02 : 0.30;
+    // Say WHICH resting pose, never what it is. These two lines used to carry
+    // their own copies of readyX/readyY, and the third-person one still said
+    // 0.30 — the exact value commit 2e23892 had lowered to 0.08 to stop the
+    // blade cursor resting 22 deg above screen centre. The fix landed in
+    // SaberController and was undone from here every time the view mode was
+    // applied, which includes every respawn. READY_GUARD owns the numbers now.
+    this.control.setViewMode(fp);
   }
 
   /* ── locomotion ──────────────────────────────────────────────────── */
@@ -877,6 +864,13 @@ export class Player {
       this._updateThrow(dt, ctx);
     }
 
+    // The same vector, published as well as passed. Saber.update consumes it to
+    // separate a swing from a walk for the whoosh and the stamina drain;
+    // Combat.captureSnapshot needs it for the same reason one layer down, and
+    // it is handed only the saber, so the saber is where it has to live. It is
+    // kept by reference — this.velocity is a persistent vector — so the frame
+    // is always current, and a blade nobody publishes one for reads as still.
+    this.saber.carrierVel = this.velocity;
     this.saber.update(dt, ctx.time, this.velocity);
     const swing = this.saber.swingSpeed;
     this.hum.set(swing, this.saber.contactStrain);

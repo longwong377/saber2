@@ -74,6 +74,35 @@ const THRUST_REACH = { hand: 0.34, guard: 0.40, standing: 1.55 };
 const FLOURISH = { dur: 0.62, turns: 2, radius: 0.30 };
 
 /**
+ * WHERE THE BLADE RESTS when you are not steering it, per view mode, in units
+ * of max deflection. This table is the ONLY place these two numbers exist:
+ * `readyX`/`readyY` are set from it and from nowhere else, and tools/checks/
+ * feel.mjs fails the build if any other file assigns to them.
+ *
+ * That check is not paranoia. Commit 2e23892 lowered the third-person `y` from
+ * 0.30 to 0.08 precisely to answer "the cursor feels way too high" — and
+ * Player._applyViewMode set it straight back to 0.30 two lines of another file
+ * away, so the fix shipped and was undone in the same build. Measured: 0.30 ×
+ * maxPitch 1.28 rad = 22.0 deg above screen centre, which is where every
+ * deflection had to start by dragging back down to the middle before you could
+ * begin aiming.
+ *
+ *   third  0.08 → 5.9 deg up. A hint of high guard rather than a handicap; a
+ *          guard IS carried high, but the blade cursor is what you aim with and
+ *          it belongs near the middle of the screen.
+ *   first  0.02 → 1.5 deg up. Over-the-shoulder height reads well in third
+ *          person but leaves first person staring at the flat of the blade, so
+ *          it drops further and crosses the lower view.
+ *
+ * `x` is the same story sideways: 0.30 × maxYaw 1.62 = 27.8 deg right, pulled
+ * in slightly in first person because the weapon is nearer the lens.
+ */
+export const READY_GUARD = {
+  third: { x: 0.30, y: 0.08 },
+  first: { x: 0.26, y: 0.02 },
+};
+
+/**
  * The angular term integrates as  θ'' = (kP/I)·θ_err − kD·θ'.
  * Critical damping is therefore kD = 2·√(kP/I); everything here sits around a
  * damping ratio of 0.6, which is what gives the blade its weight — a flick
@@ -101,17 +130,12 @@ export class SaberController {
     this.deadzone = 0.24;
     this.scheme = opts.scheme ?? 'hold';     // 'hold' | 'free'
 
-    // Where the blade sits when you are not steering it: a high right guard.
-    // Releasing the mouse returns to this, rather than leaving the blade
-    // wherever the last flick abandoned it.
-    this.readyX = 0.30;
-    // 0.30 rested the guard 22 degrees ABOVE screen centre, which is where "the
-    // cursor feels way too high" came from: every deflection started by dragging
-    // back down to the middle before you could even begin aiming. A guard is
-    // carried high, but the blade cursor is what you aim with, so it belongs
-    // near the middle of the screen — 0.08 is 6 degrees up, a hint of high
-    // guard rather than a handicap.
-    this.readyY = 0.08;
+    // Where the blade sits when you are not steering it. Releasing the mouse
+    // returns to this, rather than leaving the blade wherever the last flick
+    // abandoned it. Set from READY_GUARD and from nowhere else — call
+    // setViewMode() to change it, never assign readyX/readyY directly.
+    this.readyX = 0; this.readyY = 0;
+    this.setViewMode(false);
     this.recentre = 5.5;     // rad/s of easing back to the ready guard
     // The camera does NOT move while you are steering the blade. A full
     // left-to-right slash has to fit INSIDE the cone, or every slash spills
@@ -228,6 +252,18 @@ export class SaberController {
 
   setScheme(s) { this.scheme = s; }
 
+  /**
+   * The blade cursor's resting place, chosen by view mode. The one door onto
+   * readyX/readyY: a caller says WHICH POSE it wants, never what the numbers
+   * are, so the pair can only ever be tuned in READY_GUARD above.
+   */
+  setViewMode(firstPerson) {
+    const r = firstPerson ? READY_GUARD.first : READY_GUARD.third;
+    this.readyX = r.x;
+    this.readyY = r.y;
+    return this;
+  }
+
   /** Guard direction in world space. */
   guardDir(aimQuat, out = new THREE.Vector3()) {
     const yaw = this.gx * this.maxYaw;
@@ -239,28 +275,20 @@ export class SaberController {
   /* ── input ─────────────────────────────────────────────────────────── */
 
   /**
-   * Two actions this file introduces — a lateral guard stance and a flourish —
-   * have no entry in Bindings.js yet, and an unbound action is silently dead.
-   * Seeding the defaults here keeps them rebindable through `input.bindings`
-   * and keeps the game playable in the meantime; the permanent home for them is
-   * the ACTIONS table, which is another lane's file.
-   */
-  _ensureBindings(input) {
-    const b = input.bindings;
-    if (!b || this._boundOnce) return;
-    this._boundOnce = true;
-    if (!b.stance) b.stance = ['KeyB'];        // hold: lay the blade across the body
-    if (!b.flourish) b.flourish = ['KeyN'];    // tap: idle twirl, no combat effect
-  }
-
-  /**
    * Consume mouse motion. Returns the camera yaw/pitch delta the blade wants
    * the view to follow (Free Blade) — the caller applies it to the camera.
+   *
+   * The two actions this file reads that nothing else does — `stance` and
+   * `flourish` — are ordinary entries in Bindings.js like every other control.
+   * They used to be seeded onto KeyB and KeyN here at runtime behind a one-shot
+   * flag, which meant they were absent from the ACTIONS table: not rebindable,
+   * not listed in the options screen, and silently sharing their keys with the
+   * stasis field, rend, and the dojo's own lesson navigation. A feature the
+   * player cannot find does not exist.
    */
   applyInput(input, dt, ctx) {
     const cam = { yaw: 0, pitch: 0 };
     if (this.locked) return cam;
-    this._ensureBindings(input);
 
     // One control at a time. Hold the mouse button and the mouse IS the blade —
     // the camera does not move. Let go and the mouse is the camera again, and

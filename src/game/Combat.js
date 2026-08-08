@@ -16,6 +16,9 @@ import { segmentCapsule } from './Bolts.js';
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3();
+/** The carrier velocity of a blade nobody has told us is being carried. */
+const _STILL = new THREE.Vector3();
 
 export const GRADE = { BLOCK: 0, DEFLECT: 1, RETURN: 2, PERFECT: 3 };
 export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
@@ -156,6 +159,9 @@ export class CatchWindow {
     this.auto = 0;          // seconds left on the auto-guard cone
     this.heldAtCatch = false;
     this.origin = new THREE.Vector3();
+    // The chest the cone hangs off, KEPT BY REFERENCE rather than copied, so it
+    // is wherever the body is now. See _followBody.
+    this.anchor = null;
     this.axis = new THREE.Vector3(0, 0, -1);
     this.caught = 0;        // lifetime counters, for the HUD and for tests
     this.autoCaught = 0;
@@ -165,15 +171,49 @@ export class CatchWindow {
   get open() { return this.t > 0; }
   get count() { return this.held.length; }
 
+  /**
+   * Bring the cone's origin back onto the body. The cone is a 1.25 m sphere
+   * around your chest, and the chest moves: pinning the origin at the position
+   * you happened to be standing in when the catch landed left the guard behind
+   * in the world and you walked out of it. Measured, sprinting for the cone's
+   * own 0.40 s lifetime: the origin ended up 2.98 m behind the chest — more
+   * than twice the sphere's radius — and 14 of the next 24 bolts arriving
+   * head-on at the actual chest fell outside a cone that was still nominally
+   * open. The AXIS is a different matter and deliberately does not follow: it
+   * points back down the line the bolt came in on and stays there, because the
+   * whole point of the window is that you turn to look somewhere else.
+   */
+  _followBody() { if (this.anchor) this.origin.copy(this.anchor); }
+
   /** A guard descriptor for guardIntercept, or null when the cone is shut. */
   guard() {
     if (this.auto <= 0) return null;
+    this._followBody();
+    // origin and axis are handed over live, so a descriptor cached for the
+    // frame keeps tracking the body for the rest of it.
     return { origin: this.origin, axis: this.axis, cone: CATCH.autoCone, radius: CATCH.autoRadius };
   }
 
   /**
    * Add a bolt. `manual` means the player put the blade on it themselves, which
    * is the only thing that opens (or re-opens) the auto-guard cone.
+   *
+   * …except that `manual` is not actually that claim. Callers set it from which
+   * MECHANISM intercepted the bolt — `manual: !hit.auto`, i.e. "the blade sweep
+   * found this one, not the cone" — and the rule the design leans on is about
+   * whether the player DROVE the blade at it. Those came apart badly: with the
+   * gate reading world-frame speed, a completely rigid wrist carried along at
+   * walking pace answered 19 bolts by "hand" in ten seconds and held the cone
+   * open for 64% of them, off a wrist that never moved. One deflect chaining
+   * through a stream forever is the exact failure autoGuard's comment says the
+   * rule exists to prevent, and it was reachable by walking.
+   *
+   * So when the contact itself is available — World passes the snapshot in as
+   * `entry.snap` — the window checks it instead of taking the caller's word.
+   * `snap.driven` is the blade half alone, so an auto-guard catch off a parked
+   * blade cannot re-arm the cone and neither can a bolt that merely met a blade
+   * being carried past it. Without a snapshot (hand-built entries in the
+   * checks) the stated flag still decides.
    */
   add(entry, { manual = true, bladeHeld = false, chest = null, incoming = null } = {}) {
     if (this.held.length >= CATCH.maxHeld) return false;
@@ -182,8 +222,12 @@ export class CatchWindow {
     // Refresh the hold, but never past the ceiling on the whole window.
     this.t = Math.max(this.t, Math.min(CATCH.hold, Math.max(0, CATCH.maxOpen - this.age)));
     this.caught++;
-    if (manual) {
+    const snap = entry && entry.snap;
+    const drove = snap && typeof snap.driven === 'boolean' ? snap.driven && snap.auto !== true : manual;
+    if (manual && drove) {
       if (chest && incoming) {
+        // Hold the chest itself, not a copy of where it was — see _followBody.
+        this.anchor = chest;
         this.origin.copy(chest);
         // The cone points back down the line the bolt came in on, and it stays
         // there. It cannot follow the camera: the entire point of the window is
@@ -192,13 +236,13 @@ export class CatchWindow {
         this.axis.copy(incoming).negate().normalize();
       }
       this.auto = CATCH.autoGuard;
-    } else this.autoCaught++;
+    } else if (!manual) this.autoCaught++;
     return true;
   }
 
   /** @returns true on the frame the throw should happen. */
   update(dt, bladeHeld) {
-    if (this.auto > 0) this.auto = Math.max(0, this.auto - dt);
+    if (this.auto > 0) { this.auto = Math.max(0, this.auto - dt); this._followBody(); }
     if (!this.open) return false;
     this.age += dt;
     this.t -= dt;
@@ -208,8 +252,10 @@ export class CatchWindow {
     return false;
   }
 
+  // clear() ends the HOLD, not the cone — the cone is 0.40 s off the catch that
+  // opened it and outlives the throw on purpose — so the anchor stays too.
   clear() { this.held.length = 0; this.t = 0; this.age = 0; this.heldAtCatch = false; }
-  reset() { this.clear(); this.auto = 0; this.caught = 0; this.autoCaught = 0; }
+  reset() { this.clear(); this.auto = 0; this.anchor = null; this.caught = 0; this.autoCaught = 0; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -229,10 +275,36 @@ export class CatchWindow {
  * merely got in the way still BLOCKS, and a block scatters immediately as it
  * always has. That is what stops catch-and-throw becoming hold-to-win — a
  * parked blade cannot catch anything at all.
+ *
+ * EVERY BLADE NUMBER HERE IS MEASURED IN THE BODY'S FRAME, not the world's.
+ * `saber.carrierVel` is the velocity of the body carrying the blade, published
+ * by whoever holds it (Player does it beside the saber.update that already
+ * takes the same vector for swingSpeed); absent, it is zero and this is the
+ * plain world-frame reading it always was.
+ *
+ * This is not a refinement, it was the difference between a mechanic and a
+ * bug. Measured on a completely rigid wrist — no mouse input at all — with the
+ * gate reading world speed:
+ *
+ *   standing     0.00 m/s  closing 0.00  → not caught.   Correct.
+ *   crouch-walk  2.21 m/s  closing 2.21  → CAUGHT.       Nothing moved but the feet.
+ *   walk         4.60 m/s  closing 4.60  → CAUGHT.
+ *   sprint       7.45 m/s  closing 7.45  → CAUGHT.
+ *
+ * The thresholds are 3.2 m/s and 1.6 m/s and ordinary walking is 4.6, so every
+ * gait above a crouch cleared them on translation alone. Saber.js had already
+ * learned this once for swingSpeed — "sprinting moves the tip at 7 m/s while
+ * the wrist is perfectly still" — and the grade never got the same treatment.
  */
 export function captureSnapshot(bolt, saber, hit) {
   const bladeT = clamp(hit.bladeT, 0, 1);
-  const bladeSpeed = hit.bladeSpeed ?? saber.speedAt(bladeT);
+  const carrier = saber.carrierVel || _STILL;
+  _c1.subVectors(saber.baseVelocity, carrier);
+  _c2.subVectors(saber.tipVelocity, carrier);
+  // Same shape as saber.speedAt(), one frame down: lerp of the two END speeds
+  // rather than the speed of the lerped velocity, so with no carrier this is
+  // bit-for-bit the number it used to be.
+  const bladeSpeed = hit.bladeSpeed ?? lerp(_c1.length(), _c2.length(), bladeT);
   const boltDir = new THREE.Vector3().copy(bolt.vel).normalize();
 
   // surface normal: radial from the blade axis out toward the bolt
@@ -245,14 +317,22 @@ export function captureSnapshot(bolt, saber, hit) {
   normal.normalize();
   if (normal.dot(boltDir) > 0) normal.negate();     // normal must face the bolt
 
-  // blade velocity at the contact point
-  const bladeVel = new THREE.Vector3().lerpVectors(saber.baseVelocity, saber.tipVelocity, bladeT);
+  // blade velocity at the contact point, again in the body's frame
+  const bladeVel = new THREE.Vector3().lerpVectors(_c1, _c2, bladeT);
   const closing = -bladeVel.dot(boltDir);           // >0 means driving into the bolt
 
+  // `driven` is the blade half of the claim on its own, and it is deliberately
+  // NOT the same thing as `caught`: the auto-guard cone catches off a parked
+  // blade — that is what it is for — so `caught` is true there and `driven` is
+  // false. The catch window needs them apart, because the rule that keeps the
+  // cone from chaining forever is about which catches the player DROVE, and a
+  // bolt that merely met a blade being carried past it is not one of them.
+  const driven = bladeSpeed > 3.2 || closing > 1.6;
+
   return {
-    bladeT, bladeSpeed, closing, boltDir, normal, bladeVel,
+    bladeT, bladeSpeed, closing, boltDir, normal, bladeVel, driven,
     point: new THREE.Vector3().copy(hit.point),
-    caught: hit.auto === true || bladeSpeed > 3.2 || closing > 1.6,
+    caught: hit.auto === true || driven,
     auto: hit.auto === true,
   };
 }

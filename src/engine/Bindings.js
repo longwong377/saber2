@@ -38,6 +38,17 @@ export const ACTIONS = [
   { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true },
   { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'] },
   { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['CapsLock'],   hold: true },
+  // Digit1/Digit2, not KeyB/KeyN. These two were seeded onto B and N at runtime
+  // by SaberController, which meant they were not in this table, so they never
+  // reached the options screen, could not be rebound, and could not be seen to
+  // COLLIDE: B already fired the stasis field and stepped the dojo lesson back,
+  // N already fired rend and skipped the lesson. One press, three systems.
+  // Every letter in the left-hand cluster is spoken for, and a guard stance is
+  // a HOLD you keep while strafing, so it has to stay under the left hand: the
+  // digit row is the only thing left there that nothing else claims. Mouse5 is
+  // the thumb button and is the nicer way to hold it if you have one.
+  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true },
+  { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'] },
 
   { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3', 'KeyT'], hold: true },
   { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'] },
@@ -47,6 +58,12 @@ export const ACTIONS = [
   { id: 'throw',      group: 'Force',    label: 'Throw / recall saber', keys: ['KeyH'] },
   { id: 'sense',      group: 'Force',    label: 'Force sense',       keys: ['KeyC'] },
   { id: 'lightning',  group: 'Force',    label: 'Force lightning',   keys: ['KeyZ'] },
+  // Stasis and rend were read straight off KeyB and KeyN inside Player, past
+  // this table, so they had the same disease: no menu row, no rebind, and no
+  // way for findConflict to warn that something else wanted the key. Their
+  // default keys are unchanged — what changes is that they are now sayable.
+  { id: 'stasis',     group: 'Force',    label: 'Stasis field',      keys: ['KeyB'] },
+  { id: 'rend',       group: 'Force',    label: 'Rend apart',        keys: ['KeyN'] },
 
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },
