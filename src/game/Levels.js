@@ -292,17 +292,67 @@ export const LEVELS = {
     pool: ['b1', 'b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker'],
     groundColor: 0xd8c09a,
     spawnRadius: [38, 62],
+    /**
+     * The dune sea measured FLATTER than the arena, and it is the level whose
+     * whole subject is one material: on the same pinned pose, 50% of the frame
+     * inside 3° of hue and 80% inside 8°, with every one of nine regions —
+     * sky, painted ranges, far dune, near rock, lit sand, shaded sand —
+     * between 33.5° and 39.2°.
+     *
+     * The tell is the last pair. Sunlit sand 36.1° and SHADED sand 36.1°, and
+     * over the whole ground band shade ran 0.114 LOWER in B/R than light.
+     * Shadow that is warmer than sunlight is not a stylistic choice, it is
+     * backwards: shade outdoors is lit by the sky and by nothing else — the
+     * canyon, measured with the same instrument, runs +0.462. The grade was
+     * doing it here, and it did not need a screenshot to see: a red lift
+     * of 0.010 against a blue lift of 0.006 puts a warm floor under every dark
+     * pixel, and a gain of [1.05, 1.0, 0.93] then warms what is left.
+     *
+     * The sky MODEL is untouched, and was checked rather than assumed: at the
+     * authored 8.5 / 1.5 / 0.012 the drawn dome runs B/R 2.38 at the top-left
+     * of this pose down to 1.00 at the aureole, which is a proper blue-to-white
+     * gradient, and thinning it to 6.5 / 2.2 / 0.008 measured WORSE (2.38 →
+     * 1.88). The blue was always there — it was the deck's warm bases and the
+     * grade on top of them that buried it, and the sky region boxes that
+     * measured 34° were all sitting on cloud.
+     *
+     * AFTER, same pose, same instrument:
+     *
+     *                                  before        after
+     *     50% of the frame inside        3°            6°
+     *     80% of the frame inside        8°          173°
+     *     nine regions span            5.7°        174.7°
+     *     ground band, lit vs shade   ΔB/R −0.114   ΔB/R −0.010
+     *
+     * Two honest caveats. The ground-band split is still very slightly the
+     * wrong sign, and on THIS level that measurement is weak: the dune sea has
+     * so little cast shadow in frame that its bright quartile is mostly hazed
+     * distance rather than sunlit ground, so the number is reading depth as
+     * much as light. And the frame's tonal range barely moved, 1.78:1 → 1.69:1
+     * — the dune sea is a low-contrast subject and always will be.
+     */
     atmosphere: {
       turbidity: 8.5, rayleigh: 1.5, mie: 0.012, mieG: 0.83,
-      elevation: 26, azimuth: 155,
+      // 155° was within 6° of PARALLEL to the dune train. The height field runs
+      // its dunes along (0.86, 0.51) with the slip face on the downwind side,
+      // so the normal of the face that should be in shadow points along that
+      // vector — and a sun at 155° raked along the crest lines instead of
+      // across them, which is the one bearing that gives a dune sea no
+      // modelling at all. 239° is perpendicular to the train: windward faces
+      // lit, slip faces in shadow, and (because the pinned pose looks down −z)
+      // the sun 59° off the view axis instead of 25°, so the sky the player is
+      // looking at is the blue part of the dome rather than the aureole.
+      elevation: 26, azimuth: 239,
       sunColor: 0xfff2d6, sunIntensity: 7.2, ambient: 0.30,
-      skyColor: 0xcfe0f5, groundColor: 0x8a6a44,
-      fogColor: 0xd8c8a4, fogDensity: 0.0042, exposure: 0.86, bloom: 0.36,
-      saturation: 1.02, lift: [0.010, 0.008, 0.006], gain: [1.05, 1.0, 0.93],
+      skyColor: 0xb4cdf3, groundColor: 0x8a6a44,
+      fillColor: 0x93b6ff, fillIntensity: 0.34,
+      fogColor: 0xd0c6b4, fogDensity: 0.0042, exposure: 0.86, bloom: 0.36,
+      saturation: 1.10, lift: [0.002, 0.005, 0.015], gain: [1.01, 1.0, 1.01],
       // Thin, scorched cloud and a long line of dune ranges receding into the
       // heat. Sparse cover on purpose — a desert sky is mostly empty, and what
-      // sells the distance here is the horizon, not the clouds.
-      cloudCover: 0.44, cloudLit: 0xfff0d4, cloudDark: 0xbba98c,
+      // sells the distance here is the horizon, not the clouds. Warm tops, cool
+      // bases: a cumulus base never sees the sun.
+      cloudCover: 0.44, cloudLit: 0xfff0d4, cloudDark: 0xa6afbc,
       cloudWindDir: 2.7, cloudWindSpeed: 0.7,
       horizonAmount: 0.85, horizonScale: 0.75, horizonColor: 0x9a7f5c,
     },
@@ -442,16 +492,102 @@ export const LEVELS = {
     pool: ['b1', 'b1', 'trooper', 'b2', 'droideka', 'acolyte', 'beast', 'walker', 'sniper'],
     groundColor: 0xcfae82,
     spawnRadius: [30, 52],
+    /**
+     * THE ARENA WAS ONE HUE, and the measurement that says so.
+     *
+     * Measured on the pinned pose (tools/arena-lane.mjs frame --level arena),
+     * over every pixel with enough chroma for a hue to mean anything:
+     *
+     *     50% of the frame inside  5° of hue
+     *     80% of the frame inside 13°
+     *
+     * — sky 33.9°, mesa ring 29.4°, masonry 34.6°, sunlit sand 35.4°. A desert
+     * is not monochrome, and nothing in that list is separated from anything
+     * else, so the eye has no structure to read and the image goes flat.
+     *
+     * Four things were doing it, in order of how much:
+     *
+     *  1. THE GRADE'S GAIN, [1.04, 1.0, 0.95]. It multiplies red up and blue
+     *     down on every pixel in the frame, which pushes warm things further
+     *     into warm and drags cool things toward neutral and past it. Measured
+     *     through the engine's own sky model: the sunward skyline comes off the
+     *     display shoulder at linear (0.995, 0.996, 0.991) — dead NEUTRAL, as a
+     *     solar aureole should be — and the band the pinned pose actually shows,
+     *     17°–30° of elevation, is barely less so. This gain is what turned that
+     *     neutral into 33° orange. A blue sky was being painted tan in post.
+     *     Warmth in the highlights is already the split tone's job (uHighTint
+     *     is 1.035/1.000/0.955 and applies only above luma 0.12→0.72); doing it
+     *     again here, flat across the whole range, is what closed the gap.
+     *  2. THE SUN WAS 30° OFF THE VIEW AXIS. At azimuth 210 the default look
+     *     across the bowl stared into the solar aureole, which is the one part
+     *     of a clear sky that is legitimately white — so the sky the player saw
+     *     was a white-to-tan wash and the ground was flat-lit. 248° puts the
+     *     sun 68° to the left: the sky ahead is the blue part of the dome, and
+     *     everything standing up in the bowl gets a lit side and a shadow side.
+     *  3. NOT THE SKY MODEL. Worth writing down because it was the obvious
+     *     suspect and it is innocent: turbidity 3.2 / rayleigh 2.9 / mie 0.005
+     *     was tried, and measured WORSE — the drawn dome's zenith B/R fell from
+     *     3.44 to 2.61, and the physical sky's zenith-to-skyline span fell from
+     *     16.8:1 to 9.3:1, which is under the 12:1 the IBL needs to carry any
+     *     direction at all (lighting.mjs pins it, and it caught this). Raising
+     *     rayleigh brightens the zenith, which is the FLOOR of that ratio, so
+     *     "make the sky bluer" and "keep the sky's dynamic range" pull opposite
+     *     ways. The authored 6 / 2.4 / 0.010 stands.
+     *  4. NOTHING WAS COOL IN SHADE. lift was neutral at [0.008, 0.007, 0.008]
+     *     and the fill was left on its default, so shadowed sand differed from
+     *     sunlit sand by 0.134 in B/R over the ground band and by 1.7° of hue.
+     *     Real shadowed sand is lit by the sky and nothing else. lift now puts
+     *     a blue-violet foot under the blacks, and the sky bounce is authored
+     *     rather than defaulted: 0x8fb4ff at 0.34 against the default 0x9fc4ff
+     *     at 0.25.
+     *
+     * AFTER, same pose, same regions, same instrument:
+     *
+     *                                  before        after
+     *     50% of the frame inside        5°           10°
+     *     80% of the frame inside       13°          171°
+     *     sky, anti-sun               201° / 0.35   208° / 0.57
+     *     painted skyline             196° / 0.18   211° / 0.36
+     *     mesa ring                    29° / 0.17   349° / 0.13 · 17° / 0.30
+     *     sunlit sand                  35° / 0.49    36° / 0.48
+     *     ground band, lit vs shade   ΔB/R 0.134    ΔB/R 0.147
+     *
+     * One number went the wrong way and it is a real cost: the ground band's
+     * tonal range fell from 3.26:1 to 2.77:1. Part is the blue lift raising the
+     * blacks; part is that a cross-lit floor has less of its area at full N·L
+     * than one with the sun behind the camera. It is why the fill sits at 0.34
+     * and the lift's blue at 0.014 rather than the 0.45 and 0.020 first tried —
+     * those measured 2.50:1 for no more hue separation at all.
+     */
     atmosphere: {
       turbidity: 6, rayleigh: 2.4, mie: 0.01, mieG: 0.8,
-      elevation: 34, azimuth: 210,
-      sunColor: 0xffe8c0, sunIntensity: 7.0, ambient: 0.30,
-      skyColor: 0xc0d4ee, groundColor: 0x7a6244,
-      fogColor: 0xc8b291, fogDensity: 0.0034, exposure: 0.9, bloom: 0.38,
-      saturation: 1.06, lift: [0.008, 0.007, 0.008], gain: [1.04, 1.0, 0.95],
+      elevation: 34, azimuth: 248,
+      // Warm light against cool shade is the pair, so both ends are authored:
+      // the sun a little warmer than it was, and the two sky terms bluer.
+      sunColor: 0xffe4b0, sunIntensity: 7.0, ambient: 0.34,
+      skyColor: 0xa8c6f6, groundColor: 0x7a6244,
+      // The sky bounce onto everything the sun cannot reach. Engine points it
+      // opposite the sun for us; what it needs from the level is a colour that
+      // is actually the sky's and a strength that reads. 0.34, not the 0.45
+      // first tried: at 0.45 the shadows filled in far enough to take the
+      // frame's tonal range from 3.26:1 to 2.50:1, which is paying for hue
+      // separation with value separation.
+      fillColor: 0x8fb4ff, fillIntensity: 0.34,
+      // 0.0034 put the half-light distance at 245 m, which is further than the
+      // rim (170 m) and the near mesas — so the one thing that makes distant
+      // rock desaturate and shift toward the sky was barely acting on the only
+      // distant rock in the frame. 0.0040 brings it to 208 m.
+      fogColor: 0xc4b6a4, fogDensity: 0.0040, exposure: 0.9, bloom: 0.38,
+      // lift is ADDED after gain, so it lands hardest on the blacks — which is
+      // exactly where a sky-lit shadow's colour belongs. 0.014 in blue and not
+      // the 0.020 first tried, for the same reason as the fill: past about
+      // 0.016 it stops tinting the shadows and starts raising the black point.
+      saturation: 1.16, lift: [0.002, 0.005, 0.014], gain: [1.00, 1.0, 1.025],
       // Mesas ringing the bowl, so the arena sits INSIDE a landscape rather
-      // than on top of an empty disc.
-      cloudCover: 0.52, cloudLit: 0xfff4e2, cloudDark: 0xa89880,
+      // than on top of an empty disc. The deck's bases are a COOL grey now:
+      // a cumulus base is lit by sky and ground bounce, never by the sun, and
+      // an authored warm base was the third large warm surface in the frame.
+      cloudCover: 0.44, cloudLit: 0xfff4e2, cloudDark: 0x9aa2b4,
       cloudWindDir: 1.1, cloudWindSpeed: 0.85,
       horizonAmount: 1.15, horizonScale: 1.25, horizonColor: 0x8d7452,
     },

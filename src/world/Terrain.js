@@ -80,7 +80,8 @@ export const TERRAIN_PRESETS = {
     sandColor: 0x9e7a42, rockColor: 0x6b5d4c,
     maps: 'sand',
     gritColor: 0x6d5430, rockColor2: 0x8a7358,
-    dustColor: 0xbb9459, crustColor: 0xa89467,
+    // A salt pan is dried silt, not sand: pale, and grey rather than tan.
+    dustColor: 0xbb9459, crustColor: 0xa4a691,
     // Slope here is 1 − cos θ, so 0.13 is 30° and 0.29 is 45°. A dune sea is
     // sand all the way up — the slip faces get coarse grit, never stone.
     slopeBands: [0.30, 0.52, 0.11, 0.24],
@@ -92,7 +93,14 @@ export const TERRAIN_PRESETS = {
     // Grain sorting reads as HUE, not only as value: a deflation pavement is
     // grey-brown gravel, a fresh drift sheet is pale and almost colourless.
     // Reusing grit/dust here left the whole map on one hue at three brightnesses.
-    lagColor: 0x6f6046, sheetColor: 0xc4a87e,
+    //
+    // …which is what 0x6f6046 still was. Measured as an authored swatch it is
+    // hue 38.0° against the base sand's 36.6° — one and a half degrees apart,
+    // so the "hue" half of the claim above was never true on this preset and
+    // the 165 m patchwork read as a brightness ramp. 0x63645a is 66°: still a
+    // dark, dusty, unsaturated gravel, but on the other side of the sand's hue
+    // from the pale sheet, which is the whole point of the pair.
+    lagColor: 0x63645a, sheetColor: 0xc4a87e,
     ripple: 1.15,
     detail: [0.95, 34],
     height(x, z) {
@@ -134,10 +142,43 @@ export const TERRAIN_PRESETS = {
 
   arena: {
     scale: 460, res: 300, waterLevel: -999,
-    sandColor: 0x9c7b48, rockColor: 0x7d6b52,
+    /* THE PALETTE WAS ONE HUE, in the source, before any light touched it.
+     * Measured as HSV hue of the authored swatches:
+     *
+     *   grit 32.6°  dust 35.2°  sand 36.4°  sheet 37.5°  lag 37.8°
+     *   rock 34.9°  rock2 34.6°  crust 43.0°
+     *
+     * Eight materials inside eleven degrees, and the two of them that are not
+     * sand at all — the stone the level's own blurb rings the bowl with, and
+     * the deflation pavement the grain-sorting layers exist to show — sat
+     * within half a degree of the sand. That is why the rendered frame came
+     * out with 80% of its pixels inside 13° of hue: the light was not flattening
+     * a varied ground, the ground was already flat.
+     *
+     * ROCK IS NOT SAND. It is a different material with a different history, and
+     * a bedded wall is the one place a landscape shows you two rocks at once.
+     * The two bands now bracket the sand instead of sitting on it: an iron-
+     * stained red-brown bed at 26.5° and a cool grey-blue one at 218.6°, the
+     * usual sandstone-over-shale pair. Luminance is held on the warm band —
+     * 0.153 linear against the old 0.154 — so nothing about the rim's exposure
+     * moves; only its hue does.
+     *
+     * The cool band's VALUE is the number that had to be measured rather than
+     * picked. rockTint is mix(rock, rock2, bandR) × (0.72 + bandR × 0.58), so
+     * the same per-bed hash that selects the cool rock also brightens it by up
+     * to 1.30: at a first try of 0x5f646d (linear 0.126, i.e. 0.83× the warm
+     * bed) the product put the cool beds 1.5× the warm ones and the rim came
+     * out as white stripes across a red cliff — a layer cake, not a wall.
+     * 0x5a5f68 is 0.114, which is 0.75× the warm bed, and the 1.30 brings the
+     * two back to within 3% of each other. The bands then read as a change of
+     * ROCK rather than as a change of exposure.
+     */
+    sandColor: 0x9c7b48, rockColor: 0x8b6547,
     maps: 'sand',
-    gritColor: 0x6a5334, rockColor2: 0x554a3b,
-    dustColor: 0xb88f55, crustColor: 0x9c8f6e,
+    gritColor: 0x6a5334, rockColor2: 0x5a5f68,
+    // …and the pan is not sand either: a silt flat is what is left when the
+    // fines settle out of standing water, and it dries pale and grey.
+    dustColor: 0xb88f55, crustColor: 0xa2a695,
     // "A bowl of sand ringed by STONE". The rim rises 27 m over 56, which is
     // 1-cos 0.11 — under the old rock band, so the amphitheatre wall came out
     // as pale sand cloth and the level's own blurb was a lie about it.
@@ -153,7 +194,11 @@ export const TERRAIN_PRESETS = {
     // loose ground to 6.5%, under the floor the checks hold this level to.
     macro: [140, 0.75, 0.50, 1.05],
     rockUpland: [0.16, 5, 26],
-    lagColor: 0x615746, sheetColor: 0xc0a880,
+    // A deflation pavement is desert varnish on coarse gravel — olive-grey,
+    // never tan. 0x615746 was the sand at 38° with the value turned down, so
+    // the whole 140 m grain-sorting patchwork read as a brightness ramp; this
+    // is 71°, and the sheet it is bracketed against stays warm at 37°.
+    lagColor: 0x5e6055, sheetColor: 0xc0a880,
     ripple: 0.95,
     detail: [0.95, 30],
     height(x, z) {
@@ -439,9 +484,18 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
    * THREE THINGS VARY, not one, and that is the difference between a ripple
    * field and corduroy. Scrambling only the phase and the bearing leaves one
    * wavelength and one amplitude edge to edge, and the eye counts the repeat
-   * off the SPACING long before it notices the angle: measured on a shallow
-   * plate, one row of sand autocorrelated at 0.61 against itself 210 px away.
-   * A single number that high is a printed pattern, not a landscape.
+   * off the SPACING long before it notices the angle.
+   *
+   * This block used to cite "one row of sand autocorrelated at 0.61 against
+   * itself 210 px away" as the reason. That number does not survive being
+   * measured properly and should not be quoted again: 210 px on the plate it
+   * came from is many times the 3.3 m tile, the plate was a shallow view of
+   * ground receding to the horizon rather than a top-down one, and a 41 px box
+   * detrend leaves a dune's own shading in the residual. On a true orthographic
+   * plate (see the lag-plane table further down) the tile leaves no trace at
+   * all, even with the hex grid switched off. What the variation below actually
+   * buys is measured there, and it is a 10% drop in the ground's self-similarity
+   * at the RIPPLE scale — not the removal of a seam, because there was no seam.
    *
    *   · BEARING, from a low-frequency flow field sampled at the cell centre
    *     (~120 m), so the crest lines sweep across the field the way a real
@@ -627,10 +681,48 @@ const TERRAIN_FRAG_MAP = /* glsl */`
    * is mostly noise before the change and mostly signal after, which is what
    * the coherence rising to 0.42 says.
    *
-   * (What is NOT claimed: neither version shows a peak in the lag plane at the
-   * 3.3 m tile distance. The strongest off-centre correlation in all four
-   * plates is the ripple harmonic at about a metre. The tile was not visible as
-   * a seam at this range; it was visible as one bearing everywhere.)
+   * AND THE TILE WAS NEVER THE PROBLEM. That last paragraph used to be a
+   * hedge; it is now a measurement, made on a TRUE orthographic top-down plate
+   * rendered with its own camera into its own float target rather than by
+   * trying to move the game's camera and losing the race with the game's own
+   * update (tools/arena-lane.mjs plate). 512 px over 48 m of the arena floor,
+   * axis-aligned to the ripple frame so a lag in pixels is a lag in the tile's
+   * own coordinates, high-passed in the frequency domain at σ = 2.5 m — which
+   * keeps 100% of the 3.33 m tile, 86% of the 7.94 m cross-tile and 7% of a
+   * 40 m landform — and autocorrelated on a zero-padded FFT:
+   *
+   *                              ACF(λ,0)   best in the 0.72–1.52λ band   peak
+   *   shipped                      0.021       0.100 @ 2.43 m      0.307 @ 0.94 m
+   *   phase scramble only          0.035       0.135 @ 2.33 m      0.346 @ 0.94 m
+   *   hex collapsed to ONE cell    0.046       0.122 @ 2.52 m      0.352 @ 0.92 m
+   *   CONTROL: this plate's own
+   *   λ×μ block stamped out        0.587       0.873 @ 3.36 m      0.968 @ 3.38 m
+   *
+   * The control is the whole point, and it is why "no repeat found" is a result
+   * rather than an absence of evidence: it is what a repeat looks like to this
+   * measurement, and the measurement finds it at 0.87. The rendered ground
+   * shows 0.10–0.14 in the same band — and shows it even with the hex grid
+   * widened past the whole map, which is a single fixed 3.3 m lattice at one
+   * bearing over 460 m of terrain. A lattice that leaves no trace in the lag
+   * plane is not being seen by anyone, because everything the tap is multiplied
+   * by afterwards — bend, ripMask, baseLum, the lag/sheet patchwork at 140 m,
+   * the cavity term — varies on scales the repeat does not, and the product
+   * never comes back to the same value twice.
+   *
+   * Nor at the scale the player's boots actually see it. A second plate, 512 px
+   * over 16 m from 14 m up — close enough that the near-detail layer is at 85%
+   * strength, which the 48 m plate is too far out to include at all — with the
+   * high-pass at σ = 1.2 m: shipped 0.009 at (λ,0), phase 0.025, one lattice
+   * 0.002, against the same stamped control at 0.492. Three orders of framing
+   * and the tile never appears once.
+   *
+   * So: the stochastic tile is not load-bearing against a SEAM. What it buys is
+   * variety, and that is visible in the same plates as a 13% drop in the
+   * ground's self-similarity at the RIPPLE scale — the strongest off-origin
+   * correlation goes 0.352 (one lattice) → 0.346 (phase only) → 0.307 (shipped)
+   * and the whole 0.7–1.5λ band with it. That is the honest size of the effect.
+   * Nobody should tune a constant here hoping to move a tiling number: there is
+   * no tiling number to move.
    */
   vec2 aspect = vec2(1.0, uRipAspect);
   vec2 pA = fA * wp;  pA.x += bend;
