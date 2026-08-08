@@ -270,14 +270,34 @@ export function run({ check, assert, near }) {
       near(Math.hypot(rip.x, rip.y), 1, 1e-5, `${name}: the ripple frame is not a rotation`);
       out.push(`${name} ${(Math.atan2(rip.y, rip.x) * 180 / Math.PI).toFixed(0)}°`);
     }
-    // the two base frames must stay near-parallel; that is the whole point
-    const angs = src.match(/tframe\(tswing\(uRip\.xy,\s*(-?[\d.]+)\)\)/g) || [];
+    /* Every frame that samples the sand map must stay near-parallel to every
+     * other one; that is the whole point. There are two halves to it now:
+     *
+     *   · the FIXED offset each layer carries, which is the angle between them
+     *     when the field is running straight, and
+     *   · the FLOW, which turns the whole field off the wind as it crosses the
+     *     ground. That part is shared — one TER_SWING, one noise — so it moves
+     *     every layer together and cancels out of the angle BETWEEN them. A
+     *     layer with its own swing coefficient would be free to open a
+     *     cross-hatch anywhere the two noises disagreed, which is the failure
+     *     this check was written for. */
+    const swing = src.match(/const float TER_SWING\s*=\s*([\d.]+)/);
+    assert(swing, 'the shared ripple swing is gone — every layer can turn on its own again');
+    const S = parseFloat(swing[1]);
+    assert(S < 0.70, `the flow turns the field ${(S * 90 / Math.PI).toFixed(0)}° off the wind at its worst`);
+    const flows = src.match(/dFlowA \* TER_SWING|flowA \* TER_SWING/g) || [];
+    assert(flows.length >= 2, 'a sand layer no longer rides the shared flow');
+    const angs = [...src.matchAll(/tswing\(uRip\.xy,\s*(-?[\d.]+)/g)].map((m) => parseFloat(m[1]));
     assert(angs.length >= 2, 'the second ripple frame is gone');
-    for (const a of angs) {
-      const v = Math.abs(parseFloat(a.match(/(-?[\d.]+)\)\)/)[1]));
-      assert(v < 0.45, `a ripple frame sits ${(v * 180 / Math.PI).toFixed(0)}° off the wind — that is a cross-hatch`);
+    for (const v of angs) {
+      assert(Math.abs(v) < 0.45,
+        `a ripple frame sits ${(Math.abs(v) * 180 / Math.PI).toFixed(0)}° off the field — that is a cross-hatch`);
     }
-    return out.join('  ');
+    const spread = Math.max(...angs, 0) - Math.min(...angs, 0);
+    assert(spread < 0.60,
+      `the sand layers open ${(spread * 180 / Math.PI).toFixed(0)}° between them — that is a lattice, not a field`);
+    return `${out.join('  ')}  swing ±${(S * 90 / Math.PI).toFixed(0)}° shared, ` +
+      `layers ${(spread * 180 / Math.PI).toFixed(0)}° apart`;
   });
 
   check('terrain: the crest bend is a displacement, never a spin of the frame', () => {

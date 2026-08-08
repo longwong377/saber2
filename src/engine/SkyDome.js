@@ -54,6 +54,10 @@
 
 import * as THREE from 'three';
 import { ground } from '../world/Scenery.js';
+/* The sky, from the one place that derives it. Engine imports this file, so
+ * this closes a cycle — safe because every one of these is a hoisted function
+ * declaration and none is called while a module body is still evaluating. */
+import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from './Engine.js';
 
 const _lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const _WHITE = new THREE.Color(1, 1, 1);
@@ -82,6 +86,74 @@ function unitLum(c) {
   const L = _lum(c);
   if (L > 1e-5) c.multiplyScalar(1 / L); else c.copy(_WHITE);
   return c;
+}
+
+/* ── the sky, as a function of where you are looking ────────────────────
+ *
+ * Everything the dome paints below the cloud deck used to converge on
+ * uHazeColor, and uHazeColor is ONE COLOUR. hazeRadiance anchors it to the
+ * skyline BESIDE THE SUN, which is the brightest sky there is, so on the shade
+ * half of the horizon the dome was painting ranges and a haze band BRIGHTER
+ * than the sky they sit in. Measured on the dune atmosphere, drawn sky
+ * radiance at 8° elevation against the one fog colour:
+ *
+ *     bearing from sun     20°    65°   110°   155°
+ *     drawn sky           0.821  0.589  0.444  0.391
+ *     uHazeColor                  0.589 everywhere
+ *
+ * One and a half to one on the anti-sun side. That is the milky horizon, and
+ * it is the same fault the far ranges in Scenery.js were scored for.
+ *
+ * So the dome carries the sky it is standing in: a 64 × 16 map of the DRAWN
+ * dome over bearing and elevation, built on the CPU from the engine's own
+ * Preetham derivation whenever the level changes. Half-float, because the
+ * values are radiance and 8 bits over a 0.2–1.6 range bands visibly in a
+ * gradient this smooth. It costs one texture fetch and about a thousand
+ * evaluations per level, and it turns every painted landform from "a swatch,
+ * hopefully darker than the sky" into "the sky, times an extinction" — which
+ * is a thing that cannot come out brighter than what is behind it.
+ */
+const BAND_AZ = 64, BAND_EL = 16;
+/** Top of the map, in sin(elevation). Covers the tallest painted range any
+ *  level asks for (canyon: 0.53) and the storm band's reach (0.62). */
+const BAND_TOP = 0.72;
+
+function skyBandTexture(a, prev) {
+  const data = new Uint16Array(BAND_AZ * BAND_EL * 4);
+  const rgb = new Float32Array(BAND_AZ * BAND_EL * 3);
+  const sun = sunDirection(a, new THREE.Vector3());
+  const disp = skyDisplayShoulder(a);
+  const dir = new THREE.Vector3(), col = new THREE.Color();
+  const H = THREE.DataUtils.toHalfFloat;
+  for (let j = 0; j < BAND_EL; j++) {
+    // sin(elevation) at the row centre, so a texel means the middle of its band
+    const s = ((j + 0.5) / BAND_EL) * BAND_TOP;
+    const c = Math.sqrt(Math.max(0, 1 - s * s));
+    for (let i = 0; i < BAND_AZ; i++) {
+      // Texel centres, so RepeatWrapping interpolates across the seam at ±π
+      // without a stripe there.
+      const b = -Math.PI + ((i + 0.5) / BAND_AZ) * Math.PI * 2;
+      skyShoulder(skyRadiance(dir.set(Math.cos(b) * c, s, Math.sin(b) * c), sun, a, col),
+        disp.knee, disp.ceil);
+      const o = (j * BAND_AZ + i) * 4, q = (j * BAND_AZ + i) * 3;
+      data[o] = H(col.r); data[o + 1] = H(col.g); data[o + 2] = H(col.b); data[o + 3] = H(1);
+      rgb[q] = col.r; rgb[q + 1] = col.g; rgb[q + 2] = col.b;
+    }
+  }
+  /* Publish the same numbers to the CPU side. Scenery's far ranges stand along
+   * exactly the line of the frame this band paints, so they read THIS array
+   * rather than deriving a sky of their own — two derivations that could
+   * disagree would disagree in the one place the eye is already looking. */
+  ground.skyBand = { az: BAND_AZ, el: BAND_EL, top: BAND_TOP, rgb };
+  if (prev) prev.dispose();
+  const tex = new THREE.DataTexture(data, BAND_AZ, BAND_EL, THREE.RGBAFormat, THREE.HalfFloatType);
+  tex.wrapS = THREE.RepeatWrapping;      // bearing is a circle
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.NoColorSpace;   // radiance, not a picture
+  tex.needsUpdate = true;
+  return tex;
 }
 
 const VERT = /* glsl */`
@@ -118,6 +190,28 @@ const FRAG = /* glsl */`
   uniform float uCloudAmb;     // radiance of a white cloud face lit by sky + ground
   uniform vec3  uSkyAmb;       // colour of the skylight falling on the deck
   uniform float uStorm;        // 0 clear .. 1 the front is on top of you
+  uniform sampler2D uSkyBand;  // the drawn dome over (bearing, sin elevation)
+  uniform vec3  uHazeHue;      // the dust, renormalised to unit luminance
+
+  /* What a range at that distance hands back, relative to the sky standing
+   * over it. Under 1 in every channel — a finite path cannot return what an
+   * infinite one does — and blue highest, because what fills in behind a
+   * distant ridge is Rayleigh scattering. That ordering IS the read of
+   * distance; without it a landform is a paper triangle whatever its level.
+   *
+   * These are deliberately paler than the tints Scenery.js gives the three
+   * REAL ranges at 170-340 m (0.62-0.84 rising to 0.73-0.99): those parallax,
+   * these do not, so these have to sit behind them tonally as well.
+   *
+   * Two ranges, not four. The old four were mixed toward the haze at
+   * 0.08 / 0.18 / 0.32 / 0.50, and composited contrast is exactly
+   * alpha × mix × (land − haze): the top two came out under two per cent of
+   * the sky's own luminance once the grade was applied, which is below the
+   * threshold at which anything is a shape at all. Two ranges that can be seen
+   * beat four where half are being paid for and not delivered. */
+  const vec3 BAND_FAR  = vec3(0.855, 0.885, 0.955);   // 11.6% under the sky
+  const vec3 BAND_NEAR = vec3(0.760, 0.800, 0.910);   // 20.0% under the sky
+  const vec3 LUM_W = vec3(0.2126, 0.7152, 0.0722);
 
   varying vec3 vDir;
 
@@ -171,65 +265,58 @@ const FRAG = /* glsl */`
     vec3 col = vec3(0.0);
     float alpha = 0.0;
 
+    // The sky THIS ray is looking at, which is the only honest thing for
+    // anything at distance to converge on. 0.15915494 is 1/2pi; the map wraps
+    // in bearing so the seam at ±pi interpolates instead of banding.
+    float bearing = atan(dir.z, dir.x);
+    vec3 skyHere = texture2D(uSkyBand,
+      vec2(bearing * 0.15915494 + 0.5, clamp(el / ${BAND_TOP.toFixed(2)}, 0.0, 1.0))).rgb;
+    float skyLum = dot(skyHere, LUM_W);
+
     // ── horizon silhouette ────────────────────────────────────────────
-    // A ridge line as a function of compass bearing, sitting just above the
-    // true horizon and fading into haze. FOUR scales, because three is not
-    // enough to read as ranges: what the eye counts is not ridges, it is
-    // OVERLAPS — each range has to be seen crossing in front of the one behind
-    // it, and with three layers there are only two such crossings anywhere in
-    // the frame. The fourth sits highest, hazes hardest and moves least, which
-    // is what a range twenty kilometres out actually does.
-    //
-    // Scenery.js now puts REAL ridges at 170/250/340 m with real parallax.
-    // These are what stands behind those, so they are deliberately pushed
-    // further toward the haze than they used to be: the near end of the
-    // distance is geometry's job now, and a painted range competing with a
-    // solid one at the same tone is what makes a backdrop look like a backdrop.
+    // Two ranges of painted landform standing behind the three real ones
+    // Scenery.js puts at 170/250/340 m. Each is the SKY IN THIS DIRECTION
+    // times what a range at that distance gives back, so it is guaranteed
+    // darker and bluer than the sky above it in every direction and at every
+    // hour, and it composites at full alpha because there is nothing to see
+    // through a mountain.
     if (uHorizonAmt > 0.001) {
-      float bearing = atan(dir.z, dir.x);
-      float vfar = fbm3(vec2(bearing * 1.4 + 21.0, 6.5));
       float far  = fbm3(vec2(bearing * 2.1, 0.0));
-      float mid  = fbm3(vec2(bearing * 3.4 + 5.0, 1.5));
       float near = fbm3(vec2(bearing * 5.3 + 11.0, 3.0));
 
-      float ridgeVF   = (vfar - 0.28) * 0.38 * uHorizonScale * uHorizonAmt;
-      float ridgeFar  = (far  - 0.30) * 0.30 * uHorizonScale * uHorizonAmt;
-      float ridgeMid  = (mid  - 0.32) * 0.24 * uHorizonScale * uHorizonAmt;
-      float ridgeNear = (near - 0.34) * 0.19 * uHorizonScale * uHorizonAmt;
+      float ridgeFar  = (far  - 0.30) * 0.34 * uHorizonScale * uHorizonAmt;
+      float ridgeNear = (near - 0.34) * 0.21 * uHorizonScale * uHorizonAmt;
 
       // The far range is hazier and higher; the near one is darker and lower.
       float aaF = fwidth(el) * 1.5 + 0.0006;
-      float mV = smoothstep(ridgeVF + aaF, ridgeVF - aaF, el);
       float mF = smoothstep(ridgeFar + aaF, ridgeFar - aaF, el);
-      float mM = smoothstep(ridgeMid + aaF, ridgeMid - aaF, el);
       float mN = smoothstep(ridgeNear + aaF, ridgeNear - aaF, el);
       // only below the skyline, and only just above it
       float win = smoothstep(-0.05, 0.01, el);
-      mV *= win; mF *= win; mM *= win; mN *= win;
+      mF *= win; mN *= win;
 
-      vec3 cVFar = mix(uHazeColor, uHorizonColor, 0.08);
-      vec3 cFar  = mix(uHazeColor, uHorizonColor, 0.18);
-      vec3 cMid  = mix(uHazeColor, uHorizonColor, 0.32);
-      vec3 cNear = mix(uHazeColor, uHorizonColor, 0.50);
-      // sun side catches a little light on the facing slopes
+      // sun side catches a little light on the facing slopes. Held under 1 —
+      // the boost may lighten a range toward its sky and never past it.
       float lit = clamp(dot(normalize(vec3(dir.x, 0.0, dir.z)),
                             normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0, 1.0);
       lit = lit * lit;
-      cVFar *= 1.0 + lit * 0.18;
-      cFar  *= 1.0 + lit * 0.16;
-      cMid  *= 1.0 + lit * 0.14;
-      cNear *= 1.0 + lit * 0.12;
+      // The land's own colour, demoted to a HUE the same way tint() does on
+      // the CPU: renormalised to unit luminance and pulled most of the way to
+      // white, so the level author's swatch can say what the rock is and never
+      // how bright a range twenty kilometres out is allowed to be.
+      vec3 landHue = mix(vec3(1.0),
+        uHorizonColor / max(dot(uHorizonColor, LUM_W), 1.0e-3), 0.20);
+      vec3 cFar  = skyHere * min(BAND_FAR  * landHue * (1.0 + lit * 0.07), vec3(0.985));
+      vec3 cNear = skyHere * min(BAND_NEAR * landHue * (1.0 + lit * 0.09), vec3(0.955));
 
-      col = mix(col, cVFar, mV);  alpha = max(alpha, mV * 0.80);
-      col = mix(col, cFar, mF);   alpha = max(alpha, mF * 0.88);
-      col = mix(col, cMid, mM);   alpha = max(alpha, mM * 0.93);
-      col = mix(col, cNear, mN);  alpha = max(alpha, mN * 0.96);
+      col = mix(col, cFar, mF);   alpha = max(alpha, mF);
+      col = mix(col, cNear, mN);  alpha = max(alpha, mN);
 
       // A front takes the distance out. This is the term that makes a squall
       // change what the level IS rather than just what is floating in it: the
       // ranges go first, from the bottom up, and come back as it passes.
-      float eaten = uStorm * (1.0 - smoothstep(0.0, 0.16, el));
-      col = mix(col, uHazeColor, clamp(eaten * 1.25, 0.0, 1.0));
+      float eaten = uStorm * (1.0 - smoothstep(0.0, 0.30, el));
+      col = mix(col, uHazeColor, clamp(eaten * 1.35, 0.0, 1.0));
     }
 
     // ── clouds ────────────────────────────────────────────────────────
@@ -354,11 +441,22 @@ const FRAG = /* glsl */`
       // and the sky all meet in the same colour. A front lifts that band a long
       // way up the dome — dust does not stay near the ground, and a storm that
       // only fogs the bottom four degrees of the sky reads as a bug in the fog.
+      //
+      // THE DUST'S HUE AT THE SKY'S OWN LEVEL, in calm air. Painted as
+      // uHazeColor outright it was a band of the sunward skyline pasted right
+      // round the compass: on the dune sea that is 0.589 laid over an anti-sun
+      // sky of 0.391, a fifty per cent lift, and it is most of why the horizon
+      // read as milk. Renormalising the dust onto skyLum leaves it able to
+      // change the CAST of the skyline and nothing else — which is all a hue
+      // can honestly do. Only a real front is allowed to move the level, and
+      // then it moves it to exactly what the scene fog converges on, so the
+      // ground and the sky meet inside the same wall.
       float bandTop = mix(0.10, 0.62, uStorm);
       float band = (1.0 - smoothstep(0.0, bandTop, el));
       band *= band;
       float wash = band * mix(0.92, 1.0, uStorm);
-      col = mix(col, uHazeColor, wash);
+      vec3 bandCol = mix(mix(skyHere, uHazeHue * skyLum, 0.62), uHazeColor, uStorm);
+      col = mix(col, bandCol, wash);
       alpha = max(alpha, band * 0.86);
     }
 
@@ -392,6 +490,10 @@ export class SkyDome {
         uCloudAmb:     { value: 0.42 },
         uSkyAmb:       { value: new THREE.Color(1, 1, 1) },
         uStorm:        { value: 0 },
+        // A flat white band until configure() bakes the level's own sky into
+        // it, so a dome built without an Engine still draws something sane.
+        uSkyBand:      { value: null },
+        uHazeHue:      { value: new THREE.Color(1, 1, 1) },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -432,6 +534,9 @@ export class SkyDome {
     unitLum(u.uCloudLit.value);
     tint(u.uCloudDark.value.set(a.cloudDark ?? 0x9aa8bd), 0.30);
     u.uHazeColor.value.set(a.fogColor ?? 0xd8c8a4);
+    // The level's own sky, baked over bearing and elevation. Everything below
+    // the deck reads it, so this is what makes the horizon directional.
+    u.uSkyBand.value = this._band = skyBandTexture(a, this._band);
     u.uHorizonAmt.value = a.horizon === false ? 0 : (a.horizonAmount ?? 1);
     u.uHorizonScale.value = a.horizonScale ?? 1;
     u.uHorizonColor.value.set(a.horizonColor ?? 0x6d6152);
@@ -466,7 +571,12 @@ export class SkyDome {
    * bright horizon. Engine hands us the value it gave the fog.
    */
   setHaze(color, land) {
-    if (color) this.mat.uniforms.uHazeColor.value.copy(color);
+    if (color) {
+      this.mat.uniforms.uHazeColor.value.copy(color);
+      // …and the same dust demoted to a HUE, for the calm-air skyline band,
+      // which may say what colour the distance is and never how bright.
+      unitLum(this.mat.uniforms.uHazeHue.value.copy(color));
+    }
     // The ranges are terrain seen through a great deal of air, so their colour
     // is the ground's own radiance — albedo times the light actually landing
     // on it — not an sRGB swatch read as light.
@@ -496,5 +606,7 @@ export class SkyDome {
     this.scene.remove(this.mesh);
     this.mesh.geometry.dispose();
     this.mat.dispose();
+    this._band?.dispose();
+    this._band = null;
   }
 }

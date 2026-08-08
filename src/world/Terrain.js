@@ -371,6 +371,14 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
 
   /* The rotation that takes world XZ into a frame whose +x runs along d. */
   mat2 tframe(vec2 d) { return mat2(d.x, -d.y, d.y, d.x); }
+  /* How far the flow field is allowed to turn the ripple bearing off the
+   * level's own wind. EVERY layer that samples the sand map multiplies THIS
+   * number by THE SAME flow, so they all curve together and the fixed offsets
+   * between them stay the only angle there is between any two of them. Two
+   * layers free to swing independently is a cross-hatch, and a fine
+   * cross-hatch over a coarse one is how the dune sea came out as woven
+   * matting the first time. tools/checks/terrain.mjs pins both halves. */
+  const float TER_SWING = 0.62;
   vec2 tswing(vec2 d, float a) {
     float c = cos(a), s = sin(a);
     return vec2(d.x * c - d.y * s, d.x * s + d.y * c);
@@ -428,30 +436,63 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   /**
    * One cell's tap of the ripple map.
    *
-   * The bearing is the sum of a LOW-FREQUENCY FLOW FIELD sampled at the cell
-   * centre — ~120 m, so the crest lines sweep across the field the way a real
-   * ripple train curves round the ground it is crossing — and a few degrees of
-   * per-cell jitter. The wavelength is drawn per cell as well, because ripple
-   * spacing tracks grain size and grain size varies patch to patch; a field at
-   * one wavelength everywhere is corduroy however well its phase is scrambled.
+   * THREE THINGS VARY, not one, and that is the difference between a ripple
+   * field and corduroy. Scrambling only the phase and the bearing leaves one
+   * wavelength and one amplitude edge to edge, and the eye counts the repeat
+   * off the SPACING long before it notices the angle: measured on a shallow
+   * plate, one row of sand autocorrelated at 0.61 against itself 210 px away.
+   * A single number that high is a printed pattern, not a landscape.
+   *
+   *   · BEARING, from a low-frequency flow field sampled at the cell centre
+   *     (~120 m), so the crest lines sweep across the field the way a real
+   *     train curves round the ground it is crossing, plus per-cell jitter.
+   *   · WAVELENGTH, from a SECOND flow field at a different scale and offset —
+   *     ripple spacing tracks grain size, grain sorts itself over the length of
+   *     a dune rather than the width of a cell, and two draws off the same map
+   *     would just make coarse sand and turned sand the same patches.
+   *   · AMPLITUDE, tied to the wavelength field, because coarse ripples are
+   *     also deep ripples — the same wind that moves bigger grains piles them
+   *     higher. That tie is what stops the variation reading as noise: spacing
+   *     and relief change together, which is what makes a patch read as a
+   *     different SAND rather than as a different setting.
+   *
+   * The two flows are gated on uHex.y with the bearing, because a poured deck
+   * is not blown by anything: panels at random angles, spacings and depths is a
+   * different lie from the one the stochastic tile is telling.
    *
    * dqx and dqy are the screen-space derivatives of the SHARED pre-rotation
    * coordinate, carried through each cell's own frame, so every tap gets the
    * gradient it would have had if its frame were the only one in the shader.
+   * They are scaled by the same sc, so the mip chain follows the wavelength.
    */
   void terRipTap(vec2 q, vec2 id, vec2 dqx, vec2 dqy, vec2 aspect,
                  out vec3 col, out vec2 tn, out mat2 frame) {
     vec2 c = (TER_UNSKEW * id) * uHex.x;
     float h1 = thash(id + 0.37), h2 = thash(id * 1.71 + 9.13), h3 = thash(id - 4.21);
-    float ang = ((tfbm(c * uMix.x * 0.62 + 31.7) - 0.5) * 0.62 + (h1 - 0.5) * 0.20) * uHex.y;
-    float sc = uScales.x * (0.87 + h3 * 0.28);
+    float flowA = tfbm(c * uMix.x * 0.62 + 31.7) - 0.5;   // which way   ~120 m
+    float flowL = tfbm(c * uMix.x * 0.83 - 12.4) - 0.5;   // how coarse   ~89 m
+    float ang = (flowA * TER_SWING + (h1 - 0.5) * 0.22) * uHex.y;
+    // Divided, not multiplied: sc is tiles per metre, so the field reads as a
+    // WAVELENGTH spreading either side of the authored one — 0.72× to 1.52× the
+    // spacing across the map, against the old 0.87–1.15 that was too narrow to
+    // see and far too narrow to break the phase lock between cells. Clamped
+    // rather than left to the noise's tails: at half the authored spacing the
+    // map is being read past its own texel density and starts to alias.
+    float spread = clamp(1.0 + (flowL * 0.62 + (h3 - 0.5) * 0.34) * uHex.y
+                             + (h3 - 0.5) * 0.14, 0.72, 1.52);
+    float sc = uScales.x / spread;
     float ca = cos(ang), sa = sin(ang);
     frame = mat2(ca, -sa, sa, ca);
     vec2 uv = ((frame * (q - c)) * sc) * aspect + vec2(h1, h2) * 23.0;
     vec2 dx = ((frame * dqx) * sc) * aspect;
     vec2 dy = ((frame * dqy) * sc) * aspect;
-    col = texture2DGradEXT(uBaseAlb, uv, dx, dy).rgb;
-    tn = texture2DGradEXT(uBaseNrm, uv, dx, dy).xy * 2.0 - 1.0;
+    vec3 raw = texture2DGradEXT(uBaseAlb, uv, dx, dy).rgb;
+    float amp = clamp(1.0 + (flowL * 1.30 + (h2 - 0.5) * 0.50) * uHex.y, 0.22, 1.55);
+    tn = (texture2DGradEXT(uBaseNrm, uv, dx, dy).xy * 2.0 - 1.0) * amp;
+    // The albedo follows the relief. Around its own mean, so a flatter patch
+    // loses its ripple CONTRAST without changing tone — lifting or dropping the
+    // level here would paint the flow field on as a stain.
+    col = mix(vec3(dot(raw, vec3(0.2126, 0.7152, 0.0722))), raw, clamp(amp, 0.45, 1.30));
   }
 
   /**
@@ -641,15 +682,27 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   //    It rides the SAME comb as the ripples. At its own fixed rotation it
   //    crossed them at 50° and four centimetres, and the dune sea came out as
   //    hessian — the finest cross-hatch in the frame beat everything else.
+  //    AND IT RIDES THE SAME TWO FLOWS, which is the fix the stochastic tile
+  //    above did not reach. This layer is the finest thing on screen and it was
+  //    the only one still at one bearing, one wavelength and one amplitude from
+  //    the player's boots to thirty metres out — a fixed cross-hatch passing
+  //    unchanged under every rock and every shadow, which is exactly what
+  //    "corduroy" was describing. The flows are sampled at the WORLD position
+  //    rather than at a cell centre, so this layer stays continuous while the
+  //    tile it lies over is stochastic, and both curve the same way.
   #ifdef TERRAIN_DETAIL
     float detW = 1.0 - smoothstep(uMix.z, uMix.w, viewDist);
     if (detW > 0.02) {
-      mat2 fD = tframe(tswing(uRip.xy, -0.19));
+      float dFlowA = tfbm(wp * uMix.x * 0.62 + 31.7) - 0.5;
+      float dFlowL = tfbm(wp * uMix.x * 0.83 - 12.4) - 0.5;
+      mat2 fD = tframe(tswing(uRip.xy, -0.19 + dFlowA * TER_SWING * uHex.y));
       vec2 pD = fD * wp;  pD.x += bend * 1.4;
-      vec2 ud = (pD * uScales.w) * aspect;
+      float dSpread = clamp(1.0 + dFlowL * 0.70 * uHex.y, 0.74, 1.44);
+      vec2 ud = (pD * (uScales.w / dSpread)) * aspect;
       vec3 cd = texture2D(uBaseAlb, ud).rgb;
-      baseN += ((texture2D(uBaseNrm, ud).xy * 2.0 - 1.0) * aspect) * fD * (detW * uNrmScale.y);
-      baseC *= mix(1.0, 0.74 + cd.g * 0.58, detW * 0.5);
+      float dAmp = clamp(1.0 + dFlowL * 1.45 * uHex.y, 0.25, 1.55);
+      baseN += ((texture2D(uBaseNrm, ud).xy * 2.0 - 1.0) * aspect) * fD * (detW * uNrmScale.y * dAmp);
+      baseC *= mix(1.0, 0.74 + cd.g * 0.58, detW * 0.5 * dAmp);
     }
   #endif
 
@@ -1212,9 +1265,26 @@ export class Terrain {
         s.lerp(_tc, 0.5);
       }
     }
-    // Indoors there is no horizon to dissolve into, and the level's fog is
-    // already thick enough to close the room off; leave it alone.
-    const indoor = this.preset.flat || (fog && fog.density > 0.01);
+    /* Indoors there is no horizon to dissolve into, and the level's fog is
+     * already thick enough to close the room off; leave it alone.
+     *
+     * THE TEST IS THE AUTHORED DENSITY, NOT THE CURRENT ONE, and that is worth
+     * a paragraph because the naive version cost the game its weather. This
+     * runs every frame from flush(), so `fog.density > 0.01` was a runtime
+     * threshold sitting directly under a squall: the dune sea asks for 0.0193
+     * at the peak of a front against an authored 0.0042, so every storm would
+     * have hard-switched the ground's aerial term off on the way in and back on
+     * on the way out — a pop, on a threshold, in a system that has no idea
+     * weather exists. Scenery's Weather CAPPED ITSELF at 0.0098 to stay under
+     * it, which cost the dune sea half its visibility loss: the whole squall
+     * moved the arena's median frame luminance by 5%.
+     *
+     * Weather may only ever ADD to what the level authored (see _applyWeather),
+     * so the smallest density this fog object has ever carried IS the authored
+     * one. Keyed on object identity, because a level change swaps the fog. */
+    if (fog !== this._fogRef) { this._fogRef = fog; this._fogFloor = fog ? fog.density : 0; }
+    else if (fog) this._fogFloor = Math.min(this._fogFloor, fog.density);
+    const indoor = this.preset.flat || (fog && this._fogFloor > 0.01);
     // 0.30, not 0.80. This is a nudge to keep the skyline from reading as a
     // cut edge against a sky the fog cannot reach; at 0.80 it was doubling the
     // optical depth of everything past 250 m on top of an integral that was

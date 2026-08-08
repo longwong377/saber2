@@ -31,6 +31,8 @@ import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import {
   WindField, wind, weather, Weather, WIND_GLSL, STORM_GLSL, Atmosphere, addHorizon, ground,
 } from '../../src/world/Scenery.js';
+import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from '../../src/engine/Engine.js';
+import { SkyDome } from '../../src/engine/SkyDome.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -430,15 +432,33 @@ export function run({ check, assert, near }) {
     }
     assert(peak.I > 0.9, `the storm never got going (${peak.I.toFixed(2)})`);
     assert(peak.fog > fog0 * 2, `fog only went ${fog0.toFixed(4)} → ${peak.fog.toFixed(4)}`);
-    /* Half the light surviving at 85 m instead of 198 m. Not the 43 m the dune
-     * sea's fogGain asks for, and deliberately: Terrain treats fog denser than
-     * 0.01 as an interior and drops the ground's aerial term, so the storm is
-     * capped under that line and the fog banks carry the rest. Pinned here so
-     * nobody "fixes" the cap by raising it. */
-    assert(peak.vis < vis0 * 0.50,
+    /* HALF THE LIGHT SURVIVING AT 43 m INSTEAD OF 198 m, which is what the dune
+     * sea's own fogGain asks for and what it did not used to get. The storm was
+     * held to 85 m by a cap that had nothing to do with weather —
+     * Terrain._syncAtmosphere used to test the LIVE fog density against 0.01 to
+     * decide whether it was indoors, so anything past that line switched the
+     * ground's aerial term off mid-squall and the cap existed to stay under it.
+     * Measured cost: a full-strength front moved the arena's median frame
+     * luminance from 0.2856 to 0.2711. Five per cent, for the whole storm.
+     *
+     * Terrain now tests the density the level AUTHORED, so the check is the
+     * real one: visibility has to collapse to a quarter, AND the ground has to
+     * still know it is outdoors while it does. */
+    assert(peak.vis < vis0 * 0.28,
       `visibility only fell ${vis0.toFixed(0)} m → ${peak.vis.toFixed(0)} m`);
-    assert(peak.fog < 0.01,
-      `the storm pushed the fog to ${peak.fog.toFixed(4)} — past that Terrain thinks it is indoors`);
+    {
+      const t = new Terrain(new THREE.Scene(), 'dunes', 0.5);
+      t._scene = scene;
+      scene.fog.density = fog0; t._syncAtmosphere();          // calm, outdoors
+      const calm = t._uniforms.uHaze.value.y;
+      scene.fog.density = peak.fog; t._syncAtmosphere();      // the same air, stormed
+      const storm = t._uniforms.uHaze.value.y;
+      assert(calm > 0.01 && storm === calm,
+        `the ground's aerial term went ${calm.toFixed(3)} → ${storm.toFixed(3)} at fog ` +
+        `${peak.fog.toFixed(4)} — the storm is switching the terrain indoors and back`);
+      t.dispose();
+      scene.fog.density = peak.fog;
+    }
     assert(peak.sun < sun0 * 0.65, `the key light barely moved: ${sun0} → ${peak.sun.toFixed(2)}`);
     assert(peak.hemi > hemi0 * 1.2,
       'the fill did not come up — a dust storm converts direct light into ambient, it is not a dimmer');
@@ -522,7 +542,8 @@ export function run({ check, assert, near }) {
     for (const m of meshes) {
       assert(!m.castShadow, 'a range 300 m away is in the shadow cascade');
       const p = m.geometry.attributes.position;
-      assert(m.geometry.attributes.color, 'a vertexColors range with no colour attribute renders black');
+      assert(m.geometry.attributes.aNear && m.geometry.attributes.aFar,
+        'a range with no aNear/aFar attribute renders as the material colour — a white wall');
       let rmin = Infinity, rmax = 0, top = -1e9, bot = 1e9;
       const tops = [];
       for (let i = 0; i < p.count; i++) {
@@ -567,51 +588,120 @@ export function run({ check, assert, near }) {
       `far range subtends ${farAngle.toFixed(1)}°`;
   });
 
-  check('horizon: the ranges dissolve into the level\'s own haze, not a swatch', () => {
-    /* An authored sRGB colour used against a linear sky is a dark band under a
-     * bright horizon — the exact failure SkyDome.setHaze exists to avoid. The
-     * ranges take their radiance from scene.fog, which is the only value in the
-     * frame already in the right units, and they are DARKER than it, because a
-     * passive surface behind a scattering medium cannot be brighter than what
-     * it is dissolving into. */
-    const terrain = new Terrain(new THREE.Scene(), 'canyon', 0.5);
-    const world = stubWorld(terrain);
-    const haze = new THREE.Color(0.61, 0.55, 0.44);
-    world.scene.fog = new THREE.FogExp2(haze.getHex(), 0.005);
-    world.scene.fog.color.copy(haze);
-    const meshes = addHorizon(world, { seed: 4403 });
-    const lum = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
-    const hazeL = lum(haze.r, haze.g, haze.b);
-    let maxL = 0, minL = Infinity, crest = 0, foot = 0, nc = 0, nf = 0;
-    for (const m of meshes) {
-      const c = m.geometry.attributes.color;
-      for (let i = 0; i < c.count; i++) {
-        const l = lum(c.getX(i), c.getY(i), c.getZ(i));
-        maxL = Math.max(maxL, l); minL = Math.min(minL, l);
-        if (i % 2 === 1) { crest += l; nc++; } else { foot += l; nf++; }
+  check('horizon: every range is DARKER and BLUER than the sky it stands against', () => {
+    /* The single sharpest thing an art director found in the whole frame, and
+     * it was true: measured on two dune frames the cones came out at 0.703 /
+     * 0.611 / 0.688 / 0.600 display luminance against sky immediately beside
+     * them at 0.547 / 0.635 / 0.537 — ratios of 1.29, 1.12, 1.08, 1.12 — at
+     * hue 36-37° against a sky at 160-198°. Flat white paper triangles.
+     *
+     * The cause was that the ranges converged on scene.fog, and scene.fog is
+     * ONE COLOUR while the sky is not: hazeRadiance anchors it to the skyline
+     * BESIDE THE SUN. Measured on the dune atmosphere at 8° elevation, drawn
+     * sky radiance runs 0.821 at 20° from the sun down to 0.391 at 155°, all
+     * against a fog colour of 0.589 — so on the shade half of the horizon the
+     * thing distance dissolved into was one and a half times the sky it was
+     * dissolving into, and no vertex shading could fix that.
+     *
+     * So this asserts the RELATIONSHIP rather than any constant: at every
+     * vertex of every range of every outdoor level, at that level's own hour,
+     * the composited range must be darker than the drawn sky directly above it
+     * AND bluer than it. Both are computed off the engine's own exported sky,
+     * not off a transcription of it. */
+    const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+    const rows = [];
+    let worstL = 0, worstB = Infinity, worstAt = '';
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const a = L.atmosphere || {};
+      if (a.sky === false || a.horizon === false) continue;
+      const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const world = stubWorld(terrain);
+      world.level = L;
+      world.scene.fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
+      // The ranges read the sky the DOME baked, so the dome has to exist —
+      // which is also the check that the two agree about the same horizon.
+      const dome = new SkyDome(world.scene);
+      dome.configure(a);
+      const meshes = addHorizon(world, { seed: 4400 });
+      const disp = skyDisplayShoulder(a);
+      const sun = sunDirection(a, new THREE.Vector3());
+      const invH = 1 / (a.fogHeight ?? 38), rho = a.fogDensity ?? 0.0035;
+      const camY = 1.75, sky = new THREE.Color(), out = new THREE.Color();
+      let hi = 0, lo = Infinity, bMin = Infinity;
+      for (const m of meshes) {
+        const P = m.geometry.attributes.position;
+        const N = m.geometry.attributes.aNear, F = m.geometry.attributes.aFar;
+        for (let i = 1; i < P.count; i += 2) {           // crest row only
+          const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+          const R = Math.hypot(x, z), relY = y - camY, dist = Math.hypot(R, relY);
+          // the shader's own extinction, camera in the middle of the ring
+          const k = relY * invH, t0 = Math.exp(-camY * invH);
+          const mm = Math.abs(k) < 1e-3 ? t0 : t0 * (1 - Math.exp(-k)) / k;
+          const path = dist * Math.min(6, Math.max(0, mm));
+          const f = 1 - Math.exp(-rho * rho * path * path);
+          out.setRGB(N.getX(i) + (F.getX(i) - N.getX(i)) * f,
+            N.getY(i) + (F.getY(i) - N.getY(i)) * f,
+            N.getZ(i) + (F.getZ(i) - N.getZ(i)) * f);
+          // the sky DIRECTLY ABOVE that crest: same bearing, 3° higher
+          const el = Math.atan2(relY, R) + 0.052, ce = Math.cos(el) / Math.max(R, 1e-4);
+          skyShoulder(skyRadiance(new THREE.Vector3(x * ce, Math.sin(el), z * ce), sun, a, sky),
+            disp.knee, disp.ceil);
+          const ratio = lum(out) / Math.max(1e-4, lum(sky));
+          // "bluer" with no argument about hue wheels: more blue per unit red.
+          const br = (out.b / Math.max(1e-4, out.r)) / (sky.b / Math.max(1e-4, sky.r));
+          hi = Math.max(hi, ratio); lo = Math.min(lo, ratio); bMin = Math.min(bMin, br);
+          if (ratio > worstL) { worstL = ratio; worstAt = key; }
+          worstB = Math.min(worstB, br);
+        }
       }
+      rows.push(`${key} ${lo.toFixed(2)}–${hi.toFixed(2)}× B/R ≥${bMin.toFixed(2)}`);
+      dome.dispose();
+      terrain.dispose();
     }
-    assert(maxL < hazeL, `a range is brighter (${maxL.toFixed(3)}) than the haze it recedes into (${hazeL.toFixed(3)})`);
-    assert(minL > hazeL * 0.35, `a range is ${(minL / hazeL).toFixed(2)}× the haze — that is a black cut-out`);
-    assert(crest / nc < foot / nf,
-      'the foot of a distant range is not paler than its crest — there is no low haze in front of it');
-    terrain.dispose();
-    return `haze ${hazeL.toFixed(3)}, ranges ${minL.toFixed(3)}–${maxL.toFixed(3)}, ` +
-      `crest ${(crest / nc).toFixed(3)} under foot ${(foot / nf).toFixed(3)}`;
+    assert(rows.length >= 3, 'no outdoor level built ranges to measure');
+    assert(worstL < 0.95,
+      `a range reaches ${worstL.toFixed(3)}× the sky above it on ${worstAt} — a landform behind 300 m ` +
+      'of the same air cannot be that bright');
+    assert(worstB > 1.05,
+      `a range is only ${worstB.toFixed(3)}× as blue-over-red as its own sky — distance is not reading as distance`);
+    return `${rows.join(', ')} (radiance, before the tone curve)`;
   });
 
-  check('sky: the painted skyline has four ranges and a storm takes it away', () => {
-    // The dome and the geometry have to be doing different jobs: the geometry
-    // owns 170-340 m, the dome owns everything past it. Four painted ranges,
-    // because what the eye counts is OVERLAPS and three layers only ever show
-    // two of them.
+  check('sky: the painted skyline is the sky times an extinction, and a storm takes it away', () => {
+    /* The dome and the geometry do different jobs: the geometry owns 170-340 m
+     * and parallaxes, the dome owns everything past it and does not.
+     *
+     * There used to be four painted ranges, mixed toward the haze at
+     * 0.08 / 0.18 / 0.32 / 0.50. Composited contrast is exactly
+     * alpha × mix × (land − haze), so the top two landed under two per cent of
+     * the sky's luminance once the grade was applied: below the threshold at
+     * which anything is a shape. Two ranges that can be seen beat four where
+     * half are paid for and not delivered — and both are now the SKY IN THAT
+     * DIRECTION times a per-range extinction, so neither can come out brighter
+     * than what is behind it whatever the level authored. */
     const src = SKY_SOURCE();
-    const bands = (src.match(/float ridge(VF|Far|Mid|Near)\s*=/g) || []).length;
-    assert(bands === 4, `the dome paints ${bands} ranges`);
+    const bands = (src.match(/float ridge(Far|Near)\s*=/g) || []).length;
+    assert(bands === 2, `the dome paints ${bands} ranges`);
+    assert(/uSkyBand/.test(src) && /texture2D\(uSkyBand/.test(src),
+      'the dome has no directional sky, so its skyline is one colour round the whole compass again');
+    const tints = [...src.matchAll(/const vec3 BAND_(FAR|NEAR)\s*=\s*vec3\(([^)]*)\)/g)]
+      .map((m) => [m[1], m[2].split(',').map(Number)]);
+    assert(tints.length === 2, 'the painted ranges no longer declare their extinction');
+    for (const [name, t] of tints) {
+      assert(t.every((v) => v > 0 && v < 1), `BAND_${name} is not an extinction — ${t.join(', ')}`);
+      assert(t[2] > t[1] && t[1] > t[0], `BAND_${name} is not Rayleigh-ordered, so it cannot read as distance`);
+      const L = t[0] * 0.2126 + t[1] * 0.7152 + t[2] * 0.0722;
+      // ~2% of the sky's own luminance is where a soft-edged shape stops being
+      // a shape. Both ranges have to clear that by a wide margin.
+      assert(1 - L > 0.08, `BAND_${name} sits ${((1 - L) * 100).toFixed(1)}% under its sky — invisible`);
+    }
     assert(/uStorm/.test(src), 'the dome cannot see the weather, so the skyline survives a dust storm');
     assert(/mix\(0\.10, 0\.62, uStorm\)/.test(src),
       'the skyline haze band does not lift during a front — dust does not stay near the ground');
-    return `${bands} painted ranges behind the geometry, skyline band 0.10 → 0.62 rad in a storm`;
+    const contrast = tints.map(([n, t]) =>
+      `${n} ${((1 - (t[0] * 0.2126 + t[1] * 0.7152 + t[2] * 0.0722)) * 100).toFixed(1)}%`).join(', ');
+    return `2 painted ranges off the sky band, contrast ${contrast}, band 0.10 → 0.62 rad in a storm`;
   });
 }
 

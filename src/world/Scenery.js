@@ -27,7 +27,9 @@ import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js'
 
 const rng = makeRng(70707);
 const _v1 = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
 const _col = new THREE.Color();
+const _rc2 = new THREE.Color();
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Wind                                                                  */
@@ -242,10 +244,23 @@ export function syncWind(uniforms) {
 const FRONT_SPEED = GUST_W / GUST_K;    // 11.3 m/s, the gust fronts' own speed
 const FRONT_REACH = 300;                // metres up/downwind a squall is tracked over
 const SQUALL_RISE = 0.24;               // share of a pass spent building; the rest is the tail
-/* Terrain._syncAtmosphere reads `fog.density > 0.01` as "this is an interior"
- * and drops the ground's sky-blend haze to zero. Nothing may push the fog over
- * that line at runtime. See _applyWeather. */
-const FOG_INDOOR_LIMIT = 0.0098;
+/* How thick a squall is allowed to get the air, as an exp2 density.
+ *
+ * This used to be 0.0098, and the number had nothing to do with weather:
+ * Terrain._syncAtmosphere tested `fog.density > 0.01` every frame to decide
+ * whether it was indoors, so anything past that line switched the ground's
+ * aerial term off mid-storm. The cap kept the fog under it — and cost the
+ * effect. Measured: a FULL-STRENGTH squall moved the arena's median frame
+ * luminance from 0.2856 to 0.2711. Five per cent. A dust storm you have to be
+ * told about is not a dust storm.
+ *
+ * Terrain now tests the density the LEVEL authored rather than the one the
+ * frame is running, so this is free to be what it should always have been: a
+ * bound on the physics rather than a workaround. 0.030 is a half-light range
+ * of 28 m, thicker than anything the levels ask for at their peak (dunes
+ * 0.0193 → 43 m, canyon 0.0229 → 36 m, arena 0.0097 → 86 m), so it constrains
+ * a runaway and nothing else. */
+const FOG_STORM_LIMIT = 0.030;
 
 export class Weather {
   constructor(opts = {}) {
@@ -341,7 +356,7 @@ export class Weather {
    */
   visibility(baseDensity) {
     const d = Math.max(baseDensity,
-      Math.min(FOG_INDOOR_LIMIT, baseDensity * (1 + this.fogGain * this.intensity)));
+      Math.min(FOG_STORM_LIMIT, baseDensity * (1 + this.fogGain * this.intensity)));
     return Math.sqrt(Math.LN2) / Math.max(1e-6, d);
   }
 
@@ -392,6 +407,22 @@ export const ground = {
   water: null,     // the live Water, if the level has one
   fx: null,        // the live Particles facade
   terrain: null,   // published by whoever was handed one
+
+  /* THE DRAWN SKY, over bearing and elevation, as SkyDome baked it:
+   * { az, el, top, rgb: Float32Array(az * el * 3) }. Published by
+   * SkyDome.configure and read here by the far ranges.
+   *
+   * The DATA is shared rather than the function that makes it, and that is
+   * deliberate twice over. The ranges and the dome's own painted skyline meet
+   * along the same line of the frame, so if they derived the sky separately
+   * and ever disagreed the disagreement would be a visible seam right where
+   * the eye is already looking. And Scenery cannot import Engine: Engine
+   * rewrites three's fog ShaderChunks as a module side effect, and a static
+   * edge from here pulls it into tools/verify.mjs's static import graph, where
+   * `three` resolves out of node_modules while everything loaded dynamically
+   * resolves out of vendor/. The patch would land on the wrong copy of three
+   * and the aerial-perspective checks would go quietly red. */
+  skyBand: null,
 
   /** Press / cut / scar the ground cover at a point. Safe with nothing there. */
   disturb(x, z, radius, opts) { ground.grass?.disturb(x, z, radius, opts); },
@@ -2250,9 +2281,9 @@ class Shimmer {
  *     one. That single cue is what separates "a world" from "a backdrop", and
  *     it is why this is geometry rather than another band on the dome.
  *   · LAYERS. Three ranges at three distances go through three different
- *     amounts of air, so the fog sorts them into three tones by itself. Nothing
- *     here paints that gradient by hand — it emerges, which means it stays
- *     right when a level changes its haze.
+ *     amounts of air, so the extinction sorts them into three tones by itself.
+ *     Nothing here paints that gradient by hand — it emerges, which means it
+ *     stays right when a level changes its air.
  *   · SCALE. The far range is 40–95 m tall. Nothing inside the play space is
  *     over 20 m, so it cannot be read as near, and something that cannot be
  *     read as near makes everything in front of it read as closer.
@@ -2260,22 +2291,198 @@ class Shimmer {
  * One mesh per range, no colliders, no shadows, no physics: three draw calls
  * and about 2.3k triangles for the entire far distance.
  */
+/* ── the one relationship that makes distance read as distance ──────────
+ *
+ * A LANDFORM SEEN THROUGH 300 M OF THE SAME AIR CANNOT BE BRIGHTER THAN THE
+ * SKY BEHIND IT. It was, and by a lot: measured on two dune frames, the cones
+ * came out at 0.703 / 0.611 / 0.688 / 0.600 display luminance against sky
+ * immediately beside them at 0.547 / 0.635 / 0.537 — ratios of 1.29, 1.12,
+ * 1.08, 1.12 — at hue 36-37° against a sky at 160-198°. Flat white paper
+ * triangles pasted onto a photograph, which is exactly how they read.
+ *
+ * The cause is not the shade constants and it is not the material. It is that
+ * the ranges converged on `scene.fog`, and scene.fog IS A SINGLE COLOUR while
+ * the sky is not. hazeRadiance anchors that colour to the skyline BESIDE THE
+ * SUN, which is the brightest sky there is. Measured on the dune atmosphere,
+ * drawn sky radiance at 8° elevation:
+ *
+ *     bearing from sun     20°    65°   110°   155°
+ *     drawn sky           0.821  0.589  0.444  0.391
+ *     scene.fog                    0.589 everywhere
+ *
+ * So on the shade half of the horizon the thing distance dissolved into was
+ * ONE AND A HALF TIMES the sky it was dissolving into. No amount of shading
+ * the vertices fixes that, because the fog chunk mixes back toward the same
+ * bright constant however dark you start.
+ *
+ * So the ranges take their asymptote from the sky IN THEIR OWN DIRECTION,
+ * sampled on the CPU off the engine's own Preetham derivation, and every one
+ * of them is built to sit under it by construction:
+ *
+ *   · RANGE_AIR is what the air hands back relative to the sky standing over
+ *     it. Every channel is below 1 — a finite path cannot return what an
+ *     infinite one does — and blue is highest because the scattering that
+ *     fills in behind a distant ridge is Rayleigh. That single ordering is
+ *     what turns a pale triangle into a far mesa.
+ *   · the SURFACE is a fraction of that asymptote and can never exceed it: a
+ *     passive surface behind a scattering medium cannot out-radiate the
+ *     medium. Its only freedom is hue, and it gets a whisper of the ground's.
+ *
+ * The result is bounded above by RANGE_AIR × sky at every vertex, at every
+ * distance, in every channel, whatever the level authored — which is what
+ * makes the claim checkable rather than tuned.
+ */
+const RANGE_AIR = [0.62, 0.68, 0.84];
+/* And it opens up with distance: the further range has more air in front of it
+ * and therefore sits closer to the sky, which is the entire mechanism by which
+ * three rings read as three DEPTHS rather than as three stripes. Luminance
+ * only — the chroma tilt above is a property of the scattering and does not
+ * change with how much of it there is. Measured on the dune sea, the three
+ * ranges land at 0.73 / 0.81 / 0.85 of the sky standing over them. */
+const RANGE_OPEN = 0.085;
+/** How much of the ground's own hue survives 300 m of air. Not much. */
+const RANGE_ROCK = 0.24;
+/** Crest and foot, as a share of the asymptote. The foot has more low air in
+ *  front of it, so it is the paler of the two — the gradient every range has. */
+const RANGE_FACE = 0.55, RANGE_FOOT = 0.82;
+/** How much the sun-facing side of a range picks up. Squared, so it reads as a
+ *  side and not as a gradient round the whole ring. Bounded so face × lit stays
+ *  under 1 and the surface stays under the air in front of it. */
+const RANGE_LIT = 0.22;
+
+/* The shared uniforms. One material, three meshes, and the storm arrives
+ * through the same single scheduler everything else reads (`ground.weather`)
+ * rather than through a second copy that could disagree with it. */
+const _ridgeU = {
+  // x: 1/scale-height, y: base height, z: calm density, w: the squall's gain
+  uRidgeAir: { value: new THREE.Vector4(1 / 38, 0, 0.0042, 3.6) },
+  uRidgeStorm: { value: 0 },
+  uRidgeDust: { value: new THREE.Color(0.72, 0.68, 0.6) },
+  // Same ceiling Weather holds scene.fog to, so the ranges and the ground in
+  // front of them never disagree about how much air a squall put between you
+  // and them — which would show up as the far distance clearing before the
+  // middle distance did.
+  uRidgeMax: { value: FOG_STORM_LIMIT },
+};
+
+const RIDGE_GLSL = {
+  pars: /* glsl */`
+  attribute vec3 aNear;      // the range's own surface, in drawn-sky radiance
+  attribute vec3 aFar;       // what it dissolves into: the sky in ITS direction
+  uniform vec4 uRidgeAir;
+  uniform float uRidgeStorm, uRidgeMax;
+  uniform vec3 uRidgeDust;
+  varying vec3 vRidge;
+  `,
+
+  /* The extinction is computed here rather than baked, and that is not a
+   * detail: it is the only reason walking toward a range darkens it. Same
+   * height integral the engine's aerial-perspective chunk runs, so the ranges
+   * and the ground in front of them agree about how much air there is. */
+  body: /* glsl */`
+  {
+    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+    vec3 ray = wp - cameraPosition;
+    float radial = length(ray);
+    float y0 = clamp(cameraPosition.y - uRidgeAir.y, -40.0, 600.0);
+    float k = ray.y * uRidgeAir.x;
+    float t0 = exp(-y0 * uRidgeAir.x);
+    float m = abs(k) < 1.0e-3 ? t0 : t0 * (1.0 - exp(-k)) / k;
+    float path = radial * clamp(m, 0.0, 6.0);
+    float dens = min(uRidgeAir.z * (1.0 + uRidgeAir.w * uRidgeStorm), uRidgeMax);
+    float f = 1.0 - exp(-dens * dens * path * path);
+    vec3 c = mix(aNear, aFar, f);
+    // A front does not thin the ranges, it REPLACES them: what is between you
+    // and the horizon stops being air and starts being sand. The extinction
+    // term above already grows with the storm; this is the rest of the way, so
+    // that at full strength there is nothing out there but the wall itself.
+    vRidge = mix(c, uRidgeDust, clamp(uRidgeStorm * (0.30 + f * 1.5), 0.0, 1.0));
+  }
+  `,
+};
+
 let _ridgeMat = null;
 function ridgeMaterial() {
   if (_ridgeMat) return _ridgeMat;
   // Basic, not standard: this is terrain seen through a kilometre of air, and
   // at that range the only thing that survives is its mean radiance and the
-  // haze in front of it. Lighting it properly would cost the same and change
-  // nothing. `fog: true` picks up the engine's aerial-perspective chunk, which
-  // is what does all the actual work here.
+  // air in front of it. Lighting it properly would cost the same and change
+  // nothing.
+  //
+  // `fog: false` and the aerial term done by hand, because three's fog — and
+  // the engine's chunk on top of it — converges on ONE colour for the whole
+  // sky. That is the entire bug this file was scored on. Injected into the
+  // stock basic shader rather than written as a ShaderMaterial so tone
+  // mapping, the output colour space and dithering all still happen: a raw
+  // ShaderMaterial silently opts out of every one of them.
   _ridgeMat = new THREE.MeshBasicMaterial({
-    vertexColors: true, fog: true, side: THREE.DoubleSide,
-    // three feeds this to any geometry missing the attribute; without it a
-    // vertexColors material renders black.
-    depthWrite: true,
+    fog: false, side: THREE.DoubleSide, depthWrite: true,
   });
-  _ridgeMat.defaultAttributeValues = { color: [1, 1, 1] };
+  _ridgeMat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, _ridgeU);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${RIDGE_GLSL.pars}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${RIDGE_GLSL.body}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRidge;')
+      .replace('#include <color_fragment>', 'diffuseColor.rgb = vRidge;');
+  };
   return _ridgeMat;
+}
+
+/**
+ * The dome as it is actually DRAWN, on the CPU: the same Preetham radiance the
+ * sky mesh evaluates, through the same display shoulder. Not a transcription —
+ * these are the engine's own exported functions, so a change to either lands
+ * here in the same commit.
+ */
+function drawnSky(bearing, sinEl, out) {
+  const B = ground.skyBand;
+  // No dome in this scene — nothing has derived a sky, so there is nothing to
+  // stand under. Falls back to the haze already loaded into the dust uniform,
+  // pulled well down: still darker than any plausible sky, just not directional.
+  if (!B) return out.copy(_ridgeU.uRidgeDust.value).multiplyScalar(0.62);
+  const u = (bearing * 0.15915494367 + 0.5) * B.az - 0.5;
+  const v = clamp((sinEl / B.top) * B.el - 0.5, 0, B.el - 1.001);
+  const i0 = Math.floor(u), j0 = Math.floor(v);
+  const fu = u - i0, fv = v - j0;
+  // bearing wraps, elevation clamps
+  const ia = ((i0 % B.az) + B.az) % B.az, ib = (ia + 1) % B.az;
+  const ja = j0, jb = Math.min(j0 + 1, B.el - 1);
+  const g = B.rgb;
+  const pa = (ja * B.az + ia) * 3, pb = (ja * B.az + ib) * 3;
+  const pc = (jb * B.az + ia) * 3, pd = (jb * B.az + ib) * 3;
+  const w00 = (1 - fu) * (1 - fv), w10 = fu * (1 - fv), w01 = (1 - fu) * fv, w11 = fu * fv;
+  return out.setRGB(
+    g[pa] * w00 + g[pb] * w10 + g[pc] * w01 + g[pd] * w11,
+    g[pa + 1] * w00 + g[pb + 1] * w10 + g[pc + 1] * w01 + g[pd + 1] * w11,
+    g[pa + 2] * w00 + g[pb + 2] * w10 + g[pc + 2] * w01 + g[pd + 2] * w11,
+    THREE.LinearSRGBColorSpace);
+}
+
+const _rc = new THREE.Color();
+/**
+ * The DIMMEST the sky gets anywhere a given piece of range could be seen
+ * against — over a window of bearings, because the player walks and a range at
+ * 170 m swings a long way across the compass when they do, and over a window
+ * of elevations, because "the sky directly above it" gets measured somewhere in
+ * the first few degrees and the sky is not flat over that.
+ *
+ * Taking the minimum is what turns "usually darker" into "darker", and it stays
+ * continuous: a minimum of continuous samples is continuous, so there is no
+ * seam anywhere the winner changes.
+ */
+function skyFloorAt(bearing, el, swing, out) {
+  let best = null;
+  for (let i = -1; i <= 1; i++) {
+    const b = bearing + i * swing;
+    for (const de of [0.035, 0.122]) {        // +2° and +7° above the crest
+      const c = drawnSky(b, Math.sin(el + de), _rc);
+      const L = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+      if (best === null || L < best) { best = L; out.copy(c); }
+    }
+  }
+  return out;
 }
 
 /**
@@ -2289,14 +2496,28 @@ function ridgeMaterial() {
 export function addHorizon(world, opts = {}) {
   const scene = world.scene;
   const terrain = world.terrain;
-  // The colour to converge on. scene.fog carries the engine's metered haze
-  // RADIANCE, which is the only value in the frame in the right units — an
-  // authored sRGB swatch used here would be a dark band under a bright sky,
-  // which is the exact failure SkyDome.setHaze exists to avoid.
-  const haze = fogColorOf(scene, new THREE.Color());
-  const sun = opts.sunDir || sceneLights(scene).sun?.position || new THREE.Vector3(0.4, 0.7, 0.3);
+  // The level's own atmosphere block, which is what the sky is drawn from. It
+  // is applied before dressing runs, so by here it is the live one.
+  const atmo = opts.atmosphere || world.level?.atmosphere || {};
+  // Read off the light the level hung rather than re-derived from the block:
+  // Engine parks the key at sunPos × 90, so this IS the engine's own answer.
+  const sun = opts.sunDir || sceneLights(scene).sun?.position || _v2.set(0.4, 0.7, 0.3);
   const sx = sun.x, sz = sun.z;
   const sl = Math.hypot(sx, sz) || 1;
+  // What a squall replaces the distance with. scene.fog carries the engine's
+  // metered haze RADIANCE — the only value in the frame in the right units.
+  const haze = fogColorOf(scene, new THREE.Color());
+  // The ground's hue, demoted to a hue: renormalised so it can only say WHAT
+  // COLOUR and never HOW BRIGHT, then pulled most of the way to neutral. A
+  // range 300 m off keeps a whisper of the rock it is made of and no more.
+  const rock = new THREE.Color(atmo.groundColor ?? 0x60482e);
+  const rl = rock.r * 0.2126 + rock.g * 0.7152 + rock.b * 0.0722;
+  rock.multiplyScalar(1 / Math.max(0.02, rl)).lerp(_col.setRGB(1, 1, 1), 1 - RANGE_ROCK);
+
+  // Hand the shared material this level's air and its dust wall.
+  _ridgeU.uRidgeAir.value.set(1 / (atmo.fogHeight ?? 38), atmo.fogBase ?? 0,
+    atmo.fogDensity ?? 0.0035, world.level?.dust?.weather?.fogGain ?? 3.2);
+  _ridgeU.uRidgeDust.value.copy(haze);
 
   const layers = opts.layers || [
     { radius: 172, low: 13, high: 34, shade: 0.55 },
@@ -2314,8 +2535,19 @@ export function addHorizon(world, opts = {}) {
     // triangles a range.
     const seg = Math.max(96, Math.min(256, Math.round((TAU * R) / 2.4)));
     const pos = new Float32Array((seg + 1) * 2 * 3);
-    const col = new Float32Array((seg + 1) * 2 * 3);
+    const near = new Float32Array((seg + 1) * 2 * 3);
+    const far = new Float32Array((seg + 1) * 2 * 3);
     const idx = [];
+    /* How far round the compass a piece of this range can swing while the
+     * player walks. asin(roam / radius): 90 m of roam puts the near ring at
+     * 32° and the far one at 15°, and the sky floor is taken over that whole
+     * window so the guarantee survives the walk rather than only the pose it
+     * was baked at. */
+    const swing = Math.asin(clamp(90 / R, 0, 0.9));
+    // Never at or above 1: a finite path cannot hand back what an infinite one
+    // does, so a range cannot reach the sky it is dissolving into however far
+    // away it is put.
+    const air = RANGE_AIR.map((v) => Math.min(0.99, v * (1 + L * RANGE_OPEN)));
     /* The noise is sampled at the ring's own WORLD position, so the profile
      * closes on itself seamlessly and no two ranges share a skyline.
      *
@@ -2348,28 +2580,36 @@ export function addHorizon(world, opts = {}) {
       const yb = g - 45;          // rooted deep, so nothing ever shows under it
       const yt = g + h;
 
+      // The sky this crest stands against, at its own bearing — the floor of
+      // it over everywhere the player can put it and everywhere "directly
+      // above" can be measured. `a` is the bearing and atan2 the crest's
+      // elevation from the middle of the ring, which is where the player is.
+      const crestEl = Math.atan2(yt - 1.75, R);
+      skyFloorAt(a, crestEl, swing, _rc2);
+      const fr = _rc2.r * air[0], fg = _rc2.g * air[1], fb = _rc2.b * air[2];
+
       // Slopes facing the sun catch a little more of it. Squared, so it is a
       // side and not a gradient across the whole ring.
       const lit = Math.max(0, (cx * sx + cz * sz) / sl);
-      const k = 1 + lit * lit * 0.16;
+      const k = 1 + lit * lit * RANGE_LIT;
       // The FOOT of a distant range is paler than its crest: there is more of
-      // the low haze between you and it. Everything else about the tonal
-      // separation between ranges is left to the fog, which already knows how
-      // far away each one is.
+      // the low haze between you and it. The tonal separation BETWEEN ranges
+      // is left to the extinction term in the shader, which already knows how
+      // far away each one is and re-decides it every frame as you walk.
       //
-      // Both are capped BELOW 1, and that is not a safety belt — it is the
-      // physics. These are passive surfaces behind a scattering medium, so
-      // they cannot hand back more light than the haze they are dissolving
-      // into. Uncapped, the canyon's far range came out at 1.09 × the fog and
-      // measured brighter than the sky standing over it.
-      const cap = 0.95;
-      const cTop = Math.min(cap, cfg.shade * k);
-      const cBot = Math.min(cap, cfg.shade * 1.42 * k);
+      // Both stay under 1, and that is not a safety belt — it is the physics.
+      // These are passive surfaces behind a scattering medium, so they cannot
+      // hand back more light than the medium in front of them. That, and
+      // RANGE_AIR being under 1 in every channel, is the whole guarantee that
+      // a range cannot out-radiate its own sky.
+      const cTop = Math.min(0.95, RANGE_FACE * k);
+      const cBot = Math.min(0.95, RANGE_FOOT * k);
       for (let s = 0; s < 2; s++) {
         const v = (i * 2 + s) * 3;
         pos[v] = x; pos[v + 1] = s ? yt : yb; pos[v + 2] = z;
         const c = s ? cTop : cBot;
-        col[v] = haze.r * c; col[v + 1] = haze.g * c; col[v + 2] = haze.b * c;
+        far[v] = fr; far[v + 1] = fg; far[v + 2] = fb;
+        near[v] = fr * rock.r * c; near[v + 1] = fg * rock.g * c; near[v + 2] = fb * rock.b * c;
       }
       if (i < seg) {
         const b0 = i * 2, t0 = i * 2 + 1, b1 = b0 + 2, t1 = t0 + 2;
@@ -2379,10 +2619,17 @@ export function addHorizon(world, opts = {}) {
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aNear', new THREE.BufferAttribute(near, 3));
+    geo.setAttribute('aFar', new THREE.BufferAttribute(far, 3));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, ridgeMaterial());
+    // The storm arrives through the same single scheduler everything else
+    // reads. Pulled per draw rather than pushed from Atmosphere so a level
+    // that builds ranges without an Atmosphere still behaves.
+    mesh.onBeforeRender = () => {
+      _ridgeU.uRidgeStorm.value = ground.weather ? ground.weather.intensity : 0;
+    };
     // The ring encloses the camera, so its bounding sphere can never be culled
     // — the test is pure cost. The matrix is identity and stays that way, but
     // it is composed once explicitly rather than relying on the default.
@@ -2548,23 +2795,23 @@ export class Atmosphere {
      * makes the far ranges disappear and come back, and it is why a squall
      * changes what the level IS rather than just what is floating in it.
      *
-     * CAPPED AT 0.0098, and that number is not taste. Terrain._syncAtmosphere
-     * runs from flush() every frame and decides it is INDOORS when
-     * `fog.density > 0.01`, at which point it sets the ground's sky-blend haze
-     * to zero. Uncapped, all three outdoor levels sail past that: the dune sea
-     * asks for 0.0193 at the peak. So every squall would have hard-switched
-     * the terrain's aerial term off on the way in and back on on the way out —
-     * a pop, on a threshold, in a system that has no idea weather exists.
-     *
-     * The cap costs real range (dunes 198 m → 85 m instead of 43 m), which is
-     * why the fog banks carry more of the load than they otherwise would. */
+     * This used to be held at 0.0098 by a threshold that had nothing to do
+     * with weather — Terrain._syncAtmosphere's indoor test — and the cost was
+     * the whole effect: the dune sea's squall took visibility to 85 m instead
+     * of the 43 m its own numbers ask for, and a full-strength front moved the
+     * arena's median frame luminance by five per cent. Terrain now tests the
+     * density the level AUTHORED rather than the one the frame is running, so
+     * the levels' own gains reach the frame: dunes 198 → 43 m, canyon 160 → 36
+     * m, arena 245 → 86 m. FOG_STORM_LIMIT is a bound on a runaway now, not a
+     * workaround, and nothing authored comes near it. */
     // The `max` is not belt and braces: a bare `min` against the cap DROPPED
     // the hangar's authored 0.016 to 0.0098 on a level with no weather at all,
     // which is the storm system quietly re-lighting an interior it is not even
-    // running in. Weather may only ever ADD to what the level authored.
+    // running in. Weather may only ever ADD to what the level authored — and
+    // Terrain's indoor test now depends on exactly that being true.
     if (this._fog) {
       this._fog.density = Math.max(this._fogBase,
-        Math.min(FOG_INDOOR_LIMIT, this._fogBase * (1 + W.fogGain * I)));
+        Math.min(FOG_STORM_LIMIT, this._fogBase * (1 + W.fogGain * I)));
     }
     // ── light. A dust storm is not a dimmer, it is a converter: it takes the
     // sun's beam apart and hands it back as sky. Direct falls, fill rises, and
