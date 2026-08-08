@@ -248,6 +248,25 @@
   </div>
 </div>
 
+<!-- Held on Tab (rebindable: the `scoreboard` action). Deliberately built from
+     the pause card's own classes rather than a new block in styles.css — it is
+     the same six numbers, and one owner for that look is one place to change
+     it. The only overrides are local: a lighter ground than a full .screen,
+     because this is held DURING a fight and you have to be able to see out of
+     it, and a z-index below the pause card so Esc still lands on top. -->
+<div id="scoreboard" class="screen hidden" style="z-index:38;background:rgba(4,7,12,.72);
+     backdrop-filter:blur(5px) saturate(.9);-webkit-backdrop-filter:blur(5px) saturate(.9);animation:none">
+  <div class="pause-wrap">
+    <h2>Standing</h2>
+    <div id="score-stats" class="pause-stats"></div>
+    <div id="score-roster" class="roster"></div>
+    <div id="score-boons" class="boons" style="justify-content:center;max-width:none"></div>
+    <!-- filled from the live binding, not typed: an overlay whose whole subject
+         is a rebindable key must not print a key the player may have changed -->
+    <div class="pause-hints"><span>hold <kbd id="score-key">Tab</kbd></span></div>
+  </div>
+</div>
+
 <div id="pause" class="screen hidden">
   <div class="pause-wrap">
     <h2>Meditate</h2>

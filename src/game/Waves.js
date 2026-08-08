@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { ARCHETYPES } from './Enemy.js';
+import { segmentSegment } from '../physics/Physics.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -365,9 +366,185 @@ export class WaveDirector {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Cleaving Throw                                                        */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The two numbers on the card, and why they are those numbers.
+ *
+ * `recall` — the outbound leg is capped at 1.5 s and the stock recall closes at
+ * up to 34 m/s, so a throw across a wave leaves you unarmed for the better part
+ * of three seconds. Doubling the recall clock brings the round trip back under
+ * two, which is the difference between a technique you use IN a fight and one
+ * you only use to open it. The card says "twice as fast" because this says 2.
+ *
+ * `speed` — the cut events a cleave produces carry a FIXED speed rather than
+ * the disc's own. World._applyBladeEvent reads ev.speed for exactly two things:
+ * the hitstop steps at 20 m/s (0.03 s below, 0.055 above) and the camera kick
+ * is clamp(speed/60, 0.05, 0.3), which is already at its ceiling by 18. The
+ * disc's real speed runs 26 m/s outbound and up to 68 on a doubled recall, so
+ * reading it would make the same cut feel different depending on which leg of
+ * the flight caught you — and both ends land on the identical kick anyway. 24
+ * sits just over the hitstop step, because a blade going clean through a body
+ * is the heavy version of a cut, not the glancing one.
+ */
+export const CLEAVE = { recall: 2.0, speed: 24 };
+
+const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3();
+const _cUp = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Cleaving Throw, in full — because nothing else implements it.
+ *
+ * Every other boon on the list below is a number: multiply cutPower, add
+ * stamina, set a flag Player.js already reads. This one is a MECHANIC, and it
+ * shipped as `p.boonMods.throwPierce = true` with no reader anywhere in the
+ * tree. The card promised a blade that passes through everything and comes back
+ * faster; the throw behaved exactly as it did without it. So the technique is
+ * installed on the player it is granted to, and each promise is one thing here.
+ *
+ * PASSES THROUGH. A held blade has to EARN a cut — BladeContactSolver
+ * accumulates speed·dt·2.4 against the material's toughness, so plastoid (1.5)
+ * parts in a frame and anything heavy (14 and up) has to be leaned on. A thrown
+ * blade is never leaned on anything: at 26 m/s it crosses a body in about 40 ms,
+ * two frames, roughly 3.4 of work. So the stock throw scores flesh and droid
+ * plating and grinds uselessly off everything above them. Cleaving skips the
+ * accumulator entirely — the disc's swept path is tested against every capsule
+ * in reach and each body it meets is cut on the frame it is met, toughness
+ * ignored, once per body per flight.
+ *
+ * The blade in flight is treated as a SPHERE of the blade's own radius, not as
+ * the horizontal disc it is drawn as. That is the honest simplification: the
+ * disc spins at 27 rad/s and translates at 26 m/s, so it sweeps its own
+ * diameter in about 90 ms and there is no orientation a body can be in, on the
+ * frame scale that matters, that the rim does not reach.
+ *
+ * It wraps Player._updateThrow because that is the only seam the throw has.
+ * tools/checks/controls.mjs pins that seam: rename it in Player.js and the
+ * check fails, rather than this boon quietly going back to doing nothing.
+ *
+ * @returns true if the technique is actually live on this player.
+ */
+export function cleavingThrow(p) {
+  const base = p?._updateThrow;
+  if (typeof base !== 'function') return false;
+
+  p.throwCleaved = new Set();     // ids already met on THIS flight
+  p.throwCleaves = 0;             // bodies passed through, this flight
+  const from = new THREE.Vector3();
+
+  p._updateThrow = function (dt, ctx) {
+    // throwOrRecall zeroes the timer on the way out and never again, so this is
+    // the one frame that is the start of a new flight. A manual recall must NOT
+    // reset it — the way back is the same flight, and a body already parted on
+    // the way out should not be parted a second time on the way home.
+    if (this.throwTimer === 0) { this.throwCleaved.clear(); this.throwCleaves = 0; }
+    from.copy(this.throwPos);
+    // Scale dt rather than the recall's own speed clamp: the spin, the steering
+    // lerp and the arrival test all read the same clock, so the blade still
+    // lands in the hand at the end of a rotation instead of mid-turn.
+    base.call(this, this.throwState === 'returning' ? dt * CLEAVE.recall : dt, ctx);
+    if (this.boonMods.throwPierce) cleaveAlong(this, from, this.throwPos, dt);
+  };
+  return true;
+}
+
+/**
+ * Everything the disc passed between `from` and `to`, cut once.
+ *
+ * The events go through World._applyBladeEvent rather than calling takeCut and
+ * Prop.cut directly, because that function is where a cut's CONSEQUENCES live —
+ * flow, combo, score, lifesteal, the hitmark, the kill credit. Duplicating that
+ * policy here is how a technique drifts out of step with the rest of the game
+ * one commit at a time.
+ */
+function cleaveAlong(p, from, to, dt) {
+  const w = p.world;
+  if (!w || typeof w._applyBladeEvent !== 'function') return;
+  const reach = p.saber?.bladeLength ?? 1.15;
+  const seen = p.throwCleaved;
+
+  const meet = (id, caps, target) => {
+    let best = null, bestGap = Infinity;
+    for (const cap of caps) {
+      const r = segmentSegment(from, to, cap.p0, cap.p1, _c1, _c2);
+      const gap = Math.sqrt(r.distSq) - (cap.r ?? 0);
+      if (gap < bestGap) { bestGap = gap; best = { cap, t: r.t }; }
+    }
+    if (!best || bestGap > reach) return;
+    seen.add(id);
+    p.throwCleaves++;
+
+    // The disc cuts on the horizontal plane it is spinning in, so where it
+    // crosses a limb is where that plane meets it — a thrown saber takes a leg
+    // at the height it was flying, not always at the middle. When the plane
+    // misses the limb's span entirely (a limb lying flat, or one the disc only
+    // clipped the end of) that answer is meaningless and the closest point on
+    // the limb is used instead.
+    const cap = best.cap;
+    const dy = cap.p1.y - cap.p0.y;
+    const plane = Math.abs(dy) > 1e-3 ? (to.y - cap.p0.y) / dy : -1;
+    const cutT = clamp(plane >= 0 && plane <= 1 ? plane : best.t, 0.06, 0.94);
+    const point = cap.p0.clone().lerp(cap.p1, cutT);
+    w._applyBladeEvent(p, {
+      type: 'cut', target: { id, ...target }, cap, bone: cap.name,
+      cutT, bladeT: 1, speed: CLEAVE.speed,
+      point, impulse: p.throwVel.clone(), normal: _cUp.clone(),
+    }, dt);
+  };
+
+  // One body at a time: Enemy.capsules() hands back a shared array it reuses,
+  // so collecting them all first would leave every entry pointing at the last
+  // enemy's bones.
+  const enemies = w.enemies || [], props = w.props || [];
+  for (let i = 0, n = enemies.length; i < n && i < enemies.length; i++) {
+    const e = enemies[i];
+    if (!e || e.dead || seen.has(e.id)) continue;
+    meet(e.id, e.capsules(), { enemy: e });
+  }
+
+  // Props need the loop bounded AND the offspring disowned, because cutting one
+  // creates more of them: World._applyBladeEvent pushes the two halves onto
+  // world.props, they carry new ids, and they are lying exactly where the disc
+  // is. Unbounded, a for…of walks into them on the same frame; bounded but
+  // unmarked, the NEXT frame finds them and cuts those, and their halves after
+  // that — two crates measured 14 cleaves before this, a crate sawn to its
+  // generation cap in the length of one flight.
+  //
+  // One pass means one pass. Anything the cut just produced is the same body in
+  // two parts, and the disc has already been through it.
+  for (let i = 0, n = props.length; i < n && i < props.length; i++) {
+    const pr = props[i];
+    if (!pr || pr.dead || seen.has(pr.id)) continue;
+    const before = props.length;
+    meet(pr.id, pr.capsules(), { prop: pr });
+    for (let k = before; k < props.length; k++) if (props[k]) seen.add(props[k].id);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Boons                                                                 */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Every clause on every card is a claim about code, and four of them were not.
+ *
+ *   Cleaving Throw   set a flag nothing read — see cleavingThrow above.
+ *   Makashi          "ripostes last twice as long" set riposteWindow to 1.0,
+ *                    and World reads it as `?? 1`. The identity value. The boon
+ *                    and no boon produced the same 0.6 s window. It is 2 now.
+ *   Soresu           "blocked bolts cost no stamina" — World._creditDeflect
+ *                    charges a flat 4 on a BLOCK and consults no boon.
+ *   Celerity         "dashes cost less" — Player._tryDash charges a flat 18 and
+ *                    consults no boon.
+ *
+ * The last two need a line in World.js and Player.js respectively, which this
+ * lane does not own, so the clauses are off the cards until the mechanic is
+ * there. They are written down here rather than deleted so the sentence can go
+ * back the moment it becomes true. Two more were simply overstated: Ataru's
+ * "cost nothing" is a 45% discount and it applies to every Force power, not
+ * just jumps, and Focusing Crystal makes the trail THICKER, not longer.
+ */
 export const BOONS = [
   {
     id: 'vaapad', icon: '⚡', name: 'Vaapad', tag: 'Form VII',
@@ -376,12 +553,12 @@ export const BOONS = [
   },
   {
     id: 'soresu', icon: '🛡', name: 'Soresu', tag: 'Form III',
-    text: 'A wider guard. Deflection is forgiven further along the blade, and blocked bolts cost no stamina.',
+    text: 'A wider guard. Deflection is forgiven further along the blade, and your reserves run deeper.',
     apply(p) { p.boonMods.returnCone = 0.58; p.control.deadzone = 0.30; p.maxStamina += 25; p.stamina = p.maxStamina; },
   },
   {
     id: 'ataru', icon: '🌀', name: 'Ataru', tag: 'Form IV',
-    text: 'Acrobatic. Force jumps cost nothing and you may leap a second time in the air.',
+    text: 'Acrobatic. Every Force power costs little over half, you leap higher, and you may leap a second time in the air.',
     apply(p) { p.boonMods.doubleJump = true; p.boonMods.forceCost *= 0.55; p.boonMods.jumpPower *= 1.18; },
   },
   {
@@ -392,7 +569,7 @@ export const BOONS = [
   {
     id: 'makashi', icon: '🤺', name: 'Makashi', tag: 'Form II',
     text: 'Duellist. A steadier blade against another blade, and ripostes last twice as long.',
-    apply(p) { p.boonMods.riposteWindow = 1.0; p.control.sensitivity *= 1.06; },
+    apply(p) { p.boonMods.riposteWindow = 2.0; p.control.sensitivity *= 1.06; },
   },
   {
     id: 'shatterpoint', icon: '💠', name: 'Shatterpoint', tag: 'Sight',
@@ -416,8 +593,11 @@ export const BOONS = [
   },
   {
     id: 'saberthrow', icon: '🪃', name: 'Cleaving Throw', tag: 'Technique',
-    text: 'The thrown blade passes through everything it meets and returns faster.',
-    apply(p) { p.boonMods.throwPierce = true; },
+    text: 'The thrown blade cuts clean through everything it passes, and returns twice as fast.',
+    // The flag is set from the RESULT, so it means "the technique is live on
+    // this player" and not "somebody once ticked a box". cleavingThrow reads it
+    // back every frame, which is also what makes it a setting with a reader.
+    apply(p) { p.boonMods.throwPierce = cleavingThrow(p); },
   },
   {
     id: 'meditation', icon: '🧘', name: 'Meditation', tag: 'Discipline',
@@ -431,7 +611,7 @@ export const BOONS = [
   },
   {
     id: 'celerity', icon: '💨', name: 'Celerity', tag: 'Speed',
-    text: 'You move a fifth faster and dashes cost less.',
+    text: 'You move a fifth faster.',
     apply(p) { p.boonMods.moveSpeed *= 1.2; },
   },
   {
@@ -441,7 +621,7 @@ export const BOONS = [
   },
   {
     id: 'dualcrystal', icon: '💎', name: 'Focusing Crystal', tag: 'Crystal',
-    text: 'A brighter, hotter blade. Cuts land more easily and the trail burns longer.',
+    text: 'A brighter, hotter blade. Cuts land more easily and the trail burns wider.',
     apply(p) { p.saber.coreWidth *= 1.25; p.boonMods.cutPower *= 1.2; },
   },
   {

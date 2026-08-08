@@ -14,9 +14,10 @@ import { World } from './game/World.js';
 import { LEVELS } from './game/Levels.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar } from './net/Net.js';
 import { BOONS } from './game/Waves.js';
+import { keyLabel } from './engine/Bindings.js';
 import { clamp } from './engine/MathUtil.js';
 
 const canvas = document.getElementById('view');
@@ -84,6 +85,10 @@ const menu = new Menu(settings, {
     world.settings.forceDrain = settings.forceDrain;
   },
   onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
+  // Camera shake and cinematic slow-motion. The gates themselves are installed
+  // once per world in buildWorld and read `settings` live; this only exists so
+  // that unticking a box also kills the shake or the hitstop already in flight.
+  onFeel: () => applyFeelSettings(world, settings),
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),
 });
@@ -157,6 +162,10 @@ function buildWorld(levelKey) {
   player.control.followStrength = settings.camFollow;
   player.camera.fovTarget = settings.fov;
   player.camera.fov = settings.fov;
+
+  // After spawnPlayer: the shake gate goes on this player's camera rig, and
+  // there is no rig until there is a player.
+  applyFeelSettings(world, settings);
 
   hud.setLevel(LEVELS[levelKey].name, world.difficulty.name);
   hud.setBoons([]);
@@ -270,6 +279,67 @@ function offerDraft(boons) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Scoreboard                                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Tab.
+ *
+ * `scoreboard` has been in ACTIONS since bindings existed, the Codex lists it
+ * as "Scoreboard & run boons", the pause card prints `Tab boons` — and nothing
+ * anywhere handled it. The only mention of Tab in this file was a
+ * preventDefault stopping the browser moving focus, which is what made it read
+ * as handled. A bound, listed, documented key that does nothing is the same lie
+ * as a dead checkbox.
+ *
+ * Read as an ACTION and not off `e.code`, so it rebinds like everything else,
+ * and it is a HOLD (Bindings.js marks it so) rather than a toggle: you glance
+ * at the standing mid-fight and let go. The DOM is rebuilt on the frame it
+ * OPENS and not while it is held — sixty relayouts a second for numbers that
+ * move once a kill is a real cost for nothing.
+ */
+const scoreEl = {
+  root: document.getElementById('scoreboard'),
+  stats: document.getElementById('score-stats'),
+  roster: document.getElementById('score-roster'),
+  boons: document.getElementById('score-boons'),
+  key: document.getElementById('score-key'),
+};
+let scoreOpen = false;
+
+function setScoreboard(open) {
+  if (!scoreEl.root || open === scoreOpen) return;
+  scoreOpen = open;
+  scoreEl.root.classList.toggle('hidden', !open);
+  if (!open || !world) return;
+
+  const p = world.player;
+  scoreEl.stats.innerHTML = [
+    ['Wave', world.director?.wave ?? 1],
+    ['Score', Math.floor(world.score + (p?.score || 0)).toLocaleString()],
+    ['Kills', p?.kills ?? 0],
+    ['Deflections', p?.deflects ?? 0],
+    ['Perfect returns', p?.perfects ?? 0],
+    ['Limbs taken', p?.limbsRemoved ?? 0],
+  ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+
+  // Only in co-op. Solo, a one-row table of yourself is noise.
+  const roster = net.enabled && net.connected ? net.roster : [];
+  scoreEl.roster.innerHTML = roster.map(r =>
+    `<div class="p"><i></i><span>${r.name}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}</div>`).join('');
+
+  const taken = [...(world.takenBoons || [])].map(id =>
+    BOONS.find(x => x.id === id) || { icon: '•', name: id });
+  scoreEl.boons.innerHTML = taken.length
+    ? taken.map(b => `<div class="bn">${b.icon} ${b.name}</div>`).join('')
+    : '<div class="bn">no boons yet</div>';
+
+  // The one label in the game that has to track a rebind, because it is the
+  // label for the key you are holding to read it.
+  if (scoreEl.key) scoreEl.key.textContent = keyLabel((input.bindings.scoreboard || [])[0]);
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Multiplayer                                                           */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -361,6 +431,10 @@ window.addEventListener('keydown', (e) => {
     if (state === 'playing') pause();
     else if (state === 'paused') resume();
   }
+  // NOT the scoreboard — that is the `scoreboard` action, read once a frame in
+  // frame() so it stays rebindable. This only stops the browser walking focus
+  // off the canvas while a menu is up; Input.js already swallows every key once
+  // a run is running.
   if (e.code === 'Tab') e.preventDefault();
 });
 
@@ -390,6 +464,10 @@ function frame(now) {
   fpsSmooth += (1 / dt - fpsSmooth) * 0.04;
 
   input.begin(dt);
+
+  // Held, and only while a run is live: the menus, the draft and the death card
+  // own the screen otherwise, and this would sit on top of all three.
+  setScoreboard(state === 'playing' && !!world && input.act('scoreboard'));
 
   if (world && (state === 'playing' || state === 'dead')) {
     world.update(dt, input);

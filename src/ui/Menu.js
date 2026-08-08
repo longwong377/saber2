@@ -86,6 +86,114 @@ export const DEFAULT_SETTINGS = {
 export function bladeCeiling(s) { return s.unlimitedBlade ? BLADE_MAX : BLADE_CAP; }
 
 /**
+ * Where every setting in DEFAULT_SETTINGS is actually READ.
+ *
+ * Three of them were read nowhere at all. `shake` and `slowmo` each had a
+ * default here, a checkbox in index.html and no onChange, no hook and no
+ * consumer anywhere in src/ — unticking either changed precisely nothing on
+ * screen, and both read perfectly well as source. A setting that does nothing
+ * is a lie to the player, and the only way that stops coming back is if adding
+ * one without a reader FAILS.
+ *
+ * So each entry names the file that consumes the setting and a literal
+ * substring of the line that consumes it. tools/checks/controls.mjs holds this
+ * to both directions: every key here is in DEFAULT_SETTINGS and every key in
+ * DEFAULT_SETTINGS is here, the named file exists, and it really does contain
+ * that expression. Rename a reader and the check fails; add a setting and
+ * forget to wire it and the check fails. It cannot be satisfied by writing an
+ * entry, only by writing a reader.
+ *
+ * Two entries point back at this file on purpose. `unlimitedBlade` moves the
+ * ceiling on the blade sliders and is a menu-scope number by nature, and the
+ * feel gates below are the seam where `shake` and `slowmo` finally bite.
+ */
+export const SETTING_READERS = {
+  level:           ['main.js', 'settings.level'],
+  difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
+  mode:            ['game/World.js', 'this.settings.mode'],
+  colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
+  hiltStyle:       ['game/World.js', 'hiltStyle: this.settings.hiltStyle'],
+  robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
+  bladeLength:     ['game/World.js', 'bladeLength: this.settings.bladeLength'],
+  coreWidth:       ['game/World.js', 'coreWidth: this.settings.coreWidth'],
+  sandboxCount:    ['game/Waves.js', 's.sandboxCount'],
+  sandboxFire:     ['game/Waves.js', 's.sandboxFire'],
+  sandboxType:     ['game/Waves.js', 's.sandboxType'],
+  unlimitedBlade:  ['ui/Menu.js', 's.unlimitedBlade ? BLADE_MAX : BLADE_CAP'],
+  sensitivity:     ['game/World.js', 'sensitivity: this.settings.sensitivity'],
+  camFollow:       ['game/World.js', 'followStrength: this.settings.camFollow'],
+  fov:             ['main.js', 'settings.fov'],
+  invertY:         ['main.js', 'input.invertY = settings.invertY'],
+  firstPerson:     ['game/World.js', '!!this.settings.firstPerson'],
+  scheme:          ['game/World.js', 'scheme: this.settings.scheme'],
+  deflectAim:      ['game/World.js', 'this.settings.deflectAim'],
+  forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
+  forceDrain:      ['game/Player.js', 'this.world.settings?.forceDrain'],
+  quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
+  resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
+  bloom:           ['main.js', 'engine.setBloom(settings.bloom)'],
+  grain:           ['main.js', 'engine.setGrain(settings.grain)'],
+  shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
+  slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
+  volume:          ['main.js', 'audio.setVolume(settings.volume)'],
+  music:           ['main.js', 'audio.setMusicVolume(settings.music)'],
+  grassScale:      ['game/World.js', 'this.settings.grassScale'],
+  particleScale:   ['game/World.js', 'this.settings.particleScale'],
+};
+
+/**
+ * Make the two feel toggles mean something.
+ *
+ * Neither effect has a settings lookup at the point it FIRES, and there is no
+ * one place to add one: nineteen `camera.addShake(…)` call sites across Player,
+ * World, Duel and Enemy, and twelve `addHitstop(…)`. But every one of them
+ * funnels through exactly one function on the way out — CameraRig.addShake is
+ * the only writer of `rig.shake`, and World.addHitstop the only writer of
+ * `world.hitstop` — so the toggle goes on the funnel. Both wrappers read
+ * `settings` live rather than capturing it, so a box ticked on the pause screen
+ * bites on the very next explosion with no redeploy.
+ *
+ * Gating the funnel and not the frame matters: zeroing `rig.shake` once a frame
+ * from the game loop would still let one frame of full-amplitude jitter through
+ * every time, because the rig applies the shake it was given inside the same
+ * update that added it. Gating the funnel makes the deviation exactly zero.
+ *
+ * Deliberately NOT gated: Focus (hold M3) and Force sense, which also bend
+ * time. Those are abilities the player spends Force on and holds a key for — a
+ * graphics toggle that silently disabled a Force power would be a new lie in
+ * place of the old one. "Cinematic" means the dilation the GAME applies without
+ * being asked, which is hitstop, and hitstop is exactly what this gates.
+ *
+ * Idempotent: safe to call on every build and on every checkbox change.
+ *
+ * @returns true once both gates are in place on this world.
+ */
+export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
+  if (!world) return false;
+  const rig = world.player?.camera;
+  // The blob is re-hung on every call rather than captured by the closure, so
+  // a second call with a different settings object cannot leave the gates
+  // silently answering to the first one.
+  world._feelSettings = s;
+  if (rig) rig._feelSettings = s;
+  if (rig && !rig._feelGated && typeof rig.addShake === 'function') {
+    const addShake = rig.addShake.bind(rig);
+    rig.addShake = (v) => { if (rig._feelSettings.shake) addShake(v); };
+    rig._feelGated = true;
+  }
+  if (!world._feelGated && typeof world.addHitstop === 'function') {
+    const addHitstop = world.addHitstop.bind(world);
+    world.addHitstop = (t) => { if (world._feelSettings.slowmo) addHitstop(t); };
+    world._feelGated = true;
+  }
+  // Turning a toggle off has to bite NOW, not once the shake already in flight
+  // has damped out (about 0.4 s) or the hitstop already running has expired.
+  if (!s.shake && rig) rig.shake = 0;
+  if (!s.slowmo) world.hitstop = 0;
+  return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
  * An older blob speaks once, and then it is retired.
  *
  * Bumping the key without this would not only forget a returning player's
@@ -831,8 +939,11 @@ export class Menu {
     this._check('opt-firstperson', 'firstPerson');
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
-    this._check('opt-shake', 'shake');
-    this._check('opt-slowmo', 'slowmo');
+    // Both toggles are live: applyFeelSettings re-reads `this.s` on every
+    // shake and every hitstop, so the hook exists only to kill what is already
+    // in flight the moment the box is unticked.
+    this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
+    this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
   }
 
   _buildButtons() {
