@@ -30,6 +30,7 @@ const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _col = new THREE.Color();
 const _rc2 = new THREE.Color();
+const _rc3 = new THREE.Color();
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Wind                                                                  */
@@ -862,6 +863,97 @@ const GRASS_FRAG = /* glsl */`
   }
 `;
 
+/* ── contact ───────────────────────────────────────────────────────────
+ *
+ * NOTHING IN THE FRAME TOUCHED THE GROUND. Measured on a dune tuft, the sand
+ * 5 px from a blade base and the sand 40 px away differed by 1.6% luminance:
+ * the whole field stood on sand of exactly its own value right up to each
+ * blade, which is the loudest single tell that a scene was assembled rather
+ * than lit.
+ *
+ * Grass cannot go in the shadow map to fix it. Ten thousand alpha-tested blades
+ * is the most expensive thing that could possibly be in a depth pass, the
+ * cascade is 42-96 m and the field is 42 m, and the result at any sane map
+ * resolution is a grey smear rather than a contact. So the contact is BAKED:
+ * one quad per TUFT, lying on the ground under it, multiplied into whatever the
+ * terrain shaded itself.
+ *
+ * Per tuft, not per blade — 540 + 1200 quads for a 9000-blade field instead of
+ * 9000 — because the thing that darkens the ground is the CLUMP. A single blade
+ * occludes a slit; ten standing in a 26 cm circle occlude most of the sky over
+ * the patch they share, which is why real grass has a dark base and isolated
+ * spikes do not.
+ *
+ * Tilted to the ground normal rather than laid flat: at the 0.55 slope the
+ * scatter still plants on, a flat 0.4 m disc rises 22 cm out of the hill it is
+ * supposed to be lying on.
+ */
+/** How much light a full clump keeps off the ground directly under it, and how
+ *  far out it does it as a multiple of the tuft's own spread.
+ *
+ *  Both measured against the reading rather than picked: at 0.52 over 1.7×
+ *  spread the contact was plainly there in an A/B of the same frame, but the
+ *  art director's own metric — sand 5 px from a base against sand 40 px away —
+ *  came out at a 9.8% median, because a disc that wide puts the 40 px reference
+ *  INSIDE the same shadow half the time and the sand's own ripples are already
+ *  worth 5.6% of that reading on their own. Narrower and deeper moves the
+ *  gradient rather than the average: the ground keeps a third of its open value
+ *  under a clump and is back to full by 32 cm. The card ring is three
+ *  billboards rather than ten blades, so it occludes less and wider. */
+const SHADE_CORE = 0.68, SHADE_SPAN = 1.25;
+const SHADE_CARD = 0.78, SHADE_CARD_SPAN = 0.80;
+
+const SHADE_VERT = /* glsl */`
+  precision highp float;
+  attribute vec4 aShade;     // world x, ground y, world z, radius
+  attribute vec4 aShadeN;    // ground normal xyz, darkness at the centre
+  uniform vec3 uCenter;
+  uniform float uFar;
+  varying vec2 vLocal;
+  varying float vDark;
+
+  void main(){
+    vec3 base = aShade.xyz;
+    vDark = aShadeN.w;
+    if (aShade.w <= 0.0001 || vDark <= 0.001) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vLocal = vec2(2.0); vDark = 0.0; return;
+    }
+    // Gone by the edge of the ring it belongs to, so the field does not end in
+    // a ring of stains on bare ground.
+    float d = distance(base.xz, uCenter.xz);
+    vDark *= 1.0 - smoothstep(uFar * 0.72, uFar * 0.98, d);
+
+    vec3 n = normalize(aShadeN.xyz);
+    // any tangent that is not parallel to the normal; the disc is radially
+    // symmetric so which one does not matter
+    // any axis that is not parallel to the normal; the disc is radially
+    // symmetric, so which one it is does not matter. step() rather than a
+    // ternary on a vec3 — that form is not portable across GLSL ES versions.
+    vec3 ref = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), step(0.9, abs(n.y)));
+    vec3 t = normalize(cross(n, ref));
+    vec3 b = cross(n, t);
+    vLocal = position.xy * 2.0;                 // unit quad spans -0.5..0.5
+    vec3 world = base + (t * position.x + b * position.y) * (aShade.w * 2.0)
+               + n * 0.015;                     // off the surface, not into it
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }
+`;
+
+const SHADE_FRAG = /* glsl */`
+  precision highp float;
+  varying vec2 vLocal;
+  varying float vDark;
+  void main(){
+    float r = dot(vLocal, vLocal);
+    if (r > 1.0 || vDark <= 0.001) discard;
+    // Squared falloff with a hot core: a clump's occlusion is nearly total
+    // right under it and gone by the skirt, and a linear ramp reads as an
+    // airbrushed blob rather than as something standing on the ground.
+    float k = 1.0 - r;
+    gl_FragColor = vec4(vec3(1.0 - vDark * k * k), 1.0);
+  }
+`;
+
 export class GrassField {
   constructor(scene, terrain, opts = {}) {
     this.scene = scene;
@@ -1144,12 +1236,56 @@ export class GrassField {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.matrixAutoUpdate = false;
+    // Deliberately NOT a shadow caster — see SHADE_VERT. The contact comes from
+    // the baked quads below, which cost 1/6th of the instances and land where
+    // the cascade never reaches.
     mesh.castShadow = false;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.meshes.push(mesh);
 
-    return { mesh, mat, geo, aInst, aOrient, aTint, count, near, far, card };
+    const shade = this._buildShade(Math.ceil(count / (card ? 3 : 10)), far);
+    return { mesh, mat, geo, aInst, aOrient, aTint, count, near, far, card, shade };
+  }
+
+  /** The contact quads for one ring: one per tuft, multiplied into the ground. */
+  _buildShade(tufts, far) {
+    const geo = new THREE.InstancedBufferGeometry();
+    const q = new THREE.PlaneGeometry(1, 1);
+    geo.index = q.index;
+    geo.attributes.position = q.attributes.position;
+    geo.instanceCount = tufts;
+    const aShade = new THREE.InstancedBufferAttribute(new Float32Array(tufts * 4), 4);
+    const aShadeN = new THREE.InstancedBufferAttribute(new Float32Array(tufts * 4), 4);
+    for (const A of [aShade, aShadeN]) A.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aShade', aShade);
+    geo.setAttribute('aShadeN', aShadeN);
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uCenter: { value: new THREE.Vector3() }, uFar: { value: far } },
+      vertexShader: SHADE_VERT,
+      fragmentShader: SHADE_FRAG,
+      // Multiply, so the quad darkens whatever the ground already worked out
+      // for itself — its own albedo, its own sun, its own fog. An alpha-blended
+      // grey would paint one tone over all three and go pale in the haze.
+      blending: THREE.MultiplyBlending,
+      transparent: true,
+      depthWrite: false,
+      // Sitting 1.5 cm off a surface is not enough on its own at 40 m, where the
+      // depth buffer's own resolution is coarser than that.
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.castShadow = mesh.receiveShadow = false;
+    // Before the haze, the motes and the particles: this belongs to the ground,
+    // and everything floating in the air belongs over it.
+    mesh.renderOrder = -5;
+    this.scene.add(mesh);
+    this.meshes.push(mesh);
+    q.dispose();
+    return { mesh, mat, geo, aShade, aShadeN, tufts };
   }
 
   /**
@@ -1177,6 +1313,10 @@ export class GrassField {
     // where a scatter stops reading as dots and starts reading as sward.
     const perTuft = ring.card ? 3 : 10;
     const spread = ring.card ? 0.75 : 0.26;
+
+    const sh = ring.shade;
+    const sa = sh.aShade.array, sn = sh.aShadeN.array;
+    let tuft = -1;
 
     let left = 0, tx = 0, tz = 0, density = 0, live = false, lean = 0, inTuft = 0;
     for (let i = 0; i < ring.count; i++) {
@@ -1207,6 +1347,33 @@ export class GrassField {
         }
         lean = 0.16 + rng() * 0.42;      // a tuft leans together, not per blade
         left = perTuft;
+
+        /* The contact this tuft prints on the ground. It goes down HERE, in the
+         * same decision that sited the tuft, so a clump that lost its site to
+         * slope or to the river cannot leave a stain on bare ground behind it —
+         * which is exactly what a second pass over the anchors would do.
+         *
+         * SHADE_CORE is measured against what the tell actually is: the sand
+         * 5 px from a base against the sand 40 px away came out 1.6% apart, and
+         * 12% is about where a contact stops being deniable. The disc is a
+         * little wider than the blades because light is being kept out at a
+         * grazing angle and not only straight down — but only a little, since
+         * a disc wide enough to swallow the 40 px reference measures as no
+         * gradient at all however dark it is. */
+        if (++tuft < sh.tufts) {
+          const o4 = tuft * 4;
+          const gy = this.terrain ? this.terrain.height(tx, tz) : 0;
+          sa[o4] = tx; sa[o4 + 1] = gy; sa[o4 + 2] = tz;
+          sa[o4 + 3] = live ? spread * (ring.card ? SHADE_CARD_SPAN : SHADE_SPAN) : 0;
+          // A stub heightfield may not carry normals; flat is the right answer
+          // for anything that does not have a slope to report.
+          if (this.terrain?.normalAt) this.terrain.normalAt(tx, tz, _v1); else _v1.set(0, 1, 0);
+          sn[o4] = _v1.x; sn[o4 + 1] = _v1.y; sn[o4 + 2] = _v1.z;
+          // A thin clump lets the sky through, so the darkness rides the same
+          // density the blade count does rather than being a flat stamp.
+          sn[o4 + 3] = live
+            ? (ring.card ? SHADE_CARD : SHADE_CORE) * clamp(density * 1.5, 0.35, 1) : 0;
+        }
       }
       left--;
       inTuft++;
@@ -1252,9 +1419,14 @@ export class GrassField {
       const v = 0.82 + rng() * 0.36;
       t[i * 3] = _col.r * v; t[i * 3 + 1] = _col.g * v; t[i * 3 + 2] = _col.b * v;
     }
+    // Anything the scatter never reached this pass is a tuft that is not there.
+    for (let k = tuft + 1; k < sh.tufts; k++) { sa[k * 4 + 3] = 0; sn[k * 4 + 3] = 0; }
     ring.aInst.needsUpdate = true;
     ring.aOrient.needsUpdate = true;
     ring.aTint.needsUpdate = true;
+    sh.aShade.needsUpdate = true;
+    sh.aShadeN.needsUpdate = true;
+    sh.mat.uniforms.uCenter.value.copy(center);
     ring.mat.uniforms.uCenter.value.copy(center);
   }
 
@@ -2316,39 +2488,68 @@ class Shimmer {
  * bright constant however dark you start.
  *
  * So the ranges take their asymptote from the sky IN THEIR OWN DIRECTION,
- * sampled on the CPU off the engine's own Preetham derivation, and every one
- * of them is built to sit under it by construction:
+ * sampled on the CPU off the engine's own Preetham derivation.
  *
- *   · RANGE_AIR is what the air hands back relative to the sky standing over
- *     it. Every channel is below 1 — a finite path cannot return what an
- *     infinite one does — and blue is highest because the scattering that
- *     fills in behind a distant ridge is Rayleigh. That single ordering is
- *     what turns a pale triangle into a far mesa.
- *   · the SURFACE is a fraction of that asymptote and can never exceed it: a
- *     passive surface behind a scattering medium cannot out-radiate the
- *     medium. Its only freedom is hue, and it gets a whisper of the ground's.
+ * ── AND THEN THAT FIX GREW THE SAME BUG ONE CHANNEL OVER ────────────────
  *
- * The result is bounded above by RANGE_AIR × sky at every vertex, at every
- * distance, in every channel, whatever the level authored — which is what
- * makes the claim checkable rather than tuned.
+ * The asymptote was `sky × [0.62, 0.68, 0.84]`. That constant is CHROMATIC:
+ * whatever colour the sky is, it hands back 1.35× as much blue per unit red,
+ * so the thing a range dissolves into can never be the sky it is dissolving
+ * into. Measured at every crest vertex of every outdoor level against the
+ * engine's own sky, saturation of the asymptote over saturation of the sky
+ * directly above it:
+ *
+ *     dunes  1.11 – 93.6×      arena  1.15 – 53.3×      canyon  1.37 – 89.5×
+ *
+ * Never once below 1. On canyon the sky at 8° is WARM (hue 46–199°) while the
+ * asymptote is BLUE (210–222°) — 171° away on the wheel. Aerial perspective
+ * drives luminance contrast AND chroma contrast to zero; this drove luminance
+ * down and chroma UP, which is why the ranges read as saturated navy paper
+ * triangles where they used to read as white paper ones. The previous pass
+ * measured the symptom (luminance) and bounded that; the mechanism survived in
+ * the channel nobody printed.
+ *
+ * So there is no per-channel constant left anywhere in here. A range's
+ * asymptote at infinity IS the drawn sky in its own direction, unscaled, in
+ * every channel, and "darker than the sky" comes from the only term that can
+ * honestly produce it:
+ *
+ *   · the SURFACE is a passive reflector behind a scattering medium, so it
+ *     cannot out-radiate the medium. Its LEVEL is the sky's own luminance in
+ *     that direction times a scalar under 1 — never a per-channel factor, so
+ *     the shortfall can only ever be in value.
+ *   · its CHROMA is not the sky's. A ridge is lit by the whole hemisphere plus
+ *     the sun, and that irradiance is far flatter than the radiance arriving
+ *     from any one direction of it, so the surface carries at most
+ *     RANGE_CHROMA of the sky's own saturation, tinted by a whisper of rock.
+ *
+ * Both bounds are enforced where they are defined rather than hoped for, and
+ * the composite inherits them: for C = mix(near, sky, f), max(C) ≤ the same mix
+ * of the maxima and min(C) ≥ the same mix of the minima, so min/max of C is a
+ * mediant of the two ratios and sat(C) ≤ max(sat(near), sat(sky)) = sat(sky),
+ * with equality only at f = 1. Darker than its sky, less saturated than its
+ * sky, and converging on it as the air thickens — which is what distance is.
  */
-const RANGE_AIR = [0.62, 0.68, 0.84];
-/* And it opens up with distance: the further range has more air in front of it
- * and therefore sits closer to the sky, which is the entire mechanism by which
- * three rings read as three DEPTHS rather than as three stripes. Luminance
- * only — the chroma tilt above is a property of the scattering and does not
- * change with how much of it there is. Measured on the dune sea, the three
- * ranges land at 0.73 / 0.81 / 0.85 of the sky standing over them. */
-const RANGE_OPEN = 0.085;
-/** How much of the ground's own hue survives 300 m of air. Not much. */
-const RANGE_ROCK = 0.24;
-/** Crest and foot, as a share of the asymptote. The foot has more low air in
- *  front of it, so it is the paler of the two — the gradient every range has. */
-const RANGE_FACE = 0.55, RANGE_FOOT = 0.82;
-/** How much the sun-facing side of a range picks up. Squared, so it reads as a
- *  side and not as a gradient round the whole ring. Bounded so face × lit stays
- *  under 1 and the surface stays under the air in front of it. */
+/** The most of the sky's own saturation a range's surface may carry. */
+const RANGE_CHROMA = 0.55;
+/** How much of the ground's own hue survives 300 m of air, as HSV saturation.
+ *  Not much: the 0.24 mix weight this replaces was worth 0.255 saturation laid
+ *  over the sky in every direction, which is a swatch, not a whisper. */
+const RANGE_ROCK = 0.12;
+/** Crest and foot, as a share of the layer's own shade. The foot has more low
+ *  air in front of it, so it is the paler of the two — the gradient every range
+ *  has. `shade` itself is the per-layer scalar: every level already authors one
+ *  per ring (0.48–0.76, rising with distance) and until now NOTHING READ IT. */
+const RANGE_CREST = 0.72, RANGE_FOOT = 1.0;
+/** Default shade if a caller hands layers without one. */
+const RANGE_SHADE = [0.55, 0.63, 0.71];
+/** How far the sun may push a face either side of the layer's shade. Now that
+ *  the facing is a real surface normal it swings both ways, so a summit gets a
+ *  lit flank AND a shaded one; the bound keeps shade × k under 1. */
 const RANGE_LIT = 0.22;
+/** How hard the along-crest slope rakes the face away from straight inward.
+ *  1 means a flank falling at 45° along the ridge faces 45° off the radial. */
+const RANGE_RAKE = 1.0;
 
 /* The shared uniforms. One material, three meshes, and the storm arrives
  * through the same single scheduler everything else reads (`ground.weather`)
@@ -2462,27 +2663,64 @@ function drawnSky(bearing, sinEl, out) {
 
 const _rc = new THREE.Color();
 /**
- * The DIMMEST the sky gets anywhere a given piece of range could be seen
- * against — over a window of bearings, because the player walks and a range at
- * 170 m swings a long way across the compass when they do, and over a window
- * of elevations, because "the sky directly above it" gets measured somewhere in
- * the first few degrees and the sky is not flat over that.
+ * The sky a given piece of range dissolves into: ITS OWN DIRECTION for colour,
+ * held down to the dimmest LEVEL that sky reaches anywhere the player could put
+ * that crest.
  *
- * Taking the minimum is what turns "usually darker" into "darker", and it stays
- * continuous: a minimum of continuous samples is continuous, so there is no
- * seam anywhere the winner changes.
+ * The two halves are separate on purpose, and getting them tangled is what the
+ * last pass was scored for. The floor is what turns "usually darker" into
+ * "darker": the player walks, and a range at 170 m swings a long way across the
+ * compass when they do, so a value baked against the sky in one pose has to
+ * survive every other one. But a floor taken as a COLOUR imports the chroma of
+ * whatever bearing won, and 32° off the sun that is a completely different sky
+ * — which is how an asymptote beside a sky at 0.006 saturation ended up at
+ * 0.5. So the win is applied as a SCALAR on the sky in the crest's own
+ * direction: same hue, same saturation, lower level. Both properties, one
+ * value, and it stays continuous because a minimum of continuous samples is.
  */
 function skyFloorAt(bearing, el, swing, out) {
-  let best = null;
+  // the sky this crest actually stands against — the colour, unscaled
+  drawnSky(bearing, Math.sin(el + 0.035), out);
+  const own = out.r * 0.2126 + out.g * 0.7152 + out.b * 0.0722;
+  let floor = own;
   for (let i = -1; i <= 1; i++) {
     const b = bearing + i * swing;
     for (const de of [0.035, 0.122]) {        // +2° and +7° above the crest
       const c = drawnSky(b, Math.sin(el + de), _rc);
-      const L = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
-      if (best === null || L < best) { best = L; out.copy(c); }
+      floor = Math.min(floor, c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722);
     }
   }
-  return out;
+  return out.multiplyScalar(floor / Math.max(1e-5, own));
+}
+
+/** HSV saturation — (max − min) / max. The plain one, because it is the one a
+ *  picker shows and the one an art director reads off a swatch. */
+function satOf(c) {
+  const mx = Math.max(c.r, c.g, c.b);
+  return mx <= 1e-6 ? 0 : (mx - Math.min(c.r, c.g, c.b)) / mx;
+}
+
+/**
+ * Pull a colour toward its own luminance-grey until its saturation is at most
+ * `maxSat`, leaving its luminance untouched.
+ *
+ * Closed form rather than a loop, and that matters: saturation along the pull
+ * t ∈ [0,1] is s(t) = t·(mx−mn) / ((1−t)·g + t·mx), which is monotone with
+ * s(0)=0 and s(1)= the colour's own saturation, so setting s(t) = maxSat and
+ * solving gives exactly the pull that lands on the bound. Anything iterative
+ * here would be a tolerance nobody could quote.
+ */
+function capChroma(c, maxSat) {
+  const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+  if (mx <= 1e-6) return c;
+  const s = (mx - mn) / mx;
+  if (s <= maxSat) return c;
+  const g = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+  // The denominator is positive whenever s > maxSat: maxSat·(mx−g) < s·(mx−g)
+  // ≤ s·mx = mx−mn, because mn ≤ g ≤ mx for any luminance-weighted mean.
+  const t = clamp((maxSat * g) / ((mx - mn) - maxSat * (mx - g)), 0, 1);
+  return c.setRGB(g + (c.r - g) * t, g + (c.g - g) * t, g + (c.b - g) * t,
+    THREE.LinearSRGBColorSpace);
 }
 
 /**
@@ -2512,7 +2750,11 @@ export function addHorizon(world, opts = {}) {
   // range 300 m off keeps a whisper of the rock it is made of and no more.
   const rock = new THREE.Color(atmo.groundColor ?? 0x60482e);
   const rl = rock.r * 0.2126 + rock.g * 0.7152 + rock.b * 0.0722;
-  rock.multiplyScalar(1 / Math.max(0.02, rl)).lerp(_col.setRGB(1, 1, 1), 1 - RANGE_ROCK);
+  // Unit luminance, then held to a saturation rather than to a mix weight. A
+  // mix weight is not a bound on anything the eye reads: 0.24 toward the dune
+  // sea's own 0x8a6a44 came out at 0.255 saturation, which is a swatch laid
+  // over every direction of the sky, not a whisper of rock.
+  capChroma(rock.multiplyScalar(1 / Math.max(0.02, rl)), RANGE_ROCK);
 
   // Hand the shared material this level's air and its dust wall.
   _ridgeU.uRidgeAir.value.set(1 / (atmo.fogHeight ?? 38), atmo.fogBase ?? 0,
@@ -2530,13 +2772,35 @@ export function addHorizon(world, opts = {}) {
   for (let L = 0; L < layers.length; L++) {
     const cfg = layers[L];
     const R = cfg.radius;
-    // One vertex every ~2.4 m of arc: fine enough that a 40 m crest has a
-    // dozen samples across it and coarse enough to stay under a thousand
-    // triangles a range.
-    const seg = Math.max(96, Math.min(256, Math.round((TAU * R) / 2.4)));
-    const pos = new Float32Array((seg + 1) * 2 * 3);
-    const near = new Float32Array((seg + 1) * 2 * 3);
-    const far = new Float32Array((seg + 1) * 2 * 3);
+    /* RESOLUTION IS SET IN BEARING, NOT IN METRES, because the silhouette is
+     * what the eye samples and the silhouette lives on the compass. The old
+     * "one vertex every 2.4 m" ran straight into a 256 cap on every ring, which
+     * is 1.4° a segment — and the profile's finest octave was authored at 22×
+     * its base, i.e. a 6.7 m wavelength on an 8.2 m sampling. Everything above
+     * the mesh's Nyquist came back as single-segment spikes, and a spike drawn
+     * across two vertices IS a triangle with dead-straight sides. That is the
+     * sawtooth in the shot, and no amount of extra noise would have fixed it.
+     *
+     * 512 puts a segment at 0.70°, ~13 px at 1280 wide, and every band below is
+     * chosen so its own finest octave stays under seg/6 — six samples a period,
+     * which is a shape rather than a spike. 1024 triangles a ring, ~3.1k for
+     * the whole far distance. */
+    const seg = 512;
+    /* THREE ROWS, and the middle one is the whole reason. The mesh runs from
+     * 45 m below grade (so no gap ever opens under it where the ground in front
+     * dips) to the crest, and with two rows the asymptote was computed ONCE per
+     * column, at the crest's own elevation, and then interpolated all the way
+     * down. But the sky is not flat over that: the body of a range stands
+     * against the horizon band, which is several times less saturated than the
+     * sky a few degrees higher. Measured over the visible band — crest down to
+     * grade — the range came out up to 0.336 of saturation ABOVE the sky
+     * immediately beside it, which is the same failure as the constant, sourced
+     * from the interpolation instead. A row at grade gives the visible band a
+     * top and a bottom that each converge on their own piece of sky. */
+    const rows = 3;
+    const pos = new Float32Array((seg + 1) * rows * 3);
+    const near = new Float32Array((seg + 1) * rows * 3);
+    const far = new Float32Array((seg + 1) * rows * 3);
     const idx = [];
     /* How far round the compass a piece of this range can swing while the
      * player walks. asin(roam / radius): 90 m of roam puts the near ring at
@@ -2544,76 +2808,128 @@ export function addHorizon(world, opts = {}) {
      * window so the guarantee survives the walk rather than only the pose it
      * was baked at. */
     const swing = Math.asin(clamp(90 / R, 0, 0.9));
-    // Never at or above 1: a finite path cannot hand back what an infinite one
-    // does, so a range cannot reach the sky it is dissolving into however far
-    // away it is put.
-    const air = RANGE_AIR.map((v) => Math.min(0.99, v * (1 + L * RANGE_OPEN)));
-    /* The noise is sampled at the ring's own WORLD position, so the profile
-     * closes on itself seamlessly and no two ranges share a skyline.
-     *
-     * The frequency is set by how many peaks should go round the ring, not by a
-     * fixed 1/metres — and that is a correction, not a nicety. A fixed
-     * 0.0062/m put a 161 m feature on a 1055 m circumference: SIX AND A HALF
-     * peaks around the entire horizon, each spanning 55° of bearing. On screen
-     * that is a row of clean paper triangles, which is exactly what the first
-     * screenshot showed. Fourteen to twenty-two peaks puts each one at 16-26°,
-     * which is what a range actually subtends. */
-    const peaks = 14 + L * 4;
-    const f = peaks / (TAU * R);
+    const shade = cfg.shade ?? RANGE_SHADE[Math.min(L, RANGE_SHADE.length - 1)];
     const off = seed * 0.37 + L * 91.3;
+
+    /* ── the profile, built in HARMONICS AROUND THE COMPASS ──────────────
+     *
+     * The noise is still sampled on a circle so the profile closes on itself
+     * seamlessly, but the circle's radius is chosen in NOISE cells rather than
+     * from the ring's own metres: value noise puts about one extremum in every
+     * cell, so K features around the horizon wants a circle 2K cells around,
+     * i.e. radius K/π. Saying it that way is the whole correction — it makes
+     * the silhouette's content a property of the PICTURE (features per degree
+     * of bearing) instead of a consequence of how far out the ring happens to
+     * be, and it makes every band answerable to the mesh's Nyquist.
+     *
+     * Four bands, because a ridgeline has energy at every scale it can hold and
+     * a cone has one:
+     *   MASSIF  3-5 round the horizon — which range is high country and which
+     *           is a low sill. Without it every peak stands on the same line.
+     *   CREST   12-18 summits, 20-30° apart. Ridged, because mountains have
+     *           sharp tops and broad saddles.
+     *   SPUR    24-34 — the shoulders and notches that break a flank so it is
+     *           not one straight run from saddle to summit.
+     *   GRAIN   60-76, the finest thing the mesh can still draw as a shape.
+     * The top harmonic any band reaches (GRAIN × fbm's own second octave, and
+     * CREST × ridged's fourth) stays under seg/6, so nothing here is a spike. */
+    const nrM = (3 + L) / Math.PI;
+    const nrC = (12 + L * 3) / Math.PI;
+    const nrS = (24 + L * 5) / Math.PI;
+    const nrG = (30 + L * 4) / Math.PI;
+    const prof = new Float64Array(seg + 1);
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * TAU;
+      const cx = Math.cos(a), cz = Math.sin(a);
+      // Octave counts are not taste: sampling on a circle 2K cells around puts
+      // a band's own finest octave at K·lacunarity^(n−1) harmonics, so ridged's
+      // four octaves would have asked for 106-160 — past the seg/6 the mesh can
+      // draw as a shape, which is the fault this whole pass exists to undo.
+      // Three puts it at 51-77, and every other band is a two-octave fbm.
+      const massif = fbm2(cx * nrM + off, cz * nrM - off, 2);          // → 6-10
+      const crest = ridged2(cx * nrC - off, cz * nrC + off, 3);        // → 51-77
+      const spur = fbm2(cx * nrS + off * 1.7, cz * nrS - off * 1.7, 2); // → 49-69
+      const grain = fbm2(cx * nrG - off * 2.3, cz * nrG + off * 2.3, 2); // → 61-77
+      // Weighted so the sum lands inside [0,1] on its own. The old form leaned
+      // on clamp() to hold it, and a clamped profile is a FLAT one: 4-11% of
+      // every ring sat on the bottom rail, which is a dead-level saddle.
+      const t = 0.30 + massif * 0.42 + crest * 0.62 + spur * 0.30 + grain * 0.13;
+      prof[i] = clamp(t, 0, 1);
+    }
+    prof[seg] = prof[0];          // the ring closes on itself exactly
 
     for (let i = 0; i <= seg; i++) {
       const a = (i / seg) * TAU;
       const cx = Math.cos(a), cz = Math.sin(a);
       const x = cx * R, z = cz * R;
-      // Ridged noise, not fbm: mountains have sharp crests and broad saddles,
-      // and fbm gives you rolling lumps that read as spoil heaps. But ridged
-      // noise ALONE is a cone — the weights below keep the sum off its own
-      // ceiling (at ×1.15 it clamped to 1 across whole peaks, which flat-tops
-      // them) and two finer octaves tear the silhouette so no crest is a
-      // straight line from saddle to summit.
-      const rr = ridged2(x * f + off, z * f - off, 4);
-      const fine = fbm2(x * f * 3.7 - off, z * f * 3.7 + off, 3);
-      const rag = fbm2(x * f * 11.0 + off, z * f * 11.0 - off, 2);
-      const h = lerp(cfg.low, cfg.high, clamp(rr * 0.90 + fine * 0.45 + rag * 0.16, 0, 1));
+      const h = lerp(cfg.low, cfg.high, prof[i]);
       const g = terrain ? terrain.height(x, z) : 0;
-      const yb = g - 45;          // rooted deep, so nothing ever shows under it
-      const yt = g + h;
+      // rooted deep, so nothing ever shows under it; grade is where the terrain
+      // in front takes over, which is where the visible band ends
+      const yRow = [g - 45, g, g + h];
 
-      // The sky this crest stands against, at its own bearing — the floor of
-      // it over everywhere the player can put it and everywhere "directly
-      // above" can be measured. `a` is the bearing and atan2 the crest's
-      // elevation from the middle of the ring, which is where the player is.
-      const crestEl = Math.atan2(yt - 1.75, R);
-      skyFloorAt(a, crestEl, swing, _rc2);
-      const fr = _rc2.r * air[0], fg = _rc2.g * air[1], fb = _rc2.b * air[2];
+      /* ── which way this piece of range is facing ────────────────────────
+       * We stand INSIDE the ring, so what we see is its inward face, and the
+       * sun lights the ranges on the far side of the compass from it while
+       * back-lighting the ones standing in front of it. The old term used the
+       * OUTWARD radial and so brightened exactly the contre-jour half — stand
+       * in a bowl of mountains at dawn and it is the WESTERN wall that is gold.
+       *
+       * The along-crest slope then rakes that face peak by peak: a flank
+       * climbing to the right presents a surface tilted back down-arc, which
+       * is what gives a summit a lit side and a shaded side instead of the
+       * whole ring having a bright half. dh/darc is taken across the two
+       * neighbours, and the ring wraps, so there is no seam at bearing 0. */
+      const im = (i - 1 + seg) % seg, ip = (i + 1) % seg;
+      const slope = ((prof[ip] - prof[im]) * (cfg.high - cfg.low))
+        / (2 * (TAU * R) / seg);
+      const tanx = -cz, tanz = cx;
+      let nx = -cx - tanx * slope * RANGE_RAKE;
+      let nz = -cz - tanz * slope * RANGE_RAKE;
+      const nl = Math.hypot(nx, nz) || 1;
+      const il = (nx * sx + nz * sz) / (nl * sl);          // −1 back-lit … +1 lit
+      const k = 1 + RANGE_LIT * il;
 
-      // Slopes facing the sun catch a little more of it. Squared, so it is a
-      // side and not a gradient across the whole ring.
-      const lit = Math.max(0, (cx * sx + cz * sz) / sl);
-      const k = 1 + lit * lit * RANGE_LIT;
-      // The FOOT of a distant range is paler than its crest: there is more of
-      // the low haze between you and it. The tonal separation BETWEEN ranges
-      // is left to the extinction term in the shader, which already knows how
-      // far away each one is and re-decides it every frame as you walk.
-      //
-      // Both stay under 1, and that is not a safety belt — it is the physics.
-      // These are passive surfaces behind a scattering medium, so they cannot
-      // hand back more light than the medium in front of them. That, and
-      // RANGE_AIR being under 1 in every channel, is the whole guarantee that
-      // a range cannot out-radiate its own sky.
-      const cTop = Math.min(0.95, RANGE_FACE * k);
-      const cBot = Math.min(0.95, RANGE_FOOT * k);
-      for (let s = 0; s < 2; s++) {
-        const v = (i * 2 + s) * 3;
-        pos[v] = x; pos[v + 1] = s ? yt : yb; pos[v + 2] = z;
-        const c = s ? cTop : cBot;
-        far[v] = fr; far[v + 1] = fg; far[v + 2] = fb;
-        near[v] = fr * rock.r * c; near[v + 1] = fg * rock.g * c; near[v + 2] = fb * rock.b * c;
+      /* ── and what it hands back ─────────────────────────────────────────
+       * LEVEL: the sky's own luminance in THAT ROW'S direction times a scalar
+       * under 1. `rock` carries unit luminance by construction, so the
+       * shortfall from the asymptote is exactly that scalar — never a
+       * per-channel one, which is the whole bug this replaces. The row at grade
+       * is paler than the crest because there is more low haze in front of it,
+       * and `shade` is the layer's own (every level authors one; nothing read
+       * it until now), so three rings separate in tone because they are three
+       * DEPTHS.
+       *
+       * CHROMA: at most RANGE_CHROMA of the sky's own saturation, and of the
+       * saturation of the piece of sky THIS row stands against. A ridge is lit
+       * by the whole hemisphere plus the sun, and that irradiance is far
+       * flatter than the radiance arriving from any one direction of it — so
+       * beside the sun, where the sky whites out to 0.006 saturation, the
+       * surface goes neutral with it instead of staying a fixed navy. */
+      const cRow = [Math.min(0.95, shade * RANGE_FOOT * k), 0,
+        Math.min(0.95, shade * RANGE_CREST * k)];
+      cRow[1] = cRow[0];                 // below grade is the grade row's tone
+      for (let s = 0; s < rows; s++) {
+        const v = (i * rows + s) * 3;
+        pos[v] = x; pos[v + 1] = yRow[s]; pos[v + 2] = z;
+        /* THE ASYMPTOTE, UNSCALED, IN EVERY CHANNEL. At infinity a landform IS
+         * the sky in its own direction; anything multiplied onto it here is a
+         * colour the range converges on that the sky never reaches. Held down
+         * to the dimmest level that sky reaches anywhere the player can put
+         * this crest — a scalar, so the colour stays the sky's own. */
+        const el = Math.max(0.004, Math.atan2(yRow[Math.max(s, 1)] - 1.75, R));
+        skyFloorAt(a, el, swing, _rc2);
+        const skyLum = _rc2.r * 0.2126 + _rc2.g * 0.7152 + _rc2.b * 0.0722;
+        const tint = capChroma(_rc3.copy(rock), RANGE_CHROMA * satOf(_rc2));
+        const c = cRow[s] * skyLum;
+        far[v] = _rc2.r; far[v + 1] = _rc2.g; far[v + 2] = _rc2.b;
+        near[v] = tint.r * c; near[v + 1] = tint.g * c; near[v + 2] = tint.b * c;
       }
       if (i < seg) {
-        const b0 = i * 2, t0 = i * 2 + 1, b1 = b0 + 2, t1 = t0 + 2;
-        idx.push(b0, b1, t0, t0, b1, t1);
+        const a0 = i * rows, b0 = (i + 1) * rows;
+        for (let s = 0; s < rows - 1; s++) {
+          idx.push(a0 + s, b0 + s, a0 + s + 1, a0 + s + 1, b0 + s, b0 + s + 1);
+        }
       }
     }
 

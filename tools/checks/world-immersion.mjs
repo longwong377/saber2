@@ -36,6 +36,11 @@ import { SkyDome } from '../../src/engine/SkyDome.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
+/** Vertex rows per column in a horizon ring: deep root, grade, crest. The row
+ *  at grade is what lets the visible band converge on the sky it actually
+ *  stands against rather than on the sky over the summit. */
+const ROWS = 3;
+
 /* ── a world stub the dressing passes are happy with ─────────────────── */
 function stubWorld(terrain) {
   const scene = new THREE.Scene();
@@ -518,6 +523,55 @@ export function run({ check, assert, near }) {
     return rows.join(', ');
   });
 
+  check('weather: a front is a whole frame, not a fog slider', () => {
+    /* THE SCORE THIS CHECK EXISTS FOR: "the storm is a fog slider, not
+     * weather." Forced to peak on the dune sea the horizon band moved
+     * luminance 0.511 → 0.731 and saturation 0.197 → 0.064, which is real, and
+     * the sky 200 px above it moved 1.4% — an 80 m whiteout under a clear blue
+     * sky with crisp cumulus and a hard sun in it.
+     *
+     * The sky's half of that lives in SkyDome and is pinned in the painted
+     * skyline check. This is the rest of the frame, in the units the code
+     * already knows how to compute rather than in gains nobody can picture:
+     * how far you can see, how hard the light is, and whether the cover goes
+     * over. A gain that has been quietly capped or multiplied by a peak of 0.2
+     * looks fine in the level file and does nothing here. */
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const a = L.atmosphere || {};
+      const w = L.dust && L.dust.weather;
+      if (a.sky === false || !w || !w.peak) continue;
+      const W = new Weather(w);
+      const base = a.fogDensity ?? 0.0035;
+      W.intensity = 0; const vCalm = W.visibility(base);
+      W.intensity = w.peak; const vPeak = W.visibility(base);
+      // The one wind everything reads; no level overrides its base speed.
+      const wCalm = 1.7, wPeak = wCalm * (1 + W.windGain * w.peak);
+      // What that does to a blade of the near ring, which is where the eye
+      // reads the rake: uBendGain 0.23, the wave at its crest, clamped at 2 rad.
+      const bend = (s) => Math.min(0.23 * s * 1.62, 2.0);
+      const kCalm = (a.sunIntensity ?? 7) / (a.ambient ?? 0.85);
+      const kPeak = ((a.sunIntensity ?? 7) * (1 - W.sunLoss * w.peak))
+        / ((a.ambient ?? 0.85) * (1 + W.fillGain * w.peak));
+
+      assert(vPeak < vCalm * 0.5,
+        `${key} sees ${vPeak.toFixed(0)} m at the peak of its own storm against ${vCalm.toFixed(0)} m ` +
+        'in calm air — that is haze, not a front');
+      assert(kPeak < kCalm * 0.55,
+        `${key} holds a ${kPeak.toFixed(1)}:1 key-to-fill through a dust storm against ${kCalm.toFixed(1)}:1 ` +
+        'in the clear — the sun is being dimmed but not softened, so every shadow stays razor-edged');
+      assert(wPeak > wCalm * 2,
+        `${key}'s wind only reaches ${wPeak.toFixed(1)} m/s in a front`);
+      assert(bend(wPeak) > 1.0,
+        `${key}'s ground cover bends ${bend(wPeak).toFixed(2)} rad at the peak — the storm does not lay it over`);
+      rows.push(`${key} ${vCalm.toFixed(0)}→${vPeak.toFixed(0)} m, key ${kCalm.toFixed(0)}→${kPeak.toFixed(0)}:1, ` +
+        `blade ${bend(wCalm).toFixed(2)}→${bend(wPeak).toFixed(2)} rad`);
+    }
+    assert(rows.length >= 3, `only ${rows.length} outdoor levels have a measurable front`);
+    return rows.join('; ');
+  });
+
   /* ══ distance ════════════════════════════════════════════════════════ */
 
   check('horizon: three ranges at three distances, and they move when you do', () => {
@@ -546,13 +600,20 @@ export function run({ check, assert, near }) {
         'a range with no aNear/aFar attribute renders as the material colour — a white wall');
       let rmin = Infinity, rmax = 0, top = -1e9, bot = 1e9;
       const tops = [];
+      // Three rows a column — deep root, grade, crest — so the crest is every
+      // third vertex. Derived from the mesh rather than hard-coded, because a
+      // stride that silently stops selecting crests turns the span assertion
+      // below into a measurement of nothing.
+      const stride = ROWS;
+      assert(p.count % stride === 0, `a range has ${p.count} vertices, not a whole number of columns`);
       for (let i = 0; i < p.count; i++) {
         const r = Math.hypot(p.getX(i), p.getZ(i));
         rmin = Math.min(rmin, r); rmax = Math.max(rmax, r);
         const y = p.getY(i);
         top = Math.max(top, y); bot = Math.min(bot, y);
-        if (i % 2 === 1) tops.push(y);
+        if (i % stride === stride - 1) tops.push(y);
       }
+      assert(tops.length === p.count / stride, 'the crest row is not one vertex a column');
       near(rmax, rmin, rmax * 0.02, 'a range is not a ring');
       radii.push(rmax);
       heights.push(top);
@@ -588,29 +649,39 @@ export function run({ check, assert, near }) {
       `far range subtends ${farAngle.toFixed(1)}°`;
   });
 
-  check('horizon: every range is DARKER and BLUER than the sky it stands against', () => {
-    /* The single sharpest thing an art director found in the whole frame, and
-     * it was true: measured on two dune frames the cones came out at 0.703 /
-     * 0.611 / 0.688 / 0.600 display luminance against sky immediately beside
-     * them at 0.547 / 0.635 / 0.537 — ratios of 1.29, 1.12, 1.08, 1.12 — at
-     * hue 36-37° against a sky at 160-198°. Flat white paper triangles.
+  check('horizon: every range is DARKER and LESS SATURATED than its sky, and converges on it', () => {
+    /* This check used to assert "darker AND BLUER", and the "bluer" half was
+     * pinning a bug. It was satisfied by multiplying the sky by the chromatic
+     * constant [0.62, 0.68, 0.84], which raises blue-over-red by 1.35 whatever
+     * colour that sky is — so a range could pass while converging on a colour
+     * its own sky never reaches. Measured that way, saturation of the asymptote
+     * over saturation of the sky directly above it ran 1.11–93.6× on dunes,
+     * 1.15–53.3× on arena and 1.37–89.5× on canyon, and on canyon the sky at 8°
+     * is warm (hue 46–199°) while the asymptote was blue (210–222°): 171° apart
+     * on the wheel. Navy paper triangles instead of white ones — the same bug
+     * as the first round, one channel over.
      *
-     * The cause was that the ranges converged on scene.fog, and scene.fog is
-     * ONE COLOUR while the sky is not: hazeRadiance anchors it to the skyline
-     * BESIDE THE SUN. Measured on the dune atmosphere at 8° elevation, drawn
-     * sky radiance runs 0.821 at 20° from the sun down to 0.391 at 155°, all
-     * against a fog colour of 0.589 — so on the shade half of the horizon the
-     * thing distance dissolved into was one and a half times the sky it was
-     * dissolving into, and no vertex shading could fix that.
+     * Aerial perspective drives luminance contrast AND chroma contrast toward
+     * zero. So the property is the whole of that, and none of it is a constant:
      *
-     * So this asserts the RELATIONSHIP rather than any constant: at every
-     * vertex of every range of every outdoor level, at that level's own hour,
-     * the composited range must be darker than the drawn sky directly above it
-     * AND bluer than it. Both are computed off the engine's own exported sky,
-     * not off a transcription of it. */
+     *   1. darker — composited luminance under the drawn sky directly above it,
+     *      at every crest vertex of every range of every outdoor level;
+     *   2. no more saturated than that sky, at the same vertices. Stated as a
+     *      DIFFERENCE, not a ratio: inside the aureole the sky is 0.004
+     *      saturated and any ratio of two near-neutrals is noise;
+     *   3. and converging with distance, both by the mix that produces it — the
+     *      mean extinction toward the asymptote has to rise ring by ring — and
+     *      in what comes out: mean luminance contrast has to fall ring by ring.
+     *
+     * All of it off the engine's own exported sky, not a transcription. */
     const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+    const sat = (c) => {
+      const m = Math.max(c.r, c.g, c.b);
+      return m <= 1e-6 ? 0 : (m - Math.min(c.r, c.g, c.b)) / m;
+    };
     const rows = [];
-    let worstL = 0, worstB = Infinity, worstAt = '';
+    let worstL = 0, worstS = -Infinity, worstLat = '', worstSat = '';
+    let worstCrest = 0, worstCrestAt = '';
     for (const key of LEVEL_ORDER) {
       const L = LEVELS[key];
       const a = L.atmosphere || {};
@@ -623,49 +694,215 @@ export function run({ check, assert, near }) {
       // which is also the check that the two agree about the same horizon.
       const dome = new SkyDome(world.scene);
       dome.configure(a);
-      const meshes = addHorizon(world, { seed: 4400 });
       const disp = skyDisplayShoulder(a);
       const sun = sunDirection(a, new THREE.Vector3());
+      /* And the KEY has to be hung before the ranges are built, exactly as a
+       * level does it. addHorizon reads the light off the scene rather than
+       * re-deriving it, so a stub with no sun in it measured every level
+       * against the same fallback vector — which is how a facing term can be
+       * backwards in the game and right in the test. */
+      const key0 = new THREE.DirectionalLight(0xffffff, 1);
+      key0.position.copy(sun).multiplyScalar(90);
+      world.scene.add(key0);
+      const meshes = addHorizon(world, { seed: 4400 });
       const invH = 1 / (a.fogHeight ?? 38), rho = a.fogDensity ?? 0.0035;
       const camY = 1.75, sky = new THREE.Color(), out = new THREE.Color();
-      let hi = 0, lo = Infinity, bMin = Infinity;
+      let hi = 0, lo = Infinity, dMax = -Infinity;
+      const meanF = [], meanC = [], lits = [];
+      /* The shader's own extinction at one vertex, camera in the middle of the
+       * ring — the composited value that vertex hands the rasteriser. */
+      const at = (P, N, F, i, o) => {
+        const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+        const R = Math.hypot(x, z), relY = y - camY, dist = Math.hypot(R, relY);
+        const k = relY * invH, t0 = Math.exp(-camY * invH);
+        const mm = Math.abs(k) < 1e-3 ? t0 : t0 * (1 - Math.exp(-k)) / k;
+        const path = dist * Math.min(6, Math.max(0, mm));
+        const f = 1 - Math.exp(-rho * rho * path * path);
+        o.setRGB(N.getX(i) + (F.getX(i) - N.getX(i)) * f,
+          N.getY(i) + (F.getY(i) - N.getY(i)) * f,
+          N.getZ(i) + (F.getZ(i) - N.getZ(i)) * f);
+        return { y, R, f };
+      };
+      const cTop = new THREE.Color(), cMid = new THREE.Color();
       for (const m of meshes) {
         const P = m.geometry.attributes.position;
         const N = m.geometry.attributes.aNear, F = m.geometry.attributes.aFar;
-        for (let i = 1; i < P.count; i += 2) {           // crest row only
-          const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
-          const R = Math.hypot(x, z), relY = y - camY, dist = Math.hypot(R, relY);
-          // the shader's own extinction, camera in the middle of the ring
-          const k = relY * invH, t0 = Math.exp(-camY * invH);
-          const mm = Math.abs(k) < 1e-3 ? t0 : t0 * (1 - Math.exp(-k)) / k;
-          const path = dist * Math.min(6, Math.max(0, mm));
-          const f = 1 - Math.exp(-rho * rho * path * path);
-          out.setRGB(N.getX(i) + (F.getX(i) - N.getX(i)) * f,
-            N.getY(i) + (F.getY(i) - N.getY(i)) * f,
-            N.getZ(i) + (F.getZ(i) - N.getZ(i)) * f);
-          // the sky DIRECTLY ABOVE that crest: same bearing, 3° higher
-          const el = Math.atan2(relY, R) + 0.052, ce = Math.cos(el) / Math.max(R, 1e-4);
-          skyShoulder(skyRadiance(new THREE.Vector3(x * ce, Math.sin(el), z * ce), sun, a, sky),
-            disp.knee, disp.ceil);
-          const ratio = lum(out) / Math.max(1e-4, lum(sky));
-          // "bluer" with no argument about hue wheels: more blue per unit red.
-          const br = (out.b / Math.max(1e-4, out.r)) / (sky.b / Math.max(1e-4, sky.r));
-          hi = Math.max(hi, ratio); lo = Math.min(lo, ratio); bMin = Math.min(bMin, br);
-          if (ratio > worstL) { worstL = ratio; worstAt = key; }
-          worstB = Math.min(worstB, br);
+        let fs = 0, cs = 0, n = 0;
+        for (let i = ROWS - 1; i < P.count; i += ROWS) {
+          /* NOT THE CREST ROW ONLY. The mesh interpolates between its rows, and
+           * a check that samples one of them measures the one place the two
+           * happen to agree. Measured at the crest alone, the ranges cleared
+           * this comfortably while the BAND BELEW them — crest down to grade,
+           * which is most of what is on screen — ran up to 0.336 of saturation
+           * ABOVE the sky beside it, because the asymptote was baked once at
+           * the crest's elevation and the sky is not flat over the few degrees
+           * that band spans. So walk the visible span. */
+          const top = at(P, N, F, i, cTop);
+          const mid = at(P, N, F, i - 1, cMid);        // the row at grade
+          for (let s = 0; s <= 6; s++) {
+            const t = s / 6;
+            const y = top.y + (mid.y - top.y) * t;
+            const el = Math.atan2(y - camY, top.R) + 0.052;
+            if (el <= 0.009) continue;                 // under the skyline
+            out.setRGB(cTop.r + (cMid.r - cTop.r) * t, cTop.g + (cMid.g - cTop.g) * t,
+              cTop.b + (cMid.b - cTop.b) * t);
+            const ce = Math.cos(el) / Math.max(top.R, 1e-4);
+            skyShoulder(skyRadiance(new THREE.Vector3(P.getX(i) * ce, Math.sin(el), P.getZ(i) * ce),
+              sun, a, sky), disp.knee, disp.ceil);
+            const ratio = lum(out) / Math.max(1e-4, lum(sky));
+            const dSat = sat(out) - sat(sky);
+            hi = Math.max(hi, ratio); lo = Math.min(lo, ratio); dMax = Math.max(dMax, dSat);
+            if (ratio > worstL) { worstL = ratio; worstLat = key; }
+            if (dSat > worstS) { worstS = dSat; worstSat = key; }
+            // The CREST is the silhouette the eye reads a range by, so it is
+            // held to a much harder bound than the base — a base at 0.98 of the
+            // horizon sky is a range dissolving into the haze, which is right;
+            // a crest at 0.98 is a range that is not there.
+            if (s === 0 && ratio > worstCrest) { worstCrest = ratio; worstCrestAt = key; }
+            fs += top.f + (mid.f - top.f) * t; cs += 1 - ratio; n++;
+          }
         }
+        assert(n > 0, 'no visible band on a range at all');
+        meanF.push(fs / n); meanC.push(cs / n);
+
+        /* ── and the sun has to light the half it can reach ──────────────
+         * The player stands INSIDE the ring, so what they see is its inward
+         * face: the ranges on the far side of the compass from the sun are
+         * front-lit and the ones standing between the player and the sun are
+         * contre-jour. The term that did this used the OUTWARD radial and so
+         * brightened exactly the backlit half — the same shape of bug as an
+         * aim assist scoring threats by alignment with the guard you already
+         * have. lum(aNear)/lum(aFar) is the surface's own scalar shortfall,
+         * because the rock hue carries unit luminance and aFar's luminance is
+         * the sky's, so it reads straight off the geometry. */
+        const sb = Math.atan2(sun.z, sun.x);
+        let toward = 0, nt = 0, away = 0, nw = 0;
+        for (let i = ROWS - 1; i < P.count; i += ROWS) {
+          const b = Math.atan2(P.getZ(i), P.getX(i));
+          const d = Math.abs(((b - sb + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI);
+          const c = lum({ r: N.getX(i), g: N.getY(i), b: N.getZ(i) })
+            / Math.max(1e-6, lum({ r: F.getX(i), g: F.getY(i), b: F.getZ(i) }));
+          if (d < Math.PI / 4) { toward += c; nt++; } else if (d > 3 * Math.PI / 4) { away += c; nw++; }
+        }
+        const gain = (away / nw) / (toward / nt);
+        assert(gain > 1.15,
+          `${key}: the ranges standing between the player and the sun come out ${gain < 1 ? 'BRIGHTER' : 'the same'} ` +
+          `as the ones opposite (${(toward / nt).toFixed(3)} vs ${(away / nw).toFixed(3)}) — the sun is ` +
+          'lighting the faces it cannot see');
+        lits.push(gain);
       }
-      rows.push(`${key} ${lo.toFixed(2)}–${hi.toFixed(2)}× B/R ≥${bMin.toFixed(2)}`);
+      for (let i = 1; i < meanF.length; i++) {
+        assert(meanF[i] > meanF[i - 1],
+          `${key}: ring ${i} sits ${meanF[i].toFixed(3)} of the way to its sky and ring ${i - 1} ` +
+          `sits ${meanF[i - 1].toFixed(3)} — the further range is not the hazier one`);
+        assert(meanC[i] < meanC[i - 1],
+          `${key}: ring ${i} holds ${meanC[i].toFixed(3)} luminance contrast against ring ${i - 1}'s ` +
+          `${meanC[i - 1].toFixed(3)} — distance is not costing contrast, so it will not read as distance`);
+      }
+      rows.push(`${key} ${lo.toFixed(2)}–${hi.toFixed(2)}× Δsat ≤${dMax.toFixed(3)} ` +
+        `contrast ${meanC.map((v) => v.toFixed(2)).join('>')} lit +` +
+        `${((Math.min(...lits) - 1) * 100).toFixed(0)}%`);
       dome.dispose();
       terrain.dispose();
     }
     assert(rows.length >= 3, 'no outdoor level built ranges to measure');
-    assert(worstL < 0.95,
-      `a range reaches ${worstL.toFixed(3)}× the sky above it on ${worstAt} — a landform behind 300 m ` +
+    assert(worstL < 0.995,
+      `a range reaches ${worstL.toFixed(3)}× the sky above it on ${worstLat} — a landform behind 300 m ` +
       'of the same air cannot be that bright');
-    assert(worstB > 1.05,
-      `a range is only ${worstB.toFixed(3)}× as blue-over-red as its own sky — distance is not reading as distance`);
-    return `${rows.join(', ')} (radiance, before the tone curve)`;
+    assert(worstCrest < 0.90,
+      `a CREST reaches ${worstCrest.toFixed(3)}× the sky above it on ${worstCrestAt} — the silhouette the ` +
+      'eye reads the range by has no contrast left to read it with');
+    // 0.01 of HSV saturation is under a JND and is the width of the sky band's
+    // own interpolation error; anything a viewer could see has to be negative.
+    assert(worstS < 0.01,
+      `a range is ${worstS.toFixed(3)} MORE saturated than its own sky on ${worstSat} — ` +
+      'aerial perspective takes chroma away, it does not add it');
+    return `${rows.join(', ')}; worst crest ${worstCrest.toFixed(2)}×, worst anywhere ` +
+      `${worstL.toFixed(2)}× (radiance, before the tone curve)`;
+  });
+
+  check('horizon: the silhouette has energy at every scale the mesh can draw', () => {
+    /* "A perfect isoceles cone with dead-straight sides." It was, and the cause
+     * was not too little noise but too much of it in the wrong place: the
+     * profile's finest authored octave sat at 22× its base — 312 to 490 cycles
+     * around the compass — on a ring the code capped at 256 segments. That is
+     * 0.8 samples per period. Everything above the mesh's Nyquist came back as
+     * single-segment spikes, and a spike two vertices wide IS a triangle with
+     * dead-straight sides; meanwhile the scales the eye actually reads a
+     * ridgeline by had almost nothing in them.
+     *
+     * So: assert the SPECTRUM of the crest profile, in harmonics around the
+     * compass, which is the axis the silhouette lives on. A cone puts nearly
+     * everything in one harmonic. A ridgeline spreads it — and every band it
+     * spreads into must be one the mesh can resolve. */
+    const OCT = [[2, 3], [4, 7], [8, 15], [16, 31], [32, 63]];
+    const rows = [];
+    let thinnest = 1, peakiest = 0, coarsest = 1, at = '';
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const a = L.atmosphere || {};
+      if (a.sky === false || a.horizon === false) continue;
+      const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const world = stubWorld(terrain);
+      world.level = L;
+      world.scene.fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
+      const dome = new SkyDome(world.scene);
+      dome.configure(a);
+      const meshes = addHorizon(world, { seed: 4400 });
+      for (let mi = 0; mi < meshes.length; mi++) {
+        const P = meshes[mi].geometry.attributes.position;
+        /* The LANDFORM this code authors, which is the crest minus the ground
+         * the ring is standing on. The eye sees the sum, and the sum is allowed
+         * to have a huge low-frequency term — canyon's ring straddles a gorge,
+         * and 57% of its drawn silhouette is that gorge. But the gorge is
+         * Terrain's, and pinning it here would make this check pass or fail on
+         * somebody else's heightfield. */
+        const p = [];
+        for (let i = ROWS - 1; i < P.count - ROWS; i += ROWS) {
+          const x = P.getX(i), z = P.getZ(i);
+          p.push(P.getY(i) - terrain.height(x, z));
+        }
+        const N = p.length;
+        assert(N >= 384,
+          `${key} ring ${mi} draws its skyline with ${N} samples — ${(360 / N).toFixed(2)}° a segment, ` +
+          'so anything finer than that is a spike rather than a shape');
+        const mean = p.reduce((s, v) => s + v, 0) / N;
+        const q = p.map((v) => v - mean);
+        const S = [];
+        for (let k = 1; k <= 63; k++) {
+          let re = 0, im = 0;
+          for (let n = 0; n < N; n++) {
+            const t = (2 * Math.PI * k * n) / N;
+            re += q[n] * Math.cos(t); im += q[n] * Math.sin(t);
+          }
+          S.push(re * re + im * im);
+        }
+        const tot = S.reduce((s, v) => s + v, 0) || 1e-12;
+        const band = ([a0, b0]) => S.slice(a0 - 1, b0).reduce((s, v) => s + v, 0) / tot;
+        const shares = OCT.map(band);
+        const peak = Math.max(...S) / tot;
+        // energy in features narrower than 45° of bearing — a "cone" is what
+        // you get when the answer is "almost none"
+        const fine = band([8, 63]);
+        thinnest = Math.min(thinnest, ...shares);
+        peakiest = Math.max(peakiest, peak);
+        if (fine < coarsest) { coarsest = fine; at = `${key} ring ${mi}`; }
+        rows.push(`${key}${mi} ${shares.map((v) => (v * 100).toFixed(0)).join('/')}`);
+      }
+      dome.dispose();
+      terrain.dispose();
+    }
+    assert(rows.length >= 9, 'no outdoor level built ranges to measure');
+    assert(thinnest > 0.05,
+      `an octave band of the skyline carries only ${(thinnest * 100).toFixed(1)}% of its energy — ` +
+      'a ridgeline has structure at every scale, and a missing band is a scale the eye reads as drawn');
+    assert(peakiest < 0.25,
+      `one harmonic carries ${(peakiest * 100).toFixed(0)}% of a skyline — that is a cone, not a range`);
+    assert(coarsest > 0.45,
+      `${at} puts only ${(coarsest * 100).toFixed(0)}% of its silhouette into features under 45° of ` +
+      'bearing — the horizon is a handful of big lumps');
+    return `${rows.length} rings, octave shares k2-3/4-7/8-15/16-31/32-63 = ${rows.join(', ')} %, ` +
+      `worst band ${(thinnest * 100).toFixed(1)}%, tallest harmonic ${(peakiest * 100).toFixed(0)}%`;
   });
 
   check('sky: the painted skyline is the sky times an extinction, and a storm takes it away', () => {
@@ -685,23 +922,81 @@ export function run({ check, assert, near }) {
     assert(bands === 2, `the dome paints ${bands} ranges`);
     assert(/uSkyBand/.test(src) && /texture2D\(uSkyBand/.test(src),
       'the dome has no directional sky, so its skyline is one colour round the whole compass again');
-    const tints = [...src.matchAll(/const vec3 BAND_(FAR|NEAR)\s*=\s*vec3\(([^)]*)\)/g)]
-      .map((m) => [m[1], m[2].split(',').map(Number)]);
+    /* These used to be vec3 and this check used to demand they be
+     * Rayleigh-ORDERED — which sounds like physics and is the bug. A
+     * per-channel constant multiplied onto the sky raises blue-over-red by a
+     * fixed factor whatever colour that sky is, so the painted skyline
+     * converged on a colour its own sky never reaches; on canyon, where the
+     * sky at 8° runs warm, that painted a blue ridge against a gold horizon.
+     * The shortfall a landform has against its sky is in VALUE. So: scalars,
+     * and whatever chroma the range carries of its own has to be bounded by
+     * the sky's rather than added to it. */
+    const tints = [...src.matchAll(/const float BAND_(FAR|NEAR)\s*=\s*([0-9.]+)/g)]
+      .map((m) => [m[1], Number(m[2])]);
     assert(tints.length === 2, 'the painted ranges no longer declare their extinction');
+    assert(!/const vec3 BAND_(FAR|NEAR)/.test(src),
+      'a painted range is back on a per-channel extinction, which tints the sky it is standing in');
     for (const [name, t] of tints) {
-      assert(t.every((v) => v > 0 && v < 1), `BAND_${name} is not an extinction — ${t.join(', ')}`);
-      assert(t[2] > t[1] && t[1] > t[0], `BAND_${name} is not Rayleigh-ordered, so it cannot read as distance`);
-      const L = t[0] * 0.2126 + t[1] * 0.7152 + t[2] * 0.0722;
+      assert(t > 0 && t < 1, `BAND_${name} is not an extinction — ${t}`);
       // ~2% of the sky's own luminance is where a soft-edged shape stops being
       // a shape. Both ranges have to clear that by a wide margin.
-      assert(1 - L > 0.08, `BAND_${name} sits ${((1 - L) * 100).toFixed(1)}% under its sky — invisible`);
+      assert(1 - t > 0.08, `BAND_${name} sits ${((1 - t) * 100).toFixed(1)}% under its sky — invisible`);
     }
+    assert(/BAND_CHROMA\s*=\s*0?\.\d+/.test(src) && /BAND_CHROMA \* skySat/.test(src),
+      'the painted skyline no longer holds its own chroma under the sky it stands in');
+
+    /* ── and the front has to reach the sky, not just the bottom of it ──
+     * Forced to peak on the dune sea, the horizon band moved luminance
+     * 0.511 → 0.731 and saturation 0.197 → 0.064, and the sky 200 px above it
+     * moved 1.4%: an 80 m whiteout under a clear blue sky with crisp cumulus
+     * and a hard sun. So uStorm has to be in the coverage, in the deck's own
+     * sunlit term, and in a lid over the WHOLE dome — and the lid is ported
+     * here rather than pattern-matched, because "the source mentions uStorm"
+     * is exactly the kind of assertion that passes while nothing moves. */
     assert(/uStorm/.test(src), 'the dome cannot see the weather, so the skyline survives a dust storm');
     assert(/mix\(0\.10, 0\.62, uStorm\)/.test(src),
       'the skyline haze band does not lift during a front — dust does not stay near the ground');
-    const contrast = tints.map(([n, t]) =>
-      `${n} ${((1 - (t[0] * 0.2126 + t[1] * 0.7152 + t[2] * 0.0722)) * 100).toFixed(1)}%`).join(', ');
-    return `2 painted ranges off the sky band, contrast ${contrast}, band 0.10 → 0.62 rad in a storm`;
+    assert(/uCoverage \+ front \* ([0-9.]+)/.test(src),
+      'a front brings no cloud with it — the deck over a dust storm is still fair weather');
+    assert(/\* \(1\.0 - 0\.\d+ \* front\)/.test(src),
+      'the cloud deck keeps its full sunlit face through a front, so the sun never goes out');
+    const lidM = src.match(/front \* mix\(1\.0, ([0-9.]+), smoothstep\(0\.0, ([0-9.]+),/);
+    assert(lidM, 'there is no whole-dome lid, so a storm is still a band at the bottom of the sky');
+    const [, hiFall, span] = lidM.map(Number);
+    const gain = Number(src.match(/float w = clamp\(lid \* ([0-9.]+)/)[1]);
+    const smooth = (t) => { const x = Math.min(1, Math.max(0, t)); return x * x * (3 - 2 * x); };
+    const frontM = src.match(/float front = smoothstep\(([0-9.]+), 1\.0, uStorm\)/);
+    assert(frontM, 'nothing separates a front from the air merely not being still');
+    const gate = Number(frontM[1]);
+    const front = (storm) => smooth((storm - gate) / (1 - gate));
+    const lid = (e, storm) =>
+      Math.min(1, front(storm) * (1 + (hiFall - 1) * smooth(e / span)) * gain);
+    // 12° up is where the "sky 200 px above the horizon" reading was taken;
+    // the zenith is the sky that never moved at all.
+    const at12 = lid(Math.sin(12 * Math.PI / 180), 1), atZen = lid(1, 1);
+    assert(at12 > 0.85, `a full front covers only ${(at12 * 100).toFixed(0)}% of the sky 12° up`);
+    assert(atZen > 0.55, `a full front covers only ${(atZen * 100).toFixed(0)}% of the zenith — ` +
+      'the player can look up and see there is no weather');
+    /* AND THE OTHER WAY. `unrest` rides under every level permanently so the
+     * calm between squalls is not a flat line; if the lid read it, fair weather
+     * would carry a permanent film of dust across the whole dome, which is the
+     * same bug as a storm that never leaves the ground pointing the other way.
+     * Same class as the `min` against the fog cap that quietly re-lit a hangar
+     * with no weather in it. */
+    let worstCalm = 0, calmAt = '';
+    for (const key of LEVEL_ORDER) {
+      const w = LEVELS[key].dust && LEVELS[key].dust.weather;
+      if (!w || !w.peak) continue;
+      // the most "storm" a level ever carries with no squall running at all
+      const calm = w.peak * (w.unrest ?? 0.14);
+      if (calm > worstCalm) { worstCalm = calm; calmAt = key; }
+      assert(front(calm) <= 0,
+        `${key} sits at ${calm.toFixed(3)} storm in calm air and the sky reads it as a front`);
+    }
+    const contrast = tints.map(([n, t]) => `${n} ${((1 - t) * 100).toFixed(1)}%`).join(', ');
+    return `2 painted ranges off the sky band, scalar contrast ${contrast}, chroma held under the sky's; ` +
+      `at full storm the dome covers ${(at12 * 100).toFixed(0)}% at 12° and ${(atZen * 100).toFixed(0)}% at the zenith, ` +
+      `and nothing at all in calm air (worst unrest ${calmAt} ${worstCalm.toFixed(3)}, gate ${gate})`;
   });
 }
 

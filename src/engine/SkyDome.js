@@ -104,16 +104,27 @@ function unitLum(c) {
  * One and a half to one on the anti-sun side. That is the milky horizon, and
  * it is the same fault the far ranges in Scenery.js were scored for.
  *
- * So the dome carries the sky it is standing in: a 64 × 16 map of the DRAWN
+ * So the dome carries the sky it is standing in: a 128 × 32 map of the DRAWN
  * dome over bearing and elevation, built on the CPU from the engine's own
  * Preetham derivation whenever the level changes. Half-float, because the
  * values are radiance and 8 bits over a 0.2–1.6 range bands visibly in a
- * gradient this smooth. It costs one texture fetch and about a thousand
+ * gradient this smooth. It costs one texture fetch and four thousand
  * evaluations per level, and it turns every painted landform from "a swatch,
  * hopefully darker than the sky" into "the sky, times an extinction" — which
  * is a thing that cannot come out brighter than what is behind it.
+ *
+ * 128 × 32 and not the 64 × 16 first shipped, and that is a measurement rather
+ * than a round-up. Scenery's far ranges read this same array for their
+ * asymptote, and the property they now have to hold is CHROMATIC — a range may
+ * not be more saturated than its own sky. At 64 × 16 a texel spans 5.6° of
+ * bearing and 2.6° of elevation near the horizon, and inside the aureole, where
+ * the sky whites out to 0.006 saturation over a few degrees, that quantisation
+ * alone made the band up to 1.20× as saturated as the sky at the same point.
+ * The ranges inherited it and the check could not clear 1.0. At 128 × 32 the
+ * same worst case is 1.05, and the property holds on the sky's own numbers
+ * rather than on the map's resolution.
  */
-const BAND_AZ = 64, BAND_EL = 16;
+const BAND_AZ = 128, BAND_EL = 32;
 /** Top of the map, in sin(elevation). Covers the tallest painted range any
  *  level asks for (canyon: 0.53) and the storm band's reach (0.62). */
 const BAND_TOP = 0.72;
@@ -194,14 +205,22 @@ const FRAG = /* glsl */`
   uniform vec3  uHazeHue;      // the dust, renormalised to unit luminance
 
   /* What a range at that distance hands back, relative to the sky standing
-   * over it. Under 1 in every channel — a finite path cannot return what an
-   * infinite one does — and blue highest, because what fills in behind a
-   * distant ridge is Rayleigh scattering. That ordering IS the read of
-   * distance; without it a landform is a paper triangle whatever its level.
+   * over it. Under 1 — a finite path cannot return what an infinite one does —
+   * and SCALAR, which is the correction.
    *
-   * These are deliberately paler than the tints Scenery.js gives the three
-   * REAL ranges at 170-340 m (0.62-0.84 rising to 0.73-0.99): those parallax,
-   * these do not, so these have to sit behind them tonally as well.
+   * These used to be vec3(0.855, 0.885, 0.955) and vec3(0.760, 0.800, 0.910):
+   * Rayleigh-ordered, which sounds right and is not. A per-channel constant
+   * multiplied onto the sky raises blue-over-red by a fixed 1.12 whatever
+   * colour that sky is, so a painted range converges on a colour its own sky
+   * never reaches — on canyon, where the sky at 8° runs warm, it turned the
+   * skyline blue against a gold horizon. The same fault as the far ranges in
+   * Scenery.js, in the same frame, one file over. A landform is DARKER than
+   * its sky and no more saturated than it; the shortfall is in value, and
+   * whatever chroma it has of its own is bounded by the sky's below.
+   *
+   * These are deliberately darker than the shades Scenery.js gives the three
+   * REAL ranges at 170-340 m: those parallax, these do not, so these have to
+   * sit behind them tonally as well.
    *
    * Two ranges, not four. The old four were mixed toward the haze at
    * 0.08 / 0.18 / 0.32 / 0.50, and composited contrast is exactly
@@ -209,8 +228,11 @@ const FRAG = /* glsl */`
    * the sky's own luminance once the grade was applied, which is below the
    * threshold at which anything is a shape at all. Two ranges that can be seen
    * beat four where half are being paid for and not delivered. */
-  const vec3 BAND_FAR  = vec3(0.855, 0.885, 0.955);   // 11.6% under the sky
-  const vec3 BAND_NEAR = vec3(0.760, 0.800, 0.910);   // 20.0% under the sky
+  const float BAND_FAR  = 0.885;    // 11.5% under the sky
+  const float BAND_NEAR = 0.800;    // 20.0% under the sky
+  /** The most of the sky's own saturation a painted range may carry. Matches
+   *  RANGE_CHROMA in Scenery.js — the two meet along the same line of frame. */
+  const float BAND_CHROMA = 0.55;
   const vec3 LUM_W = vec3(0.2126, 0.7152, 0.0722);
 
   varying vec3 vDir;
@@ -262,6 +284,18 @@ const FRAG = /* glsl */`
     vec3 dir = normalize(vDir);
     float el = dir.y;
 
+    /* A FRONT, as distinct from the air merely not being perfectly still.
+     * Weather's unrest rides under every level all the time — it tops out at
+     * 0.16 on the dune sea, 0.124 on the arena, 0.187 in the gorge — and it is
+     * there so the calm between squalls is not a flat line near the ground.
+     * Everything below it has no business clouding the sky over or putting a
+     * lid on the zenith: an overhead quietly 11% dust in fair weather is the
+     * same bug as a storm that never reaches it, pointing the other way. So
+     * the terms that change what the WEATHER IS start above the highest unrest
+     * any level authors, and the terms that only thicken the skyline keep
+     * reading uStorm raw. */
+    float front = smoothstep(0.22, 1.0, uStorm);
+
     vec3 col = vec3(0.0);
     float alpha = 0.0;
 
@@ -300,12 +334,27 @@ const FRAG = /* glsl */`
       float lit = clamp(dot(normalize(vec3(dir.x, 0.0, dir.z)),
                             normalize(vec3(uSunDir.x, 0.0, uSunDir.z))), 0.0, 1.0);
       lit = lit * lit;
-      // The land's own colour, demoted to a HUE the same way tint() does on
-      // the CPU: renormalised to unit luminance and pulled most of the way to
-      // white, so the level author's swatch can say what the rock is and never
-      // how bright a range twenty kilometres out is allowed to be.
-      vec3 landHue = mix(vec3(1.0),
-        uHorizonColor / max(dot(uHorizonColor, LUM_W), 1.0e-3), 0.20);
+      /* The land's own colour, demoted to a HUE — renormalised to unit
+       * luminance so the level author's swatch can say what the rock is and
+       * never how bright a range twenty kilometres out is allowed to be — and
+       * then held to a fraction of THIS DIRECTION'S OWN SATURATION.
+       *
+       * That second half is the point. A fixed pull toward white is a fixed
+       * amount of chroma laid over every bearing, and beside the sun, where
+       * the sky whites out to 0.006 saturation over a couple of degrees, a
+       * fixed 0.20 of a warm swatch is a coloured smear on a neutral sky.
+       * Saturation along the pull t is t·(mx−mn) / ((1−t) + t·mx) for a
+       * unit-luminance hue, which is monotone, so solving it for the target
+       * gives the exact pull rather than a guess. Same construction as
+       * capChroma() in Scenery.js, because it is the same claim. */
+      vec3 hue = uHorizonColor / max(dot(uHorizonColor, LUM_W), 1.0e-3);
+      float hMax = max(max(hue.r, hue.g), hue.b);
+      float hMin = min(min(hue.r, hue.g), hue.b);
+      float sMax = max(max(skyHere.r, skyHere.g), skyHere.b);
+      float skySat = sMax > 1.0e-5 ? (sMax - min(min(skyHere.r, skyHere.g), skyHere.b)) / sMax : 0.0;
+      float want = min(BAND_CHROMA * skySat, 0.20);
+      float t = clamp(want / max((hMax - hMin) - want * (hMax - 1.0), 1.0e-5), 0.0, 1.0);
+      vec3 landHue = mix(vec3(1.0), hue, t);
       vec3 cFar  = skyHere * min(BAND_FAR  * landHue * (1.0 + lit * 0.07), vec3(0.985));
       vec3 cNear = skyHere * min(BAND_NEAR * landHue * (1.0 + lit * 0.09), vec3(0.955));
 
@@ -341,7 +390,13 @@ const FRAG = /* glsl */`
       // to p95 0.70 about a median of 0.50, so 0.60→0.30 walks the sky from 22%
       // covered to 95% as uCoverage goes 0→1. tools/checks/lighting.mjs ports
       // the field and pins those numbers.
-      float thr = mix(0.60, 0.30, uCoverage);
+      //
+      // A FRONT BRINGS ITS OWN CLOUD. Nothing here read uStorm before, which is
+      // most of why a full-strength squall on the dune sea left crisp fair
+      // weather cumulus over an 80 m whiteout. 0.42 of coverage is the
+      // difference between a scattered deck and an overcast one.
+      float cover = clamp(uCoverage + front * 0.42, 0.0, 1.0);
+      float thr = mix(0.60, 0.30, cover);
 
       // — parallax. A cumulus is as tall as it is wide, so its top is visibly
       // displaced from its base along the view ray. One cheap iteration: read
@@ -401,7 +456,9 @@ const FRAG = /* glsl */`
       float cosT = dot(dir, uSunDir);
       float phase = min(0.88 + 0.30 * hg(cosT, 0.72), 2.4);
 
-      float sun = trans * mix(0.42, 1.0, powder) * phase;
+      // and under a front the deck stops having a sunlit face at all: what is
+      // over you is the underside of the weather, lit by scattered light only.
+      float sun = trans * mix(0.42, 1.0, powder) * phase * (1.0 - 0.72 * front);
       // ambient: the underside is not black, it is lit by the whole dome and
       // by everything the ground throws back up, more so where the cloud is
       // thin. The floor is 0.55 rather than 0.30 because uCloudAmb already
@@ -458,6 +515,33 @@ const FRAG = /* glsl */`
       vec3 bandCol = mix(mix(skyHere, uHazeHue * skyLum, 0.62), uHazeColor, uStorm);
       col = mix(col, bandCol, wash);
       alpha = max(alpha, band * 0.86);
+    }
+
+    /* ── the front, over the WHOLE dome ────────────────────────────────
+     *
+     * A storm that only fogs the bottom four degrees of the sky is a fog
+     * slider, and that is exactly what this was. Measured on the dune sea at
+     * forced peak: the horizon band moved luminance 0.511 → 0.731 and
+     * saturation 0.197 → 0.064 — real, and welcome — while the sky 200 px above
+     * it moved 1.4%. An 80 m whiteout under an untouched clear blue sky with
+     * crisp clouds and a hard sun in it.
+     *
+     * The dust between you and the zenith is the same dust that is between you
+     * and the ridge; there is simply less of it, because the path up is short
+     * and the path out is not. So the lid falls off with elevation and never to
+     * nothing, and because this dome composites over the Preetham sky mesh, it
+     * takes the sun's own disc with it — which is what a front actually does.
+     *
+     * Written as a proper over-operator rather than another mix into col:
+     * the frame multiplies the colour by alpha on the way out, so a term that
+     * raises alpha has to divide that back out or a half-strength front lands
+     * at a quarter strength. */
+    if (front > 0.001) {
+      float lid = front * mix(1.0, 0.62, smoothstep(0.0, 0.60, max(el, 0.0)));
+      float w = clamp(lid * 1.15, 0.0, 1.0);
+      float na = 1.0 - (1.0 - w) * (1.0 - alpha);
+      col = ((1.0 - w) * col * alpha + w * uHazeColor) / max(na, 1.0e-4);
+      alpha = na;
     }
 
     if (alpha < 0.002) discard;

@@ -471,6 +471,68 @@ export function run({ check, assert, near }) {
     return `cover ${amt.toFixed(2)}, litter #${c.getHexString()}`;
   });
 
+  check('grass: every tuft prints a contact shadow on the ground under it', () => {
+    /* NOTHING IN THE FRAME TOUCHED THE GROUND, and it was named the loudest
+     * "assembled rather than lit" signal in the whole picture. Measured on a
+     * dune tuft, the sand 5 px from a blade base against the sand 40 px away:
+     * 1.6% apart. The whole field stood on sand of exactly its own value right
+     * up to each blade.
+     *
+     * Grass cannot go in the shadow map — ten thousand alpha-tested blades is
+     * the most expensive thing that could be in a depth pass, and the cascade
+     * starts further out than the field goes — so the contact is baked as one
+     * multiplied quad per TUFT. This pins the three things that make it a
+     * contact rather than a smudge: it is DARK enough to read, it is LOCAL
+     * enough to be a contact, and it lies ON the ground rather than through it.
+     */
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const g = new GrassField(new THREE.Scene(), t, { count: 6000, density: 1, radius: 46 });
+    g.update(1 / 60, new THREE.Vector3(0, t.height(0, 0), 0), [], null);
+    const report = [];
+    for (const [name, ring] of [['near', g.near], ['far', g.far]]) {
+      const sh = ring.shade;
+      assert(sh && sh.mesh, `the ${name} ring has no contact shadows at all`);
+      const S = sh.aShade.array, N = sh.aShadeN.array;
+      let live = 0, dark = 0, rad = 0, worstOff = 0, worstTilt = 1;
+      for (let i = 0; i < sh.tufts; i++) {
+        if (S[i * 4 + 3] <= 1e-4 || N[i * 4 + 3] <= 1e-3) continue;
+        live++;
+        dark += N[i * 4 + 3];
+        rad += S[i * 4 + 3];
+        // on the ground, not floating over it or buried in it
+        worstOff = Math.max(worstOff, Math.abs(S[i * 4 + 1] - t.height(S[i * 4], S[i * 4 + 2])));
+        // and lying along it: the quad is built on this normal, so a flat one
+        // on a 30° hillside would cut straight through the slope
+        const n = t.normalAt(S[i * 4], S[i * 4 + 2], new THREE.Vector3());
+        worstTilt = Math.min(worstTilt, n.x * N[i * 4] + n.y * N[i * 4 + 1] + n.z * N[i * 4 + 2]);
+      }
+      assert(live > sh.tufts * 0.4,
+        `${name}: only ${live} of ${sh.tufts} tufts printed anything`);
+      const mD = dark / live, mR = rad / live;
+      // What the ground keeps directly under a clump, and 25 cm out. The
+      // falloff is (1 - (d/R)^2)^2, ported from SHADE_FRAG.
+      const keep = (d) => 1 - mD * Math.pow(Math.max(0, 1 - (d / mR) * (d / mR)), 2);
+      assert(keep(0) < 0.62,
+        `${name}: the ground under a tuft keeps ${(keep(0) * 100).toFixed(0)}% of its open value — ` +
+        'that is not a contact, it is a smudge');
+      // A disc wide enough to swallow the reference patch measures as no
+      // gradient at all however dark it is — that is how the first attempt
+      // came out at a 9.8% median on a metric that wanted 12%.
+      assert(mR < 0.75,
+        `${name}: the contact spreads ${mR.toFixed(2)} m from the tuft — a soft blob, not a contact`);
+      assert(keep(mR * 1.02) > 0.999, `${name}: the contact does not end at its own radius`);
+      assert(worstOff < 0.05, `${name}: a contact sits ${worstOff.toFixed(2)} m off the ground`);
+      assert(worstTilt > 0.999, `${name}: a contact is not lying along the slope it is on`);
+      report.push(`${name} ${live} tufts, ${(mD * 100).toFixed(0)}% at the base over ${mR.toFixed(2)} m ` +
+        `(ground keeps ${(keep(0) * 100).toFixed(0)}% under it, ${(keep(mR * 0.6) * 100).toFixed(0)}% at 0.6R)`);
+    }
+    const before = g.scene.children.length;
+    g.dispose(); t.dispose();
+    assert(g.scene.children.length === before - 4,
+      'the grass left meshes behind on dispose');
+    return report.join('; ');
+  });
+
   check('grass: the near ring covers enough ground to read as cover', () => {
     // 6.8% silhouette is nine parts bare sand to one part grass. The lever is
     // the ring's AREA, not the blade: instances over πr² is what decides it.
