@@ -2597,6 +2597,20 @@ check('source: no stray backtick inside a GLSL template literal', async () => {
   // A backtick in a shader comment closes the JS template literal that holds
   // the shader, and the file dies at parse time with an error pointing at the
   // GLSL rather than at the quote. It has cost two debugging rounds already.
+  //
+  // ...and then the lint itself grew the same class of bug. It used to pair each
+  // /* glsl */ marker with the NEXT backtick-SEMICOLON, which only describes a
+  // shader assigned to a const. A shader passed as an object property ends
+  // backtick-COMMA, and those either merged into the following literal or — when
+  // nothing later in the file ended `;` — dropped out of the scan with no trace.
+  // Measured on this tree: 45 literals exist, the old scanner checked 31. All 12
+  // property-shaped shaders in Scenery.js and both in Engine.js went unread. A
+  // stray backtick injected into Scenery.js:1737 was flagged 0 times.
+  //
+  // So do not guess the terminator. Walk each literal from its OWN marker,
+  // stepping over \ escapes and ${ } substitutions, and take the first backtick
+  // that JS could legally be continuing from as the close. Every backtick before
+  // that one is sitting inside the GLSL, which is exactly the bug.
   const { readdir, readFile } = await import('node:fs/promises');
   const walk = async (dir) => {
     const out = [];
@@ -2608,18 +2622,49 @@ check('source: no stray backtick inside a GLSL template literal', async () => {
     return out;
   };
   const files = await walk(new URL('../src', import.meta.url).pathname);
+  // How a shader literal is actually used in this tree: const (`;`), object
+  // property or argument (`,`), last argument (`)`), array or object close.
+  // Kept deliberately tight — every token added here is a token a stray backtick
+  // is allowed to hide behind.
+  const TERM = /^\s*[;,)\]}]/;
+  const line = (src, i) => src.slice(0, i).split('\n').length;
   const bad = [];
+  let declared = 0, scanned = 0;
   for (const f of files) {
     const src = await readFile(f, 'utf8');
-    // every /* glsl */` ... ` block
-    const re = /\/\* glsl \*\/`([\s\S]*?)`;/g;
+    const rel = f.split('/src/')[1];
+    // Counted independently of the scan, so that breaking the marker regex can
+    // never quietly turn this check into "0 of 0 shaders are clean".
+    declared += (src.match(/\/\* glsl \*\//g) || []).length;
+    const re = /\/\* glsl \*\/\s*`/g;
     let m;
     while ((m = re.exec(src))) {
-      if (m[1].includes('`')) bad.push(f.split('/src/')[1]);
+      const open = m.index + m[0].length - 1;      // the literal's own backtick
+      const ticks = [];
+      let close = -1;
+      for (let k = open + 1; k < src.length; k++) {
+        const c = src[k];
+        if (c === '\\') { k++; continue; }         // \` is not a terminator
+        if (c === '$' && src[k + 1] === '{') {     // step over ${ ... }, braces nest
+          let d = 1; k += 2;
+          for (; k < src.length && d; k++) { if (src[k] === '{') d++; else if (src[k] === '}') d--; }
+          k--; continue;
+        }
+        if (c !== '`') continue;
+        ticks.push(k);
+        if (TERM.test(src.slice(k + 1, k + 8))) { close = k; break; }
+      }
+      assert(close >= 0, `${rel}:${line(src, open)} — a /* glsl */ literal is never closed`);
+      scanned++;
+      for (const t of ticks) if (t !== close) bad.push(`${rel}:${line(src, t)}`);
+      re.lastIndex = close + 1;
     }
   }
-  assert(bad.length === 0, `backtick inside a shader literal in: ${[...new Set(bad)].join(', ')}`);
-  return `${files.length} source files, all shader literals clean`;
+  assert(bad.length === 0, `backtick inside a shader literal at: ${[...new Set(bad)].join(', ')}`);
+  assert(scanned === declared,
+    `the lint read ${scanned} of ${declared} /* glsl */ literals — ${declared - scanned} skipped silently`);
+  assert(scanned >= 45, `only ${scanned} shader literals found; the tree had 45`);
+  return `${files.length} source files, ${scanned}/${declared} shader literals walked (was 31/45), all clean`;
 });
 
 check('source: no GLSL ES reserved word is used as an identifier', async () => {
