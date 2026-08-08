@@ -12,7 +12,8 @@ import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
-import { ACTIONS, MOUSE, keyLabel, loadBindings, saveBindings, defaultBindings, findConflict } from '../engine/Bindings.js';
+import { QUALITY } from '../engine/Engine.js';
+import { ACTIONS, MOUSE, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts } from '../engine/Bindings.js';
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
@@ -131,7 +132,7 @@ export const SETTING_READERS = {
   forceDrain:      ['game/Player.js', 'this.world.settings?.forceDrain'],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
-  bloom:           ['main.js', 'engine.setBloom(settings.bloom)'],
+  bloom:           ['main.js', '!!settings.bloom &&'],
   grain:           ['main.js', 'engine.setGrain(settings.grain)'],
   shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
   slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
@@ -666,9 +667,10 @@ export class Menu {
           ${BLADE_CAP.toFixed(2)}. The capture window along the blade grows with it — ±70 cm at
           the stock 1.15 m, ±212 cm at 4 m — which is the point: a bolt you cannot yet meet with
           a hand-span of plasma, you can meet with a pike, and then shorten it back.</p>
-        <p class="hint">The same slider lives in <b>Saber</b>; they are one number. Unlike the
-          two above it, length is read when the blade is <i>built</i> — a change lands on your
-          next Ignite, not mid-fight.</p>
+        <p class="hint">The same slider lives in <b>Saber</b>; they are one number, and like the
+          two above it, it is <b>live</b>: the blade you are holding grows or shortens as you drag
+          it. It used to say it landed on your next Ignite, and it did not land at all — nothing
+          read it after the blade was built.</p>
         <p class="hint" style="margin-top:auto">Deploys the theatre picked under <b>Deploy</b>,
           in Sandbox mode. The Dojo is the quiet one.</p>
         <button id="btn-sandbox" class="primary">Enter the sandbox</button>
@@ -840,12 +842,16 @@ export class Menu {
         this._listening = false;
         if (hint) hint.textContent = '';
         if (code) {
-          const clash = findConflict(this.bindings, code, action.id);
-          if (clash) {
-            // take it from the other action rather than binding one key twice,
-            // but never leave that action with nothing at all
-            const other = this.bindings[clash].filter(k => k !== code);
-            if (other.length) this.bindings[clash] = other;
+          // EVERY other action loses the key, not just the first one found.
+          // The shipped defaults had thrust and hurl both on Mouse2, so the
+          // single-clash version took it off one of them and wrote a binding
+          // that was still a duplicate — the resolver could not settle the one
+          // table that came out of the box needing it.
+          const { refused } = resolveConflicts(this.bindings, code, action.id);
+          if (refused.length && hint) {
+            hint.textContent = `${keyLabel(code)} is the last key on `
+              + `${refused.map(id => ACTIONS.find(a => a.id === id)?.label || id).join(', ')} — `
+              + 'it is bound to both. Give that one another key first.';
           }
           const list = (this.bindings[action.id] || []).slice();
           list[slot] = code;
@@ -905,17 +911,26 @@ export class Menu {
       host.appendChild(d);
     }
 
+    // Every card states the tier's OWN numbers, straight off Engine's QUALITY,
+    // because the previous four sentences promised things nothing read: the
+    // Performance card said "fewer particles… for laptops and integrated
+    // graphics" while World.loadLevel handed every tier Cinematic's particle
+    // and grass budgets — 19,800 pooled particles and 11,000 blades at `low`
+    // exactly as at `ultra`. A card that quotes the table cannot drift from it.
     const qhost = document.getElementById('opt-quality');
     qhost.innerHTML = '';
     for (const [key, name, blurb] of [
-      ['low', 'Performance', 'Small shadows, fewer particles. For laptops and integrated graphics.'],
+      ['low', 'Performance', 'Smallest shadows, shortest view. For laptops and integrated graphics.'],
       ['medium', 'Balanced', 'A good default on most machines.'],
-      ['high', 'Fidelity', 'Full shadows, bloom, dense particles.'],
+      ['high', 'Fidelity', 'Full shadows and a deep view.'],
       ['ultra', 'Cinematic', 'Everything. Expects a discrete GPU.'],
     ]) {
+      const q = QUALITY[key];
+      const budget = `${Math.round(q.particles * 100)}% particles · ${Math.round(q.grass * 100)}% grass `
+        + `· ${q.viewDist} m view · ${q.shadow}px shadows`;
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.quality === key ? ' sel' : '');
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}<br>${budget}</span></div>`;
       d.addEventListener('click', () => {
         audio.ui('click');
         this.s.quality = key;
@@ -1054,11 +1069,28 @@ export class Menu {
     return box;
   }
 
-  showPause(stats) {
+  /**
+   * @param {boolean} [sandboxLive]  does the room the player is standing in
+   *   actually read sandboxCount / sandboxFire / sandboxType this frame? Only
+   *   the caller can know: main.js asks the live director. Left out (a test, a
+   *   pause with no world) it falls back to the settings, which is the best
+   *   guess available and no worse than what this used to do.
+   */
+  showPause(stats, sandboxLive) {
     this.el.pauseStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     // Only where the numbers actually bite; everywhere else they would be two
     // sliders that do nothing, which is worse than no sliders at all.
-    const live = this.s.mode === 'sandbox' || this.s.level === 'dojo';
+    //
+    // `level === 'dojo'` was not that test. The dojo runs eleven lessons and
+    // exactly ONE of them — the last, Dojo.inSandbox — is the sandbox room that
+    // reads these three numbers; the other ten place their own remotes, dummies
+    // and sparring partner from the lesson's own setup block and ignore them
+    // entirely. So the sliders showed for all eleven and bit on one, and a
+    // player pausing on lesson three could drag "Enemies" from 5 to 0 and watch
+    // nothing at all happen. The live director is the only thing that knows.
+    const live = sandboxLive !== undefined
+      ? !!sandboxLive
+      : (this.s.mode === 'sandbox' || this.s.level === 'dojo');
     const box = this._buildPauseTraining();
     if (box) {
       box.style.display = live ? '' : 'none';

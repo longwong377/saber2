@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 
-const _v = new THREE.Vector3(), _n = new THREE.Vector3();
+const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3();
 
 /**
  * @param {THREE.BufferGeometry} geometry  (convex, will be converted to non-indexed)
@@ -110,10 +110,19 @@ export function sliceGeometry(geometry, planePoint, planeNormal) {
   for (let i = 0; i < ptsUnique.length; i++) {
     const a = ptsUnique[i], b = ptsUnique[(i + 1) % ptsUnique.length];
     _v.subVectors(a, centroid); _n.subVectors(b, centroid);
-    area += _v.cross(_n).length() * 0.5;
-
+    // PROJECT FIRST, THEN CROSS. `Vector3.cross` writes its result into the
+    // receiver, so taking the area here used to leave `_v` holding a vector
+    // along the cut PLANE NORMAL — and bx/by lie in the plane, so every `ua`
+    // computed from it collapsed onto (0.5, 0.5). Measured on the shipped
+    // build: total cap UV area 0.00000 on a crate, a barrel and a pillar
+    // alike, against 4 uv² per m² at this scale. Every cap triangle was a
+    // zero-area sliver in UV space, so the whole cut face — the one surface
+    // the eye goes to after a cut — sampled a single line of texels and read
+    // as an untextured plate. The area itself was right, which is exactly why
+    // nothing caught it.
     const ua = new THREE.Vector2(0.5 + _v.dot(bx) * 2, 0.5 + _v.dot(by) * 2);
     const ub = new THREE.Vector2(0.5 + _n.dot(bx) * 2, 0.5 + _n.dot(by) * 2);
+    area += _t.crossVectors(_v, _n).length() * 0.5;
     // front half sees the cap facing -normal, back half sees +normal
     const negN = planeNormal.clone().negate();
     tri(front, centroid, b, a, negN, negN, negN, uvC, ub, ua);

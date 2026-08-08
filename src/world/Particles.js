@@ -515,7 +515,23 @@ export class ChipField {
       if (c.sleep < 1) {
         c.vel.y -= gravity * step;
         c.pos.addScaledVector(c.vel, step);
-        const floorY = c.floor > -900 ? c.floor : (ground.heightAt(c.pos.x, c.pos.z) ?? -1e4);
+        // THE GROUND UNDER THE CHIP, not the ground under the burst.
+        //
+        // `c.floor` is captured once, at spawn, from one heightfield lookup per
+        // burst — which is exactly right for the pooled particles, because a
+        // shader cannot ask the terrain anything. A chip is a CPU body and can,
+        // and it has to: it skitters, bounces and slides metres from where it
+        // was thrown, and resting at the height the BURST happened at is a
+        // faceted pebble hanging in mid-air over a dune, or standing on nothing
+        // out over the canyon river. Measured over 60 hard landings per level
+        // with the spawn floor frozen: mean |rest − ground| 0.09 m on the arena,
+        // 0.45 m on the dunes, 2.60 m in the canyon, worst 30.2 m.
+        //
+        // Only AWAKE chips ask (a settled one already settled on the right
+        // ground), and Terrain.height is a bilinear read, so the whole pool
+        // costs less than the spark burst that threw it.
+        const live = ground.heightAt(c.pos.x, c.pos.z);
+        const floorY = live !== null ? live : (c.floor > -900 ? c.floor : -1e4);
         if (c.pos.y < floorY + c.scale * 0.5) {
           c.pos.y = floorY + c.scale * 0.5;
           if (c.vel.y < 0) c.vel.y = -c.vel.y * c.rest;
@@ -640,6 +656,99 @@ const DECAL_FRAG = /* glsl */`
   }
 `;
 
+/** How far a ground mark's worst corner may stand off the ground it marks. */
+export const DECAL_GROUND_TOL = 0.05;
+/** Below this half-width a mark is a smudge and shrinking it further buys nothing. */
+const DECAL_MIN_R = 0.10;
+/** The eight bearings a corner can point along, whatever the mark's spin is. */
+const _RING = [[1, 0], [0, 1], [-1, 0], [0, -1],
+  [0.7071, 0.7071], [-0.7071, 0.7071], [-0.7071, -0.7071], [0.7071, -0.7071]];
+const _RING_H = new Float64Array(8);
+const _fit = { x: 0, y: 0, z: 0, r: 0, nx: 0, ny: 1, nz: 0, standoff: 0, shrunk: 1 };
+
+/**
+ * Sit a ground mark ON the ground.
+ *
+ * A decal is ONE FLAT QUAD. Laid down at the height of the foot that made it,
+ * with a fixed straight-up normal and a half-width of up to 1.6 m, its corners
+ * stand off whatever the ground is actually doing — which is the pale plate
+ * lying across a dune crest in the arena and the translucent grey
+ * quadrilateral hanging off a boulder out over the canyon river. It is the
+ * same bug as the chip that rests at the height of the burst, in the same
+ * file: a flat thing pinned to a height sampled somewhere else.
+ *
+ * Three steps, cheapest first, because each one only exists to make the next
+ * one smaller:
+ *
+ *   · the CENTRE goes to the mean of the ring of samples, so the quad
+ *     straddles the slope instead of perching on its high side;
+ *   · the NORMAL becomes the fitted plane's, from central differences across
+ *     the mark's own footprint, so it lies ALONG the slope rather than
+ *     across it;
+ *   · the HALF-WIDTH shrinks until the worst remaining corner is inside
+ *     DECAL_GROUND_TOL. A plane cannot follow a crest, and a plane the size of
+ *     the crest is precisely the thing that ends up hanging in the air.
+ *
+ * Only for marks that claim to be ON the terrain: a normal more than ~40° off
+ * vertical is a scorch on a wall or a droid, and a mark whose height is not
+ * within a metre of the terrain is on a prop. Both are left exactly alone —
+ * the terrain is not the surface they are stuck to and fitting them to it
+ * would be a new lie in place of the old one.
+ *
+ * Returns a shared record; read it before the next call.
+ */
+export function conformToGround(pos, normal, radius) {
+  _fit.x = pos.x; _fit.y = pos.y; _fit.z = pos.z; _fit.r = radius;
+  _fit.nx = normal ? normal.x : 0;
+  _fit.ny = normal ? normal.y : 1;
+  _fit.nz = normal ? normal.z : 0;
+  _fit.standoff = 0; _fit.shrunk = 1;
+
+  const nl = Math.hypot(_fit.nx, _fit.ny, _fit.nz) || 1;
+  if (_fit.ny / nl < 0.76) return _fit;                 // a wall, not a floor
+  const h0 = ground.heightAt(pos.x, pos.z);
+  if (h0 === null || Math.abs(pos.y - h0) > 1.0) return _fit;   // no terrain, or on a prop
+
+  const lift = pos.y - h0;      // whatever clearance the caller asked for, kept
+  let r = radius;
+  for (let pass = 0; pass < 4; pass++) {
+    // The quad is inscribed in a disc of radius r√2, so the corners are sampled
+    // at r√2 and not at r — sampling the edge midpoints would fit a plane that
+    // the corners then poke straight through.
+    const R = r * Math.SQRT2;
+    let sum = 0, dx = 0, dz = 0;
+    for (let k = 0; k < 8; k++) {
+      const h = ground.heightAt(pos.x + _RING[k][0] * R, pos.z + _RING[k][1] * R);
+      _RING_H[k] = h === null ? h0 : h;
+      sum += _RING_H[k];
+      dx += _RING_H[k] * _RING[k][0];
+      dz += _RING_H[k] * _RING[k][1];
+    }
+    // Least squares over the ring, which for these eight bearings is just the
+    // projection over Σx² = Σz² = 4 — the ±x pair and the four diagonals each
+    // carry x, with exactly the same weighting in the other axis.
+    const gx = dx / (4 * R), gz = dz / (4 * R);
+    const mean = sum / 8;
+    let worst = 0;
+    for (let k = 0; k < 8; k++) {
+      const plane = mean + (gx * _RING[k][0] + gz * _RING[k][1]) * R;
+      const e = Math.abs(_RING_H[k] - plane);
+      if (e > worst) worst = e;
+    }
+    _fit.y = mean + lift;
+    _fit.nx = -gx; _fit.ny = 1; _fit.nz = -gz;
+    _fit.standoff = worst;
+    _fit.r = r;
+    if (worst <= DECAL_GROUND_TOL || r <= DECAL_MIN_R) break;
+    // Relief across a patch grows roughly linearly with its width, so aiming
+    // straight at the tolerance converges in one or two passes instead of
+    // halving blindly down to the floor and throwing the mark away.
+    r = Math.max(DECAL_MIN_R, r * Math.max(0.35, DECAL_GROUND_TOL / worst));
+  }
+  _fit.shrunk = _fit.r / radius;
+  return _fit;
+}
+
 export class DecalField {
   constructor(scene, opts = {}) {
     this.max = Math.max(8, Math.floor(opts.max ?? 96));
@@ -689,12 +798,12 @@ export class DecalField {
     const i = this.head;
     this.head = (this.head + 1) % this.max;
     const i4 = i * 4;
-    this.aPos.array[i4] = pos.x; this.aPos.array[i4 + 1] = pos.y;
-    this.aPos.array[i4 + 2] = pos.z; this.aPos.array[i4 + 3] = Math.max(0.03, radius);
-    const nx = normal ? normal.x : 0, ny = normal ? normal.y : 1, nz = normal ? normal.z : 0;
-    const nl = Math.hypot(nx, ny, nz) || 1;
-    this.aNrm.array[i4] = nx / nl; this.aNrm.array[i4 + 1] = ny / nl;
-    this.aNrm.array[i4 + 2] = nz / nl; this.aNrm.array[i4 + 3] = rng() * TAU;
+    const fit = conformToGround(pos, normal, Math.max(0.03, radius));
+    this.aPos.array[i4] = fit.x; this.aPos.array[i4 + 1] = fit.y;
+    this.aPos.array[i4 + 2] = fit.z; this.aPos.array[i4 + 3] = fit.r;
+    const nl = Math.hypot(fit.nx, fit.ny, fit.nz) || 1;
+    this.aNrm.array[i4] = fit.nx / nl; this.aNrm.array[i4 + 1] = fit.ny / nl;
+    this.aNrm.array[i4 + 2] = fit.nz / nl; this.aNrm.array[i4 + 3] = rng() * TAU;
     this.aParams.array[i4] = this.time;
     this.aParams.array[i4 + 1] = life;
     this.aParams.array[i4 + 2] = heat;

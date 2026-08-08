@@ -25,8 +25,10 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from '../../src/game/Saber.js';
-import { Particles, ParticlePool, ChipField, surfaceTint, incandescent, ground }
+import { Particles, ParticlePool, ChipField, surfaceTint, incandescent, ground, conformToGround }
   from '../../src/world/Particles.js';
+import { Terrain } from '../../src/world/Terrain.js';
+import { sliceGeometry } from '../../src/world/Slice.js';
 
 /**
  * three's own punctual falloff, from lights_pars_begin. The blade's wash is
@@ -886,5 +888,167 @@ export function run({ check, assert, near }) {
     for (const v of p.chips.aHeat.array) assert(isFinite(v) && v >= 0, 'a chip heat went bad');
     p.dispose();
     return `7 recipes, ${live} particles alive, all finite`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  Nothing may hang in the air                                           */
+  /*                                                                        */
+  /*  One bug, three shapes, all of it "a flat thing pinned to a height      */
+  /*  sampled somewhere else": a chip that rests at the height of the burst   */
+  /*  that threw it, a decal quad that lies at the height of the foot that    */
+  /*  made it, and a cut face whose UVs collapse onto one texel. The first    */
+  /*  two put hard-edged pale polygons in mid-air over the arena's sand and   */
+  /*  translucent grey ones hanging off the canyon's rocks; the third is the  */
+  /*  untextured plate you get the instant you cut anything.                 */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /** A real heightfield, published the way a level publishes one. */
+  const onTerrain = (preset) => {
+    const t = new Terrain(new THREE.Scene(), preset, 1);
+    ground.terrain = t;
+    return t;
+  };
+
+  check('debris: a chip settles on the ground it LANDED on, not the one it left', () => {
+    const rows = [];
+    for (const preset of ['arena', 'canyon', 'dunes']) {
+      const t = onTerrain(preset);
+      const scene = litScene();
+      const p = new Particles(scene, 1);
+      let s = 12345;
+      const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      for (let k = 0; k < 60; k++) {
+        const x = (rnd() - 0.5) * 70, z = (rnd() - 0.5) * 70;
+        const gy = t.height(x, z);
+        // A hard landing: the ring, the chips it throws, and the floor the
+        // emitter captured once for the whole burst.
+        p.landingRing(new THREE.Vector3(x, gy, z), 1.4, gy, 0xd8c09a);
+      }
+      for (let i = 0; i < 60 * 6; i++) p.chips.update(1 / 60, 22);
+
+      let n = 0, sum = 0, worst = 0, floating = 0;
+      for (const c of p.chips.chips) {
+        if (!c.alive) continue;
+        const err = c.pos.y - c.scale * 0.5 - t.height(c.pos.x, c.pos.z);
+        n++; sum += Math.abs(err);
+        if (Math.abs(err) > worst) worst = Math.abs(err);
+        if (err > 0.10) floating++;
+      }
+      assert(n > 40, `${preset} settled only ${n} chips — the burst is not being measured`);
+      // 5 cm is half the smallest chip: below that it is inside its own body.
+      assert(worst < 0.05, `${preset}: a chip came to rest ${worst.toFixed(2)} m off the ground `
+        + `(${floating} of ${n} more than 10 cm up) — that is the hard-edged pale polygon `
+        + 'floating over the sand');
+      rows.push(`${preset} ${n} chips, worst ${(sum / n).toFixed(3)}/${worst.toFixed(3)} m`);
+      p.dispose(); ground.terrain = null;
+    }
+    // Freezing the floor at spawn is what did it, so the fix has to be in the
+    // step and not in the emitter: the pooled particles keep their one lookup
+    // per burst (a shader cannot ask the terrain anything), the chips do not.
+    return rows.join('; ') + ' (was 0.09/0.40, 2.60/30.18, 0.45/4.62 m mean/worst)';
+  });
+
+  check('marks: a ground decal lies ON the ground, at whatever size it can', () => {
+    const RING = [[1, 0], [0, 1], [-1, 0], [0, -1], [0.7071, 0.7071],
+      [-0.7071, 0.7071], [-0.7071, -0.7071], [0.7071, -0.7071]];
+    // the half-widths the game actually asks for: landing rings, skids,
+    // footfall scuffs, blade scars, explosion scorches
+    const RADII = [1.60, 1.30, 0.55, 0.48, 0.34, 0.28, 0.22, 1.32];
+    const UP = new THREE.Vector3(0, 1, 0);
+    const rows = [];
+    for (const preset of ['arena', 'canyon', 'dunes']) {
+      const t = onTerrain(preset);
+      let s = 987654321;
+      const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      let n = 0, before = 0, after = 0, bMax = 0, aMax = 0, kept = 0;
+      for (let k = 0; k < 300; k++) {
+        const x = (rnd() - 0.5) * 80, z = (rnd() - 0.5) * 80;
+        const gy = t.height(x, z), r = RADII[k % RADII.length];
+        const at = new THREE.Vector3(x, gy + 0.012, z);
+        // BEFORE: the shipped model — one flat quad, straight up, fixed height.
+        let b = 0;
+        const R = r * Math.SQRT2;
+        for (const [dx, dz] of RING) b = Math.max(b, Math.abs(gy - t.height(x + dx * R, z + dz * R)));
+        // AFTER: the fitted plane, at the half-width the fit could keep.
+        const f = conformToGround(at, UP, r);
+        const nl = Math.hypot(f.nx, f.ny, f.nz);
+        const nx = f.nx / nl, ny = f.ny / nl, nz = f.nz / nl;
+        let a = 0;
+        const RA = f.r * Math.SQRT2;
+        for (const [dx, dz] of RING) {
+          const cx = x + dx * RA, cz = z + dz * RA;
+          const cy = f.y - (nx * (cx - f.x) + nz * (cz - f.z)) / (ny || 1);
+          a = Math.max(a, Math.abs(cy - t.height(cx, cz) - 0.012));
+        }
+        n++; before += b; after += a;
+        bMax = Math.max(bMax, b); aMax = Math.max(aMax, a);
+        kept += f.shrunk;
+      }
+      assert(aMax < 0.12, `${preset}: a mark's worst corner still stands ${aMax.toFixed(2)} m `
+        + 'off the ground — that is the translucent quadrilateral hanging off the rocks');
+      assert(after / n < before / n * 0.4 || before / n < 0.02,
+        `${preset}: fitting the mark to the ground bought only `
+        + `${(before / n).toFixed(3)} → ${(after / n).toFixed(3)} m`);
+      // and it must not pay for that by throwing the mark away
+      assert(kept / n > 0.6, `${preset}: fitting shrank marks to ${(100 * kept / n).toFixed(0)}% of the size asked for`);
+      rows.push(`${preset} ${(before / n).toFixed(3)}→${(after / n).toFixed(3)} m mean, `
+        + `${bMax.toFixed(2)}→${aMax.toFixed(2)} max, ${(100 * kept / n).toFixed(0)}% size`);
+      ground.terrain = null;
+    }
+    // A mark on a WALL or on a droid must be left exactly alone: the terrain is
+    // not the surface it is stuck to, and fitting it to one would be a new lie.
+    const t = onTerrain('arena');
+    const wall = new THREE.Vector3(3, t.height(3, 4) + 1.4, 4);
+    const side = new THREE.Vector3(1, 0.1, 0).normalize();
+    const w = conformToGround(wall, side, 0.4);
+    assert(w.y === wall.y && w.r === 0.4 && w.nx === side.x, 'a scorch on a wall was flattened onto the terrain');
+    const air = new THREE.Vector3(3, t.height(3, 4) + 2.5, 4);
+    const a2 = conformToGround(air, new THREE.Vector3(0, 1, 0), 0.4);
+    assert(a2.y === air.y, 'a mark on top of a prop was dragged down to the terrain under it');
+    ground.terrain = null;
+    return rows.join('; ');
+  });
+
+  check('cuts: the face a blade leaves is textured, not a flat plate', () => {
+    // `_v.cross(_n)` writes into `_v`, and the two UVs were read off `_v` and
+    // `_n` AFTERWARDS — so every cap vertex but one landed on (0.5, 0.5) and
+    // the whole cut face sampled a single line of texels. The area it computed
+    // was correct, which is exactly why nothing caught it. Measured: total cap
+    // UV area 0.00000 on a crate, a barrel and a pillar alike.
+    const shapes = [
+      ['crate', new THREE.BoxGeometry(0.7, 0.7, 0.7)],
+      ['barrel', new THREE.CylinderGeometry(0.3, 0.3, 0.9, 12)],
+      ['pillar', new THREE.BoxGeometry(0.4, 2.0, 0.4)],
+    ];
+    const rows = [];
+    for (const [name, geo] of shapes) {
+      const res = sliceGeometry(geo, new THREE.Vector3(0.02, 0.05, 0),
+        new THREE.Vector3(0.3, 0.9, 0.2).normalize());
+      assert(res, `${name} refused to cut`);
+      // The area the slicer reports is the cross-section, and it has to stay
+      // right — it is what decides whether a cut is a cut at all.
+      assert(res.area > 0.05, `${name} reports a ${res.area.toFixed(4)} m² cross-section`);
+      for (const [side, g] of [['front', res.front], ['back', res.back]]) {
+        const pos = g.attributes.position, uv = g.attributes.uv;
+        const tris = pos.count / 3;
+        let world = 0, uvA = 0;
+        for (let t = tris - res.ringCount; t < tris; t++) {
+          const P = [0, 1, 2].map(k => new THREE.Vector3().fromBufferAttribute(pos, t * 3 + k));
+          const U = [0, 1, 2].map(k => new THREE.Vector2().fromBufferAttribute(uv, t * 3 + k));
+          world += new THREE.Vector3().subVectors(P[1], P[0])
+            .cross(new THREE.Vector3().subVectors(P[2], P[0])).length() * 0.5;
+          uvA += Math.abs((U[1].x - U[0].x) * (U[2].y - U[0].y)
+            - (U[2].x - U[0].x) * (U[1].y - U[0].y)) * 0.5;
+        }
+        assert(world > 1e-4, `${name}/${side}: the cap has no area at all`);
+        // The cap's UVs are authored at 0.5 + d·2, so one metre of cut face is
+        // exactly four square uv. Anything else is a smear.
+        const perM = uvA / world;
+        near(perM, 4, 0.02, `${name}/${side}: the cut face gets ${perM.toFixed(3)} uv² per m² `
+          + '(0 means every cap triangle is degenerate in UV and the face is untextured)');
+        rows.push(`${name}/${side} ${uvA.toFixed(3)} uv² over ${world.toFixed(3)} m²`);
+      }
+    }
+    return rows.join('; ') + ' — 4.000 uv²/m², was 0.000';
   });
 }

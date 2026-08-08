@@ -54,7 +54,14 @@ export const ACTIONS = [
   { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'] },
   { id: 'pull',       group: 'Force',    label: 'Force pull',        keys: ['KeyR'] },
   { id: 'grip',       group: 'Force',    label: 'Force grip object', keys: ['KeyG'],       hold: true },
-  { id: 'hurl',       group: 'Force',    label: 'Hurl gripped',      keys: ['Mouse2'] },
+  // KeyY, not Mouse2. Mouse2 is `thrust`, and it was ALSO the shipped default
+  // here — a clash inside the defaults themselves, so a fresh profile had one
+  // button firing two things and no rebind could separate them until you found
+  // and moved one by hand. The options screen never said so either, because
+  // findConflict only ever looked at the key you were TYPING, never at what was
+  // already in the table. Y is free, and it sits with the other Force verbs
+  // that live off the movement cluster (T focus, H throw).
+  { id: 'hurl',       group: 'Force',    label: 'Hurl gripped',      keys: ['KeyY'] },
   { id: 'throw',      group: 'Force',    label: 'Throw / recall saber', keys: ['KeyH'] },
   { id: 'sense',      group: 'Force',    label: 'Force sense',       keys: ['KeyC'] },
   { id: 'lightning',  group: 'Force',    label: 'Force lightning',   keys: ['KeyZ'] },
@@ -67,6 +74,23 @@ export const ACTIONS = [
 
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },
+
+  // The dojo's lesson navigation. Last round moved stasis and rend into this
+  // table so that B and N could be SEEN to collide — and then left main.js's
+  // raw `e.code === 'KeyB' → director.back()` alive next to them, so in the
+  // level the menu tags "start here" one press still did two things: B threw a
+  // stasis field AND stepped the lesson back, N tore an enemy apart AND skipped
+  // it. findConflict could not warn, because a raw keydown listener is not in
+  // the table; and no rebind could separate them, because a raw keydown
+  // listener does not read the table either.
+  //
+  // Brackets and backslash because lesson navigation is the one thing in the
+  // game you do while NOT fighting: nothing wants those keys mid-swing, they
+  // are nowhere near the movement cluster, and they read as "step through" on
+  // any keyboard. The coach panel prints whatever they are actually bound to.
+  { id: 'lessonNext',   group: 'Training', label: 'Next lesson',     keys: ['BracketRight'] },
+  { id: 'lessonBack',   group: 'Training', label: 'Previous lesson', keys: ['BracketLeft'] },
+  { id: 'lessonRepeat', group: 'Training', label: 'Restart lesson',  keys: ['Backslash'] },
 ];
 
 export const ACTION_IDS = ACTIONS.map(a => a.id);
@@ -110,17 +134,75 @@ export function keyLabel(code) {
     Space: 'Space', ShiftLeft: 'L Shift', ShiftRight: 'R Shift',
     ControlLeft: 'L Ctrl', ControlRight: 'R Ctrl', AltLeft: 'L Alt', AltRight: 'R Alt',
     CapsLock: 'Caps', Tab: 'Tab', Escape: 'Esc', Backquote: '`', Minus: '-', Equal: '=',
+    BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: '\'',
+    Comma: ',', Period: '.', Slash: '/',
   })[code] || code;
 }
 
 /**
- * Which action, if any, a given key is already bound to — so the options screen
- * can warn about a conflict instead of silently producing one.
+ * EVERY action a given key is already bound to.
+ *
+ * Plural on purpose. The single-answer version could only ever describe a table
+ * with at most one clash in it, and the shipped defaults had two actions on
+ * Mouse2 — so it reported one of them, the caller took the key off that one,
+ * and the binding it then wrote was still a duplicate. A resolver that settles
+ * the first clash is a resolver that cannot settle a table that already has
+ * one, which is the only kind of table that needs settling.
  */
-export function findConflict(bindings, code, exceptId) {
+export function findConflicts(bindings, code, exceptId) {
+  const out = [];
   for (const id of ACTION_IDS) {
     if (id === exceptId) continue;
-    if ((bindings[id] || []).includes(code)) return id;
+    if ((bindings[id] || []).includes(code)) out.push(id);
   }
-  return null;
+  return out;
+}
+
+/**
+ * Which action, if any, a given key is already bound to — so the options screen
+ * can warn about a conflict instead of silently producing one. The first of
+ * findConflicts; use that one when you intend to act on the answer.
+ */
+export function findConflict(bindings, code, exceptId) {
+  return findConflicts(bindings, code, exceptId)[0] ?? null;
+}
+
+/**
+ * Give `code` to `keepId` and to nothing else.
+ *
+ * Takes it off EVERY other action, not the first one found, and never leaves an
+ * action with nothing at all — an action stripped down to its last key keeps
+ * it, and the caller is told, so a conflict it cannot resolve is visible rather
+ * than silently applied. Mutates `bindings` and returns
+ * `{ taken, refused }`: the ids it took the key from, and the ids that would
+ * have been left unbound.
+ */
+export function resolveConflicts(bindings, code, keepId) {
+  const taken = [], refused = [];
+  for (const id of findConflicts(bindings, code, keepId)) {
+    const rest = (bindings[id] || []).filter(k => k !== code);
+    if (rest.length) { bindings[id] = rest; taken.push(id); }
+    else refused.push(id);
+  }
+  return { taken, refused };
+}
+
+/**
+ * Every key that more than one action answers to, as `{ code, ids }` rows.
+ *
+ * The defaults must return [] — that is what tools/checks/controls.mjs pins,
+ * and it is the only way "no rebind can separate them" stops being reachable
+ * from a fresh profile.
+ */
+export function conflicts(bindings) {
+  const byCode = new Map();
+  for (const id of ACTION_IDS) {
+    for (const code of bindings[id] || []) {
+      if (!byCode.has(code)) byCode.set(code, []);
+      byCode.get(code).push(id);
+    }
+  }
+  const out = [];
+  for (const [code, ids] of byCode) if (ids.length > 1) out.push({ code, ids });
+  return out;
 }

@@ -32,7 +32,44 @@ import { Saber } from '../../src/game/Saber.js';
 import { Player } from '../../src/game/Player.js';
 import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
-import { ACTIONS, ACTION_IDS, defaultBindings } from '../../src/engine/Bindings.js';
+import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, resolveConflicts }
+  from '../../src/engine/Bindings.js';
+import { Input } from '../../src/engine/Input.js';
+import { QUALITY } from '../../src/engine/Engine.js';
+import { Particles } from '../../src/world/Particles.js';
+import { GrassField } from '../../src/world/Scenery.js';
+import { Terrain } from '../../src/world/Terrain.js';
+import { DojoDirector } from '../../src/game/Dojo.js';
+
+/**
+ * Where every COLUMN of Engine's QUALITY table is actually read.
+ *
+ * Same instrument as SETTING_READERS and for the same reason, one level down.
+ * `grass` (0.25→1.5) and `particles` (0.4→1.35) sat in that table from the
+ * foundation commit with no reader anywhere in src/ — `git log -S"q.particles"`
+ * was empty — while World.loadLevel kept its own inline
+ * `{low:0.55, medium:0.8, high:1, ultra:1.25}` and the Performance card
+ * promised "fewer particles… for laptops and integrated graphics". Every tier
+ * got Cinematic's budget. `bloom` was a third: true on all four rows and read
+ * by nobody.
+ *
+ * A tier is a PROMISE about what the machine will be asked to draw. A column
+ * of that promise with no reader is the same lie as a checkbox with no
+ * onChange, so it fails the build the same way.
+ *
+ * This lives here rather than beside QUALITY only because Engine.js belongs to
+ * another lane this round; it wants to move next to the table it describes.
+ */
+const QUALITY_READERS = {
+  shadow:     ['engine/Engine.js', 'L.shadow.mapSize.set(q.shadow, q.shadow)'],
+  shadowDist: ['engine/Engine.js', 'q.shadowDist * f'],
+  viewDist:   ['engine/Engine.js', 'this.camera.far = q.viewDist'],
+  pixelRatio: ['engine/Engine.js', 'Math.min(window.devicePixelRatio, q.pixelRatio)'],
+  msaa:       ['engine/Engine.js', 'samples: q.msaa'],
+  bloom:      ['main.js', 'QUALITY.high).bloom'],
+  grass:      ['game/World.js', 'Math.round(11000 * q.grass)'],
+  particles:  ['game/World.js', 'q.particles'],
+};
 
 const DEG = 180 / Math.PI;
 const scene = new THREE.Scene();
@@ -485,9 +522,273 @@ export async function run({ check, assert }) {
     return `#scoreboard filled from act('scoreboard'), default ${b.scoreboard.join('+')}, hold, label from the binding`;
   });
 
+  check('controls: no shipped default binds one key to two actions', () => {
+    // The shipped table had `thrust: ['Mouse2']` and `hurl: ['Mouse2']`. A
+    // fresh profile therefore had one button firing two things, and the options
+    // screen could not say so, because findConflict only ever looked at the key
+    // you were TYPING — never at the table it was typing into.
+    const clash = conflicts(defaultBindings());
+    assert(!clash.length, 'the shipped defaults bind one key to two actions: '
+      + clash.map(c => `${c.code} → ${c.ids.join(' + ')}`).join('; ')
+      + ' — no rebind can separate them');
+    const b = defaultBindings();
+    let n = 0;
+    for (const id of ACTION_IDS) n += b[id].length;
+    return `${ACTION_IDS.length} actions, ${n} bound keys, no key answered by two`;
+  });
+
+  check('controls: the rebinder settles EVERY clash, not the first one', () => {
+    // Reproduce the shipped state — Mouse2 on two actions — through
+    // _buildBindings.finish()'s own logic, which is: ask the resolver, then
+    // write the key. Both victims are given a spare so that "could not settle"
+    // is never the reason either version leaves a duplicate behind.
+    const doubled = () => {
+      const b = defaultBindings();
+      b.thrust = ['Mouse2', 'KeyU']; b.hurl = ['Mouse2', 'KeyI'];
+      return b;
+    };
+
+    const old = doubled();
+    // what finish() used to do, verbatim
+    const first = findConflict(old, 'Mouse2', 'dash');
+    const rest = old[first].filter(k => k !== 'Mouse2');
+    if (rest.length) old[first] = rest;
+    old.dash = ['Mouse2'];
+    const left = conflicts(old);
+    assert(left.length > 0,
+      'the single-clash path was supposed to leave a duplicate behind and did not — '
+      + 'this check no longer reproduces the bug it exists for');
+
+    const now = doubled();
+    const res = resolveConflicts(now, 'Mouse2', 'dash');
+    now.dash = ['Mouse2'];
+    assert(!conflicts(now).length,
+      `after settling, Mouse2 still answers to ${conflicts(now).map(c => c.ids.join('+')).join(', ')}`);
+    assert(res.taken.length === 2 && !res.refused.length,
+      `both victims had a spare, so both should give the key up, not ${JSON.stringify(res)}`);
+    assert(now.thrust.length === 1 && now.hurl.length === 1, 'a victim lost more than the clashing key');
+
+    // An action down to its LAST key keeps it and is reported, rather than
+    // being silently muted — the one thing worse than a duplicate.
+    const last = defaultBindings();
+    const r3 = resolveConflicts(last, 'KeyF', 'view');
+    assert(r3.refused.includes('push') && last.push.includes('KeyF'),
+      'an action on its last key was left unbound');
+    return `first-only left ${left.map(c => c.ids.join('+')).join(', ')}; `
+      + 'resolveConflicts clears all of them and refuses to mute an action';
+  });
+
+  check('controls: the dojo steps lessons through the bindings table, not off raw keys', async () => {
+    const main = await read('src/main.js');
+    // The exact shape that shipped, beside a table that had just been given
+    // stasis on B and rend on N so the collision could be SEEN.
+    for (const [code, verb] of [['KeyN', 'skip'], ['KeyB', 'back'], ['KeyY', 'repeat']]) {
+      const re = new RegExp(`code\\s*===\\s*'${code}'[^\\n]*\\.${verb}\\(`);
+      assert(!re.test(main), `main.js still steps the lesson off a raw ${code}`);
+    }
+    for (const [id, verb] of [['lessonNext', 'skip'], ['lessonBack', 'back'], ['lessonRepeat', 'repeat']]) {
+      assert(ACTION_IDS.includes(id), `${id} is not in the bindings table, so it cannot be rebound`);
+      const re = new RegExp(`act(?:Hit)?\\('${id}'\\)[^\\n]*\\.${verb}\\(`);
+      assert(re.test(main), `${id} is registered but nothing calls director.${verb}()`);
+      assert(typeof DojoDirector.prototype[verb] === 'function',
+        `DojoDirector.${verb} is gone — ${id} has nothing to drive`);
+    }
+    // And the keys they got must not be the keys of anything else, in a fresh
+    // profile OR after the Force powers moved: that was the whole bug.
+    const b = defaultBindings();
+    for (const id of ['lessonNext', 'lessonBack', 'lessonRepeat']) {
+      for (const code of b[id]) {
+        const other = findConflict(b, code, id);
+        assert(!other, `${id} defaults to ${code}, which ${other} also answers to`);
+      }
+    }
+    // The coach panel's legend has to come from the table too — index.html
+    // shipped `N next / B back / R etry with Y` baked into the markup.
+    assert(/coach-keys/.test(main) && /keyLabel\(/.test(main),
+      'the coach panel still prints hardcoded keys instead of the bound ones');
+    return `lesson nav on ${['lessonNext', 'lessonBack', 'lessonRepeat'].map(i => b[i][0]).join('/')}, `
+      + 'read as actions, legend from the bindings';
+  });
+
+  check('controls: one key press, one action — through the real Input', () => {
+    // Not a source scan. A real Input, with the shipped bindings, fed the key
+    // the way tools/smoke.mjs feeds the live game, and asked which actions
+    // answer. With a fresh profile KeyB used to answer `stasis` AND run
+    // director.back(), and KeyN `rend` AND director.skip() — two systems, one
+    // press, and nothing in the table able to say so.
+    const input = new Input({ addEventListener() {}, requestPointerLock() {} });
+    const answers = (code) => {
+      input.keys.clear(); input.pressed.clear();
+      input.buttons.fill(false); input.buttonPressed.fill(false);
+      if (code.startsWith('Mouse')) {
+        const i = Object.keys(MOUSE).find(k => MOUSE[k] === code);
+        input.buttons[i] = true; input.buttonPressed[i] = true;
+      } else { input.keys.add(code); input.pressed.add(code); }
+      return ACTION_IDS.filter(id => input.actHit(id) || input.act(id));
+    };
+    const doubled = [];
+    for (const id of ACTION_IDS) {
+      for (const code of input.bindings[id]) {
+        const who = answers(code);
+        if (who.length > 1) doubled.push(`${code} → ${who.join(' + ')}`);
+      }
+    }
+    assert(!doubled.length, `one press, two systems: ${doubled.join('; ')}`);
+    // and the three keys the dojo took answer to the dojo and to nothing else
+    for (const id of ['lessonNext', 'lessonBack', 'lessonRepeat']) {
+      const who = answers(input.bindings[id][0]);
+      assert(who.length === 1 && who[0] === id,
+        `${input.bindings[id][0]} answers to ${who.join(' + ')}, not just ${id}`);
+    }
+    assert(answers('KeyB').join() === 'stasis', 'KeyB still answers to more than the stasis field');
+    assert(answers('KeyN').join() === 'rend', 'KeyN still answers to more than rend');
+    let n = 0;
+    for (const id of ACTION_IDS) n += input.bindings[id].length;
+    return `${n} bound keys driven through Input, every one answered by exactly one action`;
+  });
+
+  check('controls: the training blade slider moves the blade that is in your hand', async () => {
+    // The panel said "length is read when the blade is built — a change lands
+    // on your next Ignite". It landed nowhere: hooks.onBladeLength was declared
+    // in Menu and implemented in nothing.
+    const saber = new Saber(new THREE.Scene(), { bladeLength: 1.15 });
+    const before = saber.bladeLength;
+    // main.js's hook, exactly as written there
+    const hook = (v) => { const w = { player: { saber } }; if (w?.player?.saber) w.player.saber.bladeLength = v; };
+    hook(4.0);
+    assert(saber.bladeLength === 4.0, `the slider moved the blade from ${before} to ${saber.bladeLength}`);
+    // and it has to be LIVE, i.e. the length the frame reads must follow —
+    // Saber.update recomputes `len = bladeLength * ignition` every frame
+    saber.lit = true;
+    for (let i = 0; i < 120; i++) saber.update(1 / 60, i / 60);
+    const tip = saber.tip.distanceTo(saber.base);
+    assert(tip > 3.6, `after re-igniting at 4 m the blade measures ${tip.toFixed(3)} m`);
+    hook(1.15);
+    for (let i = 0; i < 120; i++) saber.update(1 / 60, 2 + i / 60);
+    const back = saber.tip.distanceTo(saber.base);
+    assert(back < 1.25, `after dragging back to 1.15 m the blade measures ${back.toFixed(3)} m`);
+
+    const main = await read('src/main.js');
+    assert(/onBladeLength\s*:/.test(main), 'main.js declares no onBladeLength — the hook is inert again');
+    const menu = await readFile(src('ui/Menu.js'), 'utf8');
+    assert(/hooks\.onBladeLength\?\.\(/.test(menu), 'the training slider no longer calls the hook');
+    // The panel must not promise the OLD behaviour either. It is live now.
+    assert(!/lands on your\s*\n?\s*next Ignite/.test(menu),
+      'the panel still says the change lands on your next Ignite');
+    return `1.15 → 4.00 m live (tip ${tip.toFixed(2)} m), and back to ${back.toFixed(2)} m`;
+  });
+
+  check('controls: the pause training sliders show exactly where they bite', async () => {
+    // `s.level === 'dojo'` showed them for all eleven lessons; Dojo.inSandbox
+    // is the one lesson that reads them.
+    const main = await read('src/main.js');
+    assert(/inSandbox/.test(main), 'main.js never asks the dojo whether this lesson is the sandbox');
+    const menu = await readFile(src('ui/Menu.js'), 'utf8');
+    assert(!/const live = this\.s\.mode === 'sandbox' \|\| this\.s\.level === 'dojo'/.test(menu),
+      'showPause is gated on the level name again');
+    assert(/showPause\(stats, sandboxLive\)/.test(menu), 'showPause no longer takes the live answer');
+
+    // And the predicate main.js computes has to agree with the director on
+    // every lesson, not just on the name of the level.
+    const lessons = (await import('../../src/game/Dojo.js')).LESSONS;
+    const inSandbox = lessons.map(L => !!L.setup?.sandbox);
+    const n = inSandbox.filter(Boolean).length;
+    assert(n >= 1, 'no lesson is the sandbox room at all');
+    assert(n < lessons.length, 'every lesson is the sandbox room — the gate would be meaningless');
+    assert(/sandboxRoomLive/.test(main), 'main.js has no single place that answers the question');
+    return `${lessons.length} lessons, ${n} read the training numbers; the pause card asks the director`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  5. Nothing in the menu may be decorative                          */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  check('controls: every column of the quality table is read by named code', async () => {
+    const cols = Object.keys(QUALITY.low);
+    for (const tier of Object.keys(QUALITY)) {
+      const mine = Object.keys(QUALITY[tier]).sort().join(',');
+      assert(mine === cols.slice().sort().join(','), `tier ${tier} does not have the same columns as low`);
+    }
+    const listed = Object.keys(QUALITY_READERS);
+    const dead = cols.filter(c => !listed.includes(c));
+    assert(!dead.length, `quality columns nothing in src/ reads: ${dead.join(', ')} — `
+      + 'the tier promises something and delivers the tier above it');
+    const stale = listed.filter(c => !cols.includes(c));
+    assert(!stale.length, `QUALITY_READERS names columns that are gone: ${stale.join(', ')}`);
+
+    // Same rule as SETTING_READERS: the declaration has to be TRUE, and the
+    // expression has to actually mention the column. The manifest itself is cut
+    // out of whatever file it is searched in, so an entry cannot satisfy itself
+    // — this file is one of the files it names nothing in, but the next round's
+    // move of the table into Engine.js must not quietly turn it green.
+    const strip = (text) => {
+      const a = text.indexOf('const QUALITY_READERS = {');
+      if (a < 0) return text;
+      const b = text.indexOf('\n};', a);
+      return b < 0 ? text.slice(0, a) : text.slice(0, a) + text.slice(b);
+    };
+    const missing = [];
+    for (const [col, [file, expr]] of Object.entries(QUALITY_READERS)) {
+      assert(expr.includes(col), `the reader declared for ${col} does not mention it: ${expr}`);
+      const text = await readFile(src(file), 'utf8').then(strip, () => null);
+      if (text === null) { missing.push(`${col} → ${file} does not exist`); continue; }
+      if (!text.includes(expr)) missing.push(`${col} → ${file} no longer contains \`${expr}\``);
+    }
+    assert(!missing.length, missing.join('; '));
+
+    // And World must not have grown a second, private ladder beside it. That is
+    // what it had: `{ low: 0.55, medium: 0.8, high: 1, ultra: 1.25 }`, inline,
+    // deciding terrain and atmosphere while Engine's own table decided nothing.
+    // Comments stripped first — the comment that RECORDS the old ladder is not
+    // the old ladder, and a check that cannot tell the two apart would make
+    // explaining the fix impossible.
+    const world = (await readFile(src('game/World.js'), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert(!/\{\s*low\s*:\s*[\d.]/.test(world),
+      'World.js has an inline quality ladder again — one value, one home');
+    assert(/QUALITY\[this\.settings\.quality\]/.test(world),
+      'World.js no longer reads the tier off Engine\'s table');
+    return `${cols.length} columns (${cols.join(', ')}), every one with a named reader`;
+  });
+
+  check('controls: the quality tier actually changes the particle and grass budgets', () => {
+    // The measurement the Performance card rests on. Built through the real
+    // constructors at the real tiers, with the player's own multipliers left at
+    // 1 so what is being measured is the TIER.
+    const tiers = ['low', 'medium', 'high', 'ultra'];
+    const scene = new THREE.Scene();
+    const terrain = new Terrain(scene, 'dunes', 1);
+    const rows = tiers.map((t) => {
+      const q = QUALITY[t];
+      const p = new Particles(scene, 1 * q.particles);
+      const g = new GrassField(scene, terrain, { count: Math.round(11000 * q.grass), density: 1, radius: 46 });
+      const row = { t, pooled: p.stats().pools, chips: p.chips.max, decals: p.decals.max, blades: g.count };
+      p.dispose(); g.dispose?.();
+      return row;
+    });
+    for (let i = 1; i < rows.length; i++) {
+      assert(rows[i].pooled > rows[i - 1].pooled,
+        `${rows[i].t} pools ${rows[i].pooled} particles, ${rows[i - 1].t} pools ${rows[i - 1].pooled}`);
+      assert(rows[i].blades > rows[i - 1].blades,
+        `${rows[i].t} plants ${rows[i].blades} blades, ${rows[i - 1].t} plants ${rows[i - 1].blades}`);
+    }
+    // The tabled spread, minus whatever the pools' own floors take back. It was
+    // 1.00 on both — 19,800 particles and 11,000 blades at low exactly as at
+    // ultra — which is what makes a bare "> the tier below" too weak to pin it.
+    const pSpread = rows[3].pooled / rows[0].pooled;
+    const gSpread = rows[3].blades / rows[0].blades;
+    assert(pSpread > 2.9, `particles spread only ${pSpread.toFixed(2)}× across the four tiers`);
+    assert(gSpread > 5.5, `grass spreads only ${gSpread.toFixed(2)}× across the four tiers`);
+    // And the player's own slider must still multiply the tier rather than
+    // replace it — `particleScale ?? q` made the tier structurally unreachable.
+    const half = new Particles(scene, 0.5 * QUALITY.ultra.particles);
+    assert(half.stats().pools < rows[3].pooled,
+      'halving particleScale did not thin the tier — the slider is replacing it, not scaling it');
+    half.dispose();
+    terrain.dispose?.();
+    return rows.map(r => `${r.t} ${r.pooled}p/${r.blades}g`).join('  ')
+      + `  (${pSpread.toFixed(2)}× / ${gSpread.toFixed(2)}×)`;
+  });
 
   check('controls: every setting in DEFAULT_SETTINGS is read by named code', async () => {
     const keys = Object.keys(DEFAULT_SETTINGS);

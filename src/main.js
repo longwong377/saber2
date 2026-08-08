@@ -42,8 +42,22 @@ const net = new Net();
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
 
+/**
+ * Bloom is on when the PLAYER wants it and the TIER allows it.
+ *
+ * `QUALITY[tier].bloom` is the last column of Engine's table with no reader in
+ * src/ — it is `true` on all four tiers today, so this changes nothing on
+ * screen, and it means a tier that wants to drop the bloom pass on integrated
+ * graphics can, without a second switch appearing somewhere else to fight the
+ * checkbox. A column nobody reads is a promise nobody keeps; this is the
+ * reader, and tools/checks/controls.mjs fails if any column loses one.
+ */
+function qualityBloom() {
+  return !!settings.bloom && (QUALITY[settings.quality] ?? QUALITY.high).bloom;
+}
+
 engine.setResolutionScale(settings.resolutionScale);
-engine.setBloom(settings.bloom);
+engine.setBloom(qualityBloom());
 engine.setGrain(settings.grain);
 audio.setVolume(settings.volume);
 audio.setMusicVolume(settings.music);
@@ -64,9 +78,11 @@ const menu = new Menu(settings, {
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
   onRetry: () => { menu.hideDeath(); deploy(); },
-  onQualityChange: (q) => { engine.setQuality(q); },
+  // The renderer takes the tier immediately; the live world takes what it can
+  // (see World.applyQuality — emission is live, buffers are next deploy).
+  onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
   onResolution: (v) => engine.setResolutionScale(v),
-  onBloom: (v) => engine.setBloom(v),
+  onBloom: () => engine.setBloom(qualityBloom()),
   onGrain: (v) => engine.setGrain(v),
   onInvert: (v) => { input.invertY = v; },
   onSensitivity: (v) => { if (world?.player) world.player.control.sensitivity = v; },
@@ -76,7 +92,7 @@ const menu = new Menu(settings, {
   // Both are live: switch the deflection model or a keybind mid-fight and the
   // very next bolt uses it, which is the only honest way to compare them.
   onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
-  onBindings: (b) => { input.setBindings(b); },
+  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); },
   // Force settings are read live off world.settings, so the sliders take effect
   // mid-fight without a reload.
   onForce: () => {
@@ -85,6 +101,18 @@ const menu = new Menu(settings, {
     world.settings.forceDrain = settings.forceDrain;
   },
   onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
+  // The training panel promised "a change lands on your next Ignite" and this
+  // hook — declared in Menu, called by both blade-length sliders — had no
+  // implementation, so it landed on nothing: build a Saber at 1.15, drag the
+  // slider to 4.00, retract, re-ignite, still 1.150. The player who asked for
+  // an unlimited training blade got a checkbox, a slider, a ceiling of 4 m and
+  // a blade that never moved.
+  //
+  // Saber.update reads `this.bladeLength` every frame (`len = bladeLength *
+  // ignition`, which is what drives the mesh, the wash, the trail and the
+  // capture window), so writing it is live — better than the promise, and the
+  // panel now says so. Same seam the Long Blade boon already uses.
+  onBladeLength: (v) => { if (world?.player?.saber) world.player.saber.bladeLength = v; },
   // Camera shake and cinematic slow-motion. The gates themselves are installed
   // once per world in buildWorld and read `settings` live; this only exists so
   // that unticking a box also kills the shake or the hitstop already in flight.
@@ -224,7 +252,22 @@ function pause() {
     ['Deflections', p?.deflects ?? 0],
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
-  ]);
+  ], sandboxRoomLive());
+}
+
+/**
+ * Do the three training numbers reach the room the player is standing in?
+ *
+ * Two different directors answer this, and only they can. In sandbox MODE the
+ * WaveDirector's whole update is `_sandboxUpdate`, which re-reads
+ * sandboxConfig every frame in any theatre. In the dojo it is one lesson out of
+ * eleven — `DojoDirector.inSandbox`, the one whose setup block says `sandbox` —
+ * and the other ten build their own room out of the lesson and never look.
+ */
+function sandboxRoomLive() {
+  if (!world) return false;
+  if (world.training) return !!world.director?.inSandbox;
+  return !!world.director?.sandbox;
 }
 
 function restartWave() {
@@ -419,14 +462,48 @@ input.onLockChange = (locked) => {
   if (!locked && state === 'playing') pause();
 };
 
+/**
+ * The dojo's lesson navigation, read as ACTIONS once a frame.
+ *
+ * It used to be a raw `e.code === 'KeyN'` listener sitting right here, beside
+ * a bindings table that had just been given `stasis` on KeyB and `rend` on
+ * KeyN for the express purpose of making that collision visible. So in the
+ * level the menu tags "start here", with a fresh profile, B threw a stasis
+ * field AND stepped the lesson back, and N tore an enemy apart AND skipped it.
+ * findConflict could not see it — a raw listener is not in the table — and no
+ * rebind could separate them, for the same reason.
+ *
+ * Read in frame() rather than off a listener so it goes through the same
+ * `input.actHit` every other verb uses, obeys `input.enabled`, and can be
+ * rebound from the options screen like everything else.
+ */
+function lessonKeys() {
+  if (state !== 'playing' || !world?.training) return;
+  const d = world.director;
+  if (!d) return;
+  if (input.actHit('lessonNext')) { d.skip(); hud.setCoach(d.state()); }
+  else if (input.actHit('lessonBack')) { d.back(); hud.setCoach(d.state()); }
+  else if (input.actHit('lessonRepeat')) { d.repeat(); hud.setCoach(d.state()); }
+}
+
+/**
+ * The coach panel's key legend, from the bindings rather than from the markup.
+ *
+ * index.html shipped `N next / B back / R etry with Y` baked in, which was
+ * wrong the moment those keys were taken and would be wrong again after any
+ * rebind. Same treatment as the scoreboard's key label below.
+ */
+function refreshCoachKeys() {
+  const host = document.querySelector('#coach .coach-keys');
+  if (!host) return;
+  const k = (id) => keyLabel((input.bindings[id] || [])[0]);
+  host.innerHTML = [
+    [k('lessonNext'), 'next'], [k('lessonBack'), 'back'], [k('lessonRepeat'), 'again'],
+  ].map(([key, what]) => `<span><kbd>${key}</kbd> ${what}</span>`).join('');
+}
+refreshCoachKeys();
+
 window.addEventListener('keydown', (e) => {
-  // dojo lesson navigation — only where it cannot cost you anything
-  if (state === 'playing' && world?.training) {
-    const d = world.director;
-    if (e.code === 'KeyN') { d.skip(); hud.setCoach(d.state()); }
-    else if (e.code === 'KeyB') { d.back(); hud.setCoach(d.state()); }
-    else if (e.code === 'KeyY') { d.repeat(); hud.setCoach(d.state()); }
-  }
   if (e.code === 'Escape') {
     if (state === 'playing') pause();
     else if (state === 'paused') resume();
@@ -468,6 +545,7 @@ function frame(now) {
   // Held, and only while a run is live: the menus, the draft and the death card
   // own the screen otherwise, and this would sit on top of all three.
   setScoreboard(state === 'playing' && !!world && input.act('scoreboard'));
+  lessonKeys();
 
   if (world && (state === 'playing' || state === 'dead')) {
     world.update(dt, input);

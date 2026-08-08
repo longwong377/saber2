@@ -23,6 +23,7 @@ import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packSnapshot } from '../net/Net.js';
+import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -78,12 +79,32 @@ export class World {
     this.levelKey = key;
     this.groundColor = L.groundColor;
 
-    const q = { low: 0.55, medium: 0.8, high: 1, ultra: 1.25 }[this.settings.quality] ?? 1;
+    // ONE VALUE, ONE HOME. This used to be `{low:0.55, medium:0.8, high:1,
+    // ultra:1.25}[quality]`, written out here, and Engine's QUALITY.grass
+    // (0.25→1.5) and QUALITY.particles (0.4→1.35) had no reader in src/ at all
+    // — they had been dead since the foundation commit. Two of the four things
+    // the Performance card promises ("fewer particles… for laptops") were
+    // therefore identical at every tier: 19,800 pooled particles and 11,000
+    // blades at `low` exactly as at `ultra`. The `?? q` on particleScale made
+    // it worse than dead: particleScale is an UNCONDITIONAL key of
+    // DEFAULT_SETTINGS, so the fallback could never be reached and the tier
+    // never touched particles even by accident.
+    //
+    // So the ladder is Engine's, and the player's own two sliders MULTIPLY it
+    // rather than replace it.
+    const q = QUALITY[this.settings.quality] || QUALITY.high;
+    // Terrain detail is the tier's own VIEW DISTANCE, normalised to `high`:
+    // the mesh exists to be looked across, so the tier that draws to 900 m has
+    // to carry the vertices for it. 380/520/700/900 against high's 700 gives
+    // 0.54 / 0.74 / 1.00 / 1.29 — within a vertex row of the hand-written
+    // ladder it replaces, and unlike it, it cannot drift away from the tier.
+    const detail = q.viewDist / QUALITY.high.viewDist;
+    const particleScale = (this.settings.particleScale ?? 1) * q.particles;
 
-    this.terrain = new Terrain(this.scene, L.terrain, q);
+    this.terrain = new Terrain(this.scene, L.terrain, detail);
     this.physics.terrain = this.terrain;
 
-    this.particles = new Particles(this.scene, this.settings.particleScale ?? q);
+    this.particles = new Particles(this.scene, particleScale);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
@@ -91,11 +112,19 @@ export class World {
     this.engine.applyAtmosphere(L.atmosphere);
     audio.setAmbience(L.ambience || {});
 
-    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: q });
+    // The motes, windborne sheets, haze and heat shimmer are particles too, so
+    // they ride the particle tier and not the terrain one.
+    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: particleScale });
     if (L.water) this.water = new Water(this.scene, { ...L.water, size: this.terrain.size + 60 });
     if (L.grass) {
+      // The tier scales the BLADE BUDGET (count); the level and the player's
+      // slider scale `density`, which GrassField also uses to decide how much
+      // cover to tint into the ground underneath. Putting the tier on `count`
+      // and not on `density` is what stops Performance quietly repainting the
+      // ground as bare dirt on top of thinning the grass standing on it.
       this.grass = new GrassField(this.scene, this.terrain, {
-        count: 11000, density: (this.settings.grassScale ?? 1) * L.grass,
+        count: Math.round(11000 * q.grass),
+        density: (this.settings.grassScale ?? 1) * L.grass,
         tintA: L.grassTint?.[0], tintB: L.grassTint?.[1], radius: 46,
       });
     }
@@ -125,6 +154,23 @@ export class World {
 
     this.running = true;
     return L;
+  }
+
+  /**
+   * A tier change while a run is live.
+   *
+   * Pool capacity, terrain resolution and the grass instance budget are all
+   * allocations made at level load and cannot move without rebuilding the
+   * level, which would cost the player their run. Emission CAN move: every
+   * recipe in Particles multiplies its count by `particles.scale` at the moment
+   * it fires, and that is the number that actually costs frames — the pool's
+   * `max` only decides how long a spark lives before its slot is recycled. So
+   * dropping to Performance mid-fight thins every burst from the very next
+   * impact, and the buffers follow on the next deploy.
+   */
+  applyQuality(name) {
+    const q = QUALITY[name] || QUALITY.high;
+    if (this.particles) this.particles.scale = (this.settings.particleScale ?? 1) * q.particles;
   }
 
   spawnPlayer(opts = {}) {
