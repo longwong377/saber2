@@ -71,6 +71,20 @@ const _box = new THREE.Box3();
 const _boxA = new THREE.Box3(), _boxB = new THREE.Box3(), _cellBox = new THREE.Box3();
 const IDENT = new THREE.Quaternion();
 
+/**
+ * Half the width of the slot a blade leaves behind, in metres.
+ *
+ * Two places need it and they need the same number. Deciding which cells a cut
+ * event was IN, the point may fall this far outside one and still have been in
+ * both — the blade is 5 cm of plasma and the samples the cells were built from
+ * are about 2 cm apart. Deciding whether a neighbour still bridges a cut, it is
+ * how much stone has to be left on this side of the plane to count: a fragment
+ * the blade made on that very plane has its cut face exactly ON it, so a strict
+ * "is it on the other side" came out 0 > 0 and was settled by the last bit of
+ * the float, and half the kerfs on a column leaked.
+ */
+const KERF = 0.04;
+
 let _structId = 1;
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -935,12 +949,22 @@ export class Structure {
   bladeCapsules(near, reach, out) {
     if (this.state === 'gone') return out;
     const r2 = reach * reach;
-    // NB: `chunks` existing does NOT mean the piece has come apart — it is
-    // pre-fractured long before it is touched. Until it converts, the blade
-    // meets the solid the maker registered.
-    if (this.chunks && this.state !== 'intact') {
+    /* NB: `chunks` existing does NOT mean the piece has come apart — it is
+     * pre-fractured before it is touched, and the cells stand in for the solid
+     * while it is still whole.
+     *
+     * It used to publish the maker's collider until the piece CONVERTED, and
+     * that cost the blade everything it had done. The solver books its work per
+     * capsule name; conversion renames every capsule; so a blade that had spent
+     * 2.6 s grinding a column started again from zero the instant it got
+     * through, and in the four seconds the grind test allows it managed two cut
+     * events out of a column sixteen cells thick. It also meant the one cut
+     * that decides how deep a notch is was measured against a proxy two fat
+     * sausages wide — 1.55× the width of the column — instead of against the
+     * cells the piece is actually going to break into. */
+    if (this.chunks) {
       for (const c of this.chunks) {
-        if (c.state !== 'attached') continue;
+        if (c.state !== 'attached' && c.state !== 'shell') continue;
         c.worldCentre(_v1);
         if (_v1.distanceToSquared(near) > r2 + c.half.lengthSq()) continue;
         /* A capsule down the cell's longest axis, not a ball at its centre.
@@ -950,15 +974,27 @@ export class Structure {
          * the cells behind it happened to sit between blade passes. Measured on
          * a column: the notch plateaued at 10 of 22 cells however long the
          * blade was held there. */
-        const h = c.half;
-        const ax = h.x >= h.y && h.x >= h.z ? 0 : (h.y >= h.z ? 1 : 2);
-        const rad = Math.max(0.18, ax === 0 ? Math.min(h.y, h.z) : ax === 1 ? Math.min(h.x, h.z) : Math.min(h.x, h.y));
+        /* …and the capsule has to hold the cell's OWN stone, not the cylinder
+         * round its bounding box.
+         *
+         * The radius was the smaller of the two cross half-extents of the AABB,
+         * plus 15%. A Voronoi cell out of a round column is a wedge, and its
+         * box is most of the section, so that capsule was 5.0× the volume of
+         * the stone it stood for — the same complaint as the cells being 1.88×
+         * the mesh, one level further out. Measured on the column this test
+         * carves: with the blade held 0.46 m into a 1.10 m section, the cell on
+         * the FAR side reported 49 frames of contact across the sweep while the
+         * blade was never once inside its stone, so a notch the blade could not
+         * physically reach the back of still cut the back off. Same stone, same
+         * length, as a cylinder: the blade is in the cell when it is in the
+         * cell, and the far cell now bridges a shallow notch and does not
+         * bridge a deep one. */
+        const { ax, rad, arm } = cellCapsule(c);
         _v3.set(ax === 0 ? 1 : 0, ax === 1 ? 1 : 0, ax === 2 ? 1 : 0).applyQuaternion(this.quaternion);
-        const arm = Math.max(0, (ax === 0 ? h.x : ax === 1 ? h.y : h.z) - rad * 0.5);
         out.push({
           name: this.id + 'c' + c.index,
           p0: _v1.clone().addScaledVector(_v3, -arm), p1: _v1.clone().addScaledVector(_v3, arm),
-          r: rad * 1.15,
+          r: rad,
           toughness: this.profile.toughness, structure: this, chunk: c,
         });
       }
@@ -1363,10 +1399,25 @@ export class Structure {
    * such thing as carving into something. A cut event is per capsule and, once
    * a piece has converted, a capsule IS a cell, so the blade names the cell it
    * parted; on the first cut, before conversion, the capsule is a segment of
-   * the maker's collider and the plane picks out the cells it crosses within
-   * one cell of the hit. Either way a swing takes what it reached, holding the
-   * blade there takes more, and what is left standing is decided downstream by
-   * settleSupport rather than here.
+   * the maker's collider and the cut point is all there is to go on. Either way
+   * a swing takes what it reached, holding the blade there takes more, and what
+   * is left standing is decided downstream by settleSupport rather than here.
+   *
+   * What was still missing is the TIP. Measured: a blade held 0.30 m into a
+   * 1.10 m column — 27% of the section — produced one cut event in 8.3 s, and
+   * that single event parted three of the four cells across the waist and
+   * knocked the fourth out whole, because the selection radius was
+   * `0.47 + the cell's own half-diagonal`, which on a stone cell is 1.3 m: a
+   * sphere wider than the column. The blade severed a section it had reached a
+   * quarter of the way into, and a 68% cut looked exactly the same.
+   *
+   * A blade IS long, so the set of cells is right — every cell the swept plane
+   * crosses, not just the one the event named. What bounds it is not a radius
+   * round the hit but the plane the blade swept ENDING at the tip: see
+   * bladeAxis() for where that direction comes from and `reach` below for how
+   * far along it the cut is known to have got. Stone past that is stone the
+   * blade has not been shown to reach; it stays whole, and it is the ligament
+   * that makes 27% of a section behave differently from 68%.
    */
   cutBy(point, normal, impulse, chunk = null) {
     if (this.state === 'gone') return false;
@@ -1376,41 +1427,80 @@ export class Structure {
     // a real vector, not module scratch: this call reaches deep enough that
     // shared temporaries get clobbered under it
     const n = new THREE.Vector3().copy(normal).normalize();
-    const nl = new THREE.Vector3().copy(n).applyQuaternion(this._invQ);   // piece-local
+    const axis = bladeAxis(n, impulse, new THREE.Vector3());
+    /* How far along the blade the cut got — the NEAR wall of the capsule it
+     * parted.
+     *
+     * The cut point is on that capsule's axis: the solver puts it there so a
+     * limb severs at the bone, and it carries no news of how deep the tip was.
+     * What a cut event does establish is contact, and contact means the blade
+     * came within the capsule's radius of its axis. So the blade is known to
+     * have got to the near wall, and is not known to have got past it.
+     *
+     * All three readings were measured on the two columns these tests carve,
+     * and only this one behaves. Reaching to the AXIS, or to the FAR wall,
+     * marches: each cut hands back a ligament whose own axis is deeper still,
+     * so the kerf walks past the tip and a 27% notch takes the section off in a
+     * few events. The near wall converges instead — cut the ligament again and
+     * its capsule's near wall is back where the last one was, which is where
+     * the tip is. Measured: 27% leaves the column standing at 7.45 m, 68%
+     * leaves nothing above the cut, and a blade ground 55% through a different
+     * column still drops everything above it.
+     */
+    let reach = axis ? axis.dot(point) : 0;
+    if (axis && chunk && chunk.structure === this) reach -= cellCapsule(chunk).rad;
+    else if (axis) reach -= Math.max(0.12, this.profile.cell * 0.25);
+    const axisL = axis ? new THREE.Vector3().copy(axis).applyQuaternion(this._invQ) : null;
+    const beyond = (c) => {
+      if (!axisL) return false;
+      const ext = Math.abs(axisL.x) * c.half.x + Math.abs(axisL.y) * c.half.y + Math.abs(axisL.z) * c.half.z;
+      return axis.dot(c.worldCentre(_v1)) - ext > reach;
+    };
+    /* A blade is 1.3 m of plasma, so what it parts is a SWATHE — every cell the
+     * swept plane runs through that is not past the tip, not just the one cell
+     * the event happened to name. Taking only the named cell was measured on a
+     * blade ground into a column for four seconds: two cut events, two cells
+     * parted out of the sixteen across the shaft, and the column stood. The
+     * bound that was missing all along is the tip, not the length. */
+    const nl = new THREE.Vector3().copy(n).applyQuaternion(this._invQ);
     const d = -n.dot(point);
     const hits = [];
-    if (chunk && chunk.structure === this && chunk.state === 'attached') {
+    if (chunk && chunk.structure === this && chunk.state === 'attached' && !beyond(chunk)) {
       hits.push(chunk);
-    } else {
-      const reach = Math.max(0.45, this.profile.cell * 0.35);
-      for (const c of this.chunks) {
-        if (c.state !== 'attached') continue;
-        c.worldCentre(_v1);
-        if (_v1.distanceTo(point) > reach + c.half.length()) continue;
-        // does the plane actually pass through this cell? the cell's box is
-        // axis-aligned in piece space, so its extent along n is exact
-        const proj = Math.abs(nl.x) * c.half.x + Math.abs(nl.y) * c.half.y + Math.abs(nl.z) * c.half.z;
-        if (Math.abs(n.dot(_v1) + d) > proj) continue;
-        hits.push(c);
-      }
+    }
+    for (const c of this.chunks) {
+      if (c.state !== 'attached' || hits.includes(c)) continue;
+      if (beyond(c)) continue;                       // the blade never got here
+      // does the plane actually pass through this cell? the cell's box is
+      // axis-aligned in piece space, so its extent along n is exact
+      const proj = Math.abs(nl.x) * c.half.x + Math.abs(nl.y) * c.half.y + Math.abs(nl.z) * c.half.z;
+      if (Math.abs(n.dot(c.worldCentre(_v1)) + d) > proj) continue;
+      hits.push(c);
     }
     if (!hits.length) {
-      // the blade parted a face the cells do not straddle — take the nearest
-      let best = null, bestD = Infinity;
+      // the cut point landed in the air between cells, or in one that has
+      // already gone — take the nearest stone the blade could have reached
+      let best = null, bestD = -Infinity;
       for (const c of this.chunks) {
-        if (c.state !== 'attached') continue;
-        const dd = c.worldCentre(_v1).distanceToSquared(point);
-        if (dd < bestD) { bestD = dd; best = c; }
+        if (c.state !== 'attached' || beyond(c)) continue;
+        const dd = this._cellDepth(c, point);
+        if (dd > bestD) { bestD = dd; best = c; }
       }
       if (best) hits.push(best);
     }
-    // The cells the plane runs through are parted ON the plane rather than
-    // knocked out whole — this is the one place a runtime slice earns its cost,
-    // and it is the difference between a column that was cut and a column that
-    // had a lump taken out of it. Bounded, because it is not cheap.
+    /* The cells the plane runs through are parted ON the plane rather than
+     * knocked out whole — this is the one place a runtime slice earns its cost,
+     * and it is the difference between a column that was cut and a column that
+     * had a lump taken out of it. Bounded to three a swing, because it is not
+     * cheap; the fourth is LEFT ALONE rather than detached, because detaching
+     * it takes the whole cell including the part beyond the tip, which is the
+     * bite this is here to stop. The blade is still on it — the next event
+     * parts it properly. Only a cell the slice itself refuses (too small to
+     * halve, or the piece is already carved past its budget) comes off whole. */
     let parted = 0;
     for (const c of hits) {
-      if (parted < 3 && this._partChunk(c, point, n, impulse)) { parted++; continue; }
+      if (parted >= 3) break;
+      if (this._partChunk(c, point, n, impulse, axis, reach)) { parted++; continue; }
       this.detach(c, impulse, point);
     }
     this.settleSupport();
@@ -1419,10 +1509,52 @@ export class Structure {
   }
 
   /**
-   * Slice one attached cell on the blade's plane and let both halves go. Falls
-   * back to the caller's plain detach when the plane misses the cell's solid.
+   * How deep inside cell `c` a world point lies: positive within the stone,
+   * negative outside it, in metres, and exact — a cell is a convex polyhedron
+   * and the cells are a partition of the piece, so this is the whole of what
+   * "the blade was in this one" means.
+   *
+   * Not the AABB, which is what the old selection effectively used. A Voronoi
+   * cell out of a round column is a wedge, and its axis-aligned box is most of
+   * the section: four cells across the waist of a 1.10 m column have boxes
+   * 0.9–1.1 m wide that all overlap the axis, so a point anywhere near the
+   * middle is "in" every one of them.
    */
-  _partChunk(chunk, point, normal, impulse) {
+  _cellDepth(c, point) {
+    const p = _v4.copy(point).sub(this.position).applyQuaternion(this._invQ);   // piece-local
+    const poly = c.cell && c.cell.poly;
+    if (poly && poly.faces && poly.faces.length) {
+      let outside = -Infinity;
+      for (const f of poly.faces) {
+        const q = f.pts[0];
+        const d = f.n.x * (p.x - q.x) + f.n.y * (p.y - q.y) + f.n.z * (p.z - q.z);
+        if (d > outside) outside = d;
+      }
+      return -outside;
+    }
+    // a fragment the blade already parted keeps no polyhedron — its own box,
+    // which is tight around the sliced geometry, is the best it has
+    const b = c.bounds;
+    return Math.min(
+      Math.min(p.x - b.min.x, b.max.x - p.x),
+      Math.min(p.y - b.min.y, b.max.y - p.y),
+      Math.min(p.z - b.min.z, b.max.z - p.z));
+  }
+
+  /**
+   * Slice one attached cell on the blade's plane and let the halves go. Falls
+   * back to the caller's plain detach when the plane misses the cell's solid.
+   *
+   * Up to THREE pieces come out, not two, because the swept plane stops at the
+   * tip. The stone past the cut point along the blade's own axis was never
+   * reached: it is left as one piece straddling the plane, and that piece is
+   * the ligament — uncut stone joining what is above the cut to what is below
+   * it, which is exactly what the flood fill walks and what the overturning
+   * test measures the bearing of. Without it every cut was a full-section cut
+   * however far in the blade actually was, so a 27% notch and a 68% one left
+   * the identical column: measured, both dropped everything above y=3.4.
+   */
+  _partChunk(chunk, point, normal, impulse, axis = null, reach = 0) {
     if (!chunk || chunk.state !== 'attached' || !chunk.geo) return false;
     // Two floors on how far carving may subdivide a piece. Halves stay attached
     // now, so the blade can keep working on them, and without these a player
@@ -1437,9 +1569,52 @@ export class Structure {
     const origin = chunk.worldCentre(new THREE.Vector3());
     const lp = new THREE.Vector3().subVectors(point, origin).applyQuaternion(inv);
     const ln = new THREE.Vector3().copy(normal).applyQuaternion(inv).normalize();
-    let res = null;
-    try { res = sliceGeometry(chunk.geo, lp, ln); } catch (e) { res = null; }
-    if (!res) return false;
+    /* The tip first. `parts` collects [geometry, which side of the cut plane]
+     * where 0 means "neither — this is the stone the blade did not reach". */
+    const parts = [];
+    let toCut = chunk.geo;
+    if (axis) {
+      const la = new THREE.Vector3().copy(axis).applyQuaternion(inv).normalize();
+      // the tip's plane, not the cut point's: `reach` is measured along the
+      // blade in world space, so slide the point up the axis to meet it
+      const lt = new THREE.Vector3().copy(lp).addScaledVector(la, reach - axis.dot(point));
+      let far = null;
+      try { far = sliceGeometry(chunk.geo, lt, la); } catch (e) { far = null; }
+      if (far) {
+        // front is the +axis side: past the tip, and it stays in one piece
+        parts.push([far.front, 0]);
+        toCut = far.back;
+      }
+    }
+    /* And the kerf has a WIDTH — a blade does not part stone, it takes a slot
+     * of it away. Cut on one plane and the two halves are coincident, which is
+     * wrong twice: the stump of a column cut at 3.40 m measured 3.40 m tall, so
+     * "nothing survives above the cut" could not be asked as a question about
+     * height; and every "is this neighbour across the kerf" test came out
+     * exactly 0 and was settled by the last bit of the float. Two planes a kerf
+     * apart, and the slab between them is gone the way the blade took it. */
+    let hi = null, lo = null;
+    const pHi = new THREE.Vector3().copy(lp).addScaledVector(ln, KERF);
+    const pLo = new THREE.Vector3().copy(lp).addScaledVector(ln, -KERF);
+    try { hi = sliceGeometry(toCut, pHi, ln); } catch (e) { hi = null; }
+    try { lo = sliceGeometry(toCut, pLo, ln); } catch (e) { lo = null; }
+    if (!hi && !lo) {
+      // the blade's plane misses what is left of the cell — the whole of it is
+      // on one side, so there is nothing to part and nothing has been spent
+      for (const [g] of parts) g.dispose();
+      if (toCut !== chunk.geo) toCut.dispose();
+      parts.length = 0;
+      return false;
+    }
+    if (hi) parts.push([hi.front, 1]);
+    if (lo) parts.push([lo.back, -1]);
+    // the halves on the wrong side of each plane, and the offcut the reach
+    // slice left behind, are the slot the blade took — nobody is going to draw
+    // them, so hand their buffers back rather than waiting for a GC that only
+    // runs on the JS side of them
+    if (hi) hi.back.dispose();
+    if (lo) lo.front.dispose();
+    if (toCut !== chunk.geo) toCut.dispose();
 
     const localCentre = chunk.centre.clone();
     const volume = chunk.volume;
@@ -1451,7 +1626,7 @@ export class Structure {
     const gap = Math.max(0.08, this.profile.cell * 0.30);
     const kin = chunk.neighbours.filter((n) => n.state === 'attached');
     const made = [];
-    for (const [geo, sign] of [[res.front, 1], [res.back, -1]]) {
+    for (const [geo, sign] of parts) {
       const off = new THREE.Vector3();
       geo.computeBoundingBox();
       geo.boundingBox.getCenter(off);
@@ -1459,7 +1634,8 @@ export class Structure {
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
       const bb = geo.boundingBox.clone().translate(scratch.copy(localCentre).add(off));
-      const share = clamp(bb.getSize(scratch).length() / Math.max(1e-3, halfLen * 2), 0.1, 1);
+      const share = clamp(bb.getSize(scratch).length() / Math.max(1e-3, halfLen * 2), 0.1, 1)
+        / parts.length * 2;                          // the pieces share one cell
       const frag = new Chunk(this, {
         bounds: bb, centre: bb.getCenter(new THREE.Vector3()),
         volume: volume * share, mat, poly: null,
@@ -1469,7 +1645,7 @@ export class Structure {
         || boxShape(Math.max(0.02, frag.half.x), Math.max(0.02, frag.half.y), Math.max(0.02, frag.half.z));
       frag.tris = geo.attributes.position.count / 3;
       this.manager.stats.chunkTris += frag.tris;
-      /* Both halves stay ATTACHED, and support decides what happens to them.
+      /* Every piece stays ATTACHED, and support decides what happens to them.
        *
        * They used to be flung apart the instant the blade parted the cell, and
        * that is what made a partial cut impossible: whatever the blade actually
@@ -1480,10 +1656,31 @@ export class Structure {
        * still touches and the far half to whatever IT still touches, the two of
        * them are joined to nothing — that is the kerf — and settleSupport is
        * what works out whether there is still a way to the ground. */
-      frag.neighbours = kin.filter((n) => !(
-        bb.max.x + gap < n.bounds.min.x || n.bounds.max.x + gap < bb.min.x
-        || bb.max.y + gap < n.bounds.min.y || n.bounds.max.y + gap < bb.min.y
-        || bb.max.z + gap < n.bounds.min.z || n.bounds.max.z + gap < bb.min.z));
+      frag.neighbours = kin.filter((n) => {
+        if (bb.max.x + gap < n.bounds.min.x || n.bounds.max.x + gap < bb.min.x
+          || bb.max.y + gap < n.bounds.min.y || n.bounds.max.y + gap < bb.min.y
+          || bb.max.z + gap < n.bounds.min.z || n.bounds.max.z + gap < bb.min.z) return false;
+        if (!sign) return true;                      // past the tip: uncut, so it bridges
+        /* …and the blade did not pass between them.
+         *
+         * The slack above is 0.41 m on stone — it has to be, because it is
+         * judging the bounding boxes of Voronoi wedges that really do share
+         * stone. But it is far wider than a kerf, so it happily re-joined a
+         * fragment above the cut to a fragment below it: measured on a column
+         * carved right through at mid height, every cell across the section
+         * parted and the top still had a path to the ground through the halves
+         * of its NEIGHBOURS, and stood. A neighbour that straddles the plane is
+         * uncut stone and is exactly the ligament the overturning test wants to
+         * find; a neighbour wholly on the other side of it is across the kerf.
+         *
+         * "Wholly" has to be a kerf's worth and not a strict inequality: a
+         * fragment the blade made on THIS plane has its cut face exactly on it,
+         * so the strict test came out 0 > 0 and was decided by the last bit of
+         * the float. Bridging means stone a kerf deep on this side of the cut. */
+        const dc = ln.dot(scratch.copy(n.centre).sub(localCentre).sub(lp));
+        const proj = Math.abs(ln.x) * n.half.x + Math.abs(ln.y) * n.half.y + Math.abs(ln.z) * n.half.z;
+        return sign > 0 ? dc + proj > KERF : dc - proj < -KERF;
+      });
       for (const n of frag.neighbours) n.neighbours.push(frag);
       frag.grounded = bb.min.y <= this.local.min.y + Math.max(0.22, this.size.y * 0.06);
       frag.state = 'attached';
@@ -1492,9 +1689,22 @@ export class Structure {
         this.quaternion.clone(), { friction: 0.85 }) || null;
       this.chunks.push(frag);
       this.attached++;
-      // a shove, so whichever half is loose already goes the right way
-      frag._kick = new THREE.Vector3().copy(point).addScaledVector(normal, -sign * 0.35);
+      // a shove, so whichever half is loose already goes the right way. The
+      // ligament has not been shoved by anything — it was never touched.
+      if (sign) frag._kick = new THREE.Vector3().copy(point).addScaledVector(normal, -sign * 0.35);
+      frag._side = sign;
       made.push(frag);
+    }
+    /* The ligament joins the two halves it stopped short of. The blade's tip
+     * ends inside the stone, so the material at the tip is continuous: the near
+     * half above the kerf rests on it and the near half below it holds it up,
+     * and taking that link out would sever a section the blade only notched. */
+    const lig = made.find((f) => !f._side);
+    if (lig) {
+      for (const f of made) {
+        if (f === lig) continue;
+        lig.neighbours.push(f); f.neighbours.push(lig);
+      }
     }
     this.shellDirty = true;
     return made.length > 0;
@@ -2083,6 +2293,12 @@ export class Destruction {
       this._bladeSeen.set(key, work);
       if (delta <= 0) continue;
       const s = cap.structure;
+      // The blade is on it, so from the next frame it meets the cells rather
+      // than the maker's collider. This is the one moment worth spending the
+      // fracture on: the piece is being cut and it is going to need them, and
+      // paying for it here rather than at the first cut means the work the
+      // solver has banked against the capsule names survives.
+      s.prefracture();
       const at = _v2.lerpVectors(cap.p0, cap.p1, 0.5);
       s.wear(delta * 2.2, at);
       const frac = clamp(work / Math.max(1e-3, cap.toughness), 0, 1);
@@ -2496,6 +2712,69 @@ function _worldBox(s, out) { return out.copy(s.local).applyMatrix4(_m4From(s.pos
  * same lintel with one column shot out from under it still goes over, because
  * across the span the depth is 5.2 m and the margin 0.6.
  */
+/**
+ * The capsule one cell publishes to the blade: which of its axes it runs along,
+ * the radius of the cylinder that holds its stone, and the half-length of the
+ * straight part. Two callers need exactly the same shape — the one that offers
+ * it to the solver and the one that has to work out, from a cut event, how far
+ * into the piece the blade was when it parted it.
+ */
+function cellCapsule(c) {
+  const h = c.half;
+  const ax = h.x >= h.y && h.x >= h.z ? 0 : (h.y >= h.z ? 1 : 2);
+  const halfLen = Math.max(0.02, ax === 0 ? h.x : ax === 1 ? h.y : h.z);
+  // never fatter than the box it came out of, and never so thin the blade has
+  // to thread it — 12 cm is about the width of the kerf a blade leaves
+  const fat = Math.max(0.02, ax === 0 ? Math.min(h.y, h.z) : ax === 1 ? Math.min(h.x, h.z) : Math.min(h.x, h.y));
+  const rad = clamp(Math.sqrt(Math.max(1e-4, c.volume) / (Math.PI * 2 * halfLen)), 0.12, fat);
+  /* The straight part spans the whole cell, so the round caps stand `rad` proud
+   * of each end. That is deliberately the one place the proxy is allowed to be
+   * bigger than the stone: erring ACROSS the cell is what let a blade cut a
+   * column it had not reached the back of, while erring ALONG it only lets the
+   * blade catch a cell a little before it reaches it — and the next cell up is
+   * there anyway. Ending the capsule short instead cost the game a measured
+   * bug: the caps narrow to nothing, so a blade held at the very bottom of a
+   * 2.3 m cell had to thread its axis to touch it at all, and a grind that
+   * should have parted a column produced two cut events in four seconds. */
+  return { ax, rad, halfLen, arm: halfLen };
+}
+
+/**
+ * The blade's own axis, hilt to tip, out of a cut event — with its SIGN.
+ *
+ * A cut event carries the plane the blade swept and the velocity it swept it
+ * at, and nothing that says "the tip was here". It does not have to: Saber
+ * builds that plane's normal as (tip − base) × (tip − prevTip), which is the
+ * axis crossed with the travel, and for two perpendicular unit vectors
+ * v̂ × (â × v̂) = â exactly. So crossing the travel back into the normal returns
+ * the axis pointing the way the blade points.
+ *
+ * The sign is the whole reason to bother. Without it, "stone past the cut point
+ * is untouched" is a coin flip between leaving the ligament the blade stopped
+ * short of and leaving the stone behind the hilt, which is the half it went
+ * clean through — and getting it backwards puts the bearing on the wrong side
+ * of the section and drops a column a notch should not have moved.
+ *
+ * Returns null for a thrust, where there is no sweep and so no plane worth the
+ * name; the caller falls back to a cut with no reach limit, which is what a
+ * blade driven straight in actually does.
+ *
+ * It leans on one thing about the saber: the event's velocity is taken at the
+ * contact, and the normal is built from the TIP's travel, so the two only agree
+ * while every point of the blade is moving the same way. They are, because a
+ * saber pivots at the hand and the hand is 15.5 cm behind the emitter — the
+ * pivot is never between base and tip. Were it ever otherwise the axis would
+ * come out reversed, and a cut would take the far side of a cell and leave the
+ * near one.
+ */
+function bladeAxis(normal, impulse, out) {
+  if (!impulse || !out) return null;
+  out.copy(impulse);
+  out.addScaledVector(normal, -out.dot(normal));    // travel, in the swept plane
+  if (out.lengthSq() < 1e-8) return null;
+  return out.normalize().cross(normal).normalize();
+}
+
 const PLAN_KERN = 0.156;
 function edgeInset(depth) { return clamp(PLAN_KERN * depth, 0.04, 0.6); }
 /**

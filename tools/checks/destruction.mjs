@@ -281,7 +281,12 @@ export async function run({ check, assert }) {
       const saber = new Saber(h.scene, { colorIndex: 0, bladeLength: L });
       saber.ignite(); saber.ignition = 1;
       const q = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), V(1, 0, 0));
-      const hiltX = -R - L + depth;                 // tip ends `depth` past the face
+      /* Tip ends `depth` past the face — and the plasma does not start at the
+       * hilt. It starts at the emitter, 15.5 cm up it, so `-R - L + depth` put
+       * the tip at `depth + 0.155` past the face and this test was carving 41%
+       * and 82% of the section while calling them 27% and 68%. Measured: hilt
+       * -1.550 → base -1.395 → tip -0.095, against a face at -0.55. */
+      const hiltX = -R + depth - L - saber.emitterY;
       for (let i = 0; i < 500; i++) {
         const dt = 1 / 60;
         saber.setHiltPose(V(hiltX, H, Math.sin(i * dt * 9) * 1.1), q);
