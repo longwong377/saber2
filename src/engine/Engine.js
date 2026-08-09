@@ -311,7 +311,98 @@ const CSM_GLSL = /* glsl */`
     vec2 d = min( c.xy / c.w, 1.0 - c.xy / c.w );
     return clamp( min( d.x, d.y ) * 12.0, 0.0, 1.0 );
   }
-  #define SABER_CASCADE(i) getShadow( directionalShadowMap[ i ], directionalLightShadows[ i ].shadowMapSize, directionalLightShadows[ i ].shadowIntensity, directionalLightShadows[ i ].shadowBias, directionalLightShadows[ i ].shadowRadius, vDirectionalShadowCoord[ i ] )
+
+  /* ── THE PENUMBRA ────────────────────────────────────────────────────
+   *
+   * A sun shadow with a hard edge is one of the loudest synthetic tells there
+   * is, and this rig had one: measured on a 6 m blocker at the arena's 34° sun,
+   * the terminator was 8.1 cm across the ground, which is the shadow an
+   * 0.24°-wide source casts — under half the sun's own 0.53° disc, before any
+   * blocker distance is counted at all. It could not be anything else. Read
+   * three's shadowmap chunk: the SHADOWMAP_TYPE_PCF_SOFT branch builds a
+   * bilinear 3×3 at exactly one texel and never mentions shadowRadius, so the
+   * edge width was set by texel size and by nothing else — the shadow of a
+   * crate and the shadow of a spire came out the same width, and both of them
+   * came out the width of the shadow map.
+   *
+   * So: a blocker search, then a filter sized by what it finds. The width of a
+   * real penumbra is the source's angular size times HOW FAR IN FRONT the
+   * caster is, which is why a foot on the ground is sharp and the same body's
+   * shadow on a wall ten metres behind it is not. One filter width cannot be
+   * both, and picking either one is picking which half of the frame is wrong.
+   *
+   * shadowRadius is repurposed to carry it, and that is the only channel
+   * there is: three uploads exactly one float per light, and adding a uniform
+   * to every material in the game to carry a second is not worth what it buys.
+   * It holds the PENUMBRA SLOPE — the shadow-map UV radius the source paints
+   * per unit of NORMALISED depth between blocker and receiver. Ortho depth is
+   * linear, so that one float folds the source's angular size, the cascade's
+   * box and its depth range together (see fitShadows), and the shader is left
+   * knowing none of them — which is also why it stays right when the split,
+   * the tier or the weather changes.
+   */
+
+  /** Vogel disc: n points spiralling out to unit radius, evenly spread by the
+   *  golden angle. Generated rather than tabulated because GLSL ES 1.00 has no
+   *  const array initialisers, and this is two trig calls either way. */
+  vec2 saberDisc( const in float i, const in float n, const in float phi ) {
+    float t = i * 2.39996323 + phi;
+    return vec2( cos( t ), sin( t ) ) * sqrt( ( i + 0.5 ) / n );
+  }
+
+  #define SABER_SEARCH 6
+  #define SABER_TAPS 12
+  /** The widest penumbra a cascade may paint, in its OWN texels. Past this the
+   *  taps are further apart than the feature they are filtering and the edge
+   *  starts to boil instead of blur. 14 texels is 31 cm in the near cascade at
+   *  high and 1.6 m in the far one. It binds on a very low sun — the canyon's
+   *  14° key wants 18 texels off a 6 m blocker — and there the edge comes out
+   *  narrower than the air says it should, which is the honest trade. */
+  #define SABER_PENUMBRA_MAX 14.0
+
+  float saberSoftShadow( sampler2D map, vec2 mapSize, float intensity, float bias, float slope, vec4 coord ) {
+    coord.xyz /= coord.w;
+    coord.z += bias;
+    bool inFrustum = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0;
+    if ( ! ( inFrustum && coord.z <= 1.0 ) ) return 1.0;
+    vec2 texel = vec2( 1.0 ) / mapSize;
+    float maxR = SABER_PENUMBRA_MAX * texel.x;
+    // Rotate the disc per pixel. Unrotated, twelve taps are a rosette, and a
+    // rosette repeated along a shadow edge is a pattern you can read; rotated,
+    // the same error lands as dither.
+    //
+    // AND IT IS MEASURABLY MORE DITHER THAN THE FILM GRAIN, which is the honest
+    // number to leave here rather than to discover later: on the arena's macro
+    // plate the row-wise standard deviation is 0.0018 on lit sand, 0.0017 in
+    // the umbra and 0.0292 across the penumbra band, against a grain of about
+    // 0.0086 at that luminance. Twelve stochastic taps buy a soft edge and pay
+    // for it in speckle inside the band and nowhere else, and the exchange rate
+    // is the square root: reaching grain level needs about 140 taps. The ways
+    // out are temporal reuse or a denoise, not a bigger loop.
+    float phi = fract( sin( dot( gl_FragCoord.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) * 6.283185;
+    float sum = 0.0, n = 0.0;
+    float d0 = unpackRGBAToDepth( texture2D( map, coord.xy ) );
+    if ( d0 < coord.z ) { sum = d0; n = 1.0; }
+    for ( int i = 0; i < SABER_SEARCH; i ++ ) {
+      vec2 o = saberDisc( float( i ), float( SABER_SEARCH ), phi ) * maxR;
+      float d = unpackRGBAToDepth( texture2D( map, coord.xy + o ) );
+      if ( d < coord.z ) { sum += d; n += 1.0; }
+    }
+    // Nothing between this fragment and the sun anywhere in the search disc:
+    // seven fetches and out. Count three's PCF_SOFT branch and it is SIXTEEN
+    // fetches — four corners plus four two-tap mixes plus a four-tap nested one
+    // — spent on every lit pixel in the game, so most of the frame gets cheaper
+    // here and only the pixels actually near an edge pay the twelve-tap filter.
+    if ( n < 0.5 ) return 1.0;
+    float r = clamp( slope * ( coord.z - sum / n ), texel.x, maxR );
+    float shadow = 0.0;
+    for ( int i = 0; i < SABER_TAPS; i ++ ) {
+      shadow += texture2DCompare( map, coord.xy + saberDisc( float( i ), float( SABER_TAPS ), phi ) * r, coord.z );
+    }
+    return mix( 1.0, shadow / float( SABER_TAPS ), intensity );
+  }
+
+  #define SABER_CASCADE(i) saberSoftShadow( directionalShadowMap[ i ], directionalLightShadows[ i ].shadowMapSize, directionalLightShadows[ i ].shadowIntensity, directionalLightShadows[ i ].shadowBias, directionalLightShadows[ i ].shadowRadius, vDirectionalShadowCoord[ i ] )
   float saberCascadeShadow() {
     float f = saberCascadeFit( vDirectionalShadowCoord[ 0 ] );
     if ( f >= 1.0 ) return SABER_CASCADE( 0 );
@@ -402,6 +493,90 @@ const ENV_INTENSITY = 0.38;
 
 /** The hemisphere light is a floor under the probe, not a second ambient. */
 const HEMI_TRIM = 0.45;
+
+/**
+ * How much diffuse sky a level is allowed, as a fraction of its direct sun —
+ * and the reason it is a FUNCTION of the sun's height rather than a constant.
+ *
+ * It used to be a flat 0.55, defended as "about where a real daylit scene sits
+ * anyway". It is not. On a clear day the diffuse horizontal irradiance runs
+ * about a fifth of the direct at a high sun; 0.55 is three times that, and it
+ * is the whole reason the frame had no blacks in it. Measured on a controlled
+ * cast shadow (tools/_shade.mjs), sand in the sun and the same sand in its own
+ * shadow came out 1.97:1 in display on the arena, off 2.64:1 of metered linear
+ * irradiance — a shadow at better than half the brightness of the light. A
+ * clear desert at that sun is nearer five to one; this curve puts it at 4.26.
+ *
+ * But it cannot be a smaller constant either, because the diffuse fraction is
+ * not constant: it is set by AIR MASS. A sun at 14° is shining through nearly
+ * four times the atmosphere a sun at 60° is, so far more of its beam arrives
+ * as sky and far less as sun — which is exactly why the canyon, at a 14° sun,
+ * was already the one level the judge called tonally lit, and why cutting
+ * every level by the same factor would have broken the one that was right.
+ * This curve leaves the canyon at 0.48 (87% of what it had) and takes the
+ * arena to 0.24 and the dune sea to 0.31.
+ *
+ * @param {number} sunY sin(elevation), i.e. the sun direction's y.
+ */
+export function diffuseCap(sunY) {
+  return 0.14 + 0.62 * Math.pow(Math.max(1 - Math.max(sunY, 0), 0), 2.2);
+}
+
+/**
+ * How much of the sky's own chroma the environment probe keeps.
+ *
+ * This was 0.6, on the reasoning that the probe stands in for bounce as well
+ * as sky and "real bounce has been through two or three surfaces and is much
+ * less saturated than Preetham's blue; baked at full chroma every shadowed
+ * face turns cyan". The first half was true and the second half was a
+ * consequence of a bug, not of chroma: the ground-bounce hemisphere the probe
+ * was supposed to be getting its warm, desaturated half from HAS NEVER BEEN IN
+ * THE BAKE (see refreshEnvironment). So the sky was desaturated to stand in
+ * for a term that was missing, and the result is that a warm albedo under a
+ * de-blued sky lands on neutral by construction: measured, sand in cast shadow
+ * came out saturation 0.075 at hue 58° on the arena, 0.051 at 197° on the dune
+ * sea and 0.013 at 79° on the canyon. Grey, whatever the level.
+ *
+ * Full chroma, and the bounce put back where it belongs, is the pair.
+ */
+const PROBE_CHROMA = 1.0;
+
+/** The sun's own angular diameter, degrees. A floor, and only a floor. */
+const SUN_DISC_DEG = 0.53;
+/**
+ * …and the circumsolar aureole around it. Forward Mie scattering does not
+ * remove light from the beam so much as smear it into a few degrees around the
+ * disc, and that aureole casts a shadow too — which is why a desert shadow
+ * edge measures wider than 0.53° at noon and why the edge softens visibly as
+ * the air thickens. Scaled by the level's own turbidity: the canyon's 4.5 adds
+ * 0.40°, the arena's 6 adds 0.64°, the dune sea's 8.5 adds 1.04°.
+ */
+const AUREOLE_DEG = 1.6;
+/**
+ * Where the source ends up when a front has taken the whole beam: the sky
+ * itself is the light, and it is tens of degrees across. A crate in a dust
+ * storm has no edge to its shadow, and until now it had the same razor edge it
+ * has at noon — the storm work could dim the key and lift the fill from its
+ * own file but the edge lives here.
+ */
+const OVERCAST_DEG = 60;
+
+/**
+ * The far plane the probe is baked through, and the radius of the ground-bounce
+ * hemisphere that has to fit inside it.
+ *
+ * These are a PAIR and that is the whole point of naming them. PMREMGenerator
+ * .fromScene defaults to near 0.1 / far 100; the bounce dome was scaled to
+ * 4000, so every one of its vertices sat past the far plane, every triangle was
+ * clipped, and the "only thing that puts colour under a chin" has contributed
+ * nothing to any frame this game has ever drawn. Nothing threw, nothing warned,
+ * and the sky was then desaturated by 40% to cover for the missing term.
+ *
+ * The far plane is passed explicitly now so the two numbers are connected by
+ * code rather than by a comment, and a check asserts one is inside the other.
+ */
+export const PMREM_FAR = 100;
+export const BOUNCE_RADIUS = 60;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _sv1 = new THREE.Vector3(), _sv2 = new THREE.Vector3();
 /* fitShadows' own scratch. Deliberately not _sv1/_sv2: those belong to
@@ -490,13 +665,24 @@ export function skyRadiance(dir, sunDir, a, out = new THREE.Color()) {
 export const SKY_PHYSICAL = { knee: 2.4, ceil: 9.5 };
 
 /**
- * The exposed radiance the brightest piece of sky is allowed to reach. ACES
- * has a long shoulder and a scene pushed up against it has no separation left,
- * so 0.72 lands the skyline around 0.92 display luminance: plainly the
- * brightest thing in the frame, still short of paper white, with the sun disc
- * left as the only thing that clips.
+ * The exposed radiance the brightest piece of sky is allowed to reach.
+ *
+ * 0.72 was defended as landing the skyline "around 0.92 display luminance".
+ * It does not, and that is measurable without a GPU: 0.72 exposed is 0.842
+ * through ACES, and the sky never reaches its own asymptote anyway — measured
+ * on the arena's pinned frame the sunward skyline read 0.829 and the mid sky
+ * 0.584 against sunlit sand at 0.655. The sky was DARKER than the ground it
+ * stood over, on a desert, which is the "no whites" half of the complaint and
+ * is the one thing a desert frame cannot be.
+ *
+ * 1.18 exposed is 0.906 through ACES, which is what the old comment claimed
+ * and what a skyline should be: the brightest thing in the frame, a hair short
+ * of paper white, the sun disc still the only thing that clips. It stays under
+ * the 1.55 linear ceiling below and therefore under the bloom pass's 1.8, so
+ * the dome still cannot become a bloom source — the drawn sky approaches its
+ * ceiling asymptotically and tops out around three quarters of it.
  */
-const SKY_CLIP = 0.72;
+const SKY_CLIP = 1.18;
 /**
  * …held inside this band in LINEAR radiance whatever the exposure asks for.
  * The ceiling is the load-bearing one: 1.55 is under the bloom pass's 1.8
@@ -613,10 +799,23 @@ export function hazeRadiance(a, out = new THREE.Color(), shoulder = null) {
  * with a warm undertone, which is what a cloud base is.
  */
 const CLOUD_ALBEDO = 0.9;
+const CLOUD_FACING = 0.35;
 export function cloudLight(a, meter = null) {
   const m = meter || atmosphereMeter(a);
   const sunPos = m.sunPos;
-  const sun = CLOUD_ALBEDO * (a.sunIntensity ?? 3.6) * Math.max(sunPos.y, 0.05) / Math.PI;
+  // A CUMULUS TOP IS NOT A HORIZONTAL PLATE. `sunY` is the cosine for flat
+  // ground, and using it here said a cloud at a 14° sun receives a quarter of
+  // the beam a cloud at noon does — which is why the canyon's deck was the
+  // darkest in the game under the level with the most weather in it. A cumulus
+  // is a bulging cauliflower above the haze: some of its facets always face the
+  // sun squarely, and those are the ones that read as the top. CLOUD_FACING is
+  // how far toward normal incidence the brightest facets sit; 0.35 keeps every
+  // level's deck under the bloom pass's 1.8 after exposure (the canyon, metered
+  // 2.4 stops off the arena, is the one that binds — it lands at 1.64) while
+  // leaving it above the sky it stands in front of, which is the pair a deck
+  // has to satisfy to read as a cloud rather than as a hole.
+  const facing = sunPos.y + CLOUD_FACING * (1 - Math.max(sunPos.y, 0.05));
+  const sun = CLOUD_ALBEDO * (a.sunIntensity ?? 3.6) * Math.max(facing, 0.05) / Math.PI;
   const tint = new THREE.Color(1, 1, 1);
   if (!m.outdoor) return { sun, amb: 0.42, tint, bounce: 0, sky: 0, inner: 0 };
   const ground = new THREE.Color(a.groundColor ?? 0x60482e);
@@ -700,7 +899,12 @@ export function atmosphereMeter(a) {
     }
   }
   const skyFull = Math.PI * (e / Math.max(w, 1e-6)) * ENV_INTENSITY;
-  const envI = ENV_INTENSITY * clamp(0.55 * direct / Math.max(skyFull, 1e-4), 0.45, 1);
+  // The floor was 0.45 and is now 0.16, because the cap it guards is no longer
+  // a flat 0.55: a floor set just under the old cap turned the whole thing into
+  // a constant the moment the cap came down. No level sits on it — the clamp's
+  // input measures 0.29 on the arena, 0.50 on the dune sea and 0.49 on the
+  // canyon — so it guards against an unauthored sky, not against these three.
+  const envI = ENV_INTENSITY * clamp(diffuseCap(sunPos.y) * direct / Math.max(skyFull, 1e-4), 0.16, 1);
   const irradiance = direct + skyFull * (envI / ENV_INTENSITY) + hemiIrr + fillIrr;
   const key = irradiance * 0.18 / Math.PI;
   return { sunPos, outdoor, direct, skyFull, envI, irradiance, key,
@@ -949,16 +1153,14 @@ export class Engine {
       L.shadow.normalBias = 0.02 * (1 + i * 0.375);
       L.shadow.camera.near = 0.5;
       L.shadow.camera.far = 260;
-      // NB `radius` does NOTHING here, and the comment that used to say it did
-      // was wrong. Read three's shadowmap_pars_fragment: the SHADOWMAP_TYPE_PCF
-      // branch scales its nine taps by shadowRadius, but SHADOWMAP_TYPE_PCF_SOFT
-      // — which is what this rig uses — builds a bilinear-weighted 3×3 at exactly
-      // one texel and never mentions shadowRadius at all. It only reaches point
-      // lights, and nothing in the game casts one. The penumbra is therefore set
-      // by shadow map texel size alone: 2.2 cm in the near cascade at medium,
-      // which is about right for a sun. Left at 1 so nobody tunes a number that
-      // is not connected.
-      L.shadow.radius = 1;
+      // `radius` used to do NOTHING — three's PCF_SOFT path never reads it —
+      // and the rig's whole penumbra was therefore one shadow-map texel wide.
+      // It is the penumbra SLOPE now (see saberSoftShadow), and fitShadows
+      // rewrites it every frame from the source's angular size and the box it
+      // belongs to. Seeded at 0, which clamps to one texel — exactly the old
+      // hard edge — so a frame taken before anything has moved degrades to what
+      // shipped rather than to "maximally soft".
+      L.shadow.radius = 0;
       this.scene.add(L);
       this.scene.add(L.target);
       this.cascades.push(L);
@@ -987,10 +1189,19 @@ export class Engine {
     // — a flat wash with none of the level's own colour in it — so every
     // upward-facing crevice and every underside is lit by the wrong thing. A
     // sunlit desert throws a great deal of warm light back up; this is it.
+    //
+    // AND IT HAS NEVER RENDERED. PMREMGenerator.fromScene defaults its cube
+    // camera to near 0.1 / far 100 and this was scaled to 4000, so every one of
+    // its vertices sat past the far plane and every triangle was clipped: the
+    // probe has been pure sky since the day it was written, and the sky was
+    // then desaturated by 40% to stand in for the term that was missing (see
+    // PROBE_CHROMA). BOUNCE_RADIUS is inside that far plane with room to
+    // spare, and the dome is drawn from its own centre so its radius means
+    // nothing else.
     this._bounce = new THREE.Mesh(
       new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5),
       new THREE.MeshBasicMaterial({ color: 0x6b543a, side: THREE.BackSide, fog: false, toneMapped: false }));
-    this._bounce.scale.setScalar(4000);
+    this._bounce.scale.setScalar(BOUNCE_RADIUS);
 
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.pmrem.compileEquirectangularShader();
@@ -1087,6 +1298,17 @@ export class Engine {
     for (const L of this.cascades) L.position.copy(sunPos).multiplyScalar(90);
     this.sun.color.set(a.sunColor ?? 0xfff0d8);
     this.sun.intensity = a.sunIntensity ?? 3.6;
+    // How wide the thing casting the shadows is, in degrees, in clear air. See
+    // SUN_DISC_DEG / AUREOLE_DEG; fitShadows turns it into a filter width.
+    this._sourceDeg = SUN_DISC_DEG
+      + AUREOLE_DEG * clamp(((a.turbidity ?? 6) - 2) / 10, 0, 1);
+    // The authored key, kept so fitShadows can see how much of it the weather
+    // has taken. Scenery dims `sun.intensity` during a front and Engine has no
+    // other way to know a front is happening — and it should not import one:
+    // the fraction of the beam that has been scattered out IS the quantity that
+    // sets how big the source has become, so the number the engine can already
+    // see is the right one to read.
+    this._sunKey = a.sunIntensity ?? 3.6;
     this.hemi.color.set(a.skyColor ?? 0xbcd8ff);
     this.hemi.groundColor.set(a.groundColor ?? 0x60482e);
     // The probe is doing this job properly now, so the hand-rolled hemisphere
@@ -1183,8 +1405,13 @@ export class Engine {
     // What the ground throws back up, for the probe: albedo × the irradiance
     // actually landing on it. A 26° sun over pale sand is a genuine second
     // light source and it is the only thing that puts colour under a chin.
+    //
+    // The irradiance is the METER's, not `sunI * sunY`: the sun is not the only
+    // thing lighting the ground, and now that the indirect budget moves with the
+    // sun's height (diffuseCap) a bounce keyed to the beam alone would drift
+    // away from the ground it is meant to be a reflection of.
     this._bounce.material.color.set(a.groundColor ?? 0x60482e)
-      .multiplyScalar(clamp(sunI * Math.max(0.12, sunPos.y) / Math.PI, 0.02, 6));
+      .multiplyScalar(clamp(meter.irradiance / Math.PI, 0.02, 6));
     this.refreshEnvironment();
   }
 
@@ -1196,12 +1423,11 @@ export class Engine {
     if (this.scene.background instanceof THREE.Color) tmp.background = this.scene.background;
     if (this.sky.visible) { tmp.add(skyClone); tmp.add(this._bounce); }
     else tmp.background = new THREE.Color(0x11151d);
-    // The probe is the ONLY indirect light in the game, so it has to stand in
-    // for everything bouncing around out there, not just the sky. Real bounce
-    // has been through two or three surfaces and is much less saturated than
-    // Preetham's blue; baked at full chroma every shadowed face turns cyan.
+    // See PROBE_CHROMA. The sky goes in at its own chroma now; the bounce
+    // hemisphere above is what carries the warm, desaturated half, and it is
+    // in the bake for the first time.
     const sat = this.sky.material.uniforms.uSkySat;
-    if (sat) sat.value = 0.6;
+    if (sat) sat.value = PROBE_CHROMA;
     // And bake from the PHYSICAL sky, not the drawn one. The drawn dome is
     // soft-clipped at 1.55 so it cannot feed the bloom pass (see SKY_DISPLAY);
     // baking the probe from that would quietly re-flatten the image-based
@@ -1210,7 +1436,7 @@ export class Engine {
     // material, so moving the uniforms here moves the clone too.
     const knee = this.sky.material.uniforms.uSkyKnee, ceil = this.sky.material.uniforms.uSkyCeil;
     if (knee) { knee.value = SKY_PHYSICAL.knee; ceil.value = SKY_PHYSICAL.ceil; }
-    this._envRT = this.pmrem.fromScene(tmp, 0.04);
+    this._envRT = this.pmrem.fromScene(tmp, 0.04, 0.1, PMREM_FAR);
     if (knee) { knee.value = this.skyDisplay.knee; ceil.value = this.skyDisplay.ceil; }
     if (sat) sat.value = 1;
     this.scene.environment = this._envRT.texture;
@@ -1320,6 +1546,23 @@ export class Engine {
   fitShadows(center) {
     const dir = this.sunDir || _fs[0].set(0.5, 0.8, 0.3);
     const boxes = cascadeBoxes(this.quality);
+    /* HOW BIG THE SOURCE IS RIGHT NOW. In clear air it is the disc plus the
+     * aureole; a front replaces it with the sky. The storm term is read off the
+     * key the level authored versus the key the sun is actually carrying —
+     * Scenery dims it during a front — so a shadow edge softens as the light
+     * goes flat without either file knowing about the other.
+     *
+     * A full squall is half the beam gone (Scenery's sunLoss is 0.50), which
+     * asks for a source near 31°. It does not get one: SABER_PENUMBRA_MAX caps
+     * the filter at 14 texels and the storm runs into that cap on every level
+     * whose sun is low enough to stretch the shadow. Measured, half the key
+     * gone widens the implied source from 1.42° to 2.15° on the arena and from
+     * 0.27° to 3.63° in the dojo — the direction is right and the magnitude is
+     * bounded by the filter, not by the model. A wider cap needs more than
+     * twelve taps to stay smooth; see saberSoftShadow. */
+    const dim = clamp(1 - this.sun.intensity / Math.max(this._sunKey || 1e-3, 1e-3), 0, 1);
+    const src = this._sourceDeg ?? SUN_DISC_DEG;
+    const tanSrc = Math.tan(THREE.MathUtils.degToRad(src + (OVERCAST_DEG - src) * dim));
     // The view forward, flattened: a box that pitches with the camera would
     // swing its whole footprint every time the player looks at their feet.
     const fwd = _fs[1].set(0, 0, -1).applyQuaternion(this.camera.quaternion);
@@ -1330,6 +1573,12 @@ export class Engine {
       const cam = L.shadow.camera;
       cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
       cam.near = 1; cam.far = d * 4.2;
+      // The penumbra slope this cascade hands the shader: UV radius per unit of
+      // normalised depth. Ortho depth is linear over [near, far] and the box is
+      // 2d of UV across, so a blocker `z` metres in front of its receiver wants
+      // z·tan(source) of world penumbra, which is that over 2d in UV, which is
+      // this constant times the normalised depth the shader already has.
+      L.shadow.radius = tanSrc * (cam.far - cam.near) / (2 * d);
       _fs[2].copy(center).addScaledVector(fwd, d * 0.55);
       // Light-space basis: the shadow camera looks down -dir with three's
       // default up, so right = up × dir and camUp = dir × right.

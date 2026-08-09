@@ -49,6 +49,9 @@ const _km = new THREE.Matrix4(), _ke = new THREE.Euler(), _kq = new THREE.Quater
 const _kv = new THREE.Vector3();
 const IDENT = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
+// addScree bedding scratch: it runs inside the instance loop, so it may not
+// share the scratch above with the makers that call it
+const _plate = new THREE.Vector3(), _tan = new THREE.Vector3(), _q2 = new THREE.Quaternion();
 
 let _propId = 1;
 
@@ -1990,6 +1993,10 @@ export function addInstanced(world, geo, mat, list, centre, opts = {}) {
   if (im.instanceColor) im.instanceColor.needsUpdate = true;
   im.castShadow = opts.castShadow !== false;
   im.receiveShadow = true;
+  // Name it. Hunting one stray polygon through a frame cost a round of this
+  // project, and an anonymous "Mesh:IcosahedronGeometry" in the scene graph is
+  // exactly what made it expensive.
+  if (opts.name) im.name = opts.name;
   im.position.copy(centre);
   if (opts.quaternion) im.quaternion.copy(opts.quaternion);
   im.matrixAutoUpdate = false; im.updateMatrix();
@@ -2235,6 +2242,20 @@ export function addBoulderCluster(world, centre, opts = {}) {
   return out;
 }
 
+/* How a chip is allowed to sit. CHIP_LEAN is the wobble off the ground's own
+ * normal — enough that a field of them does not read as tiles, small enough
+ * that none of them reads as standing. CHIP_REPOSE is the hard ceiling on the
+ * result: 0.62 rad is 36°, the angle of repose of loose rock, which is the
+ * steepest a chip can rest at before it slides instead of perching. Past that
+ * the chip is leaned back toward vertical rather than dropped, so scree still
+ * covers a steep bank — it just lies on it. */
+const CHIP_LEAN = 0.30;      // rad, ±17° off the ground normal
+const CHIP_REPOSE = 0.62;    // rad, 36° from vertical, whatever the ground does
+/* And how big a chip is allowed to get. 1.5 m is not a new number: it is the
+ * one Levels.js already names as where a chip stops reading as a stone lying on
+ * the ground and starts reading as a shard. Nothing was enforcing it. */
+const CHIP_SPAN = 1.5;       // metres across, the long axis
+
 /**
  * Scree: the chips a rock face sheds. One instanced draw, no physics, density
  * falling off with radius — the cheapest way to stop a rock from meeting the
@@ -2268,9 +2289,59 @@ export function addScree(world, centre, opts = {}) {
     const rad = lerp(inner, R, Math.pow(r(), 0.5));
     const sc = size * lerp(1.5, 0.45, rad / R) * (0.5 + r());
     p.set(Math.cos(a) * rad, 0, Math.sin(a) * rad);
-    p.y = sc * 0.16 + (onGround ? groundY(world, centre.x + p.x, centre.z + p.z) - groundY(world, centre.x, centre.z) : 0);
-    q.setFromEuler(new THREE.Euler(r() * TAU, r() * TAU, r() * TAU));
+    /* A CHIP LIES ON THE GROUND. It used to be turned by three unbounded Euler
+     * angles, which is the same generator Levels.js already had to abandon for
+     * the landmark grade: the chip is an icosahedron flattened to 0.52, so a
+     * uniformly random orientation stands it on edge as often as it lays it
+     * flat, and an edge-on chip is a PLATE — measured across the three outdoor
+     * levels, 179 / 447 / 894 chips stood past 55° with a face over 0.6 m, up
+     * to a full 90°, and 12 / 15 / 18 of them touched the ground at no point at
+     * all — hence "no ground contact". That is the "unlit polygon" the
+     * art director kept shooting, and it is unlit-looking for a second reason
+     * the tilt causes on its own: a plate square to a low sun returns up to
+     * 4.13× the radiance the flat ground does (canyon, sun at 14°), so it
+     * clips to flat white on the lit side and to bare sky-ambient blue on the
+     * back. Both faces are lit correctly. Neither has anything to be lit BY.
+     *
+     * So the plate axis is now the ground's own normal, leaned by a little, and
+     * then pulled back to the angle loose rock can actually rest at. Yaw stays
+     * free — that is where the variety was worth having. Exactly three randoms,
+     * in the same order as the three Euler angles they replace, so every seed
+     * downstream lands where it did. */
+    const yaw = r() * TAU, lean = (r() * 2 - 1) * CHIP_LEAN, leanDir = r() * TAU;
+    if (onGround && world.terrain?.normalAt) world.terrain.normalAt(centre.x + p.x, centre.z + p.z, _plate);
+    else _plate.set(0, 1, 0);
+    // lean off that normal in a random compass direction, staying on the sphere
+    _tan.set(Math.cos(leanDir), 0, Math.sin(leanDir));
+    _tan.addScaledVector(_plate, -_tan.dot(_plate));
+    if (_tan.lengthSq() > 1e-8) _plate.applyAxisAngle(_tan.normalize(), lean);
+    // and no steeper than loose rock rests: past this it slides, it does not perch
+    const lie = Math.acos(clamp(_plate.y, -1, 1));
+    if (lie > CHIP_REPOSE) {
+      _tan.crossVectors(_plate, UP);
+      if (_tan.lengthSq() > 1e-8) _plate.applyAxisAngle(_tan.normalize(), lie - CHIP_REPOSE);
+    }
+    q.setFromUnitVectors(UP, _plate).multiply(_q2.setFromAxisAngle(UP, yaw));
     s.set(sc * (0.7 + r() * 0.7), sc * (0.45 + r() * 0.4), sc * (0.7 + r() * 0.7));
+    /* And it is a CHIP. Levels.js already names the threshold — "past about
+     * 1.5 m across, a scree chip stops reading as a stone lying on the ground
+     * and starts reading as a shard" — but nothing enforced it, and the tail of
+     * this distribution runs to 3.15× the caller's `size`, which is 3.0 m for
+     * the boulder grade. Lying flat, such a piece still presents most of a
+     * square metre square to the sun: measured in the canyon, where the sun is
+     * at 14° and the ground returns only 0.242, one chip came back with 0.795 m²
+     * of EXCESS sunlit area after the tilt was fixed. Clamped proportionally,
+     * so the shape and the random stream are both untouched. */
+    const span = Math.max(s.x, s.z);
+    if (span > CHIP_SPAN) s.multiplyScalar(CHIP_SPAN / span);
+    /* Settled INTO the ground rather than balanced on it. The flat `sc·0.16`
+     * this replaces was written for a chip standing at any angle; now that
+     * every chip lies down, its own half-thickness is the only length that
+     * matters, and 0.16·sc left the thinnest of them hovering clear of the
+     * sand. A fifth of the half-thickness is enough to close the gap without
+     * swallowing the chip. */
+    p.y += -0.2 * (0.5 * 0.52 * s.y)
+      + (onGround ? groundY(world, centre.x + p.x, centre.z + p.z) - groundY(world, centre.x, centre.z) : 0);
     list.push(m.clone().compose(p, q, s));
     const t = 0.72 + r() * 0.5;
     cols.push(c.clone().setRGB(t, t * 0.95, t * 0.88));
@@ -2286,7 +2357,8 @@ export function addScree(world, centre, opts = {}) {
     if (merged) opts.kit.put(merged, opts.mat || M.stone, 0, 0, 0);
     return opts.kit;
   }
-  return addInstanced(world, chip, opts.mat || M.stone, list, centre, { colors: cols, castShadow: false });
+  return addInstanced(world, chip, opts.mat || M.stone, list, centre,
+    { colors: cols, castShadow: false, name: 'scree' });
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

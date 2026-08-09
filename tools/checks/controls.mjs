@@ -30,11 +30,13 @@ import { FocusSystem } from '../../src/game/Focus.js';
 import { BladeContactSolver, TOUGHNESS } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
 import { Player } from '../../src/game/Player.js';
-import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings } from '../../src/ui/Menu.js';
+import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings, CODEX, SCHEMES, codexHtml, pauseHintsHtml,
+  keyChips } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
-import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, resolveConflicts }
-  from '../../src/engine/Bindings.js';
+import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, findConflicts,
+  resolveConflicts, keyLabel } from '../../src/engine/Bindings.js';
 import { Input } from '../../src/engine/Input.js';
+import { SaberController } from '../../src/game/SaberController.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { Particles } from '../../src/world/Particles.js';
 import { GrassField } from '../../src/world/Scenery.js';
@@ -961,5 +963,485 @@ export async function run({ check, assert }) {
     // pretending it worked
     assert(cleavingThrow({}) === false, 'the technique claimed to install on an object with no throw');
     return `wrapped ${Player.prototype._updateThrow.name || '_updateThrow'}, recall ×${CLEAVE.recall}`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  Residue: one value, two homes                                     */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('controls: no player-facing surface types a key name', async () => {
+    // The residue of the rebind that moved Hurl off Mouse2 — where it had
+    // shipped colliding with Thrust — onto Y. main.js was taught to print the
+    // coach panel's legend from the bindings; the Codex grid, seventeen rows of
+    // markup in index.html, was not. Sixteen of those rows agreed with
+    // defaultBindings(); the seventeenth told a player on a fresh profile
+    // "M2 to hurl it", and M2 thrusts. A typed key cannot follow a rebind, so
+    // the rule is that no key name is typed at all.
+    const html = await read('index.html');
+    const typed = [...html.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(m => m[1]);
+    assert(!typed.length,
+      `index.html types ${typed.length} key names into the markup (${typed.join(', ')}) — `
+      + 'markup cannot read the bindings table');
+    for (const id of ['codex-grid', 'pause-hints']) {
+      assert(html.includes(`id="${id}"`), `#${id} is gone, so nothing can fill it from the bindings`);
+    }
+
+    // The exact row, stated as arithmetic against the shipped table.
+    const b = defaultBindings();
+    const rowOf = (markup, re) =>
+      [...markup.matchAll(/<div>([\s\S]*?)<span>([\s\S]*?)<\/span><\/div>/g)].find(r => re.test(r[2]));
+    const chips = (s) => [...s.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(m => m[1]);
+    const grip = rowOf(codexHtml(b), /Grip an object/);
+    assert(grip, 'the Codex no longer has a row about gripping an object');
+    const inline = chips(grip[2]);
+    assert(inline.length === 1 && inline[0] === keyLabel(b.hurl[0]),
+      `the grip row says ${inline.join('/') || 'nothing'} hurls, and hurl answers to `
+      + `${b.hurl.map(keyLabel).join('+')}`);
+    assert(b.thrust.includes('Mouse2') && !b.hurl.includes('Mouse2'),
+      'Mouse2 no longer thrusts, so the row this check exists for is measuring something else now');
+
+    // EVERY action, and by REBINDING rather than by reading a declaration:
+    // move one action onto a key nothing else uses, re-render, and the Codex
+    // has to start saying so. An action the Codex never mentions cannot pass,
+    // and neither can a row that prints a name instead of a binding — which is
+    // the only way this can be satisfied by typing, and it cannot.
+    const PROBE = 'F13';
+    const silent = [];
+    for (const id of ACTION_IDS) {
+      const probe = defaultBindings();
+      probe[id] = [PROBE];
+      if (!new RegExp(`<kbd>(?:Hold )?${PROBE}</kbd>`).test(codexHtml(probe))) silent.push(id);
+    }
+    assert(!silent.length,
+      `the Codex never prints the live binding for: ${silent.join(', ')} — either the action is `
+      + 'documented nowhere a player reads, or the row prints a typed name');
+    // Named because they are the two that were invented and then documented
+    // nowhere at all, and a generic message would not say so.
+    for (const id of ['stance', 'flourish']) {
+      assert(ACTION_IDS.includes(id) && !silent.includes(id),
+        `${id} exists as a binding and appears on no screen the player reads`);
+    }
+    // The pause card is the same surface with two rebindable keys on it.
+    for (const id of ['view', 'scoreboard']) {
+      const probe = defaultBindings();
+      probe[id] = [PROBE];
+      assert(pauseHintsHtml(probe).includes(`<kbd>${PROBE}</kbd>`),
+        `the pause card prints a typed key for ${id}`);
+    }
+    // A row may only name actions that exist; a renamed id must fail loudly
+    // rather than render a dash.
+    const ghosts = CODEX.flatMap(r => r.keys || []).filter(id => !ACTION_IDS.includes(id));
+    assert(!ghosts.length, `the Codex names actions that are not in the table: ${ghosts.join(', ')}`);
+
+    // The other direction, and the one that closes the hole the probe above
+    // leaves: a row could still TYPE "M2" into its prose while some other row
+    // printed thrust's real binding, and every assertion so far would pass. So
+    // bind every action to a code of its own, render once, and require that
+    // every <kbd> on the page came out of the table. The only survivors are the
+    // declared literals — the mouse's own motion, which is not a binding, and
+    // Esc, which main.js handles raw so that pausing survives a broken one.
+    const all = defaultBindings();
+    ACTION_IDS.forEach((id, i) => { all[id] = [`PROBE${i}`]; });
+    const mint = new Set(ACTION_IDS.map((_, i) => `PROBE${i}`));
+    const strays = chips(codexHtml(all)).map(t => t.replace(/^Hold /, ''))
+      .filter(t => !mint.has(t) && t !== 'Mouse');
+    assert(!strays.length,
+      `key names in the Codex that did not come from the bindings table: ${[...new Set(strays)].join(', ')}`);
+    const pauseStrays = chips(pauseHintsHtml(all)).map(t => t.replace(/^Hold /, ''))
+      .filter(t => !mint.has(t) && t !== 'Esc');
+    assert(!pauseStrays.length,
+      `key names on the pause card that did not come from the table: ${[...new Set(pauseStrays)].join(', ')}`);
+    // The control-scheme cards, which named Mouse2's default as "RMB" while
+    // describing what is really `!input.act('thrust')`.
+    const schemeStrays = SCHEMES.flatMap(s => chips(s.blurb(id => keyChips(all, id))))
+      .filter(t => !mint.has(t));
+    assert(!schemeStrays.length,
+      `key names on the control-scheme cards that did not come from the table: ${[...new Set(schemeStrays)].join(', ')}`);
+    for (const s of SCHEMES) {
+      assert(/<kbd>/.test(s.blurb(id => keyChips(b, id))),
+        `the ${s.name} card describes a control and names no key at all`);
+    }
+    // And the boon cards are a player-facing surface too: "Unlocks lightning on
+    // Z" was a key name typed into a run reward.
+    const named = BOONS.filter(x =>
+      /\b(?:on|press|pressing|hold|holding|with) [A-Z0-9]\b|\bM[1-5]\b|\bMouse ?[1-5]\b/.test(x.text));
+    assert(!named.length, `boon cards that type a key name: ${named.map(x => x.id).join(', ')}`);
+    return `${CODEX.length} rows, ${ACTION_IDS.length}/${ACTION_IDS.length} actions printed from the table, `
+      + `0 typed <kbd> in index.html; grip row prints ${inline[0]} and hurl is ${b.hurl.map(keyLabel).join('+')}`;
+  });
+
+  check('controls: Focusing Crystal reaches the blade, not just a field on it', () => {
+    // `p.saber.coreWidth *= 1.25` moved a number that only the Saber
+    // CONSTRUCTOR had ever read — uWidth/uRadius in _buildBlade, trailThickness
+    // in _buildTrail — so on a blade already in the player's hand the card's
+    // three promises came to one. Measured, not asserted: the uniforms, and
+    // then the thing the uniforms are supposed to be for, which is the geometry
+    // that actually gets drawn.
+    const cam = new THREE.PerspectiveCamera();
+    const s = new Saber(new THREE.Scene(), { coreWidth: 1 });
+    s.ignite(); s.ignition = 1;
+    const swing = (n) => {
+      for (let i = 0; i < n; i++) {
+        s.root.rotation.z = Math.sin(i * 0.4) * 1.2;
+        s.root.updateMatrixWorld(true);
+        s.update(1 / 60, { camera: cam });
+      }
+    };
+    /**
+     * The DRAWN channel. The uniform moving is not the same claim as the smear
+     * getting wider: _updateTrail offsets sheet k by `(k - 1) * trailThickness`
+     * along the sweep normal, so the distance between the outer two sheets is
+     * the slab a player can see. A check that only read the field would pass on
+     * a build where nothing consumed it — which is the bug being fixed.
+     */
+    const drawnSlab = () => {
+      const p = s.trailPos;
+      let max = 0;
+      for (let i = 0; i < s.trailSegments; i++) {
+        const a = (i * s.trailSheets) * 2 * 3;
+        const c = (i * s.trailSheets + s.trailSheets - 1) * 2 * 3;
+        const d = Math.hypot(p[a] - p[c], p[a + 1] - p[c + 1], p[a + 2] - p[c + 2]);
+        if (d > max) max = d;
+      }
+      return max / 2;
+    };
+    swing(30);
+    const before = {
+      w: s.bladeMat.uniforms.uWidth.value.clone(),
+      r: s.bladeMat.uniforms.uRadius.value,
+      t: s.trailThickness,
+      slab: drawnSlab(),
+    };
+    assert(before.slab > 1e-4, 'the trail drew nothing, so the drawn channel is not being measured');
+
+    // Through the card, the way the draft screen takes it.
+    BOONS.find(x => x.id === 'dualcrystal').apply({ saber: s, boonMods: { cutPower: 1 } });
+    swing(60);
+    const after = {
+      w: s.bladeMat.uniforms.uWidth.value.clone(),
+      r: s.bladeMat.uniforms.uRadius.value,
+      t: s.trailThickness,
+      slab: drawnSlab(),
+    };
+    const k = 1.25;
+    for (const [name, a, b0] of [['uWidth.x', after.w.x, before.w.x], ['uWidth.y', after.w.y, before.w.y],
+      ['uWidth.z', after.w.z, before.w.z], ['uRadius', after.r, before.r],
+      ['trailThickness', after.t, before.t], ['drawn slab', after.slab, before.slab]]) {
+      assert(Math.abs(a / b0 - k) < 0.001,
+        `${name} went ${b0.toFixed(5)} → ${a.toFixed(5)} (${(a / b0).toFixed(3)}×), and the card is worth ${k}×`);
+    }
+    // Both directions: a width that only ever grows is a latch, not a setting,
+    // and the forge slider drives the same accessor downwards.
+    s.coreWidth = 1;
+    assert(Math.abs(s.bladeMat.uniforms.uRadius.value - before.r) < 1e-9,
+      'putting the width back did not put the uniform back');
+    // The forge builds a fresh Saber per drag, so construction must still land.
+    const wide = new Saber(new THREE.Scene(), { coreWidth: 1.6 });
+    assert(Math.abs(wide.bladeMat.uniforms.uRadius.value - Saber.PROFILE.radius * 1.6) < 1e-9,
+      'opts.coreWidth no longer reaches the uniforms at construction');
+
+    // The general rule, so the next boon to write a number onto the blade
+    // cannot land in a field nobody reads: any boon that moves a saber field
+    // has to move something the blade DRAWS.
+    const dead = [];
+    for (const boon of BOONS) {
+      const t = new Saber(new THREE.Scene(), {});
+      t.ignite(); t.ignition = 1;
+      for (let i = 0; i < 20; i++) t.update(1 / 60, { camera: cam });
+      const fields = () => `${t.bladeLength}/${t.coreWidth}`;
+      const drawn = () => `${t.bladeMat.uniforms.uWidth.value.toArray().join(',')}|`
+        + `${t.bladeMat.uniforms.uRadius.value}|${t.bladeMat.uniforms.uLen.value}|${t.trailThickness}`;
+      const f0 = fields(), d0 = drawn();
+      boon.apply({
+        saber: t, control: {}, maxHp: 100, hp: 100,
+        boonMods: new Proxy({}, { get: (o, key) => (key in o ? o[key] : 1), set: (o, key, v) => (o[key] = v, true) }),
+      });
+      for (let i = 0; i < 60; i++) t.update(1 / 60, { camera: cam });
+      if (fields() !== f0 && drawn() === d0) dead.push(boon.id);
+    }
+    assert(!dead.length,
+      `boons that write a number onto the blade and change nothing it draws: ${dead.join(', ')}`);
+    return `uWidth ${before.w.y.toFixed(4)}→${after.w.y.toFixed(4)}, uRadius ${before.r.toFixed(3)}→${after.r.toFixed(3)}, `
+      + `drawn slab ${before.slab.toFixed(4)}→${after.slab.toFixed(4)} m (all 1.250×)`;
+  });
+
+  check('controls: every setting has a control, not only a reader', async () => {
+    // The other direction of "every control is bound to a setting", and the one
+    // that was never asserted. `grassScale` and `particleScale` were keys of
+    // DEFAULT_SETTINGS with real readers in World.loadLevel, no opt- id in
+    // index.html and no _slider anywhere — pinned at 1 forever, while World's
+    // own comment described "the player's own two sliders". `bladeHold` was the
+    // same lie facing the other way: World.spawnPlayer read
+    // `this.settings.bladeHold` into a per-frame controller flag and there was
+    // no such setting and no such box.
+    const menu = await readFile(src('ui/Menu.js'), 'utf8');
+    const html = await read('index.html');
+    const bound = new Map([...menu.matchAll(/_(?:slider|check)\('(opt-[a-z0-9-]+)',\s*'([A-Za-z0-9_]+)'/g)]
+      .map(m => [m[2], m[1]]));
+    /**
+     * The settings that are PICKED rather than slid — cards, swatches and
+     * radio lists, one element per option. Not a free pass: each one still has
+     * to be written by hand somewhere in this file, which is asserted below, so
+     * a setting cannot join this list without a control writing it.
+     */
+    const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
+      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade'];
+    const orphans = [], ghost = [];
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (bound.has(key)) {
+        assert(html.includes(`id="${bound.get(key)}"`) || menu.includes(`id="${bound.get(key)}"`),
+          `${key} is bound to #${bound.get(key)}, which is in no markup — _slider returns silently`);
+        continue;
+      }
+      if (!PICKED.includes(key)) { orphans.push(key); continue; }
+      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'`);
+      if (!re.test(menu)) ghost.push(key);
+    }
+    assert(!orphans.length,
+      `settings with a reader and no control: ${orphans.join(', ')} — the player cannot move them, `
+      + 'so they are pinned at their default forever');
+    assert(!ghost.length, `listed as picked, but nothing in the menu writes them: ${ghost.join(', ')}`);
+    // and the three this check was written for
+    for (const [key, id] of [['grassScale', 'opt-grass'], ['particleScale', 'opt-particles'], ['bladeHold', 'opt-bladehold']]) {
+      assert(bound.get(key) === id, `${key} is bound to ${bound.get(key) || 'nothing'}, expected #${id}`);
+      assert(html.includes(`id="${id}"`), `#${id} is not on the options screen`);
+    }
+    return `${Object.keys(DEFAULT_SETTINGS).length} settings: ${bound.size} on sliders/checkboxes, `
+      + `${PICKED.length} on pickers, 0 with no control`;
+  });
+
+  check('controls: the two fidelity sliders multiply the tier and bite mid-run', async () => {
+    // A control that exists is not the same claim as a control that does
+    // something. Driven through World.prototype.applyQuality — the real reader,
+    // and the seam the slider's hook fires — with a real Particles pool.
+    const scene = new THREE.Scene();
+    const w = { settings: { quality: 'high', particleScale: 1 }, particles: new Particles(scene, QUALITY.high.particles),
+      applyQuality: World.prototype.applyQuality };
+    const full = w.particles.scale;
+    w.settings.particleScale = 0.5;
+    w.applyQuality('high');
+    const half = w.particles.scale;
+    assert(Math.abs(half / full - 0.5) < 1e-6,
+      `halving the slider took emission from ${full} to ${half}, not half of it`);
+    // It must MULTIPLY the tier, not replace it: at the same slider position,
+    // Performance has to stay under Cinematic.
+    w.settings.particleScale = 1.5;
+    w.applyQuality('low');
+    const lowMax = w.particles.scale;
+    w.applyQuality('ultra');
+    const ultraMax = w.particles.scale;
+    assert(lowMax < ultraMax,
+      `Performance at 150% emits ${lowMax} and Cinematic at 150% emits ${ultraMax} — the slider is replacing the tier`);
+    // Grass is planted at level load, so the slider scales the DENSITY the
+    // level asks for. Asserted on the expression, because the field it feeds is
+    // an allocation and rebuilding it needs a level.
+    const world = await readFile(src('game/World.js'), 'utf8');
+    assert(/density:\s*\(this\.settings\.grassScale \?\? 1\) \* L\.grass/.test(world),
+      'grassScale no longer multiplies the level density');
+    assert(/const particleScale = \(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
+      'particleScale no longer multiplies the tier');
+    return `slider 1.0→0.5 takes emission ${full.toFixed(2)}→${half.toFixed(2)}; `
+      + `at 1.5, low ${lowMax.toFixed(2)} < ultra ${ultraMax.toFixed(2)}`;
+  });
+
+  check('controls: movement is read from the table and from nowhere else', () => {
+    // Input.moveAxis carried `|| this.down('ArrowUp')` and three more like it.
+    // That is a second set of movement bindings that ACTIONS never knew about,
+    // so with the shipped defaults ArrowUp fired NO action, drove moveAxis.y to
+    // 1, and findConflicts reported the key free. Bind anything to an arrow and
+    // one press did two things, with no way for the options screen to warn —
+    // the KeyB/KeyN bug, still alive underneath the fix for it.
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const b = defaultBindings();
+    const hidden = [];
+    for (const code of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+      'Numpad8', 'Numpad2', 'Numpad4', 'Numpad6', 'KeyI', 'KeyK', 'KeyJ', 'KeyL']) {
+      const i = fresh();
+      i.keys.add(code); i.pressed.add(code);
+      const acts = ACTION_IDS.filter(id => i.act(id) || i.actHit(id));
+      const ax = i.moveAxis();
+      const moves = ax.x !== 0 || ax.y !== 0;
+      if (moves && !acts.length) hidden.push(`${code} → moveAxis(${ax.x},${ax.y}) with no action and no conflict`);
+      if (!acts.length) {
+        assert(!findConflicts(b, code).length,
+          `${code} fires no action but findConflicts claims ${findConflicts(b, code).join('+')}`);
+      }
+    }
+    assert(!hidden.length, `keys that move the player without being in the table: ${hidden.join('; ')}`);
+
+    // The table still drives movement, and an arrow key is now an ORDINARY key
+    // — bind it and it walks, and the conflict machinery can see it.
+    const w = fresh();
+    w.keys.add('KeyW');
+    assert(w.moveAxis().y === 1, 'W no longer walks forward');
+    const arrows = defaultBindings();
+    arrows.moveF = ['KeyW', 'ArrowUp'];
+    const a = fresh();
+    a.setBindings(arrows);
+    a.keys.add('ArrowUp');
+    assert(a.moveAxis().y === 1, 'ArrowUp bound to moveF does not walk');
+    assert(findConflicts(arrows, 'ArrowUp').join() === 'moveF',
+      'a bound arrow key is invisible to findConflicts');
+    // One press, one system: with push moved onto ArrowUp, the arrow must push
+    // and NOT also walk.
+    const clash = defaultBindings();
+    clash.push = ['ArrowUp'];
+    const c = fresh();
+    c.setBindings(clash);
+    c.keys.add('ArrowUp'); c.pressed.add('ArrowUp');
+    assert(c.moveAxis().y === 0,
+      'rebinding onto an arrow key still walks as well — the second binding is still there');
+    return 'moveAxis reads moveF/moveB/moveL/moveR and the stick, nothing else; '
+      + '4 arrows + 4 numpad + IJKL fire nothing and move nothing';
+  });
+
+  check('controls: no gameplay reads a raw key code', async () => {
+    // The rule the arrows broke, stated once for the whole tree. A raw
+    // `down('KeyX')` is not in ACTIONS, so it cannot be rebound, cannot be
+    // shown, and cannot be seen to collide — every version of this bug this
+    // project has had (B/N in Player, B/N/Y in main.js, the arrows in Input)
+    // was one of these.
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    const files = ['engine/Input.js', 'game/Player.js', 'game/SaberController.js', 'game/World.js', 'game/Enemy.js'];
+    const raw = [];
+    for (const f of files) {
+      const body = strip(await readFile(src(f), 'utf8'));
+      for (const m of body.matchAll(/\.(?:down|hit|up|anyDown)\((\s*'[^']+'[^)]*)\)/g)) {
+        raw.push(`${f}: .${m[0].slice(1)}`);
+      }
+    }
+    assert(!raw.length, `raw key codes read past the bindings table: ${raw.join('; ')}`);
+    return `${files.length} gameplay files, 0 raw key-code reads`;
+  });
+
+  check('controls: every damage() call site matches the signature', async () => {
+    // The third distinct bug this one method has produced. The signature is
+    // (amount, point, source, kind); Player._land shipped
+    // `this.damage(clamp(...), null, 'fall')` — three arguments, so `source`
+    // received the string 'fall' and `kind` received undefined, while
+    // Enemy.js's identical fall-damage line has always passed four. Nothing
+    // threw, because a string is a perfectly good value for a parameter nobody
+    // dereferences until somebody does.
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    const args = (s) => {
+      const out = []; let depth = 0, cur = '';
+      for (const ch of s) {
+        if (ch === '(' || ch === '[' || ch === '{') depth++;
+        if (ch === ')' || ch === ']' || ch === '}') depth--;
+        if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; continue; }
+        cur += ch;
+      }
+      if (cur.trim()) out.push(cur.trim());
+      return out;
+    };
+    const files = ['game/Player.js', 'game/Enemy.js', 'game/World.js', 'game/Duel.js'];
+    const bad = [], kinds = new Set();
+    let sites = 0;
+    for (const f of files) {
+      const body = strip(await readFile(src(f), 'utf8'));
+      for (const m of body.matchAll(/(\w+)\.damage\(([^;]*?)\);/g)) {
+        const list = args(m[2]);
+        // Props take (amount, point, dir) and are a different class with a
+        // different third parameter, so they are identified by their receiver
+        // rather than by arity — `pr` and `prop` are the only names used.
+        if (/^(pr|prop)$/.test(m[1])) continue;
+        sites++;
+        if (list.length < 3 || list.length > 4) {
+          bad.push(`${f}: ${m[1]}.damage(${m[2]}) has ${list.length} arguments`);
+          continue;
+        }
+        // A string in the SOURCE slot is the bug, exactly.
+        if (/^'[^']*'$/.test(list[2])) {
+          bad.push(`${f}: ${m[1]}.damage(…) passes ${list[2]} as \`source\`, which takes an entity — `
+            + 'it belongs in `kind`, and `kind` is then undefined');
+        }
+        if (list.length === 4) {
+          if (!/^'[^']*'$/.test(list[3])) bad.push(`${f}: \`kind\` is ${list[3]}, which is not a string literal`);
+          else kinds.add(list[3]);
+        }
+      }
+    }
+    assert(!bad.length, bad.join('; '));
+    // Fall damage specifically, on both sides, because that is where it went
+    // wrong and Enemy is the version that was always right.
+    for (const f of ['game/Player.js', 'game/Enemy.js']) {
+      const body = strip(await readFile(src(f), 'utf8'));
+      const line = [...body.matchAll(/\w+\.damage\(([^;]*?)\);/g)].find(m => /'fall'/.test(m[1]));
+      assert(line, `${f} no longer deals fall damage`);
+      const list = args(line[1]);
+      assert(list.length === 4 && list[3] === "'fall'",
+        `${f} calls damage(${line[1]}) — 'fall' must be the fourth argument, \`kind\``);
+    }
+
+    // And through the real code, not only the source: _land with a killing
+    // impact, recording what Player.damage is handed.
+    const rec = [];
+    const body = Object.assign(Object.create(Player.prototype), {
+      position: new THREE.Vector3(), cloak: null, camera: { addShake() {} },
+      boonMods: { repulse: false }, _shockwave() {},
+      damage(...a) { rec.push(a); return false; },
+    });
+    body._land({ particles: null, terrain: null }, 40);
+    assert(rec.length === 1, 'a 40 m/s landing dealt no fall damage at all');
+    const [amount, point, source, kind] = rec[0];
+    assert(Number.isFinite(amount) && amount > 0, `fall damage was ${amount}`);
+    assert(point === null, `fall damage passed ${point} as the impact point`);
+    assert(source === null || typeof source === 'object',
+      `fall damage passed ${JSON.stringify(source)} as \`source\`, which every other call site fills with an entity`);
+    assert(kind === 'fall', `fall damage reported kind ${JSON.stringify(kind)}`);
+    return `${sites} damage() call sites across ${files.length} files, kinds ${[...kinds].sort().join(' ')}; `
+      + `_land → (${amount.toFixed(1)}, null, null, 'fall')`;
+  });
+
+  check('controls: a world knob that never moves is not a knob', async () => {
+    // `this.hpScale = 1` and `this.dmgScale = 1` sat in the World constructor,
+    // were read by Enemy as `A.hp * (world.hpScale ?? 1)`, and were written by
+    // nothing else anywhere — no difficulty, no mode, no wave, no control. A
+    // value written once to the identity of the operation it feeds is a claim
+    // that a knob exists. Enemy's `?? 1` is what keeps the seam open, so
+    // deleting the write costs nothing and stops the claim.
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    const world = strip(await readFile(src('game/World.js'), 'utf8'));
+    const all = (await Promise.all(['game/World.js', 'game/Waves.js', 'game/Player.js', 'game/Enemy.js', 'main.js']
+      .map(f => readFile(f === 'main.js' ? new URL('../../src/main.js', import.meta.url) : src(f), 'utf8'))))
+      .map(strip).join('\n');
+    const idle = [];
+    for (const m of world.matchAll(/this\.(\w+)\s*=\s*1\s*;/g)) {
+      const name = m[1];
+      // Anything written again, to anything other than 1, is a live knob.
+      const moved = new RegExp(`(?:this|world|w)\\.${name}\\s*=\\s*(?!1\\s*;)`, 'g');
+      const hits = [...all.matchAll(moved)];
+      if (!hits.length) idle.push(name);
+    }
+    assert(!idle.length,
+      `written once, to 1, and moved by nothing: ${idle.join(', ')} — `
+      + 'either give it a writer or let its reader default it');
+    for (const name of ['hpScale', 'dmgScale']) {
+      assert(!new RegExp(`this\\.${name}\\s*=`).test(world),
+        `World writes ${name} again — if that write is real it must not be the identity`);
+      const enemy = await readFile(src('game/Enemy.js'), 'utf8');
+      assert(new RegExp(`world\\.${name}\\s*\\?\\?\\s*1`).test(enemy),
+        `Enemy no longer defaults ${name}, so removing the constructor write would break it`);
+    }
+    return 'no World field is written once to its own identity; hpScale/dmgScale default in Enemy';
+  });
+
+  check('controls: Blade holds position is a setting, a box, and a live flag', () => {
+    // SaberController.holdPosition has been read every frame since it was
+    // written, World.spawnPlayer has always read `this.settings.bladeHold` into
+    // it, and there was no such key in DEFAULT_SETTINGS and no box anywhere:
+    // the reader read undefined forever. The structural half is covered by
+    // "every setting has a control"; this is the behavioural half.
+    assert('bladeHold' in DEFAULT_SETTINGS, 'bladeHold is not a setting');
+    assert(DEFAULT_SETTINGS.bladeHold === false, 'blade-holds-position now defaults to ON');
+    const w = { players: [{ control: { holdPosition: false } }], hitstop: 0, addHitstop() {} };
+    applyFeelSettings(w, { ...DEFAULT_SETTINGS, bladeHold: true });
+    assert(w.players[0].control.holdPosition === true,
+      'ticking the box does not reach a player already in the world — it would land on the next deploy');
+    applyFeelSettings(w, { ...DEFAULT_SETTINGS, bladeHold: false });
+    assert(w.players[0].control.holdPosition === false, 'unticking the box does not reach the player');
+    // The flag has to still mean something at the far end.
+    assert(new SaberController().holdPosition === false, 'the controller no longer starts off');
+    return 'bladeHold: default off, checkbox #opt-bladehold, pushed live onto every player by applyFeelSettings';
   });
 }

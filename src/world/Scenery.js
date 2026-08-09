@@ -1570,6 +1570,19 @@ function bladeGeometry(segments = 4) {
 
 const MAX_RIPPLES = 10;
 
+/* Water's own absorption, 1/m, in linear RGB. Red is gone inside half a metre
+ * and blue-green is still coming back at three; that difference IS why water
+ * has a colour, and one scalar cannot express it. Lives here rather than as a
+ * literal in the shader so the GL-free model of this shader and the shader
+ * itself read the same three numbers. */
+const WATER_EXT = [2.6, 0.85, 0.62];
+
+/* How fast the bed stops being what you are looking at, 1/m. At the 1.5 this
+ * replaces a running wash was legible to a metre and a half, which is not a
+ * wash, it is an aquarium — and it is why two thirds of the canyon river was
+ * reading as gravel with a wash of colour over it rather than as water. */
+const BED_FADE = 2.8;
+
 const WATER_VERT = /* glsl */`
   #include <common>
   #include <fog_pars_vertex>
@@ -1610,12 +1623,21 @@ const WATER_FRAG = /* glsl */`
   uniform float uRippleActive;
   #ifdef WATER_DEPTH
     uniform sampler2D uDepth;
-    uniform vec3 uField;                    // 1/size, half extent, depth range (m)
+    uniform vec4 uField;                    // 1/size, half extent, depth range, gradient range
   #endif
   varying vec3 vW; varying vec2 vUv; varying float vWave;
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
   float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
     return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+  #ifdef WATER_DEPTH
+    // R is depth in metres; GB are its gradient, signed and centred on 0.5
+    vec3 bedAt(vec2 xz){
+      vec4 t = texture2D(uDepth, xz * uField.x + 0.5);
+      return vec3(t.r * uField.z, (t.gb - 0.5) * 2.0 * uField.w);
+    }
+  #endif
+  const vec3 WATER_EXT = vec3(${WATER_EXT.join(', ')});
+  const float BED_FADE = ${BED_FADE.toFixed(2)};
   void main(){
     vec3 V = normalize(cameraPosition - vW);
     vec2 q = vW.xz*1.6;
@@ -1631,9 +1653,20 @@ const WATER_FRAG = /* glsl */`
      * fades out instead of stopping, and has a lap of foam running along it.
      */
     float depth = 4.0;
-    #ifdef WATER_DEPTH
-      depth = texture2D(uDepth, vW.xz * uField.x + 0.5).r * uField.z;
-    #endif
+    /* What is under the water, and where it climbs out of it.
+     *
+     * bedDepth is the depth along the REFRACTED ray rather than straight
+     * down: the surface bends what you see through it, and offsetting the
+     * lookup along the surface normal is what makes the bed swim under the
+     * ripples instead of sitting behind them like a decal.
+     *
+     * climb is |grad depth| — how fast the bed rises, in metres per metre.
+     * It is the difference between a shore and a shallow, and the lap below
+     * needs it: measured on the canyon's own heightfield, 71% of the wet
+     * surface is between 2.5 and 30 cm deep, so a lap keyed on depth alone is
+     * a lap painted over the entire river. */
+    float bedDepth = 4.0, climb = 0.0;
+    vec3 bedN = vec3(0.0, 1.0, 0.0);
 
     // ── impact rings. Expanding wave fronts, tilting the surface along the
     // radius and throwing foam at the crest. Doing this here rather than in the
@@ -1660,55 +1693,205 @@ const WATER_FRAG = /* glsl */`
     }
     N = normalize(N);
 
-    float fres = pow(1.0 - clamp(dot(N,V),0.0,1.0), 3.2);
-    // Beer's law, near enough: the colour is what is LEFT of the bed after the
-    // water has taken its bite out of it, so an inch of river reads as wet
-    // gravel and a metre reads as river.
-    float dw = 1.0 - exp(-depth * 1.5);
-    vec3 body = mix(uShallow, uDeep, 1.0 - exp(-depth * 0.55));
-    vec3 col = mix(uBed, body, dw);
-    /*
-     * What the surface mirrors. Seen along the water — which is how you always
-     * see a river — a level facet reflects the sky and a tilted one reflects
-     * whatever is standing on the far bank, so a real river reads as bands of
-     * bright and dark travelling with the ripples. Reflecting only the sky
-     * gives one flat sheet of milk, which is what this was.
-     */
-    float facet = smoothstep(0.90, 0.999, N.y);
-    // and what it mirrors along the water is the HORIZON, not the zenith: the
-    // reflected ray at a grazing angle leaves nearly level and lands on the far
-    // bank, so it comes back the colour of the distance. Reflecting the sky
-    // tint made the whole river read 93% as bright as the sky — a sheet of
-    // milk with a shoreline drawn on it.
-    vec3 mirror = mix(uDeep * 1.35, mix(fogColor, uSky, 0.45), facet);
-    // capped well under 1: a rough surface never mirrors cleanly, and leaving
-    // a third of the body colour showing is what gives the channel a spine
-    col = mix(col, mirror, fres * 0.62 * (0.45 + dw * 0.55));
-    float spec = pow(max(dot(reflect(-normalize(uSunDir), N), V), 0.0), 90.0);
-    col += vec3(1.0,0.95,0.85) * spec * 2.4 * (0.4 + dw * 0.6);
+    /* The bed: ONE fetch, which is what the flat version cost.
+     *
+     * Depth and its gradient both come out of the same texel (see _bakeDepth),
+     * and the refracted point is then a first-order step ALONG that gradient
+     * rather than a second dependent read. A central difference in the shader
+     * plus a separate refracted sample is six reads per water pixel on a 520 m
+     * sheet that fills a third of the frame, which is enough to stop the canyon
+     * booting at all under a software rasteriser — measured, by it not booting.
+     * First order is plenty over the 20-30 cm the refraction offset reaches,
+     * and it is still what makes the bed swim under the ripples instead of
+     * sitting behind them like a decal. */
+    vec2 grad = vec2(0.0);
+    #ifdef WATER_DEPTH
+      vec3 bedSample = bedAt(vW.xz);
+      depth = bedSample.x;
+      grad = bedSample.yz;
+      // depth grows as the bed drops, so the bed's normal leans the way depth does
+      bedN = normalize(vec3(grad.x, 1.0, grad.y));
+      climb = length(grad);
+      bedDepth = max(0.0, depth + dot(grad, N.xz * depth * 0.9));
+    #endif
+    vec3 L = normalize(uSunDir);
 
-    // The lap: a band of broken water that follows the shoreline contour,
-    // travelling up the beach and back. It is the thing that says "this is a
-    // river running over that", and it costs one noise.
+    /*
+     * FRESNEL, THE REAL CURVE. pow(1-N·V, 3.2) folded into 0.62 of the mix
+     * meant that at 3° — which is how a standing player always sees a river —
+     * the surface came back 67% DIFFUSE. Water does not do that. Schlick with
+     * water's own F0 = 0.02 puts a 3° facet at 0.77 reflective and a 45° one at
+     * 0.02, and that swing IS the material: mirror along it, look into it.
+     */
+    float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(N,V),0.0,1.0), 5.0);
+
+    /*
+     * WHAT IS UNDER IT. Beer's law PER CHANNEL, which is the entire reason
+     * water has a colour: red is gone in the first half-metre and blue-green is
+     * still coming back at three. It is applied to the BED, which is the thing
+     * the water is filtering — a stone under a foot of river goes blue-green
+     * because that is the only light left to come back off it.
+     *
+     * It is deliberately NOT applied to uShallow/uDeep. Those swatches are the
+     * colour the water SCATTERS, and they already carry the hue the extinction
+     * would give them; weighting them per channel as well multiplies the hue in
+     * twice and cancels it — the first cut of this did exactly that and turned
+     * the authored teal green. The scalar 1-exp(-depth*1.5) still says how much
+     * of what you see is water rather than bed, which is all a scalar is for.
+     */
+    vec3 bed = uBed * (0.34 + 0.66 * clamp(dot(bedN, L), 0.0, 1.0));
+    vec3 trans = exp(-WATER_EXT * bedDepth);
+    float dw = 1.0 - exp(-depth * 1.5);
+    vec3 body = mix(uShallow, uDeep, 1.0 - exp(-bedDepth * 0.55));
+    vec3 col = mix(body, bed * trans, exp(-bedDepth * BED_FADE));
+    /*
+     * What the surface mirrors, and it depends on WHERE THE MIRRORED RAY GOES.
+     * Grazing, it leaves nearly level and lands on the far bank — in a gorge
+     * that is a wall standing in its own shade, not sky. Steepen the view and
+     * the ray clears the rim. The old code used a flatness term as a proxy for
+     * that and then mirrored a 55/45 blend of haze and sky, which is two
+     * chromas cancelling into grey: the sheet of milk was not the sky being too
+     * bright, it was the reflection having no colour left to be.
+     */
+    vec3 R = reflect(-V, N);
+    float facet = smoothstep(0.02, 0.34, clamp(R.y, 0.0, 1.0));
+    // Blue, and DARK: 40% of the sky's own radiance, because what a level ray
+    // finds over a canyon is distance, and distance in shade is not a light
+    // source. Keeping the hue is what stopped it reading as paper.
+    vec3 mirror = mix(uSky * 0.40, mix(uSky, fogColor, 0.16), facet);
+    col = mix(col, mirror, fres * (0.55 + dw * 0.40));
+    /*
+     * Sun on water, in two lobes. The shipped shader had only the pinpoint one
+     * at exponent 90, which lights a handful of pixels and reads as nothing;
+     * what says "wet" from a standing eye is the BROAD sheen down the sun's
+     * bearing. Both are gated by the Fresnel, so the sheen lives at grazing
+     * angles where a real one does and never appears looking straight down.
+     */
+    float sd = max(dot(reflect(-L, N), V), 0.0);
+    float spec = pow(sd, 90.0) * 1.9 + pow(sd, 8.0) * 0.34;
+    col += vec3(1.0,0.96,0.88) * spec * fres * (0.35 + dw * 0.65);
+
+    /*
+     * The lap belongs at a SHORE, and a shore is where the bed climbs out of
+     * the water — not merely where the water is shallow. On the canyon's own
+     * heightfield 71% of the wet surface is 2.5-30 cm deep, so keying the lap
+     * on depth alone laid 0.86 of linear white over a body colour of 0.14
+     * across nearly the whole river. That, and not the sky, is what the white
+     * sheet was. Gate it on climb as well and it goes back to the banks.
+     */
     float shore = smoothstep(0.30, 0.03, depth) * smoothstep(0.0, 0.025, depth);
+    float lapBand = shore * smoothstep(0.06, 0.30, climb);
     float lap = sin(depth * 26.0 - uTime * 1.9 + vnoise(vW.xz * 0.55) * 8.0) * 0.5 + 0.5;
+    // and broken, because a solid band of foam is a painted line. n1 is the
+    // ripple noise already computed at the top; a fourth vnoise here is four
+    // more sin() per water pixel for a value this one already has.
+    float broken = 0.30 + 0.70 * n1;
     // The long swell used to throw foam wherever it crested, which on a 580 m
     // sheet with a 20 m swell is white blobs the size of a barge. Ankle-deep
     // rivers do not have whitecaps; they have a lap at the edge.
     float foam = smoothstep(0.08, 0.15, abs(vWave)) * 0.045
-               + clamp(foamRing, 0.0, 1.4) * 0.5
-               + shore * (0.26 + lap * 0.60);
+               + clamp(foamRing, 0.0, 1.4) * 0.45
+               + lapBand * (0.10 + lap * 0.30) * broken;
     col += foam;
+    /*
+     * WET GROUND, which is the other half of a shoreline and was missing
+     * entirely. The last centimetres are not foam, they are the bed with a film
+     * on it: darker and more saturated than the dry bank a hand's breadth away.
+     * It carries its own alpha, or the sheet fades out before the film shows.
+     */
+    float wet = smoothstep(0.06, 0.0, depth) * smoothstep(0.0, 0.012, depth);
+    col = mix(col, bed * 0.44, wet * 0.60 * (1.0 - lapBand));
     // and the edge itself is where the depth runs out, not where the sheet does
     float edge = smoothstep(0.0, 0.06, depth);
-    gl_FragColor = vec4(col, clamp((0.40 + dw * 0.46 + fres*0.14 + foamRing*0.25 + shore * 0.25)
-                                   * edge, 0.0, 1.0));
+    gl_FragColor = vec4(col, clamp((0.34 + dw * 0.40 + fres*0.22 + foamRing*0.25 + lapBand * 0.22)
+                                   * edge + wet * 0.34, 0.0, 1.0));
     #include <fog_fragment>
   }
 `;
 
+/**
+ * WATER_FRAG's colour maths, on the CPU.
+ *
+ * The same arrangement WindField/WIND_GLSL already use, and for the same
+ * reason: the only way to sweep a water constant otherwise is to boot the
+ * canyon under SwiftShader, which is twenty minutes a look, and the round that
+ * shipped the white river did exactly that and shipped it anyway. This costs
+ * 40 microseconds, so tools/checks/terrain.mjs can hold the river to a
+ * saturation and to "a grazing surface mirrors more than it scatters" instead
+ * of to a regular expression over the shader text.
+ *
+ * Everything is LINEAR radiance in, linear radiance out. The tone curve is the
+ * caller's business, because the caller is the only one who knows the level's
+ * exposure and grade.
+ *
+ * `depth`/`bedDepth` in metres, `climb` in metres of bed rise per metre
+ * travelled, `viewDeg` the elevation of the eye above the surface (3 degrees is
+ * a standing player looking down a river; 45 is looking over the side of it),
+ * `ny` the surface normal's y — the ripple noise holds it near 0.996.
+ */
+export function waterShade(o) {
+  const dep = o.depth ?? 1, bedDep = o.bedDepth ?? dep, climb = o.climb ?? 0;
+  const V = [Math.cos((o.viewDeg ?? 8) * Math.PI / 180), Math.sin((o.viewDeg ?? 8) * Math.PI / 180), 0];
+  const ny = o.ny ?? 0.996, nxz = Math.sqrt(Math.max(0, 1 - ny * ny)) * Math.SQRT1_2;
+  const N = [nxz, ny, nxz];
+  const nl = Math.hypot(N[0], N[1], N[2]); for (let i = 0; i < 3; i++) N[i] /= nl;
+  const L = o.sun || [0.4, 0.24, 0.3];
+  const ll = Math.hypot(L[0], L[1], L[2]); const Ln = L.map((v) => v / ll);
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const mix3 = (a, b, t) => a.map((v, i) => v + (b[i] - v) * (Array.isArray(t) ? t[i] : t));
+  const ss = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+
+  const NdotV = clamp(dot3(N, V), 0, 1);
+  const fres = 0.02 + 0.98 * Math.pow(1 - NdotV, 5);
+
+  // the bed, lit by its own relief; climb IS the slope, so it doubles as the tilt
+  const bedN = [climb * Math.SQRT1_2, 1, climb * Math.SQRT1_2];
+  const bl = Math.hypot(bedN[0], bedN[1], bedN[2]); for (let i = 0; i < 3; i++) bedN[i] /= bl;
+  const bed = o.bed.map((v) => v * (0.34 + 0.66 * clamp(dot3(bedN, Ln), 0, 1)));
+  const trans = WATER_EXT.map((k) => Math.exp(-k * bedDep));
+  const dw = 1 - Math.exp(-dep * 1.5);
+  const body = mix3(o.shallow, o.deep, 1 - Math.exp(-bedDep * 0.55));
+  let col = mix3(body, bed.map((v, i) => v * trans[i]), Math.exp(-bedDep * BED_FADE));
+  const diffuse = col.slice();
+
+  // R.y for a surface that is essentially level is just the view elevation
+  const Ry = clamp(2 * dot3(N, V) * N[1] - V[1], 0, 1);
+  const facet = ss(0.02, 0.34, Ry);
+  const mirror = mix3(o.sky.map((v) => v * 0.40), mix3(o.sky, o.fog, 0.16), facet);
+  const mirrorK = fres * (0.55 + dw * 0.40);
+  col = mix3(col, mirror, mirrorK);
+
+  const Rl = [2 * dot3(N, Ln) * N[0] - Ln[0], 2 * dot3(N, Ln) * N[1] - Ln[1], 2 * dot3(N, Ln) * N[2] - Ln[2]];
+  const sd = Math.max(dot3(Rl, V), 0);
+  const spec = Math.pow(sd, 90) * 1.9 + Math.pow(sd, 8) * 0.34;
+  const sheen = [1.0, 0.96, 0.88].map((v) => v * spec * fres * (0.35 + dw * 0.65));
+  col = col.map((v, i) => v + sheen[i]);
+
+  const shore = ss(0.30, 0.03, dep) * ss(0.0, 0.025, dep);
+  const lapBand = shore * ss(0.06, 0.30, climb);
+  const foam = ss(0.08, 0.15, Math.abs(o.wave ?? 0)) * 0.045
+    + lapBand * (0.10 + (o.lap ?? 0.5) * 0.30) * (o.broken ?? 0.65);
+  col = col.map((v) => v + foam);
+  const wet = ss(0.06, 0.0, dep) * ss(0.0, 0.012, dep);
+  col = mix3(col, bed.map((v) => v * 0.44), wet * 0.60 * (1 - lapBand));
+
+  const edge = ss(0.0, 0.06, dep);
+  const alpha = clamp((0.34 + dw * 0.40 + fres * 0.22 + lapBand * 0.22) * edge + wet * 0.34, 0, 1);
+  const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  return {
+    col, alpha, fres, mirrorK, foam, wet, climb,
+    // what the two halves actually contribute, so "does a grazing surface
+    // mirror more than it scatters" is a comparison and not an opinion
+    reflected: lum(mirror) * mirrorK + lum(sheen),
+    scattered: lum(diffuse) * (1 - mirrorK) + foam,
+  };
+}
+
 /** Metres of water the depth map can describe. 3 m is a river, not an ocean. */
 const WATER_DEPTH_RANGE = 3.0;
+/** Metres of bed rise per metre travelled the map's gradient channels can hold.
+ *  A 1:1 bank is 45 degrees; 2:1 is as steep as anything a river runs past. */
+const WATER_GRAD_RANGE = 2.0;
 const WATER_DEPTH_RES = 256;
 
 export class Water {
@@ -1747,7 +1930,8 @@ export class Water {
     if (this.depthTex) {
       this.mat.uniforms.uDepth = { value: this.depthTex };
       this.mat.uniforms.uField = {
-        value: new THREE.Vector3(1 / this._fieldSize, this._fieldSize * 0.5, WATER_DEPTH_RANGE),
+        value: new THREE.Vector4(1 / this._fieldSize, this._fieldSize * 0.5,
+          WATER_DEPTH_RANGE, WATER_GRAD_RANGE),
       };
     }
     this.mesh = new THREE.Mesh(geo, this.mat);
@@ -1759,9 +1943,10 @@ export class Water {
   }
 
   /**
-   * One byte per texel of "how deep is it here", clamped to 3 m. A byte is
-   * 1.2 cm of resolution, which is finer than the shoreline band it is there
-   * to draw, and it filters linearly — a packed float would not.
+   * "How deep is it here, and how fast is the bed climbing" — one RGBA texel,
+   * depth clamped to 3 m. A byte is 1.2 cm of depth, which is finer than the
+   * shoreline band it is there to draw, and it filters linearly; a packed float
+   * would not.
    *
    * Clamped at the edges on purpose: past the heightfield the map holds
    * whatever the rim held, so the river runs off the map instead of stopping
@@ -1773,7 +1958,18 @@ export class Water {
     const N = WATER_DEPTH_RES;
     this._fieldSize = terrain.size;
     const half = terrain.size / 2;
-    const data = new Uint8Array(N * N);
+    /* R is the depth. GB are the GRADIENT of that depth — how fast the bed
+     * climbs, in metres per metre, signed and centred on 0.5.
+     *
+     * It is baked rather than differenced in the shader because the shader
+     * needs it twice (for the bed's own shading, and to tell a shore from a
+     * shallow so the lap does not paint the whole river) and a central
+     * difference costs four more DEPENDENT texture reads on a 520 m sheet that
+     * fills a third of the frame. Six reads per water pixel is enough to stop
+     * the canyon booting at all under a software rasteriser; this is one, which
+     * is what the single-channel version cost. Three bytes a texel for it. */
+    const data = new Uint8Array(N * N * 4);
+    const depth = new Float32Array(N * N);
     let wet = 0;
     // texel centres, so uv = world/size + 0.5 lands exactly on the sample
     for (let j = 0; j < N; j++) {
@@ -1781,19 +1977,34 @@ export class Water {
       for (let i = 0; i < N; i++) {
         const x = -half + ((i + 0.5) / N) * terrain.size;
         const d = clamp((this.level - terrain.height(x, z)) / WATER_DEPTH_RANGE, 0, 1);
-        data[j * N + i] = Math.round(d * 255);
+        depth[j * N + i] = d;
+        data[(j * N + i) * 4] = Math.round(d * 255);
         if (d > 0) wet++;
+      }
+    }
+    // the gradient of the CLAMPED depth, so it is the gradient the shader would
+    // have differenced for itself — central where there is room, one-sided at
+    // the rim
+    const texel = terrain.size / N;
+    const at = (i, j) => depth[clamp(j, 0, N - 1) * N + clamp(i, 0, N - 1)];
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const gx = (at(i + 1, j) - at(i - 1, j)) * WATER_DEPTH_RANGE / (2 * texel);
+        const gz = (at(i, j + 1) - at(i, j - 1)) * WATER_DEPTH_RANGE / (2 * texel);
+        const k = (j * N + i) * 4;
+        data[k + 1] = Math.round(clamp(gx / WATER_GRAD_RANGE * 0.5 + 0.5, 0, 1) * 255);
+        data[k + 2] = Math.round(clamp(gz / WATER_GRAD_RANGE * 0.5 + 0.5, 0, 1) * 255);
+        data[k + 3] = 255;
       }
     }
     // A sheet with no bed under it anywhere is a level whose "water" is a
     // decoration; leave it on the flat path rather than paying for a map.
     if (wet === 0) return;
     this.wetFraction = wet / (N * N);
-    const tex = new THREE.DataTexture(data, N, N, THREE.RedFormat);
+    const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.minFilter = tex.magFilter = THREE.LinearFilter;
     tex.generateMipmaps = false;
-    tex.unpackAlignment = 1;
     tex.needsUpdate = true;
     this.depthTex = tex;
   }

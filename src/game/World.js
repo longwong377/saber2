@@ -59,8 +59,18 @@ export class World {
     this.running = false;
 
     this.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
-    this.hpScale = 1;
-    this.dmgScale = 1;
+    // `this.hpScale = 1` and `this.dmgScale = 1` used to sit here. Enemy reads
+    // them as `A.hp * (world.hpScale ?? 1)` and `A.damage * (world.dmgScale ??
+    // 1)`, and no line in src/ ever wrote either of them again — they were
+    // written once, to the identity of the operation they feed, and moved by
+    // nothing: no difficulty tier, no mode, no wave, no menu control. A knob
+    // pinned at its own identity forever is not a knob, it is a claim that one
+    // exists, and the next reader greps for a writer and finds the constructor
+    // agreeing with itself. The SEAM is not lost — Enemy's `?? 1` is what
+    // makes the field optional — so the day something really does want to
+    // scale a droid's hp it assigns it here and every enemy spawned after
+    // picks it up, which is exactly what the old line looked like it was for
+    // and never did.
 
     this.bladeSolver = new BladeContactSolver();
     this.events = [];
@@ -91,7 +101,12 @@ export class World {
     // never touched particles even by accident.
     //
     // So the ladder is Engine's, and the player's own two sliders MULTIPLY it
-    // rather than replace it.
+    // rather than replace it. Those sliders are #opt-grass and #opt-particles
+    // under Fidelity, writing `grassScale` and `particleScale`. When this
+    // sentence was written they did not exist — the two settings had a reader
+    // here, a default of 1 in DEFAULT_SETTINGS, no control anywhere in the menu
+    // and therefore no way of ever being anything but 1, while this comment
+    // described the UI a player would go looking for and not find.
     const q = QUALITY[this.settings.quality] || QUALITY.high;
     // Terrain detail is the tier's own VIEW DISTANCE, normalised to `high`:
     // the mesh exists to be looked across, so the tier that draws to 900 m has

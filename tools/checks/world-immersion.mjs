@@ -36,6 +36,9 @@ import { SkyDome } from '../../src/engine/SkyDome.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
+/** The levels with open ground and a sun on it. */
+const OUTDOOR_LEVELS = ['dunes', 'arena', 'canyon'];
+
 /** Vertex rows per column in a horizon ring: deep root, grade, crest. The row
  *  at grade is what lets the visible band converge on the sky it actually
  *  stands against rather than on the sky over the summit. */
@@ -219,6 +222,110 @@ export function run({ check, assert, near }) {
     const worst = Math.min(...ratios);
     assert(ratios.length >= 3, `only ${ratios.length} outdoor levels to measure`);
     assert(worst > 5, `the least instanced outdoor level packs only ${worst.toFixed(1)} objects per draw call`);
+    return rows.join('; ');
+  });
+
+  check('ground: a chip LIES on the ground instead of standing in it', () => {
+    /*
+     * THE STRAY POLYGON, named at last. Three rounds of screenshots called it an
+     * "unlit untextured plane standing upright at a random angle, with no
+     * shadow and no ground contact", in all three outdoor levels; the round
+     * before this one went looking in the decal path and in Slice and found
+     * real bugs there that were not this one.
+     *
+     * It is addScree. Its chip is an icosahedron flattened to 0.52 and it was
+     * turned by THREE UNBOUNDED EULER ANGLES, so a uniformly random orientation
+     * stood it on edge as often as it laid it flat — the same generator
+     * Levels.js had already had to abandon for the landmark grade, for the same
+     * reason, in a comment that says so. Measured on the three outdoor levels,
+     * with only addScree's own chip counted (detail 0, 60 vertices;
+     * addBoulderCluster and addDebrisField are detail 1+ and both already cap
+     * their tilt):
+     *
+     *              blades  maxTilt  worstChip m²  two-tone plate  floating
+     *   dunes      179 → 0  90° → 36°  1.004 → 0.260  0.396 → 0.156   12 → 0
+     *   arena      447 → 0  90° → 36°  0.428 → 0.189  0.297 → 0.159   15 → 0
+     *   canyon     894 → 0  90° → 36°  1.834 → 0.547  0.503 → 0.145   18 → 0
+     *
+     * A "blade" is a chip past 55° with a face over 0.6 m. The brightness that
+     * made them read as UNLIT follows from the tilt on its own: a plate square
+     * to a low sun returns up to 4.13× the radiance the flat ground does
+     * (canyon, sun at 14°), so the lit face clips to white and the back face
+     * gets nothing but sky ambient — the white triangle with a saturated blue
+     * one welded to it, exactly as shot. The chip's own albedo is 0.112-0.190
+     * linear, DARKER than the sand it sits on, so orientation is the only
+     * channel it could have been.
+     *
+     * "worstChip" is the excess sunlit area of the worst single chip: the area
+     * of its faces weighted by how much more than a flat patch of ground each
+     * one returns, in m². It is the second channel, and it is the one that
+     * matters — the first cut of this check measured tilt alone, watched it go
+     * to zero, and would have shipped on that.
+     */
+    const UP = new THREE.Vector3(0, 1, 0);
+    const rows = [];
+    for (const key of OUTDOOR_LEVELS) {
+      const L = LEVELS[key];
+      const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const world = stubWorld(terrain);
+      L.dress(world);
+      const sun = sunDirection(L.atmosphere).normalize();
+      const groundNL = Math.max(0, UP.dot(sun));
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+      const t = new THREE.Vector3(), s = new THREE.Vector3(), ny = new THREE.Vector3();
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), fn = new THREE.Vector3();
+      let chips = 0, blades = 0, maxTilt = 0, maxExcess = 0, maxPair = 0, floating = 0, maxFloat = 0;
+      world.scene.traverse((o) => {
+        if (!o.isInstancedMesh || o.geometry.type !== 'IcosahedronGeometry') return;
+        const pos = o.geometry.attributes.position;
+        if (pos.count !== 60) return;             // detail 0 — addScree's chip and nothing else
+        o.updateMatrixWorld(true);
+        for (let i = 0; i < o.count; i++) {
+          o.getMatrixAt(i, m); m.premultiply(o.matrixWorld); m.decompose(t, q, s);
+          chips++;
+          ny.set(0, 1, 0).applyQuaternion(q);
+          const tilt = Math.acos(Math.min(1, Math.abs(ny.dot(UP)))) * 180 / Math.PI;
+          if (tilt > maxTilt) maxTilt = tilt;
+          if (tilt > 55 && Math.max(s.x, s.z) > 0.6) blades++;
+          let ex = 0, lit = 0, dark = 0, lowest = Infinity;
+          for (let f = 0; f < 20; f++) {
+            a.fromBufferAttribute(pos, f * 3).applyMatrix4(m);
+            b.fromBufferAttribute(pos, f * 3 + 1).applyMatrix4(m);
+            c.fromBufferAttribute(pos, f * 3 + 2).applyMatrix4(m);
+            lowest = Math.min(lowest, a.y, b.y, c.y);
+            e1.subVectors(b, a); e2.subVectors(c, a); fn.crossVectors(e1, e2);
+            const area = fn.length() * 0.5;
+            if (area < 1e-7) continue;
+            fn.normalize();
+            const nl = Math.max(0, fn.dot(sun));
+            ex += area * Math.max(0, nl - groundNL);
+            if (nl >= 0.80 && area > lit) lit = area;    // the white face
+            if (nl <= 0.05 && area > dark) dark = area;  // the blue one welded to it
+          }
+          if (ex > maxExcess) maxExcess = ex;
+          const pair = Math.min(lit, dark);
+          if (pair > maxPair) maxPair = pair;
+          const gap = lowest - terrain.height(t.x, t.z);
+          if (gap > 0.01) { floating++; maxFloat = Math.max(maxFloat, gap); }
+        }
+      });
+      assert(chips > 400, `${key}: only ${chips} scree chips to survey`);
+      assert(blades === 0, `${key}: ${blades} chips stand past 55° with a face over 0.6 m across`);
+      // 36° is CHIP_REPOSE, the angle of repose of loose rock; a shade over it
+      // for the quaternion round trip
+      assert(maxTilt < 38, `${key}: a chip lies at ${maxTilt.toFixed(1)}°, steeper than loose rock rests`);
+      // 0.65 against a measured worst of 0.547 (canyon, and canyon is worst
+      // because its sun is at 14°, so the flat ground only returns 0.242 and
+      // ANY tilt toward the sun buys a large multiple of it). Was 1.834.
+      assert(maxExcess < 0.65,
+        `${key}: one chip presents ${maxExcess.toFixed(3)} m² of excess sunlit area — it will clip to white`);
+      assert(maxPair < 0.22,
+        `${key}: a chip shows a ${maxPair.toFixed(3)} m² face square to the sun with an equally big one in shade — that is the white-and-blue plate`);
+      assert(floating === 0, `${key}: ${floating} chips hover clear of the ground, worst ${maxFloat.toFixed(3)} m`);
+      rows.push(`${key} ${chips} chips, 0 blades, ≤${maxTilt.toFixed(0)}°, worst ${maxExcess.toFixed(2)} m² excess sunlit, plate ${maxPair.toFixed(2)} m²`);
+      terrain.dispose();
+    }
     return rows.join('; ');
   });
 

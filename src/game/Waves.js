@@ -588,7 +588,10 @@ export const BOONS = [
   },
   {
     id: 'lightning', icon: '🗲', name: 'Force Lightning', tag: 'Dark',
-    text: 'Unlocks lightning on Z. It is not the Jedi way.',
+    // No key name. This card said "on Z" — a key typed into a run reward,
+    // which is wrong for anyone who has rebound `lightning` and is a second
+    // home for a name that lives in ACTIONS. The Codex prints the live key.
+    text: 'Unlocks Force lightning, on its own key. It is not the Jedi way.',
     apply(p) { p.boonMods.lightning = true; },
   },
   {
@@ -622,6 +625,13 @@ export const BOONS = [
   {
     id: 'dualcrystal', icon: '💎', name: 'Focusing Crystal', tag: 'Crystal',
     text: 'A brighter, hotter blade. Cuts land more easily and the trail burns wider.',
+    // Three promises, and for a long time one of them landed. The line is
+    // unchanged — `coreWidth` is now an accessor on Saber, so writing it pushes
+    // the new width into uWidth/uRadius and into trailThickness instead of
+    // sitting in a field that only the constructor had ever read. Measured on a
+    // live blade 60 frames after the draft: uWidth 0.0110/0.0330/0.1050 →
+    // 0.0138/0.0413/0.1313, uRadius 0.360 → 0.450, trail half-thickness
+    // 0.0528 → 0.0660. Before, all three were unchanged.
     apply(p) { p.saber.coreWidth *= 1.25; p.boonMods.cutPower *= 1.2; },
   },
   {

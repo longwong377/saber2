@@ -459,8 +459,9 @@ export class Saber {
     this.bladeGroup.position.y = this.emitterY;
     this.root.add(this.bladeGroup);
 
-    const w = this.coreWidth;
     const P = Saber.PROFILE;
+    // The initial values only; _syncWidth below is what owns them from here on.
+    const w = this.coreWidth;
 
     // Two triangles. aQuad.x runs across the blade, aQuad.y along it.
     const geo = new THREE.BufferGeometry();
@@ -497,7 +498,49 @@ export class Saber {
     this.blade.renderOrder = 12;
     this.bladeGroup.add(this.blade);
     this.bladeGroup.visible = false;
+    this._syncWidth();
   }
+
+  /**
+   * The core width, and everything built out of it, in one place.
+   *
+   * `coreWidth` used to be a plain field that these three lines read ONCE, at
+   * construction. Focusing Crystal does `p.saber.coreWidth *= 1.25` on a saber
+   * that is already in the player's hand, so measured on a live blade the field
+   * went 1 → 1.25 and uWidth stayed (0.0110, 0.0330, 0.1050), uRadius stayed
+   * 0.360 and trailThickness stayed 0.0528 — sixty frames later, still. Two of
+   * that card's three promises ("a brighter, hotter blade… the trail burns
+   * wider") were dead; only cutPower landed.
+   *
+   * Null-safe on purpose: the constructor assigns coreWidth before the blade
+   * material or the trail exist, and the forge preview rebuilds a Saber from
+   * scratch on every drag of the width slider.
+   *
+   * The 1.6 on the trail is the blade's HALO lobe, not a taste number: the
+   * smear is the swept slab of the thing that made it, and a slab thinner than
+   * the blade's own glow reads as a decal stuck on behind it.
+   */
+  _syncWidth() {
+    const w = this._coreWidth, P = Saber.PROFILE;
+    if (this.bladeMat) {
+      this.bladeMat.uniforms.uWidth.value.set(P.width[0] * w, P.width[1] * w, P.width[2] * w);
+      this.bladeMat.uniforms.uRadius.value = P.radius * w;
+    }
+    this.trailThickness = P.width[1] * 1.6 * w;
+  }
+
+  /**
+   * One home for the width. Reading it is a plain read (Bolts.js sizes the
+   * bolt-catch radius off it every frame); WRITING it is what pushes it into
+   * the uniforms, which is why this is an accessor and not a setWidth() the
+   * boon table would have to remember to call.
+   *
+   * An accessor pair is not a method (`Object.getOwnPropertyDescriptor` gives
+   * get/set, never value), so this does not put a property over a method of the
+   * same name — the class of bug tools/checks/shadowing.mjs exists for.
+   */
+  get coreWidth() { return this._coreWidth; }
+  set coreWidth(v) { this._coreWidth = v; this._syncWidth(); }
 
   /**
    * The trail is SHEETS × SAMPLES quads. Three sheets, offset along the normal
@@ -508,10 +551,10 @@ export class Saber {
   _buildTrail() {
     this.trailSegments = 30;
     this.trailSheets = 3;
-    // Half the thickness of the swept slab. It is the blade's own glow radius,
-    // read off PROFILE rather than typed again, because a smear thinner than
-    // the thing that made it reads as a decal stuck behind the blade.
-    this.trailThickness = Saber.PROFILE.width[1] * 1.6 * this.coreWidth;
+    // Half the thickness of the swept slab — set by _syncWidth, which is the
+    // only writer of it, so a width change mid-run reaches the smear as well as
+    // the blade. `(k - 1) * TH` in _updateTrail is what spends it.
+    this._syncWidth();
     const n = this.trailSegments, S = this.trailSheets;
     const verts = n * S * 2;
     const geo = new THREE.BufferGeometry();

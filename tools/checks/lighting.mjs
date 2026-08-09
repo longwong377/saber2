@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
   AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
-  cascadeBoxes, CASCADE_SPLIT,
+  cascadeBoxes, CASCADE_SPLIT, PMREM_FAR, BOUNCE_RADIUS, diffuseCap,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -206,19 +206,78 @@ export function run({ check, assert, near, THREE: T }) {
       + `authored spread was ${spread(authored).toFixed(2)}:1`;
   });
 
-  check('exposure: indirect light is capped below direct, or nothing has shape', () => {
-    // A scene whose sky puts as much light on the ground as its sun does has no
-    // modelling in it at all. Measured before the cap: the arena at 0.85 and
-    // the canyon at 0.98 of direct.
+  check('probe: the ground bounce is actually inside the bake', () => {
+    // It was not, for the whole life of the feature. PMREMGenerator.fromScene
+    // defaults to far = 100 and the bounce hemisphere was scaled to 4000, so
+    // every triangle of it was clipped and the probe was pure sky — while the
+    // comment above it said it was "the only thing that puts colour under a
+    // chin". Nothing threw. This is the cheapest possible guard against it
+    // happening again, and it is worth having precisely because the failure is
+    // silent and looks exactly like a taste decision.
+    assert(BOUNCE_RADIUS < PMREM_FAR * 0.95,
+      `the bounce dome is ${BOUNCE_RADIUS} against a ${PMREM_FAR} far plane — it is clipped out of the bake`);
+    assert(BOUNCE_RADIUS > 1, `a ${BOUNCE_RADIUS}-unit dome is inside the geometry it is lighting`);
+    const src = readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8');
+    assert(/fromScene\(\s*tmp,\s*0\.04,\s*0\.1,\s*PMREM_FAR\s*\)/.test(src),
+      'the bake no longer passes its far plane explicitly, so the pair is a comment again');
+    assert(/setScalar\(BOUNCE_RADIUS\)/.test(src),
+      'the bounce dome is scaled by a literal again, so nothing connects it to the far plane');
+    return `bounce ${BOUNCE_RADIUS} inside far ${PMREM_FAR}, both passed explicitly`;
+  });
+
+  check('exposure: the indirect budget is set by AIR MASS, and leaves a shadow dark', () => {
+    // REWRITTEN. This used to assert `ratio <= 0.56 && envI > 0.15`, which
+    // pinned a flat 0.55 cap and a floor sitting just under it — between them
+    // they made the diffuse fraction a constant, and 0.55 is three times what a
+    // clear sky actually puts down at a high sun. Measured on a controlled cast
+    // shadow (tools/_shade.mjs), sunlit sand and the same sand in its own
+    // shadow came out 2.9:1 in LINEAR on the arena. A desert is five to eight.
+    // The `envI > 0.15` half of it asserted the bug directly: it is the line
+    // that would have to be deleted to darken a shadow at all.
+    //
+    // The properties now are stronger and there are three of them: the ratio is
+    // tighter for every level, it has to be ORDERED BY SUN HEIGHT rather than
+    // being one number, and the thing it exists for — how dark a cast shadow
+    // lands — is asserted directly instead of being hoped for.
     const rows = [];
+    const seen = [];
     for (const key of OUTDOOR) {
       const a = LEVELS[key].atmosphere;
       const m = atmosphereMeter(a);
       const usedSky = m.skyFull * (m.envI / 0.38);
       const ratio = usedSky / m.direct;
-      assert(ratio <= 0.56, `${key} still runs ${(ratio * 100).toFixed(0)}% indirect`);
-      assert(m.envI > 0.15, `${key} choked the probe down to ${m.envI.toFixed(3)}`);
-      rows.push(`${key} ${(ratio * 100).toFixed(0)}% (uncapped ${(100 * m.skyFull / m.direct).toFixed(0)}%)`);
+      assert(ratio <= 0.50, `${key} still runs ${(ratio * 100).toFixed(0)}% indirect`);
+      // …and the probe is trimmed, never switched off: it is still the only
+      // image-based light in the game and the only thing with direction in it.
+      assert(m.envI > 0.05, `${key} switched the probe off at ${m.envI.toFixed(3)}`);
+      // The whole point. Flat ground, one material, sun versus no sun, in
+      // linear radiance before any curve — which is the number a tone curve can
+      // compress but cannot invent.
+      const shade = (m.irradiance - m.direct) / Math.PI;
+      const lit = m.irradiance / Math.PI;
+      // The floor rises with the sun because the physics does: a 14° sun is
+      // shining through four times the air a 60° one is, so a low-sun level
+      // legitimately has a brighter shadow and must not be held to a high-sun
+      // level's contrast. Shipped, all three sat at 2.5–2.6:1 whatever their
+      // sun was doing, which is the signature of a constant pretending to be a
+      // physical quantity — this line fails every one of them.
+      const floor = 1.2 + 4.6 * m.sunPos.y;
+      assert(lit / shade >= floor,
+        `${key}: sunlit ground is only ${(lit / shade).toFixed(2)}:1 over its own cast shadow, `
+        + `and a ${(Math.asin(m.sunPos.y) * 180 / Math.PI).toFixed(0)}° sun owes ${floor.toFixed(2)}:1`);
+      // …and not so dark that a shadow is a hole with nothing in it.
+      assert(lit / shade <= 12, `${key}: ${(lit / shade).toFixed(1)}:1 is a shadow with no light in it`);
+      seen.push([m.sunPos.y, ratio, key]);
+      rows.push(`${key} ${(ratio * 100).toFixed(0)}% at ${(Math.asin(m.sunPos.y) * 180 / Math.PI).toFixed(0)}° `
+        + `→ ${(lit / shade).toFixed(1)}:1`);
+    }
+    // A low sun shines through more air, so more of its beam arrives as sky and
+    // less as sun. Sorting by elevation has to sort by indirect fraction too,
+    // or the budget is a taste knob wearing a physical argument.
+    seen.sort((p, q) => p[0] - q[0]);
+    for (let i = 1; i < seen.length; i++) {
+      assert(seen[i][1] < seen[i - 1][1],
+        `${seen[i][2]} has a higher sun than ${seen[i - 1][2]} and no less indirect light`);
     }
     return rows.join(', ');
   });

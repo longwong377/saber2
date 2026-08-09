@@ -178,13 +178,32 @@ export class Input {
     return false;
   }
 
-  /** WASD + left stick, as a normalised 2D vector (x = strafe, y = forward). */
+  /**
+   * The movement actions + left stick, as a normalised 2D vector
+   * (x = strafe, y = forward).
+   *
+   * The four `|| this.down('Arrow…')` that used to sit on these lines were a
+   * SECOND set of movement bindings that no table knew about. Measured with the
+   * shipped defaults: ArrowUp fired no action at all, drove moveAxis.y to 1, and
+   * findConflicts(defaults, 'ArrowUp') came back empty — the key read as free.
+   * Bind anything to ArrowUp and one press did two things (push AND walk
+   * forward), with no way for the options screen to warn and no rebind able to
+   * separate them: exactly the KeyB/KeyN disease that was closed one round ago,
+   * still alive down here because a raw `down(code)` is not in ACTIONS.
+   *
+   * So movement is read through the table and nowhere else. Arrow keys are now
+   * ordinary free keys: adding ArrowUp as a second key on "Move forward" in the
+   * options screen takes one click and — unlike the hidden version — shows up in
+   * the bindings list and in every conflict warning. The DEFAULT arrow movement
+   * is gone with the hidden binding; restoring it means putting the arrows in
+   * ACTIONS beside W/A/S/D, which is a change to src/engine/Bindings.js.
+   */
   moveAxis(out = { x: 0, y: 0 }) {
     let x = 0, y = 0;
-    if (this.act('moveF') || this.down('ArrowUp')) y += 1;
-    if (this.act('moveB') || this.down('ArrowDown')) y -= 1;
-    if (this.act('moveR') || this.down('ArrowRight')) x += 1;
-    if (this.act('moveL') || this.down('ArrowLeft')) x -= 1;
+    if (this.act('moveF')) y += 1;
+    if (this.act('moveB')) y -= 1;
+    if (this.act('moveR')) x += 1;
+    if (this.act('moveL')) x -= 1;
     if (this.padLeft) { x += this.padLeft.x; y -= this.padLeft.y; }
     const len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; }

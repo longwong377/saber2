@@ -81,6 +81,14 @@ export const DEFAULT_SETTINGS = {
   music: 0.45,
   grassScale: 1,
   particleScale: 1,
+  // SaberController.holdPosition has been a real, per-frame-read behaviour
+  // since it was written, World.spawnPlayer has always read
+  // `this.settings.bladeHold` into it, and there has never been a key of that
+  // name in this object or a control anywhere in the menu. So the reader read
+  // `undefined` forever and the feature was unreachable from the game. A
+  // reader with no setting is the same lie as a setting with no reader, just
+  // pointing the other way.
+  bladeHold: false,
 };
 
 /** The blade may only be long while the training leash is off. */
@@ -140,6 +148,7 @@ export const SETTING_READERS = {
   music:           ['main.js', 'audio.setMusicVolume(settings.music)'],
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
   particleScale:   ['game/World.js', 'this.settings.particleScale'],
+  bladeHold:       ['game/World.js', 'this.settings.bladeHold'],
 };
 
 /**
@@ -191,7 +200,152 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // has damped out (about 0.4 s) or the hitstop already running has expired.
   if (!s.shake && rig) rig.shake = 0;
   if (!s.slowmo) world.hitstop = 0;
+  // "Blade holds position" is the same shape and rides the same seam.
+  // SaberController reads `holdPosition` every frame, but the only line that
+  // ever wrote it was World.spawnPlayer, so even once the setting existed the
+  // box would not have bitten until the next deploy. Pushed here it lands on
+  // the very next frame, on every player in the world.
+  for (const p of world.players || []) if (p.control) p.control.holdPosition = !!s.bladeHold;
   return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
+ * THE CODEX — the game's own list of what the controls do.
+ *
+ * It was seventeen rows of markup in index.html with the key names typed into
+ * them, and the round that moved Hurl off Mouse2 (where it collided with
+ * Thrust) onto Y did not come back here: the grid went on telling a player on a
+ * fresh profile "M2 to hurl it" while M2 thrusts. Parsed against
+ * defaultBindings(), sixteen of the seventeen rows were right and that one was
+ * a lie — and it was a lie no rebind could ever fix, because typed markup does
+ * not read the table.
+ *
+ * So there are no key names here at all. A row names ACTIONS; the renderer asks
+ * the live bindings what they are bound to. Rebind Hurl to Backslash and this
+ * page says Backslash, in the leading key and in the middle of the sentence.
+ *
+ * `text` is a function of `k`, which turns an action id into its `<kbd>`
+ * markup, so a key named INSIDE a sentence comes from the same place as one in
+ * the margin — the M2 above was an inline one, and inline is where a typed key
+ * hides longest.
+ *
+ * `device: 'Mouse'` is the one row with no action behind it: the mouse's own
+ * MOTION is not a binding and cannot be rebound. It is declared rather than
+ * written into the prose so that "everything else is generated" is checkable.
+ *
+ * Every id in ACTIONS must appear here — tools/checks/controls.mjs holds both
+ * directions — which is how `stance` and `flourish`, invented two rounds ago
+ * and documented on no screen a player ever sees, stop being invisible.
+ */
+export const CODEX = [
+  { keys: ['blade'], hold: true,
+    text: () => 'The mouse becomes the <b>blade</b>. The camera holds still while you hold it.' },
+  { device: 'Mouse',
+    text: () => 'Released, it is the camera. The blade settles back to a ready guard.' },
+  { keys: ['thrust'], text: () => 'Thrust — drive the hands forward along the blade.' },
+  { keys: ['moveF', 'moveL', 'moveB', 'moveR'],
+    text: k => `Move. ${k('sprint')} sprint, ${k('crouch')} crouch.` },
+  { keys: ['jump'], text: () => 'Force jump — hold to leap higher. Landing sends out a shockwave.' },
+  { keys: ['jump', 'jump'], text: () => 'Double jump. Hold on the way up to feed Force into the leap.' },
+  { keys: ['dash'], text: () => 'Dash, in any direction you are holding. No direction = dash back.' },
+  { keys: ['rollL', 'rollR'], text: () => 'Roll the wrist. Changes the plane your blade cuts on.' },
+  // Kept to two or three lines each, like every other row: .codex-grid sizes a
+  // grid ROW to its tallest cell, so one five-line entry opens a hole beside
+  // the two-line cells next to it.
+  { keys: ['stance'], hold: true,
+    text: () => 'Lateral guard — the blade lies flat across you. Drift the cursor through the centre '
+      + 'and the guard turns over.' },
+  { keys: ['flourish'],
+    text: () => 'Flourish — an idle twirl and nothing more. Any real intent cancels it.' },
+  { keys: ['grip2'], hold: true,
+    text: () => 'One-handed grip. A looser blade, and the free hand is yours.' },
+  { keys: ['ignite'], text: () => 'Ignite / retract.' },
+  { keys: ['focus'],
+    text: () => '<b>Focus</b> — hold to bend time. The world slows to a third, you barely do. Burns '
+      + 'Force fast, so pick your volleys.' },
+  { keys: ['push'], text: () => 'Force push.' },
+  { keys: ['pull'], text: () => 'Force pull.' },
+  { keys: ['grip'],
+    text: k => `Grip an object — then move the mouse to swing it, ${k('hurl')} to hurl it.` },
+  { keys: ['throw'], text: () => 'Throw the saber. Press again to recall it.' },
+  { keys: ['sense'], text: () => 'Force sense — see through walls.' },
+  { keys: ['stasis'],
+    text: k => `Stasis field — freeze what is near you, bolts included. ${k('hurl')} fires the whole field.` },
+  { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
+  { keys: ['lightning'],
+    text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },
+  { keys: ['view'], text: () => 'Toggle first / third person.' },
+  { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
+  { keys: ['lessonNext', 'lessonBack', 'lessonRepeat'],
+    text: () => 'In the <b>Dojo</b>: next lesson, previous lesson, start this one again.' },
+];
+
+/**
+ * The two control schemes. Their blurbs name keys, so their blurbs are
+ * functions of the bindings like the Codex rows.
+ *
+ * The Free Blade card said "Hold RMB to look around", which was a typed key
+ * name AND a description of an action rather than a button: what the free
+ * scheme actually reads is `!input.act('thrust')` for the camera and
+ * `actHit('blade')` for the stab, so the card was naming Mouse2's DEFAULT and
+ * would have gone on saying RMB after a rebind moved thrust anywhere else.
+ */
+export const SCHEMES = [
+  { key: 'hold', name: 'Hold to Blade',
+    blurb: k => `The mouse looks. Hold ${k('blade')} and the mouse IS the blade. Recommended.` },
+  { key: 'free', name: 'Free Blade',
+    blurb: k => `The mouse always moves the blade and the camera follows it. Hold ${k('thrust')} `
+      + `to look around; ${k('blade')} stabs. Chaotic.` },
+];
+
+// Key codes come from KeyboardEvent.code and cannot carry markup, but this is
+// stored player data on its way into innerHTML and the cost of being sure is
+// one replace.
+const escKey = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+/**
+ * One action's `<kbd>`s: every key it answers to, alternatives joined by "/".
+ *
+ * Plural because a binding is a LIST — Focus ships on M3 and T, Dash on Alt and
+ * M4 — and a legend that prints only the first would be telling half the truth
+ * to anyone using the other one. `—` when an action has been cleared, which is
+ * the honest answer and not a crash.
+ */
+export function keyChips(bindings, id, hold = false) {
+  const list = (bindings[id] || []).map(keyLabel);
+  if (!list.length) return '<kbd>—</kbd>';
+  return list.map((label, i) => `<kbd>${escKey((hold && i === 0 ? 'Hold ' : '') + label)}</kbd>`).join(' / ');
+}
+
+/**
+ * The Codex grid, as markup, from a bindings table.
+ *
+ * Pure and DOM-free so that the check can render it against a rebound table and
+ * assert what a PLAYER would read, rather than re-deriving the answer with a
+ * copy of this loop and agreeing with itself.
+ */
+export function codexHtml(bindings) {
+  return CODEX.map((row) => {
+    const lead = row.device ? `<kbd>${escKey(row.device)}</kbd>`
+      : row.keys.map(id => keyChips(bindings, id, row.hold)).join(' ');
+    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id))}</span></div>`;
+  }).join('');
+}
+
+/**
+ * The pause card's legend.
+ *
+ * Esc is the one key here that is NOT read from the table, and that is not an
+ * oversight: pausing is a raw keydown in main.js precisely so it still works
+ * when a binding has gone wrong, so it is not in ACTIONS and there is nothing
+ * to read. Declared here, once, instead of typed into index.html beside two
+ * that ARE rebindable.
+ */
+export function pauseHintsHtml(bindings) {
+  return ['<span><kbd>Esc</kbd> resume</span>']
+    .concat([['view', 'camera'], ['scoreboard', 'boons']]
+      .map(([id, what]) => `<span>${keyChips(bindings, id)} ${what}</span>`))
+    .join('');
 }
 
 /**
@@ -276,6 +430,10 @@ export class Menu {
     this._buildSaber();
     this._buildOptions();
     this._buildButtons();
+    // Belt and braces: _buildOptions reaches this through _buildBindings, but
+    // that bails out early when #bind-list is absent (a stripped DOM), and the
+    // Codex must still be built in that case rather than left empty.
+    this._buildKeyLegends();
     // after _buildSaber, so the forge's own Length slider gets the ceiling too
     this._applyBladeCeiling?.(this.s.unlimitedBlade);
     this.el.build.textContent = 'r1.0';
@@ -827,6 +985,9 @@ export class Menu {
         row.appendChild(label); row.appendChild(keys);
         host.appendChild(row);
       }
+      // Every OTHER surface that prints a key reads the same table, so a
+      // rebind lands on all of them in the same frame it lands here.
+      this._buildKeyLegends();
     };
 
     const listen = (action, slot, el) => {
@@ -888,28 +1049,54 @@ export class Menu {
     render();
   }
 
+  /**
+   * Every key name the player reads, printed from the live bindings.
+   *
+   * Two surfaces, one source. The Codex grid used to be seventeen rows of typed
+   * markup and the pause card three typed keys, and both were wrong the moment
+   * anything moved — the Codex was already wrong on a FRESH profile, telling
+   * the player M2 hurls a gripped object when M2 thrusts and Y hurls.
+   *
+   * Called from _buildBindings' render(), so a rebind repaints the Codex and
+   * the pause card in the same frame it repaints the bindings list.
+   */
+  _buildKeyLegends() {
+    this.bindings = this.bindings || loadBindings();
+    const grid = document.getElementById('codex-grid');
+    if (grid) grid.innerHTML = codexHtml(this.bindings);
+    const hints = document.getElementById('pause-hints');
+    if (hints) hints.innerHTML = pauseHintsHtml(this.bindings);
+
+    // The control-scheme cards name the key you hold to hand the camera back.
+    for (const s of SCHEMES) {
+      const el = document.querySelector(`#opt-scheme [data-scheme="${s.key}"] .txt span`);
+      if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id));
+    }
+  }
+
   _buildOptions() {
     this._buildDeflectModes();
     this._buildBindings();
-    const schemes = [
-      ['hold', 'Hold to Blade', 'The mouse looks. Hold left mouse and the mouse IS the blade. Recommended.'],
-      ['free', 'Free Blade', 'The mouse always moves the blade and the camera follows it. Hold RMB to look around. Chaotic.'],
-    ];
     const host = document.getElementById('opt-scheme');
     host.innerHTML = '';
-    for (const [key, name, blurb] of schemes) {
+    for (const s of SCHEMES) {
       const d = document.createElement('div');
-      d.className = 'diff' + (this.s.scheme === key ? ' sel' : '');
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      d.className = 'diff' + (this.s.scheme === s.key ? ' sel' : '');
+      // The blurb is left empty and filled by _buildKeyLegends, because it
+      // names keys and therefore has to be repainted on every rebind.
+      d.dataset.scheme = s.key;
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${s.name}</b><span></span></div>`;
       d.addEventListener('click', () => {
         audio.ui('click');
-        this.s.scheme = key;
+        this.s.scheme = s.key;
         [...host.children].forEach(c => c.classList.toggle('sel', c === d));
         saveSettings(this.s);
-        this.hooks.onSchemeChange?.(key);
+        this.hooks.onSchemeChange?.(s.key);
       });
       host.appendChild(d);
     }
+    // _buildBindings ran before the cards existed, so its repaint found nothing.
+    this._buildKeyLegends();
 
     // Every card states the tier's OWN numbers, straight off Engine's QUALITY,
     // because the previous four sentences promised things nothing read: the
@@ -948,10 +1135,33 @@ export class Menu {
     this._slider('opt-forcedrain', 'forceDrain', v => (v <= 0 ? 'unlimited' : `${v.toFixed(2)}\u00d7`),
       v => this.hooks.onForce?.());
     this._slider('opt-scale', 'resolutionScale', v => `${Math.round(v * 100)}%`, v => this.hooks.onResolution?.(v));
+    // The two multipliers on top of the tier. They have been keys of
+    // DEFAULT_SETTINGS with real readers in World.loadLevel since the tier
+    // ladder was fixed — and no control anywhere, so both were pinned at 1
+    // forever while World's own comment described "the player's own two
+    // sliders". These are those sliders.
+    //
+    // Grass reaches zero and particles do not: an empty field is a legitimate
+    // thing to ask a slow laptop for, whereas the particle budget also carries
+    // sparks, impact puffs and blood — the feedback that tells you a hit
+    // landed — so the floor is the Performance tier's own 0.4 rather than
+    // nothing at all.
+    this._slider('opt-grass', 'grassScale', v => (v <= 0 ? 'bare' : `${Math.round(v * 100)}%`));
+    this._slider('opt-particles', 'particleScale', v => `${Math.round(v * 100)}%`,
+      // Emission is re-read from the settings every time the tier is applied,
+      // and applyQuality is the one seam that does it, so the existing hook is
+      // exactly the right one: it means "the fidelity budget moved, go and
+      // read it again". Pool capacity and the grass instance budget are
+      // allocated at level load and follow on the next deploy.
+      () => this.hooks.onQualityChange?.(this.s.quality));
     this._slider('opt-vol', 'volume', v => `${Math.round(v * 100)}%`, v => audio.setVolume(v));
     this._slider('opt-music', 'music', v => `${Math.round(v * 100)}%`, v => audio.setMusicVolume(v));
     this._check('opt-invert', 'invertY', v => this.hooks.onInvert?.(v));
     this._check('opt-firstperson', 'firstPerson');
+    // Live on the same seam as shake and slowmo: applyFeelSettings pushes it
+    // onto every player's controller, so it bites on the next frame instead of
+    // on the next deploy.
+    this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every

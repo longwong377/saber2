@@ -494,8 +494,9 @@ export class Player {
     if (input.actHit('lightning') && this.boonMods.lightning) this.forceLightning(ctx);
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
-    // One meaning for Mouse2 whichever way the Force is currently full: send
-    // what I am holding at what I am looking at.
+    // One meaning for `hurl` whichever way the Force is currently full: send
+    // what I am holding at what I am looking at. (It said "Mouse2" here until
+    // the key moved off Mouse2 — which is why comments name the ACTION.)
     if (input.actHit('hurl')) {
       if (this.gripBody || this.gripEnemy) this.hurlGripped(ctx);
       else if (this.stasis.active) this.releaseStasis(ctx, true);
@@ -743,7 +744,15 @@ export class Player {
       this._shockwave(ctx, 5.4 * power, 11 * power, 14 * power);
       if (this.boonMods.repulse) this._shockwave(ctx, 8 * power, 20 * power, 26 * power);
     }
-    if (impactSpeed > 26) this.damage(clamp((impactSpeed - 26) * 2.6, 0, 45), null, 'fall');
+    // Four arguments, not three. The signature is (amount, point, source, kind)
+    // and this shipped as (amount, null, 'fall') — so `source` got the string
+    // 'fall' and `kind` got undefined. A fall that killed you then called
+    // die('fall') → onPlayerDeath(player, 'fall'), i.e. a killer that is a
+    // string where every other death hands over an entity, and the one
+    // diagnostic that prints `kind` printed undefined. Enemy.js's identical
+    // fall-damage line has always passed four. Nothing threw; the third
+    // distinct bug this one method has produced.
+    if (impactSpeed > 26) this.damage(clamp((impactSpeed - 26) * 2.6, 0, 45), null, null, 'fall');
   }
 
   _shockwave(ctx, radius, force, damage) {

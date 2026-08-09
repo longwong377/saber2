@@ -354,7 +354,14 @@ export const LEVELS = {
       // shadow and the tone curve.
       sunColor: 0xfff2d6, sunIntensity: 7.2, ambient: 0.30,
       skyColor: 0xb4cdf3, groundColor: 0x8a6a44,
-      fillColor: 0x93b6ff, fillIntensity: 0.34,
+      // The one term in the shade that is AUTHORED rather than derived, and it
+      // is a real skylight now rather than a pale blue: 0x93b6ff is B/R 3.43 in
+      // linear, 0x7ba4ff is 5.05. It matters more than its 3.0% of the ground
+      // irradiance suggests, because it is the only piece of the shade that
+      // arrives FROM A DIRECTION — the probe is an average over the hemisphere
+      // and the hemisphere light is a two-colour gradient, so neither of them
+      // can model a face turning toward the open sky and getting bluer for it.
+      fillColor: 0x7ba4ff, fillIntensity: 0.48,
       // fogColor IS THE NEAR AIR NOW, and only that.
       //
       // The complaint against this pair was exact: 0xd0c6b4 is hue 38° and the
@@ -604,7 +611,13 @@ export const LEVELS = {
       // first tried: at 0.45 the shadows filled in far enough to take the
       // frame's tonal range from 3.26:1 to 2.50:1, which is paying for hue
       // separation with value separation.
-      fillColor: 0x8fb4ff, fillIntensity: 0.34,
+      // …and a real skylight blue rather than a pale one: 0x8fb4ff is B/R 3.64
+      // in linear, 0x7ba4ff is 5.05. The note above about 0.45 buying hue with
+      // value still holds — this is 0.48, not 0.60 — but the arithmetic under it
+      // has changed: the probe that used to dwarf this term has come down by
+      // more than half (see diffuseCap), so the same 0.14 of intensity now moves
+      // the shade's hue about twice as far as it did when that note was written.
+      fillColor: 0x7ba4ff, fillIntensity: 0.48,
       // 0.0034 put the half-light distance at 245 m, which is further than the
       // rim (170 m) and the near mesas — so the one thing that makes distant
       // rock desaturate and shift toward the sky was barely acting on the only
@@ -958,6 +971,17 @@ export const LEVELS = {
       elevation: 14, azimuth: 95,
       sunColor: 0xffd9a8, sunIntensity: 6.4, ambient: 0.32,
       skyColor: 0xa8c8f0, groundColor: 0x6a5440,
+      // This level never authored a fill and took the engine's pale default,
+      // which is the one thing about its light that was not deliberate. It is
+      // the same skylight the other two outdoor levels use and it is DIMMER
+      // than theirs on purpose: a 14° sun already leaves this level with more
+      // sky in its shade than either of them (see diffuseCap), so it needs the
+      // hue from this term and none of the level. Measured on a controlled cast
+      // shadow (tools/_shade.mjs), this level's shaded sand went hue 79.0° /
+      // saturation 0.013 — grey, with GREEN as its maximum channel — to hue
+      // 205.3° / 0.354 with blue as its maximum, and its lit-to-shade ratio
+      // moved 1.97:1 to 2.15:1, which is the least of the three on purpose.
+      fillColor: 0x7ba4ff, fillIntensity: 0.40,
       fogColor: 0xb4a894, fogDensity: 0.0052, exposure: 0.94, bloom: 0.42,
       saturation: 1.1, lift: [0.008, 0.010, 0.014], gain: [1.03, 1.0, 0.98],
       // A 14-degree sun under heavy cloud: the light rakes along the canyon and

@@ -31,7 +31,45 @@
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
-import { GrassField, Water, ground } from '../../src/world/Scenery.js';
+import { GrassField, Water, ground, waterShade } from '../../src/world/Scenery.js';
+import { LEVELS } from '../../src/game/Levels.js';
+import { sunDirection } from '../../src/engine/Engine.js';
+
+/* ── the frame's own tone curve ───────────────────────────────────────────
+ * Transcribed from Engine's composite pass, the same way tools/checks/vfx.mjs
+ * carries its own copy: saturation is a DISPLAY quantity, and the last two
+ * rounds of this workstream both went wrong by judging colour in linear
+ * radiance. A river measured before the curve is a river nobody looked at.
+ */
+const clampT = (v) => Math.min(1, Math.max(0, v));
+const LUMT = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+const linToSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055);
+function acesT(rgb, exposure = 1) {
+  const IN = [[0.59719, 0.35458, 0.04823], [0.07600, 0.90834, 0.01566], [0.02840, 0.13383, 0.83777]];
+  const OUT = [[1.60475, -0.53108, -0.07367], [-0.10208, 1.10813, -0.00605], [-0.00327, -0.07276, 1.07602]];
+  const mul = (M, v) => M.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2]);
+  let v = rgb.map((c) => c * exposure / 0.6);
+  v = mul(IN, v);
+  v = v.map((x) => (x * (x + 0.0245786) - 0.000090537) / (x * (0.983729 * x + 0.432951) + 0.238081));
+  return mul(OUT, v).map(clampT);
+}
+const GRADE_T = { black: 0.018, curve: 0.32, contrast: 1.04,
+  shadowTint: [0.955, 0.985, 1.070], highTint: [1.035, 1.000, 0.955] };
+function throughTone(linear, exposure = 1, a = {}) {
+  const G = GRADE_T;
+  const lift = a.lift ?? [0.004, 0.006, 0.012], gain = a.gain ?? [1.02, 1.0, 0.98];
+  let c = acesT(linear, exposure).map(linToSrgb);
+  c = c.map((v) => Math.max(v - G.black, 0) / (1 - G.black));
+  c = c.map((v) => v + (v * v * (3 - 2 * v) - v) * G.curve);
+  c = c.map((v) => (v - 0.5) * G.contrast + 0.5);
+  c = c.map((v, i) => v * gain[i] + lift[i]);
+  const luma = LUMT(c);
+  const t = clampT((luma - 0.12) / 0.60), ss = t * t * (3 - 2 * t);
+  c = c.map((v, i) => v * (G.shadowTint[i] + (G.highTint[i] - G.shadowTint[i]) * ss));
+  const th = clampT((luma - 0.62) / 0.38), sh = th * th * (3 - 2 * th);
+  const satEff = (a.saturation ?? 1.06) * (1 + (0.70 - 1) * sh);
+  return c.map((v) => clampT(luma + (v - luma) * satEff));
+}
 
 const PRESETS = ['dunes', 'arena', 'canyon', 'hangar'];
 const OUTDOOR = ['dunes', 'arena', 'canyon'];
@@ -574,10 +612,17 @@ export function run({ check, assert, near }) {
     assert(w.depthTex, 'the water has no depth map, so its edge is wherever the sheet ends');
     assert('WATER_DEPTH' in w.mat.defines, 'the depth map was baked and never compiled in');
     const N = w.depthTex.image.width, d = w.depthTex.image.data;
-    const sample = (x, z) => {
+    // RGBA now: R is depth, GB are its gradient (see Water._bakeDepth)
+    assert(d.length === N * N * 4, `the depth map is ${d.length} bytes for ${N}² texels`);
+    const texel = (x, z) => {
       const i = clamp(Math.round((x / t.size + 0.5) * N - 0.5), 0, N - 1);
       const j = clamp(Math.round((z / t.size + 0.5) * N - 0.5), 0, N - 1);
-      return (d[j * N + i] / 255) * 3.0;
+      return (j * N + i) * 4;
+    };
+    const sample = (x, z) => (d[texel(x, z)] / 255) * 3.0;
+    const gradAt = (x, z) => {
+      const k = texel(x, z);
+      return Math.hypot((d[k + 1] / 255 - 0.5) * 4.0, (d[k + 2] / 255 - 0.5) * 4.0);
     };
     // the map has to agree with the heightfield, or the shoreline is drawn in
     // the wrong place and the whole thing is worse than no map at all
@@ -594,9 +639,34 @@ export function run({ check, assert, near }) {
       `the wash is ${deepest.toFixed(2)} m deep — the blurb says water underfoot`);
     assert(w.wetFraction > 0.005 && w.wetFraction < 0.5,
       `${(w.wetFraction * 100).toFixed(0)}% of the map is under water`);
+    /* And the gradient channels have to agree with the heightfield too, or the
+     * lap goes back to painting every shallow. Sampled on the wet ground only:
+     * a bank is where the bed climbs, and the shader can only know that from
+     * this map. */
+    let gWorst = 0, gMax = 0, gN = 0;
+    for (let z = -80; z <= 80; z += 3) {
+      for (let x = -180; x <= 180; x += 7) {
+        if (0.35 - t.height(x, z) <= 0.01) continue;
+        const truth = Math.hypot(
+          (clamp(0.35 - t.height(x + 1.1, z), 0, 3) - clamp(0.35 - t.height(x - 1.1, z), 0, 3)) / 2.2,
+          (clamp(0.35 - t.height(x, z + 1.1), 0, 3) - clamp(0.35 - t.height(x, z - 1.1), 0, 3)) / 2.2);
+        gWorst = Math.max(gWorst, Math.abs(truth - gradAt(x, z)));
+        gMax = Math.max(gMax, gradAt(x, z));
+        gN++;
+      }
+    }
+    assert(gN > 200, `only ${gN} wet samples for the gradient`);
+    assert(gWorst < 0.45, `the baked bed gradient is out by ${gWorst.toFixed(2)} m/m against the terrain`);
+    /* 0.10, not the 0.16 this actually measures: the map is 2.2 m per texel, so
+     * it cannot resolve a bank steeper than the bank's own run, and the survey
+     * grid below is coarser still. The property being pinned is that the map
+     * knows a bank from a shallow AT ALL — without that the lap has nothing to
+     * sit on and goes back to painting every ankle-deep metre of the wash. */
+    assert(gMax > 0.10, `the steepest bank the map knows about is ${gMax.toFixed(2)} m/m — the lap has nothing to sit on`);
     w.dispose();
     ground.terrain = null;
-    return `${N}² map, ≤${(worst * 100).toFixed(0)} cm error, ${(w.wetFraction * 100).toFixed(1)}% wet, ${deepest.toFixed(2)} m deepest`;
+    return `${N}² map, ≤${(worst * 100).toFixed(0)} cm error, ${(w.wetFraction * 100).toFixed(1)}% wet, `
+      + `${deepest.toFixed(2)} m deepest, bed gradient ≤${gWorst.toFixed(2)} m/m error over ${gN} wet samples (max ${gMax.toFixed(2)})`;
   });
 
   check('water: the edge fades out where the depth runs out', () => {
@@ -605,16 +675,124 @@ export function run({ check, assert, near }) {
       'there is no shoreline band');
     assert(/float edge = smoothstep\(0\.0, [\d.]+, depth\)/.test(src) && /\* edge/.test(src),
       'the alpha does not go to zero at the waterline — the sheet ends in a hard line');
-    assert(/mix\(uBed, body, dw\)/.test(src),
+    /* REWRITTEN, and the old line is worth recording: this asserted
+     * `mix(uBed, body, dw)` — a SCALAR fade from a flat bed colour to a flat
+     * swatch. That expression was the bug. A scalar carries no hue, so the
+     * swatch never asserted itself and the river displayed at saturation 0.11
+     * against an authored 0.62; and sampling the bed straight down puts it
+     * behind the ripples like a decal. The property that replaces it is
+     * strictly stronger on both counts. */
+    assert(/vec3 trans = exp\(-WATER_EXT \* bedDepth\)/.test(src),
+      'the bed is filtered by a scalar, so a foot of river has no colour of its own');
+    assert(/bedDepth = max\(0\.0, depth \+ dot\(grad, N\.xz/.test(src),
+      'the bed is read straight down — it sits behind the ripples instead of refracting through them');
+    // one fetch, not six: the canyon stops booting somewhere above two
+    const fetches = (src.slice(src.indexOf('const WATER_FRAG'), src.indexOf('waterShade'))
+      .match(/bedAt\(|texture2D\(uDepth/g) || []).length;
+    assert(fetches <= 3,
+      `the water shader takes ${fetches} depth reads per pixel; a 520 m sheet cannot afford that`);
+    assert(/mix\(body, bed \* trans,/.test(src),
       'shallow water does not show the bed through it');
     // and a shallow river must not be throwing whitecaps
     const swell = src.match(/smoothstep\(0\.08, 0\.15, abs\(vWave\)\) \* ([\d.]+)/);
     assert(swell && Number(swell[1]) < 0.08,
       'the long swell is still foaming, which on a 580 m sheet is white blobs the size of a barge');
-    // reflecting only the sky is a sheet of milk; a facet term is what bands it
-    assert(/float facet = smoothstep/.test(src) && /vec3 mirror = mix\(/.test(src),
-      'the surface mirrors one flat colour');
-    return 'depth-graded colour, faded edge, a lap at the shoreline';
+    /* Also rewritten. The old pair — a flatness term and any `mirror = mix(` —
+     * was satisfied by a shader that mirrored a 55/45 blend of haze and sky,
+     * i.e. two chromas cancelling into grey. What matters is that the mirror is
+     * chosen by where the REFLECTED RAY GOES, and that a lap is a shore rather
+     * than a shallow: 71% of the canyon's wet surface is 2.5-30 cm deep, so a
+     * lap keyed on depth alone is a lap over the whole river. */
+    assert(/vec3 R = reflect\(-V, N\)/.test(src) && /float facet = smoothstep\([\d.]+, [\d.]+, clamp\(R\.y/.test(src),
+      'the reflection is picked by a flatness proxy, not by where the mirrored ray actually goes');
+    assert(/vec3 mirror = mix\(/.test(src), 'the surface mirrors one flat colour');
+    assert(/float lapBand = shore \* smoothstep\([\d.]+, [\d.]+, climb\)/.test(src),
+      'the lap is keyed on depth alone, so it paints foam across every shallow');
+    assert(/float wet = smoothstep/.test(src) && /bed \* 0\.44, wet/.test(src),
+      'there is no wet ground at the waterline — the river ends in a bright line instead of a beach');
+    return 'refracted bed, per-channel extinction, ray-chosen mirror, a lap at the shore and wet ground under it';
+  });
+
+  check('water: the river reads as water, and along it the surface is a mirror', () => {
+    /*
+     * The canyon river shipped as a flat near-white sheet: hue 189, saturation
+     * 0.192 measured off a frame, against an authored shallow swatch of 0.62,
+     * and 11.8% of the frame over 0.80 luminance with none of it sky.
+     *
+     * Three things were wrong and only one of them was the reflection:
+     *   · the lap was keyed on DEPTH, and 71% of this wash is 2.5-30 cm deep,
+     *     so 0.86 of linear white went down over a body colour of 0.14 across
+     *     nearly the whole river;
+     *   · the Fresnel was pow(1-N.V, 3.2) folded into 0.62 of the mix, so at
+     *     the 2-8 degrees a standing player sees a river at, the surface came
+     *     back mostly DIFFUSE — water does not do that;
+     *   · the mirror was a 55/45 blend of haze and sky, two chromas cancelling.
+     *
+     * Measured here on the canyon's own heightfield, every wet cell at the
+     * elevation a 1.7 m eye actually sees it from, averaged over the ripple
+     * normal's own distribution (a single flat facet overstates the mirror at a
+     * grazing view by a mile), and pushed through the shipped ACES + grade —
+     * because saturation is a DISPLAY quantity and judging it in linear
+     * radiance is how the last two rounds measured the wrong channel.
+     *
+     *            shipped        now
+     *   sat        0.113       0.428     (gate: 60% of the authored 0.620)
+     *   lum        0.731       0.446
+     *   >0.80     48.13%       0.00%
+     */
+    const t = terrainOf('canyon');
+    const L = LEVELS.canyon, A = L.atmosphere;
+    const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+    const env = {
+      shallow: lin(L.water.shallow), deep: lin(L.water.deep), bed: lin(0x6b5a41),
+      sky: lin(A.skyColor), fog: lin(A.fogColor), sun: sunDirection(A).normalize().toArray(),
+    };
+    // the ripple normal WATER_FRAG builds: normalize(vec3(a, 1, -a)) with a
+    // triangular on ±0.55, sampled at seven points with its own weights
+    const FACET = [-0.44, -0.28, -0.14, 0, 0.14, 0.28, 0.44];
+    const WT = [0.06, 0.13, 0.19, 0.24, 0.19, 0.13, 0.06];
+    let wsat = 0, wlum = 0, n = 0, hot = 0, grazeRefl = 0, grazeScat = 0;
+    for (let z = -110; z <= 110; z += 1.5) {
+      for (let x = -110; x <= 110; x += 1.5) {
+        const d = L.water.level - t.height(x, z);
+        if (d <= 0.005) continue;
+        const climb = Math.hypot(t.height(x + 0.7, z) - t.height(x - 0.7, z),
+          t.height(x, z + 0.7) - t.height(x, z - 0.7)) / 1.4;
+        const dist = Math.max(6, Math.hypot(x, z) * 0.35 + 8);
+        const viewDeg = Math.atan(1.7 / dist) * 180 / Math.PI;
+        const col = [0, 0, 0];
+        for (let k = 0; k < FACET.length; k++) {
+          const a = FACET[k], ny = 1 / Math.sqrt(1 + 2 * a * a);
+          const s = waterShade({ ...env, depth: d, bedDepth: d, climb, viewDeg, ny });
+          for (let i = 0; i < 3; i++) col[i] += s.col[i] * WT[k];
+        }
+        const disp = throughTone(col, A.exposure, A);
+        const mx = Math.max(...disp), mn = Math.min(...disp);
+        wsat += mx <= 1e-9 ? 0 : (mx - mn) / mx;
+        const lum = 0.2126 * disp[0] + 0.7152 * disp[1] + 0.0722 * disp[2];
+        wlum += lum; if (lum > 0.80) hot++;
+        n++;
+        // and the same cell on a level facet at 4°, which is the question
+        // "along a river, does the surface mirror or does it scatter?"
+        const g = waterShade({ ...env, depth: d, bedDepth: d, climb, viewDeg: 4, ny: 0.996 });
+        grazeRefl += g.reflected; grazeScat += g.scattered;
+      }
+    }
+    const authored = (() => {
+      const s = env.shallow.map(linToSrgb), mx = Math.max(...s), mn = Math.min(...s);
+      return (mx - mn) / mx;
+    })();
+    const sat = wsat / n, lum = wlum / n, hotShare = (hot / n) * 100;
+    assert(n > 1500, `only ${n} wet cells surveyed`);
+    assert(sat >= authored * 0.60,
+      `the river displays at saturation ${sat.toFixed(3)}, under 60% of the authored ${authored.toFixed(3)}`);
+    assert(grazeRefl > grazeScat,
+      `along the water the surface returns ${grazeRefl.toFixed(2)} reflected against ${grazeScat.toFixed(2)} scattered — a river seen along it is a mirror`);
+    assert(hotShare < 2.0,
+      `${hotShare.toFixed(1)}% of the river is over 0.80 luminance — it is a white sheet again`);
+    t.dispose();
+    return `sat ${sat.toFixed(3)} vs authored ${authored.toFixed(3)} (was 0.113), lum ${lum.toFixed(3)} (was 0.731), `
+      + `${hotShare.toFixed(2)}% over 0.80 (was 48.1%), grazing reflect/scatter ${(grazeRefl / grazeScat).toFixed(2)}:1`;
   });
 
   check('water: a level with no terrain still gets a river, just a flat one', () => {

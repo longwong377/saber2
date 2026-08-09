@@ -109,6 +109,9 @@
         <label class="slider">Field of view <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
         <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
+        <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
+        <p class="hint">Held, the blade stays where your last flick left it instead of easing back to the
+          ready guard. The controller has always been able to do this and nothing could ask it to.</p>
         <h3 style="margin-top:22px">Deflection aiming</h3>
         <div id="opt-deflect" class="difflist"></div>
         <h3 style="margin-top:22px">The Force</h3>
@@ -126,6 +129,11 @@
         <h3>Fidelity</h3>
         <div id="opt-quality" class="difflist"></div>
         <label class="slider">Resolution <input type="range" id="opt-scale" min="0.5" max="1.35" step="0.05" value="1"><b></b></label>
+        <label class="slider">Grass <input type="range" id="opt-grass" min="0" max="1.5" step="0.05" value="1"><b></b></label>
+        <label class="slider">Particles <input type="range" id="opt-particles" min="0.4" max="1.5" step="0.05" value="1"><b></b></label>
+        <p class="hint">Both <b>multiply</b> the tier above rather than replacing it, so Performance at 150%
+          particles is still thinner than Cinematic at 100%. Particles take effect on the next impact;
+          grass on the next deploy, because a field is planted when the level loads.</p>
         <label class="check"><input type="checkbox" id="opt-bloom" checked> Bloom</label>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
@@ -139,26 +147,16 @@
     <section class="panel" data-panel="train">
       <div class="col wide codex">
         <h3>The blade is yours to move</h3>
-        <div class="codex-grid">
-          <div><kbd>Hold LMB</kbd><span>The mouse becomes the <b>blade</b>. The camera holds still while you hold it.</span></div>
-          <div><kbd>Mouse</kbd><span>Released, it is the camera. The blade settles back to a ready guard.</span></div>
-          <div><kbd>RMB</kbd><span>Thrust — drive the hands forward along the blade.</span></div>
-          <div><kbd>W A S D</kbd><span>Move. <kbd>Shift</kbd> sprint, <kbd>Ctrl</kbd> crouch.</span></div>
-          <div><kbd>Space</kbd><span>Force jump — hold to leap higher. Landing sends out a shockwave.</span></div>
-          <div><kbd>Q</kbd> <kbd>E</kbd><span>Roll the wrist. Changes the plane your blade cuts on.</span></div>
-          <div><kbd>M3</kbd> / <kbd>T</kbd><span><b>Focus</b> — hold to bend time. The world slows to a third, you barely do. Burns Force fast, so pick your volleys.</span></div>
-          <div><kbd>Alt</kbd> / <kbd>M4</kbd><span>Dash, in any direction you are holding. No direction = dash back.</span></div>
-          <div><kbd>Space</kbd> <kbd>Space</kbd><span>Double jump. Hold on the way up to feed Force into the leap.</span></div>
-          <div><kbd>F</kbd><span>Force push.</span></div>
-          <div><kbd>R</kbd><span>Force pull.</span></div>
-          <div><kbd>G</kbd><span>Grip an object — then move the mouse to swing it, <kbd>M2</kbd> to hurl it.</span></div>
-          <div><kbd>H</kbd><span>Throw the saber. Press again to recall it.</span></div>
-          <div><kbd>C</kbd><span>Force sense — see through walls.</span></div>
-          <div><kbd>V</kbd><span>Toggle first / third person.</span></div>
-          <div><kbd>X</kbd><span>Ignite / retract.</span></div>
-          <div><kbd>Tab</kbd><span>Scoreboard &amp; run boons.</span></div>
-        </div>
-        <p class="hint" style="margin-top:14px">Every one of these can be rebound under <b>Options</b>.</p>
+        <!-- Filled by Menu._buildKeyLegends from the CODEX table and the LIVE
+             bindings, and repainted on every rebind. It used to be seventeen
+             rows with the keys typed into them, and the round that moved Hurl
+             off M2 (where it collided with Thrust) onto Y never came back here:
+             sixteen of the seventeen rows agreed with defaultBindings() and one
+             told a player on a fresh profile to press the key that thrusts.
+             A key name that is typed cannot follow a rebind, so none are. -->
+        <div class="codex-grid" id="codex-grid"></div>
+        <p class="hint" style="margin-top:14px">Every one of these can be rebound under <b>Options</b>, and this
+          page is printed from those bindings — rebind a key and this is what it says.</p>
         <h3 style="margin-top:26px">The four things that make a master</h3>
         <ol class="codex-list">
           <li><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>
@@ -220,9 +218,12 @@
     <p id="coach-brief" class="coach-brief"></p>
     <p id="coach-hint" class="coach-hint"></p>
     <div class="coach-bar"><i id="coach-fill"></i></div>
-    <div class="coach-keys">
-      <span><kbd>N</kbd> next</span><span><kbd>B</kbd> back</span><span><kbd>R</kbd>etry with <kbd>Y</kbd></span>
-    </div>
+    <!-- Filled by refreshCoachKeys() in main.js from the live bindings. The
+         typed `N next / B back / R etry with Y` that used to sit here was
+         already dead markup — main.js overwrites it on boot — and dead markup
+         with a key name in it is a second home for the key, waiting for
+         somebody to trust it. -->
+    <div class="coach-keys"></div>
   </div>
 
   <div id="lockmeter" class="lockmeter hidden">
@@ -274,9 +275,11 @@
     <button id="btn-resume" class="primary">Resume</button>
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
-    <div class="pause-hints">
-      <span><kbd>Esc</kbd> resume</span><span><kbd>V</kbd> camera</span><span><kbd>Tab</kbd> boons</span>
-    </div>
+    <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
+         `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
+         (main.js pauses off a raw keydown so it survives a broken binding), so
+         it is the one key here that is declared rather than read. -->
+    <div class="pause-hints" id="pause-hints"></div>
   </div>
 </div>
 
