@@ -368,13 +368,54 @@ const wrapPi = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += 
  * The reach clamp is chained to that foot, so the pelvis goes with it. A real
  * foot lands at well under 0.5 m/s.
  *
- * That cannot be fixed by reshaping the arc alone: 285 mm of lift inside a
- * 314 ms swing has a mean descent rate of 0.9 m/s even if it is spread over the
- * ENTIRE swing, and holding the foot high late is the only thing keeping it
- * inside the leg's reach while it is 300 mm out in front. It needs the lift
- * amplitude, the stride budget and the hip height re-derived together, which is
- * the gait model itself. It is written down here, with its numbers, rather than
- * half-fixed.
+ * ── WHAT THAT DIAGNOSIS GOT RIGHT, AND THE ONE THING IT GOT WRONG ────────
+ *
+ * Everything above is a correct measurement and it named the right suspect. It
+ * was wrong about one thing, and the wrong thing was the conclusion: it said
+ * the arc could not be fixed on its own because 285 mm inside a 314 ms swing
+ * averages 0.9 m/s however it is spread. True, and beside the point — the mean
+ * descent is not what reads as a stamp. The foot was ALREADY landing at 0.00
+ * m/s before any of this; the 3.4-7.0 m/s was a mid-swing plunge that the foot
+ * then caught itself out of, which is a marionette rather than a stamp, and a
+ * plunge is exactly what reshaping the arc fixes.
+ *
+ * `tools/_gait.mjs` measures all of it. Baseline against now:
+ *
+ *                    worst descent      lift        pelvis/frame     clamp binds
+ *        walk 1.6      3.41 → 0.98    134 → 88 mm    20.1 → 8.4 mm    6% →  3%
+ *        jog  3.0      3.13 → 1.06    205 → 130      27.6 → 11.3    100% →  0%
+ *        run  4.6      5.28 → 1.79    285 → 178      43.9 → 32.4    100% → 10%
+ *        sprint 7.4    6.98 → 1.94    300 → 200      87.5 → 28.4    100% → 19%
+ *
+ * Five things, and no constant was tuned by eye:
+ *
+ *   THE CLAMP WAS THE PELVIS because the stride was sized to saturate the
+ *   reach budget exactly — `freq = max(freq, duty·speed/spanMax)` sets the span
+ *   to spanMax whenever the natural cadence is too slow, so the leg ran at 100%
+ *   of its own limit at every speed and any upward bob was clipped off.
+ *
+ *   THE BUDGET SOLVED THE WRONG INSTANT. It checked the plant, but the swing
+ *   foot decelerates to a dead stop while the body keeps travelling, so its
+ *   lead over the hip PEAKS a few frames earlier — 463 mm against a 344 mm
+ *   plant offset at a sprint. See SWING_OVER.
+ *
+ *   THE ANKLE HAD TWO MODELS. `ankleFwd` rolled the foot about the ball and was
+ *   exact; `ankleRise` used a fudge factor that placed the pivot 161 mm ahead
+ *   of the ankle on a foot 133 mm long. The budget was spending rear reach that
+ *   did not exist. See `_ankleOffset`.
+ *
+ *   AN UNLOADED KNEE WAS TREATED AS A STRUT. The clamp constrained the pelvis
+ *   against a foot that had left the ground four frames earlier. See
+ *   SWING_SLACK.
+ *
+ *   THE BUDGET DID NOT KNOW WHAT IT WAS STANDING ON, so uphill the trailing
+ *   foot was below the hip by the slope times how far back it was, and the
+ *   drawn ankle came off its plant point by 67 mm on a 20° ramp.
+ *
+ * What is left is honest bob: 28 mm in a frame at a sprint is a 48 mm amplitude
+ * at 5.7 Hz, which is what a running pelvis does. The clamp is a safety net
+ * again — on the worst frame at every speed it now sits ABOVE the height the
+ * gait asked for.
  */
 
 /**
@@ -409,7 +450,7 @@ const SWING_LAND = 0.97;
  * one number the stride was sized against. The taper is what still leaves the
  * foot motionless at the instant it lands.
  */
-const SWING_A = 0.86;
+const SWING_A = 0.92;
 const SWING_V = 2 / (1 + SWING_A);
 function swingEase(t) {
   if (t <= SWING_A) return SWING_V * t;
@@ -436,6 +477,93 @@ function swingEase(t) {
  */
 const SOLE_BIAS = 0.008;
 
+/**
+ * ANKLE PITCH AT THE TWO ENDS OF STANCE, radians, [walk, run].
+ *
+ * These were three separate copies of `0.10 + 0.20 * runness` and
+ * `0.40 + 0.36 * runness`, written out longhand at the stride budget, at the
+ * start of the swing and in the stance roll. The budget's own comment insists
+ * that "both lifts come straight out of the same ankle-pitch model the feet are
+ * posed with, so the budget cannot drift away from the pose it is budgeting
+ * for" — which was true only for as long as nobody edited one of the three.
+ *
+ * Toe-off is 0.86 rad (49°) at a walk, not the 0.40 rad (23°) that was here. A
+ * real walking push-off leaves the foot at 50-60° to the floor with the heel
+ * fully up; 23° is a foot that never finishes its roll. It is not a cosmetic
+ * number: the ankle's height at toe-off is where a long stride finds its rear
+ * reach, and 23° was costing 6.3cm of it — which the cadence solver then paid
+ * for by taking more, shorter steps.
+ */
+const PITCH_STRIKE = [0.10, 0.30];
+const PITCH_OFF = [0.86, 1.10];
+
+/**
+ * How much reach an UNLOADED leg is allowed to give back to the pelvis, metres.
+ *
+ * See the reach clamp. A swinging knee folds; a stance knee does not. This is
+ * the size of that difference and it is spent entirely in early swing.
+ */
+const SWING_SLACK = 0.10;
+
+/**
+ * THE FOOT PARKS BEFORE IT LANDS, AND THE BODY DOES NOT.
+ *
+ * `swingEase` decelerates the foot to a dead stop so it touches down with zero
+ * ground speed — that is not optional, a foot arriving with speed IS a slide.
+ * But the body keeps travelling through that deceleration, so the foot's lead
+ * over the hip PEAKS BEFORE THE PLANT and shrinks back to the plant offset over
+ * the last few frames. The stride budget only ever checked the plant instant.
+ *
+ * Measured at a 7.4 m/s sprint: the budget sized the front foot to land 344 mm
+ * ahead of the hip, and four frames earlier that same foot was 463 mm ahead —
+ * 119 mm outside the reach the stride was sized against. That is where the
+ * pelvis dive came from, and it is why the clamp bound on 100% of frames at
+ * every speed above a walk: the gait was solving the wrong instant.
+ *
+ * The overshoot scales with how far the body travels during a swing, which is
+ * `span·(1-duty)/duty`, so it is expressed as a fraction of that and folded
+ * into the front budget alongside `frontFrac`. Solving the ease for where the
+ * foot's world speed drops below the body's gives 0.080 at a sprint and 0.075
+ * at a walk; one constant is inside a millimetre of both.
+ */
+const SWING_OVER = 0.086;
+
+/**
+ * THE SHAPE OF A SWING, and how high it goes.
+ *
+ * This was `sin(pi·u^1.3) · (1 - smoothstep(0.80, 1, u))`, whose comment said
+ * the foot is held high while it is furthest in front of the hip "because that
+ * is what a flexed knee is for". It is not what a real one does: a swing leg
+ * peaks EARLY, right after toe-off when the knee folds hardest, and is already
+ * low and reaching forward through terminal swing. `u^1.3` skewed the peak the
+ * other way, to u=0.59, and then the smoothstep dropped the foot the whole
+ * remaining distance inside the last fifth of the swing.
+ *
+ * The cost of that was a peak descent of 5.94 per unit swing — 3.4 m/s at a
+ * walk and 7.0 at a sprint, against a real foot's well under 0.5 — with the
+ * pelvis chained to it through the reach clamp.
+ *
+ * u^1.3·(1-u)^1.95 peaks at u=0.40, has ZERO derivative at both ends (both
+ * exponents exceed 1, so the foot neither snaps off the ground nor arrives
+ * moving), and its worst descent is 2.51 — 2.4x gentler for the same height.
+ * The obvious alternative, skewing the existing sine earlier with u^0.75,
+ * measures a rise rate of 25.0 at toe-off because u^p has an infinite slope at
+ * the origin for p<1; it would have yanked the foot off the floor.
+ *
+ * LIFT is [base, per unit normalised speed, floor, ceiling] in metres. The old
+ * 0.055/0.05/0.05/0.30 lifted 135mm at a walk and 285 at a run, which is a
+ * march and a high-knee respectively; the reason it needed to be that high was
+ * that holding the foot up was propping the reach clamp, and the stride budget
+ * now accounts for that honestly instead.
+ */
+const ARC_A = 1.3, ARC_B = 1.95;
+const ARC_C = 1 / (Math.pow(ARC_A / (ARC_A + ARC_B), ARC_A)
+  * Math.pow(ARC_B / (ARC_A + ARC_B), ARC_B));
+const swingArc = (u) => ARC_C * Math.pow(u, ARC_A) * Math.pow(1 - u, ARC_B);
+const LIFT = [0.040, 0.030, 0.038, 0.20];
+const pitchStrikeAt = (runness) => lerp(PITCH_STRIKE[0], PITCH_STRIKE[1], runness);
+const pitchOffAt = (runness) => lerp(PITCH_OFF[0], PITCH_OFF[1], runness);
+
 export class BipedAnimator {
   constructor(rig, opts = {}) {
     this.rig = rig;
@@ -452,6 +580,7 @@ export class BipedAnimator {
     // actually pivots on — are a bit under half the foot's length forward.
     this.footBall = 0.45 * this.footLen;
     this.footHeel = 0.30 * this.footLen;
+    this.footToe = this.footLen - this.footHeel;
     this.legRef = this.legLen / (0.86 * s);  // these legs against a reference adult's
 
     // A hip height the legs can actually hold. `hipHeight: 0.95` is what every
@@ -505,6 +634,7 @@ export class BipedAnimator {
 
     this.phase = 0;
     this.duty = 0.63;
+    this.freq = 0; this.spanMax = 0; this.span = 0;
     this.feet = [this._mkFoot('L', 1, 0), this._mkFoot('R', -1, 0.5)];
     this.initialised = false;
     this.hipLean = new THREE.Vector3();
@@ -548,6 +678,35 @@ export class BipedAnimator {
       lift: 0, pitch: 0, ankleRise: 0, ankleFwd: 0,
       grounded: true, air: false, t: 1, dur: 0.3, sinceStep: 9,
     };
+  }
+
+  /**
+   * WHERE THE ANKLE SITS RELATIVE TO THE CONTACT POINT, for a given sole pitch.
+   * Writes `this._ankFwd` and `this._ankRise`; returns nothing, because this is
+   * called twice per foot per frame and an object per call is not free.
+   *
+   * There used to be two different answers to this question in this file. The
+   * forward term rolled the foot about the BALL and was exact; the height term
+   * was `footLen · sin|pitch| · (pitch < 0 ? 0.85 : 0.4)`, whose 0.85 puts the
+   * pivot 161mm ahead of the ankle on a foot whose toe is 133mm ahead — past
+   * the end of the boot. At a 49° toe-off it claimed the ankle was 216mm up
+   * where the geometry puts it at 151mm, so the stride budget was spending
+   * 65mm of rear reach that did not exist, and the reach clamp then met the
+   * real foot and yanked the pelvis down to it.
+   *
+   * Rotating the ankle at (0, ankleY) about a pivot `d` ahead of it gives both
+   * terms at once and in one branch, because `d` is negative when the heel is
+   * the end that is down. No fudge factors survive.
+   */
+  _ankleOffset(pitch) {
+    // A real foot rolls onto the ball and then onto the toe as it steepens.
+    // Stopping at the ball is what made the drawn toe sweep the floor.
+    const d = pitch < 0
+      ? lerp(this.footBall, this.footToe, smoothstep(0.35, 1.0, -pitch))
+      : -this.footHeel;
+    const c = Math.cos(pitch), sn = Math.sin(pitch);
+    this._ankFwd = d * (1 - c) - this.ankleY * sn;
+    this._ankRise = this.ankleY * (c - 1) - d * sn;
   }
 
   /** Ground normal by central difference — groundAt is all we are handed. */
@@ -613,7 +772,13 @@ export class BipedAnimator {
     /* ── the gait itself ──────────────────────────────────────────────── */
     const runness = smoothstep(1.9, 3.4, vn);
     const sprint = smoothstep(5.4, 8.0, vn);
-    const duty = clamp(lerp(0.63, 0.34, runness) - 0.04 * sprint, 0.28, 0.72);
+    // DUTY FACTOR — the fraction of a stride each foot spends on the ground.
+    // A sprint's is 0.22-0.25 in every study of one; this floored at 0.28 and
+    // only ever reached 0.30, which is a fast jog's. It matters here because
+    // stance span is `speed·duty/freq`: a foot that stays down longer has to
+    // cover more ground while it is down, so an over-long stance is paid for
+    // twice, once in reach and again in the cadence needed to fit inside it.
+    const duty = clamp(lerp(0.63, 0.34, runness) - 0.11 * sprint, 0.20, 0.72);
     this.duty = duty;
     const moveGate = smoothstep(0.2, 1.1, vn);
 
@@ -628,10 +793,12 @@ export class BipedAnimator {
     // every centimetre of that back as horizontal travel. Both lifts come
     // straight out of the same ankle-pitch model the feet are posed with, so
     // the budget cannot drift away from the pose it is budgeting for.
-    const pitchStrike = 0.10 + 0.20 * runness;
-    const pitchOff = 0.40 + 0.36 * runness;
-    const strikeLift = this.ankleY + this.footLen * Math.sin(pitchStrike) * 0.4;
-    const toeOffLift = this.ankleY + this.footLen * Math.sin(pitchOff) * 0.85;
+    const pitchStrike = pitchStrikeAt(runness);
+    const pitchOff = pitchOffAt(runness);
+    this._ankleOffset(pitchStrike);
+    const strikeLift = this.ankleY + this._ankRise;
+    this._ankleOffset(-pitchOff);
+    const toeOffLift = this.ankleY + this._ankRise;
     const R = this.legLen * 0.975;
     const bobAmp = lerp(0.018, 0.048, runness) * s * moveGate;
     const bobSign = lerp(1, -1, runness);
@@ -639,15 +806,55 @@ export class BipedAnimator {
     // at the same height at both of them
     const bobEdge = bobAmp * bobSign * Math.cos(TAU * duty);
     const thighY = Math.max(0.05 * s, hipStand + bobEdge - 0.02 * s);
-    // A walk splits its stance evenly about the hip; a run lands much closer
-    // to underneath itself and pushes further off the back. Measured: at 0.5
-    // the sprint pelvis was dragged down to 0.69m to reach the front foot, at
-    // 0.38 it holds 0.77m.
-    const frontFrac = lerp(0.5, 0.38, runness);
-    const budgetF = Math.sqrt(Math.max(0, R * R - (thighY - strikeLift) ** 2));
-    const budgetR = Math.sqrt(Math.max(0, R * R - (thighY - toeOffLift) ** 2));
+    // THE BUDGET IS SPENT ON THE GROUND THE FEET ARE ACTUALLY GOING TO BE ON.
+    //
+    // Both budgets used to assume the two ends of a stance were level with each
+    // other, which is true on a floor and nowhere else. Uphill, the trailing
+    // foot is BELOW the hip by the slope times how far back it is — so the leg
+    // that has furthest to reach is also reaching downhill, and on a 20° ramp
+    // the drawn ankle came off its plant point by 67mm because the gait had
+    // sized a stride the leg could not span.
+    //
+    // Solving it needs no iteration. For a foot `r` metres away on a slope `m`
+    // the leg must satisfy (A ± m·r)² + r² = R², a quadratic in r whose
+    // positive root is below; the discriminant going negative means the slope
+    // alone has used the whole leg, and the budget floors out.
+    const probe = 0.45 * s;
+    const mSlope = moving ? clamp((
+      groundAt(p.position.x + moveDir.x * probe, p.position.z + moveDir.z * probe)
+      - groundAt(p.position.x - moveDir.x * probe, p.position.z - moveDir.z * probe)
+    ) / (2 * probe), -1.2, 1.2) : 0;
+    const onSlope = (A, m) => {
+      const k = 1 + m * m;
+      const disc = A * A * m * m - k * (A * A - R * R);
+      return disc <= 0 ? 0 : (A * m + Math.sqrt(disc)) / k;
+    };
+    // uphill the front foot is raised (its vertical gap shrinks, +m) and the
+    // rear foot is dropped (its gap grows, -m). Downhill both signs flip out of
+    // the same expression, so there is one branch and not four.
+    const budgetF = onSlope(thighY - strikeLift, mSlope);
+    const budgetR = onSlope(thighY - toeOffLift, -mSlope);
+    // SPLIT THE STANCE SO BOTH LEGS RUN OUT OF REACH AT THE SAME INSTANT.
+    //
+    // This was `lerp(0.5, 0.38, runness)`, hand-fitted at the sprint end and
+    // never at the walking end, and an even split throws away whichever budget
+    // is larger. The rear budget is always the larger one, because the ankle is
+    // a hand's width off the floor at toe-off and level at heel strike: 40.4cm
+    // against 28.1cm at a walk. Splitting evenly sizes the WHOLE stride off the
+    // smaller of the two and leaves 12cm of rear reach unused.
+    //
+    // budgetF/ff = budgetR/(1-ff) has one solution and it is this. It gives
+    // 0.402 at a sprint — within 0.02 of the number that was fitted by hand,
+    // which is the check on it — and 0.410 at a walk, where it is worth 22% of
+    // stride length. The consequence is cadence: the walk was taking twice as
+    // many steps as a human and each of them half as long, purely because the
+    // stride budget it was solving against was 12cm short.
+    // How much further forward than its own plant offset the swing foot gets,
+    // as a fraction of the stance span. See SWING_OVER.
+    const over = SWING_OVER * (1 - duty) / duty;
+    const frontFrac = clamp((budgetF - budgetR * over) / Math.max(budgetF + budgetR, 1e-4), 0.12, 0.5);
     const spanMax = Math.max(0.05 * s,
-      Math.min(budgetF / frontFrac, budgetR / (1 - frontFrac)) * 0.95);
+      Math.min(budgetF / (frontFrac + over), budgetR / (1 - frontFrac)) * 0.95);
 
     // Cadence: the natural law for a body this size, raised to whatever the
     // legs need so that a stance never asks for more ground than they span.
@@ -658,6 +865,14 @@ export class BipedAnimator {
     // how much of the travel is across the body rather than through it
     const lateral = Math.abs(moveDir.dot(left));
     this._gStance = moving ? speed * stanceTime : 0;
+    // What the cadence solver settled on, published rather than left to be
+    // re-derived: the span it wants, the span the legs allow, and the rate it
+    // had to raise to make one fit inside the other. `span / spanMax` is the
+    // single number that says whether the legs are working inside their reach
+    // or at the end of it, and it was invisible before.
+    this.freq = freq;
+    this.spanMax = spanMax;
+    this.span = this._gStance;
     this._gFront = frontFrac;
     this._gMoving = moving;
     // Sidestepping is the one case where the stance line and the stride line
@@ -772,9 +987,6 @@ export class BipedAnimator {
         // snapped it to the floor: a 20mm pop on every single footfall.
         const e = swingEase(clamp(f.t / SWING_LAND, 0, 1));
         f.pos.lerpVectors(f.from, f.to, e);
-        // The foot is still HIGH while it is at its furthest in front of the
-        // hip — that is what a flexed knee is for — and comes down over the
-        // last fifth of the swing.
         const u = clamp(f.t / SWING_LAND, 0, 1);
         // THE SWING FOOT PASSES INSIDE THE STANCE LEG.
         //
@@ -787,15 +999,14 @@ export class BipedAnimator {
         // sin(pi*u) is zero at both ends of that, so the plant still lands on
         // the fixed world point the gait chose.
         f.pos.addScaledVector(left, -side * this._gNarrow * Math.sin(Math.PI * u));
-        const arc = Math.sin(Math.PI * Math.pow(u, 1.3)) * (1 - smoothstep(0.80, 1, u));
-        f.lift = arc * clamp(0.055 + 0.05 * vn, 0.05, 0.30) * s * this._gLift;
+        f.lift = swingArc(u) * clamp(LIFT[0] + LIFT[1] * vn, LIFT[2], LIFT[3]) * s * this._gLift;
         f.pos.y = lerp(f.from.y, f.to.y, e) + f.lift;
         f.yaw = f.fromYaw + wrapPi(f.toYaw - f.fromYaw) * e;
         f.normal.lerp(f.toN, clamp(dt * 12, 0, 1)).normalize();
         // Plantarflexed off the toe, dorsiflexed to clear, heel first coming
         // in — and starting from exactly the angle stance left it at, or the
         // ankle snaps 19° at every toe-off.
-        f.pitch = -(0.40 + 0.36 * runness) * (1 - smoothstep(0, 0.32, f.t))
+        f.pitch = -pitchOff * (1 - smoothstep(0, 0.32, f.t))
           + smoothstep(0.3, 0.92, f.t) * (0.13 + 0.14 * runness);
         if (f.t >= 1) {
           f.grounded = true;
@@ -818,15 +1029,16 @@ export class BipedAnimator {
         f.pos.copy(f.planted);
         f.lift = damp(f.lift, 0, 24, dt);
         const u = moving ? clamp(ph / duty, 0, 1) : 0;
-        const strike = (1 - smoothstep(0, 0.20, u)) * (0.10 + 0.20 * runness);
-        const off = smoothstep(0.52, 1, u) * (0.40 + 0.36 * runness);
+        const strike = (1 - smoothstep(0, 0.20, u)) * pitchStrike;
+        const off = smoothstep(0.52, 1, u) * pitchOff;
         f.pitch = damp(f.pitch, moving ? strike - off : 0, 20, dt);
       }
 
       // The ankle rides above the contact point, and rides HIGHER as the foot
       // rolls: pitch the sole and the ankle lifts by the length of whichever
       // end of it is still down. That is where a long stride finds its reach.
-      f.ankleRise = this.footLen * Math.sin(Math.abs(f.pitch)) * (f.pitch < 0 ? 0.85 : 0.4);
+      this._ankleOffset(f.pitch);
+      f.ankleRise = this._ankRise;
 
       // A ROLLING FOOT PIVOTS ON THE END THAT IS DOWN, NOT ON THE ANKLE.
       //
@@ -840,14 +1052,12 @@ export class BipedAnimator {
       // because `f.pos` is copied verbatim and cannot move by construction —
       // it is the geometry hung off it that was skating.
       //
-      // A real foot rolls over the heel until it is flat and over the ball
-      // after that, and the joint travels on an arc about whichever it is.
-      // Ankle relative to the pivot is (-d, ankleY) with d the pivot's distance
-      // ahead of the ankle; rotating that by the pitch and adding d back gives
-      // the two terms below. Both branches share -ankleY·sin(pitch), which is
-      // the shin simply leaning over its own contact.
-      const pivot = f.pitch < 0 ? this.footBall : -this.footHeel;
-      f.ankleFwd = pivot * (1 - Math.cos(f.pitch)) - this.ankleY * Math.sin(f.pitch);
+      // A real foot rolls over the heel until it is flat, over the ball after
+      // that, and over the TOE at the end — which is the part that was missing.
+      // `_ankleOffset` owns the arc now, so the forward term and the height
+      // term cannot disagree about where the pivot is; they did, and the sole
+      // swept the floor for it.
+      f.ankleFwd = this._ankFwd;
     }
 
     /* ── pelvis ───────────────────────────────────────────────────────── */
@@ -876,6 +1086,9 @@ export class BipedAnimator {
     // against the planted foot is what left the drawn foot up to 22cm from
     // the point the gait believed it was standing on. A swinging foot near the
     // ground constrains the pelvis exactly as hard as a planted one does.
+    this.hipIntent = hipY - p.position.y;
+    this.reachLimit = Infinity;
+    this.bindFoot = -1;
     if (p.grounded) {
       for (const f of this.feet) {
         // against where the ANKLE is, roll included — a foot up on its ball at
@@ -884,7 +1097,26 @@ export class BipedAnimator {
         const ax = hipX + left.x * f.side * 0.095 * s - (f.pos.x + Math.sin(f.yaw) * f.ankleFwd);
         const az = hipZ + left.z * f.side * 0.095 * s - (f.pos.z + Math.cos(f.yaw) * f.ankleFwd);
         const vmax = Math.sqrt(Math.max(0, R * R - (ax * ax + az * az)));
-        hipY = Math.min(hipY, f.pos.y + this.ankleY + f.ankleRise + vmax + 0.02 * s);
+        // A SWING LEG'S KNEE IS FREE TO FOLD.
+        //
+        // This loop used to treat a foot that had just left the ground as a
+        // rigid strut of length R, exactly like the one carrying the body's
+        // weight. It is not one: the whole purpose of a swing is that the knee
+        // flexes, and nothing anywhere requires the hip-to-ankle distance of an
+        // unloaded leg to stay at full extension. Measured at a 7.4 m/s sprint,
+        // the worst single-frame pelvis step landed on a frame where BOTH feet
+        // were airborne and the binding one was 19% into its swing — a foot
+        // that had left the ground four frames earlier and would not touch it
+        // again for another 200 ms was setting the height of the hips.
+        //
+        // The slack is what the knee is allowed to give back, and it closes as
+        // the foot commits to landing, so the constraint is at full strength on
+        // the frame it plants — which is the frame it has to be right on.
+        const slack = f.grounded ? 0
+          : (1 - smoothstep(0.45, 0.95, f.t)) * SWING_SLACK * s;
+        const lim = f.pos.y + this.ankleY + f.ankleRise + vmax + 0.02 * s + slack;
+        if (lim < this.reachLimit) { this.reachLimit = lim - p.position.y; this.bindFoot = f.side; }
+        hipY = Math.min(hipY, lim);
       }
       hipY = Math.max(hipY, p.position.y + 0.30 * s);
     }
