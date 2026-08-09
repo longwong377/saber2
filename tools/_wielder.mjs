@@ -384,21 +384,17 @@ const CANDIDATES = [
   { name: 'after', note: 'AS NOW SHIPPED: core neutralised, light floored', apply: '' },
   { name: 'core0', note: 'core at full crystal chroma, light still floored',
     apply: 'sb.bladeMat.uniforms.uCoreWhite.value = 0;' },
-  { name: 'core0.85', note: 'character fix only: core lobe 85% neutralised',
-    apply: '' },
-  // A FLOOR on the thrown light's dimmest channel, not a lerp toward white.
-  // The two are the same operation for a colour that is already balanced and
-  // very different for one that is not: Bronze throws 1% blue today, and a floor
-  // fixes exactly that case while leaving Ivory and Void almost untouched.
-  { name: 'floor0.10', note: 'fix + light dimmest channel floored at 10% of peak',
-    apply: 'FLOOR(L, 0.10); FLOOR(T, 0.10);' },
-  { name: 'floor0.16', note: 'fix + floor at 16%',
-    apply: 'FLOOR(L, 0.16); FLOOR(T, 0.16);' },
-  { name: 'floor0.24', note: 'fix + floor at 24%',
-    apply: 'FLOOR(L, 0.24); FLOOR(T, 0.24);' },
-  { name: 'floor0.16+lights0.75', note: 'fix + floor 16% + point lights at 75%',
-    apply: 'FLOOR(L, 0.16); FLOOR(T, 0.16); L.intensity *= 0.75; T.intensity *= 0.75;' },
-  { name: 'lights0.6', note: 'fix + point lights at 60%, no floor — magnitude alone',
+  { name: 'nofloor', note: 'core neutralised but light un-floored — the floor isolated',
+    apply: 'L.color.copy(sb.hue); T.color.copy(sb.hue);' },
+  /* Sweeping the FLOOR. Each of these RESETS the light to the raw crystal hue
+   * first and then floors it: the shipped light is already floored, so a bare
+   * FLOOR(L, 0.10) would be a no-op against it and the whole row would come back
+   * identical to 'after' while claiming to be a 10% floor. Reset, then set. */
+  { name: 'floor0.10', note: 'light floored at 10% of peak instead of the shipped floor',
+    apply: 'L.color.copy(sb.hue); T.color.copy(sb.hue); FLOOR(L, 0.10); FLOOR(T, 0.10);' },
+  { name: 'floor0.24', note: 'floored at 24%',
+    apply: 'L.color.copy(sb.hue); T.color.copy(sb.hue); FLOOR(L, 0.24); FLOOR(T, 0.24);' },
+  { name: 'lights0.6', note: 'shipped + point lights at 60% — magnitude alone, measured and rejected',
     apply: 'L.intensity *= 0.6; T.intensity *= 0.6;' },
 ];
 

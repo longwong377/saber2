@@ -1135,25 +1135,25 @@ const GRASS_TIERS = [
    * where the player is standing. Widening this ring costs density as the
    * square of the radius and takes the budget straight out of the tier that is
    * actually covering the ground. */
-  { name: 'blade', card: false, rIn: 0, rOut: 6.5, cell: 2.2, dens: 6.0, per: 8, spread: 0.25,
+  { name: 'blade', card: false, rIn: 0, rOut: 6.5, cell: 2.2, dens: 5.0, per: 8, spread: 0.25,
     width: 0.110, bend: 0.23, wave: 0.62, sheen: 0.30, trans: 0.90,
     base: 0.16, varies: 0.22, shade: true, cut: 0.42 },
   /* Cards: a billboard standing in for a bush, and 50× the silhouette per
    * instance that a blade is. Fades in at 3 m — UNDER the blades rather than
    * after them, so the handover is a thickening and not a boundary. */
-  { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.42, per: 3, spread: 0.80,
+  { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.62, per: 3, spread: 0.80,
     width: 1.05, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
     base: 0.26, varies: 0.26, shade: true, cut: 0.42 },
   /* Swathes: one card per patch of ground, wide enough to close the gaps that
    * would otherwise read as bald spots at a hundred metres. */
-  { name: 'swath', card: true, rIn: 42, rOut: 150, cell: 17, dens: 0.0167, per: 2, spread: 3.2,
+  { name: 'swath', card: true, rIn: 42, rOut: 150, cell: 17, dens: 0.024, per: 2, spread: 3.2,
     width: 2.60, bend: 0.30, wave: 0.62, sheen: 0.62, trans: 0.45,
     base: 0.26, varies: 0.26, shade: false, cut: 0.36 },
   /* The far ground. Six-metre cards at a thousandth of the near tier's
    * density, which at that range is still most of what you see, because you
    * are looking ALONG the ground rather than down at it: from eye height a
    * 0.4 m tuft at 250 m hides the sixty metres of ground behind it. */
-  { name: 'far', card: true, rIn: 140, rOut: 400, cell: 46, dens: 0.00205, per: 1, spread: 9.0,
+  { name: 'far', card: true, rIn: 140, rOut: 400, cell: 46, dens: 0.0026, per: 1, spread: 9.0,
     width: 6.0, bend: 0.22, wave: 0.55, sheen: 0.66, trans: 0.35,
     base: 0.26, varies: 0.26, shade: false, cut: 0.30 },
 ];
@@ -1184,14 +1184,17 @@ export class GrassField {
      * takes the rest, saturating, because the difference between a level with
      * tussock in its troughs and one that is a meadow is not linear in a
      * density multiplier. `opts.cover` overrides it outright for tests. */
-    /* And the budget itself is 1.6× what the caller names, because what the
-     * caller names was sized for a 46 m bubble. The field now reaches 400 m —
-     * seventy-five times the ground — and it does it in six draw calls and
-     * about 112k triangles against the bubble's four and 70k. The instance
-     * count is not the cost that matters here; the fragment work of the near
-     * blades is, and that has not moved, because the near tier is smaller
-     * than the ring it replaces. */
-    const total = Math.max(0, Math.floor((opts.count ?? 9000) * 1.6 * (0.5 + 0.5 * Math.min(density, 1.4))));
+    /* And the budget itself is 2.2× what the caller names, because what the
+     * caller names was sized for a 46 m bubble. The field reaches 400 m now —
+     * seventy-five times the ground — in six draw calls and about 150k
+     * triangles against the bubble's four and 70k.
+     *
+     * The number was set by looking rather than by arithmetic, and the plate
+     * that set it is the magenta one: with the terrain's cover mask forced to
+     * full magenta, the ground says "grass here" over a swathe the geometry
+     * was filling about a sixth of. A mask and a field that disagree by that
+     * much is worse than either alone — the ground reads as painted. */
+    const total = Math.max(0, Math.floor((opts.count ?? 9000) * 2.2 * (0.5 + 0.5 * Math.min(density, 1.4))));
     this.count = total;
     this.density = density;
     if (total === 0) { this.mesh = null; return; }
@@ -1217,7 +1220,7 @@ export class GrassField {
     if (terrain && terrain.setGroundCover) {
       const litter = this.tintB.clone().lerp(this.dry, 0.55).multiplyScalar(0.46);
       this.coverTex = this.cover.bake(256, terrain.size || half * 2);
-      terrain.setGroundCover(clamp(0.62 * density + 0.16, 0, 0.86), litter, 30, this.coverTex);
+      terrain.setGroundCover(clamp(0.30 + 0.46 * density, 0, 0.86), litter, 30, this.coverTex);
     }
 
     this._buildTrail();

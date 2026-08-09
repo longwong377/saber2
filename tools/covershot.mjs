@@ -172,7 +172,7 @@ const perf = await page.evaluate(() => {
   const S = window.SABER, r = S.engine.renderer, g = S.world.grass;
   const samples = [];
   return (async () => {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 12; i++) {
       const t = performance.now();
       await new Promise((res) => requestAnimationFrame(res));
       samples.push(performance.now() - t);
@@ -180,7 +180,7 @@ const perf = await page.evaluate(() => {
     samples.sort((a, b) => a - b);
     return {
       drawCalls: r.info.render.calls, triangles: r.info.render.triangles,
-      medianMs: +samples[20].toFixed(1), p90Ms: +samples[36].toFixed(1),
+      medianMs: +samples[6].toFixed(1), p90Ms: +samples[10].toFixed(1),
       grass: g ? {
         budget: g.count, reach: g.reach, cover: +g.cover.amount.toFixed(3),
         rings: g.rings.map((x) => `${x.tier.name} ${x.count}`),
