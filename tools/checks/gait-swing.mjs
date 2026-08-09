@@ -37,10 +37,10 @@ let THREE = null;
 const D = 180 / Math.PI;
 
 /** Walk a figure in a straight line on given ground and record the gait. */
-function march(speed, { seconds = 9, dt = 1 / 60, ground = () => 0 } = {}) {
+function march(speed, { seconds = 9, dt = 1 / 60, ground = () => 0, scale = 1 } = {}) {
   const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
-  const rig = new Rig(humanoidSkeleton(1));
-  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  const rig = new Rig(humanoidSkeleton(scale));
+  const anim = new BipedAnimator(rig, { scale, hipHeight: 0.95 * scale });
   const pos = V3(0, 0, 0);
   anim.setFacing(0);
 
@@ -248,5 +248,29 @@ export async function run({ check, assert, THREE: T }) {
       rows.push(`${speed} ${(over * 100).toFixed(1)}%`);
     }
     return `overshoot past the plant offset: ${rows.join(', ')} of a stance span`;
+  });
+  check('swing: every constant in the swing scales with the body it is on', () => {
+    // Half of what this file pins is an absolute distance — 100mm of knee
+    // slack, a 40mm lift base, a 450mm slope probe — and a B1 is 0.85 scale
+    // while a B2 is 1.25. A metre baked into a droid a quarter the size of a
+    // person is the classic way a gait that reads fine on the hero reads
+    // broken on everything else. Speed is scaled with the legs too, because a
+    // small body at a person's walking speed is sprinting.
+    const rows = [];
+    for (const scale of [0.7, 1.0, 1.3]) {
+      const r = march(1.6 * scale, { scale });
+      // lift is a length, so it scales; the descent RATE is a length over a
+      // fixed time and scales the same way
+      assert(r.lift > 0.055 * scale && r.lift < 0.115 * scale,
+        `at scale ${scale} a walk lifts ${(r.lift * 1000).toFixed(0)}mm — `
+        + `${(r.lift / scale * 1000).toFixed(0)}mm scaled back to 1.0`);
+      assert(r.fall < 1.6 * scale,
+        `at scale ${scale} the foot falls at ${r.fall.toFixed(2)} m/s`);
+      assert(r.bind < 0.5,
+        `at scale ${scale} the clamp sets the pelvis on ${(r.bind * 100).toFixed(0)}% of frames`);
+      assert(r.land < 0.5 * scale, `at scale ${scale} the foot lands at ${r.land.toFixed(2)} m/s`);
+      rows.push(`${scale}x lift ${(r.lift * 1000).toFixed(0)}mm fall ${r.fall.toFixed(2)} bind ${(r.bind * 100).toFixed(0)}%`);
+    }
+    return rows.join(', ');
   });
 }
