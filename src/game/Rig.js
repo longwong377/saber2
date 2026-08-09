@@ -446,9 +446,23 @@ const SWING_LAND = 0.97;
  * sits further in front of the hip than the leg is long — measured 64cm of
  * reach against a 44cm budget at a 4.6 m/s run — and the pelvis then has to
  * drop 15cm to reach it. Travelling at a steady rate keeps the foot's offset
- * from the hip monotonic and bounded by the plant offset itself, which is the
- * one number the stride was sized against. The taper is what still leaves the
- * foot motionless at the instant it lands.
+ * from the hip monotonic. The taper is what still leaves the foot motionless
+ * at the instant it lands.
+ *
+ * CORRECTION, measured: this used to claim the offset was also "bounded by the
+ * plant offset itself, which is the one number the stride was sized against".
+ * It is not, and could not be — the foot decelerates to a stop and the body
+ * does not, so the offset necessarily peaks BEFORE the plant and then shrinks
+ * back to it. At a sprint the peak was 463mm against a 344mm plant offset.
+ * SWING_OVER is the term that now pays for it in the budget.
+ *
+ * SWING_A went 0.86 → 0.92 because of that. A longer constant-speed phase
+ * parks the foot later and so overshoots less at source, which is strictly
+ * better than budgeting for it: at a sprint it took the peak from 415mm to
+ * 357mm and the worst single-frame pelvis step from 45.9mm to 30.0mm, while
+ * KEEPING the longer stride that paying for the overshoot would have cost. The
+ * price is a shorter deceleration, and there was room for it — the foot was
+ * landing at 0.00-0.06 m/s against a budget of well under 0.5.
  */
 const SWING_A = 0.92;
 const SWING_V = 2 / (1 + SWING_A);
