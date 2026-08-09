@@ -380,3 +380,24 @@ button{font-family:inherit}
 /* Focus: the Force bar burns while time is bent */
 .bar.fc.focus i{background:linear-gradient(90deg,#ffb03a,#fff0c0);
   box-shadow:0 0 18px rgba(255,180,80,.9);animation:pulseLow .5s ease-in-out infinite}
+
+
+/* The frame counter. Monospace and tabular so the digits do not dance, and
+   pinned top-right where nothing else in the HUD lives. Deliberately plain:
+   it is an instrument, not part of the game's look. */
+#hud-perf {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  margin: 0;
+  padding: 6px 9px;
+  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #c8f0ff;
+  background: rgba(6, 10, 16, 0.55);
+  border: 1px solid rgba(140, 200, 255, 0.18);
+  border-radius: 4px;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 6;
+}

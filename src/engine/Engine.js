@@ -41,6 +41,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { SkyDome } from './SkyDome.js';
+import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
 
@@ -1507,6 +1508,9 @@ export class Engine {
     // bolts and molten cuts qualify.
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.42, 0.55, 1.8);
     this.composer.addPass(this.bloom);
+    // Always on. Sampling costs a few microseconds, and a profiler you have to
+    // remember to enable is off at the exact moment the stutter happens.
+    this.profiler = new Profiler(this.renderer);
 
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
@@ -1668,10 +1672,16 @@ export class Engine {
     this.heatSources.length = 0;
 
     this.renderer.info.reset();
+    // The GPU query brackets the DRAW and nothing else. Wrapping the whole
+    // frame would fold our own JS into it and report a number that is neither
+    // CPU nor GPU time.
+    this.profiler.beginDraw();
     this.composer.render(dt);
+    this.profiler.endDraw();
   }
 
   dispose() {
+    this.profiler?.dispose();
     this.skyDome?.dispose();
     this._bounce?.geometry.dispose();
     this._bounce?.material.dispose();

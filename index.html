@@ -135,6 +135,7 @@
           particles is still thinner than Cinematic at 100%. Particles take effect on the next impact;
           grass on the next deploy, because a field is planted when the level loads.</p>
         <label class="check"><input type="checkbox" id="opt-bloom" checked> Bloom</label>
+        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
@@ -176,6 +177,7 @@
 
 <!-- ══════════════════════ HUD ══════════════════════ -->
 <div id="hud" class="hidden">
+  <pre id="hud-perf" class="hidden"></pre>
   <svg id="reticle" viewBox="0 0 100 100" aria-hidden="true">
     <circle class="ret-ring" cx="50" cy="50" r="15"></circle>
     <circle class="ret-dot" cx="50" cy="50" r="1.4"></circle>
@@ -315,6 +317,7 @@
     <button id="btn-resume" class="primary">Resume</button>
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
+    <button id="btn-perfcopy" class="ghost">Copy frame report</button>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so

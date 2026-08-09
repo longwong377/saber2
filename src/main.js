@@ -78,6 +78,17 @@ const menu = new Menu(settings, {
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
+  // Context the raw numbers do not carry: which level, which tier, and how much
+  // of the frame the player's own settings asked for. A report that says 24 ms
+  // without saying "arena, ultra, grass 1.5" is not actionable.
+  onPerfReport: () => engine.profiler.report({
+    level: settings.level,
+    quality: settings.quality,
+    scale: settings.resolutionScale,
+    grass: settings.grassScale,
+    enemies: world ? world.enemies.length : 0,
+    wave: world && world.director ? (world.director.wave ?? '-') : '-',
+  }),
   onRetry: () => { menu.hideDeath(); deploy(); },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
@@ -535,6 +546,9 @@ document.addEventListener('visibilitychange', () => {
 
 function frame(now) {
   requestAnimationFrame(frame);
+  // Before anything else: the gap since the last rAF is the only honest frame
+  // time there is, and it has to be read before we spend any of this one.
+  engine.profiler.begin(now);
   let dt = (now - last) / 1000;
   last = now;
   if (!isFinite(dt) || dt <= 0) return;
@@ -561,6 +575,8 @@ function frame(now) {
   }
 
   engine.render(dt);
+  engine.profiler.end();
+  hud.perf(engine.profiler, settings.showPerf);
   input.end();
 }
 

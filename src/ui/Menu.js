@@ -99,6 +99,12 @@ export const DEFAULT_SETTINGS = {
   quality: 'high',
   resolutionScale: 1,
   bloom: true,
+  // Off by default: it is an instrument, not decoration. It exists because no
+  // frame time in this project has ever been measured on real hardware — the
+  // only renderer the build pipeline can reach is a software rasterizer, so
+  // every performance claim here is a budget (draw calls, instances) and never
+  // a millisecond.
+  showPerf: false,
   grain: true,
   shake: true,
   slowmo: true,
@@ -166,6 +172,7 @@ export const SETTING_READERS = {
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
   bloom:           ['main.js', '!!settings.bloom &&'],
+  showPerf:        ['main.js', 'hud.perf(engine.profiler, settings.showPerf)'],
   grain:           ['main.js', 'engine.setGrain(settings.grain)'],
   shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
   slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
@@ -1243,6 +1250,7 @@ export class Menu {
     // on the next deploy.
     this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
+    this._check('opt-showperf', 'showPerf');
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every
     // shake and every hitstop, so the hook exists only to kill what is already
@@ -1260,6 +1268,30 @@ export class Menu {
     bind('btn-resume', () => this.hooks.onResume?.());
     bind('btn-restart', () => this.hooks.onRestart?.());
     bind('btn-quit', () => this.hooks.onQuit?.());
+    // The whole point of the profiler is that the numbers have to leave the
+    // player's machine — nothing in this project's build pipeline can reach a
+    // real GPU, so a frame time only exists if someone plays and sends it back.
+    // Clipboard first, with a select-all fallback, because clipboard writes are
+    // refused outside a secure context and a button that silently does nothing
+    // is worse than no button.
+    bind('btn-perfcopy', async () => {
+      const text = this.hooks.onPerfReport?.();
+      if (!text) return;
+      const btn = document.getElementById('btn-perfcopy');
+      try {
+        await navigator.clipboard.writeText(text);
+        if (btn) { btn.textContent = 'Copied — paste it back'; setTimeout(() => { btn.textContent = 'Copy frame report'; }, 2600); }
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,80vw);height:190px;z-index:99;font:12px monospace';
+        document.body.appendChild(ta);
+        ta.select();
+        if (btn) btn.textContent = 'Select and copy, then click again';
+        const close = () => { ta.remove(); if (btn) btn.textContent = 'Copy frame report'; };
+        ta.addEventListener('blur', close, { once: true });
+      }
+    });
     bind('btn-retry', () => this.hooks.onRetry?.());
     bind('btn-menu', () => this.hooks.onQuit?.());
     bind('btn-host', () => this.hooks.onHost?.());

@@ -24,6 +24,7 @@ export class HUD {
   constructor(root = document) {
     this.el = {
       hud: root.getElementById('hud'),
+      perf: root.getElementById('hud-perf'),
       wave: root.getElementById('hud-wave'),
       level: root.getElementById('hud-level'),
       diff: root.getElementById('hud-diff'),
@@ -255,6 +256,36 @@ export class HUD {
     this.el.hitmarks.appendChild(node);
     this._marks.push({ node, pos: worldPos.clone(), t: 0 });
     if (this._marks.length > 26) { const m = this._marks.shift(); m.node.remove(); }
+  }
+
+  /**
+   * The frame cost, on screen, in the corner.
+   *
+   * Refreshed four times a second rather than every frame: at 60 Hz a number
+   * that changes 60 times a second is unreadable, and — worse — reading it
+   * would then be a measurement of the profiler. The values shown are the
+   * WINDOW's statistics, not this frame's, for the same reason.
+   *
+   * The 1% low is deliberately given equal billing to the mean. A build that
+   * averages 8 ms and hitches to 40 four times a second reads as "smooth" in
+   * an average and feels broken to play, and "it runs like shit and gets worse"
+   * is a complaint about the second number, never the first.
+   */
+  perf(profiler, show) {
+    const el = this.el.perf;
+    if (!el) return;
+    if (!show) { if (!el.classList.contains('hidden')) el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    this._perfAt = (this._perfAt || 0) + 1;
+    if (this._perfAt % 15) return;
+    const s = profiler.stats();
+    if (!s) { el.textContent = 'measuring…'; return; }
+    const gpu = profiler.gpuMs == null ? 'n/a' : profiler.gpuMs.toFixed(1);
+    el.textContent =
+      `${s.mean.toFixed(1)} ms  ${s.fps.toFixed(0)} fps\n`
+      + `1% low ${s.low1.toFixed(1)}  p99 ${s.p99.toFixed(1)}\n`
+      + `cpu ${profiler.cpuMs.toFixed(1)}  gpu ${gpu}\n`
+      + `${profiler.calls} calls  ${(profiler.triangles / 1000).toFixed(0)}k tris`;
   }
 
   hitmark(worldPos, kind, bone) {
