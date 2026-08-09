@@ -21,7 +21,7 @@ import { WaveDirector, MODES, sandboxConfig, sandboxUnits, holdFire, tuneFireRat
   SANDBOX_MAX_ENEMIES } from '../../src/game/Waves.js';
 import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
-import { DEFAULT_SETTINGS, BLADE_CAP, BLADE_MAX, bladeCeiling, loadSettings } from '../../src/ui/Menu.js';
+import { DEFAULT_SETTINGS, BLADE_CAP, BLADE_MAX, bladeCeiling, loadSettings, STORE_KEY, LEGACY_KEYS } from '../../src/ui/Menu.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
 import { intersectBladeSweep } from '../../src/game/Bolts.js';
@@ -448,8 +448,13 @@ export async function run({ check, assert }) {
     //     object, so every returning player has `scheme` on disk whether they
     //     chose it or not, and without this the shipped default would reach
     //     nobody who had ever opened the options screen.
-    const CUR = 'saber.settings.v4';
-    for (const k of ['saber.settings.v2', 'saber.settings.v3', CUR]) localStorage.removeItem(k);
+    // The key is READ, never named. Hardcoding it meant the v5 bump turned "a
+    // blob under the current key survives" into "a blob under a legacy key is
+    // drained", and the check failed pointing at the store rather than at the
+    // bump. Reading it is strictly stronger: the property holds at every future
+    // bump without anyone remembering to come back here.
+    const CUR = STORE_KEY;
+    for (const k of [CUR, ...LEGACY_KEYS]) localStorage.removeItem(k);
     localStorage.setItem(CUR, JSON.stringify({ level: 'dunes', colorIndex: 7 }));
     localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'hangar', scheme: 'hold', fov: 77 }));
     localStorage.setItem('saber.settings.v2', JSON.stringify({ level: 'canyon' }));

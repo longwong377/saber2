@@ -29,8 +29,13 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 // order and the last one wins: tools/smoke.mjs and tools/motion.mjs still preset
 // a level by writing the v2 key, so v2 has to keep speaking or every `--level x`
 // run would silently boot the dunes.
-const STORE_KEY = 'saber.settings.v4';
-const LEGACY_KEYS = ['saber.settings.v3', 'saber.settings.v2'];
+// Exported so the check that pins the adoption chain can READ the chain instead
+// of naming it. It used to hardcode the current key, which meant every version
+// bump silently turned "a blob under the current key survives" into "a blob
+// under a legacy key is drained" — the assertion still ran, against the wrong
+// slot, and reported the current blob as lost.
+export const STORE_KEY = 'saber.settings.v5';
+export const LEGACY_KEYS = ['saber.settings.v4', 'saber.settings.v3', 'saber.settings.v2'];
 
 /**
  * The blade length the forge slider stops at, and the length it stops at when
@@ -61,7 +66,14 @@ export const DEFAULT_SETTINGS = {
   hiltStyle: 'Graflex',
   robeIndex: 1,
   bladeLength: 1.15,
-  coreWidth: 1,
+  // 0.7, not 1.0. At this width the halo lobe's amplitude falls to 0.735,
+  // under UnrealBloomPass's 1.8 threshold, so the wide outer glow stops feeding
+  // the bloom pass entirely rather than merely shrinking; the halo's sigma goes
+  // 10.5 cm -> 7.35 cm and the quad's reach 36 cm -> 25 cm. The core keeps 87%
+  // of its punch, because a lightsaber's centre is meant to be blown out.
+  // Anyone who wants the old blade can put the slider back to 1.0, which is
+  // still bit-for-bit what it always was.
+  coreWidth: 0.7,
   // ── training ──────────────────────────────────────────────────────────
   // These bite in Sandbox mode and in the dojo, and nowhere else: they are
   // practice controls, not difficulty controls. Zero is legal for both
@@ -400,7 +412,18 @@ export function pauseHintsHtml(bindings) {
  * complaint the comment above drainLegacy is about. So the bump retires one
  * key by name and keeps the rest.
  */
-const RETIRED = { 'saber.settings.v3': ['scheme'] };
+const RETIRED = {
+  // v5 retires coreWidth for the same reason v4 retired scheme. The player has
+  // now said twice that the blade "covers way too much of the screen", and the
+  // default is what they are describing — the slider fix gave the setting real
+  // authority over the bloom but deliberately left w = 1.0 identical, so anyone
+  // who never touched it saw no change. saveSettings writes the whole object,
+  // so a stored 1.0 sits on disk for everyone who has opened the options screen
+  // once, chosen or not, and would pin them to the old blade forever.
+  'saber.settings.v4': ['coreWidth'],
+  'saber.settings.v3': ['scheme', 'coreWidth'],
+  'saber.settings.v2': ['coreWidth'],
+};
 
 function drainLegacy() {
   let out = null;
