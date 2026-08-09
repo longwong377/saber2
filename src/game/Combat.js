@@ -80,6 +80,77 @@ export const TOUGHNESS = {
   heavy: 14, durasteel: 42, blastdoor: 110, unbreakable: Infinity,
 };
 
+/**
+ * A slash and a press are not the same act, and the old model could not tell
+ * them apart.
+ *
+ * Work accrued as `speed * dt * 2.4`, which makes the criterion "cumulative
+ * blade travel >= toughness / 2.4 metres": 0.375 m for flesh, 0.625 m for
+ * plastoid, 0.83 m for a droid limb, 1.88 m for armour. But a slash only ever
+ * travels about the chord of what it passes through — a trooper's torso is
+ * r 0.18, so 0.36 m. Nothing above flesh could be severed by slashing AT ALL,
+ * only by holding the blade against it, and every pass that failed emitted a
+ * `grind`, which was pure VFX with no damage attached. That is the whole of
+ * "you slash them and it appears to do nothing".
+ *
+ * Three terms fix it, and the patient-blast-door model survives all three:
+ *
+ *   rush      efficiency rising with the SQUARE of blade speed, so a committed
+ *             swing parts what a lean cannot. At rest it is 1 and the model is
+ *             exactly the old one.
+ *   softness  but not against everything. Speed buys much less against `heavy`
+ *             and above, or a thrown saber picks up enough efficiency to saw
+ *             through a walker — which it did, and it made the Cleaving Throw
+ *             boon buy nothing because the stock throw already went through all
+ *             six test bodies.
+ *   coverage  the share of the frame's sweep actually inside the capsule. A
+ *             glancing frame used to bank its whole travel, so the same 14 m/s
+ *             pass banked 2.42 at 60 Hz and 1.68 at 144 Hz — a 1.44x advantage
+ *             to the slower machine. With coverage it is 1.78 and 1.76, 1.01x.
+ *
+ * Measured outcomes (tools/checks/cutting.mjs), one pass, severed or not:
+ *
+ *      flesh forearm  12 m/s  CUT        plastoid  3 m/s   grinds
+ *      trooper torso  14 m/s  CUT        heavy    30 m/s   grinds
+ *      droid torso    16 m/s  CUT        blastdoor 40 m/s  grinds
+ *      B2 torso       26 m/s  CUT
+ *
+ * ARCHITECTURE IS EXEMPT FROM ALL OF IT. `cap.structure` takes rush, softness
+ * and coverage out, so a destructible wall carves at exactly the rate it always
+ * did. Bringing a building down is a patient-press mechanic whose statics —
+ * flood fill, plan kerning, overturning — are calibrated against that rate;
+ * speeding it up turned a 0.30 m notch into something that dropped a whole
+ * column, and the destruction checks said so twice.
+ */
+const SLASH_REF = 8;     // m/s at which a swing does twice a press's work
+const SLASH_CAP = 8;     // ceiling: no speed may slash through a blast door
+const WORK_RATE = 2.4;   // unchanged, so every authored TOUGHNESS keeps its meaning
+
+/** No contact for this long and accumulated cut work begins to fade. */
+const PROGRESS_GRACE = 1.5;
+const PROGRESS_FADE = 0.8;   // e-folds per second after the grace
+
+/**
+ * How much work it takes to get through a given capsule.
+ *
+ * Just the material's toughness: the budget is absolute, not per-metre. An
+ * earlier version of this change scaled it by the capsule's chord so a wrist
+ * would cost less than a wall, which is the more physical model — but it
+ * retuned every destructible structure in the game at the same time, and the
+ * statics behind them (flood fill, plan kerning, overturning) are calibrated
+ * against the rate a blade carves stone. Two destruction checks failed
+ * immediately and correctly. The chord model is the right one to come back to,
+ * with the statics re-tuned alongside it; it is not something to slip in under
+ * a combat fix.
+ *
+ * Exported because Destruction grades its own kerf and stress off the same
+ * ratio, and the two must never drift apart.
+ */
+export function cutNeed(cap) {
+  const tough = cap.toughness ?? TOUGHNESS.flesh;
+  return tough < Infinity ? tough : Infinity;
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Catch and throw                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -485,6 +556,7 @@ export function pickReturnTarget(origin, aimDir, candidates, cone = 0.42) {
 export class BladeContactSolver {
   constructor() {
     this.progress = new Map();      // "actorId:bone" → accumulated cut work
+    this.touched = new Map();       // …and when that work was last added to
     this.cooldown = new Map();
     this.time = 0;
     this.activeCuts = [];           // for slag VFX on heavy materials
@@ -513,16 +585,24 @@ export class BladeContactSolver {
         const cd = this.cooldown.get(key) || 0;
         if (cd > this.time) continue;
 
-        // sweep the blade across the frame so a fast slash cannot skip a limb
-        let hit = null, bestSlice = 0;
+        // Sweep the blade across the frame so a fast slash cannot skip a limb.
+        //
+        // Every sub-sample is tested, not just up to the first hit, because the
+        // COUNT of them is the frame's contact coverage — and crediting a whole
+        // frame's travel for a glancing touch is what made cut work depend on
+        // refresh rate. Measured on one 14 m/s pass through a 0.18 m capsule:
+        // 60 Hz banked 2.42 and 144 Hz banked 1.68, a 1.44x advantage to the
+        // slower machine. Scaling by coverage is what closes that.
+        let hit = null, touching = 0;
         for (let i = 0; i <= SLICES; i++) {
           const k = i / SLICES;
           _v1.lerpVectors(saber.prevBase, saber.base, k);
           _v2.lerpVectors(saber.prevTip, saber.tip, k);
           const h = segmentCapsule(_v1, _v2, cap.p0, cap.p1, cap.r);
-          if (h) { hit = h; bestSlice = k; break; }
+          if (h) { touching++; if (!hit) hit = h; }
         }
         if (!hit) continue;
+        const coverage = touching / (SLICES + 1);
 
         const bladeT = clamp(hit.s, 0, 1);
         const speed = saber.speedAt(bladeT) * (opts.power ?? 1);
@@ -535,17 +615,62 @@ export class BladeContactSolver {
           continue;
         }
 
-        // work accumulates: light materials part instantly, heavy ones take a
-        // deliberate push — a blast door is just a very patient limb
-        const work = (this.progress.get(key) || 0) + speed * dt * 2.4;
-        if (work < tough) {
+        // You cannot do more cutting work than the material you actually passed
+        // through, so the credit is capped at the capsule's own chord. That cap
+        // is what makes this frame-rate independent: at 60 Hz a fast swing
+        // covers 0.33 m in one frame and used to bank all of it for a glancing
+        // touch, while at 144 Hz the same swing banked 0.139 m over the two or
+        // three frames it overlapped. Same swing, 2.4x the work, purely because
+        // of refresh rate. Both now converge on the chord.
+        // Speed helps, but not against everything. Swinging harder parts flesh
+        // and plate; it does not get you through a walker's belly armour or a
+        // blast door, and without the softness term it did — a thrown saber
+        // picked up enough efficiency to saw through six bodies including two
+        // `heavy` ones, which made the Cleaving Throw boon buy nothing because
+        // the stock throw already went through everything.
+        const softness = clamp(TOUGHNESS.armour / tough, 0.25, 1);
+        const rush = (speed / SLASH_REF) * (speed / SLASH_REF) * softness;
+        // Architecture is exempt, deliberately. Bringing a wall down is a
+        // patient-press mechanic whose statics — flood fill, plan kerning,
+        // overturning — are tuned against the rate a blade carves stone, and
+        // speeding that up carved a 0.30 m notch into something that dropped a
+        // whole column. The complaint this whole change answers is about things
+        // that bleed and things you can pick up, so that is where it applies.
+        const slash = cap.structure ? 1 : coverage * Math.min(SLASH_CAP, 1 + rush);
+        const dWork = speed * dt * WORK_RATE * slash;
+        const need = cutNeed(cap);
+
+        // Work fades once the blade leaves, so nothing is whittled down by a
+        // hundred incidental touches over a fight.
+        let prior = this.progress.get(key) || 0;
+        const gap = this.time - (this.touched.get(key) ?? this.time);
+        // A kerf cut into stone does not heal, and Destruction paints a
+        // widening mark at fixed fractions of it, so structures never fade. A
+        // body does, or a fight-long accumulation of incidental touches would
+        // eventually take a limb off by itself. The grace has to outlast a
+        // slashing RHYTHM rather than a single frame: at 0.4 s it was shorter
+        // than the gap between passes of a blade sweeping at 1.1 Hz, so a
+        // column being worked on healed faster than it was being cut.
+        if (prior > 0 && !cap.structure && gap > PROGRESS_GRACE) {
+          prior *= Math.exp(-(gap - PROGRESS_GRACE) * PROGRESS_FADE);
+        }
+        this.touched.set(key, this.time);
+
+        const work = prior + dWork;
+        if (work < need) {
           this.progress.set(key, work);
           saber.strain(clamp(0.25 + tough / 60, 0, 1));
-          this.activeCuts.push({ point: hit.point.clone(), progress: work / tough, cap, target });
-          events.push({ type: 'grind', target, cap, point: hit.point.clone(), bladeT, progress: work / tough, speed });
+          this.activeCuts.push({ point: hit.point.clone(), progress: work / need, cap, target });
+          // `dWork` and `tough` ride along because a grind has to HURT. It used
+          // to be particles and nothing else, so every slash that failed to
+          // sever was cosmetic and the player read it as the blade doing
+          // nothing at all.
+          events.push({ type: 'grind', target, cap, point: hit.point.clone(), bladeT,
+            progress: work / need, speed, dWork, need });
           continue;
         }
         this.progress.delete(key);
+        this.touched.delete(key);
 
         // where along the limb did the blade cross?
         const cutT = clamp(hit.t, 0.06, 0.94);
@@ -565,12 +690,28 @@ export class BladeContactSolver {
     return events;
   }
 
-  clearTarget(id) {
-    for (const k of [...this.progress.keys()]) if (k.startsWith(id + ':')) this.progress.delete(k);
+  /**
+   * Forget accumulated work.
+   *
+   * `capName` matters more than it looks. Every destructible structure in a
+   * level — every column, every wall, every cell of every one of them — reaches
+   * the solver through ONE DestructionProxy sharing ONE id. So the prefix sweep,
+   * called on each successful cut, was wiping the grind progress on every other
+   * cell in the level every time one cell parted. Pass the capsule when only
+   * that capsule is gone; pass nothing when the whole target is (a real Prop
+   * gets replaced by its halves, which carry new ids).
+   */
+  clearTarget(id, capName = null) {
+    if (capName != null) {
+      const k = id + ':' + capName;
+      this.progress.delete(k); this.touched.delete(k); this.cooldown.delete(k);
+      return;
+    }
+    for (const k of [...this.progress.keys()]) if (k.startsWith(id + ':')) { this.progress.delete(k); this.touched.delete(k); }
     for (const k of [...this.cooldown.keys()]) if (k.startsWith(id + ':')) this.cooldown.delete(k);
   }
 
-  reset() { this.progress.clear(); this.cooldown.clear(); }
+  reset() { this.progress.clear(); this.touched.clear(); this.cooldown.clear(); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

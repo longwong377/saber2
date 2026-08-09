@@ -60,7 +60,7 @@
 import * as THREE from 'three';
 import { Body, LAYER, box as boxShape, hullFromGeometry } from '../physics/RapierWorld.js';
 import { sliceGeometry } from './Slice.js';
-import { TOUGHNESS } from '../game/Combat.js';
+import { TOUGHNESS, cutNeed } from '../game/Combat.js';
 import { clamp, makeRng } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -2301,7 +2301,7 @@ export class Destruction {
       s.prefracture();
       const at = _v2.lerpVectors(cap.p0, cap.p1, 0.5);
       s.wear(delta * 2.2, at);
-      const frac = clamp(work / Math.max(1e-3, cap.toughness), 0, 1);
+      const frac = clamp(work / Math.max(1e-3, cutNeed(cap)), 0, 1);
       s.stress = Math.max(s.stress, frac);
       if (this.rng() < 0.35) this._dust(at, 0.3 + s.stress * 0.5, s.profile.chip);
       // the kerf, widening: one mark when the blade has bitten, a bigger one

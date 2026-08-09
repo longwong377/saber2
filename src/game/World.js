@@ -31,6 +31,18 @@ const rng = makeRng((Math.random() * 1e9) | 0);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 
+/**
+ * How much of a body a full sever is worth, when you take it a share at a time.
+ *
+ * Grinding a limb off accumulates work up to the material's toughness and then
+ * parts it. Partial work now deals partial damage, and this is the exchange
+ * rate: complete a whole sever's worth of work and you will have dealt this
+ * share of the target's maximum health along the way. 0.55 rather than 1.0
+ * because taking the limb is itself supposed to be the decisive event — the
+ * damage is what stops a failed pass from being free.
+ */
+const GRIND_LETHALITY = 0.55;
+
 export class World {
   constructor(engine, settings) {
     this.engine = engine;
@@ -629,6 +641,10 @@ export class World {
     // Contact-sound throttles are drained once per frame, not once per contact.
     this._clangSound = (this._clangSound || 0) - dt;
     this._grindSound = (this._grindSound || 0) - dt;
+    // Same reason as the sound: a grind fires every frame it is in contact, and
+    // an unthrottled hitmarker would put sixty floating numbers a second on the
+    // screen. Drained once per frame here, never per event.
+    this._grindMark = (this._grindMark || 0) - dt;
     for (const p of this.players) {
       if (!p.alive || p.saber.ignition < 0.6) continue;
 
@@ -723,6 +739,30 @@ export class World {
         player.saber.strain(0.9);
         if (breached) this.addHitstop(0.05);
       } else {
+        // A GRIND HAS TO HURT. This branch used to be particles and nothing
+        // else: no hp, no hitmarker, no hitstop. Since severing needs a full
+        // work budget and a single pass rarely filled one, the overwhelmingly
+        // common outcome of putting a lit blade through a body was a puff of
+        // slag and no consequence — "you slash them and it appears to do
+        // nothing", exactly as reported.
+        //
+        // Damage is the SHARE OF A SEVER done this frame, so it is bounded by
+        // construction: work accumulates to `tough` and then the limb comes
+        // off, which means a grind can never deal more than GRIND_LETHALITY of
+        // max hp before it stops being a grind. That holds at any frame rate,
+        // because the share is a share of work and not of time.
+        const t = ev.target;
+        if (t.enemy && ev.dWork > 0 && ev.need > 0 && !t.enemy.dead) {
+          const e = t.enemy;
+          const wasAlive = !e.dead;
+          const share = ev.dWork / ev.need;
+          e.damage(share * e.maxHp * GRIND_LETHALITY, ev.point, player, 'saber');
+          if (this._grindMark <= 0) {
+            this._grindMark = 0.12;
+            this.onHitmark?.(ev.point, wasAlive && e.dead ? 'kill' : 'hit', ev.cap?.name);
+          }
+          player.addFlow(0.012);
+        }
         P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
         if (rng() < 0.35) P.sparkBurst(ev.point, null, 3, { speed: 5, embers: false });
       }
@@ -758,7 +798,12 @@ export class World {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
       if (!halves) t.prop.shatter(ev.impulse, ev.point);
       else { for (const h of halves) this.props.push(h); }
-      this.bladeSolver.clearTarget(t.id);
+      // Only the capsule that parted, when the target is the destruction proxy.
+      // Every destructible structure in the level shares that one proxy id, so
+      // the prefix sweep was resetting grind progress on every column and wall
+      // in the level each time one cell came away. A real Prop is genuinely
+      // gone — replaced by halves carrying new ids — so it still clears whole.
+      this.bladeSolver.clearTarget(t.id, ev.cap?.structure ? ev.cap.name : null);
       P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
       audio.cut(ev.point, false);
       player.camera.addShake(0.06);
