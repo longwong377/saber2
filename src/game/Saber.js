@@ -525,6 +525,24 @@ export class Saber {
     if (this.bladeMat) {
       this.bladeMat.uniforms.uWidth.value.set(P.width[0] * w, P.width[1] * w, P.width[2] * w);
       this.bladeMat.uniforms.uRadius.value = P.radius * w;
+      // THE WIDTH SLIDER HAS TO REACH THE BLOOM, or it does not do what its
+      // label says. It used to scale only the gaussian SIGMAS, and the player
+      // reported — twice — that the blade "covers way too much of the screen in
+      // both 1st person and 3rd person even with the width fully reduced".
+      // They were right, and the reason is that bloom is driven by AMPLITUDE,
+      // not width: the core sits at 58 against UnrealBloomPass's 1.8 threshold,
+      // 32x over, and no setting moved it. A narrower blade bloomed exactly as
+      // hard and the halo it threw was the same brightness, just over a
+      // slightly smaller disc.
+      //
+      // The core keeps most of its punch (a lightsaber's centre is meant to be
+      // blown out, and scaling it linearly would make a thin blade a dull
+      // stripe), but the GLOW and HALO — the two terms that actually spread
+      // across the screen — now scale with the setting, superlinearly for the
+      // halo because that is the one you see from the far side of an arena.
+      const glow = P.amp[1] * w;
+      const halo = P.amp[2] * w * w;
+      this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w), glow, halo);
     }
     this.trailThickness = P.width[1] * 1.6 * w;
   }

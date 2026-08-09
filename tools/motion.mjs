@@ -85,6 +85,32 @@ const CLIPS = {
     }`,
   },
 
+  /* The same walk with the blade RETRACTED — the control for one question:
+   * how much of the wielder's colour is coming from their own saber?
+   *
+   * The light's hue is the crystal normalised to peak 1 IN LINEAR SPACE, and
+   * 0x3ba7ff linear is (0.0034, 0.1236, 1.0), so it has a blue-to-red ratio of
+   * 294:1. With decay 1 (1/r, deliberate) and intensity 5.4 it delivers about
+   * 10.8 units half a metre from the chest, against a shade budget near 1.2. If
+   * that is what is flattening the figure, retracting the blade is the one test
+   * that says so without ambiguity. Compare per-pixel R/B on the silhouette.
+   */
+  walkdark: {
+    warmup: 30,
+    note: 'walking with the blade retracted — the control for the saber-light hypothesis',
+    input: `(i, S) => {
+      S.input.keys.add('KeyW');
+      const sb = S.world.player.saber;
+      sb.lit = false; sb.ignition = 0;
+      sb.light.intensity = 0; sb.tipLight.intensity = 0;
+    }`,
+    camera: `(i, S) => {
+      const p = S.world.player;
+      const y = p.position.y;
+      return { pos: [p.position.x + 2.1, y + 0.95, p.position.z], look: [p.position.x, y + 0.85, p.position.z] };
+    }`,
+  },
+
   /* Same, sprinting — a gait solver can look fine at a walk and fall apart at
    * a run, and the duty factor changes at 1.9 and 5.4 m/s. */
   sprint: {
