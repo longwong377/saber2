@@ -346,10 +346,33 @@ export function run({ check, assert, near }) {
      *
      * And what it threw was (0.25, 0.52, 1.00) — the hue lifted 22% toward
      * white "because bounce light has been through a surface". Bounce through
-     * a surface IS the albedo multiply, so that lift was counted twice, and on
-     * sand it inverted the result: sand's blue albedo is 0.109 against 0.51 in
-     * red, so a light that pale lands RED-dominant. The blade lit the ground
-     * with its own colour and the ground handed back white.
+     * a surface IS the albedo multiply, so that lift was counted twice.
+     *
+     * ── REWRITTEN, and the numbers above are part of why ──────────────────
+     *
+     * This check used to demand the thrown light keep >90% of the crystal's
+     * chroma and return >3:1 blue on sand. Both bars were computed on sand
+     * albedo [0.51, 0.28, 0.109], and that array is the arena's ground colour
+     * put through the sRGB-to-linear transform TWICE. `new THREE.Color(0xcfae82)`
+     * is [0.617, 0.418, 0.220] in the working space. Every ratio in the old
+     * paragraph is inflated about twofold, including the claim that a pale
+     * light "lands RED-dominant on sand" — at the real albedo the old 22% lift
+     * returns 1.4:1 BLUE, not red-dominant at all.
+     *
+     * The >90% chroma bar also had a hole in it big enough to drive the whole
+     * palette through: it only ever ran on Cerulean, and "keeps its chroma" is
+     * satisfied perfectly by a light with NO blue in it. Bronze throws
+     * (1.000, 0.195, 0.010) — one part blue in a hundred — and scored 100%.
+     * A surface lit by that does not get a warm tint, it loses a primary, and
+     * with it every material distinction it carried there.
+     *
+     * So the property is now TWO-SIDED and runs over every crystal: the light
+     * must still be recognisably the crystal AND must not annihilate a channel.
+     * That is strictly more failure modes than the old bar caught. The sand
+     * ratio moves 3 -> 2 only because it is now measured against the correct
+     * albedo: the shipped light returns 8.2:1 there (not the 4.9 the old
+     * comment quoted) and the floored light returns 2.2:1, so the bar sits at
+     * 90% of what ships where the old bar sat at 61% of it.
      */
     const scene = new THREE.Scene();
     const s = new Saber(scene, { colorIndex: 0 });      // Cerulean
@@ -357,16 +380,34 @@ export function run({ check, assert, near }) {
     const q = new THREE.Quaternion(), p = new THREE.Vector3(0, 1.1, 0);
     for (let i = 0; i < 6; i++) { s.setHiltPose(p, q); s.update(1 / 60, i / 60); }
 
+    // The arena's own ground colour, converted ONCE. See above.
+    const sand = [0.617, 0.418, 0.220];
     for (const [name, l] of [['main', s.light], ['tip', s.tipLight]]) {
       assert(l.decay === 1, `the ${name} light still falls off as 1/d^${l.decay}`);
       assert(l.intensity > 0.5, `the ${name} light is dark on a lit blade`);
-      // and it must be the crystal, not a pale wash of it
+      // still recognisably the crystal…
       const kept = chroma(l.color.r, l.color.g, l.color.b) / chroma(s.hue.r, s.hue.g, s.hue.b);
-      assert(kept > 0.9, `the ${name} light keeps only ${(kept * 100).toFixed(0)}% of the crystal's chroma`);
-      // blue has to outrun red on SAND, which is the surface that broke it
-      const sand = [0.51, 0.28, 0.109];                 // measured arena albedo
+      assert(kept > 0.8, `the ${name} light keeps only ${(kept * 100).toFixed(0)}% of the crystal's chroma`);
+      // …and blue still has to outrun red on SAND, the surface that broke it
       const ratio = (sand[2] * l.color.b) / (sand[0] * l.color.r);
-      assert(ratio > 3, `on sand this light returns only ${ratio.toFixed(2)}× as much blue as red`);
+      assert(ratio > 2, `on sand this light returns only ${ratio.toFixed(2)}× as much blue as red`);
+    }
+
+    // …and the hole the old bar left: EVERY crystal, not just the blue one.
+    // A light may not put a channel so far down that a surface lit by it loses
+    // that primary. This is the assertion Bronze used to walk straight past.
+    for (let i = 0; i < SABER_COLORS.length; i++) {
+      const t = new Saber(scene, { colorIndex: i });
+      t.ignite(); t.ignition = 1;
+      for (let k = 0; k < 6; k++) { t.setHiltPose(p, q); t.update(1 / 60, k / 60); }
+      for (const [name, l] of [['main', t.light], ['tip', t.tipLight]]) {
+        const c = [l.color.r, l.color.g, l.color.b];
+        const share = Math.min(...c) / Math.max(...c);
+        assert(share >= Saber.FLOOR_CHANNEL - 1e-6,
+          `${SABER_COLORS[i].name}'s ${name} light puts its dimmest channel at `
+          + `${(share * 100).toFixed(1)}% of its brightest — anything it lights loses that primary`);
+      }
+      t.dispose();
     }
     // neither sample sits ON the tip: a point light at the tip of a blade laid
     // on the deck is a singularity sitting on the deck

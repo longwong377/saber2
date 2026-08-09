@@ -277,6 +277,7 @@ export class Actor {
         const c = bone.obj.children[i];
         if (c.userData.boneChild) continue;
         inner.add(c);
+        c.visible = true;                // see addBone: a corpse is never headless
       }
       this.scene.add(holder);
       this.holders.set(bone.name, holder);
@@ -483,6 +484,15 @@ export class DetachedPiece {
       const c = bone.obj.children[i];
       if (c.userData.boneChild) continue;
       inner.add(c);
+      // A DETACHED PIECE IS ALWAYS VISIBLE, WHATEVER THE VIEW WAS HIDING.
+      //
+      // These are the body's real meshes being reparented, not copies, so any
+      // `visible = false` on them comes along. First person hides the neck, the
+      // head and its fifteen face meshes, and the clavicles, precisely because
+      // the player is inside them — so cutting your own head off in first
+      // person spawned a piece with no head on it, and the limb it was attached
+      // to went with it. Dismemberment is not a view mode.
+      c.visible = true;
     }
     holder.position.copy(_v1).add(_v2.set(0, len * 0.5, 0).applyQuaternion(_q1));
     holder.quaternion.copy(_q1);
@@ -506,6 +516,7 @@ export class DetachedPiece {
     const target = this.entries[0];
     obj.position.y -= keepLen + target.len * 0.5;
     target.holder.children[0].add(obj);
+    obj.visible = true;                  // see addBone: a piece is never hidden
   }
 
   finalise(impulse, cutPoint, spin = 1) {

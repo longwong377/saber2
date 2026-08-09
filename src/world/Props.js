@@ -2206,9 +2206,22 @@ export function addBoulderCluster(world, centre, opts = {}) {
   const lists = [], cols = [];
   for (let i = 0; i < NV; i++) { lists.push([]); cols.push([]); }
   const c = new THREE.Color();
+  /* WHERE the stones gathered, as a field. Without it a "cluster" of fifty
+   * boulders over a 120 m radius is a uniform sprinkle with a fancy name — and
+   * measured on the shipped levels, that is exactly what it was: Clark–Evans
+   * 0.80-0.89 against a Poisson control's 1.0. Rejection against a bimodal
+   * mask turns the same fifty stones into three or four talus fields with real
+   * bare ground between them, for a handful of extra tries. */
+  const field = opts.field || null;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
-    const a = r() * TAU, rad = R * Math.pow(r(), 0.62);
+    let a = 0, rad = 0, ok = !field;
+    for (let attempt = 0; attempt < (field ? 7 : 1); attempt++) {
+      a = r() * TAU; rad = R * Math.pow(r(), opts.crowd ?? 0.62);
+      if (!field) break;
+      if (r() <= field(centre.x + Math.cos(a) * rad, centre.z + Math.sin(a) * rad)) { ok = true; break; }
+    }
+    if (!ok) continue;
     // a much wider size ladder: a cluster of near-identical boulders reads as
     // set dressing, one with a 4:1 range between its biggest and its chips
     // reads as a rockfall
@@ -2254,7 +2267,14 @@ const CHIP_REPOSE = 0.62;    // rad, 36° from vertical, whatever the ground doe
 /* And how big a chip is allowed to get. 1.5 m is not a new number: it is the
  * one Levels.js already names as where a chip stops reading as a stone lying on
  * the ground and starts reading as a shard. Nothing was enforcing it. */
-const CHIP_SPAN = 1.5;       // metres across, the long axis
+/* Tightened from 1.5 to 1.35, and the number that decides it is not the
+ * "shard" heuristic — it is the measured one next door. The check on the worst
+ * two-tone plate (a face square to the sun with an equally big one in shade)
+ * gates at 0.22 m², and area goes as the span squared: at 1.5 the dune sea's
+ * worst chip measured 0.225 m² once the drift field re-drew which chip was
+ * worst, and there is no reason for the ceiling on a chip's SIZE to be set by
+ * anything softer than the thing that ceiling exists to prevent. */
+const CHIP_SPAN = 1.35;      // metres across, the long axis
 
 /**
  * Scree: the chips a rock face sheds. One instanced draw, no physics, density
@@ -2283,10 +2303,17 @@ export function addScree(world, centre, opts = {}) {
   const list = [], cols = [];
   const c = new THREE.Color();
   const onGround = !opts.kit;          // composing: the parent frame owns the height
+  // Chips gather where the ground gathered them — see addBoulderCluster.
+  const field = opts.field || null;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
-    const a = r() * TAU;
-    const rad = lerp(inner, R, Math.pow(r(), 0.5));
+    let a = 0, rad = 0, ok = !field;
+    for (let attempt = 0; attempt < (field ? 7 : 1); attempt++) {
+      a = r() * TAU; rad = lerp(inner, R, Math.pow(r(), 0.5));
+      if (!field) break;
+      if (r() <= field(centre.x + Math.cos(a) * rad, centre.z + Math.sin(a) * rad)) { ok = true; break; }
+    }
+    if (!ok) continue;
     const sc = size * lerp(1.5, 0.45, rad / R) * (0.5 + r());
     p.set(Math.cos(a) * rad, 0, Math.sin(a) * rad);
     /* A CHIP LIES ON THE GROUND. It used to be turned by three unbounded Euler

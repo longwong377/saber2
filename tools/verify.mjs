@@ -2343,34 +2343,52 @@ check('grass: the disturbance window wraps without smearing marks across the map
   return `${g.trailRes}² texels over ${g.trailSize}m, wrap cleared`;
 });
 
-check('grass: the two LOD rings tile the field with an overlap, not a gap', () => {
+check('grass: the whole LOD ladder tiles the field with overlaps, not gaps', () => {
+  /* Was TWO rings out to 46 m. It is four now, out to 400, and the property
+   * is the same one asserted over every adjacent pair rather than over the
+   * only pair there was: no rung may start beyond where the one inside it has
+   * finished fading, or the field ends in a visible circle and starts again
+   * further out. The budget must still land somewhere, and every instance must
+   * still be inside the annulus its own shader fades. */
   const scene = litScene();
   const g = new GrassField(scene, FLAT, { count: 3000, radius: 46 });
-  const nearU = g.near.mat.uniforms, farU = g.far.mat.uniforms;
-  assert(farU.uNear.value < nearU.uFar.value,
-    `the rings leave a hole between ${nearU.uFar.value} and ${farU.uNear.value}`);
-  assert(g.near.count + g.far.count === 3000, 'the instance budget was not spent');
+  assert(g.rings.length >= 4, `only ${g.rings.length} LOD rungs — the field is a bubble again`);
+  const spent = g.rings.reduce((a, r) => a + r.count, 0);
+  assert(spent === g.count, `the budget is ${g.count} and the rings hold ${spent}`);
+  assert(g.count > 3000, 'the budget did not grow with the reach it now has to fill');
+  for (let i = 1; i < g.rings.length; i++) {
+    const inner = g.rings[i - 1], outer = g.rings[i];
+    assert(outer.mat.uniforms.uNear.value < inner.mat.uniforms.uFar.value,
+      `${inner.tier.name}/${outer.tier.name} leave a hole between `
+      + `${inner.mat.uniforms.uFar.value} and ${outer.mat.uniforms.uNear.value} m`);
+  }
+  assert(g.reach > 300, `the field reaches only ${g.reach} m on a level you can see 700 across`);
 
   g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
-  // blades are jittered around a tuft centre, so a tuft on the boundary
-  // straddles it — the annulus holds to within that spread and no further
-  const inRing = (ring, lo, hi, spread) => {
+  // blades are jittered around a tuft centre and the window is snapped to the
+  // tier's cell grid, so the annulus holds to within a cell and no further
+  let tris = 0, live = 0;
+  for (const ring of g.rings) {
     const a = ring.aInst.array;
+    const slop = ring.cell + ring.spread;
     for (let i = 0; i < ring.count; i++) {
+      if (a[i * 4 + 3] <= 0.004) continue;
+      live++;
       const r = Math.hypot(a[i * 4], a[i * 4 + 2]);
-      assert(r <= hi + spread, `a ${ring.card ? 'tuft' : 'blade'} sits at ${r.toFixed(2)}m, outside ${hi}m`);
-      assert(r >= lo - spread, `a ${ring.card ? 'tuft' : 'blade'} sits at ${r.toFixed(2)}m, inside ${lo}m`);
+      assert(r <= ring.far + slop, `a ${ring.tier.name} sits at ${r.toFixed(2)}m, outside ${ring.far}m`);
+      assert(r >= ring.near - slop, `a ${ring.tier.name} sits at ${r.toFixed(2)}m, inside ${ring.near}m`);
     }
-  };
-  inRing(g.near, 0, g.nearRadius, 0.1);
-  inRing(g.far, g.nearRadius * 0.62, g.radius, 0.4);
+    tris += ring.count * (ring.geo.index.count / 3);
+  }
 
-  // and the near ring is real geometry while the far ring is not
+  // and the near rung is real geometry while every rung past it is not
   assert(g.near.geo.index.count / 3 === 8, `a blade is ${g.near.geo.index.count / 3} triangles`);
-  assert(!g.near.card && g.far.card, 'the LODs are the same thing twice');
-  const tris = g.near.count * 8 + g.far.count * (g.far.geo.index.count / 3);
+  assert(!g.rings[0].card, 'the nearest rung is a billboard');
+  assert(g.rings.slice(1).every(r => r.card), 'a distant rung is still drawing real blades');
+  const draws = g.meshes.length;
   g.dispose();
-  return `${g.near.count} blades + ${g.far.count} tufts, ${tris} triangles, 2 draw calls`;
+  return `${g.rings.map(r => `${r.tier.name} ${r.count}`).join(' + ')} = ${spent} instances, `
+    + `${tris} triangles, ${draws} draw calls, reach ${g.reach} m`;
 });
 
 check('grass: it is lit, shadowed and fogged rather than a flat colour multiply', () => {
@@ -2821,18 +2839,27 @@ check('scenery: grass is ground cover, not waist-high weeds', async () => {
   assert(geo && /pos\[k \* 3 \+ 1\] = v;/.test(geo[0]),
     'bladeGeometry no longer spans v = 0..1 — the height maths below is void');
 
-  const m = src.match(/const base = ring\.card \? ([\d.]+) : ([\d.]+);\s*\n\s*const varies = ring\.card \? ([\d.]+) : ([\d.]+);/);
-  assert(m, 'could not find the grass height constants');
-  const [cardBase, nearBase, cardVar, nearVar] = m.slice(1).map(Number);
-
-  // worst case: the top of the random range times the top of the density clamp
-  const tallest = (b, v) => (b + v) * 1.5;
-  const nearMax = tallest(nearBase, nearVar), cardMax = tallest(cardBase, cardVar);
-  assert(nearMax < 0.75, `the tallest blade is ${nearMax.toFixed(2)}m — knee-high on a 1.78m character at most`);
-  assert(cardMax < 0.85, `the tallest tuft is ${cardMax.toFixed(2)}m`);
-  // and it must not be so short it reads as moss
-  assert(nearMax > 0.25, `the tallest blade is only ${nearMax.toFixed(2)}m`);
-  return `tallest blade ${nearMax.toFixed(2)}m, tallest tuft ${cardMax.toFixed(2)}m`;
+  /* The two hand-written constants this used to read are a TABLE now — one row
+   * per LOD rung — so every rung is held to the limit rather than the two that
+   * happened to exist. That is the stronger form of the same property: a rung
+   * added at 400 m with waist-high cards would have sailed past the old regex
+   * entirely. The clamp is read out of the source too, so raising it cannot
+   * quietly raise every ceiling here with it. */
+  const clampM = src.match(/clamp\(density \* 1\.8, 0\.5, ([\d.]+)\)/);
+  assert(clampM, 'could not find the density clamp the blade height is scaled by');
+  const top = Number(clampM[1]);
+  const rows = [...src.matchAll(/base: ([\d.]+), varies: ([\d.]+)/g)].map(m2 => m2.slice(1).map(Number));
+  assert(rows.length >= 4, `only ${rows.length} LOD rungs declare a height`);
+  const names = [...src.matchAll(/name: '(\w+)', card:/g)].map(m2 => m2[1]);
+  const heights = rows.map(([b, v]) => (b + v) * top);
+  for (let i = 0; i < heights.length; i++) {
+    assert(heights[i] < 0.85, `the tallest ${names[i]} is ${heights[i].toFixed(2)}m`);
+    assert(heights[i] > 0.25, `the tallest ${names[i]} is only ${heights[i].toFixed(2)}m — that is moss`);
+  }
+  // and the rung the player walks through is held tighter still: knee-high on
+  // a 1.78 m character, or a field of ground cover reads as scratchy weeds
+  assert(heights[0] < 0.75, `the tallest blade is ${heights[0].toFixed(2)}m`);
+  return names.map((n, i) => `${n} ${heights[i].toFixed(2)}m`).join(', ');
 });
 
 check('bodies: no face feature is buried inside the head it belongs to', () => {

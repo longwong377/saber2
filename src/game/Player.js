@@ -29,6 +29,10 @@ const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vect
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const FWD = new THREE.Vector3(0, 0, -1);
+/** Read-only stand-in for a missing pelvis offset. Never written to. */
+const _ZERO = new THREE.Vector3();
+/** Reused by syncAim, which runs twice a frame and must not allocate. */
+const _eul = new THREE.Euler();
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The Force's one hard number                                           */
@@ -118,6 +122,127 @@ const LEG_BONE = /thigh|shin|foot|femur|tibia|tarsus|^leg/;
 /*  Camera                                                                */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * How much of the pelvis's own motion the first-person eye rides. ONE number,
+ * applied to every axis, and it is 1 because a head is bolted to a spine.
+ *
+ * This used to be two numbers and neither of them said so. The pelvis takes the
+ * full gait bob and the camera took `bob * 0.5`; the pelvis sways up to 30mm
+ * laterally per step and the camera took none of it at all; and the pelvis
+ * drops 41mm into a run and the eye did not move. Measured on the walk, with
+ * the whole upper body expressed in the eye's own view space — which is what
+ * the player is actually looking at:
+ *
+ *       standing   chest 22.9mm across, 6.0mm up    (idle sway, uncancelled)
+ *       1.6 m/s    chest 29.2mm across, 26.4mm up
+ *                  shoulder 20.1 / 32.3 / 17.3mm in x/y/z
+ *       4.6 m/s    shoulder 5.4 / 71.2 / 21.9mm
+ *
+ * Seventy-one millimetres of your own shoulder sliding up and down the screen,
+ * 27cm from the lens. That is not a gait, it is the body and the camera being
+ * two separate simulations of the same person, and it is the largest single
+ * source of the "jumbled mess" the player described. At a gain of 1 the number
+ * is zero by construction, in every axis, at every speed.
+ */
+const EYE_FOLLOW = 1;
+
+/**
+ * The fastest a neck is allowed to carry the eye, m/s.
+ *
+ * A rate cap and not a filter, deliberately: a damped follower that tracks the
+ * 3 Hz bob closely enough to leave no residual swim (rate 60 leaves 4.7%) does
+ * essentially nothing to a one-frame spike, and one slow enough to absorb the
+ * spike puts 19% of the bob back on the screen as swim. A cap is exact in the
+ * regime that matters and only engages where the body is already wrong.
+ *
+ * It has to engage at all only because the pelvis is still not smooth.
+ * SWING_LAND in Rig.js took the worst single-frame pelvis travel from 69.6 mm
+ * to 43.9 mm at a 4.6 m/s run and from 88.3 to 87.5 at a 7.4 m/s sprint, but
+ * 87 mm in a 1/60 s frame is 5.2 m/s of pelvis and no neck does that. The
+ * residue is the swing foot arriving at a measured 5.3 m/s with the reach clamp
+ * chained to it — a defect in the gait, named where it lives in Rig.js rather
+ * than hidden behind a filter here.
+ *
+ * 2.8 m/s and not 2.2: the game's ordinary forward speed IS 4.6 m/s, where the
+ * pelvis peaks at 43.9 mm/frame = 2.63 m/s. A 2.2 cap trimmed 5.9 mm there —
+ * a filter running during normal play, putting 5.9 mm of swim back on the
+ * screen. 2.8 leaves the run untouched and still refuses 41 mm of the sprint.
+ */
+const EYE_MAX_SPEED = 2.8;
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The first-person viewmodel                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHERE THE WIELDER'S OWN SHOULDERS GO WHEN THEY ARE LOOKING OUT OF THEIR OWN
+ * EYES — which, until now, was "wherever the third-person body happened to put
+ * them", and that is not a place a camera can be.
+ *
+ * Measured on the built figure, the right shoulder joint in the eye's own view
+ * space while standing still:
+ *
+ *       x  +0.153 m   (to the right)
+ *       y  -0.224 m   (below the lens)
+ *       z  +0.068 m   ← BEHIND THE LENS
+ *
+ * The near plane in first person is 0.045 m, so both upper arms began 6.8 cm
+ * behind the camera and crossed the camera plane on their way to the hilt. The
+ * rasteriser cannot draw that: it clips at the plane, so what reached the
+ * screen was two forearms erupting out of the bottom corners with no visible
+ * origin, sliced flat. That is the "jumbled mess", and no amount of tuning the
+ * pose could have fixed it, because the problem was the ARM'S ROOT, not its
+ * pose. The whole distance from the shoulder to the lens was 0.279 m.
+ *
+ * So the shoulders move to the view, which is what every first-person game
+ * does. Three numbers, in the aim frame, in metres from the eye:
+ *
+ *   Z is IN FRONT and it has a hard floor. The deltoid is a tube of radius
+ *   0.055 m about the joint, so anything closer than 0.045 + 0.055 = 0.10 m
+ *   has its own shoulder sliced open by the near plane. 0.115 leaves 1.5 cm.
+ *
+ *   Y is how far below the lens, and it is deeper than anatomy (0.224) on
+ *   purpose: the shoulders have to sit outside a 60-degree frustum at 0.115 m
+ *   out, whose half-height there is only 0.066 m, or you are looking at your
+ *   own deltoids all day.
+ *
+ *   X is the half-width of the shoulder line. 0.21 is a real one.
+ */
+const VM_SHOULDER_X = 0.21;
+const VM_SHOULDER_Y = -0.32;
+const VM_SHOULDER_Z = 0.115;
+/** The clavicle's own slope, kept off the skeleton's rest so the deltoid sits right. */
+const VM_CLAV_RISE = 0.18;
+/** Body left is the camera's left: clavL points along -right. */
+const VM_CLAV = [['clavL', -1], ['clavR', 1]];
+
+/**
+ * How far below the eye the first-person blade is solved from.
+ *
+ * This was 0.26 and the consequence is not visible in any still the project
+ * could previously take: measured off tools/fpview.mjs, with the camera level,
+ * the hilt sat 43 degrees off the view axis against a 30-degree half-frustum.
+ * THIRTEEN DEGREES OFF THE BOTTOM OF THE SCREEN. Looking straight ahead, a
+ * first-person player of a lightsaber game could see the blade and no part of
+ * their own hands, gloves, bracers or hilt at all — which is a fair description
+ * of what "the hands are a jumbled mess" feels like when the mess is invisible
+ * and only its consequences are not.
+ *
+ * 0.15 brings the hilt to ~31 degrees, which puts the hilt body and the top of
+ * both gloves inside the frame at a level gaze and the whole forearm in it the
+ * moment the player looks down at all. It is a raise of 11 cm and no more,
+ * because everything here is REAL: this anchor is where the blade is solved
+ * from, so raising it raises the blade in the world, and a lightsaber whose
+ * base has climbed a foot is a different weapon, not a different view.
+ */
+const FP_HILT_DROP = 0.15;
+
+// Scratch for the viewmodel alone. It runs in the middle of the arm solve,
+// which is already holding _v1.._v6 AND _g1.._g5, so it may borrow neither.
+const _m1 = new THREE.Vector3(), _m2 = new THREE.Vector3(), _m3 = new THREE.Vector3();
+const _m4 = new THREE.Vector3(), _m5 = new THREE.Vector3(), _m6 = new THREE.Vector3();
+const _m7 = new THREE.Vector3();
+
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
@@ -140,7 +265,70 @@ export class CameraRig {
     this.aimQuat = new THREE.Quaternion();
     this._smoothTarget = new THREE.Vector3();
     this._init = false;
+    /** Where the eye currently sits relative to a neutral stance — see EYE_FOLLOW. */
+    this.eyeOffset = new THREE.Vector3();
+    /** How much of the pelvis the cap had to refuse this frame, metres. */
+    this.eyeCapped = 0;
   }
+
+  /**
+   * Advance the eye's ride on the pelvis. Called EXACTLY once a frame, by the
+   * owner, immediately after the gait has been solved — never from update().
+   *
+   * The split exists because the first-person arms are hung off the eye and the
+   * eye is hung off the pelvis, so all three have to be resolved in that order
+   * inside one frame. When the camera advanced its own offset during update(),
+   * which runs last, the arms could only ever be built against the PREVIOUS
+   * frame's eye — a one-frame lag between a viewmodel and the view it is bolted
+   * to, which is visible as judder the moment the player turns quickly.
+   */
+  advanceEye(dt, pelvis) {
+    if (!this.firstPerson) { this.eyeOffset.set(0, 0, 0); this.eyeCapped = 0; return this.eyeOffset; }
+    // THE EYE RIDES THE PELVIS. All of it, every axis — bob, sway, the run's
+    // crouch, the landing dip and the reach clamp — because that is what a head
+    // bolted to a spine does, and because any fraction less than all of it is
+    // the body and the camera being two simulations of one person. See
+    // EYE_FOLLOW; the cap is a statement about necks, see EYE_MAX_SPEED.
+    _v5.copy(pelvis || _ZERO).multiplyScalar(EYE_FOLLOW).sub(this.eyeOffset);
+    // VERTICAL ONLY. The lateral sway is a pure cosine of the gait clock with
+    // nothing clamped on top of it, so it is smooth by construction, and capping
+    // it can only open a gap for the body to slide through — measured, a
+    // magnitude cap cost 4.9 mm of lateral weld at a sprint and bought nothing.
+    // It is the vertical that has spikes, because that is where the reach clamp
+    // is.
+    const maxStep = EYE_MAX_SPEED * Math.max(dt, 1e-4);
+    this.eyeCapped = Math.max(0, Math.abs(_v5.y) - maxStep);
+    if (Math.abs(_v5.y) > maxStep) _v5.y = Math.sign(_v5.y) * maxStep;
+    this.eyeOffset.add(_v5);
+    return this.eyeOffset;
+  }
+
+  /**
+   * Where the eye is. ONE function, and both callers that matter use it: the
+   * camera itself, and the first-person arms that have to be welded to it.
+   * Two copies of this arithmetic is precisely how the arms and the view came
+   * to disagree in the first place.
+   */
+  eyePosition(target, eyeHeight, out) {
+    out.copy(target).addScaledVector(UP, eyeHeight).add(this.eyeOffset);
+    // Offset along the body's HORIZONTAL forward, not the view forward.
+    // Following the view meant looking down also moved the eye downward and out
+    // of the head, so the pivot drifted as you aimed.
+    _v4.set(0, 0, -1).applyQuaternion(this.aimQuat).setY(0);
+    if (_v4.lengthSq() > 1e-6) out.addScaledVector(_v4.normalize(), 0.07);
+    return out;
+  }
+
+  /**
+   * Rebuild the aim quaternion from the yaw and pitch the input just wrote.
+   *
+   * update() does this too, but update() runs LAST, so everything solved before
+   * it — the blade, and now the arms welded to the view — was reading an aim
+   * that was one frame old. On a 400 deg/s flick that is 6.7 degrees, which at
+   * the 0.3 m the hands sit from the lens is 3.5 cm of viewmodel lagging behind
+   * its own camera. Cheap enough to simply do twice.
+   */
+  syncAim() { this.aimQuat.setFromEuler(_eul.set(this.pitch, this.yaw, 0, 'YXZ')); return this.aimQuat; }
 
   addYaw(d) { this.yaw += d; }
   addPitch(d) { this.pitch = clamp(this.pitch + d, -1.28, 1.16); }
@@ -150,7 +338,7 @@ export class CameraRig {
   }
 
   update(dt, target, ctx = {}) {
-    this.aimQuat.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    this.syncAim();
 
     if (!this._init) { this._smoothTarget.copy(target); this._init = true; }
     // First person locks the eye to the body with NO positional smoothing. Even
@@ -170,17 +358,11 @@ export class CameraRig {
     const right = _v2.set(1, 0, 0).applyQuaternion(this.aimQuat);
 
     if (this.firstPerson) {
-      this.pos.copy(this._smoothTarget).addScaledVector(UP, ctx.eyeHeight ?? 1.62);
-      // Offset along the body's HORIZONTAL forward, not the view forward.
-      // Following the view meant looking down also moved the eye downward and
-      // out of the head, so the pivot drifted as you aimed.
-      _v6.set(fwd.x, 0, fwd.z);
-      if (_v6.lengthSq() > 1e-6) this.pos.addScaledVector(_v6.normalize(), 0.07);
-      // A small gait bob so footfalls have weight. Deliberately tiny — this is
-      // the knob that makes people motion sick.
-      this.pos.y += (ctx.bob ?? 0) * 0.5;
+      this.eyePosition(this._smoothTarget, ctx.eyeHeight ?? 1.62, this.pos);
       this.look.copy(this.pos).addScaledVector(fwd, 10);
     } else {
+      this.eyeOffset.set(0, 0, 0);
+      this.eyeCapped = 0;
       const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height)
         .addScaledVector(right, this.shoulder);
       let dist = this.distance;
@@ -375,6 +557,12 @@ export class Player {
     world.physics.add(this.body);
 
     this.chest = new THREE.Vector3();
+    /**
+     * Where the WEAPON hangs from — the body's chest in third person, a fixed
+     * point in the aim frame in first. Separate from `chest` because `chest` is
+     * what the rest of the game aims at. See _updateBlade.
+     */
+    this.gripAnchor = new THREE.Vector3();
     this.headPos = new THREE.Vector3();
     this._prevChest = new THREE.Vector3();
     this.aimDir = new THREE.Vector3(0, 0, -1);
@@ -423,8 +611,22 @@ export class Player {
     if (!this.alive) { this._updateDead(dt, ctx); return; }
 
     this._readInput(dt, ctx);
+    // The aim the input just wrote, available to everything solved this frame
+    // rather than only to the camera at the end of it — see syncAim.
+    this.camera.syncAim();
     this._move(dt, ctx);
     this._updateForce(dt, ctx);
+    // ONE ORDER, AND IT IS A CHAIN OF DEPENDENCIES, NOT A HABIT.
+    //
+    // The gait moves the pelvis; the eye rides the pelvis; the blade is solved
+    // from the eye in first person; the arms are IK'd to the blade and rooted
+    // on the eye. Every arrow points forward, so all of it resolves inside one
+    // frame. It used to run blade → body → camera, which put two of those
+    // arrows backwards: the blade anchor was built from a stale eye and the
+    // eye was advanced after everything that depended on it had already been
+    // drawn. Measured on the walk, that alone was 97mm of hilt sliding up and
+    // down the first-person frame, once per stride.
+    this._poseGait(dt, ctx);
     this._updateBlade(dt, ctx);
     this._updateBody(dt, ctx);
     this._updateCamera(dt, ctx);
@@ -525,6 +727,42 @@ export class Player {
       if (head) head.obj.scale.setScalar(1);
       neck.obj.traverse((o) => { if (o.isMesh) o.visible = !fp; });
     }
+
+    // The clavicles are the join between a torso that is still standing where
+    // the body is and a pair of shoulders that have moved onto the camera, so
+    // in first person they are a 13cm tube stretched between two places the
+    // player is not meant to think about. Hide the tube; the bone still does
+    // its job, which is to carry the arm.
+    //
+    // Restoring is not optional and not free: _anchorViewArms OVERWRITES the
+    // clavicle's local position and rotation every frame it runs, so leaving
+    // first person without putting the rest pose back leaves the third-person
+    // figure with its shoulders frozen wherever the camera last was.
+    for (const [name] of VM_CLAV) {
+      const b = this.rig.get(name);
+      if (!b) continue;
+      b.obj.traverse((o) => { if (o.isMesh && o.parent === b.obj) o.visible = !fp; });
+      if (!fp) { b.obj.position.copy(b.offset); b.obj.quaternion.copy(b.restQuat); }
+    }
+
+    // AND THE RIBCAGE, BECAUSE YOU ARE INSIDE IT.
+    //
+    // The chest lathe ends in a domed cap 16 cm across — the shoulder line,
+    // which is the first thing a human silhouette is read by and is worth every
+    // triangle in third person. In first person its top sits 16 cm below a lens
+    // with a 4.5 cm near plane, so it is both inside the frustum and across the
+    // camera plane. tools/fpview.mjs at 70 degrees down: a smooth brown dome
+    // filling the bottom 60% of the frame, radial lathe seams and all, with the
+    // player's own legs and boots behind it. Looking down at yourself showed you
+    // the inside of your own chest.
+    //
+    // The spine and hips keep their robe, so looking down still finds a body
+    // and a pair of legs where they belong — just not from inside the ribs.
+    const chestBone = this.rig.get('chest');
+    if (chestBone) {
+      chestBone.obj.traverse((o) => { if (o.isMesh && o.parent === chestBone.obj) o.visible = !fp; });
+    }
+
     this.camera.targetDistance = fp ? 0 : 3.05;
     // Say WHICH resting pose, never what it is. These two lines used to carry
     // their own copies of readyX/readyY, and the third-person one still said
@@ -830,22 +1068,57 @@ export class Player {
     // off the ribcage. So drop the anchor further below the eye and push it
     // back behind it, which both recedes the blade to a sane size and puts the
     // hilt where your hands would actually be if you were holding it up.
+    // THE BODY'S CHEST, ALWAYS, IN BOTH VIEWS.
+    //
+    // Everything outside this file that asks the player where they are asks
+    // `chest`: Enemy.js aims every bolt and every lunge at `target.chest`,
+    // Duel.js builds the blade-lock midpoint from it, World.js searches for
+    // threats near it, and a dozen Force powers use it as their origin and as
+    // the position of their own sound. It is a place on a body.
+    //
+    // It used to be quietly redefined in first person as the point the WEAPON
+    // hangs from, which is a different thing that merely happened to be at a
+    // similar height. Making that point follow the aim — which the viewmodel
+    // needs, so the hands stay in front of the lens when you look up — would
+    // have carried all of the above with it: measured, looking straight up put
+    // it 0.20 m ABOVE the player's own eye, so every droid in the level would
+    // have been shooting over the head of a player who looked at the sky.
+    // They are two points and they are now two fields.
     this.chest.copy(this.position).setY(this.position.y + lerp(1.34, 1.0, this.crouch));
+    this.gripAnchor.copy(this.chest);
     if (this.camera.firstPerson) {
-      const eye = this.position.y + lerp(1.62, 1.22, this.crouch);
+      // OFF THE EYE, AND OFF THE SAME EYE THE CAMERA USES.
+      //
+      // This took `position.y + eyeHeight` for its height and `position` for
+      // its x and z, which is the eye MINUS everything the eye actually does:
+      // the pelvis ride, the lateral sway, the 7cm forward set. So the hilt
+      // hung off a point that did not move while the view did. Measured on the
+      // walk, before this, the wrist travelled 97mm up and down the frame per
+      // stride against a shoulder that was already pinned to the lens — the
+      // arm stretching and folding to reach a weapon that was swimming.
+      const eye = this.camera.eyePosition(this.position, lerp(1.62, 1.22, this.crouch), _v5);
       // FORWARD and down, not back. The hands sit ~0.29m out along the guard
       // from this anchor; at 0.30m below the eye they need to be at least
       // 0.30/tan(30) = 0.52m in FRONT of it to fall inside a 60 degree vertical
       // frustum at all. Anchoring behind the eye put the hilt permanently off
       // the bottom of the screen, and closer to the lens made the blade bigger
       // rather than smaller.
-      this.chest.setY(eye - 0.26);
-      _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat).setY(0);
+      // IN THE AIM FRAME, ALL OF IT. The forward offset used to be flattened to
+      // horizontal, so the hilt stayed roughly where the BODY was while the view
+      // rotated off it: at 63 degrees of look-up the left elbow came within 8 mm
+      // of a 45 mm near plane and was sliced in half, and the arms moved against
+      // the view every time the player pitched. Solved in the aim frame the
+      // hands sit at a FIXED point in view space at every pitch, which is what
+      // makes them a viewmodel rather than a body that happens to be near a
+      // camera.
+      //
       // Kept modest on purpose: this anchor is the REAL one, so whatever it adds
       // in front of you is real reach. 0.45 looked best but handed first person
       // a third more range than third person, which is not a view option, it is
       // a different weapon.
-      if (_v4.lengthSq() > 1e-6) this.chest.addScaledVector(_v4.normalize(), 0.28);
+      this.gripAnchor.copy(eye)
+        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), -FP_HILT_DROP)
+        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), 0.28);
     }
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
@@ -856,10 +1129,10 @@ export class Player {
       // Padawan's 30 m/s a 26 m search only ever handed it 0.87 s — so the one
       // tier that most needs the full lead was the one being clipped.
       const threats = ctx.bolts ? ctx.bolts.threatsNear(this.chest, 34) : [];
-      this.control.applyAssist(threats.filter(t => t.bolt.team !== this.team), this.chest, this.camera.aimQuat, dt);
+      this.control.applyAssist(threats.filter(t => t.bolt.team !== this.team), this.gripAnchor, this.camera.aimQuat, dt);
     } else this.control.assist = 0;
 
-    this.control.update(dt, this.chest, this.camera.aimQuat, {
+    this.control.update(dt, this.gripAnchor, this.camera.aimQuat, {
       stamina: this.stamina / this.maxStamina,
       flow: this.flow,
       riposte: this.riposteTimer > 0,
@@ -907,12 +1180,64 @@ export class Player {
     }
   }
 
+  /**
+   * Move the shoulders onto the camera, and return the torso point the elbow
+   * poles hang off. This is the whole first-person viewmodel.
+   *
+   * It is a re-anchoring rather than a second set of arms on purpose. A
+   * viewmodel built as its own mesh is a second copy of the sleeve, the glove,
+   * the bracer, the palette and the cut geometry, and every one of them is then
+   * a thing that can drift out of step with the body — including on a sever,
+   * where the arm you are looking down is supposed to come off. Here there is
+   * exactly one pair of arms in the game. All that changes in first person is
+   * WHERE THEY START: the clavicle's tip is placed on a fixed point in the aim
+   * frame instead of on the ribcage, and everything below it — the IK to the
+   * hilt, the wrist taking the hilt's roll, the sever path, the ragdoll — is
+   * the same code addressing the same bones.
+   *
+   * Consequences that are properties, not accidents:
+   *   · the shoulder-to-eye vector is CONSTANT, so the arms cannot swim against
+   *     the view no matter what the gait, the camera or the terrain does;
+   *   · the whole arm is in front of the near plane, so nothing is sliced;
+   *   · look up and the arms come with you, because they are in the aim frame.
+   */
+  _anchorViewArms(out) {
+    const rig = this.rig;
+    const q = this.camera.aimQuat;
+    // The SAME eye the camera will use this frame, from the same function.
+    const eye = this.camera.eyePosition(this.position, lerp(1.62, 1.22, this.crouch), _m1);
+    const right = _m2.set(1, 0, 0).applyQuaternion(q);
+    const up = _m3.set(0, 1, 0).applyQuaternion(q);
+    const fwd = _m4.set(0, 0, -1).applyQuaternion(q);
+
+    out.copy(eye).addScaledVector(up, VM_SHOULDER_Y).addScaledVector(fwd, VM_SHOULDER_Z);
+
+    for (const [name, side] of VM_CLAV) {
+      const b = rig.get(name);
+      if (!b || !b.obj.parent) continue;
+      // where the clavicle's TIP has to land: the shoulder joint
+      const joint = _m5.copy(out).addScaledVector(right, side * VM_SHOULDER_X);
+      // the clavicle keeps its own slope, so the deltoid sits as it was built
+      const dir = _m6.copy(right).multiplyScalar(side).addScaledVector(up, VM_CLAV_RISE).normalize();
+      // root = tip - length·dir, so the tip lands exactly on the joint rather
+      // than merely near it — the arm's reach budget is measured from there.
+      b.obj.parent.worldToLocal(_m7.copy(joint).addScaledVector(dir, -b.length));
+      b.obj.position.copy(_m7);
+      rig.aimBoneWorld(name, dir, fwd);
+    }
+    rig.updateMatrices();
+    return out;
+  }
+
   /* ── body pose ───────────────────────────────────────────────────── */
 
-  _updateBody(dt, ctx) {
+  /**
+   * The gait, and the eye that rides it. Split out of _updateBody so that it
+   * can run BEFORE the blade: in first person the hilt is anchored to the eye,
+   * and the eye cannot be known until the pelvis is. See update().
+   */
+  _poseGait(dt, ctx) {
     const terrain = ctx.terrain;
-    const groundAt = (x, z) => (terrain ? terrain.height(x, z) : 0);
-
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.animator.setFacing(this.facing);
     this.animator.update(dt, {
@@ -920,12 +1245,15 @@ export class Player {
       facing: this.facing,
       velocity: this.velocity,
       grounded: this.grounded,
-      groundAt,
+      groundAt: (x, z) => (terrain ? terrain.height(x, z) : 0),
       crouch: this.crouch,
       accelForward: clamp(speed / 8, 0, 1),
       accelStrafe: 0,
     });
+    this.camera.advanceEye(dt, this.animator.pelvis);
+  }
 
+  _updateBody(dt, ctx) {
     const rig = this.rig;
 
     // Spine FIRST. It is an ancestor of chest -> clavicle -> arm, so rewriting
@@ -951,7 +1279,11 @@ export class Player {
     // A gesture takes the off hand off the hilt without touching the blade's
     // grip model — see the note in _readInput on why those are separate.
     const twoHanded = this.control.grip === 'two' && this.throwState === 'held' && !this.gesture.kind;
-    const chest = rig.worldPos('chest', _v1);
+    // In first person the arms hang off the VIEW, not off the ribcage, and
+    // `chest` — which is the frame every elbow pole below is built in — becomes
+    // the point midway between the two viewmodel shoulders. See _anchorViewArms.
+    const chest = this.camera.firstPerson
+      ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
     if (this.throwState === 'held') {
       const gripR = this.saber.root.localToWorld(_v2.set(0, 0.03, 0));
@@ -991,7 +1323,31 @@ export class Player {
         // off the end of both.
         if (palm) rig.aimBoneWorld('handL', palm, right);
       }
-      // hands take the hilt's roll
+      // THE WRIST IS SET TO AN ARBITRARY ORIENTATION, AND THAT IS A REAL DEFECT.
+      //
+      // The hand's world quaternion is copied straight off the hilt, so the
+      // wrist absorbs the entire difference between the roll solveIK gave the
+      // forearm and the roll the blade wants. Measured through a real
+      // mouse-driven slash: the wrist reaches 179.7 degrees from its own rest
+      // pose. A human wrist bends about 80 and rolls about 30. At the extremes
+      // of a swing this hand is folded completely backwards.
+      //
+      // Moving the roll onto the forearm — the anatomically right answer, since
+      // pronation is a forearm motion and not a wrist one — was implemented,
+      // MEASURED, AND REMOVED. It took the worst wrist deviation only from
+      // 179.7 to 157.4 degrees, both of which are impossible, and it took the
+      // forearm's own peak angular rate from 6874 deg/s to 10653: the required
+      // twist passes +/-180, the swing-twist decomposition wraps there, and the
+      // bone snapped between its anatomical limits frame to frame. Spinning
+      // faster is not the fix.
+      //
+      // The 6874 deg/s the forearm ALREADY turns at is the other half of it and
+      // is not the wrist's doing: solveIK rolls the lower bone with aimY against
+      // the elbow pole, and aimY substitutes a fixed reference whenever the two
+      // come within 10 degrees of parallel — which snaps the roll by up to 90
+      // degrees in the middle of a swing. Both want the wrist limited to a real
+      // cone and twist with the remainder redistributed across the forearm AND
+      // the shoulder together. That is a solver change, not a line here.
       this.saber.root.getWorldQuaternion(_q1);
       for (const h of twoHanded ? ['handR', 'handL'] : ['handR']) {
         const b = rig.get(h);
@@ -1057,7 +1413,9 @@ export class Player {
     this.camera.rollTarget = clamp(-this.control.angVel.y * 0.006, -0.05, 0.05);
     this.camera.update(dt, this.position, {
       physics: ctx.physics, terrain: ctx.terrain, eyeHeight: lerp(1.62, 1.22, this.crouch),
-      bob: this.animator?.bob ?? 0,
+      // The whole pelvis, not the bob and not half of it. _updateBody runs
+      // before this, so `pelvis` is this frame's, not last frame's.
+      pelvis: this.animator?.pelvis,
     });
   }
 

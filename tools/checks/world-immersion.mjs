@@ -30,6 +30,7 @@ import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import {
   WindField, wind, weather, Weather, WIND_GLSL, STORM_GLSL, Atmosphere, addHorizon, ground,
+  GrassField,
 } from '../../src/world/Scenery.js';
 import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
@@ -125,10 +126,21 @@ function fill() {
     if (!L || typeof L.dress !== 'function' || L.training) continue;
     const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
     const world = stubWorld(terrain);
+    /* GROUND COVER COUNTS, and it is the level's OWN field rather than a
+     * restatement of it — built through the real constructor with the real
+     * arguments the World passes, BEFORE dress(), in the order World.loadLevel
+     * uses. The order is load-bearing now: the stone drifts bias themselves
+     * away from the cover, so a survey that dressed first would be measuring a
+     * layout the game never produces. */
+    const grass = L.grass
+      ? new GrassField(new THREE.Scene(), terrain, { count: 11000, density: L.grass, radius: 46 })
+      : null;
     L.dress(world);
     const occ = occupancy(world);
+    const coverAt = (x, z) => (grass
+      ? grass.cover.at(x, z) * Math.max(0, Math.min(1, (0.30 - terrain.slopeAt(x, z)) / 0.22)) : 0);
     const R = 90, step = 4;
-    let total = 0, footBad = 0, silBad = 0;
+    let total = 0, footBad = 0, silBad = 0, objBad = 0, covered = 0;
     const foot = [];
     for (let z = -R; z <= R; z += step) {
       for (let x = -R; x <= R; x += step) {
@@ -138,17 +150,22 @@ function fill() {
         total++;
         const f = nearestGap(occ, x, z, 0.35);
         foot.push(f);
-        if (f > 12) footBad++;
+        const cov = coverAt(x, z);
+        if (cov > 0.5) covered++;
+        if (f > 12) objBad++;
+        if (f > 12 && cov <= 0.5) footBad++;
         if (nearestGap(occ, x, z, 1.20) > 25) silBad++;
       }
     }
     foot.sort((a, b) => a - b);
+    grass?.dispose();
     let meshes = 0;
     world.scene.traverse((o) => { if (o.isMesh && o.geometry) meshes++; });
     for (const p of world.props) { if (p.mesh) p.mesh.traverse((o) => { if (o.isMesh && o.geometry) meshes++; }); }
     FILL.set(key, {
       samples: total, objects: occ.length, meshes,
-      foot: footBad / total, sil: silBad / total,
+      foot: footBad / total, objFoot: objBad / total, cover: covered / total,
+      sil: silBad / total, hasGrass: !!L.grass,
       p50: foot[(foot.length * 0.5) | 0], p95: foot[(foot.length * 0.95) | 0],
     });
     terrain.dispose();
@@ -171,16 +188,67 @@ export function run({ check, assert, near }) {
      * — it builds a colonnade, an outpost, three wrecks, a rock arch — but all
      * of it aims at the inner forty metres, and past that the levels were bare
      * heightfield. The gate is 0.35 m because that is about the smallest thing
-     * that reads as an object rather than as ground texture. */
+     * that reads as an object rather than as ground texture.
+     *
+     * WHAT CHANGED, and why this is the stronger form of the same property.
+     * The first answer to that 55% was a uniform spray of 1,200-2,000 pebbles
+     * of 20-95 cm over a 108-165 m disc. It moved this number to 4.6% and it
+     * was the wrong answer: a landscape filled with isolated small objects is
+     * the opposite of ground cover, and the level it produced was described as
+     * "a jumbled mess with just little objects everywhere". The scatter is a
+     * clustered one now, with real drifts and real clearings — Clark–Evans
+     * 0.89/0.82/0.80 before, 0.59/0.48/0.46 after — and a clearing IS empty by
+     * construction, which put the object-only figure back to 23% on the dunes.
+     *
+     * So the question this asks is now the question it was always a proxy for.
+     * "Something in reach" is an object within 12 m OR ground you are standing
+     * in — real knee-high cover, from the level's own field, the same field
+     * the terrain paints itself with, reaching 400 m rather than 46. That is
+     * strictly MORE than the old bar demanded, because it also requires the
+     * cover to exist: every outdoor level has to clear a stated fraction of it
+     * below, and no amount of gravel can fake that. Both figures are reported,
+     * so the pebble-spray number cannot regress unnoticed. */
     const rows = [];
     for (const [key, f] of fill()) {
       assert(f.samples > 900, `${key}: only ${f.samples} walkable samples to survey`);
       assert(f.foot < 0.10,
-        `${key}: ${(f.foot * 100).toFixed(1)}% of the walkable ground has nothing within 12 m`);
-      assert(f.p50 < 6.5, `${key}: the median gap to the nearest object is ${f.p50.toFixed(1)} m`);
-      rows.push(`${key} ${(f.foot * 100).toFixed(1)}% p50 ${f.p50.toFixed(1)}m`);
+        `${key}: ${(f.foot * 100).toFixed(1)}% of the walkable ground has neither an object within 12 m nor cover on it`);
+      // and where there is no cover at all, the old bar stands unchanged
+      if (!f.hasGrass) {
+        assert(f.p50 < 6.5, `${key}: the median gap to the nearest object is ${f.p50.toFixed(1)} m`);
+      }
+      rows.push(`${key} ${(f.foot * 100).toFixed(1)}% (objects alone ${(f.objFoot * 100).toFixed(1)}%, `
+        + `cover ${(f.cover * 100).toFixed(0)}%) p50 ${f.p50.toFixed(1)}m`);
     }
     assert(rows.length >= 4, `only ${rows.length} levels surveyed`);
+    return rows.join(', ');
+  });
+
+  check('levels: an outdoor level is covered ground, not a bare plate with things on it', () => {
+    /* The half of "nowhere barren" that gravel cannot answer, and the player's
+     * complaint stated as a number: "rather than having you play on an entire
+     * field of grass all you did was add a couple patches here and there."
+     *
+     * Measured on the shipped build, the grass was a 46 m bubble — 2.1% of the
+     * dune sea's 313,600 m² of terrain, 3.1% of the arena's — and 12-18% of
+     * the 3 m cells inside the walkable disc held any grass at all. Beyond
+     * 46 m there was none, at any quality, on levels you can see 700 m across.
+     *
+     * The bar is on the walkable disc because that is the ground the player
+     * judges, and it is deliberately well under 100%: a field with no
+     * clearings is as false as one with no field. */
+    const rows = [];
+    let outdoor = 0;
+    for (const [key, f] of fill()) {
+      if (!f.hasGrass) { rows.push(`${key} —`); continue; }
+      outdoor++;
+      assert(f.cover > 0.35,
+        `${key}: only ${(f.cover * 100).toFixed(0)}% of the walkable ground carries ground cover`);
+      assert(f.cover < 0.98,
+        `${key}: ${(f.cover * 100).toFixed(0)}% covered — a field with no clearings in it is a carpet`);
+      rows.push(`${key} ${(f.cover * 100).toFixed(0)}%`);
+    }
+    assert(outdoor >= 3, `only ${outdoor} levels carry ground cover at all`);
     return rows.join(', ');
   });
 

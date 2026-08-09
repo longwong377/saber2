@@ -390,6 +390,15 @@ function smooth01(t) {
   const x = t < 0 ? 0 : (t > 1 ? 1 : t);
   return x * x * (3 - 2 * x);
 }
+/** GLSL's smoothstep, in the same argument order, for the fields JS and the
+ *  shaders both have to agree about. */
+function smoothstep(lo, hi, v) { return hi === lo ? (v < lo ? 0 : 1) : smooth01((v - lo) / (hi - lo)); }
+/** A stable seed from a preset name, so two levels on one preset match. */
+function hashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h ^ (h >>> 15)) >>> 0;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The broker                                                            */
@@ -781,6 +790,7 @@ const GRASS_FRAG = /* glsl */`
   uniform float uAmbientBoost;
   uniform float uSheen;
   uniform float uSheenLift;
+  uniform float uCut;
 
   varying vec2 vUv;
   varying vec3 vTint;
@@ -793,7 +803,7 @@ const GRASS_FRAG = /* glsl */`
   void main(){
     #ifdef CARD
       float a = texture2D(uMap, vUv).a;
-      if(a < 0.42) discard;
+      if(a < uCut) discard;
     #endif
 
     vec3 V = normalize(cameraPosition - vWorld);
@@ -954,64 +964,322 @@ const SHADE_FRAG = /* glsl */`
   }
 `;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Where anything grows                                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE COVER FIELD — one function that decides, for every square metre of a
+ * level, whether ground cover grows there.
+ *
+ * It exists because three separate systems were each inventing their own
+ * answer and none of them agreed: the terrain shader masked its cover tint
+ * with a 30 m value noise, the grass scatter clumped off a 36 m fbm, and the
+ * prop scatter used none at all. So the ground could be painted green where
+ * there was no grass and bare where there was, and no measurement of "how
+ * much of this level is covered" could mean anything.
+ *
+ * Two properties are the whole design:
+ *
+ *  · It is a PURE FUNCTION OF WORLD POSITION. Nothing about the player, the
+ *    camera or the order things were built enters into it, so a patch of
+ *    grass is the same patch after you walk away and come back — which the
+ *    old field, re-rolled off a module-global rng every 13.8 m of walking,
+ *    emphatically was not.
+ *
+ *  · Its THRESHOLD IS SOLVED, not authored. A caller says what fraction of
+ *    the ground should be covered; the field samples itself, sorts, and takes
+ *    that quantile. A hand-picked threshold on an fbm means nothing — change
+ *    the frequency and the same number covers a different amount of ground.
+ *
+ * The shape it produces is deliberately BIMODAL: a wide swathe scale carrying
+ * a finer grain, pushed through a narrow smoothstep so most ground is either
+ * covered or bare and only the margins are in between. Uniform sprinkling is
+ * what makes a landscape read as dusted rather than as grown; composition
+ * needs the empty parts empty.
+ */
+export function makeCoverField(opts = {}) {
+  const r = makeRng(opts.seed ?? 1337);
+  // Perlin's table is global, so the only way two levels get different fields
+  // is to look at different parts of the same one.
+  const gx = r() * 4000 - 2000, gz = r() * 4000 - 2000;
+  const f1 = 1 / Math.max(4, opts.patch ?? 54);
+  const f2 = 1 / Math.max(2, opts.grain ?? 15);
+  const base = (x, z) => fbm2(x * f1, z * f1, 3) * 0.74
+                       + fbm2((x + gx) * f2, (z + gz) * f2, 2) * 0.26;
+
+  const amount = clamp(opts.amount ?? 0.5, 0, 1);
+  const extent = opts.extent ?? 280;
+  /** Threshold and spread of `base` over a square of half-width `extent`
+   *  centred on (cx, cz), given the fraction wanted above the midpoint. */
+  const solve = (cx, cz) => {
+    const N = 88, samples = new Float64Array(N * N);
+    let k = 0, sum = 0;
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const x = cx + (i / (N - 1) - 0.5) * 2 * extent;
+        const z = cz + (j / (N - 1) - 0.5) * 2 * extent;
+        const v = base(x, z);
+        samples[k++] = v; sum += v;
+      }
+    }
+    const mean = sum / k;
+    let vs = 0;
+    for (let i = 0; i < k; i++) { const d = samples[i] - mean; vs += d * d; }
+    const sd = Math.sqrt(vs / k) || 0.1;
+    const sorted = Float64Array.from(samples).sort();
+    const q = clamp(Math.round((1 - amount) * (k - 1)), 0, k - 1);
+    return { t: sorted[q], sd };
+  };
+
+  /* WHERE THE LEVEL SITS IN THE FIELD is a choice, and leaving it to the seed
+   * gets it wrong about half the time: the first three levels wired up this
+   * way all spawned the player in a clearing, and a clearing at the spawn is
+   * the one sample of the field every player is guaranteed to see. So the
+   * offset is SEARCHED rather than drawn — candidates from the same stream,
+   * keeping the first whose value at the origin is comfortably above the
+   * threshold. It is still the same field; the level is just standing in a
+   * thick part of it. A field asked to cover everything has no thin part to
+   * avoid, so the search simply falls through. */
+  let ox = 0, oz = 0;
+  {
+    const probe = solve(0, 0);
+    const wantAt = probe.t + probe.sd * 0.45;
+    for (let i = 0; i < 400; i++) {
+      const cx = r() * 4000 - 2000, cz = r() * 4000 - 2000;
+      if (base(cx, cz) >= wantAt) { ox = cx; oz = cz; break; }
+      if (i === 399) { ox = r() * 4000 - 2000; oz = r() * 4000 - 2000; }
+    }
+  }
+  const raw = (x, z) => base(x + ox, z + oz);
+
+  const { t: thresh, sd } = solve(ox, oz);
+  // The margin is a fraction of the field's OWN spread, so the edges stay the
+  // same softness whatever frequency or amplitude the caller asked for.
+  const edge = Math.max(1e-4, sd * (opts.edge ?? 0.62));
+  const lo = thresh - edge * 0.5, hi = lo + edge;
+
+  const field = {
+    amount, patch: 1 / f1, grain: 1 / f2, extent, lo, hi, sd, ox, oz,
+    /** 0 bare, 1 fully covered — the mask, with no slope or water in it. */
+    at(x, z) { return smoothstep(lo, hi, raw(x, z)); },
+    raw,
+    /** The fraction of a disc of radius R that comes out covered. */
+    fraction(R, step = 4) {
+      let n = 0, c = 0;
+      for (let z = -R; z <= R; z += step) for (let x = -R; x <= R; x += step) {
+        if (x * x + z * z > R * R) continue;
+        n++; c += field.at(x, z);
+      }
+      return n ? c / n : 0;
+    },
+    /**
+     * The same mask as an 8-bit texture over a `size` square centred on the
+     * origin, for the terrain shader — so the ground is toned as covered in
+     * exactly the places the geometry grows, right out to the edge of the
+     * heightfield where no instance budget could ever reach.
+     */
+    bake(res, size) {
+      const d = new Uint8Array(res * res * 4);
+      for (let j = 0; j < res; j++) {
+        for (let i = 0; i < res; i++) {
+          const x = ((i + 0.5) / res - 0.5) * size;
+          const z = ((j + 0.5) / res - 0.5) * size;
+          const v = Math.round(field.at(x, z) * 255);
+          const o = (j * res + i) * 4;
+          d[o] = d[o + 1] = d[o + 2] = v; d[o + 3] = 255;
+        }
+      }
+      const tex = new THREE.DataTexture(d, res, res, THREE.RGBAFormat);
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.minFilter = tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.needsUpdate = true;
+      return tex;
+    },
+  };
+  return field;
+}
+
+/**
+ * THE LOD LADDER, and the arithmetic that sizes it.
+ *
+ * The field this replaces was a 46 m bubble. Beyond it there was no grass at
+ * any quality on levels you can see 700 m across, and the bubble held 2.1% of
+ * the dune sea's ground and 3.1% of the arena's. Extending it is not a matter
+ * of spending more instances — the budget is 2,750 blades at `low` — it is a
+ * matter of spending them on the right THING at each range, and the thing
+ * changes because the GEOMETRY OF LOOKING changes:
+ *
+ *   at 5 m you are looking down at the ground and you see individual blades;
+ *   at 100 m the ground is 1° below the horizon and a 0.4 m tuft hides the
+ *   twenty-three metres of ground behind it;
+ *   at 300 m it hides seventy.
+ *
+ * So near cover has to be paid for by area and far cover almost pays for
+ * itself. `dens` is TUFTS PER SQUARE METRE OF COVERED GROUND — not of ground,
+ * because a level whose cover field says 40% spends its whole budget on that
+ * 40% and gets patches that are actually dense, instead of a thin wash over
+ * everything. `per` is instances per tuft: blades in a clump, cards in a bush.
+ *
+ * Radii are quoted at the reference `radius` of 46 m and scale with it.
+ */
+const GRASS_TIERS = [
+  /* Real blade geometry, eight to a clump. The only tier the player ever sees
+   * as separate plants, so it is deliberately SMALL and DENSE — 6.5 m at
+   * 27 blades per square metre — and it keeps shrinking every time a plate is
+   * looked at, because a blade is a TERRIBLE way to cover ground: its
+   * silhouette is 0.003 m² against a card's 0.37, so an instance spent here
+   * buys a hundredth of the cover an instance spent one rung out does. What it
+   * buys instead is the only thing a card cannot: a plant, seen as a plant,
+   * where the player is standing. Widening this ring costs density as the
+   * square of the radius and takes the budget straight out of the tier that is
+   * actually covering the ground. */
+  { name: 'blade', card: false, rIn: 0, rOut: 6.5, cell: 2.2, dens: 6.0, per: 8, spread: 0.25,
+    width: 0.110, bend: 0.23, wave: 0.62, sheen: 0.30, trans: 0.90,
+    base: 0.16, varies: 0.22, shade: true, cut: 0.42 },
+  /* Cards: a billboard standing in for a bush, and 50× the silhouette per
+   * instance that a blade is. Fades in at 3 m — UNDER the blades rather than
+   * after them, so the handover is a thickening and not a boundary. */
+  { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.42, per: 3, spread: 0.80,
+    width: 1.05, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
+    base: 0.26, varies: 0.26, shade: true, cut: 0.42 },
+  /* Swathes: one card per patch of ground, wide enough to close the gaps that
+   * would otherwise read as bald spots at a hundred metres. */
+  { name: 'swath', card: true, rIn: 42, rOut: 150, cell: 17, dens: 0.0167, per: 2, spread: 3.2,
+    width: 2.60, bend: 0.30, wave: 0.62, sheen: 0.62, trans: 0.45,
+    base: 0.26, varies: 0.26, shade: false, cut: 0.36 },
+  /* The far ground. Six-metre cards at a thousandth of the near tier's
+   * density, which at that range is still most of what you see, because you
+   * are looking ALONG the ground rather than down at it: from eye height a
+   * 0.4 m tuft at 250 m hides the sixty metres of ground behind it. */
+  { name: 'far', card: true, rIn: 140, rOut: 400, cell: 46, dens: 0.00205, per: 1, spread: 9.0,
+    width: 6.0, bend: 0.22, wave: 0.55, sheen: 0.66, trans: 0.35,
+    base: 0.26, varies: 0.26, shade: false, cut: 0.30 },
+];
+
+/** A stable 32-bit hash of a cell coordinate. This is the whole of the fix. */
+function cellHash(i, j, salt) {
+  let h = Math.imul(i | 0, 374761393) + Math.imul(j | 0, 668265263) + Math.imul(salt | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 export class GrassField {
   constructor(scene, terrain, opts = {}) {
     this.scene = scene;
     this.terrain = terrain;
     if (terrain) ground.terrain = terrain;
     this.radius = opts.radius ?? 42;
-    this.nearRadius = Math.min(opts.nearRadius ?? 7.5, this.radius * 0.5);
     this.time = 0;
     this.meshes = [];
     this.tracker = new PusherTracker();
 
     const density = opts.density ?? 1;
-    const total = Math.max(0, Math.floor((opts.count ?? 9000) * density));
+    /* The budget and the COVERED FRACTION are two different questions and the
+     * one number the World hands down has to answer both, because it is the
+     * level's `grass` times the player's slider and neither can reach in here
+     * separately. So the budget takes half its swing from the slider — a
+     * Performance setting must still buy frames — and the covered fraction
+     * takes the rest, saturating, because the difference between a level with
+     * tussock in its troughs and one that is a meadow is not linear in a
+     * density multiplier. `opts.cover` overrides it outright for tests. */
+    /* And the budget itself is 1.6× what the caller names, because what the
+     * caller names was sized for a 46 m bubble. The field now reaches 400 m —
+     * seventy-five times the ground — and it does it in six draw calls and
+     * about 112k triangles against the bubble's four and 70k. The instance
+     * count is not the cost that matters here; the fragment work of the near
+     * blades is, and that has not moved, because the near tier is smaller
+     * than the ring it replaces. */
+    const total = Math.max(0, Math.floor((opts.count ?? 9000) * 1.6 * (0.5 + 0.5 * Math.min(density, 1.4))));
     this.count = total;
+    this.density = density;
     if (total === 0) { this.mesh = null; return; }
 
     this.tintA = new THREE.Color(opts.tintA ?? 0x9aa860);
     this.tintB = new THREE.Color(opts.tintB ?? 0x5d6b34);
     this.dry = new THREE.Color(opts.dry ?? 0x6a6142);
 
-    // The ground has to know it is covered. Litter is the darker, browner end
-    // of the living blade, never the blade colour itself — soil under grass is
-    // not green, it is what green rots into.
+    const half = terrain && terrain.half ? terrain.half : 280;
+    this.cover = opts.field || makeCoverField({
+      seed: opts.seed ?? (terrain && terrain.presetKey ? hashString(terrain.presetKey) : 1337),
+      amount: opts.cover ?? clamp(0.24 + 0.72 * density, 0.12, 0.95),
+      patch: opts.patch ?? 54, grain: opts.grain ?? 15,
+      extent: half,
+    });
+    this.coverFrac = Math.max(0.05, this.cover.amount);
+
+    // The ground has to know it is covered — and it has to know WHERE, or the
+    // tint is a wash over ground the blades never reach and the two read as
+    // different materials. Litter is the darker, browner end of the living
+    // blade, never the blade colour itself: soil under grass is not green, it
+    // is what green rots into.
     if (terrain && terrain.setGroundCover) {
       const litter = this.tintB.clone().lerp(this.dry, 0.55).multiplyScalar(0.46);
-      terrain.setGroundCover(clamp(0.62 * density, 0, 0.8), litter, 30);
+      this.coverTex = this.cover.bake(256, terrain.size || half * 2);
+      terrain.setGroundCover(clamp(0.62 * density + 0.16, 0, 0.86), litter, 30, this.coverTex);
     }
 
     this._buildTrail();
 
-    // Most of the instances go to the near ring, which is deliberately small.
-    // What decides whether a field reads as COVER or as spikes stuck in a beach
-    // is the fraction of the ground its silhouette covers, and that is the
-    // instance budget divided by the ring's area. At a 10 m ring and half the
-    // budget the near field covered 6.8% of its own ground — nine parts bare
-    // sand to one part grass, which no amount of blade detail can rescue.
-    // Pulling the ring in to 7.5 m and taking 60% of the budget is 2.8× the
-    // areal density for nothing; the card ring picks up where it stops.
-    const nearCount = Math.max(1, Math.round(total * 0.6));
-    const farCount = Math.max(1, total - nearCount);
+    /* SIZE EVERY TIER OFF THE SAME ARITHMETIC so the ladder cannot drift, and
+     * size it against the ground the fill ACTUALLY KEEPS — which is one cell
+     * wider at each end than the tier's own annulus, because the window snaps
+     * to the cell grid while the shader's fade follows the camera. Sizing on
+     * the annulus alone under-provisions the near tier by (11/8.5)², and an
+     * under-provisioned near tier does not thin out: it stops, in a circle,
+     * at whatever radius its capacity ran out.
+     *
+     * `hold` is how much cover a tier has to be ready for. A 400 m annulus
+     * averages the whole level and can be sized on the level's own fraction; a
+     * 8.5 m one sits entirely inside a single patch, and since the field is
+     * anchored so the spawn IS a patch, it has to be sized for nearly full
+     * cover or it clips exactly where the player is looking.
+     *
+     * Densities are then the authored ones times one shared factor, so the
+     * ratio between the rungs is fixed by the table and only the overall
+     * thickness moves with the budget. */
+    const k = this.radius / 46;
+    const tiers = GRASS_TIERS.map((T) => {
+      const rIn = T.rIn * k, rOut = T.rOut * k, cell = T.cell * k;
+      const oR = rOut + cell, iR = Math.max(0, rIn - cell);
+      const hold = Math.min(1, this.coverFrac
+        + (rOut < 15 ? 0.45 : rOut < 60 ? 0.22 : rOut < 250 ? 0.12 : 0));
+      const area = Math.PI * (oR * oR - iR * iR) * hold;
+      return { T, rIn, rOut, cell, area, hold, want: area * T.dens * T.per };
+    });
+    const wantAll = tiers.reduce((a, t) => a + t.want, 0) || 1;
+    this.thickness = total / wantAll;
+    let spent = 0;
+    for (let i = 0; i < tiers.length; i++) {
+      const t = tiers[i];
+      t.cap = i === tiers.length - 1
+        ? Math.max(1, total - spent)
+        : Math.max(1, Math.round(total * t.want / wantAll));
+      spent += t.cap;
+    }
 
-    this.near = this._buildRing({
-      count: nearCount, card: false,
-      geometry: bladeGeometry(4),
-      near: 0, far: this.nearRadius,
-      // The near ring is 7.5 m across — half a wave crest — so a strong sheen
-      // there is a band sliding over your boots rather than a field moving.
-      // The bend still carries the full wave; only the light is held back.
-      width: 0.070, bendGain: 0.23, waveGain: 0.62, sheen: 0.30, translucency: 0.9,
-    });
-    this.far = this._buildRing({
-      count: farCount, card: true,
-      geometry: new THREE.PlaneGeometry(1, 1, 1, 2),
-      near: this.nearRadius * 0.66, far: this.radius,
-      width: 1.05, bendGain: 0.34, waveGain: 0.62, sheen: 0.55, translucency: 0.55,
-      map: repeating(grassSprite(96)),
-    });
-    this.mesh = this.near.mesh;     // kept for anything that pokes at `.mesh`
+    this.nearRadius = tiers[0].rOut;      // where real blades stop
+    this.reach = tiers[tiers.length - 1].rOut;
+    this._cardMap = repeating(grassSprite(96));
+
+    this.rings = tiers.map((t) => this._buildRing({
+      count: t.cap, card: t.T.card,
+      geometry: t.T.card ? new THREE.PlaneGeometry(1, 1, 1, 2) : bladeGeometry(4),
+      near: t.rIn, far: t.rOut,
+      width: t.T.width, bendGain: t.T.bend, waveGain: t.T.wave,
+      sheen: t.T.sheen, translucency: t.T.trans, cut: t.T.cut,
+      map: t.T.card ? this._cardMap : null,
+      tier: t.T, cell: t.cell, spread: t.T.spread * k,
+      // tufts per m² of covered ground: the table's rung times the one shared
+      // factor, so a tier thins rather than stopping short when the budget does
+      dens: t.T.dens * this.thickness,
+      shade: t.T.shade,
+    }));
+
+    this.near = this.rings[0];            // the two names the checks and the
+    this.far = this.rings[1];             // clippings path already know
+    this.mesh = this.near.mesh;           // kept for anything that pokes at `.mesh`
 
     this.center = new THREE.Vector3(1e9, 0, 1e9);
     ground.grass = this;
@@ -1181,7 +1449,8 @@ export class GrassField {
 
   /* ── scatter ───────────────────────────────────────────────────────── */
 
-  _buildRing({ count, card, geometry, near, far, width, bendGain, waveGain, sheen, translucency, map }) {
+  _buildRing({ count, card, geometry, near, far, width, bendGain, waveGain, sheen, translucency, map,
+               cut, tier, cell, spread, dens, shade }) {
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = geometry.index;
     geo.attributes.position = geometry.attributes.position;
@@ -1209,17 +1478,32 @@ export class GrassField {
       // go negative, which would flip the crest of every band upwind.
       uWaveGain: { value: waveGain ?? 0.62 },
       uSheen: { value: sheen ?? 0.5 },
-      uSheenLift: { value: 1.7 },
+      // How far the laid-over crest is lifted above the blade's own value.
+      // 1.7 read as fluorescent against sand once there was enough cover to
+      // see a crest travel across; the wave is still legible at 1.4.
+      uSheenLift: { value: 1.4 },
       uTranslucency: { value: translucency },
-      // The terrain the grass grows out of is also lit by the sky probe, and
-      // that probe is worth several times the hemisphere light on its own. With
-      // no probe here the hemisphere has to carry both, or grass in shadow
-      // reads as a different, much darker material than the ground beside it.
-      uAmbientBoost: { value: 4.0 },
+      /* The terrain the grass grows out of is lit by a sky probe as well as by
+       * the hemisphere, and there is no probe here, so the hemisphere has to
+       * stand in for both or grass in shadow reads as a different, much darker
+       * material than the ground beside it.
+       *
+       * It was 4.0, and that overshot in the other direction — which only
+       * became visible once the field stopped being a 46 m bubble and started
+       * covering ground that is in shadow. Measured on a canyon plate, in the
+       * shade of the west wall: the brightest blade pixels came back at 0.68
+       * luminance over ground at 0.20, so the cover was glowing at three and a
+       * half times the value of the ground it grows out of. A probe is worth
+       * something like the hemisphere again, not three times it. */
+      uAmbientBoost: { value: 2.4 },
       uDry: { value: this.dry.clone() },
       uTrail: { value: this.trailTex },
       uTrailCenter: { value: this.trailCenter },
       uTrailSize: { value: this.trailSize },
+      // Where a card's alpha stops being grass. The far tiers cut lower: a
+      // card 300 m out is two pixels tall, and a 0.42 cut on a mip that
+      // averaged away most of the blade leaves nothing but holes.
+      uCut: { value: cut ?? 0.42 },
     });
 
     const mat = new THREE.ShaderMaterial({
@@ -1244,8 +1528,16 @@ export class GrassField {
     this.scene.add(mesh);
     this.meshes.push(mesh);
 
-    const shade = this._buildShade(Math.ceil(count / (card ? 3 : 10)), far);
-    return { mesh, mat, geo, aInst, aOrient, aTint, count, near, far, card, shade };
+    /* Contact quads only where a contact resolves. Past the clump tier a tuft
+     * is smaller than the pixel it lands in and its stain on the ground is a
+     * second draw call for nothing. */
+    const sh = shade ? this._buildShade(Math.ceil(count / Math.max(1, tier ? tier.per : (card ? 3 : 10))), far) : null;
+    return {
+      mesh, mat, geo, aInst, aOrient, aTint, count, near, far, card, shade: sh,
+      tier, cell: cell ?? 4, spread: spread ?? (card ? 0.75 : 0.26), dens: dens ?? 0,
+      per: tier ? tier.per : (card ? 3 : 10),
+      salt: tier ? hashString(tier.name) : 7, ci: 1e9, cj: 1e9, live: 0, used: 0,
+    };
   }
 
   /** The contact quads for one ring: one per tuft, multiplied into the ground. */
@@ -1289,145 +1581,161 @@ export class GrassField {
   }
 
   /**
-   * Scatter one ring.
+   * FILL ONE TIER, and the reason this is a hash and not a scatter.
    *
-   * Grass grows in TUFTS, and that is not a detail — a uniform scatter of the
-   * same instance count reads as a field of isolated spikes no matter how many
-   * you spend, because real cover gets its density from blades standing beside
-   * each other. Placing them in fives inside a hand's width buys apparent
-   * density for nothing, and the gaps between tufts are what make it read as
-   * ground rather than as carpet.
+   * The field this replaces re-rolled EVERY BLADE IN THE LEVEL off a
+   * module-global generator whenever the centre moved more than 0.3 of its
+   * radius — 13.8 metres of walking. Turn around after fourteen paces and the
+   * tussock you just fought past was a different tussock. That is a
+   * correctness bug before it is an art one: nothing about a place should
+   * depend on how you arrived at it.
+   *
+   * So the world is cut into cells, and A CELL'S CONTENTS ARE A PURE FUNCTION
+   * OF ITS INTEGER COORDINATE. Walk away, walk back, reload the level: the
+   * same hash seeds the same generator and puts the same clump in the same
+   * square metre with the same lean and the same tint. The buffer index a
+   * tuft lands in changes as the window slides — that is all that changes.
+   *
+   * Cells are visited OUTWARD from the middle, so if a tier ever runs out of
+   * capacity — which happens when the window sits over ground the cover field
+   * says is unusually thick — what gets dropped is the far rim, where the
+   * shader has already faded it to nothing, and never the ground at the
+   * player's feet.
    */
-  _scatterRing(ring, center) {
+  _fillTier(ring, center) {
     const a = ring.aInst.array, o = ring.aOrient.array, t = ring.aTint.array;
-    const inner = ring.card ? this.nearRadius * 0.62 : 0;
-    // Tuft ANCHORS go inside the annulus by half a tuft, so the blades that
-    // scatter around them still land inside the ring their shader fades. A
-    // blade outside its own ring is a blade the fade never reaches.
-    const outer = Math.max(inner + 0.5, ring.far - (ring.card ? 0.75 : 0.26) * 0.5);
-    const span = outer * outer - inner * inner;
+    const cell = ring.cell, spread = ring.spread, perTuft = ring.per;
     const waterLine = ground.water ? ground.water.level : null;
-    // A tuft of six blades in a 11 cm circle, one every half metre, is exactly
-    // what "isolated spikes" looks like from standing height. Ten blades over
-    // 26 cm puts the tufts within touching distance of each other, which is
-    // where a scatter stops reading as dots and starts reading as sward.
-    const perTuft = ring.card ? 3 : 10;
-    const spread = ring.card ? 0.75 : 0.26;
-
+    const field = this.cover;
+    // A margin of one cell at each end: the window is snapped to the cell grid
+    // but the shader's fade follows the camera continuously, so the geometry
+    // has to exist slightly beyond where the fade will ask for it.
+    const rIn = Math.max(0, ring.near - cell), rOut = ring.far + cell;
+    const rIn2 = rIn * rIn, rOut2 = rOut * rOut;
+    const ci = ring.ci, cj = ring.cj;
+    const K = Math.ceil(rOut / cell) + 1;
+    const cap = ring.count;
     const sh = ring.shade;
-    const sa = sh.aShade.array, sn = sh.aShadeN.array;
-    let tuft = -1;
+    const sa = sh ? sh.aShade.array : null, sn = sh ? sh.aShadeN.array : null;
+    const shCap = sh ? sh.tufts : 0;
+    const nom = ring.dens * cell * cell;      // tufts per cell at full cover
 
-    let left = 0, tx = 0, tz = 0, density = 0, live = false, lean = 0, inTuft = 0;
-    for (let i = 0; i < ring.count; i++) {
-      if (left <= 0) {
-        inTuft = 0;
-        // Three tries at a site before giving up on the tuft. A third of the
-        // far ring's budget used to be spent on instances that landed on a
-        // cliff or in the river and rendered as nothing at all — the field paid
-        // for them and the player never saw them. Retrying puts them where
-        // grass would actually be, and three tries is few enough that ground
-        // which is genuinely hostile still comes out bare.
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const ang = rng() * TAU;
-          const rad = Math.sqrt(inner * inner + rng() * span);
-          tx = center.x + Math.cos(ang) * rad;
-          tz = center.z + Math.sin(ang) * rad;
+    let i = 0, tuft = 0, live = 0;
+    // Chebyshev rings outward: nearest ground first, and no sort.
+    for (let k = 0; k <= K && i < cap; k++) {
+      for (let e = 0; e < (k === 0 ? 1 : 8 * k) && i < cap; e++) {
+        let di, dj;
+        if (k === 0) { di = 0; dj = 0; }
+        else if (e < 2 * k) { di = -k + e; dj = -k; }
+        else if (e < 4 * k) { di = k; dj = -k + (e - 2 * k); }
+        else if (e < 6 * k) { di = k - (e - 4 * k); dj = k; }
+        else { di = -k; dj = k - (e - 6 * k); }
+        const gi = ci + di, gj = cj + dj;
+        // the cell's own square against the annulus, in the snapped frame
+        const cxm = (gi + 0.5) * cell - (ci + 0.5) * cell;
+        const czm = (gj + 0.5) * cell - (cj + 0.5) * cell;
+        const d2 = cxm * cxm + czm * czm;
+        const half = cell * 0.7072;
+        if (d2 > (rOut + half) * (rOut + half)) continue;
+        if (rIn > half && d2 < (rIn - half) * (rIn - half)) continue;
+
+        const r = makeRng(cellHash(gi, gj, ring.salt));
+        // How many tufts THIS cell holds. Deterministic, and proportional to
+        // the cover field at its middle: a level whose field says 40% spends
+        // its whole budget on that 40% instead of dusting everything.
+        const cx0 = gi * cell, cz0 = gj * cell;
+        const cw = field.at(cx0 + cell * 0.5, cz0 + cell * 0.5);
+        const want = nom * cw;
+        let n = Math.floor(want);
+        if (r() < want - n) n++;
+        for (let q = 0; q < n && i < cap; q++) {
+          // Every tuft draws the SAME randoms in the SAME order whether or not
+          // it survives, so one tuft failing its site cannot shift the ones
+          // behind it in the cell.
+          const jx = r(), jz = r(), lean0 = r(), phase = r(), yaw0 = r();
+          const tx = cx0 + jx * cell, tz = cz0 + jz * cell;
+          const dx = tx - center.x, dz = tz - center.z;
+          const dr2 = dx * dx + dz * dz;
+          if (dr2 > rOut2 || dr2 < rIn2) { for (let b = 0; b < perTuft * 5; b++) r(); continue; }
+
           const slope = this.terrain ? this.terrain.slopeAt(tx, tz) : 0;
-          const y = this.terrain ? this.terrain.height(tx, tz) : 0;
-          // Steep ground carries little, and clumping comes from a low-frequency
-          // field so the cover reads as patches. Water thins it rather than
+          const y0 = this.terrain ? this.terrain.height(tx, tz) : 0;
+          // Steep ground carries little, and water thins the cover rather than
           // cutting it dead: the interesting grass in a river wash is the reeds
           // standing in the shallows along the margin.
-          const clump = clamp(fbm2(tx * 0.028, tz * 0.028, 3) * 1.15 + 0.58, 0, 1);
-          const wet = waterLine === null ? 1 : clamp((y - (waterLine - 0.30)) / 0.45, 0, 1);
-          density = clamp(1 - slope * 1.7, 0, 1) * clump * wet;
-          live = density > 0.14;
-          if (live) break;
-        }
-        lean = 0.16 + rng() * 0.42;      // a tuft leans together, not per blade
-        left = perTuft;
+          const wet = waterLine === null ? 1 : clamp((y0 - (waterLine - 0.30)) / 0.45, 0, 1);
+          const density = clamp(1 - slope * 1.7, 0, 1) * field.at(tx, tz) * wet;
+          const alive = density > 0.14;
+          /* A tuft leans TOGETHER, not per blade, and it leans a long way. At
+           * 0.16-0.58 rad the field rendered as a bristle brush: every blade
+           * within a few degrees of vertical, each one a separate hard-edged
+           * needle against the sand. Real tussock arches — 0.3 to 1.05 rad of
+           * curvature over the blade's length, which is the difference between
+           * a clump reading as a plant and reading as a row of spikes. The
+           * wind's own bend adds to this, and the whole thing is still capped
+           * at 2 rad in the shader. */
+          const lean = 0.30 + lean0 * 0.75;
 
-        /* The contact this tuft prints on the ground. It goes down HERE, in the
-         * same decision that sited the tuft, so a clump that lost its site to
-         * slope or to the river cannot leave a stain on bare ground behind it —
-         * which is exactly what a second pass over the anchors would do.
-         *
-         * SHADE_CORE is measured against what the tell actually is: the sand
-         * 5 px from a base against the sand 40 px away came out 1.6% apart, and
-         * 12% is about where a contact stops being deniable. The disc is a
-         * little wider than the blades because light is being kept out at a
-         * grazing angle and not only straight down — but only a little, since
-         * a disc wide enough to swallow the 40 px reference measures as no
-         * gradient at all however dark it is. */
-        if (++tuft < sh.tufts) {
-          const o4 = tuft * 4;
-          const gy = this.terrain ? this.terrain.height(tx, tz) : 0;
-          sa[o4] = tx; sa[o4 + 1] = gy; sa[o4 + 2] = tz;
-          sa[o4 + 3] = live ? spread * (ring.card ? SHADE_CARD_SPAN : SHADE_SPAN) : 0;
-          // A stub heightfield may not carry normals; flat is the right answer
-          // for anything that does not have a slope to report.
-          if (this.terrain?.normalAt) this.terrain.normalAt(tx, tz, _v1); else _v1.set(0, 1, 0);
-          sn[o4] = _v1.x; sn[o4 + 1] = _v1.y; sn[o4 + 2] = _v1.z;
-          // A thin clump lets the sky through, so the darkness rides the same
-          // density the blade count does rather than being a flat stamp.
-          sn[o4 + 3] = live
-            ? (ring.card ? SHADE_CARD : SHADE_CORE) * clamp(density * 1.5, 0.35, 1) : 0;
+          if (alive) live++;
+          if (sh && tuft < shCap) {
+            const o4 = tuft * 4;
+            sa[o4] = tx; sa[o4 + 1] = y0; sa[o4 + 2] = tz;
+            sa[o4 + 3] = alive ? spread * (ring.card ? SHADE_CARD_SPAN : SHADE_SPAN) : 0;
+            if (this.terrain?.normalAt) this.terrain.normalAt(tx, tz, _v1); else _v1.set(0, 1, 0);
+            sn[o4] = _v1.x; sn[o4 + 1] = _v1.y; sn[o4 + 2] = _v1.z;
+            // A thin clump lets the sky through, so the darkness rides the same
+            // density the blade count does rather than being a flat stamp.
+            sn[o4 + 3] = alive
+              ? (ring.card ? SHADE_CARD : SHADE_CORE) * clamp(density * 1.5, 0.35, 1) : 0;
+          }
+          tuft++;
+
+          for (let b = 0; b < perTuft && i < cap; b++) {
+            const rr = Math.sqrt(r()) * 0.5 * spread;
+            const ra = r() * TAU;
+            const hs = r(), fa = r(), tl = r();
+            const x = tx + Math.cos(ra) * rr;
+            const z = tz + Math.sin(ra) * rr;
+            const y = this.terrain ? this.terrain.height(x, z) : 0;
+            // Blade geometry spans v = 0..1, so these ARE metres, not a
+            // multiplier. Pasture is ankle-to-knee; a 1.4 m blade beside a
+            // 1.78 m character reads as scratchy weeds however many there are.
+            const T = ring.tier;
+            const base = T ? T.base : (ring.card ? 0.26 : 0.20);
+            const varies = T ? T.varies : 0.26;
+            // A third of every clump is sward: short blades filling the base,
+            // which is the part the eye actually reads density from.
+            const shortling = !ring.card && (b % 3) === 2 ? 0.48 : 1;
+            const scale = alive
+              ? (base + hs * varies) * clamp(density * 1.8, 0.5, 1.15) * shortling
+              : 0;
+
+            a[i * 4] = x; a[i * 4 + 1] = y - 0.02; a[i * 4 + 2] = z; a[i * 4 + 3] = scale;
+            const fang = fa * TAU;
+            o[i * 4] = Math.cos(fang);
+            o[i * 4 + 1] = Math.sin(fang);
+            o[i * 4 + 2] = lean * (0.6 + yaw0 * 0.8);
+            o[i * 4 + 3] = phase;
+            _col.copy(this.tintA).lerp(this.tintB, tl * 0.9);
+            const v = 0.82 + ((tl * 7.13) % 1) * 0.36;   // per-blade value noise
+            t[i * 3] = _col.r * v; t[i * 3 + 1] = _col.g * v; t[i * 3 + 2] = _col.b * v;
+            i++;
+          }
         }
       }
-      left--;
-      inTuft++;
-
-      // Blades crowd the middle of their tuft and thin out at its skirt, which
-      // is what gives a clump a soft edge instead of a hard disc of spikes.
-      const rr = Math.sqrt(rng()) * 0.5 * spread;
-      const ra = rng() * TAU;
-      const x = tx + Math.cos(ra) * rr;
-      const z = tz + Math.sin(ra) * rr;
-      const y = this.terrain ? this.terrain.height(x, z) : 0;
-      // Height matters more than it looks. A 1.4m blade beside a 1.78m
-      // character reads as scratchy weeds however many of them there are;
-      // knee-high and packed reads as ground cover. Cap it well under the knee.
-      // Blade geometry spans v = 0..1, so these ARE metres, not a multiplier.
-      // At 0.30 + 0.34 the median blade stood 0.51m and the top 5% reached
-      // 0.87m — thigh-high on a 1.78m character. Sparse AND that tall reads as
-      // scratchy weeds rather than ground cover. Pasture is ankle-to-knee; the
-      // wet margin still earns its taller reeds from the density term above.
-      const base = ring.card ? 0.26 : 0.20;
-      const varies = ring.card ? 0.26 : 0.26;
-      // A third of every tuft is sward: short blades filling the base, which is
-      // the part of a clump the eye actually reads density from. All blades the
-      // same height gives a bristle brush.
-      const shortling = !ring.card && (inTuft % 3) === 0 ? 0.48 : 1;
-      const scale = live
-        ? (base + rng() * varies) * clamp(density * 1.8, 0.5, 1.15) * shortling
-        : 0;
-
-      a[i * 4] = x;
-      a[i * 4 + 1] = y - 0.02;
-      a[i * 4 + 2] = z;
-      a[i * 4 + 3] = scale;
-
-      const fa = rng() * TAU;
-      o[i * 4] = Math.cos(fa);
-      o[i * 4 + 1] = Math.sin(fa);
-      o[i * 4 + 2] = lean * (0.6 + rng() * 0.8);
-      o[i * 4 + 3] = rng();
-
-      _col.copy(this.tintA).lerp(this.tintB, rng() * 0.9);
-      // a little per-blade value noise stops the field reading as one flat hue
-      const v = 0.82 + rng() * 0.36;
-      t[i * 3] = _col.r * v; t[i * 3 + 1] = _col.g * v; t[i * 3 + 2] = _col.b * v;
     }
-    // Anything the scatter never reached this pass is a tuft that is not there.
-    for (let k = tuft + 1; k < sh.tufts; k++) { sa[k * 4 + 3] = 0; sn[k * 4 + 3] = 0; }
+    /* Anything the fill never reached this pass is not there. All four
+     * components, not just the scale: a slot left holding the position it had
+     * two windows ago is invisible either way, but it makes the buffer depend
+     * on where the player has BEEN, and the whole point of this pass is that
+     * nothing about the field does. */
+    for (let z = i; z < cap; z++) { a[z * 4] = 0; a[z * 4 + 1] = 0; a[z * 4 + 2] = 0; a[z * 4 + 3] = 0; }
+    for (let z = tuft; z < shCap; z++) { sa[z * 4 + 3] = 0; sn[z * 4 + 3] = 0; }
+    ring.used = i; ring.live = live; ring.tufts = tuft;
     ring.aInst.needsUpdate = true;
     ring.aOrient.needsUpdate = true;
     ring.aTint.needsUpdate = true;
-    sh.aShade.needsUpdate = true;
-    sh.aShadeN.needsUpdate = true;
-    sh.mat.uniforms.uCenter.value.copy(center);
-    ring.mat.uniforms.uCenter.value.copy(center);
+    if (sh) { sh.aShade.needsUpdate = true; sh.aShadeN.needsUpdate = true; }
   }
 
   /* ── frame ─────────────────────────────────────────────────────────── */
@@ -1469,15 +1777,28 @@ export class GrassField {
     }
     if (this._trailDirty) { this.trailTex.needsUpdate = true; this._trailDirty = false; }
 
-    if (center.distanceToSquared(this.center) > this.radius * this.radius * 0.09) {
-      this.center.copy(center);
-      this._scatterRing(this.near, center);
-      this._scatterRing(this.far, center);
-    }
-
-    for (const ring of [this.near, this.far]) {
+    this.center.copy(center);
+    /* Each tier follows its own cell grid, so the tier whose cells are 2.75 m
+     * across refills every 2.75 m of walking and the one whose cells are 46 m
+     * refills every 46 m. That is the point of snapping the window: the cost
+     * of a refill scales with the tier's instance count, and the tiers that
+     * hold the most instances are the ones you cross fastest, so pinning the
+     * refill to a FRACTION OF THE RADIUS — as the whole-field re-roll this
+     * replaces did — spent the most time on the least visible ground.
+     *
+     * The uCenter every ring fades against is the TRUE centre, updated every
+     * frame, not the snapped one: a fade that jumps in cell steps is a ring
+     * of grass appearing at the horizon every time you cross a line. */
+    for (const ring of this.rings) {
+      const ci = Math.floor(center.x / ring.cell), cj = Math.floor(center.z / ring.cell);
+      if (ci !== ring.ci || cj !== ring.cj) {
+        ring.ci = ci; ring.cj = cj;
+        this._fillTier(ring, center);
+      }
       const u = ring.mat.uniforms;
       u.uTime.value = this.time;
+      u.uCenter.value.copy(center);
+      if (ring.shade) ring.shade.mat.uniforms.uCenter.value.copy(center);
       syncWind(u);
       if (opts.bendGain) u.uBendGain.value = opts.bendGain;
     }
@@ -1511,7 +1832,9 @@ export class GrassField {
     // the next level builds its own; leaving this pointing at a disposed
     // heightfield makes every chip and decal land at the wrong altitude
     if (ground.terrain === this.terrain) ground.terrain = null;
-    this.terrain?.setGroundCover?.(0);
+    // and hand the mask back, or the terrain keeps sampling a texture this
+    // field is about to delete out from under it
+    this.terrain?.setGroundCover?.(0, null, 30, null);
     if (!this.mesh) return;
     for (const m of this.meshes) {
       m.geometry.dispose();
@@ -1520,7 +1843,8 @@ export class GrassField {
     }
     this.meshes.length = 0;
     this.trailTex?.dispose();
-    this.far?.mat.uniforms.uMap.value?.dispose();
+    this._cardMap?.dispose();
+    this.coverTex?.dispose();
     this.mesh = null;
   }
 }

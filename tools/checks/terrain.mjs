@@ -524,10 +524,21 @@ export function run({ check, assert, near }) {
      * enough to be a contact, and it lies ON the ground rather than through it.
      */
     const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
-    const g = new GrassField(new THREE.Scene(), t, { count: 6000, density: 1, radius: 46 });
+    const scene = new THREE.Scene();
+    const g = new GrassField(scene, t, { count: 6000, density: 1, radius: 46 });
     g.update(1 / 60, new THREE.Vector3(0, t.height(0, 0), 0), [], null);
     const report = [];
-    for (const [name, ring] of [['near', g.near], ['far', g.far]]) {
+    /* Only the two rungs a contact can actually resolve on. Past the clump
+     * ring a tuft is smaller than the pixel it lands in, so a stain under it
+     * is a second draw call for something nobody can see — which is why the
+     * rungs declare `shade` and this reads the declaration rather than
+     * assuming every ring has one. */
+    const shaded = g.rings.filter(r => r.shade);
+    assert(shaded.length >= 2, `only ${shaded.length} LOD rungs print a contact at all`);
+    assert(shaded.every((r, i) => r === g.rings[i]),
+      'the rungs that print a contact are not the nearest ones');
+    for (const ring of shaded) {
+      const name = ring.tier.name;
       const sh = ring.shade;
       assert(sh && sh.mesh, `the ${name} ring has no contact shadows at all`);
       const S = sh.aShade.array, N = sh.aShadeN.array;
@@ -564,41 +575,132 @@ export function run({ check, assert, near }) {
       report.push(`${name} ${live} tufts, ${(mD * 100).toFixed(0)}% at the base over ${mR.toFixed(2)} m ` +
         `(ground keeps ${(keep(0) * 100).toFixed(0)}% under it, ${(keep(mR * 0.6) * 100).toFixed(0)}% at 0.6R)`);
     }
-    const before = g.scene.children.length;
+    /* Stronger than the "minus four" this replaces, which was a count of the
+     * meshes the field happened to build at the time: the scene it was given
+     * held nothing but grass, so after dispose it must hold NOTHING, however
+     * many rungs the ladder grows. */
+    const before = scene.children.length;
+    assert(before === g.meshes.length && before >= 6,
+      `the field put ${before} meshes in the scene and tracks ${g.meshes.length}`);
     g.dispose(); t.dispose();
-    assert(g.scene.children.length === before - 4,
-      'the grass left meshes behind on dispose');
-    return report.join('; ');
+    assert(scene.children.length === 0,
+      `the grass left ${scene.children.length} meshes behind on dispose`);
+    return report.join('; ') + `; ${before} draw calls`;
   });
 
-  check('grass: the near ring covers enough ground to read as cover', () => {
-    // 6.8% silhouette is nine parts bare sand to one part grass. The lever is
-    // the ring's AREA, not the blade: instances over πr² is what decides it.
+  check('grass: the cover reaches out to the range you can see, at a density that reads', () => {
+    /* WHAT THIS REPLACES, and why the old form could pass on a field nobody
+     * would call covered: it measured each ring against ITS OWN ground, so a
+     * 46 m bubble scoring 19% and 313,600 m² of bare dunes outside it scored
+     * 19%. Measured on the shipped build: the grass disc was 2.1% of the dune
+     * sea's terrain, 3.1% of the arena's, and beyond 46 m there was no grass
+     * at any quality on levels you can see 700 m across.
+     *
+     * So the bar is stated over BANDS, out to the reach, and the bands past
+     * the near one are held to a lower plan-view figure ON PURPOSE — not as a
+     * concession, but because plan view is the wrong projection out there. At
+     * a hundred metres the ground is one degree below the horizon and a 0.4 m
+     * tuft hides the twenty-three metres of ground behind it, so what the eye
+     * gets is the GRAZING coverage, which is computed here too and held to a
+     * real bar. Both are reported; only asserting the first is how a field can
+     * measure "covered" and still show you bare ground to the horizon. */
     const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
     const g = new GrassField(new THREE.Scene(), t, { count: 11000, density: 1, radius: 46 });
     g.update(1 / 60, new THREE.Vector3(0, t.height(0, 0), 0), [], null);
-    const report = [];
-    for (const [name, ring] of [['near', g.near], ['far', g.far]]) {
-      const a = ring.aInst.array;
-      let live = 0, area = 0;
+
+    const BANDS = [[0, 12, 0.22, 0], [12, 46, 0.10, 0], [46, 150, 0.015, 0.45], [150, 400, 0.002, 0.30]];
+    const plan = BANDS.map(() => 0), graze = BANDS.map(() => 0);
+    let live = 0, budget = 0;
+    for (const ring of g.rings) {
+      const a = ring.aInst.array, w = ring.mat.uniforms.uWidth.value;
+      budget += ring.count;
       for (let i = 0; i < ring.count; i++) {
         const len = a[i * 4 + 3];
         if (len <= 0.004) continue;
         live++;
-        const w = ring.mat.uniforms.uWidth.value * len * (ring.card ? 2.2 : 1);
-        area += w * len * (ring.card ? 1.0 : 0.62);
+        const r = Math.hypot(a[i * 4], a[i * 4 + 2]);
+        // the card shader widens with range: `widen = 0.55 + 0.95 * d/uFar`
+        const widen = ring.card ? 0.55 + 0.95 * Math.min(1, r / ring.far) : 1;
+        const wide = w * len * (ring.card ? 2.2 * widen : 1);
+        const b = BANDS.findIndex(([lo, hi]) => r >= lo && r < hi);
+        if (b < 0) continue;
+        plan[b] += wide * len * (ring.card ? 1.0 : 0.62);
+        // ground hidden behind it from eye height: len / tan(depression)
+        graze[b] += wide * Math.min(60, len * Math.max(1, r) / 1.7);
       }
-      const inner = ring.card ? g.nearRadius * 0.62 : 0;
-      const ground2 = Math.PI * (ring.far * ring.far - inner * inner);
-      const cover = area / ground2;
-      assert(cover > 0.12,
-        `${name} ring silhouette covers ${(cover * 100).toFixed(1)}% of its own ground`);
-      assert(live / ring.count > 0.55,
-        `${name} ring spends ${((1 - live / ring.count) * 100).toFixed(0)}% of its budget on instances that render as nothing`);
-      report.push(`${name} ${(cover * 100).toFixed(0)}% from ${live}/${ring.count}`);
     }
+    const rows = [];
+    for (let b = 0; b < BANDS.length; b++) {
+      const [lo, hi, wantPlan, wantGraze] = BANDS[b];
+      const area = Math.PI * (hi * hi - lo * lo);
+      const p = plan[b] / area, z = Math.min(1, graze[b] / area);
+      assert(p > wantPlan,
+        `${lo}-${hi} m: the silhouette covers ${(p * 100).toFixed(1)}% of the ground in plan, wanted ${(wantPlan * 100).toFixed(1)}%`);
+      assert(z > wantGraze,
+        `${lo}-${hi} m: only ${(z * 100).toFixed(0)}% of the ground is hidden behind cover from eye height`);
+      rows.push(`${lo}-${hi}m ${(p * 100).toFixed(1)}%/${(z * 100).toFixed(0)}%`);
+    }
+    assert(live / budget > 0.55,
+      `the field spends ${((1 - live / budget) * 100).toFixed(0)}% of its budget on instances that render as nothing`);
+    assert(g.reach >= 300, `the cover stops at ${g.reach} m`);
     g.dispose(); t.dispose();
-    return report.join('  ');
+    return `plan/grazing by band: ${rows.join('  ')}; ${live}/${budget} instances live to ${g.reach} m`;
+  });
+
+  check('grass: a tuft stays where it is when you walk away and come back', () => {
+    /* THE CORRECTNESS BUG UNDER THE ART ONE. The field this replaces re-rolled
+     * every blade in the level off a module-global generator whenever the
+     * centre moved more than 0.3 of its radius — 13.8 m of walking. Measured
+     * on the shipped build, over a 4×4 m box of ground and a 40 m round trip:
+     * 532 instances before, 407 after, ZERO of them the same one. Turn around
+     * after fourteen paces and the tussock you just fought past was different
+     * tussock.
+     *
+     * Placement is a hash of the cell's integer coordinate now, so this is a
+     * property and not a tolerance: not "mostly the same", the SAME. */
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const g = new GrassField(new THREE.Scene(), t, { count: 8000, density: 1, radius: 46 });
+    const at = (x, z) => new THREE.Vector3(x, t.height(x, z), z);
+    const snap = (bx, bz, br) => {
+      const out = [];
+      for (const ring of g.rings) {
+        const a = ring.aInst.array, o = ring.aOrient.array;
+        for (let i = 0; i < ring.count; i++) {
+          if (a[i * 4 + 3] <= 0.004) continue;
+          if (Math.abs(a[i * 4] - bx) > br || Math.abs(a[i * 4 + 2] - bz) > br) continue;
+          out.push(`${ring.tier.name}|${a[i * 4].toFixed(4)}|${a[i * 4 + 2].toFixed(4)}`
+            + `|${a[i * 4 + 3].toFixed(4)}|${o[i * 4 + 2].toFixed(4)}`);
+        }
+      }
+      return out.sort();
+    };
+    g.update(1 / 60, at(0, 0), [], null);
+    const boxes = [[5, 0, 2], [28, 6, 4], [110, -20, 10]];
+    const before = boxes.map(([x, z, r]) => snap(x, z, r));
+    assert(before[0].length > 40, `only ${before[0].length} instances near the spawn to compare`);
+    assert(before[2].length > 0, 'nothing at all is planted 110 m out');
+    // out to 240 m and back, in steps small enough to cross every tier's grid
+    for (let d = 0; d <= 240; d += 3) g.update(1 / 60, at(d, 0), [], null);
+    for (let d = 240; d >= 0; d -= 3) g.update(1 / 60, at(d, 0), [], null);
+    const rows = [];
+    for (let b = 0; b < boxes.length; b++) {
+      const after = new Set(snap(...boxes[b]));
+      const same = before[b].filter(s => after.has(s)).length;
+      assert(same === before[b].length && after.size === before[b].length,
+        `box at ${boxes[b][0]},${boxes[b][1]}: ${before[b].length} instances went out and `
+        + `${after.size} came back, ${same} of them the same tuft in the same place`);
+      rows.push(`${boxes[b][0]}m ${same}/${before[b].length}`);
+    }
+    // and a field built from scratch a second time must agree with the first,
+    // or "the same place" only means "the same place this session"
+    const h = new GrassField(new THREE.Scene(), t, { count: 8000, density: 1, radius: 46 });
+    h.update(1 / 60, at(0, 0), [], null);
+    const a0 = g.rings[0].aInst.array, b0 = h.rings[0].aInst.array;
+    let diff = 0;
+    for (let i = 0; i < g.rings[0].count * 4; i++) if (a0[i] !== b0[i]) diff++;
+    assert(diff === 0, `${diff} of ${g.rings[0].count * 4} floats differ between two builds of the same field`);
+    g.dispose(); h.dispose(); t.dispose();
+    return `identical after a 240 m round trip: ${rows.join(', ')}; and byte-identical on a rebuild`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

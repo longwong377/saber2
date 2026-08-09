@@ -105,6 +105,7 @@ const BLADE_FRAG = /* glsl */`
   uniform float uFlicker;
   uniform float uTime;
   uniform float uSurge;      // ignition front
+  uniform float uCoreWhite;  // how far the core lobe is neutralised. See CORE_WHITE.
   varying vec2 vP;
   varying float vLen;
   void main(){
@@ -147,12 +148,21 @@ const BLADE_FRAG = /* glsl */`
     // a longer tail than a gaussian on the outermost lobe — this is the wash
     // that lands on walls and faces, and it has to reach
     float halo = exp(-pow(dd.z, 1.4)) * keep.z;
-    float e = (uAmp.x * core + uAmp.y * glow + uAmp.z * halo) * amp;
+    float ec = uAmp.x * core * amp;                       // the core lobe alone
+    float e0 = ec + (uAmp.y * glow + uAmp.z * halo) * amp;
     // guarantee it is exactly zero at the quad's edge
-    e *= smoothstep(uRadius, uRadius * 0.55, d);
+    float e = e0 * smoothstep(uRadius, uRadius * 0.55, d);
     if(e < 0.002) discard;
 
-    vec3 c = uHue * e;
+    /* THE CORE IS NEUTRALISED WHERE IT DOMINATES — see CORE_WHITE in the class.
+     * The mix is toward the hue's own LUMINANCE, not toward white: a lift toward
+     * white would add radiance and make the bloom veil brighter as well as
+     * paler, and then no measurement could say which of the two fixed anything.
+     * This way the lobe's luminance is identical before and after and the only
+     * thing that moves is chroma. */
+    vec3 hueN = vec3(dot(uHue, vec3(0.2126, 0.7152, 0.0722)));
+    vec3 col = mix(uHue, hueN, uCoreWhite * (ec / max(e0, 1e-5)));
+    vec3 c = col * e;
     #ifdef USE_FOG
       #ifdef FOG_EXP2
         float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
@@ -315,26 +325,88 @@ export class Saber {
     const peak = Math.max(c.r, c.g, c.b, 1e-4);
     this.hue.copy(c).multiplyScalar(1 / peak);
     this.punch = 0.62 + 0.38 * Math.pow(peak, 0.6);
-    // The light the blade throws is the crystal's hue, exactly and entirely.
-    // The old 22% lift toward white was reasoning about bounce — but bounce
-    // through a surface is what multiplying by that surface's albedo already
-    // does, so the lift was double-counting it, and on sand it was fatal:
-    // sand's blue albedo is 0.109 against 0.51 in red, so a light of
-    // (0.25, 0.52, 1.00) lands on it as (0.128, 0.146, 0.109) — RED-dominant.
-    // The blade lit the ground with its own colour and the ground handed back
-    // white. At the crystal's own (0.044, 0.386, 1.00) the same sand returns
-    // (0.022, 0.108, 0.109): blue outruns red five to one and the hue survives
-    // the trip.
-    //
-    // It is not lifted toward white AT ALL, and the reason is worth a line: the
-    // crystal's red channel is 0.044, so even a 6% white lift more than doubles
-    // it and drops that sand ratio from 4.9 back to 2.1. Down here a "barely
-    // perceptible" desaturation is not barely anything.
+
+    /* WHAT THE BLADE THROWS — the crystal's hue, with a FLOOR under its dimmest
+     * channel and nothing else.
+     *
+     * The argument this replaces was that the light must not be lifted toward
+     * white at all, because on sand a lifted light "lands RED-dominant and the
+     * ground hands back white". The direction of that argument is right and the
+     * arithmetic under it was not: it was computed on colours that had been
+     * through the sRGB-to-linear transform TWICE. `new THREE.Color(0x3ba7ff)`
+     * is (0.0437, 0.3864, 1.0000) in the working space, not (0.0034, 0.1236,
+     * 1.0000); the dune sea's sand is (0.687, 0.527, 0.324), not (0.51, …,
+     * 0.109). Redone at the real values, the old 22% lift returns
+     * (0.172, 0.274, 0.324) off that sand — still BLUE-dominant at 1.9:1, not
+     * red-dominant — and the un-lifted crystal returns 10.8:1 rather than the
+     * 4.9:1 the comment quoted. Every ratio in that paragraph was roughly
+     * doubled, and the one claim that made a lift unthinkable is not true.
+     *
+     * What IS true, and what the floor is for: across the palette the crystal
+     * hues run from 4.1:1 (Void) to 96.8:1 (Bronze) between their brightest and
+     * dimmest channel. A Bronze blade throws light with one part blue in a
+     * hundred. That is not a coloured light, it is a channel filter — anything
+     * it lights loses a whole primary and with it every material distinction
+     * carried in that primary. A floor at FLOOR_CHANNEL of the peak is the
+     * narrow fix for exactly that: it is a no-op on Ivory (89%) and Void (24%),
+     * and it is nearly the whole story on Bronze, Cyanite, Crimson and Sunfire.
+     *
+     * This is also the fix for the SECOND fault, which is a different fault
+     * from the wielder's: the player's own cast shadow reading as a bright cyan
+     * hole. That one IS the point lights — they are unshadowed on purpose, so
+     * in the one region the sun cannot reach they are the only thing there.
+     * With the blade drawn but both lights zeroed the shadow measures R/B 1.494
+     * against an unlit 1.605, i.e. barely touched; the lights are what invert it.
+     *
+     * Measured on the dune sea, one frozen frame, floor off then on
+     * (tools/_wielder.mjs sweep --only before,after,core0):
+     *
+     *   the player's own cast shadow, R/B   1.052 -> 1.113   (unlit 1.611)
+     *   sunlit sand, B/R                    0.803 -> 0.799   (unlit 0.754)
+     *
+     * so the ground still reads the blade — the blade moves sunlit sand's B/R
+     * by +0.045 where before it moved it +0.049, i.e. the floor costs 8% of the
+     * blade's effect on the ground — while the shadow it fills gets some of its
+     * warmth back. The pool on sand is still about 3:1 blue.
+     *
+     * The floor does NOT fix the shadow's brightness, only its hue: the lights
+     * still lift it 1.2x. Cutting their intensity is the only thing that would,
+     * and it was measured and rejected — see the near-field check in
+     * tools/checks/saber-light.mjs.
+     *
+     * It is a FLOOR and not a lerp toward white on purpose: a lerp moves every
+     * colour, including the ones that were never the problem, and would take
+     * Void and Ivory with it for nothing. */
     this.light.color.copy(this.hue);
     this.tipLight.color.copy(this.hue);
+    Saber.floorChannels(this.light.color);
+    Saber.floorChannels(this.tipLight.color);
+
+    // The blade, the trail and the hilt accent are NOT floored. They are the
+    // emitter, and the emitter is the crystal — the floor is a statement about
+    // what a light source may do to other people's materials, not about what
+    // colour the plasma is.
     if (this.bladeMat) this.bladeMat.uniforms.uHue.value.copy(this.hue);
     if (this.trailMat) this.trailMat.uniforms.uHue.value.copy(this.hue);
     this.hiltAccent.emissive.copy(this.color);
+  }
+
+  /**
+   * Raise a light colour's dimmest channel to FLOOR_CHANNEL of its brightest,
+   * in place.
+   *
+   * Writes r/g/b directly rather than going through setRGB: the components are
+   * already in the renderer's working space and setRGB's colour-space argument
+   * is the kind of thing that silently changes meaning across a three upgrade.
+   */
+  static FLOOR_CHANNEL = 0.16;
+
+  static floorChannels(col, f = Saber.FLOOR_CHANNEL) {
+    const p = Math.max(col.r, col.g, col.b, 1e-4) * f;
+    col.r = Math.max(col.r, p);
+    col.g = Math.max(col.g, p);
+    col.b = Math.max(col.b, p);
+    return col;
   }
 
   /* ── construction ──────────────────────────────────────────────────── */
@@ -450,6 +522,59 @@ export class Saber {
     radius: 0.36,
   };
 
+  /**
+   * HOW MUCH OF THE CORE LOBE'S CHROMA IS GIVEN UP, and why there is any.
+   *
+   * Set from measurement. The established experiment for "why does the wielder
+   * look wrong" was the same walk with the blade LIT and with it RETRACTED, and
+   * it is a real effect — but retracting the blade removes two different things
+   * at once, the two POINT LIGHTS and the drawn emitter, and the difference
+   * between those had never been measured. Rendering one frozen frame of the
+   * real level once per condition separates them (tools/_wielder.mjs sweep),
+   * reading the wielder's silhouette masked off the retracted cell:
+   *
+   *     wielder, dune sea, one pose             R/B
+   *     blade retracted (control)              0.984
+   *     blade DRAWN, both point lights ZERO    0.303    <- already ruined
+   *     as shipped                             0.283
+   *     as shipped, bloom pass disabled        0.650    <- most of it back
+   *
+   * The drawn blade with its lights switched off does 88% of the damage, and
+   * disabling the bloom pass with the lights switched back ON undoes most of it.
+   * So what flattens a wielder is not what the blade throws, it is the bloom
+   * halo of what the blade IS — and that halo is the crystal's hue at 22:1
+   * blue-to-red, laid over the figure as a wash.
+   *
+   * It is a wash because the pass sees the core at 58 against its 1.8 threshold
+   * and spreads it over a quarter of the screen. The core carries 63% of the
+   * blade's flux (amp x sigma, the line integral), and it is the ONE lobe whose
+   * chroma nothing needs: it is 39x over the clip, so it renders white either
+   * way — but bloom samples the linear buffer BEFORE the tonemap, where it is
+   * not white at all, it is (2.5, 22, 58). Neutralising it there costs the
+   * drawn blade nothing and takes the veil's blue-to-red from 22:1 to about 2:1.
+   *
+   * The GLOW and HALO lobes keep the crystal's hue untouched, which is the part
+   * that has to stay: they are the coloured halo, they are what still says blue,
+   * and the glow lobe is over the bloom threshold too, so the bloom stays
+   * tinted — just no longer monochromatic.
+   *
+   * What it is worth, old and new rendered from the SAME frozen frame of the
+   * same build so the level cannot move between them:
+   *
+   *     wielder            R/B     p10..p90 band   overlap with control
+   *     retracted         1.020    [0.56, 1.33]         —
+   *     before            0.364    [0.11, 0.76]        26%
+   *     after             0.638    [0.38, 0.95]        51%
+   *
+   * The band is the point. Before, the whole middle 80% of the figure was
+   * COLDER than the coldest fifth of its own material — there was no overlap
+   * worth the name, which is what "it lost its material" means as a number.
+   * Luminance is deliberately quoted separately and barely moves (1.96x -> 1.99x
+   * of the retracted figure): this is a chroma fix and it is not allowed to be
+   * anything else.
+   */
+  static CORE_WHITE = 0.85;
+
   /** The smear's amplitudes, tied to the blade's own lobes. See _buildTrail. */
   static TRAIL_HOT = Saber.PROFILE.amp[1] * 0.85;
   static TRAIL_GLOW = Saber.PROFILE.amp[2] * 1.5;
@@ -481,6 +606,7 @@ export class Saber {
         uFlicker: { value: 1 },
         uTime: { value: 0 },
         uSurge: { value: 0 },
+        uCoreWhite: { value: Saber.CORE_WHITE },
       }]),
       vertexShader: BLADE_VERT, fragmentShader: BLADE_FRAG,
       transparent: true, depthWrite: false, depthTest: true,

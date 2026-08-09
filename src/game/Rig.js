@@ -339,6 +339,62 @@ const _be = new THREE.Euler();
 
 const wrapPi = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
 
+/*
+ * WHY THE PELVIS REACH CLAMP IS STILL A HARD Math.min, AND WHAT IS ACTUALLY
+ * WRONG WITH THE PELVIS.
+ *
+ * The clamp below is a `min` over two reach cones, so its derivative steps
+ * every time the binding foot changes. That looks exactly like the cause of the
+ * hitch, and it is not. Measured, worst pelvis travel in a single 1/60 s frame,
+ * against what the gait's own bob asked for over the same frame:
+ *
+ *        walk   1.6 m/s   23.7 mm   (smooth intent  7.2 mm)   clamp binds   8%
+ *        jog    3.0 m/s   40.1 mm   (smooth intent  9.3 mm)   clamp binds 99.8%
+ *        run    4.6 m/s   69.6 mm   (smooth intent 21.1 mm)   clamp binds 99.8%
+ *        sprint 7.4 m/s   88.3 mm   (smooth intent 29.5 mm)   clamp binds 99.8%
+ *
+ * Above a jog the clamp is not a safety net, it IS the pelvis height. But
+ * rounding the corner off with iq's quadratic smooth-min — tried, measured,
+ * removed — took the sprint from 88.3 to 78.3 mm and made the WALK worse
+ * (20.1 → 21.9), while costing up to k/4 of stature: at a blend width of 45 mm
+ * the stance knee at a walk went from 26.3° of flexion to 30.8°, which
+ * tools/checks/character-gait.mjs correctly calls a crouch. A smooth min buys
+ * an eleventh of the problem and pays for it in posture.
+ *
+ * The corner is not the problem. THE SWING FOOT IS. `f.lift` reaches 285 mm at
+ * a 4.6 m/s run and is taken to zero by `(1 - smoothstep(0.80, 1, u))` over the
+ * last fifth of a 314 ms swing, so the foot descends at a measured 3.4 m/s at a
+ * walk, 5.3 m/s at a run and 7.0 m/s at a sprint — 57, 88 and 116 mm per frame.
+ * The reach clamp is chained to that foot, so the pelvis goes with it. A real
+ * foot lands at well under 0.5 m/s.
+ *
+ * That cannot be fixed by reshaping the arc alone: 285 mm of lift inside a
+ * 314 ms swing has a mean descent rate of 0.9 m/s even if it is spread over the
+ * ENTIRE swing, and holding the foot high late is the only thing keeping it
+ * inside the leg's reach while it is 300 mm out in front. It needs the lift
+ * amplitude, the stride budget and the hip height re-derived together, which is
+ * the gait model itself. It is written down here, with its numbers, rather than
+ * half-fixed.
+ */
+
+/**
+ * The fraction of the swing at which the foot is actually DOWN.
+ *
+ * The last 3% of a swing is deliberately dead time — "the foot is down and
+ * still for the last few percent of it" — and the swing solver has always known
+ * that (`f.t / 0.97`). `_aimSwing` did not: it was handed `(1 - f.t) * f.dur`
+ * as the time left before landing and therefore aimed at where the body would
+ * be at f.t = 1, three percent of a swing AFTER the foot had already arrived.
+ *
+ * Three percent sounds like nothing. At a 4.6 m/s run it is 9.4 ms of body
+ * travel, so every plant landed 43 mm further in front of the body than the
+ * stride budget had sized it for — measured, the front foot touched down 346 mm
+ * ahead of the hip against a 327 mm front reach budget and a 283 mm intent. The
+ * pelvis then has to dive to reach a foot that is out past its own leg, which
+ * is what the reach clamp below is doing on 99.8% of frames at a run.
+ */
+const SWING_LAND = 0.97;
+
 /**
  * Swing ease: near-constant speed for most of the swing, then a cosine taper
  * to a dead stop at touchdown.
@@ -456,6 +512,12 @@ export class BipedAnimator {
     this.spineLean = 0;
     this.bob = 0;
     this.sway = 0;
+    /**
+     * The pelvis's offset from the neutral stance point, in world axes, as
+     * ACTUALLY APPLIED — bob, breath, land dip, run crouch, reach clamp, sway,
+     * all of it. Nothing downstream should ever rebuild this from the parts.
+     */
+    this.pelvis = new THREE.Vector3();
     this.airTime = 0;
     this.turnRate = 0;
     this.landDip = 0;
@@ -557,7 +619,8 @@ export class BipedAnimator {
 
     // Hips ride lower the faster you go. A runner's pelvis genuinely drops, and
     // it is also what buys the horizontal reach a long stride needs.
-    const hipStand = this.standHip * lerp(1, 0.955, runness) * lerp(1, 0.68, crouch);
+    const hipCrouch = this.standHip * lerp(1, 0.68, crouch);
+    const hipStand = hipCrouch * lerp(1, 0.955, runness);
 
     // How much ground one stance can actually cover, solved rather than
     // guessed. Heel-off is worth more of it than anything else in here: at
@@ -691,7 +754,7 @@ export class BipedAnimator {
           f.from.copy(f.planted); f.fromYaw = f.yaw; f.t = 0; f.grounded = false;
           f.dur = Math.max(0.08, moving ? (1 - duty) / freq
             : clamp(0.30 / this.legRef, 0.18, 0.45));
-          this._aimSwing(f, p, groundAt, f.dur);
+          this._aimSwing(f, p, groundAt, f.dur * SWING_LAND);
         }
       }
 
@@ -701,18 +764,18 @@ export class BipedAnimator {
         // locked so the plant lands on a fixed world point with zero foot
         // velocity. Chasing the body all the way down is what makes a foot
         // arrive already travelling — which is exactly what a slide is.
-        if (f.t < 0.45) this._aimSwing(f, p, groundAt, (1 - f.t) * f.dur);
+        if (f.t < 0.45) this._aimSwing(f, p, groundAt, (SWING_LAND - f.t) * f.dur);
         f.t = Math.min(1, f.t + dt / Math.max(f.dur, 1e-3));
         // The swing finishes BEFORE the phase does — the foot is down and
         // still for the last few percent of it. Landing straight off the end
         // of the arc left 25mm of lift on the final frame, and the plant then
         // snapped it to the floor: a 20mm pop on every single footfall.
-        const e = swingEase(clamp(f.t / 0.97, 0, 1));
+        const e = swingEase(clamp(f.t / SWING_LAND, 0, 1));
         f.pos.lerpVectors(f.from, f.to, e);
         // The foot is still HIGH while it is at its furthest in front of the
         // hip — that is what a flexed knee is for — and comes down over the
         // last fifth of the swing.
-        const u = clamp(f.t / 0.97, 0, 1);
+        const u = clamp(f.t / SWING_LAND, 0, 1);
         // THE SWING FOOT PASSES INSIDE THE STANCE LEG.
         //
         // from and to sit at the same distance from the midline, so a straight
@@ -826,6 +889,19 @@ export class BipedAnimator {
       hipY = Math.max(hipY, p.position.y + 0.30 * s);
     }
     hips.position.set(hipX, hipY, hipZ);
+    // WHAT THE PELVIS ACTUALLY DID, in world axes, relative to a neutral
+    // stance. Published rather than left to be rebuilt from the parts, because
+    // it is the sum of six separate terms — bob, breath, the landing dip, the
+    // run's own crouch, the reach clamp and the lateral sway — and anything
+    // that has to move WITH the pelvis needs every one of them or it swims
+    // against the body. The first-person eye is exactly such a thing, and
+    // before this it was handed `bob` alone, at half strength. See Player.js.
+    //
+    // The one term deliberately left OUT is the crouch key, because the eye
+    // does not track the pelvis through a crouch: a crouching human flexes the
+    // spine as well as the hips, so the head drops further than the pelvis does
+    // (0.40 m against 0.30 m here). Player.js owns that difference.
+    this.pelvis.set(hipX - p.position.x, hipY - (p.position.y + hipCrouch), hipZ - p.position.z);
 
     // Lean into what the body is doing: real acceleration, plus the caller's
     // own speed proxy so a steady run still carries a forward set. The proxy

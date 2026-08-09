@@ -396,7 +396,8 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform float uRipAspect;  // how far the ripple frame is stretched along the crest
   uniform vec2 uHex;         // stochastic tile: cell size (m), bearing gain
   uniform vec3 uRockUp;      // rock-with-height: gain, y start, y end
-  uniform vec3 uCover;       // amount, freq (1/m), threshold
+  uniform vec3 uCover;       // amount, 1/extent (m), unused
+  uniform sampler2D uCoverMap;  // WHERE anything grows — the grass's own field
   uniform vec3 uNrmScale;    // base, near detail, rock
   uniform vec3 uSkyCol;      // the fallback asymptote, when nothing drew a sky
   uniform sampler2D uSkyStrip;  // the DRAWN sky at the skyline, over bearing
@@ -811,8 +812,16 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // Ground cover darkens the ground it grows out of — leaf litter, root mat,
   // damp soil. Without it every blade of grass is an isolated green spike
   // standing on bright sand, which is what "hobby project" looks like.
+  /* THE MASK IS THE GRASS'S OWN. It used to be a 30 m value noise invented
+   * here, while the blades clumped off a 36 m fbm invented in Scenery and the
+   * props used no field at all — so the ground could be painted green where
+   * nothing grew and left bare where the grass stood, and "how much of this
+   * level is covered" had three different answers. One field now, baked to a
+   * texture by makeCoverField and handed down by the grass, which is also the
+   * only way cover reaches past the instanced field's outer radius: this runs
+   * to the edge of the heightfield for nothing. */
   if (uCover.x > 0.001) {
-    float cov = uCover.x * smoothstep(uCover.z, uCover.z + 0.34, tnoise(wp * uCover.y) + 0.16)
+    float cov = uCover.x * texture2D(uCoverMap, wp * uCover.y + 0.5).r
               * smoothstep(0.30, 0.08, slope)
               * smoothstep(uGround.x - 0.35, uGround.x + 0.45, vWPos.y);
     col = mix(col, uCoverCol, cov);
@@ -1078,6 +1087,12 @@ export class Terrain {
   constructor(scene, presetName = 'dunes', quality = 1) {
     const preset = TERRAIN_PRESETS[presetName] || TERRAIN_PRESETS.dunes;
     this.preset = preset;
+    /* The NAME, not just the table row. Anything that has to be different from
+     * level to level and has only the terrain to ask — the grass's cover field
+     * is the first — needs a per-level seed, and reading it off the preset
+     * object means two levels on one preset agree, which is the right answer
+     * for a heightfield and the right answer for what grows on it. */
+    this.presetKey = TERRAIN_PRESETS[presetName] ? presetName : 'dunes';
     this.quality = clamp(quality, 0.4, 1.6);
     this.size = preset.scale;
     this.res = Math.max(64, Math.floor(preset.res * this.quality));
@@ -1294,7 +1309,8 @@ export class Terrain {
       // and none of the bearing: panels at random angles is a different lie.
       uHex: { value: new THREE.Vector2(2.4 / (P.texScale ? P.texScale[0] : 0.30), P.flat ? 0.0 : 1.0) },
       uRockUp: { value: new THREE.Vector3(...(P.rockUpland || [0, 0, 1])) },
-      uCover: { value: new THREE.Vector3(0, 1 / 30, 0.42) },
+      uCover: { value: new THREE.Vector3(0, 1 / this.size, 0) },
+      uCoverMap: { value: this._coverDefault = flatTexture(255) },
       uCoverCol: { value: new THREE.Color(0x3c4223) },
       // base ripple, near grain, rock. The rock figure used to be 1.35, which
       // added up to a 53 degree tilt on a unit normal: every joint in the map
@@ -1475,12 +1491,15 @@ export class Terrain {
    *
    * @param {number} amount   0 for bare ground, ~0.5 for real cover
    * @param {number|THREE.Color} colour   the litter/soil tone under the cover
-   * @param {number} metres   patch scale of the cover
+   * @param {number} metres   patch scale — only read when there is no map
+   * @param {THREE.Texture} [map]  the cover field, baked over the heightfield's
+   *                        own square. WHERE cover is, as against how much.
    */
-  setGroundCover(amount, colour, metres = 30) {
+  setGroundCover(amount, colour, metres = 30, map) {
     const u = this._uniforms;
     if (!u) return this;
-    u.uCover.value.set(clamp(amount, 0, 1), 1 / Math.max(2, metres), 0.42);
+    u.uCover.value.set(clamp(amount, 0, 1), 1 / this.size, 0);
+    if (map !== undefined) u.uCoverMap.value = map || this._coverDefault;
     if (colour !== undefined && colour !== null) u.uCoverCol.value.set(colour);
     return this;
   }
@@ -1668,8 +1687,17 @@ export class Terrain {
     this.geometry.dispose();
     this.material.dispose();
     this._strip?.dispose();
+    this._coverDefault?.dispose();
     this.mesh.parent?.remove(this.mesh);
   }
+}
+
+/** A 1×1 texture, so a sampler that has nothing bound to it yet still reads a
+ *  known value rather than whatever the driver last left in the unit. */
+function flatTexture(v) {
+  const t = new THREE.DataTexture(new Uint8Array([v, v, v, 255]), 1, 1, THREE.RGBAFormat);
+  t.needsUpdate = true;
+  return t;
 }
 
 const _tv = new THREE.Vector3();

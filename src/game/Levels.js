@@ -15,7 +15,7 @@ import {
   addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
   addAntenna, addPlinth,
 } from '../world/Props.js';
-import { addHorizon } from '../world/Scenery.js';
+import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { DOJO_LEVEL } from './Dojo.js';
 
@@ -62,11 +62,22 @@ export function siteOk(world, x, z, opts = {}) {
   if (x * x + z * z < keep * keep) return false;
   const taken = world._siteTaken || (world._siteTaken = []);
   const rad = opts.clearance ?? 2.2;
-  for (let i = 0; i < taken.length; i++) {
-    const t = taken[i];
-    const dx = t.x - x, dz = t.z - z;
-    const min = rad + t.r;
-    if (dx * dx + dz * dz < min * min) return false;
+  /* CLEARANCE ZERO MEANS THINGS MAY TOUCH, and that had to become sayable.
+   * The mutual-exclusion radius here — 2.2 m by default, 1.4 for a cluster
+   * satellite — meant NOTHING IN THE GAME COULD REST AGAINST ANYTHING ELSE,
+   * and real ground gets most of its density from exactly that: talus piled
+   * against a face, a drift banked behind a rock, a thicket. Forbidding it and
+   * then answering the resulting emptiness with more isolated objects is how a
+   * landscape ends up evenly dusted with litter instead of composed. A site
+   * asked for at zero clearance still RECORDS itself, so anything that does
+   * want its own room still gets it. */
+  if (rad > 0) {
+    for (let i = 0; i < taken.length; i++) {
+      const t = taken[i];
+      const dx = t.x - x, dz = t.z - z;
+      const min = rad + t.r;
+      if (dx * dx + dz * dz < min * min) return false;
+    }
   }
   taken.push({ x, z, r: rad });
   return true;
@@ -111,6 +122,50 @@ export function cluster(world, opts, place) {
 }
 
 /**
+ * DRIFT — placement through a DENSITY FIELD instead of over a disc.
+ *
+ * This is the primitive the file was missing, and its absence is what every
+ * "jumbled mess of little objects everywhere" reduces to. `polar` draws
+ * uniformly: given 500 stones and a 130 m disc it puts one every 33 m², each
+ * one alone, everywhere, forever. Measured on the shipped build with the
+ * Clark–Evans ratio — mean nearest-neighbour distance over what a Poisson
+ * process of the same intensity would give, so 1.0 is indistinguishable from
+ * uniform random and below 0.5 is strongly clustered:
+ *
+ *     dunes R = 0.893    arena R = 0.819    canyon R = 0.800
+ *
+ * That is uniform scatter with a rounding error of clumping on it, over three
+ * thousand objects a level. The field is a `makeCoverField`: a bimodal mask
+ * with genuine swathes and genuine clearings, solved to a stated area
+ * fraction. Rejection-sampling against it costs a few extra tries per item and
+ * turns the same object count into drifts and bare ground.
+ *
+ * Composition needs the negative space more than it needs the objects. A
+ * landscape reads as full when the full parts are full — which is only
+ * possible if the empty parts are allowed to be empty.
+ *
+ * @param {function} opts.field   (x, z) → 0..1 chance of accepting a site
+ * @param {number}   opts.count   how many to place
+ */
+export function drift(world, opts, place) {
+  const field = opts.field || (() => 1);
+  const rmin = opts.rmin ?? 0, rmax = opts.rmax ?? 120;
+  const n = opts.count ?? 60;
+  const maxTries = n * (opts.tries ?? 9);
+  let placed = 0;
+  for (let i = 0; i < maxTries && placed < n; i++) {
+    const q = polar(rmin, rmax, opts.bias ?? 1);
+    const w = field(q.x, q.z);
+    if (rng() > w) continue;
+    if (!siteOk(world, q.x, q.z, opts)) continue;
+    _p.set(q.x, world.terrain ? world.terrain.height(q.x, q.z) : 0, q.z);
+    place(_p, placed, w, q.a);
+    placed++;
+  }
+  return placed;
+}
+
+/**
  * A line of things — a colonnade, a wall run, a ridge of wreckage. Straight
  * scatter never produces one, and a single line does more to make a space feel
  * built than fifty scattered objects.
@@ -147,6 +202,7 @@ export function run(world, from, to, count, place, opts = {}) {
  */
 export function beginDressing(world, seed) {
   world._siteTaken = [];
+  world._stoneField = null;
   rng = makeRng(seed ?? 20250805);
 }
 
@@ -155,42 +211,99 @@ export function beginDressing(world, seed) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * NOWHERE BARREN, and the measurement that says so.
+ * WHERE LOOSE ROCK HAS GATHERED on this level — one field, shared by every
+ * pass that spills stone, so the cobble lies around the boulders and the
+ * shingle banks where the talus is instead of each grade running its own
+ * independent sprinkle over the same ground. Cleared by `beginDressing`.
  *
- * Sampled on a 4 m grid over the walkable r = 90 m disc, asking how far the
- * nearest object with a silhouette (radius ≥ 0.35 m) is:
+ * Squared on the way out: the margins of a drift thin out fast instead of
+ * trailing a halo of singletons, and a halo of singletons is the thing being
+ * fixed.
+ */
+export function stoneField(world, seed = 3300, opts = {}) {
+  if (world._stoneField) return world._stoneField;
+  const F = makeCoverField({
+    seed: seed * 7 + 13, amount: opts.amount ?? 0.29,
+    patch: opts.patch ?? 62, grain: 19, edge: 0.34, extent: opts.extent ?? 130,
+  });
+  /* STONE SHUNS PLANTS, because they are competing for the same ground: what
+   * you get where cover fails is pavement, lag and talus, and what you get
+   * where it does not is cover. Two independent fields put their clearings on
+   * top of each other by chance, which is how the dune sea ended up with a
+   * tenth of its walkable ground carrying neither — and the survey it fails is
+   * right to fail it, because that tenth is genuinely nothing at all.
+   *
+   * Still a bias and not an exclusion — a drift runs into cover at its edge,
+   * which is what a real talus toe does — but 0.8 rather than the 0.6 it was
+   * first written at, and the number was measured rather than picked. The
+   * acceptance test is retried up to seven times, so what decides where a
+   * chip lands is the field's SHAPE and not its scale: the accepted
+   * distribution is proportional to the weight, and at 0.6 that moved the mean
+   * cover under a chip from 0.47 only to 0.41. At 0.8 it is 0.19.
+   *
+   * Taken off the LIVE field the level is actually growing, matched by
+   * terrain, so a stale one from another level's teardown cannot leak in. */
+  const cover = ground.grass && ground.grass.terrain === world.terrain ? ground.grass.cover : null;
+  const shun = opts.shun ?? 0.8;
+  const f = (x, z) => {
+    const v = F.at(x, z);
+    return v * v * (cover ? 1 - shun * cover.at(x, z) : 1);
+  };
+  f.raw = F;
+  world._stoneField = f;
+  return f;
+}
+
+/**
+ * WHAT LIES ON THE GROUND, and the two measurements that decide it.
+ *
+ * The first is the one this helper was written for. Sampled on a 4 m grid over
+ * the walkable r = 90 m disc, asking how far the nearest object with a
+ * silhouette (radius ≥ 0.35 m) is:
  *
  *     dunes  55.1% of the ground had NOTHING within 12 m, median gap 13.4 m
  *     canyon 36.2%,  median 8.7 m
  *     arena  33.1%,  median 6.2 m
  *     hangar  1.0%,  median 0.0 m
  *
- * A third to a half of every outdoor level was ground you could stand on with
- * nothing in reach — while the hangar, which nobody complained about, was at
- * one per cent. That is what "barren" means numerically, and no amount of
- * architecture at the rim fixes it: the fix has to be ON the floor.
+ * The second is the one that says the first was answered WRONG. Clark–Evans,
+ * the mean nearest-neighbour distance over what a Poisson process of the same
+ * intensity would give — 1.0 is indistinguishable from uniform random:
  *
- * It also has to be nearly free, which is what makes `addScree` the right tool
- * rather than the obvious one: it is ONE instanced draw call for hundreds of
- * stones, it beds every one onto the heightfield, and it adds no colliders and
- * casts no shadows. The whole ground of a level is four draw calls.
+ *     dunes R = 0.893    arena R = 0.819    canyon R = 0.800
  *
- * The grain LADDER is the part that matters, and it is why this is a helper
- * rather than four copy-pasted calls: real ground is graded, and each grade
- * answers a different question. Landmarks are what you see across the level,
- * boulders are what you fight around, cobble is what you read as ground while
- * standing on it, grit is what you only ever see at your own feet. One size at
- * one density reads as gravel texture sprayed onto a plane.
+ * So the fix for "the ground is empty" had been fifteen hundred to two
+ * thousand pebbles of 20 to 95 cm sprayed UNIFORMLY over a 108-165 m disc. It
+ * moved the first number and it is precisely what the level was then described
+ * as: "a jumbled mess with just little objects everywhere". Filling a
+ * landscape with isolated small objects is the opposite of ground cover.
  *
- * `addScree` shrinks its chips toward the rim (×0.45 at the edge against ×1.5
- * at the centre), so each grade's disc is deliberately centred somewhere
- * DIFFERENT: four concentric discs is a target, four offset ones is a landscape
- * whose coarse ground is over there and whose fine ground is here.
+ * Three things changed here.
  *
- * FOUR draw calls, and that is the whole budget — which is why the grades are
- * fixed passes rather than a loop somebody can turn up. The first version of
- * this used seven per call and put the arena at 502 draw calls against a
- * starting 351.
+ * ONE: every grade goes through a DENSITY FIELD now — a `makeCoverField` mask
+ * with real swathes and real clearings, solved to a stated area fraction — so
+ * the same stones arrive as talus and drifts with bare ground between them
+ * rather than as an even dusting. Stones may touch: `siteOk` takes clearance
+ * zero, and a talus cone is stones resting on stones.
+ *
+ * TWO: THE GRIT GRADE IS GONE. It was 520 stones of 22 cm over a 71 m disc,
+ * and it was doing a job the terrain shader already does better: `uGritCol`
+ * and its slope band paint exactly that grain, in texture, over the whole
+ * heightfield, for nothing. At 22 cm a stone is sub-pixel past about ten
+ * metres, so what it contributed at range was aliasing, and what it
+ * contributed underfoot was the litter the complaint is about. One draw call
+ * and 520 objects a level, cut.
+ *
+ * THREE: the ground cover that replaces it is REAL cover — the grass field's
+ * own, which now reaches 400 m instead of 46 and paints the terrain to match
+ * out to the edge of the heightfield. That is what "nothing within 12 m" is
+ * supposed to mean, and it is what the barrenness survey measures now.
+ *
+ * The grain LADDER survives all three, because it is the part that was right:
+ * landmarks are what you see across the level, boulders are what you fight
+ * around, cobble is what you read as ground while standing on it. `addScree`
+ * shrinks its chips toward the rim, so each grade's disc is centred somewhere
+ * DIFFERENT — four concentric discs is a target, offset ones are a landscape.
  */
 function strewGround(world, opts = {}) {
   const T = world.terrain;
@@ -199,44 +312,46 @@ function strewGround(world, opts = {}) {
   const R = opts.radius ?? 130;
   const mat = opts.mat || null;
   const bearing = opts.bearing ?? 0.7;
+  /* Where loose rock has gathered on THIS level. Coarser than the grass field
+   * and thinner: rock collects in fewer, bigger, more definite places than
+   * plants do, and every grade shares the one field so the cobble is lying
+   * around the boulders instead of in its own independent sprinkle. */
+  const field = stoneField(world, seed, { amount: opts.spread ?? 0.29, extent: R });
   const put = (k, rad, count, size, s) => {
     const a = bearing + (k / 3) * TAU;
     addScree(world, at(Math.cos(a) * R * 0.3, Math.sin(a) * R * 0.3), {
-      radius: rad, count, size, inner: opts.inner ?? 0, seed: seed + s, mat,
+      radius: rad, count, size, inner: opts.inner ?? 0, seed: seed + s, mat, field,
     });
   };
-  /* Landmarks — the grade the SILHOUETTE measurement is about. With only the
-   * three scree grades below, 16% of the dune sea still had nothing over 1.2 m
-   * within 25 m of it: everything else here is ankle to knee, and every big
-   * thing on the level is in a CLUSTER. Clustering is right — things gather
-   * because something gathered them — but it leaves voids between the clusters
-   * by construction, and this is what fills them.
+  /* Landmarks — the grade the SILHOUETTE measurement is about, and the one
+   * that has to survive the cut, because it is the only thing on the floor big
+   * enough to give the ground a scale from across the level.
    *
    * NOT scree. `addScree` orients its chips on all three axes with no limit,
-   * which is exactly right for a 20 cm chip and catastrophic at three metres:
-   * its geometry is an icosahedron flattened to 0.52, so a large one landing
+   * which is right for a 20 cm chip and catastrophic at three metres: its
+   * geometry is an icosahedron flattened to 0.52, so a large one landing
    * edge-on is a five-metre blade standing vertically in the sand. That is
-   * what the first screenshot of this pass showed, unmistakably, and it is why
-   * this grade is the boulder maker instead — real broken shapes, tilt capped
-   * at ±0.35 rad, and each one bedded to its own depth. Five draw calls for
-   * fifty stones, against one for the scree it replaces.
+   * what the first screenshot of this pass showed, and it is why this grade is
+   * the boulder maker instead — real broken shapes, tilt capped at ±0.35 rad,
+   * each one bedded to its own depth.
    */
   {
     const a = bearing + 1.7;
     addBoulderCluster(world, at(Math.cos(a) * R * 0.22, Math.sin(a) * R * 0.22), {
-      radius: R * 0.94, count: Math.round(50 * (opts.landmarks ?? 1)),
-      size: 2.3, seed: seed + 61, mat,
+      radius: R * 0.94, count: Math.round(64 * (opts.landmarks ?? 1)),
+      size: 2.3, seed: seed + 61, mat, field, crowd: 0.52,
     });
   }
   // Boulders — the grade that reads as cover from across the level. Held at
-  // 0.95 for the same reason: past about 1.5 m across, a scree chip stops
-  // reading as a stone lying on the ground and starts reading as a shard.
-  put(1, R * 0.94, Math.round(220 * (opts.boulders ?? 1)), 0.95, 11);
-  // Cobble — the grade you read as ground while standing on it.
-  put(2, R * 0.98, Math.round(460 * (opts.cobble ?? 1)), 0.62, 17);
-  // Grit — only worth drawing where it can be seen, so it stays near the fight.
-  put(0.5, R * 0.55, Math.round(520 * (opts.grit ?? 1)), 0.22, 31);
-  return 8;
+  // 0.95 for the same reason the landmarks are not scree: past about 1.5 m
+  // across, a chip stops reading as a stone lying on the ground and starts
+  // reading as a shard.
+  put(1, R * 0.94, Math.round(280 * (opts.boulders ?? 1)), 0.95, 11);
+  // Cobble — the grade you read as ground while standing on it. It takes over
+  // the grit grade's budget as well as its own, and spends it where the field
+  // says stone has collected rather than everywhere.
+  put(2, R * 0.98, Math.round(620 * (opts.cobble ?? 1)), 0.58, 17);
+  return 7;
 }
 
 /**
@@ -454,7 +569,7 @@ export const LEVELS = {
     // troughs where the little water there is collects. Sparse on purpose — the
     // clump field puts it in 36 m patches, and the slope term keeps it off the
     // slip faces, so it reads as the desert having a grain rather than a lawn.
-    grass: 0.34,
+    grass: 0.40,
     grassTint: [0xb9a463, 0x7d6c3a],
     dress(world) {
       const T = world.terrain;
@@ -538,7 +653,14 @@ export const LEVELS = {
       // ── The floor itself. See strewGround: this is the pass that takes the
       // dune sea from "55% of it has nothing within 12 m" to something you can
       // stand anywhere on and see the ground has a history.
-      strewGround(world, { seed: 3301, radius: 150, inner: 5, landmarks: 1.3 });
+      strewGround(world, {
+        seed: 3301, radius: 150, inner: 5, landmarks: 1.3,
+        // The dune sea spreads its grades over a 150 m disc against the
+        // arena's 108, so the same counts are half the areal density inside
+        // the ground the player actually walks. It also carries the thinnest
+        // cover of the three, so the stone has to do more of the work here.
+        spread: 0.36, boulders: 1.5, cobble: 1.7,
+      });
 
       // ── Wrecks in the middle distance. A desert collects them, and each one
       // is a silhouette to steer by from a long way off.
@@ -723,7 +845,7 @@ export const LEVELS = {
     },
     // Dry scrub in the sand — the stuff that grows in a place people only visit
     // to kill each other in. Thin: this floor is fought on.
-    grass: 0.26,
+    grass: 0.36,
     grassTint: [0xa9985c, 0x6f6234],
     dress(world) {
       const T = world.terrain;
@@ -855,7 +977,9 @@ export const LEVELS = {
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * TAU + 0.21;
         addScree(world, at(Math.cos(a) * (R - 4) * 0.62, Math.sin(a) * (R - 4) * 0.62),
-          { radius: R - 2, inner: R * 0.62, count: 380, size: 0.62, seed: 3400 + i });
+          { radius: R - 2, inner: R * 0.62, count: 430, size: 0.62, seed: 3400 + i,
+            // banked where the bays actually fell in, not evenly round the ring
+            field: stoneField(world) });
       }
 
       // ── Fallen columns and broken plinths lying in the sand across the bowl.
@@ -1195,7 +1319,9 @@ export const LEVELS = {
       for (let k = 0; k < 8; k++) {
         const cx = (k - 3.5) * 26;
         addScree(world, at(cx, (rng() - 0.5) * 22),
-          { radius: 30, count: 300, size: 0.72, seed: 3900 + k, mat: M.stone });
+          { radius: 30, count: 340, size: 0.72, seed: 3900 + k, mat: M.stone,
+            // a river bed is graded into BARS with clean channel between them
+            field: stoneField(world) });
       }
 
       // ── Boulders shed off both walls, all the way down the gorge. Seven
@@ -1229,7 +1355,8 @@ export const LEVELS = {
       // one per piece of driftwood
       for (let k = 0; k < 2; k++) {
         addScree(world, at((rng() - 0.5) * 120, (k ? 1 : -1) * (9 + rng() * 8)),
-          { radius: 58, count: 420, size: 0.34, seed: 4100 + k, mat: M.stone });
+          { radius: 58, count: 480, size: 0.34, seed: 4100 + k, mat: M.stone,
+            field: stoneField(world) });
       }
 
       // ── More spires, and a second rock arch further down: navigating a
