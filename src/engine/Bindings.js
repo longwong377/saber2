@@ -19,6 +19,24 @@ const STORE_KEY = 'saber.bindings.v1';
 export const MOUSE = { 0: 'Mouse1', 1: 'Mouse3', 2: 'Mouse2', 3: 'Mouse4', 4: 'Mouse5' };
 
 /**
+ * …and so does the WHEEL, which until now lived outside the table entirely.
+ *
+ * It was read raw in two places — `rollInput += input.mouse.wheel * 0.55` in
+ * SaberController and `this._wheel = input.mouse.wheel` in Player — with the
+ * second having to STEAL the device from the first, frame by frame, to get a
+ * notch of its own. That is the same disease as KeyB/KeyN and the arrow keys,
+ * in the one input the project had never put in a table: not rebindable, not
+ * listed, and invisible to findConflicts, so the collision could only be fixed
+ * by one reader knowing about the other.
+ *
+ * A notch is an edge, not a state, so both `act` and `actHit` answer the same
+ * question — `mouse.wheel` is accumulated over the frame and cleared by
+ * Input.end(), which makes it a one-frame press by construction.
+ */
+export const WHEEL = { up: 'WheelUp', down: 'WheelDown' };
+export const WHEEL_CODES = [WHEEL.up, WHEEL.down];
+
+/**
  * Every rebindable action, in the order the options screen lists them.
  * `hold` marks an action read continuously rather than on the press edge.
  */
@@ -34,6 +52,14 @@ export const ACTIONS = [
 
   { id: 'blade',      group: 'Blade',    label: 'Take the blade',    keys: ['Mouse1'],     hold: true },
   { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'] },
+  // The two halves of the attack rose, mirroring the guard rose: wheel up is an
+  // overhead, wheel down is a stab. They are ordinary rows here rather than a
+  // raw `mouse.wheel` read for exactly the reason the four rows below this one
+  // exist — a control that is not in this table cannot be rebound, cannot be
+  // listed, and cannot be seen to collide with the Force grip, which is the
+  // other thing that wants the wheel.
+  { id: 'attackOver', group: 'Blade',    label: 'Overhead attack',   keys: ['WheelUp'] },
+  { id: 'attackStab', group: 'Blade',    label: 'Stab',              keys: ['WheelDown'] },
   { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true },
   { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true },
   { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'] },
@@ -125,6 +151,8 @@ export function saveBindings(b) {
 /** Human-readable name for a key code, for the options screen. */
 export function keyLabel(code) {
   if (!code) return '—';
+  if (code === 'WheelUp') return 'Wheel ↑';
+  if (code === 'WheelDown') return 'Wheel ↓';
   if (code.startsWith('Mouse')) return code.replace('Mouse', 'M');
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);

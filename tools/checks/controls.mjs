@@ -1295,7 +1295,7 @@ export async function run({ check, assert }) {
       + '4 arrows + 4 numpad + IJKL fire nothing and move nothing';
   });
 
-  check('controls: no gameplay reads a raw key code', async () => {
+  check('controls: no gameplay reads a raw key code or a raw device', async () => {
     // The rule the arrows broke, stated once for the whole tree. A raw
     // `down('KeyX')` is not in ACTIONS, so it cannot be rebound, cannot be
     // shown, and cannot be seen to collide — every version of this bug this
@@ -1311,7 +1311,35 @@ export async function run({ check, assert }) {
       }
     }
     assert(!raw.length, `raw key codes read past the bindings table: ${raw.join('; ')}`);
-    return `${files.length} gameplay files, 0 raw key-code reads`;
+
+    // ── the same rule for the DEVICES, which is where the last one was hiding.
+    //
+    // The check above only ever looked at key codes, so the wheel sailed past
+    // it for the whole of v1: SaberController spent it on wrist roll and Player
+    // spent it on grip distance, neither was in ACTIONS, and the collision could
+    // only be resolved by Player physically stealing the field
+    // (`input.mouse.wheel = 0`) before the blade could read it. A device read is
+    // exactly as unrebindable as a key code and this now says so.
+    //
+    // ONE exception, named and bounded rather than pattern-matched away:
+    // Player's grip distance still reads the wheel raw. It is a continuous
+    // magnitude (notches of hold distance), not a press, so it is not an ACTION
+    // in the shape ACTIONS describes — putting it in the table would mean
+    // inventing analogue bindings. It is listed here so it is visible and so a
+    // SECOND one cannot appear beside it unremarked.
+    const ALLOWED = new Set(['game/Player.js']);
+    const devices = [], excused = [];
+    for (const f of files) {
+      const body = strip(await readFile(src(f), 'utf8'));
+      for (const m of body.matchAll(/\binput\.mouse\.(wheel|buttons)\b|\binput\.(?:buttons|buttonPressed)\s*\[/g)) {
+        (ALLOWED.has(f) ? excused : devices).push(`${f}: ${m[0]}`);
+      }
+    }
+    assert(!devices.length,
+      `raw device reads past the bindings table: ${devices.join('; ')} — `
+      + 'a wheel notch or a mouse button read this way cannot be rebound and cannot be seen to collide');
+    return `${files.length} gameplay files, 0 raw key-code reads, `
+      + `0 unexcused raw device reads (${excused.length} excused: ${excused.join(', ') || 'none'})`;
   });
 
   check('controls: every damage() call site matches the signature', async () => {

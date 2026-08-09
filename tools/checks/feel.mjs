@@ -136,7 +136,34 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 120; i++) c.applyInput(input, 1 / 60, { stamina: 1 });
     const settled = c.gy * c.maxPitch * DEG;
     assert(settled < 10, `after 2 s of no input the cursor settles ${settled.toFixed(1)} deg high`);
-    return `${rows.join(', ')}; settles at ${settled.toFixed(1)} deg`;
+
+    // ── and READY_GUARD is what NEUTRAL means under the directional scheme.
+    //
+    // Directional blocking replaced the continuous guard POSITION with four
+    // discrete zones, so it would have been easy for the ready pose to quietly
+    // stop being anything: it is now where the blade rests with no guard
+    // raised, which makes it the pose a player looks at for most of a fight.
+    // Same two numbers, same one owner, and the check that keeps it that way is
+    // the same check.
+    const d = new SaberController({ scheme: 'directional' });
+    Player.prototype._applyViewMode.call(
+      { camera: { firstPerson: false, targetDistance: 0 }, rig: { get: () => null }, control: d });
+    const dInput = { mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 },
+      bindings: defaultBindings(), _held: new Set(),
+      act(id) { return this._held.has(id); }, actHit: () => false };
+    dInput._held.add('blade');
+    for (let i = 0; i < 60; i++) d.applyInput(dInput, 1 / 60, { stamina: 1 });
+    assert(d.zone !== 'none', 'setup: the directional guard never came up, so nothing was left');
+    const raisedUp = d.gy * d.maxPitch * DEG;
+    dInput._held.delete('blade');
+    for (let i = 0; i < 90; i++) d.applyInput(dInput, 1 / 60, { stamina: 1 });
+    assert(Math.abs(d.gx - d.readyX) < 0.02 && Math.abs(d.gy - d.readyY) < 0.02,
+      `dropping the guard left the cursor at (${d.gx.toFixed(3)}, ${d.gy.toFixed(3)}) `
+      + `instead of the ready guard (${d.readyX}, ${d.readyY})`);
+    const neutral = d.gy * d.maxPitch * DEG;
+    assert(neutral < 10, `directional neutral rests the cursor ${neutral.toFixed(1)} deg above centre`);
+    return `${rows.join(', ')}; settles at ${settled.toFixed(1)} deg; `
+      + `directional guard up ${raisedUp.toFixed(1)} deg → released ${neutral.toFixed(1)} deg`;
   });
 
   /* ── 2. the catch gate is graded in the body's frame ────────────────── */
@@ -294,9 +321,14 @@ export async function run({ check, assert }) {
     return `${used.size} distinct actions read across ${files.length} files, all registered, none seeded`;
   });
 
-  check('feel: lateral guard and flourish are on keys nothing else claims', async () => {
+  check('feel: lateral guard, flourish and the attack rose are on keys nothing else claims', async () => {
     const b = defaultBindings();
-    for (const id of ['stance', 'flourish', 'stasis', 'rend']) {
+    // attackOver/attackStab join the list for the same reason the other four
+    // are on it: they were the WHEEL, which had never been in a table at all —
+    // read raw by the wrist roll and raw again by the Force grip, with the grip
+    // having to steal the device frame by frame because neither could see the
+    // other. A control that is not in ACTIONS cannot be seen to collide.
+    for (const id of ['stance', 'flourish', 'stasis', 'rend', 'attackOver', 'attackStab']) {
       const a = ACTIONS.find(x => x.id === id);
       assert(a, `${id} is not in ACTIONS at all — it cannot be rebound or even found`);
       assert(b[id] && b[id].length, `${id} has no default key`);
@@ -306,7 +338,7 @@ export async function run({ check, assert }) {
 
     // Nothing else in ACTIONS may want these keys…
     const clashes = [];
-    for (const id of ['stance', 'flourish']) {
+    for (const id of ['stance', 'flourish', 'attackOver', 'attackStab']) {
       for (const k of b[id]) {
         const other = findConflict(b, k, id);
         if (other) clashes.push(`${id} shares ${k} with ${other}`);
@@ -322,10 +354,13 @@ export async function run({ check, assert }) {
     const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
     const raw = new Set([...main.matchAll(/\.code\s*===\s*['"]([A-Za-z0-9]+)['"]/g)].map(m => m[1]));
     const stolen = [];
-    for (const id of ['stance', 'flourish']) for (const k of b[id]) if (raw.has(k)) stolen.push(`${id} on ${k}`);
+    for (const id of ['stance', 'flourish', 'attackOver', 'attackStab']) {
+      for (const k of b[id]) if (raw.has(k)) stolen.push(`${id} on ${k}`);
+    }
     assert(!stolen.length,
       `${stolen.join(', ')} — main.js reads that code directly, so one press does two things`);
-    return `stance ${b.stance.join('+')}, flourish ${b.flourish.join('+')}; `
+    return `stance ${b.stance.join('+')}, flourish ${b.flourish.join('+')}, `
+      + `attacks ${b.attackOver.join('+')}/${b.attackStab.join('+')}; `
       + `main.js claims ${[...raw].join(',') || 'nothing'} raw, no overlap`;
   });
 }

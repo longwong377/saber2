@@ -18,6 +18,7 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.j
 import { Net, RemoteAvatar } from './net/Net.js';
 import { BOONS } from './game/Waves.js';
 import { keyLabel } from './engine/Bindings.js';
+import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 
 const canvas = document.getElementById('view');
@@ -553,6 +554,7 @@ function frame(now) {
       r.update(dt, { terrain: world.terrain, camera: engine.camera, time: world.time });
     }
     hud.update(dt, world, world.player, engine.camera);
+    setGuardRose(world);
   } else if (world && (state === 'paused' || state === 'draft')) {
     // keep the camera alive behind the overlay
     world.player?.camera.update(dt, world.player.position, { physics: world.physics, terrain: world.terrain });
@@ -561,6 +563,78 @@ function frame(now) {
   engine.render(dt);
   input.end();
 }
+
+/* ── the guard rose ──────────────────────────────────────────────────── */
+
+/**
+ * Light the petal for the guard the player is holding.
+ *
+ * Directional blocking is a DISCRETE STATE, and a discrete state the player
+ * cannot see is one they cannot play: the whole scheme comes down to knowing
+ * which of four zones you are in without having to look at your own blade. So
+ * the rose is the readout for the mechanic rather than an ornament, and it is
+ * read straight off the controller's own fields — `zone` and `guard.parry` —
+ * so it cannot describe a guard the game is not actually holding.
+ *
+ * It lives here rather than in HUD.js because it is driven by the same round
+ * that added the controller state, and because everything it needs is one
+ * property lookup: routing it through the HUD's update signature would mean
+ * teaching that layer about the blade to no purpose.
+ */
+const roseEl = document.getElementById('guard-rose');
+const rosePetals = roseEl ? [...roseEl.querySelectorAll('.pet')] : [];
+const roseThreat = { zone: null };
+let roseZone = null, roseParry = null, roseWant = null;
+function setGuardRose(world) {
+  if (!roseEl) return;
+  const control = world && world.player ? world.player.control : null;
+  const on = !!control && control.scheme === 'directional';
+  const zone = on ? control.zone : 'none';
+  const parry = !!(on && control.guard && control.guard.parry);
+
+  /**
+   * The petal the NEXT bolt wants, so the mapping from "where it is coming
+   * from" to "which way to flick" is something the player learns by looking
+   * rather than by dying. Read through the same classifier the block itself
+   * uses, off the same guard descriptor, so the hint cannot promise a zone that
+   * would not actually answer.
+   *
+   * threatsNear() already returns the bolts closing on you sorted by time to
+   * impact, so the first hostile one IS the next thing to answer. Its `point`
+   * is a LIVE reference to bolt.pos and must never be kept — everything wanted
+   * here is consumed inside this call.
+   */
+  let want = null;
+  if (on && control.guard.active && world.bolts && world.player.chest) {
+    const threats = world.bolts.threatsNear(world.player.chest, 30, roseThreats);
+    for (const t of threats) {
+      if (!t.bolt || t.bolt.team === world.player.team) continue;
+      const vel = t.bolt.vel;
+      _roseA.copy(t.point);
+      _roseB.copy(t.point).addScaledVector(vel, 1 / 60);
+      const z = guardZoneOf(_roseA, _roseB, control.guard, roseThreat).zone;
+      // 'centre' is a bolt on your own centreline — every guard answers it, so
+      // there is nothing to hint and pointing at one of the four would be a lie.
+      if (z && z !== 'centre') want = z;
+      break;
+    }
+  }
+
+  // Repaint only on a change: this runs every frame, and a class write per
+  // petal per frame is 240 style invalidations a second for a picture that
+  // changes a handful of times in a fight.
+  if (zone === roseZone && parry === roseParry && want === roseWant) return;
+  roseZone = zone; roseParry = parry; roseWant = want;
+  const up = on && zone !== 'none';
+  roseEl.classList.toggle('on', up);
+  roseEl.classList.toggle('parry', up && parry);
+  for (const p of rosePetals) {
+    p.classList.toggle('sel', p.dataset.zone === zone);
+    p.classList.toggle('want', p.dataset.zone === want && p.dataset.zone !== zone);
+  }
+}
+const roseThreats = [];
+const _roseA = new THREE.Vector3(), _roseB = new THREE.Vector3();
 
 /* ── go ──────────────────────────────────────────────────────────────── */
 

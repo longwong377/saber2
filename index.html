@@ -183,6 +183,46 @@
   </svg>
   <div id="blade-cursor"><i></i></div>
 
+  <!--
+    THE GUARD ROSE. Four petals round the reticle, one lit.
+
+    A discrete state the player cannot see is a state they cannot play, and
+    directional blocking is nothing but a discrete state — so this is not
+    decoration, it is the readout for the whole mechanic. It sits ON the reticle
+    rather than in a corner because that is where the eye already is while you
+    are being shot at, and it is empty (all four dim) whenever no guard is up,
+    so "I have no guard" reads as a state rather than as an absence.
+
+    The styles are inline rather than in styles.css because this element is
+    owned by the same change as the mechanic, and because a HUD readout that
+    is half in one file and half in another is how one of them goes stale.
+  -->
+  <style>
+    #guard-rose { position: absolute; left: 50%; top: 50%; width: 168px; height: 168px;
+      transform: translate(-50%, -50%); pointer-events: none; opacity: 0;
+      transition: opacity .16s ease; }
+    #guard-rose.on { opacity: 1; }
+    #guard-rose .pet { fill: rgba(190, 225, 255, .085); stroke: rgba(190, 225, 255, .18);
+      stroke-width: .8; transition: fill .09s linear, stroke .09s linear; }
+    /* The lit petal is the guard you are holding. */
+    #guard-rose .pet.sel { fill: rgba(150, 225, 255, .40); stroke: rgba(200, 245, 255, .95); }
+    /* …and while the parry window is open it is hotter, because the difference
+       between a block and a riposte is 200 ms and nothing else. */
+    #guard-rose.parry .pet.sel { fill: rgba(255, 232, 150, .62); stroke: rgba(255, 246, 205, 1); }
+    /* The petal the NEXT bolt wants — a dashed outline, never a fill, so it
+       cannot be mistaken for the guard you are actually holding. This is how
+       the mapping from "where it came from" to "which way to flick" gets
+       learned by looking instead of by dying. */
+    #guard-rose .pet.want { stroke: rgba(255, 140, 120, .95); stroke-width: 1.6;
+      stroke-dasharray: 3 2.5; }
+  </style>
+  <svg id="guard-rose" viewBox="-50 -50 100 100" aria-hidden="true">
+    <path class="pet" data-zone="high"  d="M-13 -18 L0 -40 L13 -18 A22 22 0 0 0 -13 -18 Z"></path>
+    <path class="pet" data-zone="low"   d="M-13 18 L0 40 L13 18 A22 22 0 0 1 -13 18 Z"></path>
+    <path class="pet" data-zone="left"  d="M-18 -13 L-40 0 L-18 13 A22 22 0 0 1 -18 -13 Z"></path>
+    <path class="pet" data-zone="right" d="M18 -13 L40 0 L18 13 A22 22 0 0 0 18 -13 Z"></path>
+  </svg>
+
   <div class="hud-tl">
     <div class="wave-line"><span id="hud-level">—</span><em id="hud-diff"></em></div>
     <div class="wave-big">WAVE <b id="hud-wave">1</b></div>

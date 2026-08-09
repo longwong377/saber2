@@ -102,6 +102,215 @@ export const READY_GUARD = {
   first: { x: 0.26, y: 0.02 },
 };
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  DIRECTIONAL GUARD                                                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Four zones and neutral, in the manner of Bannerlord's guard rose and
+ * Chivalry 2's parry window.
+ *
+ * WHY THIS EXISTS. Free aim had the mouse doing two jobs at once: holding the
+ * blade button froze the camera so the mouse could steer a continuous guard
+ * POSITION. "I don't understand how you're supposed to block and also aim at an
+ * enemy in the same motion because when you're moving the blade to specifically
+ * deflect the cursor can't move." That is not tunable — it is the definition of
+ * the scheme. A guard ZONE is a discrete STATE, set by a flick and then simply
+ * held, so the mouse is never taken hostage and the camera is live at all times.
+ *
+ * The poses are not decoration. The zone's VOLUME is a rose sector about a fixed
+ * bearing, and the pose is where the blade physically goes — if the two disagree
+ * the player watches a bolt stop in mid-air beside a weapon that is somewhere
+ * else. So the poses are chosen by measuring where the blade actually ends up,
+ * not by writing down where it ought to. Settled on the real controller and read
+ * at the blade's midpoint bearing off the chest:
+ *
+ *              pose            off the sightline   off its own zone axis
+ *   HIGH   ( 0.00,  0.62)          49.8°                  3.4°
+ *   LOW    ( 0.00, -0.72)          35.4°                 14.0°
+ *   LEFT   (-0.49, -0.10)          46.9°                  4.6°
+ *   RIGHT  ( 0.49, -0.15)          41.6°                  4.9°
+ *
+ * Two things in that table are not obvious and both were measured rather than
+ * reasoned:
+ *
+ *   The lateral guards are carried BELOW the centre line, not on it. The hands
+ *   sit 20 cm under the chest (GRIPS.two.offset), so a guard point at eye level
+ *   tilts the blade up and off its own axis — LEFT at gy +0.10 lands 18.9° off,
+ *   at -0.10 it lands 4.6° off. Dropping the guard point is what lays the blade
+ *   level across the body.
+ *
+ *   LOW stops at -0.72 rather than going deeper. Lower is better for the zone
+ *   (at -0.92 the blade is 51.5° off the sightline, well clear of the centre
+ *   disc) but it eats the overhead: the arc clamps at GY_MIN, so a swing out of
+ *   a -0.82 guard sweeps 1.13 units against the 1.23 a -0.72 guard gets. The
+ *   guard and the attack share one axis and this is where they meet.
+ *
+ * They sit at ±45° off the sightline rather than at the edge of the guard's ±93°
+ * travel because the four have to tile the rose evenly — a LEFT at the travel
+ * limit would leave a hole between it and HIGH that no zone answers.
+ */
+export const ZONE = { NONE: 'none', HIGH: 'high', LEFT: 'left', LOW: 'low', RIGHT: 'right' };
+
+/** The four live zones, in rose order (rose 0 is right, +90° is up). */
+export const ZONE_ORDER = ['right', 'high', 'left', 'low'];
+export const ZONE_ROSE = { right: 0, high: Math.PI / 2, left: Math.PI, low: -Math.PI / 2 };
+
+export const ZONE_POSE = {
+  high:  { x: 0.00, y: 0.62 },
+  left:  { x: -0.49, y: -0.10 },
+  low:   { x: 0.00, y: -0.72 },
+  right: { x: 0.49, y: -0.15 },
+};
+
+/**
+ * The guard volume, and why every number in it is the size it is.
+ *
+ * `radius` 1.4 m — the blade's own reach. Settled at the four poses the blade's
+ * midpoint sits 0.84–1.07 m off the chest, so its tip is at about 1.4 m: a bolt
+ * arrested at this sphere is arrested where the blade actually is, not out in
+ * front of it.
+ *
+ * `centre` 20° — THE ONE NUMBER THAT MAKES THIS PLAYABLE, and it was measured
+ * rather than chosen. A bolt is classified by where its LINE crosses the guard
+ * sphere, which for a shooter you are looking straight at is a function of how
+ * far off your centreline the shot was placed: θ = asin(miss / radius). A bolt
+ * that would actually hit your torso misses your chest by at most ~0.4 m, so it
+ * arrives inside asin(0.4/1.4) = 16.6°. Every frontal shot that threatens you is
+ * therefore inside a 20° disc — and inside that disc ANY guard answers, because
+ * a blade held anywhere in front of your chest is across the line of a bolt
+ * coming down your own sightline.
+ *
+ * Without that disc the mechanic is a lottery and not a skill. Enemy spread is
+ * ±1.4–2.1° (Enemy.js `spread`), which at 20 m scatters bolts ±0.5 m around the
+ * chest in a direction that is uniform on the rose — so a frontal shooter would
+ * hand you a RANDOM zone on every bolt of a burst. Nothing you could learn.
+ * With it, the rule is one sentence: your guard covers your centreline plus one
+ * quadrant, and the quadrant is for the people shooting you from the side.
+ *
+ * `reach` 100° — the same shoulder line applyAssist already refuses to reach
+ * past. You cannot bring a guard behind you.
+ *
+ * `sector` 45° — a quarter of the rose each, so the four tile it exactly and
+ * every bolt outside the centre disc falls in exactly one zone.
+ *
+ * `tolerance` 90° — what a FULL difficulty assist buys on top of the sector.
+ * 45 + 90 = 135° is the far edge of the adjacent quadrant and stops one degree
+ * short of the opposite zone, so no tier ever forgives a guard held the wrong
+ * way round. See zoneTolerance() in Combat.js.
+ */
+export const GUARD = {
+  radius: 1.4,
+  centre: 20 * Math.PI / 180,
+  reach: 100 * Math.PI / 180,
+  sector: 45 * Math.PI / 180,
+  tolerance: 90 * Math.PI / 180,
+};
+
+/**
+ * The flick that sets a zone, and the parry window that rewards one.
+ *
+ * `speed` 1400 px/s is the gate between aiming and flicking. The camera gain is
+ * 0.0024 rad/px, so at 60 Hz an ordinary tracking correction of 6 px/frame is
+ * 360 px/s and 23 px/frame — a fast track across a target — is 1380. A flick is
+ * a deliberate throw of the wrist above that; below it the mouse is purely the
+ * camera, which is the whole point of the scheme.
+ *
+ * `window` 0.20 s is Chivalry 2's parry window to the frame. Enter a zone and
+ * meet a bolt inside it and the block is a PARRY: it earns the RETURN and the
+ * bolt goes where you are looking. `perfect` 0.10 s is the tighter half.
+ *
+ * `cooldown` 0.28 s is what stops the window being held open by mashing. It is
+ * longer than the window itself, so a parry window can never be back-to-back
+ * with another one and the duty cycle of "parrying" tops out at 71%.
+ *
+ * `burst` 1.8 is the second half of the gate and it is not optional. A speed
+ * threshold ALONE cannot tell a flick from a fast pan, because a fast pan spends
+ * part of every sweep above any fixed threshold — measured, five seconds of
+ * ordinary 2 Hz tracking produced this many unasked-for zone changes:
+ *
+ *   peak  600 px/s → 0      peak 1800 px/s → 20
+ *   peak 1000 px/s → 0      peak 2400 px/s → 41
+ *   peak 1400 px/s → 0      peak 3600 px/s → 41
+ *
+ * That is a guard flailing between zones every time the player makes a big turn,
+ * which is exactly the situation the scheme exists to be good at. So a flick
+ * must also be fast RELATIVE TO WHAT THE HAND HAS BEEN DOING: `mouseSpeed` is
+ * the EMA this file already keeps, and a sinusoidal sweep sits at 1/0.64 = 1.56x
+ * its own average at the peak, so 1.8x rejects sustained panning at ANY
+ * amplitude while a real wrist-throw — 70 px in one frame is 4200 px/s — clears
+ * it from any tracking speed a hand can hold.
+ */
+export const PARRY = { speed: 1400, burst: 1.8, window: 0.20, perfect: 0.10, cooldown: 0.28 };
+
+/**
+ * OVERHEAD, the attack that mirrors the rose upward.
+ *
+ * A scripted arc rather than a pose change: the guard target is driven from
+ * above the head down through the centreline over `dur`, and the hands and the
+ * blade chase it through their own spring. Driving the TARGET along the arc
+ * rather than snapping it to the end is what makes this a swing — a snap from
+ * HIGH to LOW peaks the blade at 7.9 m/s, which is under the 7.5 m/s the
+ * RETURN grade wants with nothing to spare.
+ */
+export const OVERHEAD = { wind: 0.10, cut: 0.07, dur: 0.32, rise: 0.95, drop: 1.00, cooldown: 0.46 };
+
+/**
+ * How fast the guard point travels to a zone's pose, in e-folds per second.
+ * The same order as `stanceRate` (9), doubled: a lateral guard is a stance you
+ * settle into, a zone change is a flick you have already made with your hand
+ * and the blade should be on its way before you have finished making it.
+ */
+export const ZONE_RATE = 18;
+
+const _zv = new THREE.Vector3();
+const _zq = new THREE.Quaternion();
+
+/**
+ * A world direction, in the guard's own polar coordinates.
+ *
+ * The transform is exactly the one applyAssist has always used to turn a threat
+ * into a guard position — invert the aim, then yaw = atan2(x, -z) and
+ * pitch = asin(y) — with two derived readings on top: `theta`, the angle off the
+ * sightline, and `rose`, the bearing around it. Those two are the zone.
+ */
+export function aimAngles(dir, aimQuat, out = {}) {
+  _zv.copy(dir).normalize().applyQuaternion(_zq.copy(aimQuat).invert());
+  out.yaw = Math.atan2(_zv.x, -_zv.z);
+  out.pitch = Math.asin(clamp(_zv.y, -1, 1));
+  out.theta = Math.acos(clamp(-_zv.z, -1, 1));
+  out.rose = Math.atan2(out.pitch, out.yaw);
+  return out;
+}
+
+/** Shortest signed distance between two rose bearings, in (-π, π]. */
+export function roseDelta(a, b) {
+  let d = (a - b) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d <= -Math.PI) d += TAU;
+  return d;
+}
+
+/**
+ * Which zone a rose bearing falls in. Exactly one, always — the four sectors
+ * tile the circle, and a bearing exactly on a boundary is resolved by taking
+ * the first in ZONE_ORDER, so there is no direction with two answers and none
+ * with none.
+ */
+export function zoneOfRose(rose) {
+  let best = ZONE_ORDER[0], bestD = Infinity;
+  for (const z of ZONE_ORDER) {
+    const d = Math.abs(roseDelta(rose, ZONE_ROSE[z]));
+    if (d < bestD - 1e-12) { bestD = d; best = z; }
+  }
+  return best;
+}
+
+/** Which zone answers a world direction arriving at a body aimed by `aimQuat`. */
+export function zoneOfDir(dir, aimQuat) {
+  return zoneOfRose(aimAngles(dir, aimQuat).rose);
+}
+
 /**
  * The angular term integrates as  θ'' = (kP/I)·θ_err − kD·θ'.
  * Critical damping is therefore kD = 2·√(kP/I); everything here sits around a
@@ -128,7 +337,12 @@ export class SaberController {
     this.sensitivity = opts.sensitivity ?? 1;
     this.followStrength = opts.followStrength ?? 0;
     this.deadzone = 0.24;
-    this.scheme = opts.scheme ?? 'hold';     // 'hold' | 'free'
+    // 'directional' is what the game ships (Menu.DEFAULT_SETTINGS); 'hold' and
+    // 'free' are the two continuous-aim schemes and both survive untouched.
+    // The constructor keeps the conservative default because it is the one the
+    // headless checks construct by hand, and a library default is not the same
+    // claim as a shipped default.
+    this.scheme = opts.scheme ?? 'hold';     // 'hold' | 'free' | 'directional'
 
     // Where the blade sits when you are not steering it. Releasing the mouse
     // returns to this, rather than leaving the blade wherever the last flick
@@ -214,6 +428,44 @@ export class SaberController {
     this.bladeHeld = false;
 
     /**
+     * DIRECTIONAL GUARD state. All of it is inert unless `scheme` is
+     * 'directional', so the two continuous-aim schemes read exactly as they did.
+     *
+     * `zone` is the guard you are holding, `zoneAge` how long you have held it,
+     * and `zoneCool` the lockout that stops the parry window being mashed open.
+     * `lastZone` is remembered across a release so raising the guard again puts
+     * you back where you were rather than in a zone you did not choose.
+     */
+    this.zone = ZONE.NONE;
+    this.zoneAge = 0;
+    this.zoneCool = 0;
+    this.zoneParry = false;
+    this.lastZone = ZONE.HIGH;
+    this.zoneFlicks = 0;
+    /**
+     * The guard volume Bolts.update tests bolts against, republished every
+     * frame by update(). `origin` is copied from the live chest and `inv` from
+     * the live aim, so the guard travels with the body and turns with the head —
+     * unlike the auto-guard cone, whose whole point is that it does NOT turn.
+     */
+    this.guard = {
+      active: false, zone: ZONE.NONE, rose: 0, half: GUARD.sector,
+      centre: GUARD.centre, reach: GUARD.reach, radius: GUARD.radius,
+      parry: false, parryAge: 0,
+      origin: new THREE.Vector3(), inv: new THREE.Quaternion(),
+    };
+    /** Extra rose forgiveness bought by the difficulty tier, in radians. */
+    this.zoneTol = 0;
+
+    // OVERHEAD attack envelope. Same additive-offset discipline as the
+    // flourish: taken back off the guard before anything else touches it, so a
+    // swing composes with a held zone instead of overwriting it.
+    this.swingT = -1;
+    this.swing = 0;
+    this.swingCool = 0;
+    this._swX = 0; this._swY = 0;
+
+    /**
      * "Blade holds position": on release the blade stays where you left it
      * instead of easing back to the ready guard. Off by default, because the
      * recentre is what makes the blade cursor a cursor.
@@ -241,6 +493,13 @@ export class SaberController {
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
     this.flourish = 0; this.flourishT = -1;
     this._flX = 0; this._flY = 0; this._flRoll = 0;
+    this.swing = 0; this.swingT = -1; this.swingCool = 0;
+    this._swX = 0; this._swY = 0;
+    // One door onto the zone state, so a reset cannot leave a stale parry flag
+    // behind the way an open-coded version of this did. `lastZone` deliberately
+    // survives: which guard you favour is a habit, not a piece of run state.
+    this.zoneCool = 0;
+    this._dropZone();
     this.catchHold = 0; this.bladeHeld = false;
     this.initialised = false;
     this.solveTargets(chest, aimQuat, 0);
@@ -250,7 +509,106 @@ export class SaberController {
     this.initialised = true;
   }
 
-  setScheme(s) { this.scheme = s; }
+  setScheme(s) {
+    this.scheme = s;
+    if (s !== 'directional') this._dropZone();
+    return this;
+  }
+
+  /* ── directional guard ─────────────────────────────────────────────── */
+
+  /** Is the player holding a guard zone right now. */
+  get guarding() { return this.scheme === 'directional' && this.zone !== ZONE.NONE; }
+
+  /** The authored pose of a zone, in guard coordinates. */
+  zonePose(zone) { return ZONE_POSE[zone] || { x: this.readyX, y: this.readyY }; }
+
+  _dropZone() {
+    this.zone = ZONE.NONE;
+    this.zoneAge = 0;
+    this.zoneParry = false;
+    this.guard.active = false;
+    this.guard.zone = ZONE.NONE;
+    this.guard.parry = false;
+  }
+
+  /**
+   * One frame of the guard rose.
+   *
+   * Everything the mouse did this frame has ALREADY been spent on the camera by
+   * the caller. That is not an oversight, it is the design: a flick turns your
+   * view a little AND sets your guard, and neither takes the other away.
+   */
+  _updateZone(dx, dy, dt, bladeHeld) {
+    this.zoneCool = Math.max(0, this.zoneCool - dt);
+    if (this.zone !== ZONE.NONE) this.zoneAge += dt;
+
+    if (!bladeHeld) {
+      if (this.zone !== ZONE.NONE) this._dropZone();
+    } else if (this.zone === ZONE.NONE) {
+      // Raising the guard puts you back in the zone you last held, and that
+      // counts as entering it — tapping the button as a bolt lands IS the
+      // parry input, which is exactly Chivalry's and exactly what `cooldown`
+      // keeps from being mashed.
+      this.zoneParry = this.setZone(this.lastZone, { force: true });
+    } else {
+      const want = this.flickZone(dx, dy, dt);
+      // ASSIGN, never merely raise. A flick that lands inside the re-entry
+      // cooldown gets the zone and NOT the window, and if this only ever set the
+      // flag true, a mashed flick would inherit the last real parry's flag while
+      // resetting the age it is measured against — measured, that held a parry
+      // window open on 100% of frames against a 71% ceiling.
+      if (want) this.zoneParry = this.setZone(want);
+    }
+
+    // Ease the guard point onto the zone's authored pose — or home, when the
+    // guard is down and the player has not asked the blade to stay put.
+    const pose = this.zone !== ZONE.NONE ? this.zonePose(this.zone)
+      : (this.holdPosition ? null : { x: this.readyX, y: this.readyY });
+    if (pose) {
+      const k = clamp(dt * ZONE_RATE, 0, 1);
+      this.gx = lerp(this.gx, pose.x, k);
+      this.gy = lerp(this.gy, pose.y, k);
+    }
+  }
+
+  /**
+   * Enter a zone. Returns true if this opened a parry window.
+   *
+   * Re-entering the zone you are already in does nothing at all — otherwise a
+   * player could hold the parry window open by flicking in place, which is the
+   * same hold-to-win failure the auto-guard cone's "only a manual catch re-arms
+   * it" rule exists to prevent, reached from a different direction.
+   */
+  setZone(zone, { force = false } = {}) {
+    if (!ZONE_POSE[zone]) { this._dropZone(); return false; }
+    if (zone === this.zone && !force) return false;
+    this.zone = zone;
+    this.lastZone = zone;
+    this.zoneAge = 0;
+    this.zoneFlicks++;
+    if (this.zoneCool > 0) return false;         // mashed: guard yes, parry no
+    this.zoneCool = PARRY.cooldown;
+    return true;
+  }
+
+  /**
+   * Which zone a flick of (dx, dy) mouse pixels asks for.
+   *
+   * Screen-space dy is positive DOWNWARD and the rose is positive UPWARD, so
+   * the vertical term is negated — the same inversion the blade steering has
+   * always applied to `gy`. Returns null for a movement that is not a flick.
+   */
+  flickZone(dx, dy, dt) {
+    const speed = Math.hypot(dx, dy) / Math.max(dt, 1e-4);
+    if (speed < PARRY.speed) return null;
+    // …and fast relative to what the hand has been doing. `mouseSpeed` is pushed
+    // further down applyInput, so what it holds here is the average THROUGH THE
+    // PREVIOUS FRAME — the recent history, not including the movement being
+    // judged. That is the only ordering in which this test means anything.
+    if (speed < this.mouseSpeed.v * PARRY.burst) return null;
+    return zoneOfRose(Math.atan2(-dy, dx));
+  }
 
   /**
    * The blade cursor's resting place, chosen by view mode. The one door onto
@@ -290,11 +648,21 @@ export class SaberController {
     const cam = { yaw: 0, pitch: 0 };
     if (this.locked) return cam;
 
-    // One control at a time. Hold the mouse button and the mouse IS the blade —
-    // the camera does not move. Let go and the mouse is the camera again, and
-    // the blade settles back to guard. Driving both at once, which is what the
-    // old blade-leads-camera scheme did, makes neither of them legible.
-    // 'blade' is a rebindable action, so the player can move it off LMB.
+    // Three schemes, and what the blade button MEANS is the difference between
+    // them. 'blade' is a rebindable action in all three, so the player can move
+    // it off LMB.
+    //
+    //   hold / free   One control at a time. While the button is down the mouse
+    //                 IS the blade and the camera does not move; let go and the
+    //                 mouse is the camera again. Driving both at once, which is
+    //                 what the old blade-leads-camera scheme did, makes neither
+    //                 legible — but the price is that you cannot aim a return
+    //                 while you are making one, which is the complaint that
+    //                 produced the third scheme.
+    //   directional   The button RAISES A GUARD. The mouse is never taken,
+    //                 because a zone is a state and states do not need holding
+    //                 in place; the same motion aims and picks the guard.
+    const directional = this.scheme === 'directional';
     const bladeHeld = this.scheme === 'free' ? !input.act('thrust') : input.act('blade');
     this.bladeHeld = bladeHeld;
     // …except while a bolt is caught. Then the camera comes back immediately and
@@ -302,13 +670,34 @@ export class SaberController {
     // the blade is to give you the camera back long enough to aim the throw.
     // This is the one line that turns block-and-aim from simultaneous — which is
     // impossible — into sequential.
-    const bladeMode = bladeHeld && this.catchHold <= 0;
+    // …and under DIRECTIONAL there is no such mode at all. The guard is a zone,
+    // not a position, so there is nothing for the mouse to steer and no reason
+    // to take it: the camera is live on every frame of a block. That single
+    // `false` is the whole of the fix the rest of this file is arranged around.
+    const bladeMode = !directional && bladeHeld && this.catchHold <= 0;
     // Two separate gains: the blade needs a full arc inside one sweep, the
     // camera needs shooter-normal turn rates. Sharing one number made the blade
     // sluggish or the camera twitchy, depending which you tuned for.
     const s = this.sensitivity * this.bladeGain;
     const cs = this.sensitivity * this.camGain;
     const dx = input.mouse.dx, dy = input.mouse.dy;
+
+    // ── Take last frame's ADDITIVE OFFSETS — the flourish twirl and the
+    // overhead arc — back off the guard and the wrist before anything else
+    // touches them. The flourish's own comment has said "before anything else"
+    // since it was written, and the code did it two thirds of the way down,
+    // AFTER the steering and the recentre. That was survivable while the only
+    // thing above it was a recentre toward a fixed pose, and it stopped being
+    // survivable the moment a zone lerp appeared: the lerp pulled `gy` —
+    // offset and all — toward the zone pose, so it ate 30% of the swing's own
+    // amplitude every frame. Measured, an overhead out of the LOW guard swept
+    // 0.91 units of a 1.33-unit arc and peaked the tip at 7.3 m/s instead of
+    // 9-plus. The offsets belong outside every reader of the base guard.
+    this.gx -= this._flX + this._swX;
+    this.gy -= this._flY + this._swY;
+    this.roll -= this._flRoll;
+    this._flX = 0; this._flY = 0; this._flRoll = 0;
+    this._swX = 0; this._swY = 0;
 
     if (bladeMode) {
       this.steering = 1;
@@ -355,20 +744,31 @@ export class SaberController {
       // turning ninety degrees pins the blade against its own travel limit.
       cam.yaw = -dx * cs;
       cam.pitch = -dy * cs;
+      // ── DIRECTIONAL. The same motion that just turned the camera also chooses
+      // the guard, if it was fast enough to be a flick. Nothing is frozen and
+      // nothing is shared: the camera gets every pixel, and the flick gets a
+      // discrete state out of the DIRECTION of those pixels rather than out of
+      // their accumulated position.
+      if (directional) this._updateZone(dx, dy, dt, bladeHeld);
       // The blade does not drift home while it is holding a caught bolt, and it
       // does not drift home at all if the player asked it not to.
-      if (this.catchHold <= 0 && !this.holdPosition) {
+      else if (this.catchHold <= 0 && !this.holdPosition) {
         const k = clamp(dt * this.recentre, 0, 1);
         this.gx = lerp(this.gx, this.readyX, k);
         this.gy = lerp(this.gy, this.readyY, k);
       }
     }
 
-    // wrist roll
+    // ── WRIST ROLL. `rollInput += input.mouse.wheel * 0.55` used to sit here,
+    // which was the last raw device read left in the blade: the wheel was not
+    // in ACTIONS, so it could not be rebound, could not be listed and could not
+    // be seen to collide — and it DID collide, with Player's grip distance,
+    // which had to steal the wheel back frame by frame to get a notch of its
+    // own. The wheel is now `attackOver` / `attackStab` like any other control
+    // and the roll is the two rebindable keys it always also had.
     let rollInput = 0;
     if (input.act('rollL')) rollInput -= 1;
     if (input.act('rollR')) rollInput += 1;
-    rollInput += input.mouse.wheel * 0.55;
     if (input.padButtons) {
       if (input.padDown(4)) rollInput -= 1;
       if (input.padDown(5)) rollInput += 1;
@@ -390,13 +790,10 @@ export class SaberController {
     // nothing else, and any real intent — steering, stancing, stabbing —
     // cancels it on the spot.
     //
-    // Take last frame's twirl back off the guard and the wrist before anything
-    // else touches them. The flourish is decoration ON TOP of whatever the blade
-    // is already doing, so it must never leave a residue: without this, starting
-    // one snapped the guard to the centre of the circle and cancelling one left
-    // the wrist wherever the twirl had got to.
-    this.gx -= this._flX; this.gy -= this._flY; this.roll -= this._flRoll;
-    this._flX = 0; this._flY = 0; this._flRoll = 0;
+    // The twirl is decoration ON TOP of whatever the blade is already doing, so
+    // it must never leave a residue: without the removal at the top of this
+    // function, starting one snapped the guard to the centre of the circle and
+    // cancelling one left the wrist wherever the twirl had got to.
     if (input.actHit('flourish') && this.flourishT < 0 && !bladeHeld) this.flourishT = 0;
     if (this.flourishT >= 0) {
       if (bladeHeld || this.stanceTarget || this.thrustT >= 0) this.flourishT = -1;
@@ -419,6 +816,45 @@ export class SaberController {
     }
     this.gx += this._flX; this.gy += this._flY; this.roll += this._flRoll;
 
+    // ── OVERHEAD. The attack that mirrors the rose upward: wheel up.
+    //
+    // Same additive discipline as the flourish, and for the same reason — the
+    // arc is an offset ON TOP of whatever guard you are holding, so swinging out
+    // of a held zone must leave that zone exactly where it was when the swing
+    // ends. An implementation that ASSIGNED the guard would drop your guard
+    // every time you attacked, which is a thing you would feel and never be able
+    // to name.
+    // (The removal is at the top of this function, above every reader of the
+    // base guard — see the note there.)
+    this.swingCool = Math.max(0, this.swingCool - dt);
+    if (input.actHit('attackOver') && this.swingT < 0 && this.swingCool <= 0 && ctx.stamina > 0.12) {
+      this.swingT = 0;
+      this.swingCool = OVERHEAD.cooldown;
+      if (ctx.onSwing) ctx.onSwing();
+    }
+    if (this.swingT >= 0) {
+      this.swingT += dt;
+      const T = OVERHEAD;
+      if (this.swingT >= T.dur) { this.swingT = -1; this.swing = 0; }
+      else {
+        // wind up, cut through, recover. Three phases rather than one lerp
+        // because the cut is the only part that has to be FAST: a snap straight
+        // from the high pose to the low one peaks the blade at 7.9 m/s, which is
+        // barely over the 7.5 m/s a RETURN wants.
+        let arc;
+        if (this.swingT < T.wind) arc = T.rise * smoothstep(0, T.wind, this.swingT);
+        else if (this.swingT < T.wind + T.cut) {
+          arc = lerp(T.rise, -T.drop, smoothstep(T.wind, T.wind + T.cut, this.swingT));
+        } else arc = -T.drop * (1 - smoothstep(T.wind + T.cut, T.dur, this.swingT));
+        this.swing = smoothstep(0, T.wind, this.swingT)
+          * (1 - smoothstep(T.wind + T.cut, T.dur, this.swingT));
+        // Clamp the OFFSET, never the result, so next frame's subtraction is
+        // still exact — the flourish learned this the hard way.
+        this._swY = clamp(this.gy + arc, -GY_MIN, GY_MAX) - this.gy;
+      }
+    } else this.swing = 0;
+    this.gx += this._swX; this.gy += this._swY;
+
     // gesture signal
     const gspeed = Math.hypot(dx, dy) / Math.max(dt, 1e-4);
     this.mouseSpeed.push(gspeed, dt);
@@ -435,7 +871,10 @@ export class SaberController {
     // rise/hold/fall envelope rather than a spike, because the hands are on a
     // spring that takes ~400 ms to arrive and a spike is gone before they do.
     this.thrustCooldown = Math.max(0, this.thrustCooldown - dt);
-    const stabPressed = this.scheme === 'free' ? input.actHit('blade') : input.actHit('thrust');
+    // `attackStab` is the wheel-down half of the rose and reaches the same
+    // envelope in every scheme — a stab is a stab, not a directional feature.
+    const stabPressed = input.actHit('attackStab')
+      || (this.scheme === 'free' ? input.actHit('blade') : input.actHit('thrust'));
     if (stabPressed && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so
@@ -543,6 +982,7 @@ export class SaberController {
       this.carrierSpeed = damp(this.carrierSpeed ?? 0, v, 12, dt);
     }
     this._prevChest.copy(chest);
+    this._publishGuard(chest, aimQuat);
 
     this.solveTargets(chest, aimQuat, dt);
     if (!this.initialised) {
@@ -617,6 +1057,38 @@ export class SaberController {
     this.handPos.copy(chest).add(this.handLocal);
   }
 
+  /**
+   * Republish the guard volume Bolts.update tests bolts against.
+   *
+   * Origin and aim frame are COPIED from the live chest and the live aim every
+   * frame, not captured once: the guard is yours, it walks with you and it turns
+   * with you. (The auto-guard cone deliberately does the opposite — it stays
+   * pointing down the line the bolt came in on, because its whole job is to
+   * cover you while you look somewhere else. Two guards, two rules, and the
+   * difference is the mechanic.)
+   *
+   * `zoneTol` is the difficulty tier's share of your zone error, computed here
+   * rather than in applyAssist because Player only calls applyAssist on tiers
+   * whose assist is above zero — so Grandmaster would never have run the line
+   * that sets it, and would have inherited whatever the last tier left behind.
+   */
+  _publishGuard(chest, aimQuat) {
+    const g = this.guard;
+    this.zoneTol = clamp(this.assist, 0, 1) * GUARD.tolerance;
+    g.active = this.guarding;
+    if (!g.active) { g.zone = ZONE.NONE; g.parry = false; return; }
+    g.zone = this.zone;
+    g.rose = ZONE_ROSE[this.zone] ?? 0;
+    g.half = GUARD.sector + this.zoneTol;
+    g.centre = GUARD.centre;
+    g.reach = GUARD.reach;
+    g.radius = GUARD.radius;
+    g.parry = this.zoneParry && this.zoneAge <= PARRY.window;
+    g.parryAge = this.zoneAge;
+    g.origin.copy(chest);
+    g.inv.copy(aimQuat).invert();
+  }
+
   /** External impulse on the blade — a parry, a bind, a bolt landing on it. */
   hitImpulse(worldPoint, impulse, angScale = 1) {
     _v1.subVectors(worldPoint, this.handPos);
@@ -659,6 +1131,11 @@ export class SaberController {
    * the tier number alone decides how much of the work is done for you.
    */
   applyAssist(threats, chest, aimQuat, dt) {
+    // Under DIRECTIONAL the tier's assist is spent on ZONE TOLERANCE instead —
+    // it forgives the share of your zone error it advertises, in _publishGuard.
+    // It must not ALSO drag the guard, or the tier would be paid twice and the
+    // one thing the player is being asked to choose would be chosen for them.
+    if (this.scheme === 'directional') return;
     if (this.assist <= 0.001 || !threats.length || dt <= 0) return;
 
     // Forward is the AIM direction, never the guard direction — a bolt coming

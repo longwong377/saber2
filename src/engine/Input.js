@@ -7,7 +7,7 @@
  * committed swing from a feint).
  */
 
-import { loadBindings, MOUSE } from './Bindings.js';
+import { loadBindings, MOUSE, WHEEL } from './Bindings.js';
 
 export class Input {
   constructor(canvas) {
@@ -148,7 +148,23 @@ export class Input {
 
   setBindings(b) { this.bindings = b; }
 
+  /**
+   * The wheel, as two pseudo-keys.
+   *
+   * `mouse.wheel` accumulates Math.sign(deltaY) over the frame and is cleared
+   * by end(), so it is already an edge: down and hit are the same question and
+   * both are true for exactly the one frame the notch landed on. deltaY is
+   * NEGATIVE scrolling up, which is why the comparison looks backwards.
+   */
+  _wheelCode(code) {
+    if (code === WHEEL.up) return this.mouse.wheel < 0;
+    if (code === WHEEL.down) return this.mouse.wheel > 0;
+    return null;
+  }
+
   _codeDown(code) {
+    const w = this._wheelCode(code);
+    if (w !== null) return w;
     if (code.startsWith('Mouse')) {
       for (const i in MOUSE) if (MOUSE[i] === code) return !!this.buttons[i];
       return false;
@@ -156,6 +172,8 @@ export class Input {
     return this.keys.has(code);
   }
   _codeHit(code) {
+    const w = this._wheelCode(code);
+    if (w !== null) return w;
     if (code.startsWith('Mouse')) {
       for (const i in MOUSE) if (MOUSE[i] === code) return !!this.buttonPressed[i];
       return false;

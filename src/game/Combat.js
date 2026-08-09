@@ -32,11 +32,30 @@ export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
  * block, only guess. The tiers now span genuinely learnable to genuinely
  * brutal, and the ramp across a run does the rest.
  *
- * `assist` is the share of your guard-aiming error the deflection assist closes
- * across 0.9 s of approach (see ASSIST_LEAD in SaberController). It is worth
- * knowing what these buy, because the blade's capture window is ±12.5 cm and
- * the guard's travel is ±93°, so unaided you must place the guard within about
- * 13° of a bolt's line to touch it at all:
+ * `assist` is THE SHARE OF YOUR ERROR THE TIER FORGIVES, and it means that in
+ * both control schemes — but the error it forgives is a different error, because
+ * the two schemes ask you for different things.
+ *
+ * Under DIRECTIONAL (the shipped scheme) you are not aiming a guard, you are
+ * choosing one of four. So the tier buys ZONE TOLERANCE: how far round the
+ * guard rose a bolt may arrive and still be answered by the zone you picked.
+ * The base sector is 45° (a quarter of the rose each, so they tile it exactly)
+ * and a full assist buys another 90°, which is the far edge of the adjacent
+ * quadrant — see zoneTolerance() below. It stops one degree short of the
+ * opposite zone at every tier, so no difficulty ever forgives a guard held the
+ * wrong way round:
+ *
+ *   Padawan 0.92 — ±127.8°. Both neighbours, nearly whole. Point roughly right.
+ *   Knight  0.70 — ±108.0°. Your quadrant and the whole of either neighbour's
+ *                  half nearest you; an adjacent zone's own centre is answered.
+ *   Master  0.30 — ±72.0°. Your quadrant plus a lip; the adjacent centre is not.
+ *   Grandmaster 0 — ±45.0°. Your quadrant, exactly. Every zone is yours.
+ *
+ * Under FREE AIM ('hold' and 'free') it is the share of your guard-AIMING error
+ * the deflection assist closes across 0.9 s of approach (see ASSIST_LEAD in
+ * SaberController). It is worth knowing what these buy, because the blade's
+ * capture window is ±12.5 cm and the guard's travel is ±93°, so unaided you must
+ * place the guard within about 13° of a bolt's line to touch it at all:
  *
  * Measured at the 34 m Player.js actually searches (tools/checks/deflection.mjs):
  *
@@ -73,6 +92,35 @@ export const DIFFICULTY = {
     deflectWindow: 0.86, boltSpeed: 0.72, fireRate: 1.0, chamberWindow: 0.11, staminaDrain: 1.15,
   },
 };
+
+/**
+ * The parry window, in seconds, and the tighter half of it that is worth a
+ * PERFECT.
+ *
+ * 0.20 s is Chivalry 2's parry window. It is deliberately the same order as
+ * CATCH.hold (0.25 s) and shorter than the 0.22 s worst-case gap inside an
+ * enemy burst, so parrying every bolt of a burst means re-entering a zone for
+ * every bolt of it and cannot be done by holding anything.
+ *
+ * The zone's own re-entry cooldown (PARRY.cooldown, 0.28 s in SaberController)
+ * is longer than this window on purpose: two parry windows can never touch, so
+ * the fraction of the time a player can be inside one tops out at 0.20/0.28 =
+ * 71% however fast they mash.
+ */
+export const PARRY_GRADE = { window: 0.20, perfect: 0.10 };
+
+/**
+ * A tier's `assist`, as radians of extra rose forgiveness on a guard zone.
+ *
+ * One function so the ladder cannot drift: SaberController multiplies by
+ * GUARD.tolerance and adds GUARD.sector, and this is the same arithmetic named
+ * once. `base` and `full` are passed in rather than imported to keep Combat
+ * free of a dependency on the controller — tools/checks/directional.mjs fails
+ * the build if the two ever disagree.
+ */
+export function zoneTolerance(assist, base = 45 * Math.PI / 180, full = 90 * Math.PI / 180) {
+  return base + clamp(assist ?? 0, 0, 1) * full;
+}
 
 /** Material toughness — how much blade speed·second it takes to part it. */
 export const TOUGHNESS = {
@@ -400,8 +448,27 @@ export function captureSnapshot(bolt, saber, hit) {
   // bolt that merely met a blade being carried past it is not one of them.
   const driven = bladeSpeed > 3.2 || closing > 1.6;
 
+  // A PARRY is the directional guard's own claim on this contact, stamped onto
+  // the bolt by Bolts.update because World rebuilds the hit descriptor from
+  // three fields on its way here and anything else would be dropped in transit.
+  //
+  // It exists as a SEPARATE claim from `driven` because the two measure
+  // different things and the numbers say so. Measured, snapping the guard from
+  // one authored zone pose to another and reading the blade at bladeT 0.62:
+  //
+  //   ready → RIGHT  1.8 m/s      HIGH → LOW    7.9 m/s
+  //   ready → HIGH   3.9 m/s      LEFT → RIGHT  8.1 m/s
+  //   ready → LOW    6.0 m/s      (the RETURN gate is 7.5)
+  //
+  // So a zone flick does NOT reliably drive the blade hard enough to earn a
+  // RETURN by speed, and half of them never would. Timing is what a directional
+  // parry is made of, not force: it is a second way to EARN the same grade, not
+  // a second grade. See gradeCaught.
+  const gz = bolt.guardZone;
+  const parry = gz && gz.parry ? { zone: gz.zone, age: gz.age ?? 0 } : null;
+
   return {
-    bladeT, bladeSpeed, closing, boltDir, normal, bladeVel, driven,
+    bladeT, bladeSpeed, closing, boltDir, normal, bladeVel, driven, parry,
     point: new THREE.Vector3().copy(hit.point),
     caught: hit.auto === true || driven,
     auto: hit.auto === true,
@@ -430,6 +497,12 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
 export function gradeCaught(snap, ctx) {
   const { bladeT, bladeSpeed, closing, boltDir } = snap;
   const _v4 = snap.normal;
+  // The parry's two rungs. Entering a guard zone inside PARRY_GRADE.window of
+  // the bolt arriving earns the RETURN a fast tip earns; inside the tighter
+  // `perfect` half it earns the PERFECT. Nothing else about the ladder moves —
+  // there is one ladder, and this is a second way onto it.
+  const parry = snap.parry || null;
+  const sharp = !!parry && parry.age <= PARRY_GRADE.perfect;
 
   let grade = snap.caught ? GRADE.DEFLECT : GRADE.BLOCK;
 
@@ -448,11 +521,13 @@ export function gradeCaught(snap, ctx) {
   // under the physical and sweep models a bolt reaches an enemy because you
   // pointed the blade at them, not because the game looked for one.
   if ((mode === 'reticle' || thrown) && grade === GRADE.DEFLECT && ctx.candidates
-      && (thrown || (bladeSpeed > 7.5 && tipZone))) {
+      && (thrown || parry || (bladeSpeed > 7.5 && tipZone))) {
     target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? 0.42);
-    if (target && bladeSpeed > 7.5 && tipZone) grade = GRADE.RETURN;
+    if (target && (parry || (bladeSpeed > 7.5 && tipZone))) grade = GRADE.RETURN;
   }
-  if (grade === GRADE.RETURN && bladeSpeed > 15 && closing > 5 && bladeT > 0.55) grade = GRADE.PERFECT;
+  if (grade === GRADE.RETURN && (sharp || (bladeSpeed > 15 && closing > 5 && bladeT > 0.55))) {
+    grade = GRADE.PERFECT;
+  }
 
   // ── outgoing direction: three models, chosen by ctx.aimMode
   const out = new THREE.Vector3();

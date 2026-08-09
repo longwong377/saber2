@@ -156,6 +156,59 @@ const CLIPS = {
       return { pos: [p.position.x + 3.2, y + 1.8, p.position.z + 2.2], look: [p.position.x, y + 1.4, p.position.z - 2] };
     }`,
   },
+
+  /* ── DIRECTIONAL BLOCKING ──────────────────────────────────────────────
+   * A bolt from 55° to the player's LEFT, answered by flicking into the LEFT
+   * guard while the camera keeps turning.
+   *
+   * Everything is driven through the real input path — the guard button is a
+   * real button press and the zone comes from a real mouse delta of 70 px in
+   * one frame, over the 1400 px/s flick gate — because poking
+   * `control.setZone` would prove the renderer draws a pose and nothing about
+   * whether a player can reach it. The steady 9 px/frame underneath is
+   * ordinary tracking, and it is there to be VISIBLE: the whole claim of this
+   * scheme is that the view is still moving while the block lands.
+   */
+  guard: {
+    warmup: 24,
+    note: 'a bolt from 55° left, answered by flicking into the LEFT guard — camera live throughout',
+    input: `(i, S) => {
+      S.input.buttons[0] = true;                 // hold the guard up
+      S.input.mouse.dx = (i === 10) ? -70 : -9;  // one flick, on a bed of ordinary tracking
+      if (i === 4) {
+        const w = S.world, p = w.player;
+        const V = p.position.constructor;
+        const a = 55 * Math.PI / 180;
+        const d = new V(-Math.sin(a), 0.08, -Math.cos(a)).applyQuaternion(p.camera.aimQuat).normalize();
+        w.bolts.fire(p.chest.clone().addScaledVector(d, 11), d.clone().negate(), { speed: 22, team: 9, damage: 8 });
+      }
+    }`,
+    camera: `(i, S) => {
+      const p = S.world.player;
+      const y = p.position.y;
+      return { pos: [p.position.x + 1.0, y + 2.4, p.position.z + 3.4], look: [p.position.x - 0.5, y + 1.35, p.position.z - 0.6] };
+    }`,
+  },
+
+  /* The same block from the player's own eyes, with the game's camera left
+   * alone. This is the sheet that shows the horizon SLIDING while the bolt is
+   * being answered — under 'hold' it could not, by construction. */
+  guardaim: {
+    warmup: 24,
+    note: 'the same block down the player own camera — watch the horizon slide while it lands',
+    input: `(i, S) => {
+      S.input.buttons[0] = true;
+      S.input.mouse.dx = (i === 10) ? -70 : -9;
+      if (i === 4) {
+        const w = S.world, p = w.player;
+        const V = p.position.constructor;
+        const a = 55 * Math.PI / 180;
+        const d = new V(-Math.sin(a), 0.08, -Math.cos(a)).applyQuaternion(p.camera.aimQuat).normalize();
+        w.bolts.fire(p.chest.clone().addScaledVector(d, 11), d.clone().negate(), { speed: 22, team: 9, damage: 8 });
+      }
+    }`,
+    camera: `null`,
+  },
 };
 
 const clip = CLIPS[CLIP];

@@ -430,24 +430,53 @@ export async function run({ check, assert }) {
     return `${BLADE_CAP} m leashed, ${BLADE_MAX} m free, stored blobs re-clamped on load`;
   });
 
-  check('settings: a v2 blob is adopted once and then retired', () => {
-    // tools/smoke.mjs presets a level by writing the v2 key and reloading. If
-    // the bump to v3 simply ignored that, every `--level x` run would have
-    // booted the dunes and said "ok".
-    localStorage.removeItem('saber.settings.v3');
-    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'dunes', colorIndex: 7 }));
+  check('settings: the whole legacy chain is adopted once, minus what was retired', () => {
+    // Was 'a v2 blob is adopted once and then retired', pinning a two-key hop.
+    // The directional-guard round added a third key, and the old check would
+    // have gone GREEN ON THE WRONG THING: its last assertion was
+    // `b.level === 'dunes'`, and 'dunes' is also DEFAULT_SETTINGS.level, so once
+    // v3 stopped being the store key the assertion could no longer tell a
+    // surviving blob from an empty store. It is rewritten here to say what the
+    // chain now has to do, which is strictly more:
+    //
+    //   · every legacy key speaks, oldest last, so tools/smoke.mjs and
+    //     tools/motion.mjs can still preset a level by writing v2;
+    //   · a blob under the CURRENT key survives adoption;
+    //   · each legacy key speaks exactly once and is then gone;
+    //   · and a setting named in RETIRED does NOT come across, which is the
+    //     whole reason the key was bumped: saveSettings writes the entire
+    //     object, so every returning player has `scheme` on disk whether they
+    //     chose it or not, and without this the shipped default would reach
+    //     nobody who had ever opened the options screen.
+    const CUR = 'saber.settings.v4';
+    for (const k of ['saber.settings.v2', 'saber.settings.v3', CUR]) localStorage.removeItem(k);
+    localStorage.setItem(CUR, JSON.stringify({ level: 'dunes', colorIndex: 7 }));
+    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'hangar', scheme: 'hold', fov: 77 }));
     localStorage.setItem('saber.settings.v2', JSON.stringify({ level: 'canyon' }));
+
     const a = loadSettings();
     assert(a.level === 'canyon', `the v2 preset was ignored — loaded level "${a.level}"`);
-    assert(a.colorIndex === 7, 'adopting the old blob threw away the current one');
-    assert(localStorage.getItem('saber.settings.v2') === null, 'the old key survived the read');
-    // second read: the retired key must not speak again
+    assert(a.colorIndex === 7, 'adopting the old blobs threw away the current one');
+    assert(a.fov === 77, `the v3 blob was dropped whole — fov came back ${a.fov}`);
+    assert(a.scheme === DEFAULT_SETTINGS.scheme,
+      `a retired setting came across: scheme loaded as "${a.scheme}", `
+      + `and the shipped default "${DEFAULT_SETTINGS.scheme}" would reach nobody`);
+    for (const k of ['saber.settings.v2', 'saber.settings.v3']) {
+      assert(localStorage.getItem(k) === null, `${k} survived the read`);
+    }
+
+    // Second read: neither retired key may speak again. Asserted against a
+    // value that is NOT a default, so an empty store cannot fake it.
     const b = loadSettings();
-    assert(b.level === 'dunes', `the retired v2 blob still won on the second read ("${b.level}")`);
-    localStorage.removeItem('saber.settings.v3');
+    assert(b.level === 'dunes', `a retired blob still won on the second read ("${b.level}")`);
+    assert(b.fov === DEFAULT_SETTINGS.fov,
+      `the retired v3 blob spoke twice — fov ${b.fov} instead of ${DEFAULT_SETTINGS.fov}`);
+    assert(b.colorIndex === 7, 'the current blob was lost between reads');
+
+    localStorage.removeItem(CUR);
     const c = loadSettings();
     assert(c.level === DEFAULT_SETTINGS.level, 'a cleared store did not fall back to defaults');
-    return 'v2 → v3 once, then gone';
+    return `v2 → v3 → v4 once each; fov 77 carried, scheme retired to "${a.scheme}"`;
   });
 
   check('blade: a long blade widens the capture window instead of breaking it', () => {

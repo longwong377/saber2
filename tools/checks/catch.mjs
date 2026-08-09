@@ -21,7 +21,7 @@
 
 import * as THREE from 'three';
 import { Saber } from '../../src/game/Saber.js';
-import { SaberController } from '../../src/game/SaberController.js';
+import { SaberController, OVERHEAD, GUARD } from '../../src/game/SaberController.js';
 import { BoltPool, guardIntercept, intersectBladeSweep } from '../../src/game/Bolts.js';
 import { CATCH, CatchWindow, captureSnapshot, gradeCaught, GRADE, DIFFICULTY } from '../../src/game/Combat.js';
 import { World } from '../../src/game/World.js';
@@ -803,9 +803,56 @@ export async function run({ check, assert }) {
     const plain = measure(() => {});
     const stanced = measure((c) => { c.stance = 1; });
     const thrusting = measure((c) => { c.thrust = 1; c.thrustStanding = 1; });
+    const swinging = measure((c) => { c.swingT = OVERHEAD.wind; c.swing = 1; });
     assert(plain >= 0.08, `the bare window fell to ±${(plain * 100).toFixed(1)} cm`);
     assert(stanced >= 0.08, `holding a stance shrank the window to ±${(stanced * 100).toFixed(1)} cm`);
     assert(thrusting >= 0.08, `thrusting shrank the window to ±${(thrusting * 100).toFixed(1)} cm`);
-    return `bare ±${(plain * 100).toFixed(1)} cm, stance ±${(stanced * 100).toFixed(1)} cm, thrust ±${(thrusting * 100).toFixed(1)} cm`;
+    assert(swinging >= 0.08, `an overhead shrank the window to ±${(swinging * 100).toFixed(1)} cm`);
+
+    // ── and the directional guard is added ON TOP of it, never instead of it.
+    //
+    // This check used to end here, pinning the blade's own capture window as
+    // the whole of what a player has to hit. Directional blocking gives them a
+    // second, much larger volume — a 1.4 m sphere sectored into four zones — and
+    // the property worth pinning is now stronger and has two halves: the blade
+    // window is UNCHANGED by any of it, and the zone is a strict superset of the
+    // blade, so nothing a player could hit before can now be missed.
+    const zoneWindow = () => {
+      const c = new SaberController({ scheme: 'directional' });
+      const aim = new THREE.Quaternion();
+      c.reset(CHEST, aim);
+      c.setZone('high', { force: true });
+      c.update(1 / 60, CHEST, aim, {});
+      const g = c.guard;
+      // in front of the player (the aim looks down -Z) and closing on the chest
+      const hits = (d) => {
+        const from = CHEST.clone().add(new THREE.Vector3(d, 0, -26));
+        const step = new THREE.Vector3(0, 0, 40 / 60);
+        const p = from.clone(), prev = from.clone();
+        for (let f = 0; f < 120; f++) {
+          prev.copy(p); p.add(step);
+          if (guardIntercept(prev, p, g, new THREE.Vector3())) return true;
+          if (p.z > CHEST.z + 3) return false;
+        }
+        return false;
+      };
+      if (!hits(0)) return 0;
+      let lo = 0, hi = 0.05;
+      while (hi < 4 && hits(hi)) { lo = hi; hi *= 1.6; }
+      for (let i = 0; i < 22; i++) { const m = (lo + hi) / 2; if (hits(m)) lo = m; else hi = m; }
+      return lo;
+    };
+    const zone = zoneWindow();
+    assert(zone > plain,
+      `a raised guard zone answers ±${(zone * 100).toFixed(1)} cm against the bare blade's `
+      + `±${(plain * 100).toFixed(1)} cm — the new scheme is NARROWER than the one it replaces`);
+    // The zone must not be so wide it stops being a guard: past the sphere it
+    // has to let a clean miss through, or "directional" would be a word for a
+    // bubble.
+    assert(zone < GUARD.radius,
+      `the zone answers ±${(zone * 100).toFixed(0)} cm, wider than its own ${GUARD.radius} m sphere`);
+    return `blade window bare ±${(plain * 100).toFixed(1)} cm, stance ±${(stanced * 100).toFixed(1)} cm, `
+      + `thrust ±${(thrusting * 100).toFixed(1)} cm, overhead ±${(swinging * 100).toFixed(1)} cm; `
+      + `a raised HIGH guard answers ±${(zone * 100).toFixed(0)} cm on top of it`;
   });
 }

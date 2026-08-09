@@ -194,12 +194,18 @@ export async function run({ check, assert }) {
    * wrong guard, exactly as Player.js drives it. Returns how much of the
    * original aiming error was closed and how far the guard still misses by.
    */
-  const assistTrial = (tier, offDeg, fromM, dt = 1 / 60) => {
+  const assistTrial = (tier, offDeg, fromM, dt = 1 / 60, scheme = 'hold') => {
     const d = DIFFICULTY[tier];
     const speed = 88 * d.boltSpeed;
     const chest = new THREE.Vector3(0, 1.35, 0);
     const aim = new THREE.Quaternion();          // looking down -Z
-    const ctrl = new SaberController();
+    // The scheme is NAMED rather than defaulted. `assist` now means "the share
+    // of your error the tier forgives" in two schemes and the error is a
+    // different quantity in each: a guard-AIMING error here, a guard-ZONE error
+    // under 'directional' (tools/checks/directional.mjs measures that ladder in
+    // degrees round the rose). Both are real and neither may quietly become the
+    // other, so this file says which one it is measuring.
+    const ctrl = new SaberController({ scheme });
     ctrl.assist = d.assist;
     ctrl.gx = (offDeg * Math.PI / 180) / ctrl.maxYaw;
     ctrl.gy = 0;
@@ -235,19 +241,31 @@ export async function run({ check, assert }) {
   // moving its own goalposts.
   const WINDOW_CM = 12.5;
 
-  check('assist: each tier closes the share of guard error it advertises', () => {
+  check('assist: each tier closes the share of guard error it advertises, on the free-aim path', () => {
     const rows = [];
     for (const key of ['padawan', 'knight', 'master', 'grandmaster']) {
       const d = DIFFICULTY[key];
       const speed = 88 * d.boltSpeed;
       // Fire from exactly one ASSIST_LEAD out, which is the condition the tier
       // number is defined against: a full 0.9 s of approach.
-      const r = assistTrial(key, 40, speed * 0.9);
-      rows.push(`${d.name} ${(r.closed * 100).toFixed(0)}%`);
-      assert(Math.abs(r.closed - d.assist) < 0.05,
-        `${d.name} advertises ${(d.assist * 100).toFixed(0)}% but closed ${(r.closed * 100).toFixed(1)}%`);
+      for (const scheme of ['hold', 'free']) {
+        const r = assistTrial(key, 40, speed * 0.9, 1 / 60, scheme);
+        assert(Math.abs(r.closed - d.assist) < 0.05,
+          `${d.name} on "${scheme}" advertises ${(d.assist * 100).toFixed(0)}% `
+          + `but closed ${(r.closed * 100).toFixed(1)}%`);
+        if (scheme === 'hold') rows.push(`${d.name} ${(r.closed * 100).toFixed(0)}%`);
+      }
+      // …and the SAME tier number must not ALSO drag the guard under
+      // 'directional', where it has already been spent on zone tolerance. Two
+      // payments for one number is how a difficulty tier stops meaning
+      // anything, and it would take the one choice this scheme asks the player
+      // to make and make it for them.
+      const dir = assistTrial(key, 40, speed * 0.9, 1 / 60, 'directional');
+      assert(dir.closed === 0,
+        `${d.name} closed ${(dir.closed * 100).toFixed(1)}% of the AIMING error under 'directional', `
+        + 'where the same number has already bought zone tolerance');
     }
-    return rows.join(', ');
+    return `${rows.join(', ')}; 'directional' closes 0% of aiming error on every tier`;
   });
 
   check('assist: a badly placed guard still blocks on the forgiving tiers', () => {

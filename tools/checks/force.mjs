@@ -33,6 +33,8 @@ import { Player } from '../../src/game/Player.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BoltPool } from '../../src/game/Bolts.js';
 import { buildJedi } from '../../src/game/Bodies.js';
+import { Input } from '../../src/engine/Input.js';
+import { defaultBindings } from '../../src/engine/Bindings.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const DEG = 180 / Math.PI;
@@ -332,31 +334,48 @@ export async function run({ check, assert, near }) {
     return rows.join(', ');
   });
 
-  check('force: gripping takes the wheel away from the wrist roll', () => {
-    // SaberController does `rollInput += input.mouse.wheel * 0.55` and runs
-    // FIRST, so before this one notch both rolled the blade and moved the held
-    // object. _readInput claims it while something is held and only then.
+  check('force: gripping takes the wheel away from the attack rose', () => {
+    // Was 'takes the wheel away from the wrist roll'. The wrist roll no longer
+    // reads the wheel at all: it was the last raw device read in the blade, and
+    // the collision this check exists to pin is the reason it had to go. The
+    // wheel is now `attackOver` / `attackStab`, ordinary rows in ACTIONS — so
+    // the property is the same and stronger, because it can be measured through
+    // the REAL Input and the REAL bindings rather than through a stub that says
+    // it reads the field.
+    //
+    // The mechanism is unchanged and still Player's: _readInput claims
+    // input.mouse.wheel while something is held and hands it straight back
+    // otherwise, and Input._codeDown reads that same field — so a notch spent
+    // on hold distance cannot ALSO swing the blade.
     const w = physicsWorld();
     const world = gameWorld(w);
     const p = player(world);
-    const input = {
-      mouse: { wheel: 3, dx: 0, dy: 0 }, bindings: {}, act: () => false, actHit: () => false,
-      _codeHit: () => false, moveAxis: (o) => o,
-    };
+    const canvas = { addEventListener() {}, removeEventListener() {} };
+    const real = new Input(canvas);
+    real.setBindings(defaultBindings());
+    const input = Object.assign(real, { moveAxis: (o) => o });
     p.saberThrown = false;
     p.isLocal = true;
     p.saber = { lit: true, toggle() {}, base: V(0, 0, 0) };
     p.control = { applyInput: () => ({ yaw: 0, pitch: 0 }), grip: 'two' };
     p.stamina = 100; p.maxStamina = 100;
+
+    input.mouse.wheel = 3;
     p._readInput(1 / 60, { input });
     assert(input.mouse.wheel === 3, 'the wheel was stolen from the blade while nothing was held');
     assert(p._wheel === 0, 'the grip took a wheel it has no use for');
+    assert(input.actHit('attackStab'),
+      'a wheel notch with nothing held did not reach the attack it is bound to');
+
     p.gripBody = prop(w, PROPS.crate);
     input.mouse.wheel = 3;
     p._readInput(1 / 60, { input });
     assert(p._wheel === 3, 'the grip did not receive the wheel');
-    assert(input.mouse.wheel === 0, 'the blade will roll on the same notch that moved the object');
-    return 'wheel goes to the wrist when free, to the grip when holding — never to both';
+    assert(input.mouse.wheel === 0, 'the blade will attack on the same notch that moved the object');
+    assert(!input.actHit('attackStab') && !input.actHit('attackOver'),
+      'one notch both pushed the held object away AND swung the blade');
+    real.dispose();
+    return 'wheel goes to the attack rose when free, to the grip when holding — never to both';
   });
 
   /* ── gestures ────────────────────────────────────────────────────── */

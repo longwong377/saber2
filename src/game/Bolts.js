@@ -15,6 +15,11 @@ const rng = makeRng(606);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vector3();
+// The zone solve runs INSIDE guardIntercept, whose `out` is usually one of the
+// vectors above — so it gets its own, or it would overwrite the very point it
+// is deciding about.
+const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+const _gA = new THREE.Vector3(), _gB = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 export const BOLT_COLORS = {
@@ -38,6 +43,12 @@ export class BoltPool {
         // While `held` the bolt is stuck to a blade: it does not fly, does not
         // hit anything, and does not age. See update().
         held: null, heldT: 0,
+        // Stamped by the directional guard on the frame it answers this bolt,
+        // and read by Combat.captureSnapshot. It rides on the BOLT rather than
+        // on the hit descriptor because World rebuilds that descriptor from
+        // three fields on its way to the snapshot, and a parry that lost its
+        // flag in transit would grade as an ordinary block.
+        guardZone: null,
       });
     }
     this.head = 0;
@@ -111,6 +122,7 @@ export class BoltPool {
     b.homing = opts.homing ?? 0;
     b.target = opts.target ?? null;
     b.held = null; b.heldT = 0;
+    b.guardZone = null;
     return b;
   }
 
@@ -141,6 +153,7 @@ export class BoltPool {
   release(bolt, dir, speed) {
     bolt.held = null;
     bolt.heldT = 0;
+    bolt.guardZone = null;      // a bolt leaving the blade is a fresh projectile
     bolt.vel.copy(dir).normalize().multiplyScalar(speed);
     bolt.prev.copy(bolt.pos);
     return bolt;
@@ -197,16 +210,54 @@ export class BoltPool {
             consumed = true;
             break;
           }
-          // ── the auto-guard cone a successful deflect just opened. The blade
-          // missed this one by hand; the guard covers it because the last one
-          // was answered properly. Hostile bolts only — your own returns must
-          // be free to leave.
-          const g = entry.guard;
-          if (!g || b.team === entry.team) continue;
-          if (!guardIntercept(b.prev, b.pos, g, _v4)) continue;
+          // ── the guards this blade is holding. Two of them, and they are
+          // different animals.
+          //
+          //   the DIRECTIONAL ZONE the player is choosing right now, which
+          //   travels with them and turns with them, and
+          //
+          //   the auto-guard CONE a successful deflect opened behind them,
+          //   which stays pointing down the line the last bolt came in on
+          //   precisely so that it keeps covering you while you look away.
+          //
+          // Hostile bolts only — your own returns must be free to leave.
+          if (b.team === entry.team) continue;
+          // The controller is reached through the owner rather than handed in,
+          // so no caller has to remember to publish it and an owner without one
+          // (every enemy) simply has no zone.
+          const zone = entry.owner && entry.owner.control ? entry.owner.control.guard : null;
+          let g = null;
+          if (zone && zone.active && guardIntercept(b.prev, b.pos, zone, _v4)) g = zone;
+          else if (entry.guard && guardIntercept(b.prev, b.pos, entry.guard, _v4)) g = entry.guard;
+          if (!g) continue;
+          let bladeT = 0.55, auto = true;
+          _gA.copy(_v4);
+          if (g === zone) {
+            // Report the contact ON THE BLADE, not out on the guard sphere. The
+            // sphere is where the RULE fired; the blade is where the player is
+            // looking, and everything downstream — the spark, the surface
+            // normal, the origin of the return — is measured off `point`. A
+            // block that happens half a metre from the weapon does not read as
+            // a block, which is the one thing tools/motion.mjs can see.
+            const res = segmentSegment(b.prev, b.pos, sab.base, sab.tip, _gB, _gA);
+            bladeT = clamp(res.t, 0.08, 0.96);
+            // A PARRY is the only thing here that is caught rather than
+            // scattered: `auto` is the flag captureSnapshot reads to say the
+            // contact was answered rather than merely met.
+            auto = !!zone.parry;
+            b.guardZone = { zone: zone.zone, parry: auto, age: zone.parryAge ?? 0 };
+          } else b.guardZone = null;
           if (this.onDeflect) {
-            this.onDeflect(b, entry, { bladeT: 0.55, point: _v4.clone(), auto: true }, _v4.clone());
+            this.onDeflect(b, entry, { bladeT, point: _gA.clone(), auto }, _gA.clone());
           }
+          // The stamp lives for exactly one callback and not a frame longer.
+          // captureSnapshot reads it synchronously inside onDeflect and copies
+          // what it needs into the snapshot, which is what survives to the
+          // throw. Leaving it on the bolt would be a live parry flag riding a
+          // bolt that is now on YOUR team and heading for an enemy blade — and
+          // that blade's own captureSnapshot would read it and be handed a free
+          // RETURN off a guard it never held.
+          b.guardZone = null;
           consumed = true;
           break;
         }
@@ -381,12 +432,120 @@ export function guardIntercept(from, to, guard, out = new THREE.Vector3()) {
     if (s < 0 || s > len) return null;                // does not reach it this frame
   }
   out.copy(from).addScaledVector(_v1, s);
+  if (guard.rose != null) return guardZoneAccepts(from, _v1, guard) ? out : null;
   _v3.subVectors(out, o);
   const d = _v3.length();
   if (d < 1e-6) return out;                           // dead centre is inside every cone
   _v3.multiplyScalar(1 / d);
   return _v3.dot(guard.axis) >= Math.cos(guard.cone) ? out : null;
 }
+
+/**
+ * Does a directional guard ZONE answer this bolt?
+ *
+ * The sphere above has already decided that the bolt actually arrives at you.
+ * This decides which of the four zones it arrives THROUGH, and it is deliberately
+ * a function of the bolt's LINE and nothing else — not of where the bolt happens
+ * to be this frame. A block answers the shot, and the shot is a line; the bearing
+ * to a bolt swings through ninety degrees over the last two metres of its flight,
+ * so classifying on it would change a bolt's zone under the player's hands while
+ * they were already answering it.
+ *
+ * The bearing used is where the line crosses the guard sphere, computed from the
+ * INFINITE line so that a bolt which began the frame already inside the sphere
+ * gets the same answer as one that did not:
+ *
+ *     q  = the offset of the line from the chest at its closest approach
+ *     n̂  = (q − u·√(R² − |q|²)) / R
+ *
+ * For a shooter off to your side that is just −velocity, the direction the shot
+ * came from. For a shooter you are looking straight at, −velocity is dead ahead
+ * and says nothing, and n̂ instead resolves to WHERE ON YOU the shot was placed,
+ * at θ = asin(miss / R). Both are the same formula; which one you are reading is
+ * decided by the geometry rather than by a special case.
+ *
+ * Then:
+ *   · inside `centre` — a bolt on your own centreline. ANY zone answers it, and
+ *     none of them is more correct than another: a blade held anywhere in front
+ *     of your chest is across the line of a shot coming down your sightline.
+ *     Every frontal shot that would actually hit your torso is in here, because
+ *     asin(0.4 / 1.4) = 16.6° and the disc is 20°.
+ *   · beyond `reach` — behind your shoulder line. No zone answers it.
+ *   · otherwise — the rose sector decides, widened by the tier's tolerance.
+ */
+export function guardZoneAccepts(from, u, guard) {
+  const o = guard.origin, R = guard.radius;
+  // closest approach of the line to the chest
+  _g1.subVectors(o, from);
+  const along = _g1.dot(u);
+  _g2.copy(from).addScaledVector(u, along).sub(o);     // q
+  const m2 = _g2.lengthSq();
+  if (m2 >= R * R) return false;
+  _g3.copy(_g2).addScaledVector(u, -Math.sqrt(R * R - m2)).multiplyScalar(1 / R);
+  // into the aim frame, then the same yaw/pitch the guard itself is written in
+  _g3.applyQuaternion(guard.inv);
+  const theta = Math.acos(clamp(-_g3.z, -1, 1));
+  if (theta > guard.reach) return false;
+  if (theta <= guard.centre) return true;
+  const yaw = Math.atan2(_g3.x, -_g3.z);
+  const pitch = Math.asin(clamp(_g3.y, -1, 1));
+  let d = (Math.atan2(pitch, yaw) - guard.rose) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d <= -Math.PI) d += Math.PI * 2;
+  return Math.abs(d) <= guard.half;
+}
+
+/**
+ * The zone a guard descriptor WOULD have to be holding to answer this line.
+ *
+ * Exactly one, for every line that reaches the sphere at all: the four sectors
+ * tile the rose. Inside the centre disc there is no meaningful bearing, so the
+ * answer is 'centre' — which every zone accepts and none of them owns. Exported
+ * for the HUD and for the checks; the resolution above never calls it, because
+ * the resolution has to be a single test rather than a classify-then-compare.
+ */
+export function guardZoneOf(from, to, guard, out = {}) {
+  const o = guard.origin, R = guard.radius;
+  _g1.subVectors(to, from);
+  const len = _g1.length();
+  if (len < 1e-9) { out.zone = null; return out; }
+  _g1.multiplyScalar(1 / len);
+  _g2.subVectors(o, from);
+  const along = _g2.dot(_g1);
+  _g2.copy(from).addScaledVector(_g1, along).sub(o);
+  const m2 = _g2.lengthSq();
+  out.miss = Math.sqrt(m2);
+  if (m2 >= R * R) { out.zone = null; return out; }
+  _g3.copy(_g2).addScaledVector(_g1, -Math.sqrt(R * R - m2)).multiplyScalar(1 / R);
+  _g3.applyQuaternion(guard.inv);
+  out.theta = Math.acos(clamp(-_g3.z, -1, 1));
+  const yaw = Math.atan2(_g3.x, -_g3.z);
+  const pitch = Math.asin(clamp(_g3.y, -1, 1));
+  out.rose = Math.atan2(pitch, yaw);
+  if (out.theta > (guard.reach ?? Math.PI)) { out.zone = null; return out; }
+  if (out.theta <= (guard.centre ?? 0)) { out.zone = 'centre'; return out; }
+  let best = null, bestD = Infinity;
+  for (const [z, c] of ZONE_ROSE_ENTRIES) {
+    let d = (out.rose - c) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d <= -Math.PI) d += Math.PI * 2;
+    d = Math.abs(d);
+    if (d < bestD - 1e-12) { bestD = d; best = z; }
+  }
+  out.zone = best;
+  out.error = bestD;
+  return out;
+}
+
+/**
+ * The rose bearings of the four zones, duplicated here rather than imported so
+ * that Bolts stays free of any dependency on the controller. SaberController's
+ * ZONE_ROSE is the same table and tools/checks/directional.mjs fails the build
+ * if the two ever drift apart.
+ */
+const ZONE_ROSE_ENTRIES = [
+  ['right', 0], ['high', Math.PI / 2], ['left', Math.PI], ['low', -Math.PI / 2],
+];
 
 /**
  * Test a segment against a capsule (used for bolt-vs-limb and blade-vs-limb).

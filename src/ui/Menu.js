@@ -13,15 +13,24 @@ import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
 import { QUALITY } from '../engine/Engine.js';
-import { ACTIONS, MOUSE, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts } from '../engine/Bindings.js';
+import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts } from '../engine/Bindings.js';
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
 // v3: the training block below is new, and a v2 blob spread over these
 // defaults would be fine — but `bladeLength` changed its legal range, and a
 // stored 1.45 has to be re-read against a cap that now moves.
-const STORE_KEY = 'saber.settings.v3';
-const LEGACY_KEYS = ['saber.settings.v2'];
+// v4: the same reason as v2, one scheme along. `scheme` now defaults to
+// 'directional', and saveSettings writes the WHOLE object — so every player who
+// has ever opened the options screen has `scheme: 'hold'` on disk whether they
+// chose it or not, and would never see the new scheme at all.
+//
+// The legacy list is a CHAIN, oldest last, because drainLegacy spreads them in
+// order and the last one wins: tools/smoke.mjs and tools/motion.mjs still preset
+// a level by writing the v2 key, so v2 has to keep speaking or every `--level x`
+// run would silently boot the dunes.
+const STORE_KEY = 'saber.settings.v4';
+const LEGACY_KEYS = ['saber.settings.v3', 'saber.settings.v2'];
 
 /**
  * The blade length the forge slider stops at, and the length it stops at when
@@ -67,7 +76,11 @@ export const DEFAULT_SETTINGS = {
   fov: 60,
   invertY: false,
   firstPerson: false,
-  scheme: 'hold',
+  // DIRECTIONAL is what the game ships. See SCHEMES, and the v4 bump above:
+  // a stored v3 blob carries `scheme: 'hold'` whether or not its owner ever
+  // chose it, so without the bump the new default would reach nobody who had
+  // opened the menu once.
+  scheme: 'directional',
   deflectAim: 'reticle',
   forcePower: 1,
   forceDrain: 1,
@@ -239,9 +252,16 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
  */
 export const CODEX = [
   { keys: ['blade'], hold: true,
-    text: () => 'The mouse becomes the <b>blade</b>. The camera holds still while you hold it.' },
+    text: () => 'Raise the <b>guard</b>. Under Directional the camera keeps moving; under the '
+      + 'other two schemes the mouse becomes the blade and the camera holds still.' },
   { device: 'Mouse',
-    text: () => 'Released, it is the camera. The blade settles back to a ready guard.' },
+    text: () => '<b>Flick</b> up, left, right or down to set the guard zone. It stays where you '
+      + 'put it. Slow movement is pure aim.' },
+  { device: 'Mouse',
+    text: () => 'Flick into a zone as the bolt lands — inside 0.2 s — and it is a <b>parry</b>: '
+      + 'the bolt goes back at whatever is under your reticle.' },
+  { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down.' },
+  { keys: ['attackStab'], text: () => 'Stab. Same lunge as the thrust, on the other half of the wheel.' },
   { keys: ['thrust'], text: () => 'Thrust — drive the hands forward along the blade.' },
   { keys: ['moveF', 'moveL', 'moveB', 'moveR'],
     text: k => `Move. ${k('sprint')} sprint, ${k('crouch')} crouch.` },
@@ -281,7 +301,7 @@ export const CODEX = [
 ];
 
 /**
- * The two control schemes. Their blurbs name keys, so their blurbs are
+ * The three control schemes. Their blurbs name keys, so their blurbs are
  * functions of the bindings like the Codex rows.
  *
  * The Free Blade card said "Hold RMB to look around", which was a typed key
@@ -289,10 +309,21 @@ export const CODEX = [
  * scheme actually reads is `!input.act('thrust')` for the camera and
  * `actHit('blade')` for the stab, so the card was naming Mouse2's DEFAULT and
  * would have gone on saying RMB after a rebind moved thrust anywhere else.
+ *
+ * DIRECTIONAL ships first and by default because the other two share one
+ * unresolvable flaw, and it is the flaw the player named: both of them buy a
+ * steerable guard by taking the camera, and a deflection is aimed with the
+ * camera. Their cards say so — a scheme's real cost belongs on its own card,
+ * not in a patch note.
  */
 export const SCHEMES = [
+  { key: 'directional', name: 'Directional Guard',
+    blurb: k => `Four guards — high, left, right, low. Hold ${k('blade')} and FLICK the mouse to `
+      + `pick one; it stays there. The camera never stops moving, so you aim and block at once. `
+      + `Flick as the bolt lands to parry it back. ${k('attackOver')} overhead, ${k('attackStab')} stab.` },
   { key: 'hold', name: 'Hold to Blade',
-    blurb: k => `The mouse looks. Hold ${k('blade')} and the mouse IS the blade. Recommended.` },
+    blurb: k => `The mouse looks. Hold ${k('blade')} and the mouse IS the blade — while you hold it `
+      + `the camera is frozen, so you cannot aim a return until you let go.` },
   { key: 'free', name: 'Free Blade',
     blurb: k => `The mouse always moves the blade and the camera follows it. Hold ${k('thrust')} `
       + `to look around; ${k('blade')} stabs. Chaotic.` },
@@ -358,12 +389,29 @@ export function pauseHintsHtml(bindings) {
  * key last (it wins over anything already under the new one) and deleting it is
  * what makes that write-then-reload still mean what it says, exactly once.
  */
+/**
+ * Settings a given legacy blob is NOT allowed to carry forward.
+ *
+ * The reason the key was bumped at all is that a stored `scheme` would pin
+ * every returning player to 'hold' — saveSettings writes the whole object, so
+ * anybody who has opened the options screen once has that value on disk whether
+ * they chose it or not. Dropping the WHOLE blob would answer that and also
+ * forget their crystal, their level and their volume, which is the exact
+ * complaint the comment above drainLegacy is about. So the bump retires one
+ * key by name and keeps the rest.
+ */
+const RETIRED = { 'saber.settings.v3': ['scheme'] };
+
 function drainLegacy() {
   let out = null;
   for (const k of LEGACY_KEYS) {
     try {
       const raw = localStorage.getItem(k);
-      if (raw) out = { ...(out || {}), ...JSON.parse(raw) };
+      if (raw) {
+        const blob = JSON.parse(raw);
+        for (const dead of RETIRED[k] || []) delete blob[dead];
+        out = { ...(out || {}), ...blob };
+      }
       localStorage.removeItem(k);
     } catch {}
   }
@@ -1000,6 +1048,7 @@ export class Menu {
       const finish = (code) => {
         window.removeEventListener('keydown', onKey, true);
         window.removeEventListener('mousedown', onMouse, true);
+        window.removeEventListener('wheel', onWheel, true);
         this._listening = false;
         if (hint) hint.textContent = '';
         if (code) {
@@ -1031,8 +1080,16 @@ export class Menu {
         e.preventDefault(); e.stopPropagation();
         finish(MOUSE[e.button] || null);
       };
+      // The wheel is a bindable code now, so the thing that captures codes has
+      // to be able to hear one — otherwise "Overhead attack" would be the only
+      // row in the table you could not rebind ONTO, which is half a control.
+      const onWheel = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        finish(e.deltaY < 0 ? WHEEL.up : WHEEL.down);
+      };
       window.addEventListener('keydown', onKey, true);
       window.addEventListener('mousedown', onMouse, true);
+      window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     };
 
     const reset = document.getElementById('btn-bind-reset');
