@@ -354,14 +354,57 @@ export const LEVELS = {
       // shadow and the tone curve.
       sunColor: 0xfff2d6, sunIntensity: 7.2, ambient: 0.30,
       skyColor: 0xb4cdf3, groundColor: 0x8a6a44,
-      // The one term in the shade that is AUTHORED rather than derived, and it
-      // is a real skylight now rather than a pale blue: 0x93b6ff is B/R 3.43 in
-      // linear, 0x7ba4ff is 5.05. It matters more than its 3.0% of the ground
-      // irradiance suggests, because it is the only piece of the shade that
-      // arrives FROM A DIRECTION — the probe is an average over the hemisphere
-      // and the hemisphere light is a two-colour gradient, so neither of them
-      // can model a face turning toward the open sky and getting bluer for it.
-      fillColor: 0x7ba4ff, fillIntensity: 0.48,
+      // THE FILL CARRIES LUMINANCE, NOT CHROMA, and the paragraph that used to
+      // sit here had the reason backwards.
+      //
+      // It read: "the probe is an average over the hemisphere … so neither of
+      // them can model a face turning toward the open sky and getting bluer for
+      // it", and on that argument the fill was made a real skylight blue
+      // (0x8fb4ff B/R 3.64 → 0x7ba4ff B/R 5.05) AND stronger (0.34 → 0.48) in
+      // one step. The premise is false. `getIBLIrradiance` samples the diffuse
+      // convolution ALONG THE NORMAL, so the probe already carries direction,
+      // and the amount is not marginal — measured on this atmosphere, probe
+      // irradiance by normal:
+      //
+      //     toward the sun  1.287 lum, B/R 1.67      down    0.094, B/R 0.23
+      //     toward open sky 0.174 lum, B/R 3.91      zenith  0.613, B/R 2.74
+      //
+      // Eighteen to one in luminance and seventeen to one in B/R. A face
+      // turning toward the open sky was ALREADY getting bluer for it. The fill
+      // was a second copy of that term, laid on at B/R 5.05 — bluer than the
+      // probe's own open-sky sample (3.91) and bluer than the whole sky
+      // integrated over the hemisphere (2.11). That is the term applied twice.
+      //
+      // The two knobs were then measured SEPARATELY, on a backlit figure, and
+      // they do different jobs:
+      //
+      //   intensity 0 → 0.66 :  luminance σ across the silhouette 0.050 → 0.080
+      //                         saturation essentially flat
+      //   chroma  ×1 → ×0.3  :  saturation 0.568 → 0.318
+      //                         luminance σ 0.0719 → 0.0731 (unmoved)
+      //
+      // So intensity buys FORM and chroma buys nothing but SATURATION. The
+      // round that raised both got the first half right and the second half
+      // wrong: the figure went to a flat saturated blue and its cast shadow to
+      // a cyan hole. Intensity stays at 0.48. The chroma comes off.
+      //
+      // 0x96a5d0 is 0x7ba4ff with its chroma scaled to 0.40 about its own
+      // luminance — B/R 5.05 → 2.04, and LUMINANCE IDENTICAL to four places
+      // (0.3798). That matters more than it looks: `atmosphereMeter` weighs the
+      // fill by lum(fillColor), so this changes the shade's colour without
+      // moving the light meter, the exposure, the indirect fraction or the
+      // lit-to-shade ratio by a single digit. One variable moved, and it is the
+      // one the measurement indicted.
+      //
+      // Measured on the controlled cast shadow (tools/_shade.mjs), before →
+      // after: shaded VERTICAL face saturation 0.379 → 0.143 at hue 223° → 231°,
+      // shaded ground 0.402 → 0.322 at 211° → 208°, sunlit ground 0.205 → 0.212
+      // (the control, which must not move), lit-to-shade 2.77:1 → 2.75:1.
+      //
+      // The amount is this level's own and does NOT generalise — the canyon
+      // goes grey under the same edit. See its block, and the note in
+      // tools/checks/lighting.mjs about the ceiling rule the data killed.
+      fillColor: 0x96a5d0, fillIntensity: 0.48,
       // fogColor IS THE NEAR AIR NOW, and only that.
       //
       // The complaint against this pair was exact: 0xd0c6b4 is hue 38° and the
@@ -606,18 +649,31 @@ export const LEVELS = {
       sunColor: 0xffe4b0, sunIntensity: 7.0, ambient: 0.34,
       skyColor: 0xa8c6f6, groundColor: 0x7a6244,
       // The sky bounce onto everything the sun cannot reach. Engine points it
-      // opposite the sun for us; what it needs from the level is a colour that
-      // is actually the sky's and a strength that reads. 0.34, not the 0.45
-      // first tried: at 0.45 the shadows filled in far enough to take the
-      // frame's tonal range from 3.26:1 to 2.50:1, which is paying for hue
-      // separation with value separation.
-      // …and a real skylight blue rather than a pale one: 0x8fb4ff is B/R 3.64
-      // in linear, 0x7ba4ff is 5.05. The note above about 0.45 buying hue with
-      // value still holds — this is 0.48, not 0.60 — but the arithmetic under it
-      // has changed: the probe that used to dwarf this term has come down by
-      // more than half (see diffuseCap), so the same 0.14 of intensity now moves
-      // the shade's hue about twice as far as it did when that note was written.
-      fillColor: 0x7ba4ff, fillIntensity: 0.48,
+      // opposite the sun for us. The note about 0.45 buying hue with value
+      // still holds and INTENSITY IS UNTOUCHED at 0.48 — see the dune sea's
+      // block for the measurement that says intensity is what puts a terminator
+      // on a shoulder and is the only reason this term earns its place.
+      //
+      // What comes off is the chroma. 0x7ba4ff is B/R 5.05 in linear against a
+      // probe that on THIS atmosphere already delivers B/R 4.34 along this very
+      // direction and 2.92 integrated over the whole dome; the fill was a second
+      // copy of the probe's directional sky term, laid on bluer than the sky it
+      // was standing in for. 0x94a5d4 is the same colour with its chroma scaled
+      // to 0.45 about its own luminance: B/R 2.21, luminance identical to four
+      // places (0.3798), so the meter, the exposure and the tonal range do not
+      // move at all — only the colour of the shade does.
+      //
+      // Measured on the controlled cast shadow (tools/_shade.mjs), this level's
+      // shaded vertical face was saturation 0.320 against its own SUNLIT face at
+      // 0.323 — a shaded face as colourful as a lit one, which is what a blue
+      // filter looks like and what a shadow does not. Before → after: face
+      // 0.320 → 0.105 at hue 213° → 205°, shaded ground 0.394 → 0.310 at
+      // 204° → 200°, sunlit ground 0.371 → 0.380 (control), lit-to-shade
+      // 3.18:1 → 3.16:1. The shade it is joining is B/R 3.71 and this fill is
+      // now 2.22, but that is a measurement and not an enforced ceiling — the
+      // canyon has a shade of 2.80 under a fill of 5.05 and is the level that
+      // reads correctly, so no threshold survives all three.
+      fillColor: 0x94a5d4, fillIntensity: 0.48,
       // 0.0034 put the half-light distance at 245 m, which is further than the
       // rim (170 m) and the near mesas — so the one thing that makes distant
       // rock desaturate and shift toward the sky was barely acting on the only
@@ -973,14 +1029,38 @@ export const LEVELS = {
       skyColor: 0xa8c8f0, groundColor: 0x6a5440,
       // This level never authored a fill and took the engine's pale default,
       // which is the one thing about its light that was not deliberate. It is
-      // the same skylight the other two outdoor levels use and it is DIMMER
-      // than theirs on purpose: a 14° sun already leaves this level with more
-      // sky in its shade than either of them (see diffuseCap), so it needs the
-      // hue from this term and none of the level. Measured on a controlled cast
-      // shadow (tools/_shade.mjs), this level's shaded sand went hue 79.0° /
-      // saturation 0.013 — grey, with GREEN as its maximum channel — to hue
-      // 205.3° / 0.354 with blue as its maximum, and its lit-to-shade ratio
-      // moved 1.97:1 to 2.15:1, which is the least of the three on purpose.
+      // DIMMER than the other two on purpose at 0.40: a 14° sun already leaves
+      // this level with more sky in its shade than either of them (see
+      // diffuseCap), so it needs the hue from this term and none of the level.
+      // Measured on a controlled cast shadow (tools/_shade.mjs), this level's
+      // shaded sand went hue 79.0° / saturation 0.013 — grey, with GREEN as its
+      // maximum channel — to hue 205.3° / 0.354 with blue as its maximum. That
+      // is the fix that worked and it stays.
+      //
+      // THIS LEVEL KEEPS 0x7ba4ff AND THAT IS A MEASURED DECISION, not an
+      // oversight, so nobody "finishes the job" later.
+      //
+      // The arena and the dune sea had their fills desaturated because their
+      // shaded faces were reading as a blue filter (saturation 0.320 and 0.379
+      // against sunlit 0.316 and 0.171 — a shaded face as colourful as a lit
+      // one). It is tempting to apply the same correction here for consistency,
+      // and it was applied here, and it broke this level. Measured on the same
+      // controlled cast shadow, with this level's fill taken to B/R 2.58:
+      //
+      //     shaded vertical face   saturation 0.148 → 0.020, hue 224.5° → 294.9°
+      //
+      // That is grey with a meaningless hue — the exact "green-grey mud" this
+      // level was rescued from a round ago, walked straight back into. The
+      // reason is that this level's shade is not made of the same stuff: at a
+      // 14° sun the probe is 94.6% of the shade on a face turned to the camera
+      // where the other two levels are 48–55%, and its exposure of 1.78 puts
+      // its shade at display luminance 0.31 where ACES has already begun taking
+      // chroma out, against 0.20 on the arena where it has not. Same edit, two
+      // and a half times the effect.
+      //
+      // So the correction is per level and this level's correct amount is zero.
+      // The three outdoor levels now carry three different fills, which is the
+      // point: one constant across three skies is what produced the fault.
       fillColor: 0x7ba4ff, fillIntensity: 0.40,
       fogColor: 0xb4a894, fogDensity: 0.0052, exposure: 0.94, bloom: 0.42,
       saturation: 1.1, lift: [0.008, 0.010, 0.014], gain: [1.03, 1.0, 0.98],

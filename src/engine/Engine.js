@@ -1314,11 +1314,47 @@ export class Engine {
     // The probe is doing this job properly now, so the hand-rolled hemisphere
     // is trimmed to a floor rather than run alongside it at full strength.
     this.hemi.intensity = (a.ambient ?? 0.85) * (this.skyLinear && a.sky !== false ? HEMI_TRIM : 1);
+    /* THE FILL IS A SHAPING LIGHT, NOT A SECOND SKY.
+     *
+     * It is the one shade term a level authors outright, and for one round it
+     * was authored as "a real skylight" on the reasoning that the probe is an
+     * average over the hemisphere and so cannot make a face turning toward the
+     * open sky get bluer for it. That is not what the probe does. Three's
+     * `getIBLIrradiance` samples the diffuse convolution ALONG THE NORMAL, so
+     * the probe is directional already — measured GL-free on the arena, its
+     * irradiance runs 0.053 lum / B/R 0.30 straight down to 0.964 / B/R 1.94
+     * toward the sun and 0.293 / B/R 4.34 toward the open sky. Eighteen to one
+     * in level, fourteen to one in chroma. The fill was therefore a SECOND COPY
+     * of the probe's own directional sky term, and it was laid on at B/R 5.05,
+     * bluer than the probe's open-sky sample it was standing in for.
+     *
+     * What it is actually for is the one thing the probe cannot do: the probe
+     * is unoccluded and unshadowed, so it has no local falloff, and max(N·L,0)
+     * is what puts a terminator on a shoulder. That job wants LUMINANCE. On a
+     * backlit figure, sweeping the two knobs apart:
+     *
+     *   intensity 0 → 0.66   luminance σ across the silhouette 0.050 → 0.080
+     *   chroma  ×1 → ×0.3    saturation 0.568 → 0.318, σ unmoved at 0.073
+     *
+     * — so a level buys form with intensity and buys nothing but saturation
+     * with chroma. Levels.js authors accordingly: intensity untouched, chroma
+     * scaled about the colour's own luminance so the light meter cannot move.
+     *
+     * There is NO derived ceiling on the chroma and one was tried. "The fill
+     * may not be more chromatic than the shade it joins" is a good-sounding
+     * rule that the measurements refuse: shipped, the amount each level's fill
+     * raised its own shade's B/R was dunes ×1.247, arena ×1.120, canyon ×1.239
+     * — and the canyon is the level that looked right. The correction is per
+     * level and has to be measured per level; lighting.mjs pins only what
+     * survives without a threshold (see "one authored skylight cannot stand for
+     * three different skies").
+     *
+     * Sky bounce from the shadow side. Pinned to a fixed direction it was
+     * nearly co-directional with the arena's sun (doing nothing) and opposed to
+     * the canyon's (fighting it).
+     */
     this.fill.color.set(a.fillColor ?? 0x9fc4ff);
     this.fill.intensity = a.fillIntensity ?? 0.25;
-    // Sky bounce from the shadow side. Pinned to a fixed direction it was
-    // nearly co-directional with the arena's sun (doing nothing) and opposed to
-    // the canyon's (fighting it).
     this.fill.position.copy(sunPos).multiplyScalar(-1).setY(0.5).normalize().multiplyScalar(60);
     this.sky.visible = a.sky !== false;
 

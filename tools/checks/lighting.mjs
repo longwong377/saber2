@@ -225,6 +225,130 @@ export function run({ check, assert, near, THREE: T }) {
     return `bounce ${BOUNCE_RADIUS} inside far ${PMREM_FAR}, both passed explicitly`;
   });
 
+  check('shade: one authored skylight cannot stand for three different skies', () => {
+    /* The fill is the one shade term a level authors outright, and for one
+     * round every outdoor level authored the IDENTICAL 0x7ba4ff — B/R 5.05 in
+     * linear — over three skies whose own hemisphere chroma is 2.92, 2.11 and
+     * 3.38. It went in on the argument that the probe cannot make a face
+     * turning toward the open sky get bluer for it. The probe does exactly
+     * that: getIBLIrradiance samples the diffuse convolution along the normal,
+     * and measured GL-free the probe's own B/R runs 0.30 pointing down to 4.34
+     * pointing at the open sky. So the fill was a second copy of a term already
+     * present, laid on bluer than the sky it stood in for.
+     *
+     * What it cost, on the controlled cast shadow (tools/_shade.mjs), was a
+     * SHADED VERTICAL FACE at saturation 0.320 on the arena and 0.379 on the
+     * dune sea — against those levels' own SUNLIT faces at 0.323 and 0.171. A
+     * shaded face as colourful as a sunlit one is a filter, not a shadow.
+     * Correcting the two of them took those to 0.105 and 0.143.
+     *
+     * The same correction applied to the canyon took its shaded face to
+     * saturation 0.020 at hue 294.9° — grey, hue meaningless — because that
+     * level's shade is 94.6% probe against 48–55% on the others and its
+     * exposure sits a stop and a half higher. Hence no numeric ceiling here
+     * (see the note in the loop); what IS assertable is that the correction is
+     * per level, so the levels must not all be carrying the same constant.
+     *
+     * B/R and not HSV saturation: the shade axis is blue against red and B/R is
+     * the ratio that multiplies a warm albedo. It is also immune to exposure
+     * and to the grade, which is the trap this lane has fallen into before —
+     * bounding a chromatic quantity with a measurement taken in the wrong
+     * space.
+     */
+    const rows = [];
+    // A deterministic Fibonacci hemisphere, so the integral is reproducible
+    // and does not depend on a sample count someone tunes later.
+    const N = 768;
+    const dirs = [];
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (2 * (i + 0.5)) / N;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = i * Math.PI * (3 - Math.sqrt(5));
+      dirs.push(new T.Vector3(Math.cos(th) * r, y, Math.sin(th) * r));
+    }
+    for (const key of OUTDOOR) {
+      const a = LEVELS[key].atmosphere;
+      const m = atmosphereMeter(a);
+      const sun = sunDirection(a, new T.Vector3());
+      // The direction Engine points the fill: opposite the sun, lifted to y=0.5.
+      const n = sun.clone().multiplyScalar(-1).setY(0.5).normalize();
+      // The probe, as the bake actually contains it: the PHYSICAL sky above and
+      // the ground-bounce hemisphere below, cosine-weighted about the normal
+      // and scaled by the environment intensity the engine will use.
+      const bounce = new T.Color(a.groundColor ?? 0x60482e)
+        .multiplyScalar(Math.min(6, Math.max(0.02, m.irradiance / Math.PI)));
+      const c = new T.Color();
+      const w = (4 * Math.PI) / N;
+      let R = 0, G = 0, B = 0;
+      for (const d of dirs) {
+        const cs = d.dot(n);
+        if (cs <= 0) continue;
+        let r, g, b;
+        if (d.y > 0) { skyShoulder(skyRadiance(d, sun, a, c)); r = c.r; g = c.g; b = c.b; }
+        else { r = bounce.r; g = bounce.g; b = bounce.b; }
+        R += r * cs * w; G += g * cs * w; B += b * cs * w;
+      }
+      R *= m.envI; G *= m.envI; B *= m.envI;
+      // …plus the hemisphere light, which is the other half of the shade.
+      const skyC = new T.Color(a.skyColor ?? 0xbcd8ff);
+      const grdC = new T.Color(a.groundColor ?? 0x60482e);
+      const hemiI = (a.ambient ?? 0.85) * 0.45;
+      const t = 0.5 * n.y + 0.5;
+      R += (grdC.r + (skyC.r - grdC.r) * t) * hemiI;
+      G += (grdC.g + (skyC.g - grdC.g) * t) * hemiI;
+      B += (grdC.b + (skyC.b - grdC.b) * t) * hemiI;
+
+      const shadeBR = B / Math.max(R, 1e-9);
+      const f = new T.Color(a.fillColor ?? 0x9fc4ff);
+      const fillBR = f.b / Math.max(f.r, 1e-9);
+      /* A CEILING WAS TRIED HERE AND THE DATA KILLED IT. Leaving the numbers
+       * so the next person does not re-derive it.
+       *
+       * The rule was `fillBR <= shadeBR` — a term that only adds light must not
+       * make the shade more coloured than the sky already makes it. It is a
+       * nice rule and it does not predict the frame. Shipped, the amount each
+       * level's fill raised its own shade's B/R was:
+       *
+       *     dunes ×1.247    arena ×1.120    canyon ×1.239
+       *
+       * — canyon in the middle, and canyon is the level that looked RIGHT while
+       * the other two looked like a blue filter. Nothing about the fill alone
+       * separates them, because the difference is not in the fill: at a 14° sun
+       * canyon's probe is 94.6% of its shade against 48–55% on the others, and
+       * its exposure of 1.78 lands its shade where ACES is already taking
+       * chroma out. Any threshold that failed shipped-arena and passed canyon
+       * would have been picked to fit this edit, which is how a taste knob ends
+       * up wearing a physical argument. So: no ceiling. What is asserted below
+       * is only what holds without one.
+       */
+      // It must still be a skylight rather than a lamp: warm fills belong to
+      // interiors, which are not in OUTDOOR.
+      assert(fillBR > 1.15, `${key}: the fill is B/R ${fillBR.toFixed(2)} — that is not skylight`);
+      // The one number a chroma edit must NOT move. atmosphereMeter weighs the
+      // fill by lum(fillColor), so a level that "desaturates" its fill by
+      // reaching for a paler hex quietly re-meters its own exposure and its own
+      // lit-to-shade ratio, and the change gets credited to the wrong knob.
+      // Scaling chroma about the colour's own luminance does not: the three
+      // outdoor fills are 0.3798, 0.3798 and 0.3798 to four places, and the
+      // measured lit-to-shade ratios moved 3.18→3.16, 2.77→2.75, 2.15→2.14.
+      assert(lum(f) > 0.16 && lum(f) < 0.62,
+        `${key}: the fill's luminance is ${lum(f).toFixed(3)} — it is being used as a dimmer`);
+      rows.push(`${key} fill ${fillBR.toFixed(2)} into shade ${shadeBR.toFixed(2)}`);
+    }
+    // THE ASSERTION. Three atmospheres whose skies differ by 60% in chroma,
+    // whose shades are made of the probe in different proportions and whose
+    // exposures span a stop and a half, cannot share one authored skylight and
+    // have all three be right. That they were identical is how the previous
+    // round's constant survived being wrong on two levels out of three: it was
+    // measured on one level and copied to the others, and the level it was
+    // measured on was the one it did least harm to.
+    const set = new Set(OUTDOOR.map((k) => LEVELS[k].atmosphere.fillColor ?? 0x9fc4ff));
+    assert(set.size === OUTDOOR.length,
+      `${OUTDOOR.length} outdoor levels share ${set.size} distinct fill colours — `
+      + 'one constant standing in for three different skies is the fault, whatever its value');
+    return `fill B/R into the shade it joins: ${rows.join(', ')}`;
+  });
+
   check('exposure: the indirect budget is set by AIR MASS, and leaves a shadow dark', () => {
     // REWRITTEN. This used to assert `ratio <= 0.56 && envI > 0.15`, which
     // pinned a flat 0.55 cap and a floor sitting just under it — between them
