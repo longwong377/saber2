@@ -21,7 +21,10 @@
  * It also prints the draw calls and triangles the level actually renders, so
  * the cost of a change is on the same page as the picture of it.
  *
+ * `--diff` makes the plate a MEASUREMENT as well as a picture: see coverStats.
+ *
  *   node tools/covershot.mjs --level canyon --tag after [--quality medium]
+ *                            [--at x,z] [--yaw deg] [--diff] [--probe]
  */
 
 import { readFile } from 'node:fs/promises';
@@ -137,14 +140,116 @@ const site = await page.evaluate(([ax, az, ya]) => {
 }, [at[0], at[1], yaw]);
 console.log('site', JSON.stringify(site));
 
+/* ── WHAT THE COVER IS ACTUALLY WORTH IN THE FRAME ──────────────────────
+ *
+ * A plate answers "does this look right" and nothing else, which is a poor
+ * return on six minutes of software rasterising. `--diff` shoots each pose
+ * TWICE — once as it renders and once with the BLADES AND CARDS hidden — and
+ * the pixels that changed are, exactly and by construction, the cover. No
+ * segmentation, no threshold on greenness, no guessing.
+ *
+ * The contact quads stay visible in both, deliberately: they are painted on the
+ * GROUND, and hiding them would move the very baseline the cover is measured
+ * against. What is being compared is a blade and the ground it stands in front
+ * of, not two different grounds.
+ *
+ * That one trick answers the two questions this lane exists for:
+ *
+ *   HOW MUCH OF THE FRAME IS COVER? A field that measures 100% cover in the
+ *   scatter and paints 1% of the frame is a field of spikes seen edge-on. Two
+ *   thresholds, because they say different things: `frac` counts every pixel
+ *   the cover touched at all, and `solid` counts only the ones it substantially
+ *   OWNS. A field of sub-pixel needles scores on the first and not the second.
+ *
+ *   AND DOES IT GO BLACK IN SHADE? The bare plate gives the ground each grass
+ *   pixel is standing in front of, so the blade and the ground beside it are
+ *   the same measurement. Split by the ground's own value — its darker third
+ *   is the shadowed ground — and "grass goes black in shadow and the sand next
+ *   to it does not" stops being a description and becomes a ratio. Measured on
+ *   the solid pixels, where the reading is a blade and not a blend.
+ *
+ * Both plates are written out, so the arithmetic can be redone from a pair
+ * without paying for the render again.
+ *
+ * Screenshots are display-referred, after tonemap and grade, which is the right
+ * space for this: the complaint is about the picture, not the radiance.
+ */
+async function coverStats(a, b) {
+  const p = await browser.newPage({ viewport: { width: 64, height: 64 } });
+  const r = await p.evaluate(async ({ A, B }) => {
+    const load = async (b64) => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + b64;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(img, 0, 0);
+      return x.getImageData(0, 0, img.width, img.height).data;
+    };
+    const da = await load(A), db = await load(B);
+    const L = (d, i) => (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+    // every pixel the cover touched, and the ones it substantially owns
+    const touched = [], hit = [];
+    for (let i = 0; i < da.length; i += 4) {
+      const dl = Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]);
+      if (dl > 6) touched.push(i);
+      if (dl > 60) hit.push(i);                             // ≥ 8% of full range
+    }
+    if (!hit.length) return { frac: touched.length / (da.length / 4), solid: 0 };
+    const ground = hit.map((i) => L(db, i)).sort((x, y) => x - y);
+    const shadeCut = ground[(ground.length / 3) | 0];       // the darker third
+    const sunCut = ground[((ground.length * 2) / 3) | 0];
+    const band = (lo, hi) => {
+      let gl = 0, bl = 0, n = 0, r = 0, g = 0, bb = 0;
+      for (const i of hit) {
+        const bv = L(db, i);
+        if (bv < lo || bv >= hi) continue;
+        gl += L(da, i); bl += bv; n++;
+        r += da[i]; g += da[i + 1]; bb += da[i + 2];
+      }
+      return n ? { n, grass: gl / n, ground: bl / n, ratio: gl / bl,
+        rgb: [r / n / 255, g / n / 255, bb / n / 255] } : null;
+    };
+    return {
+      frac: touched.length / (da.length / 4),
+      solid: hit.length / (da.length / 4),
+      shade: band(-1, shadeCut), sun: band(sunCut, 2), all: band(-1, 2),
+    };
+  }, { A: a.toString('base64'), B: b.toString('base64') });
+  await p.close();
+  return r;
+}
+
 const shots = [];
+const measured = [];
 for (const [name, pose] of Object.entries(POSES)) {
   await page.evaluate((p) => { window.SABER.__pose = p; }, pose);
   await page.waitForTimeout(2200);
   const file = join(out, `${tag}-${level}-${name}.png`);
-  await page.screenshot({ path: file });
+  const lit = await page.screenshot({ path: file });
   shots.push(file);
+  if (argv.includes('--diff')) {
+    // the blades and cards only; the contact quads belong to the ground
+    await page.evaluate(() => {
+      const g = window.SABER.world.grass;
+      window.__hidden = g.rings.map((r) => r.mesh).filter((m) => m && m.visible);
+      for (const m of window.__hidden) m.visible = false;
+    });
+    await page.waitForTimeout(2200);
+    const bareFile = join(out, `${tag}-${level}-${name}-bare.png`);
+    const bare = await page.screenshot({ path: bareFile });
+    await page.evaluate(() => { for (const m of window.__hidden) m.visible = true; });
+    const s = await coverStats(lit, bare);
+    const pc = (v) => (v * 100).toFixed(1);
+    measured.push(`${name}: cover touches ${pc(s.frac)}% of frame, owns ${pc(s.solid)}%`
+      + (s.all ? `; grass/ground ${s.all.ratio.toFixed(2)}×`
+        + ` (in shade ${s.shade.ratio.toFixed(2)}×, in sun ${s.sun.ratio.toFixed(2)}×)`
+        + `; shaded blade L ${s.shade.grass.toFixed(3)} over ground ${s.shade.ground.toFixed(3)}`
+        + `; mean rgb ${s.all.rgb.map((v) => v.toFixed(2)).join('/')}` : ''));
+  }
 }
+if (measured.length) console.log('cover in frame:\n  ' + measured.join('\n  '));
 
 /* THE DECISIVE TEST for the ground tone: force the litter colour to magenta
  * and the amount to 1, and shoot again. If the ground does not go magenta in

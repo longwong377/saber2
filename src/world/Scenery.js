@@ -557,11 +557,20 @@ const TRAIL_HOLD = 6;       // seconds of decay after the last splat
  *
  * 1.75 rather than 2: measured over the field's own bend distribution, p = 2
  * loses a third of the tip's horizontal reach for the same total turn (the
- * blade holds its line longer, so it gets less far over), and the calm-air
- * field came out visibly more upright than the thing being replaced. At 1.75,
- * with the natural lean widened to match, the tip reaches as far as the arc did
- * and points 60° off vertical instead of 42°, while the base at 15% height sits
- * 2.2° off vertical instead of 6.4°. Straight at the boot, arched at the top.
+ * blade holds its line longer, so it gets less far over) and the calm-air field
+ * came out more upright than the thing being replaced, which is the opposite of
+ * the complaint. At 1.75, with the natural lean widened to match, calm air
+ * measures:
+ *
+ *              mean tip reach   tip angle   base at 15% height
+ *   shipped arc     0.352·len        42°          6.4°
+ *   cantilever      0.347·len        61°          2.2°
+ *
+ * — the same reach, half again the arch, and a base that stands up. In a gale
+ * the new blade reaches LESS far (0.443 against 0.555 at 6.1 m/s) while
+ * pointing further over, 94° against 86°, and that is the trade being taken
+ * deliberately: the shipped arc answered a storm by bowing the whole blade out
+ * of the ground like a hoop, and grass answers one by laying its top over.
  */
 const BLADE_CURVE = 1.75;
 
@@ -608,9 +617,9 @@ export function bladeSpine(bend, h, p = BLADE_CURVE) {
  * base width at three quarters height and then collapses to 2% across the last
  * segment. A grass blade is very nearly parallel-sided for most of its length
  * and does all of its tapering in the last quarter. `pow(1 - h³, 0.42)` is that:
- * 99% of base width at a quarter height, 94% at half, 80% at three quarters,
- * and then a point. Same base width, 28% more silhouette per blade, and the
- * difference between reading as a leaf and reading as a spike. */
+ * 99% of base width at a quarter height, 94% at half, 79% at three quarters,
+ * and then a point. Measured on the strip's own rows, a blade covers 83% of its
+ * own bounding rectangle where the needle covered 63%. */
 export function bladeWidth(h) {
   return Math.pow(Math.max(1 - h * h * h, 4e-4), 0.42);
 }
@@ -2041,8 +2050,7 @@ export class GrassField {
           // Every tuft draws the SAME randoms in the SAME order whether or not
           // it survives, so one tuft failing its site cannot shift the ones
           // behind it in the cell.
-          const jx = r(), jz = r(), lean0 = r(), phase = r(), yaw0 = r(),
-                spec0 = r(), lean1 = r();
+          const jx = r(), jz = r(), lean0 = r(), phase = r(), yaw0 = r(), spec0 = r();
           const tx = cx0 + jx * cell, tz = cz0 + jz * cell;
           const dx = tx - kx, dz = tz - kz;
           const dr2 = dx * dx + dz * dz;
@@ -2138,8 +2146,18 @@ export class GrassField {
      * components, not just the scale: a slot left holding the position it had
      * two windows ago is invisible either way, but it makes the buffer depend
      * on where the player has BEEN, and the whole point of this pass is that
-     * nothing about the field does. */
-    for (let z = i; z < cap; z++) { a[z * 4] = 0; a[z * 4 + 1] = 0; a[z * 4 + 2] = 0; a[z * 4 + 3] = 0; }
+     * nothing about the field does.
+     *
+     * And every ATTRIBUTE, not just aInst — which the comment above already
+     * claimed and the code did not do. A slot past `used` kept the facing, the
+     * lean and the colour of whatever last stood there, so the tail of the
+     * buffer was a record of the walk. Nothing draws it, and it still made two
+     * routes to the same cell produce two different buffers. */
+    for (let z = i; z < cap; z++) {
+      a[z * 4] = 0; a[z * 4 + 1] = 0; a[z * 4 + 2] = 0; a[z * 4 + 3] = 0;
+      o[z * 4] = 0; o[z * 4 + 1] = 0; o[z * 4 + 2] = 0; o[z * 4 + 3] = 0;
+      t[z * 3] = 0; t[z * 3 + 1] = 0; t[z * 3 + 2] = 0;
+    }
     for (let z = tuft; z < shCap; z++) { sa[z * 4 + 3] = 0; sn[z * 4 + 3] = 0; }
     ring.used = i; ring.live = live; ring.tufts = tuft;
     ring.aInst.needsUpdate = true;

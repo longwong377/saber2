@@ -54,7 +54,7 @@ import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
 import {
   GrassField, makeCoverField, ground, bladeSpine, bladeWidth, bladeRows,
-  bladeSideAxis, bladeVisibleWidth, grassPalette, bladeTint, grassShade,
+  bladeSideAxis, bladeVisibleWidth, grassShade,
 } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER, siteOk, drift, beginDressing, stoneField } from '../../src/game/Levels.js';
 
@@ -606,10 +606,12 @@ export function run({ check, assert, near }) {
       `the worst-placed blade still shows only ${(mn * 100).toFixed(0)}% of its width`);
     assert(sum / N > 0.78,
       `the field shows ${((sum / N) * 100).toFixed(0)}% of its width on average — 64% is doing nothing`);
-    // it must NOT become a billboard: a blade facing the eye is left alone, and
-    // the field keeps a real spread of orientations
-    const face = bladeSideAxis([1, 0], [0, 1]);           // side0 already ⟂ view
-    assert(Math.abs(face[0] - 1) < 1e-6 && Math.abs(face[1]) < 1e-6,
+    /* And it must NOT become a billboard. A blade already presenting its width
+     * — one bending along the view axis — has to come back untouched, and the
+     * field has to keep a real spread of orientations across the sweep. */
+    const face = bladeSideAxis([0, 1], [0, 1]);
+    assert(bladeVisibleWidth(face, [0, 1]) > 0.999
+      && Math.abs(face[0] + 1) < 1e-6 && Math.abs(face[1]) < 1e-6,
       'a blade that was already showing its width is being turned anyway');
     let span = 0;
     for (const p of axes) for (const q of axes) {
@@ -660,16 +662,16 @@ export function run({ check, assert, near }) {
         col.setRGB(ring.aTint.array[i * 3], ring.aTint.array[i * 3 + 1], ring.aTint.array[i * 3 + 2]);
         return hsl(col).h * 360;
       };
-      const all = [], near = [];
+      const all = [], near = [], light = [];
       for (const ring of g.rings) {
         for (let i = 0; i < ring.used; i++) {
           if (ring.aInst.array[i * 4 + 3] <= 0.004) continue;
           const h = hueOf(ring, i);
-          all.push(h);
+          all.push(h); light.push(hsl(col).l);
           if (ring === g.rings[0]) near.push(h);
         }
       }
-      all.sort((a, b) => a - b); near.sort((a, b) => a - b);
+      all.sort((a, b) => a - b); near.sort((a, b) => a - b); light.sort((a, b) => a - b);
       const q = (arr, f) => arr[Math.min(arr.length - 1, Math.floor(arr.length * f))];
       const span = q(all, 0.98) - q(all, 0.02);
       const nearSpan = q(near, 0.98) - q(near, 0.02);
@@ -686,8 +688,29 @@ export function run({ check, assert, near }) {
       const mid = q(all, 0.5), authored = (cLo + cHi) / 2;
       assert(Math.abs(mid - authored) < 30,
         `${key}: the field's median hue is ${mid.toFixed(0)}° against the level's authored ${authored.toFixed(0)}°`);
+
+      /* AND IT IS A SPREAD, NOT A LIFT. The cheapest way to make a field of
+       * cover read better in a plate is to make it brighter, and it is not an
+       * improvement, it is a thumb on the scale. Against the shipped two-stop
+       * ramp put through the same per-blade value noise, the median blade may
+       * not have got lighter — the withered end IS paler, which is what
+       * withered means, and it has to be paid for at the other end. */
+      const shipL = [];
+      for (let i = 0; i <= 200; i++) {
+        const tl = i / 200;
+        col.copy(A).lerp(B, tl * 0.9);
+        const v = 0.82 + ((tl * 7.13) % 1) * 0.36;
+        col.setRGB(col.r * v, col.g * v, col.b * v);
+        shipL.push(hsl(col).l);
+      }
+      shipL.sort((a, b) => a - b);
+      const lifted = q(light, 0.5) / q(shipL, 0.5);
+      assert(lifted < 1.02,
+        `${key}: the median blade is ${lifted.toFixed(2)}× lighter than the ramp it replaces — `
+        + 'the field is being brightened, not recoloured');
       rows.push(`${key} ${span.toFixed(0)}° (was ${(cHi - cLo).toFixed(0)}°) `
-        + `${(straw * 100).toFixed(0)}/${(green * 100).toFixed(0)}/${(blue * 100).toFixed(0)}`);
+        + `${(straw * 100).toFixed(0)}/${(green * 100).toFixed(0)}/${(blue * 100).toFixed(0)}`
+        + ` L×${lifted.toFixed(2)}`);
       g.dispose(); t.dispose();
     }
     return `hue span, then withered/green/blue-green %: ${rows.join('; ')}`;
@@ -753,11 +776,22 @@ export function run({ check, assert, near }) {
       near += Math.abs(F.at(x, z) - F.at(x + 1.2, z + 0.8));
       far += Math.abs(F.at(x, z) - F.at(x + 55, z - 41));
     }
-    assert(near / far < 0.35,
-      `the species field changes as fast over a metre as over fifty (${(near / far).toFixed(2)}) — that is confetti`);
+    /* Against a control drawn here rather than a number remembered: an
+     * uncorrelated field — which is what a per-tuft random IS — changes exactly
+     * as much over a metre as over fifty, so it scores 1. */
+    let cn = 0, cf = 0, seed = 4242;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (let k = 0; k < 4000; k++) {
+      const a = rnd(), b = rnd(), c = rnd();
+      cn += Math.abs(a - b); cf += Math.abs(a - c);
+    }
+    const smooth = (near / far) / (cn / cf);
+    assert(smooth < 0.55,
+      `the species field changes ${smooth.toFixed(2)}× as fast over a metre as an uncorrelated one — that is confetti`);
     g.dispose(); t.dispose();
     return `within a tuft ${inTuft.toFixed(2)} rad, across the field ${across.toFixed(2)} rad (${(across / inTuft).toFixed(1)}×), `
-      + `tuft hue spread ${mean(hueSpread).toFixed(0)}°, species field 1 m vs 50 m ${(near / far).toFixed(2)}`;
+      + `tuft hue spread ${mean(hueSpread).toFixed(0)}°, species field 1 m vs 50 m `
+      + `${smooth.toFixed(2)}× an uncorrelated control`;
   });
 
   /* ══ the shade ═══════════════════════════════════════════════════════ */
@@ -783,7 +817,10 @@ export function run({ check, assert, near }) {
     assert(!/this\.fill\.castShadow\s*=\s*true/.test(src),
       'the fill casts a shadow now, so masking it would be correct and this check is stale');
 
-    const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+    // the regex hands back '0xbcd8ff' as a STRING, and THREE.Color reads a string as
+    // a CSS name; Number() first. Nothing is convertSRGBToLinear'd here — a Color
+    // built from a hex is already linear and converting twice publishes a wrong figure.
+    const lin = (hex) => { const c = new THREE.Color(Number(hex)); return [c.r, c.g, c.b]; };
     const hemi = { sky: lin(hemiM[1]).map((v) => v * +hemiM[3]), ground: lin(hemiM[2]).map((v) => v * +hemiM[3]) };
     const fillDir = fillP[1].split(',').map(Number);
     const fl = Math.hypot(...fillDir);
@@ -869,6 +906,7 @@ export function run({ check, assert, near }) {
       const out = g.rings.map((r) => ({
         name: r.tier.name, used: r.used,
         inst: Float32Array.from(r.aInst.array), orient: Float32Array.from(r.aOrient.array),
+        tint: Float32Array.from(r.aTint.array),
       }));
       g.dispose();
       return out;
@@ -886,6 +924,7 @@ export function run({ check, assert, near }) {
         for (let i = 0; i < east[k].inst.length; i++) {
           if (east[k].inst[i] !== other.inst[i] || east[k].orient[i] !== other.orient[i]) diff++;
         }
+        for (let i = 0; i < east[k].tint.length; i++) if (east[k].tint[i] !== other.tint[i]) diff++;
         assert(diff === 0,
           `${east[k].name}: ${diff} of ${east[k].inst.length} floats differ ${name} — `
           + 'the field depends on how you walked to it');
