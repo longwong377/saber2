@@ -89,14 +89,18 @@ export function buildDummy() {
 export const LESSONS = [
   {
     id: 'feel', title: 'Feel the weight', need: 6,
-    brief: 'HOLD LEFT MOUSE and move. While you hold it the mouse is the blade, not the camera. Let go and the blade returns to guard.',
+    brief: (s) => s.scheme === 'directional'
+      ? 'Flick the mouse and the blade follows into that guard — high, left, right or low. Aim normally and it stays where you put it.'
+      : 'HOLD LEFT MOUSE and move. While you hold it the mouse is the blade, not the camera. Let go and the blade returns to guard.',
     hint: 'The blade lags a flick and overshoots a snap. Swing hard enough to hear it cut the air.',
     setup: { remotes: 0, dummies: 0, spar: false },
     check: (ev, s) => ev.type === 'swing' && ev.speed > 13,
   },
   {
     id: 'block', title: 'Meet the bolt', need: 5,
-    brief: 'A remote will fire slowly. Hold left mouse and get the blade in the way — anywhere on it.',
+    brief: (s) => s.scheme === 'directional'
+      ? 'A remote will fire slowly. Flick into the guard the shot is coming from — your guard covers your centreline plus one quadrant.'
+      : 'A remote will fire slowly. Hold left mouse and get the blade in the way — anywhere on it.',
     hint: 'Watch where the bolt is going, not where it is.',
     setup: { remotes: 1, fireRate: 2.4, boltSpeed: 26, dummies: 0, spar: false },
     check: (ev) => ev.type === 'deflect',
@@ -146,7 +150,9 @@ export const LESSONS = [
   {
     id: 'lock', title: 'Blade lock', need: 1,
     brief: 'Rest your blade against theirs while neither of you is swinging, and you will bind.',
-    hint: 'In a lock, hold left mouse and drive it hard to overpower them.',
+    hint: (s) => s.scheme === 'directional'
+      ? 'In a lock, keep flicking into the bind and drive it hard to overpower them.'
+      : 'In a lock, hold left mouse and drive it hard to overpower them.',
     setup: { remotes: 0, dummies: 0, spar: true, sparForm: 'soresu', sparSpeed: 0.7 },
     check: (ev) => ev.type === 'lockWon',
   },
@@ -399,9 +405,19 @@ export class DojoDirector {
 
   state() {
     const L = this.lesson;
+    // A lesson may state its brief as a FUNCTION OF THE LIVE SETTINGS, because
+    // the game now ships more than one control scheme and the coach was still
+    // teaching the one it used to ship: "HOLD LEFT MOUSE… the mouse is the
+    // blade, not the camera" is now false for every player who has not gone
+    // looking for Free Blade. A lesson that teaches the wrong controls is worse
+    // than no lesson, and the check that forbids typing a key name into a
+    // player-facing surface never scanned this file.
+    const s = this.world.settings;
     const out = {
       index: this.index, total: LESSONS.length,
-      id: L.id, title: L.title, brief: L.brief, hint: L.hint,
+      id: L.id, title: L.title,
+      brief: typeof L.brief === 'function' ? L.brief(s) : L.brief,
+      hint: typeof L.hint === 'function' ? L.hint(s) : L.hint,
       progress: this.progress, need: L.need,
       form: this.spar ? this.spar.formName : null,
     };

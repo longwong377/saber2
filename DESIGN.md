@@ -94,11 +94,27 @@ A meter that is only fed by precision — perfect returns, chambers, tip cuts, n
 
 ### 2.6 Camera
 
-The perpetual problem of "the mouse has two jobs" is solved by giving the mouse one job and making the camera follow it:
+The perpetual problem of "the mouse has two jobs" is not solved by splitting the
+mouse between them — it is solved by making the guard a STATE instead of a
+position, so it never needs the mouse held anywhere:
 
-- **Free Blade (default).** The mouse always moves the blade. The camera is dragged only when the blade leaves an inner deadzone — small precise blade work does not shake the frame, big sweeps naturally turn you into the fight. Hold **RMB** to pin the blade and look around.
-- **Hold-to-Blade (option).** Classic split: mouse looks, hold **LMB** to take the blade.
-- **First person** for maximum immersion and reach reading, **third person** for spatial awareness. Both fully modelled.
+- **Directional Guard (default).** Four zones — high, left, right, low — each set
+  by a flick. Slow aiming never disturbs your guard; a flick past the gate sets
+  it. The camera stays live the whole time, which is the entire point: measured
+  on the same bolt, this scheme sweeps 30.0° of yaw during a block where
+  Hold-to-Blade swept exactly 0.0°. A bolt is answered if its zone matches
+  yours, and your guard covers your centreline plus one quadrant — a shot inside
+  a 20° disc has no meaningful direction to have come from, and past 20° of
+  bearing you need the right zone. Enter the zone inside the parry window and
+  you get the return.
+- **Free Blade (option).** The mouse always moves the blade; the camera is
+  dragged only when the blade leaves an inner deadzone. Hold **RMB** to pin the
+  blade and look around.
+- **Hold-to-Blade (option).** Classic split: mouse looks, hold **LMB** to take
+  the blade. This was the default, and it is the scheme the player described as
+  "when you're moving the blade to specifically deflect the cursor can't move".
+- **First person** for maximum immersion and reach reading, **third person** for
+  spatial awareness. Both fully modelled.
 
 ---
 
