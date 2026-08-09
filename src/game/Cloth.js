@@ -101,6 +101,15 @@ export class Cloak {
      * cloth planes through air instead of dropping like a plate.
      */
     this.lift = opts.lift ?? 1.0;
+    /**
+     * How much of the wind is still felt as a uniform body force.
+     *
+     * The aero term is not free force added on top: with lift 1.0 a face-on
+     * particle catches roughly twice the push it used to, and left at 1 the
+     * cape streamed backwards half its own length further at a walk. 0.7 keeps
+     * the total force about where it was and moves the difference onto the
+     * surface, which is the point — the same push, now direction-dependent.
+     */
     this.drift = opts.drift ?? 0.7;
     /**
      * Per-frame velocity retention AT 60 fps.
@@ -117,7 +126,9 @@ export class Cloak {
     this.anchorFn = opts.anchorFn || null;
     this.flare = opts.flare ?? 0.85;   // how much wider the hem is than the collar
     this.colliders = [];               // {c: Vector3, r: number}, world space
-    this.rng = makeRng(opts.seed ?? ((rng() * 1e9) | 0));
+    // one stream per cloak, drawn from the module's. reset() re-seeds from this
+    // so a cloak that is laid out twice is the same cloak twice.
+    this.seed = opts.seed ?? ((rng() * 1e9) | 0);
 
     const n = this.cols * this.rows;
     this.pos = new Float32Array(n * 3);
@@ -240,6 +251,7 @@ export class Cloak {
      * the span the collar is pinned at, which puts the sheet in compression;
      * `jitter` is what tells the compression where to buckle.
      */
+    const noise = makeRng(this.seed);
     for (const l of this.links) {
       const a = l.a * 3, b = l.b * 3;
       const d = Math.hypot(this.pos[a] - this.pos[b], this.pos[a + 1] - this.pos[b + 1], this.pos[a + 2] - this.pos[b + 2]);
@@ -247,7 +259,7 @@ export class Cloak {
       // still the size it was cut — `rest` alone cannot answer that once
       // jitter has made the rest lengths deliberately inconsistent.
       l.rest0 = d;
-      l.rest = d * (l.across ? this.fullness : 1) * (1 + (this.rng() * 2 - 1) * this.jitter);
+      l.rest = d * (l.across ? this.fullness : 1) * (1 + (noise() * 2 - 1) * this.jitter);
     }
     this.initialised = true;
     this._writeMesh();
