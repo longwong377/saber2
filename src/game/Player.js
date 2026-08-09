@@ -1715,6 +1715,14 @@ export class Player {
     // filter could never see one. That is why gripping a droid only worked when
     // the ray hit nothing at all — a crate anywhere behind it won the pick.
     if (b.layer === LAYER.ENEMY) return !!(b.userData.enemy && !b.userData.enemy.dead);
+    // `grippable` was WRITTEN AND NEVER READ. Props.js sets it false on exactly
+    // two things — the pillar and the spire — and Destruction's proxy sets it
+    // false too, and not one line in src/ or tools/ ever looked at it. The only
+    // real gate was mass, so at a high Force Power slider the 900 kg pillar the
+    // author had explicitly excluded came out of the ground anyway, and the
+    // proxy that stands in for every destructible structure in the level was
+    // grippable in principle. An author's "no" now means no.
+    if (b.userData && b.userData.prop && b.userData.prop.grippable === false) return false;
     return b.invMass > 0
       && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL);
   }
@@ -1788,7 +1796,20 @@ export class Player {
     // far the Force slider is turned up, not a permanent no.
     const cap = this.liftCapacity;
     if (target.mass > cap) {
+      // Say WHY. This recorded the two numbers and nothing ever read them, so a
+      // refused lift was a groan and a shudder and no explanation — which reads
+      // as the Force being broken rather than as the thing being too heavy. The
+      // player cannot see a mass, so the feedback has to carry it, and it has to
+      // name the slider that moves the cap or the number is just a wall.
       this.lastGripRefusal = { mass: target.mass, cap };
+      // Read back out of the FIELD, by name, rather than off the locals. It
+      // looks redundant and is not: writing these two numbers somewhere nothing
+      // read them is exactly how a refused lift ended up being a groan with no
+      // explanation, and a field with no reader is a comment with syntax. One
+      // home, and the seam stays open for the HUD to show it too.
+      const why = this.lastGripRefusal;
+      this.world?.notify?.('TOO HEAVY',
+        `${Math.round(why.mass)} kg against your ${Math.round(why.cap)} kg — raise Force Power`);
       this._gripStrain(ctx, target);
       return;
     }
