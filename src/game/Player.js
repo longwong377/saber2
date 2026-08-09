@@ -228,12 +228,21 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
  * of what "the hands are a jumbled mess" feels like when the mess is invisible
  * and only its consequences are not.
  *
- * 0.15 brings the hilt to ~31 degrees, which puts the hilt body and the top of
- * both gloves inside the frame at a level gaze and the whole forearm in it the
- * moment the player looks down at all. It is a raise of 11 cm and no more,
- * because everything here is REAL: this anchor is where the blade is solved
- * from, so raising it raises the blade in the world, and a lightsaber whose
- * base has climbed a foot is a different weapon, not a different view.
+ * 0.15 is an 11 cm raise and it is measured, not chosen. Off the level-gaze
+ * pose, angles below the centre of a 30-degree half-frustum:
+ *
+ *       hilt emitter   18.8 deg     on screen
+ *       right wrist    27.2 deg     on screen
+ *       hilt grip      29.8 deg     on the bottom edge, 0.2 deg inside
+ *       left wrist     32.8 deg     still 2.8 deg off the bottom
+ *
+ * So the weapon and the sword hand are on screen and the off hand is not quite.
+ * It stops at 11 cm because everything here is REAL: this anchor is where the
+ * blade is SOLVED from, so raising it raises the blade in the world, and a
+ * lightsaber whose base has climbed a foot is a different weapon, not a
+ * different view. Going further wants the blade's own framing checked against
+ * the top of the frame — tools/fpview.mjs, `--only 'level gaze'` — and that is
+ * a picture, not an inequality.
  */
 const FP_HILT_DROP = 0.15;
 
