@@ -679,13 +679,22 @@ export const LEVELS = {
         const site = findSite(world, 14, 46, { bias: 0.7, clearance: 4 });
         if (site) world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.85));
       }
-      // Broken rock in the middle distance, where the eye needs something to
-      // land on between the fight and the ranges. Real boulder geometry rather
-      // than scree chips, because at 30–120 m the facets still read.
-      for (let k = 0; k < 9; k++) {
-        const site = findSite(world, 30, 150, { clearance: 9, maxSlope: 0.5, tries: 22 });
-        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.7, seed: 4500 + k });
-      }
+      /* Broken rock in the middle distance, where the eye needs something to
+       * land on between the fight and the ranges. Real boulder geometry rather
+       * than scree chips, because at 30–120 m the facets still read.
+       *
+       * Through the DRIFT rather than `findSite`, and it is worth saying why
+       * on the one call where the difference is easiest to see: nine clusters
+       * placed uniformly over a 150 m disc are nine things, one every 2,600 m²,
+       * each one alone. Nine placed through the level's own stone field arrive
+       * in twos and threes on the ground that already carries talus, and leave
+       * the ground that carries tussock clear. Same nine clusters, same cost. */
+      drift(world, {
+        field: stoneField(world), rmin: 30, rmax: 150, count: 9,
+        clearance: 9, maxSlope: 0.5, tries: 22,
+      }, (pos, k) => addBoulderCluster(world, pos, {
+        radius: 9, count: 11, size: 1.7, seed: 4500 + k,
+      }));
     },
   },
 
