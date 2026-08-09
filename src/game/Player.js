@@ -1354,9 +1354,41 @@ export class Player {
       // is not the wrist's doing: solveIK rolls the lower bone with aimY against
       // the elbow pole, and aimY substitutes a fixed reference whenever the two
       // come within 10 degrees of parallel — which snaps the roll by up to 90
-      // degrees in the middle of a swing. Both want the wrist limited to a real
-      // cone and twist with the remainder redistributed across the forearm AND
-      // the shoulder together. That is a solver change, not a line here.
+      // degrees in the middle of a swing. Measured: it fires on 7 frames of 210,
+      // isolated spikes, and nothing below touches it.
+      //
+      // ── SECOND ATTEMPT, ALSO MEASURED, ALSO REMOVED ──────────────────────
+      //
+      // Redistributing the twist properly this time — decomposed in the
+      // FOREARM's frame about the axis the roll actually turns about, twist-
+      // first because a forearm roll arrives pre-multiplied, and unwrapped
+      // against the previous frame so +/-180 cannot snap it. All three of those
+      // were wrong or missing in the first attempt. Splitting the wrist's
+      // deviation apart shows why it looked like the answer:
+      //
+      //        BEND   median 37.4  p90 110.4  max 145.6   past 80: 43/210
+      //        ROLL   median 81.5  p90 151.9  max 179.7   past 30: 197/210
+      //
+      // Roll dominates, so pronation IS the right lever for it, and cancelling
+      // all of it works: roll median 81.5 -> 6.0, total p90 164.8 -> 110.9,
+      // max 179.7 -> 156.4, frames past 80 166 -> 121.
+      //
+      // It still does not ship, for two reasons that are the whole finding.
+      // Cancelling all the roll needs 172 degrees of forearm pronation, and a
+      // real forearm has about 150 through its ENTIRE range; at any anatomical
+      // limit (75-120 deg) the result is WORSE than doing nothing, median 106
+      // to 120 against 90.3, because a partly-cancelled roll adds to the bend
+      // instead of opposing it. And with the roll gone entirely the BEND alone
+      // is still past 80 degrees on 43 frames of 210.
+      //
+      // No amount of roll can change that bend. It is the angle between the
+      // forearm's direction — which solveIK picks purely from where the grip
+      // POINT is — and the hilt's axis. So the fix is not a limit and not a
+      // redistribution: the arm has to be solved from the grip's ORIENTATION as
+      // well as its position, so the forearm arrives already pointing somewhere
+      // a wrist can finish from. That is a real solver change and it is worth
+      // doing; what is written down here is that the two cheaper answers have
+      // both now been measured and neither one is it.
       this.saber.root.getWorldQuaternion(_q1);
       for (const h of twoHanded ? ['handR', 'handL'] : ['handR']) {
         const b = rig.get(h);
