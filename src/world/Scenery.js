@@ -765,6 +765,40 @@ export function bladeTint(palette, s, out = new THREE.Color()) {
  *  given eye, and an edge is one pixel. */
 const BLADE_FACE_CAM = 0.55;
 
+/**
+ * The blade's width axis, as arithmetic — the GLSL twin of the block in
+ * GRASS_VERT, and the thing to measure "how much of this blade can be seen"
+ * against. Everything here is horizontal, so it takes and returns xz.
+ *
+ * @param {number[]} bd     the direction the blade bends, unit, [x, z]
+ * @param {number[]} toCam  unit vector from the blade to the eye, [x, z]
+ * @returns {number[]} the unit width axis [x, z]
+ */
+export function bladeSideAxis(bd, toCam) {
+  let sx = -bd[1], sz = bd[0];
+  const cl = Math.hypot(toCam[0], toCam[1]);
+  if (cl > 1e-4) {
+    const tx = toCam[0] / cl, tz = toCam[1] / cl;
+    let cx = -tz, cz = tx;
+    const sgn = Math.sign(sx * cx + sz * cz + 1e-6);
+    cx *= sgn; cz *= sgn;
+    const edge = 1 - Math.abs(sx * cx + sz * cz);
+    const k = BLADE_FACE_CAM * edge;
+    const mx = sx + (cx - sx) * k, mz = sz + (cz - sz) * k;
+    const ml = Math.hypot(mx, mz) || 1;
+    sx = mx / ml; sz = mz / ml;
+  }
+  return [sx, sz];
+}
+
+/** How much of a blade's width survives the projection to the screen, 0..1: a
+ *  blade presenting its face is 1 and a blade presenting its edge is 0. */
+export function bladeVisibleWidth(side, toCam) {
+  const cl = Math.hypot(toCam[0], toCam[1]) || 1;
+  const tx = toCam[0] / cl, tz = toCam[1] / cl;
+  return Math.abs(side[0] * -tz + side[1] * tx);
+}
+
 const GRASS_VERT = /* glsl */`
   precision highp float;
   #include <common>

@@ -24,14 +24,42 @@
  *      exclusion radius, 1.4 m for cluster satellites, so talus, thickets and
  *      drifts — where real ground gets its density — were structurally
  *      impossible.
+ *
+ * Coverage and clustering came out measurably right, and the complaint did not
+ * go away, because the rest of it was never about how MUCH cover there is:
+ *
+ *   4. THE BLADES WERE HOOPS. `ks = bend * h` swept the strip along a circular
+ *      arc — constant curvature, the shape of bent fence wire. The turn rate at
+ *      90% of a blade's height was 1.00× the rate at 15%, by construction.
+ *
+ *   5. THEY WERE NEEDLES. `pow(1 - h, 0.55)` is down to 47% of base width at
+ *      three quarters height and 2% at the tip.
+ *
+ *   6. A CLUMP WENT OFF LIKE A FIREWORK. The facing was drawn per BLADE, so
+ *      eight blades out of one crown pointed eight different ways.
+ *
+ *   7. THE FIELD WAS ONE COLOUR — 2.9 degrees of hue over the whole thing.
+ *
+ *   8. AND IT WENT BLACK IN SHADE, because the grass multiplied the SUN's
+ *      shadow mask into every directional light including the shadowless blue
+ *      fill, which the ground beside it kept.
+ *
+ * Those five are the second half of this file. Each one is arithmetic — the
+ * blade's shape is a vertex displacement and the shade is a fragment's sum —
+ * so each one is a number here rather than a screenshot.
  */
 
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
-import { GrassField, makeCoverField, ground } from '../../src/world/Scenery.js';
+import {
+  GrassField, makeCoverField, ground, bladeSpine, bladeWidth, bladeRows,
+  bladeSideAxis, bladeVisibleWidth, grassPalette, bladeTint, grassShade,
+} from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER, siteOk, drift, beginDressing, stoneField } from '../../src/game/Levels.js';
 
 const OUTDOOR = ['dunes', 'arena', 'canyon'];
+const DEG = 180 / Math.PI;
 
 function stubWorld(terrain) {
   const scene = new THREE.Scene();
@@ -408,5 +436,463 @@ export function run({ check, assert, near }) {
       rows.push(`${key} ${tiny}`);
     }
     return `sub-30 cm stones in a wide pass: ${rows.join(', ')}`;
+  });
+
+  /* ══ the shape of a blade ════════════════════════════════════════════ */
+
+  check('blades: a blade curves like a cantilever, not like a hoop', () => {
+    /* THE FIRST HALF OF "IT LOOKS LIKE SHIT". What shipped sent the strip
+     * along `ks = bend * h` — a constant turn per unit length, which is a
+     * CIRCLE. Every blade in the field was equally curved at the sheath and at
+     * the tip, which is the silhouette of bent wire and not of a plant; and the
+     * CARD shader in the same file had `bv * (h * h)` all along, so the
+     * billboards standing in for tufts curved correctly while the real blades
+     * did not.
+     *
+     * Grass is a tapered cantilever: the bending moment falls off toward the
+     * tip but the second moment of area falls off faster, so the curvature goes
+     * UP with height and the blade stands out of the ground before arching
+     * over. That is one exponent, and these are the numbers it has to hit. */
+    const P = [];
+    // 1. the turn rate must climb with height. A circular arc scores exactly 1.
+    const rate = (bend, h) => bladeSpine(bend, h).rate;
+    const climb = rate(1, 0.9) / rate(1, 0.15);
+    assert(climb > 3.0,
+      `the turn rate at 90% height is ${climb.toFixed(2)}× the rate at 15% — 1.00 is a circle`);
+    // and it must be the same shape whatever the wind is doing
+    for (const bend of [0.4, 1.0, 1.8, 2.4]) {
+      const c = rate(bend, 0.9) / rate(bend, 0.15);
+      assert(Math.abs(c - climb) < 1e-9, `the curve changes shape with the bend (${c.toFixed(2)} at ${bend})`);
+    }
+    // 2. most of the turning happens in the top half. A circle splits it 50/50.
+    for (const bend of [0.6, 1.2, 2.0]) {
+      const top = 1 - bladeSpine(bend, 0.5).theta / bladeSpine(bend, 1).theta;
+      assert(top > 0.62,
+        `only ${(top * 100).toFixed(0)}% of the turn is in the top half of the blade — 50% is a circle`);
+      P.push(top);
+    }
+    // 3. the base stands up. At the bend the field actually spends its time at,
+    //    the shipped arc was 8.6°/12.0° off vertical a sixth of the way up.
+    for (const bend of [1.0, 1.4]) {
+      const base = bladeSpine(bend, 0.15).theta * DEG;
+      assert(base < 4.5, `a blade leaves the ground ${base.toFixed(1)}° off vertical at bend ${bend}`);
+    }
+    // 4. and it still arches: the tip has to leave vertical by a real angle
+    assert(bladeSpine(1.0, 1).theta * DEG > 50,
+      'the tip barely departs from vertical, which is the spike being complained about');
+    // 5. bending may not stretch the blade — the spine is arc-length parametrised
+    let worstLen = 0;
+    for (const bend of [0, 0.8, 1.6, 2.4]) {
+      let L = 0, px = 0, py = 0;
+      for (let i = 1; i <= 3000; i++) {
+        const s = bladeSpine(bend, i / 3000);
+        L += Math.hypot(s.x - px, s.y - py); px = s.x; py = s.y;
+      }
+      worstLen = Math.max(worstLen, Math.abs(L - 1));
+    }
+    assert(worstLen < 0.005, `a blade at full bend is ${(worstLen * 100).toFixed(2)}% longer or shorter than itself`);
+
+    /* 6. AND THE SHADER IS THE SAME CURVE. The polynomial in GRASS_VERT is
+     *    generated from the exponent, so it can only be checked by reading it
+     *    back out of the compiled material and evaluating it here. */
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const g = new GrassField(new THREE.Scene(), t, { count: 400, density: 1, radius: 46 });
+    const vs = g.near.mat.vertexShader;
+    const exp = /float ks = bend \* pow\(max\(h, 1e-4\), ([\d.]+)\)/.exec(vs);
+    const cyL = /float cy = s \* \(([^)]*)\)/.exec(vs);
+    const cxL = /float cx = s \* ks \* \(([^)]*)\)/.exec(vs);
+    assert(exp && cyL && cxL, 'the blade sweep is no longer where this check can read it');
+    const nums = (s) => s.split(/(?=[+-])/).map((x) => parseFloat(x.replace(/\s|\*|t\d/g, '')));
+    const Y = nums(cyL[1]), X = nums(cxL[1]);
+    assert(Y.length >= 4 && X.length >= 3 && Y.every(Number.isFinite) && X.every(Number.isFinite),
+      'the generated polynomial did not parse');
+    let worst = 0;
+    for (const bend of [0.3, 0.9, 1.5, 2.1, 2.4]) {
+      for (let k = 1; k <= 20; k++) {
+        const h = k / 20;
+        const ks = bend * Math.pow(h, parseFloat(exp[1])), t2 = ks * ks;
+        const gy = h * Y.reduce((a, c, i) => a + c * Math.pow(t2, i), 0);
+        const gx = h * ks * X.reduce((a, c, i) => a + c * Math.pow(t2, i), 0);
+        const m = bladeSpine(bend, h);
+        worst = Math.max(worst, Math.hypot(gx - m.x, gy - m.y));
+      }
+    }
+    assert(worst < 1e-6,
+      `the shader's spine and bladeSpine() disagree by ${worst.toExponential(2)} of a blade length`);
+    // and the cap has to be a real arch rather than a lean
+    const cap = /bend = min\(bend \+ press \* 1\.15, ([\d.]+)\)/.exec(vs);
+    assert(cap && parseFloat(cap[1]) * DEG > 120,
+      'a blade can no longer be turned past the horizontal, however hard the wind blows');
+    g.dispose(); t.dispose();
+    return `turn rate ×${climb.toFixed(2)} from 15% to 90% height (a circle is ×1.00), `
+      + `${(P[1] * 100).toFixed(0)}% of the turn in the top half, base ${(bladeSpine(1.4, 0.15).theta * DEG).toFixed(1)}° off vertical, `
+      + `shader agrees to ${worst.toExponential(1)}`;
+  });
+
+  check('blades: a blade is a leaf, not a needle', () => {
+    /* `pow(1 - h, 0.55)`: 85% of base width a quarter of the way up, 47% at
+     * three quarters, and then 2% — the whole taper collapsing inside the top
+     * segment. That is a spike with a bevel on it. Real grass is very nearly
+     * parallel-sided and does its tapering in the last quarter, and what that
+     * buys is silhouette, which is the only thing a blade at four metres has.
+     *
+     * Measured on the strip's OWN ROWS, because a width profile the geometry
+     * never samples is a curve nobody draws. */
+    const rows = bladeRows();
+    const w = rows.map(bladeWidth);
+    assert(rows.length >= 5, `a blade is ${rows.length - 1} segments`);
+    assert(Math.abs(rows[0]) < 1e-9 && Math.abs(rows[rows.length - 1] - 1) < 1e-9,
+      'the strip does not span the whole blade');
+    for (let i = 1; i < rows.length; i++) assert(rows[i] > rows[i - 1], 'the rows are not in order');
+    // rows biased toward the tip, where all the curvature now is
+    assert(rows[1] > 1.15 / (rows.length - 1),
+      `the rows are evenly spaced (first at ${rows[1].toFixed(3)}), so the arch is drawn with a kink`);
+    // the blade holds its width
+    assert(bladeWidth(0.5) > 0.90, `half way up a blade is ${(bladeWidth(0.5) * 100).toFixed(0)}% of its base width`);
+    assert(bladeWidth(0.75) > 0.68, `three quarters up a blade is ${(bladeWidth(0.75) * 100).toFixed(0)}% of its base width`);
+    assert(bladeWidth(1) < 0.10, 'a blade ends in a stump rather than a point');
+    // and it must be monotonic, or the blade has a waist
+    for (let h = 0; h < 1; h += 0.01) {
+      assert(bladeWidth(h + 0.01) <= bladeWidth(h) + 1e-9, `the blade gets wider at h=${h.toFixed(2)}`);
+    }
+    // the silhouette the strip actually draws, as a fraction of a rectangle
+    let area = 0;
+    for (let i = 1; i < rows.length; i++) area += (w[i] + w[i - 1]) * 0.5 * (rows[i] - rows[i - 1]);
+    assert(area > 0.75,
+      `a blade covers ${(area * 100).toFixed(0)}% of its own bounding rectangle — 63% was the needle`);
+    // the shader must be drawing this curve and not another
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const g = new GrassField(new THREE.Scene(), t, { count: 400, density: 1, radius: 46 });
+    const m = /float wdt = uWidth \* len \* pow\(max\(1\.0 - h \* h \* h, ([\de.-]+)\), ([\d.]+)\)/.exec(g.near.mat.vertexShader);
+    assert(m, 'the shader is no longer using the taper this check measures');
+    for (const h of [0.2, 0.5, 0.8, 0.95]) {
+      const shader = Math.pow(Math.max(1 - h * h * h, parseFloat(m[1])), parseFloat(m[2]));
+      assert(Math.abs(shader - bladeWidth(h)) < 1e-9, 'bladeWidth() and the shader disagree');
+    }
+    g.dispose(); t.dispose();
+    return `rows ${rows.map((v) => v.toFixed(2)).join('/')} at widths ${w.map((v) => v.toFixed(2)).join('/')}, `
+      + `${(area * 100).toFixed(0)}% of its bounding rectangle`;
+  });
+
+  check('blades: a near blade turns its face to the eye instead of vanishing edge-on', () => {
+    /* A blade's plane is perpendicular to the way it bends, and the way it
+     * bends is the wind plus its own lean — nothing to do with where you are
+     * standing. So for any given eye, the field contains blades at every
+     * orientation and the ones presenting an edge are one pixel wide: the near
+     * ring was paying for twice the cover it was showing. Averaged over
+     * facings, an unbillboarded field shows 2/π = 64% of its own width and a
+     * tenth of it shows less than 15%.
+     *
+     * The turn is scaled by how edge-on the blade already is, so a blade that
+     * is presenting its face is not moved at all — which is what stops this
+     * from flattening the field into one wall of identically-facing blades. */
+    const N = 512, cam = [0, 1];
+    let mn = 1, sum = 0, worstTurn = 0, bad = 0;
+    const axes = [];
+    for (let k = 0; k < N; k++) {
+      const a = (k / N) * Math.PI * 2;
+      const bd = [Math.cos(a), Math.sin(a)];
+      const side0 = [-bd[1], bd[0]];
+      const side = bladeSideAxis(bd, cam);
+      const vis = bladeVisibleWidth(side, cam);
+      const raw = bladeVisibleWidth(side0, cam);
+      if (raw < 0.15) bad++;
+      mn = Math.min(mn, vis); sum += vis;
+      worstTurn = Math.max(worstTurn, Math.acos(Math.min(1, Math.abs(side[0] * side0[0] + side[1] * side0[1]))));
+      axes.push(Math.atan2(side[1], side[0]));
+    }
+    assert(bad > N * 0.06, 'the control is wrong: an unbillboarded field should have edge-on blades in it');
+    assert(mn > 0.60,
+      `the worst-placed blade still shows only ${(mn * 100).toFixed(0)}% of its width`);
+    assert(sum / N > 0.78,
+      `the field shows ${((sum / N) * 100).toFixed(0)}% of its width on average — 64% is doing nothing`);
+    // it must NOT become a billboard: a blade facing the eye is left alone, and
+    // the field keeps a real spread of orientations
+    const face = bladeSideAxis([1, 0], [0, 1]);           // side0 already ⟂ view
+    assert(Math.abs(face[0] - 1) < 1e-6 && Math.abs(face[1]) < 1e-6,
+      'a blade that was already showing its width is being turned anyway');
+    let span = 0;
+    for (const p of axes) for (const q of axes) {
+      let d = Math.abs(p - q); if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d > Math.PI / 2) d = Math.PI - d;               // a width axis is a line, not an arrow
+      span = Math.max(span, d);
+    }
+    assert(span > 1.0,
+      `every blade in the field now lies within ${(span * DEG).toFixed(0)}° of the same axis — that is a wall`);
+    assert(worstTurn * DEG < 60, `a blade is being spun ${(worstTurn * DEG).toFixed(0)}° out of its own plane`);
+    return `worst-case visible width ${(mn * 100).toFixed(0)}% (was 0%), mean ${((sum / N) * 100).toFixed(0)}% (was 64%), `
+      + `axes still spread over ${(span * DEG).toFixed(0)}°, worst turn ${(worstTurn * DEG).toFixed(0)}°`;
+  });
+
+  /* ══ the colour of a field ═══════════════════════════════════════════ */
+
+  check('cover: a field is not one colour', () => {
+    /* Every level authors two grass tints and lerps between them, and the three
+     * outdoor levels author pairs 0.5°, 2.6° and 5.1° apart in hue — so the
+     * pair was a lightness ramp with two names and the whole dune sea was straw
+     * at 45°. Koboh, which is the reference this was measured against, is
+     * explicitly withered straw AND greenery AND blue-green in one field.
+     *
+     * Hue is measured in sRGB, because that is where "yellow" and "blue-green"
+     * mean anything; the tints themselves are linear, and are NOT converted
+     * again on the way in — `new THREE.Color(hex)` has already done it. */
+    const hsl = (c) => c.getHSL({}, THREE.SRGBColorSpace);
+    const col = new THREE.Color();
+    const rows = [];
+    for (const key of OUTDOOR) {
+      const L = LEVELS[key];
+      // the control: what the shipped two-stop ramp spanned on this level
+      const A = new THREE.Color(L.grassTint[0]), B = new THREE.Color(L.grassTint[1]);
+      let cLo = 999, cHi = -999;
+      for (let i = 0; i <= 100; i++) {
+        const h = hsl(col.copy(A).lerp(B, (i / 100) * 0.9)).h * 360;
+        cLo = Math.min(cLo, h); cHi = Math.max(cHi, h);
+      }
+      assert(cHi - cLo < 12, `${key}: the control is wrong — the authored pair already spans ${(cHi - cLo).toFixed(0)}°`);
+
+      const t = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const g = new GrassField(new THREE.Scene(), t, {
+        count: 9000, density: L.grass ?? 1, radius: 46,
+        tintA: L.grassTint[0], tintB: L.grassTint[1],
+      });
+      g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
+      const hueOf = (ring, i) => {
+        col.setRGB(ring.aTint.array[i * 3], ring.aTint.array[i * 3 + 1], ring.aTint.array[i * 3 + 2]);
+        return hsl(col).h * 360;
+      };
+      const all = [], near = [];
+      for (const ring of g.rings) {
+        for (let i = 0; i < ring.used; i++) {
+          if (ring.aInst.array[i * 4 + 3] <= 0.004) continue;
+          const h = hueOf(ring, i);
+          all.push(h);
+          if (ring === g.rings[0]) near.push(h);
+        }
+      }
+      all.sort((a, b) => a - b); near.sort((a, b) => a - b);
+      const q = (arr, f) => arr[Math.min(arr.length - 1, Math.floor(arr.length * f))];
+      const span = q(all, 0.98) - q(all, 0.02);
+      const nearSpan = q(near, 0.98) - q(near, 0.02);
+      const frac = (lo, hi) => all.filter((h) => h >= lo && h < hi).length / all.length;
+      const straw = frac(0, 58), green = frac(58, 112), blue = frac(112, 360);
+      assert(span > 45,
+        `${key}: the field spans ${span.toFixed(0)}° of hue against the authored pair's ${(cHi - cLo).toFixed(0)}°`);
+      assert(nearSpan > 35,
+        `${key}: the grass at the player's feet spans ${nearSpan.toFixed(0)}° — the variety is all at range`);
+      for (const [name, f] of [['withered', straw], ['green', green], ['blue-green', blue]]) {
+        assert(f > 0.04, `${key}: ${(f * 100).toFixed(1)}% of the field is ${name}`);
+      }
+      // the level still governs where the middle of its own field sits
+      const mid = q(all, 0.5), authored = (cLo + cHi) / 2;
+      assert(Math.abs(mid - authored) < 30,
+        `${key}: the field's median hue is ${mid.toFixed(0)}° against the level's authored ${authored.toFixed(0)}°`);
+      rows.push(`${key} ${span.toFixed(0)}° (was ${(cHi - cLo).toFixed(0)}°) `
+        + `${(straw * 100).toFixed(0)}/${(green * 100).toFixed(0)}/${(blue * 100).toFixed(0)}`);
+      g.dispose(); t.dispose();
+    }
+    return `hue span, then withered/green/blue-green %: ${rows.join('; ')}`;
+  });
+
+  check('cover: hue comes in drifts, and a tuft is one plant', () => {
+    /* Two separate ways of getting this wrong, and the field had both. Drawn
+     * per tuft out of a plain random, hue is salt-and-pepper — a mown lawn
+     * seeded with confetti. Drawn per BLADE, so is the facing, and eight blades
+     * out of one crown then point eight different ways, which is what made
+     * every clump in the game go off like a firework. A tuft is ONE PLANT: its
+     * blades share a colour and a direction and fan a little around both. */
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const g = new GrassField(new THREE.Scene(), t, { count: 9000, density: 1, radius: 46 });
+    g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
+    const ring = g.rings[0], per = ring.per;
+    assert(per >= 6, `a tuft is only ${per} blades, so this measures nothing`);
+
+    const circStd = (angles) => {
+      let sx = 0, sy = 0;
+      for (const a of angles) { sx += Math.cos(a); sy += Math.sin(a); }
+      return Math.sqrt(-2 * Math.log(Math.max(Math.hypot(sx, sy) / angles.length, 1e-9)));
+    };
+    const within = [], means = [], hueSpread = [];
+    const hsl = (c) => c.getHSL({}, THREE.SRGBColorSpace);
+    const col = new THREE.Color();
+    for (let tf = 0; tf + per <= ring.used; tf += per) {
+      const ang = [], hue = [];
+      let ok = true;
+      for (let b = 0; b < per; b++) {
+        const i = tf + b;
+        if (ring.aInst.array[i * 4 + 3] <= 0.004) { ok = false; break; }
+        ang.push(Math.atan2(ring.aOrient.array[i * 4 + 1], ring.aOrient.array[i * 4]));
+        col.setRGB(ring.aTint.array[i * 3], ring.aTint.array[i * 3 + 1], ring.aTint.array[i * 3 + 2]);
+        hue.push(hsl(col).h * 360);
+      }
+      if (!ok) continue;
+      within.push(circStd(ang));
+      means.push(Math.atan2(ang.reduce((s, a) => s + Math.sin(a), 0), ang.reduce((s, a) => s + Math.cos(a), 0)));
+      hueSpread.push(Math.max(...hue) - Math.min(...hue));
+    }
+    assert(within.length > 200, `only ${within.length} whole tufts to measure`);
+    const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+    const inTuft = mean(within), across = circStd(means);
+    // uniform random over a circle measures ≈ 3.0; the shipped field measured
+    // the same within a tuft as across the field, which is the whole bug
+    assert(inTuft < 0.50,
+      `the blades of one tuft point ${inTuft.toFixed(2)} rad apart — a tuft is not a plant, it is a firework`);
+    assert(across > 1.5,
+      `every tuft in the field faces the same way (${across.toFixed(2)} rad across tufts)`);
+    assert(across / inTuft > 4,
+      `a tuft is as spread out as the whole field (${(across / inTuft).toFixed(1)}×)`);
+    // and a tuft is one colour, give or take
+    assert(mean(hueSpread) < 25,
+      `one tuft covers ${mean(hueSpread).toFixed(0)}° of hue — that is a bouquet, not a plant`);
+
+    // hue drifts across the ground rather than sparkling: neighbouring tufts
+    // agree far more than distant ones
+    const F = g.species;
+    let near = 0, far = 0;
+    for (let k = 0; k < 4000; k++) {
+      const x = (k * 37.13) % 300 - 150, z = (k * 91.7) % 300 - 150;
+      near += Math.abs(F.at(x, z) - F.at(x + 1.2, z + 0.8));
+      far += Math.abs(F.at(x, z) - F.at(x + 55, z - 41));
+    }
+    assert(near / far < 0.35,
+      `the species field changes as fast over a metre as over fifty (${(near / far).toFixed(2)}) — that is confetti`);
+    g.dispose(); t.dispose();
+    return `within a tuft ${inTuft.toFixed(2)} rad, across the field ${across.toFixed(2)} rad (${(across / inTuft).toFixed(1)}×), `
+      + `tuft hue spread ${mean(hueSpread).toFixed(0)}°, species field 1 m vs 50 m ${(near / far).toFixed(2)}`;
+  });
+
+  /* ══ the shade ═══════════════════════════════════════════════════════ */
+
+  check('shade: a light that casts no shadow keeps its light on a shadowed blade', () => {
+    /* THE REASON GRASS WENT BLACK IN SHADE AND THE SAND BESIDE IT DID NOT. The
+     * rig is a sun with a cascade, two black carriers that exist only to own
+     * the middle and far shadow maps, and a blue sky FILL that casts nothing.
+     * `getShadowMask()` is the sun's cascade — Engine.js narrows it to light 0
+     * for the terrain, with `#if UNROLLED_LOOP_INDEX == 0` — and the grass then
+     * multiplied that same mask into every directional light it summed. So a
+     * blade in shadow lost the fill as well as the sun, and the ground next to
+     * it kept it.
+     *
+     * The rig is read out of Engine.js rather than restated here, so the check
+     * measures the game's own lights and not a memory of them. */
+    const src = readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8');
+    const hemiM = /new THREE\.HemisphereLight\(\s*(0x[0-9a-f]+)\s*,\s*(0x[0-9a-f]+)\s*,\s*([\d.]+)\s*\)/i.exec(src);
+    const sunM = /new THREE\.DirectionalLight\(i === 0 \? (0x[0-9a-f]+) : 0x000000, i === 0 \? ([\d.]+) : 0\)/i.exec(src);
+    const fillM = /this\.fill = new THREE\.DirectionalLight\(\s*(0x[0-9a-f]+)\s*,\s*([\d.]+)\s*\)/i.exec(src);
+    const fillP = /this\.fill\.position\.set\(([-\d., ]+)\)/.exec(src);
+    assert(hemiM && sunM && fillM && fillP, 'the light rig moved; this check can no longer see it');
+    assert(!/this\.fill\.castShadow\s*=\s*true/.test(src),
+      'the fill casts a shadow now, so masking it would be correct and this check is stale');
+
+    const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+    const hemi = { sky: lin(hemiM[1]).map((v) => v * +hemiM[3]), ground: lin(hemiM[2]).map((v) => v * +hemiM[3]) };
+    const fillDir = fillP[1].split(',').map(Number);
+    const fl = Math.hypot(...fillDir);
+    const lights = [
+      { color: lin(sunM[1]).map((v) => v * +sunM[2]), L: [0.573, 0.574, 0.585] },  // sun at 35°
+      { color: [0, 0, 0], L: [0.573, 0.574, 0.585] },                              // carriers
+      { color: [0, 0, 0], L: [0.573, 0.574, 0.585] },
+      { color: lin(fillM[1]).map((v) => v * +fillM[2]), L: fillDir.map((v) => v / fl) },
+    ];
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+
+    /* Averaged over blade facings, because a single normal is a single blade
+     * and the complaint is about a field. The fragment flips the normal toward
+     * the viewer, so the average has to be taken after that. */
+    const sweep = (o) => {
+      const acc = [0, 0, 0];
+      const M = 256;
+      for (let k = 0; k < M; k++) {
+        const a = (k / M) * Math.PI * 2;
+        const r = grassShade({
+          N: [Math.cos(a), 0.30, Math.sin(a)], V: [0, 0.18, -1],
+          hemi, lights, height: 0.7, ...o,
+        });
+        for (let i = 0; i < 3; i++) acc[i] += r.total[i] / M;
+      }
+      return acc;
+    };
+    const lit = sweep({ shadow: 1 });
+    const shaded = sweep({ shadow: 0 });
+    const shippedShaded = sweep({ shadow: 0, guard: false });
+    const shippedLit = sweep({ shadow: 1, guard: false });
+
+    // 1. the fill survives a full shadow. This is the property, stated flat.
+    const kept = (lum(shaded) - lum(sweep({ shadow: 0, lights: [lights[0]] })))
+               / (lum(lit) - lum(sweep({ shadow: 1, lights: [lights[0]] })));
+    assert(kept > 0.95,
+      `a fully shadowed blade keeps only ${(kept * 100).toFixed(0)}% of the light a shadowless fill gives it`);
+    // 2. and it is worth something: this is not a check on a rounding error
+    const gain = lum(shaded) / lum(shippedShaded);
+    assert(gain > 1.20,
+      `the guard is worth ${gain.toFixed(3)}× in shade, which is not the difference between black and dark green`);
+    // 3. shade must be BLUER than sun, because what is left of it is sky
+    const blueLit = lit[2] / lum(lit), blueShade = shaded[2] / lum(shaded);
+    assert(blueShade > blueLit * 1.25,
+      `shaded grass is only ${(blueShade / blueLit).toFixed(2)}× as blue as sunlit grass`);
+    // 4. and the guard may not touch a lit blade — it is a shadow fix, nothing else
+    assert(Math.abs(lum(lit) / lum(shippedLit) - 1) < 1e-9,
+      'the guard changed what a blade in full sun receives');
+    // 5. the shader has to be doing what this model says
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const g = new GrassField(new THREE.Scene(), t, { count: 200, density: 1, radius: 30 });
+    const fs = g.near.mat.fragmentShader;
+    const loop = fs.slice(fs.indexOf('for(int i = 0; i < NUM_DIR_LIGHTS'), fs.indexOf('#pragma unroll_loop_end', fs.indexOf('NUM_DIR_LIGHTS')));
+    assert(/#if UNROLLED_LOOP_INDEX == 0/.test(loop),
+      'the grass applies the sun\'s shadow to every directional light again');
+    assert(!/wrap \* shadow/.test(loop),
+      'the raw shadow mask is still being multiplied into a light inside the loop');
+    g.dispose(); t.dispose();
+
+    return `shaded blade ${lum(shippedShaded).toFixed(3)} → ${lum(shaded).toFixed(3)} irradiance `
+      + `(${gain.toFixed(2)}×), keeps ${(kept * 100).toFixed(0)}% of the fill in full shadow, `
+      + `shade ${(blueShade / blueLit).toFixed(2)}× as blue as sun`;
+  });
+
+  /* ══ the scatter, again ══════════════════════════════════════════════ */
+
+  check('cover: a tier holds what its cell says, not what the walk there said', () => {
+    /* A tier only refills when its snapped cell changes, and it was then culling
+     * tufts against the annulus measured from WHEREVER THE CAMERA WAS at that
+     * instant. The swath tier's cells are 17 m: walking east across a line
+     * refills it from 15 m one side of the cell's middle and walking back west
+     * refills the same cell from the other, so its contents depended on the
+     * path taken to it. Measured on the shipped build, arriving at the origin
+     * from the east and from the north gave the swath ring 2242 instances one
+     * way and 2246 the other, with 96% of its buffer different — and the far
+     * ring 99%. Everything else about this field is a pure function of the cell
+     * coordinate; this was the one thing that was not. */
+    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const at = (x, z) => new THREE.Vector3(x, t.height(x, z), z);
+    const walk = (path) => {
+      const g = new GrassField(new THREE.Scene(), t, { count: 8000, density: 1, radius: 46 });
+      for (const [x, z] of path) g.update(1 / 60, at(x, z), [], null);
+      const out = g.rings.map((r) => ({
+        name: r.tier.name, used: r.used,
+        inst: Float32Array.from(r.aInst.array), orient: Float32Array.from(r.aOrient.array),
+      }));
+      g.dispose();
+      return out;
+    };
+    const east = walk([[80, 0], [60, 0], [40, 0], [20, 0], [9, 0], [0, 0]]);
+    const north = walk([[0, 80], [0, 60], [0, 40], [0, 20], [0, 9], [0, 0]]);
+    const still = walk([[0, 0]]);
+    const rows = [];
+    for (let k = 0; k < east.length; k++) {
+      assert(east[k].used > 100, `${east[k].name}: only ${east[k].used} instances to compare`);
+      for (const [name, other] of [['from the north', north[k]], ['standing still', still[k]]]) {
+        assert(east[k].used === other.used,
+          `${east[k].name}: ${east[k].used} instances arriving from the east, ${other.used} ${name}`);
+        let diff = 0;
+        for (let i = 0; i < east[k].inst.length; i++) {
+          if (east[k].inst[i] !== other.inst[i] || east[k].orient[i] !== other.orient[i]) diff++;
+        }
+        assert(diff === 0,
+          `${east[k].name}: ${diff} of ${east[k].inst.length} floats differ ${name} — `
+          + 'the field depends on how you walked to it');
+      }
+      rows.push(`${east[k].name} ${east[k].used}`);
+    }
+    t.dispose();
+    return `identical from east, from north and standing still: ${rows.join(', ')}`;
   });
 }
