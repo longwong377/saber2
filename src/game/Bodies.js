@@ -637,6 +637,59 @@ function mergeGeos(parts) {
   return out;
 }
 
+/**
+ * Attach `target` to `base` as morph target 0.
+ *
+ * A baked geometry has no bones and no retained transform — which is exactly
+ * why the hand could never open. But two builds that walk the SAME part list
+ * in the same order differ only in the matrices bakeTree flattens, so vertex i
+ * means the same vertex of the same part in both, and the difference between
+ * them is a legal morph target. That gives one continuous shape parameter at
+ * no CPU cost: the GPU interpolates, nothing here runs per frame.
+ *
+ * The guard below is the whole safety of the scheme and is not decoration — a
+ * morph across mismatched topology is silent garbage, not an error, so the
+ * vertex count AND the entire index buffer are compared. Colours come across
+ * too: an AO set baked for the closed pose paints creases where the open pose
+ * has nothing to cast them (measured: 75% of the 364 digit vertices carry a
+ * darkening the open hand does not want, mean 0.775 against 0.976), so each
+ * pose is shaded for itself and the difference rides along as morphAttributes.
+ * `color` — supported by three r169 exactly like position and normal.
+ */
+export function addShapeMorph(base, target, name = 'morph') {
+  const bp = base.attributes.position, tp = target.attributes.position;
+  if (bp.count !== tp.count) {
+    throw new Error(`morph "${name}": ${bp.count} vertices against ${tp.count} — not the same build`);
+  }
+  const bi = base.index, ti = target.index;
+  if (!!bi !== !!ti || (bi && bi.count !== ti.count)) {
+    throw new Error(`morph "${name}": the two builds do not share an index buffer`);
+  }
+  if (bi) for (let i = 0; i < bi.count; i++) {
+    if (bi.getX(i) !== ti.getX(i)) throw new Error(`morph "${name}": index ${i} differs — vertex order is not the same`);
+  }
+  const delta = (a, b) => {
+    const n = a.itemSize * a.count;
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = b.array[i] - a.array[i];
+    const attr = new THREE.BufferAttribute(out, a.itemSize);
+    attr.name = name;
+    return attr;
+  };
+  base.morphTargetsRelative = true;
+  base.morphAttributes.position = [delta(bp, tp)];
+  const bn = base.attributes.normal, tn = target.attributes.normal;
+  if (bn && tn) base.morphAttributes.normal = [delta(bn, tn)];
+  const bc = base.attributes.color, tc = target.attributes.color;
+  if (bc && tc) base.morphAttributes.color = [delta(bc, tc)];
+  // mergeGeos sized the bounding sphere around the closed pose; three widens it
+  // to cover the morph targets, and an un-widened one culls an outstretched
+  // hand at the edge of the frame.
+  base.computeBoundingSphere();
+  target.dispose();
+  return base;
+}
+
 /** Flatten an authoring hierarchy of un-materialled meshes into one geometry. */
 function bakeTree(group) {
   group.updateMatrixWorld(true);
@@ -832,6 +885,13 @@ const FINGER_TABLE = {
  * The fingers are curled by default rather than splayed, because the only
  * thing either hand ever does is close around a hilt directly under the
  * first-person camera.
+ *
+ * `curl` (0 = straight, 1 = fist) and `splay` (a multiplier on the fan across
+ * the knuckles) only ever set rotations on the authoring groups — no geometry
+ * is built differently — so two builds that differ ONLY in those two numbers
+ * are the same topology vertex for vertex, and addShapeMorph can turn the pair
+ * into an open/close morph. Verified in tools/checks/body-parts.mjs rather
+ * than asserted here.
  */
 export function buildHand(side, S, opts = {}) {
   const tw = side === 'L' ? 1 : -1;
@@ -842,6 +902,7 @@ export function buildHand(side, S, opts = {}) {
   const fingerR = (opts.fingerR ?? 0.0097) * S;
   const wristR = (opts.wristR ?? 0.028) * S;
   const curl = opts.curl ?? 1;
+  const splay = opts.splay ?? 1;
   const seg = opts.seg ?? 6;
   const table = FINGER_TABLE[opts.fingers ?? 4] || FINGER_TABLE[4];
   const wristY = palmT * 0.42;
@@ -876,7 +937,7 @@ export function buildHand(side, S, opts = {}) {
   for (const [ox, hy, lf, rf, fan] of table) {
     const root = new THREE.Group();
     root.position.set(tw * ox * palmW, wristY + palmL * hy, palmT * 0.16);
-    root.rotation.z = -tw * fan;
+    root.rotation.z = -tw * fan * splay;
     root.rotation.x = 1.24 * curl;
     g.add(root);
     const L = fingerL * lf, R = fingerR * rf;
@@ -1353,7 +1414,12 @@ export function dressHumanoid(rig, style) {
 
     const hand = rig.get('hand' + side);
     if (hand) {
-      const geo = style.handGeo ? style.handGeo(side, S) : buildHand(side, S, style.hands || {});
+      // `style.hands` reaches handGeo too. It used to reach only the default
+      // branch, so an archetype that declared BOTH — the Jedi declared
+      // `hands: { curl: 0.95 }` and a handGeo that hard-coded the same 0.95 —
+      // had a hand-shape field that could be edited to no effect whatsoever.
+      const geo = style.handGeo ? style.handGeo(side, S, style.hands || {})
+                                : buildHand(side, S, style.hands || {});
       const m = mesh(geo, style.hand || style.arm || style.body, hand.obj);
       hand.parts.push(m); hand.primary = m; hand.radius = (style.handRadius ?? 0.05) * S;
     }
@@ -1517,12 +1583,38 @@ export function buildJedi(opts = {}) {
     // was one flat value: a mitten. Hand-bone frame is +Y wrist→knuckles and
     // +Z the way the palm faces, so the shading below is the shadow the curled
     // fingers throw back onto the palm and the dark between each digit.
-    handGeo: (side, sc) => shadeAO(buildHand(side, sc, { curl: 0.95 }), ao(
-      creaseAt(0, 0.058 * sc, 0.030 * sc, 0.034 * sc, 0.52, 0.5),
-      (x, y, z) => 1 - 0.34 * clamp((z / sc - 0.016) / 0.026, 0, 1) * clamp((y / sc - 0.030) / 0.030, 0, 1),
-      // the web at the base of the thumb
-      creaseAt((side === 'L' ? 1 : -1) * 0.030 * sc, 0.028 * sc, 0.016 * sc, 0.024 * sc, 0.58, 0.4),
-    ), { floor: 0.38 }),
+    //
+    // Two builds, one geometry. The hand ships CLOSED — that is what it does
+    // for all but a second at a time, and it is the pose the colliders, the cut
+    // path and the bounding sphere are all read off — with the open pose
+    // carried as morph target 0 (`open`). Player.js drives the influence off
+    // GESTURES[].palm, which until now reached a quaternion and nothing else:
+    // a Force push turned the wrist to face the target and presented a fist.
+    //
+    // The AO is baked TWICE, once per pose, because it is a positional field
+    // and it travels with the vertex. The finger-shadow crease below has
+    // nothing casting it once the fingers straighten; measured on the built
+    // hand, carrying the closed bake onto the open pose leaves 272 of 364
+    // digit vertices darker than 0.90 and a mean of 0.775 where the open hand
+    // wants 0.976 — a fifth of the light missing off an extended hand. Only
+    // the two terms that are true of any hand are shared.
+    handGeo: (side, sc, o) => {
+      const anyPose = [
+        // the dark forward of the palm plane and between the digits
+        (x, y, z) => 1 - 0.34 * clamp((z / sc - 0.016) / 0.026, 0, 1) * clamp((y / sc - 0.030) / 0.030, 0, 1),
+        // the web at the base of the thumb
+        creaseAt((side === 'L' ? 1 : -1) * 0.030 * sc, 0.028 * sc, 0.016 * sc, 0.024 * sc, 0.58, 0.4),
+      ];
+      return addShapeMorph(
+        shadeAO(buildHand(side, sc, o), ao(
+          // the shadow the curled fingers throw back onto the palm — a fist only
+          creaseAt(0, 0.058 * sc, 0.030 * sc, 0.034 * sc, 0.52, 0.5), ...anyPose), { floor: 0.38 }),
+        // Open: fingers all but straight and fanned nearly twice as wide, which
+        // is a flat splayed palm rather than a plank.
+        shadeAO(buildHand(side, sc, { ...o, curl: 0.08, splay: 1.9 }),
+          ao(...anyPose), { floor: 0.38 }),
+        'open');
+    },
     hands: { curl: 0.95 },
     headRadius: 0.098,
     yoke: { reach: 0.62, rise: 0.031, depth: 0.064, at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },

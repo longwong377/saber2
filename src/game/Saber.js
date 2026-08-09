@@ -208,18 +208,43 @@ const TRAIL_FRAG = /* glsl */`
   #include <common>
   #include <fog_pars_fragment>
   uniform vec3 uHue; uniform float uGlow; uniform float uHot;
+  uniform float uCoreWhite;  // how far the HOT lobe is neutralised. See CORE_WHITE.
   varying float vAge; varying float vSide; varying float vThick; varying float vPunch;
   void main(){
     float fade = pow(clamp(1.0 - vAge, 0.0, 1.0), 1.5);
     // feathered at the emitter, carried a little past the tip
     float prof = smoothstep(0.0, 0.13, vSide) * (1.0 - smoothstep(0.99, 1.06, vSide));
     float th = exp(-vThick * vThick * 1.3);
-    // The freshest slice is still at blade temperature and whites out; behind
-    // it the smear cools to the crystal's own colour before it dies.
+    // The smear has the same two-lobe structure the blade has: a HOT lobe that
+    // dies within a couple of frames, and a GLOW lobe that carries the length of
+    // the arc. uHot * hot is the smear's core, uGlow * fade is its halo.
     float hot = pow(clamp(1.0 - vAge * 2.6, 0.0, 1.0), 2.0);
-    float e = prof * th * vPunch * (uGlow * fade + uHot * hot);
+    float ec = uHot * hot;               // the hot lobe alone
+    float e0 = uGlow * fade + ec;
+    float e = prof * th * vPunch * e0;
     if(e < 0.002) discard;
-    vec3 c = uHue * e;
+    /* THE FRESHEST SLICE GIVES UP ITS CHROMA, exactly as the blade's core does —
+     * same constant, same target, same reason. prof, th and vPunch are common to
+     * both lobes and cancel out of the ratio, so what is neutralised is decided
+     * by AGE alone: the freshest slice is 71% hot lobe and comes out near-neutral,
+     * and once the hot lobe has died (vAge > 0.385, about four frames) the mix is
+     * exactly zero and the wisp is the crystal at full chroma. That is the read
+     * this is for — a white-hot leading edge trailing into a coloured wisp — and
+     * it is what the old line, vec3 c = uHue * e, could never produce: hot only
+     * ever raised the AMPLITUDE of the same 22.9:1 blue, so the whole ribbon was
+     * one saturated sheet and the comment here claiming it "whites out" described
+     * a mechanism the code did not have.
+     *
+     * Toward the hue's own LUMINANCE and never toward white, for a reason that is
+     * sharper here than on the blade: UnrealBloomPass's high pass thresholds on
+     * luminance() with the SAME Rec.709 weights, so a mix toward hueN leaves the
+     * pass's own value bit-identical. Exactly as much of the trail blooms as
+     * before and only its colour moves — which is what makes the A/B on the
+     * wielder readable at all. A lift toward white would raise that value, bloom
+     * MORE of the ribbon, and confound the two. */
+    vec3 hueN = vec3(dot(uHue, vec3(0.2126, 0.7152, 0.0722)));
+    vec3 col = mix(uHue, hueN, uCoreWhite * (ec / max(e0, 1e-5)));
+    vec3 c = col * e;
     #ifdef USE_FOG
       #ifdef FOG_EXP2
         float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
@@ -572,12 +597,47 @@ export class Saber {
    * Luminance is deliberately quoted separately and barely moves (1.96x -> 1.99x
    * of the retracted figure): this is a chroma fix and it is not allowed to be
    * anything else.
+   *
+   * IT ALSO DRIVES THE TRAIL, and did not until this round. The smear ended
+   * `vec3 c = uHue * e` while its own comment claimed the freshest slice "whites
+   * out" — it never did, `hot` only raised the amplitude of the same 22.9:1 blue.
+   * Measured the same way, one frozen frame of a real slash on the dune sea
+   * (tools/_wielder.mjs sweep --clip slash), wielder silhouette, 12086 px:
+   *
+   *     blade retracted (control)                       R/B 0.995
+   *     blade drawn, smear HIDDEN                           0.676   overlit 2.98x
+   *     + the old smear                                     0.654   overlit 3.26x
+   *     + chroma fixed only  (defect 1 alone)                0.668   overlit 3.26x
+   *     + amplitudes fixed only (defect 2 alone)             0.657   overlit 3.15x
+   *     + as now shipped                                    0.667   overlit 3.16x
+   *
+   * Read it as a decomposition, because that is the point of the two middle rows:
+   * the chroma half moves R/B by +0.014 and luminance by NOTHING (3.26x -> 3.26x,
+   * which is the mix toward hueN doing exactly what it promises), and the width
+   * half moves luminance by -3% and R/B by +0.003. Neither can be credited with
+   * the other's work. Together they give back 59% of the damage the smear does to
+   * the figure — and the smear's damage is only 7% of the blade's own on this
+   * frame, because the blade is held against the body while the arc sweeps away
+   * from it. Over the whole frame the smear is the bigger object: it moves 16% of
+   * the pixels, against the blade's bloom which moves 50%.
    */
   static CORE_WHITE = 0.85;
 
-  /** The smear's amplitudes, tied to the blade's own lobes. See _buildTrail. */
-  static TRAIL_HOT = Saber.PROFILE.amp[1] * 0.85;
-  static TRAIL_GLOW = Saber.PROFILE.amp[2] * 1.5;
+  /**
+   * The smear's two amplitudes, as FRACTIONS of the blade lobes they are tied to.
+   * See _buildTrail for what the tie means and _syncWidth for what keeps it.
+   *
+   * They used to be absolute numbers — `PROFILE.amp[1] * 0.85` evaluated once at
+   * class-definition time — which made the tie a comment rather than a fact. The
+   * blade's lobes scale with the width slider and these did not, so at the
+   * shipped default of 0.7 the smear's hot lobe was 5.525 against a glow lobe of
+   * 4.55 — 1.21x the lobe it is defined as 0.85x OF, a 1.43x drift — and its glow
+   * lobe was 2.25 against a halo lobe of 0.735, 3.06x what it is defined as 1.5x
+   * of, a 2.04x drift. Worse, the smear's hot lobe was then 7.5x the whole halo
+   * lobe of the blade that drew it. Stated as fractions there is nothing to drift.
+   */
+  static TRAIL_HOT_OF_GLOW = 0.85;
+  static TRAIL_GLOW_OF_HALO = 1.5;
 
   _buildBlade() {
     this.bladeGroup = new THREE.Group();
@@ -645,9 +705,16 @@ export class Saber {
    * The 1.6 on the trail is the blade's HALO lobe, not a taste number: the
    * smear is the swept slab of the thing that made it, and a slab thinner than
    * the blade's own glow reads as a decal stuck on behind it.
+   *
+   * The smear's two AMPLITUDES live here for the same reason its thickness does,
+   * and they did not until this round — see the second half of the body.
    */
   _syncWidth() {
     const w = this._coreWidth, P = Saber.PROFILE;
+    // The two lobes the SMEAR is defined against, computed once here so the
+    // blade and the trail cannot be given different exponents by accident.
+    const glow = P.amp[1] * w;
+    const halo = P.amp[2] * w * w;
     if (this.bladeMat) {
       this.bladeMat.uniforms.uWidth.value.set(P.width[0] * w, P.width[1] * w, P.width[2] * w);
       this.bladeMat.uniforms.uRadius.value = P.radius * w;
@@ -666,11 +733,36 @@ export class Saber {
       // stripe), but the GLOW and HALO — the two terms that actually spread
       // across the screen — now scale with the setting, superlinearly for the
       // halo because that is the one you see from the far side of an arena.
-      const glow = P.amp[1] * w;
-      const halo = P.amp[2] * w * w;
       this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w), glow, halo);
     }
     this.trailThickness = P.width[1] * 1.6 * w;
+    /* AND IT HAS TO REACH THE SMEAR, for the same reason and with more force.
+     *
+     * The paragraph above is about screen area, and the trail is nothing BUT
+     * screen area: it is a whole blade's length dragged through a whole arc, and
+     * its amplitude is the only handle the slider has on it — unlike the blade,
+     * whose sigmas and quad shrink with the setting, the smear's geometry is the
+     * arc the wrist made and does not shrink with `w` at all. Only the 5 cm slab
+     * between the three sheets does.
+     *
+     * The exponents are not a choice. TRAIL_HOT_OF_GLOW and TRAIL_GLOW_OF_HALO
+     * define the smear as a fraction of two blade lobes, so they inherit those
+     * lobes' exponents — `w` and `w*w` — or the definition is false at every
+     * width but 1. Measured on cerulean (luminance factor 0.3579) at the peak of
+     * the freshest slice with all three sheets stacked, against the bloom pass's
+     * 1.8 threshold:
+     *
+     *     width   trail peak lum   was
+     *     0.45         1.63        4.30    under the line: the slider can now
+     *     0.70         2.75        4.30    switch the smear's bloom OFF
+     *     1.00         4.30        4.30
+     *     1.60         8.07        4.30
+     *
+     * i.e. it went from a flat 4.30 at every setting — a player who dragged the
+     * width to minimum got the identical blooming ribbon — to a 5:1 range with
+     * the bottom of it under the threshold entirely. */
+    this.trailHot = glow * Saber.TRAIL_HOT_OF_GLOW;
+    this.trailGlow = halo * Saber.TRAIL_GLOW_OF_HALO;
   }
 
   /**
@@ -729,17 +821,24 @@ export class Saber {
     geo.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
     geo.setAttribute('aThick', new THREE.BufferAttribute(thick, 1));
 
-    // The smear's two amplitudes are derived from the blade's own lobes so the
-    // two cannot drift apart: the freshest slice runs at the GLOW lobe's
-    // temperature (which puts it over the bloom line — luminance 2.3 for a
-    // cerulean crystal against a threshold of 1.8, so a fast cut leaves a
-    // glowing arc and not a coloured film), and the body of the smear settles
-    // above the HALO lobe, where ACES still keeps its chroma.
+    /* The smear's two amplitudes are derived from the blade's own lobes so the
+     * two cannot drift apart — _syncWidth owns both ends of that tie: the
+     * freshest slice runs at 0.85 of the GLOW lobe's temperature, which puts it
+     * over the bloom line (at w = 1 the three sheets stack to linear luminance
+     * 4.30 for a cerulean crystal against a threshold of 1.8, so a fast cut
+     * leaves a glowing arc and not a coloured film), and the body of the smear
+     * settles at 1.5 of the HALO lobe, where ACES still keeps its chroma.
+     *
+     * uCoreWhite is the blade's own CORE_WHITE, on the smear's own hot lobe. The
+     * two are one knob on purpose: the trail is the swept volume of the blade,
+     * and a smear whose leading edge is a different colour from the edge that
+     * made it reads as a decal rather than as light. */
     this.trailMat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
         uHue: { value: new THREE.Color(1, 1, 1) },
-        uGlow: { value: Saber.TRAIL_GLOW },
-        uHot: { value: Saber.TRAIL_HOT },
+        uGlow: { value: this.trailGlow },
+        uHot: { value: this.trailHot },
+        uCoreWhite: { value: Saber.CORE_WHITE },
       }]),
       vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -956,8 +1055,10 @@ export class Saber {
     this.trail.geometry.attributes.position.needsUpdate = true;
     this.trail.geometry.attributes.aAge.needsUpdate = true;
     this.trail.geometry.attributes.aPunch.needsUpdate = true;
-    this.trailMat.uniforms.uHot.value = Saber.TRAIL_HOT * this.punch;
-    this.trailMat.uniforms.uGlow.value = Saber.TRAIL_GLOW * this.punch;
+    // From _syncWidth, so the width slider and the Focusing Crystal boon reach
+    // the smear's amplitudes and not only its thickness.
+    this.trailMat.uniforms.uHot.value = this.trailHot * this.punch;
+    this.trailMat.uniforms.uGlow.value = this.trailGlow * this.punch;
     this.trail.visible = this.ignition > 0.2 && live > 1;
   }
 

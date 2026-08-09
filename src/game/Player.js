@@ -1380,6 +1380,10 @@ export class Player {
       if (palm) rig.aimBoneWorld('handL', palm, right);
     }
 
+    // Both branches above turn the WRIST and nothing else. The fingers are the
+    // other half of the gesture and they live here — see _openPalm.
+    this._openPalm();
+
     // Head: a limited glance toward the aim, layered on the rest pose. The head
     // bone's +Y runs up through the skull and its face is +Z, so the old code —
     // which aimed +Y at the blade tip — laid the head over sideways every time
@@ -1551,6 +1555,33 @@ export class Player {
       }
     }
     return this.gesture.hasAt ? out.copy(this.gesture.at) : null;
+  }
+
+  /**
+   * Open the off hand.
+   *
+   * `palm` used to reach exactly one place — aimBoneWorld, which writes a
+   * QUATERNION and nothing else. So `stasis` at palm 1.0 correctly rolled the
+   * wrist until the back of the hand faced the target and then presented it a
+   * clenched fist, because the hand is one baked BufferGeometry built at
+   * curl 0.95 and there is no bone, no morph and no retained transform inside
+   * it that anything could address. Bodies.js now bakes a second, open build
+   * of the same part list as morph target 0, so `palm × env` — a product this
+   * function's caller already computes and smooths — is a continuous open and
+   * close for one float per frame and no CPU work at all.
+   *
+   * LEFT HAND ONLY, and that is load-bearing rather than incidental: the saber
+   * lives in the right hand, the blade solve owns that arm outright, and every
+   * gesture in GESTURES is left-handed for exactly that reason. handR is never
+   * touched here, so the grip cannot open mid-swing.
+   */
+  _openPalm() {
+    const b = this.rig.get('handL');
+    const m = b && b.primary;
+    // droids, and anything else whose hand was not built with the morph
+    if (!m || !m.morphTargetInfluences || !m.morphTargetInfluences.length) return;
+    const g = GESTURES[this.gesture.kind];
+    m.morphTargetInfluences[0] = g ? clamp(g.palm * this.gesture.env, 0, 1) : 0;
   }
 
   /**

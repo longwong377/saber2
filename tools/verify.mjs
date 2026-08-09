@@ -2365,16 +2365,24 @@ check('grass: the whole LOD ladder tiles the field with overlaps, not gaps', () 
   assert(g.reach > 300, `the field reaches only ${g.reach} m on a level you can see 700 across`);
 
   g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
-  // blades are jittered around a tuft centre and the window is snapped to the
-  // tier's cell grid, so the annulus holds to within a cell and no further
+  /* Blades are jittered around a tuft centre and the window is snapped to the
+   * tier's cell grid, so the annulus holds to within a cell and no further.
+   *
+   * MEASURED FROM THE TIER'S OWN SNAPPED WINDOW CENTRE, which is the frame the
+   * fill works in — a tier's contents are a pure function of its snapped cell
+   * (see Scenery._fillTier) and measuring from the camera instead only agreed
+   * with that while the camera happened to be sitting near a cell middle. The
+   * tolerance is HALF a tuft's spread rather than a whole one, because that is
+   * the real bound: a blade is placed at sqrt(u)·0.5·spread from its tuft. */
   let tris = 0, live = 0;
   for (const ring of g.rings) {
     const a = ring.aInst.array;
-    const slop = ring.cell + ring.spread;
+    const slop = ring.cell + ring.spread * 0.5 + 1e-6;
+    const kx = (ring.ci + 0.5) * ring.cell, kz = (ring.cj + 0.5) * ring.cell;
     for (let i = 0; i < ring.count; i++) {
       if (a[i * 4 + 3] <= 0.004) continue;
       live++;
-      const r = Math.hypot(a[i * 4], a[i * 4 + 2]);
+      const r = Math.hypot(a[i * 4] - kx, a[i * 4 + 2] - kz);
       assert(r <= ring.far + slop, `a ${ring.tier.name} sits at ${r.toFixed(2)}m, outside ${ring.far}m`);
       assert(r >= ring.near - slop, `a ${ring.tier.name} sits at ${r.toFixed(2)}m, inside ${ring.near}m`);
     }

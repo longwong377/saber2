@@ -537,6 +537,234 @@ const TRAIL_RES = 128;      // texels across the disturbance window
 const TRAIL_SIZE = 40;      // metres across the disturbance window
 const TRAIL_HOLD = 6;       // seconds of decay after the last splat
 
+/* ── the shape of a blade ──────────────────────────────────────────────
+ *
+ * A BLADE IS NOT A BENT WIRE. What shipped swept the strip along a CIRCULAR
+ * ARC: `ks = bend * h`, a constant turn per unit length, so the blade was
+ * equally curved at the sheath and at the tip and the whole field read as ten
+ * thousand identical hoops of fence wire. Measured on the shipped numbers, the
+ * turn rate at 90% of the blade's height was 1.00× the rate at 15% — by
+ * construction, because that is what a circle is.
+ *
+ * Grass is a TAPERED cantilever. The bending moment does fall off toward the
+ * tip, but the second moment of area falls off faster, because the blade is
+ * getting narrower and thinner at the same time — so the curvature INCREASES
+ * with height and a real blade stands up out of the ground and arches over near
+ * its end. `theta = bend * h^BLADE_CURVE` is that shape in one exponent, and
+ * it is the same shape the CARD shader in this file already used (`bv * h * h`)
+ * while the geometry ring did not: the billboards curved and the actual blades
+ * did not.
+ *
+ * 1.75 rather than 2: measured over the field's own bend distribution, p = 2
+ * loses a third of the tip's horizontal reach for the same total turn (the
+ * blade holds its line longer, so it gets less far over), and the calm-air
+ * field came out visibly more upright than the thing being replaced. At 1.75,
+ * with the natural lean widened to match, the tip reaches as far as the arc did
+ * and points 60° off vertical instead of 42°, while the base at 15% height sits
+ * 2.2° off vertical instead of 6.4°. Straight at the boot, arched at the top.
+ */
+const BLADE_CURVE = 1.75;
+
+/** Where the tip of a unit-length blade at total turn `bend` ends up, and how
+ *  fast it is turning, as plain arithmetic. `theta` is the angle off vertical
+ *  at height h; `x`/`y` are the spine, in units of the blade's own length.
+ *
+ *  The series is the term-by-term integral of sin/cos along theta = b·h^p, so
+ *  |d(x,y)/dh| is exactly 1 and the blade cannot stretch as it bends — the same
+ *  property the shipped circular arc had, kept. */
+/* Coefficients of those two integrals, computed once from the exponent so the
+ * shader and the model below cannot drift apart: the shader's polynomial is
+ * generated from these very numbers. */
+const SPINE_X = [1, 6, 120, 5040].map((f, k) => ((k % 2) ? -1 : 1)
+  / (f * ((2 * k + 1) * BLADE_CURVE + 1)));
+const SPINE_Y = [1, 2, 24, 720, 40320].map((f, k) => ((k % 2) ? -1 : 1)
+  / (f * (2 * k * BLADE_CURVE + 1)));
+/** `c0 + c1*x1 + …` with the signs folded in, for pasting into GLSL. */
+function glslPoly(coef, terms) {
+  return coef.map((c, i) => `${i ? (c < 0 ? ' - ' : ' + ') : (c < 0 ? '-' : '')}`
+    + `${Math.abs(c).toPrecision(9)}${i ? ` * ${terms[i]}` : ''}`).join('');
+}
+
+export function bladeSpine(bend, h, p = BLADE_CURVE) {
+  const ks = bend * Math.pow(Math.max(h, 0), p);
+  const t2 = ks * ks;
+  const X = p === BLADE_CURVE ? SPINE_X
+    : [1, 6, 120, 5040].map((f, k) => ((k % 2) ? -1 : 1) / (f * ((2 * k + 1) * p + 1)));
+  const Y = p === BLADE_CURVE ? SPINE_Y
+    : [1, 2, 24, 720, 40320].map((f, k) => ((k % 2) ? -1 : 1) / (f * (2 * k * p + 1)));
+  const poly = (c) => c.reduce((a, v, i) => a + v * Math.pow(t2, i), 0);
+  return {
+    theta: ks,
+    x: h * ks * poly(X),
+    y: h * poly(Y),
+    /** d(theta)/dh — the local turn rate. Constant for a circular arc. */
+    rate: bend * p * Math.pow(Math.max(h, 1e-6), p - 1),
+  };
+}
+
+/* ── the width of a blade ──────────────────────────────────────────────
+ *
+ * `pow(1 - h, 0.55)` is a NEEDLE, not a blade: it is already down to 47% of its
+ * base width at three quarters height and then collapses to 2% across the last
+ * segment. A grass blade is very nearly parallel-sided for most of its length
+ * and does all of its tapering in the last quarter. `pow(1 - h³, 0.42)` is that:
+ * 99% of base width at a quarter height, 94% at half, 80% at three quarters,
+ * and then a point. Same base width, 28% more silhouette per blade, and the
+ * difference between reading as a leaf and reading as a spike. */
+export function bladeWidth(h) {
+  return Math.pow(Math.max(1 - h * h * h, 4e-4), 0.42);
+}
+
+/* Rows of the strip, and why they are not evenly spaced. All of the curvature
+ * now lives in the top half, so evenly spaced rows spend their vertices where
+ * the blade is straight: at the storm cap of 2.4 rad, four EVEN segments turn
+ * 54° across the last one, which is a kink and not an arch. Biasing them toward
+ * the tip brings that to 45°, and the worst segment at the bend the field
+ * actually spends its time at — 1.6 rad — from 36° to 30°. That is free.
+ *
+ * A fifth segment would take those to 36°/24°, and it is NOT taken: it is
+ * twelve thousand triangles on the near ring to straighten a kink in the top
+ * 4% of a blade's width, and `verify.mjs` pins a blade at eight triangles for
+ * the sake of the budget. The bias is the free half of that trade. */
+const BLADE_SEGMENTS = 4;
+const BLADE_ROW_BIAS = 1.45;
+/** v of each row of the strip, root first. */
+export function bladeRows(segments = BLADE_SEGMENTS, bias = BLADE_ROW_BIAS) {
+  const out = [];
+  for (let r = 0; r <= segments; r++) out.push(1 - Math.pow(1 - r / segments, bias));
+  return out;
+}
+
+/** How far a blade may be turned over in total, radians. 2.4 puts the tip 47°
+ *  below horizontal under a storm plus a boot; the old 2.0 was set against a
+ *  circular arc, where the same number bowed the WHOLE blade rather than the
+ *  end of it. */
+const BLADE_BEND_CAP = 2.4;
+
+/* ── the colour of a field ─────────────────────────────────────────────
+ *
+ * THE FIELD WAS ONE COLOUR. A blade's tint was `lerp(tintA, tintB, t)` between
+ * the two colours the level authors, and the three outdoor levels author pairs
+ * that are 0.5°, 2.6° and 5.1° apart in hue — so every blade in the dune sea
+ * was straw at hue 45° and every blade in the gorge was green at hue 75°, and
+ * the pair was doing nothing but a lightness ramp. Measured on the shipped
+ * defaults, the whole field spanned 2.9 degrees of hue.
+ *
+ * A steppe is not one plant. Koboh's ground cover is the reference and it is
+ * explicitly withered straw AND greenery AND blue-green standing in the same
+ * field. So the level's two colours become the MIDDLE of a five-stop ramp and
+ * the rest is derived from them by rotation: a bleached, desaturated straw
+ * below, and a live green and a glaucous blue-green above. The level still says
+ * what its grass is; it no longer says that its grass is one thing.
+ *
+ * FIVE and not four because two of the three levels author a pair that is half
+ * a degree apart in hue — the dune sea's `grassTint` is straw at 45.3° and
+ * straw at 44.8°, which is a lightness ramp wearing two names. A ramp that only
+ * derives its ENDS from such a pair spends 56% of its span going nowhere. The
+ * green stop is rotated off the level's own dark end, so a straw level gets
+ * green in it and a green level barely moves.
+ *
+ * The stops are not evenly spaced, because the proportions are the point:
+ * roughly a quarter withered, a third the level's own, a quarter green, a sixth
+ * blue-green. Blue-green is the spice, not the dish.
+ */
+const GRASS_STOPS = [0, 0.26, 0.56, 0.84, 1];
+
+/** How wide a tuft's blades fan around the direction the clump leans, radians
+ *  peak to peak. Blades out of one crown, not a starburst. */
+const BLADE_SPLAY = 1.10;
+
+/** Hue lerp on a 0..1 hue wheel, the short way round. */
+function hueTo(from, to, k) {
+  let d = to - from;
+  if (d > 0.5) d -= 1; else if (d < -0.5) d += 1;
+  let h = from + d * k;
+  return h - Math.floor(h);
+}
+
+/**
+ * The five stops a field's blades are drawn from, given the two the level
+ * authored. Withered, green and glaucous are rotations of the level's own pair,
+ * so a straw level keeps a straw field with green in it and a green level keeps
+ * a green field with straw in it — the level still governs where the middle of
+ * its own field sits.
+ *
+ * @returns {THREE.Color[]} withered, the level's A, the level's B, green, glaucous
+ */
+export function grassPalette(tintA, tintB) {
+  const A = tintA.getHSL({}, THREE.SRGBColorSpace);
+  const B = tintB.getHSL({}, THREE.SRGBColorSpace);
+  // withered: rotated to the yellow the sun bleaches grass to, washed out and
+  // lifted, because dead grass is paler than live grass and not just browner
+  const straw = new THREE.Color().setHSL(
+    hueTo(A.h, 42 / 360, 0.80), clamp(A.s * 0.74, 0.05, 0.42),
+    clamp(A.l * 1.30, 0.2, 0.68), THREE.SRGBColorSpace);
+  // greenery: the part of the sward that is still alive. Rotated most of the
+  // way to a true grass green and lifted, because live grass is not just a
+  // darker straw.
+  const green = new THREE.Color().setHSL(
+    hueTo(B.h, 92 / 360, 0.72), clamp(B.s * 1.10, 0.14, 0.46),
+    clamp(B.l * 1.16, 0.10, 0.48), THREE.SRGBColorSpace);
+  // glaucous: the blue-green that survives when the rest of a field has gone
+  // over. Floored at 125° so it stays on the blue side of green even when the
+  // level's own green is a yellow one.
+  const glaucous = new THREE.Color().setHSL(
+    Math.max(125 / 360, hueTo(B.h, 156 / 360, 0.82)), clamp(B.s * 0.92, 0.10, 0.44),
+    clamp(B.l * 1.14, 0.10, 0.52), THREE.SRGBColorSpace);
+  return [straw, tintA.clone(), tintB.clone(), green, glaucous];
+}
+
+/**
+ * WHICH PLANT GROWS WHERE. Hue drawn per tuft out of a plain random is
+ * salt-and-pepper, which is as wrong as one colour: a steppe is drifts of one
+ * thing running into drifts of another. Two smooth octaves — a forty-metre
+ * community drift and a ten-metre mosaic inside it — so a clump matches most of
+ * its neighbours and the field still changes as you cross it.
+ *
+ * Deliberately NOT the cover field. Where the grass is and what it is are two
+ * different questions, and tying them would put every withered patch on the
+ * same ground as every thin patch.
+ */
+export function makeSpeciesField(seed = 1337) {
+  const r = makeRng((seed ^ 0x5bf03635) >>> 0);
+  const ox = (r() - 0.5) * 4000, oz = (r() - 0.5) * 4000;
+  return {
+    ox, oz,
+    at(x, z) {
+      const n = fbm2((x + ox) / 30, (z + oz) / 30, 2) * 0.42
+              + fbm2((x + ox) / 7 + 71, (z + oz) / 7 - 43, 2) * 0.58;
+      /* 1.7 and not 1, and weighted toward the SHORT octave, and both numbers
+       * were measured rather than picked. Two octaves of fbm live in the middle
+       * of their own range, so at unit gain the ends of the ramp are drawn by
+       * about 1% of the field and the blue-green stop may as well not exist. Up
+       * at 2.6 the field saturates instead and goes blotchy: sampled over the
+       * near ring at twelve places on each level, the hue span there ran from
+       * 3° to 93°, i.e. wherever you happened to stand you were either in a
+       * mixed sward or in a solid block of one plant. At 1.7 with the seven
+       * metre octave carrying most of the weight, the worst near-ring span
+       * across all three levels is 67° and the field still reads as drifts. */
+      return clamp(0.5 + n * 1.7, 0, 1);
+    },
+  };
+}
+
+/** The blade colour at species coordinate `s` in [0,1] — 0 withered, 1
+ *  blue-green — as a linear-space colour. */
+export function bladeTint(palette, s, out = new THREE.Color()) {
+  const t = clamp(s, 0, 1);
+  let i = 1;
+  while (i < GRASS_STOPS.length - 1 && t > GRASS_STOPS[i]) i++;
+  const a = GRASS_STOPS[i - 1], b = GRASS_STOPS[i];
+  return out.copy(palette[i - 1]).lerp(palette[i], (t - a) / (b - a));
+}
+
+/** How hard a near blade turns its face toward the camera, and it is scaled by
+ *  how edge-on it already is — a blade that is presenting its width is left
+ *  exactly where it stands, and only the ones that were about to disappear get
+ *  turned. Half of a field of un-billboarded blades presents an edge to any
+ *  given eye, and an edge is one pixel. */
+const BLADE_FACE_CAM = 0.55;
+
 const GRASS_VERT = /* glsl */`
   precision highp float;
   #include <common>
@@ -625,24 +853,45 @@ const GRASS_VERT = /* glsl */`
             + wdir * (press * 0.4);
     float bend = length(bv);
     vec2 bdir = bend > 1e-4 ? bv / bend : aOrient.xy;
-    bend = min(bend + press * 1.15, 2.0);
+    bend = min(bend + press * 1.15, ${BLADE_BEND_CAP.toFixed(3)});
 
-    // ── sweep the blade along the arc (series form of sin/cos, no divide)
+    /* ── sweep the blade along a CANTILEVER, not a circle. The turn angle goes
+     * as h^${BLADE_CURVE} rather than as h, so the blade leaves the ground vertical and does
+     * its arching near the tip — see bladeSpine(), which is this arithmetic in
+     * Javascript and the thing the checks measure. The brackets are the
+     * term-by-term integral of sin/cos along that angle, so the spine is still
+     * exactly arc-length parametrised and a bending blade cannot stretch. */
     vec3 bd = vec3(bdir.x, 0.0, bdir.y);
-    vec3 sideV = vec3(-bd.z, 0.0, bd.x);
     float s = h * len;
-    float ks = bend * h;
-    float t2 = ks * ks;
-    float cy = s * (1.0 - t2 * 0.1666667 + t2 * t2 * 0.0083333);
-    float cx = s * ks * (0.5 - t2 * 0.0416667);
+    float ks = bend * pow(max(h, 1e-4), ${BLADE_CURVE.toFixed(4)});
+    float t2 = ks * ks, t4 = t2 * t2, t6 = t4 * t2, t8 = t4 * t4;
+    float cy = s * (${glslPoly(SPINE_Y, ['1.0', 't2', 't4', 't6', 't8'])});
+    float cx = s * ks * (${glslPoly(SPINE_X, ['1.0', 't2', 't4', 't6'])});
 
-    // ── width. Widest at the sheath, a point at the tip. (pow() of an exact
-    // zero is undefined in GLSL ES; keep the base off it.)
-    float wdt = uWidth * len * pow(max(1.0 - h, 0.001), 0.55);
+    /* ── width. A blade, not a needle: near enough parallel-sided to three
+     * quarters height and then a point. bladeWidth() is the same curve. */
+    float wdt = uWidth * len * pow(max(1.0 - h * h * h, 4e-4), 0.42);
+
+    /* ── which way the blade's face points. Its own plane is perpendicular to
+     * the way it bends, which means that for any given eye about half the field
+     * is edge-on and an edge-on blade is one pixel wide — the near ring was
+     * paying for twice the blades it was showing. So a blade that is already
+     * presenting its width is left exactly alone (edge is 0 there) and only
+     * the ones about to vanish are turned toward the camera. */
+    vec3 sideV = vec3(-bd.z, 0.0, bd.x);
+    vec3 toCam = vec3(cameraPosition.x - base.x, 0.0, cameraPosition.z - base.z);
+    float camLen = length(toCam);
+    if(camLen > 1e-4){
+      toCam /= camLen;
+      vec3 sideC = vec3(-toCam.z, 0.0, toCam.x);
+      sideC *= sign(dot(sideC, sideV) + 1e-6);
+      float edge = 1.0 - abs(dot(sideV, sideC));
+      sideV = normalize(mix(sideV, sideC, ${BLADE_FACE_CAM.toFixed(3)} * edge));
+    }
 
     vec3 world = base + bd * cx + vec3(0.0, cy, 0.0) + sideV * (position.x * wdt);
 
-    // ── normal: the arc's tangent crossed with the blade's width axis, then
+    // ── normal: the spine's tangent crossed with the blade's width axis, then
     // fanned across the width so the blade shades like the curved trough it is
     vec3 tang = sin(ks) * bd + cos(ks) * vec3(0.0, 1.0, 0.0);
     vec3 nrm = normalize(cross(tang, sideV) + sideV * (position.x * 1.4));
@@ -855,13 +1104,28 @@ const GRASS_FRAG = /* glsl */`
       #pragma unroll_loop_start
       for(int i = 0; i < NUM_DIR_LIGHTS; i++){
         {
+          /* ONLY LIGHT 0 IS SHADOWED, and this guard is the whole of why the
+           * cover used to go black in shade while the sand beside it did not.
+           * getShadowMask() is the SUN's cascade — Engine.js narrows it to
+           * light 0 there for exactly this reason — and the rig also carries a
+           * blue sky fill that casts nothing at all. Multiplying the sun's
+           * shadow into the fill deleted the only light a shaded blade had
+           * left, so grass in shadow lost a term the ground next to it kept.
+           * The terrain guards it with UNROLLED_LOOP_INDEX == 0 in
+           * lights_fragment_begin; this is the same guard, so the two
+           * materials now answer the light rig identically. */
+          #if UNROLLED_LOOP_INDEX == 0
+            float sh = shadow;
+          #else
+            float sh = 1.0;
+          #endif
           vec3 L = inverseTransformDirection(directionalLights[i].direction, viewMatrix);
           // half-lambert: a blade lit from behind is not black, it is dim
           float wrap = clamp(dot(N, L) * 0.62 + 0.38, 0.0, 1.0);
           // and light coming THROUGH it is what makes a field glow at low sun
           float back = pow(clamp(dot(-V, L), 0.0, 1.0), 3.0) * uTranslucency
                      * smoothstep(0.0, 0.6, vHeight);
-          direct += directionalLights[i].color * (wrap * shadow + back * (0.35 + 0.65 * shadow));
+          direct += directionalLights[i].color * (wrap * sh + back * (0.35 + 0.65 * sh));
         }
       }
       #pragma unroll_loop_end
@@ -872,6 +1136,74 @@ const GRASS_FRAG = /* glsl */`
     #include <fog_fragment>
   }
 `;
+
+/* The terrain the grass grows out of is lit by a sky probe as well as by the
+ * hemisphere, and there is no probe on a ShaderMaterial, so the hemisphere has
+ * to stand in for both. See the uniform's own note for how this number was
+ * measured — it is not a taste knob and raising it is how the cover last came
+ * out glowing at three and a half times the value of the ground beside it. */
+const GRASS_AMBIENT_BOOST = 2.4;
+
+/**
+ * THE GRASS FRAGMENT'S LIGHTING, in plain arithmetic, so what a blade does in
+ * shade is a number and not an opinion. Same structure, same order, same
+ * constants as GRASS_FRAG above; `guard: false` reproduces what shipped, where
+ * the sun's shadow mask was multiplied into EVERY directional light.
+ *
+ * All colours are linear — `new THREE.Color(hex)` already converts, and
+ * converting again is exactly the mistake that publishes a wrong figure.
+ *
+ * @param {object} o
+ *   N, V       world normal of the blade and the direction to the eye
+ *   lights     [{ color:[r,g,b] linear × intensity, L:[x,y,z] toward the light }]
+ *              in the order three uploads them: index 0 is the shadow caster
+ *   hemi       { sky:[r,g,b], ground:[r,g,b] } linear × intensity
+ *   ambient    the AmbientLight, linear. Three's `ambientLightColor`; there is
+ *              no AmbientLight in this game's scene, so it is normally zero
+ *   shadow     the sun's cascade mask, 0 fully shadowed .. 1 fully lit
+ *   guard      whether only light 0 is masked. false is the shipped bug
+ */
+export function grassShade(o) {
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return v.map((x) => x / l); };
+  const V = unit(o.V ?? [0, 0, 1]);
+  let N = unit(o.N ?? [0, 0, 1]);
+  // grass is thin: whichever way you look at it you see the lit side
+  if (dot3(N, V) < 0) N = N.map((v) => -v);
+
+  const boost = o.ambientBoost ?? GRASS_AMBIENT_BOOST;
+  const hemi = o.hemi
+    ? (() => { const w = 0.5 * N[1] + 0.5; return o.hemi.ground.map((g, i) => (g + (o.hemi.sky[i] - g) * w) * boost); })()
+    : [0, 0, 0];
+  const ambient = o.ambient ?? [0, 0, 0];
+  const irradiance = hemi.map((v, i) => v + ambient[i]);
+
+  const shadow = o.shadow ?? 1;
+  const h = o.height ?? 0.7;
+  const trans = o.translucency ?? 0.9;
+  const guard = o.guard !== false;
+  const direct = [0, 0, 0];
+  const per = (o.lights ?? []).map((lt, i) => {
+    const sh = (guard && i !== 0) ? 1 : shadow;
+    const L = unit(lt.L);
+    const wrap = clamp(dot3(N, L) * 0.62 + 0.38, 0, 1);
+    const back = Math.pow(clamp(dot3(V.map((v) => -v), L), 0, 1), 3) * trans
+               * smoothstep(0, 0.6, h);
+    const k = wrap * sh + back * (0.35 + 0.65 * sh);
+    for (let c = 0; c < 3; c++) direct[c] += lt.color[c] * k;
+    return lt.color.map((v) => v * k);
+  });
+
+  const albedo = o.albedo ?? [1, 1, 1];
+  const ao = o.ao ?? (0.48 + 0.52 * smoothstep(0, 0.45, h));
+  return {
+    irradiance, direct, per, ao,
+    /** what the fragment writes, before fog and tonemap */
+    col: albedo.map((a, i) => a * (1 / Math.PI) * ao * (irradiance[i] + direct[i])),
+    /** everything reaching the blade, which is the thing a shaded blade loses */
+    total: irradiance.map((v, i) => v + direct[i]),
+  };
+}
 
 /* ── contact ───────────────────────────────────────────────────────────
  *
@@ -1202,10 +1534,16 @@ export class GrassField {
     this.tintA = new THREE.Color(opts.tintA ?? 0x9aa860);
     this.tintB = new THREE.Color(opts.tintB ?? 0x5d6b34);
     this.dry = new THREE.Color(opts.dry ?? 0x6a6142);
+    /* The level says what its grass is; this says that it is not only one
+     * thing. Four stops — withered, the level's two, blue-green — and every
+     * blade is a point on that ramp. See grassPalette. */
+    this.palette = grassPalette(this.tintA, this.tintB);
 
     const half = terrain && terrain.half ? terrain.half : 280;
+    const seed = opts.seed ?? (terrain && terrain.presetKey ? hashString(terrain.presetKey) : 1337);
+    this.species = makeSpeciesField(seed);
     this.cover = opts.field || makeCoverField({
-      seed: opts.seed ?? (terrain && terrain.presetKey ? hashString(terrain.presetKey) : 1337),
+      seed,
       amount: opts.cover ?? clamp(0.24 + 0.72 * density, 0.12, 0.95),
       patch: opts.patch ?? 54, grain: opts.grain ?? 15,
       extent: half,
@@ -1268,7 +1606,7 @@ export class GrassField {
 
     this.rings = tiers.map((t) => this._buildRing({
       count: t.cap, card: t.T.card,
-      geometry: t.T.card ? new THREE.PlaneGeometry(1, 1, 1, 2) : bladeGeometry(4),
+      geometry: t.T.card ? new THREE.PlaneGeometry(1, 1, 1, 2) : bladeGeometry(),
       near: t.rIn, far: t.rOut,
       width: t.T.width, bendGain: t.T.bend, waveGain: t.T.wave,
       sheen: t.T.sheen, translucency: t.T.trans, cut: t.T.cut,
@@ -1498,7 +1836,7 @@ export class GrassField {
        * luminance over ground at 0.20, so the cover was glowing at three and a
        * half times the value of the ground it grows out of. A probe is worth
        * something like the hemisphere again, not three times it. */
-      uAmbientBoost: { value: 2.4 },
+      uAmbientBoost: { value: GRASS_AMBIENT_BOOST },
       uDry: { value: this.dry.clone() },
       uTrail: { value: this.trailTex },
       uTrailCenter: { value: this.trailCenter },
@@ -1605,7 +1943,7 @@ export class GrassField {
    * shader has already faded it to nothing, and never the ground at the
    * player's feet.
    */
-  _fillTier(ring, center) {
+  _fillTier(ring) {
     const a = ring.aInst.array, o = ring.aOrient.array, t = ring.aTint.array;
     const cell = ring.cell, spread = ring.spread, perTuft = ring.per;
     const waterLine = ground.water ? ground.water.level : null;
@@ -1616,6 +1954,20 @@ export class GrassField {
     const rIn = Math.max(0, ring.near - cell), rOut = ring.far + cell;
     const rIn2 = rIn * rIn, rOut2 = rOut * rOut;
     const ci = ring.ci, cj = ring.cj;
+    /* THE ANNULUS IS MEASURED FROM THE SNAPPED CENTRE, not from where the
+     * camera happens to be standing — and that is a correctness fix, not a
+     * simplification. A tier only refills when its snapped cell changes, so the
+     * `center` this is handed is wherever the player was at the instant they
+     * crossed the cell line: walking east across the swath tier's 17 m grid
+     * refills it from 15 m off the cell's middle, and walking back west refills
+     * the SAME cell from the other side. Measured on the shipped build, that
+     * moved two instances in and out of a 4 m box 28 m from the spawn on a
+     * there-and-back walk — the tier's contents depended on the path taken to
+     * it. They are a pure function of (ci, cj) now, which is what the cell test
+     * six lines above was already doing and what every comment here claims.
+     * The margin above is exactly the room this needs: the snapped centre is
+     * never more than 0.71 of a cell from the true one. */
+    const kx = (ci + 0.5) * cell, kz = (cj + 0.5) * cell;
     const K = Math.ceil(rOut / cell) + 1;
     const cap = ring.count;
     const sh = ring.shade;
@@ -1635,8 +1987,8 @@ export class GrassField {
         else { di = -k; dj = k - (e - 6 * k); }
         const gi = ci + di, gj = cj + dj;
         // the cell's own square against the annulus, in the snapped frame
-        const cxm = (gi + 0.5) * cell - (ci + 0.5) * cell;
-        const czm = (gj + 0.5) * cell - (cj + 0.5) * cell;
+        const cxm = (gi + 0.5) * cell - kx;
+        const czm = (gj + 0.5) * cell - kz;
         const d2 = cxm * cxm + czm * czm;
         const half = cell * 0.7072;
         if (d2 > (rOut + half) * (rOut + half)) continue;
@@ -1655,11 +2007,12 @@ export class GrassField {
           // Every tuft draws the SAME randoms in the SAME order whether or not
           // it survives, so one tuft failing its site cannot shift the ones
           // behind it in the cell.
-          const jx = r(), jz = r(), lean0 = r(), phase = r(), yaw0 = r();
+          const jx = r(), jz = r(), lean0 = r(), phase = r(), yaw0 = r(),
+                spec0 = r(), lean1 = r();
           const tx = cx0 + jx * cell, tz = cz0 + jz * cell;
-          const dx = tx - center.x, dz = tz - center.z;
+          const dx = tx - kx, dz = tz - kz;
           const dr2 = dx * dx + dz * dz;
-          if (dr2 > rOut2 || dr2 < rIn2) { for (let b = 0; b < perTuft * 5; b++) r(); continue; }
+          if (dr2 > rOut2 || dr2 < rIn2) { for (let b = 0; b < perTuft * 6; b++) r(); continue; }
 
           const slope = this.terrain ? this.terrain.slopeAt(tx, tz) : 0;
           const y0 = this.terrain ? this.terrain.height(tx, tz) : 0;
@@ -1674,10 +2027,26 @@ export class GrassField {
            * within a few degrees of vertical, each one a separate hard-edged
            * needle against the sand. Real tussock arches — 0.3 to 1.05 rad of
            * curvature over the blade's length, which is the difference between
-           * a clump reading as a plant and reading as a row of spikes. The
-           * wind's own bend adds to this, and the whole thing is still capped
-           * at 2 rad in the shader. */
-          const lean = 0.30 + lean0 * 0.75;
+           * a clump reading as a plant and reading as a row of spikes.
+           *
+           * WIDENED to 0.48-1.60 with the cantilever curve, and that is
+           * arithmetic rather than taste: h^1.75 holds its line longer than the
+           * circular arc it replaces, so the same total turn puts the tip a
+           * third less far over. Measured across the field's own bend
+           * distribution, this range restores the shipped arc's mean tip reach
+           * in calm air while pointing the tip 60° off vertical instead of 42°.
+           *
+           * AND A TUFT SHARES A FACING. `yaw0` finally means what it is called:
+           * it is the direction the whole clump leans, and the blades fan
+           * around it by a third of a radian each way. It used to be a per-tuft
+           * scalar on the lean MAGNITUDE while the direction was drawn per
+           * blade, so eight blades out of one crown pointed eight different
+           * ways and every clump in the game went off like a firework. */
+          const lean = 0.48 + lean0 * 1.12;
+          const tuftFace = yaw0 * TAU;
+          /* Where this clump sits on the withered → green → blue-green ramp:
+           * mostly the drift of ground it is standing in, partly its own. */
+          const spec = clamp(this.species.at(tx, tz) + (spec0 - 0.5) * 0.62, 0, 1);
 
           if (alive) live++;
           if (sh && tuft < shCap) {
@@ -1696,7 +2065,7 @@ export class GrassField {
           for (let b = 0; b < perTuft && i < cap; b++) {
             const rr = Math.sqrt(r()) * 0.5 * spread;
             const ra = r() * TAU;
-            const hs = r(), fa = r(), tl = r();
+            const hs = r(), fa = r(), tl = r(), lj = r();
             const x = tx + Math.cos(ra) * rr;
             const z = tz + Math.sin(ra) * rr;
             const y = this.terrain ? this.terrain.height(x, z) : 0;
@@ -1714,12 +2083,16 @@ export class GrassField {
               : 0;
 
             a[i * 4] = x; a[i * 4 + 1] = y - 0.02; a[i * 4 + 2] = z; a[i * 4 + 3] = scale;
-            const fang = fa * TAU;
+            // the tuft's facing, fanned. ±0.55 rad is a clump of blades out of
+            // one sheath; the full circle it replaces was a firework.
+            const fang = tuftFace + (fa - 0.5) * BLADE_SPLAY;
             o[i * 4] = Math.cos(fang);
             o[i * 4 + 1] = Math.sin(fang);
-            o[i * 4 + 2] = lean * (0.6 + yaw0 * 0.8);
+            o[i * 4 + 2] = lean * (0.74 + lj * 0.52);
             o[i * 4 + 3] = phase;
-            _col.copy(this.tintA).lerp(this.tintB, tl * 0.9);
+            // the clump's species, jittered a little per blade, so a tuft is
+            // one plant rather than a bouquet
+            bladeTint(this.palette, spec + (tl - 0.5) * 0.16, _col);
             const v = 0.82 + ((tl * 7.13) % 1) * 0.36;   // per-blade value noise
             t[i * 3] = _col.r * v; t[i * 3 + 1] = _col.g * v; t[i * 3 + 2] = _col.b * v;
             i++;
@@ -1796,7 +2169,7 @@ export class GrassField {
       const ci = Math.floor(center.x / ring.cell), cj = Math.floor(center.z / ring.cell);
       if (ci !== ring.ci || cj !== ring.cj) {
         ring.ci = ci; ring.cj = cj;
-        this._fillTier(ring, center);
+        this._fillTier(ring);
       }
       const u = ring.mat.uniforms;
       u.uTime.value = this.time;
@@ -1863,14 +2236,20 @@ function repeating(tex) {
  * A blade: a strip `segments` tall, one quad wide, rooted at the origin and one
  * unit long. Everything else about its shape — taper, curvature, lean — happens
  * in the vertex shader, because all of it is per-instance.
+ *
+ * The rows are NOT evenly spaced. All of the curvature is in the top half now
+ * (see BLADE_CURVE), and even spacing spends its vertices on the straight part:
+ * at the storm cap four even segments turn 54° across the last one, which is a
+ * kink rather than an arch. See bladeRows().
  */
-function bladeGeometry(segments = 4) {
+function bladeGeometry(segments = BLADE_SEGMENTS) {
   const rows = segments + 1;
+  const vs = bladeRows(segments);
   const pos = new Float32Array(rows * 2 * 3);
   const uv = new Float32Array(rows * 2 * 2);
   const idx = [];
   for (let r = 0; r < rows; r++) {
-    const v = r / segments;
+    const v = vs[r];
     for (let s = 0; s < 2; s++) {
       const k = r * 2 + s;
       pos[k * 3] = s ? 0.5 : -0.5;

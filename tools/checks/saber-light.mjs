@@ -208,6 +208,303 @@ export function run({ check, assert, near, THREE }) {
     return `core ${(share * 100).toFixed(0)}% of flux, glow lobe ${P.amp[1]} vs bloom threshold ${threshold}`;
   });
 
+  /* ── 3b. AND SO IS THE TRAIL'S, WHICH IS THE SAME FAULT OVER MORE SCREEN ─
+   *
+   * The core fix above landed on the blade and was never applied to the SMEAR —
+   * the same emitter, in the same hue, dragged through a whole arc. The old trail
+   * shader ended `vec3 c = uHue * e`, one saturated hue at every age, while the
+   * comment two lines above it said the freshest slice "whites out". It did not:
+   * `hot` only ever raised the amplitude of the same 22.9:1 blue.
+   *
+   * Measured on the shipped profile, cerulean, all three sheets stacked: the
+   * freshest slice reaches linear luminance 4.30 against UnrealBloomPass's 1.8
+   * threshold, i.e. 2.4x over, at the full crystal chroma. Identical number,
+   * identical mechanism and identical ratio to the pre-fix core.
+   *
+   * The three checks below pin the fix as a SHAPE rather than as a constant: what
+   * blooms must be near-neutral, what carries the colour must be under the line
+   * where ACES can keep it, and the width slider must reach both. Each one is
+   * shown to have teeth by re-running its own arithmetic on the old behaviour.
+   */
+
+  /** The trail shader's own source, so the model below cannot silently diverge. */
+  const TRAIL_SRC = (() => {
+    const src = readFileSync(SRC, 'utf8');
+    const a = src.indexOf('const TRAIL_FRAG');
+    const b = src.indexOf('export class Saber');
+    assertOrThrow(a > 0 && b > a, 'TRAIL_FRAG is no longer where this file looks for it');
+    return src.slice(a, b);
+  })();
+  function assertOrThrow(c, m) { if (!c) throw new Error(m); }
+
+  /** UnrealBloomPass's threshold, read from the pass's own constructor call. */
+  const BLOOM_THRESHOLD = (() => {
+    const eng = readFileSync(ENGINE_SRC, 'utf8');
+    const m = eng.match(
+      /new UnrealBloomPass\(\s*new THREE\.Vector2\([^)]*\)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/);
+    assertOrThrow(m, 'could not find the bloom pass constructor in Engine.js to read its threshold');
+    return Number(m[3]);
+  })();
+
+  /**
+   * TRAIL_FRAG, evaluated in JS, for one age of one crystal.
+   *
+   * `prof`, `th` and `vPunch` are common factors of both lobes, so they cancel
+   * out of the colour entirely and only scale `e`. The three sheets are additive
+   * and overlap down the centre of the ribbon, so the value the bloom pass sees
+   * there is the single-sheet radiance times exp(-1.3) + 1 + exp(-1.3).
+   */
+  const SHEET_STACK = Math.exp(-1.3) * 2 + 1;
+  const L709 = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  function trailAt(saber, age, coreWhite = saber.trailMat.uniforms.uCoreWhite.value,
+    hot0 = saber.trailMat.uniforms.uHot.value, glow0 = saber.trailMat.uniforms.uGlow.value) {
+    const fade = Math.pow(Math.max(0, 1 - age), 1.5);
+    const hot = Math.pow(Math.max(0, Math.min(1, 1 - age * 2.6)), 2);
+    const ec = hot0 * hot;
+    const e0 = glow0 * fade + ec;
+    const hue = chan(saber.trailMat.uniforms.uHue.value);
+    const hueN = L709(hue);
+    const k = coreWhite * (ec / Math.max(e0, 1e-5));
+    const col = hue.map((v) => v + (hueN - v) * k);
+    return { e0, col, lum: e0 * SHEET_STACK * L709(col),
+      ratio: Math.max(...col) / Math.max(Math.min(...col), 1e-9) };
+  }
+
+  check('saber trail: what blooms is near-neutral and what keeps the crystal does not bloom', () => {
+    /* THE DESIGN STATEMENT, as an inequality rather than as a constant.
+     *
+     * A Jedi Survivor blade is a thin white-clipping core inside a coloured halo,
+     * and the colour lives in the halo. The trail is the same idea in time rather
+     * than in space: the freshest slice is the core and the cooling wisp is the
+     * halo. So the two claims are — over the bloom line the smear must have given
+     * up its chroma, because bloom samples the LINEAR buffer before the tonemap
+     * and spreads whatever it finds across a quarter of the screen; and under the
+     * line it must still be the crystal, because that is the part ACES keeps and
+     * it is the only thing that says which sabre this is.
+     *
+     * Stated on the ribbon's own age axis so it holds for any amplitude pair. */
+    /* THE SHADER HAS TO BE DOING WHAT THE MODEL SAYS IT DOES. trailAt() above is
+     * TRAIL_FRAG rewritten in JS, and a model that can drift from the shader it
+     * models is a way of measuring nothing at all — so every constant the model
+     * hardcodes is pinned to the source here, and this check failing is how a
+     * shader edit tells the other two they are out of date. */
+    for (const [re, what] of [
+      [/float\s+fade\s*=\s*pow\(clamp\(1\.0 - vAge, 0\.0, 1\.0\), 1\.5\);/, 'the glow lobe fade'],
+      [/float\s+hot\s*=\s*pow\(clamp\(1\.0 - vAge \* 2\.6, 0\.0, 1\.0\), 2\.0\);/, 'the hot lobe decay'],
+      [/float\s+th\s*=\s*exp\(-vThick \* vThick \* 1\.3\);/, 'the across-sheet falloff'],
+    ]) assert(re.test(TRAIL_SRC), `${what} has changed and the model in this file has not`);
+    assert(/float\s+ec\s*=\s*uHot\s*\*\s*hot;/.test(TRAIL_SRC)
+      && /float\s+e0\s*=\s*uGlow\s*\*\s*fade\s*\+\s*ec;/.test(TRAIL_SRC),
+    'the trail no longer splits into a hot lobe and a glow lobe, so there is nothing to neutralise');
+    assert(/vec3\s+col\s*=\s*mix\(uHue,\s*hueN,\s*uCoreWhite\s*\*\s*\(ec\s*\/\s*max\(e0,\s*1e-5\)\)\);/.test(TRAIL_SRC),
+      'the trail is not mixing its hot lobe toward hueN in proportion to how far that lobe dominates');
+    assert(/vec3\s+c\s*=\s*col\s*\*\s*e;/.test(TRAIL_SRC) && !/vec3\s+c\s*=\s*uHue\s*\*\s*e;/.test(TRAIL_SRC),
+      'the trail is emitting the raw crystal hue again — the neutralised colour is computed and dropped');
+
+    /* THE VEIL, and why it is not the worst pixel.
+     *
+     * A saturated component over the bloom line is DELIBERATE — the check above
+     * this one requires the blade's glow lobe to stay over it, because a bloom
+     * with no colour in it is not a lightsaber. So the quantity to bound is not
+     * the reddest sample, it is what the pass actually spreads: the high pass
+     * hands the mip chain the texel itself wherever luminance clears the
+     * threshold, so the wash's colour is the ENERGY-WEIGHTED MEAN of those
+     * texels. Age is a fair area weight here because the ribbon is one quad per
+     * history sample and the samples are one frame apart.
+     *
+     * And the bound is not invented either. This veil is a wash laid over other
+     * people's materials, which is precisely what FLOOR_CHANNEL exists to bound
+     * on the thrown light: a source whose dimmest channel is a small enough
+     * fraction of its brightest stops tinting a surface and starts deleting a
+     * primary from it. The emitter is not floored — it is the crystal — but what
+     * bloom smears across a quarter of the screen is not the emitter any more,
+     * it is a light, and it is held to the light's standard. */
+    const BOUND = 1 / Saber.FLOOR_CHANNEL;
+    const bad = [], noColour = [], veils = [];
+    for (let i = 0; i < sabers.length; i++) {
+      const s = sabers[i], name = SABER_COLORS[i].name;
+      const crystal = ratio(s.hue);
+      const veil = (cw) => {
+        const sum = [0, 0, 0];
+        let w = 0, over = 0, n = 0;
+        for (let a = 0; a <= 1.0001; a += 0.002) {
+          n++;
+          const t = trailAt(s, a, cw);
+          if (t.lum <= BLOOM_THRESHOLD) continue;
+          over++; w += t.e0;
+          for (let k = 0; k < 3; k++) sum[k] += t.col[k] * t.e0;
+        }
+        if (!w) return { ratio: 1, over, n };
+        const m = sum.map((v) => v / w);
+        return { ratio: Math.max(...m) / Math.max(Math.min(...m), 1e-9), over, n };
+      };
+      const now = veil(Saber.CORE_WHITE), was = veil(0);
+      veils.push([name, crystal, now.ratio, was.ratio]);
+      if (now.ratio > BOUND) bad.push(`${name} ${now.ratio.toFixed(1)}:1`);
+      // the other half: under the line the crystal has to be intact somewhere
+      let seenColour = false;
+      for (let a = 0; a <= 1.0001; a += 0.005) {
+        const t = trailAt(s, a);
+        if (t.lum <= BLOOM_THRESHOLD && t.ratio > crystal * 0.99) { seenColour = true; break; }
+      }
+      if (!seenColour) noColour.push(name);
+      /* THE SAME AMOUNT BLOOMS, which is the luminance-holding property seen from
+       * the other side and the reason the wielder A/B is readable: if the fix
+       * also changed how much of the ribbon cleared the threshold, no measurement
+       * on the figure could separate "less blue" from "less light".
+       *
+       * One sample of slack and not zero: the two luminances are equal in exact
+       * arithmetic (that is what the mix toward hueN guarantees) but reach the
+       * comparison down two different code paths, so a sample sitting exactly on
+       * the threshold could land either side of it in the last bit. Check 2 pins
+       * the equality itself; this pins the consequence without a knife edge. */
+      assert(Math.abs(now.over - was.over) <= 1,
+        `${name}: neutralising the smear changed how much of it clears the bloom threshold `
+        + `(${was.over}/${was.n} samples -> ${now.over}/${now.n})`);
+    }
+    assert(!bad.length,
+      'the bloom pass is still being handed a channel filter by the smear: ' + bad.join(', ')
+      + ` (bound ${BOUND.toFixed(2)}:1, the same FLOOR_CHANNEL the thrown light is held to)`);
+    assert(!noColour.length,
+      'these crystals have no part of the smear that is both under the bloom line and still the '
+      + 'crystal, so the trail has no colour left at all: ' + noColour.join(', '));
+
+    /* AND THE CHECK HAS TEETH: the same arithmetic with the hot lobe left alone —
+     * which is exactly the old `vec3 c = uHue * e` — must fail it. A check that
+     * passes both ways is worth nothing. */
+    const old = veils.filter(([, , , was]) => was > BOUND);
+    assert(old.length >= 8,
+      'un-neutralised, only ' + old.length + ' crystals fail this check, so it has stopped proving '
+      + 'the neutralisation does anything');
+    const [, , cn, cw0] = veils[0];
+    return `cerulean's bloom veil ${cw0.toFixed(1)}:1 -> ${cn.toFixed(2)}:1, worst crystal `
+      + `${Math.max(...veils.map((v) => v[2])).toFixed(2)}:1 against a ${BOUND.toFixed(2)}:1 bound; `
+      + `${old.length}/${sabers.length} crystals fail it un-neutralised`;
+  });
+
+  check('saber trail: neutralising it moves colour and not one photon of bloom', () => {
+    /* The trail's version of the luminance-holding property, and it is TIGHTER
+     * than the blade's because of where the number is spent.
+     *
+     * UnrealBloomPass's high pass thresholds on three's own luminance(), whose
+     * weights come from ColorManagement.getLuminanceCoefficients — the same
+     * Rec.709 triple the shader mixes toward. So mixing toward hueN leaves the
+     * high pass's own value bit-identical: exactly the same pixels bloom, by
+     * exactly the same amount, in a different colour. That is what makes the
+     * before/after on the wielder readable at all. A mix toward vec3(1.0) would
+     * raise the value, bloom MORE of the ribbon, and no measurement afterwards
+     * could say which half of the change did the work. */
+    const w = new THREE.Vector3();
+    THREE.ColorManagement.getLuminanceCoefficients(w);
+    const m = TRAIL_SRC.match(
+      /vec3 hueN = vec3\(dot\(uHue, vec3\(([\d.]+), ([\d.]+), ([\d.]+)\)\)\);/);
+    assert(m, 'the trail no longer neutralises toward a luminance at all');
+    assert(!/mix\(uHue, vec3\(1\.0\)/.test(TRAIL_SRC),
+      'the trail hot lobe is being mixed toward WHITE, which adds radiance the bloom pass will spend');
+    for (const [k, got] of [[0, Number(m[1])], [1, Number(m[2])], [2, Number(m[3])]]) {
+      near(got, w.getComponent(k), 5e-4,
+        `the trail's neutralisation weight ${k} is not the weight UnrealBloomPass's own luminance() `
+        + 'uses, so the mix changes how much blooms as well as what colour it is');
+    }
+    // and the consequence, at every age of every crystal
+    let worst = 0;
+    for (let i = 0; i < sabers.length; i++) {
+      for (let a = 0; a <= 1.0001; a += 0.02) {
+        const on = trailAt(sabers[i], a), off = trailAt(sabers[i], a, 0);
+        if (off.lum < 1e-9) continue;
+        worst = Math.max(worst, Math.abs(on.lum / off.lum - 1));
+      }
+    }
+    assert(worst < 1e-9,
+      `neutralising the trail moved its luminance by ${(worst * 100).toFixed(4)}% somewhere — this is a `
+      + 'chroma fix and it is not allowed to be anything else');
+    return `weights ${w.toArray().join('/')} match the bloom pass; luminance held to `
+      + `${worst.toExponential(1)} across ${sabers.length} crystals x 51 ages`;
+  });
+
+  check('saber trail: the width slider reaches the smear, not only the blade', () => {
+    /* THE SECOND HALF OF COMMIT 0000567, which stopped at the blade.
+     *
+     * That commit's finding was that bloom is driven by AMPLITUDE, not by width,
+     * so a slider that scales only the gaussian sigmas cannot do what its label
+     * says. It scaled the blade's glow by w and its halo by w*w and left the
+     * trail's two amplitudes as absolute constants — so at the newly shipped
+     * default of 0.7 the blade's halo fell to 0.735, under the 1.8 threshold,
+     * while the smear sat at 5.525/2.25 exactly as on a full-width blade: on a
+     * default blade the trail was BRIGHTER than the blade's own glow lobe and
+     * 7.5x its halo, and the slider at minimum changed it by nothing at all.
+     *
+     * The exponents are not chosen. TRAIL_HOT_OF_GLOW and TRAIL_GLOW_OF_HALO
+     * define the smear as a fraction of two blade lobes; a fraction of a lobe
+     * inherits that lobe's exponent or it is not a fraction of it. This check is
+     * that identity, at four widths, on the uniforms the shader actually reads —
+     * a field nobody consumes is exactly the bug 0000567 was about. */
+    const drive = (s) => {
+      s.ignite(); s.ignition = 1;
+      const q = new THREE.Quaternion(), pos = new THREE.Vector3(0, 1.1, 0);
+      for (let k = 0; k < 4; k++) {
+        s.root.rotation.z = Math.sin(k * 0.6) * 1.2;
+        s.setHiltPose(pos, q); s.update(1 / 60, k / 60, null);
+      }
+      return s;
+    };
+    // near() compares with Math.abs and a NaN comparison is false, so a missing
+    // constant would sail through every assertion below as an undefined ratio.
+    assert(Number.isFinite(Saber.TRAIL_HOT_OF_GLOW) && Number.isFinite(Saber.TRAIL_GLOW_OF_HALO),
+      'the smear is not stated as a fraction of the blade lobes any more, so there is nothing left '
+      + 'to inherit their exponents and the width slider has no defined effect on it');
+    const rows = [];
+    for (const w of [0.45, 0.7, 1.0, 1.6]) {
+      const s = drive(new Saber(new THREE.Scene(), { colorIndex: 0, coreWidth: w }));
+      const amp = s.bladeMat.uniforms.uAmp.value;
+      const u = s.trailMat.uniforms;
+      assert(u.uCoreWhite && u.uHot && u.uGlow,
+        'the trail material is missing one of uHot/uGlow/uCoreWhite');
+      // The identity, on the DRAWN uniforms and not on the fields behind them.
+      near(u.uHot.value / s.punch, amp.y * Saber.TRAIL_HOT_OF_GLOW, 1e-9,
+        `at width ${w} the smear's hot lobe is not ${Saber.TRAIL_HOT_OF_GLOW} of the blade's glow lobe`);
+      near(u.uGlow.value / s.punch, amp.z * Saber.TRAIL_GLOW_OF_HALO, 1e-9,
+        `at width ${w} the smear's glow lobe is not ${Saber.TRAIL_GLOW_OF_HALO} of the blade's halo lobe`);
+      assert(u.uCoreWhite.value === Saber.CORE_WHITE,
+        `at width ${w} the smear's uCoreWhite is ${u.uCoreWhite.value}, not CORE_WHITE — the shader has `
+        + 'the mix and nothing drives it');
+      rows.push([w, u.uHot.value, u.uGlow.value, trailAt(s, 0).lum]);
+      s.dispose();
+    }
+    const [lo, , , hi] = rows;
+    // What the slider is FOR: at the bottom of its travel the smear must stop
+    // blooming, and at the top it must bloom hard. Old code: 4.30 at both ends.
+    assert(lo[3] < BLOOM_THRESHOLD,
+      `at the minimum width the smear still reaches luminance ${lo[3].toFixed(2)} against a bloom `
+      + `threshold of ${BLOOM_THRESHOLD} — the slider cannot switch its bloom off`);
+    assert(hi[3] / lo[3] > 3,
+      `the slider only moves the smear's peak luminance ${(hi[3] / lo[3]).toFixed(2)}x across its whole `
+      + 'travel, which is not authority over anything');
+
+    // A LIVE write, because that is the path the forge slider and the Focusing
+    // Crystal boon take — the field used to be read once, at construction.
+    const s = drive(new Saber(new THREE.Scene(), { colorIndex: 0, coreWidth: 1 }));
+    const was = s.trailMat.uniforms.uHot.value;
+    s.coreWidth *= 1.25;
+    drive(s);
+    near(s.trailMat.uniforms.uHot.value / was, 1.25, 1e-9,
+      'moving coreWidth on a live saber did not move the smear amplitude the shader reads');
+    s.coreWidth = 1; drive(s);
+    near(s.trailMat.uniforms.uHot.value, was, 1e-9, 'putting the width back did not put the uniform back');
+    s.dispose();
+
+    // Teeth: the OLD constants — absolute, unscaled — fail both of the two
+    // properties above, and the check must say so rather than assume it.
+    const oldHot = Saber.PROFILE.amp[1] * Saber.TRAIL_HOT_OF_GLOW;
+    const oldGlow = Saber.PROFILE.amp[2] * Saber.TRAIL_GLOW_OF_HALO;
+    const oldLo = trailAt(sabers[0], 0, Saber.CORE_WHITE, oldHot, oldGlow).lum;
+    assert(oldLo > BLOOM_THRESHOLD,
+      'the un-scaled amplitudes no longer bloom at the minimum width, so this check has stopped '
+      + 'proving the width scaling does anything');
+    return rows.map(([w, h, g, l]) => `w${w} ${h.toFixed(2)}/${g.toFixed(2)} lum ${l.toFixed(2)}`).join(', ')
+      + ` (threshold ${BLOOM_THRESHOLD}; unscaled it was ${oldLo.toFixed(2)} at every width)`;
+  });
+
   /* ── 4. THE NEAR FIELD, PINNED BECAUSE IT WAS DELIBERATELY LEFT ALONE ── */
 
   check('saber light: the near field is 1/r and unbounded, on measured purpose', () => {

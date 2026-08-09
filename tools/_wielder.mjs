@@ -31,6 +31,23 @@
  *             node tools/_wielder.mjs sweep [--level dunes] [--tag ab]
  *             node tools/_wielder.mjs sweep --only before,after
  *
+ *           --clip picks what the player is DOING when the world stops. `walk`
+ *           (the default) freezes a steady stride and is the frame every blade
+ *           question has been answered on. `slash` drives motion.mjs's real
+ *           overhead arc and freezes mid-swing, and it is the ONLY frame on which
+ *           a question about the TRAIL means anything — walking gives
+ *           swingSpeed ~ 0, so `trail.visible` is false and every trail candidate
+ *           returns the same numbers. It refuses to draw a sheet at all if the
+ *           smear is not really there:
+ *
+ *             node tools/_wielder.mjs sweep --clip slash --tag trail \
+ *               --only notrail,trail-old,trail-chroma,trail-amp,trail-new,trail-old
+ *
+ *           A candidate named twice is measured twice, in the order given. That
+ *           is not a convenience: it is how the snapshot/restore below is proved,
+ *           by putting three candidates that write the same uniforms between two
+ *           cells that must agree.
+ *
  *   sheet   The same statistics against a tools/motion.mjs contact sheet, with
  *           the silhouette masked off a reference frame — normally the retracted
  *           blade control — so the same pixels are read in both. Useful for
@@ -364,9 +381,37 @@ function sheetMode() {
 const RETRACT = 'sb.lit = false; sb.ignition = 0; sb.bladeGroup.visible = false;'
   + ' sb.trail.visible = false; L.intensity = 0; T.intensity = 0;';
 
+/* THE TRAIL AS IT WAS BEFORE THIS ROUND, reconstructed from the class's own
+ * constants rather than typed in, so the "before" cell cannot quietly stop being
+ * the old build when a constant moves. Two faults, and they are separable:
+ *
+ *   chroma   the smear multiplied uHue by e and nothing else, so every pixel of
+ *            it was the crystal at full 22.9:1 blue-to-red, including the part
+ *            that is 1.5x to 2.4x over the bloom threshold.
+ *   width    TRAIL_HOT/TRAIL_GLOW were absolute numbers that did not scale with
+ *            coreWidth, so the smear sat at the w = 1 amplitude on every blade.
+ */
+const OLD_AMP = 'sb.trailMat.uniforms.uHot.value = sb.constructor.PROFILE.amp[1]'
+  + ' * sb.constructor.TRAIL_HOT_OF_GLOW * sb.punch;'
+  + ' sb.trailMat.uniforms.uGlow.value = sb.constructor.PROFILE.amp[2]'
+  + ' * sb.constructor.TRAIL_GLOW_OF_HALO * sb.punch;';
+const OLD_CHROMA = 'sb.trailMat.uniforms.uCoreWhite.value = 0;';
+
 const CANDIDATES = [
   { name: 'retract', note: 'CONTROL: no blade at all — the material on its own',
     apply: RETRACT },
+  /* ── THE TRAIL A/B (run with --clip slash, or every one of these is a
+   *    measurement of a trail that is not on screen). ────────────────────── */
+  { name: 'notrail', note: 'blade as shipped, SMEAR HIDDEN — the trail contribution isolated',
+    apply: 'sb.trail.visible = false;' },
+  { name: 'trail-old', note: 'THE OLD SMEAR: full crystal chroma, amplitudes that ignore the width',
+    apply: OLD_CHROMA + OLD_AMP },
+  { name: 'trail-chroma', note: 'old amplitudes, chroma fixed — defect 1 alone',
+    apply: OLD_AMP },
+  { name: 'trail-amp', note: 'old chroma, amplitudes scaled by the width — defect 2 alone',
+    apply: OLD_CHROMA },
+  { name: 'trail-new', note: 'AS NOW SHIPPED: hot lobe neutralised, both amplitudes scaled',
+    apply: '' },
   { name: 'retract-nobloom', note: 'control with bloom off, to size bloom on its own',
     apply: RETRACT + ' E.bloom.enabled = false;' },
   /* THE A/B THAT MATTERS. Two cells, one frame, one build.
@@ -398,13 +443,100 @@ const CANDIDATES = [
     apply: 'L.intensity *= 0.6; T.intensity *= 0.6;' },
 ];
 
+/* ── WHAT THE PLAYER IS DOING WHEN THE WORLD FREEZES ───────────────────────
+ *
+ * The freeze used to be unconditional: hold KeyW for 31 steps and stop. That is
+ * the right frame for a question about the blade, and it is worthless for a
+ * question about the SMEAR, because walking swings nothing — swingSpeed lands
+ * near zero, _trailPunch clamps to 0, live segments never exceed one and
+ * `trail.visible` is FALSE in every cell of the sheet. Every trail candidate
+ * measured against that frame comes back identical to every other, and the sheet
+ * reads exactly like a fix that did nothing.
+ *
+ * So the clip is chosen, and `slash` drives the same real arc tools/motion.mjs
+ * drives — the guard button held and a mouse sweep through it, not a synthetic
+ * pose poked onto the saber transform. The freeze is then ADAPTIVE rather than a
+ * step count: keep stepping the arc until the smear is actually there, and fail
+ * loudly if it never is. A number measured off an invisible trail is not a
+ * weaker measurement, it is not a measurement.
+ */
+const CLIPS = {
+  walk: {
+    note: 'holding forward, frozen in a steady stride',
+    warmup: 31,
+    input: (S) => { S.input.keys.add('KeyW'); },
+    stop: (S) => { S.input.keys.delete('KeyW'); },
+    // 2.1 m out and level with the hips — motion.mjs's walk camera, so this
+    // sheet and that one are the same picture of the same thing.
+    camera: (p) => ({ pos: [p.x + 2.1, p.y + 0.95, p.z], look: [p.x, p.y + 0.85, p.z] }),
+    needTrail: false,
+  },
+  slash: {
+    note: 'guard held, mouse swept through an overhead arc, frozen mid-swing',
+    /* ELEVEN, off the instrument's own trace, not off motion.mjs's 24.
+     *
+     * The first run of this used motion.mjs's warmup and aborted, correctly: at
+     * step 24 the smear was alive but limp, maxPunch 0.23. The trace it printed
+     * says why — the arc's ONE hard swing is its first, and everything after it
+     * is the aim settling:
+     *
+     *   step   0   3   5   7  10  16  20  24  33  55
+     *   punch .11 .31 .46 .53 .53 .53 .47 .23 .26 .28
+     *   swing 4.3 7.1 9.2 10. 9.0 3.9 1.9 2.3 6.0 6.3
+     *
+     * _trailPunch is (swingSpeed - 2.6) / 13, so nothing after the first arc ever
+     * gets near the top of that ramp again. Step 11 is the first frame that has
+     * BOTH the peak punch of 0.531 and a full 10-segment ribbon behind it — the
+     * live count only reaches 10 at step 10 — so it is the strongest frame the
+     * clip contains, and freezing anywhere later measures a fading smear and
+     * calls it the smear. */
+    warmup: 11,
+    // Lifted verbatim from tools/motion.mjs's `slash` clip. Period 48 steps in i.
+    input: (S, i) => {
+      S.input.buttons[0] = true;
+      const t = i / 24;
+      S.input.mouse.dx = Math.cos(t * Math.PI) * -34;
+      S.input.mouse.dy = Math.sin(t * Math.PI) * -22;
+    },
+    stop: (S) => { S.input.buttons[0] = false; S.input.mouse.dx = 0; S.input.mouse.dy = 0; },
+    // motion.mjs's slash camera: far enough back and high enough that the whole
+    // arc is in frame, which the hip-height walk camera cannot do — half the
+    // smear of an overhead cut is above its top edge, and bloom only spreads
+    // what is in the buffer.
+    camera: (p) => ({ pos: [p.x + 3.6, p.y + 1.7, p.z + 1.4], look: [p.x, p.y + 1.4, p.z] }),
+    needTrail: true,
+  },
+};
+
 async function sweepMode() {
   const LEVEL = flag('level', 'dunes');
   const TAG = flag('tag', 'now');
   const CELL_W = Number(flag('cellw', 560)), CELL_H = Number(flag('cellh', 400));
-  const WARMUP = Number(flag('warmup', 31));
+  const CLIP = flag('clip', 'walk');
+  const clip = CLIPS[CLIP];
+  if (!clip) { console.error(`unknown clip "${CLIP}". known: ${Object.keys(CLIPS).join(', ')}`); process.exit(1); }
+  const WARMUP = Number(flag('warmup', clip.warmup));
+  const MAXWARM = Number(flag('maxwarmup', 96));
+  // The peak the slash clip actually reaches, measured. The seek below is a
+  // fallback for a build whose arc has moved, not the normal path.
+  const WANTPUNCH = Number(flag('punch', 0.53));
   const only = flag('only', null);
-  const list = only ? CANDIDATES.filter((c) => c.name === 'retract' || only.split(',').includes(c.name)) : CANDIDATES;
+  /* ORDER AND REPEATS ARE THE CALLER'S, not the table's. A filter over
+   * CANDIDATES silently de-duplicates, and a repeat is the only way to prove the
+   * snapshot/restore below actually restores: measure one candidate, measure
+   * three others that all write the same uniforms, then measure the first one
+   * again. If the two cells do not agree the A/B was reading accumulated state. */
+  let list = CANDIDATES;
+  if (only) {
+    const byName = new Map(CANDIDATES.map((c) => [c.name, c]));
+    list = [];
+    for (const nm of only.split(',').map((s) => s.trim()).filter(Boolean)) {
+      const c = byName.get(nm);
+      if (!c) { console.error(`unknown candidate "${nm}". known: ${[...byName.keys()].join(', ')}`); process.exit(1); }
+      list.push(c);
+    }
+    if (!list.some((c) => c.name === 'retract')) list.unshift(byName.get('retract'));
+  }
 
   const { chromium } = await import('playwright-core');
   const { createServer } = await import('node:http');
@@ -470,13 +602,15 @@ async function sweepMode() {
 
     const origRender = S.engine.render.bind(S.engine);
     const shots = [];
+    const cameraFn = new Function('p', 'return (' + cfg.cameraSrc + ')(p);');
+    const inputFn = new Function('S', 'i', '(' + cfg.inputSrc + ')(S, i);');
+    const stopFn = new Function('S', '(' + cfg.stopSrc + ')(S);');
     const aimCamera = () => {
-      const p = S.world.player;
-      // The camera motion.mjs' walk clip uses, so this sheet and that one are
-      // the same picture of the same thing.
+      const p = S.world.player.position;
+      const pose = cameraFn({ x: p.x, y: p.y, z: p.z });
       const c = S.engine.camera;
-      c.position.set(p.position.x + 2.1, p.position.y + 0.95, p.position.z);
-      c.lookAt(p.position.x, p.position.y + 0.85, p.position.z);
+      c.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
+      c.lookAt(pose.look[0], pose.look[1], pose.look[2]);
       c.updateMatrixWorld(true);
     };
     S.engine.render = (dt) => { aimCamera(); origRender(dt); };
@@ -490,13 +624,65 @@ async function sweepMode() {
       return null;
     };
 
-    // Walk into the steady-state stride, then stop driving input.
-    for (let i = 0; i < cfg.warmup; i++) {
-      S.input.keys.add('KeyW');
+    const sb = S.world.player.saber;
+    const E = S.engine;
+
+    /* WHAT THE SMEAR ACTUALLY IS THIS FRAME, read off the buffers the trail
+     * DRAWS from rather than off the flag that says it is drawn. `trail.visible`
+     * is necessary and nowhere near sufficient: every dead segment is collapsed
+     * onto the hilt with punch 0, so a "visible" trail can be thirty degenerate
+     * quads stacked on the emitter, rasterising nothing. Length, slab and punch
+     * are what say there is a ribbon. */
+    const trailState = () => {
+      const n = sb.trailSegments, S3 = sb.trailSheets;
+      const pos = sb.trailPos, age = sb.trailAge, pun = sb.trailPunch;
+      let live = 0, maxPunch = 0, path = 0, slab = 0, prev = null;
+      for (let i = 0; i < n; i++) {
+        const v = (i * S3) * 2;
+        if (age[v] >= 1 || pun[v] <= 0.001) continue;
+        live++;
+        if (pun[v] > maxPunch) maxPunch = pun[v];
+        // the centre sheet's TIP vertex — the leading edge of the ribbon
+        const q = ((i * S3 + ((S3 - 1) >> 1)) * 2 + 1) * 3;
+        if (prev) path += Math.hypot(pos[q] - prev[0], pos[q + 1] - prev[1], pos[q + 2] - prev[2]);
+        prev = [pos[q], pos[q + 1], pos[q + 2]];
+        // the drawn slab: outermost sheet to outermost sheet at the emitter end
+        const lo = (i * S3) * 2 * 3, hi = (i * S3 + S3 - 1) * 2 * 3;
+        const d = Math.hypot(pos[lo] - pos[hi], pos[lo + 1] - pos[hi + 1], pos[lo + 2] - pos[hi + 2]);
+        if (d > slab) slab = d;
+      }
+      return { visible: !!sb.trail.visible, live, maxPunch, path, slab,
+        swing: sb.swingSpeed, hot: sb.trailMat.uniforms.uHot.value,
+        glow: sb.trailMat.uniforms.uGlow.value };
+    };
+
+    // Warm up, then — if the clip needs a smear — keep going until there is one.
+    const trace = [];
+    let i = 0;
+    for (; i < cfg.warmup; i++) {
+      inputFn(S, i);
       const err = await step();
       if (err) return { error: err, phase: 'warmup', i };
+      trace.push(trailState());
     }
-    S.input.keys.delete('KeyW');
+    if (cfg.needTrail) {
+      const ready = (t) => t.visible && t.live >= 5 && t.maxPunch >= cfg.wantPunch && t.path > 0.3;
+      while (!ready(trace[trace.length - 1]) && i < cfg.maxWarmup) {
+        inputFn(S, i); i++;
+        const err = await step();
+        if (err) return { error: err, phase: 'seek', i };
+        trace.push(trailState());
+      }
+    }
+    stopFn(S);
+    const T0 = trace[trace.length - 1];
+    /* THE ASSERTION THAT MAKES THE REST OF THE SHEET MEAN ANYTHING. Bail before
+     * a single cell is drawn rather than return a sheet of identical numbers
+     * that looks like a null result. */
+    if (cfg.needTrail && !(T0.visible && T0.live >= 5 && T0.maxPunch >= cfg.wantPunch * 0.6 && T0.path > 0.3)) {
+      return { error: 'froze on a frame with no usable trail: ' + JSON.stringify(T0), phase: 'freeze', i,
+        trace: trace.map((t) => [t.visible ? 1 : 0, +t.live, +t.maxPunch.toFixed(3), +t.swing.toFixed(2)]) };
+    }
 
     /* ── FREEZE ────────────────────────────────────────────────────────────
      * From here the world is never stepped again. Every candidate is a redraw
@@ -516,32 +702,73 @@ async function sweepMode() {
      * without a restore a colour candidate would leak into every candidate
      * after it — which is how the same first version reported four different
      * rows that were all, in fact, the glow colour. */
-    const sb = S.world.player.saber;
-    const E = S.engine;
-    // Everything a candidate is allowed to touch has to be in here, or the
-    // candidate after it inherits the change. Colour, blade visibility and the
-    // amp uniforms are NOT rewritten per frame — only intensity is — so a
-    // restore list that covers only intensity silently chains every candidate.
+    /* EVERYTHING A CANDIDATE IS ALLOWED TO TOUCH HAS TO BE IN HERE, or the
+     * candidate after it inherits the change.
+     *
+     * The rule is mechanical: after the freeze, nothing is stepped, so any state
+     * the game rewrites PER FRAME repairs itself and any state it does not is
+     * permanent. _updateVisuals rewrites the two light intensities every frame
+     * and nothing else; _updateTrail rewrites uHot and uGlow every frame and
+     * nothing else — and neither of them runs once the world is frozen. So the
+     * blade's uAmp/uCoreWhite AND the trail's uHot/uGlow/uCoreWhite are all
+     * permanent, and a list covering only the first pair chains every trail
+     * candidate into every trail candidate measured after it. This list is
+     * therefore built by ENUMERATING the two materials' uniforms rather than by
+     * naming the ones anybody happened to think of.
+     *
+     * Verified rather than asserted: run the same candidate twice, non-adjacent,
+     * with candidates that write all three trail uniforms in between, and check
+     * the two cells report the same numbers. See --only in the header. Measured
+     * that way — trail-old at cells 2 and 6, with trail-chroma, trail-amp and
+     * trail-new between them — the two agree to R/B 0.654 vs 0.655.
+     *
+     * They are NOT bit-identical, and that is not a leak: the composite grade
+     * carries animated film grain at uGrain 0.045, i.e. +-5.7/255, keyed off
+     * uTime, which advances two frames per candidate. So every cell has different
+     * grain, and the residual between two identical candidates is uniform over
+     * the whole frame — mean |delta| 1.49/255 on far sand where the trail draws
+     * nothing, 1.60 on the figure. A restore leak would be the other shape: large
+     * where the trail is, exactly zero on the sand. For scale, the change this
+     * instrument is measuring is mean |delta| 3.21 on the figure and 29/255 at
+     * its peak, so the signal clears the grain floor by about 2x on the mean. */
+    const snapUniforms = (mat) => {
+      const o = {};
+      for (const k of Object.keys(mat.uniforms)) {
+        const v = mat.uniforms[k].value;
+        o[k] = (v && typeof v.clone === 'function') ? v.clone() : v;
+      }
+      return o;
+    };
+    const restoreUniforms = (mat, o) => {
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v && typeof v.clone === 'function') mat.uniforms[k].value.copy(v);
+        else mat.uniforms[k].value = v;
+      }
+    };
     const snap = {
       c: sb.light.color.clone(), i: sb.light.intensity,
       tc: sb.tipLight.color.clone(), ti: sb.tipLight.intensity,
       bloom: E.bloom.enabled, lit: sb.lit, ign: sb.ignition,
       bvis: sb.bladeGroup.visible, tvis: sb.trail.visible,
-      amp: sb.bladeMat.uniforms.uAmp.value.clone(),
-      cw: sb.bladeMat.uniforms.uCoreWhite.value,
+      blade: snapUniforms(sb.bladeMat),
+      trail: snapUniforms(sb.trailMat),
       br: E.bloom.radius, bs: E.bloom.strength,
+    };
+    const restore = () => {
+      sb.light.color.copy(snap.c); sb.light.intensity = snap.i;
+      sb.tipLight.color.copy(snap.tc); sb.tipLight.intensity = snap.ti;
+      E.bloom.enabled = snap.bloom; sb.lit = snap.lit; sb.ignition = snap.ign;
+      sb.bladeGroup.visible = snap.bvis; sb.trail.visible = snap.tvis;
+      restoreUniforms(sb.bladeMat, snap.blade);
+      restoreUniforms(sb.trailMat, snap.trail);
+      E.bloom.radius = snap.br; E.bloom.strength = snap.bs;
     };
     const G = sb.glowColor.clone();
     G.multiplyScalar(1 / Math.max(G.r, G.g, G.b, 1e-4));
 
     for (let k = 0; k < cfg.cases.length; k++) {
-      sb.light.color.copy(snap.c); sb.light.intensity = snap.i;
-      sb.tipLight.color.copy(snap.tc); sb.tipLight.intensity = snap.ti;
-      E.bloom.enabled = snap.bloom; sb.lit = snap.lit; sb.ignition = snap.ign;
-      sb.bladeGroup.visible = snap.bvis; sb.trail.visible = snap.tvis;
-      sb.bladeMat.uniforms.uAmp.value.copy(snap.amp);
-      sb.bladeMat.uniforms.uCoreWhite.value = snap.cw;
-      E.bloom.radius = snap.br; E.bloom.strength = snap.bs;
+      restore();
       if (cfg.cases[k].apply) {
         // FLOOR raises a light colour's dimmest channel to a fraction of its
         // peak, writing r/g/b directly so no colour-space conversion can creep
@@ -565,30 +792,47 @@ async function sweepMode() {
       sc.strokeStyle = 'rgba(255,255,255,0.22)';
       sc.strokeRect(x + 0.5, y + 0.5, cfg.cellW - 1, cfg.cellH - 1);
       sc.font = '12px monospace';
-      sc.fillStyle = 'rgba(0,0,0,0.72)'; sc.fillRect(x + 3, y + 3, 160, 16);
-      sc.fillStyle = '#c8f0ff'; sc.fillText(cfg.cases[k].name, x + 6, y + 15);
+      sc.fillStyle = 'rgba(0,0,0,0.72)'; sc.fillRect(x + 3, y + 3, 176, 16);
+      sc.fillStyle = '#c8f0ff'; sc.fillText(k + '  ' + cfg.cases[k].name, x + 6, y + 15);
+      // The trail uniforms this cell was actually drawn with, so a row that
+      // claims to be the old smear can be checked against what it drew.
       shots.push({ name: cfg.cases[k].name,
-        colour: sb.light.color.toArray(), I: sb.light.intensity, tipI: sb.tipLight.intensity });
+        colour: sb.light.color.toArray(), I: sb.light.intensity, tipI: sb.tipLight.intensity,
+        tvis: !!sb.trail.visible,
+        tHot: sb.trailMat.uniforms.uHot.value, tGlow: sb.trailMat.uniforms.uGlow.value,
+        tCW: sb.trailMat.uniforms.uCoreWhite.value });
       await new Promise((r) => realRAF(r));
     }
 
-    sb.light.color.copy(snap.c); sb.light.intensity = snap.i;
-    sb.tipLight.color.copy(snap.tc); sb.tipLight.intensity = snap.ti;
-    E.bloom.enabled = snap.bloom; sb.lit = snap.lit; sb.ignition = snap.ign;
-    sb.bladeGroup.visible = snap.bvis; sb.trail.visible = snap.tvis;
-    sb.bladeMat.uniforms.uAmp.value.copy(snap.amp);
-    sb.bladeMat.uniforms.uCoreWhite.value = snap.cw;
-    E.bloom.radius = snap.br; E.bloom.strength = snap.bs;
+    restore();
     S.engine.render = origRender;
     window.requestAnimationFrame = realRAF;
-    return { png: sheet.toDataURL('image/png'), shots, cols, rows };
-  }, { cases: list.map((c) => ({ name: c.name, apply: c.apply })), cellW: CELL_W, cellH: CELL_H, warmup: WARMUP, stepMs: 1000 / 60 });
+    return { png: sheet.toDataURL('image/png'), shots, cols, rows, froze: i, trail: T0,
+      trace: trace.map((t) => [t.visible ? 1 : 0, +t.live, +t.maxPunch.toFixed(3), +t.swing.toFixed(2)]) };
+  }, { cases: list.map((c) => ({ name: c.name, apply: c.apply })), cellW: CELL_W, cellH: CELL_H,
+    warmup: WARMUP, maxWarmup: MAXWARM, wantPunch: WANTPUNCH, needTrail: !!clip.needTrail,
+    cameraSrc: String(clip.camera), inputSrc: String(clip.input), stopSrc: String(clip.stop),
+    stepMs: 1000 / 60 });
 
   await browser.close(); server.close();
   if (result.error) {
     console.error('sweep threw during ' + result.phase + ' ' + result.i + ': ' + result.error);
+    if (result.trace) console.error('  [visible, live, maxPunch, swingSpeed] per step:\n   '
+      + result.trace.map((t) => '[' + t.join(' ') + ']').join(' '));
     if (errors.length) console.error('page errors:', errors.slice(0, 6));
     process.exit(1);
+  }
+  /* WHAT WAS ON SCREEN WHEN THE WORLD STOPPED. Printed unconditionally, because
+   * the whole trail lane's failure mode is a beautiful sheet of a frame that has
+   * no smear in it. */
+  {
+    const t = result.trail || {};
+    console.log('\n  froze at step ' + result.froze + ' on clip "' + CLIP + '" — ' + clip.note);
+    console.log('  trail: visible=' + t.visible + '  live=' + t.live + '/' + '30'
+      + '  maxPunch=' + fmt(t.maxPunch, 3, 5) + '  ribbon=' + fmt(t.path, 2, 5) + ' m'
+      + '  slab=' + fmt((t.slab || 0) * 1000, 1, 5) + ' mm'
+      + '  swing=' + fmt(t.swing, 2, 5) + ' m/s'
+      + '  uHot=' + fmt(t.hot, 3, 6) + ' uGlow=' + fmt(t.glow, 3, 6));
   }
   mkdirSync(OUT, { recursive: true });
   const file = join(OUT, TAG + '-' + LEVEL + '-sweep.png');
@@ -653,8 +897,10 @@ async function sweepMode() {
     const N = stats(png, set(sand, ox, oy));
     const sh = result.shots[k] || {};
     if (k === darkIdx) { base.C = C; base.D = D; base.N = N; }
-    console.log('  ── ' + list[k].name + '  (' + (list[k].note || '') + ')');
-    console.log('     light ' + (sh.colour || []).map((v) => v.toFixed(3)).join(',') + '  I ' + (sh.I || 0).toFixed(2));
+    console.log('  ── [' + k + '] ' + list[k].name + '  (' + (list[k].note || '') + ')');
+    console.log('     light ' + (sh.colour || []).map((v) => v.toFixed(3)).join(',') + '  I ' + (sh.I || 0).toFixed(2)
+      + '   trail vis=' + sh.tvis + ' uHot=' + fmt(sh.tHot, 3, 6) + ' uGlow=' + fmt(sh.tGlow, 3, 6)
+      + ' uCoreWhite=' + fmt(sh.tCW, 2, 4));
     printStats('wielder', C);
     printStats('cast shadow', D);
     if (base.C && C) {
