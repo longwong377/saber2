@@ -110,7 +110,8 @@ Math.random = () => 0.31830988618;
 const Waves = await import('../src/game/Waves.js');
 Math.random = _realRandom;
 
-const { WaveDirector, BOONS } = Waves;
+const { WaveDirector, BOONS, ATTUNEMENTS, RankSet, rankScale, maxRank } = Waves;
+const { defaultBoonMods } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
 const EnemyMod = await import('../src/game/Enemy.js');
@@ -137,6 +138,15 @@ const Bodies = await import('../src/game/Bodies.js');
 const { makeRng, clamp, lerp } = await import('../src/engine/MathUtil.js');
 
 const scene = new THREE.Scene();
+/**
+ * The scene, for the one check that needs it.
+ *
+ * Exposed rather than exported directly so it reads as an instrument port
+ * rather than as something to build in. A Saber ADDS ITSELF here, so the child
+ * count is the exact measure of whether anything is being retained — see the
+ * note on `workCapsule`, and tools/checks/balance.mjs.
+ */
+export function reportScene() { return scene; }
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 /**
@@ -506,10 +516,41 @@ function limbConsequence(A, bone) {
 const GRIND_LETHALITY = 0.55;   // World.js — module-private there
 const BLADE_REACH_BASE = 1.15;  // Player's default bladeLength
 
-/** One capsule worked until it parts or the body stops mattering. */
+/**
+ * One capsule worked until it parts or the body stops mattering.
+ *
+ * ── WHY THE `try/finally` ──────────────────────────────────────────────────
+ *
+ * THIS FUNCTION IS WHY THE HARNESS DIED. `new Saber(scene, …)` ADDS ITSELF TO
+ * THE SCENE, and `scene` is a module-level THREE.Scene that nothing ever
+ * clears — so every blade this function has ever built stayed reachable, with
+ * its blade geometry, its trail buffers and its two lights. One engagement
+ * costs one Saber per capsule and a humanoid has about twenty, so the cost is
+ * ~20 undisposed blades per cache miss in `engagementFor`.
+ *
+ * With no boons the memo key is constant and it plateaus, which is why a short
+ * run looks fine. The boon section varies `cutPower` per card and per tier, so
+ * the key varies, so nearly every call is a miss — tens of thousands of blades,
+ * ~460 MB of ArrayBuffers per sixty runs, and `FATAL ERROR: Ineffective
+ * mark-compacts near heap limit` at 8 GB. The crash landed after the boon table
+ * had printed, which made it look like the survival section's fault; it was
+ * neither section's, it was this line's.
+ *
+ * Found by measuring `process.memoryUsage()` — heap, external and arrayBuffers
+ * separately. arrayBuffers tracking the heap one-for-one is what pointed at
+ * geometry rather than at bookkeeping, after two wrong guesses at the caches.
+ */
 function workCapsule(cap, hp, maxHp, speed, power, reach, cadence, budget) {
   const solver = new BladeContactSolver();
   const saber = new Saber(scene, { colorIndex: 0, bladeLength: reach });
+  try {
+    return _workCapsule(saber, solver, cap, hp, maxHp, speed, power, reach, cadence, budget);
+  } finally {
+    saber.dispose();
+  }
+}
+
+function _workCapsule(saber, solver, cap, hp, maxHp, speed, power, reach, cadence, budget) {
   saber.ignite(); saber.ignition = 1;
   const q = new THREE.Quaternion();
   // You cannot cut deeper than the blade is long, so the capsule a pass sees is
@@ -554,6 +595,45 @@ function passesOf(t, cadence) { return Math.max(1, Math.round(t * cadence + 0.5)
  */
 function timeFor(passes, cadence) { return (passes / MODEL.swingHit) / cadence; }
 
+/**
+ * A memo that cannot eat the process.
+ *
+ * THE BUG THIS EXISTS FOR: three of the caches below are keyed on numbers that
+ * MOVE CONTINUOUSLY during a run. `engagementFor` keyed on
+ * `cutPower.toFixed(4)`, and Fury scales cutPower by how close to death the
+ * player is — so it takes a new value on almost every tick and the key space is
+ * effectively unbounded. Measured: ~10 MB retained per simulated run, after an
+ * explicit GC. A full report is ~10,500 runs, which is how a balance harness
+ * came to die on `FATAL ERROR: Ineffective mark-compacts near heap limit` at
+ * 8 GB — after printing the boon table, so the crash looked like it belonged to
+ * the survival section rather than to a cache filled by all of them.
+ *
+ * Bounded, and cleared wholesale rather than evicted one at a time: these are
+ * pure functions of their key, so a cold cache costs time and never
+ * correctness, and LRU bookkeeping on a hot inner loop would cost more than the
+ * misses it saved.
+ */
+const MEMO_MAX = 60000;
+function memoGet(map, key, make) {
+  const hit = map.get(key);
+  if (hit !== undefined) return hit;
+  if (map.size >= MEMO_MAX) map.clear();
+  const v = make();
+  map.set(key, v);
+  return v;
+}
+
+/**
+ * Rounding for a memo key, and the reason it is coarse.
+ *
+ * Two decimal places on a multiplier is finer than any conclusion this file
+ * draws — the report prints depths to two decimals and rankings, not physics —
+ * and it turns a continuous axis into at most a few hundred buckets. The old
+ * `toFixed(4)` bought four digits of a number the model does not resolve, and
+ * paid for them with the heap.
+ */
+const q = (v) => (Math.round(v * 100) / 100).toFixed(2);
+
 const _engage = new Map();
 /**
  * How long the blade needs to NEUTRALISE a body and how long to KILL it — two
@@ -562,12 +642,23 @@ const _engage = new Map();
  * A model that only knows hp would miss the whole of that.
  */
 export function engagementFor(entry, mods) {
-  const key = `${entry}|${mods.cutPower.toFixed(4)}|${mods.bladeLength.toFixed(3)}`;
+  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}`;
   if (_engage.has(key)) return _engage.get(key);
+  if (_engage.size >= MEMO_MAX) _engage.clear();
 
   const { A } = archetypeOf(entry);
   const maxHp = A.hp;
-  const cadence = measureSwing().attacksPerSec;
+  /**
+   * The authored cadence, TIMES WHAT THE RUN HAS DONE TO IT.
+   *
+   * `attacksPerSec` alone made this model blind to the only offensive axis that
+   * is not cut depth. That mattered the moment Cadence existed — the card added
+   * precisely because the harness showed cut depth buys nothing against ten of
+   * fifteen archetypes — and a harness that reports its own answer as
+   * UNMODELLED is worse than one with a known gap, because the gap is invisible
+   * in the ranking.
+   */
+  const cadence = measureSwing().attacksPerSec * (mods.attackRate ?? 1);
   const reach = mods.bladeLength;
   const passSpeed = measureSwing().passSpeed;
   // How high a standing player's blade goes, MEASURED off the real controller
@@ -677,11 +768,10 @@ function armTime(entry, diff, levelKey) {
  */
 const _bolt = new Map();
 function boltPressure(entry, diff, playerSpeed = 4.6) {
-  const memo = `${entry}|${diff.name}|${playerSpeed.toFixed(2)}`;
-  if (_bolt.has(memo)) return _bolt.get(memo);
-  const v = _boltPressure(entry, diff, playerSpeed);
-  _bolt.set(memo, v);
-  return v;
+  // `playerSpeed` is 4.6 x moveSpeed, and Fury moves moveSpeed with health —
+  // so this key is continuous too. Same quantisation, same bound. See memoGet.
+  return memoGet(_bolt, `${entry}|${diff.name}|${q(playerSpeed)}`,
+    () => _boltPressure(entry, diff, playerSpeed));
 }
 function _boltPressure(entry, diff, playerSpeed) {
   const { A } = archetypeOf(entry);
@@ -780,12 +870,13 @@ function makePlayer(diffKey = 'knight') {
     kills: 0, deflects: 0, perfects: 0, limbsRemoved: 0, combo: 0, score: 0,
     isLocal: true,
     position: new THREE.Vector3(),
-    boons: new Set(),
-    boonMods: {
-      deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
-      jumpPower: 1, flowGain: 1, returnCone: 0.42, healOnKill: 0, lightning: false,
-      repulse: false, throwPierce: false, doubleJump: false, lifesteal: 0,
-    },
+    boons: new RankSet(),
+    // PLAYER'S OWN, not a copy. This was a hand-written duplicate of Player's
+    // boonMods and it went stale the moment a card needed a key it did not
+    // list — `undefined * 1.33` is NaN, and a NaN in cutPower silently reports
+    // a card as worthless rather than crashing, which is the worst possible
+    // failure for an instrument whose entire job is ranking cards.
+    boonMods: defaultBoonMods(),
     control: { deadzone: 0.22, sensitivity: 1 },
     saber: { bladeLength: BLADE_REACH_BASE, coreWidth: 1 },
     world: {
@@ -820,6 +911,7 @@ function applyBoon(p, boon) {
 function modsOf(p) {
   return {
     cutPower: p.boonMods.cutPower,
+    attackRate: p.boonMods.attackRate,
     bladeLength: p.saber.bladeLength,
     moveSpeed: p.boonMods.moveSpeed,
     deflectDamage: p.boonMods.deflectDamage,
@@ -828,7 +920,6 @@ function modsOf(p) {
     lifesteal: p.boonMods.lifesteal,
     healOnKill: p.boonMods.healOnKill,
     maxHp: p.maxHp, maxStamina: p.maxStamina,
-    returnCone: p.boonMods.returnCone,
   };
 }
 
@@ -840,10 +931,41 @@ function modsOf(p) {
  */
 const MODELLED_CHANNELS = {
   cutPower: 'blade damage', bladeLength: 'reach + travel', moveSpeed: 'travel',
-  deflectDamage: 'returned bolts', staminaRegen: 'guard sustain', absorb: 'damage taken',
-  lifesteal: 'healing', healOnKill: 'healing', maxHp: 'health', maxStamina: 'guard sustain',
-  returnCone: 'return targeting',
+  // The cadence the whole offence model divides by. See engagementFor.
+  attackRate: 'swing rate',
+  deflectDamage: 'returned bolts', absorb: 'damage taken',
+  lifesteal: 'healing', healOnKill: 'healing', maxHp: 'health',
+  // NOT returnCone. It was listed here as 'return targeting' and NOTHING IN
+  // THE SIMULATION EVER READ IT — `modsOf` copied it out and no line consumed
+  // it, because this model has no notion of picking a victim for a returned
+  // bolt. So Soresu was reported as having a channel, measured at Δ0.000, and
+  // therefore printed as a card that does nothing. Claiming to see something
+  // and then scoring it zero is the one failure mode an instrument must not
+  // have.
 };
+
+/**
+ * READ, BUT NEVER BINDING — and therefore not a channel.
+ *
+ * `staminaRegen` and `maxStamina` used to be listed above, and they are
+ * genuinely read: `canSwing` gates every cut on stamina/maxStamina > 0.12 and a
+ * BLOCK spends 4. But the regen this model now runs (Player._regen's own 16/s,
+ * +10/s out of contact) restores that in a quarter of a second, so the gate is
+ * never actually reached — you would have to block four bolts a second forever
+ * to feel it. Meditation and Soresu therefore measure exactly Δ0.000 with 0%
+ * helped, and listing them as MODELLED turned "this instrument cannot tell"
+ * into the printed claim "this card does nothing".
+ *
+ * That is the distinction the whole UNMODELLED column exists to protect, and it
+ * is the difference between a finding and a libel. Fixing it properly means
+ * giving the model a guard that can actually be broken, which is a bigger piece
+ * of work than this file; until then it says it cannot see them.
+ *
+ * (The regen itself is kept regardless, because without it the model was
+ * WRONG rather than merely incomplete: a player who blocked twenty-five bolts
+ * could never swing again for the rest of the run.)
+ */
+const READ_BUT_NEVER_BINDING = ['staminaRegen', 'maxStamina'];
 
 /**
  * The conditional cards do not move any of those fields at install time; they
@@ -947,6 +1069,21 @@ export function simulateRun(opts) {
       t += dt;
       p.invuln = Math.max(0, p.invuln - dt);
       p.update(dt, {});      // every boonTick the run has installed
+      /**
+       * STAMINA COMES BACK. It did not, and that was a hole in the model rather
+       * than a simplification: `canSwing` gates every cut on stamina and a
+       * BLOCK spends 4 of it, so a player who blocked twenty-five bolts could
+       * never swing again for the rest of the run. Nothing regenerated it, so
+       * `staminaRegen` had no reader here at all — which is why Meditation
+       * measured Δ0.000 with 0% helped and was reported as a card that does
+       * nothing, and why Soresu's +25 reserve read the same way.
+       *
+       * Player._regen's own arithmetic: 16/s, plus 10/s more out of contact.
+       * `combatIntensity` is a world signal this model does not have, so it
+       * uses the honest proxy — whether anything is currently engaged.
+       */
+      p.stamina = Math.min(p.maxStamina,
+        p.stamina + (16 + (engaged ? 0 : 10)) * dt * p.boonMods.staminaRegen);
       if (t > MODEL.waveTimeout) { modelFailure = `wave ${wave} never ended`; break; }
 
       /* ── spawning: the director's own cadence ── */
