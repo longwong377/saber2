@@ -480,14 +480,22 @@ export class WaveDirector {
    * a wave with fewer, nastier bodies in it, not a wave that is secretly three
    * times the intended threat. `tools/checks/escalation.mjs` asserts the total.
    *
-   * @returns the extra threat spent, or 0 if nothing was promoted.
+   * Weighted by DEPTH, not uniform: a modifier is picked in proportion to the
+   * wave it unlocked at, so a run that has earned Leaders sees Leaders rather
+   * than being handed the wave-3 Frenzied it has been fighting for twenty
+   * waves. Uniform would make the newest, most expensive variant the rarest
+   * thing in the wave that just unlocked it.
+   *
+   * @returns `{mod, extra}`, or 0 when nothing affordable will go on.
    */
   _promote(type, budget, wave, allowed) {
     const options = modifiersFor(type).filter(k => allowed.includes(k));
     if (!options.length) return 0;
-    // Weighted towards the ones this depth has only just unlocked, so a wave
-    // that has earned Leaders does not keep handing out Frenzied instead.
-    const pick = options[Math.floor(rng() * options.length)];
+    let total = 0;
+    for (const k of options) total += MODIFIERS[k].since;
+    let r = rng() * total;
+    let pick = options[options.length - 1];
+    for (const k of options) { r -= MODIFIERS[k].since; if (r <= 0) { pick = k; break; } }
     const extra = modifierThreat(type, pick) - (ARCHETYPES[type]?.threat ?? 0);
     if (extra > budget) return 0;
     return { mod: pick, extra };
