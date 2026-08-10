@@ -451,6 +451,102 @@ function clawGeo(len, r0, r1, bend, seg = 6, rings = 5) {
   return mergeGeos(parts);
 }
 
+/**
+ * A tube swept along a polyline — lekku, montrals, head tentacles, horns.
+ *
+ * `nodes` is [[x, y, z, r], …]: the spine of the tube and its radius at each
+ * node, in the frame the tube is going to be parented into. Everything the
+ * species pass hangs off a head is one of these, and they are all authored the
+ * same way — by typing where the tip has to END UP rather than by composing a
+ * chain of rotations, because "the left lek finishes 18cm below the shoulder
+ * blade" is a thing that can be checked and "rotate 0.4 then 0.3 then 0.25" is
+ * not.
+ *
+ * Two things make it worth having its own builder rather than reusing clawGeo:
+ *
+ *   · clawGeo merges one CAPPED limbGeo per segment, so a six-segment tail
+ *     carries five pairs of end caps buried inside itself — 60% of its
+ *     triangles are surface nobody can ever see, and on a 13k budget with 76
+ *     spare that is the whole feature;
+ *   · the frame is parallel-transported (rotation-minimising) rather than
+ *     re-derived per node from world up. A lek that leaves the temple pointing
+ *     down and finishes pointing back passes through horizontal, where the
+ *     up-reference degenerates and the section corkscrews 90° in one step.
+ *
+ * The ring carries exactly `seg` vertices — no duplicated seam column — so
+ * computeVertexNormals() is smooth the whole way round instead of leaving a
+ * crease down the length of every tail. The price is that u wraps backwards
+ * over one column in 8, which on a noise bake at this size is invisible.
+ *
+ * `opts.section(u, t)` scales the radius: u is the angle from the frame's own
+ * +X, t runs 0→1 along the tube. Lekku are flattened, not round.
+ */
+export function tubeGeo(nodes, seg = 8, opts = {}) {
+  const n = nodes.length;
+  const sect = opts.section || null;
+  const tipLen = opts.tip ?? 0.9;          // ×r, how far the point stands past the last node
+  const capRoot = opts.capRoot !== false;
+  const P = nodes.map(a => new THREE.Vector3(a[0], a[1], a[2]));
+  const R = nodes.map(a => a[3]);
+  // tangents: central differences, one-sided at the ends
+  const T = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)];
+    T.push(new THREE.Vector3().subVectors(b, a).normalize());
+  }
+  // parallel transport: start from whichever world axis is least parallel to T0
+  const N = [];
+  {
+    const t0 = T[0];
+    const seed = Math.abs(t0.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+    N.push(seed.projectOnPlane(t0).normalize());
+    const q = new THREE.Quaternion();
+    for (let i = 1; i < n; i++) {
+      q.setFromUnitVectors(T[i - 1], T[i]);
+      N.push(N[i - 1].clone().applyQuaternion(q).projectOnPlane(T[i]).normalize());
+    }
+  }
+  const pos = [], uv = [], idx = [];
+  const v = new THREE.Vector3(), bi = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    bi.crossVectors(T[i], N[i]);
+    const t = n === 1 ? 0 : i / (n - 1);
+    for (let j = 0; j < seg; j++) {
+      const u = (j / seg) * Math.PI * 2;
+      const r = R[i] * (sect ? sect(u, t) : 1);
+      v.copy(P[i]).addScaledVector(N[i], Math.cos(u) * r).addScaledVector(bi, Math.sin(u) * r);
+      pos.push(v.x, v.y, v.z);
+      uv.push(j / seg, t);
+    }
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < seg; j++) {
+      const a = i * seg + j, b = i * seg + (j + 1) % seg;
+      const c = a + seg, d = b + seg;
+      // Winding, derived rather than guessed: (N, B, T) is right-handed, so the
+      // outward normal of the quad is (b−a)×(c−a) = B×T = +N. The other order
+      // gives −N and a tail that is lit from inside.
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  // the point, and a flat disc closing the root so a severed tail is not a pipe
+  const apex = pos.length / 3;
+  v.copy(P[n - 1]).addScaledVector(T[n - 1], R[n - 1] * tipLen);
+  pos.push(v.x, v.y, v.z); uv.push(0.5, 1);
+  for (let j = 0; j < seg; j++) idx.push((n - 1) * seg + j, (n - 1) * seg + (j + 1) % seg, apex);
+  if (capRoot) {
+    const hub = pos.length / 3;
+    pos.push(P[0].x, P[0].y, P[0].z); uv.push(0.5, 0);
+    for (let j = 0; j < seg; j++) idx.push(j, hub, (j + 1) % seg);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return white(g);
+}
+
 /* ── build-time surface probing ──────────────────────────────────────── */
 
 const _pa = new THREE.Vector3(), _pb = new THREE.Vector3(), _pc = new THREE.Vector3();
