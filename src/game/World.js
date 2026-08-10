@@ -17,6 +17,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector } from './Waves.js';
+import { applyOrder } from './Order.js';
 import { LEVELS } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -211,11 +212,19 @@ export class World {
       skinIndex: this.settings.skinIndex,
       hairIndex: this.settings.hairIndex,
       build: this.settings.build,
+      order: this.settings.order,
       sensitivity: this.settings.sensitivity,
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,
       spawn: opts.spawn || new THREE.Vector3(0, 0, 8),
     });
+
+    // THE ORDER, before any boon. It writes the same `boonMods` a boon card
+    // writes, through the same shape, so a card that multiplies cutPower still
+    // multiplies whatever the order set — applying it afterwards would have the
+    // order overwrite the run instead of starting it.
+    const rec = applyOrder(p, this.settings.order);
+    if (rec) for (const id of rec.grants) this.takenBoons.add(id);
     p.camera.firstPerson = !!this.settings.firstPerson;
     p._applyViewMode();
     // Catch-and-throw state lives out here rather than on the Player, because

@@ -1568,12 +1568,731 @@ export function dressHumanoid(rig, style) {
   return rig;
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The character creator — species, face, frame                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Three axes, one figure, and a budget of seventy-six triangles.
+ *
+ * Nothing here is an asset. `buildJedi` writes the whole person out in code, so
+ * "let the player be a Togruta" is a parameter problem — but it is a parameter
+ * problem inside a hard wall: tools/checks/characters.mjs caps an archetype at
+ * 13 000 triangles and 76 meshes, and the Jedi as shipped measures **12 924
+ * triangles in 66 meshes**. There are seventy-six triangles of headroom and ten
+ * meshes. A lek is a hundred and twelve triangles.
+ *
+ * So the rule every non-human species obeys is: IT PAYS FOR ITSELF OUT OF THE
+ * HAIR. The human hair — cap, fringe, ear masses, nape and braid — is 732
+ * triangles in 2 meshes, and none of the five species below has human hair on
+ * it. Each one gets that allowance and no more, which is why the numbers in the
+ * tables are what they are rather than what would have been nicer.
+ *
+ * Three further constraints shaped this more than taste did:
+ *
+ *   · THE SKELETON IS SHARED AND FIXED. Rig.js is not this file's to edit and
+ *     every body in the game is the same size, so a species is a head and a set
+ *     of radii — never a new bone. Lekku, montrals and tentacles are therefore
+ *     RIGID geometry hung off the head object, not simulated: Cloth.js belongs
+ *     to another workstream, and a rigid tail that tracks the head is a thing
+ *     that can be measured for torso penetration (it is, below) where a cloth
+ *     one would need a solver this pass is not allowed to touch.
+ *
+ *   · EVERYTHING MUST STILL COME OFF. Actor.addBone() re-homes every child of a
+ *     bone object that is not itself a bone, and makes it visible again on the
+ *     way — so anything parented to `head.obj` is severed with the head by
+ *     construction, and first person's `visible = false` on the head cannot
+ *     leave a decapitation with no lekku on it. That is the whole reason these
+ *     hang off the head object rather than off the rig root.
+ *
+ *   · A FACE HAS TO READ AT GAMEPLAY RANGE, NOT IN A PREVIEW. At 8 m through a
+ *     60° vertical FOV on a 1080-line frame, one pixel is 8.6 mm and a whole
+ *     head is 24 pixels tall. A 3 mm nose is a third of a pixel. The presets
+ *     below are therefore built out of the two things that survive that: the
+ *     OUTLINE of the cranium and jaw, which moves whole pixels, and the large
+ *     shading masses — brow, cheekbone, eye socket — which move the mean
+ *     luminance of a five-pixel patch. Everything is measured in
+ *     tools/checks/body-parts.mjs at exactly that sampling density rather than
+ *     asserted here.
+ */
+
+/** The eight numbers a face is. 0 is the face this file shipped with. */
+const FACE_KEYS = ['skull', 'brow', 'cheek', 'jaw', 'chin', 'nose', 'eyes', 'mouth'];
+
+/**
+ * Six faces, not fifty sliders.
+ *
+ * Each preset moves several parameters together, because a face is a
+ * correlated object — a heavy brow comes with a wide jaw and a low vault, and
+ * moving one of the three on its own reads as a defect rather than as a person.
+ * They are also deliberately BOLD: measured at the 8 m sampling density, a
+ * preset that moves the skull by 4 mm is invisible, so the span between `broad`
+ * and `fine` is 17 mm of head breadth — two pixels — and the brow term is worth
+ * a fifth of the luminance of the eye band.
+ */
+export const FACE_PRESETS = [
+  { id: 'even',  name: 'Even',  face: {} },
+  { id: 'heavy', name: 'Heavy', face: { skull: -0.45, brow: 1.0, cheek: 0.30, jaw: 1.0, chin: 0.65, nose: 0.60, eyes: 0.15, mouth: 0.45 } },
+  { id: 'fine',  name: 'Fine',  face: { skull: 0.55, brow: -0.80, cheek: 0.75, jaw: -0.95, chin: -0.35, nose: -0.70, eyes: 0.20, mouth: -0.30 } },
+  { id: 'broad', name: 'Broad', face: { skull: -1.0, brow: 0.35, cheek: 1.0, jaw: 0.70, chin: -0.30, nose: 0.35, eyes: 0.95, mouth: 0.85 } },
+  { id: 'gaunt', name: 'Gaunt', face: { skull: 0.70, brow: 0.75, cheek: 1.0, jaw: -0.85, chin: 0.90, nose: 0.75, eyes: -0.45, mouth: -0.20 } },
+  { id: 'round', name: 'Round', face: { skull: -0.75, brow: -1.0, cheek: -0.65, jaw: -0.30, chin: -0.85, nose: -0.55, eyes: -0.35, mouth: -0.25 } },
+];
+
+/**
+ * Resolve `face` — a preset id, a raw parameter object, or nothing — into the
+ * eight numbers. Missing keys are ZERO, and zero has to mean *exactly* the face
+ * this file already shipped: every use of these below is of the form
+ * `x * (1 + k*F.jaw)` or `x + k*F.chin`, and `x * 1` and `x + 0` are the
+ * identity in float. That is what lets buildJedi() with no arguments still
+ * produce the byte-for-byte figure Player, Enemy and the menu preview expect.
+ */
+function faceOf(face) {
+  const out = {};
+  for (const k of FACE_KEYS) out[k] = 0;
+  let src = face;
+  if (typeof face === 'string') src = (FACE_PRESETS.find(p => p.id === face) || FACE_PRESETS[0]).face;
+  if (src && typeof src === 'object') {
+    for (const k of FACE_KEYS) if (typeof src[k] === 'number' && isFinite(src[k])) out[k] = clamp(src[k], -1, 1);
+  }
+  return out;
+}
+
+/**
+ * FRAME IS A CONTINUUM, NOT TWO BOXES.
+ *
+ * The torso is already three lathes driven by chestR/waistR/hipR/shoulderR and
+ * torsoDepth, and the limbs by armR/foreR/thighR, so the mechanism for a body
+ * type was sitting in dressHumanoid the whole time with nothing feeding it. One
+ * number in [0, 1] drives all of them at once, 0.5 being exactly the figure
+ * this file shipped.
+ *
+ * It is one axis rather than a gender switch because one axis is both better
+ * and less work: at 0 it produces a narrow-shouldered, thin-necked, light-limbed
+ * figure whose waist is 23% narrower than its hips, and at 1 a heavy one whose
+ * waist is 2% WIDER than its hips — the shoulder-to-hip and waist-to-hip ratios
+ * are the sexually dimorphic measurements, and they are also the only ones that
+ * survive being seen from thirty metres in a robe. Two hard-coded bodies would
+ * have given the player those same two figures and nothing in between.
+ *
+ * BODY_TYPES names five points on it for a UI that would rather show cards than
+ * a slider; BUILD_RANGE is the slider's own bounds.
+ */
+export const BUILD_RANGE = [0, 1];
+export const BODY_TYPES = [
+  { id: 'slight', name: 'Slight', build: 0.05 },
+  { id: 'lean',   name: 'Lean',   build: 0.28 },
+  { id: 'even',   name: 'Even',   build: 0.5 },
+  { id: 'solid',  name: 'Solid',  build: 0.74 },
+  { id: 'heavy',  name: 'Heavy',  build: 0.95 },
+];
+
+/**
+ * `build` → the signed frame parameter k ∈ [-1, +1].
+ *
+ * Accepts the slider's number or a BODY_TYPES id. Undefined is 0.5, and
+ * (0.5 - 0.5) * 2 is exactly 0, so every `1 + gain*k` below is exactly 1.
+ */
+function buildOf(build) {
+  let t = build;
+  if (typeof t === 'string') t = (BODY_TYPES.find(b => b.id === t) || { build: 0.5 }).build;
+  if (typeof t !== 'number' || !isFinite(t)) t = 0.5;
+  t = clamp(t, BUILD_RANGE[0], BUILD_RANGE[1]);
+  return { t, k: (t - 0.5) * 2 };
+}
+
+/**
+ * WHAT THE PLAYER CAN BE.
+ *
+ * Chosen for what could be built WELL on a shared skeleton out of a hair
+ * allowance, not for length. Every one of the five non-human entries changes
+ * the head's outline by something a player can see from across an arena; the
+ * two that were cut — Mirialan and Chiss — could not, and the reasons are
+ * recorded here rather than in a commit message, because they are the argument
+ * for not adding them back:
+ *
+ *   MIRIALAN is a human with green skin and geometric facial tattooing, and the
+ *   tattooing is the species. It was built and measured before it was cut. A
+ *   diamond pattern painted as hard as the vertex-colour channel goes — 65%
+ *   darkening, which is darker than any real tattoo — moves ELEVEN of the 676
+ *   interior pixels of a head at 8 m past a 2% luminance threshold, and none of
+ *   its outline. The parameters that were kept move 47 to 108. It is also at
+ *   the mesh's Nyquist limit: the face carries 353 vertices at a 7.7 mm mean
+ *   spacing and there is no second UV set to hang a texture on, so an 8 mm
+ *   diamond cannot be drawn there at all. In the menu preview the same pattern
+ *   is 1265 pixels, which is the whole finding: Mirialan is a species you can
+ *   only see in the character creator. What survives into the game is the skin
+ *   tone, so it is offered as one — see the human row's own `skinTones`.
+ *
+ *   CHISS is blue skin and red eyes on an otherwise human head: one material
+ *   change and a 5 mm iris, which is smaller than the tattoo that already
+ *   failed. Same verdict, same remedy — the blue is in the human tone list.
+ *
+ * `skinTones` overrides the menu's human swatch row for species whose skin is
+ * not a human colour; `skin` is what the builder falls back to when nothing is
+ * passed, so `buildJedi({ species: 'twilek' })` on its own is already green.
+ * `eye`/`sclera` are the iris and the white. `hair: false` says the species
+ * spends the human hair allowance on its own head instead.
+ */
+export const SPECIES = [
+  {
+    id: 'human', name: 'Human', hair: true, brows: true, eyes: true,
+    skin: 0xc79a76, eye: 0x2c1d12, sclera: 0xece7dd,
+    // Mirialan and Chiss live here rather than in the species list, for the
+    // reason set out above: at gameplay range they ARE their skin.
+    skinTones: [
+      { name: 'Porcelain', hex: 0xf0cdb4 }, { name: 'Fair', hex: 0xe4b493 },
+      { name: 'Warm', hex: 0xc79a76 }, { name: 'Olive', hex: 0xa87c52 },
+      { name: 'Bronze', hex: 0x8c5f3c }, { name: 'Umber', hex: 0x6a462c },
+      { name: 'Deep', hex: 0x4a2f1d }, { name: 'Ashen', hex: 0xbfae9c },
+      { name: 'Mirialan', hex: 0x8fa86a }, { name: 'Chiss', hex: 0x6f8fbe },
+    ],
+  },
+  {
+    id: 'zabrak', name: 'Zabrak', hair: false, brows: true, eyes: true,
+    // A crown of cranial horns on a shaven skull. The cheapest big silhouette
+    // change in the list — ten cones at 36 triangles each — and the only one
+    // that leaves the face itself entirely human, which is the point of it.
+    skin: 0xb4463a, eye: 0xb08a30, sclera: 0xe8dfcd,
+    skinTones: [
+      { name: 'Iridonian', hex: 0xb4463a }, { name: 'Ember', hex: 0x8f3a2c },
+      { name: 'Ochre', hex: 0xc08a45 }, { name: 'Bone', hex: 0xd9c3a4 },
+      { name: 'Dathomiri', hex: 0xc02a22 }, { name: 'Umber', hex: 0x6a462c },
+      { name: 'Ash', hex: 0x8b8578 }, { name: 'Warm', hex: 0xc79a76 },
+    ],
+    face: { brow: 0.35, skull: -0.15 },
+  },
+  {
+    id: 'twilek', name: "Twi'lek", hair: false, brows: false, eyes: true,
+    // Two lekku off the temples, down the back. The largest single change to a
+    // human outline available on this skeleton: it adds 34 cm of body BELOW the
+    // jaw that no other archetype in the game has.
+    skin: 0x6f8f6a, eye: 0x8a3b52, sclera: 0xe8e2d6,
+    skinTones: [
+      { name: 'Rutian', hex: 0x5f7fa8 }, { name: 'Lethan', hex: 0xa33d3d },
+      { name: 'Twi\'lek', hex: 0x6f8f6a }, { name: 'Pale jade', hex: 0x9dae8b },
+      { name: 'Violet', hex: 0x7a5f96 }, { name: 'Ochre', hex: 0xc2a15c },
+      { name: 'Deep indigo', hex: 0x3d4f86 }, { name: 'Ash', hex: 0x8b8578 },
+    ],
+    face: { cheek: 0.35, brow: -0.35, jaw: -0.25 },
+  },
+  {
+    id: 'togruta', name: 'Togruta', hair: false, brows: false, eyes: true, ears: false,
+    // Montrals UP and head-tails DOWN, which is what keeps it from reading as a
+    // Twi'lek: the pair reaches 12 cm above the crown, so the figure is taller
+    // in silhouette than anything else on the same skeleton. Striped, in vertex
+    // colours — free, and the only marking in this list that survives 8 m,
+    // because a montral band is 4 cm across rather than 8 mm.
+    skin: 0xc4643c, eye: 0x8a5a20, sclera: 0xf0e7d8,
+    skinTones: [
+      { name: 'Shili red', hex: 0xc4643c }, { name: 'Rust', hex: 0xa14e2e },
+      { name: 'Amber', hex: 0xd08a4a }, { name: 'Sunset', hex: 0xdc6a4a },
+      { name: 'Blue', hex: 0x5f7fa8 }, { name: 'Green', hex: 0x6f8f6a },
+      { name: 'Bone', hex: 0xd9c3a4 }, { name: 'Ash', hex: 0x8b8578 },
+    ],
+    face: { cheek: 0.55, jaw: -0.35, nose: -0.45, brow: -0.30 },
+  },
+  {
+    id: 'nautolan', name: 'Nautolan', hair: false, brows: false, eyes: true, ears: false,
+    // Eight head tentacles swept back off the crown — a wide, low fan, where
+    // lekku are two heavy verticals. Solid black eyes with no visible sclera,
+    // which is the one face change in the list that reads close up.
+    skin: 0x4f7f6c, eye: 0x0a0c0d, sclera: 0x14181a,
+    skinTones: [
+      { name: 'Glee Anselm', hex: 0x4f7f6c }, { name: 'Deep teal', hex: 0x365f56 },
+      { name: 'Sea green', hex: 0x6f9f7a }, { name: 'Slate', hex: 0x5a6f78 },
+      { name: 'Rutian', hex: 0x5f7fa8 }, { name: 'Olive', hex: 0x7d8f5a },
+      { name: 'Pale', hex: 0xa8bda6 }, { name: 'Ash', hex: 0x8b8578 },
+    ],
+    face: { skull: 0.35, brow: -0.55, cheek: 0.30, nose: -0.85, chin: -0.30 },
+  },
+  {
+    id: 'keldor', name: 'Kel Dor', hair: false, brows: false, eyes: false, ears: false, mouth: false,
+    // An antiox breath mask and two goggle discs over a tall, noseless skull.
+    // The eyes, brows and lashes are not built at all — they are behind opaque
+    // lenses — which is what pays for the mask: 464 triangles of face nobody
+    // could see, spent on the two features that make the head unmistakable at
+    // any range.
+    skin: 0xc4552e, eye: 0x0d0f12, sclera: 0x0d0f12,
+    skinTones: [
+      { name: 'Dorin', hex: 0xc4552e }, { name: 'Rust', hex: 0x9e4526 },
+      { name: 'Salmon', hex: 0xd97a52 }, { name: 'Deep red', hex: 0x8a2f24 },
+      { name: 'Ochre', hex: 0xc08a45 }, { name: 'Grey', hex: 0x8b8578 },
+      { name: 'Bone', hex: 0xd9c3a4 }, { name: 'Umber', hex: 0x6a462c },
+    ],
+    face: { skull: 0.85, brow: -0.70, cheek: 0.85, jaw: -0.55, nose: -1.0, chin: -0.20 },
+  },
+];
+
+/**
+ * A species row from its id, falling back to human. Exported because the menu
+ * needs the row to swap its skin swatches, and an unknown id has to resolve to
+ * something rather than to undefined — a player whose saved species was renamed
+ * gets a human, not a crash on the character screen.
+ */
+export function speciesOf(id) {
+  if (id && typeof id === 'object' && id.id) return id;
+  return SPECIES.find(s => s.id === id) || SPECIES[0];
+}
+
+/**
+ * The vault's three scale factors, shared by the skull and by anything worn
+ * ON it.
+ *
+ * This exists because of a measured defect rather than for tidiness. The hair
+ * is a separate assembly of seven shells sized against a fixed braincase, so
+ * with the skull parameter driving the skull alone, `skull` moved the rendered
+ * outline by TWO PIXELS at 8 m and nothing else — the hair, which is most of
+ * the head's outline, sat exactly where it always had. Worse, at skull = -1 the
+ * wider braincase pushed through the cap it was supposed to be under, which is
+ * the poke-through the scalp bake exists to hide. Both the skull and the hair
+ * are built through this, so they move together.
+ *
+ * `skull` +1 is a tall narrow braincase, -1 a low wide one; the face below it
+ * follows at a third of the rate, because a narrow vault over an unchanged jaw
+ * reads as a deformity rather than as a different person.
+ */
+function vaultOf(F) {
+  return {
+    w: 1 - 0.105 * F.skull,
+    h: 1 + 0.085 * F.skull,
+    d: 1 + 0.030 * F.skull,
+    faceW: 1 - 0.035 * F.skull,
+  };
+}
+
+/**
+ * The skull, as twelve overlapping masses driven by the eight face numbers.
+ *
+ * This is the same union of ellipsoids buildJedi has always assembled — the
+ * proportions in it (head breadth 15.1 cm, the eye line at half the head's
+ * height, a jaw carried below the maxilla) were measured once and are not up
+ * for negotiation. What is new is that every radius and offset now carries a
+ * term, and every term is written so that ZERO IS THE IDENTITY: `r * (1 + g*p)`
+ * with p = 0 is `r * 1`, and `y + g*p` is `y + 0`. buildJedi() with no face
+ * argument therefore emits the same floats it always did, which is asserted
+ * against the previous build rather than hoped for.
+ *
+ * Which terms are big and which are small is not styling. At 8 m one pixel is
+ * 8.6 mm, so `skull` — the vault's breadth, worth ±8 mm a side — gets the
+ * largest gain in the function, and `nose`, which can only ever be worth two
+ * or three millimetres, gets a gain that makes it read in the menu preview and
+ * nowhere else. That is an honest description of what a nose is.
+ */
+function skullGeo(s, F, sp) {
+  const ball = (rx, ry, rz, w = 12, h = 9) => {
+    const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
+  };
+  const { w: vaultW, h: vaultH, d: vaultD, faceW } = vaultOf(F);
+  const g = assemble([
+    // braincase, and the occiput carried back off it
+    [ball(0.0755 * vaultW, 0.0985 * vaultH, 0.0930 * vaultD, 14, 10), [0, 0.098 * s, -0.012 * s]],
+    // the occiput's DEPTH follows the vault too, and that is not symmetry for
+    // its own sake: left fixed, a wide-vault preset pushed the back of the
+    // skull 1mm through the hair cap, which is one bare vertex of the 117
+    // behind the hairline and exactly the poke-through this shape was rebuilt
+    // to eliminate.
+    [ball(0.0640 * vaultW, 0.0620 * vaultH, 0.0700 * vaultD, 8, 6),   [0, 0.104 * s, -0.048 * s]],
+    // maxilla — the mid-face, forward of the braincase
+    [ball(0.0705 * faceW * (1 + 0.055 * F.jaw + 0.045 * F.cheek), 0.0780, 0.0820 * (1 + 0.025 * F.nose), 12, 9),
+      [0, 0.055 * s, 0.012 * s]],
+    // the jaw, as ONE wide mass overlapping the maxilla by most of its own
+    // height, then tapering forward and down to the chin
+    [ball(0.0600 * faceW * (1 + 0.210 * F.jaw), 0.0560 * (1 + 0.10 * F.chin), 0.0690 * (1 + 0.085 * F.jaw), 12, 8),
+      [0, 0.026 * s, 0.022 * s]],
+    [ball(0.0455 * faceW * (1 + 0.250 * F.jaw), 0.0390 * (1 + 0.12 * F.chin), 0.0570 * (1 + 0.075 * F.chin), 10, 7),
+      [0, 0.008 * s, 0.034 * s]],
+    [ball(0.0250 * (1 + 0.230 * F.jaw), 0.0285 * (1 + 0.340 * F.chin), 0.0330 * (1 + 0.220 * F.chin), 8, 6),
+      [0, (-0.006 - 0.0075 * F.chin) * s, (0.044 + 0.006 * F.chin) * s]],
+    // brow ridge and the root of the nose. The brow's DEPTH is what shades the
+    // eye band, so it carries the biggest gain on the face.
+    [ball(0.0580 * faceW, 0.0210 * (1 + 0.420 * F.brow), 0.0330 * (1 + 0.400 * F.brow), 10, 5),
+      [0, 0.101 * s, (0.055 + 0.006 * F.brow) * s]],
+    [ball(0.0180 * (1 + 0.30 * F.nose), 0.0350 * (1 + 0.18 * F.nose), 0.0270 * (1 + 0.26 * F.nose), 8, 6),
+      [0, 0.086 * s, 0.064 * s]],
+    // the nose: a dorsum running down off the root, and a tip wide enough
+    // to carry the wings without needing two more balls for them
+    [ball(0.0175 * (1 + 0.32 * F.nose), 0.0280 * (1 + 0.20 * F.nose), 0.0270 * (1 + 0.28 * F.nose), 8, 6),
+      [0, 0.065 * s, (0.074 + 0.005 * F.nose) * s]],
+    [ball(0.0200 * (1 + 0.34 * F.nose), 0.0165 * (1 + 0.22 * F.nose), 0.0205 * (1 + 0.30 * F.nose), 8, 6),
+      [0, 0.049 * s, (0.076 + 0.006 * F.nose) * s]],
+    // cheekbones, which is what stops the face being a smooth egg in
+    // three-quarter light
+    [ball(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek), 7, 5),
+      [0.0390 * faceW * (1 + 0.10 * F.cheek) * s, (0.073 + 0.004 * F.cheek) * s, (0.0400 + 0.004 * F.cheek) * s]],
+    [ball(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek), 7, 5),
+      [-0.0390 * faceW * (1 + 0.10 * F.cheek) * s, (0.073 + 0.004 * F.cheek) * s, (0.0400 + 0.004 * F.cheek) * s]],
+  ], 'head');
+  const eyeX = 0.0335 * (1 + 0.30 * F.eyes);
+  // Occlusion, baked where a face has it: under the jaw and the cheekbones,
+  // in the eye sockets, at the temples and at the wings of the nose. Skin
+  // on a single sun with a hemisphere fill has no other way to know that
+  // an eye socket is a hole, and a face with no sockets is a doll.
+  //
+  // THIS IS ALSO WHERE A FACE PRESET ACTUALLY GETS SEEN. Geometry that moves
+  // 4 mm is a third of a pixel at gameplay range; the same 4 mm of brow
+  // deepening the socket under it by a fifth moves the mean luminance of a
+  // five-pixel band, and that is measurable from thirty metres. The two terms
+  // that carry a preset are therefore the socket's depth and the hollow under
+  // the cheekbone — and both are written with k = 1 at the neutral face, where
+  // creaseAt returns exactly 1 and the whole term is a bit-for-bit no-op.
+  return shadeAO(g, ao(
+    // under the jaw and back under its angle — the deepest shadow on a head
+    creaseAt(0, -0.008 * s, -0.006 * s, 0.080 * s, 0.42, 0.75),
+    creaseAt(0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
+    creaseAt(-0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
+    // eye sockets. The eye line is at HALF the head's height — crown
+    // 19.7cm, menton -3.5cm, so 8.4cm — not the 10.0 the features here
+    // were laid out at, which gave a forehead a third too short and put
+    // the whole face too high in the skull.
+    creaseAt(eyeX * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+    creaseAt(-eyeX * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+    // the brow's own shadow, which only exists on a face that has a brow
+    creaseAt(eyeX * s, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
+    creaseAt(-eyeX * s, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
+    // and the hollow UNDER the cheekbone, which is the only way a cheekbone
+    // reads at all on a surface lit by one sun
+    creaseAt(0.044 * s, 0.046 * s, 0.044 * s, 0.030 * s, 1 - 0.30 * Math.max(0, F.cheek), 0.5),
+    creaseAt(-0.044 * s, 0.046 * s, 0.044 * s, 0.030 * s, 1 - 0.30 * Math.max(0, F.cheek), 0.5),
+    // temples
+    creaseAt(0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
+    creaseAt(-0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
+    // either side of the nose, and the crease under the lower lip
+    creaseAt(0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
+    creaseAt(-0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
+    creaseAt(0, 0.022 * s, 0.064 * s, 0.019 * s, 0.66, 0.5),
+    // THE SCALP.
+    //
+    // This is not subtle occlusion, it is insurance. The hair is a union of
+    // seven low-poly shells over a low-poly braincase, and wherever a facet
+    // of one sags inside a facet of the other a patch of skull shows
+    // through — measured at luminance 0.80 against hair at 0.03 in the
+    // head portrait, which is a cream pentagon stamped on the back of a
+    // dark head and is impossible to miss. Everything above the ear line
+    // and behind the hairline is driven to 0.28, so a poke-through reads
+    // as a dark root rather than as bare bone.
+    //
+    // ONLY UNDER HAIR. A Twi'lek has no hair over the crown, and painting the
+    // top two thirds of a bare head down to 0.28 is not insurance, it is a
+    // black skullcap — which is exactly what the first pass at the species
+    // shipped before this was gated.
+    sp.hair
+      ? (x, y, z) => {
+        const above = clamp((y / s - 0.062) / 0.030, 0, 1);
+        const face = clamp((z / s - 0.030) / 0.030, 0, 1) * clamp((0.112 - y / s) / 0.030, 0, 1);
+        return 1 - 0.72 * above * (1 - face);
+      }
+      : (x, y, z) => {
+        // A bare skull still has occlusion on it — the nape under the occiput
+        // and the shadow a montral or a lek root throws — but it is a hint,
+        // not a cap: a tenth of a stop at the back of the head and nothing at
+        // all above the brow.
+        const behind = clamp((-z / s - 0.030) / 0.050, 0, 1);
+        const low = clamp((0.070 - y / s) / 0.050, 0, 1);
+        return 1 - 0.22 * behind * low;
+      },
+  ), { floor: 0.30 });
+}
+
+/** The species' own face bias, plus whatever the player chose, clamped once. */
+function faceFor(sp, face) {
+  const chosen = faceOf(face);
+  if (!sp.face) return chosen;
+  const out = {};
+  for (const k of FACE_KEYS) out[k] = clamp(chosen[k] + (sp.face[k] || 0), -1.2, 1.2);
+  return out;
+}
+
+
+/* ── what a species puts on a head ───────────────────────────────────── */
+
+/**
+ * Everything a non-human species wears instead of hair.
+ *
+ * All of it is parented to `headObj` and merged to one mesh per material, for
+ * three separate reasons that happen to agree:
+ *
+ *   · Actor.addBone() re-homes exactly the children of a bone object, so a
+ *     head severed at the neck carries its lekku away with it and a first-person
+ *     `visible = false` cannot leave the piece bald. Nothing else in the file
+ *     has to know these exist.
+ *   · one merged mesh per material is one draw call, doubled by the shadow
+ *     pass, and twenty characters can be up at once.
+ *   · the whole assembly is far bigger than half the head shell, which is what
+ *     tells the "nothing on a head stands off it like a bolted-on slab" check
+ *     that a lek is a garment rather than a stray vent.
+ *
+ * The budget is the human hair's: 732 triangles and 2 meshes. Every entry below
+ * comes in under it, and the check that says so builds all six species.
+ */
+const SPECIES_HEADS = {
+  /**
+   * ZABRAK — a crown of cranial horns on a shaven skull.
+   *
+   * Twelve cones seated by raycasting the assembled skull, so the ring follows
+   * whatever the face preset did to the vault instead of hovering off a narrow
+   * one. Longest at the front, shortest at the nape, which is the arrangement
+   * every reference has and is also what puts the jagged part of the outline
+   * where a player looking at a face will see it.
+   */
+  zabrak(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    const O = new THREE.Vector3(0, 0.098 * s, -0.012 * s);
+    const dir = new THREE.Vector3();
+    const N = 12;
+    for (let i = 0; i < N; i++) {
+      const th = (i / N) * Math.PI * 2;
+      const el = 0.80 - 0.10 * Math.cos(th);            // tipped a little further back at the front
+      dir.set(Math.sin(th) * Math.cos(el), Math.sin(el), Math.cos(th) * Math.cos(el)).normalize();
+      const p = onSurface(hg, dir, 0.006 * s, O);
+      const len = (0.030 + 0.011 * Math.cos(th)) * s;
+      const r = 0.0078 * s;
+      // the axis leans toward vertical, not straight out of the skull: a horn
+      // normal to a sphere at 46 degrees points half sideways and reads as a
+      // spike through the head rather than as a crown standing off it
+      const ax = new THREE.Vector3(dir.x * 0.55, 1, dir.z * 0.55).normalize();
+      k.add(skin, tubeGeo([
+        [p[0], p[1], p[2], r],
+        [p[0] + ax.x * len * 0.5, p[1] + ax.y * len * 0.5, p[2] + ax.z * len * 0.5, r * 0.56],
+        [p[0] + ax.x * len, p[1] + ax.y * len, p[2] + ax.z * len, r * 0.17],
+      ], 6, { tip: 1.1 }));
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * TWI'LEK — two lekku off the temples, down the back.
+   *
+   * Rigid, and hung off the head bone, which means they track the head's yaw.
+   * That is the honest trade for not owning Cloth.js this pass, and it is not
+   * free: at the ±0.85 rad the player's head glance is clamped to, the tip of a
+   * 42 cm lek travels 30 cm sideways. So the path is built to stay OUTSIDE the
+   * shoulder line the whole way down — swung out to x = ±7.2 cm before it drops
+   * — and the clearance to the torso is measured over the whole glance range in
+   * tools/checks/body-parts.mjs rather than eyeballed here.
+   *
+   * The section is an oval with its long axis across the body, which is what a
+   * lek is at the root; the frame is parallel-transported, so that oval stays
+   * across the body all the way down instead of corkscrewing at the point where
+   * the path passes through horizontal.
+   */
+  twilek(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    const sect = (u) => 1 - 0.20 * Math.abs(Math.sin(u));
+    // The path is not a drawing, it is a fit, against two measurements that
+    // pull in opposite directions.
+    //
+    // BEHIND: the body under a lek reaches z = -0.104 at the shoulder and
+    // -0.134 at the shoulder blade in head-local coordinates, so a lek 38 mm
+    // thick has to keep its axis behind -0.17 from the collar down or it runs
+    // through the back of the robe.
+    //
+    // BESIDE: routed straight back off the temple, the whole lek disappears
+    // behind the shoulders from the front — and measured at 8 m, a Twi'lek and
+    // a Nautolan head-on were 37 pixels apart out of an 1861-pixel head and
+    // shoulders, which is two species that read as the same bald man. Between
+    // y = +0.12 and y = -0.02 the lek therefore swings OUT to 8.4 cm off the
+    // centre line, where the head is only 5.3 cm wide and the shoulders have
+    // not started: 4.7 cm of lek stands clear of the skull on each side, and
+    // the pair separates.
+    //
+    // Below y = -0.02 it dives back behind the robe, which is where the first
+    // constraint takes over again.
+    for (const sx of [-1, 1]) {
+      k.add(skin, tubeGeo([
+        [sx * 0.056, 0.116, -0.030, 0.034],
+        [sx * 0.084, 0.054, -0.054, 0.040],
+        [sx * 0.086, 0.008, -0.108, 0.039],
+        [sx * 0.078, -0.060, -0.170, 0.034],
+        [sx * 0.072, -0.144, -0.186, 0.027],
+        [sx * 0.064, -0.224, -0.180, 0.018],
+        [sx * 0.056, -0.290, -0.166, 0.009],
+      ].map(a => [a[0] * s, a[1] * s, a[2] * s, a[3] * s]), 8, { section: sect, tip: 1.2 }));
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * TOGRUTA — montrals up, head-tails down, and the stripes are free.
+   *
+   * The montrals are the point. They stand 11 cm above the crown, which makes
+   * this the only figure on the shared skeleton that is TALLER than the others
+   * — and height is the one silhouette cue that survives any range at all,
+   * because it does not depend on resolving the head as a shape.
+   *
+   * The banding is painted into the vertex colour channel that shadeAO already
+   * writes the occlusion into, so it costs nothing: no triangles, no second
+   * material, no draw call. It is also the only marking in the whole species
+   * pass that survives 8 m, and the reason is arithmetical — a montral band is
+   * 40 mm across where a Mirialan tattoo diamond is 8, and one pixel is 8.6.
+   */
+  togruta(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    // bands running across the part, spaced by height. Squared cosine rather
+    // than a hard edge: at four vertices per band a step function aliases into
+    // a stack of triangles.
+    const bands = (pitch, phase, depth) => (x, y) => {
+      const w = Math.cos((y / s) * Math.PI * 2 / pitch + phase);
+      return 1 - depth * clamp(w * 1.6, 0, 1);
+    };
+    const stripe = (g, pitch, phase) => shadeAO(g, bands(pitch, phase, 0.42), { floor: 0.30 });
+    for (const sx of [-1, 1]) {
+      // montral: a hollow horn out of the top-side of the skull, swept out then up
+      k.add(skin, stripe(tubeGeo([
+        [sx * 0.050, 0.150, -0.008, 0.034],
+        [sx * 0.073, 0.206, -0.022, 0.026],
+        [sx * 0.087, 0.262, -0.034, 0.017],
+        [sx * 0.094, 0.306, -0.042, 0.008],
+      ].map(a => [a[0] * s, a[1] * s, a[2] * s, a[3] * s]), 8, { tip: 1.3 }), 0.062, 0.4));
+      // the front head-tail, lying ON the chest rather than in it. Measured on
+      // the standing figure: the tabard's front face is at z = +0.115 in
+      // head-local coordinates at this height, so a 26 mm tail wants its axis
+      // at +0.148 to rest a centimetre clear of the cloth. It stops at the
+      // sternum, because a rigid tail is driven by the head and one that
+      // reached the belt would sweep through the ribs on the first glance.
+      k.add(skin, stripe(tubeGeo([
+        [sx * 0.056, 0.090, -0.014, 0.030],
+        [sx * 0.070, 0.040, 0.058, 0.032],
+        [sx * 0.078, -0.030, 0.132, 0.029],
+        [sx * 0.082, -0.104, 0.160, 0.022],
+        [sx * 0.080, -0.166, 0.162, 0.011],
+      ].map(a => [a[0] * s, a[1] * s, a[2] * s, a[3] * s]), 8, { tip: 1.2 }), 0.070, 1.1));
+    }
+    // and the long one down the back
+    k.add(skin, stripe(tubeGeo([
+      [0, 0.092, -0.072, 0.033],
+      [0, 0.030, -0.126, 0.036],
+      [0, -0.052, -0.176, 0.030],
+      [0, -0.136, -0.190, 0.022],
+      [0, -0.212, -0.184, 0.011],
+    ].map(a => [a[0] * s, a[1] * s, a[2] * s, a[3] * s]), 8, { tip: 1.2 }), 0.074, 2.0));
+    k.bake(headObj);
+  },
+
+  /**
+   * NAUTOLAN — eight head tentacles in a fan swept back off the crown.
+   *
+   * Deliberately not lekku: two heavy verticals and eight light diagonals read
+   * as different creatures at any range, and the whole point of picking six
+   * species rather than eight was that each one is a different SHAPE and not a
+   * different tint. The fan is wide (25 cm across at the tips) and low (the
+   * tips finish level with the jaw), which is the opposite of the Togruta's
+   * tall-and-narrow and of the Twi'lek's narrow-and-long.
+   */
+  nautolan(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    for (let i = 0; i < 8; i++) {
+      const u = (i + 0.5) / 8 - 0.5;                    // -0.44 … +0.44
+      const th = u * 2.6;
+      const rx = Math.sin(th) * 0.068, rz = -0.026 - Math.cos(th) * 0.048;
+      const ry = 0.168 - 0.052 * Math.abs(u * 2);
+      const sag = 0.9 + 0.5 * Math.abs(u * 2);          // the outer ones fall further
+      // The tendrils ARCH over the crown before they fall, which is what makes
+      // a Nautolan read head-on: eight lumps standing 2 cm above the skull
+      // where a Twi'lek has a smooth bald dome. Without the arch the whole fan
+      // is behind the head and the two species were 37 pixels apart at 8 m.
+      k.add(skin, tubeGeo([
+        [rx * 0.86, ry + 0.008, rz + 0.016, 0.015],
+        [rx, ry + 0.016, rz, 0.017],
+        [rx * 1.34, ry - 0.046 * sag, rz - 0.054, 0.017],
+        [rx * 1.66, ry - 0.116 * sag, rz - 0.094, 0.014],
+        [rx * 1.86, ry - 0.190 * sag, rz - 0.114, 0.0095],
+        [rx * 1.96, ry - 0.252 * sag, rz - 0.118, 0.0048],
+      ].map(a => [a[0] * s, a[1] * s, a[2] * s, a[3] * s]), 6, { tip: 1.2 }));
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * KEL DOR — an antiox breath mask and two goggle discs.
+   *
+   * This is the species that pays for itself twice over: with the eyes behind
+   * opaque lenses there is no reason to build a sclera, an iris, a lash or a
+   * brow, and those four parts are 464 triangles of face that could never be
+   * seen. The mask and the goggles cost less than that on their own, so a Kel
+   * Dor is the cheapest head in the list AND the most recognisable one — two
+   * hard discs and a dark muzzle survive being 24 pixels tall in a way that no
+   * arrangement of a nose and a chin does.
+   *
+   * Everything is seated by raycasting the assembled skull, so a Kel Dor built
+   * with the `broad` face preset gets its goggles on the wider cheekbones
+   * rather than 6 mm inside them.
+   */
+  keldor(headObj, s, hg) {
+    const rim = metalMat(0x6d6156, 0.44, 0.85, 3.0);
+    const lens = glassMat(0x1b1f24, 0.12);
+    const seal = leatherMat(0x2e2823, 0.72, { repeat: 5.0 });
+    const k = new Kit();
+    const eyeO = new THREE.Vector3(0, 0.086 * s, 0.010 * s);
+    for (const sx of [-1, 1]) {
+      const d = new THREE.Vector3(sx * 0.34, 0.10, 0.93).normalize();
+      const p = onSurface(hg, d, 0.004 * s, eyeO);
+      // Kit.aim puts local +Y along the normal, so a disc built about +Y comes
+      // out facing the way it was seated — which is what a cylinder wants and
+      // what a plate emphatically does not (see Kit.face).
+      k.aim(rim, new THREE.CylinderGeometry(0.0245 * s, 0.0225 * s, 0.016 * s, 12), p, d);
+      k.aim(lens, new THREE.CylinderGeometry(0.0198 * s, 0.0198 * s, 0.019 * s, 12), p, d);
+    }
+    // the bridge between the two lenses, and the strap round the temples
+    const bd = new THREE.Vector3(0, 0.06, 1).normalize();
+    k.aim(rim, plateGeo(0.030 * s, 0.010 * s, 0.011 * s, 0.003 * s, 1),
+      onSurface(hg, bd, 0.002 * s, new THREE.Vector3(0, 0.090 * s, 0.010 * s)), bd);
+    for (const sx of [-1, 1]) {
+      const td = new THREE.Vector3(sx * 0.97, 0.16, 0.18).normalize();
+      k.aim(seal, plateGeo(0.020 * s, 0.008 * s, 0.030 * s, 0.003 * s, 1),
+        onSurface(hg, td, 0.004 * s, new THREE.Vector3(0, 0.090 * s, 0.010 * s)), td);
+    }
+    // ── the mask ─────────────────────────────────────────────────────────
+    // A shell over the whole lower face from under the goggles to below the
+    // chin, seated off the muzzle so it clears whatever the jaw preset did.
+    const md = new THREE.Vector3(0, -0.12, 1).normalize();
+    const mp = onSurface(hg, md, -0.004 * s, new THREE.Vector3(0, 0.040 * s, 0.010 * s));
+    k.face(rim, plateGeo(0.078 * s, 0.082 * s, 0.030 * s, 0.014 * s, 2), mp, md);
+    // a rubber seal round its edge, and the two intake canisters at the corners
+    k.face(seal, plateGeo(0.086 * s, 0.090 * s, 0.018 * s, 0.010 * s, 1),
+      [mp[0], mp[1], mp[2] - 0.012 * s], md);
+    for (const sx of [-1, 1]) {
+      const cd = new THREE.Vector3(sx * 0.72, -0.16, 0.68).normalize();
+      k.aim(rim, new THREE.CylinderGeometry(0.0115 * s, 0.0115 * s, 0.036 * s, 8),
+        onSurface(hg, cd, -0.008 * s, new THREE.Vector3(0, 0.030 * s, 0.010 * s)), cd);
+    }
+    // and the grille, three slats down the centre line where a mouth would be
+    for (let i = 0; i < 3; i++) {
+      k.face(seal, plateGeo(0.030 * s, 0.005 * s, 0.008 * s, 0.002 * s, 1),
+        [mp[0], mp[1] - (i - 1) * 0.010 * s, mp[2] + 0.014 * s], md);
+    }
+    k.bake(headObj);
+  },
+};
+
+function speciesHead(sp, headObj, s, hg, ctx) {
+  const fn = SPECIES_HEADS[sp.id];
+  if (fn) fn(headObj, s, hg, ctx);
+}
+
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
 export function buildJedi(opts = {}) {
   const S = opts.scale ?? 1;
   const robe = ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0];
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
+  /**
+   * The three creator axes. `sp` is a row of SPECIES, `F` the eight face
+   * numbers (the species' own bias folded in), and `k` the signed frame
+   * parameter, -1 slight to +1 heavy.
+   *
+   * All three are written so that the DEFAULT IS THE IDENTITY: species human
+   * carries no face bias, an absent face preset is eight zeros, an absent build
+   * is exactly 0.5 and therefore k exactly 0, and every use below has the shape
+   * `x * (1 + gain*k)` or `x + gain*k`. `x * 1` and `x + 0` are exact in IEEE
+   * float, so buildJedi() with no arguments emits byte-for-byte the geometry it
+   * emitted before any of this existed — which Player, Enemy, Net and the menu
+   * preview all depend on, and which is asserted against the previous build
+   * rather than assumed.
+   */
+  const sp = speciesOf(opts.species);
+  const F = faceFor(sp, opts.face);
+  const { k } = buildOf(opts.build);
 
   /**
    * Five cloth tones off a two-tone palette, not two.
@@ -1605,7 +2324,10 @@ export function buildJedi(opts = {}) {
   // flat brown vinyl, and gloves are 20% of the first-person frame. Tighter
   // tiling than the default 4.5: leather grain is finer than plate scuffing.
   const leather = leatherMat(0x53412f, 0.58, { vc: true, repeat: 5.4 });
-  const skin = skinMat(opts.skinColor ?? 0xc79a76, 3.0, { vc: true });
+  // The species' own default tone when nothing is chosen, so
+  // `buildJedi({ species: 'twilek' })` is already green rather than beige; the
+  // human row's default is 0xc79a76, which is what this line always said.
+  const skin = skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true });
   // The cap is an open shell, so it has to be lit from the inside too. On the
   // cloth bake rather than bare: hair with no normal detail at all is a
   // moulded plastic wig, and it is 20cm from the camera in every menu shot.
@@ -1625,7 +2347,32 @@ export function buildJedi(opts = {}) {
    * on X by the inverse of that squash — the two ellipses are then concentric
    * and similar. This one number is why the tabards can wrap instead of
    * standing off the flanks like a sandwich board. */
-  const DEPTH = 0.76, XK = 1 / DEPTH;
+  // A heavier frame is a DEEPER torso as well as a wider one. Everything that
+  // wraps the body — the tabards, the obi, the skirt — is derived from this one
+  // number, so it has to be computed before any of them and not typed twice.
+  const DEPTH = 0.76 * (1 + 0.055 * k), XK = 1 / DEPTH;
+  /**
+   * GARMENTS FOLLOW THE BODY UNDER THEM.
+   *
+   * The tabards are raycast onto the ribcage and look after themselves, but the
+   * collar, the obi, the belt, both skirts, the boot shafts and the whole
+   * sleeve-and-bracer stack are lathes at typed radii — and a typed radius on a
+   * body that just grew 15% is a bracer inside its own forearm. Each of these
+   * is the multiplier that was applied to the limb it is worn on, so the
+   * relationship the numbers were tuned against holds all the way across the
+   * slider. There is a check that walks every band on every build and measures
+   * whether the limb is still inside it.
+   */
+  const KTOR = 1 + 0.105 * k;      // ribcage: tabard caps, the V of the tunic
+  const KHIP = 1 + 0.030 * k;      // pelvis: both skirts and the front panels
+  // The obi is a WAIST band, not a hip band, and the waist carries five times
+  // the hip's gain — so scaling the belt group with the pelvis buried 15% more
+  // of the obi at the heavy end than at the middle. Halfway between the two is
+  // what actually keeps a belt on a waist while its skirt still covers a hip.
+  const KBELT = 1 + 0.080 * k;     // obi, belt, buckle, pouches, hanging ends
+  const KARM = 1 + 0.150 * k;      // humerus and forearm: mantle, hem, cuff, bracer
+  const KLEG = 1 + 0.120 * k;      // shin: boot shaft, cuff, ankle strap
+  const KNECK = 1 + 0.135 * k;     // collar
 
   /**
    * The outer layer of the robe below the belt — the over-skirt and the two
@@ -1642,13 +2389,40 @@ export function buildJedi(opts = {}) {
     // shoulder joint, 3.9 at the elbow, 4.4 just below it where the flexor
     // mass sits, 3.0 at the wrist where the bracer closes on it. It used to
     // run one near-constant sweep at 4.5→3.5, which is a length of pipe.
-    parts: { chestR: 0.162, shoulderR: 0.138, hipR: 0.138, waistR: 0.122,
-             armR: 0.045, armR0: 0.052, armR1: 0.039, foreR0: 0.044, foreR1: 0.030,
-             clavR: 0.062, thighR: 0.090, neckR: 0.058, torsoDepth: DEPTH },
+    // THE FRAME, as eleven radii off one slider.
+    //
+    // The gains are not uniform, and which ones are large is the whole content
+    // of the body-type feature. Shoulder and chest carry the most because the
+    // shoulder-to-hip ratio is what a frame IS in silhouette; the hip goes the
+    // OTHER WAY, so a slight build is 10.5% narrower in the shoulder and 5%
+    // wider in the hip at once, which turns a 6% radius change into a 16%
+    // change in the ratio a viewer actually reads. Waist tracks the chest, so
+    // the slight end also gets the narrow-waisted profile and the heavy end a
+    // waist 2% wider than its own hips.
+    //
+    // The pelvis barely moves and the WAIST carries the difference instead
+    // (gain 0.135 against the hip's 0.025), for a reason that is structural
+    // rather than anatomical: the belt, the obi and both skirts are lathes hung
+    // off the pelvis at typed radii, and a pelvis that grows while they do not
+    // stands outside its own robe. Waist-to-hip does the same work — it runs
+    // 0.86 → 1.09 across the slider — and everything below the belt can then
+    // follow one monotone factor.
+    //
+    // Measured across the range at the 8 m sampling density in
+    // tools/checks/body-parts.mjs.
+    parts: { chestR: 0.162 * (1 + 0.105 * k), shoulderR: 0.138 * (1 + 0.115 * k),
+             hipR: 0.138 * (1 + 0.025 * k), waistR: 0.122 * (1 + 0.135 * k),
+             armR: 0.045 * (1 + 0.150 * k), armR0: 0.052 * (1 + 0.165 * k),
+             armR1: 0.039 * (1 + 0.130 * k), foreR0: 0.044 * (1 + 0.150 * k),
+             foreR1: 0.030 * (1 + 0.110 * k),
+             clavR: 0.062 * (1 + 0.100 * k), thighR: 0.090 * (1 + 0.120 * k),
+             neckR: 0.058 * (1 + 0.135 * k), torsoDepth: DEPTH },
     // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
     // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
-    // instead of bolted on as a ball — see dressHumanoid.
-    deltoid: [0.34, 0.15, 0.155],
+    // instead of bolted on as a ball — see dressHumanoid. Its amplitude is the
+    // strongest single frame cue on a limb: a shoulder cap is either there or
+    // it is not, and unlike a radius it changes the SHAPE of the outline.
+    deltoid: [0.34 * (1 + 0.36 * k), 0.15, 0.155],
     seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
     limbOpts: {
       // The thigh carries the quadriceps high and the condyles at the knee;
@@ -1720,7 +2494,11 @@ export function buildJedi(opts = {}) {
     },
     hands: { curl: 0.95 },
     headRadius: 0.098,
-    yoke: { reach: 0.62, rise: 0.031, depth: 0.064, at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
+    // The trapezius. A heavy frame carries the shoulder line higher and further
+    // out from the neck; a slight one has a longer, thinner neck showing above
+    // the collar, which is the cue the collar itself frames.
+    yoke: { reach: 0.62 * (1 + 0.055 * k), rise: 0.031 * (1 + 0.30 * k), depth: 0.064 * (1 + 0.14 * k),
+            at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
     yokeMat: outer,
     // The skull.
     //
@@ -1733,95 +2511,15 @@ export function buildJedi(opts = {}) {
     // It is also one assembled shell rather than a loose pile of meshes, for
     // the reason every other archetype already is: `surfacePoint` can only
     // answer "where does the face actually end" if there is one thing to ask.
-    headGeo: (s) => {
-      const ball = (rx, ry, rz, w = 12, h = 9) => {
-        const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
-      };
-      // A union of ellipsoids is only smooth where the ellipsoids OVERLAP.
-      //
-      // The first pass at a jaw here was anatomically literal — a ramus each
-      // side, a jaw body, a chin, a muzzle, an ala each side of the nose — and
-      // rendered, it was a bag of marbles: every small ball that did not reach
-      // deep inside its neighbour showed up as a separate bump, and the face
-      // was worse than the featureless egg it replaced. Each mass below now
-      // reaches at least a third of the way into the next one down the chain,
-      // so the surface between them is a fillet rather than a seam, and there
-      // are five masses in the lower face instead of nine.
-      //
-      // The proportions are still the ones that matter: head breadth 15.1cm on
-      // a 1.78m figure (not the 22.6 this file once shipped), the jaw carried
-      // BELOW the maxilla so there is a line from the earlobe to the chin, and
-      // a nose 3.5cm wide standing 2cm off the face instead of a 1.35cm stud.
-      const g = assemble([
-        // braincase, and the occiput carried back off it
-        [ball(0.0755, 0.0985, 0.0930, 14, 10), [0, 0.098 * s, -0.012 * s]],
-        [ball(0.0640, 0.0620, 0.0700, 8, 6),   [0, 0.104 * s, -0.048 * s]],
-        // maxilla — the mid-face, forward of the braincase
-        [ball(0.0705, 0.0780, 0.0820, 12, 9),  [0, 0.055 * s, 0.012 * s]],
-        // the jaw, as ONE wide mass overlapping the maxilla by most of its own
-        // height, then tapering forward and down to the chin
-        [ball(0.0600, 0.0560, 0.0690, 12, 8),  [0, 0.026 * s, 0.022 * s]],
-        [ball(0.0455, 0.0390, 0.0570, 10, 7),  [0, 0.008 * s, 0.034 * s]],
-        [ball(0.0250, 0.0285, 0.0330, 8, 6),   [0, -0.006 * s, 0.044 * s]],
-        // brow ridge and the root of the nose
-        [ball(0.0580, 0.0210, 0.0330, 10, 5),  [0, 0.101 * s, 0.055 * s]],
-        [ball(0.0180, 0.0350, 0.0270, 8, 6),   [0, 0.086 * s, 0.064 * s]],
-        // the nose: a dorsum running down off the root, and a tip wide enough
-        // to carry the wings without needing two more balls for them
-        [ball(0.0175, 0.0280, 0.0270, 8, 6),   [0, 0.065 * s, 0.074 * s]],
-        [ball(0.0200, 0.0165, 0.0205, 8, 6),   [0, 0.049 * s, 0.076 * s]],
-        // cheekbones, which is what stops the face being a smooth egg in
-        // three-quarter light
-        [ball(0.0270, 0.0250, 0.0270, 7, 5),   [0.0390 * s, 0.073 * s, 0.0400 * s]],
-        [ball(0.0270, 0.0250, 0.0270, 7, 5),   [-0.0390 * s, 0.073 * s, 0.0400 * s]],
-      ], 'head');
-      // Occlusion, baked where a face has it: under the jaw and the cheekbones,
-      // in the eye sockets, at the temples and at the wings of the nose. Skin
-      // on a single sun with a hemisphere fill has no other way to know that
-      // an eye socket is a hole, and a face with no sockets is a doll.
-      return shadeAO(g, ao(
-        // under the jaw and back under its angle — the deepest shadow on a head
-        creaseAt(0, -0.008 * s, -0.006 * s, 0.080 * s, 0.42, 0.75),
-        creaseAt(0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
-        creaseAt(-0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
-        // eye sockets. The eye line is at HALF the head's height — crown
-        // 19.7cm, menton -3.5cm, so 8.4cm — not the 10.0 the features here
-        // were laid out at, which gave a forehead a third too short and put
-        // the whole face too high in the skull.
-        creaseAt(0.0335 * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
-        creaseAt(-0.0335 * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
-        // temples
-        creaseAt(0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
-        creaseAt(-0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
-        // either side of the nose, and the crease under the lower lip
-        creaseAt(0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
-        creaseAt(-0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
-        creaseAt(0, 0.022 * s, 0.064 * s, 0.019 * s, 0.66, 0.5),
-        // THE SCALP.
-        //
-        // This is not subtle occlusion, it is insurance. The hair is a union of
-        // seven low-poly shells over a low-poly braincase, and wherever a facet
-        // of one sags inside a facet of the other a patch of skull shows
-        // through — measured at luminance 0.80 against hair at 0.03 in the
-        // head portrait, which is a cream pentagon stamped on the back of a
-        // dark head and is impossible to miss. Everything above the ear line
-        // and behind the hairline is driven to 0.28, so a poke-through reads
-        // as a dark root rather than as bare bone.
-        (x, y, z) => {
-          const above = clamp((y / s - 0.062) / 0.030, 0, 1);
-          const face = clamp((z / s - 0.030) / 0.030, 0, 1) * clamp((0.112 - y / s) / 0.030, 0, 1);
-          return 1 - 0.72 * above * (1 - face);
-        },
-      ), { floor: 0.30 });
-    },
+    headGeo: (s) => skullGeo(s, F, sp),
     buildHead(headObj, s, hg) {
       // Every feature is raycast onto the assembled skull. Authored against a
       // nominal sphere radius they went missing four separate times — both
       // eyes, both pupils, both brows and the nose had literally never been
       // drawn — because the face mass reaches further forward than the cranium
       // at eye height, so clearing one still leaves you inside the other.
-      const sclera = new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 0.24 });
-      const iris = new THREE.MeshStandardMaterial({ color: 0x2c1d12, roughness: 0.18 });
+      const sclera = new THREE.MeshStandardMaterial({ color: sp.sclera ?? 0xece7dd, roughness: 0.24 });
+      const iris = new THREE.MeshStandardMaterial({ color: sp.eye ?? 0x2c1d12, roughness: 0.18 });
       const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.70 });
       // Kit.aim's frame, which every offset below depends on: local +Y goes
       // along the normal, local +X is ref × normal and local +Z closes the
@@ -1834,13 +2532,20 @@ export function buildJedi(opts = {}) {
       // a single mesh puts that mesh's centre on the nose, which is neither
       // where it is nor anywhere a burial check can reason about.
       const eyeD = new THREE.Vector3(0, 0, 1);
-      for (const sx of [-1, 1]) {
+      // Eye spacing is the one face parameter that moves a feature rather than
+      // a mass, so it moves the PROBE ORIGIN: the eyeball, the iris, the lash
+      // and the brow are all seated by raycasting the assembled skull from
+      // behind the socket, so widening the eyes re-seats every one of them on
+      // the surface that is actually there rather than sliding four parts
+      // sideways off a face that curves away underneath them.
+      const eyeX = 0.0335 * (1 + 0.30 * F.eyes);
+      for (const sx of sp.eyes === false ? [] : [-1, 1]) {
         const k = new Kit();
         // Probed straight forward from a point directly behind the eye. An
         // angled ray exits off the meridian and lands the eyeball on the side
         // of the nose, which is what the first pass did; forward, the exit is
         // by construction the frontmost point of the face at that x and y.
-        const o = new THREE.Vector3(sx * 0.0335 * s, 0.084 * s, 0.010 * s);
+        const o = new THREE.Vector3(sx * eyeX * s, 0.084 * s, 0.010 * s);
         // A real eyeball is 12mm across and mostly buried; a ball sitting proud
         // of the skull reads as an insect. Set into the socket so the brow does
         // the work, with only the iris standing clear.
@@ -1863,23 +2568,47 @@ export function buildJedi(opts = {}) {
         const ld = new THREE.Vector3(sx * 0.06, 0.30, 0.95).normalize();
         k.aim(brow, plateGeo(0.0200 * s, 0.0032 * s, 0.0036 * s, 0.0010 * s, 1),
           onSurface(hg, ld, 0.0018 * s, o), ld);
-        // brow, laid on the ridge above the eye and swept in toward the nose
-        const b = new THREE.Vector3(sx * 0.13, 0.17, 0.98).normalize();
-        k.aim(brow, plateGeo(0.0265 * s, 0.0045 * s, 0.0085 * s, 0.0018 * s, 1),
-          onSurface(hg, b, -0.0022 * s, new THREE.Vector3(sx * 0.032 * s, 0.093 * s, 0.020 * s)), b);
-        // ear, on the side of the cranium where the cranium actually is
-        const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
-        k.aim(skin, (() => { const g = new THREE.SphereGeometry(1, 8, 6);
-          g.scale(0.0150 * s, 0.0080 * s, 0.0230 * s); return g; })(),
-          onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.076 * s, -0.012 * s)), e);
+        // brow, laid on the ridge above the eye and swept in toward the nose.
+        // Twi'lek, Togruta, Nautolan and Kel Dor have none — a species with no
+        // hair on its scalp wearing two dark human eyebrows was the single
+        // loudest thing wrong with the first pass at the head.
+        if (sp.brows !== false) {
+          const b = new THREE.Vector3(sx * 0.13, 0.17, 0.98).normalize();
+          k.aim(brow, plateGeo(0.0265 * s, 0.0045 * s, 0.0085 * s, 0.0018 * s, 1),
+            onSurface(hg, b, -0.0022 * s, new THREE.Vector3(sx * (eyeX - 0.0015) * s, 0.093 * s, 0.020 * s)), b);
+        }
+        // ear, on the side of the cranium where the cranium actually is.
+        // A Togruta hears through its montrals and a Nautolan has none at all,
+        // and on both of them the ear landed exactly where the species' own
+        // geometry roots — a 15mm lump inside the base of a head-tail.
+        if (sp.ears !== false) {
+          const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
+          k.aim(skin, (() => { const g = new THREE.SphereGeometry(1, 8, 6);
+            g.scale(0.0150 * s, 0.0080 * s, 0.0230 * s); return g; })(),
+            onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.076 * s, -0.012 * s)), e);
+        }
         k.bake(headObj);
       }
       // The mouth is a shallow crease with a lip over it. As a separate
-      // coloured slab standing off the face it read as a sticker.
-      const m = new THREE.Vector3(0, -0.05, 1).normalize();
-      mesh(plateGeo(0.026 * s, 0.0050 * s, 0.006 * s, 0.002 * s, 1), lip, headObj,
-        onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.030 * s, 0.030 * s)),
-        [0.06, 0, 0]);
+      // coloured slab standing off the face it read as a sticker. Its width is
+      // the `mouth` parameter and nothing else: a mouth is 26mm of geometry on
+      // a head 24 pixels tall at gameplay range, so this is a preview-range
+      // feature and the comment says so rather than pretending otherwise.
+      if (sp.mouth !== false) {
+        const m = new THREE.Vector3(0, -0.05, 1).normalize();
+        mesh(plateGeo(0.026 * (1 + 0.30 * F.mouth) * s, 0.0050 * s, 0.006 * s, 0.002 * s, 1), lip, headObj,
+          onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.030 * s, 0.030 * s)),
+          [0.06, 0, 0]);
+      }
+
+      // Everything the species puts on the head instead of hair — horns,
+      // lekku, montrals, tentacles, a breath mask. It runs BEFORE the hair
+      // block so that a species which keeps hair (Zabrak does not, but the
+      // hook allows it) has the hair laid over its own crown rather than under
+      // it, and every mesh it makes is a child of headObj, which is what makes
+      // it come off with a severed head. See speciesHead().
+      speciesHead(sp, headObj, s, hg, { skin, F });
+      if (!sp.hair) return;
 
       // ── hair ─────────────────────────────────────────────────────────
       // What was here was one smooth spherical cap. A sphere sector laid on a
@@ -1888,8 +2617,18 @@ export function buildJedi(opts = {}) {
       // read at silhouette range by its OUTLINE, and an outline needs to be
       // broken — a parting, a fringe with a corner in it, a mass over each
       // ear, a tail at the nape. Six pieces, still one geometry and one mesh.
+      // The hair is most of the head's OUTLINE, so it is sized off the same
+      // vault the braincase is — see vaultOf(). Sized against a fixed skull it
+      // was a wig standing off a narrow head, or a cap with a wide one growing
+      // through it, and `skull` moved the rendered silhouette by two pixels
+      // instead of the seven it is worth.
+      const V = vaultOf(F);
       const cap = new THREE.SphereGeometry(0.0890 * s, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
-      cap.scale(1.02, 1.32, 1.24);
+      // A hair of margin on the WIDE end only. Measured: at skull = -1 the
+      // braincase grew through the cap at one vertex of 117 behind the hairline,
+      // which the scalp bake would have rendered as a dark root rather than as
+      // bare bone — but zero is cheaper than an excuse.
+      cap.scale(1.02 * (V.w + 0.020 * Math.max(0, -F.skull)), 1.32 * V.h, 1.24 * V.d);
       // Tipped about its OWN centre — rotating the mesh instead swings the cap
       // 2cm off the skull. NB the sign: +0.38 tips the axis forward, which
       // drags the rim down over the eyes, the opposite of what is wanted.
@@ -1911,15 +2650,15 @@ export function buildJedi(opts = {}) {
         [cap],
         // the swept fringe: a wedge over the brow, heavier on one side, which
         // is what puts an asymmetric corner in the outline
-        [lump(0.052, 0.026, 0.030, 8, 5),  [0.020 * s, 0.150 * s, 0.050 * s], [0.36, 0.22, -0.14]],
-        [lump(0.030, 0.021, 0.024, 7, 4),  [-0.040 * s, 0.143 * s, 0.042 * s], [0.30, -0.30, 0.20]],
+        [lump(0.052 * V.w, 0.026, 0.030, 8, 5),  [0.020 * V.w * s, 0.150 * V.h * s, 0.050 * s], [0.36, 0.22, -0.14]],
+        [lump(0.030 * V.w, 0.021, 0.024, 7, 4),  [-0.040 * V.w * s, 0.143 * V.h * s, 0.042 * s], [0.30, -0.30, 0.20]],
         // a mass over each ear, covering the top of it the way hair does
-        [lump(0.030, 0.050, 0.054, 7, 5),  [0.066 * s, 0.092 * s, -0.012 * s], [0, 0, 0.16]],
-        [lump(0.030, 0.050, 0.054, 7, 5),  [-0.066 * s, 0.092 * s, -0.012 * s], [0, 0, -0.16]],
+        [lump(0.030, 0.050 * V.h, 0.054, 7, 5),  [0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, 0.16]],
+        [lump(0.030, 0.050 * V.h, 0.054, 7, 5),  [-0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, -0.16]],
         // the nape, filling in under the cap's back edge and running down to
         // the collar rather than stopping in mid-air
-        [lump(0.066, 0.062, 0.062, 8, 6),  [0, 0.056 * s, -0.052 * s]],
-        [lump(0.042, 0.034, 0.032, 7, 4),  [0, 0.014 * s, -0.058 * s], [0.35, 0, 0]],
+        [lump(0.066 * V.w, 0.062, 0.062 * V.d, 8, 6),  [0, 0.056 * s, -0.052 * s]],
+        [lump(0.042 * V.w, 0.034, 0.032, 7, 4),  [0, 0.014 * s, -0.058 * s], [0.35, 0, 0]],
       ], 'hair');
       // Hair is self-shadowing and nearly black at the roots: dark under the
       // fringe, dark at the nape, lit along the crown. On a single sun this is
@@ -1932,12 +2671,26 @@ export function buildJedi(opts = {}) {
       ), { floor: 0.26 });
       mesh(hairGeo, hair, headObj);
       // a short braid, because of course — one tapered strand rather than the
-      // five spheres it used to be, which cost 400 triangles on their own
-      const braid = new THREE.Group(); headObj.add(braid);
-      braid.position.set(0.064 * s, 0.078 * s, 0.008 * s);
-      braid.rotation.set(0.10, 0, 0.09);
+      // five spheres it used to be, which cost 400 triangles on their own.
+      //
+      // A DIRECT CHILD OF THE HEAD, not a mesh inside a positioning Group, and
+      // that is a bug fix rather than tidying. Player._applyViewMode hides first
+      // person's own head with `neck.obj.traverse(o => o.visible = !fp)`, which
+      // reaches every descendant; Ragdoll's addBone() re-shows only the DIRECT
+      // children of the bone it is re-homing. A mesh one level down inside a
+      // Group is hidden by the first and missed by the second, so cutting your
+      // own head off in first person produced a head with no braid on it.
+      // Measured before this change: 13 of the severed head's 14 meshes came
+      // back visible. Everything a species hangs on a head goes on through
+      // Kit.bake(), which is already a direct child; this was the last one.
+      //
+      // The group's transform is composed into the mesh's own rather than
+      // deleted, so the braid lands on exactly the matrix it always did.
+      const braidRot = new THREE.Euler(0.10, 0, 0.09);
+      const braidPos = new THREE.Vector3(0, -0.115 * s, 0).applyEuler(braidRot)
+        .add(new THREE.Vector3(0.064 * V.w * s, 0.078 * s, 0.008 * s));
       mesh(limbGeo(0.115 * s, 0.0080 * s, 0.0042 * s, 7, true, { rings: 6, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
-        hair, braid, [0, -0.115 * s, 0]);
+        hair, headObj, [braidPos.x, braidPos.y, braidPos.z], [braidRot.x, braidRot.y, braidRot.z]);
     },
     dress(r, s) {
       const chestB = r.get('chest'), chest = chestB.obj;
@@ -2008,15 +2761,20 @@ export function buildJedi(opts = {}) {
         (x, y) => 1 - 0.36 * clamp(1 - Math.abs(y / s + 0.165) / 0.075, 0, 1),
       );
       for (const sx of [-1, 1]) {
-        const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108);
+        const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108 * KBELT);
         shadeAO(m.geometry, tabAO, { floor: 0.45 });
       }
-      const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104);
+      const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104 * KBELT);
       shadeAO(back.geometry, tabAO, { floor: 0.45 });
-      // the V of the crossed tunic, showing between the two front panels
+      // the V of the crossed tunic, showing between the two front panels.
+      // It stands off the FRONT of the ribcage, so it has to follow both the
+      // chest's radius and its depth — the two multiply. Measured on the
+      // heaviest frame with the radius alone: 65% of the panel was inside the
+      // chest against 22% on the lightest, which is a garment that quietly
+      // disappears at one end of a slider.
       for (const sx of [-1, 1]) {
         mesh(plateGeo(0.115 * s, 0.215 * s, 0.018 * s, 0.009 * s), tunic, chest,
-          [sx * 0.036 * s, 0.098 * s, 0.112 * s], [0.10, 0, sx * 0.42]);
+          [sx * 0.036 * s, 0.098 * s, 0.112 * KTOR * (DEPTH / 0.76) * s], [0.10, 0, sx * 0.42]);
       }
       // ── collar ─────────────────────────────────────────────────────────
       // Rides the neck so it clears the shoulder line and gives the head
@@ -2029,9 +2787,9 @@ export function buildJedi(opts = {}) {
         // of the dark fold-over and the whole collar read as one cream ring —
         // a neck brace. The dark layer is the collar; the tunic is a hint of
         // lining at the top of it.
-        mesh(bandGeo(0.056 * s, 0.063 * s, 0.058 * s, 0.066 * s, 0.030 * s, 12), tunic, neck.obj,
+        mesh(bandGeo(0.056 * KNECK * s, 0.063 * KNECK * s, 0.058 * KNECK * s, 0.066 * KNECK * s, 0.030 * s, 12), tunic, neck.obj,
           [0, 0.010 * s, 0], [0.06, 0, 0]);
-        const col = mesh(bandGeo(0.060 * s, 0.076 * s, 0.064 * s, 0.086 * s, 0.052 * s, 12), trim, neck.obj,
+        const col = mesh(bandGeo(0.060 * KNECK * s, 0.076 * KNECK * s, 0.064 * KNECK * s, 0.086 * KNECK * s, 0.052 * s, 12), trim, neck.obj,
           [0, -0.014 * s, 0], [0.10, 0, 0]);
         shadeAO(col.geometry, (x, y) => 0.56 + 0.44 * clamp(y / (0.052 * s), 0, 1), { floor: 0.4 });
       }
@@ -2040,25 +2798,25 @@ export function buildJedi(opts = {}) {
       // ends hanging off the knot. The hanging ends are the point: a closed
       // ring round a waist is a hoop, and every reference for this character
       // has cloth falling off the front of the belt.
-      const obi = mesh(bandGeo(0.126 * s, 0.148 * s, 0.124 * s, 0.144 * s, 0.108 * s, 18), trim, hips,
+      const obi = mesh(bandGeo(0.126 * KBELT * s, 0.148 * KBELT * s, 0.124 * KBELT * s, 0.144 * KBELT * s, 0.108 * s, 18), trim, hips,
         [0, 0.020 * s, 0], null, [1, 1, DEPTH + 0.06]);
       shadeAO(obi.geometry, (x, y) => 0.66 + 0.34 * Math.sin(clamp(y / (0.108 * s), 0, 1) * Math.PI), { floor: 0.5 });
-      mesh(bandGeo(0.140 * s, 0.152 * s, 0.140 * s, 0.152 * s, 0.038 * s, 18), leather, hips,
+      mesh(bandGeo(0.140 * KBELT * s, 0.152 * KBELT * s, 0.140 * KBELT * s, 0.152 * KBELT * s, 0.038 * s, 18), leather, hips,
         [0, 0.036 * s, 0], null, [1, 1, DEPTH + 0.06]);
       mesh(plateGeo(0.058 * s, 0.044 * s, 0.020 * s, 0.007 * s), metalMat(0x9a8a6a), hips,
-        [0, 0.055 * s, 0.121 * s]);
+        [0, 0.055 * s, 0.121 * KBELT * s]);
       // pouches, and a capsule bar on the left hip
       for (const sx of [-1, 1]) mesh(plateGeo(0.048 * s, 0.056 * s, 0.034 * s, 0.010 * s), leather, hips,
-        [sx * 0.104 * s, 0.036 * s, 0.086 * s], [0, sx * 0.35, 0]);
+        [sx * 0.104 * KBELT * s, 0.036 * s, 0.086 * KBELT * s], [0, sx * 0.35, 0]);
       mesh(plateGeo(0.070 * s, 0.024 * s, 0.026 * s, 0.008 * s), leather, hips,
-        [-0.058 * s, 0.028 * s, -0.104 * s], [0, 0.10, 0]);
+        [-0.058 * s, 0.028 * s, -0.104 * KBELT * s], [0, 0.10, 0]);
       // The two ends: flattened straps hanging off the knot, lightly splayed.
       // limbGeo spans +Y, so they are turned over to hang.
       for (const [sx, len, lean] of [[1, 0.30, 0.10], [-1, 0.22, -0.07]]) {
         const g = limbGeo(len * s, 0.030 * s, 0.020 * s, 8, false,
           { rings: 5, swells: [[0.30, 0.06, 0.4]], section: ovalSection(0.30, 2.6) });
         shadeAO(g, (x, y) => 0.72 + 0.28 * clamp(y / (len * s), 0, 1), { floor: 0.55 });
-        mesh(g, trim, hips, [sx * 0.052 * s, 0.024 * s, 0.104 * s],
+        mesh(g, trim, hips, [sx * 0.052 * s, 0.024 * s, 0.104 * KBELT * s],
           [Math.PI - 0.14, 0, lean]);
       }
 
@@ -2110,7 +2868,7 @@ export function buildJedi(opts = {}) {
       // skirts together were 316 triangles over the 13000 an archetype is
       // allowed, and this is the cheapest 200 of them that costs nothing you
       // can see.
-      const skirtGeo = limbGeo(skirtH, 0.142 * s, 0.262 * s, 28, false, {
+      const skirtGeo = limbGeo(skirtH, 0.142 * KHIP * s, 0.262 * KHIP * s, 28, false, {
         rings: 9, bulge: 0, swells: [[0.22, 0.26, 0.20], [0.93, -0.065, 0.055]],
         section: (th, t) => 1 + foldT(t) * foldAmt(th),
       });
@@ -2175,7 +2933,7 @@ export function buildJedi(opts = {}) {
       // single skirt gave 219mm of radius and a plain taper here gave 186mm —
       // 33mm less room for a joint that travels, which buys a knee through the
       // front of the robe. With the swell it is 223mm, better than it was.
-      const underGeo = limbGeo(underH, 0.132 * s, 0.230 * s, 24, false, {
+      const underGeo = limbGeo(underH, 0.132 * KHIP * s, 0.230 * KHIP * s, 24, false, {
         rings: 7, bulge: 0, swells: [[0.45, 0.20, 0.34], [0.94, -0.05, 0.05]],
         section: (th, t) => 1 + foldT(t) * underFold(th),
       });
@@ -2207,7 +2965,7 @@ export function buildJedi(opts = {}) {
       // figure — three edges at three heights is the opposite of a cone.
       const lobe = (w) => (th) => 0.28 + 0.72 / (1 + (th / w) ** 6);
       for (const [sx, r0, r1, ln] of [[1, 0.212, 0.268, 0.52], [-1, 0.206, 0.248, 0.43]]) {
-        const g = limbGeo(ln * s, r0 * s, r1 * s, 14, false,
+        const g = limbGeo(ln * s, r0 * KHIP * s, r1 * KHIP * s, 14, false,
           { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
         shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
         outerLayer.push(mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]));
@@ -2222,17 +2980,17 @@ export function buildJedi(opts = {}) {
         const sh = r.get('shin' + side);
         if (!sh) continue;
         const shaftY = 0.170 * s;
-        const shaft = mesh(bandGeo(0.058 * s, 0.076 * s, 0.048 * s, 0.068 * s, sh.length - shaftY, 14),
+        const shaft = mesh(bandGeo(0.058 * KLEG * s, 0.076 * KLEG * s, 0.048 * KLEG * s, 0.068 * KLEG * s, sh.length - shaftY, 14),
           leather, sh.obj, [0, shaftY, 0]);
         shadeAO(shaft.geometry, (x, y) => 0.62 + 0.38 * clamp((y - shaftY) / (0.10 * s), 0, 1), { floor: 0.45 });
         // the cuff, turned down over the top of the shaft
-        mesh(bandGeo(0.070 * s, 0.086 * s, 0.062 * s, 0.079 * s, 0.048 * s, 12),
+        mesh(bandGeo(0.070 * KLEG * s, 0.086 * KLEG * s, 0.062 * KLEG * s, 0.079 * KLEG * s, 0.048 * s, 12),
           leather, sh.obj, [0, shaftY - 0.006 * s, 0]);
         // a strap round the ankle end of the shaft. Sized off the shaft's own
         // taper, not off the shin: at this height the leather is already 70mm
         // out and a strap typed at 58 disappears inside the boot it is meant
         // to be buckling.
-        mesh(bandGeo(0.066 * s, 0.077 * s, 0.065 * s, 0.076 * s, 0.020 * s, 10),
+        mesh(bandGeo(0.066 * KLEG * s, 0.077 * KLEG * s, 0.065 * KLEG * s, 0.076 * KLEG * s, 0.020 * s, 10),
           trim, sh.obj, [0, sh.length - 0.055 * s, 0]);
       }
 
@@ -2251,27 +3009,27 @@ export function buildJedi(opts = {}) {
           // r0 is measured against the humerus at the height it starts, plus
            // 3mm of cloth: typed at 62mm it stood a full centimetre off a 52mm
            // arm and the gap between the two showed as a hole in the shoulder.
-          const g = limbGeo(0.098 * s, 0.0555 * s, 0.0715 * s, 18, false,
+          const g = limbGeo(0.098 * s, 0.0555 * KARM * s, 0.0715 * KARM * s, 18, false,
             { rings: 4, bulge: 0, section: (th, t) => 1 + 0.030 * t * Math.cos(4 * th + 0.5) });
           shadeAO(g, (x, y) => 0.68 + 0.32 * clamp(y / (0.098 * s), 0, 1), { floor: 0.42 });
           mesh(g, over, a.obj, [0, 0.004 * s, 0]);
         }
         if (!f) continue;
         // the robe sleeve's flared hem, just below the elbow
-        const hem = mesh(bandGeo(0.041 * s, 0.050 * s, 0.044 * s, 0.066 * s, 0.052 * s, 14),
+        const hem = mesh(bandGeo(0.041 * KARM * s, 0.050 * KARM * s, 0.044 * KARM * s, 0.066 * KARM * s, 0.052 * s, 14),
           over, f.obj, [0, 0.020 * s, 0]);
         shadeAO(hem.geometry, (x, y) => 0.60 + 0.40 * clamp(y / (0.052 * s), 0, 1), { floor: 0.42 });
         // the tunic cuff under it
         // sized off the forearm's measured surface at that height (45.3mm),
         // not off its nominal taper — typed at 45 the cuff was 46% buried in
         // the arm it was supposed to be hanging off
-        mesh(bandGeo(0.044 * s, 0.053 * s, 0.042 * s, 0.050 * s, 0.030 * s, 12), tunic, f.obj,
+        mesh(bandGeo(0.044 * KARM * s, 0.053 * KARM * s, 0.042 * KARM * s, 0.050 * KARM * s, 0.030 * s, 12), tunic, f.obj,
           [0, 0.072 * s, 0]);
         // the bracer, and a strap round each end of it
-        const br = mesh(bandGeo(0.036 * s, 0.047 * s, 0.030 * s, 0.041 * s, 0.145 * s, 14),
+        const br = mesh(bandGeo(0.036 * KARM * s, 0.047 * KARM * s, 0.030 * KARM * s, 0.041 * KARM * s, 0.145 * s, 14),
           leather, f.obj, [0, 0.100 * s, 0]);
         shadeAO(br.geometry, (x, y) => 0.66 + 0.34 * clamp((y - 0.100 * s) / (0.05 * s), 0, 1), { floor: 0.45 });
-        mesh(bandGeo(0.036 * s, 0.045 * s, 0.035 * s, 0.044 * s, 0.014 * s, 10),
+        mesh(bandGeo(0.036 * KARM * s, 0.045 * KARM * s, 0.035 * KARM * s, 0.044 * KARM * s, 0.014 * s, 10),
           trim, f.obj, [0, 0.222 * s, 0]);
       }
 

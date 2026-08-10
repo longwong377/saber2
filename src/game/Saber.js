@@ -29,6 +29,178 @@ export const SABER_COLORS = [
 
 export const HILT_STYLES = ['Graflex', 'Guardian', 'Sentinel', 'Consular', 'Crossguard'];
 
+/* ── the orders, as blade physics ────────────────────────────────────── */
+
+/**
+ * WHAT AN ORDER DOES TO THE WEAPON.
+ *
+ * The identity — names, crystal sets, robes, what the player's numbers become —
+ * lives in Order.js. This is only the half of it that is a blade: how the
+ * emitter is tuned, how steady it burns, and what the hilt is machined out of.
+ * The dependency runs one way (Order.js imports this file, never the reverse)
+ * because a Saber has to be constructible by Enemy, Net and the menu preview
+ * without any of them knowing what an order is.
+ *
+ * EVERY FIELD IS A MULTIPLIER ON THE SHIPPED PROFILE, and NEUTRAL is exactly
+ * 1.0 in all of them. `x * 1` is exact in IEEE754, so a Saber built with no
+ * order at all produces bit-identical uniforms to the ones this file produced
+ * before orders existed — which is asserted, per uniform, in
+ * tools/checks/order.mjs. That is the whole reason the tuning is expressed as
+ * factors and not as three parallel copies of PROFILE.
+ *
+ *   amp/width   per-lobe factors on PROFILE.amp / PROFILE.width — core, glow,
+ *               halo. A blade is a shape, not a brightness, so these are chosen
+ *               to MOVE flux between lobes rather than to add it: the Sith
+ *               blade's core keeps its line integral (1.26 amp × 0.84 sigma =
+ *               1.06) and its halo gains half again (1.30 × 1.16 = 1.51). The
+ *               core must stay the majority of the flux for every order or
+ *               CORE_WHITE is aimed at the wrong lobe — see the flux check in
+ *               tools/checks/saber-light.mjs, which this file's own check
+ *               extends to the orders.
+ *   radius      the quad has to reach past the widest lobe or the halo is cut
+ *               off square. Scaled with the halo sigma.
+ *   unstable    the shader's standing-instability amplitude. 1.0 is the shipped
+ *               0.030 — ±6% of the blade's own amplitude, crawling along it at
+ *               8–17 Hz. This is the one number that makes a Sith blade READ as
+ *               a contained fault rather than as a red lamp.
+ *   flicker     the whole-blade temporal wobble in _updateVisuals. It scales the
+ *               AC term ONLY: the 0.94 DC level is untouched, so the mean over a
+ *               cycle is identical for every order and an unstable blade is a
+ *               modulation and never a gain. (Asserted.)
+ *   coreWhite   how far the core lobe gives up its chroma. Never BELOW the
+ *               shipped 0.85 for any order — see the note in Order.js on why a
+ *               redder Sith core was measured and refused.
+ *   trailLife   how long a slice of the smear lives, as a factor on 0.17 s.
+ *   metal       the hilt. `steel`/`dark`/`black`/`gold` are the four materials
+ *               _buildHilt machines the weapon out of; `rough` moves with them,
+ *               because the difference between a temple hilt and a forge hilt is
+ *               as much finish as colour.
+ */
+const NEUTRAL_TUNING = {
+  amp: [1, 1, 1], width: [1, 1, 1], radius: 1,
+  unstable: 1, flicker: 1, coreWhite: 0.85, trailLife: 1,
+  metal: { steel: 0x8d939c, steelRough: 0.34, dark: 0x1c1f26, black: 0x0c0e12,
+           gold: 0xb98b3e, goldRough: 0.28 },
+};
+
+/** Shallow-merge a partial tuning over NEUTRAL, so a table only states deltas. */
+function tune(spec) {
+  return { ...NEUTRAL_TUNING, ...spec, metal: { ...NEUTRAL_TUNING.metal, ...(spec.metal || {}) } };
+}
+
+/**
+ * One order's tuning at one temper, which for every order but the Grey is the
+ * order's tuning and nothing else.
+ *
+ * The returned object is FRESH each call — the caller writes it into uniforms
+ * and must never be handed a table entry it could mutate.
+ */
+function tuningAt(spec, temper) {
+  if (!spec) return NEUTRAL_TUNING;
+  if (!spec.tempered) return spec;
+  const t = clamp(temper, 0, 1), a = spec.calm, b = spec.fury;
+  const L = (x, y) => x + (y - x) * t;
+  return {
+    amp: [L(a.amp[0], b.amp[0]), L(a.amp[1], b.amp[1]), L(a.amp[2], b.amp[2])],
+    width: [L(a.width[0], b.width[0]), L(a.width[1], b.width[1]), L(a.width[2], b.width[2])],
+    radius: L(a.radius, b.radius),
+    unstable: L(a.unstable, b.unstable),
+    flicker: L(a.flicker, b.flicker),
+    coreWhite: L(a.coreWhite, b.coreWhite),
+    trailLife: L(a.trailLife, b.trailLife),
+    metal: spec.metal,
+  };
+}
+
+export const BLADE_TUNING = {
+  /**
+   * JEDI — the shipped core, focused.
+   *
+   * The CORE lobe is untouched — amp 1, sigma 1 — and that is deliberate: those
+   * two numbers were solved against the arena's real back end and there is
+   * nothing about a temple blade that wants them re-solved. What an attuned
+   * crystal in a properly tuned emitter earns is everything OUTSIDE the core:
+   * the halo comes in a tenth and dims by a seventh, the glow lobe with it, the
+   * quad closes to match, and the standing instability drops by a quarter. The
+   * read is a clean line rather than a hot smear — the exact opposite of the row
+   * below it, which is the point of having both.
+   */
+  jedi: tune({
+    amp: [1.0, 0.96, 0.86], width: [1.0, 0.97, 0.90], radius: 0.94,
+    unstable: 0.75, flicker: 0.6, trailLife: 0.92,
+    // Satin rather than the untuned weapon's brushed finish, and brighter gold:
+    // a temple armoury maintains its blades.
+    metal: { steel: 0x9aa1ab, steelRough: 0.30, gold: 0xd9ae54, goldRough: 0.22 },
+  }),
+
+  /**
+   * SITH — a synthetic crystal in an over-driven emitter.
+   *
+   * A bled crystal is cracked, and the containment field is what is holding the
+   * crack together; that is the whole visual argument for this row. The core is
+   * driven harder and pinched tighter (its flux barely moves, 1.06×), the halo
+   * is opened up and pushed 51% harder — so the light that used to be in the
+   * beam is now around it — and the standing instability goes to 3.6× the
+   * shipped figure, which is ±21.6% of amplitude writhing along the blade
+   * instead of ±6%. The smear lingers a third longer, so a Sith arc hangs in
+   * the air behind the swing.
+   */
+  sith: tune({
+    amp: [1.26, 1.10, 1.30], width: [0.84, 1.0, 1.16], radius: 1.14,
+    unstable: 3.6, flicker: 3.2, trailLife: 1.35,
+    metal: { steel: 0x4a4d55, steelRough: 0.20, dark: 0x14161b, black: 0x08090c,
+             gold: 0x8e3a2a, goldRough: 0.36 },
+  }),
+
+  /**
+   * GREY — a healed crystal, and the only blade in the game that is not a
+   * constant.
+   *
+   * The top level states no lobes of its own because there is no one answer: a
+   * Grey blade is `calm` when its wielder is still and `fury` when they are
+   * swinging, and every frame it is somewhere between the two. Saber.temper is
+   * the state and _retune() is what spends it. See TEMPER below for the driver.
+   *
+   * The poles are outside the other two orders in BOTH directions, which is the
+   * point and is asserted. Composed, this is a purified crystal: the WIDEST core
+   * in the game (sigma 1.14) giving up more of its chroma than any other
+   * (coreWhite 0.94) inside the tightest, faintest halo in the game — a fat
+   * white blade with a thin coloured fringe, which is what a healed crystal
+   * looks like. Furious, the same blade is a needle core (sigma 0.80) inside a
+   * halo wider and hotter than a Sith's, and the least stable thing in the
+   * build. No other blade here travels that far.
+   */
+  grey: tune({
+    tempered: true,
+    calm: tune({ amp: [0.98, 0.86, 0.68], width: [1.14, 0.98, 0.86], radius: 0.90,
+                 unstable: 0.45, flicker: 0.5, coreWhite: 0.94, trailLife: 0.85 }),
+    fury: tune({ amp: [1.30, 1.16, 1.45], width: [0.80, 1.0, 1.26], radius: 1.22,
+                 unstable: 4.4, flicker: 4.0, coreWhite: 0.86, trailLife: 1.5 }),
+    metal: { steel: 0x9aa0a4, steelRough: 0.62, dark: 0x272a2e, black: 0x121417,
+             gold: 0x7d6a48, goldRough: 0.55 },
+  }),
+};
+
+/**
+ * THE TEMPER, which is the Grey order's whole mechanic.
+ *
+ * It is driven by the one thing about the fight the blade already knows without
+ * anybody wiring anything: how hard it is being SWUNG, measured against the body
+ * that carries it (`swingSpeed`, not tip speed — sprinting moves the tip at
+ * 7 m/s with the wrist perfectly still, and reading that as fury would let a
+ * player raise a Grey blade's temper by jogging).
+ *
+ * Asymmetric on purpose, and this is the fiction as a number. Measured on the
+ * real update loop (tools/checks/order.mjs quotes both): 1.44 s of swinging at
+ * 20 m/s to reach 0.9, and 2.62 s of perfect stillness to fall from 0.9 back to
+ * 0.3. Fury is easy to reach for and slow to let go of, by a factor of 1.8.
+ *
+ * FLOOR/SPAN are in metres per second at the tip. 4 m/s is a blade being
+ * carried; 18 m/s is a committed cut — the same regime `_trailPunch` reads, so
+ * the temper rises exactly when the smear does.
+ */
+export const TEMPER = { floor: 4.0, span: 14.0, rise: 1.6, fall: 0.42 };
+
 /* ── shaders ─────────────────────────────────────────────────────────── */
 
 /**
@@ -106,6 +278,7 @@ const BLADE_FRAG = /* glsl */`
   uniform float uTime;
   uniform float uSurge;      // ignition front
   uniform float uCoreWhite;  // how far the core lobe is neutralised. See CORE_WHITE.
+  uniform float uUnstable;   // standing-instability amplitude. See BLADE_TUNING.
   varying vec2 vP;
   varying float vLen;
   void main(){
@@ -121,12 +294,16 @@ const BLADE_FRAG = /* glsl */`
     // which brightens as it narrows.
     float w = 1.0 + 0.30 * exp(-a * 26.0) - 0.09 * smoothstep(0.5, 1.0, t);
     // Standing instability: three incommensurate waves crawling along the
-    // blade. Small — 6% — but it is the difference between a lamp and a
-    // contained arc, and it is the only thing on the blade that moves.
+    // blade. Small — 6% on an untuned crystal — but it is the difference
+    // between a lamp and a contained arc, and it is the only thing on the blade
+    // that moves. It is a UNIFORM rather than a constant because it is the one
+    // number that separates a temple blade from a bled one: at uUnstable 0.108
+    // (BLADE_TUNING.sith) the same three waves run at ±21.6% and the blade
+    // visibly writhes. The default is exactly the 0.030 that was here.
     float n = sin(a * 57.0 - uTime * 8.0)
             + sin(a * 23.0 + uTime * 5.3) * 0.7
             + sin(a * 127.0 + uTime * 17.0) * 0.3;
-    float amp = uFlicker * (1.0 + n * 0.030) * (1.0 + 0.22 * smoothstep(0.86, 1.0, t));
+    float amp = uFlicker * (1.0 + n * uUnstable) * (1.0 + 0.22 * smoothstep(0.86, 1.0, t));
     // the ignition front burns hotter than the blade behind it
     amp *= 1.0 + uSurge * exp(-(1.0 - t) * 7.0);
 
@@ -269,6 +446,23 @@ export class Saber {
     this.hue = new THREE.Color(1, 1, 1);
     this.punch = 1;
     this.bladeLength = opts.bladeLength ?? 1.15;
+    /**
+     * The order this weapon was built by, or null for a blade that belongs to
+     * nobody's tradition. null is not a synonym for 'jedi': it is the untuned
+     * emitter every Saber in this game was until orders existed, and every
+     * uniform it produces is bit-identical to what it produced then.
+     *
+     * Set BEFORE _coreWidth, because the coreWidth setter runs _syncWidth,
+     * which reads the tuning.
+     */
+    this._order = null;
+    this._tuning = NEUTRAL_TUNING;
+    /** 0 = still, 1 = fury. Only a tempered order ever moves it. See TEMPER. */
+    this.temper = 0;
+    if (opts.order && BLADE_TUNING[opts.order]) {
+      this._order = opts.order;
+      this._tuning = tuningAt(BLADE_TUNING[opts.order], 0);
+    }
     this.coreWidth = opts.coreWidth ?? 1;
     this.hiltStyle = opts.hiltStyle ?? 'Graflex';
     this.isDark = c.key === 'red' || c.key === 'black';
@@ -300,6 +494,10 @@ export class Saber {
     this._buildHilt();
     this._buildBlade();
     this._buildTrail();
+    // The lobes were already tuned by _syncWidth on the way through; this is
+    // what lands the SCALARS — instability, core neutralisation, smear lifetime
+    // — on a blade that now has materials to put them on.
+    this._retune();
 
     // A metre of plasma is a LINE light, and the decay exponent is where that
     // gets said. An infinite line falls off as 1/r near it and only reaches
@@ -436,17 +634,35 @@ export class Saber {
 
   /* ── construction ──────────────────────────────────────────────────── */
 
+  /**
+   * THE HILT IS MACHINED BY THE ORDER THAT BUILT IT.
+   *
+   * Four materials and two finishes, all four of them already here — this only
+   * stopped hard-coding them. A temple hilt is satin steel with bright gold neck
+   * rings, because an armoury maintains its weapons; a Sith hilt is blackened
+   * chrome with blood-bronze; a Grey hilt is raw unpolished alloy with dull
+   * brass, because a salvaged weapon is not finished by a smith who had time.
+   * The untuned hilt — nobody's tradition — keeps the brushed steel it always
+   * had, and is a fourth distinct weapon rather than a synonym for the Jedi's.
+   *
+   * The materials are kept on the instance so the ORDER SETTER can restyle a
+   * live hilt: the forge preview flips orders without rebuilding, and a hilt
+   * that kept its old metal while the blade changed would be the same
+   * half-wired feature this file's checks exist to stop.
+   */
   _buildHilt() {
     const g = new THREE.Group();
-    const steel = new THREE.MeshStandardMaterial({ color: 0x8d939c, metalness: 1, roughness: 0.34 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x1c1f26, metalness: 0.75, roughness: 0.55 });
-    const black = new THREE.MeshStandardMaterial({ color: 0x0c0e12, metalness: 0.3, roughness: 0.82 });
-    const gold = new THREE.MeshStandardMaterial({ color: 0xb98b3e, metalness: 1, roughness: 0.28 });
+    const M = this._tuning.metal;
+    const steel = new THREE.MeshStandardMaterial({ color: M.steel, metalness: 1, roughness: M.steelRough });
+    const dark = new THREE.MeshStandardMaterial({ color: M.dark, metalness: 0.75, roughness: 0.55 });
+    const black = new THREE.MeshStandardMaterial({ color: M.black, metalness: 0.3, roughness: 0.82 });
+    const gold = new THREE.MeshStandardMaterial({ color: M.gold, metalness: 1, roughness: M.goldRough });
     const accent = new THREE.MeshStandardMaterial({
       color: 0x2a2f38, metalness: 0.9, roughness: 0.3,
       emissive: this.color, emissiveIntensity: 0.9,
     });
     this.hiltAccent = accent;
+    this.hiltMetals = { steel, dark, black, gold };
 
     const R = 0.019;
     const add = (mesh, y) => { mesh.position.y = y; mesh.castShadow = true; g.add(mesh); return mesh; };
@@ -639,6 +855,17 @@ export class Saber {
   static TRAIL_HOT_OF_GLOW = 0.85;
   static TRAIL_GLOW_OF_HALO = 1.5;
 
+  /**
+   * The standing instability's amplitude on an untuned crystal — the constant
+   * that used to be written into BLADE_FRAG as `n * 0.030`. Named here so
+   * BLADE_TUNING's factors have something to be factors OF, and so nothing can
+   * change the default without the checks noticing.
+   */
+  static UNSTABLE = 0.030;
+
+  /** How long one slice of the smear lives, in seconds, on an untuned blade. */
+  static TRAIL_LIFE = 0.17;
+
   _buildBlade() {
     this.bladeGroup = new THREE.Group();
     this.bladeGroup.position.y = this.emitterY;
@@ -667,6 +894,7 @@ export class Saber {
         uTime: { value: 0 },
         uSurge: { value: 0 },
         uCoreWhite: { value: Saber.CORE_WHITE },
+        uUnstable: { value: Saber.UNSTABLE },
       }]),
       vertexShader: BLADE_VERT, fragmentShader: BLADE_FRAG,
       transparent: true, depthWrite: false, depthTest: true,
@@ -711,13 +939,22 @@ export class Saber {
    */
   _syncWidth() {
     const w = this._coreWidth, P = Saber.PROFILE;
+    /* THE ORDER'S TUNING IS A FACTOR ON EVERY LOBE, applied here and nowhere
+     * else, for exactly the reason the width slider is: a second place that
+     * writes uWidth is a second place that can be forgotten. NEUTRAL_TUNING is
+     * 1.0 in all of them and `x * 1` is exact, so an order-less blade comes out
+     * of this bit-for-bit what it was. */
+    const T = this._tuning;
     // The two lobes the SMEAR is defined against, computed once here so the
     // blade and the trail cannot be given different exponents by accident.
-    const glow = P.amp[1] * w;
-    const halo = P.amp[2] * w * w;
+    const glow = P.amp[1] * w * T.amp[1];
+    const halo = P.amp[2] * w * w * T.amp[2];
     if (this.bladeMat) {
-      this.bladeMat.uniforms.uWidth.value.set(P.width[0] * w, P.width[1] * w, P.width[2] * w);
-      this.bladeMat.uniforms.uRadius.value = P.radius * w;
+      this.bladeMat.uniforms.uWidth.value.set(
+        P.width[0] * w * T.width[0], P.width[1] * w * T.width[1], P.width[2] * w * T.width[2]);
+      // The quad has to reach past the widest lobe, so an order that opens the
+      // halo up has to open the quad with it or the halo is cut off square.
+      this.bladeMat.uniforms.uRadius.value = P.radius * w * T.radius;
       // THE WIDTH SLIDER HAS TO REACH THE BLOOM, or it does not do what its
       // label says. It used to scale only the gaussian SIGMAS, and the player
       // reported — twice — that the blade "covers way too much of the screen in
@@ -733,7 +970,7 @@ export class Saber {
       // stripe), but the GLOW and HALO — the two terms that actually spread
       // across the screen — now scale with the setting, superlinearly for the
       // halo because that is the one you see from the far side of an arena.
-      this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w), glow, halo);
+      this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w) * T.amp[0], glow, halo);
     }
     this.trailThickness = P.width[1] * 1.6 * w;
     /* AND IT HAS TO REACH THE SMEAR, for the same reason and with more force.
@@ -777,6 +1014,86 @@ export class Saber {
    */
   get coreWidth() { return this._coreWidth; }
   set coreWidth(v) { this._coreWidth = v; this._syncWidth(); }
+
+  /**
+   * THE ORDER, live.
+   *
+   * Writable so the forge preview can flip between Jedi, Sith and Grey without
+   * rebuilding a Saber — and writing it re-machines the HILT as well as
+   * re-tuning the blade, because a hilt that kept its old metal while the blade
+   * changed is precisely the half-wired feature the checks in this project
+   * exist to catch. An unknown id falls back to the untuned blade rather than
+   * throwing: a stored settings blob from an older build must not be able to
+   * stop the game booting.
+   */
+  get order() { return this._order; }
+  set order(v) {
+    const id = v && BLADE_TUNING[v] ? v : null;
+    if (id === this._order) return;
+    this._order = id;
+    this.temper = 0;
+    this._retune();
+  }
+
+  /** Is this order's blade one whose tuning moves with `temper`? */
+  get tempered() { return !!(this._order && BLADE_TUNING[this._order]?.tempered); }
+
+  /**
+   * Push the current order (and, for the Grey, the current temper) into
+   * everything that draws.
+   *
+   * ONE writer for all of it, for the same reason _syncWidth is one writer for
+   * the lobes: the tuning reaches five different objects — two shader materials,
+   * the trail's lifetime, the hilt's four metals and the temporal flicker — and
+   * the way this feature would rot is by growing a second place that sets three
+   * of the five.
+   */
+  _retune() {
+    this._tuning = tuningAt(BLADE_TUNING[this._order], this.temper);
+    const T = this._tuning;
+    this._syncWidth();
+    if (this.bladeMat) {
+      this.bladeMat.uniforms.uCoreWhite.value = T.coreWhite;
+      this.bladeMat.uniforms.uUnstable.value = Saber.UNSTABLE * T.unstable;
+    }
+    if (this.trailMat) this.trailMat.uniforms.uCoreWhite.value = T.coreWhite;
+    this.trailLife = Saber.TRAIL_LIFE * T.trailLife;
+    // The metal does not move with the temper — tuningAt hands back the order's
+    // own table entry by reference — so this runs on an order change and not
+    // sixty times a second on a Grey player's hilt. Identity, not deep compare:
+    // the tables are module constants and are never mutated.
+    if (this.hiltMetals && this._hiltMetal !== T.metal) {
+      this._hiltMetal = T.metal;
+      const M = T.metal, m = this.hiltMetals;
+      m.steel.color.setHex(M.steel); m.steel.roughness = M.steelRough;
+      m.dark.color.setHex(M.dark);
+      m.black.color.setHex(M.black);
+      m.gold.color.setHex(M.gold); m.gold.roughness = M.goldRough;
+    }
+  }
+
+  /**
+   * Move the temper toward what the wrist is doing, and re-tune if it moved.
+   *
+   * IT HAS TO LAND ON THE TARGET, not merely approach it. An exponential never
+   * arrives, and a blade that settles a thousandth short of composed is a latch
+   * rather than a temper: it would hold a sliver of fury for the rest of the run
+   * and re-write eleven uniforms every frame to keep holding it. The snap is
+   * what makes "a blade at rest is at rest" true, and it is also the whole cost
+   * control — a still Grey blade does no work at all here, and neither does a
+   * blade of any other order.
+   */
+  _updateTemper(dt) {
+    if (!this.tempered || !(dt > 0)) return;
+    const want = clamp((this.swingSpeed - TEMPER.floor) / TEMPER.span, 0, 1);
+    if (this.temper === want) return;
+    const rate = want > this.temper ? TEMPER.rise : TEMPER.fall;
+    let next = this.temper + (want - this.temper) * Math.min(1, dt * rate);
+    if (Math.abs(want - next) < 1e-3) next = want;
+    if (next === this.temper) return;
+    this.temper = next;
+    this._retune();
+  }
 
   /**
    * The trail is SHEETS × SAMPLES quads. Three sheets, offset along the normal
@@ -929,13 +1246,38 @@ export class Saber {
     this.sweepArea = _v3.crossVectors(_v1, _v2).length();
     if (this.sweepArea > 1e-6) this.sweepNormal.copy(_v3).multiplyScalar(1 / this.sweepArea);
 
+    // AFTER the sweep bookkeeping, because it reads this frame's swingSpeed,
+    // and BEFORE the visuals, so the uniforms it writes are the ones this frame
+    // draws with. A tempered blade whose retune landed a frame late would read
+    // as input lag on the one order whose blade is supposed to answer the hand.
+    this._updateTemper(dt);
+
     this._updateVisuals(dt, time, len);
     this._updateTrail(dt, len);
   }
 
   _updateVisuals(dt, time, len) {
-    const flick = 0.94 + Math.sin(time * 47.3) * 0.022 + Math.sin(time * 111.7) * 0.014
-                  + this.contactStrain * 0.22 * Math.sin(time * 180);
+    /* THE ORDER SCALES THE AC TERM AND NOT THE DC ONE.
+     *
+     * 0.94 is what the blade burns at; the three sine terms are what it burns
+     * UNSTEADILY by. Multiplying only the second group means an unstable order
+     * is a MODULATION and never a gain — the mean of `flick` over a cycle is
+     * 0.94 for every order, so a Sith blade does not quietly become a 20%
+     * brighter light on the world as well as a twitchier one. (Pinned in
+     * tools/checks/order.mjs, which averages this expression over a second.)
+     * The same discipline as CORE_WHITE's mix toward hueN: one axis at a time,
+     * or no measurement afterwards can say which half did the work.
+     *
+     * The factor is applied to each term rather than to their sum, and that is
+     * not a style choice: `0.94 + F*(a+b+c)` re-associates the addition and
+     * lands one ulp away from `0.94 + a + b + c` even at F = 1, which would
+     * make an order-less blade measurably — if barely — not the blade it was.
+     * `(x * 0.022) * 1` is exact, so this form is bit-identical at F = 1 and
+     * arithmetically the same at every other F. Measured against HEAD across
+     * four crystals and 130 frames: 4 ulp of drift the other way, 0 this way. */
+    const F = this._tuning.flicker;
+    const flick = 0.94 + Math.sin(time * 47.3) * 0.022 * F + Math.sin(time * 111.7) * 0.014 * F
+                  + this.contactStrain * 0.22 * Math.sin(time * 180) * F;
     const u = this.bladeMat.uniforms;
     u.uLen.value = Math.max(0.001, len);
     u.uTime.value = time;
@@ -989,7 +1331,10 @@ export class Saber {
   _updateTrail(dt, len) {
     const n = this.trailSegments, S = this.trailSheets;
     const h = this.trailHistory;
-    const LIFE = 0.17;
+    // From _retune, so a Sith arc hangs a third longer than a temple one and a
+    // Grey blade's smear lengthens as its wielder loses patience. Exactly 0.17
+    // for an untuned blade.
+    const LIFE = this.trailLife;
     const punch = this._trailPunch();
 
     if (this.ignition > 0.4) {

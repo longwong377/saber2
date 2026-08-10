@@ -1186,7 +1186,7 @@ export async function run({ check, assert }) {
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
       'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade',
-      'skinIndex', 'hairIndex'];
+      'skinIndex', 'hairIndex', 'order'];
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (bound.has(key)) {
@@ -1200,7 +1200,7 @@ export async function run({ check, assert }) {
       // guarantee through a shared helper, so the vocabulary widens and the
       // property does not: a setting still cannot reach this list without a
       // control that writes it BY NAME.
-      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'`);
+      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'|_cardRow\\('[a-z-]+', '[a-z-]+', '${key}'`);
       if (!re.test(menu)) ghost.push(key);
     }
     assert(!orphans.length,

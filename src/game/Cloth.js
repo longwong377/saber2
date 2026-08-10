@@ -145,6 +145,24 @@ export class Cloak {
     this.pleatHarm = opts.pleatHarm ?? 5;
     this.pleatPhase = opts.pleatPhase ?? 0.4;
     /**
+     * AN ASYMMETRIC HEM, as ±fraction of the drop.
+     *
+     * Every other parameter in here is a property of the whole ring, so every
+     * garment they can describe is a solid of revolution with a wrinkle on it.
+     * A real robe is not: it wraps, and one side of the hem finishes lower than
+     * the other. `hemBias` scales the per-column drop by 1 + hemBias·cos(θ +
+     * hemPhase), which cuts the panel long on one side and short on the other —
+     * and because reset() samples the rest lengths off the layout, the vertical
+     * links on the long side really are longer. The garment is CUT that way; it
+     * is not a symmetric garment displaced, and it does not settle back.
+     *
+     * The profile is read at the biased t as well, so the long side keeps
+     * hugging the body's own silhouette at the height it actually reaches
+     * instead of holding the radius its row index would have had.
+     */
+    this.hemBias = opts.hemBias ?? 0;
+    this.hemPhase = opts.hemPhase ?? 0;
+    /**
      * Aerodynamic coefficient, 1/s.
      *
      * Wind here was a uniform body force, which can translate a sheet and can
@@ -393,8 +411,12 @@ export class Cloak {
     }
     for (let c = 0; c < this.cols; c++) {
       this.anchorFn(c, this.cols, _v1, 0);
+      // the asymmetric cut: this column's share of the drop. 1 everywhere when
+      // hemBias is 0, which is every garment that shipped before it existed.
+      const bias = this.hemBias
+        ? 1 + this.hemBias * Math.cos((c / this.cols) * Math.PI * 2 + this.hemPhase) : 1;
       for (let r = 0; r < this.rows; r++) {
-        const t = this.rows === 1 ? 0 : r / (this.rows - 1);
+        const t = (this.rows === 1 ? 0 : r / (this.rows - 1)) * bias;
         /*
          * Widen the LAYOUT by the same fraction the rest lengths below are
          * shortened by. Gathered fabric is narrower than flat fabric, so
@@ -433,7 +455,11 @@ export class Cloak {
         const spread = base * gather;
         const i = (r * this.cols + c) * 3;
         this.pos[i] = this.prev[i] = centre.x + (_v1.x - centre.x) * spread;
-        this.pos[i + 1] = this.prev[i + 1] = _v1.y - r * dropStep;
+        // t·length is r·dropStep with the unbiased t — but only to within an
+        // ulp, and a garment with no bias in it has to lay out BIT for bit as
+        // it did before there was such a thing, so the shipped expression stays
+        this.pos[i + 1] = this.prev[i + 1] = this.hemBias ? _v1.y - t * this.length
+                                                          : _v1.y - r * dropStep;
         this.pos[i + 2] = this.prev[i + 2] = centre.z + (_v1.z - centre.z) * spread + t * t * this.lean;
       }
     }
@@ -775,11 +801,239 @@ export class Cloak {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  ROBE CUTS                                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE CUTS.
+ *
+ * "Clothes" in the character creator were six colour palettes on one identical
+ * garment, which is a paint job rather than a wardrobe. The solver's parameters
+ * are the vocabulary of a garment's CUT — length, pleat, flare, how the fabric
+ * bends, how heavy it hangs — so a cut is a named set of them, and switching
+ * cuts changes what the robe DOES, not what colour it is.
+ *
+ * Every one of these was measured before it was written down, on the headless
+ * bench the checks in tools/checks/garments.mjs re-derive: fold depth and ridge
+ * correlation standing, hem travel in the pelvis frame at a walk, how deep the
+ * cloth passes into a leg, ride-up and stretch at a sprint, and the cost. What
+ * the measurements ruled out is recorded here too, because three of the obvious
+ * ideas do not survive contact with a four-iteration solve:
+ *
+ *   MORE ROWS ARE WORSE, not better. At the shipped 460mm, 6/7/8 rows read 33 /
+ *   72 / 99 mm of leg through the cloth at a jog and 15 / 21 / 47 % stretch. A
+ *   longer garment therefore does NOT get proportionally more rows; it gets the
+ *   same seven and a coarser row pitch, and it measures better for it.
+ *
+ *   A GARMENT NARROWER THAN THE STRIDE CANNOT BE SOLVED. A hem drawn in to
+ *   0.22m with the flare taken out — the "tight travelling coat" this set was
+ *   supposed to contain — reaches 329% stretch at a sprint: the cloth is caught
+ *   between the inner shell and a leg swinging outside it, and four iterations
+ *   have no way to let it slide. The coat here is taken in through the hip and
+ *   keeps its flare below the knee, which is as tight as the solver goes.
+ *
+ *   STIFFNESS DOES NOT BUY IT BACK. On that same coat, structural 0.82 → 0.97
+ *   moved the p95 walk stretch from 110% to 103%. The stretch is contact, not
+ *   compliance.
+ *
+ *   AND SHEAR IS NOT STIFFNESS. The obvious way to write a stiff duelling
+ *   tabard is to raise every stiffness including the diagonals; at shear 0.5 it
+ *   scores ridge 0.53 with 23% of its fold power at the per-column Nyquist —
+ *   a rash rather than a garment. Stiffness for a tube belongs in `stiffness`,
+ *   `bend` and `bendDown`; the diagonals stay soft or the folds stop running
+ *   down the cloth. Same finding as the shipped skirt's own shear note.
+ *
+ * `id` is what the UI stores and what `attachSkirt(scene, rig, { cut })` takes.
+ * The blurb is written for a player, not for this file.
+ */
+export const ROBE_CUTS = [
+  {
+    id: 'temple', name: 'Temple Robe',
+    blurb: 'The order\'s own cut. Knee-length over the under-robe, five soft pleats, and enough swing to read as cloth.',
+    // Empty on purpose: this IS the shipped garment, and it has to stay the
+    // thing every other cut is measured against.
+    skirt: {}, cloak: {},
+  },
+  {
+    id: 'cassock', name: 'Heavy Cassock',
+    blurb: 'The longest cut the order allows, in something that hangs rather than flies. Four deep folds and half the swing of a temple robe.',
+    skirt: {
+      // 540mm, and that is the ceiling rather than a preference. See the note
+      // on floor length below: at 740mm the same 98 particles sample the cloth
+      // every 106mm and the shin it has to drape over is 98mm in radius.
+      length: 0.54, cols: 14, rows: 7, shellStep: 0.065,
+      // falls straight instead of belling — a cassock is a column
+      petticoat: [[0.056, 0.145], [-0.04, 0.216], [-0.15, 0.234], [-0.26, 0.262],
+                  [-0.37, 0.278], [-0.46, 0.278], [-0.58, 0.272]],
+      pleat: 0.26, pleatHarm: 4, shear: 0.14,
+      /*
+       * HEAVY IS NOT MORE GRAVITY.
+       *
+       * The obvious spelling of a heavy garment is a bigger `gravity`, and it
+       * was tried: at -16 this cut reaches 60% stretch through the jog band
+       * against 40% at the shipped -13, because in a verlet solve with unit
+       * masses gravity is not weight, it is LOAD, and a chain's sag is load
+       * over stiffness. Every particle here masses the same as every other one
+       * and there is no knob that changes that.
+       *
+       * What heft actually is, in this solver: energy that goes and does not
+       * come back (`damping` 0.952 against 0.972), a fabric that will not
+       * answer the air (`lift` 0.55 and `drift` 0.45 against 1.0 and 0.7), and
+       * a bend that holds its own line down the cloth (`bendDown` 0.70). The
+       * measurement that says it worked is hem travel in the pelvis frame:
+       * 92mm at a walk against the temple robe's 177mm on a garment 80mm
+       * longer, which is a robe that moves at half speed.
+       */
+      damping: 0.952, lift: 0.55, drift: 0.45, bendDown: 0.80,
+      foldAO: 0.62, proxyRows: [1, 3, 5, 6],
+    },
+    cloak: { damping: 0.952, lift: 0.6, drift: 0.5, bendDown: 0.80, fullness: 0.92 },
+  },
+  {
+    id: 'tabard', name: 'Duelling Tabard',
+    blurb: 'Short, stiff and belted twice. It sits above the knee and turns with the hips — nothing of it is between you and the floor.',
+    skirt: {
+      length: 0.30, cols: 12, rows: 5,
+      petticoat: [[0.056, 0.145], [-0.04, 0.220], [-0.15, 0.235], [-0.26, 0.262]],
+      /*
+       * TWO PINNED RINGS, and they are the whole cut.
+       *
+       * `pinRows` has been a parameter since the tube landed and nothing used
+       * it. A short garment is the case that wants it: the ride-up at a sprint
+       * is close to a fixed 270-320mm whatever the garment's length — it is the
+       * inner shell pumping, not the wind, and only 38mm of the shipped robe's
+       * 274 goes away when the wind is switched off — so a 300mm tabard on one
+       * ring finishes the sprint bunched at the belt, hem 98% of its own length
+       * up. Held at a second ring 75mm down it rides 60mm, which is 20%.
+       *
+       * That ring needed an anchor that reads its row index; see anchorFn.
+       */
+      pinRows: 2,
+      pleat: 0.22, pleatHarm: 4, stiffness: 0.90, bend: 0.30, bendDown: 0.85,
+      damping: 0.93, lift: 0.45, drift: 0.45, shellIn: 0.88,
+      proxyRows: [1, 2, 3, 4],
+    },
+    cloak: { stiffness: 0.90, bendDown: 0.80, damping: 0.93, lift: 0.5, drift: 0.5, fullness: 0.94 },
+  },
+  {
+    id: 'ceremonial', name: 'Ceremonial Robe',
+    blurb: 'Six deep pleats in a great bell of cloth. Too much fabric to fight in, and every bit of it moves.',
+    skirt: {
+      length: 0.52, cols: 14, rows: 7,
+      // 348mm at the hem against the temple robe's 267 — the widest the cape's
+      // live proxy can be handed without the cape standing off the shoulders
+      petticoat: [[0.056, 0.145], [-0.04, 0.235], [-0.15, 0.265], [-0.26, 0.305],
+                  [-0.37, 0.335], [-0.48, 0.348], [-0.52, 0.348]],
+      // six folds on fourteen columns: 2·6 < 14, so the mesh can still draw
+      // them. Seven cannot — at harmonic 7 the power lands on the per-column
+      // Nyquist and 82% of the wrinkle is a checkerboard.
+      pleat: 0.42, pleatHarm: 6, shellIn: 0.82,
+      /*
+       * Light is not less gravity either — the mirror of the cassock's note.
+       * At -11 this cut rides 346mm up its own anchor at a sprint against the
+       * temple robe's 274; at the shipped -13 it rides 315 and loses nothing
+       * that reads. Floating is `lift`, `drift` and `damping`: the air term is
+       * what makes a light fabric behave like one, and this cut catches 35%
+       * more of it than anything else in the wardrobe.
+       */
+      damping: 0.980, lift: 1.35, drift: 0.85, bendDown: 0.42,
+      foldAO: 0.65, proxyRows: [1, 3, 5, 6],
+    },
+    cloak: { damping: 0.980, lift: 1.35, drift: 0.85, bendDown: 0.42, fullness: 0.82 },
+  },
+  {
+    id: 'coat', name: 'Travelling Coat',
+    blurb: 'Taken in at the hip and cut to the knee. It hangs close and creases rather than swings.',
+    skirt: {
+      length: 0.48, cols: 14, rows: 7, shellStep: 0.06,
+      // in at the hip by 36mm, and it keeps its flare below the knee because a
+      // hem narrower than the stride cannot be solved — see the note above
+      petticoat: [[0.056, 0.145], [-0.04, 0.196], [-0.15, 0.208], [-0.26, 0.232],
+                  [-0.37, 0.250], [-0.46, 0.252]],
+      // three shallow creases rather than five folds: 13mm of wrinkle against
+      // the temple robe's 25. `shear` 0.14 is what keeps them ridges — at the
+      // skirt's own 0.20 this cut scores ridge 0.51 with 19% at Nyquist,
+      // because a shallow pleat has nothing to spare for the diagonals to eat.
+      pleat: 0.12, pleatHarm: 3, shear: 0.14,
+      shellIn: 0.90, stiffness: 0.88, bendDown: 0.66,
+      damping: 0.960, lift: 0.5, drift: 0.5, foldAO: 0.48,
+      /*
+       * FIVE proxy spheres, not four, and this is the only cut that needs a
+       * fifth. The cape collides against this garment's own rows at their
+       * widest point; on a cut taken in at the hip the cape settles further in
+       * and finds the scallop between two of them — measured, 3.4mm of cape
+       * inside the coat on 117 of 180 frames at the shipped [1,3,5,6] against
+       * 0.0 on 0 of 180 at [1,3,4,5,6]. One more sphere against 99 cape
+       * particles is 99 more sphere tests, which the cape's budget has.
+       */
+      proxyRows: [1, 3, 4, 5, 6],
+    },
+    cloak: { stiffness: 0.88, bendDown: 0.66, damping: 0.960, lift: 0.5, drift: 0.5, fullness: 0.95 },
+  },
+  {
+    id: 'wrap', name: 'Wrapped Robe',
+    blurb: 'Crossed over and caught at one hip: the hem falls to the calf on one side and clears the knee on the other, in four deep folds.',
+    skirt: {
+      length: 0.44, cols: 14, rows: 7, shellStep: 0.06,
+      petticoat: [[0.056, 0.145], [-0.04, 0.220], [-0.15, 0.238], [-0.26, 0.268],
+                  [-0.37, 0.288], [-0.48, 0.292], [-0.62, 0.288]],
+      /*
+       * THE ASYMMETRY: ±34% of the drop round the ring, which is a hem that
+       * finishes 307mm lower on one side than the other and stays that way,
+       * because the rest lengths are sampled off the biased layout — the long
+       * side's columns really are cut 77% longer than the short side's. The
+       * phase puts the long fall over one hip rather than down the back, where
+       * it would read as a train on an otherwise symmetric garment.
+       *
+       * The rest of the cut exists because the first draft of it WAS the temple
+       * robe with a slanted hem, and the wardrobe check said so: at 480mm on
+       * the shipped fabric it separated from the temple robe on the slant and
+       * on nothing else, which is the definition of a slider moved. Shorter, in
+       * four deep folds instead of five soft ones, and freer down the cloth.
+       */
+      hemBias: 0.34, hemPhase: 2.0,
+      // four folds and the deepest wrinkle in the wardrobe, at 27mm — a
+      // crossed-over robe carries its cloth in a few big falls, not in a
+      // gather, and it is also what separates this cut from the temple robe
+      // on something other than the slant
+      pleat: 0.24, pleatHarm: 4, shear: 0.14, bendDown: 0.60, damping: 0.968,
+      proxyRows: [1, 3, 5, 6],
+    },
+    cloak: { bendDown: 0.60, damping: 0.968, fullness: 0.86 },
+  },
+];
+
+const CUT_BY_ID = new Map(ROBE_CUTS.map((c) => [c.id, c]));
+/** The cut with this id, or null — for a UI that wants to validate a choice. */
+export function robeCut(id) { return CUT_BY_ID.get(id) || null; }
+
+/**
+ * Fill a cut's fields in UNDER whatever the caller asked for.
+ *
+ * Explicit options always win, because Player, Enemy and the sparring acolytes
+ * pass their own material, scale and rigid meshes and a preset has no business
+ * overwriting those. Written as an `undefined` test rather than a spread so an
+ * option that is present-but-undefined — which is most of what attachSkirt
+ * forwards — cannot blank a cut's value. No `cut` returns the caller's own
+ * object untouched, so the default garment is not merely equal to the shipped
+ * one, it is the same code path.
+ */
+function withCut(opts, part) {
+  if (!opts.cut) return opts;
+  const c = CUT_BY_ID.get(opts.cut);
+  if (!c) return opts;                 // an unknown id wears the temple robe
+  const out = { ...opts }, from = c[part] || {};
+  for (const k in from) if (out[k] === undefined) out[k] = from[k];
+  return out;
+}
+
 /**
  * Build a cloak that hangs from a rig's chest bone, with colliders tracking
  * the torso and legs so it drapes instead of clipping.
  */
 export function attachCloak(scene, rig, opts = {}) {
+  opts = withCut(opts, 'cloak');
   const S = opts.scale ?? 1;
   const chest = rig.get('chest');
   if (!chest) return null;
@@ -925,6 +1179,7 @@ export function attachCloak(scene, rig, opts = {}) {
  *                    live and shown again by setVisible(false) at LOD range.
  */
 export function attachSkirt(scene, rig, opts = {}) {
+  opts = withCut(opts, 'skirt');
   const S = opts.scale ?? 1;
   const hipsB = rig.get('hips');
   if (!hipsB) return null;
@@ -1008,11 +1263,28 @@ export function attachSkirt(scene, rig, opts = {}) {
     damping: opts.damping, iterations: opts.iterations,
     gravity: opts.gravity ?? -13,
     seed: opts.seed, pinRows: opts.pinRows,
+    hemBias: opts.hemBias, hemPhase: opts.hemPhase,
     foldAO: opts.foldAO ?? 0.55,
-    anchorFn: (c, n, out) => {
+    /*
+     * The waistband ring — and, for a cut that asks for one, the ring below it.
+     *
+     * `pinRows` has been a parameter since the tube landed and this function
+     * handed it an anchor that ignored the row index, so both pinned rings came
+     * out at the same height and the link between them had a rest length of
+     * zero. The second ring belongs where the LAYOUT would have put it: down by
+     * its share of the drop, at the radius the body has there. Row 0 is
+     * untouched — `waist` rather than radiusAt(waistY), so a caller that moves
+     * the waistband off the petticoat still gets the ring it asked for.
+     */
+    anchorFn: (c, n, out, r = 0) => {
       const th = (c / n) * Math.PI * 2;
+      const bias = opts.hemBias
+        ? 1 + opts.hemBias * Math.cos(th + (opts.hemPhase ?? 0)) : 1;
+      const t = (rows > 1 ? r / (rows - 1) : 0) * bias;
+      const dy = r === 0 ? waistY : waistY - t * length;
+      const rad = r === 0 ? waist : radiusAt(dy);
       _m.copy(hipsB.obj.matrixWorld);
-      out.set(Math.sin(th) * waist * S, waistY * S, Math.cos(th) * waist * S);
+      out.set(Math.sin(th) * rad * S, dy * S, Math.cos(th) * rad * S);
       out.applyMatrix4(_m);
     },
   });
@@ -1052,9 +1324,21 @@ export function attachSkirt(scene, rig, opts = {}) {
    * radius starts falling away from the garment it stands in for.
    */
   const shellIn = opts.shellIn ?? 0.80;
+  /*
+   * ...spaced by `shellStep`, which a long cut has to be able to open out.
+   *
+   * The shell is one sphere every 55mm of drop, and a floor-length cassock is
+   * 780mm of it: 14 spheres against the shipped garment's 8, and the cost gate
+   * is particles × colliders. What the 55mm buys is overlap — the scallop the
+   * cloth can dip into between two spheres of radius r spaced s apart is
+   * r − √(r² − s²/4), which at the shipped 55mm on a 210mm shell is 1.8mm and
+   * at 80mm is 3.8mm. Both are inside the 4mm the table was sized for, so the
+   * long cuts step 80mm and stay under the budget.
+   */
+  const shellStep = opts.shellStep ?? 0.055;
   const shell = opts.shell === false ? null : (opts.shell ?? (() => {
     const t = [];
-    for (let dy = waistY - 0.03; dy > waistY - length; dy -= 0.055) t.push([dy, radiusAt(dy) * shellIn]);
+    for (let dy = waistY - 0.03; dy > waistY - length; dy -= shellStep) t.push([dy, radiusAt(dy) * shellIn]);
     return t;
   })());
   /*

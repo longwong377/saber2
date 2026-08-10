@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
-import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster } from './Bodies.js';
+import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
 import { buildRemote } from './Dojo.js';
@@ -48,6 +48,10 @@ export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+/** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
+const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
+const _o4 = new THREE.Vector3(), _o5 = new THREE.Vector3(), _o6 = new THREE.Vector3();
+const _oq = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 
 let _enemyId = 1;
@@ -128,6 +132,419 @@ export const ARCHETYPES = {
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Modifiers — the same eight bodies, at depth                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A wave-20 trooper used to be a wave-2 trooper with more friends. Escalation
+ * was one number — the director's budget — so depth bought QUANTITY and never
+ * anything else, and the fight you learned at wave 5 was the fight you were
+ * still having at wave 25.
+ *
+ * A modifier is an elite variant applied on spawn. Three rules hold it honest:
+ *
+ * 1. IT IS DATA. A modifier is a patch on the archetype (`scale` multiplies,
+ *    `set` replaces) plus an optional `install` for the parts that are meshes
+ *    and behaviour. `applyModifier` copies the archetype before patching, so an
+ *    elite carries its own `A` and nothing an elite does can leak back into the
+ *    shared table and follow the player into their next run. Anything headless —
+ *    the balance harness, the checks below — can read the whole escalation model
+ *    off this object without executing a frame.
+ *
+ * 2. IT IS PAID FOR. `modifierThreat` is what the wave director spends, and it
+ *    is a function of the BASE archetype: a shielded droid and a shielded
+ *    droideka are not the same purchase. An elite wave costs the same threat as
+ *    a plain one, so depth changes the SHAPE of a wave rather than secretly
+ *    tripling it. `tools/checks/escalation.mjs` asserts the queue never spends
+ *    more than the budget.
+ *
+ * 3. IT READS AT ENGAGEMENT RANGE. Every modifier below names the tell it puts
+ *    on the body, and each tell is either on a bone's PRIMARY mesh — which the
+ *    LOD never culls, because it is the silhouette — or a mesh added after the
+ *    constructor's `_collectLodParts` ran, which is therefore not in `_lodParts`
+ *    and never hidden either. A difficulty you cannot see coming is not
+ *    difficulty, it is a surprise.
+ *
+ * And everything here survives being cut apart, because everything in this game
+ * is cut apart. Geometry a modifier adds is parented to a BONE, so `Actor.cut`
+ * hands it to the DetachedPiece with the limb it was sitting past, and
+ * `Actor.goRagdoll` re-homes it onto that bone's holder — the same two paths
+ * every rivet and armour plate in Bodies.js already travels. Nothing is
+ * parented to `rig.root`, where it would be orphaned the moment the body fell.
+ */
+
+/** How much of a leader's aura a nearby ally gets, and how far it reaches. */
+export const RALLY = { radius: 9.5, speed: 1.15, damage: 1.25, rate: 0.78, refresh: 0.25 };
+
+/** The unstable core: how long the fuse burns, and what the blast is worth. */
+export const UNSTABLE = { fuse: 0.85, radius: 5.0, damage: 34, impulse: 15 };
+
+/**
+ * What an elite deflector holds, as a share of the body's own health — bounded
+ * at both ends. Unbounded it read `maxHp * 2.2`, which is 62 on a B1 (a rounding
+ * error) and 1364 on a walker (more than everything else in the wave put
+ * together). The droideka's own generator carries 260; an elite's sits either
+ * side of it.
+ */
+function shieldPool(maxHp) { return clamp(maxHp * 1.6, 90, 300); }
+
+export const MODIFIERS = {
+  frenzied: {
+    label: 'Frenzied',
+    // The tell is MOTION first — it arrives while its wave is still walking —
+    // backed by a hot rim on the limb tubes so a still one still reads.
+    tell: 'half again as fast as everything around it, and lit from the inside',
+    since: 3,
+    threat: { mul: 0.95, flat: 1.4 },
+    allow: (A) => !A.boss && !A.big && !A.inert && !A.training && A.speed > 0,
+    scale: { hp: 0.58, speed: 1.5, fireRate: 0.68, score: 1.4 },
+    install: (e) => tintBones(e, 0xff3a12, 1.5),
+  },
+
+  shielded: {
+    label: 'Shielded',
+    tell: 'a deflector bubble a metre across, lit and rippling',
+    since: 6,
+    threat: { mul: 1.0, flat: 3.2 },
+    // A droideka already has one; a second is not a modifier, it is a typo.
+    allow: (A) => !A.boss && !A.inert && !A.training && !A.shield,
+    scale: { speed: 0.94, score: 1.6 },
+    install: installShield,
+  },
+
+  marksman: {
+    label: 'Marksman',
+    // The red targeting line and its rising tone: 0.9 s of warning, drawn from
+    // the muzzle to your chest, which is the whole of the counter-play.
+    tell: 'a red targeting line on your chest, and most of a second to leave it',
+    since: 7,
+    threat: { mul: 0.9, flat: 2.8 },
+    allow: (A) => A.ranged && !A.custom && !A.telegraph && !A.training,
+    scale: { damage: 2.4, fireRate: 1.4, score: 1.5 },
+    set: { telegraph: 0.9, burst: 1, spread: 0.006, boltColor: BOLT_COLORS.gold, preferred: [20, 38] },
+    install: (e) => { tintBones(e, 0xff8a10, 0.45); addScope(e); },
+  },
+
+  unstable: {
+    label: 'Unstable',
+    tell: 'a reactor core pulsing through the chest, and a fuse you can hear',
+    since: 5,
+    threat: { mul: 0.85, flat: 1.8 },
+    allow: (A) => !A.boss && !A.inert && !A.training,
+    scale: { hp: 0.75, score: 1.3 },
+    install: installCore,
+  },
+
+  armoured: {
+    label: 'Armoured',
+    tell: 'plated shoulders, chest and thighs, and a dead metal finish',
+    since: 8,
+    // The dearest modifier on a heavy chassis, and it should be: a durasteel
+    // torso takes the blade's fastest route away entirely, so an armoured
+    // acolyte is not 1.5 acolytes, it is nearer three. Priced against that
+    // measurement rather than against how the number looks.
+    threat: { mul: 2.0, flat: 2.6 },
+    // Rig-built humanoids only: the plates are authored against a humanoid
+    // skeleton and a walker has no clavicles to hang them from.
+    allow: (A) => !A.custom && !A.boss && !A.inert && !A.training,
+    scale: { hp: 1.5, speed: 0.86, score: 1.7 },
+    // `armorPlus` is read by _boneToughness: the TORSO goes to durasteel, the
+    // limbs do not. The counter-play is that the legs are still legs.
+    set: { armorPlus: true },
+    install: installPlates,
+  },
+
+  dualist: {
+    label: 'Dual-Wielding',
+    tell: 'two lit blades — the brightest thing in the wave, at any range',
+    since: 9,
+    threat: { mul: 1.25, flat: 3.6 },
+    allow: (A) => !!A.saber && !!A.melee && !A.boss && !A.training,
+    scale: { damage: 1.12, score: 1.8 },
+    install: installOffhand,
+  },
+
+  leader: {
+    label: 'Leader',
+    tell: 'a standard burning on its back, and a ring on the ground showing exactly who it is helping',
+    since: 11,
+    threat: { mul: 1.4, flat: 5.0 },
+    allow: (A) => !A.boss && !A.big && !A.inert && !A.training,
+    scale: { hp: 1.5, score: 2.2 },
+    install: installStandard,
+  },
+};
+
+export const MODIFIER_KEYS = Object.keys(MODIFIERS);
+
+/**
+ * What the director pays for one elite, in the same currency as `A.threat`.
+ *
+ * A function of the BASE archetype rather than a flat surcharge, because
+ * "shielded" is worth more bolted to a droideka than to a B1 and a flat number
+ * would make elite B1s the cheapest threat in the game.
+ */
+export function modifierThreat(type, key) {
+  const A = ARCHETYPES[type];
+  if (!A) return 0;
+  const M = MODIFIERS[key];
+  if (!M) return A.threat;
+  return A.threat * M.threat.mul + M.threat.flat;
+}
+
+/** Which modifiers this archetype can wear at all. */
+export function modifiersFor(type) {
+  const A = ARCHETYPES[type];
+  if (!A) return [];
+  return MODIFIER_KEYS.filter(k => MODIFIERS[k].allow(A));
+}
+
+/**
+ * Promote a freshly spawned enemy to an elite.
+ *
+ * Post-construction because `World.spawnEnemy(type, pos)` is the only door in
+ * and it takes no options — so the numbers the constructor read off the shared
+ * archetype are re-derived here rather than being read twice. Health is reset
+ * outright (a spawn is at full), while speed and damage are SCALED so the
+ * per-body jitter and the difficulty factor the constructor rolled survive.
+ *
+ * @returns {boolean} whether the modifier actually went on.
+ */
+export function applyModifier(e, key) {
+  const M = MODIFIERS[key];
+  if (!e || !M || e.mod || e.dead) return false;
+  const base = e.A;
+  if (!M.allow(base)) return false;
+
+  const A = { ...base };
+  for (const [k, v] of Object.entries(M.scale || {})) {
+    if (typeof A[k] === 'number') A[k] *= v;
+  }
+  Object.assign(A, M.set || {});
+  A.label = `${M.label} ${base.label}`;
+  A.threat = modifierThreat(e.type, key);
+  A.elite = key;
+  e.A = A;
+  e.mod = key;
+  e.modLabel = M.label;
+
+  e.maxHp = A.hp * (e.world.hpScale ?? 1);
+  e.hp = e.maxHp;
+  e.speed *= M.scale?.speed ?? 1;
+  e.attackDamage *= M.scale?.damage ?? 1;
+  // The duel brain reads timeScale as "how fast this form runs"; a frenzied
+  // duellist has to actually swing faster, not merely walk faster.
+  if (e.duel && M.scale?.fireRate) e.duel.timeScale /= M.scale.fireRate;
+
+  M.install?.(e);
+  return true;
+}
+
+/* ── the tells ───────────────────────────────────────────────────────── */
+
+const _tintTarget = new THREE.Color();
+
+/**
+ * Recolour the bone PRIMARIES — the limb tubes — and nothing else.
+ *
+ * The primaries are the one part of a body the LOD never culls (see
+ * `_applyLod`: `keep` is exactly `bone.primary`), so a tint on them is the only
+ * colour signal that survives out to the 56 m spawn ring. Materials are CLONED
+ * first: Bodies.js hands every B1 in the wave the same MeshStandardMaterial
+ * instance, and tinting it in place would turn the whole army red.
+ */
+function tintBones(e, hex, strength = 1) {
+  if (!e.rig) return;
+  _tintTarget.setHex(hex);
+  const cloned = e._modMaterials || (e._modMaterials = []);
+  for (const b of e.rig.list) {
+    const m = b.primary;
+    if (!m || !m.material || Array.isArray(m.material)) continue;
+    const mat = m.material.clone();
+    if (mat.emissive) {
+      mat.emissive.copy(_tintTarget);
+      mat.emissiveIntensity = strength;
+    }
+    if (mat.color) mat.color.lerp(_tintTarget, Math.min(0.35 * strength, 0.55));
+    m.material = mat;
+    cloned.push(mat);
+  }
+}
+
+/** The shell material for an elite deflector — the droideka's, standalone. */
+function eliteShieldMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(0x7fe6ff) }, uTime: { value: 0 }, uPower: { value: 0.85 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal);
+        vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix*mv; }`,
+    fragmentShader: `uniform vec3 uColor; uniform float uTime; uniform float uPower;
+      varying vec3 vN; varying vec3 vV; varying vec3 vP;
+      void main(){
+        float fres = pow(1.0-abs(dot(normalize(vN),normalize(vV))), 2.2);
+        float hexes = sin(vP.x*22.0)*sin(vP.y*22.0)*sin(vP.z*22.0);
+        float ripple = 0.5+0.5*sin(vP.y*12.0 - uTime*3.4);
+        float a = (fres*0.9 + max(hexes,0.0)*0.16 + ripple*0.06) * uPower;
+        gl_FragColor = vec4(uColor*(a*2.4), a);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+}
+
+/**
+ * A deflector bubble on a body that was not built with one.
+ *
+ * Scene-parented rather than bone-parented, and driven from `aimPoint` every
+ * frame: a bubble hung off the chest bone would ride the ragdoll and leave a
+ * corpse glowing, and one hung off `rig.root` would not move at all, because
+ * this rig's bones are posed in world space under a root that never leaves the
+ * origin. `die()` hides it, `dispose()` frees it.
+ */
+function installShield(e) {
+  const S = e.A.scale ?? 1;
+  const r = (e.A.big ? 1.9 : 1.05) * S;
+  const mat = eliteShieldMaterial();
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), mat);
+  mesh.frustumCulled = false;
+  e.world.scene.add(mesh);
+  e.shieldMesh = mesh;
+  e.shieldMat = mat;
+  e.shieldRadius = r;
+  e.shieldMax = shieldPool(e.maxHp);
+  e.shieldHp = e.shieldMax;
+  e.shieldUp = true;
+  e.deployTimer = 0;
+}
+
+/**
+ * A reactor that is about to stop being one.
+ *
+ * Parented to the chest bone so it goes where the chest goes: severed with the
+ * torso it rides the DetachedPiece, and on a ragdoll `goRagdoll` re-homes it
+ * onto the chest's holder. Both paths force `visible = true`, which is why this
+ * is a mesh on a bone and not a sprite bolted to the scene.
+ */
+function installCore(e) {
+  const S = e.A.scale ?? 1;
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff5a20, toneMapped: false,
+    transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.12 * S, 10, 8), mat);
+  const host = e.rig?.get('chest') || e.rig?.get('spine') || e.rig?.get('body');
+  if (host) { mesh.position.set(0, host.length * 0.5, 0.1 * S); host.obj.add(mesh); }
+  else if (e.group) { mesh.position.y = 0.6 * S; e.group.add(mesh); }
+  else return;
+  e.coreMesh = mesh;
+  (e._modMaterials || (e._modMaterials = [])).push(mat);
+  e.fuse = 0;
+}
+
+/**
+ * Plate the torso and the big limbs.
+ *
+ * Every plate is a child of the bone it armours, which is what makes it behave:
+ * cut the thigh and the thigh plate leaves with the leg, because `Actor.cut`
+ * adopts any child sitting past the cut into the piece; cut above it and it
+ * stays on the stub. `noDetach` is deliberately NOT set — an armour plate is
+ * part of the limb, not part of the body.
+ */
+function installPlates(e) {
+  if (!e.rig) return;
+  const S = e.A.scale ?? 1;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x30343c, roughness: 0.42, metalness: 0.85 });
+  (e._modMaterials || (e._modMaterials = [])).push(mat);
+  const plates = e._modMeshes || (e._modMeshes = []);
+  const bolt = (boneName, w, h, d, y, z = 0) => {
+    const b = e.rig.get(boneName);
+    if (!b) return;
+    const m = new THREE.Mesh(plateGeo(w * S, h * S, d * S, 0.01 * S, 1), mat);
+    m.position.set(0, y * b.length, z * S);
+    m.castShadow = true;
+    b.obj.add(m);
+    plates.push(m);
+  };
+  bolt('chest', 0.40, 0.30, 0.30, 0.5, 0.03);
+  bolt('spine', 0.36, 0.22, 0.28, 0.5, 0.02);
+  bolt('armL', 0.20, 0.16, 0.20, 0.16);
+  bolt('armR', 0.20, 0.16, 0.20, 0.16);
+  bolt('thighL', 0.17, 0.26, 0.17, 0.42);
+  bolt('thighR', 0.17, 0.26, 0.17, 0.42);
+  tintBones(e, 0x3a4048, 0.12);
+}
+
+/** A long optic on the blaster, so the shooter reads before the laser does. */
+function addScope(e) {
+  if (!e.weapon) return;
+  const S = e.A.scale ?? 1;
+  const mat = new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.5, metalness: 0.7 });
+  const glass = new THREE.MeshBasicMaterial({ color: 0xff8a10, toneMapped: false });
+  (e._modMaterials || (e._modMaterials = [])).push(mat, glass);
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.017 * S, 0.017 * S, 0.26 * S, 8), mat);
+  tube.rotation.x = Math.PI / 2;
+  tube.position.set(0, 0.055 * S, 0.10 * S);
+  e.weapon.add(tube);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.016 * S, 8), glass);
+  lens.position.set(0, 0.055 * S, -0.072 * S);
+  lens.rotation.y = Math.PI;
+  e.weapon.add(lens);
+  (e._modMeshes || (e._modMeshes = [])).push(tube, lens);
+}
+
+/**
+ * A second blade in the off hand.
+ *
+ * It is a real Saber, posed every frame from the left hand, and it is the
+ * loudest tell in the game — a lit blade is emissive and self-luminous, so it
+ * reads at the far end of the spawn ring where a colour tint would not. It also
+ * has an answer: `_loseLimbBehaviour` retracts it the moment the left arm comes
+ * off, so taking the arm takes the weapon, exactly as it does for the main one.
+ */
+function installOffhand(e) {
+  if (!e.saber || !e.rig) return;
+  e.offSaber = new Saber(e.world.scene, {
+    colorIndex: e.A.saberColor ?? 4, bladeLength: 1.04, hiltStyle: e.A.hilt ?? 'Sentinel',
+  });
+  e.offSaber.ignite();
+  e.offHand = new THREE.Vector3();
+  e.offQuat = new THREE.Quaternion();
+  e._offPhase = null;
+}
+
+/**
+ * A standard on the leader's back, and a ring on the ground under it.
+ *
+ * The ring is not decoration: it is drawn at exactly `RALLY.radius`, so what
+ * the player sees is the literal set of enemies being buffed. The standard is a
+ * chest child, so it falls with the body and is gone the moment the leader is.
+ */
+function installStandard(e) {
+  const S = e.A.scale ?? 1;
+  const pole = new THREE.MeshStandardMaterial({ color: 0x241f18, roughness: 0.8 });
+  const flame = new THREE.MeshBasicMaterial({ color: 0xffc24a, toneMapped: false,
+    transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+  (e._modMaterials || (e._modMaterials = [])).push(pole, flame);
+  const host = e.rig?.get('chest') || e.rig?.get('spine') || e.rig?.get('body');
+  if (host) {
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.022 * S, 0.026 * S, 1.15 * S, 6), pole);
+    staff.position.set(0.13 * S, host.length * 0.35, -0.16 * S);
+    host.obj.add(staff);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.10 * S, 10, 8), flame);
+    beacon.position.set(0.13 * S, host.length * 0.35 + 0.60 * S, -0.16 * S);
+    host.obj.add(beacon);
+    e.beacon = beacon;
+    (e._modMeshes || (e._modMeshes = [])).push(staff, beacon);
+  }
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffb03a, toneMapped: false,
+    transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending,
+    depthWrite: false, side: THREE.DoubleSide });
+  (e._modMaterials || (e._modMaterials = [])).push(ringMat);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(RALLY.radius - 0.28, RALLY.radius, 48), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.frustumCulled = false;
+  e.world.scene.add(ring);
+  e.rallyRing = ring;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Enemy                                                                 */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -172,6 +589,11 @@ export class Enemy {
     this.windTimer = 0;
     this.strafeDir = rng() < 0.5 ? 1 : -1;
     this.strafeTimer = rng() * 2;
+    /** Time left on a Leader's aura. Refreshed by whoever is leading. */
+    this.rallyTimer = 0;
+    /** Which modifier this body wears, if any — see MODIFIERS. */
+    this.mod = null;
+    this.fuse = 0;
     this.target = null;
     this.lastSeen = 0;
     this.lod = 0;
@@ -330,6 +752,17 @@ export class Enemy {
     out.length = 0;
     if (this.dead && !this.actor?.ragdolled) return out;
 
+    // An elite deflector is a sphere around the whole body, so it is in front of
+    // every bone and the blade meets it first — which is the point. `takeCut`
+    // reads `cap.shield` and drops the bubble instead of the limb, so one clean
+    // pass costs the shield and nothing else. Pushed before the bones for the
+    // same reason the droideka pushes it before its core.
+    if (this.shieldUp && this.shieldMesh && !this.dead) {
+      const c = _v4.copy(this.shieldMesh.position);
+      out.push({ name: 'shield', p0: c.clone(), p1: c.clone(),
+        r: this.shieldRadius, toughness: TOUGHNESS.heavy, enemy: this, shield: true });
+    }
+
     if (this.rig) {
       for (const b of this.rig.list) {
         if (b.severed || !b.parts.length) continue;
@@ -375,6 +808,10 @@ export class Enemy {
 
   _boneToughness(name) {
     const A = this.A;
+    // The Armoured modifier plates the TORSO to durasteel and leaves the limbs
+    // where they were: the counter-play to a body you cannot cut through is the
+    // legs it is standing on.
+    if (A.armorPlus && /^(chest|spine|hips|neck|head)$/.test(name)) return TOUGHNESS.durasteel;
     if (A.armored && (name === 'chest' || name === 'spine' || name === 'hips')) return TOUGHNESS.heavy;
     if (A.custom === 'walker' && (name === 'body' || name === 'hips')) return TOUGHNESS.durasteel;
     if (A.custom === 'beast' && name === 'body') return TOUGHNESS.heavy;
@@ -399,7 +836,12 @@ export class Enemy {
     if (this.invincible) return false;
     if (this.shieldUp && kind !== 'melee') {
       this.shieldHp -= amount;
-      this.built.shieldMat.uniforms.uPower.value = 1.4;
+      // Two kinds of body carry a bubble now — the droideka, which was built
+      // with one, and anything the Shielded modifier promoted — so the flash
+      // goes through whichever material is actually there rather than assuming
+      // `built.shieldMat` exists.
+      const mat = this.shieldMat || this.built?.shieldMat;
+      if (mat) mat.uniforms.uPower.value = 1.4;
       if (this.shieldHp <= 0) this.dropShield();
       return false;
     }
@@ -444,6 +886,12 @@ export class Enemy {
       if (this.legsLost >= (this.A.custom === 'walker' || this.A.custom === 'beast' ? 3 : 1)) {
         this.topple();
       }
+    }
+    // The off hand holds a real weapon, so losing it loses the weapon. Checked
+    // before the general arm rule, which only knows about the main one.
+    if (this.offSaber && /L$/.test(bone) && /arm|fore|hand|clav/.test(bone)) {
+      this.offSaber.retract();
+      this.offDisarmed = true;
     }
     if (/arm|fore|hand/.test(bone)) {
       this.armsLost = (this.armsLost || 0) + 1;
@@ -512,9 +960,13 @@ export class Enemy {
   dropShield() {
     if (!this.shieldUp) return;
     this.shieldUp = false;
-    this.built.shield.visible = false;
+    if (this.built?.shield) this.built.shield.visible = false;
+    if (this.shieldMesh) this.shieldMesh.visible = false;
     this.shieldHp = 0;
-    this.deployTimer = 4.5;
+    // A droideka's own generator cycles back up; an elite's bubble does not.
+    // Bringing it back would make the one clean pass that broke it worth
+    // nothing, and the whole counter-play is that the pass is worth something.
+    this.deployTimer = this.mod === 'shielded' ? Infinity : 4.5;
     audio.explosion(this.position, 0.4);
     this.world.particles?.sparkBurst(this.aimPoint(_v1), null, 30, { speed: 12, color: 0x88ffcc });
   }
@@ -533,6 +985,19 @@ export class Enemy {
       const h = this.hum; this.hum = null;
       h.retract();
       setTimeout(() => { try { h.dispose(); } catch {} }, 400);
+    }
+    // The elite fittings go with the body: a corpse is not shielded, does not
+    // lead, and — for exactly UNSTABLE.fuse seconds — is still a bomb.
+    if (this.shieldMesh) { this.shieldUp = false; this.shieldMesh.visible = false; }
+    if (this.rallyRing) this.rallyRing.visible = false;
+    if (this.offSaber) {
+      this.offSaber.retract();
+      setTimeout(() => this.offSaber && this.offSaber.setVisible(false), 900);
+    }
+    if (this.mod === 'unstable' && !this._detonated) {
+      this.fuse = UNSTABLE.fuse;
+      audio.tone({ freq: 700, freqEnd: 2600, dur: UNSTABLE.fuse, gain: 0.12, type: 'square', pos: this.position });
+      this.world.notifyFloating?.(this.aimPoint(_v3), 'UNSTABLE', '#ff8a40');
     }
     if (this.telegraphArc) this.telegraphArc.hide();
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
@@ -562,7 +1027,103 @@ export class Enemy {
 
   /* ── update ──────────────────────────────────────────────────────── */
 
+  /* ── elites ──────────────────────────────────────────────────────── */
+
+  /**
+   * Everything a modifier has to do every frame, in one place.
+   *
+   * Runs for the living and the dead alike, because a fuse burns on a corpse
+   * and a bubble has to be taken off one.
+   */
+  _updateElite(dt, ctx) {
+    if (this.shieldMesh) {
+      if (this.dead || !this.shieldUp) this.shieldMesh.visible = false;
+      else {
+        this.shieldMesh.visible = true;
+        this.aimPoint(_v5);
+        this.shieldMesh.position.copy(_v5);
+        const u = this.shieldMat.uniforms;
+        u.uTime.value += dt;
+        u.uPower.value = damp(u.uPower.value, clamp(this.shieldHp / this.shieldMax, 0, 1) * 0.9, 4, dt);
+      }
+    }
+    if (this.rallyRing) {
+      const live = !this.dead && !this.toppled;
+      this.rallyRing.visible = live;
+      if (live) {
+        const gy = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : this.position.y;
+        this.rallyRing.position.set(this.position.x, gy + 0.06, this.position.z);
+        this.rallyRing.material.opacity = 0.20 + Math.sin(ctx.time * 2.4) * 0.06;
+      }
+      if (this.beacon) this.beacon.scale.setScalar(live ? 1 + Math.sin(ctx.time * 5) * 0.14 : 0.001);
+    }
+    // A LEADER IS A MULTIPLIER, AND IT SHOWS YOU EXACTLY WHOM IT MULTIPLIES.
+    // The ring above is drawn at RALLY.radius, so the set of bodies inside it
+    // is the set of bodies getting the buff — no guessing, and one obvious
+    // target if you would rather not fight the buffed version of the wave.
+    if (this.mod === 'leader' && !this.dead && !this.toppled) {
+      const r2 = RALLY.radius * RALLY.radius;
+      for (const other of ctx.enemies) {
+        if (other === this || other.dead) continue;
+        if (other.position.distanceToSquared(this.position) > r2) continue;
+        other.rallyTimer = RALLY.refresh;
+      }
+    }
+    if (this.fuse > 0) {
+      this.fuse -= dt;
+      if (this.coreMesh) {
+        const k = clamp(1 - this.fuse / UNSTABLE.fuse, 0, 1);
+        this.coreMesh.scale.setScalar(1 + k * 2.6);
+        this.coreMesh.material.opacity = 0.55 + 0.45 * Math.abs(Math.sin(k * 26));
+      }
+      if (this.fuse <= 0) this._detonate();
+    }
+  }
+
+  /**
+   * The unstable core going off — after a fuse, never on the frame of death.
+   *
+   * The delay is the whole fairness argument: the core has been pulsing on its
+   * chest since it walked in, it screams for 0.85 s once it dies, and only then
+   * does it take the ground it is standing on. Long enough to walk out of,
+   * short enough that you cannot ignore where you killed it. It hurts EVERYONE
+   * inside the radius, which makes a bomb droid something you can aim.
+   */
+  _detonate() {
+    this.fuse = 0;
+    if (this._detonated) return;
+    this._detonated = true;
+    const at = this.actor?.ragdolled ? this.actor.centre(_v1) : this.aimPoint(_v1);
+    const point = at.clone();
+    this.world.particles?.explosion(point, 1.6);
+    this.world.onExplosion?.(point, 1.4);
+    audio.explosion(point, 1.3);
+    this.world.engine?.flash(0.09);
+    if (this.coreMesh) this.coreMesh.visible = false;
+
+    const R = UNSTABLE.radius;
+    const hurt = (t) => {
+      if (!t || t === this) return;
+      const pos = t.position;
+      if (!pos) return;
+      const d = pos.distanceTo(point);
+      if (d > R) return;
+      const k = 1 - d / R;
+      _v2.subVectors(pos, point).setY(0.55).normalize().multiplyScalar(UNSTABLE.impulse * k);
+      if (t.applyKnockback) t.applyKnockback(_v2.clone(), UNSTABLE.damage * k, this, false);
+      else {
+        t.damage?.(UNSTABLE.damage * k, point, this, 'explosion');
+        t.velocity?.add(_v2);
+        t.camera?.addShake(0.5 * k);
+      }
+    };
+    for (const p of (this.world.players || [])) hurt(p);
+    for (const e of (this.world.enemies || [])) if (!e.dead) hurt(e);
+  }
+
   update(dt, ctx) {
+    this._updateElite(dt, ctx);
+    if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
     if (this.dead) {
       this.dying += dt;
       if (this.actor) this.actor.update(dt);
@@ -684,12 +1245,14 @@ export class Enemy {
     }
 
     this.attackTimer -= dt;
+    // A rallied shooter reloads faster; the leader's ring is what tells you so.
+    const rally = this.rallyTimer > 0 ? RALLY.rate : 1;
     if (this.burstLeft > 0) {
       this.burstTimer -= dt;
       if (this.burstTimer <= 0) {
         this._shoot(ctx);
         this.burstLeft--;
-        this.burstTimer = A.burstGap ?? 0.12;
+        this.burstTimer = (A.burstGap ?? 0.12) * rally;
       }
       return;
     }
@@ -704,12 +1267,12 @@ export class Enemy {
           this._endTelegraph();
           this.burstLeft = A.burst ?? 1;
           this.burstTimer = 0;
-          this.attackTimer = A.fireRate * (0.75 + rng() * 0.5) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
+          this.attackTimer = rally * A.fireRate * (0.75 + rng() * 0.5) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
         }
       } else {
         this.burstLeft = A.burst ?? 1;
         this.burstTimer = 0;
-        this.attackTimer = A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
+        this.attackTimer = rally * A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
       }
     }
   }
@@ -803,7 +1366,9 @@ export class Enemy {
     _v3.normalize();
 
     ctx.bolts.fire(from, _v3, {
-      speed: this.trainingBoltSpeed ?? speed, damage: this.attackDamage, color: A.boltColor ?? BOLT_COLORS.red,
+      speed: this.trainingBoltSpeed ?? speed,
+      damage: this.attackDamage * (this.rallyTimer > 0 ? RALLY.damage : 1),
+      color: A.boltColor ?? BOLT_COLORS.red,
       owner: this, team: this.team, big: !!A.big,
       length: A.big ? 2.4 : 1.15, radius: A.big ? 0.1 : 0.05,
     });
@@ -817,11 +1382,57 @@ export class Enemy {
     if (!this.saber) { this._beastBrain(dt, ctx, dist); return; }
     if (this.lock) { this.wish = null; return; }   // a blade lock pins both fighters
     if (this.trainingSpeed) this.duel.timeScale = this.trainingSpeed;
+    // The leader's aura reaches the duel brain as tempo, which is what the form
+    // actually spends: shorter guards, shorter recoveries, the same attacks.
+    if (this.rallyTimer > 0) {
+      this._duelBase = this._duelBase ?? this.duel.timeScale;
+      this.duel.timeScale = this._duelBase / RALLY.rate;
+    } else if (this._duelBase !== undefined) {
+      this.duel.timeScale = this._duelBase;
+      this._duelBase = undefined;
+    }
     this.duel.update(dt, ctx, dist);
     // a lunging attack actually carries the duellist forward
     if (this.duel.lungeSpeed > 0.01 && this.toTarget) {
       this.velocity.addScaledVector(this.toTarget, this.duel.lungeSpeed * dt * 9);
     }
+    if (this.offSaber && !this.offDisarmed) this._offhandStrike(dt, ctx);
+  }
+
+  /**
+   * The second blade's own hit, and why it is here rather than in World.
+   *
+   * World tests exactly one blade per duellist — `e.saber.prevTip → e.saber.tip`
+   * against the player's capsule — and it owns the clash resolution for that
+   * blade. A second weapon that only LOOKED like a weapon would be the same lie
+   * the boon table has a note about, so the off blade swings for itself.
+   *
+   * It is deliberately the FOLLOW-UP, not a duplicate: it lands in the back half
+   * of the strike, once per attack, for a fraction of the damage. So the
+   * telegraph you already read still tells you when to move, and the answer to a
+   * dual-wielder is to be gone by the second beat rather than to parry twice.
+   */
+  _offhandStrike(dt, ctx) {
+    const duel = this.duel;
+    const phase = duel.phase;
+    if (phase !== 'strike') { this._offPhase = phase; return; }
+    if (this._offPhase !== 'strike') { this._offPhase = 'strike'; this._offSwung = false; }
+    if (this._offSwung) return;
+    // the back half of the arc — the main blade has already gone through
+    if (duel.timer > (duel._strikeLen ?? 0.2) * 0.5) return;
+    this._offSwung = true;
+
+    const t = this.target;
+    if (!t || !t.position) return;
+    const reach = 1.15 * (this.A.scale ?? 1) + 0.9;
+    _v1.copy(t.chest ?? t.position);
+    if (this.offHand.distanceTo(_v1) > reach) return;
+    if (t.invuln > 0) return;
+    t.damage?.(this.attackDamage * 0.55 * duel.damageScale, _v1.clone(), this, 'saber');
+    _v2.subVectors(t.position, this.position).setY(0.25).normalize().multiplyScalar(4.5);
+    t.velocity?.add(_v2);
+    t.camera?.addShake(0.16);
+    audio.swing(18, this.offSaber.base);
   }
 
   /**
@@ -929,7 +1540,7 @@ export class Enemy {
 
     const canMove = this.stunTimer <= 0 && this.knockTimer <= 0 && !this.gripped;
     if (canMove && this.wish) {
-      const speed = this.speed * (this.legsLost ? 0.45 : 1);
+      const speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
       _v1.copy(this.wish).multiplyScalar(speed);
       // Nobody backpedals as fast as they run. Only the component pointing AWAY
       // from the target is scaled, so a sidestep keeps its full pace and only
@@ -1141,7 +1752,8 @@ export class Enemy {
     const poleR = _v3.copy(chest).addScaledVector(right, 0.8 * S).addScaledVector(UP, -0.75 * S);
     rig.solveIK('armR', 'foreR', this.saberHand, poleR);
     const poleL = _v3.copy(chest).addScaledVector(right, -0.7 * S).addScaledVector(UP, -0.8 * S);
-    rig.solveIK('armL', 'foreL', _v2.copy(this.saberHand).addScaledVector(right, -0.06 * S).addScaledVector(UP, -0.06 * S), poleL);
+    if (this.offSaber) this._poseOffhand(dt, ctx, poleL, fast, S);
+    else rig.solveIK('armL', 'foreL', _v2.copy(this.saberHand).addScaledVector(right, -0.06 * S).addScaledVector(UP, -0.06 * S), poleL);
     rig.updateMatrices();
 
     // close duellists get simulated robes; distant ones do not need them
@@ -1158,6 +1770,51 @@ export class Enemy {
         this.cloak.update(dt, this.cloak.refreshColliders(), _v3);
       }
     }
+  }
+
+  /**
+   * The off hand, when it is holding a blade rather than steadying one.
+   *
+   * The guard direction is MIRRORED across the fighter's centre line and lagged
+   * behind the main blade, which is what makes two blades read as two blades: a
+   * pair that tracked the same target with the same damping would look like one
+   * weapon drawn twice. The lag is also honest about the timing — the off blade
+   * really does arrive after the main one, which is what `_offhandStrike` hits
+   * on.
+   */
+  _poseOffhand(dt, ctx, poleL, fast, S) {
+    const rig = this.rig;
+    const arm = rig.get('armL');
+    if (this.offDisarmed || !arm || arm.severed) {
+      rig.solveIK('armL', 'foreL', _o1.copy(this.saberHand).addScaledVector(UP, -0.06 * S), poleL);
+      return;
+    }
+    // Its OWN temporaries, re-read from the rig. The chest and right-axis
+    // vectors _poseSaber hands round are module scratch that the pole targets
+    // above have already written over by the time this runs; borrowing them
+    // would make the second blade's guard a function of whatever happened to be
+    // left in _v1.
+    const chest = rig.worldPos('chest', _o1);
+    const fwd = _o2.set(Math.sin(this.facing), 0, Math.cos(this.facing));
+    const right = _o3.set(fwd.z, 0, -fwd.x);
+    _oq.setFromAxisAngle(UP, this.facing + this.duel.spin);
+    const dir = _o4.copy(this.duel.guardDir).applyQuaternion(_oq).normalize();
+
+    // mirror the guard about the body's own right axis, then drop it a little:
+    // a second blade is carried low, ready to come up under the first.
+    const mirrored = dir.addScaledVector(right, -2 * dir.dot(right)).addScaledVector(UP, -0.28).normalize();
+    const reach = 0.32 + (this.duel.attack?.reach ?? 0) * 0.6;
+    const handTarget = _o5.copy(chest).addScaledVector(mirrored, reach * S).addScaledVector(UP, -0.14 * S);
+    const guardPoint = _o6.copy(chest).addScaledVector(mirrored, (reach + 0.58) * S);
+
+    if (!this._offHandInit) { this.offHand.copy(handTarget); this._offHandInit = true; }
+    dampVec(this.offHand, handTarget, fast ? 18 : 8, dt);
+    guardPoint.sub(this.offHand).normalize();
+    aimY(guardPoint, null, _oq);
+    this.offQuat.slerp(_oq, clamp(dt * (fast ? 16 : 7), 0, 1));
+    this.offSaber.setHiltPose(this.offHand, this.offQuat);
+    this.offSaber.update(dt, ctx.time, this.velocity);
+    rig.solveIK('armL', 'foreL', this.offHand, poleL);
   }
 
   _poseWalker(dt, ctx) {
@@ -1243,6 +1900,23 @@ export class Enemy {
   }
 
   dispose() {
+    // Modifier fittings first. The bone-parented ones (plates, core, standard)
+    // are freed by the rig's own traverse — they are children of bones — so
+    // only the scene-parented ones and the cloned materials are ours to undo.
+    if (this.shieldMesh) {
+      this.world.scene.remove(this.shieldMesh);
+      this.shieldMesh.geometry.dispose();
+      this.shieldMat?.dispose();
+      this.shieldMesh = null;
+    }
+    if (this.rallyRing) {
+      this.world.scene.remove(this.rallyRing);
+      this.rallyRing.geometry.dispose();
+      this.rallyRing.material.dispose();
+      this.rallyRing = null;
+    }
+    if (this.offSaber) { this.offSaber.dispose(); this.offSaber = null; }
+    if (this._modMaterials) { for (const m of this._modMaterials) m.dispose(); this._modMaterials = null; }
     if (this.saber) this.saber.dispose();
     if (this.hum) this.hum.dispose();
     if (this.cloak) this.cloak.dispose();

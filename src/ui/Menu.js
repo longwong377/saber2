@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi } from '../game/Bodies.js';
+import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
@@ -34,8 +35,8 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 // bump silently turned "a blob under the current key survives" into "a blob
 // under a legacy key is drained" — the assertion still ran, against the wrong
 // slot, and reported the current blob as lost.
-export const STORE_KEY = 'saber.settings.v5';
-export const LEGACY_KEYS = ['saber.settings.v4', 'saber.settings.v3', 'saber.settings.v2'];
+export const STORE_KEY = 'saber.settings.v6';
+export const LEGACY_KEYS = ['saber.settings.v5', 'saber.settings.v4', 'saber.settings.v3', 'saber.settings.v2'];
 
 /**
  * The blade length the forge slider stops at, and the length it stops at when
@@ -87,6 +88,7 @@ export const HAIR_COLORS = [
 
 export const DEFAULT_SETTINGS = {
   level: 'dunes',
+  order: 'jedi',
   difficulty: 'knight',
   mode: 'roguelite',
   colorIndex: 0,
@@ -188,6 +190,7 @@ export function bladeCeiling(s) { return s.unlimitedBlade ? BLADE_MAX : BLADE_CA
  */
 export const SETTING_READERS = {
   level:           ['main.js', 'settings.level'],
+  order:           ['game/World.js', 'applyOrder(p, this.settings.order)'],
   difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
   mode:            ['game/World.js', 'this.settings.mode'],
   colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
@@ -690,16 +693,16 @@ export class Menu {
 
   _buildSaber() {
     this.el.colors.innerHTML = '';
-    SABER_COLORS.forEach((c, i) => {
+    crystalPalette(this.s.order).forEach((c, i) => {
       const sw = document.createElement('div');
-      sw.className = 'sw' + (this.s.colorIndex === i ? ' sel' : '');
+      sw.className = 'sw' + (this.s.colorIndex === c.index ? ' sel' : '');
       const hex = '#' + c.hex.toString(16).padStart(6, '0');
       sw.style.background = `radial-gradient(circle at 35% 30%, #fff, ${hex} 62%)`;
       sw.style.boxShadow = `0 0 16px -2px ${hex}`;
       sw.title = c.name;
       sw.addEventListener('click', () => {
         audio.ui('click');
-        this.s.colorIndex = i;
+        this.s.colorIndex = c.index;   // the rack is filtered; position is not the index
         [...this.el.colors.children].forEach(x => x.classList.toggle('sel', x === sw));
         saveSettings(this.s);
         this._refreshPreview();
@@ -738,6 +741,23 @@ export class Menu {
         this._refreshPreview(true);
       });
       this.el.robes.appendChild(sw);
+    });
+
+    /**
+     * THE ORDER, and it re-homes what depends on it.
+     *
+     * A Sith rack has no Cerulean in it. Switching order while holding a
+     * crystal that order does not carry would leave the setting pointing at a
+     * swatch no longer on screen — the control would look fine and the blade
+     * would be something the player never chose. `crystalForOrder` moves it to
+     * the nearest legal one; the hilt and robe defaults follow the same rule.
+     */
+    this._cardRow('order-list', 'h-order', 'order', ORDERS, (o) => {
+      this.s.colorIndex = crystalForOrder(o.id, this.s.colorIndex);
+      if (!hiltsForOrder(o.id).includes(this.s.hiltStyle)) this.s.hiltStyle = o.hiltDefault ?? this.s.hiltStyle;
+      if (o.robes && !o.robes.includes(this.s.robeIndex)) this.s.robeIndex = o.robeDefault ?? this.s.robeIndex;
+      this._buildSaber();
+      this._refreshPreview(true);
     });
 
     this._swatchRow('skin-list', 'skinIndex', SKIN_TONES, () => this._refreshPreview(true));
@@ -861,19 +881,52 @@ export class Menu {
    * length, against 53% at 1.15 m, and the hilt shrinks by the same factor
    * rather than vanishing.
    */
-/** One row of colour swatches bound to an index setting. */
+  /**
+   * One row of cards bound to an id setting — orders, species, cuts, faces.
+   * Hides its own heading when the list is empty, so a module that exports
+   * nothing yet leaves no titled empty box behind it.
+   */
+  _cardRow(hostId, headId, key, list, onPick) {
+    const host = document.getElementById(hostId);
+    const head = headId && document.getElementById(headId);
+    if (!host) return;
+    host.innerHTML = '';
+    const empty = !list || !list.length;
+    if (head) head.style.display = empty ? 'none' : '';
+    host.style.display = empty ? 'none' : '';
+    if (empty) return;
+    for (const it of list) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s[key] === it.id ? ' sel' : '');
+      const sub = it.epithet || it.blurb || '';
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${sub}</span></div>`;
+      d.addEventListener('click', () => {
+        audio.ui('click');
+        this.s[key] = it.id;
+        [...host.children].forEach(x => x.classList.toggle('sel', x === d));
+        onPick?.(it);
+        saveSettings(this.s);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /** One row of colour swatches bound to an index setting. */
   _swatchRow(hostId, key, palette, onPick) {
     const host = document.getElementById(hostId);
     if (!host) return;
     host.innerHTML = '';
     palette.forEach((c, i) => {
       const sw = document.createElement('div');
-      sw.className = 'sw' + (this.s[key] === i ? ' sel' : '');
+      sw.className = 'sw' + (this.s[key] === (c.index ?? i) ? ' sel' : '');
       sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
       sw.title = c.name;
       sw.addEventListener('click', () => {
         audio.ui('click');
-        this.s[key] = i;
+        // `c.index ?? i` — a FILTERED rack (an order's crystals) is a subset, so
+        // its array position is not the index the game stores. Skin, hair and
+        // robe palettes carry no `index` and keep behaving exactly as before.
+        this.s[key] = c.index ?? i;
         [...host.children].forEach(x => x.classList.toggle('sel', x === sw));
         saveSettings(this.s);
         onPick?.();
@@ -922,6 +975,7 @@ export class Menu {
         bladeLength: this.s.bladeLength,
         coreWidth: this.s.coreWidth,
         hiltStyle: this.s.hiltStyle,
+        order: this.s.order,
       });
       // Held in the right hand rather than floating: parented to the bone, so
       // it stays put whatever the rest pose does.
@@ -938,6 +992,7 @@ export class Menu {
       p.saber.ignition = 1;
     } else {
       p.saber.setColor(this.s.colorIndex);
+      p.saber.order = this.s.order;   // the hilt re-machines live
     }
   }
 
