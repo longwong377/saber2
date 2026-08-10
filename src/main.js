@@ -16,7 +16,7 @@ import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar } from './net/Net.js';
-import { boonById } from './game/Waves.js';
+import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
 import { Run } from './game/Run.js';
 import { recordRun, progressLines } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
@@ -521,7 +521,37 @@ function wireNet() {
   net.on('peer-left', (id) => {
     menu.netStatus('a Jedi left', '');
     const r = world?.remotes?.get(id);
-    if (r) { r.dispose(); world.remotes.delete(id); }
+    if (!r) return;
+    r.dispose();
+    world.remotes.delete(id);
+    // …and out of `world.players`, which is where it was ALSO pushed and was
+    // never removed from. A departed peer stayed a live entry in every loop
+    // over the player list forever: enemies kept picking it as a target and
+    // walking to a body that no longer updated, the blade loop kept testing
+    // against it, and `damage` kept addressing a closed connection.
+    const i = world.players.indexOf(r);
+    if (i >= 0) world.players.splice(i, 1);
+    world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the fight`);
+  });
+  /**
+   * The host is gone.
+   *
+   * There is no host migration, and there is not going to be one here — the
+   * host owns the wave director, the enemy list and every spawn, and electing a
+   * new one mid-run means transferring all of it. What there IS now is being
+   * TOLD. This event had no handler at all, so the host closing the tab left a
+   * joining player in a world where enemies stopped arriving, nothing could
+   * hurt them and nothing ever said why. Saying so out loud is the smallest
+   * honest thing, and it beats a silent, unwinnable room.
+   */
+  net.on('closed', () => {
+    menu.netStatus('the host left — this run cannot continue', 'err');
+    if (world && world.netMode === 'client') {
+      // Nothing to stop: a client's director never started (main.js only calls
+      // `start` when netMode !== 'client'), and the waves it was fighting came
+      // from the host's snapshots. They simply stop arriving.
+      world.notify('THE HOST HAS LEFT', 'no more waves will come — abandon when ready');
+    }
   });
   net.on('welcome', (hostSettings) => {
     if (hostSettings) {
@@ -555,6 +585,14 @@ function wireNet() {
    * exception — `absorb` is applied at World's call site rather than inside
    * `damage`, so it has to be repeated here or a peer would silently lose it.
    */
+  // A draft is open on the host. Draw OUR hand, from OUR taken-set.
+  net.on('draft', (msg) => {
+    if (!world || world.netMode !== 'client') return;
+    offerDraft(drawBoons(msg.boss ? 4 : 3, world.takenBoons, msg.w || 1, {
+      floor: msg.boss ? 'rare' : null,
+      attune: !!msg.boss && (msg.w || 0) >= BOSS_EVERY,
+    }));
+  });
   net.on('hit', (msg) => {
     const p = world?.player;
     if (!p || !p.alive || !(msg.d > 0)) return;

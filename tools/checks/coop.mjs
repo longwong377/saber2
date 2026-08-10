@@ -194,4 +194,69 @@ export async function run({ check, assert }) {
     assert(/p\.damage\(/.test(body), 'the body hit no longer reaches the player at all');
     return 'clash is local-only; the body hit reaches every player, remote or not';
   });
+
+  check('co-op: drafting a boon does not throw, and every player gets one', async () => {
+    /**
+     * TWO BUGS THAT LOOKED LIKE ONE FEATURE.
+     *
+     *   `World.applyBoon` looped `this.players` and called `applyBoon` on each.
+     *   A RemoteAvatar is in that list and has no such method, so drafting a
+     *   SINGLE CARD in co-op threw a TypeError.
+     *
+     *   And a client's director never runs — main.js only calls `start` when
+     *   `netMode !== 'client'` — so `onDraft` never fired there. A joining
+     *   player fought every wave the host did and was never offered a card, for
+     *   the whole session.
+     *
+     * The fix has to be BOTH: apply locally only, and tell the peers a draft is
+     * open. What is NOT sent is the hand — each machine draws from its own
+     * taken-set, because that is the only set that knows what that player
+     * already holds and what ranks they have left. Sending the host's three
+     * cards would offer a Vitality III to someone who has never taken one.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+
+    const i = world.indexOf('  applyBoon(boon)');
+    assert(i > 0, 'World.applyBoon is gone');
+    const body = world.slice(i, i + 700);
+    assert(/typeof p\.applyBoon === 'function'/.test(body),
+      'applyBoon still calls p.applyBoon on every player, and a RemoteAvatar has none — this throws');
+
+    // the moment is broadcast…
+    assert(/t: 'draft'/.test(world), 'the host never tells a peer that a draft is open');
+    // …and the hand is NOT
+    const d = world.slice(world.indexOf('onDraft = '), world.indexOf('onDraft = ') + 1400);
+    assert(!/broadcast\([^)]*boons/.test(d),
+      'the host broadcasts its own hand, which offers peers ranks they have not earned');
+    // the client draws its own, from its own set
+    assert(/net\.on\('draft'/.test(main), 'nothing on the client opens a draft');
+    const h = main.slice(main.indexOf("net.on('draft'"), main.indexOf("net.on('draft'") + 500);
+    assert(/drawBoons\(/.test(h) && /world\.takenBoons/.test(h),
+      'the client does not draw from its own taken-set');
+    return 'applied locally, the moment broadcast, each peer draws its own hand';
+  });
+
+  check('co-op: a player who leaves stops being a player', async () => {
+    // `peer-left` deleted the avatar from `world.remotes` and left it in
+    // `world.players`, where main.js had ALSO pushed it. So a departed peer
+    // stayed live in every loop over the player list: enemies kept picking it
+    // as a target and walking to a body that no longer updated, and `damage`
+    // kept addressing a closed connection.
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i = main.indexOf("net.on('peer-left'");
+    assert(i > 0, 'the peer-left handler is gone');
+    const body = main.slice(i, i + 900);
+    assert(/remotes\.delete/.test(body), 'the avatar is not removed from remotes');
+    assert(/players\.splice|players\.indexOf/.test(body),
+      'the avatar is left in world.players, where it stays a target forever');
+    // and the pushes must still be paired, or this check is pinning half a rule
+    assert(/world\.players\.push\(r\)/.test(main), 'the push this pairs with is gone');
+    // the host leaving must SAY so rather than leaving a silent, unwinnable room
+    assert(/net\.on\('closed'/.test(main),
+      'nothing handles the host disappearing — a client is left in a world where nothing arrives and nothing explains why');
+    return 'a departed peer leaves both remotes and players; a vanished host is announced';
+  });
 }

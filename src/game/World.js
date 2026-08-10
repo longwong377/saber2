@@ -247,7 +247,24 @@ export class World {
         this.onRungClear?.(this.run);
       }
     };
-    this.director.onDraft = (boons) => { this.onDraftOffer?.(boons); };
+    this.director.onDraft = (boons) => {
+      this.onDraftOffer?.(boons);
+      /**
+       * …AND TELL THE PEERS, because a client's director never runs — main.js
+       * only calls `director.start` when `netMode !== 'client'` — so a joining
+       * player was never offered a card at all. They fought every wave the host
+       * did and drafted nothing for the whole session.
+       *
+       * The HAND is not sent, only the moment. Each machine draws from its own
+       * taken-set, which is the only set that knows what that player already
+       * holds, what ranks they have left and which masteries they have earned.
+       * Sending the host's three cards would offer a Vitality III to someone who
+       * has never taken one.
+       */
+      if (this.netMode === 'host') {
+        this.net?.broadcast({ t: 'draft', w: this.director.wave, boss: this.director.isBossWave(this.director.wave) });
+      }
+    };
 
     this.running = true;
     return L;
@@ -1227,10 +1244,20 @@ export class World {
     }
   }
 
+  /**
+   * Take a boon — on THIS machine's players only.
+   *
+   * This used to loop every entry of `this.players`, and a RemoteAvatar is in
+   * that list and has no `applyBoon`: drafting a single card in co-op threw a
+   * TypeError. It was also wrong in principle even without the crash, because a
+   * build belongs to a player. Each machine drafts its own card from its own
+   * taken-set, so two people climbing the Spire together arrive at the top with
+   * different runs — which is the point of a draft.
+   */
   applyBoon(boon) {
     this.takenBoons.take(boon.id);
     this.run?.take(boon);
-    for (const p of this.players) p.applyBoon(boon);
+    for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
     this.director.resumeAfterDraft();
     this.notify(boon.name.toUpperCase(), boon.tag);
   }

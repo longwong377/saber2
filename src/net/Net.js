@@ -199,6 +199,9 @@ export class Net {
       // and the host overwrites its copy 24 times a second), so the host cannot
       // apply the damage itself; it can only say so.
       case 'hit': this._emit('hit', msg); break;
+      // Host → peers: a draft is open. The moment, not the hand — see the note
+      // on World's onDraft.
+      case 'draft': this._emit('draft', msg); break;
       // 'event' was routed here with no sender anywhere and no listener
       // anywhere — a channel that existed only as this line. Deleting it is as
       // valid a fix as giving it a purpose, and it is the honest one: nothing
