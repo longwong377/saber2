@@ -18,6 +18,7 @@ import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { RankSet, rankScale } from './Waves.js';
+import { parryScale } from './Combat.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -1282,6 +1283,12 @@ export class Player {
     }
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
+
+    // The tier's scale on the parry window. Set unconditionally, unlike assist:
+    // Grandmaster has assist 0 and still declares the tightest window in the
+    // table, so hanging this off the assist branch would leave the one tier
+    // that most advertises it as the only tier without it.
+    this.control.parryWindow = parryScale(this.difficulty);
 
     if (this.isLocal && this.difficulty && this.difficulty.assist > 0) {
       this.control.assist = this.difficulty.assist;

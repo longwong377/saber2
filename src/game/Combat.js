@@ -45,11 +45,14 @@ export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
  * opposite zone at every tier, so no difficulty ever forgives a guard held the
  * wrong way round:
  *
- *   Padawan 0.92 — ±127.8°. Both neighbours, nearly whole. Point roughly right.
- *   Knight  0.70 — ±108.0°. Your quadrant and the whole of either neighbour's
- *                  half nearest you; an adjacent zone's own centre is answered.
+ *   Padawan 0.90 — ±126.0°. Both neighbours, nearly whole. Point roughly right.
+ *   Knight  0.65 — ±103.5°. Your quadrant and most of either neighbour's half
+ *                  nearest you; an adjacent zone's own centre is answered.
  *   Master  0.30 — ±72.0°. Your quadrant plus a lip; the adjacent centre is not.
  *   Grandmaster 0 — ±45.0°. Your quadrant, exactly. Every zone is yours.
+ *
+ * Steps of 22.5°, 31.5° and 27°, which used to be 19.8°, 36° and 27° — see the
+ * note on the table below for what that uneven 36° step was doing.
  *
  * Under FREE AIM ('hold' and 'free') it is the share of your guard-AIMING error
  * the deflection assist closes across 0.9 s of approach (see ASSIST_LEAD in
@@ -59,9 +62,9 @@ export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
  *
  * Measured at the 34 m Player.js actually searches (tools/checks/deflection.mjs):
  *
- *   Padawan 0.92 — 40° off arrives 3.5 cm out. Genuinely guides your guard.
- *   Knight  0.70 — 30° off arrives 10.5 cm out; past about 33° you are on your
- *                  own. Get roughly there and the assist finishes it.
+ *   Padawan 0.90 — 40° off arrives about 4 cm out. Genuinely guides your guard.
+ *   Knight  0.65 — 30° off arrives 12.0 cm out, just inside the window; past
+ *                  30° you are on your own. Get roughly there and it finishes it.
  *   Master  0.30 — you must be within ~18° yourself.
  *   Grandmaster 0 — every bolt is yours.
  *
@@ -70,26 +73,88 @@ export const GRADE_NAME = ['BLOCK', 'DEFLECT', 'RETURN', 'PERFECT RETURN'];
  * assist guides your guard — missed a bolt you were 40° off. They are not
  * comparable to these and must not be read as a difficulty increase.
  */
+/**
+ * The four tiers — and why these numbers moved.
+ *
+ * MEASURED, by `tools/balance.mjs`, at three modelled skill levels. The old
+ * ladder was correctly ORDERED and badly SPACED, and the spacing is what a
+ * player actually experiences:
+ *
+ *   skill "sharp"   Padawan 26.0   Knight 26.0   Master 2.87   Grandmaster 1.13
+ *
+ * 26 is the model's ceiling, so a good player never died on either of the first
+ * two tiers and died on wave three of the third. Four settings, two
+ * experiences: "you cannot lose" and "you cannot play". There was no tier in
+ * between, which is the one a difficulty menu exists to offer.
+ *
+ * The cause is not any single dial — each of the four climbs in even steps. It
+ * is that they MULTIPLY. What actually reaches the player is
+ *
+ *     (share of bolts unanswered) x fireRate x accuracy x damageTaken
+ *
+ * and the first term is the violent one: 98% answered at Knight against 83% at
+ * Master is an 8.5x increase in what gets through, which then meets a 2.3x
+ * bigger hit. Nineteen times the damage, for one step of the menu.
+ *
+ * Two changes, both aimed at the compounding rather than at any one number:
+ *
+ *   THE ASSIST STEPS MORE EVENLY. 0.92/0.70/0.30/0 gave guard zones of
+ *   127.8/108/72/45 degrees — steps of 19.8, 36 and 27, and that 36-degree step
+ *   between Knight and Master was most of the cliff. It is now 0.90/0.65/0.30/0
+ *   = 126/103.5/72/45, steps of 22.5, 31.5 and 27.
+ *
+ *   NOT the equal 27s that would be ideal, and the reason is worth recording:
+ *   Knight cannot go below 0.65. Under free aim the same number buys forgiveness
+ *   of a guard-AIMING error, and `assist: a badly placed guard still blocks on
+ *   the forgiving tiers` requires a 30-degree-off Knight guard to land inside
+ *   the blade's ±12.5 cm capture window. Measured: 0.60 misses by 13.6 cm, 0.63
+ *   by 12.6, 0.65 by 12.0. So one number serves two schemes with different
+ *   needs, and 0.65 is where they meet. Squaring that properly means giving the
+ *   two schemes their own dial, which is a larger change than this.
+ *
+ *   Grandmaster keeps assist 0 exactly, because its blurb promises "zero
+ *   assist" and a blurb is a contract.
+ *
+ *   THE DAMAGE PRODUCT GROWS MORE SLOWLY AT THE TOP. It stepped 2.97x, 2.28x,
+ *   1.80x; the top two tiers were being punished twice for the same thing,
+ *   since they already ask you to answer far more of it yourself.
+ *
+ * MEASURED AFTER, same harness, same seeds:
+ *
+ *   sharp       26.0   21.2   3.63   1.25     steps 1.2x, 5.8x, 2.9x (was 1.0, 9.1, 2.5)
+ *   competent   22.6    5.7   1.50   0.64     steps 3.9x, 3.8x, 2.3x
+ *
+ * The competent ladder is now genuinely even. The sharp one still has a step at
+ * Knight -> Master, halved but not gone, and it is not obvious it should be:
+ * a player who answers 98% of bolts saturates the lower tiers by construction,
+ * so any tier where they answer less looks violent by ratio. Tuning that number
+ * further would be fitting to a model whose own header says not to read a row as
+ * a prediction about a human. Knight is at least a fight now rather than a
+ * formality — it was the ceiling at every skill level and is not.
+ *
+ * The ordering is unchanged and is checked — see tools/checks/balance.mjs, which
+ * fails if any dial stops being monotonic across the four.
+ */
 export const DIFFICULTY = {
   padawan: {
     name: 'Padawan', blurb: 'The blade is forgiving. Assist guides your guard.',
-    assist: 0.92, enemyAccuracy: 0.42, enemyAggression: 0.55, damageTaken: 0.55,
-    deflectWindow: 1.6, boltSpeed: 0.34, fireRate: 0.5, chamberWindow: 0.22, staminaDrain: 0.7,
+    assist: 0.90, enemyAccuracy: 0.42, enemyAggression: 0.55, damageTaken: 0.55,
+    deflectWindow: 1.6, boltSpeed: 0.34, fireRate: 0.5, staminaDrain: 0.7,
   },
   knight: {
     name: 'Knight', blurb: 'A fair fight. Light assist, honest bolts.',
-    assist: 0.70, enemyAccuracy: 0.62, enemyAggression: 0.78, damageTaken: 0.85,
-    deflectWindow: 1.25, boltSpeed: 0.46, fireRate: 0.65, chamberWindow: 0.17, staminaDrain: 0.9,
+    assist: 0.65, enemyAccuracy: 0.62, enemyAggression: 0.78, damageTaken: 0.85,
+    deflectWindow: 1.25, boltSpeed: 0.46, fireRate: 0.65, staminaDrain: 0.9,
   },
   master: {
     name: 'Master', blurb: 'No hand on your wrist. They shoot to kill.',
-    assist: 0.30, enemyAccuracy: 0.8, enemyAggression: 1.0, damageTaken: 1.15,
-    deflectWindow: 1.0, boltSpeed: 0.63, fireRate: 0.85, chamberWindow: 0.14, staminaDrain: 1.0,
+    assist: 0.30, enemyAccuracy: 0.76, enemyAggression: 1.0, damageTaken: 1.05,
+    deflectWindow: 1.0, boltSpeed: 0.63, fireRate: 0.80, staminaDrain: 1.0,
   },
   grandmaster: {
     name: 'Grandmaster', blurb: 'Zero assist. Every bolt is yours to answer.',
-    assist: 0, enemyAccuracy: 0.94, enemyAggression: 1.25, damageTaken: 1.5,
-    deflectWindow: 0.86, boltSpeed: 0.72, fireRate: 1.0, chamberWindow: 0.11, staminaDrain: 1.15,
+    assist: 0, enemyAccuracy: 0.88, enemyAggression: 1.25, damageTaken: 1.25,
+    deflectWindow: 0.86, boltSpeed: 0.72, fireRate: 0.92, staminaDrain: 1.15,
   },
 };
 
@@ -108,6 +173,20 @@ export const DIFFICULTY = {
  * 71% however fast they mash.
  */
 export const PARRY_GRADE = { window: 0.20, perfect: 0.10 };
+
+/**
+ * A tier's scale on the parry window, clamped and defaulting to 1.
+ *
+ * Named here rather than read inline for the same reason `zoneTolerance` is:
+ * two readers of one ladder drift, and this one already spent its whole life
+ * with zero readers. The clamp is what stops a mistyped tier from making the
+ * window either infinite or negative — at 0 every parry is late, which is
+ * indistinguishable from the parry system being switched off.
+ */
+export function parryScale(difficulty) {
+  const v = difficulty?.deflectWindow;
+  return typeof v === 'number' && isFinite(v) ? clamp(v, 0.5, 2.5) : 1;
+}
 
 /**
  * THE SPEED LADDER — the three blade speeds that decide what a contact is worth.
@@ -564,7 +643,14 @@ export function gradeCaught(snap, ctx) {
   // `perfect` half it earns the PERFECT. Nothing else about the ladder moves —
   // there is one ladder, and this is a second way onto it.
   const parry = snap.parry || null;
-  const sharp = !!parry && parry.age <= PARRY_GRADE.perfect;
+  // `deflectWindow` is the tier's scale on how long you have. It was a column of
+  // DIFFICULTY with NO READER ANYWHERE — four hand-authored numbers, printed in
+  // the difficulty table, promising a wider window on Padawan and a tighter one
+  // on Grandmaster, and identical in the code on all four. `tools/balance.mjs`
+  // reports columns like that as dead, and a tier is a promise about the fight:
+  // a column of that promise with no reader is the same lie as a checkbox with
+  // no onChange.
+  const sharp = !!parry && parry.age <= PARRY_GRADE.perfect * parryScale(ctx.difficulty);
 
   let grade = snap.caught ? GRADE.DEFLECT : GRADE.BLOCK;
 

@@ -1088,7 +1088,12 @@ export class SaberController {
     g.centre = GUARD.centre;
     g.reach = GUARD.reach;
     g.radius = GUARD.radius;
-    g.parry = this.zoneParry && this.zoneAge <= PARRY.window;
+    // Scaled by the tier, so a parry is genuinely more forgiving on Padawan and
+    // genuinely tighter on Grandmaster. `deflectWindow` was four authored
+    // numbers with no reader anywhere in the tree — see parryScale, and the
+    // note in Combat's DIFFICULTY. `parryWindow` is set by the Player from its
+    // world's difficulty; 1 when nobody has said otherwise.
+    g.parry = this.zoneParry && this.zoneAge <= PARRY.window * (this.parryWindow ?? 1);
     g.parryAge = this.zoneAge;
     g.origin.copy(chest);
     g.inv.copy(aimQuat).invert();

@@ -288,6 +288,30 @@ export class WaveDirector {
    * real per-card value the ramp moves by editing one number rather than by
    * re-tuning a polynomial.
    *
+   * ── AND IT HAS NOW MEASURED, AND THIS DID NOT MOVE. Read before changing it,
+   * because the obvious derivation is wrong.
+   *
+   * What the harness produces is a paired MODEL-DEPTH difference: the median
+   * modelled card is worth Δ0.372 waves, the best (The Dark Side — a mastery,
+   * gated on three dark cards, costing a third of your health) Δ2.413. Those
+   * are waves, not throughput, and balance.mjs's own header says an absolute
+   * depth "is NOT a prediction of a human" and moves by a factor of three
+   * across its three skill settings. Converting Δwaves into a multiplier on a
+   * threat budget needs a conversion this project does not have and would have
+   * to invent — and a number invented to look derived is worse than one
+   * honestly labelled a working figure. So it stays 1.05, and stays labelled.
+   *
+   * What the measurement IS good for is what it was asked for: the SPREAD. It
+   * was 12.1x the median at the top with five cards measuring below zero; it is
+   * 6.5x with one, and that one is a gated mastery that costs health. That is
+   * the finding, and it was acted on in the cards rather than here.
+   *
+   * Note too that ranks and ATTUNEMENTS now add player growth this exponent
+   * never accounted for, and attunements deliberately do not converge — so no
+   * fixed exponent can answer them. The budget curve and the attunement ladder
+   * are two curves racing, and that race is what the endless mode IS. Folding
+   * the attunements in here would end the race by construction.
+   *
    * Multiply, do not re-fit: the opening is already tuned and 1.08^0 = 1 leaves
    * wave 1 exactly where it was. The extra pressure lands where the extra cards
    * do — ×1.15 at wave 10, ×1.31 at 20, ×1.47 at 30.

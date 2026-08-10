@@ -69,6 +69,51 @@ export async function run({ check, assert }) {
     return rows.join(', ');
   });
 
+  check('balance: every column of a difficulty tier has a reader', async () => {
+    /**
+     * "A tier is a promise about the fight. A column of that promise with no
+     * reader is the same lie as a checkbox with no onChange." That is
+     * balance.mjs's own report text, and it was printing TWO names —
+     * `deflectWindow` and `chamberWindow`, both four hand-authored numbers that
+     * differed across the tiers on paper and were identical in the code.
+     *
+     * `deflectWindow` now scales the parry window (see parryScale).
+     * `chamberWindow` was deleted rather than wired: Duel.js already owns that
+     * name, per FORM, with different semantics, so the DIFFICULTY copy was a
+     * vestigial duplicate that could only ever have meant something else.
+     *
+     * Deleting a dead column and wiring one are equally honest; what is not
+     * honest is printing it in a difficulty table and reading it nowhere.
+     */
+    const { readFile, readdir } = await import('node:fs/promises');
+    const dir = new URL('../../src/', import.meta.url);
+    let src = '';
+    const walk = async (d) => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), d);
+        if (e.isDirectory()) await walk(u);
+        else if (e.name.endsWith('.js')) src += await readFile(u, 'utf8');
+      }
+    };
+    await walk(dir);
+    // The declaration itself is not a reader, so count occurrences past the
+    // four table rows.
+    const dead = [];
+    for (const col of Object.keys(DIFFICULTY.knight)) {
+      if (col === 'name' || col === 'blurb') continue;
+      const uses = (src.match(new RegExp(`\\b${col}\\b`, 'g')) || []).length;
+      // 4 rows of the table + the doc comment mentions; a real reader pushes it
+      // clear of that. Checked as "appears somewhere that is not the table",
+      // which is what a reader means.
+      const outsideTable = new RegExp(`(\\.|\\?\\.)${col}\\b|\\[['"\`]${col}['"\`]\\]`).test(src);
+      if (!outsideTable) dead.push(`${col} (${uses} mentions, none of them a read)`);
+    }
+    assert(!dead.length,
+      `difficulty columns with no reader anywhere in src/: ${dead.join(', ')}. `
+      + 'Wire it or delete it — a tier that differs on paper and not in the code is a lie.');
+    return `${Object.keys(DIFFICULTY.knight).length - 2} columns, all read`;
+  });
+
   /* ══ 2. the gate that outran the blade ═════════════════════════════════ */
 
   check('balance: every deflection gate is a speed the blade can actually reach', () => {
