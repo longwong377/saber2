@@ -1186,7 +1186,7 @@ export async function run({ check, assert }) {
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
       'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade',
-      'skinIndex', 'hairIndex', 'order'];
+      'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut'];
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (bound.has(key)) {

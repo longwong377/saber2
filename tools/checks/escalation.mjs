@@ -384,56 +384,64 @@ export async function run({ check, assert }) {
     const world = gameWorld();
     const rows = [];
     for (const key of Object.keys(Foe.MODIFIERS)) {
-      const type = Object.keys(ARCHETYPES).find(t => Foe.modifiersFor(t).includes(key)
-        && !ARCHETYPES[t].training && !ARCHETYPES[t].boss);
-      assert(type, `${key} has no non-training chassis to test on`);
+      const chassis = Object.keys(ARCHETYPES).filter(t => Foe.modifiersFor(t).includes(key));
+      assert(chassis.length, `${key} has no chassis to test on`);
+      const seen = [];
+      // EVERY legal chassis, not the first one that happens to work. A droideka
+      // is a baked group with no bone rig, so a tell written only against
+      // `rig.list` reads on five of the six bodies a modifier is legal on and
+      // on none of the sixth — which is exactly the shape of bug this is for.
+      for (const type of chassis) {
+        // BEFORE AND AFTER ON THE SAME BODY. Comparing a promoted enemy against
+        // a separately built plain one proves nothing: Bodies.js mints fresh
+        // material instances per build, so every mesh would read as
+        // "recoloured" and this would pass for a modifier that did nothing.
+        const e = spawn(world, type);
+        settle(e, world);
+        const mats = new Map();
+        const surfaces = [];
+        if (e.rig) for (const b of e.rig.list) { if (b.primary) surfaces.push(b.primary); }
+        else e.group?.traverse(o => { if (o.isMesh) surfaces.push(o); });
+        for (const m of surfaces) mats.set(m, m.material.clone());
+        const before = new Set();
+        (e.rig?.root || e.group)?.traverse(o => { if (o.isMesh) before.add(o); });
+        const sceneBefore = world.scene.children.length;
 
-      // BEFORE AND AFTER ON THE SAME BODY. Comparing a promoted enemy against a
-      // separately built plain one proves nothing: Bodies.js mints fresh
-      // material instances per build, so every bone would read as "recoloured"
-      // and this check would pass for a modifier that changed nothing at all.
-      const e = spawn(world, type);
-      settle(e, world);
-      const mats = new Map();
-      for (const b of (e.rig?.list || [])) if (b.primary) mats.set(b.name, b.primary.material.clone());
-      const before = new Set();
-      e.rig?.root.traverse(o => { if (o.isMesh) before.add(o); });
-      const sceneBefore = world.scene.children.length;
+        assert(Foe.applyModifier(e, key), `${key} refused to go on a ${type}`);
+        settle(e, world);
 
-      assert(Foe.applyModifier(e, key), `${key} refused to go on a ${type}`);
-      settle(e, world);
+        // (a) a SILHOUETTE surface that looks different — bone primaries, which
+        // `_applyLod` keeps at every distance, or a group's own baked meshes
+        let tinted = 0;
+        for (const m of surfaces) {
+          const was = mats.get(m), now = m.material;
+          if (!was || !was.color || !now.color) continue;      // shader shells have no colour to move
+          if (!now.color.equals(was.color)
+            || (now.emissive && was.emissive && !now.emissive.equals(was.emissive))
+            || now.emissiveIntensity !== was.emissiveIntensity) tinted++;
+        }
+        // (b) new geometry on the body that `_lodParts` does not own
+        const added = [];
+        (e.rig?.root || e.group)?.traverse(o => { if (o.isMesh && !before.has(o)) added.push(o); });
+        const lodOwned = new Set(e._lodParts || []);
+        const survives = added.filter(o => !lodOwned.has(o));
+        assert(!added.length || added.length === survives.length,
+          `${key} on a ${type} hung ${added.length - survives.length} of its meshes inside _lodParts — culled past 30 m`);
+        // (c) something new in the scene beside the body (bubble, ring, blade)
+        const sceneAdded = world.scene.children.length - sceneBefore;
 
-      // (a) a bone PRIMARY that looks different — the one channel the LOD keeps
-      let tinted = 0;
-      for (const b of (e.rig?.list || [])) {
-        if (!b.primary) continue;
-        const was = mats.get(b.name), now = b.primary.material;
-        if (!was) continue;
-        if (!now.color.equals(was.color) || (now.emissive && !now.emissive.equals(was.emissive))
-          || now.emissiveIntensity !== was.emissiveIntensity) tinted++;
+        // and prove it: force the far LOD and the tell has to still be there
+        e._applyLod(2);
+        const stillOn = survives.filter(o => o.visible).length;
+        assert(tinted > 0 || stillOn > 0 || sceneAdded > 0,
+          `${key} on a ${type} changes nothing a player can see from the spawn ring — `
+          + 'the wave walks in from 34 to 56 m out, and a tell that only reads inside 30 m is not a tell');
+        seen.push(`${type}:${tinted}/${stillOn}/${sceneAdded}`);
+
+        e.dispose();
+        world.enemies.splice(world.enemies.indexOf(e), 1);
       }
-      // (b) new geometry on the body that `_lodParts` does not own
-      const added = [];
-      e.rig?.root.traverse(o => { if (o.isMesh && !before.has(o)) added.push(o); });
-      const lodOwned = new Set(e._lodParts || []);
-      const survives = added.filter(o => !lodOwned.has(o));
-      assert(added.length === survives.length || !added.length,
-        `${key} hung ${added.length - survives.length} of its meshes inside _lodParts — those are culled past 30 m`);
-      // (c) something new in the scene beside the body (bubble, ring, blade)
-      const sceneAdded = world.scene.children.length - sceneBefore;
-
-      assert(tinted > 0 || survives.length > 0 || sceneAdded > 0,
-        `${key} changes nothing a player can see before it matters`);
-
-      // and prove it: force the far LOD and the tell has to still be there
-      e._applyLod(2);
-      const stillOn = survives.filter(o => o.visible).length;
-      assert(tinted > 0 || stillOn > 0 || sceneAdded > 0,
-        `${key}'s tell is culled at distance — it only reads once you are inside 30 m`);
-      rows.push(`${key}: ${tinted} recoloured, ${stillOn} kept meshes, ${sceneAdded} in scene`);
-
-      e.dispose();
-      world.enemies.splice(world.enemies.indexOf(e), 1);
+      rows.push(`${key} [${seen.join(' ')}]`);
     }
     return rows.join('; ');
   });

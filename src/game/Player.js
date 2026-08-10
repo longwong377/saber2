@@ -12,12 +12,25 @@ import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
+import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
+
+/**
+ * The skin tone at an index, on the rack that species actually has.
+ *
+ * A Twi'lek built from the shared human row is a beige Twi'lek — the rack
+ * belongs to the species, and the indices are relative to it.
+ */
+function skinHex(species, i) {
+  const sp = speciesOf(species);
+  const rack = (sp && sp.skinTones && sp.skinTones.length) ? sp.skinTones : SKIN_TONES;
+  return (rack[i ?? 0] || rack[0])?.hex;
+}
 
 const rng = makeRng(1212);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -455,13 +468,14 @@ export class Player {
     // one default face. The builder needed no change; this line was the feature.
     const built = buildJedi({
       robeIndex: opts.robeIndex ?? 0, scale: 1,
-      skinColor: SKIN_TONES[opts.skinIndex ?? 2]?.hex,
+      skinColor: skinHex(opts.species, opts.skinIndex),
       hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
-      build: opts.build,
+      build: opts.build, species: opts.species, face: opts.face,
     });
     this.rig = built.rig;
     this.palette = built.palette;
     this.built = built;
+    this.robeCut = opts.robeCut;
     world.scene.add(this.rig.root);
     this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
@@ -606,6 +620,7 @@ export class Player {
       // narrow at the collar, flared at the hem, and stopping above the knee so
       // the legs still read — a floor-length sack hides the whole silhouette.
       material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0,
+      cut: this.robeCut,
     });
     // THE ROBE BELOW THE BELT IS CLOTH NOW.
     //
@@ -621,7 +636,7 @@ export class Player {
       const smat = (this.palette.over || this.palette.outer).clone();
       smat.side = THREE.DoubleSide;
       this.skirt = attachSkirt(this.world.scene, this.rig, {
-        material: smat, rigid: this.built.robeSkirt,
+        material: smat, rigid: this.built.robeSkirt, cut: this.robeCut,
       });
       // The cape used to avoid the skirt via a fixed table of spheres sampled
       // off a standing figure. Now the skirt can move, so the cape follows the
@@ -2765,9 +2780,10 @@ export class Player {
     if (this.actor) { this.actor.dispose(); this.actor = null; }
     const built = buildJedi({
       robeIndex: this.world.settings.robeIndex ?? 0,
-      skinColor: SKIN_TONES[this.world.settings.skinIndex ?? 2]?.hex,
+      skinColor: skinHex(this.world.settings.species, this.world.settings.skinIndex),
       hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
       build: this.world.settings.build,
+      species: this.world.settings.species, face: this.world.settings.face,
     });
     this.rig = built.rig;
     this.palette = built.palette;

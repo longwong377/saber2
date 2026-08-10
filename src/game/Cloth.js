@@ -818,13 +818,14 @@ export class Cloak {
  * bench the checks in tools/checks/garments.mjs re-derive: fold depth and ridge
  * correlation standing, hem travel in the pelvis frame at a walk, how deep the
  * cloth passes into a leg, ride-up and stretch at a sprint, and the cost. What
- * the measurements ruled out is recorded here too, because three of the obvious
+ * the measurements ruled out is recorded here too, because four of the obvious
  * ideas do not survive contact with a four-iteration solve:
  *
- *   MORE ROWS ARE WORSE, not better. At the shipped 460mm, 6/7/8 rows read 33 /
- *   72 / 99 mm of leg through the cloth at a jog and 15 / 21 / 47 % stretch. A
- *   longer garment therefore does NOT get proportionally more rows; it gets the
- *   same seven and a coarser row pitch, and it measures better for it.
+ *   MORE ROWS ARE WORSE, not better. At the shipped 460mm and 4.6 m/s, 6/7/8
+ *   rows read 33 / 72 / 99 mm of cloth inside a leg and 15 / 21 / 47 % stretch:
+ *   the finer the mesh the less each particle can be moved out of the way in
+ *   four passes. A longer garment therefore does NOT get proportionally more
+ *   rows; it gets the same seven at a coarser pitch, and measures better for it.
  *
  *   A GARMENT NARROWER THAN THE STRIDE CANNOT BE SOLVED. A hem drawn in to
  *   0.22m with the flare taken out — the "tight travelling coat" this set was
@@ -844,8 +845,17 @@ export class Cloak {
  *   `bend` and `bendDown`; the diagonals stay soft or the folds stop running
  *   down the cloth. Same finding as the shipped skirt's own shear note.
  *
- * `id` is what the UI stores and what `attachSkirt(scene, rig, { cut })` takes.
- * The blurb is written for a player, not for this file.
+ * `id` is what the UI stores, and both `attachSkirt(scene, rig, { cut })` and
+ * `attachCloak(scene, rig, { cut })` take it. The blurb is written for a
+ * player, not for this file.
+ *
+ * The `cloak` half of each entry is FABRIC ONLY — how the cape damps, how much
+ * air it catches, how it bends — because Player and Enemy both pass the cape's
+ * width, length, cols, rows and flare explicitly and an explicit option beats a
+ * preset. That is enough to be worth having: measured at a walk, the cassock's
+ * cape trails 45mm less and hangs 27mm lower than the temple robe's and the
+ * ceremonial's streams 39mm further back. If a caller ever stops pinning the
+ * dimensions, put them here.
  */
 export const ROBE_CUTS = [
   {
@@ -857,7 +867,7 @@ export const ROBE_CUTS = [
   },
   {
     id: 'cassock', name: 'Heavy Cassock',
-    blurb: 'The longest cut the order allows, in something that hangs rather than flies. Four deep folds and half the swing of a temple robe.',
+    blurb: 'The longest cut the order allows, in something that hangs rather than flies. Four deep folds, and it is still moving a second after you have stopped.',
     skirt: {
       // 540mm, and that is the ceiling rather than a preference. See the note
       // on floor length below: at 740mm the same 98 particles sample the cloth
@@ -871,19 +881,19 @@ export const ROBE_CUTS = [
        * HEAVY IS NOT MORE GRAVITY.
        *
        * The obvious spelling of a heavy garment is a bigger `gravity`, and it
-       * was tried: at -16 this cut reaches 60% stretch through the jog band
-       * against 40% at the shipped -13, because in a verlet solve with unit
-       * masses gravity is not weight, it is LOAD, and a chain's sag is load
-       * over stiffness. Every particle here masses the same as every other one
-       * and there is no knob that changes that.
+       * was tried: at -16 this cut stretches a vertical link 54/51/45/46% over
+       * its cut length at 4.2/4.6/5.0/7.4 m/s against 42/37/42/40% at the
+       * shipped -13. In a verlet solve where every particle masses the same,
+       * gravity is not weight, it is LOAD, and a chain's sag is load over
+       * stiffness. There is no mass knob, and turning gravity up buys stretch.
        *
-       * What heft actually is, in this solver: energy that goes and does not
-       * come back (`damping` 0.952 against 0.972), a fabric that will not
+       * What heft actually is here: energy that goes and does not come back
+       * (`damping` 0.952 against the shipped 0.972), a fabric that will not
        * answer the air (`lift` 0.55 and `drift` 0.45 against 1.0 and 0.7), and
-       * a bend that holds its own line down the cloth (`bendDown` 0.70). The
-       * measurement that says it worked is hem travel in the pelvis frame:
-       * 92mm at a walk against the temple robe's 177mm on a garment 80mm
-       * longer, which is a robe that moves at half speed.
+       * a bend that holds its own line down the cloth (`bendDown` 0.80 against
+       * 0.55). What that reads as, measured: the hem goes on moving for 1.48
+       * seconds after the wearer stops dead, against 0.87 for the temple robe,
+       * and travels 175mm a stride against its 194 on a garment 80mm longer.
        */
       damping: 0.952, lift: 0.55, drift: 0.45, bendDown: 0.80,
       foldAO: 0.62, proxyRows: [1, 3, 5, 6],
@@ -901,11 +911,12 @@ export const ROBE_CUTS = [
        *
        * `pinRows` has been a parameter since the tube landed and nothing used
        * it. A short garment is the case that wants it: the ride-up at a sprint
-       * is close to a fixed 270-320mm whatever the garment's length — it is the
-       * inner shell pumping, not the wind, and only 38mm of the shipped robe's
-       * 274 goes away when the wind is switched off — so a 300mm tabard on one
-       * ring finishes the sprint bunched at the belt, hem 98% of its own length
-       * up. Held at a second ring 75mm down it rides 60mm, which is 20%.
+       * is close to a fixed 270-320mm whatever the garment's LENGTH, because it
+       * is the inner shell pumping the cloth up its own cone rather than the
+       * wind — switching the wind off leaves 236 of the temple robe's 274mm. So
+       * a 300mm tabard on one ring finishes a sprint bunched at the belt, 80%
+       * of its own length up its anchor. Held at a second ring 75mm down it
+       * rides 66mm, which is 22%.
        *
        * That ring needed an anchor that reads its row index; see anchorFn.
        */
@@ -980,9 +991,9 @@ export const ROBE_CUTS = [
                   [-0.37, 0.288], [-0.48, 0.292], [-0.62, 0.288]],
       /*
        * THE ASYMMETRY: ±34% of the drop round the ring, which is a hem that
-       * finishes 307mm lower on one side than the other and stays that way,
+       * finishes 312mm lower on one side than the other and stays that way,
        * because the rest lengths are sampled off the biased layout — the long
-       * side's columns really are cut 77% longer than the short side's. The
+       * side's columns really are cut 91% longer than the short side's. The
        * phase puts the long fall over one hip rather than down the back, where
        * it would read as a train on an otherwise symmetric garment.
        *
@@ -1327,13 +1338,14 @@ export function attachSkirt(scene, rig, opts = {}) {
   /*
    * ...spaced by `shellStep`, which a long cut has to be able to open out.
    *
-   * The shell is one sphere every 55mm of drop, and a floor-length cassock is
-   * 780mm of it: 14 spheres against the shipped garment's 8, and the cost gate
-   * is particles × colliders. What the 55mm buys is overlap — the scallop the
-   * cloth can dip into between two spheres of radius r spaced s apart is
-   * r − √(r² − s²/4), which at the shipped 55mm on a 210mm shell is 1.8mm and
-   * at 80mm is 3.8mm. Both are inside the 4mm the table was sized for, so the
-   * long cuts step 80mm and stay under the budget.
+   * The shell is one sphere every 55mm of drop, and the cost gate is particles
+   * × colliders: a 540mm cassock on the shipped spacing carries 10 shell
+   * spheres against the temple robe's 8 and pays 1764 sphere tests a pass
+   * instead of 1568. What the 55mm buys is overlap — the scallop the cloth can
+   * dip into between two spheres of radius r spaced s apart is r − √(r² − s²/4),
+   * which at 55mm on a 210mm shell is 1.8mm and at 65mm is 2.5mm, both inside
+   * the 4mm the original table was sized for. So the long cuts step 60-65mm and
+   * cost the shipped 16 colliders.
    */
   const shellStep = opts.shellStep ?? 0.055;
   const shell = opts.shell === false ? null : (opts.shell ?? (() => {

@@ -97,9 +97,19 @@ export async function run({ check, assert }) {
       assert(new RegExp(`opts\\.${key}`).test(player) || new RegExp(`settings\\.${key}`).test(player),
         `Player never reads ${key}, so the swatch writes a setting nobody uses`);
     }
-    assert(/skinColor:\s*SKIN_TONES\[/.test(player), 'Player does not turn the index into a colour buildJedi takes');
+    // STRONGER THAN IT WAS. This used to assert the literal `SKIN_TONES[...]`,
+    // which pinned one shared palette — and the palette is not shared any more:
+    // a rack belongs to a SPECIES, because a Twi'lek built from the human row
+    // is a beige Twi'lek. So the property is not "it indexes that array", it is
+    // "it resolves the index on the rack that species actually has".
+    assert(/skinHex\(/.test(player), 'Player does not turn the skin index into a colour at all');
+    const h = player.slice(player.indexOf('function skinHex'), player.indexOf('const rng = makeRng'));
+    assert(/speciesOf\(/.test(h) && /skinTones/.test(h),
+      'the skin index is resolved without asking the species which tones it has');
+    assert(/rack\[0\]|\|\| rack/.test(h),
+      'an index past the end of a shorter species rack has no fallback — it would build a colourless body');
     assert(/hairColor:\s*HAIR_COLORS\[/.test(player), 'Player does not turn the hair index into a colour');
-    return 'menu index -> World.spawnPlayer -> Player -> buildJedi, all four links present';
+    return 'menu index -> World.spawnPlayer -> Player -> species rack -> buildJedi';
   });
 
   check('appearance: the preview shows a person, not a floating hilt', async () => {
@@ -118,8 +128,12 @@ export async function run({ check, assert }) {
       const j = menu.indexOf(key);
       assert(j > 0, `${key} is gone`);
     }
-    assert(/_swatchRow\('skin-list', 'skinIndex', SKIN_TONES, \(\) => this\._refreshPreview/.test(menu),
+    // The rack argument is no longer a fixed name — it is the species' own —
+    // so what is pinned is the CONSEQUENCE: picking a tone must rebuild the
+    // preview, whichever rack it came from.
+    assert(/_swatchRow\('skin-list', 'skinIndex', [^,]+, \(\) => this\._refreshPreview/.test(menu),
       'picking a skin tone does not refresh the preview');
+    assert(/_cardRow\('species-list'[^)]*\)/.test(menu), 'species is not a control at all');
     return 'the preview builds a Jedi from all three choices and rebuilds on every pick';
   });
 }

@@ -7,8 +7,9 @@
 
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
-import { ROBE_COLORS, buildJedi } from '../game/Bodies.js';
+import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf } from '../game/Bodies.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
+import { ROBE_CUTS } from '../game/Cloth.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
@@ -93,6 +94,9 @@ export const DEFAULT_SETTINGS = {
   mode: 'roguelite',
   colorIndex: 0,
   hiltStyle: 'Graflex',
+  species: 'human',
+  face: FACE_PRESETS[0]?.id ?? 'even',
+  robeCut: 'temple',
   robeIndex: 1,
   skinIndex: 2,
   hairIndex: 1,
@@ -195,6 +199,9 @@ export const SETTING_READERS = {
   mode:            ['game/World.js', 'this.settings.mode'],
   colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
   hiltStyle:       ['game/World.js', 'hiltStyle: this.settings.hiltStyle'],
+  species:         ['game/World.js', 'species: this.settings.species'],
+  face:            ['game/World.js', 'face: this.settings.face'],
+  robeCut:         ['game/World.js', 'robeCut: this.settings.robeCut'],
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
   skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
   hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
@@ -760,7 +767,27 @@ export class Menu {
       this._refreshPreview(true);
     });
 
-    this._swatchRow('skin-list', 'skinIndex', SKIN_TONES, () => this._refreshPreview(true));
+    /**
+     * SPECIES AND FACE.
+     *
+     * The skin rack belongs to the SPECIES, not to the menu: a Twi'lek built
+     * from the human row is a beige Twi'lek. Changing species therefore
+     * re-homes the tone the same way changing order re-homes the crystal —
+     * clamped, because the racks are different lengths and a stale index would
+     * point past the end of a shorter one.
+     */
+    this._cardRow('species-list', 'h-species', 'species', SPECIES, () => {
+      const tones = this._skinRack();
+      if (this.s.skinIndex >= tones.length) this.s.skinIndex = 0;
+      this._buildForge();
+      this._refreshPreview(true);
+    });
+    this._cardRow('face-list', 'h-face', 'face', FACE_PRESETS, () => this._refreshPreview(true));
+    // The cut is a CLOTH SIM, and the preview is a still frame — so it is
+    // honest about that rather than pretending: no rebuild here, because
+    // there is nothing a static pose can show about how a garment moves.
+    this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS);
+    this._swatchRow('skin-list', 'skinIndex', this._skinRack(), () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
 
     this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
@@ -881,6 +908,15 @@ export class Menu {
    * length, against 53% at 1.15 m, and the hilt shrinks by the same factor
    * rather than vanishing.
    */
+  /** The skin tones of the chosen species, falling back to the shared row. */
+  _skinRack() {
+    const sp = speciesOf(this.s.species);
+    return (sp && sp.skinTones && sp.skinTones.length) ? sp.skinTones : SKIN_TONES;
+  }
+
+  /** Redraw every row whose contents depend on another row's choice. */
+  _buildForge() { this._buildSaber(); }
+
   /**
    * One row of cards bound to an id setting — orders, species, cuts, faces.
    * Hides its own heading when the list is empty, so a module that exports
@@ -961,9 +997,11 @@ export class Menu {
       try {
         const built = buildJedi({
           robeIndex: this.s.robeIndex ?? 1,
-          skinColor: (SKIN_TONES[this.s.skinIndex] || SKIN_TONES[2]).hex,
+          skinColor: (this._skinRack()[this.s.skinIndex] || this._skinRack()[0]).hex,
           hairColor: (HAIR_COLORS[this.s.hairIndex] || HAIR_COLORS[1]).hex,
           build: this.s.build,
+          species: this.s.species,
+          face: this.s.face,
           scale: 1,
         });
         p.figure = built;

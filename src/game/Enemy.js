@@ -354,12 +354,10 @@ const _tintTarget = new THREE.Color();
  * instance, and tinting it in place would turn the whole army red.
  */
 function tintBones(e, hex, strength = 1) {
-  if (!e.rig) return;
   _tintTarget.setHex(hex);
   const cloned = e._modMaterials || (e._modMaterials = []);
-  for (const b of e.rig.list) {
-    const m = b.primary;
-    if (!m || !m.material || Array.isArray(m.material)) continue;
+  const paint = (m) => {
+    if (!m || !m.material || Array.isArray(m.material)) return;
     const mat = m.material.clone();
     if (mat.emissive) {
       mat.emissive.copy(_tintTarget);
@@ -368,7 +366,16 @@ function tintBones(e, hex, strength = 1) {
     if (mat.color) mat.color.lerp(_tintTarget, Math.min(0.35 * strength, 0.55));
     m.material = mat;
     cloned.push(mat);
+  };
+  if (e.rig) {
+    for (const b of e.rig.list) paint(b.primary);
+    return;
   }
+  // A droideka is a baked group rather than a bone rig, and it can wear the
+  // same modifiers. Its meshes ARE its silhouette — Kit bakes them down to a
+  // handful — so painting them all is the same claim on the same channel, not
+  // a second implementation of the tell.
+  if (e.group) e.group.traverse((o) => { if (o.isMesh) paint(o); });
 }
 
 /** The shell material for an elite deflector — the droideka's, standalone. */
@@ -402,10 +409,16 @@ function eliteShieldMaterial() {
  */
 function installShield(e) {
   const S = e.A.scale ?? 1;
-  const r = (e.A.big ? 1.9 : 1.05) * S;
+  // A humanoid's bubble wraps the whole body; a walker's deliberately does NOT
+  // reach its feet. `1.9 * S` on a 2.4-scale chassis is a four-and-a-half metre
+  // sphere with the legs inside it and no way past, and "no way past" is not a
+  // modifier, it is an invulnerability. Chassis covered, legs exposed — the same
+  // bargain Armoured strikes with its durasteel torso.
+  const r = e.A.big ? 2.6 : 1.05 * S;
   const mat = eliteShieldMaterial();
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), mat);
   mesh.frustumCulled = false;
+  mesh.position.copy(e.shieldCentre());
   e.world.scene.add(mesh);
   e.shieldMesh = mesh;
   e.shieldMat = mat;
@@ -523,13 +536,18 @@ function installStandard(e) {
     transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
   (e._modMaterials || (e._modMaterials = [])).push(pole, flame);
   const host = e.rig?.get('chest') || e.rig?.get('spine') || e.rig?.get('body');
-  if (host) {
+  // A bone if there is one — so the standard falls with the body and rides the
+  // piece it was mounted on — and the baked group otherwise, which is what a
+  // droideka has instead of a skeleton.
+  const parent = host ? host.obj : e.group;
+  if (parent) {
+    const base = host ? host.length * 0.35 : 0.55 * S;
     const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.022 * S, 0.026 * S, 1.15 * S, 6), pole);
-    staff.position.set(0.13 * S, host.length * 0.35, -0.16 * S);
-    host.obj.add(staff);
+    staff.position.set(0.13 * S, base, -0.16 * S);
+    parent.add(staff);
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.10 * S, 10, 8), flame);
-    beacon.position.set(0.13 * S, host.length * 0.35 + 0.60 * S, -0.16 * S);
-    host.obj.add(beacon);
+    beacon.position.set(0.13 * S, base + 0.60 * S, -0.16 * S);
+    parent.add(beacon);
     e.beacon = beacon;
     (e._modMeshes || (e._modMeshes = [])).push(staff, beacon);
   }
@@ -738,10 +756,42 @@ export class Enemy {
 
   /* ── queries ─────────────────────────────────────────────────────── */
 
+  /**
+   * Where this body is aimed at, floated over and centred on.
+   *
+   * `rig.worldPos('chest')` alone was wrong for a third of the roster: `Rig`
+   * answers a name it does not know with (0, 0, 0), and neither the walker nor
+   * the acklay has a chest — their torso bone is called `body`. So every
+   * floating notice over an acklay ("WINDED", "CHARGE", a phase banner) was
+   * being drawn at the world origin. The chain ends at the body's own position
+   * rather than at a bone, so a rig with no torso at all still lands somewhere
+   * real.
+   */
   aimPoint(out = new THREE.Vector3()) {
-    if (this.rig && !this.actor?.ragdolled) return this.rig.worldPos('chest', out);
+    if (this.rig && !this.actor?.ragdolled) {
+      for (const name of ['chest', 'body', 'spine', 'hips']) {
+        if (this.rig.get(name)) return this.rig.worldPos(name, out);
+      }
+    }
     if (this.group) return out.copy(this.group.position).addScaledVector(UP, 0.8 * this.A.scale);
     return out.copy(this.position).setY(this.position.y + 1.1 * this.A.scale);
+  }
+
+  /**
+   * The centre a deflector bubble sits on — geometry, not a bone.
+   *
+   * Deliberately independent of `aimPoint`: the bubble has to be in the same
+   * place on the frame the enemy spawns (before anything has posed the rig) and
+   * on the frame it dies, and it has to be right on a chassis whose bones are
+   * named nothing in particular.
+   */
+  shieldCentre(out = new THREE.Vector3()) {
+    const S = this.A.scale ?? 1;
+    // 1.75·S puts it on a walker's chassis (which _poseWalker holds at 1.6·S
+    // above the ground) and 1.02·S on a humanoid's chest. Measured against the
+    // posed rigs, not guessed: a bubble half a metre below the body reads as a
+    // bug rather than as a shield.
+    return out.set(this.position.x, this.position.y + (this.A.big ? 1.75 : 1.02) * S, this.position.z);
   }
 
   get chestY() { return this.position.y + 1.15 * this.A.scale; }
@@ -758,7 +808,7 @@ export class Enemy {
     // pass costs the shield and nothing else. Pushed before the bones for the
     // same reason the droideka pushes it before its core.
     if (this.shieldUp && this.shieldMesh && !this.dead) {
-      const c = _v4.copy(this.shieldMesh.position);
+      const c = this.shieldCentre(_v4);
       out.push({ name: 'shield', p0: c.clone(), p1: c.clone(),
         r: this.shieldRadius, toughness: TOUGHNESS.heavy, enemy: this, shield: true });
     }
@@ -1040,8 +1090,7 @@ export class Enemy {
       if (this.dead || !this.shieldUp) this.shieldMesh.visible = false;
       else {
         this.shieldMesh.visible = true;
-        this.aimPoint(_v5);
-        this.shieldMesh.position.copy(_v5);
+        this.shieldMesh.position.copy(this.shieldCentre(_v5));
         const u = this.shieldMat.uniforms;
         u.uTime.value += dt;
         u.uPower.value = damp(u.uPower.value, clamp(this.shieldHp / this.shieldMax, 0, 1) * 0.9, 4, dt);
@@ -1093,8 +1142,10 @@ export class Enemy {
     this.fuse = 0;
     if (this._detonated) return;
     this._detonated = true;
-    const at = this.actor?.ragdolled ? this.actor.centre(_v1) : this.aimPoint(_v1);
-    const point = at.clone();
+    // The corpse's own centre if it has fallen, its torso if it has not — and
+    // never a bone name this chassis might not have, which is what aimPoint's
+    // fallback chain is for.
+    const point = (this.actor?.ragdolled ? this.actor.centre(_v1) : this.aimPoint(_v1)).clone();
     this.world.particles?.explosion(point, 1.6);
     this.world.onExplosion?.(point, 1.4);
     audio.explosion(point, 1.3);

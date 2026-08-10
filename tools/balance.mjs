@@ -217,7 +217,7 @@ export const MODEL = {
   reachCapsBody: true,
 
   /** How far past the last wave a run is allowed to go before it is called a survival. */
-  maxWave: 30,
+  maxWave: 25,
 
   /** Compositions drawn per (level, wave) up front; a run picks one by seed. */
   poolPerWave: 24,
@@ -234,8 +234,13 @@ export const MODEL = {
    */
   lineOfSight: 0.6,
 
-  /** Simulation timestep for the fight, in seconds. */
-  dt: 0.05,
+  /**
+   * Simulation timestep for the fight. 0.1 s: shorter than Player.damage's own
+   * 0.18 s of invulnerability, which is the shortest thing in the loop that
+   * matters, and long enough that a thirty-wave run is seconds rather than
+   * minutes.
+   */
+  dt: 0.1,
 
   /** A wave that will not end is a modelling failure, not a balance result. */
   waveTimeout: 400,
@@ -659,7 +664,15 @@ function armTime(entry, diff, levelKey) {
  * ±spread/2 on the horizontal components of the aim and ±0.35·spread on the
  * vertical, applied at the archetype's own preferred range.
  */
+const _bolt = new Map();
 function boltPressure(entry, diff, playerSpeed = 4.6) {
+  const memo = `${entry}|${diff.name}|${playerSpeed.toFixed(2)}`;
+  if (_bolt.has(memo)) return _bolt.get(memo);
+  const v = _boltPressure(entry, diff, playerSpeed);
+  _bolt.set(memo, v);
+  return v;
+}
+function _boltPressure(entry, diff, playerSpeed) {
   const { A } = archetypeOf(entry);
   if (!A.ranged || A.inert) return null;
   const rate = A.fireRate / (diff.enemyAggression * (diff.fireRate ?? 1));
@@ -702,8 +715,16 @@ function boltPressure(entry, diff, playerSpeed = 4.6) {
   };
 }
 
+const _melee = new Map();
 /** Melee pressure, per the real DuelBrain cadence and the real strike test. */
 function meleePressure(entry, diffKey, formKey) {
+  const memo = `${entry}|${diffKey}|${formKey}`;
+  if (_melee.has(memo)) return _melee.get(memo);
+  const v = _meleePressure(entry, diffKey, formKey);
+  _melee.set(memo, v);
+  return v;
+}
+function _meleePressure(entry, diffKey, formKey) {
   const { A } = archetypeOf(entry);
   if (!A.melee) return null;
   if (A.saber) {
@@ -934,6 +955,11 @@ export function simulateRun(opts) {
           dead: false,
           eng: engagementFor(entry, mods),
           close: closeTime(entry, mods),
+          // Cached on the body rather than looked up per step: the inner loop
+          // runs a million times a run and a Map key built from three strings
+          // was most of its cost.
+          bp: boltPressure(entry, diff, 4.6 * mods.moveSpeed),
+          mp: meleePressure(entry, difficulty, form),
         });
         spawnTimer = lerp(0.85, 0.16, clamp(wave / 16, 0, 1)) * (0.6 + rng() * 0.8);
       }
@@ -980,7 +1006,7 @@ export function simulateRun(opts) {
         e.arm -= dt;
         if (e.arm > 0) continue;                 // still walking in
         e.auto = Math.max(0, e.auto - dt);       // CATCH.autoGuard, per shooter
-        const bp = boltPressure(e.entry, diff, 4.6 * mods.moveSpeed);
+        const bp = e.bp;
         if (bp) {
           if (rng() >= MODEL.lineOfSight) continue;
           // Standing still to cut is what makes you easy to lead. Walking is
@@ -1039,7 +1065,7 @@ export function simulateRun(opts) {
           }
           continue;
         }
-        const mp = meleePressure(e.entry, difficulty, e.form);
+        const mp = e.mp;
         if (mp) {
           const swings = mp.strikesPerSec * mp.connect * dt;
           let n = Math.floor(swings);

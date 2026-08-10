@@ -19,7 +19,7 @@
  * the options written out by hand:
  *
  *   `hemBias` was ignored, so the wrapped robe hung 25mm out of level instead
- *   of 311 and its columns were all cut the same length;
+ *   of 312 and its columns were all cut the same length;
  *
  *   attachSkirt's anchor ignored the row index it is handed, so `pinRows: 2`
  *   put both waistbands at the same height AND the same radius — a zero-length
