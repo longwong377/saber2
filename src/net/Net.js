@@ -193,6 +193,12 @@ export class Net {
         if (this.isHost) this.broadcastExcept(conn.peer, { ...msg, from: conn.peer });
         break;
       case 'claim': this._emit('claim', conn.peer, msg); break;
+      // Host → this peer: you were hit. The reverse of `claim`, and it exists
+      // for the same reason — the authority for a thing is not where the thing
+      // is drawn. A peer owns its own health (its avatar packet carries `hp`,
+      // and the host overwrites its copy 24 times a second), so the host cannot
+      // apply the damage itself; it can only say so.
+      case 'hit': this._emit('hit', msg); break;
       // 'event' was routed here with no sender anywhere and no listener
       // anywhere — a channel that existed only as this line. Deleting it is as
       // valid a fix as giving it a purpose, and it is the honest one: nothing
@@ -213,6 +219,20 @@ export class Net {
     for (const [id, { conn }] of this.conns) if (id !== exceptId) this.send(conn, msg);
   }
   toHost(msg) { if (this.hostConn) this.send(this.hostConn, msg); }
+
+  /**
+   * Host → ONE peer.
+   *
+   * `broadcast` was the only outbound path, and it is the wrong shape for
+   * anything addressed to a particular player: damage is the obvious one, since
+   * the peer owns its own health and everybody else only needs to be told about
+   * it through the avatar stream they already receive. Sending a hit to all
+   * four would wound all four.
+   */
+  toPeer(peerId, msg) {
+    const c = this.conns.get(peerId);
+    if (c) this.send(c.conn, msg);
+  }
 
   get peerCount() { return this.isHost ? this.conns.size : (this.connected ? 1 : 0); }
 
@@ -272,6 +292,33 @@ export class RemoteAvatar {
     this.facing = 0;
     this.hp = 100; this.maxHp = 100;
 
+    /**
+     * THE SHAPE THE WORLD ALREADY ASSUMED, and did not have.
+     *
+     * A RemoteAvatar goes into `world.players` (main.js), and World's loops
+     * treat everything in that list as a Player. Two of them did not survive
+     * the difference:
+     *
+     *   `_boltHitTest` reads `p.invuln` and then `p.boonMods.absorb` with no
+     *   guard at all. Neither existed here, so `undefined > 0` was false, the
+     *   hit test ran, and reading `.absorb` off undefined THREW — every enemy
+     *   bolt that reached a friend took the frame loop down with it. Co-op was
+     *   not "your friend cannot be hurt", it was "your friend being shot at is
+     *   an exception".
+     *
+     *   The enemy-blade loop guarded on `!p.control`, which no avatar has, so
+     *   enemy sabers passed straight through them. That one at least failed
+     *   quietly.
+     *
+     * `boonMods` is deliberately EMPTY rather than Player's defaults: whatever
+     * boons this player holds are theirs, applied on their own machine, and a
+     * plausible-looking local copy here would be a second source of truth for
+     * something this side does not own.
+     */
+    this.invuln = 0;
+    this.boonMods = {};
+    this.kills = 0; this.deflects = 0; this.perfects = 0; this.limbsRemoved = 0;
+
     this.buffer = [];
     this.delay = 0.09;      // interpolation window
     this.hiltPos = new THREE.Vector3();
@@ -296,6 +343,36 @@ export class RemoteAvatar {
 
   aimPoint(out = new THREE.Vector3()) { return out.copy(this.chest); }
   get dead() { return !this.alive; }
+
+  /**
+   * Something on THIS machine hurt a player on ANOTHER one.
+   *
+   * It does not touch `this.hp`, and that is the whole design rather than an
+   * omission: `update()` overwrites hp from the avatar packet every frame, so
+   * anything written here is gone inside 42 ms. The peer owns its own health —
+   * it runs its own Player, its own boons, its own Second Wind — so the only
+   * correct thing the host can do is tell it, and let it decide what the number
+   * becomes.
+   *
+   * Returns false ("not killed") unconditionally for the same reason: whether
+   * this was lethal is not knowable here, and callers use the return only to
+   * decide local flourishes.
+   *
+   * Silently does nothing on a client, so a peer cannot damage another peer —
+   * the host is the only authority, and the alternative is four machines each
+   * applying their own version of the same sword.
+   */
+  damage(amount, point, source, kind) {
+    if (!(amount > 0) || !this.alive) return false;
+    const net = this.world?.net;
+    if (this.world?.netMode !== 'host' || !net) return false;
+    net.toPeer(this.id, { t: 'hit', d: amount, k: kind || 'bolt' });
+    return false;
+  }
+
+  /** A remote player heals on its own machine. Here so World's loops are safe. */
+  heal() {}
+  addFlow() {}
 
   push(state, now) {
     this.buffer.push({ t: now, s: state });

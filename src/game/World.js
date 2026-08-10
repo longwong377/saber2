@@ -780,9 +780,19 @@ export class World {
       if (e.dead || !e.saber || e.saber.ignition < 0.6) continue;
       if (e.lock) continue;                       // a lock owns both blades
       for (const p of this.players) {
-        if (!p.alive || !p.control) continue;
-        // blades meeting takes precedence over a blade meeting a body
-        if (p.saber.ignition > 0.5) {
+        // `!p.control` used to be here, and a RemoteAvatar has none — so enemy
+        // sabers passed straight through every joining player, in the one mode
+        // where being surrounded is the point. The guard was standing in for
+        // "is this a local Player" and the thing it actually protects is the
+        // two hitImpulse calls inside _applyClash, which is where it now lives.
+        if (!p.alive) continue;
+        // Blades meeting takes precedence over a blade meeting a body — but
+        // ONLY for a local player. A clash is resolved on the machine that owns
+        // the blade: it is a mouse-driven contest (a blade lock is literally a
+        // drag race), and the stamina, riposte window, stagger and score it
+        // moves all live on that player's own machine. Running it here for a
+        // remote would decide a duel on their behalf with none of their input.
+        if (p.control && p.saber.ignition > 0.5) {
           const clash = resolveBladeClash(p.saber, e.saber);
           if (clash) { this._applyClash(p, e, clash); continue; }
         }
@@ -969,7 +979,7 @@ export class World {
 
     // ── UNBLOCKABLE: the blade is not the answer
     if (attacking && !tier.parryable && !tier.chamberable) {
-      player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(-9), 1.0);
+      player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(-9), 1.0);
       player.stamina = Math.max(0, player.stamina - 10);
       this.notifyFloating(clash.point, 'UNBLOCKABLE', '#ff5a62');
       this.onDeflectFeedback?.(-1, clash.point, 'that one had to be dodged');
@@ -978,7 +988,7 @@ export class World {
 
     // ── HEAVY parried flat: guard broken
     if (attacking && !tier.parryable) {
-      player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(-16), 1.5);
+      player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(-16), 1.5);
       player.stamina = Math.max(0, player.stamina - 22 * tier.guardBreak);
       player.staggerTimer = Math.max(player.staggerTimer, 0.38);
       this.addHitstop(0.05);
@@ -1000,7 +1010,7 @@ export class World {
 
     // ── PARRY / CLASH — both blades recoil, the slower one loses ground
     const playerWon = clash.winner === 'a' || bladeSpeed > clash.sb;
-    player.control.hitImpulse(clash.point, _v1.clone().multiplyScalar(playerWon ? -5 : -13), playerWon ? 0.6 : 1.3);
+    player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(playerWon ? -5 : -13), playerWon ? 0.6 : 1.3);
     if (playerWon) {
       if (duel) duel.interrupt(0.45);
       enemy.stun(0.18);

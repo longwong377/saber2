@@ -539,6 +539,32 @@ function wireNet() {
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
+  /**
+   * The host says we were hit.
+   *
+   * Until this existed a joining player was INVULNERABLE, and not by half
+   * measures: a client's enemies are `netDriven`, which returns before
+   * `_think`, so they never fire a bolt and never run a duel strike — there was
+   * nothing on this machine that could hurt us. Meanwhile the host skipped
+   * remote avatars in its own blade loop and threw a TypeError when a bolt
+   * reached one. Co-op had two players and one of them could not lose.
+   *
+   * Applied through OUR OWN Player.damage, so every boon that lives in the
+   * damage path is consulted here where it actually exists: Second Wind,
+   * Steadfast, Encircled, the difficulty's damageTaken. Tutaminis is the one
+   * exception — `absorb` is applied at World's call site rather than inside
+   * `damage`, so it has to be repeated here or a peer would silently lose it.
+   */
+  net.on('hit', (msg) => {
+    const p = world?.player;
+    if (!p || !p.alive || !(msg.d > 0)) return;
+    let d = msg.d;
+    if (msg.k === 'bolt' && p.boonMods.absorb) {
+      p.force = Math.min(p.maxForce, p.force + d * 0.8);
+      d *= 0.45;
+    }
+    p.damage(d, null, null, msg.k || 'bolt');
+  });
   net.on('avatar', (peerId, msg) => {
     if (!world) return;
     if (!world.remotes) world.remotes = new Map();

@@ -108,4 +108,90 @@ export async function run({ check, assert }) {
     assert(/iceServers/.test(net.slice(i, i + 700)), 'no ICE servers configured — direct connections only');
     return 'window.SABER_SIGNAL overrides the broker; ICE servers are configured';
   });
+
+  /* ══ the other half of the wire: a joining player could not be hurt ═════ */
+
+  check('co-op: a RemoteAvatar has the shape World treats it as having', async () => {
+    /**
+     * A RemoteAvatar is pushed into `world.players`, and World's loops treat
+     * everything in that list as a Player. Two of them did not survive the
+     * difference, and the first is not a missing feature but a CRASH:
+     *
+     *   `_boltHitTest` reads `p.invuln` then `p.boonMods.absorb` with no guard.
+     *   Neither field existed, so `undefined > 0` was false, the hit test ran,
+     *   and `.absorb` off undefined threw. Every enemy bolt that reached a
+     *   friend took the frame loop with it.
+     *
+     * So the property is not "remotes can be hit", it is "anything in
+     * `world.players` answers what World's loops ask of it".
+     */
+    const { readFile } = await import('node:fs/promises');
+    const net = await readFile(new URL('../../src/net/Net.js', import.meta.url), 'utf8');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const i = net.indexOf('export class RemoteAvatar');
+    assert(i > 0, 'RemoteAvatar is gone');
+    const body = net.slice(i);
+    // Exactly the fields the loops over `this.players` touch without a guard.
+    for (const field of ['invuln', 'boonMods', 'damage(', 'heal(', 'alive', 'position', 'saber']) {
+      assert(new RegExp(`\\b${field.replace('(', '\\(')}`).test(body),
+        `RemoteAvatar has no ${field}, and World's player loops read it unguarded`);
+    }
+    // …and the reader must still be unguarded, or this check is pinning a field
+    // nothing needs.
+    assert(/p\.boonMods\.absorb/.test(world),
+      'the unguarded read is gone — re-point this check at whatever replaced it');
+    return 'RemoteAvatar answers invuln, boonMods, damage, heal and the pose fields';
+  });
+
+  check('co-op: the host can hurt a peer, and does not try to do it locally', async () => {
+    /**
+     * A peer owns its own health: its avatar packet carries `hp` and
+     * `RemoteAvatar.update` overwrites the host's copy 24 times a second, so
+     * anything the host writes there is gone inside 42 ms. The only correct
+     * move is to TELL the peer — the mirror image of `claim`, and it did not
+     * exist.
+     *
+     * Combined with the other half — a client's enemies are `netDriven`, which
+     * returns before `_think`, so they never fire and never strike — a joining
+     * player was simply invulnerable.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const net = await readFile(new URL('../../src/net/Net.js', import.meta.url), 'utf8');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i = net.indexOf('  damage(amount');
+    assert(i > 0, 'RemoteAvatar has no damage()');
+    const dmg = net.slice(i, i + 700);
+    assert(/toPeer\(/.test(dmg), 'the host does not tell the peer it was hit');
+    assert(!/this\.hp\s*[-=]/.test(dmg),
+      'RemoteAvatar.damage writes its own hp, which the next avatar packet overwrites 42 ms later');
+    assert(/netMode !== 'host'/.test(dmg),
+      'a client can damage another client — the host must be the only authority');
+    // addressed, not broadcast: a broadcast hit wounds everybody
+    assert(/toPeer\(peerId, msg\)|toPeer\(.*\)\s*\{/.test(net), 'Net cannot address a single peer');
+    // and the receiving end must exist and go through the peer's OWN damage
+    assert(/net\.on\('hit'/.test(main), 'nothing on the client listens for a hit');
+    const h = main.slice(main.indexOf("net.on('hit'"), main.indexOf("net.on('hit'") + 700);
+    assert(/p\.damage\(/.test(h), 'the hit does not go through the peer\'s own damage path, so its boons are skipped');
+    return 'host addresses one peer; the peer applies it through its own Player.damage';
+  });
+
+  check('co-op: a blade clash is resolved by whoever is holding the blade', async () => {
+    // The body hit is host-authoritative because the ENEMY is. The clash is
+    // not: it is a mouse-driven contest — a blade lock is a drag race — and the
+    // stamina, riposte window and stagger it moves live on the other machine.
+    // Resolving it host-side would decide a duel on a player's behalf with none
+    // of their input.
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const i = world.indexOf('// enemy blades vs the player');
+    assert(i > 0, 'the enemy blade loop is gone');
+    const body = world.slice(i, world.indexOf('// blade locks run their own contest', i));
+    assert(body.length > 400 && body.length < 6000, `the loop parse looks wrong (${body.length} chars)`);
+    assert(!/if \(!p\.alive \|\| !p\.control\) continue/.test(body),
+      'the loop still skips everything without a control, so enemy sabers pass through remote players');
+    assert(/p\.control && p\.saber\.ignition/.test(body),
+      'the clash is resolved for a remote blade too, which decides their duel for them');
+    assert(/p\.damage\(/.test(body), 'the body hit no longer reaches the player at all');
+    return 'clash is local-only; the body hit reaches every player, remote or not';
+  });
 }
