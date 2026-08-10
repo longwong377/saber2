@@ -13,7 +13,7 @@ import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { Rig, BipedAnimator } from './Rig.js';
-import { attachCloak } from './Cloth.js';
+import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -460,6 +460,7 @@ export class Player {
     });
     this.rig = built.rig;
     this.palette = built.palette;
+    this.built = built;
     world.scene.add(this.rig.root);
     this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
@@ -597,6 +598,7 @@ export class Player {
 
   _makeCloak() {
     this.cloak?.dispose();
+    this.skirt?.dispose(); this.skirt = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
     this.cloak = attachCloak(this.world.scene, this.rig, {
@@ -604,6 +606,27 @@ export class Player {
       // the legs still read — a floor-length sack hides the whole silhouette.
       material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0,
     });
+    // THE ROBE BELOW THE BELT IS CLOTH NOW.
+    //
+    // It was three rigid lathes bolted to the hips bone, so a hem vertex
+    // travelled 0.000 mm in the pelvis frame over seven seconds of walking
+    // while the cape beside it travelled 217 mm. That contrast is what the
+    // player saw and called "a hard cylinder" under the clothes.
+    //
+    // It REPLACES those 616 triangles rather than adding to them, so the
+    // figure is 448 triangles cheaper with the simulation on than it was
+    // without it.
+    if (this.built?.robeSkirt) {
+      const smat = (this.palette.over || this.palette.outer).clone();
+      smat.side = THREE.DoubleSide;
+      this.skirt = attachSkirt(this.world.scene, this.rig, {
+        material: smat, rigid: this.built.robeSkirt,
+      });
+      // The cape used to avoid the skirt via a fixed table of spheres sampled
+      // off a standing figure. Now the skirt can move, so the cape follows the
+      // real thing: live proxy in, table out.
+      this.cloak.outer = this.skirt;
+    }
   }
 
   /* ── convenience ─────────────────────────────────────────────────── */
@@ -1063,7 +1086,7 @@ export class Player {
 
   _land(ctx, impactSpeed) {
     const power = clamp(impactSpeed / 18, 0.2, 1.6);
-    this.cloak?.impulse(_v5.set(0, 1, 0), power * 2.2);
+    this.cloak?.impulse(_v5.set(0, 1, 0), power * 2.2); this.skirt?.impulse(_v5.set(0, 1, 0), power * 2.2);
     this.camera.addShake(power * 0.5);
     audio.thud(this.position, power);
     if (ctx.particles) {
@@ -1535,6 +1558,13 @@ export class Player {
       _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
       _v1.x += Math.sin(ctx.time * 0.7) * 1.1;
       _v1.z += Math.cos(ctx.time * 0.53) * 1.1;
+      // SKIRT FIRST: the cape's collider proxy is the skirt's own particles, so
+      // stepping the cape first would have it dodging where the skirt was last
+      // frame.
+      if (this.skirt) {
+        this.skirt.setVisible(!this.camera.firstPerson);
+        if (!this.camera.firstPerson) this.skirt.update(dt, this.skirt.refreshColliders(), _v1);
+      }
       this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
       this.cloak.setVisible(!this.camera.firstPerson);
     }
@@ -1758,7 +1788,7 @@ export class Player {
     this._gesture('push');
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
-    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
+    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6); this.skirt?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
 
     const origin = this.chest;
     const dir = this.aimDir;
@@ -1831,7 +1861,7 @@ export class Player {
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
     audio.force(this.chest, 'pull');
-    this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
+    this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8); this.skirt?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
     // Reach scales with the setting, same law as push and grip. A pull that
     // stayed at 17 m while the grip reached 36 was the odd one out.
     const P = this.forceScale;
@@ -2045,7 +2075,7 @@ export class Player {
     const P = this.forceScale;
     const cap = this.liftCapacity;
     this._gesture('hurl', aim.point);
-    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.3), 2.4);
+    this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.3), 2.4); this.skirt?.impulse(_v5.copy(this.aimDir).negate().setY(0.3), 2.4);
     this.camera.addShake(0.26);
     this.world?.addHitstop?.(0.035);
 
@@ -2459,7 +2489,7 @@ export class Player {
     S.fireT = 0;
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
-    this.cloak?.impulse(_g1.copy(this.aimDir).negate().setY(0.35), 2.6);
+    this.cloak?.impulse(_g1.copy(this.aimDir).negate().setY(0.35), 2.6); this.skirt?.impulse(_g1.copy(this.aimDir).negate().setY(0.35), 2.6);
     this.world?.addHitstop?.(0.05);
   }
 
@@ -2633,7 +2663,7 @@ export class Player {
     audio.tone({ freq: 150, freqEnd: 48, dur: 0.55, gain: 0.22, type: 'sawtooth', pos: centre });
     this.camera.addShake(0.34);
     this.world?.addHitstop?.(0.07);
-    this.cloak?.impulse(_g1.set(0, 1, 0), 2.0);
+    this.cloak?.impulse(_g1.set(0, 1, 0), 2.0); this.skirt?.impulse(_g1.set(0, 1, 0), 2.0);
     ctx.particles?.sparkBurst(centre, null, 30 + 8 * cut, { speed: 11 });
   }
 
@@ -2703,6 +2733,7 @@ export class Player {
     this.saber.retract();
     this.hum.retract();
     this.cloak?.dispose(); this.cloak = null;
+    this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
     audio.ui('bad');
     // collapse
@@ -2738,6 +2769,7 @@ export class Player {
     });
     this.rig = built.rig;
     this.palette = built.palette;
+    this.built = built;          // _makeCloak needs robeSkirt on a respawn too
     this.world.scene.add(this.rig.root);
     this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, s) => this._footstep(p, s);

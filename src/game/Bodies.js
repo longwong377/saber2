@@ -1531,6 +1531,13 @@ export function buildJedi(opts = {}) {
    * standing off the flanks like a sandwich board. */
   const DEPTH = 0.76, XK = 1 / DEPTH;
 
+  /**
+   * The outer layer of the robe below the belt — the over-skirt and the two
+   * front over-panels — collected as it is built so the runtime can swap it for
+   * simulated cloth. See attachSkirt() in Cloth.js and the note at the lathe.
+   */
+  const outerLayer = [];
+
   dressHumanoid(rig, {
     scale: S,
     body: outer, arm: sleeve, leg: outer, hand: leather, boot: leather,
@@ -2033,7 +2040,23 @@ export function buildJedi(opts = {}) {
       // Hung from +0.058 rather than -0.012: the top edge now sits up inside
       // the obi (which spans +0.020 to +0.128), so the belt holds the skirt
       // instead of floating above a 3cm ring of bare pelvis.
-      mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]);
+      /*
+       * KEPT, AND HANDED OUT.
+       *
+       * This lathe and the two front panels below are the whole OUTER layer of
+       * the robe under the belt, and every one of them is welded to the pelvis:
+       * measured on a walking Jedi, a hem vertex of this mesh travels 0.000 mm
+       * in the pelvis frame over seven seconds while the cape's hem travels
+       * 217 mm beside it. That contrast is the jankiness — nothing is wrong
+       * with the cape, it is hanging next to a cylinder.
+       *
+       * attachSkirt() replaces the three of them with a simulated tube and
+       * hides these while it is live. They are not deleted, because the cloth
+       * is switched off past lod > 1 exactly as the cape is, and a character at
+       * range with no cloth and no lathe has a bare pelvis. `robeSkirt` is the
+       * handle: pass it to attachSkirt as `rigid` and the LOD swap is one call.
+       */
+      outerLayer.push(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]));
 
       // ── the under-robe ─────────────────────────────────────────────────
       // The long layer, in the mid tone, running from the belt to the ankle and
@@ -2091,7 +2114,7 @@ export function buildJedi(opts = {}) {
         const g = limbGeo(ln * s, r0 * s, r1 * s, 14, false,
           { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
         shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
-        mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]);
+        outerLayer.push(mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]));
       }
 
       // ── boots ──────────────────────────────────────────────────────────
@@ -2233,7 +2256,8 @@ export function buildJedi(opts = {}) {
     },
   });
 
-  return { rig, palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
+  return { rig, robeSkirt: outerLayer,
+           palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
 }
 
 /* ── battle droids ───────────────────────────────────────────────────── */

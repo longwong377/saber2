@@ -30,10 +30,11 @@
 
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { Terrain } from '../../src/world/Terrain.js';
+import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { GrassField, Water, ground, waterShade } from '../../src/world/Scenery.js';
 import { LEVELS } from '../../src/game/Levels.js';
-import { sunDirection } from '../../src/engine/Engine.js';
+import { sunDirection, atmosphereMeter } from '../../src/engine/Engine.js';
+import { rawMaps, sandMaps, soilMaps, snowMaps, duracreteMaps } from '../../src/engine/Textures.js';
 
 /* ── the frame's own tone curve ───────────────────────────────────────────
  * Transcribed from Engine's composite pass, the same way tools/checks/vfx.mjs
@@ -71,8 +72,8 @@ function throughTone(linear, exposure = 1, a = {}) {
   return c.map((v) => clampT(luma + (v - luma) * satEff));
 }
 
-const PRESETS = ['dunes', 'arena', 'canyon', 'hangar'];
-const OUTDOOR = ['dunes', 'arena', 'canyon'];
+const PRESETS = ['dunes', 'arena', 'canyon', 'hangar', 'meadow', 'drifts', 'alpine'];
+const OUTDOOR = ['dunes', 'arena', 'canyon', 'meadow', 'drifts', 'alpine'];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const fract = (v) => v - Math.floor(v);
@@ -86,6 +87,65 @@ const chroma = (c) => {
   return M < 1e-6 ? 0 : (M - Math.min(c[0], c[1], c[2])) / M;
 };
 const mix3 = (a, b, w) => [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w];
+
+/* ── the baked maps, read as bytes ────────────────────────────────────────
+ * Never through a canvas: the headless DOM shim's getImageData returns zeros,
+ * so a canvas readback measures every texture as perfectly black and perfectly
+ * seamless. rawMaps hands back the arrays the bake actually wrote.
+ */
+const toLin8 = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const _mapMean = new Map();
+/** Mean of dot(albedo, 1/3) — exactly what the terrain shader reads off it. */
+function baseMapMean(name) {
+  if (_mapMean.has(name)) return _mapMean.get(name);
+  const m = rawMaps(name);
+  const N = m.size * m.size;
+  let s = 0;
+  for (let i = 0; i < N; i++) {
+    s += (toLin8(m.albedo[i * 4]) + toLin8(m.albedo[i * 4 + 1]) + toLin8(m.albedo[i * 4 + 2])) / 3;
+  }
+  const v = s / N;
+  _mapMean.set(name, v);
+  return v;
+}
+
+/**
+ * How DIRECTIONAL a map's structure is, as the coherence of its gradient
+ * structure tensor: 0 is isotropic, 1 is one perfectly parallel train.
+ *
+ * Rotation-invariant on purpose. Measuring |du| against |dv| would only find a
+ * train that happens to run along a texture axis, and every one of these maps
+ * builds its features on a slanted lattice vector so that it wraps.
+ *
+ * Measured on a 4× BOX DOWNSAMPLE, which is the whole trick. At full
+ * resolution the tensor is dominated by whatever has the most energy per texel,
+ * and on every one of these maps that is the isotropic grain — the sparkle in
+ * the snow alone drags its raw coherence to 0.11, indistinguishable from soil's
+ * 0.12, while its sastrugi are plainly there. At 128² the grain is gone and
+ * what is left is the structure: sand 0.79, snow 0.65, soil 0.17.
+ */
+const _coh = new Map();
+function anisotropy(name, down = 4) {
+  const key = `${name}@${down}`;
+  if (_coh.has(key)) return _coh.get(key);
+  const m = rawMaps(name), S0 = m.size, A = m.albedo;
+  const S = S0 / down, b = down;
+  const g = new Float64Array(S * S);
+  for (let y = 0; y < S0; y++) {
+    for (let x = 0; x < S0; x++) g[((y / b) | 0) * S + ((x / b) | 0)] += toLin8(A[(y * S0 + x) * 4 + 1]) / (b * b);
+  }
+  const at = (x, y) => g[((y + S) % S) * S + ((x + S) % S)];
+  let Jxx = 0, Jyy = 0, Jxy = 0;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const gx = at(x + 1, y) - at(x - 1, y), gy = at(x, y + 1) - at(x, y - 1);
+      Jxx += gx * gx; Jyy += gy * gy; Jxy += gx * gy;
+    }
+  }
+  const v = Math.hypot(Jxx - Jyy, 2 * Jxy) / Math.max(1e-12, Jxx + Jyy);
+  _coh.set(key, v);
+  return v;
+}
 
 /* ── the shader's own noise, in JS ───────────────────────────────────── */
 const thash = (x, y) => fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453);
@@ -122,7 +182,7 @@ function composeSurface(t) {
 
   const R = t.res, n = new THREE.Vector3();
   const step = Math.max(1, Math.floor(R / 200));
-  const out = { cols: [], ao: [], layers: { rock: 0, grit: 0, drift: 0, crust: 0, lag: 0, sheet: 0 }, bare: 0, n: 0 };
+  const out = { cols: [], rock: [], ao: [], layers: { rock: 0, grit: 0, drift: 0, crust: 0, lag: 0, sheet: 0 }, bare: 0, n: 0 };
   for (let j = 2; j < R - 2; j += step) {
     for (let i = 2; i < R - 2; i += step) {
       const k = j * R + i;
@@ -163,6 +223,7 @@ function composeSurface(t) {
       if (rockW > 0.004) col = mix3(col, mix3(rockA, rockB, 0.5), rockW);
       const macro = 0.90 + mA * 0.22 + upl * 0.07 - basin * 0.06 + open * 0.05;
       out.cols.push([col[0] * macro, col[1] * macro, col[2] * macro]);
+      out.rock.push(rockW);
       // landform occlusion only; the map's own cavity is texture, not landform
       out.ao.push(clamp(1 - (hollow * 0.30 + encl * 0.20 + driftW * 0.10) * M.w + crest * 0.05, 0.28, 1.06));
 
@@ -286,6 +347,249 @@ export function run({ check, assert, near }) {
     return out.join('  ');
   });
 
+  check('terrain: a ground base map is a GAIN of one, not a colour', () => {
+    /* The invariant that lets a preset author its ground as a hex.
+     *
+     * Terrain composes the surface as `col = uBaseCol … ; col *= A + baseLum·B`
+     * with baseLum the base map's own mean of R, G and B — so the map decides
+     * whether the level's authored colour arrives intact, and a base map at any
+     * other mean silently re-lights every level built on it. Sand lands on 1.0
+     * by being a real 0.389 albedo. Soil and snow are calibrated onto the same
+     * number ON PURPOSE, and this is where that is enforced: a "physically
+     * honest" 0.10 soil would have delivered the meadow at 0.67× its authored
+     * green with nothing anywhere saying why, and a 0.75 snow at 1.41×.
+     *
+     * Both constants are read out of the shader rather than written here, so
+     * the check cannot drift away from the thing it is checking. */
+    const src = TERRAIN_SRC();
+    const gm = src.match(/col \*= ([\d.]+) \+ baseLum \* ([\d.]+);/);
+    assert(gm, 'the base map is no longer applied as a gain around 1.0');
+    const [, A, B] = gm.map(Number);
+    const fm = src.match(/float baseLum = mix\(([\d.]+), dot\(baseC/);
+    assert(fm, 'baseLum no longer falls back to a constant on smooth ground');
+    const fallback = Number(fm[1]);
+
+    /* AND THE MAP A PRESET ASKS FOR IS THE MAP IT GETS. _mapSet() resolves the
+     * `maps` key through a switch with a default, so a key it does not know
+     * falls through to sand and the level renders on the wrong surface with no
+     * error anywhere — which is exactly what a green level did before soil
+     * existed, and what any future 'ash' or 'mud' preset would do the moment
+     * somebody added the key and forgot the case. Identity on the baked image,
+     * because the texture objects differ per tiling and the bake does not. */
+    const BUILD = { sand: sandMaps, soil: soilMaps, snow: snowMaps, deck: duracreteMaps };
+    for (const name of PRESETS) {
+      const want = BUILD[TERRAIN_PRESETS[name].maps];
+      assert(want, `${name}: '${TERRAIN_PRESETS[name].maps}' is not a known base surface`);
+      assert(terrainOf(name)._uniforms.uBaseAlb.value.image === want(1).map.image,
+        `${name} asks for '${TERRAIN_PRESETS[name].maps}' and is rendering on a different surface`);
+    }
+
+    const rows = [];
+    for (const [map, presets] of [['sand', ['dunes', 'arena', 'canyon', 'drifts']],
+                                  ['soil', ['meadow']], ['snow', ['alpine']]]) {
+      const mean = baseMapMean(map);
+      const gain = A + mean * B;
+      near(gain, 1.0, 0.06, `${map} is a ${gain.toFixed(3)}× gain, so ${presets.join('/')} do not render the colour they authored`);
+      /* And the SMOOTH ground has to match the textured ground. baseLum lerps
+       * toward this constant wherever the surface is barely rippled, so a map
+       * whose mean is not it puts a visible step between a rippled patch and a
+       * smooth one — on the same level, in the same light. */
+      near(mean, fallback, 0.02,
+        `${map} averages ${mean.toFixed(3)} but the shader falls back to ${fallback} on smooth ground`);
+      rows.push(`${map} ${mean.toFixed(3)} → ×${gain.toFixed(3)}`);
+    }
+    /* The deck is NOT held to this and it is the one that misses. duracrete
+     * means 0.313, so the hangar's floor renders at 0.910× the colour the
+     * preset asks for and its smooth patches read 24% brighter than its
+     * textured ones. Recorded rather than asserted: the fix is either to
+     * recalibrate duracrete — which re-lights every wall and plinth that tints
+     * against MEAN_ALBEDO.duracrete — or to brighten the hangar's own swatch,
+     * and both of those are somebody else's level. */
+    const deck = baseMapMean('duracrete');
+    rows.push(`deck ${deck.toFixed(3)} → ×${(A + deck * B).toFixed(3)} (known, unasserted)`);
+    return rows.join('  ');
+  });
+
+  check('terrain: the two new ground maps obey the foundry\'s own three rules', () => {
+    /* tools/checks/materials.mjs holds every surface in the game to these, over
+     * a hardcoded SURFACES list that does not know soil and snow exist. Rather
+     * than let two maps into the game with nobody measuring them, the same three
+     * rules are restated here on the two the terrain added — and they are the
+     * three this foundry has actually broken before, not a wish list:
+     *
+     *  1. IT WRAPS. Every primitive takes an explicit lattice period; combine
+     *     two periodic pieces aperiodically (a cellular field scaled by 1.3, a
+     *     per-band hash whose index gains 4 across the tile) and there is a hard
+     *     line down every tile boundary. Measured as the wrap edge against the
+     *     strongest interior edge and against the median one.
+     *  2. NOTHING BELOW ~8 CYCLES. A soft blob at 4-6 cycles IS the repeat: the
+     *     eye reads the blob, not the grain, and the tiling becomes a grid.
+     *  3. THERE IS GRAIN, AND IT IS NOT NOISE. A map with no one-texel energy
+     *     is a blur (rock once measured 0.004 rms against an 0.020 spread); a
+     *     map whose one-texel rms IS its spread is white noise at Nyquist and
+     *     shimmers when you move.
+     */
+    const rows = [];
+    for (const name of ['soil', 'snow']) {
+      const m = rawMaps(name), S = m.size, N = S * S;
+      assert(m && m.albedo.length === N * 4, `${name} baked no pixels`);
+
+      // 1 — the wrap, on albedo, normal and roughness
+      let worstMax = 0, worstMed = 0;
+      for (const [buf, ch] of [[m.albedo, 0], [m.normal, 0], [m.rough, 1]]) {
+        const col = new Float64Array(S), row = new Float64Array(S);
+        for (let y = 0; y < S; y++) {
+          for (let x = 0; x < S; x++) {
+            const i = (y * S + x) * 4 + ch;
+            col[x] += Math.abs(buf[i] - buf[(y * S + (x + 1) % S) * 4 + ch]) / S;
+            row[y] += Math.abs(buf[i] - buf[(((y + 1) % S) * S + x) * 4 + ch]) / S;
+          }
+        }
+        for (const arr of [col, row]) {
+          const wrap = arr[arr.length - 1];
+          let hi = 0;
+          for (let i = 0; i < arr.length - 1; i++) if (arr[i] > hi) hi = arr[i];
+          const sorted = Float64Array.from(arr).sort();
+          worstMax = Math.max(worstMax, wrap / Math.max(1e-6, hi));
+          worstMed = Math.max(worstMed, wrap / Math.max(1e-6, sorted[arr.length >> 1]));
+        }
+      }
+      assert(worstMax < 1.25, `${name}: the wrap steps ${worstMax.toFixed(2)}× the strongest edge inside the map`);
+      assert(worstMed < 4.0, `${name}: the wrap steps ${worstMed.toFixed(2)}× the median edge`);
+
+      // 2 — energy at 4 cycles must be under the energy at 16, and small
+      const band = (blocks) => {
+        const b = S / blocks, acc = new Float64Array(blocks * blocks);
+        for (let y = 0; y < S; y++) {
+          for (let x = 0; x < S; x++) acc[((y / b) | 0) * blocks + ((x / b) | 0)] += toLin8(m.albedo[(y * S + x) * 4 + 1]);
+        }
+        let mu = 0; for (const v of acc) mu += v / (b * b);
+        mu /= acc.length;
+        let sd = 0; for (const v of acc) sd += (v / (b * b) - mu) ** 2;
+        return Math.sqrt(sd / acc.length) / Math.max(1e-9, mu);
+      };
+      const coarse = band(4), fine = band(16);
+      assert(coarse < fine, `${name} has more energy at 4 cycles (${coarse.toFixed(4)}) than at 16 — that reads as a repeating blob`);
+      assert(coarse < 0.05, `${name} carries a ${(coarse * 100).toFixed(1)}% swing at 4 cycles; the tile will be visible`);
+
+      // 3 — grain, and a normal that is not a flat card
+      const L = new Float64Array(N);
+      let lm = 0;
+      for (let i = 0; i < N; i++) {
+        L[i] = (toLin8(m.albedo[i * 4]) + toLin8(m.albedo[i * 4 + 1]) + toLin8(m.albedo[i * 4 + 2])) / 3;
+        lm += L[i];
+      }
+      lm /= N;
+      let lv = 0, hi = 0, tilt = 0;
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const i = y * S + x;
+          lv += (L[i] - lm) ** 2;
+          hi += (L[i] - L[y * S + ((x + 1) % S)]) ** 2;
+          const nz = m.normal[i * 4 + 2] / 255 * 2 - 1;
+          tilt += Math.acos(Math.min(1, Math.max(-1, nz))) * 180 / Math.PI;
+        }
+      }
+      const lsd = Math.sqrt(lv / N), micro = Math.sqrt(hi / N), alias = micro / lsd;
+      assert(alias > 0.15, `${name} has no texel-scale grain (rms ${micro.toFixed(4)} vs sd ${lsd.toFixed(4)})`);
+      assert(alias < 0.90, `${name} is aliased noise (rms ${micro.toFixed(4)} vs sd ${lsd.toFixed(4)})`);
+      assert(tilt / N > 4, `${name} normal map is flat: ${(tilt / N).toFixed(1)}° mean tilt`);
+      rows.push(`${name} wrap ${worstMax.toFixed(2)}×peak/${worstMed.toFixed(1)}×med, `
+        + `4-cycle ${(coarse * 100).toFixed(2)}%, grain ${(alias * 100).toFixed(0)}%, tilt ${(tilt / N).toFixed(1)}°`);
+    }
+    return rows.join('; ');
+  });
+
+  check('terrain: snow is the brightest ground in the game, and the grade survives it', () => {
+    /* WHAT THE EXPOSURE METER ACTUALLY KNOWS, and why a white ground is a real
+     * problem rather than an imagined one.
+     *
+     * atmosphereMeter keys off IRRADIANCE alone: key = E·0.18/π, i.e. it
+     * assumes an 18% grey world. Nothing about the ground reaches it. So for a
+     * flat, fully lit patch the linear value that arrives at ACES is
+     *
+     *     albedo/π · E · exposure  =  albedo · bias · KEY / 0.18
+     *
+     * with E cancelling out completely — the atmosphere does not appear. That
+     * identity is verified below against the three shipped levels before it is
+     * used, because it is the whole basis of the measurement and it is only
+     * true while the meter's own clamp is off it.
+     *
+     * The consequence: a level cannot fix a white ground with weather. Snow's
+     * albedo goes straight into the curve, and at real snow's 0.8-0.9 the
+     * ground lands on top of the shoulder with nothing above it — which is not
+     * "bright", it is FLAT, because the drift crest and the drift trough both
+     * clip to the same white. The alpine preset therefore authors settled snow
+     * dark (0.53 linear) and this holds it there.
+     *
+     * Everything is measured through the real ACES + grade, because clipping is
+     * a display quantity; measured in linear radiance it does not exist. */
+    const KEY = Number((ENGINE_SRC().match(/^const KEY = ([\d.]+);/m) || [])[1]);
+    assert(KEY > 0, 'Engine no longer states the key it exposes for');
+
+    // the identity, on the levels that have an atmosphere to check it against
+    const drift = [];
+    for (const name of ['dunes', 'arena', 'canyon']) {
+      const A = LEVELS[name].atmosphere;
+      const m = atmosphereMeter(A);
+      assert(m.exposure > 0.2001 && m.exposure < 2.9999, `${name}: the exposure meter is on its clamp`);
+      const direct = (m.irradiance / Math.PI) * m.exposure;      // a 1.0 albedo ground
+      const identity = (A.exposure ?? 1.05) * KEY / 0.18;
+      drift.push(Math.abs(direct - identity) / identity);
+    }
+    assert(Math.max(...drift) < 0.02,
+      `the exposure identity is out by ${(Math.max(...drift) * 100).toFixed(1)}% — the measurement below is measuring nothing`);
+
+    // The dune sea's own authored bias, used for every level here so the
+    // numbers compare. A level is free to bias its own, and that moves every
+    // row by the same factor.
+    const BIAS = LEVELS.dunes.atmosphere.exposure;
+    const K = BIAS * KEY / 0.18;
+    const disp = (c, k = 1) => LUMT(throughTone([c[0] * K * k, c[1] * K * k, c[2] * K * k]));
+    const rows = [];
+    for (const name of OUTDOOR) {
+      const s = surfaceOf(name);
+      const P = TERRAIN_PRESETS[name];
+      const swatch = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
+      const base = swatch(P.sandColor), sheet = swatch(P.sheetColor ?? P.dustColor ?? P.sandColor);
+
+      /* THE MEAN, on the ground you actually walk on. Taken over the LOOSE
+       * surface only: the alpine is a third rock by area and averaging a
+       * snowfield together with a cliff hides the snowfield. */
+      let ls = 0, ln = 0;
+      for (let i = 0; i < s.cols.length; i++) {
+        if (s.rock[i] > 0.35) continue;
+        ls += disp(s.cols[i]); ln++;
+      }
+      const loose = ls / Math.max(1, ln);
+
+      /* WHAT A 15% CHANGE OF ALBEDO IS WORTH ON SCREEN, at the level this
+       * ground sits at. This is the number the whole check exists for, and it
+       * is not "does it clip": ACES has a shoulder, not a wall, so nothing ever
+       * reaches 1.0 and a clipping test on a snowfield reports 0.0% while the
+       * snowfield is completely flat. What actually happens on the shoulder is
+       * that the material's layers stop being tellable apart. Measured through
+       * the real curve at this bias: a desert ground gets 0.049-0.051 of display
+       * for a 15% albedo step; REAL fresh snow at 0.90 albedo gets 0.018, a
+       * third of that, and the drift crest and the drift trough arrive at the
+       * same white however much work the shader did on them. */
+      const modul = disp(base, 1.15) - disp(base);
+      /* And the same failure stated over the two layers that cover most of the
+       * ground: the base coat and the pale sheet riding on it. */
+      const sep = Math.abs(disp(sheet) - disp(base));
+
+      assert(loose < 0.88,
+        `${name}: the loose ground displays at ${loose.toFixed(3)} mean luminance — nothing can be lit on top of that`);
+      assert(modul > 0.025,
+        `${name}: a 15% change in albedo is worth ${modul.toFixed(3)} of display — the ground is on the shoulder and its layers have merged`);
+      assert(sep > 0.06,
+        `${name}: the base coat and the drift sheet display ${sep.toFixed(3)} apart — the material's two biggest layers are one colour on screen`);
+      rows.push(`${name} base ${lum(base).toFixed(2)}→${disp(base).toFixed(3)} loose ${loose.toFixed(3)} `
+        + `mod ${modul.toFixed(3)} sep ${sep.toFixed(3)}`);
+    }
+    return rows.join('; ') + ` (bias ${BIAS}, KEY ${KEY}; real snow at 0.90 albedo measures mod 0.018)`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  Ripples                                                           */
   /* ══════════════════════════════════════════════════════════════════ */
@@ -361,24 +665,62 @@ export function run({ check, assert, near }) {
 
   check('terrain: ripple crests are longer than they are wide, and die where sand is not blown', () => {
     const src = TERRAIN_SRC();
-    // the frame is stretched along the crest, or the map's two trains cross at
-    // 33° and every desert in the game is a diamond lattice
-    for (const name of ['dunes', 'arena', 'canyon']) {
+    /* REWRITTEN AGAINST THE MAP, not just the uniform. The old form asserted
+     * the frame stretch on three named presets and the absence of it on the
+     * deck, which pinned half of the property: the stretch exists to pull the
+     * BASE MAP's two ripple trains onto one bearing, so it is only meaningful
+     * if the base map has trains in it, and it is actively wrong on a base map
+     * that does not. A soil map sampled through a 0.42 frame is a meadow with
+     * its crumb combed into corduroy, and nothing in the uniform would say so.
+     *
+     * So the ground is split by what its base MAP is, and the map's own
+     * directionality is measured rather than assumed. */
+    const COMB = { sand: true, snow: true, soil: false, deck: false };
+    const rows = [];
+    for (const name of PRESETS) {
+      const P = TERRAIN_PRESETS[name];
       const a = terrainOf(name)._uniforms.uRipAspect.value;
-      assert(a > 0.2 && a < 0.75,
-        `${name}: the ripple frame aspect is ${a} — 1.0 is the lattice, 0 is a smear`);
+      const combed = COMB[P.maps];
+      assert(combed !== undefined, `${name}: '${P.maps}' is not a known base surface`);
+      if (combed) {
+        assert(a > 0.2 && a < 0.75,
+          `${name}: the ripple frame aspect is ${a} — 1.0 is the lattice, 0 is a smear`);
+      } else {
+        // a poured deck is not blown by anything, and neither is a meadow
+        near(a, 1.0, 1e-6, `${name}: ground that no wind worked is being combed by one`);
+      }
+      rows.push(`${name} ${a}`);
     }
-    // a poured deck is not blown by anything
-    near(terrainOf('hangar')._uniforms.uRipAspect.value, 1.0, 1e-6,
-      'the hangar deck is being combed by a wind');
+    /* And the map behind it. Coherence of the gradient structure tensor at the
+     * feature scale: a wind-worked surface is one train of crests and measures
+     * high; soil is crumb and measures low however hard you look. The two must
+     * not be within reach of each other, or "this ground is not combed" is a
+     * claim about a uniform rather than about anything on screen. */
+    const dirn = {};
+    for (const m of ['sand', 'snow', 'soil']) dirn[m] = anisotropy(m);
+    assert(dirn.sand > 0.45, `the sand map has no ripple train in it: coherence ${dirn.sand.toFixed(2)}`);
+    assert(dirn.snow > 0.45, `the snow map has no sastrugi in it: coherence ${dirn.snow.toFixed(2)}`);
+    assert(dirn.soil < 0.30, `the soil map is combed: coherence ${dirn.soil.toFixed(2)}`);
+    assert(dirn.soil < dirn.snow * 0.5,
+      `soil at ${dirn.soil.toFixed(2)} is as directional as the wind-carved snow at ${dirn.snow.toFixed(2)}`);
     // and wet sand is packed flat
     assert(/1\.0 - wet \* 0\.8/.test(src) || /\(1\.0 - wet/.test(src),
       'the river bed is still covered in wind ripples');
     // the canyon is worked by water, the dune sea by wind
-    assert(terrainOf('canyon')._uniforms.uRip.value.w < terrainOf('dunes')._uniforms.uRip.value.w * 0.7,
-      'a river wash ripples as hard as a dune sea');
-    return `aspect ${terrainOf('dunes')._uniforms.uRipAspect.value}, gain dunes ` +
-      `${terrainOf('dunes')._uniforms.uRip.value.w} vs canyon ${terrainOf('canyon')._uniforms.uRip.value.w}`;
+    const gain = (n) => terrainOf(n)._uniforms.uRip.value.w;
+    assert(gain('canyon') < gain('dunes') * 0.7, 'a river wash ripples as hard as a dune sea');
+    // a storm-driven erg combs harder than the dune sea, a meadow barely at all
+    assert(gain('drifts') > gain('dunes'), 'a sandstorm erg is combed no harder than a breeze');
+    assert(gain('meadow') < gain('dunes') * 0.4,
+      `the meadow ripples at ${gain('meadow')} against the dune sea's ${gain('dunes')}`);
+    /* …and NOT at zero, which is the trap this number sets. uRip.w scales the
+     * whole base normal, so a meadow "with no ripples" at 0.0 is a meadow with
+     * no surface relief of any kind: a painted plane that lights only by the
+     * mesh normal. The anisotropy is what had to go, not the relief. */
+    assert(gain('meadow') > 0.15, 'the meadow has no base relief left at all — that is a painted plane');
+    return `aspect ${rows.join(' ')}; gain dunes ${gain('dunes')} / drifts ${gain('drifts')} / `
+      + `canyon ${gain('canyon')} / meadow ${gain('meadow')}; map coherence sand ${dirn.sand.toFixed(2)} `
+      + `snow ${dirn.snow.toFixed(2)} soil ${dirn.soil.toFixed(2)}`;
   });
 
   check('terrain: rock reads as jointed stone, not as tooled leather', () => {
@@ -469,6 +811,60 @@ export function run({ check, assert, near }) {
     assert(washRock / wash < 0.15, `${(washRock / wash * 100).toFixed(0)}% of the wash floor is rock`);
     assert(wallRock / walls > 0.9, `only ${(wallRock / walls * 100).toFixed(0)}% of the walls are rock`);
     return `wash ${(washRock / wash * 100).toFixed(0)}% rock, walls ${(wallRock / walls * 100).toFixed(0)}%`;
+  });
+
+  check('terrain: snow lies on the shallow ground and slides off the steep faces', () => {
+    /* The alpine's whole material idea, and it is not a new mechanism: it is
+     * the canyon's rock band and the arena's rock-with-height run the other way
+     * round. What is loose here is SNOW, so the same lever that keeps the wash
+     * gravelly and the rim stony keeps the benches white and the buttresses
+     * bare — a snowfield is exactly a rock face with a slope threshold on it.
+     *
+     * Both halves have to hold or the level is one material: all snow and the
+     * mountain is a dust sheet, all rock and there is no snow in the blizzard.
+     */
+    const t = terrainOf('alpine');
+    const B = t._uniforms.uBands.value, RU = t._uniforms.uRockUp.value;
+    const n = new THREE.Vector3();
+    const R = t.res;
+    let flat = 0, flatRock = 0, steep = 0, steepRock = 0, mid = 0, midRock = 0;
+    for (let j = 2; j < R - 2; j += 2) {
+      for (let i = 2; i < R - 2; i += 2) {
+        const y = t.heights[j * R + i];
+        t._vertexNormal(i, j, n);
+        const slope = 1 - clamp(n.y, 0, 1);
+        const w = smoothstep(B.x, B.y, slope + smoothstep(RU.y, RU.z, y) * RU.x);
+        if (slope < 0.034) { flat++; flatRock += w; }          // under 15°
+        else if (slope > 0.293) { steep++; steepRock += w; }   // over 45°
+        else { mid++; midRock += w; }
+      }
+    }
+    assert(flat > 200 && steep > 200, 'the alpine has no shallow ground or no steep faces to test');
+    assert(flatRock / flat < 0.25,
+      `${(flatRock / flat * 100).toFixed(0)}% of the shallow ground is bare rock — the snow is not lying anywhere`);
+    assert(steepRock / steep > 0.85,
+      `only ${(steepRock / steep * 100).toFixed(0)}% of the 45° faces shed their snow`);
+    /* And the preset's own rockAt has to say the same thing the material does.
+     * It is the JS twin of that band — the surface keyword, the footstep and
+     * the particle tint are all supposed to agree with what you can see — and a
+     * twin that crosses over at a different slope is worse than no twin. */
+    const cross = (f) => {   // the slope at which a 0..1 mask passes a half
+      let lo = 0, hi = 1;
+      for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (f(m) < 0.5) lo = m; else hi = m; }
+      return (lo + hi) / 2;
+    };
+    // every preset that has loose ground; the hangar is exempt because
+    // surfaceAt() short-circuits a `flat` deck to 'metal' before either of
+    // these is consulted
+    for (const name of PRESETS.filter((n) => !TERRAIN_PRESETS[n].flat)) {
+      const p = TERRAIN_PRESETS[name], u = terrainOf(name)._uniforms.uBands.value;
+      const jsCross = cross((s) => p.rockAt(0, 0, s));
+      const glCross = cross((s) => smoothstep(u.x, u.y, s));
+      assert(Math.abs(jsCross - glCross) < 0.06,
+        `${name}: rockAt turns to stone at slope ${jsCross.toFixed(2)} and the material at ${glCross.toFixed(2)}`);
+    }
+    return `flat ${(flatRock / flat * 100).toFixed(0)}% rock, 15-45° ${(midRock / mid * 100).toFixed(0)}%, `
+      + `steep ${(steepRock / steep * 100).toFixed(0)}%`;
   });
 
   check('terrain: the ground publishes itself, so water and decals can find it', () => {
@@ -927,6 +1323,113 @@ export function run({ check, assert, near }) {
     return out.join('  ');
   });
 
+  check('terrain: every height function is smooth, and the meadow is the cheapest of them', () => {
+    /* height() is the hottest function in this file by a distance. It runs
+     * res² times at bake, once per physics heightfield refresh, and once per
+     * FOOT PER CHARACTER PER FRAME — so it is not a bake-time cost, it is a
+     * frame cost that scales with how many people are standing on the level.
+     *
+     * SMOOTHNESS first, because it is the property that can break silently. A
+     * step in the field is invisible in a screenshot and lethal underfoot: the
+     * physics sampler bilinearly interpolates a grid, so a discontinuity
+     * between two grid points becomes a wall a character can be pushed through
+     * or stood on top of.
+     *
+     * Measured as the largest jump over one MILLIMETRE of ground, which is the
+     * scale that separates the two cases: a discontinuity shows its whole size
+     * at any epsilon and every plausible one here is metres — a strata band is
+     * 3 to 7 m, a dune amplitude 21 — while the steepest continuous thing in
+     * the game, the near-vertical riser `strata` puts at the top of a bed,
+     * shows 13 mm. The gate sits at 50 mm: three times the worst real riser and
+     * sixty times under the smallest step anything here could produce.
+     *
+     * Then COST, as a ratio to the dune sea measured in the same process, so
+     * the number does not depend on the machine or on what else is running. */
+    const rows = [];
+    const jump = {}, cost = {};
+    for (const name of PRESETS) {
+      const P = TERRAIN_PRESETS[name], half = P.scale / 2;
+      let worst = 0;
+      for (let k = 0; k < 20000; k++) {
+        // a low-discrepancy walk, so the sample set is not itself on a lattice
+        const x = (fract(k * 0.7548776662) * 2 - 1) * half * 0.98;
+        const z = (fract(k * 0.5698402909) * 2 - 1) * half * 0.98;
+        const a = P.height(x, z);
+        if (!isFinite(a)) throw new Error(`${name}: height(${x}, ${z}) is ${a}`);
+        worst = Math.max(worst, Math.abs(P.height(x + 1e-3, z) - a),
+          Math.abs(P.height(x, z + 1e-3) - a));
+      }
+      jump[name] = worst;
+      assert(worst < 0.05,
+        `${name}: the surface steps ${(worst * 1000).toFixed(0)} mm across one millimetre of ground`);
+
+      const h = P.height;
+      let s = 0;
+      for (let i = 0; i < 60000; i++) s += h(i * 0.37 - 180, i * 0.71 - 240);   // warm
+      const t0 = process.hrtime.bigint();
+      for (let i = 0; i < 300000; i++) s += h(i * 0.37 - 180, i * 0.71 - 240);
+      cost[name] = Number(process.hrtime.bigint() - t0) / 300000;
+      if (!isFinite(s)) throw new Error(`${name}: the timing loop went non-finite`);
+      rows.push(`${name} ${(worst * 1000).toFixed(1)}mm ${cost[name].toFixed(0)}ns`);
+    }
+    /* The meadow's whole design claim, as a number. It is two octaves of fbm
+     * and a micro term — six noise2 calls against the dune sea's eighteen —
+     * and if it ever stops being the cheapest ground in the game, somebody has
+     * put landform into a landscape that does not have any. Measured: 0.19×.
+     * The gate is loose because this is wall-clock on a shared machine; the
+     * failure it is here to catch is a factor, not a percentage. */
+    assert(cost.meadow < cost.dunes * 0.40,
+      `the meadow costs ${(cost.meadow / cost.dunes).toFixed(2)}× the dune sea — it is not the simple one any more`);
+    // and the two new deserts/mountains must not cost more than the field they
+    // were built next to
+    assert(cost.drifts < cost.dunes * 1.4,
+      `the erg costs ${(cost.drifts / cost.dunes).toFixed(2)}× the dune sea`);
+    assert(cost.alpine < cost.canyon * 1.4,
+      `the alpine costs ${(cost.alpine / cost.canyon).toFixed(2)}× the canyon`);
+    return rows.join('  ') + `  — meadow ${(cost.meadow / cost.dunes).toFixed(2)}× dunes`;
+  });
+
+  check('terrain: a Force landing still craters every ground that is not a deck', () => {
+    // crater() rewrites position, normal and the landform attribute in place
+    // and is disabled only on `flat` presets. A new preset that a crater slid
+    // off — because its height function is dominated by a term the deformation
+    // is added under, or because it is quietly flat — would lose the one piece
+    // of terrain interaction the game has.
+    const rows = [];
+    for (const name of PRESETS) {
+      const t = new Terrain(new THREE.Scene(), name, 0.6);
+      /* 8 m, not the 3 the dune sea's own check uses: at quality 0.6 the grid
+       * is up to 3 m and a crater narrower than a few cells is resolved by
+       * whichever vertices happen to fall inside it, so a 4 m one measures as
+       * a 0.7 m dent on the 540 m meadow and as 1.5 m on the 300 m deck. That
+       * is the grid, not the preset — this is testing that the deformation
+       * lands at all, not what crater() does at the resolution limit. */
+      const before = t.height(9, -6), rimBefore = t.height(17.3, -6);
+      t.crater(9, -6, 8, 1.6);
+      const after = t.height(9, -6);
+      if (t.preset.flat) {
+        near(after, before, 1e-6, `${name}: a deck deformed`);
+        rows.push(`${name} —`);
+      } else {
+        assert(after < before - 1.1, `${name}: a 1.6 m crater only moved the ground ${(before - after).toFixed(2)} m`);
+        /* The rim is measured against ITS OWN height before the crater, not
+         * against the crater floor. On rough ground the two are unrelated: the
+         * alpine's ribs put 13 m of relief inside the first 40 m, so a point
+         * 8 m away is routinely metres below a crater floor that a perfectly
+         * good 34 cm lip has just been added to. */
+        assert(t.height(17.3, -6) > rimBefore + 0.05,
+          `${name}: the crater has no raised rim — the ground 8.3 m out moved ${(t.height(17.3, -6) - rimBefore).toFixed(3)} m`);
+        assert(t.deformSeq === 1, `${name}: the physics heightfield was not told the ground moved`);
+        t.flush();
+        const k = t._idx(Math.round((9 + t.half) * t.invStep), Math.round((-6 + t.half) * t.invStep));
+        assert(t.landform[k * 4] > 128, `${name}: the crater floor did not become a hollow in the landform`);
+        rows.push(`${name} ${(before - after).toFixed(2)}m`);
+      }
+      t.dispose();
+    }
+    return rows.join('  ');
+  });
+
   check('terrain: the surface stays finite and continuous with everything added', () => {
     // Every layer above multiplies into diffuseColor; one NaN anywhere in the
     // heightfield poisons the landform bake and every channel that reads it.
@@ -959,8 +1462,13 @@ export function run({ check, assert, near }) {
  * exposes: which chunk a term is spliced into, whether a bend is a
  * displacement or a rotation, whether the alpha reaches zero at the waterline.
  */
-let _terSrc = null, _scnSrc = null;
+let _terSrc = null, _scnSrc = null, _engSrc = null;
 const TERRAIN_SRC = () => (_terSrc ??= readSrc('Terrain.js'));
 const SCENERY_SRC = () => (_scnSrc ??= readSrc('Scenery.js'));
 const readSrc = (name) =>
   readFileSync(new URL(`../../src/world/${name}`, import.meta.url), 'utf8');
+/* The exposure key is a module-private const in Engine, and the whole snow
+ * measurement is anchored on it; reading it out of the source is the only way
+ * to be sure the check and the engine are talking about the same number. */
+const ENGINE_SRC = () =>
+  (_engSrc ??= readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8'));

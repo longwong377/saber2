@@ -30,7 +30,7 @@ import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import {
   WindField, wind, weather, Weather, WIND_GLSL, STORM_GLSL, Atmosphere, addHorizon, ground,
-  GrassField,
+  GrassField, windSettings, WIND_DEFAULTS,
 } from '../../src/world/Scenery.js';
 import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
@@ -692,9 +692,16 @@ export function run({ check, assert, near }) {
       rows.push(`${key} peak ${w.peak} every ${w.period}s`);
     }
     assert(rows.length >= 3, `only ${rows.length} outdoor levels carry weather`);
-    // and the levels must not all be the same storm
-    const peaks = new Set(rows.map((r) => r.split('peak ')[1]));
-    assert(peaks.size > 1, 'every level has identical weather');
+    /* And NO TWO LEVELS MAY BE THE SAME STORM. This used to be `size > 1`,
+     * which only refused a world where every level had the identical squall
+     * and passed happily on three levels sharing one between two of them.
+     * Weather is the strongest single thing distinguishing one open-sky level
+     * from another — it decides visibility, key-to-fill and how hard the cover
+     * lies down — so "some of them differ" is not the property; "each of them
+     * is its own place" is. */
+    const storms = new Set(rows.map((r) => r.split(' ').slice(1).join(' ')));
+    assert(storms.size === rows.length,
+      `${rows.length} outdoor levels share ${storms.size} distinct storms between them`);
     return rows.join(', ');
   });
 
@@ -721,8 +728,17 @@ export function run({ check, assert, near }) {
       const base = a.fogDensity ?? 0.0035;
       W.intensity = 0; const vCalm = W.visibility(base);
       W.intensity = w.peak; const vPeak = W.visibility(base);
-      // The one wind everything reads; no level overrides its base speed.
-      const wCalm = 1.7, wPeak = wCalm * (1 + W.windGain * w.peak);
+      /* THE LEVEL'S OWN PREVAILING WIND, resolved through the code that
+       * resolves it. This line used to read `const wCalm = 1.7` under the
+       * comment "the one wind everything reads; no level overrides its base
+       * speed" — true when it was written and false now that `dust.wind`
+       * exists. Pinning the constant would have quietly measured the wrong
+       * level the first time one authored a gale, and the property that
+       * matters was never the number: it is that a front more than doubles
+       * whatever the level's calm air is, and that the cover goes over at the
+       * peak of it. Both are now tested against what the level actually says. */
+      const wCalm = windSettings(L.dust && L.dust.wind).strength;
+      const wPeak = wCalm * (1 + W.windGain * w.peak);
       // What that does to a blade of the near ring, which is where the eye
       // reads the rake: uBendGain 0.23, the wave at its crest, clamped at 2 rad.
       const bend = (s) => Math.min(0.23 * s * 1.62, 2.0);
@@ -1173,6 +1189,365 @@ export function run({ check, assert, near }) {
       `at full storm the dome covers ${(at12 * 100).toFixed(0)}% at 12° and ${(atZen * 100).toFixed(0)}% at the zenith, ` +
       `and nothing at all in calm air (worst unrest ${calmAt} ${worstCalm.toFixed(3)}, gate ${gate})`;
   });
+
+  /* ══ advection ═══════════════════════════════════════════════════════
+   *
+   * `position += windAt(p) * t` is what every carried layer in this file did,
+   * and it is not advection. `windAt` is a function of time, so that product
+   * differentiates to `w + t·dw/dt` and the second term has no bound: a fleck
+   * that should drift at 2 m/s reaches 20 m/s a minute in, 304 m/s at ten
+   * minutes, and 2701 m/s at ten minutes of storm wind. The `mod` wrap hid it
+   * — the flecks never flew off screen, they turned into static — which is
+   * exactly why nothing caught it.
+   */
+
+  check('wind: what the air CARRIES moves at the wind\'s speed, ten minutes in as much as one', () => {
+    const w = new WindField({ heading: 0.7, strength: 1.7, gustiness: 0.62 });
+    w.wander = 0; w._refresh();
+    const sites = [[3, -7], [40, 25], [-18, 60], [-90, -110]];
+    const rows = [];
+    for (const [strength, gustiness] of [[1.7, 0.62], [8, 0.84], [16, 0.95]]) {
+      w.strength = strength; w.gustiness = gustiness;
+      let sumE = 0, sumW = 0, maxSpeed = 0, maxErr = 0;
+      const h = 1 / 240;
+      // fifteen minutes, which is longer than anyone plays one level
+      for (let t = 0; t < 900; t += 0.05) {
+        for (const [x, z] of sites) {
+          const a = w.drift(x, z, t), b = w.drift(x, z, t + h);
+          const vx = (b.x - a.x) / h, vz = (b.y - a.y) / h;
+          const truth = w.sample(x, z, V(0, 0, 0), t);
+          const e = Math.hypot(vx - truth.x, vz - truth.z);
+          sumE += e * e; sumW += truth.x * truth.x + truth.z * truth.z;
+          maxErr = Math.max(maxErr, e);
+          maxSpeed = Math.max(maxSpeed, Math.hypot(vx, vz));
+        }
+      }
+      const rel = Math.sqrt(sumE / sumW);
+      /* What is dropped is the gust×swirl cross term and the swirl's second
+       * harmonic — see SWIRL_MEAN / SWIRL_H1. A tenth of the wind, and it does
+       * not grow with the wind or with the clock, which is the whole point. */
+      assert(rel < 0.12,
+        `the drift's own velocity is ${(rel * 100).toFixed(1)}% off the wind it is supposed to be`);
+      // and the thing that actually broke: no runaway, at any strength, ever
+      assert(maxSpeed < strength * 2.4,
+        `something carried by a ${strength} m/s wind reaches ${maxSpeed.toFixed(0)} m/s`);
+      rows.push(`${strength} m/s: ${(rel * 100).toFixed(1)}% err, tops out at ` +
+        `${maxSpeed.toFixed(1)} m/s (${(maxSpeed / strength).toFixed(2)}×)`);
+    }
+    // and no carried layer may go back to multiplying a velocity by the clock
+    const src = SCENERY_SOURCE();
+    assert(/vec2 windDrift\(vec2 p, float t\)/.test(src),
+      'WIND_GLSL has no drift, so nothing in a shader can be advected honestly');
+    const carried = src.match(/p\.xz \+= [^;]*;/g) || [];
+    assert(carried.length >= 3, `only ${carried.length} layers offset themselves horizontally at all`);
+    for (const line of carried) {
+      assert(/windDrift/.test(line),
+        `a layer is back on velocity × clock, which has no bound: ${line.trim()}`);
+    }
+    return `${carried.length} carried layers on the integrated wind; ${rows.join('; ')}`;
+  });
+
+  check('wind: a level points the prevailing wind, and gives it back when it unloads', () => {
+    /* The wind was a module singleton with hardcoded defaults — heading 0.62,
+     * 1.7 m/s, gustiness 0.62 — so a level could not say which way its own
+     * weather came from. Making it per-level must not make it per-SYSTEM:
+     * there is still exactly one WindField and everything still samples it. */
+    assert(typeof windSettings === 'function', 'a level has no way to author the wind');
+    // the compass a level writes in, resolved the way `atmosphere.azimuth` is
+    const east = windSettings({ from: 270 });        // a westerly blows toward +x
+    near(Math.cos(east.heading), 1, 1e-9, 'a westerly does not blow toward +x');
+    near(Math.sin(east.heading), 0, 1e-9, 'a westerly has a cross-wind component');
+    const north = windSettings({ from: 180 });       // a southerly blows toward +z
+    near(Math.sin(north.heading), 1, 1e-9, 'a southerly does not blow toward +z');
+    // saying nothing gets the documented default, not the last level's gale
+    for (const k of ['heading', 'strength', 'gustiness', 'wander']) {
+      near(windSettings({})[k], WIND_DEFAULTS[k], 1e-12, `an unauthored ${k} is not the default`);
+    }
+    // gustiness cannot be pushed past where the gust field stays positive, or
+    // the closed-form drift stops being the integral of a wind that exists
+    assert(windSettings({ gustiness: 5 }).gustiness < 1,
+      'a level can author a gustiness that makes the wind blow backwards');
+
+    const scene = litOutdoor();
+    const before = { heading: wind.baseHeading, strength: wind.strength, gust: wind.gustiness, wander: wind.wander };
+    const a = new Atmosphere(scene, {
+      count: 60, density: 0.4,
+      wind: { from: 250, strength: 4.2, gustiness: 0.55, wander: 0.3 },
+      weather: { peak: 1, period: 120, duration: 40, phase: 0, windGain: 2.9 },
+    });
+    near(wind.strength, 4.2, 1e-9, 'the level authored a 4.2 m/s prevailing and did not get it');
+    near(wind.wander, 0.3, 1e-9, 'the level pinned its heading and the wind roamed anyway');
+    // and the storm multiplies the LEVEL's calm air, not the engine's default
+    let peak = 0;
+    for (let i = 0; i < 400; i++) { a.update(0.1, V(0, 0, 0)); peak = Math.max(peak, wind.strength); }
+    assert(peak > 4.2 * 3.5 && peak < 4.2 * 4.2,
+      `a 2.9× gain off a 4.2 m/s prevailing reached ${peak.toFixed(1)} m/s`);
+    a.dispose();
+    for (const [k, v] of [['baseHeading', before.heading], ['strength', before.strength],
+      ['gustiness', before.gust], ['wander', before.wander]]) {
+      near(wind[k], v, 1e-9, `the level kept the shared wind's ${k} after unloading`);
+    }
+    // one field, still
+    assert(ground.wind === wind, 'something forked the wind');
+    return `from 250° at 4.2 m/s gusting to ${peak.toFixed(1)}; heading/strength/gust/wander all handed back`;
+  });
+
+  /* ══ precipitation ═══════════════════════════════════════════════════ */
+
+  check('snow: it FALLS — at its own speed, and the wind rakes the fall over', () => {
+    /* Nothing in this engine fell. Every particle layer was horizontal —
+     * motes hang, sheets skim, banks roll past — which is the right model for
+     * dust and the wrong one for weather coming out of the sky.
+     *
+     * The trajectory is ported out of the vertex shader here rather than
+     * asserted about, because "the source mentions gravity" is the kind of
+     * check that passes while the flakes hang in the air. */
+    const scene = litOutdoor();
+    const a = new Atmosphere(scene, {
+      count: 40, density: 1, snow: { count: 900, calm: 1, span: 48, height: 26, fall: [0.7, 1.9] },
+    });
+    assert(a.snow && a.snow.mesh, 'a level asked for snow and got none');
+    const A = a.snow.mesh.geometry.attributes;
+    const H = a.snow.height;
+
+    // ── every flake has its OWN terminal velocity, or the column is a rigid
+    // curtain sliding down the screen and the eye locks onto the spacing
+    const terms = [];
+    for (let i = 0; i < a.snow.count; i++) terms.push(A.aFlake.array[i * 4]);
+    const tMin = Math.min(...terms), tMax = Math.max(...terms);
+    assert(tMax / tMin > 2, `terminal velocity runs ${tMin.toFixed(2)}–${tMax.toFixed(2)} m/s — one speed for all`);
+    assert(tMin > 0.3 && tMax < 3.5, `${tMin.toFixed(2)}–${tMax.toFixed(2)} m/s is not snow, it is rain or ash`);
+
+    const flake = (i, t) => {
+      const hx = A.aHome.array[i * 4], hz = A.aHome.array[i * 4 + 1];
+      const vT = A.aFlake.array[i * 4], phase = A.aFlake.array[i * 4 + 1];
+      const flut = A.aFlake.array[i * 4 + 2], tumble = A.aFlake.array[i * 4 + 3];
+      const cyc = H / vT;
+      const age = ((t + phase * cyc) % cyc + cyc) % cyc;
+      const d1 = wind.drift(hx, hz, t), d0 = wind.drift(hx, hz, t - age);
+      const ph = phase * 6.2831 + t * tumble;
+      return {
+        x: hx + (d1.x - d0.x) + Math.sin(ph) * flut,
+        z: hz + (d1.y - d0.y) + Math.cos(ph * 0.73 + 1.1) * flut,
+        y: H - vT * age + Math.sin(ph * 1.6) * 0.11,
+        age, vT, cyc,
+      };
+    };
+
+    const rows = [];
+    for (const [name, strength] of [['still', 0.2], ['breeze', 3.0], ['blizzard', 14.0]]) {
+      wind.configure({ heading: 0.4, strength, gustiness: 0.6, wander: 0 });
+      let sumFall = 0, sumSlant = 0, sumDrift = 0, n = 0, wobbles = 0;
+      const h = 1 / 120;
+      for (let i = 0; i < 220; i++) {
+        // sample away from the recycle so the difference is one flake's motion
+        const t = 3 + (i % 11) * 0.9;
+        const f0 = flake(i, t), f1 = flake(i, t + h);
+        if (f1.age < f0.age) continue;                    // it recycled between frames
+        const vy = (f1.y - f0.y) / h;
+        const vx = (f1.x - f0.x) / h, vz = (f1.z - f0.z) / h;
+        sumFall += -vy; sumDrift += Math.hypot(vx, vz);
+        sumSlant += Math.atan2(Math.hypot(vx, vz), Math.max(1e-6, -vy));
+        n++;
+        // and the lateral track is not a straight line: a plate rocks
+        const back = flake(i, t + 0.9);
+        if (Math.sign(f1.x - f0.x) !== Math.sign(back.x - f1.x)) wobbles++;
+      }
+      const fall = sumFall / n, drift = sumDrift / n, slant = (sumSlant / n) * 180 / Math.PI;
+      const air = wind.strengthAt(0, 0);
+      assert(fall > 0.4 && fall < 3.2, `flakes fall at ${fall.toFixed(2)} m/s in ${name} air`);
+      /* CARRIED, not pushed: the horizontal speed IS the air's, so the snow
+       * agrees with the grass, the sheets and the banks about what the wind is
+       * doing. This is the assertion that a "snow" made of downward-only
+       * particles with a fudge factor cannot pass. */
+      assert(Math.abs(drift - air) < air * 0.35 + 0.25,
+        `the air is moving at ${air.toFixed(1)} m/s and the snow at ${drift.toFixed(1)} m/s`);
+      if (name === 'still') {
+        assert(slant < 35, `flakes fall ${slant.toFixed(0)}° off vertical in still air`);
+        assert(wobbles > 20, `only ${wobbles} of ${n} flakes changed lateral direction — they fall on rails`);
+      }
+      if (name === 'blizzard') {
+        assert(slant > 70, `a 14 m/s gale only rakes the fall to ${slant.toFixed(0)}° off vertical`);
+      }
+      rows.push(`${name} ${fall.toFixed(2)} m/s down, ${drift.toFixed(1)} across, ${slant.toFixed(0)}° off vertical`);
+    }
+    /* ── A STREAK, NOT A SCRATCH. The quad stretches along the flake's own
+     * velocity, which is what makes driven snow read as driven; the first
+     * version also NARROWED it across by the factor Particles.js narrows a
+     * spark by, and the screenshot came back with 1-pixel-by-18-pixel
+     * hairlines that looked like dirt on the lens. A spark is a point source
+     * and has to narrow. A flake is an object being motion-blurred, and motion
+     * blur lengthens a smear without thinning it. */
+    {
+      const u = a.snow.mat.uniforms;
+      const aspect = (speed, face) =>
+        (1 + Math.min(speed * u.uStreak.value, 2)) / (0.4 + 0.6 * face);
+      assert(aspect(1.3, 1) < 1.35, `a flake falling in still air is already ${aspect(1.3, 1).toFixed(1)}:1`);
+      assert(aspect(17, 1) > 2, 'a 17 m/s gale does not stretch the flake at all');
+      assert(aspect(17, 1) < 4, `a gale stretches a flake to ${aspect(17, 1).toFixed(1)}:1 — that is a scratch`);
+      assert(aspect(60, 1) < 4, 'the streak has no cap, so a runaway wind draws hairlines');
+    }
+
+    // ── and the column is a POOL: a flake that reaches the ground is the flake
+    // that appears at the top, so nothing is allocated and nothing escapes.
+    wind.configure({ strength: 6, gustiness: 0.6, wander: 0 });
+    let lowest = Infinity, highest = -Infinity;
+    for (let t = 0; t < 240; t += 0.37) {
+      for (let i = 0; i < 60; i++) {
+        const f = flake(i, t);
+        lowest = Math.min(lowest, f.y); highest = Math.max(highest, f.y);
+      }
+    }
+    assert(lowest > -0.4 && highest < H + 0.4,
+      `flakes reach ${lowest.toFixed(1)}–${highest.toFixed(1)} m in a ${H} m column`);
+    a.dispose();
+    wind.configure({});
+    return `${rows.join('; ')}; column ${lowest.toFixed(2)}–${highest.toFixed(1)} m of ${H}, ` +
+      `terminal ${tMin.toFixed(2)}–${tMax.toFixed(2)} m/s`;
+  });
+
+  check('snow: the front decides how hard it comes down, and calling for none costs nothing', () => {
+    /* Two properties in one, because they are the same property: the pool is
+     * a fixed allocation and the WEATHER decides what share of it is falling.
+     * A blizzard that costs its peak all the time is a particle count, which
+     * is the thing the whole weather system exists not to be. */
+    const bare = litOutdoor();
+    const n0 = bare.children.length;
+    const dry = new Atmosphere(bare, { count: 100, density: 1 });
+    assert(bare.children.length === n0 + 5, 'the air without snow is not five draw calls');
+    assert(dry.snow && !dry.snow.mesh && !dry.snow.mat,
+      'a level that never snows still built a snow shader');
+    dry.dispose();
+
+    // the tier scales it, like every other pool in the air
+    const thin = new Atmosphere(litOutdoor(), { count: 100, density: 0.4, snow: { count: 2600 } });
+    near(thin.snow.count, Math.floor(2600 * 0.4), 0.5, 'the quality tier does not reach the snow');
+    thin.dispose();
+    // and a typo cannot allocate a million quads
+    const huge = new Atmosphere(litOutdoor(), { count: 100, density: 2, snow: { count: 900000 } });
+    assert(huge.snow.count <= 14000, `a level asked for 900k flakes and got ${huge.snow.count}`);
+    // …while a blizzard authored for `high` still fits at `ultra` unclamped
+    const ultra = new Atmosphere(litOutdoor(), { count: 100, density: 1.35, snow: { count: 9000 } });
+    assert(ultra.snow.count === Math.floor(9000 * 1.35),
+      `the top tier silently clamps a 9000-flake blizzard to ${ultra.snow.count}`);
+    ultra.dispose();
+    huge.dispose();
+
+    /* Built LAST, because `weather` is one shared scheduler and constructing
+     * any Atmosphere re-configures it — which is the correct design (there is
+     * one storm over one world) and a trap for a check that builds several. */
+    const scene = litOutdoor();
+    const before = scene.children.length;
+    const a = new Atmosphere(scene, {
+      count: 100, density: 1,
+      snow: { count: 2600, calm: 0.18 },
+      weather: { peak: 1, period: 120, duration: 40, phase: 0 },
+    });
+    assert(scene.children.length === before + 6, 'snow costs more than one draw call');
+    assert(a.snow.count === 2600, `2600 flakes became ${a.snow.count}`);
+
+    // ── the front drives it
+    let calm = Infinity, peak = -Infinity, atCalm = 0, atPeak = 0;
+    for (let i = 0; i < 400; i++) {
+      a.update(0.1, V(0, 0, 0));
+      const live = a.snow.mat.uniforms.uFall.value;
+      if (a.weather.intensity < calm) { calm = a.weather.intensity; atCalm = live; }
+      if (a.weather.intensity > peak) { peak = a.weather.intensity; atPeak = live; }
+    }
+    assert(peak > 0.9 && calm < 0.1, `the storm ran ${calm.toFixed(2)}–${peak.toFixed(2)}`);
+    assert(atPeak > atCalm * 3,
+      `the fall goes ${atCalm.toFixed(2)} → ${atPeak.toFixed(2)} of the pool — that is a fixed flurry`);
+    assert(atCalm > 0.05, 'between fronts it stops snowing entirely on a level that says it is snowing');
+    assert(atPeak <= 1.0001, `the front asks for ${atPeak.toFixed(2)} of a pool that only has 1`);
+    a.dispose();
+    assert(scene.children.length === before, 'the snow leaked its mesh on dispose');
+    return `off: no mesh, no material, 5 calls. on: 1 call, 2600 instances, ` +
+      `${(atCalm * 100).toFixed(0)}% falling in calm air and ${(atPeak * 100).toFixed(0)}% at the peak`;
+  });
+
+  check('weather: a blizzard is the same machine as a dust storm with different air in it', () => {
+    /* The scheduler couples ONE intensity to fog, key, fill, wind and every
+     * layer, and it must not have "sand" written into it anywhere: the same
+     * machine has to deliver a brown-out and a white-out from the same shape
+     * of level entry. What separates them is what the level says is in the
+     * air, and nothing else. */
+    const build = (air, snow, tint) => {
+      const scene = litOutdoor();
+      scene.fog = new THREE.FogExp2(air, 0.0072);
+      const a = new Atmosphere(scene, {
+        count: 120, density: 0.5, color: air,
+        wind: { strength: 3.4, gustiness: 0.5, wander: 0 },
+        snow: snow ? { count: 400, calm: 0.15 } : undefined,
+        weather: { peak: 1, period: 120, duration: 40, phase: 0, unrest: 0, fogGain: 4.2,
+          windGain: 2.9, sunLoss: 0.82, fillGain: 1.3, tint },
+      });
+      const sun = a.sun, hemi = a.hemi;
+      const cold = { key: sun.intensity, fill: hemi.intensity, vis: a.weather.visibility(0.0072) };
+      assert(a.weather.intensity === 0, 'the calm baseline was read mid-front');
+      let top = null;
+      for (let i = 0; i < 400; i++) {
+        a.update(0.1, V(0, 0, 0));
+        if (!top || a.weather.intensity > top.I) {
+          top = { I: a.weather.intensity, key: sun.intensity, fill: hemi.intensity,
+            vis: a.weather.visibility(0.0072), sunB: sun.color.b, sunR: sun.color.r,
+            fall: a.snow.mesh ? a.snow.mat.uniforms.uFall.value : 0 };
+        }
+      }
+      a.dispose();
+      return { cold, top, clear: { r: sun0.r, b: sun0.b } };
+    };
+    const sun0 = new THREE.Color(0xfff0d8);
+    const clearBR = sun0.b / sun0.r;
+    const sand = build(0xd8c8a8, false, 0.6);
+    const blizzard = build(0xdfe9ff, true, 0.92);
+
+    for (const [name, r] of [['sandstorm', sand], ['blizzard', blizzard]]) {
+      assert(r.top.vis < r.cold.vis * 0.28,
+        `${name}: visibility ${r.cold.vis.toFixed(0)} → ${r.top.vis.toFixed(0)} m`);
+      assert(r.top.key < r.cold.key * 0.65, `${name}: the key light barely moved`);
+      assert(r.top.fill > r.cold.fill * 1.2, `${name}: the fill did not come up`);
+    }
+    /* THE ONE THING THAT HAS TO DIFFER: what the sun turns into. A front takes
+     * the beam apart and hands back the colour of what is in the air, so the
+     * SAME arithmetic gives a browner sun over sand and a colder, paler one
+     * over snow — which is the whole of "a blizzard, not a sandstorm with the
+     * swatches changed". If this ever stops separating, the coupling has an
+     * assumption about deserts baked into it. */
+    const sandBR = sand.top.sunB / sand.top.sunR, snowBR = blizzard.top.sunB / blizzard.top.sunR;
+    assert(sandBR < clearBR,
+      `the sun over a dust storm went from B/R ${clearBR.toFixed(2)} to ${sandBR.toFixed(2)} — it got bluer`);
+    assert(snowBR > clearBR * 1.5,
+      `the sun in a whiteout only reached B/R ${snowBR.toFixed(2)} against ${clearBR.toFixed(2)} in clear air`);
+    assert(snowBR > sandBR * 1.6, 'the two fronts light the world the same colour');
+    // and only one of the two has anything falling out of it
+    assert(sand.top.fall === 0 && blizzard.top.fall > 0.9,
+      'the snow is not what tells the two apart');
+    return `sun B/R ${clearBR.toFixed(2)} clear → ${sandBR.toFixed(2)} in sand, ${snowBR.toFixed(2)} in snow; ` +
+      `both ${sand.cold.vis.toFixed(0)} → ${sand.top.vis.toFixed(0)} m, key ×` +
+      `${(sand.top.key / sand.cold.key).toFixed(2)}, fill ×${(sand.top.fill / sand.cold.fill).toFixed(2)}`;
+  });
+}
+
+/** A scene with a sky, a sun hard enough for a mirage, and a fill. */
+function litOutdoor() {
+  const scene = new THREE.Scene();
+  const sun = new THREE.DirectionalLight(0xfff0d8, 7);
+  sun.position.set(30, 60, 20); sun.castShadow = true;
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xcfe0f5, 0x8a6a44, 0.30));
+  scene.fog = new THREE.FogExp2(0xd8c8a4, 0.0042);
+  return scene;
+}
+
+/** Scenery's own source, for the assertions that are about what the SHADERS
+ *  do — their code is module-private template literals, and a copy of it in
+ *  here would agree with itself forever. */
+let _scenerySrc = null;
+function SCENERY_SOURCE() {
+  if (_scenerySrc === null) {
+    _scenerySrc = readFileSync(new URL('../../src/world/Scenery.js', import.meta.url), 'utf8');
+  }
+  return _scenerySrc;
 }
 
 /** `1 + gain·wave` must stay positive, or the crest of every band bends upwind. */

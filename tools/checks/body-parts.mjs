@@ -26,8 +26,8 @@
 
 import * as THREE from 'three';
 import { buildHand, buildJedi, dressHumanoid, addShapeMorph } from '../../src/game/Bodies.js';
-import { Rig, humanoidSkeleton } from '../../src/game/Rig.js';
-import { Cloak, attachCloak } from '../../src/game/Cloth.js';
+import { Rig, humanoidSkeleton, BipedAnimator } from '../../src/game/Rig.js';
+import { Cloak, attachCloak, attachSkirt } from '../../src/game/Cloth.js';
 import { Player } from '../../src/game/Player.js';
 import { readFile } from 'node:fs/promises';
 
@@ -568,5 +568,576 @@ export async function run({ check, assert }) {
     assert(!/iterations\s*=\s*opts\.iterations\s*\?\?\s*[0-3]\b/.test(src),
       'the constraint iteration count was lowered — that makes the cloth stretchy, not foldy');
     return r;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  skirt                                                                 */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE COMPLAINT: "the cape looks good with the physics but when it's in
+   * motion you see that underneath the model's clothes is just a hard cylinder".
+   *
+   * It was exactly right and the code agreed. The robe below the belt was five
+   * lathes parented to the `hips` bone with the folds baked into the mesh
+   * section AND into the vertex-colour occlusion, so it could not move relative
+   * to the pelvis by one micron — the check below measures 0.000 mm of travel
+   * over seven seconds of walking while the cape's hem travels 217 mm beside
+   * it. Nothing was wrong with the cape. It was hanging next to a cylinder.
+   *
+   * Every check in this section fails on the code it was written against:
+   * `closed`, `pinRows`, `pleat`, `profile`, `Cloak.outer`, `attachSkirt` and
+   * `buildJedi().robeSkirt` did not exist, and the four defects in the first
+   * three are defects the obvious implementation still has.
+   */
+
+  /** A Jedi walking in a straight line, with whatever cloth is asked for. */
+  function walked({ speed = 4.6, seconds = 8, tail = 180, skirt = null, cloak = null,
+                    feed = false } = {}) {
+    const built = buildJedi({ scale: 1 });
+    const rig = built.rig;
+    const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+    anim.setFacing(0);
+    const sc = new THREE.Scene();
+    const pos = new THREE.Vector3();
+    const sk = skirt ? attachSkirt(sc, rig, { seed: 991, rigid: built.robeSkirt, ...skirt }) : null;
+    const cl = cloak ? attachCloak(sc, rig, { width: 0.36, length: 0.86, cols: 9, rows: 11,
+                                              flare: 1.0, seed: 4242, ...cloak }) : null;
+    if (feed && cl && sk) cl.outer = sk;
+    const wind = new THREE.Vector3();
+    const N = Math.round(seconds * 60);
+    const frames = [];
+    for (let i = 0; i < N; i++) {
+      pos.z += speed / 60;
+      anim.update(1 / 60, { position: pos, facing: 0, velocity: new THREE.Vector3(0, 0, speed),
+        grounded: true, groundAt: () => 0, crouch: 0,
+        accelForward: Math.min(1, speed / 8), accelStrafe: 0 });
+      anim.swingArms(1 / 60, speed, 1);
+      rig.updateMatrices();
+      wind.set(0, 0, -speed * 0.85);
+      if (sk) sk.update(1 / 60, sk.refreshColliders(), wind);
+      if (cl) cl.update(1 / 60, cl.refreshColliders(), wind);
+      if (i >= N - tail) frames.push(i);
+    }
+    rig.get('hips').obj.updateMatrixWorld(true);
+    const hipsInv = new THREE.Matrix4().copy(rig.get('hips').obj.matrixWorld).invert();
+    return { built, rig, anim, scene: sc, skirt: sk, cloak: cl, hipsInv, frames: frames.length };
+  }
+
+  /**
+   * The wrinkle left in a closed row once its size, its offset and its ovality
+   * are taken out, as a circular power spectrum.
+   *
+   * A quadratic across the column INDEX is the sheet's absorber and it cannot
+   * be periodic, so it is the wrong one here; harmonics 0-2 about the row's own
+   * centre are the same three things said in a basis that closes. `dom` is the
+   * harmonic carrying the most of what is left, `nyq` is the share sitting at
+   * cols/2 — which is exactly and only the per-column checkerboard, and is what
+   * a lag-1 autocorrelation cannot separate from a real fold (a genuine
+   * harmonic-5 pattern on 14 columns has ac1 = cos(2π·5/14) = -0.62, the same
+   * sign as the artefact) — and `ridge` is how well one row's wrinkle lines up
+   * with the row below it, which is the difference between a fold and a rash.
+   */
+  function tubeFolds(cl) {
+    const { cols, rows, pos } = cl;
+    const dev = [], P = new Float64Array(Math.floor(cols / 2) + 1);
+    let tot = 0, rms = 0, n = 0, flips = 0, nr = 0;
+    for (let r = 1; r < rows; r++) {
+      let cx = 0, cy = 0, cz = 0;
+      for (let c = 0; c < cols; c++) {
+        const i = (r * cols + c) * 3; cx += pos[i]; cy += pos[i + 1]; cz += pos[i + 2];
+      }
+      cx /= cols; cy /= cols; cz /= cols;
+      const rad = new Float64Array(cols);
+      for (let c = 0; c < cols; c++) {
+        const i = (r * cols + c) * 3;
+        rad[c] = Math.hypot(pos[i] - cx, pos[i + 1] - cy, pos[i + 2] - cz);
+      }
+      const co = [];
+      for (let h = 0; h <= cols / 2; h++) {
+        let a = 0, b = 0;
+        for (let c = 0; c < cols; c++) {
+          const th = (c / cols) * Math.PI * 2 * h;
+          a += rad[c] * Math.cos(th); b += rad[c] * Math.sin(th);
+        }
+        co.push([a * 2 / cols, b * 2 / cols]);
+        const p = (a * a + b * b) / (cols * cols);
+        if (h >= 3) { P[h] += p; tot += p; }
+      }
+      const d = new Float64Array(cols);
+      for (let c = 0; c < cols; c++) {
+        const th = (c / cols) * Math.PI * 2;
+        let fit = co[0][0] / 2;
+        for (let h = 1; h <= 2; h++) fit += co[h][0] * Math.cos(h * th) + co[h][1] * Math.sin(h * th);
+        d[c] = rad[c] - fit; rms += d[c] * d[c]; n++;
+      }
+      let prev = 0;
+      for (let c = 0; c <= cols; c++) {
+        const v = d[c % cols];
+        if (Math.abs(v) < 1e-4) continue;
+        const s = Math.sign(v);
+        if (prev !== 0 && s !== prev) flips++;
+        prev = s;
+      }
+      dev.push(d); nr++;
+    }
+    let dom = 3, best = 0;
+    for (let h = 3; h < P.length; h++) if (P[h] > best) { best = P[h]; dom = h; }
+    let rs = 0, rn = 0;
+    for (let i = 0; i + 1 < dev.length; i++) {
+      let dp = 0, la = 0, lb = 0;
+      for (let c = 0; c < cols; c++) { dp += dev[i][c] * dev[i + 1][c]; la += dev[i][c] ** 2; lb += dev[i + 1][c] ** 2; }
+      if (la > 1e-12 && lb > 1e-12) { rs += dp / Math.sqrt(la * lb); rn++; }
+    }
+    return { rms: Math.sqrt(rms / n), count: flips / nr, dom,
+             nyq: tot ? P[P.length - 1] / tot : 0, ridge: rn ? rs / rn : 0 };
+  }
+
+  check('skirt: the cloth closes on itself, in every link family', () => {
+    // Links were built with `if (c + 1 < this.cols)`, so column 0 and column
+    // cols-1 were never joined. A skirt is a TUBE; without a seam it gapes at
+    // the back and its two free edges flap independently of each other.
+    // A structural seam alone is not enough either — that is a hinge, and cloth
+    // hinged at one column creases there every time — so the diagonals and the
+    // bend link that reaches two columns on have to wrap as well.
+    const sc = new THREE.Scene();
+    const anchor = (c, n, out) => out.set(Math.sin(c / n * 2 * Math.PI) * 0.145, 1.0,
+                                          Math.cos(c / n * 2 * Math.PI) * 0.145);
+    const tube = new Cloak(sc, { closed: true, cols: 14, rows: 7, anchorFn: anchor });
+    const sheet = new Cloak(sc, { cols: 14, rows: 7, anchorFn: anchor });
+    const across = (cl) => {
+      const kinds = new Set();
+      for (const l of cl.links) {
+        const ca = l.a % cl.cols, cb = l.b % cl.cols;
+        const spans = (ca === 0 && cb >= cl.cols - 2) || (cb === 0 && ca >= cl.cols - 2)
+                   || (ca === 1 && cb === cl.cols - 1) || (cb === 1 && ca === cl.cols - 1);
+        if (spans && Math.floor(l.a / cl.cols) <= Math.floor(l.b / cl.cols)) kinds.add(l.kind);
+      }
+      return kinds;
+    };
+    const k = across(tube);
+    assert(across(sheet).size === 0, 'a sheet grew a seam — the wrap is not conditional on `closed`');
+    for (const [kind, name] of [[0, 'structural'], [1, 'shear'], [2, 'bend']]) {
+      assert(k.has(kind), `the seam carries no ${name} link — column 0 and column ${tube.cols - 1} are ${kind === 0 ? 'not joined at all' : 'joined by a hinge'}`);
+    }
+    // and the seam must be one span, not a doubled or a missing one. Per ROW:
+    // the layout flares, so the bottom row's spans are legitimately wider than
+    // the top's and a seam compared against the whole-garment mean would fail
+    // on correct code.
+    tube.reset();
+    let worstRow = 0, at = 0, seamAt = 0, meanAt = 0;
+    for (let r = 0; r < tube.rows; r++) {
+      let seam = 0, interior = 0, ni = 0;
+      for (let c = 0; c < tube.cols; c++) {
+        const a = (r * tube.cols + c) * 3, b = (r * tube.cols + (c + 1) % tube.cols) * 3;
+        const d = Math.hypot(tube.pos[a] - tube.pos[b], tube.pos[a + 1] - tube.pos[b + 1], tube.pos[a + 2] - tube.pos[b + 2]);
+        if (c === tube.cols - 1) seam = d; else { interior += d; ni++; }
+      }
+      const m = interior / ni, e = Math.abs(seam / m - 1);
+      if (e > worstRow) { worstRow = e; at = r; seamAt = seam; meanAt = m; }
+    }
+    assert(worstRow < 0.06,
+      `on row ${at} the seam span is ${(seamAt * 1000).toFixed(1)} mm against ${(meanAt * 1000).toFixed(1)} mm everywhere else in the same row — the tube gapes at the back`);
+    const r = `${k.size} link families wrap; worst seam span is ${(worstRow * 100).toFixed(1)}% off its own row`;
+    tube.dispose(); sheet.dispose();
+    return r;
+  });
+
+  check('skirt: the mesh is a tube, welded, and lit from outside', () => {
+    // The mesh was a PlaneGeometry with a 1:1 vertex↔particle map, which cannot
+    // close. The closed one carries cols+1 vertex columns with the extra one
+    // mapped back onto particle 0 — and that duplicate costs a hard lit line
+    // down the garment unless the pair's normals are averaged, because
+    // computeVertexNormals gives each copy only the faces on its own side.
+    const w = walked({ skirt: {}, seconds: 4, speed: 0 });
+    const sk = w.skirt, g = sk.geometry;
+    assert(g.index, 'the tube has no index buffer, so it is still a plane');
+    assert(g.attributes.position.count === (sk.cols + 1) * sk.rows,
+      `${g.attributes.position.count} vertices for ${sk.cols}×${sk.rows} particles — the seam column is missing`);
+    const p = g.attributes.position, nA = g.attributes.normal, vc = sk.cols + 1;
+    let gap = 0, ndiff = 0;
+    for (let r = 0; r < sk.rows; r++) {
+      const a = r * vc, b = r * vc + vc - 1;
+      gap = Math.max(gap, Math.hypot(p.getX(a) - p.getX(b), p.getY(a) - p.getY(b), p.getZ(a) - p.getZ(b)));
+      ndiff = Math.max(ndiff, Math.hypot(nA.getX(a) - nA.getX(b), nA.getY(a) - nA.getY(b), nA.getZ(a) - nA.getZ(b)));
+    }
+    assert(gap < 1e-9, `the two seam vertex columns are ${(gap * 1000).toFixed(2)} mm apart — the tube is split`);
+    assert(ndiff < 1e-6, `the seam's two normals differ by ${ndiff.toFixed(4)} — that is a lit crease down the robe`);
+    // winding: at rest every normal has to face away from the wearer
+    sk.reset();
+    const hips = w.rig.get('hips').obj;
+    hips.updateMatrixWorld(true);
+    const axis = new THREE.Vector3().setFromMatrixPosition(hips.matrixWorld);
+    let worst = 1;
+    for (let v = 0; v < p.count; v++) {
+      const rx = p.getX(v) - axis.x, rz = p.getZ(v) - axis.z;
+      const L = Math.hypot(rx, rz) || 1;
+      worst = Math.min(worst, (nA.getX(v) * rx + nA.getZ(v) * rz) / L);
+    }
+    assert(worst > 0, `a face is wound inside out (worst normal·radius ${worst.toFixed(3)}) — the robe is lit from within`);
+    return `${p.count} verts / ${g.index.count / 3} tris, seam gap ${(gap * 1e9).toFixed(1)} nm, `
+      + `normals welded, worst outward dot ${worst.toFixed(2)}`;
+  });
+
+  check('skirt: the pinned set is a parameter, not "everything past row 0"', () => {
+    // Three loops hard-coded the anchor as row 0 — the constructor, the
+    // collision push (`for (let i = this.cols; i < n; i++)`) and impulse().
+    // Right for a collar, right for a waistband, and an assumption rather than
+    // a rule either way. A second pinned row under a belt is the case that
+    // catches it: on the old loops row 1 is solved, pushed out of colliders and
+    // kicked by every Force impulse in the game, whatever it was pinned to.
+    const sc = new THREE.Scene();
+    const at = (c, n, out, r = 0) => out.set(Math.sin(c / n * 2 * Math.PI) * 0.15,
+                                             1.0 - r * 0.08, Math.cos(c / n * 2 * Math.PI) * 0.15);
+    const cl = new Cloak(sc, { closed: true, cols: 12, rows: 6, pinRows: 2, anchorFn: at, length: 0.4 });
+    cl.reset();
+    assert(cl.pinned.slice(0, 24).every((x) => x === 1) && !cl.pinned[24],
+      'pinRows did not reach the pinned set');
+    // a collider swallowing the whole waistband must not move it
+    const swallow = [{ c: new THREE.Vector3(0, 1.0, 0), r: 0.6 }];
+    for (let i = 0; i < 30; i++) cl.update(1 / 60, swallow, new THREE.Vector3());
+    cl.impulse(new THREE.Vector3(0, 1, 0), 4);
+    for (let i = 0; i < 5; i++) cl.update(1 / 60, swallow, new THREE.Vector3());
+    let worst = 0;
+    const want = new THREE.Vector3();
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < cl.cols; c++) {
+        at(c, cl.cols, want, r);
+        const i = (r * cl.cols + c) * 3;
+        worst = Math.max(worst, Math.hypot(cl.pos[i] - want.x, cl.pos[i + 1] - want.y, cl.pos[i + 2] - want.z));
+      }
+    }
+    // 1e-5 m, not 0: `pos` is a Float32Array and the anchor is a double, so an
+    // untouched pin still reads back a few hundred nanometres out.
+    assert(worst < 1e-5,
+      `a pinned particle moved ${(worst * 1e6).toFixed(1)} µm off its anchor — the solver still owns it`);
+    // and the row below it is genuinely free, or the test proves nothing
+    let free = 0;
+    for (let c = 0; c < cl.cols; c++) {
+      at(c, cl.cols, want, 2);
+      const i = (2 * cl.cols + c) * 3;
+      free = Math.max(free, Math.hypot(cl.pos[i] - want.x, cl.pos[i + 1] - want.y, cl.pos[i + 2] - want.z));
+    }
+    assert(free > 0.01, 'row 2 did not move either — the cloth is frozen and the check is vacuous');
+    cl.dispose();
+    return `2 rows held to 0.0 mm through a collider that swallows them and a Force kick; row 2 free by ${(free * 1000).toFixed(0)} mm`;
+  });
+
+  check('skirt: a tube folds, and the folds run down it rather than round it', () => {
+    const w = walked({ skirt: {}, seconds: 6, speed: 0 });
+    const f = tubeFolds(w.skirt);
+    // The rigid lathe this replaces bakes three cosine harmonics into its
+    // section at ±up to 28 mm on a 285 mm hem. Anything under about 12 is a
+    // painted cylinder again.
+    assert(f.rms > 0.015,
+      `the skirt wrinkles ${(f.rms * 1000).toFixed(1)} mm — that is a cylinder with a texture on it`);
+    assert(f.count > 6 && f.count < 13,
+      `${f.count.toFixed(1)} fold crossings per row on ${w.skirt.cols} columns — ${f.count <= 6 ? 'one bulge is not a gathered skirt' : 'that is a rash, not a garment'}`);
+    // the two that separate a fold from an artefact
+    assert(f.nyq < 0.12,
+      `${(f.nyq * 100).toFixed(0)}% of the fold power sits at the per-column Nyquist harmonic — that is a checkerboard`);
+    assert(f.ridge > 0.75,
+      `one row's wrinkle correlates only ${f.ridge.toFixed(2)} with the row below it — deep per-row noise, not a fold running from the waist to the hem`);
+    assert(f.dom * 2 < w.skirt.cols,
+      `the dominant harmonic is ${f.dom} on ${w.skirt.cols} columns, which the mesh cannot draw`);
+    // and it is still the garment that was cut
+    let worst = 0;
+    for (const l of w.skirt.links) {
+      if (l.kind !== 0 || l.across) continue;
+      const i = l.a * 3, j = l.b * 3;
+      const d = Math.hypot(w.skirt.pos[j] - w.skirt.pos[i], w.skirt.pos[j + 1] - w.skirt.pos[i + 1], w.skirt.pos[j + 2] - w.skirt.pos[i + 2]);
+      worst = Math.max(worst, d / l.rest0);
+    }
+    assert(worst < 1.20, `a vertical link is stretched ${((worst - 1) * 100).toFixed(0)}% over its cut length — going stretchy, not foldy`);
+    return `${(f.rms * 1000).toFixed(1)} mm rms, ${f.count.toFixed(1)} crossings/row, dominant harmonic ${f.dom}, `
+      + `${(f.nyq * 100).toFixed(0)}% at Nyquist, ridge correlation ${f.ridge.toFixed(2)}, worst stretch ${((worst - 1) * 100).toFixed(0)}%`;
+  });
+
+  check('skirt: fullness cannot fold a ring — it pulls it taut', () => {
+    // The sheet's mechanism run on a tube, measured, so nobody re-derives it.
+    // A pinned sheet whose across rest is shortened has nowhere to put the
+    // surplus but sideways, so it buckles. A RING has: it shrinks to the
+    // matching radius, and the moment it reaches the shell it cannot shrink
+    // further, so every across link ends up in TENSION over a surface it
+    // cannot pass through. That is the board this whole exercise is about, and
+    // running the cape's own fullness on the skirt is how you get it back.
+    const run = (o) => {
+      const w = walked({ skirt: o, seconds: 6, speed: 0 });
+      return { sk: w.skirt, f: tubeFolds(w.skirt) };
+    };
+    const ship = run({});
+    assert(ship.sk.fullness === 1,
+      `the skirt ships at fullness ${ship.sk.fullness} — on a ring that flattens the folds, it does not make them`);
+    const gathered = run({ fullness: 0.86 }), tight = run({ fullness: 0.75 });
+    assert(gathered.f.rms < ship.f.rms * 0.75,
+      `fullness 0.86 wrinkles ${(gathered.f.rms * 1000).toFixed(1)} mm against ${(ship.f.rms * 1000).toFixed(1)} at 1 — `
+      + 'shortening the ring no longer costs fold depth, so this reasoning needs re-deriving');
+    assert(tight.f.rms < ship.f.rms * 0.35 && tight.f.ridge < 0.5,
+      `fullness 0.75 still wrinkles ${(tight.f.rms * 1000).toFixed(1)} mm at ridge ${tight.f.ridge.toFixed(2)} — re-measure`);
+    // the folds are the pleat's, so removing it has to cost something
+    const flat = run({ pleat: 0 });
+    assert(flat.f.nyq > ship.f.nyq * 1.5 || flat.f.rms < ship.f.rms * 0.9,
+      `taking the pleat out changed nothing (${(flat.f.rms * 1000).toFixed(1)} mm / ${(flat.f.nyq * 100).toFixed(0)}% Nyquist against ${(ship.f.rms * 1000).toFixed(1)} / ${(ship.f.nyq * 100).toFixed(0)}%) — it is not what folds the tube`);
+    // and a pleat is a CUT, not a bake: it adds shape and no cloth
+    const c0 = ship.sk.links.filter((l) => l.across && l.a >= ship.sk.cols && l.a < ship.sk.cols * 2);
+    const mean = c0.reduce((a, l) => a + l.rest / l.rest0, 0) / c0.length;
+    assert(Math.abs(mean - 1) < 0.02,
+      `the pleated row carries ${((mean - 1) * 100).toFixed(1)}% more cloth than it was cut — a pleat must sum to zero`);
+    ship.sk.dispose(); gathered.sk.dispose(); tight.sk.dispose(); flat.sk.dispose();
+    return `fullness 1 → ${(ship.f.rms * 1000).toFixed(1)} mm at ridge ${ship.f.ridge.toFixed(2)}; `
+      + `0.86 → ${(gathered.f.rms * 1000).toFixed(1)}; 0.75 → ${(tight.f.rms * 1000).toFixed(1)} at ridge ${tight.f.ridge.toFixed(2)}; `
+      + `pleat off → ${(flat.f.rms * 1000).toFixed(1)} mm / ${(flat.f.nyq * 100).toFixed(0)}% Nyquist`;
+  });
+
+  check('skirt: the robe moves relative to the pelvis, which is the whole complaint', () => {
+    // The measurement the complaint was made about. Every rigid layer below the
+    // belt is a child of the `hips` bone with a constant local transform, so a
+    // hem vertex of it travels EXACTLY zero in the pelvis frame however hard
+    // the figure runs, while the cape's hem travels 217 mm beside it.
+    const w = walked({ skirt: {}, cloak: {}, seconds: 8, feed: true });
+    const hips = w.rig.get('hips').obj;
+    const spread = (pts) => {
+      let d = 0;
+      for (const a of pts) for (const b of pts) d = Math.max(d, a.distanceTo(b));
+      return d;
+    };
+    // re-walk, sampling. (walked() runs to the end; this samples the tail.)
+    const built = buildJedi({ scale: 1 });
+    const rig = built.rig;
+    const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+    anim.setFacing(0);
+    const sc = new THREE.Scene();
+    const pos = new THREE.Vector3();
+    const sk = attachSkirt(sc, rig, { seed: 991, rigid: built.robeSkirt });
+    const wind = new THREE.Vector3();
+    const cloth = [], rigidPts = [];
+    const rigidMesh = built.robeSkirt[0];
+    for (let i = 0; i < 8 * 60; i++) {
+      pos.z += 4.6 / 60;
+      anim.update(1 / 60, { position: pos, facing: 0, velocity: new THREE.Vector3(0, 0, 4.6),
+        grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0.575, accelStrafe: 0 });
+      anim.swingArms(1 / 60, 4.6, 1);
+      rig.updateMatrices();
+      wind.set(0, 0, -4.6 * 0.85);
+      sk.update(1 / 60, sk.refreshColliders(), wind);
+      if (i < 5 * 60) continue;
+      rig.get('hips').obj.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(rig.get('hips').obj.matrixWorld).invert();
+      const k = (sk.rows - 1) * sk.cols;
+      cloth.push(new THREE.Vector3(sk.pos[k * 3], sk.pos[k * 3 + 1], sk.pos[k * 3 + 2]).applyMatrix4(inv));
+      rigidMesh.updateMatrixWorld(true);
+      const rp = rigidMesh.geometry.attributes.position;
+      rigidPts.push(new THREE.Vector3(rp.getX(0), rp.getY(0), rp.getZ(0))
+        .applyMatrix4(rigidMesh.matrixWorld).applyMatrix4(inv));
+    }
+    const rigid = spread(rigidPts), moving = spread(cloth);
+    assert(rigid < 1e-9,
+      `the rigid layer moved ${(rigid * 1000).toFixed(3)} mm in the pelvis frame — it is no longer the thing being replaced, so this number needs re-deriving`);
+    assert(moving > 0.08,
+      `the cloth hem travels only ${(moving * 1000).toFixed(0)} mm relative to the pelvis — that is still a cylinder`);
+    assert(moving < 0.60,
+      `the hem travels ${(moving * 1000).toFixed(0)} mm relative to the pelvis, which is not a robe, it is a flag`);
+    sk.dispose(); w.skirt?.dispose(); w.cloak?.dispose();
+    return `rigid lathe ${(rigid * 1000).toFixed(3)} mm, cloth hem ${(moving * 1000).toFixed(0)} mm, over 3 s at a walk`;
+  });
+
+  check('skirt: the cape hangs on a skirt that MOVES, not on where one used to be', () => {
+    // attachCloak collides against a table sampled off the rigid over-skirt.
+    // Once that garment is cloth the table is a photograph — the real thing
+    // swings 183 mm at a walk and the cape settles against a surface that
+    // stayed put. `cloak.outer` replaces the table with spheres taken off the
+    // skirt's own particles, at each row's WIDEST point: at its mean radius the
+    // proxy sits inside every ridge and does worse than the table it replaces.
+    const penetration = (feed) => {
+      const built = buildJedi({ scale: 1 });
+      const rig = built.rig;
+      const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+      anim.setFacing(0);
+      const sc = new THREE.Scene();
+      const pos = new THREE.Vector3();
+      const sk = attachSkirt(sc, rig, { seed: 991, rigid: built.robeSkirt });
+      const cl = attachCloak(sc, rig, { width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0, seed: 4242 });
+      if (feed) cl.outer = sk;
+      const wind = new THREE.Vector3();
+      let worst = 0, bad = 0, frames = 0;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < 8 * 60; i++) {
+        anim.update(1 / 60, { position: pos, facing: 0, velocity: new THREE.Vector3(),
+          grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0, accelStrafe: 0 });
+        anim.swingArms(1 / 60, 0, 1);
+        rig.updateMatrices();
+        sk.update(1 / 60, sk.refreshColliders(), wind);
+        cl.update(1 / 60, cl.refreshColliders(), wind);
+        if (i < 5 * 60) continue;
+        frames++;
+        rig.get('hips').obj.updateMatrixWorld(true);
+        const inv = new THREE.Matrix4().copy(rig.get('hips').obj.matrixWorld).invert();
+        // the skirt's own surface, per row, as bearing→radius
+        const rows = [];
+        for (let r = 0; r < sk.rows; r++) {
+          let dy = 0; const rad = [];
+          for (let c = 0; c < sk.cols; c++) {
+            const i3 = (r * sk.cols + c) * 3;
+            v.set(sk.pos[i3], sk.pos[i3 + 1], sk.pos[i3 + 2]).applyMatrix4(inv);
+            dy += v.y; rad.push([Math.atan2(v.x, v.z), Math.hypot(v.x, v.z)]);
+          }
+          rows.push([dy / sk.cols, rad]);
+        }
+        let any = 0;
+        for (let k = 0; k < cl.cols * cl.rows; k++) {
+          if (cl.pinned[k]) continue;
+          v.set(cl.pos[k * 3], cl.pos[k * 3 + 1], cl.pos[k * 3 + 2]).applyMatrix4(inv);
+          const th = Math.atan2(v.x, v.z), rr = Math.hypot(v.x, v.z);
+          let row = null, bd = 1e9;
+          for (const q of rows) { const d = Math.abs(q[0] - v.y); if (d < bd) { bd = d; row = q; } }
+          if (bd > 0.06) continue;
+          let sr = 0, sd = 1e9;
+          for (const [a, r2] of row[1]) {
+            let d = Math.abs(a - th); if (d > Math.PI) d = 2 * Math.PI - d;
+            if (d < sd) { sd = d; sr = r2; }
+          }
+          if (sr - rr > 0.001) { any = 1; worst = Math.max(worst, sr - rr); }
+        }
+        bad += any;
+      }
+      sk.dispose(); cl.dispose();
+      return { worst, bad, frames };
+    };
+    const table = penetration(false), live = penetration(true);
+    assert(table.bad > 0,
+      'the fixed table already keeps the cape out of the cloth skirt, so the live proxy is not needed — delete it');
+    assert(live.worst < 0.002,
+      `the cape is still ${(live.worst * 1000).toFixed(1)} mm inside the skirt on ${live.bad}/${live.frames} frames with the live proxy`);
+    assert(live.worst < table.worst,
+      `the live proxy is no better than the table (${(live.worst * 1000).toFixed(1)} vs ${(table.worst * 1000).toFixed(1)} mm)`);
+    return `fixed table ${(table.worst * 1000).toFixed(1)} mm inside on ${table.bad}/${table.frames} frames → `
+      + `live proxy ${(live.worst * 1000).toFixed(1)} mm on ${live.bad}/${live.frames}`;
+  });
+
+  check('skirt: it costs what the cape costs, and the rigid layer comes back at range', () => {
+    // The cape is 99 particles at 4 iterations and is switched off past
+    // lod > 1. The same budget and the same gate — and because the cloth is
+    // gated, the lathes it stands in for cannot be deleted at build time or a
+    // character at range would have a bare pelvis. attachSkirt hides them
+    // instead, and hands them back through the same call.
+    const built = buildJedi({ scale: 1 });
+    const rig = built.rig;
+    rig.updateMatrices(); rig.root.updateMatrixWorld(true);
+    const sk = attachSkirt(new THREE.Scene(), rig, { rigid: built.robeSkirt });
+    const cl = attachCloak(new THREE.Scene(), rig, { width: 0.36, length: 0.86, cols: 9, rows: 11 });
+    const tris = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+    const nSk = sk.cols * sk.rows, nCl = cl.cols * cl.rows;
+    assert(nSk <= nCl, `${nSk} particles against the cape's ${nCl}`);
+    assert(sk.links.length <= cl.links.length * 1.1,
+      `${sk.links.length} links against the cape's ${cl.links.length}`);
+    assert(sk.iterations === cl.iterations, 'the skirt solves a different number of passes from the cape');
+    const skC = sk.refreshColliders().length, clC = cl.refreshColliders().length;
+    assert(nSk * skC <= nCl * clC, `${nSk * skC} sphere tests per pass against the cape's ${nCl * clC}`);
+    // and it must not cost triangles either — it replaces more than it draws
+    let rigid = 0;
+    assert(built.robeSkirt && built.robeSkirt.length === 3,
+      `buildJedi handed out ${built.robeSkirt ? built.robeSkirt.length : 0} rigid outer-layer meshes, not 3`);
+    for (const m of built.robeSkirt) rigid += tris(m.geometry);
+    assert(tris(sk.geometry) < rigid,
+      `the cloth draws ${tris(sk.geometry)} triangles to replace ${rigid}`);
+    // the LOD swap, both ways
+    sk.setVisible(false);
+    assert(built.robeSkirt.every((m) => m.visible) && !sk.mesh.visible,
+      'switching the cloth off at range leaves the character with no robe below the belt');
+    sk.setVisible(true);
+    assert(built.robeSkirt.every((m) => !m.visible) && sk.mesh.visible,
+      'the rigid lathes are still drawn underneath the cloth');
+    sk.dispose();
+    assert(built.robeSkirt.every((m) => m.visible), 'disposing the cloth left the robe invisible');
+    cl.dispose();
+    return `skirt ${nSk} particles / ${sk.links.length} links / ${skC} colliders / ${tris(sk.geometry)} tris `
+      + `against cape ${nCl} / ${cl.links.length} / ${clC} / ${tris(cl.geometry)}; replaces ${rigid} rigid triangles`;
+  });
+
+  check('skirt: a bigger duellist gets a bigger skirt, not a differently-shaped one', () => {
+    // Enemy.js hands attachCloak `scale: A.scale`, so a scaled garment is a
+    // real case and not a hypothetical. It is also where the tables bite: the
+    // petticoat and the inner shell are metres on a 1.0 figure and
+    // refreshColliders scales what it is handed, so scaling them at the point
+    // they are BUILT puts S in twice — which is how this was first written.
+    //
+    // The bound is 18mm, not zero. A garment 20% smaller under the same gravity
+    // and the same 1/60 s step does not hang identically and never will, and
+    // the cape does not either: measured over scale 0.8→1.25 the shipped skirt
+    // holds its unit-space radius to 12.4mm and its drop to 5.2. Scaling the
+    // shell twice — the bug this exists for — doubles both, to 24.7 and 13.3.
+    const profile = (S) => {
+      const built = buildJedi({ scale: S });
+      const rig = built.rig;
+      const anim = new BipedAnimator(rig, { scale: S, hipHeight: 0.95 * S });
+      anim.setFacing(0);
+      const pos = new THREE.Vector3();
+      const sk = attachSkirt(new THREE.Scene(), rig, { scale: S, seed: 991, rigid: built.robeSkirt });
+      for (let i = 0; i < 5 * 60; i++) {
+        anim.update(1 / 60, { position: pos, facing: 0, velocity: new THREE.Vector3(), grounded: true,
+          groundAt: () => 0, crouch: 0, accelForward: 0, accelStrafe: 0 });
+        anim.swingArms(1 / 60, 0, 1);
+        rig.updateMatrices();
+        sk.update(1 / 60, sk.refreshColliders(), new THREE.Vector3());
+      }
+      const hips = rig.get('hips').obj;
+      hips.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(hips.matrixWorld).invert();
+      const v = new THREE.Vector3(), out = [];
+      for (let r = 0; r < sk.rows; r++) {
+        let dy = 0, rad = 0;
+        for (let c = 0; c < sk.cols; c++) {
+          const i = (r * sk.cols + c) * 3;
+          v.set(sk.pos[i], sk.pos[i + 1], sk.pos[i + 2]).applyMatrix4(inv);
+          dy += v.y; rad += Math.hypot(v.x, v.z);
+        }
+        out.push([dy / sk.cols / S, rad / sk.cols / S]);   // read back in UNIT space
+      }
+      sk.dispose();
+      return out;
+    };
+    const one = profile(1);
+    let worstR = 0, worstY = 0;
+    for (const S of [0.8, 1.25]) {
+      const p = profile(S);
+      for (let r = 0; r < one.length; r++) {
+        worstY = Math.max(worstY, Math.abs(p[r][0] - one[r][0]));
+        worstR = Math.max(worstR, Math.abs(p[r][1] - one[r][1]));
+      }
+    }
+    assert(worstR < 0.018,
+      `the skirt's unit-space radius moves ${(worstR * 1000).toFixed(1)} mm between scale 0.8 and 1.25 — something is scaled twice`);
+    assert(worstY < 0.009,
+      `the skirt's unit-space drop moves ${(worstY * 1000).toFixed(1)} mm across scale — something is scaled twice`);
+    return `over scale 0.8 → 1.25 the unit-space profile holds to ${(worstR * 1000).toFixed(1)} mm of radius `
+      + `and ${(worstY * 1000).toFixed(1)} mm of drop`;
+  });
+
+  check('skirt: the folds are shaded, not just shaped', () => {
+    // The lathe baked its fold shadows into vertex colour, because geometry
+    // alone gives a fold a lit side and a dark side and only occlusion makes
+    // the BOTTOM of one read as a fold rather than as a facet. A simulated fold
+    // moves, so the bake cannot follow it; the channel is written from the live
+    // radial residual instead. This is a shading claim and nothing else — it
+    // does not deepen a single fold.
+    const on = walked({ skirt: {}, seconds: 5, speed: 0 }).skirt;
+    const off = walked({ skirt: { foldAO: 0 }, seconds: 5, speed: 0 }).skirt;
+    const range = (sk) => {
+      const c = sk.geometry.attributes.color.array;
+      let lo = 1, hi = 0;
+      for (let i = 0; i < c.length; i += 3) { lo = Math.min(lo, c[i]); hi = Math.max(hi, c[i]); }
+      return [lo, hi];
+    };
+    const [aLo, aHi] = range(on), [bLo, bHi] = range(off);
+    assert(aLo < bLo - 0.05,
+      `the occlusion darkens the valleys to ${aLo.toFixed(3)} against ${bLo.toFixed(3)} with it off — it is not reaching the channel`);
+    assert(aLo > 0.20, `the valleys go to ${aLo.toFixed(3)} of the light, which is a black stripe, not a shadow`);
+    assert(Math.abs(aHi - bHi) < 1e-6, 'the ridges got BRIGHTER than plain cloth — that is not occlusion');
+    // and it must not have moved the geometry
+    const f1 = tubeFolds(on), f2 = tubeFolds(off);
+    assert(Math.abs(f1.rms - f2.rms) < 1e-9, 'writing vertex colours changed the simulation');
+    on.dispose(); off.dispose();
+    return `valleys ${bLo.toFixed(2)} → ${aLo.toFixed(2)} of the light, ridges unchanged at ${aHi.toFixed(2)}, `
+      + `folds identical at ${(f1.rms * 1000).toFixed(1)} mm`;
   });
 }

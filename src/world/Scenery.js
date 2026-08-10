@@ -79,15 +79,88 @@ const WAVE_K = 0.42;       // 1/m along the wind — crests ≈ 15 m apart
 const WAVE_W = 2.9;        // rad/s — crests travel at WAVE_W/WAVE_K ≈ 6.9 m/s
 const WAVE_CROSS = 0.115;  // 1/m across the wind — crests bend every ~55 m
 
+/*
+ * The swirl, as a mean and a wobble.
+ *
+ * `sample` rotates the wind direction by `SWIRL_A·sin(φ)`. That is a rotation
+ * inside a sine, so the velocity has no elementary antiderivative — and an
+ * antiderivative is exactly what `drift` below needs. What it does have is a
+ * Fourier series in φ that converges immediately at this amplitude: the mean of
+ * cos(A sin φ) is J₀(A) and the first sine coefficient of sin(A sin φ) is
+ * 2J₁(A), and at A = 0.34 the terms after those are worth 0.029 and 0.0016.
+ *
+ * Derived from SWIRL_A rather than written out, so that changing the swirl
+ * cannot leave the drift describing a wind the game no longer has.
+ */
+const [SWIRL_MEAN, SWIRL_H1] = (() => {
+  let c = 0, s = 0;
+  const N = 4096;
+  for (let i = 0; i < N; i++) {
+    const ph = (i + 0.5) / N * TAU;
+    c += Math.cos(SWIRL_A * Math.sin(ph));
+    s += Math.sin(SWIRL_A * Math.sin(ph)) * Math.sin(ph);
+  }
+  return [c / N, 2 * s / N];
+})();
+
+/** What a level gets if it says nothing about the wind. */
+export const WIND_DEFAULTS = Object.freeze({
+  heading: 0.62,    // radians; the way the wind BLOWS, atan2(z, x)
+  strength: 1.7,    // metres/second at gust neutral
+  gustiness: 0.62,  // ± share of `strength` the gusts are worth
+  wander: 1,        // how much the heading roams either side of `heading`
+});
+
+/**
+ * A level's wind block, resolved. THE ONE PLACE the defaults live and the one
+ * place a compass bearing becomes a heading, so a check can ask what a level
+ * actually authored instead of keeping its own copy of the answer.
+ *
+ *   heading    radians, the way the wind BLOWS. atan2(z, x): 0 is toward +x,
+ *              π/2 is toward +z. Same convention as a terrain preset's `wind`.
+ *   from       degrees, the bearing the wind COMES FROM, on the same compass as
+ *              `atmosphere.azimuth` (0 = +z, 90 = +x). A westerly is `from: 270`
+ *              if you call +x east. Overrides `heading`.
+ *   strength   m/s at gust neutral. The weather multiplies THIS.
+ *   gustiness  0–0.95. The weather adds to this.
+ *   wander     0 pins the heading; 1 lets it roam ±33° over a couple of minutes.
+ */
+export function windSettings(opts = {}) {
+  const raw = opts.from !== undefined
+    ? (90 - (opts.from + 180)) * Math.PI / 180
+    : (opts.heading ?? WIND_DEFAULTS.heading);
+  // Wrapped into (-π, π] so `from` and `heading` are comparable at a glance
+  // and a level's authored bearing reads back as the number it meant.
+  const heading = raw - TAU * Math.round(raw / TAU);
+  return {
+    heading,
+    strength: Math.max(0, opts.strength ?? WIND_DEFAULTS.strength),
+    gustiness: clamp(opts.gustiness ?? WIND_DEFAULTS.gustiness, 0, 0.95),
+    wander: Math.max(0, opts.wander ?? WIND_DEFAULTS.wander),
+  };
+}
+
 export class WindField {
   constructor(opts = {}) {
     this.time = 0;
-    this.baseHeading = opts.heading ?? 0.62;   // radians; the way the wind BLOWS
-    this.strength = opts.strength ?? 1.7;      // metres/second at gust neutral
-    this.gustiness = clamp(opts.gustiness ?? 0.62, 0, 0.95);
-    this.wander = opts.wander ?? 1;            // how much the heading roams
+    this.configure(opts);
+  }
+
+  /**
+   * Adopt a level's wind block. Same shape `windSettings` documents; every
+   * field optional, and anything left out falls back to the default rather
+   * than to whatever the last level happened to leave behind.
+   */
+  configure(opts = {}) {
+    const s = windSettings(opts);
+    this.baseHeading = s.heading;
+    this.strength = s.strength;
+    this.gustiness = s.gustiness;
+    this.wander = s.wander;
     this.heading = this.baseHeading;
-    this.dir = new THREE.Vector2(Math.cos(this.heading), Math.sin(this.heading));
+    if (!this.dir) this.dir = new THREE.Vector2();
+    this._refresh();
+    return this;
   }
 
   /** Point the wind somewhere. `strength` and `gustiness` are optional. */
@@ -156,6 +229,44 @@ export class WindField {
     return out.set(dx * s, s * 0.06 * g, dz * s);
   }
 
+  /**
+   * WHERE A PARCEL OF AIR HAS GOT TO by time `t` — the time integral of
+   * `sample`, in closed form. Two `windAt`s deep, one `windDrift` wide.
+   *
+   * This exists because `position += windAt(p) * t` — which is what every
+   * layer in this file used to do — IS NOT ADVECTION. `windAt` is itself a
+   * function of time, so differentiating that product gives `w + t·dw/dt`, and
+   * the second term grows without bound: measured on the shipped field, a
+   * Windborne fleck's apparent speed reaches 20 m/s a minute into a level, 304
+   * m/s at ten minutes, and 2701 m/s at ten minutes of storm wind. The `mod`
+   * wrap hid it as noise, which is why it survived — the flecks did not fly off
+   * screen, they turned into static.
+   *
+   * The gust field is a sum of sinusoids whose phase is LINEAR in t, so its
+   * integral is another sum of sinusoids and nothing accumulates. The swirl is
+   * a rotation inside a sine and is carried by its mean and first harmonic (see
+   * SWIRL_MEAN / SWIRL_H1); what that drops is the gust×swirl cross term, worth
+   * 7% of the wind in RMS velocity — against a term that was worth 160,000%.
+   *
+   * The constant of integration is left off on purpose: only differences of
+   * this function matter, and per-position constants are absorbed by wherever
+   * the caller thinks its home is.
+   */
+  drift(x, z, t = this.time, out = new THREE.Vector2()) {
+    const P = x * this.dir.x + z * this.dir.y;
+    const Q = -x * this.dir.y + z * this.dir.x;
+    const a = P * GUST_K - t * GUST_W;
+    const b = Q * GUST_CROSS;
+    const gi = (Math.cos(a) * 0.55
+              + Math.cos(a * 1.93 + b * 1.7 + 1.3) * (0.28 / 1.93)
+              + Math.cos(a * 0.47 - b * 0.83 - 0.7) * (0.17 / 0.47)) / GUST_W;
+    const along = this.strength * SWIRL_MEAN * (t + this.gustiness * gi);
+    const lat = this.strength * SWIRL_H1
+              * (-Math.cos(Q * SWIRL_K + t * SWIRL_W) / SWIRL_W);
+    return out.set(this.dir.x * along - this.dir.y * lat,
+                   this.dir.y * along + this.dir.x * lat);
+  }
+
   /** Pack into the vec4 the shaders take: (dirX, dirZ, strength, time). */
   writeUniform(v4) { return v4.set(this.dir.x, this.dir.y, this.strength, this.time); }
 }
@@ -190,6 +301,24 @@ export const WIND_GLSL = /* glsl */`
     float c = cos(sw), n = sin(sw);
     vec2 d = vec2(uWind.x * c - uWind.y * n, uWind.x * n + uWind.y * c);
     return vec3(d.x * s, s * 0.06 * g, d.y * s);
+  }
+  // GLSL twin of WindField.drift — where the air itself has got to by time t.
+  // Anything CARRIED by the wind offsets by this; anything that only leans in
+  // it (grass, a sheet's own length) reads the velocity above. Declared after
+  // the velocity on purpose: the two mirror checks slice this string at the
+  // velocity's declaration.
+  vec2 windDrift(vec2 p, float t){
+    vec2 D = uWind.xy;
+    float P = dot(p, D), Q = dot(p, vec2(-D.y, D.x));
+    float a = P * ${GUST_K.toFixed(6)} - t * ${GUST_W.toFixed(6)};
+    float b = Q * ${GUST_CROSS.toFixed(6)};
+    float gi = (cos(a) * 0.55
+              + cos(a * 1.93 + b * 1.7 + 1.3) * (0.28 / 1.93)
+              + cos(a * 0.47 - b * 0.83 - 0.7) * (0.17 / 0.47)) / ${GUST_W.toFixed(6)};
+    float along = uWind.z * ${SWIRL_MEAN.toFixed(6)} * (t + uGustiness * gi);
+    float lat = uWind.z * ${SWIRL_H1.toFixed(6)}
+              * (-cos(Q * ${SWIRL_K.toFixed(6)} + t * ${SWIRL_W.toFixed(6)}) / ${SWIRL_W.toFixed(6)});
+    return vec2(D.x * along - D.y * lat, D.y * along + D.x * lat);
   }
 `;
 
@@ -288,6 +417,13 @@ export class Weather {
     this.windGain = opts.windGain ?? 2.4;           // × the level's own wind speed
     this.sunLoss = clamp(opts.sunLoss ?? 0.50, 0, 0.9);
     this.fillGain = opts.fillGain ?? 0.55;
+    /* How far, at the peak, the surviving beam takes the colour of what it is
+     * coming through. This was a bare 0.6 in `_applyWeather` and it is the one
+     * term that decides whether a front reads as brown-out or white-out, so it
+     * belongs where the level can reach it: 0.6 leaves a dust sun still 40%
+     * its clear-air self, which is right for sand and leaves a snow storm's
+     * sun sitting on neutral instead of going cold. */
+    this.tint = clamp(opts.tint ?? 0.6, 0, 1);
     this.intensity = 0;
     this.frontOffset = -FRONT_REACH;
     return this;
@@ -2846,9 +2982,13 @@ class Motes {
         varying float vA; varying float vGlow;
         void main(){
           vec3 p = position;
-          // carried by the wind, then wrapped into a box around the camera
-          vec3 w = windAt(p.xz + uCenter.xz);
-          p += w * (uTime * (0.55 + aSeed.x * 0.8));
+          // carried by the wind, then wrapped into a box around the camera.
+          // A mote weighs nothing, so it goes where the air goes: windDrift
+          // is where the air HAS GOT TO, not its speed times the clock. The
+          // vertical term the old form carried was the updraft times the same
+          // clock, which is the same runaway pointed at the ceiling; the bob
+          // below was always doing that job anyway and does it bounded.
+          p.xz += windDrift(p.xz + uCenter.xz, uTime) * (0.55 + aSeed.x * 0.8);
           p.y += sin(uTime * 0.6 + aSeed.y * 11.0) * 0.7;
           // NB: "half" is a reserved word in GLSL ES; a variable named that
           // fails to compile the whole shader.
@@ -2970,11 +3110,16 @@ class Windborne {
           vUv = uv;
           vKind = aSeed.y;
           vec3 home = aHome.xyz;
-          vec3 w = windAt(home.xz + uCenter.xz);
+          vec2 base = home.xz + uCenter.xz;
+          vec3 w = windAt(base);
           float speed = length(w.xz);
 
           vec3 p = home;
-          p.xz += w.xz * uTime * aSeed.z;
+          // CARRIED, so it offsets by where the air has got to — see
+          // WindField.drift. The velocity above is still what decides how long
+          // a sheet is and how hard it is showing, because those are properties
+          // of the wind right now rather than of everywhere it has been.
+          p.xz += windDrift(base, uTime) * aSeed.z;
           p.xz = mod(p.xz - uCenter.xz + uSpan * 0.5, uSpan) - uSpan * 0.5 + uCenter.xz;
           if(vKind < 0.5){
             // a sheet skims the ground and only exists when it is blowing
@@ -3046,6 +3191,287 @@ class Windborne {
     u.uTime.value = t;
     u.uCenter.value.copy(center);
     u.uGround.value = center.y;
+    syncWind(u);
+  }
+  dispose() {
+    if (!this.mesh) return;
+    this.mesh.geometry.dispose(); this.mat.dispose(); this.mesh.parent?.remove(this.mesh);
+  }
+}
+
+/**
+ * NOTHING IN THIS ENGINE FELL.
+ *
+ * Every other layer in this file is horizontal: motes hang, sheets skim, banks
+ * roll past, flecks tumble downwind. All five are the same idea — dust the wind
+ * is carrying — and none of them has a terminal velocity, because dust does not
+ * have one at these scales. Precipitation does, and it is the whole difference:
+ * snow is not blown past you, it comes DOWN past you, and what a gale does to it
+ * is rake that fall over toward the horizontal. Sideways-only never reads as
+ * weather falling out of the sky; vertical-only reads as a screensaver.
+ *
+ * So a flake is three things, in this order of importance:
+ *
+ *   1. IT FALLS AT ITS OWN SPEED. A pool of flakes with one terminal velocity
+ *      is a curtain sliding down the screen — the eye locks onto the rigid
+ *      spacing immediately. Terminal velocity is per flake (0.7–1.9 m/s by
+ *      default, which is dry snow), so the column is always shearing through
+ *      itself and there is no rank to lock onto.
+ *   2. IT IS ADVECTED BY THE ONE WIND — not pushed by it, carried by it, which
+ *      for something with the density of snow is the honest model. The offset
+ *      is `windDrift` over the flake's own age: exactly the wind's own
+ *      displacement, so the snow, the grass, the sand sheets and the fog banks
+ *      are all being moved by the same air. And because it is a DIFFERENCE over
+ *      the age, a flake near the ground is carrying twenty seconds more of the
+ *      gust history than one just released, so a gust crossing the field bends
+ *      the whole curtain instead of sliding it.
+ *   3. IT TUMBLES. A plate falling through air rocks, and the rocking does two
+ *      things at once: it walks the flake off its own vertical (centimetres,
+ *      not metres) and it turns the plate edge-on, which is a flicker. That
+ *      flicker is most of what stops a flake reading as a moving dot.
+ *
+ * The pool is the same shape as every other layer here: a fixed instance count
+ * wrapped into a box that rides with the camera, one draw call, no allocation
+ * after construction. `mod` over the fall cycle IS the recycling — a flake that
+ * reaches the ground is the flake appearing at the top.
+ *
+ * And when a level says nothing, `count` is 0, there is no geometry, no
+ * material, no shader and no draw call: an empty constructor and a null check
+ * per frame.
+ */
+/* A ceiling no level's typo can get past. It is high, and the number came off
+ * a frame rather than out of caution: at 4200 flakes in a 48 m box the whole
+ * layer moved 0.37% of the frame at the peak of a gale and the screenshot
+ * showed about thirty hairline scratches. The budget that matters here is not
+ * the instance count — one draw call, four vertices each, and everything the
+ * front is not asking for leaves the clip volume — it is fill, and a flake is
+ * a handful of blended pixels. 14000 leaves an `ultra` tier (density 1.35)
+ * room to run a level authored at 9000 for `high` without clamping it. */
+const SNOW_CAP = 14000;
+
+class Snowfall {
+  constructor(scene, opts = {}) {
+    this.count = Math.max(0, Math.min(SNOW_CAP, Math.floor(opts.count ?? 0)));
+    this.calm = clamp(opts.calm ?? 0.22, 0, 1);
+    this.storm = clamp(opts.storm ?? 1, 0, 1);
+    if (this.count <= 0) { this.mesh = null; return; }
+    /* The box, and why it is smaller than every other layer's.
+     *
+     * Only the part of the pool inside the view frustum and inside the edge
+     * fade is ever seen, and that is a cone, so widening the box mostly buys
+     * flakes behind your head. A 48 m box put 3.9% of the pool in front of the
+     * camera; 40 m with the fade held further out puts 5.6% there, for 30%
+     * fewer instances. Past ~20 m the whiteout's own fog is doing the work
+     * anyway — a level that can see 28 m does not need snow drawn at 40. */
+    this.span = opts.span ?? 40;
+    this.height = opts.height ?? 26;
+    const fall = opts.fall ?? [0.7, 1.9];
+    /* Ten centimetres, which is five times a real snowflake and measured
+     * rather than guessed. At the honest size a flake covers one or two pixels
+     * at any range you can still see through a whiteout, and at 0.075 m in a
+     * 48 m box the whole layer moved 0.27% of the frame at the peak of a
+     * blizzard — the same "looked entirely reasonable and rendered nothing"
+     * the fog banks were caught at, and found the same way, off a frame.
+     *
+     * Four things bought the other 13×, in descending order of what they were
+     * worth: the count (a blizzard wants thousands, see SNOW_CAP), not
+     * narrowing the streak, this size, and dropping the soft sprite for a disc
+     * the flake actually fills. 9000 flakes now move 3.6% of the frame at the
+     * peak against a dark subject and 2.8% against a white one. */
+    const size = opts.size ?? 0.10;
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.attributes.position = quad.attributes.position;
+    geo.attributes.uv = quad.attributes.uv;
+    geo.instanceCount = this.count;
+
+    const aHome = new Float32Array(this.count * 4);    // x, z, size, live gate
+    const aFlake = new Float32Array(this.count * 4);   // terminal, phase, flutter, tumble
+    for (let i = 0; i < this.count; i++) {
+      aHome[i * 4] = (rng() - 0.5) * this.span;
+      aHome[i * 4 + 1] = (rng() - 0.5) * this.span;
+      // A long tail rather than a uniform range: most flakes are small and a
+      // few are three times the rest, which is what a snowfall looks like.
+      aHome[i * 4 + 2] = size * (0.55 + rng() * rng() * 2.4);
+      /* The gate. Drawn independently of everything else, so thinning the fall
+       * thins it evenly instead of quietly taking all the big flakes or all the
+       * slow ones out first. */
+      aHome[i * 4 + 3] = rng();
+      aFlake[i * 4] = fall[0] + rng() * (fall[1] - fall[0]);
+      aFlake[i * 4 + 1] = rng();                       // where in its fall it is
+      /* Centimetres and a fraction of a hertz. Both are bounded by the same
+       * argument: the rocking must never be a large share of the flake's own
+       * velocity, or the snow stops agreeing with the wind everything else is
+       * leaning in. At the top of these ranges it is worth 0.4 m/s against a
+       * 1.2 m/s fall. */
+      aFlake[i * 4 + 2] = 0.04 + rng() * 0.12;         // metres of flutter
+      aFlake[i * 4 + 3] = 1.0 + rng() * 3.0;           // rad/s of tumble
+    }
+    geo.setAttribute('aHome', new THREE.InstancedBufferAttribute(aHome, 4));
+    geo.setAttribute('aFlake', new THREE.InstancedBufferAttribute(aFlake, 4));
+
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]);
+    Object.assign(uniforms, windUniforms(), {
+      uTime: { value: 0 },
+      uCenter: { value: new THREE.Vector3() },
+      uSpan: { value: new THREE.Vector2(this.span, this.height) },
+      uGround: { value: 0 },
+      uColor: { value: new THREE.Color(opts.color ?? 0xeef3fb) },
+      uSun: { value: new THREE.Color(1, 1, 1) },
+      uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.3) },
+      uOpacity: { value: opts.opacity ?? 0.85 },
+      uFall: { value: this.calm },
+      // How much of a flake-length a metre per second of travel is worth,
+      // capped in the shader at 3×. The cap is the interesting half: an
+      // uncapped stretch put an 11:1 hairline on the screen at gale force, and
+      // eleven-to-one is a scratch on the lens, not snow going past.
+      uStreak: { value: opts.streak ?? 0.12 },
+    });
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms, fog: true,
+      vertexShader: /* glsl */`
+        #include <common>
+        #include <fog_pars_vertex>
+        ${WIND_GLSL}
+        attribute vec4 aHome;    // x, z, size, live gate
+        attribute vec4 aFlake;   // terminal m/s, fall phase, flutter m, tumble rad/s
+        uniform float uTime; uniform vec3 uCenter; uniform vec2 uSpan;
+        uniform float uGround; uniform float uFall; uniform float uStreak;
+        uniform vec3 uSunDir;
+        varying vec2 vUv; varying float vA; varying float vGlow;
+        void main(){
+          vUv = uv;
+          /* ── the pool's density knob. Every flake the weather is not asking
+           * for leaves the clip volume as a whole quad — every vertex of an
+           * instance takes the same branch — so it is never rasterised. A level
+           * that authors a blizzard therefore costs a flurry's fill rate while
+           * it is only flurrying, and the count is an allocation rather than a
+           * per-frame bill. */
+          if(aHome.w > uFall){
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            vA = 0.0; vGlow = 0.0;
+            #ifdef USE_FOG
+              vFogDepth = 0.0;
+              vFogRay = vec3(0.0);
+            #endif
+            return;
+          }
+
+          float vT = aFlake.x;                     // this flake's terminal speed
+          float H = uSpan.y;
+          float cyc = H / vT;                      // seconds from the top to the ground
+          float age = mod(uTime + aFlake.y * cyc, cyc);
+          float born = uTime - age;
+
+          vec2 base = aHome.xy + uCenter.xz;
+          // where the AIR has moved since this flake left the top
+          vec2 p2 = aHome.xy + (windDrift(base, uTime) - windDrift(base, born));
+
+          // ── the rocking: one phase, two consequences
+          float ph = aFlake.y * 6.2831 + uTime * aFlake.w;
+          p2 += vec2(sin(ph), cos(ph * 0.73 + 1.1)) * aFlake.z;
+          float hAbove = H - vT * age + sin(ph * 1.6) * 0.11;
+
+          // one box, wrapped, riding with the camera
+          p2 = mod(p2 - uCenter.xz + uSpan.x * 0.5, uSpan.x) - uSpan.x * 0.5 + uCenter.xz;
+          vec3 p = vec3(p2.x, uGround + hAbove, p2.y);
+
+          /* ── the streak. The flake's own velocity is the wind plus its own
+           * fall, and a billboard stretched along that is what turns a vertical
+           * flurry into driven snow without a second system deciding how hard
+           * it is blowing.
+           *
+           * It does NOT narrow across as it stretches, which is where the
+           * first version went wrong. Particles.js narrows its sparks and is
+           * right to: a spark is a point source, so a stretched billboard with
+           * a constant width is a lozenge that gets fatter the faster it goes.
+           * A flake is not a point source, it is an object, and what stretches
+           * it is motion blur — which lengthens the smear and leaves the width
+           * alone. Narrowed by the same 0.8 the sparks use, a gale put 1-pixel
+           * by 18-pixel hairlines on the screen. */
+          vec3 w = windAt(base);
+          vec3 vel = vec3(w.x, -vT, w.z);
+          float sp = length(vel);
+          vec3 dir = vel / max(sp, 1.0e-4);
+          vec3 side = normalize(cross(dir, cameraPosition - p) + vec3(1.0e-5));
+          float face = abs(cos(ph * 0.61));        // the plate turning edge-on
+          float stretch = 1.0 + min(sp * uStreak, 2.0);
+          p += dir * (position.y * aHome.z * stretch)
+             + side * (position.x * aHome.z * (0.4 + 0.6 * face));
+
+          float radial = length(p.xz - uCenter.xz);
+          float dist = distance(p, cameraPosition);
+          vA = (0.5 + 0.5 * face)
+             // out of the murk at the top and lost against the ground at the
+             // bottom, so the recycle is never a flake winking into existence
+             * smoothstep(H, H * 0.86, hAbove)
+             /* And the last third of a metre, not the last one and a bit. The
+              * first version faded over 1.1 m and the screenshot showed the
+              * whole lower half of the frame — everything below the horizon,
+              * which is where you look while fighting — with no snow in it at
+              * all: the flakes between the camera and the ground live in
+              * exactly that slab, and the fade was eating all of them. */
+             * smoothstep(-0.15, 0.35, hAbove)
+             * smoothstep(uSpan.x * 0.49, uSpan.x * 0.38, radial)
+             * smoothstep(0.30, 1.0, dist);
+          // a flake is a lens like a mote is: brightest between you and the sun
+          vGlow = pow(clamp(dot(normalize(p - cameraPosition), normalize(uSunDir)), 0.0, 1.0), 4.0);
+          vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+          #include <fog_vertex>
+          gl_Position = projectionMatrix * mvPosition;
+        }`,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        #include <common>
+        #include <fog_pars_fragment>
+        uniform vec3 uColor; uniform vec3 uSun; uniform float uOpacity;
+        varying vec2 vUv; varying float vA; varying float vGlow;
+        void main(){
+          /* No sprite. Every other layer here shares one soft fbm blob, which
+           * is right for a bank of haze and wrong for a flake: most of that
+           * texture's area is alpha the eye cannot see, so a two-pixel flake
+           * spends both of its pixels on it. This is the same falloff the
+           * motes use in point space, and in the stretched quad's UV space it
+           * comes out as the ellipse a motion-blurred flake actually is —
+           * sharper than the blob, and one fewer texture fetch. */
+          float d = 1.0 - clamp(length(vUv - 0.5) * 2.0, 0.0, 1.0);
+          float a = d * d * vA * uOpacity;
+          if(a < 0.004) discard;
+          gl_FragColor = vec4(mix(uColor, uSun, 0.30) * (1.0 + vGlow * 1.4), a);
+          #include <fog_fragment>
+        }`,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+
+    this.mesh = new THREE.Mesh(geo, this.mat);
+    this.mesh.frustumCulled = false;
+    this.mesh.matrixAutoUpdate = false;
+    // in front of everything else in the air: it is the layer between you and
+    // the frame rather than a layer of the frame
+    this.mesh.renderOrder = 8;
+    scene.add(this.mesh);
+  }
+
+  /** The share of the pool that is falling, given the weather's own intensity. */
+  liveFraction(intensity) { return this.calm + (this.storm - this.calm) * clamp(intensity, 0, 1); }
+
+  /** How thick it is coming down. The one number the weather hands this layer. */
+  load(intensity) {
+    if (!this.mesh) return;
+    this.mat.uniforms.uFall.value = this.liveFraction(intensity);
+  }
+
+  update(t, center, sun, sunDir) {
+    if (!this.mesh) return;
+    const u = this.mat.uniforms;
+    u.uTime.value = t;
+    u.uCenter.value.copy(center);
+    u.uGround.value = center.y;
+    if (sun) u.uSun.value.copy(sun);
+    if (sunDir) u.uSunDir.value.copy(sunDir);
     syncWind(u);
   }
   dispose() {
@@ -3222,9 +3648,11 @@ class FogBank {
         void main(){
           vUv = uv;
           vec3 home = aHome.xyz;
-          vec3 w = windAt(home.xz + uCenter.xz);
           vec3 p = home;
-          p.xz += w.xz * uTime * aSeed.y;
+          // A bank IS a body of air, so it travels with the air — at a fraction
+          // of it, because the sand skimming under it is being pushed and the
+          // bank is only being carried.
+          p.xz += windDrift(home.xz + uCenter.xz, uTime) * aSeed.y;
           // one box, wrapped, so a bank leaving downwind is the bank arriving upwind
           p.xz = mod(p.xz - uCenter.xz + uSpan * 0.5, uSpan) - uSpan * 0.5 + uCenter.xz;
           p.y = uGround + home.y;
@@ -3941,6 +4369,23 @@ export function addHorizon(world, opts = {}) {
  * inferred from what the level already built — whether there is a sky overhead,
  * what colour the fog is, how hard the sun is hitting. Indoors that means motes
  * and nothing else; out on the dunes it means sand sheets, mirage and haze.
+ *
+ * ── what a level may say, all of it optional ──────────────────────────────
+ *
+ *   dust: {
+ *     count, color, opacity, size,   // the motes, as before
+ *     fleckColor,                    // what tumbles, if not 0.62× `color`
+ *     shimmer: false,                // force the mirage off (or on)
+ *     wind: { from, heading, strength, gustiness, wander },   // windSettings
+ *     snow: { count, color, size, span, height, fall, calm, storm,
+ *             opacity, streak },
+ *     weather: { peak, period, duration, phase, span, unrest,
+ *                fogGain, windGain, sunLoss, fillGain, tint },
+ *   }
+ *
+ * `wind` and `snow` are the two that did not exist. The wind was a module
+ * singleton with hardcoded defaults, so a level could not say which way its own
+ * weather came from; and nothing in the game fell.
  */
 export class Atmosphere {
   constructor(scene, opts = {}) {
@@ -3960,6 +4405,19 @@ export class Atmosphere {
     // fbm bake is the most expensive thing in this constructor by far
     this.puff = smokeSprite(128);
 
+    /* ── the one wind, pointed by the level ────────────────────────────
+     * `wind` stays a module singleton and everything still samples that one
+     * object; what a level authors is its SETTINGS, applied here and handed
+     * back on dispose. Snapshotting BEFORE the level speaks is the whole of
+     * it: without that, the restore at the end of a level would restore the
+     * level's own wind and the main menu would inherit whichever gale the
+     * player last quit out of. */
+    this._windRestore = {
+      heading: wind.baseHeading, strength: wind.strength,
+      gustiness: wind.gustiness, wander: wind.wander,
+    };
+    if (opts.wind) wind.configure(opts.wind);
+
     this.motes = new Motes(scene, {
       count: Math.floor((opts.count ?? 900) * density),
       color: dust, size: opts.size ?? 22, opacity: opts.opacity ?? 0.30,
@@ -3971,7 +4429,10 @@ export class Atmosphere {
       sheets: outdoor ? Math.floor(70 * density) : 0,
       flecks: Math.floor((outdoor ? 150 : 60) * density),
       sheetColor: dust,
-      fleckColor: _col.copy(dust).multiplyScalar(0.62).getHex(),
+      // Ash and seed heads are darker than the sheet they blow through. Snow
+      // is not, so a level whose air is white says so rather than getting grey
+      // grit tumbling through its blizzard.
+      fleckColor: opts.fleckColor ?? _col.copy(dust).multiplyScalar(0.62).getHex(),
       opacity: (opts.opacity ?? 0.3) * 0.85,
       span: 76,
     });
@@ -3982,10 +4443,13 @@ export class Atmosphere {
       color: fog, opacity: 0.075,
     });
 
+    /* Only where the ground is genuinely being cooked — and "a hard sun" is a
+     * proxy for that, not the thing itself. A glacier or a wet meadow under a
+     * bright sky is exactly as sunlit as a desert and has no mirage over it at
+     * all, so the level gets the last word. */
     this.shimmer = new Shimmer(scene, {
       map: this.puff,
-      // only where the ground is genuinely being cooked
-      count: outdoor && sunPower > 5 ? Math.floor(46 * density) : 0,
+      count: outdoor && (opts.shimmer ?? sunPower > 5) ? Math.floor(46 * density) : 0,
       color: this.hemi ? this.hemi.color.clone() : new THREE.Color(0xbfd4ec),
       opacity: 0.10,
     });
@@ -4014,6 +4478,14 @@ export class Atmosphere {
       opacity: 0.12, span: 190, seed: 5150,
     });
 
+    /* Precipitation. Opt-in and OFF by default, and off means off: no
+     * geometry, no material, no shader compile, no draw call. A level that
+     * does not snow pays one constructor that returns on its first line. */
+    this.snow = new Snowfall(scene, {
+      ...(opts.snow || {}),
+      count: outdoor ? Math.floor((opts.snow?.count ?? 0) * density) : 0,
+    });
+
     /* ── the weather itself ────────────────────────────────────────────
      * Everything below this line is a CONSEQUENCE. The level says how hard its
      * weather gets and the scheduler decides when; wind, fog, sun and every
@@ -4027,7 +4499,10 @@ export class Atmosphere {
     // The level's own settings are the CALM baseline; every storm term is
     // relative to them, so restoring is exact and a level that never storms is
     // bit-for-bit what it was before there was weather at all.
-    this._windBase = wind.baseHeading;
+    // Read AFTER the level has pointed the wind, so a level that authors a
+    // 4 m/s prevailing gets a storm off 4 and not off the engine's default.
+    // (`_windRestore` above is the other end of the same pair: what the field
+    // was before this level, which is what dispose hands back.)
     this._windSpeed = wind.strength;
     this._gustBase = wind.gustiness;
     this._fog = scene.fog || null;
@@ -4040,8 +4515,9 @@ export class Atmosphere {
     this._moteOpacity = opts.opacity ?? 0.30;
     this._bankOpacity = 0.12;
     this._hazeOpacity = 0.075;
+    this._snowOpacity = opts.snow?.opacity ?? 0.85;
 
-    this.parts = [this.motes, this.windborne, this.haze, this.shimmer, this.banks];
+    this.parts = [this.motes, this.windborne, this.haze, this.shimmer, this.banks, this.snow];
     // the legacy handle — anything that looked for `.mesh` still finds one
     this.mesh = this.motes.mesh;
     this.count = this.motes.count;
@@ -4103,7 +4579,7 @@ export class Atmosphere {
     // what is left of the sun takes the colour of what it is coming through.
     if (this.sun) {
       this.sun.intensity = this._sunBase * (1 - W.sunLoss * I);
-      if (this._sunTint) this.sun.color.copy(this._sunTint).lerp(this._dustTint, 0.6 * I);
+      if (this._sunTint) this.sun.color.copy(this._sunTint).lerp(this._dustTint, W.tint * I);
     }
     if (this.hemi) this.hemi.intensity = this._hemiBase * (1 + W.fillGain * I);
     // ── and the layers thicken
@@ -4121,6 +4597,16 @@ export class Atmosphere {
      * measured off a frame rather than reasoned about. */
     if (this.banks.mat) this.banks.mat.uniforms.uOpacity.value = this._bankOpacity + 0.85 * I;
     if (this.haze.mat) this.haze.mat.uniforms.uOpacity.value = this._hazeOpacity * (1 + 1.2 * I);
+    /* And it comes down harder. `load` is a share of the pool, not a
+     * multiplier on anything: the flakes the front is not asking for leave the
+     * clip volume, so a blizzard peaking and passing costs what it is worth at
+     * each moment rather than what it is worth at its worst. The character
+     * follows for free — the same intensity is already driving the wind, and
+     * the wind is what rakes a fall over into driven snow. */
+    if (this.snow.mesh) {
+      this.snow.load(I);
+      this.snow.mat.uniforms.uOpacity.value = this._snowOpacity * (0.72 + 0.28 * I);
+    }
   }
 
   update(dt, center) {
@@ -4134,6 +4620,7 @@ export class Atmosphere {
     this.haze.update(this.time, center, _col, this.sunDir);
     this.shimmer.update(this.time, center);
     this.banks.update(this.time, center, _col, this.sunDir);
+    this.snow.update(this.time, center, _col, this.sunDir);
   }
 
   /** Legacy hook: point the shared wind with a world vector. */
@@ -4149,8 +4636,9 @@ export class Atmosphere {
       if (this._sunTint) this.sun.color.copy(this._sunTint);
     }
     if (this.hemi) this.hemi.intensity = this._hemiBase;
-    wind.strength = this._windSpeed;
-    wind.gustiness = this._gustBase;
+    // The wind the level was handed, not the one it authored: a level may point
+    // the shared field wherever it likes and must not leave it there.
+    wind.configure(this._windRestore);
     weather.configure({ peak: 0 });
     for (const p of this.parts) p.dispose();
     this.parts.length = 0;

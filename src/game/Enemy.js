@@ -14,7 +14,7 @@ import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalke
 import { Saber } from './Saber.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
 import { buildRemote } from './Dojo.js';
-import { attachCloak } from './Cloth.js';
+import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { TOUGHNESS } from './Combat.js';
@@ -295,6 +295,16 @@ export class Enemy {
         scale: A.scale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
         color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
       });
+      // The robe below the belt, simulated rather than three lathes welded to
+      // the pelvis — see Player._makeCloak. It replaces the rigid meshes, so it
+      // costs the character fewer triangles than it saves.
+      if (built.robeSkirt) {
+        this.skirt = attachSkirt(this.world.scene, this.rig, {
+          scale: A.scale, rigid: built.robeSkirt,
+          color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
+        });
+        this.cloak.outer = this.skirt;
+      }
     }
     if (A.shield) {
       this.shieldUp = false;
@@ -526,6 +536,7 @@ export class Enemy {
     }
     if (this.telegraphArc) this.telegraphArc.hide();
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
+    if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
       // the blade falls with them, then goes out
       this.saber.retract();
@@ -1135,10 +1146,15 @@ export class Enemy {
 
     // close duellists get simulated robes; distant ones do not need them
     if (this.cloak) {
-      if (this.lod > 1) { this.cloak.setVisible(false); }
+      if (this.lod > 1) { this.cloak.setVisible(false); this.skirt?.setVisible(false); }
       else {
-        this.cloak.setVisible(true);
         _v3.copy(this.velocity).multiplyScalar(-0.8).setY(0);
+        // skirt first: the cape's proxy is the skirt's own particles
+        if (this.skirt) {
+          this.skirt.setVisible(true);
+          this.skirt.update(dt, this.skirt.refreshColliders(), _v3);
+        }
+        this.cloak.setVisible(true);
         this.cloak.update(dt, this.cloak.refreshColliders(), _v3);
       }
     }
@@ -1230,6 +1246,7 @@ export class Enemy {
     if (this.saber) this.saber.dispose();
     if (this.hum) this.hum.dispose();
     if (this.cloak) this.cloak.dispose();
+    if (this.skirt) this.skirt.dispose();
     if (this.telegraphArc) this.telegraphArc.dispose();
     if (this.laser) { this.world.scene.remove(this.laser); this.laser.geometry.dispose(); this.laser.material.dispose(); }
     if (this.actor) this.actor.dispose();

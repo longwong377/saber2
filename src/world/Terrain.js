@@ -25,7 +25,7 @@
 
 import * as THREE from 'three';
 import { fbm2, ridged2, clamp, lerp, smoothstep } from '../engine/MathUtil.js';
-import { sandMaps, rockMaps, duracreteMaps, metalMaps } from '../engine/Textures.js';
+import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps } from '../engine/Textures.js';
 // One-way: Scenery knows nothing about Terrain, so publishing the heightfield
 // on the broker here is what lets the water find the bed it is lying in
 // without the World having to wire the two together.
@@ -73,6 +73,17 @@ export function strata(h, step, strength, seed = 0) {
  * material. Colours are the five layers the shader blends between — base,
  * grit, rock (two bands), drift, crust — and the bands say which slopes and
  * which landform positions each one claims.
+ *
+ * ONE HONEST NOTE ABOUT `rockAt`: nothing in the game calls it. Grepped across
+ * src/ and tools/, the only occurrences are the five definitions below. What
+ * actually decides rock-versus-loose is `slopeBands` (+ `rockUpland`) in the
+ * fragment shader, and what decides the footstep and the particle tint is
+ * `stoneSlope` in surfaceAt(). It is left here, and kept in agreement with each
+ * preset's own bands, because it is the natural JS twin of that band and the
+ * next person to want a slope mask in script will reach for it — but it is not
+ * wired to anything today, and a preset author should not believe it is.
+ * tools/checks/terrain.mjs pins the agreement; it found two presets whose
+ * rockAt disagreed with their own material by 0.17 and 0.43 of slope.
  */
 export const TERRAIN_PRESETS = {
   dunes: {
@@ -137,7 +148,11 @@ export const TERRAIN_PRESETS = {
       return draa * (0.42 + open * 0.58) + (dune + sec) * open + corr
         - (1 - open) * 1.1;
     },
-    rockAt(x, z, slope) { return clamp(slope * 1.9 - 1.1, 0, 1); },
+    // 0.30 → 0.52 is this preset's own rock band, i.e. the material starts
+    // painting stone at 46° and is all stone by 61°. The twin has to cross
+    // where the material does; this one used to cross at slope 0.84, steeper
+    // than anything in the field, i.e. "never stone" anywhere.
+    rockAt(x, z, slope) { return clamp(slope * 4.55 - 1.36, 0, 1); },
   },
 
   arena: {
@@ -262,7 +277,9 @@ export const TERRAIN_PRESETS = {
 
       return wall + talus + floor + dish;
     },
-    rockAt(x, z, slope) { return clamp(slope * 2.4 - 0.2, 0, 1); },
+    // matched to the 0.055 → 0.19 band above; it used to cross at 0.29 against
+    // the material's 0.12, so the twin called the whole amphitheatre rim sand
+    rockAt(x, z, slope) { return clamp(slope * 7.4 - 0.41, 0, 1); },
   },
 
   canyon: {
@@ -318,6 +335,295 @@ export const TERRAIN_PRESETS = {
       return wall + talus + (bar + braid) * inWash + detail;
     },
     rockAt(x, z, slope) { return clamp(slope * 1.7 + 0.12, 0, 1); },
+  },
+
+  /**
+   * Rolling green hills. The simplest height function in this file, on purpose.
+   *
+   * A meadow has no landform story. There is no wind that built it, no water
+   * that cut it and no bedding under it — it is the shape the ground was left
+   * in, with grass over the top. Everything the deserts spend their octaves on
+   * (a windward face, a slip face, a thalweg, strata) is a lie here, and the
+   * one thing that is true is that the CRESTS ARE LONG. Two octaves of fbm at
+   * 320 m and 100 m is the whole silhouette; a third at 20 m and 30 cm keeps
+   * the ground from being a mathematical surface underfoot. Six noise2 calls
+   * against the dune sea's eighteen, and 0.21× its cost measured, which matters
+   * because this runs per vertex at bake, per frame per FOOT of every
+   * character, and per physics heightfield refresh.
+   *
+   * Measured on the built field: 27 m of relief, 9.0° mean slope, 23.9° at its
+   * steepest, and 69% of the map under 10°. That last figure is the design —
+   * the level's cover is grass to the horizon, and grass wants ground it can
+   * stand up on.
+   */
+  meadow: {
+    scale: 540, res: 300, waterLevel: -999,
+    // The base coat IS the meadow at distance. The grass field is instanced out
+    // to its own reach and the level is seen to 700 m; past that reach the only
+    // green in the frame is THIS colour, so it is the sward's own green rather
+    // than the soil under it.
+    sandColor: 0x6d7a3e, rockColor: 0x736a58,
+    maps: 'soil',
+    // thin dry earth on the shoulders, where the mat wears through
+    gritColor: 0x7d7048, rockColor2: 0x585d5f,
+    // the hollows are wetter, and wet sward is darker and bluer-green
+    dustColor: 0x4c5b2e, crustColor: 0x7e8a5c,
+    // 0.050 is 18.2° and 0.135 is 30.1°, against a field whose steepest ground
+    // is 23.9°: outcrop appears on the few steepest banks and nowhere else,
+    // which is the correct amount of rock in a meadow. The grit band at
+    // 0.014-0.055 (9.6°-19.1°) is the one that does the work — that is the
+    // shoulder of every hill, and it is where a footpath wears the sward off.
+    slopeBands: [0.050, 0.135, 0.014, 0.055],
+    stoneSlope: 0.10,
+    crust: 0.35, damp: 0.30, strataH: 4.0,
+    wind: [0.42, 0.91],
+    macro: [155, 0.60, 0.55, 0.95],
+    // The same two ends of the same mechanism, reading as what they are on wet
+    // ground instead of dry: what the 155 m patchwork sorts here is not grain
+    // size but how long the sward has stood. Peaty humus where it is old and
+    // rank, bleached thatch where last year's growth is still standing.
+    lagColor: 0x4a4736, sheetColor: 0xb3ac8e,
+    // A meadow is not wind-carved. 0.35 against the dune sea's 1.15 — and the
+    // number that actually kills the corduroy is ripAspect: at 1.0 the soil map
+    // is sampled through a SQUARE frame, so its crumb has no bearing at all.
+    // (Zeroing `ripple` instead would have been the obvious reading of "no
+    // ripples" and it is wrong: uRip.w scales the whole base normal, so at 0
+    // the ground loses every scrap of micro-relief and lights as a painted
+    // plane. The anisotropy is the thing to remove, not the relief.)
+    ripple: 0.35, ripAspect: 1.0,
+    // 2.0 m base tile, not 3.3: soil crumb is centimetres, and at the desert's
+    // tiling a ped came out 20 cm across.
+    texScale: [0.50, 0.29, 0.215],
+    detail: [0.95, 32],
+    height(x, z) {
+      const swell = fbm2(x * 0.0031, z * 0.0031, 2) * 25;          // ~320 m
+      const hills = fbm2(x * 0.0106 + 7.3, z * 0.0106 - 1.9, 2) * 8.5;  // ~100 m
+      const turf = fbm2(x * 0.048 + 5.1, z * 0.048 - 2.6, 2) * 0.30;    // underfoot
+      return swell + hills + turf;
+    },
+    rockAt(x, z, slope) { return clamp(slope * 7.4 - 0.37, 0, 1); },
+  },
+
+  /**
+   * The deep erg — the dune sea's landform with the amplitude a sandstorm level
+   * wants, and the same primitive underneath.
+   *
+   * Two things are different and both are deliberate:
+   *
+   *  · SCALE. Dune height and dune spacing are not free of each other; a taller
+   *    dune is a longer one. Measured over both fields, the dune sea averages a
+   *    7.4 m dune every 70 m and this averages 15.1 m every 108 m, so the
+   *    amplitude doubles and the wavelength goes up by half. What that buys is
+   *    visible in the SLIP FACE, which is the thing an erg is actually about:
+   *    the dune sea's drops 7.4 m over 18 m of run, which is 22° — a slope you
+   *    stroll down — and this one drops 15.1 over 23, which is 34°, sand's
+   *    angle of repose exactly, the steepest a dry slip face can stand.
+   *    Holding the 70 m wavelength and only raising the amplitude would have
+   *    put it at 46°, past repose by a mile and unclimbable in a way that reads
+   *    as a bug rather than as a dune.
+   *  · THE BRINK. duneProfile's `brink` is where along the crossing the crest
+   *    sits. At 0.79 rather than 0.74 the windward face is longer and the slip
+   *    face shorter, and the discontinuity in slope at the crest goes from
+   *    2.39:1 to 3.16:1 — which is what "a sharper brink" means as a number.
+   *    The crest reads as an edge from further away, which is the only thing
+   *    you can see when visibility is 40 m.
+   *
+   * Measured: 44 m of relief against the dune sea's 28, 22.1° mean slope against
+   * 18.4°, and a corridor at the middle that holds under 9° out to 36 m and
+   * only then starts to climb.
+   */
+  drifts: {
+    scale: 560, res: 340, waterLevel: -999,
+    // A deep erg is older sand than a young dune field: more of the quartz has
+    // been coated in iron oxide, and it runs red rather than tan. Held at the
+    // dune sea's luminance — 0.2162 linear against 0.2158, a fifth of a percent
+    // — so a level can start from the dune sea's authored exposure and be right.
+    // What moves is the hue, 22.0° against the dune sea's 29.3°, and the
+    // saturation, 0.880 against 0.841.
+    sandColor: 0xaa753e, rockColor: 0x6d5644,
+    maps: 'sand',
+    gritColor: 0x76502a, rockColor2: 0x4d5055,
+    dustColor: 0xc49a63, crustColor: 0xada38c,
+    // 0.34 is 48.7°. A dune sea is sand all the way up and a deep one is more
+    // so: the band is set past the steepest slip face this field builds, so
+    // stone never appears anywhere on it. The grit band carries the slip faces.
+    slopeBands: [0.34, 0.58, 0.12, 0.26],
+    stoneSlope: 0.34,
+    crust: 0.50, strataH: 5.0,
+    wind: [0.79, 0.61],
+    // 180 m patches, not 165: the landform under them is half again as big.
+    macro: [180, 0.62, 0.56, 1.05],
+    lagColor: 0x585a4e, sheetColor: 0xd4b184,
+    // A storm combs harder than a breeze does.
+    ripple: 1.30,
+    detail: [0.95, 34],
+    height(x, z) {
+      const wx = 0.79, wz = 0.61;
+      // draa: 480 m sand ridges, 30 m tall. The dune sea keeps these at 18 and
+      // under the dune amplitude on purpose; here they are meant to be over it,
+      // because what an erg has and a dune field does not is a horizon made of
+      // sand rather than of sky.
+      const draa = Math.pow(Math.max(0, ridged2(x * 0.0021 + 11.9, z * 0.0021, 3)), 1.20) * 30;
+
+      const warp = fbm2(x * 0.0036, z * 0.0036, 3) * 42;
+      const s = x * wx + z * wz + warp;
+      const t = -x * wz + z * wx;
+      const lam = 104 * (1 + fbm2(t * 0.0041, s * 0.0026, 2) * 0.28);
+      const amp = 21 * clamp(fbm2(t * 0.0074 + 23, s * 0.0025, 3) * 2.0 + 0.78, 0, 1);
+      const dune = duneProfile(fract(s / lam), 0.79) * amp;
+
+      // secondary dunes on the windward flanks, dying out as the primary rises
+      const s2 = s * 0.36 + t * 0.93;
+      const sec = duneProfile(fract(s2 / 31), 0.72) * 2.4
+        * clamp(1.3 - dune * 0.07, 0, 1);
+
+      // the interdune is scoured to a firm corrugated floor, never a plane
+      const corr = fbm2(x * 0.048, z * 0.048, 3) * 0.32
+        + Math.max(0, ridged2(x * 0.017, z * 0.017, 2) - 0.3) * 0.5;
+
+      // The corridor. Same device as the dune sea's pan and wider, because the
+      // dunes around it are nearly twice as tall and a fight needs the same
+      // amount of floor whatever is standing over it.
+      const d = Math.hypot(x, z);
+      const panR = 46 + fbm2(x * 0.010, z * 0.010, 2) * 24;
+      const open = smoothstep(panR * 0.62, panR * 1.60, d);
+
+      return draa * (0.38 + open * 0.62) + (dune + sec) * open + corr
+        - (1 - open) * 1.4;
+    },
+    // the 0.34 → 0.58 band, so the twin agrees with the material: the very
+    // steepest brinks this field builds do show a little stone and nothing else
+    // on it does
+    rockAt(x, z, slope) { return clamp(slope * 4.17 - 1.42, 0, 1); },
+  },
+
+  /**
+   * The mountain. Same vocabulary as the canyon — strata, cliffs, rock-with-
+   * height — at nearly twice the relief (112 m against 61), and with the
+   * rock/loose decision run backwards: what lies on the shallow ground here is
+   * snow, and what the steep ground shows is stone.
+   *
+   * THE HARD CONSTRAINT IS 520 METRES. A mountain is a kilometre tall and this
+   * field is half a kilometre wide, so the summit cannot be in it — it lives in
+   * the painted horizon, which is not this file's. What is in here is the
+   * ground within sight of the player, and it is built in three pieces:
+   *
+   *  · the FLANKS, outside 60 m. A ridged multifractal, because an arête is a
+   *    crest that is a LINE and nothing else in MathUtil makes one; quantised
+   *    into beds by `strata` so the buttresses come out ledged rather than
+   *    extruded, which is also what gives snow somewhere to sit on a wall.
+   *  · the CIRQUE FLOOR, inside it. Not a plate: rock ribs breaking through the
+   *    snow, benched at a 3.2 m step. 89% of the first 40 m is under 30° so the
+   *    fight works, and it still has 13 m of relief in it to move around.
+   *  · the TALUS, a skirt of the flanks' own debris fanning out from their foot,
+   *    because a cliff that meets the floor at a line has nowhere to have put
+   *    what it lost.
+   *
+   * Measured: 112 m of relief, 35° mean slope, 80° at the steepest riser.
+   */
+  alpine: {
+    scale: 520, res: 320, waterLevel: -999,
+    /* THE BASE COAT IS SNOW, and snow is the one ground in this game brighter
+     * than the light falling on it is metered for. This number was measured,
+     * and it did not come out where I expected it to.
+     *
+     * atmosphereMeter keys the exposure off IRRADIANCE alone — key = E·0.18/π,
+     * an 18% grey world, with nothing about the ground reaching it. So for a
+     * flat, fully lit patch the linear value that arrives at ACES is exactly
+     * albedo × bias × KEY / 0.18, and the ATMOSPHERE CANCELS OUT. Whatever the
+     * weather lane does to this level's sky, the ground's place on the tone
+     * curve is decided here, by this hex.
+     *
+     * The expected failure was clipping. It does not happen: ACES has a
+     * shoulder, not a wall, and even real 0.90 snow measures 0.0% of the ground
+     * over 0.985 display. What actually happens on the shoulder is that the
+     * ground goes FLAT — the curve stops resolving albedo differences, and every
+     * layer the material spends its taps on arrives as the same white. Measured
+     * through the real ACES + grade at the dune sea's authored bias of 0.86:
+     *
+     *   authored albedo   base coat    a 15% albedo    base coat vs the
+     *                     displays at  step is worth   pale drift sheet
+     *     desert ground (0.18-0.22)  0.45-0.51   0.050      0.19-0.31
+     *     0xf0f4f8  real fresh snow, 0.90   0.914   0.018      0.010
+     *     0xd8e0e8  settled snow,    0.74   0.882   0.023      0.026
+     *     0xbcc6d0                   0.56   0.825   0.030      0.068
+     *     0xb4bfca  ← this           0.51   0.805   0.033      0.088
+     *     0xadb8c4                   0.47   0.783   0.035      0.109
+     *
+     * Read the last column. At real snow's albedo the base coat and the drift
+     * sheet display 0.010 apart — they are the SAME COLOUR on screen, and the
+     * sastrugi, the wind slab and the fresh drift are all one white card. That
+     * is what a physically honest snow albedo buys, and it is worth more than
+     * clipping ever was.
+     *
+     * So 0.51 is a lie about snow, and it is the same lie every photograph of
+     * snow tells, because a camera meters the way this engine does. The
+     * alternative — author 0.90 and hand the level a −0.9 stop bias — fails
+     * because exposure is ONE number for the whole frame: it would have taken
+     * the sky, the sabers and the characters down with the ground, and the
+     * ground is the only part of the frame that is white.
+     *
+     * Even at 0.51 this ground gets two thirds of a desert's tonal modulation.
+     * There is no setting that gets all of it; the shoulder is where it is. */
+    sandColor: 0xb4bfca, rockColor: 0x4b4744,
+    maps: 'snow',
+    // wind crust: older, greyer, slightly warmer snow on the scoured shoulders
+    gritColor: 0xa2acb6, rockColor2: 0x3b3f45,
+    // powder collecting in the lee hollows, and the wind slab on the flats
+    dustColor: 0xd2dae2, crustColor: 0xc6ced8,
+    // 0.10 is 25.8° and 0.30 is 45.6°. Snow does not lie on a 46° face: it
+    // sloughs, and what is left is the rock. The grit band at 0.030-0.11
+    // (14°-27°) is the wind crust between the two.
+    slopeBands: [0.10, 0.30, 0.030, 0.11],
+    stoneSlope: 0.16,
+    crust: 0.45, strataH: 6.0, cliffs: true,
+    wind: [0.62, -0.78],
+    macro: [130, 0.55, 0.60, 1.05],
+    // The other half of the snow mask. Slope alone cannot find a benched wall —
+    // strata put most of its area on near-flat treads — and the treads high on
+    // a buttress are wind-scoured, not snow-covered. Same lever as the canyon's
+    // and the arena's, aimed at the same failure.
+    rockUpland: [0.09, 34, 108],
+    // The two ends of the same sorting, on snow: the wind strips the exposed
+    // crests down to the moraine grit under them and drops what it took as
+    // fresh drift downwind. Both are true of a snowfield and both are visible.
+    lagColor: 0x60564a, sheetColor: 0xdfe6ee,
+    // Sastrugi. Real, directional, and softer than an aeolian sand ripple — the
+    // map's drift wavelength is twice the sand map's and its two trains sit 2°
+    // apart rather than 33°, so the frame does not need stretching as hard to
+    // keep them from crossing into a lattice.
+    ripple: 0.70, ripAspect: 0.55,
+    detail: [1.0, 30],
+    height(x, z) {
+      const d = Math.hypot(x * 1.06, z * 0.90);
+      const rise = smoothstep(60, 235, d);
+
+      // the massif. ^1.30 sharpens the arête and drops the ground between the
+      // ridges, which is what stops a ridged fractal reading as a pile of cones
+      const arete = Math.pow(Math.max(0, ridged2(x * 0.0044 + 8.4, z * 0.0037 - 3.1, 4)), 1.30);
+      // 7 m beds — four grid cells at this resolution, which is the floor for a
+      // bench that survives the mesh at all (the canyon learned this at 3.6 m,
+      // where its benches were two vertices wide and came out as noise)
+      const flank = strata(arete * 118 * rise, 7.0,
+        smoothstep(0.06, 0.42, rise) * 0.66, 7.3);
+
+      // the cirque floor: rock ribs through the snow, benched into ledges
+      const rib = Math.max(0, ridged2(x * 0.0115 + 2.2, z * 0.0102 + 6.4, 3) - 0.22)
+        * 18 * (1 - rise * 0.62);
+      const bench = strata(rib, 3.2, 0.30, 3.9);
+
+      // sastrugi and boulders, at the scale you walk over
+      const floor = fbm2(x * 0.019, z * 0.019, 3) * 1.3
+        + Math.max(0, ridged2(x * 0.055, z * 0.055, 2) - 0.34) * 0.7;
+
+      // the debris skirt under the buttresses
+      const talus = smoothstep(64, 118, d) * smoothstep(210, 130, d) * 5.0;
+
+      return flank + bench + talus + floor;
+    },
+    // Snow lies on shallow ground and falls off steep faces — the same shape as
+    // the shader's own rock band, at the same crossing (0.20, i.e. 36.9°).
+    rockAt(x, z, slope) { return clamp(slope * 5.0 - 0.5, 0, 1); },
   },
 
   hangar: {
@@ -1226,8 +1532,15 @@ export class Terrain {
    * particular re-bakes 512² for every distinct repeat it is handed.)
    */
   _mapSet() {
-    if (this.preset.maps === 'deck') return [duracreteMaps(2), metalMaps(2)];
-    return [sandMaps(1), rockMaps(2)];
+    // The rock set is deliberately shared by every landform that has any rock
+    // in it: a snowfield's outcrop and a canyon wall are the same stone, and
+    // the preset's two rock colours are what make them different rocks.
+    switch (this.preset.maps) {
+      case 'deck': return [duracreteMaps(2), metalMaps(2)];
+      case 'soil': return [soilMaps(1), rockMaps(2)];
+      case 'snow': return [snowMaps(1), rockMaps(2)];
+      default: return [sandMaps(1), rockMaps(2)];
+    }
   }
 
   _buildMesh(scene) {

@@ -28,6 +28,11 @@
  *
  *   sand  0.578 0.399 0.190     rock   0.110 0.080 0.059    metal 0.318 0.353 0.416
  *   cloth 0.935 0.935 0.935     armor  0.668 0.653 0.623    crete 0.332 0.318 0.290
+ *
+ * The two terrain-only carriers, soil and snow, are a different kind of number
+ * and are documented where they are declared: nothing tints against them, the
+ * terrain reads only their luminance, and they are pinned to the mean the
+ * terrain shader's own arithmetic expects (0.389). See MEAN_ALBEDO.
  */
 
 import * as THREE from 'three';
@@ -427,6 +432,36 @@ export const MEAN_ALBEDO = {
   armor:     [0.668, 0.653, 0.623],   // aged off-white plastoid
   duracrete: [0.332, 0.318, 0.290],   // portland concrete, 0.30-0.35 is the measured band
   skin:      [0.780, 0.700, 0.660],   // detail carrier; the flesh tone is the tint
+
+  /* ── the two terrain-only carriers ────────────────────────────────────
+   * These are NOT measured albedos and nothing tints against them, which is
+   * why they are neutral and why they are both exactly 0.389.
+   *
+   * A terrain base map is a GAIN, not a colour. Terrain.js composes the
+   * ground as `col = uBaseCol … ; col *= 0.55 + baseLum * 1.15`, so the map's
+   * mean decides whether the level's authored ground colour arrives intact:
+   * 0.55 + 0.389 × 1.15 = 0.997. Sand lands there by coincidence of being a
+   * real albedo ((0.578 + 0.399 + 0.190)/3 = 0.389); soil and snow land there
+   * on purpose, because a "physically honest" 0.10 soil would have delivered
+   * every meadow at 0.67× its authored green and a 0.75 snow at 1.41× its
+   * authored white with no knob anywhere saying why.
+   *
+   * The same constant is written into the shader a second time — `baseLum`
+   * lerps toward 0.389 where the ground is barely rippled — so a base map at
+   * any other mean also makes the smooth ground and the textured ground two
+   * different brightnesses. tools/checks/terrain.mjs pins all of it.
+   *
+   * And hue is thrown away outright downstream: the shader takes
+   * dot(baseC, 1/3). Both maps are authored with real hue in them — blue pits
+   * in the snow, humus in the soil crumb — but pinning the MEAN neutral is a
+   * per-channel scale, and once the three channels are pulled onto the same
+   * mean what survives is only the part of each texel that disagrees with the
+   * average ratio. Measured after calibration: 0.019 mean saturation on soil
+   * and 0.038 on snow, against sand's 0.683. They are luminance carriers in
+   * practice, and that is stated here rather than implied, because the authored
+   * constants below read like colours and are not behaving as any. */
+  soil:      [0.389, 0.389, 0.389],   // damp crumb under a grass field
+  snow:      [0.389, 0.389, 0.389],   // wind-packed snow with sastrugi
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -557,6 +592,174 @@ export function rockMaps(repeat = 8) {
   }, {
     repeat, normalStrength: 3.1, ao: 0.85, aoFloor: 0.40, aoRough: 0.05,
     calibrate: MEAN_ALBEDO.rock,
+  });
+}
+
+/**
+ * Soil. The ground a grass field grows out of.
+ *
+ * This one is defined by what it must NOT do. It is seen almost entirely
+ * BETWEEN blades — a few centimetres of it at a time, under and behind ten
+ * thousand silhouettes — so anything with a legible pattern in it competes
+ * with the grass and wins, because the grass is moving and broken up and the
+ * ground is not. Sand can afford ripples; soil cannot afford anything the eye
+ * can name. So: no directional structure at all (soil is not blown, and the
+ * meadow preset samples it through a square frame, uRipAspect = 1, rather than
+ * the stretched one the deserts comb their ripples with — measured, the
+ * finished map's gradient coherence is 0.17 against the sand map's 0.79); a
+ * tonal spread of 0.227 sd/mean against sand's 0.288; and, the number that
+ * actually decides whether a ground layer competes with what stands on it, a
+ * mean surface tilt of 6.4° against sand's 12.8°, at a normal gain of 2.6
+ * against sand's 8.0.
+ *
+ * What it does carry is CRUMB. Soil aggregates into peds — millimetre to
+ * centimetre lumps with dark damp organic matter in the cracks between them —
+ * and that is the one structure that says "soil" rather than "brown noise".
+ * F2−F1 cellular puts the crack on the cell border where it belongs, and the
+ * cell id gives every crumb its own height and tone, the same trick the rock
+ * map uses for blocks.
+ */
+export function soilMaps(repeat = 14) {
+  const CRUMB = [0.430, 0.372, 0.300];   // ordinary damp loam crumb
+  const HUMUS = [0.246, 0.206, 0.162];   // wet organic matter down in the cracks
+  const FIBRE = [0.548, 0.505, 0.386];   // dead root and litter fragments
+  const GRIT  = [0.500, 0.494, 0.480];   // the few small stones in it
+  return materialFrom('soil', 512, (u, v) => {
+    const warp = pfbm(u, v, 9, 3, 0.5, 23) * 0.05;
+    const uu = u + warp, vv = v - warp * 0.9;
+
+    // the crumb structure, at two sizes; the small peds only break where the
+    // big ped is already broken, so the field reads as aggregate not as foam
+    const p1 = pworley(uu, vv, 17, 11);
+    const crack1 = sstep(0.115, 0.0, p1[1] - p1[0]);
+    const p2 = pworley(uu, vv, 41, 67);
+    const crack2 = sstep(0.070, 0.0, p2[1] - p2[0]) * 0.62;
+    const cracks = clamp(crack1 + crack2 * (1 - crack1), 0, 1);
+    const ped = (p1[2] - 0.5) + (p2[2] - 0.5) * (0.30 + p1[2] * 0.5);
+
+    // litter: dead roots and stems, tangled rather than combed
+    const fibre = sstep(0.52, 0.86, pridged(uu, vv, 23, 3, 89));
+    // a few small stones
+    const grit = sstep(0.125, 0.045, pworley(uu, vv, 56, 131)[0]);
+    // the grain that stops it being clay
+    const grain = (pnoise(u * 152, v * 152, 152, 152, 41) * 0.60
+                 + pnoise(u * 84, v * 84, 84, 84, 7) * 0.40) * 0.5 + 0.5;
+    // where the ground holds water. 15 cycles, well clear of the ~8 below which
+    // a soft blob stops being variation and becomes the tile itself.
+    const damp = sstep(0.42, 0.74, pfbm(uu, vv, 15, 3, 0.5, 173) * 0.5 + 0.5);
+
+    const h = ped * 0.26 + (grain - 0.5) * 0.34 + grit * 0.30 + fibre * 0.14
+            - cracks * 0.62 - damp * 0.10;
+
+    // Damp soil is darker AND less saturated than dry soil, which is the whole
+    // reason a wet patch reads as wet: water fills the pores and the surface
+    // stops scattering off every grain boundary.
+    const wetW = clamp(damp * 0.60 + cracks * 0.48, 0, 1);
+    let r = lerp(CRUMB[0], HUMUS[0], wetW);
+    let g = lerp(CRUMB[1], HUMUS[1], wetW);
+    let b = lerp(CRUMB[2], HUMUS[2], wetW);
+    r = lerp(r, FIBRE[0], fibre * 0.55); g = lerp(g, FIBRE[1], fibre * 0.55); b = lerp(b, FIBRE[2], fibre * 0.55);
+    r = lerp(r, GRIT[0], grit * 0.62); g = lerp(g, GRIT[1], grit * 0.62); b = lerp(b, GRIT[2], grit * 0.62);
+    const shade = 0.93 + ped * 0.11 + (grain - 0.5) * 0.18;
+    return {
+      h: h * 0.060,
+      r: r * shade, g: g * shade, b: b * shade,
+      // wet is smoother, litter and stone are smoother than bare crumb
+      rough: clamp(0.965 - damp * 0.13 - grit * 0.10 - fibre * 0.06 + (grain - 0.5) * 0.06, 0, 1),
+      metal: 0,
+    };
+  }, {
+    // 2.6, not sand's 8.0: this map's job is to sit still behind the blades.
+    repeat, normalStrength: 2.6, ao: 0.46, aoFloor: 0.64, aoRough: 0.04,
+    calibrate: MEAN_ALBEDO.soil,
+  });
+}
+
+/**
+ * Snow.
+ *
+ * Wind-packed, not fresh — fresh powder has no surface at all and reads as a
+ * white card, which is exactly the failure a snow level falls into. What gives
+ * a snowfield form is SASTRUGI: the wind carves it into drifts with a long
+ * smooth stoss face and a sharp lee edge, the same asymmetry as an aeolian sand
+ * ripple at twice the wavelength — 11 and 17 cycles a tile against the sand
+ * map's 26 and 15, which at the alpine preset's own tiling is 30 cm sastrugi
+ * against the desert's 13 cm ripples. Those are the only large features here,
+ * and the preset's own `ripple` gain and wind axis point them the same way the
+ * deserts point their ripples, so the drift lies along the storm.
+ *
+ * Two things then keep it from being white:
+ *
+ *  · THE PITS ARE BLUE. Light that goes into snow and comes back out has been
+ *    through several centimetres of ice, and ice absorbs red. A crown is white
+ *    and the hollow beside it is not, and that pair is the only colour a
+ *    snowfield has. Authored here rather than left to the lighting, because the
+ *    hemisphere light is one colour and cannot know where a pit is.
+ *  · SPARKLE IS SPECULAR, NOT ALBEDO. An ice facet catching the sun is a
+ *    mirror, and a mirror cannot be drawn by making the albedo brighter — the
+ *    map is calibrated, so anything pushed up here comes back out of the rest
+ *    of the field, and above 1.0 it simply clips. The facets live in the
+ *    ROUGHNESS map instead — measured, the field means 0.894 and the specks
+ *    reach 0.13 — where they cost nothing and behave like facets: they flare
+ *    when the sun lines up with them and vanish when it does not.
+ *
+ * Measured on the finished map: 0.162 sd/mean tonal spread (snow is genuinely
+ * low contrast and this does not pretend otherwise), and a gradient coherence
+ * of 0.65 at the feature scale against soil's 0.17 — the sastrugi are a real
+ * directional train, which is the thing the preset's ripple frame is aimed at.
+ */
+export function snowMaps(repeat = 18) {
+  const CROWN = [0.470, 0.478, 0.492];   // sunlit crystal, faintly cool
+  const PIT   = [0.268, 0.312, 0.398];   // light that went into the pack and came back
+  const GRIME = [0.330, 0.312, 0.284];   // wind-blown grit on an old surface
+  return materialFrom('snow', 512, (u, v) => {
+    const warp = pfbm(u, v, 8, 4, 0.5, 31) * 0.20;
+    /* Sastrugi: long stoss, sharp lee. Both directions are integer lattice
+     * vectors so the whole field wraps, and they sit 2° apart rather than at
+     * unrelated bearings — one wind carved this, and two trains at 20° would
+     * cross into the same diamond lattice that once turned the dune sea into
+     * woven matting. What the pair buys at 2° is a beat ALONG the crest, so a
+     * drift fades out and another picks up, which is what sastrugi do. */
+    const driftA = ridgeWave(u, v, 11, 3, warp, 0.80);
+    const driftB = ridgeWave(u, v, 17, 4, warp * 1.35 + 0.27, 0.72);
+    const drift = driftA * 0.66 + driftB * 0.34;
+    // Where the surface is drifted at all. A snowfield alternates between
+    // carved ground and smooth infill; without this the sastrugi run edge to
+    // edge at one amplitude and the tile is a corrugation.
+    const patch = pfbm(u, v, 13, 3, 0.5, 59) * 0.5 + 0.5;
+    const dr = lerp(drift, drift * 0.45 + 0.31, sstep(0.52, 0.14, patch));
+
+    // wind slab cracks into plates on the exposed crests
+    const pl = pworley(u, v, 15, 77);
+    const plate = sstep(0.075, 0.0, pl[1] - pl[0]) * sstep(0.38, 0.74, dr);
+    // packed granular snow: rounded grains, not the dendrites of fresh fall
+    const grain = (pnoise(u * 164, v * 164, 164, 164, 3) * 0.62
+                 + pnoise(u * 92, v * 92, 92, 92, 53) * 0.38) * 0.5 + 0.5;
+    // individual crystal facets — one to two texels, sparse
+    const spark = sstep(0.070, 0.020, pworley(u, v, 92, 19)[0]);
+    // old surfaces collect blown grit; sparse, and it stays in the troughs
+    const dirt = sstep(0.60, 0.88, pfbm(u, v, 14, 3, 0.5, 211) * 0.5 + 0.5)
+               * sstep(0.62, 0.24, dr) * 0.5;
+
+    const h = dr * 0.62 + (pl[2] - 0.5) * 0.10 + (grain - 0.5) * 0.16
+            - plate * 0.30 + spark * 0.06;
+
+    // the pit blue rides the cavity, not a separate noise: it IS the depth
+    const pitW = clamp((1 - dr) * 0.72 + plate * 0.30 - 0.06, 0, 1);
+    let r = lerp(CROWN[0], PIT[0], pitW);
+    let g = lerp(CROWN[1], PIT[1], pitW);
+    let b = lerp(CROWN[2], PIT[2], pitW);
+    r = lerp(r, GRIME[0], dirt); g = lerp(g, GRIME[1], dirt); b = lerp(b, GRIME[2], dirt);
+    const shade = 0.94 + (grain - 0.5) * 0.16 + spark * 0.14;
+    return {
+      h: h * 0.085,
+      r: r * shade, g: g * shade, b: b * shade,
+      // a facet is a mirror; the field around it is not
+      rough: clamp(0.90 - spark * 0.70 - plate * 0.06 + (grain - 0.5) * 0.10 + dirt * 0.06, 0, 1),
+      metal: 0,
+    };
+  }, {
+    repeat, normalStrength: 5.2, ao: 0.50, aoFloor: 0.66, calibrate: MEAN_ALBEDO.snow,
   });
 }
 
@@ -1020,7 +1223,8 @@ export function noiseTexture(size = 256) {
 export function rawMaps(name) {
   if (!baked.has(name)) {
     const build = { sand: sandMaps, rock: rockMaps, metal: metalMaps, cloth: clothMaps,
-                    armor: armorMaps, duracrete: duracreteMaps, skin: skinMaps }[name];
+                    armor: armorMaps, duracrete: duracreteMaps, skin: skinMaps,
+                    soil: soilMaps, snow: snowMaps }[name];
     if (!build) return null;
     build();
   }
