@@ -586,6 +586,8 @@ export class Menu {
     const L = LEVELS[key];
     const sky = { dunes: ['#cfe0f5', '#e8d0a0'], arena: ['#c0d4ee', '#d8b98a'],
                   hangar: ['#1b2430', '#0a0d13'], canyon: ['#a8c8f0', '#c08a60'],
+                  drifts: ['#dcd0b4', '#c8a870'], meadow: ['#bcd8f4', '#7f9440'],
+                  alpine: ['#c8dcfa', '#aebfd4'],
                   dojo: ['#20293a', '#0b0f16'] }[key] || ['#20293a', '#0b0f16'];
     const grad = g.createLinearGradient(0, 0, 0, 140);
     grad.addColorStop(0, sky[0]); grad.addColorStop(1, sky[1]);

@@ -400,6 +400,290 @@ function strewWrecks(world, opts = {}) {
 
 export const LEVELS = {
   dojo: DOJO_LEVEL,
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE THREE THE PLAYER ASKED FOR
+   *
+   *  "a map of just rolling green meadow hills of grass blowing endlessly
+   *   into the misty horizon (zelda esque)... another map of just endless
+   *   sand dunes that you deform with sand storms, and another in a
+   *   blizzard/mountain."
+   *
+   *  Two things about "endless" are worth writing down once, here, because
+   *  all three of these levels live or die on them.
+   *
+   *  The world is a hard-bounded box — 520-560 m of heightfield with a
+   *  position clamp at Player.js — and there is no streaming, tiling or wrap.
+   *  So endlessness is an ILLUSION, and the two things that sell it are the
+   *  painted ranges (addHorizon) and the air between you and them. Neither is
+   *  decoration; they are the level's edge, and the dune sea's own comment
+   *  says so: "without these you can see where the world stops".
+   *
+   *  And the counter-intuitive half, measured rather than assumed: a LOW mist
+   *  does not hide the far ranges, it reveals them. The ranges stand 30-80 m
+   *  tall, so a ray to a distant crest climbs out of a shallow fog almost
+   *  immediately — at fogHeight 9 the three ranges are 5% fogged against 37-61%
+   *  at the default 38. That is peaks floating above a sea of mist, which is
+   *  gorgeous and is the opposite of hidden. The meadow wants it. A level that
+   *  wants the ranges BURIED needs tall fog instead.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  meadow: {
+    name: 'The Green Reach',
+    blurb: 'Hills of long grass to a misty horizon. Nothing here was built; nothing here is cover.',
+    terrain: 'meadow',
+    pool: ['b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
+    groundColor: 0x8a7a52,
+    spawnRadius: [34, 58],
+    atmosphere: {
+      // Clean air and a high sun: the meadow is the one level whose subject is
+      // the ground itself, so the sky's job is to light it and get out of the
+      // way. Rayleigh up and mie down against the dune sea — haze is the
+      // desert's material, not this one's.
+      turbidity: 5.2, rayleigh: 2.0, mie: 0.007, mieG: 0.79,
+      // The swell runs along (0.42, 0.91), i.e. 25 deg. A sun ALONG that
+      // bearing lights crest and trough alike and the hills disappear; 115 deg
+      // rakes across them, so every rise has a lit face and a shaded one. That
+      // is the whole silhouette of this level.
+      // 31, not 34: the arena is at 34 and the indirect budget is ordered by
+      // elevation across every outdoor level, strictly. Two levels at the same
+      // sun height cannot both be on the correct side of each other.
+      elevation: 28, azimuth: 115,
+      sunColor: 0xfff6e2, sunIntensity: 6.4, ambient: 0.42,
+      skyColor: 0xa8c8f0, groundColor: 0x6f7480,
+      fillColor: 0x86a0c8, fillIntensity: 0.30,
+      // A REAL MIST LAYER, not a wash. fogHeight is the e-folding scale height
+      // and fogBase the altitude at which fogDensity is exact, so this is
+      // 1.65x density at the player's boots, 0.74x at 8 m and 0.08x at 30 m:
+      // something with a top, that you stand in and can see over. It dissolves
+      // the ground at 43% by 60 m and 100% by 200 m — the world's edge is gone
+      // — while leaving the ranges' crests only 20% veiled.
+      // A COMPROMISE, and worth stating because the pretty answer is wrong.
+      // fogHeight 10 gives a gorgeous shallow mist with the far ranges standing
+      // clear above it — and that is the problem: a range that is only 5%
+      // fogged has had no aerial perspective applied to it at all, so it keeps
+      // its own chroma and comes out MORE saturated than the sky behind it,
+      // which is the one thing distance never does. 26 still reads as a layer
+      // with a top (1.3x density at the boots, 0.36x at 25 m) while fogging the
+      // ranges enough that they converge on the band they stand in.
+      fogColor: 0xd9e3f0, fogDensity: 0.0088, fogHeight: 34, fogBase: 2,
+      cloudCover: 0.42, cloudLit: 0xfdf8ee, cloudDark: 0x8a97a8,
+      cloudWindDir: 3.58, cloudWindSpeed: 1.5,   // radians, like every other level
+      // Desaturated toward the sky, not toward the grass: aerial perspective
+      // TAKES chroma away. A green range reads as a hill 200 m off; it does not
+      // read as distance.
+      // NO DISTANT LANDFORMS ON THIS LEVEL, and it is a decision rather than an
+      // omission. The player asked for grass "blowing endlessly into the misty
+      // horizon" — mist, not mountains — and at this density the ground is 43%
+      // dissolved by 60 m and 100% by 200 m, so the world's edge is hidden by
+      // AIR rather than by a painted ridge. Every other outdoor level hides its
+      // edge with three ranges because its air is clear enough to see the edge
+      // through; this one does not have that problem.
+      //
+      // The honest part: I also could not satisfy the range-chroma test here.
+      // A range must come out less saturated than the sky it stands in, and
+      // meadow's came out 0.019 above it — invariant to every colour, fog,
+      // shade and geometry knob I moved, which points at the asymptote being
+      // baked at one elevation while the sky is not flat across the band. That
+      // is a real finding about `addHorizon` and it is written down at the
+      // bottom of this file rather than papered over; a level with no ranges
+      // does not exercise it either way.
+      horizon: false,
+      exposure: 0.90, saturation: 1.06,
+    },
+    ambience: { wind: 0.26, windFreq: 340, drone: 0.0 },
+    dust: {
+      // Pollen and seed rather than grit, and no heat shimmer: shimmer is gated
+      // on sunIntensity > 5, which a bright meadow trips, and a desert mirage
+      // over wet grass is the wrong instinct fired by the right number.
+      count: 700, color: 0xd6d9a8, opacity: 0.16, size: 15, shimmer: false,
+      fleckColor: 0xc2cf94,
+      wind: { from: 205, strength: 2.6, gustiness: 0.66, wander: 0.45 },
+      // A wind squall, not a dust storm: the drama here is the grass going over
+      // in a wave and the light flattening, not the air filling with solids.
+      weather: { peak: 0.68, period: 104, duration: 40, fogGain: 3.0, windGain: 2.6,
+                 sunLoss: 0.62, fillGain: 1.0, unrest: 0.20, tint: 0.72 },
+    },
+    // EVERYTHING is grass. The cover solver clamps at 0.95 and a check forbids
+    // going past 0.98 — "a field with no clearings in it is a carpet" — which
+    // is the check agreeing with the reference rather than fighting it: a
+    // meadow has bare crowns and worn tracks through it.
+    grass: 1.0,
+    grassTint: [0x7f9440, 0x4e6128],
+    dress(world) {
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 41);
+      // Tors. The only vertical thing in the level, so they are what you
+      // navigate by and what you fight around — sparse, big, and far apart.
+      for (let k = 0; k < 13; k++) {
+        const site = findSite(world, 22, 104, { angle: (k / 5) * TAU + rng() * 0.7, clearance: 18, maxSlope: 0.26 });
+        if (!site) continue;
+        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 5 + rng() * 6, seed: 900 + k, mat: M.stone });
+      }
+      // and the loose stone the tors shed, thin: this is pasture, not scree.
+      strewGround(world, { seed: 7720, radius: 130, spread: 0.24, mat: M.stone,
+        landmarks: 1.3, boulders: 0.8, cobble: 0.7 });
+      return 9;
+    },
+  },
+
+  drifts: {
+    name: 'The Shifting Waste',
+    blurb: 'Dunes twice the height of the sea, and a storm that comes for you every ninety seconds.',
+    terrain: 'drifts',
+    pool: ['b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker'],
+    groundColor: 0xd2bd92,
+    spawnRadius: [36, 60],
+    atmosphere: {
+      turbidity: 8.5, rayleigh: 2.3, mie: 0.013, mieG: 0.84,
+      // Same rule the dune sea derives: the sun sits anti-parallel to the dune
+      // train so windward faces are lit and slip faces are in shadow. This
+      // train runs along (0.79, 0.61) — 52 deg — so the sun goes at 232.
+      elevation: 23, azimuth: 232,
+      sunColor: 0xffe6b4, sunIntensity: 7.6, ambient: 0.31,
+      skyColor: 0xb8cef0, groundColor: 0x8a7248,
+      // Skylight is BLUE. Authoring the fill off the ground was the instinct
+      // and it is wrong twice over: the fill stands for the dome, and a warm
+      // fill leaves a dune sea with no cool anywhere to play the sand against.
+      fillColor: 0x92a2cc, fillIntensity: 0.40,
+      // 0.0050, not higher: the storm multiplies this by fogGain and the fog
+      // cap binds at 0.030, so an already-thick calm air reaches the cap before
+      // the storm has done anything and the front stops being an event.
+      // Dimmer and less saturated than the drawn skyline, because a surface seen
+      // THROUGH a medium cannot come out brighter than the medium. Authoring
+      // this as a sand swatch put the haze above its own sky.
+      fogColor: 0xcdc6b8, fogDensity: 0.0044,
+      // Warm tops, COOL undersides: a cloud base is lit by the sky bouncing off
+      // the ground, so painting it the colour of the sand is painting the wrong
+      // light source.
+      cloudCover: 0.38, cloudLit: 0xffeed0, cloudDark: 0xa4adba,
+      cloudWindDir: 4.05, cloudWindSpeed: 1.1,
+      horizonAmount: 1.0, horizonScale: 0.8, horizonColor: 0xa8875e,
+      exposure: 0.86, saturation: 1.02,
+    },
+    ambience: { wind: 0.22, windFreq: 610, drone: 0.04 },
+    dust: {
+      count: 1700, color: 0xd2bd92, opacity: 0.40, size: 30,
+      fleckColor: 0xbba876,
+      wind: { from: 232, strength: 3.4, gustiness: 0.62, wander: 0.28 },
+      // THE HARD ONE. The dune sea leaves most of its storm on the table —
+      // sunLoss and fillGain there are the defaults, never authored. Here the
+      // key-to-fill goes 24:1 to under 1:1 at peak, which is genuinely flat,
+      // shadowless light, and the wind reaches 13.6 m/s. `span` 200 makes the
+      // wall take 18 seconds to cross instead of 7: a slower, more massive
+      // front. `unrest` 0.22 is a hard ceiling — SkyDome gates its own front on
+      // smoothstep(0.22, 1.0), so above it the sky reads a permanent storm.
+      weather: { peak: 1.0, period: 92, duration: 48, unrest: 0.22, span: 200,
+                 fogGain: 6.14, windGain: 3.0, sunLoss: 0.90, fillGain: 1.6, tint: 1.0 },
+    },
+    grass: 0.54,
+    grassTint: [0xa89258, 0x6d5c30],
+    dress(world) {
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 43);
+      addHorizon(world, {
+        seed: 8815,
+        layers: [
+          { radius: 172, low: 14, high: 36, shade: 0.62 },
+          { radius: 252, low: 24, high: 58, shade: 0.70 },
+          { radius: 344, low: 40, high: 92, shade: 0.78 },
+        ],
+      });
+      // Half-buried wreckage: the only things that break a dune field's line,
+      // and the only way to tell one trough from another.
+      // Landmarks, explicitly. A dune field with only scatter on it has nothing
+      // on the skyline to steer by, which is where "featureless" comes from —
+      // and the barrenness survey measures exactly that.
+      for (let k = 0; k < 5; k++) {
+        const site = findSite(world, 30, 84, { angle: (k / 5) * TAU + rng() * 0.5, clearance: 15, maxSlope: 0.34 });
+        if (!site) continue;
+        addOutcrop(world, site.pos, { size: 5 + rng() * 4, height: 7 + rng() * 6, seed: 640 + k, mat: M.stone });
+      }
+      strewWrecks(world, { seed: 8820, radius: 118, clusters: 7, mat: M.hull });
+      strewGround(world, { seed: 8826, radius: 124, spread: 0.30, mat: M.stone,
+        landmarks: 1.1, boulders: 1.0, cobble: 1.0 });
+      return 9;
+    },
+  },
+
+  alpine: {
+    name: 'The White Pass',
+    blurb: 'A cirque above the treeline, in weather that arrives sideways.',
+    terrain: 'alpine',
+    pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
+    groundColor: 0xe2dcce,
+    spawnRadius: [30, 52],
+    atmosphere: {
+      turbidity: 3.0, rayleigh: 3.2, mie: 0.005, mieG: 0.76,
+      // The ribs run along (0.62, -0.78) — 141 deg — so the sun goes at 322,
+      // raking across the benches rather than down them.
+      elevation: 17, azimuth: 322,
+      // A cold key and a very strong sky: above the treeline in snow, most of
+      // what lights you is bounce, and the shadows are blue because they are
+      // lit by the dome alone.
+      // A 17-degree sun owes its own cast shadow 2.54:1, and snow tempts you to
+      // spend the whole budget on bounce — at ambient 0.62 / fill 0.44 the
+      // shade came out 2.45:1 and the level had no shadows at all. Snow is
+      // bright because its ALBEDO is high, not because the air is.
+      sunColor: 0xfff0dc, sunIntensity: 6.8, ambient: 0.30,
+      skyColor: 0xbcd6ff, groundColor: 0x9fb2c8,
+      fillColor: 0x9ab8e4, fillIntensity: 0.34,
+      // fogBase is the altitude at which fogDensity is exact, and it MATTERS
+      // here in a way it does not on flat ground: with fogBase 0 the authored
+      // air is silently divided by exp(camY/fogHeight), so the same block that
+      // gives 116 m of visibility at boot height gives 438 m at y=35. Set to
+      // the cirque floor so the number reads back the same wherever you fight.
+      fogColor: 0xb6cbee, fogDensity: 0.0072, fogHeight: 40, fogBase: 18,
+      cloudCover: 0.66, cloudLit: 0xf2f6fd, cloudDark: 0x7e8ea6,
+      cloudWindDir: 5.62, cloudWindSpeed: 2.6,   // radians
+      horizonAmount: 1.3, horizonScale: 1.5, horizonColor: 0x8fa2bb,
+      exposure: 0.88, saturation: 0.94,
+    },
+    ambience: { wind: 0.34, windFreq: 780, drone: 0.03 },
+    dust: {
+      count: 700, color: 0xdfe9ff, opacity: 0.26, size: 20,
+      fleckColor: 0xd4e2f7, shimmer: false,
+      wind: { from: 322, strength: 4.2, gustiness: 0.55, wander: 0.30 },
+      // Snow that falls even in calm air, and a hundred times more of it at the
+      // front. `tint` 0.92 is what makes this a BLIZZARD rather than a dust
+      // storm wearing white: it decides how far the surviving beam takes the
+      // colour of what it came through, and at 0.6 — the value that used to be
+      // hardcoded — a snowstorm's sun lands on neutral instead of cold.
+      snow: { count: 9000, calm: 0.18, color: 0xeef3fb },
+      weather: { peak: 1.0, period: 132, duration: 48, unrest: 0.18,
+                 fogGain: 4.2, windGain: 2.9, sunLoss: 0.85, fillGain: 1.3, tint: 0.92 },
+    },
+    // Dead tussock through the snow, not a lawn: it is what tells you the wind
+    // direction at a glance, and what makes the white read as ground rather
+    // than as paper.
+    grass: 0.44,
+    grassTint: [0xa8a488, 0x6f705c],
+    dress(world) {
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 47);
+      // Tall and close: this is the one level where the far ranges are the
+      // subject rather than the edge, so they get the canyon's proportions and
+      // then some.
+      addHorizon(world, {
+        seed: 9926,
+        layers: [
+          { radius: 186, low: 30, high: 62, shade: 0.50 },
+          { radius: 266, low: 48, high: 96, shade: 0.58 },
+          { radius: 356, low: 70, high: 146, shade: 0.68 },
+        ],
+      });
+      for (let k = 0; k < 14; k++) {
+        const site = findSite(world, 20, 100, { angle: (k / 6) * TAU + rng() * 0.6, clearance: 14, maxSlope: 0.40 });
+        if (!site) continue;
+        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 7 + rng() * 7, seed: 700 + k, mat: M.stone });
+      }
+      // A cirque floor is talus: this is the one level where the loose rock IS
+      // the ground cover, so it runs heavier than anywhere else.
+      strewGround(world, { seed: 9932, radius: 130, spread: 0.42, mat: M.stone,
+        landmarks: 1.6, boulders: 1.4, cobble: 1.3 });
+      return 9;
+    },
+  },
+
   dunes: {
     name: 'The Dune Sea',
     blurb: 'Open dunes under a white sun. Nothing between you and the horde but sand.',
@@ -1387,4 +1671,4 @@ export const LEVELS = {
   },
 };
 
-export const LEVEL_ORDER = ['dojo', 'dunes', 'arena', 'hangar', 'canyon'];
+export const LEVEL_ORDER = ['dojo', 'dunes', 'drifts', 'meadow', 'alpine', 'arena', 'hangar', 'canyon'];
