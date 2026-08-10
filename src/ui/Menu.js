@@ -1519,7 +1519,9 @@ export class Menu {
     this.el.draftCards.innerHTML = '';
     for (const b of boons) {
       const card = document.createElement('div');
-      card.className = 'dc';
+      // An attunement is permanent and repeatable and a card is neither, so it
+      // reads differently rather than hiding among them.
+      card.className = b.attune ? 'dc att' : 'dc';
       card.innerHTML = `<div class="ic">${b.icon}</div><b>${b.name}</b><span>${b.text}</span><em>${b.tag}</em>`;
       card.addEventListener('mouseenter', () => audio.ui('hover'));
       card.addEventListener('click', () => {

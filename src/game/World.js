@@ -16,7 +16,7 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
-import { WaveDirector } from './Waves.js';
+import { WaveDirector, RankSet } from './Waves.js';
 import { applyOrder } from './Order.js';
 import { SPIRE } from './Run.js';
 import { LEVELS } from './Levels.js';
@@ -60,7 +60,7 @@ export class World {
     this.locks = [];
     this.statics = [];
     this.levelLights = [];
-    this.takenBoons = new Set();
+    this.takenBoons = new RankSet();
 
     this.timeScale = 1;
     this.focus = new FocusSystem();
@@ -112,6 +112,21 @@ export class World {
     const run = opts.run || this.run || null;
     this.unload();
     this.run = run;
+    /**
+     * DERIVED, so it is rebuilt rather than appended to.
+     *
+     * `unload()` does not clear this — it disposes the world, and the taken-set
+     * is not part of the world — so a landing used to re-add every carried boon
+     * to a set that already held it. That was harmless while the set was a
+     * plain Set and an id could only be present once. It stopped being harmless
+     * the moment cards had RANKS: a four-rung climb would have counted a
+     * rank-2 Vitality as rank 8, dropping cards out of the draft pool early and
+     * handing out masteries three tiers before they were earned.
+     *
+     * `spawnPlayer` refills it from the order's grants and the run's own list,
+     * which are the only two things it should ever have contained.
+     */
+    this.takenBoons = new RankSet();
     const L = LEVELS[key] || LEVELS.dunes;
     this.level = L;
     this.levelKey = key;
@@ -1176,7 +1191,8 @@ export class World {
   }
 
   applyBoon(boon) {
-    this.takenBoons.add(boon.id);
+    this.takenBoons.take(boon.id);
+    this.run?.take(boon);
     for (const p of this.players) p.applyBoon(boon);
     this.director.resumeAfterDraft();
     this.notify(boon.name.toUpperCase(), boon.tag);

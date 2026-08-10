@@ -30,7 +30,16 @@ import { BladeContactSolver, gradeDeflection, resolveBladeClash, GRADE, TOUGHNES
 import { sliceGeometry, spheresForGeometry, recenterGeometry } from '../src/world/Slice.js';
 import { Saber } from '../src/game/Saber.js';
 import { SaberController } from '../src/game/SaberController.js';
-import { WaveDirector, BOONS, drawBoons } from '../src/game/Waves.js';
+import { WaveDirector, BOONS, ATTUNEMENTS, drawBoons, RankSet, rankOf, rankScale,
+  maxRank, RANK_DIMINISH } from '../src/game/Waves.js';
+/* Player.js is imported DYNAMICALLY, inside the one check that needs it — see
+ * the note at src/world/Scenery.js:566. A static edge from this file reaches
+ * Engine.js through Player -> Saber/Cloth, and Engine rewrites three's fog
+ * ShaderChunks as a module side effect behind a once-only flag. In this file's
+ * STATIC graph `three` resolves out of node_modules while everything imported
+ * dynamically resolves out of vendor/, so a static edge patches the wrong copy,
+ * burns the flag, and turns all five aerial-perspective checks quietly red.
+ * Measured, by doing exactly that. */
 import { Terrain, TERRAIN_PRESETS, strata, duneProfile } from '../src/world/Terrain.js';
 import { DuelBrain, Telegraph, BladeLock, FORMS, FORM_KEYS, TIER } from '../src/game/Duel.js';
 import { Cloak, attachCloak } from '../src/game/Cloth.js';
@@ -1665,33 +1674,103 @@ check('waves: the budget escalates and unlocks new units', () => {
   return `budget ${b1}→${b5}→${b15}, wave 8 = ${d.spawnQueue.length} units of ${types.size} kinds`;
 });
 
-check('boons: drafting never repeats what you already hold', () => {
-  const taken = new Set(BOONS.slice(0, 10).map(b => b.id));
-  for (let i = 0; i < 50; i++) {
-    const drawn = drawBoons(3, taken);
-    assert(drawn.length === 3, `drew ${drawn.length}`);
-    assert(new Set(drawn.map(b => b.id)).size === 3, 'drew a duplicate within one offer');
-    assert(drawn.every(b => !taken.has(b.id)), 'offered a boon already taken');
+/**
+ * REPLACED, and deliberately. This used to be "drafting never repeats what you
+ * already hold", which pinned the design that made a run run out: with no
+ * repeats and 30 cards, a draft every second wave drained the entire system by
+ * about wave 68, `drawBoons` returned `[]`, and the player's power froze while
+ * the budget kept climbing forever. Cards now have RANKS and a card is in the
+ * pool while it has ranks left.
+ *
+ * So the property is not "never repeats" any more. It is the stronger one that
+ * the old rule was a crude proxy for: an offer is always full, always distinct
+ * within itself, and never contains something with nothing left to give.
+ */
+check('boons: a draft is never empty, never duplicated, and never spent', () => {
+  const taken = new RankSet();
+  // Drain hard — 400 picks is far past any real run, and past the point where
+  // the whole card table is exhausted and only attunements remain.
+  let minHand = Infinity;
+  for (let i = 0; i < 400; i++) {
+    const wave = 2 + i * 2;
+    const drawn = drawBoons(3, taken, wave);
+    assert(drawn.length >= 3, `wave ${wave}: drew ${drawn.length}, so the draft screen would be short`);
+    minHand = Math.min(minHand, drawn.length);
+    assert(new Set(drawn.map(b => b.id)).size === drawn.length, `wave ${wave}: drew a duplicate within one offer`);
+    for (const b of drawn) {
+      assert(rankOf(taken, b.id) < maxRank(b),
+        `wave ${wave}: offered ${b.id} at rank ${rankOf(taken, b.id) + 1} of ${maxRank(b)} — it has nothing left`);
+    }
+    taken.take(drawn[0].id);
   }
-  return `${BOONS.length} boons, ${BOONS.length - 10} still available`;
+  const cardRanks = BOONS.reduce((n, b) => n + maxRank(b), 0);
+  return `400 drafts, smallest hand ${minHand}; ${BOONS.length} cards / ${cardRanks} ranks, `
+    + `then ${ATTUNEMENTS.length} attunements that never run out`;
 });
 
-check('boons: every boon applies without throwing', () => {
+check('boons: every boon applies without throwing', async () => {
+  const { defaultBoonMods } = await import('../src/game/Player.js');
+  // The stub's boonMods is PLAYER'S OWN, not a copy. A hand-written duplicate
+  // went stale the moment a card needed a key it did not list, and then this
+  // check failed on a NaN that existed only inside itself. Reading the real
+  // defaults makes it exact: a card that writes an undeclared key is now
+  // caught here, which is the bug worth catching — `undefined * 1.33` is NaN
+  // and a NaN in cutPower is a blade that cuts nothing.
   const stub = () => ({
-    boonMods: { deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
-      jumpPower: 1, flowGain: 1, returnCone: 0.42, healOnKill: 0, lifesteal: 0 },
+    boonMods: defaultBoonMods(),
     control: { deadzone: 0.24, sensitivity: 1 },
     saber: { bladeLength: 1.15, coreWidth: 1 },
-    maxHp: 100, hp: 100, maxStamina: 100, stamina: 100,
+    maxHp: 100, hp: 100, maxStamina: 100, stamina: 100, maxForce: 100, force: 100,
   });
-  for (const b of BOONS) {
-    const p = stub();
-    b.apply(p);
-    for (const [k, v] of Object.entries(p.boonMods)) {
-      assert(typeof v !== 'number' || isFinite(v), `${b.id} made boonMods.${k} = ${v}`);
+  const all = [...BOONS, ...ATTUNEMENTS];
+  const declared = new Set(Object.keys(defaultBoonMods()));
+  for (const b of all) {
+    // Ranks too: rank 3 runs different arithmetic from rank 1 and is where a
+    // `set`-shaped effect turns out not to accumulate.
+    for (const rank of [1, 2, 3]) {
+      if (rank > maxRank(b)) break;
+      const p = stub();
+      for (let r = 1; r <= rank; r++) b.apply(p, rankScale(r));
+      for (const [k, v] of Object.entries(p.boonMods)) {
+        assert(declared.has(k), `${b.id} wrote boonMods.${k}, which Player never declares`);
+        assert(typeof v !== 'number' || isFinite(v), `${b.id} rank ${rank} made boonMods.${k} = ${v}`);
+      }
+      assert(isFinite(p.maxHp) && p.maxHp > 0, `${b.id} rank ${rank} left maxHp = ${p.maxHp}`);
+      assert(isFinite(p.saber.bladeLength) && p.saber.bladeLength > 0,
+        `${b.id} rank ${rank} left bladeLength = ${p.saber.bladeLength}`);
     }
   }
-  return `${BOONS.length}/${BOONS.length} applied cleanly`;
+  return `${all.length} cards × up to 3 ranks applied cleanly onto Player's own defaults`;
+});
+
+/**
+ * The bound that makes `stack` safe to hand out.
+ *
+ * RANK_DIMINISH is a geometric series, so stacking one card forever converges
+ * to 1/(1-d) of itself. That convergence is the entire argument for letting
+ * cards repeat at all, and it is worth pinning because it is one constant away
+ * from being false: at d = 1 a stacked card is unbounded, and the harness has
+ * already caught one 12x outlier in this table without any help from stacking.
+ */
+check('boons: a stacked card converges instead of running away', () => {
+  assert(RANK_DIMINISH > 0 && RANK_DIMINISH < 1,
+    `RANK_DIMINISH is ${RANK_DIMINISH} — outside (0,1) it does not converge at all`);
+  let sum = 0;
+  for (let r = 1; r <= 40; r++) sum += rankScale(r);
+  const limit = 1 / (1 - RANK_DIMINISH);
+  assert(sum <= limit + 1e-9, `forty ranks sum to ${sum.toFixed(3)}, past the ${limit.toFixed(2)} limit`);
+  // …and never worth nothing, which is the other half: a card at its last rank
+  // must still be a card. Deepest stack in the table decides the worst case.
+  const deepest = Math.max(...BOONS.map(maxRank).filter(n => isFinite(n)));
+  assert(rankScale(deepest) > 0.05,
+    `the last rank of a ${deepest}-stack is worth ${(rankScale(deepest) * 100).toFixed(1)}% of the first — that is a dead draft slot`);
+  // Attunements are the opposite promise and must NOT converge, or the endless
+  // mode has no answer to a budget that grows without bound.
+  for (const a of ATTUNEMENTS) {
+    assert(maxRank(a) === Infinity, `${a.id} has a cap — attunements are the growth that has none`);
+  }
+  return `ranks converge to ${limit.toFixed(2)}× (40 ranks = ${sum.toFixed(3)}), deepest stack `
+    + `${deepest} still worth ${(rankScale(deepest) * 100).toFixed(0)}%, ${ATTUNEMENTS.length} uncapped attunements`;
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -39,6 +39,8 @@
  * they have come without being told.
  */
 
+import { maxRank } from './Waves.js';
+
 /**
  * One rung. `level` is a key into LEVELS; `air` is merged over that level's own
  * atmosphere, so a tier borrows a place and changes only its height.
@@ -126,7 +128,23 @@ export class Run {
     return n;
   }
 
-  take(boon) { if (boon && !this.boons.some((b) => b.id === boon.id)) this.boons.push(boon); }
+  /**
+   * Record one rank of a boon.
+   *
+   * A LIST WITH REPEATS, not a set: `World.spawnPlayer` replays this array into
+   * a freshly built body, and `Player.applyBoon` counts its own ranks as it
+   * goes, so two entries of `vitality` land as rank 1 then rank 2 and arrive at
+   * exactly the hp the player had before the level changed. Deduplicating here
+   * would quietly refund every rank above the first on every ascent.
+   */
+  take(boon) {
+    if (!boon) return;
+    const held = this.boons.reduce((n, b) => n + (b.id === boon.id ? 1 : 0), 0);
+    if (held < maxRank(boon)) this.boons.push(boon);
+  }
+
+  /** Ranks of `id` this run holds. */
+  rank(id) { return this.boons.reduce((n, b) => n + (b.id === id ? 1 : 0), 0); }
 
   /** Survived a rung. Returns false when that was the last one. */
   ascend() {

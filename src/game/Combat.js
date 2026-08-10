@@ -110,6 +110,68 @@ export const DIFFICULTY = {
 export const PARRY_GRADE = { window: 0.20, perfect: 0.10 };
 
 /**
+ * THE SPEED LADDER — the three blade speeds that decide what a contact is worth.
+ *
+ * These were four literals scattered through `captureSnapshot` and
+ * `gradeCaught`, and `tools/balance.mjs` restated all three to grade its own
+ * trace. So the harness could not tell you the gates were wrong: it was reading
+ * from the same guess.
+ *
+ * WHY `perfect` MOVED, 15 -> 9.4. The harness drives the real SaberController
+ * through the real authored overhead into a real Saber and reads the real tip
+ * velocity at 240 Hz. It peaks at **10.97 m/s**. The old PERFECT gate was 15 —
+ * about 1.37x a speed the blade cannot reach — so the top rung of the
+ * deflection ladder could not be climbed by swinging at all, and the measured
+ * grade mix over that trace was 51% BLOCK / 36% DEFLECT / 13% RETURN / 0%
+ * PERFECT. Deflection is the most-used verb in this game and its best answer
+ * was unreachable.
+ *
+ * 9.4 is 0.86 of the measured peak. It is deliberately NOT a number that a
+ * decent swing clears: `gradeCaught` also demands `closing > 5` and
+ * `bladeT > 0.55`, and because `bladeSpeed` is `speedAt(bladeT)` — a lerp from
+ * a near-stationary base out to the tip — 9.4 at bladeT 0.55 means the TIP was
+ * far above 9.4. So this is the last third of a committed cut, met near the
+ * point, driving into the bolt. Rare, and now possible.
+ *
+ * It is expressed as a fraction of the measured peak in the check rather than
+ * as an absolute, so that anything which changes how fast the blade moves — a
+ * new attack, a grip spring, a boon that buys tip speed — is checked against
+ * this ladder instead of silently walking away from it. See
+ * tools/checks/balance.mjs.
+ *
+ * The parry route to PERFECT (`PARRY_GRADE.perfect`) is unchanged and always
+ * worked; this is the other way up, the one for players who answer with the
+ * blade rather than with the guard.
+ */
+export const SPEED_GRADE = {
+  /** Below this and it is a BLOCK: the blade was carried, not driven. */
+  driven: 3.2,
+  /** …or this much closing speed, which is the same claim made another way. */
+  closing: 1.6,
+  /** A RETURN is aimed, so it needs a tip that was actually going somewhere. */
+  return: 7.5,
+  /** The top rung. See above — measured against the blade, not asserted at it. */
+  perfect: 9.4,
+  /** A PERFECT must also be driving INTO the bolt this hard… */
+  perfectClosing: 5,
+  /** …and be met this far along the blade. */
+  perfectBladeT: 0.55,
+};
+
+/**
+ * Did this contact earn a PERFECT on the blade alone?
+ *
+ * One function because there were two copies of the condition — the reticle
+ * path and the physical/sweep path — and they were separate literals that had
+ * to be kept in step by hand.
+ */
+export function bySpeed(bladeSpeed, closing, bladeT) {
+  return bladeSpeed > SPEED_GRADE.perfect
+    && closing > SPEED_GRADE.perfectClosing
+    && bladeT > SPEED_GRADE.perfectBladeT;
+}
+
+/**
  * A tier's `assist`, as radians of extra rose forgiveness on a guard zone.
  *
  * One function so the ladder cannot drift: SaberController multiplies by
@@ -446,7 +508,7 @@ export function captureSnapshot(bolt, saber, hit) {
   // false. The catch window needs them apart, because the rule that keeps the
   // cone from chaining forever is about which catches the player DROVE, and a
   // bolt that merely met a blade being carried past it is not one of them.
-  const driven = bladeSpeed > 3.2 || closing > 1.6;
+  const driven = bladeSpeed > SPEED_GRADE.driven || closing > SPEED_GRADE.closing;
 
   // A PARRY is the directional guard's own claim on this contact, stamped onto
   // the bolt by Bolts.update because World rebuilds the hit descriptor from
@@ -521,11 +583,11 @@ export function gradeCaught(snap, ctx) {
   // under the physical and sweep models a bolt reaches an enemy because you
   // pointed the blade at them, not because the game looked for one.
   if ((mode === 'reticle' || thrown) && grade === GRADE.DEFLECT && ctx.candidates
-      && (thrown || parry || (bladeSpeed > 7.5 && tipZone))) {
+      && (thrown || parry || (bladeSpeed > SPEED_GRADE.return && tipZone))) {
     target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? 0.42);
-    if (target && (parry || (bladeSpeed > 7.5 && tipZone))) grade = GRADE.RETURN;
+    if (target && (parry || (bladeSpeed > SPEED_GRADE.return && tipZone))) grade = GRADE.RETURN;
   }
-  if (grade === GRADE.RETURN && (sharp || (bladeSpeed > 15 && closing > 5 && bladeT > 0.55))) {
+  if (grade === GRADE.RETURN && (sharp || bySpeed(bladeSpeed, closing, bladeT))) {
     grade = GRADE.PERFECT;
   }
 
@@ -597,7 +659,7 @@ export function gradeCaught(snap, ctx) {
     const hitting = pickReturnTarget(snap.point, out, ctx.candidates, 0.06);
     if (hitting) {
       target = hitting;
-      grade = bladeSpeed > 15 && closing > 5 && bladeT > 0.55 ? GRADE.PERFECT : GRADE.RETURN;
+      grade = bySpeed(bladeSpeed, closing, bladeT) ? GRADE.PERFECT : GRADE.RETURN;
     }
   }
 

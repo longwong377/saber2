@@ -735,10 +735,16 @@ export class WaveDirector {
       this.intermission = draft ? 999 : 5.5;
       if (this.onWaveClear) this.onWaveClear(this.wave);
       if (draft && this.onDraft) {
-        this.onDraft(drawBoons(this.draftSize(this.wave), this.world.takenBoons, this.wave,
+        const boss = this.isBossWave(this.wave);
+        this.onDraft(drawBoons(this.draftSize(this.wave), this.world.takenBoons, this.wave, {
           // A set-piece cleared is worth more than a wave cleared: the boss
           // draft is one card wider AND cannot be three commons.
-          { floor: this.isBossWave(this.wave) ? 'rare' : null }));
+          floor: boss ? 'rare' : null,
+          // …and past the first set-piece it is not a card at all. See
+          // ATTUNEMENTS: this is the growth that does not converge, and it is
+          // put behind the boss so that it paces with the thing it is racing.
+          attune: boss && this.wave >= BOSS_EVERY,
+        }));
       }
     }
   }
@@ -1035,11 +1041,17 @@ export function boonOnSever(p, name, fn) {
  * Takes the SET OF IDS, not a player, so the draft screen can ask the same
  * question of `world.takenBoons` that a mastery card asks of the player who is
  * about to be handed it.
+ *
+ * RANKS COUNT. A second rank of Djem So is another commitment to the blade, and
+ * the alternative makes ranks a trap: if only distinct cards counted, taking
+ * the rank the draft just offered you would push your mastery further away, so
+ * the correct play would be to refuse every rank until wave 12. A reward you
+ * are punished for accepting is worse than no reward.
  */
 export function axisCountOf(taken, axis) {
   if (!taken) return 0;
   let n = 0;
-  for (const b of BOONS) if (taken.has(b.id) && b.axes?.includes(axis)) n++;
+  for (const b of BOONS) if (b.axes?.includes(axis)) n += rankOf(taken, b.id);
   return n;
 }
 
@@ -1315,18 +1327,107 @@ export const MASTERY_NEEDS = 3;
 export const MASTERY_AT = 12;
 const mastery = (axis) => (taken) => axisCountOf(taken, axis) >= MASTERY_NEEDS;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  RANKS — why a run does not run out of cards                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `drawBoons` filtered out everything already taken and nothing could be taken
+ * twice. With 34 cards and a draft every DRAFT_EVERY = 2 waves, that means a
+ * run exhausts the entire system at about wave 68 — `drawBoons` returns `[]`,
+ * `offerDraft` sees an empty hand and silently resumes, and from there the
+ * player's power is frozen while the budget keeps climbing forever. In the mode
+ * whose whole promise is endless escalation, the reward half of the loop had a
+ * hard stop and gave no sign it had reached it.
+ *
+ * So the numeric cards have RANKS. A card with `stack: n` stays in the pool
+ * until it has been taken n times, and rank k is worth
+ *
+ *     1 + (v - 1) · RANK_DIMINISH^(k-1)
+ *
+ * of whatever the card's rank-1 value v is. Two properties matter and both are
+ * deliberate:
+ *
+ *   A RANK IS NEVER WORTH NOTHING. 0.6^4 is still 0.13 of the first rank. There
+ *   is no dead card at the bottom of a deep run, which is the failure mode of
+ *   flat stacking with a cap.
+ *
+ *   A RANK NEVER RUNS AWAY. The geometric sum converges to 1/(1-0.6) = 2.5, so
+ *   a card stacked forever is worth two and a half of itself and no more. Five
+ *   ranks of Vitality is +69 hp, not +150. That bound is why `stack` can be
+ *   generous without handing the harness another 12x outlier.
+ *
+ * WHAT DOES NOT STACK, and why: the cards that unlock a verb rather than move a
+ * number — Force Lightning, Ataru's double jump, Cleaving Throw — and the five
+ * masteries. A second Force Lightning is not a card, it is a no-op wearing the
+ * costume of a reward, and the draft offering one would be worse than the draft
+ * being empty.
+ */
+export const RANK_DIMINISH = 0.6;
+
+/** What rank `k` of a card is worth, as a fraction of its rank-1 value. */
+export function rankScale(rank) {
+  return Math.pow(RANK_DIMINISH, Math.max(0, (rank | 0) - 1));
+}
+
+/** How many times a card may be taken. Unranked cards are `stack: 1`. */
+export function maxRank(boon) { return Math.max(1, boon?.stack ?? 1); }
+
+/**
+ * Scale a MULTIPLIER by a rank. `grow(1.4, 0.6)` is 1.24 — the excess over 1 is
+ * what shrinks, not the multiplier itself, because scaling 1.4 directly would
+ * make a high rank a *penalty* (1.4 × 0.36 = 0.5).
+ */
+export function grow(v, scale = 1) { return 1 + (v - 1) * scale; }
+
+/**
+ * A taken-set that counts.
+ *
+ * Extends Set so that every existing `.has(id)`, `[...taken]` and
+ * `for (const id of taken)` in World, main.js, Order.js and the checks keeps
+ * working unchanged and yields each card once. `take()` is the rank-aware
+ * addition — it is separate from `add()` so that `add` keeps Set's contract of
+ * returning `this`, which is what anything chaining would expect.
+ */
+export class RankSet extends Set {
+  constructor(ids) { super(); this._n = new Map(); if (ids) for (const id of ids) this.take(id); }
+  /** Add one rank of `id`; returns the rank now held (1 for the first). */
+  take(id) { const r = (this._n.get(id) || 0) + 1; this._n.set(id, r); super.add(id); return r; }
+  add(id) { this.take(id); return this; }
+  /** How many ranks of `id` are held. 0 if never taken. */
+  rank(id) { return this._n.get(id) || 0; }
+  /** Total ranks across every card — the real size of a build. */
+  get ranks() { let n = 0; for (const v of this._n.values()) n += v; return n; }
+  delete(id) { this._n.delete(id); return super.delete(id); }
+  clear() { this._n.clear(); super.clear(); }
+}
+
+/** Ranks of `id` held by a Set-or-RankSet, so callers need not care which. */
+export function rankOf(taken, id) {
+  if (!taken) return 0;
+  if (typeof taken.rank === 'function') return taken.rank(id);
+  return taken.has(id) ? 1 : 0;
+}
+
 export const BOONS = [
   {
     id: 'vaapad', icon: '⚡', name: 'Vaapad', tag: 'Form VII',
-    rarity: 'rare', axes: ['guard'],
+    rarity: 'rare', axes: ['guard'], stack: 3,
     text: 'Returned bolts strike for half again as much, and every return feeds your Flow.',
-    apply(p) { p.boonMods.deflectDamage *= 1.5; p.boonMods.flowGain *= 1.35; },
+    apply(p, s = 1) { p.boonMods.deflectDamage *= grow(1.5, s); p.boonMods.flowGain *= grow(1.35, s); },
   },
   {
     id: 'soresu', icon: '🛡', name: 'Soresu', tag: 'Form III',
-    rarity: 'common', axes: ['guard'],
+    rarity: 'common', axes: ['guard'], stack: 3,
     text: 'A wider guard. Deflection is forgiven further along the blade, and your reserves run deeper.',
-    apply(p) { p.boonMods.returnCone = 0.58; p.control.deadzone = 0.30; p.maxStamina += 25; p.stamina = p.maxStamina; },
+    // The cone GROWS by rank instead of being set to a constant, or rank 2
+    // would silently be half a card. Capped, because a return cone wide enough
+    // to contain everything on screen is an auto-aim, not a guard.
+    apply(p, s = 1) {
+      p.boonMods.returnCone = Math.min(0.80, (p.boonMods.returnCone ?? 0.42) + 0.16 * s);
+      p.control.deadzone = 0.30;
+      p.maxStamina += 25 * s; p.stamina = p.maxStamina;
+    },
   },
   {
     id: 'ataru', icon: '🌀', name: 'Ataru', tag: 'Form IV',
@@ -1336,28 +1437,34 @@ export const BOONS = [
   },
   {
     id: 'djemso', icon: '🗡', name: 'Djem So', tag: 'Form V',
-    rarity: 'common', axes: ['blade'],
+    rarity: 'common', axes: ['blade'], stack: 3,
     text: 'Power over finesse. Cuts bite deeper, and whatever you cut is thrown off its feet.',
     // The shove is the half of this card that was only ever a sentence. It is
     // an impulse and a stun on the body that was cut, so Form V opens ground
     // where Shatterpoint only opens armour.
-    apply(p) {
-      p.boonMods.cutPower *= 1.4;
-      p.boonMods.sunderShock = 9;
+    apply(p, s = 1) {
+      p.boonMods.cutPower *= grow(1.4, s);
+      p.boonMods.sunderShock = (p.boonMods.sunderShock ?? 0) + 9 * s;
       boonOnSever(p, 'djemso', severShove);
     },
   },
   {
     id: 'makashi', icon: '🤺', name: 'Makashi', tag: 'Form II',
-    rarity: 'common', axes: ['guard', 'blade'],
+    rarity: 'common', axes: ['guard', 'blade'], stack: 2,
     text: 'Duellist. A steadier blade against another blade, and ripostes last twice as long.',
-    apply(p) { p.boonMods.riposteWindow = (p.boonMods.riposteWindow ?? 1) * 2; p.control.sensitivity *= 1.06; },
+    apply(p, s = 1) { p.boonMods.riposteWindow = (p.boonMods.riposteWindow ?? 1) * grow(2, s); p.control.sensitivity *= grow(1.06, s); },
   },
   {
     id: 'shatterpoint', icon: '💠', name: 'Shatterpoint', tag: 'Sight',
-    rarity: 'rare', axes: ['blade'],
-    text: 'You see where things want to break. Heavy materials part in half the time.',
-    apply(p) { p.boonMods.cutPower *= 1.9; },
+    rarity: 'rare', axes: ['blade'], stack: 3,
+    // THE NICHE cutPower ACTUALLY HAS, said out loud. tools/balance.mjs measures
+    // kill time at one pass — 0.64 s — for ten of fifteen archetypes, so against
+    // a B1 or a trooper a deeper cut buys nothing: the limb was already coming
+    // off. It is worth a great deal against the five that need four or more
+    // passes (droideka, walker, armoured and shielded elites), and that is what
+    // the card is for. The text now says so instead of promising a general edge.
+    text: 'You see where things want to break. Armour, shields and heavy plate part in half the time.',
+    apply(p, s = 1) { p.boonMods.cutPower *= grow(1.9, s); },
   },
   {
     id: 'tutaminis', icon: '🌡', name: 'Tutaminis', tag: 'Absorption',
@@ -1391,27 +1498,44 @@ export const BOONS = [
   },
   {
     id: 'meditation', icon: '🧘', name: 'Meditation', tag: 'Discipline',
-    rarity: 'common', axes: ['body'],
+    rarity: 'common', axes: ['body'], stack: 3,
     text: 'Stamina returns half again as fast, and Flow bleeds away more slowly.',
-    apply(p) { p.boonMods.staminaRegen *= 1.5; p.boonMods.flowGain *= 1.15; },
+    apply(p, s = 1) { p.boonMods.staminaRegen *= grow(1.5, s); p.boonMods.flowGain *= grow(1.15, s); },
   },
   {
     id: 'vitality', icon: '❤', name: 'Vitality', tag: 'Body',
-    rarity: 'common', axes: ['body'],
+    // THE MEASURED OUTLIER. Paired same-seed runs put this at Δ1.730 model-depth
+    // against a median modelled card of Δ0.143 — twelve times the median, the
+    // widest gap in the table, and the top six cards were all survivability.
+    // It is NOT nerfed here, because it is not overpowered so much as unopposed:
+    // the fix is the offensive cards having something to sell (see Shatterpoint,
+    // Extended Blade, Cadence) and the diminishing ranks bounding what a run can
+    // pile into one axis. tools/checks/balance.mjs holds the spread to 6x.
+    rarity: 'common', axes: ['body'], stack: 4,
     text: 'Thirty more vitality, and a kill returns a little of it.',
-    apply(p) { p.maxHp += 30; p.hp += 30; p.boonMods.healOnKill += 3; },
+    apply(p, s = 1) {
+      const d = Math.round(30 * s);
+      p.maxHp += d; p.hp += d; p.boonMods.healOnKill += 3 * s;
+    },
   },
   {
     id: 'celerity', icon: '💨', name: 'Celerity', tag: 'Speed',
-    rarity: 'common', axes: ['body'],
+    rarity: 'common', axes: ['body'], stack: 3,
     text: 'You move a fifth faster.',
-    apply(p) { p.boonMods.moveSpeed *= 1.2; },
+    apply(p, s = 1) { p.boonMods.moveSpeed *= grow(1.2, s); },
   },
   {
     id: 'longblade', icon: '📏', name: 'Extended Blade', tag: 'Crystal',
-    rarity: 'common', axes: ['blade'],
-    text: 'A longer blade. More reach, and a faster tip for the same swing.',
-    apply(p) { p.saber.bladeLength += 0.24; },
+    rarity: 'common', axes: ['blade'], stack: 3,
+    // THE TIP-SPEED CARD, and it always was — the same angular swing through a
+    // longer radius moves the point faster, which is the only reason the text
+    // could promise "a faster tip for the same swing" without any code for it.
+    // What changed is that tip speed is now worth something: SPEED_GRADE.perfect
+    // came down off 15 m/s to 9.4, which a real swing can reach, so a longer
+    // blade is what turns RETURNs into PERFECTs and their 1.5x into 2.5x. The
+    // text says the consequence now rather than the mechanism.
+    text: 'A longer blade. More reach, and a tip fast enough to turn returns into perfect ones.',
+    apply(p, s = 1) { p.saber.bladeLength += 0.24 * s; },
   },
   {
     id: 'dualcrystal', icon: '💎', name: 'Focusing Crystal', tag: 'Crystal',
@@ -1424,90 +1548,121 @@ export const BOONS = [
     // live blade 60 frames after the draft: uWidth 0.0110/0.0330/0.1050 →
     // 0.0138/0.0413/0.1313, uRadius 0.360 → 0.450, trail half-thickness
     // 0.0528 → 0.0660. Before, all three were unchanged.
-    apply(p) { p.saber.coreWidth *= 1.25; p.boonMods.cutPower *= 1.2; },
+    apply(p, s = 1) { p.saber.coreWidth *= grow(1.25, s); p.boonMods.cutPower *= grow(1.2, s); },
+  },
+  {
+    id: 'cadence', icon: '🥁', name: 'Cadence', tag: 'Tempo',
+    rarity: 'common', axes: ['blade'], stack: 3,
+    /**
+     * THE CARD THE BLADE AXIS DID NOT HAVE.
+     *
+     * Every offensive boon in this table bought CUT DEPTH, and the harness
+     * showed why that was worth nothing: kill time is one pass, 0.64 s, for ten
+     * of fifteen archetypes, so a deeper cut removes a limb that was already
+     * coming off. The blade's real ceiling is not how hard it cuts, it is
+     * OVERHEAD.cooldown — 0.46 s, 2.17 swings a second — and nothing in the
+     * game could move it.
+     *
+     * That is what this sells. It is the one offensive axis the model can see
+     * and the one a player feels immediately, because it changes how often they
+     * get to act rather than what happens when they do.
+     */
+    text: 'You recover from a swing faster. The blade comes back around a third sooner.',
+    apply(p, s = 1) { p.boonMods.attackRate *= grow(1.33, s); },
   },
   {
     id: 'lifesteal', icon: '🩸', name: 'Dark Sustenance', tag: 'Dark',
-    rarity: 'rare', axes: ['dark'],
+    rarity: 'rare', axes: ['dark'], stack: 3,
     text: 'Severing a limb returns vitality.',
-    apply(p) { p.boonMods.lifesteal += 5; },
+    apply(p, s = 1) { p.boonMods.lifesteal += 5 * s; },
   },
 
   /* ── the conditional cards ──────────────────────────────────────────── */
 
   {
     id: 'counterstroke', icon: '↩', name: 'Counterstroke', tag: 'Riposte',
-    rarity: 'common', axes: ['blade', 'guard'],
+    rarity: 'common', axes: ['blade', 'guard'], stack: 3,
     text: 'A parry opens them up and you take the opening: while the riposte lasts your blade cuts twice as hard.',
     // Multiplies the window rather than setting it, so Makashi's doubling and
     // this card's stack instead of one overwriting the other.
-    apply(p) {
-      p.boonMods.riposteWindow = (p.boonMods.riposteWindow ?? 1) * 1.35;
-      p.boonMods.riposteCut = 2.0;
+    apply(p, s = 1) {
+      p.boonMods.riposteWindow = (p.boonMods.riposteWindow ?? 1) * grow(1.35, s);
+      p.boonMods.riposteCut = (p.boonMods.riposteCut ?? 1) + 1.0 * s;
       boonTick(p, 'counterstroke', riposteEdge);
     },
   },
   {
     id: 'wellspring', icon: '🔷', name: 'Wellspring', tag: 'Reservoir',
-    rarity: 'common', axes: ['force'],
+    rarity: 'common', axes: ['force'], stack: 3,
     text: 'A deeper well, and it fills back up half again as fast.',
-    apply(p) {
-      if (typeof p.maxForce === 'number') { p.maxForce += 45; p.force = p.maxForce; }
-      p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * 1.6;
+    apply(p, s = 1) {
+      if (typeof p.maxForce === 'number') { p.maxForce += 45 * s; p.force = p.maxForce; }
+      p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * grow(1.6, s);
       boonTick(p, 'wellspring', wellspringFlow);
     },
   },
   {
     id: 'encircle', icon: '⭕', name: 'Encircled', tag: 'Bulwark',
-    rarity: 'common', axes: ['guard', 'body'],
+    rarity: 'common', axes: ['guard', 'body'], stack: 3,
     text: 'A crowd is cover. Every one of them within reach of you takes a little of the sting out of all of them.',
-    apply(p) {
-      p.boonMods.encircle = 0.06;
+    // CAPPED, and this is the general rule for anything that subtracts damage:
+    // `encircleGuard` scales this by the crowd size, so an uncapped third rank
+    // in a wave-30 press would reach total immunity — a stack that ends the
+    // game is not a reward. 0.14 against BODY_MAX is a hard ceiling well short
+    // of one.
+    apply(p, s = 1) {
+      p.boonMods.encircle = Math.min(0.14, (p.boonMods.encircle ?? 0) + 0.06 * s);
       boonGuard(p, 'encircle', encircleGuard);
     },
   },
   {
     id: 'juyo', icon: '☄', name: 'Juyo', tag: 'Form VII',
-    rarity: 'rare', axes: ['blade', 'dark'],
+    rarity: 'rare', axes: ['blade', 'dark'], stack: 3,
     text: 'Ferocity compounds. Every limb you take sharpens the next cut, and the edge cools the moment you stop.',
-    apply(p) {
-      p.boonMods.ferocity = 0.12;
+    apply(p, s = 1) {
+      p.boonMods.ferocity = (p.boonMods.ferocity ?? 0) + 0.12 * s;
       boonTick(p, 'juyo', juyoEdge);
     },
   },
   {
     id: 'conduit', icon: '🌊', name: 'Conduit', tag: 'Channel',
-    rarity: 'rare', axes: ['force'],
+    rarity: 'rare', axes: ['force'], stack: 3,
     text: 'The fight feeds the Force: every body you put down hands a measure of it straight back.',
-    apply(p) {
-      p.boonMods.conduit = 22;
+    apply(p, s = 1) {
+      p.boonMods.conduit = (p.boonMods.conduit ?? 0) + 22 * s;
       boonTick(p, 'conduit', conduitReturn);
     },
   },
   {
     id: 'secondwind', icon: '🕊', name: 'Second Wind', tag: 'Endurance',
-    rarity: 'rare', axes: ['body'],
+    // A COUNT, so its ranks are whole and `rankScale` is deliberately ignored:
+    // 0.6 of a second chance is not a thing. Two is the cap because a third
+    // makes a wave essentially unloseable at the health where Fury pays best.
+    rarity: 'rare', axes: ['body'], stack: 2,
     text: 'Once each wave, the blow that would finish you leaves you standing on a sliver instead.',
     apply(p) {
-      p.boonMods.secondWind = 1;
+      p.boonMods.secondWind = (p.boonMods.secondWind ?? 0) + 1;
       boonGuard(p, 'secondwind', secondWindGuard, secondWindAfter);
     },
   },
   {
     id: 'fury', icon: '🔥', name: 'Fury', tag: 'Dark',
-    rarity: 'rare', axes: ['dark', 'blade'],
+    rarity: 'rare', axes: ['dark', 'blade'], stack: 3,
     text: 'Pain is a weapon. The nearer death you are, the harder you strike and the faster you move.',
-    apply(p) {
-      p.boonMods.fury = 0.7;
+    apply(p, s = 1) {
+      p.boonMods.fury = (p.boonMods.fury ?? 0) + 0.7 * s;
       boonTick(p, 'fury', furyEdge);
     },
   },
   {
     id: 'steadfast', icon: '🗿', name: 'Steadfast', tag: 'Stance',
-    rarity: 'rare', axes: ['guard', 'body'],
+    rarity: 'rare', axes: ['guard', 'body'], stack: 2,
     text: 'Nothing staggers you, and anything heavy enough to have tried lands for half.',
-    apply(p) {
-      p.boonMods.steadfast = 0.5;
+    // Capped for the same reason as Encircled: this one subtracts damage
+    // outright, so two ranks of 0.5 would be immunity to every heavy blow in
+    // the game.
+    apply(p, s = 1) {
+      p.boonMods.steadfast = Math.min(0.75, (p.boonMods.steadfast ?? 0) + 0.5 * s);
       boonGuard(p, 'steadfast', steadfastGuard);
       boonTick(p, 'steadfast', steadfastStance);
     },
@@ -1565,6 +1720,95 @@ export const BOONS = [
   },
 ];
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  ATTUNEMENTS — the growth that has no end                              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHY THIS EXISTS, and why ranks were not enough.
+ *
+ * `RANK_DIMINISH` is a geometric series, so a ranked card converges: stack one
+ * forever and it is worth 2.5 of itself and never more. That is exactly right
+ * for keeping a build bounded, and exactly wrong as an answer to a budget that
+ * grows without bound. Measured: the wave budget goes 7 -> 162 over twenty
+ * waves and the raw damage a wave puts on an undefended player goes 17.8 ->
+ * 230. Nothing that converges can race that.
+ *
+ * And even with ranks the card pool is finite — 66 ranks across 30 cards, which
+ * a draft every second wave exhausts at about wave 134. Better than the 68 it
+ * was, still a wall, and past it the reward half of the loop went quiet while
+ * the pressure half kept climbing forever.
+ *
+ * So: one choice, on every boss wave, that does NOT diminish and has NO cap.
+ * Five axes — the same five the masteries already name, so a run's attunements
+ * and its cards pull in the same direction and a build has one identity rather
+ * than two. Each step is small BECAUSE it is unbounded: 1.12^20 by wave 100 is
+ * 9.6x, which is the same order as the ramp it is racing. That race, with no
+ * finish line, is what an endless mode actually is.
+ *
+ * They are shaped exactly like a boon — same `id`, `icon`, `name`, `text`,
+ * `apply` — so they travel the whole existing path (draft screen, World.applyBoon,
+ * Run.take, the replay in spawnPlayer) with no new machinery and no new UI.
+ * `stack: Infinity` keeps them permanently in their pool, and every `apply`
+ * IGNORES the rank scale it is handed, which is the one way they differ from a
+ * card and the entire point of them.
+ */
+export const ATTUNE_STEP = 0.12;
+
+export const ATTUNEMENTS = [
+  {
+    id: 'attune-blade', icon: '⚔', name: 'Attunement of the Blade', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'blade',
+    text: 'The edge sharpens and the recovery shortens. Permanent, and it will happen again.',
+    apply(p) { p.boonMods.cutPower *= 1 + ATTUNE_STEP; p.boonMods.attackRate *= 1.06; },
+  },
+  {
+    id: 'attune-guard', icon: '🛡', name: 'Attunement of the Guard', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'guard',
+    text: 'What you turn aside comes back harder, every time you choose this.',
+    apply(p) { p.boonMods.deflectDamage *= 1 + ATTUNE_STEP; p.boonMods.flowGain *= 1.05; },
+  },
+  {
+    id: 'attune-force', icon: '🌀', name: 'Attunement of the Force', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'force',
+    text: 'The Force asks less and returns sooner. Permanent, and repeatable.',
+    apply(p) {
+      p.boonMods.forceCost *= 1 - ATTUNE_STEP * 0.7;
+      p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * 1.10;
+    },
+  },
+  {
+    id: 'attune-body', icon: '❤', name: 'Attunement of the Body', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'body',
+    // Additive on hp rather than multiplicative, so it does not compound with
+    // Vitality's ranks into the same runaway the harness already caught once.
+    text: 'You endure more of it, and carry it faster. Permanent, and repeatable.',
+    apply(p) { p.maxHp += 18; p.hp += 18; p.boonMods.moveSpeed *= 1.04; },
+  },
+  {
+    id: 'attune-dark', icon: '⚫', name: 'Attunement of the Dark', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'dark',
+    text: 'It gives back more of what you take from them, and the taking sharpens you.',
+    apply(p) {
+      p.boonMods.lifesteal += 2;
+      p.boonMods.ferocity = (p.boonMods.ferocity ?? 0) + 0.03;
+    },
+  },
+];
+
+/** A card or an attunement, by id — the HUD and the scoreboard want either. */
+export function boonById(id) {
+  return BOONS.find((b) => b.id === id) || ATTUNEMENTS.find((a) => a.id === id) || null;
+}
+
+/**
+ * How many times this holding has attuned to an axis. Ranks, so it counts the
+ * repeats that are the whole point.
+ */
+export function attunementOf(taken, axis) {
+  return rankOf(taken, `attune-${axis}`);
+}
+
 /** Weighted pick without replacement. Weights are strictly positive. */
 function weightedPick(pool, weightOf) {
   let total = 0;
@@ -1584,9 +1828,32 @@ function weightedPick(pool, weightOf) {
  * @param opts.floor  lowest rarity the FIRST card may be, if one is available
  */
 export function drawBoons(n, taken = new Set(), wave = 1, opts = {}) {
-  const pool = BOONS.filter(b => !taken.has(b.id)
+  /**
+   * WHICH TABLE. A boss wave hands out attunements instead of cards — see
+   * ATTUNEMENTS — and every other draft is topped up with them once the card
+   * pool thins, because a draft that offers nothing (or offers two things where
+   * it promised three) is the failure this whole system exists to remove.
+   * Attunements never run out, so neither branch can fail the way the old
+   * no-repeats pool did at wave 68.
+   */
+  const inPool = (b) => rankOf(taken, b.id) < maxRank(b)
     && wave >= (b.minWave ?? 1)
-    && (!b.requires || b.requires(taken)));
+    && (!b.requires || b.requires(taken));
+  // ALL FIVE, never a weighted sample of them. An attunement is a permanent
+  // commitment to an axis, and a draft that happened not to offer the dark one
+  // would be denying a build by dice — with a slice of four out of five, the
+  // last axis in the array was literally unreachable for a whole run.
+  if (opts.attune) return ATTUNEMENTS.slice();
+  // A card is in the pool while it has ranks left, not while it is unheld —
+  // that one condition is what stops a deep run from draining the whole system
+  // and then drafting nothing. See RANK_DIMINISH.
+  const pool = BOONS.filter(inPool);
+  // TOPPED UP, not merely rescued when empty. A pool down to its last two cards
+  // hands back a two-card draft, and a short draft screen is the same failure
+  // as an empty one wearing a smaller hat: the player is offered less because
+  // of bookkeeping they cannot see. Attunements never run out, so they are what
+  // the tail of a very deep run is made of.
+  for (let i = 0; pool.length < n && i < ATTUNEMENTS.length; i++) pool.push(ATTUNEMENTS[i]);
   const weightOf = (b) => Math.max(1e-4, (RARITY[b.rarity] ?? RARITY.common).weight(wave));
   const out = [];
   const take = (from) => {
@@ -1600,5 +1867,14 @@ export function drawBoons(n, taken = new Set(), wave = 1, opts = {}) {
     if (strong.length) take(strong);
   }
   while (out.length < n && pool.length) take(pool);
-  return out;
+  // Stamp the rank being OFFERED, for the card face. Display only: what a boon
+  // is actually worth is decided by the rank the PLAYER holds when it is
+  // applied, because a player respawned from a carried run replays its ranks in
+  // order and must arrive at the same numbers it had before the level changed.
+  return out.map((b) => {
+    const rank = rankOf(taken, b.id) + 1;
+    return rank > 1 ? { ...b, rank, name: `${b.name} ${ROMAN[rank] || rank}` } : b;
+  });
 }
+
+const ROMAN = [, 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];

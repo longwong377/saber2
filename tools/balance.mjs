@@ -112,7 +112,7 @@ Math.random = _realRandom;
 
 const { WaveDirector, BOONS } = Waves;
 const Combat = await import('../src/game/Combat.js');
-const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance } = Combat;
+const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
 const EnemyMod = await import('../src/game/Enemy.js');
 const { ARCHETYPES, Enemy, limitBackpedal } = EnemyMod;
 
@@ -310,12 +310,23 @@ export function measureSwing() {
   // The grade a contact earns is decided at the blade point that met the bolt;
   // Combat's gates read speedAt(bladeT) with bladeT > 0.42 for a RETURN, so the
   // tip trace is the right trace to grade against.
+  //
+  // READ FROM THE GAME, NOT RETYPED. These were the literals 3.2 / 7.5 / 15,
+  // copied out of Combat.js — which meant this harness could never report that
+  // a gate was wrong, because it was grading against the same guess. It is now
+  // SPEED_GRADE, and the mix below moves the moment the game's ladder does.
+  // That is how the 15 was caught: the gate outran the blade by 37% and the
+  // instrument agreed with it.
   const above = (v) => samples.filter(s => s > v).length / Math.max(1, samples.length);
-  const driven = above(3.2);            // captureSnapshot: driven => DEFLECT not BLOCK
-  const canReturn = above(7.5);         // gradeCaught: RETURN gate
-  const canPerfect = above(15);         // gradeCaught: PERFECT gate
+  const driven = above(SPEED_GRADE.driven);
+  const canReturn = above(SPEED_GRADE.return);
+  const canPerfect = above(SPEED_GRADE.perfect);
   _swing = {
     peak,
+    /** What share of a real swing's trace clears an arbitrary speed. Exposed so
+     *  a check can ask what a candidate gate would admit without re-driving the
+     *  controller, and so the ladder can be calibrated against the blade. */
+    shareAbove: above,
     /** What a committed pass is worth, in m/s, for the cut solver. */
     passSpeed: peak,
     /** Shares of ANSWERED bolts by grade, from the same trace, nested and disjoint. */
@@ -1289,8 +1300,23 @@ export function offenceReport() {
   out.push(`  MEASURED off the real controller: one authored overhead attack peaks the`);
   out.push(`  tip at ${s.peak.toFixed(2)} m/s, tops out ${s.reachHeight.toFixed(2)} m above the feet, and may be repeated at`);
   out.push(`  most ${s.attacksPerSec.toFixed(2)} times a second (OVERHEAD.cooldown). Graded against Combat's own`);
-  out.push(`  gates, that trace answers ${(100 * s.grade.block).toFixed(0)}% BLOCK, ${(100 * s.grade.deflect).toFixed(0)}% DEFLECT, ${(100 * s.grade.return).toFixed(0)}% RETURN, ${(100 * s.grade.perfect).toFixed(0)}% PERFECT —`);
-  out.push(`  a blade that cannot reach 15 m/s cannot earn a PERFECT by speed at all.`);
+  out.push(`  gates, that trace answers ${(100 * s.grade.block).toFixed(0)}% BLOCK, ${(100 * s.grade.deflect).toFixed(0)}% DEFLECT, ${(100 * s.grade.return).toFixed(0)}% RETURN, ${(100 * s.grade.perfect).toFixed(0)}% PERFECT`);
+  out.push(`  BY SPEED ALONE, against SPEED_GRADE (${SPEED_GRADE.driven}/${SPEED_GRADE.return}/${SPEED_GRADE.perfect} m/s).`);
+  out.push('');
+  out.push(`  READ THAT LAST COLUMN CAREFULLY. It is the share of the swing fast enough`);
+  out.push(`  for a PERFECT, not the share that earns one: gradeCaught also demands`);
+  out.push(`  closing > ${SPEED_GRADE.perfectClosing} and bladeT > ${SPEED_GRADE.perfectBladeT}, and this trace has no bolt to close on. The`);
+  out.push(`  bladeT term is the sharp one — bladeSpeed is speedAt(bladeT), a lerp from a`);
+  out.push(`  near-still base out to the tip, so ${SPEED_GRADE.perfect} m/s at bladeT ${SPEED_GRADE.perfectBladeT} needs a tip well`);
+  out.push(`  past the ${s.peak.toFixed(1)} m/s this swing can reach. In practice a PERFECT means the top`);
+  out.push(`  ~15% of the blade, at the top of the swing, driving into the bolt.`);
+  out.push('');
+  out.push(`  That PERFECT can read HIGHER than RETURN here is real and not a bug: the`);
+  out.push(`  swing plateaus near its peak, so the [${SPEED_GRADE.return}, ${SPEED_GRADE.perfect}) band is genuinely narrower`);
+  out.push(`  in time than the band above it. Speed is not what separates the top two`);
+  out.push(`  rungs — aim is. Speed only decides whether the rung exists, and until`);
+  out.push(`  SPEED_GRADE.perfect came down off 15 (1.37x a speed the blade cannot`);
+  out.push(`  reach) it did not.`);
   out.push('');
   out.push('  Reach is tested against the body\'s REST POSE, so it is an approximation of');
   out.push('  a moving fight; the bones it admits and refuses are the game\'s own.');

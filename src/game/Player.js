@@ -17,6 +17,7 @@ import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { RankSet, rankScale } from './Waves.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -454,6 +455,35 @@ export class CameraRig {
 /*  Player                                                                */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Every key a boon, an order or an attunement is allowed to move.
+ *
+ * EXPORTED, and a function so each caller gets its own, because this list is a
+ * CONTRACT and it had two copies: one here and a hand-written duplicate in the
+ * "every boon applies without throwing" check. The duplicate went stale the
+ * moment a card needed a key the copy did not have, and the check then failed
+ * for the wrong reason — reporting a NaN that only existed inside the check's
+ * own stub.
+ *
+ * Reading the real defaults makes that check exact instead of approximate: a
+ * boon that writes a key which is not declared here now fails it, which is the
+ * property actually worth pinning. `undefined * 1.33` is NaN, and a NaN in
+ * `cutPower` is a blade that cuts nothing at all.
+ */
+export function defaultBoonMods() {
+  return {
+    deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
+    jumpPower: 1, flowGain: 1, returnCone: 0.42, healOnKill: 0, lightning: false,
+    repulse: false, throwPierce: false, doubleJump: false, lifesteal: 0,
+    /** Swings per second, as a multiplier on OVERHEAD.cooldown. See Cadence. */
+    attackRate: 1,
+    /** Set by the conditional cards; each has a reader in the technique layer. */
+    riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
+    conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
+    guardRefund: 0, tempest: 0, sunderReach: 0, mend: 0, absorb: false,
+  };
+}
+
 export class Player {
   constructor(world, opts = {}) {
     this.world = world;
@@ -571,12 +601,8 @@ export class Player {
     this.hurled = [];
     this._wheel = 0;
     this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 };
-    this.boons = new Set();
-    this.boonMods = {
-      deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
-      jumpPower: 1, flowGain: 1, returnCone: 0.42, healOnKill: 0, lightning: false,
-      repulse: false, throwPierce: false, doubleJump: false, lifesteal: 0,
-    };
+    this.boons = new RankSet();
+    this.boonMods = defaultBoonMods();
     this.airJumps = 0;
 
     // ── camera
@@ -716,6 +742,7 @@ export class Player {
     // blade → camera coupling
     const camDelta = this.control.applyInput(input, dt, {
       stamina: this.stamina / this.maxStamina,
+      attackRate: this.boonMods.attackRate,
       onThrust: () => {
         this.stamina = Math.max(0, this.stamina - 6);
         audio.swing(16, this.saber.base);
@@ -2799,9 +2826,18 @@ export class Player {
 
   /* ── boons ───────────────────────────────────────────────────────── */
 
+  /**
+   * Take one rank of a boon.
+   *
+   * The rank comes from THIS PLAYER's own count, never from the draft that
+   * offered the card: `World.spawnPlayer` re-applies a carried run's boons to a
+   * freshly built body one at a time, so replaying `[vitality, vitality]` has
+   * to land on ranks 1 and 2 and reach the same hp it had on the rung below.
+   * A rank stamped on the card at draft time would replay as 2 and 2.
+   */
   applyBoon(boon) {
-    this.boons.add(boon.id);
-    boon.apply(this);
+    const rank = this.boons.take(boon.id);
+    boon.apply(this, rankScale(rank));
   }
 
   dispose() {

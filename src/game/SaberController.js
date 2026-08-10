@@ -829,7 +829,12 @@ export class SaberController {
     this.swingCool = Math.max(0, this.swingCool - dt);
     if (input.actHit('attackOver') && this.swingT < 0 && this.swingCool <= 0 && ctx.stamina > 0.12) {
       this.swingT = 0;
-      this.swingCool = OVERHEAD.cooldown;
+      // The one offensive rate in the game, and until Cadence nothing could
+      // move it: 0.46 s is 2.17 swings a second no matter what a run had drawn.
+      // Divided, not multiplied — `attackRate` is swings per second, so a 1.33x
+      // rate is a 0.75x recovery, and a card that raised it would otherwise
+      // have made the player slower.
+      this.swingCool = OVERHEAD.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
       if (ctx.onSwing) ctx.onSwing();
     }
     if (this.swingT >= 0) {

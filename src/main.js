@@ -16,7 +16,7 @@ import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar } from './net/Net.js';
-import { BOONS } from './game/Waves.js';
+import { boonById } from './game/Waves.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
@@ -319,6 +319,24 @@ function gameOver(stats) {
   }, 2600);
 }
 
+/**
+ * What the run is holding, as cards the HUD and the scoreboard can draw.
+ *
+ * Ranks are shown as a suffix rather than as repeated entries — five separate
+ * "Vitality" chips is a list, "Vitality ×4" is a build. `boonById` is used
+ * instead of `BOONS.find` because attunements are not in BOONS and would
+ * otherwise all render as a bullet with a raw id under them.
+ */
+function heldBoons() {
+  const taken = world?.takenBoons;
+  if (!taken) return [];
+  return [...taken].map((id) => {
+    const b = boonById(id) || { icon: '•', name: id };
+    const n = typeof taken.rank === 'function' ? taken.rank(id) : 1;
+    return n > 1 ? { ...b, name: `${b.name} ×${n}` } : b;
+  });
+}
+
 function offerDraft(boons) {
   if (!boons || !boons.length) { world.director.resumeAfterDraft(); return; }
   state = 'draft';
@@ -327,8 +345,7 @@ function offerDraft(boons) {
   input.exitLock();
   menu.showDraft(boons, (b) => {
     world.applyBoon(b);
-    hud.setBoons([...world.takenBoons].map(id =>
-      BOONS.find(x => x.id === id) || { icon: '•', name: id }));
+    hud.setBoons(heldBoons());
     resume();
   });
 }
@@ -383,8 +400,7 @@ function setScoreboard(open) {
   scoreEl.roster.innerHTML = roster.map(r =>
     `<div class="p"><i></i><span>${r.name}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}</div>`).join('');
 
-  const taken = [...(world.takenBoons || [])].map(id =>
-    BOONS.find(x => x.id === id) || { icon: '•', name: id });
+  const taken = heldBoons();
   scoreEl.boons.innerHTML = taken.length
     ? taken.map(b => `<div class="bn">${b.icon} ${b.name}</div>`).join('')
     : '<div class="bn">no boons yet</div>';
