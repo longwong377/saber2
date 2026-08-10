@@ -63,20 +63,34 @@
     </section>
 
     <section class="panel" data-panel="saber">
-      <div class="col">
-        <h3>Crystal</h3>
+      <!-- Every heading whose list is built from a module is EMPTY here and
+           filled by Menu._buildForge. A row whose source module exports
+           nothing hides its own heading, so a half-built feature is invisible
+           rather than an empty box with a title over it. -->
+      <div class="col scroll">
+        <h3 id="h-order">Order</h3>
+        <div id="order-list" class="cards small"></div>
+        <h3 id="h-species" style="margin-top:22px">Species</h3>
+        <div id="species-list" class="cards small"></div>
+        <h3 id="h-face" style="margin-top:22px">Face</h3>
+        <div id="face-list" class="cards small"></div>
+        <h3 id="h-build" style="margin-top:22px">Build</h3>
+        <label class="slider" id="build-row">Frame <input type="range" id="opt-build" min="0" max="1" step="0.01" value="0.5"><b></b></label>
+        <h3 style="margin-top:22px">Skin</h3>
+        <div id="skin-list" class="swatches"></div>
+        <h3 style="margin-top:22px">Hair</h3>
+        <div id="hair-list" class="swatches"></div>
+        <h3 id="h-cut" style="margin-top:22px">Robe cut</h3>
+        <div id="cut-list" class="cards small"></div>
+        <h3 style="margin-top:22px">Robe colour</h3>
+        <div id="robe-list" class="swatches"></div>
+        <h3 style="margin-top:22px">Crystal</h3>
         <div id="color-list" class="swatches"></div>
         <h3 style="margin-top:22px">Hilt</h3>
         <div id="hilt-list" class="cards small"></div>
         <h3 style="margin-top:22px">Blade</h3>
         <label class="slider">Length <input type="range" id="opt-bladelen" min="0.85" max="1.45" step="0.01" value="1.15"><b></b></label>
         <label class="slider">Core width <input type="range" id="opt-bladewidth" min="0.45" max="1.6" step="0.01" value="1"><b></b></label>
-        <h3 style="margin-top:22px">Robes</h3>
-        <div id="robe-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Skin</h3>
-        <div id="skin-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Hair</h3>
-        <div id="hair-list" class="swatches"></div>
       </div>
       <div class="col narrow">
         <h3>Preview</h3>

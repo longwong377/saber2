@@ -210,6 +210,7 @@ export class World {
       robeIndex: this.settings.robeIndex,
       skinIndex: this.settings.skinIndex,
       hairIndex: this.settings.hairIndex,
+      build: this.settings.build,
       sensitivity: this.settings.sensitivity,
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,

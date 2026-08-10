@@ -404,3 +404,9 @@ button{font-family:inherit}
   pointer-events: none;
   z-index: 6;
 }
+
+/* The forge is now a character creator and does not fit a screen; the preview
+   beside it must not scroll away with it. */
+.panel .col.scroll{overflow-y:auto;padding-right:10px}
+.panel .col.scroll::-webkit-scrollbar{width:6px}
+.panel .col.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}

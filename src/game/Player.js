@@ -457,6 +457,7 @@ export class Player {
       robeIndex: opts.robeIndex ?? 0, scale: 1,
       skinColor: SKIN_TONES[opts.skinIndex ?? 2]?.hex,
       hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
+      build: opts.build,
     });
     this.rig = built.rig;
     this.palette = built.palette;
@@ -2766,6 +2767,7 @@ export class Player {
       robeIndex: this.world.settings.robeIndex ?? 0,
       skinColor: SKIN_TONES[this.world.settings.skinIndex ?? 2]?.hex,
       hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
+      build: this.world.settings.build,
     });
     this.rig = built.rig;
     this.palette = built.palette;

@@ -94,6 +94,16 @@ export const DEFAULT_SETTINGS = {
   robeIndex: 1,
   skinIndex: 2,
   hairIndex: 1,
+  /**
+   * FRAME — one continuum rather than two boxes.
+   *
+   * The torso is three lathe sections whose chest, waist, hip and shoulder
+   * radii are already parameters, so a build is a set of numbers along a line
+   * and not two modelled bodies. 0 is the narrowest frame the skeleton carries
+   * and 1 the broadest; every body in the game stays the same HEIGHT, which is
+   * what keeps one gait solver and one set of reach budgets honest.
+   */
+  build: 0.5,
   bladeLength: 1.15,
   // 0.7, not 1.0. At this width the halo lobe's amplitude falls to 0.735,
   // under UnrealBloomPass's 1.8 threshold, so the wide outer glow stops feeding
@@ -185,6 +195,7 @@ export const SETTING_READERS = {
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
   skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
   hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
+  build:           ['game/World.js', 'build: this.settings.build'],
   bladeLength:     ['game/World.js', 'bladeLength: this.settings.bladeLength'],
   coreWidth:       ['game/World.js', 'coreWidth: this.settings.coreWidth'],
   sandboxCount:    ['game/Waves.js', 's.sandboxCount'],
@@ -732,6 +743,8 @@ export class Menu {
     this._swatchRow('skin-list', 'skinIndex', SKIN_TONES, () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
 
+    this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
+      () => this._refreshPreview(true));
     this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, () => this._refreshPreview(true));
     this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview(true));
   }
@@ -897,6 +910,7 @@ export class Menu {
           robeIndex: this.s.robeIndex ?? 1,
           skinColor: (SKIN_TONES[this.s.skinIndex] || SKIN_TONES[2]).hex,
           hairColor: (HAIR_COLORS[this.s.hairIndex] || HAIR_COLORS[1]).hex,
+          build: this.s.build,
           scale: 1,
         });
         p.figure = built;
