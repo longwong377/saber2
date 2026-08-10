@@ -208,6 +208,8 @@ export class World {
       coreWidth: this.settings.coreWidth,
       hiltStyle: this.settings.hiltStyle,
       robeIndex: this.settings.robeIndex,
+      skinIndex: this.settings.skinIndex,
+      hairIndex: this.settings.hairIndex,
       sensitivity: this.settings.sensitivity,
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,

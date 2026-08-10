@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
-import { ROBE_COLORS } from '../game/Bodies.js';
+import { ROBE_COLORS, buildJedi } from '../game/Bodies.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
@@ -58,6 +58,33 @@ export const LEGACY_KEYS = ['saber.settings.v4', 'saber.settings.v3', 'saber.set
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
 
+/**
+ * WHAT A PLAYER CAN CHOOSE TO BE.
+ *
+ * `buildJedi` has accepted `skinColor` and `hairColor` since it was written and
+ * NOTHING EVER PASSED THEM — every Jedi in the game was the one default face
+ * under six robe palettes. The builder needed no changes at all; the whole
+ * feature was two swatch rows and a line in spawnPlayer.
+ *
+ * Hex, not names, because that is what the builder takes. The spread is
+ * deliberately wide rather than a gradient of one tone.
+ */
+export const SKIN_TONES = [
+  { name: 'Porcelain', hex: 0xf0cdb4 }, { name: 'Fair',     hex: 0xe4b493 },
+  { name: 'Warm',      hex: 0xc79a76 }, { name: 'Olive',    hex: 0xa87c52 },
+  { name: 'Bronze',    hex: 0x8c5f3c }, { name: 'Umber',    hex: 0x6a462c },
+  { name: 'Deep',      hex: 0x4a2f1d }, { name: 'Ashen',    hex: 0xbfae9c },
+  { name: 'Zabrak',    hex: 0xb4463a }, { name: 'Twi\'lek',  hex: 0x6f8f6a },
+];
+
+export const HAIR_COLORS = [
+  { name: 'Black',  hex: 0x1b1410 }, { name: 'Dark brown', hex: 0x2a1d14 },
+  { name: 'Brown',  hex: 0x4a3220 }, { name: 'Auburn',     hex: 0x6b3418 },
+  { name: 'Copper', hex: 0x92451c }, { name: 'Sand',       hex: 0xb08c56 },
+  { name: 'Ash',    hex: 0x8b8578 }, { name: 'Silver',     hex: 0xc9c6bd },
+  { name: 'White',  hex: 0xe6e2d8 }, { name: 'Shaven',     hex: 0x3a2e26 },
+];
+
 export const DEFAULT_SETTINGS = {
   level: 'dunes',
   difficulty: 'knight',
@@ -65,6 +92,8 @@ export const DEFAULT_SETTINGS = {
   colorIndex: 0,
   hiltStyle: 'Graflex',
   robeIndex: 1,
+  skinIndex: 2,
+  hairIndex: 1,
   bladeLength: 1.15,
   // 0.7, not 1.0. At this width the halo lobe's amplitude falls to 0.735,
   // under UnrealBloomPass's 1.8 threshold, so the wide outer glow stops feeding
@@ -154,6 +183,8 @@ export const SETTING_READERS = {
   colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
   hiltStyle:       ['game/World.js', 'hiltStyle: this.settings.hiltStyle'],
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
+  skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
+  hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
   bladeLength:     ['game/World.js', 'bladeLength: this.settings.bladeLength'],
   coreWidth:       ['game/World.js', 'coreWidth: this.settings.coreWidth'],
   sandboxCount:    ['game/Waves.js', 's.sandboxCount'],
@@ -691,9 +722,13 @@ export class Menu {
         this.s.robeIndex = i;
         [...this.el.robes.children].forEach(x => x.classList.toggle('sel', x === sw));
         saveSettings(this.s);
+        this._refreshPreview(true);
       });
       this.el.robes.appendChild(sw);
     });
+
+    this._swatchRow('skin-list', 'skinIndex', SKIN_TONES, () => this._refreshPreview(true));
+    this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
 
     this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, () => this._refreshPreview(true));
     this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview(true));
@@ -811,13 +846,36 @@ export class Menu {
    * length, against 53% at 1.15 m, and the hilt shrinks by the same factor
    * rather than vanishing.
    */
+/** One row of colour swatches bound to an index setting. */
+  _swatchRow(hostId, key, palette, onPick) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    host.innerHTML = '';
+    palette.forEach((c, i) => {
+      const sw = document.createElement('div');
+      sw.className = 'sw' + (this.s[key] === i ? ' sel' : '');
+      sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
+      sw.title = c.name;
+      sw.addEventListener('click', () => {
+        audio.ui('click');
+        this.s[key] = i;
+        [...host.children].forEach(x => x.classList.toggle('sel', x === sw));
+        saveSettings(this.s);
+        onPick?.();
+      });
+      host.appendChild(sw);
+    });
+  }
+
   _framePreview() {
     const p = this.preview;
     if (!p) return;
+    // Framed on the whole figure now that there is one, and pulled back a
+    // little further for a longer blade so the choice still reads.
     const pull = Math.max(1, this.s.bladeLength / BLADE_CAP);
-    p.camera.position.set(0.55 * pull, 0.35 * pull, 1.1 * pull);
+    p.camera.position.set(1.15 * pull, 1.35 * pull, 2.55 * pull);
     p.camera.far = 40 * pull;
-    p.camera.lookAt(0, 0.32 * pull, 0);
+    p.camera.lookAt(0, 0.95, 0);
     p.camera.updateProjectionMatrix();
   }
 
@@ -828,13 +886,37 @@ export class Menu {
     if (rebuild || !p.saber) {
       if (p.saber) { p.saber.dispose(); }
       p.group.clear();
+      // THE FIGURE, not just the blade. Robe colour has been a setting since
+      // the menu was written and the preview never showed it, so choosing one
+      // was choosing blind — and skin and hair were not choices at all. A
+      // character creator you cannot see is a settings screen.
+      try {
+        const built = buildJedi({
+          robeIndex: this.s.robeIndex ?? 1,
+          skinColor: (SKIN_TONES[this.s.skinIndex] || SKIN_TONES[2]).hex,
+          hairColor: (HAIR_COLORS[this.s.hairIndex] || HAIR_COLORS[1]).hex,
+          scale: 1,
+        });
+        p.figure = built;
+        p.group.add(built.rig.root);
+        built.rig.updateMatrices();
+      } catch { p.figure = null; }   // a stripped DOM in tests has no body kit
       p.saber = new Saber(p.group, {
         colorIndex: this.s.colorIndex,
         bladeLength: this.s.bladeLength,
         coreWidth: this.s.coreWidth,
         hiltStyle: this.s.hiltStyle,
       });
-      p.saber.root.position.set(0, -0.05, 0);
+      // Held in the right hand rather than floating: parented to the bone, so
+      // it stays put whatever the rest pose does.
+      const hand = p.figure?.rig?.get('handR')?.obj;
+      if (hand) {
+        hand.add(p.saber.root);
+        p.saber.root.position.set(0, 0.04, 0.02);
+        p.saber.root.rotation.set(-Math.PI * 0.5, 0, 0);
+      } else {
+        p.saber.root.position.set(0, -0.05, 0);
+      }
       p.saber.trail.visible = false;
       p.saber.ignite();
       p.saber.ignition = 1;

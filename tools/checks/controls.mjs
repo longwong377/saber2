@@ -1185,7 +1185,8 @@ export async function run({ check, assert }) {
      * a setting cannot join this list without a control writing it.
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
-      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade'];
+      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade',
+      'skinIndex', 'hairIndex'];
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (bound.has(key)) {
@@ -1194,7 +1195,12 @@ export async function run({ check, assert }) {
         continue;
       }
       if (!PICKED.includes(key)) { orphans.push(key); continue; }
-      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'`);
+      // `_swatchRow('skin-list', 'skinIndex', ...)` names the key at the control
+      // site just as explicitly as `this.s.skinIndex =` does — it is the same
+      // guarantee through a shared helper, so the vocabulary widens and the
+      // property does not: a setting still cannot reach this list without a
+      // control that writes it BY NAME.
+      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'`);
       if (!re.test(menu)) ghost.push(key);
     }
     assert(!orphans.length,

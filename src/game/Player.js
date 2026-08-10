@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
+import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
@@ -449,7 +450,14 @@ export class Player {
     this.team = 0;
 
     // ── body
-    const built = buildJedi({ robeIndex: opts.robeIndex ?? 0, scale: 1 });
+    // skinColor and hairColor have been parameters of buildJedi since it was
+    // written and nothing ever passed them, so every Jedi in the game wore the
+    // one default face. The builder needed no change; this line was the feature.
+    const built = buildJedi({
+      robeIndex: opts.robeIndex ?? 0, scale: 1,
+      skinColor: SKIN_TONES[opts.skinIndex ?? 2]?.hex,
+      hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
+    });
     this.rig = built.rig;
     this.palette = built.palette;
     world.scene.add(this.rig.root);
@@ -2723,7 +2731,11 @@ export class Player {
     if (pos) this.position.copy(pos);
     this.invuln = 2.2;
     if (this.actor) { this.actor.dispose(); this.actor = null; }
-    const built = buildJedi({ robeIndex: this.world.settings.robeIndex ?? 0 });
+    const built = buildJedi({
+      robeIndex: this.world.settings.robeIndex ?? 0,
+      skinColor: SKIN_TONES[this.world.settings.skinIndex ?? 2]?.hex,
+      hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
+    });
     this.rig = built.rig;
     this.palette = built.palette;
     this.world.scene.add(this.rig.root);
