@@ -155,4 +155,53 @@ export async function run({ check, assert }) {
     }
     return '2 runs, 1 ascent, deepest 16, tracked by order; corrupt store reads as empty';
   });
+
+  check('run: a landing carries the run across loadLevel, which disposes players', async () => {
+    // THE KEYSTONE, and the reason the Spire could not exist before. `unload()`
+    // disposes every player and takes boonMods, maxHp, the taken boons and the
+    // score with it — so a level change was a restart, and every level was a
+    // separate arena rather than a place in a longer journey.
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+
+    const i = world.indexOf('  loadLevel(key');
+    assert(i > 0, 'loadLevel is gone');
+    const head = world.slice(i, i + 900);
+    // The run must be read BEFORE unload, or unload clears the thing that was
+    // supposed to survive it.
+    const readAt = head.indexOf('opts.run');
+    const unloadAt = head.indexOf('this.unload()');
+    assert(readAt > 0 && unloadAt > 0, 'loadLevel does not take a run at all');
+    assert(readAt < unloadAt,
+      'the run is read AFTER unload() — unload is allowed to clear the world, so it would be gone');
+
+    // and it has to be re-applied, as boons rather than as a snapshot
+    const j = world.indexOf('  spawnPlayer(');
+    const body = world.slice(j, j + 2600);
+    assert(/this\.run/.test(body), 'spawnPlayer never looks at the run');
+    assert(/applyBoon\(/.test(body), 'the run\'s boons are not re-applied to the new player');
+    assert(/hpFrac/.test(body), 'health does not carry across a landing');
+    // order BEFORE boons: the order starts the numbers, a boon multiplies them
+    const orderAt = body.indexOf('applyOrder(');
+    const boonAt = body.indexOf('applyBoon(');
+    assert(orderAt > 0 && orderAt < boonAt,
+      'boons are applied before the order, so the order overwrites what the run earned');
+    return 'run read before unload, boons re-applied after the order, hp as a fraction';
+  });
+
+  check('run: a rung borrows a level and changes only its air', async () => {
+    // The Spire has no levels of its own — it takes an existing one and moves
+    // it up. So the merge has to reach BOTH the atmosphere and the weather, or
+    // the climb is four identical arenas with different names.
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    assert(/\.\.\.rung\.air/.test(world), 'a rung does not change the atmosphere it borrows');
+    assert(/\.\.\.rung\.weather/.test(world), 'a rung does not change the weather it borrows');
+    // and the merge must be OVER the level, not under it
+    const k = world.indexOf('applyAtmosphere(');
+    const line = world.slice(k, k + 140);
+    assert(line.indexOf('L.atmosphere') < line.indexOf('rung.air'),
+      'the level is merged over the rung, so the climb is overwritten by the place it borrowed');
+    return 'air and weather both merged over the borrowed level';
+  });
 }

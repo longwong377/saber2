@@ -18,6 +18,7 @@ import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector } from './Waves.js';
 import { applyOrder } from './Order.js';
+import { SPIRE } from './Run.js';
 import { LEVELS } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -95,12 +96,34 @@ export class World {
 
   /* ── level lifecycle ─────────────────────────────────────────────── */
 
-  loadLevel(key) {
+  /**
+   * @param key   a LEVELS key
+   * @param opts.run  a Run that must SURVIVE this call.
+   *
+   * `unload()` disposes every player, and with it `boonMods`, `maxHp`, the
+   * taken boons and the score — which is why every level in this game used to
+   * be a separate arena rather than a place in a longer journey. A run handed
+   * in here is held across that and re-applied to the player that comes out the
+   * other side, so a landing is a transition rather than a restart.
+   */
+  loadLevel(key, opts = {}) {
+    // Read BEFORE unload: `this.run` lives on the world, and unload is allowed
+    // to clear the world.
+    const run = opts.run || this.run || null;
     this.unload();
+    this.run = run;
     const L = LEVELS[key] || LEVELS.dunes;
     this.level = L;
     this.levelKey = key;
     this.groundColor = L.groundColor;
+    /**
+     * A rung BORROWS a level and changes only its height. `air` is merged over
+     * the level's own atmosphere and `weather` over its own dust block, so the
+     * Spire never needs a level of its own — the climb is told by the air, and
+     * the air is the one thing a level already parameterises fully.
+     */
+    const rung = run && !run.done ? SPIRE[Math.min(run.tier, SPIRE.length - 1)] : null;
+    this.rung = rung;
 
     // ONE VALUE, ONE HOME. This used to be `{low:0.55, medium:0.8, high:1,
     // ultra:1.25}[quality]`, written out here, and Engine's QUALITY.grass
@@ -137,12 +160,15 @@ export class World {
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
-    this.engine.applyAtmosphere(L.atmosphere);
+    this.engine.applyAtmosphere(rung ? { ...L.atmosphere, ...rung.air } : L.atmosphere);
     audio.setAmbience(L.ambience || {});
 
     // The motes, windborne sheets, haze and heat shimmer are particles too, so
     // they ride the particle tier and not the terrain one.
-    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: particleScale });
+    this.atmosphere = new Atmosphere(this.scene, rung
+      ? { ...(L.dust || {}), density: particleScale,
+          weather: { ...((L.dust || {}).weather || {}), ...rung.weather } }
+      : { ...(L.dust || {}), density: particleScale });
     if (L.water) this.water = new Water(this.scene, { ...L.water, size: this.terrain.size + 60 });
     if (L.grass) {
       // The tier scales the BLADE BUDGET (count); the level and the player's
@@ -176,6 +202,7 @@ export class World {
       this.notify('WAVE CLEAR', 'the Force is with you');
       audio.ui('good');
       this.score += 500 * w;
+      if (this.run) this.run.wave = w;
       for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
     };
     this.director.onDraft = (boons) => { this.onDraftOffer?.(boons); };
@@ -228,6 +255,26 @@ export class World {
     // order overwrite the run instead of starting it.
     const rec = applyOrder(p, this.settings.order);
     if (rec) for (const id of rec.grants) this.takenBoons.add(id);
+
+    /**
+     * AND THEN THE RUN, which is what makes a landing a transition rather than
+     * a restart. Order first, boons second: the order STARTS the numbers and a
+     * boon multiplies them, so the reverse order would have the order overwrite
+     * everything the run had earned.
+     *
+     * The boons are re-applied rather than a snapshot of `boonMods` restored,
+     * because a snapshot would drift the first time a boon's effect changed —
+     * and health comes back as a FRACTION, since maxHp is itself a thing boons
+     * move and a raw number would silently undo Vitality at every landing.
+     */
+    if (this.run) {
+      for (const b of this.run.boons) {
+        this.takenBoons.add(b.id);
+        p.applyBoon(b);
+      }
+      p.hp = Math.max(1, Math.round(p.maxHp * this.run.hpFrac));
+      this.score = this.run.score;
+    }
     p.camera.firstPerson = !!this.settings.firstPerson;
     p._applyViewMode();
     // Catch-and-throw state lives out here rather than on the Player, because
