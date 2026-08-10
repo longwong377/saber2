@@ -198,6 +198,79 @@ export class AudioEngine {
     if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
   }
 
+  /**
+   * THE SCORE — streamed, never decoded.
+   *
+   * `decodeAudioData` is how every other sound in this file is made, and it is
+   * the wrong tool for a 49-minute track by three orders of magnitude: decoded
+   * to float32 at 44.1 kHz stereo that file is about 1.0 GB resident, and the
+   * tab dies before the first note. An <audio> element streams it — the browser
+   * pulls only what it is about to play, `loop` is handled natively with no gap
+   * to schedule, and `createMediaElementSource` routes it into the same
+   * musicBus the Music slider already controls, so volume and mute come for
+   * free and cost nothing to wire.
+   *
+   * Everything here is best-effort by design. A missing file, a codec the
+   * browser will not take, or an autoplay policy that refuses the first play()
+   * must all end in "no music" — never in a broken game. The score is the one
+   * asset in this project that is not procedural, so it is also the only one
+   * that can fail to load at all.
+   */
+  playMusic(url, opts = {}) {
+    if (!this.ready || this._music) return null;
+    if (typeof Audio === 'undefined' || typeof document === 'undefined') return null;
+    try {
+      const el = new Audio();
+      el.src = url;
+      el.loop = opts.loop !== false;
+      el.preload = 'auto';
+      el.crossOrigin = 'anonymous';
+      // The element's own volume stays at 1: the musicBus is the only place
+      // loudness is decided, or the slider and the element would fight and the
+      // result would depend on which one moved last.
+      el.volume = 1;
+      const src = this.ctx.createMediaElementSource(el);
+      const gain = this.ctx.createGain();
+      // Fade in rather than cutting in on the menu: a 49-minute score that
+      // starts at full level the instant the context unlocks is a jump-scare.
+      gain.gain.value = 0;
+      gain.gain.setTargetAtTime(num(opts.gain, 1), this.ctx.currentTime, opts.fade ?? 1.6);
+      src.connect(gain); gain.connect(this.musicBus);
+      this._music = { el, src, gain };
+      const go = () => { try { el.play()?.catch?.(() => {}); } catch {} };
+      go();
+      // An autoplay block is not an error, it is a "not yet" — retry on the
+      // first real gesture, which is the same event that unlocks the context.
+      if (el.paused) {
+        const once = () => {
+          this.resume(); go();
+          if (!el.paused) {
+            for (const e of ['pointerdown', 'keydown']) window.removeEventListener(e, once);
+          }
+        };
+        for (const e of ['pointerdown', 'keydown']) window.addEventListener(e, once);
+      }
+      return this._music;
+    } catch { this._music = null; return null; }
+  }
+
+  /** Silence the score without tearing the stream down, so it can come back. */
+  setMusicPlaying(on) {
+    const m = this._music;
+    if (!m) return;
+    try {
+      if (on) { this.resume(); m.el.play()?.catch?.(() => {}); }
+      else m.el.pause();
+    } catch {}
+  }
+
+  stopMusic() {
+    const m = this._music;
+    if (!m) return;
+    try { m.el.pause(); m.el.src = ''; m.src.disconnect(); m.gain.disconnect(); } catch {}
+    this._music = null;
+  }
+
   _makeNoise(seconds, pink) {
     const len = Math.floor(this.ctx.sampleRate * seconds);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);

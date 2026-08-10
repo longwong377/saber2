@@ -531,8 +531,24 @@ window.addEventListener('keydown', (e) => {
 // in it never reached the canvas listener below — which was the only thing that
 // called audio.init(). Every menu blip was a no-op and the game was silent
 // until the first Ignite. Arm the context on any pointer down, anywhere.
-window.addEventListener('pointerdown', () => { audio.init(); audio.resume(); }, true);
-window.addEventListener('keydown', () => { audio.init(); audio.resume(); }, true);
+/**
+ * THE SCORE starts on the same gesture that unlocks the context, and only once.
+ *
+ * It is a 49-minute stream rather than a decoded buffer — see audio.playMusic —
+ * so starting it early costs nothing: the browser fetches only what it is about
+ * to play. Under the menu is exactly where it should begin.
+ *
+ * Best-effort throughout: if the file is missing or the browser refuses the
+ * codec, `playMusic` returns null and the game is simply silent. The one asset
+ * in this project that is not generated in code is also the only one that can
+ * fail to arrive.
+ */
+const startScore = () => {
+  audio.init(); audio.resume();
+  audio.playMusic(new URL('../assets/music/theme.mp3', import.meta.url).href, { loop: true });
+};
+window.addEventListener('pointerdown', startScore, true);
+window.addEventListener('keydown', startScore, true);
 
 canvas.addEventListener('pointerdown', () => {
   audio.init(); audio.resume();
