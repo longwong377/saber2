@@ -193,7 +193,10 @@ export class Net {
         if (this.isHost) this.broadcastExcept(conn.peer, { ...msg, from: conn.peer });
         break;
       case 'claim': this._emit('claim', conn.peer, msg); break;
-      case 'event': this._emit('event', msg); break;
+      // 'event' was routed here with no sender anywhere and no listener
+      // anywhere — a channel that existed only as this line. Deleting it is as
+      // valid a fix as giving it a purpose, and it is the honest one: nothing
+      // downstream was waiting for it. See tools/checks/coop.mjs.
       case 'ping': this.send(conn, { t: 'pong', s: msg.s }); break;
       case 'pong': this.latency = (performance.now() - msg.s) * 0.5; break;
       default: this._emit(msg.t, msg, conn.peer);

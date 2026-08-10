@@ -374,6 +374,14 @@ export class Body {
     this.spheres = opts.spheres || bladeSpheresFor(this.shape);
     shapeExtent(this.shape, _v1);
     this.boundingRadius = Math.max(0.05, _v1.length());
+    /**
+     * The half-extents themselves, not just their length. Both call sites used
+     * to compute this and keep only `boundingRadius`, which is the HALF-DIAGONAL
+     * — 1.73x the half-height of a cube. Anything that wants to know where the
+     * top of a crate is (standing on one, for instance) needs the box, and
+     * guessing it back out of the diagonal either floats you or sinks you.
+     */
+    this.extent = _v1.clone();
 
     // Rapier handles, filled in by RapierWorld.add
     this._world = null;      // the RapierWorld that adopted us
@@ -520,6 +528,7 @@ export class Body {
     this.shape = shape;
     shapeExtent(shape, _v1);
     this.boundingRadius = Math.max(0.05, _v1.length());
+    this.extent.copy(_v1);
     if (opts.mass > 0) { this.mass = opts.mass; this.invMass = 1 / opts.mass; }
     if (opts.spheres) this.spheres = opts.spheres;
     else if (this._ownSpheres) this.spheres = bladeSpheresFor(shape);

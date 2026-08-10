@@ -14,6 +14,7 @@ import { buildJedi } from './Bodies.js';
 import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
+import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -479,6 +480,11 @@ export class Player {
     this.crouch = 0;
     this.radius = 0.34;
     this.height = 1.78;
+    /** Colliders near enough to stand on, rebuilt once a frame by _gatherNear. */
+    this._nearBoxes = [];
+    this._nearProps = [];
+    /** The height of whatever the feet are over — terrain, rock or crate. */
+    this.supportY = 0;
     this.coyote = 0;
     this.jumpHeld = 0;
     this.dashTimer = 0;
@@ -875,15 +881,80 @@ export class Player {
     if (sprinting) this.stamina = Math.max(0, this.stamina - 11 * dt);
   }
 
+  /**
+   * WHAT AM I STANDING ON? — the whole answer, in one place.
+   *
+   * Before this there were two answers and the wrong one won. A block in
+   * `_collide` set `grounded = true` when the player landed on a box, and then
+   * fifty lines further down an unguarded `else if` re-decided it from the
+   * TERRAIN HEIGHTFIELD ALONE — which on top of a boulder is metres below you,
+   * so `grounded` went false again on the very same frame, every frame. That
+   * one line produced every symptom the player reported:
+   *
+   *   the repeated hop     gravity re-applies each frame, you sink into the
+   *                        rock, the snap teleports you back out, ~5 Hz
+   *   phasing into it      the collider was ONE SPHERE AT MID-BODY, 0.89 m
+   *                        above the feet with a 0.36 m radius, so the top-snap
+   *                        could not fire until the feet were 0.53 m inside
+   *   sliding off          depenetration was horizontal-only (`_v5.y = 0`), so
+   *                        near an edge the nearest face is a side and you get
+   *                        shoved off it
+   *   legs through the rock  the gait's `groundAt` sampled terrain only, so both
+   *                        ankles were driven to y=0 under a pelvis at y=2
+   *   footstep spam        `grounded` flickering makes Rig.js re-plant every
+   *                        frame, and re-planting fires onFootstep
+   *
+   * It also meant air control (12 instead of 46) the whole time you stood on
+   * anything, no coyote time so your jump silently became a Force-costing air
+   * jump, no landing thud, and a stale `fallSpeed` that fired a bogus violent
+   * landing the moment you stepped back onto sand.
+   *
+   * So: one query, every surface, highest wins. Terrain, static boxes and
+   * dynamic props all answer the same question and the caller cannot tell them
+   * apart — which is the point, because the player cannot either.
+   *
+   * `feetY` is where the feet are; a surface above `feetY + STEP_UP` is a wall,
+   * not a floor, and is ignored so that jumping up past a ledge does not snap
+   * you onto it.
+   */
+  _supportAt(ctx, x, z, feetY) {
+    return supportHeight(ctx.terrain, this._nearBoxes, this._nearProps,
+      x, z, feetY, this.radius, STEP_UP);
+  }
+
+  /** The short list of colliders near enough to matter, rebuilt once a frame. */
+  _gatherNear(ctx) {
+    const near = this._nearBoxes; near.length = 0;
+    const props = this._nearProps; props.length = 0;
+    const physics = ctx.physics;
+    if (!physics) return;
+    // Generous enough to cover both feet at full stride and the capsule's own
+    // radius, small enough that the per-foot ground query below is a short scan
+    // rather than a walk of every collider in the level.
+    const R = 2.6;
+    for (const box of physics.staticBoxes) {
+      if (box.disabled) continue;
+      const dx = box.center.x - this.position.x, dz = box.center.z - this.position.z;
+      if (dx * dx + dz * dz < (box.radius + R) ** 2) near.push(box);
+    }
+    for (const b of physics.bodies) {
+      if (b.invMass === 0 || b === this.body || !b.extent) continue;
+      if (b.layer !== LAYER.PROP && b.layer !== LAYER.DEBRIS && b.layer !== LAYER.RAGDOLL) continue;
+      const dx = b.position.x - this.position.x, dz = b.position.z - this.position.z;
+      if (dx * dx + dz * dz < (b.boundingRadius + R) ** 2) props.push(b);
+    }
+  }
+
   _collide(dt, ctx) {
     const terrain = ctx.terrain;
     const physics = ctx.physics;
     const wasGrounded = this.grounded;
+    this._gatherNear(ctx);
 
     // static boxes and props: push out horizontally
     if (physics) {
       for (let iter = 0; iter < 2; iter++) {
-        for (const box of physics.staticBoxes) {
+        for (const box of this._nearBoxes) {
           if (box.disabled) continue;
           _v1.set(this.position.x, this.position.y + this.height * 0.5, this.position.z);
           if (_v1.distanceToSquared(box.center) > (box.radius + 1.4) ** 2) continue;
@@ -906,16 +977,11 @@ export class Player {
           _v4.multiplyScalar(1 / d);
           const push = r - d;
           _v5.copy(_v4).applyQuaternion(box.quat);
-          // land on top of it rather than sliding off
-          if (_v5.y > 0.6 && this.velocity.y <= 0.1) {
-            const topY = box.center.y + h.y;
-            if (this.position.y < topY && this.position.y > topY - 1.2) {
-              this.position.y = topY;
-              this.velocity.y = 0;
-              this.grounded = true;
-              continue;
-            }
-          }
+          // An upward face is FLOOR, and floors are resolved by the support
+          // query below, which knows about every surface at once. Resolving it
+          // here as well is what used to fight it: this loop would shove the
+          // body up while the terrain branch pulled it back down.
+          if (_v5.y > 0.5) continue;
           _v5.y = 0;
           if (_v5.lengthSq() < 1e-6) continue;
           _v5.normalize();
@@ -924,10 +990,10 @@ export class Player {
           if (vn < 0) this.velocity.addScaledVector(_v5, -vn);
         }
       }
-      // shove dynamic props out of the way
-      for (const b of physics.bodies) {
-        if (b.invMass === 0 || b === this.body) continue;
-        if (b.layer !== LAYER.PROP && b.layer !== LAYER.DEBRIS && b.layer !== LAYER.RAGDOLL) continue;
+      // shove dynamic props out of the way — the same short list the support
+      // query uses, so a crate you are standing on and a crate you are walking
+      // into are the same object seen twice, not two different searches
+      for (const b of this._nearProps) {
         _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
         const rr = this.radius + b.boundingRadius;
         _v2.subVectors(b.position, _v1);
@@ -946,16 +1012,27 @@ export class Player {
       }
     }
 
-    // terrain
+    // ── the ground, whatever it happens to be made of
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
-    if (this.position.y <= gh + 0.02) {
+    const support = this._supportAt(ctx, this.position.x, this.position.z, this.position.y);
+    this.supportY = support;
+    // Never inside it: a body below the surface it is standing on is the
+    // "phase into it" the player described, and it is unconditional.
+    if (this.position.y < support) this.position.y = support;
+    if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
+      // ONE landing path, so a prop landing sounds and looks like a sand one.
+      // `_land` and the `fallSpeed` reset used to live only on the terrain
+      // branch, so landing on a rock was silent and kept a stale fall speed
+      // that fired a bogus violent landing the moment you stepped off it.
       if (!wasGrounded && this.fallSpeed < -7) this._land(ctx, -this.fallSpeed);
-      this.position.y = gh;
+      this.position.y = support;
       if (this.velocity.y < 0) this.velocity.y = 0;
       this.grounded = true;
       this.fallSpeed = 0;
-      // slide down steep faces
-      if (terrain) {
+      // Slide down steep faces — but only off the TERRAIN. A boulder's top is
+      // flat by construction and the terrain normal underneath it is whatever
+      // the hillside does, which would drag you off a rock you are standing on.
+      if (terrain && support <= gh + GROUND_SNAP) {
         terrain.normalAt(this.position.x, this.position.z, _v1);
         const slope = 1 - _v1.y;
         if (slope > 0.52) {
@@ -963,7 +1040,7 @@ export class Player {
           this.velocity.add(_v2);
         }
       }
-    } else if (this.position.y > gh + 0.06) {
+    } else if (this.position.y > support + 0.06) {
       this.grounded = false;
     }
 
@@ -1254,7 +1331,11 @@ export class Player {
       facing: this.facing,
       velocity: this.velocity,
       grounded: this.grounded,
-      groundAt: (x, z) => (terrain ? terrain.height(x, z) : 0),
+      // THE FEET STAND WHERE THE BODY STANDS. This was terrain-only, so with
+      // the pelvis on a two-metre boulder both ankles were driven to y=0 and
+      // the legs were drawn through the rock. It is the same query the body
+      // uses, over the short list _gatherNear already built this frame.
+      groundAt: (x, z) => this._supportAt(ctx, x, z, this.position.y),
       crouch: this.crouch,
       accelForward: clamp(speed / 8, 0, 1),
       accelStrafe: 0,

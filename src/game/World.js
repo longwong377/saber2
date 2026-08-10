@@ -756,7 +756,10 @@ export class World {
           const e = t.enemy;
           const wasAlive = !e.dead;
           const share = ev.dWork / ev.need;
-          e.damage(share * e.maxHp * GRIND_LETHALITY, ev.point, player, 'saber');
+          const dmg = share * e.maxHp * GRIND_LETHALITY;
+          e.damage(dmg, ev.point, player, 'saber');
+          if (player.isLocal) this._claim({ t: 'claim', k: 'dmg', id: e.id, d: dmg,
+            p: [ev.point.x, ev.point.y, ev.point.z] });
           if (this._grindMark <= 0) {
             this._grindMark = 0.12;
             this.onHitmark?.(ev.point, wasAlive && e.dead ? 'kill' : 'hit', ev.cap?.name);
@@ -785,6 +788,9 @@ export class World {
       const e = t.enemy;
       const wasAlive = !e.dead;
       e.takeCut(ev, player);
+      if (player.isLocal) this._claim({ t: 'claim', k: 'cut', id: e.id, b: ev.bone, ct: ev.cutT,
+        p: [ev.point.x, ev.point.y, ev.point.z],
+        v: [ev.impulse.x, ev.impulse.y, ev.impulse.z] });
       player.limbsRemoved++;
       player.addFlow(0.10);
       player.combo++;
@@ -1128,6 +1134,15 @@ export class World {
   _netTick(rawDt) {
     const net = this.net;
     if (!net || !net.connected) return;
+    // `Net` answers a ping with a pong and derives `latency` from the round
+    // trip, and NOTHING EVER SENT A PING — so the number it publishes was
+    // whatever it was initialised to, for the whole session. Same shape as the
+    // claim: a wire built at one end.
+    this._pingAccum = (this._pingAccum || 0) + rawDt;
+    if (this._pingAccum > 2 && this.netMode === 'client') {
+      this._pingAccum = 0;
+      net.toHost({ t: 'ping', s: performance.now() });
+    }
     this._netAccum += rawDt;
     const interval = 1 / (this.netMode === 'host' ? 18 : 24);
     if (this._netAccum < interval) return;
@@ -1169,6 +1184,27 @@ export class World {
   }
 
   /** Client → host: "my blade did this." Trusted; this is co-op with friends. */
+  /**
+   * TELL THE HOST WHAT MY BLADE DID.
+   *
+   * `applyClaim` below has always existed to receive this, and `Net.toHost` has
+   * always existed to send it, and NOTHING EVER CALLED EITHER — `toHost` had
+   * zero callers in the whole repository. Both ends of the wire were built and
+   * nothing crossed it, so a joining player could move, be seen and deflect,
+   * and then every enemy they hit came straight back to life 55 ms later when
+   * the host's next snapshot hard-wrote `e.hp`. Co-op existed; killing things
+   * in it did not. This codebase's signature bug, surviving in one seam.
+   *
+   * The hit is applied LOCALLY as well, and deliberately: the architecture note
+   * in Net.js is that each player is authoritative over their own blade because
+   * it cannot tolerate a frame of lag. So the client shows its own hit at once
+   * and the host's snapshot confirms it a moment later — rather than the client
+   * waiting a round trip to find out whether its own sword works.
+   */
+  _claim(msg) {
+    if (this.netMode === 'client' && this.net?.connected) this.net.toHost(msg);
+  }
+
   applyClaim(peerId, msg) {
     if (this.netMode !== 'host') return;
     const e = this._netEnemyIndex?.get(msg.id) || this.enemies.find(x => x.id === msg.id);
@@ -1177,7 +1213,10 @@ export class World {
       const cap = e.capsules().find(c => c.name === msg.b);
       if (!cap) return;
       e.takeCut({
-        bone: msg.b, cutT: msg.t, cap, point: new THREE.Vector3(...msg.p),
+        // `ct`, NOT `t`: Net routes every message on `msg.t`, so the receiver
+        // asking for the cut parameter under the same name would have read the
+        // string 'claim'. Never caught because nothing ever sent one.
+        bone: msg.b, cutT: msg.ct, cap, point: new THREE.Vector3(...msg.p),
         impulse: new THREE.Vector3(...msg.v), normal: new THREE.Vector3(0, 1, 0), speed: 20,
       }, null);
     } else if (msg.k === 'dmg') {

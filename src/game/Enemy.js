@@ -16,6 +16,7 @@ import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
+import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
@@ -950,17 +951,27 @@ export class Enemy {
     if (!this.grounded) this.velocity.y -= 24 * dt;
     this.position.addScaledVector(this.velocity, dt);
 
+    // THE SAME GROUND THE PLAYER STANDS ON. This sampled the terrain heightfield
+    // alone, and the box loop below has no top-landing branch at all — its
+    // resolution is `_v4.y = 0`, horizontal, always. So an enemy could not stand
+    // on a rock, a crate or a piece of its own ruined architecture: it sank
+    // through and stood on the sand underneath, or hopped on the spot the way
+    // the player's did. See src/physics/Support.js.
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
-    if (this.position.y <= gh) {
+    const support = supportHeight(terrain, ctx.physics?.staticBoxes, null,
+      this.position.x, this.position.z, this.position.y, this.radius, STEP_UP);
+    this.supportY = support;
+    if (this.position.y < support) this.position.y = support;
+    if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
       if (this.velocity.y < -9) {
-        ctx.particles?.sandPuff(this.position.clone(), 0.8, gh, this.world.groundColor);
+        ctx.particles?.sandPuff(this.position.clone(), 0.8, support, this.world.groundColor);
         audio.thud(this.position, 0.6);
         if (this.velocity.y < -20 && !this.A.boss) this.damage(clamp(-this.velocity.y - 20, 0, 60), this.position, null, 'fall');
       }
-      this.position.y = gh;
+      this.position.y = support;
       if (this.velocity.y < 0) this.velocity.y = 0;
       this.grounded = true;
-    } else this.grounded = false;
+    } else if (this.position.y > support + 0.06) this.grounded = false;
 
     // stay inside the arena
     if (terrain && !terrain.inBounds(this.position.x, this.position.z, 4)) {
@@ -983,6 +994,8 @@ export class Enemy {
       if (d2 > r * r || d2 < 1e-8) continue;
       const d = Math.sqrt(d2);
       _v4.multiplyScalar(1 / d).applyQuaternion(box.quat);
+      // an upward face is floor, and the support query above owns floors
+      if (_v4.y > 0.5) continue;
       _v4.y = 0;
       if (_v4.lengthSq() < 1e-6) continue;
       _v4.normalize();
@@ -1013,7 +1026,9 @@ export class Enemy {
     if (this.actor?.ragdolled) return;
 
     if (this.animator) {
-      const groundAt = (x, z) => (ctx.terrain ? ctx.terrain.height(x, z) : 0);
+      // the feet stand where the body stands — see src/physics/Support.js
+      const groundAt = (x, z) => supportHeight(ctx.terrain, ctx.physics?.staticBoxes, null,
+        x, z, this.position.y, this.radius, STEP_UP);
       this.animator.setFacing(this.facing);
       this.animator.update(dt, {
         position: this.position, facing: this.facing, velocity: this.velocity,
