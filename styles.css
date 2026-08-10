@@ -67,6 +67,9 @@ b{font-weight:650}
 /* Quieter than the tagline and a size below it: a credit, not a second title. */
 .byline{margin-top:10px;font:var(--mono);font-size:10px;letter-spacing:.34em;
   text-transform:uppercase;color:var(--dimmer);opacity:.62}
+.record{margin-top:7px;font:var(--mono);font-size:10px;letter-spacing:.14em;
+  color:var(--dim);opacity:.72}
+.record:empty{display:none}
 .menu-tabs{display:flex;gap:2px;justify-content:center;border-bottom:1px solid var(--line);margin-bottom:2px}
 .tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);font:var(--ui);font-weight:600;
   letter-spacing:.16em;text-transform:uppercase;font-size:11px;padding:12px 22px;cursor:pointer;transition:.18s}
@@ -289,6 +292,13 @@ button{font-family:inherit}
 /* ══════════════════ draft / pause / death ══════════════════ */
 .draft-wrap,.pause-wrap,.death-wrap{text-align:center;width:min(920px,92vw);animation:riseIn .5s cubic-bezier(.22,1,.36,1) both}
 .pause-wrap,.death-wrap{width:min(400px,90vw)}
+.landing-wrap{width:min(430px,90vw);text-align:center}
+/* The altitude, as the biggest thing on the screen. It is the one number that
+   says how far the climb has come, and the Spire has no geometry to say it. */
+.landing-alt{font:var(--mono);font-size:46px;letter-spacing:.06em;color:var(--accent);
+  text-shadow:0 0 34px rgba(87,201,255,.5);margin-bottom:2px}
+.landing-wrap h2{margin-bottom:6px}
+.landing-wrap .hint{margin-bottom:20px;font-style:italic;opacity:.82}
 .draft-cards{display:flex;gap:16px;justify-content:center;margin-top:28px;flex-wrap:wrap}
 .dc{width:250px;padding:22px 20px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
   cursor:pointer;transition:.24s cubic-bezier(.22,1,.36,1);text-align:left}

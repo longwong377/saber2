@@ -541,6 +541,11 @@ export class Menu {
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
+      landing: document.getElementById('landing'),
+      landingAlt: document.getElementById('landing-alt'),
+      landingTitle: document.getElementById('landing-title'),
+      landingBrief: document.getElementById('landing-brief'),
+      landingStats: document.getElementById('landing-stats'),
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
@@ -1621,4 +1626,25 @@ export class Menu {
     this.el.death.classList.remove('hidden');
   }
   hideDeath() { this.el.death.classList.add('hidden'); }
+
+  /**
+   * The landing between rungs of the Spire.
+   *
+   * `next` is the rung about to be climbed INTO, so the altitude and the brief
+   * describe where the player is going rather than where they have been — the
+   * card is a threshold, not a receipt. On the crown there is no next rung and
+   * the caller shows the death card with a different title instead.
+   */
+  showLanding({ altitude, name, brief, stats = [], onAscend }) {
+    this.el.landingAlt.textContent = `${Math.round(altitude).toLocaleString()} m`;
+    this.el.landingTitle.textContent = name;
+    this.el.landingBrief.textContent = brief || '';
+    this.el.landingStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    const btn = document.getElementById('btn-ascend');
+    // Replaced rather than added to: this screen is shown once per rung and a
+    // listener per landing would fire the fourth ascent four times.
+    btn.onclick = () => { audio.ui('good'); this.hideLanding(); onAscend?.(); };
+    this.el.landing.classList.remove('hidden');
+  }
+  hideLanding() { this.el.landing.classList.add('hidden'); }
 }

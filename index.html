@@ -38,6 +38,10 @@
       <div class="logo small"><span class="logo-blade"></span><h1>SABER</h1></div>
       <p class="tagline">a single blade against a hundred</p>
       <p class="byline">made by Valdrian</p>
+      <!-- Filled by main.js from Progress.js. A HISTORY, not a currency:
+           nothing here unlocks anything, and it is empty until you have played
+           once so a first run is never greeted by a row of zeroes. -->
+      <p class="record" id="menu-record"></p>
     </header>
 
     <nav class="menu-tabs">
@@ -342,6 +346,20 @@
          (main.js pauses off a raw keydown so it survives a broken binding), so
          it is the one key here that is declared rather than read. -->
     <div class="pause-hints" id="pause-hints"></div>
+  </div>
+</div>
+
+<!-- The landing between rungs of the Spire. Deliberately its own screen rather
+     than a reskinned death card: this is the one moment in a run that is not a
+     fight and not a menu, and the altitude line is the whole point of it — a
+     player who can read how far they have climbed does not need to be told. -->
+<div id="landing" class="screen hidden">
+  <div class="landing-wrap">
+    <div id="landing-alt" class="landing-alt">0 m</div>
+    <h2 id="landing-title">The Foundations</h2>
+    <p class="hint" id="landing-brief"></p>
+    <div id="landing-stats" class="death-stats"></div>
+    <button id="btn-ascend" class="primary">Ascend</button>
   </div>
 </div>
 

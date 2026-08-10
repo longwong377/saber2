@@ -217,8 +217,35 @@ export class World {
       this.notify('WAVE CLEAR', 'the Force is with you');
       audio.ui('good');
       this.score += 500 * w;
-      if (this.run) this.run.wave = w;
       for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
+      if (!this.run || this.run.done) return;
+      this.run.wave = w;
+      this.run.score = this.score;
+      this.run.kills = this.players.reduce((a, p) => a + p.kills, 0);
+      // Health crosses a landing as a FRACTION, so it is snapshotted at the
+      // moment the rung is survived rather than read off a player who is about
+      // to be disposed by the level change.
+      const alive = this.players.filter((p) => p.alive);
+      if (alive.length) {
+        this.run.hpFrac = Math.max(0.05,
+          alive.reduce((a, p) => a + p.hp / Math.max(1, p.maxHp), 0) / alive.length);
+      }
+      /**
+       * THE RUNG IS DONE — the one signal the Spire is made of.
+       *
+       * Fired here rather than inferred in main.js because `rung.waves` and
+       * `run.wave` both live on this side, and a caller that had to reconstruct
+       * "is this the last wave of this tier" from a wave number and a table
+       * would be a second copy of the ladder. The client decides what a landing
+       * LOOKS like; the world decides when one has been earned.
+       *
+       * The host is the only one that may say so: in co-op the peers are told
+       * by the level change that follows, and two clients both deciding to
+       * ascend would run the ladder twice.
+       */
+      if (this.netMode !== 'client' && this.run.wave >= (this.rung?.waves ?? Infinity)) {
+        this.onRungClear?.(this.run);
+      }
     };
     this.director.onDraft = (boons) => { this.onDraftOffer?.(boons); };
 

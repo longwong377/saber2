@@ -17,6 +17,8 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar } from './net/Net.js';
 import { boonById } from './game/Waves.js';
+import { Run } from './game/Run.js';
+import { recordRun, progressLines } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
@@ -176,7 +178,7 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-function buildWorld(levelKey) {
+function buildWorld(levelKey, run = null) {
   if (world) { world.dispose(); world = null; }
   audio.init();
   audio.resume();
@@ -196,7 +198,9 @@ function buildWorld(levelKey) {
     hud.explain(why, colour, grade < 0 ? 2.0 : 1.4);
   };
 
-  world.loadLevel(levelKey);
+  world.onRungClear = (r) => landing(r);
+
+  world.loadLevel(levelKey, { run });
   const player = world.spawnPlayer({ name: net.name || 'Jedi', isLocal: true });
   player.control.sensitivity = settings.sensitivity;
   player.control.followStrength = settings.camFollow;
@@ -207,8 +211,8 @@ function buildWorld(levelKey) {
   // there is no rig until there is a player.
   applyFeelSettings(world, settings);
 
-  hud.setLevel(LEVELS[levelKey].name, world.difficulty.name);
-  hud.setBoons([]);
+  hud.setLevel(world.rung ? world.rung.name : LEVELS[levelKey].name, world.difficulty.name);
+  hud.setBoons(heldBoons());
 
   if (world.training) {
     world.director.onLesson = (state) => hud.setCoach(state);
@@ -219,14 +223,37 @@ function buildWorld(levelKey) {
   return world;
 }
 
-function deploy() {
+/**
+ * THE SPIRE, at last connected to something.
+ *
+ * `gauntlet` has been in the mode list since the menu was written, with a blurb
+ * promising "a fixed ladder of set-pieces, ending in a boss", and had ZERO
+ * implementation — it fell through to the generic path and was byte-identical
+ * to the thing it claimed to be an alternative to. Run.js and Progress.js were
+ * written, checked, and had no callers at all. This is the wire.
+ *
+ * A run is created ONLY for the gauntlet. Every other mode is still a place you
+ * fight in rather than a climb, and giving them a Run would silently change
+ * what `Esc → Abandon` means in all of them.
+ */
+function startRun() {
+  if (settings.mode !== 'gauntlet') return null;
+  return new Run({
+    identity: { order: settings.order, species: settings.species },
+    mode: 'spire',
+  });
+}
+
+function deploy(run = startRun()) {
   saveSettings(settings);
   menu.hideMenu();
   menu.hideDeath();
   menu.hidePause();
+  menu.hideLanding();
 
-  const levelKey = settings.level;
-  buildWorld(levelKey);
+  // A rung BORROWS a level; outside the Spire the player's own choice stands.
+  const levelKey = run && !run.done ? run.rung.level : settings.level;
+  buildWorld(levelKey, run);
 
   if (net.enabled && net.connected) {
     world.attachNet(net, net.isHost ? 'host' : 'client');
@@ -239,7 +266,57 @@ function deploy() {
   input.requestLock();
 
   if (world.netMode !== 'client' && !world.training) world.director.start(1);
-  world.notify('MAY THE FORCE BE WITH YOU', LEVELS[levelKey].name);
+  if (run) world.notify(run.rung.name.toUpperCase(), run.rung.brief);
+  else world.notify('MAY THE FORCE BE WITH YOU', LEVELS[levelKey].name);
+}
+
+/**
+ * A rung survived.
+ *
+ * The heal is applied by `Run.ascend` (LANDING_HEAL), so the card can report
+ * the health the player will actually START the next rung on rather than the
+ * sliver they finished this one with — which is the number that decides whether
+ * they want to keep climbing.
+ */
+function landing(run) {
+  state = 'landing';
+  world.paused = true;
+  input.enabled = false;
+  input.exitLock();
+  audio.ui('wave');
+
+  const cleared = run.rung;
+  const more = run.ascend();      // heals, and steps the tier if there is one
+  if (!more) return crowned(run);
+
+  const next = run.rung;
+  menu.showLanding({
+    altitude: next.altitude,
+    name: next.name,
+    brief: next.brief,
+    stats: [
+      [`${cleared.name} cleared`, `${cleared.waves} wave${cleared.waves === 1 ? '' : 's'}`],
+      ['Climbed so far', `${run.depth} waves`],
+      ['Vitality', `${Math.round(run.hpFrac * 100)}%`],
+      ['Score', Math.floor(run.score).toLocaleString()],
+    ],
+    onAscend: () => deploy(run),
+  });
+}
+
+/** The crown. The one way this game has ever had of being finished. */
+function crowned(run) {
+  state = 'dead';
+  input.enabled = false;
+  input.exitLock();
+  recordRun(run.summary());
+  showRecord();
+  menu.showDeath([
+    ['Waves climbed', run.depth],
+    ['Score', Math.floor(run.score).toLocaleString()],
+    ['Kills', run.kills],
+    ['Boons held', run.boons.length],
+  ], 'You stand above the storm');
 }
 
 function resume() {
@@ -295,17 +372,40 @@ function restartWave() {
 function quitToMenu() {
   menu.hidePause();
   menu.hideDeath();
+  menu.hideLanding();
   hud.show(false);
   input.enabled = false;
   input.exitLock();
+  // An abandoned climb still happened. Recording it is what stops "deepest
+  // reached" from quietly meaning "deepest you happened to die on".
+  if (world?.run && !world.run.done) { world.run.end(); recordRun(world.run.summary()); }
   if (world) { world.dispose(); world = null; }
+  showRecord();
   menu.showMenu();
   state = 'menu';
 }
 
+/** The one line of history the main menu carries. See Progress.js. */
+function showRecord() {
+  const el = document.getElementById('menu-record');
+  if (!el) return;
+  const lines = progressLines();
+  el.textContent = lines.length && lines[0] !== 'No runs yet.' ? lines.join('  ·  ') : '';
+}
+showRecord();
+
 function gameOver(stats) {
   state = 'dead';
   input.enabled = false;
+  // A run that ended is a run that happened. `gameOver` used to reduce it to a
+  // card and throw it away — the only two localStorage keys in the tree were
+  // settings and keybinds, so you could play for an hour and the game would not
+  // know you had ever played. This is a record, not a currency: nothing here
+  // unlocks anything (see Progress.js).
+  if (world?.run && !world.run.done) {
+    world.run.end();
+    recordRun(world.run.summary());
+  }
   setTimeout(() => {
     input.exitLock();
     menu.showDeath([
@@ -601,7 +701,7 @@ function frame(now) {
     }
     hud.update(dt, world, world.player, engine.camera);
     setGuardRose(world);
-  } else if (world && (state === 'paused' || state === 'draft')) {
+  } else if (world && (state === 'paused' || state === 'draft' || state === 'landing')) {
     // keep the camera alive behind the overlay
     world.player?.camera.update(dt, world.player.position, { physics: world.physics, terrain: world.terrain });
   }

@@ -204,4 +204,122 @@ export async function run({ check, assert }) {
       'the level is merged over the rung, so the climb is overwritten by the place it borrowed');
     return 'air and weather both merged over the borrowed level';
   });
+
+  /* ══ the wire — everything above existed with no callers ═══════════════ */
+
+  check('run: something actually STARTS a run, ascends it, and records it', async () => {
+    // The whole of Run.js and Progress.js shipped with zero callers. `new Run`
+    // appeared nowhere, `recordRun` appeared nowhere, and World imported only
+    // SPIRE — so the climb existed as a data structure and could not be played.
+    // Every assertion here fails on that tree.
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    assert(/new Run\(/.test(main), 'nothing in main.js ever constructs a Run — the Spire is unreachable');
+    assert(/recordRun\(/.test(main), 'no run is ever recorded, so a finished climb leaves nothing behind');
+    assert(/onRungClear/.test(main), 'nothing listens for a rung being cleared, so there is no landing');
+    assert(/\.ascend\(\)/.test(main), 'nothing ever ascends, so the climb has one tier');
+    // …and the mode has to mean it. `gauntlet` fell straight through to the
+    // generic path for the whole life of the menu.
+    assert(/gauntlet/.test(main), 'main.js never mentions the gauntlet, so the mode still falls through');
+    // A run is created for the SPIRE only: handing every mode a Run silently
+    // changes what "abandon" means in all of them.
+    const i = main.indexOf('function startRun');
+    assert(i > 0, 'there is no single place a run begins');
+    assert(/mode !== 'gauntlet'/.test(main.slice(i, i + 400)),
+      'a run is created for every mode, not only the climb');
+    return 'main.js starts a run, lands between rungs, ascends, and records the result';
+  });
+
+  check('run: the world says when a rung is done, and only the host says it', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const i = world.indexOf('onWaveClear = ');
+    assert(i > 0, 'onWaveClear is gone');
+    const body = world.slice(i, i + 1600);
+    assert(/onRungClear/.test(body), 'clearing the last wave of a rung signals nothing');
+    // The ladder lives on one side. A client reconstructing "was that the last
+    // wave of this tier" from a wave number and a table is a second copy of it.
+    assert(/rung\?\.waves|rung\.waves/.test(body),
+      'the rung length is not consulted where the rung is judged complete');
+    assert(/netMode !== 'client'/.test(body),
+      'a joining client can declare the rung cleared, so two peers would climb the ladder twice');
+    return 'the host alone fires onRungClear, off the rung\'s own length';
+  });
+
+  check('run: a landing carries health forward as a fraction of a moving maximum', () => {
+    // maxHp is itself a thing boons move, so carrying a raw number silently
+    // undoes Vitality at every landing. And a landing must heal SOME but not
+    // ALL, or the rung just survived stops mattering to the one above it.
+    assert(LANDING_HEAL > 0 && LANDING_HEAL < 1,
+      `LANDING_HEAL is ${LANDING_HEAL} — at 0 a bad rung ends a run four tiers later, at 1 no rung costs anything`);
+    const r = new Run({ seed: 7 });
+    r.hpFrac = 0.10;
+    r.ascend();
+    const after = r.hpFrac;
+    assert(after > 0.10, 'a landing healed nothing');
+    assert(after < 1, 'a landing is a full heal, so the tier below it was free');
+    // …and it must never exceed full, however many landings there are.
+    for (let i = 0; i < 20; i++) r.hpFrac = Math.min(1, r.hpFrac + LANDING_HEAL);
+    assert(r.hpFrac <= 1, `health carried past full: ${r.hpFrac}`);
+    return `0.10 → ${after.toFixed(2)} on a landing, clamped at 1.0 across twenty of them`;
+  });
+
+  check('run: winning counts the tier you won on', () => {
+    // `ascend` zeroed `wave` before deciding whether there was another rung, so
+    // the crown's own waves fell out of `depth` — a full climb recorded itself
+    // as the sum of every tier BUT the last, on the one screen whose whole job
+    // is to say how far you got. Caught by walking a climb, not by reading it.
+    const total = SPIRE.reduce((n, t) => n + t.waves, 0);
+    const r = new Run({ seed: 11 });
+    let guard = 0;
+    while (guard++ < 50) {
+      r.wave = r.rung.waves;
+      if (!r.ascend()) break;
+    }
+    assert(r.won, 'the climb did not finish');
+    assert(r.depth === total,
+      `a full climb of ${total} waves recorded depth ${r.depth} — the crown's ${SPIRE[SPIRE.length - 1].waves} waves are missing`);
+    // and a run that dies partway still counts what it did climb
+    const d = new Run({ seed: 12 });
+    d.wave = d.rung.waves; d.ascend();
+    d.wave = 2;
+    assert(d.depth === SPIRE[0].waves + 2, `a partial climb reported ${d.depth}`);
+    return `full climb = ${r.depth} waves (all ${SPIRE.length} rungs), partial = ${d.depth}`;
+  });
+
+  check('run: ranks survive a landing exactly, instead of being refunded or doubled', () => {
+    // THE ONE THAT WOULD HAVE BITTEN. `Run.boons` is replayed into a freshly
+    // built player at every landing, and `Player.applyBoon` counts its own
+    // ranks as it goes. So the run's list must keep REPEATS: deduplicating it
+    // would hand back rank 1 four rungs running, and `unload()` not clearing
+    // World.takenBoons would have counted every carried rank again per rung.
+    const r = new Run({ seed: 3 });
+    const vit = { id: 'vitality', stack: 4 };
+    for (let i = 0; i < 6; i++) r.take(vit);
+    assert(r.rank('vitality') === 4,
+      `six takes of a 4-stack card left ${r.rank('vitality')} ranks — the cap is not enforced on the run`);
+    assert(r.boons.length === 4, `the run stored ${r.boons.length} entries for 4 ranks — replay would drift`);
+    const unranked = { id: 'lightning' };
+    r.take(unranked); r.take(unranked);
+    assert(r.rank('lightning') === 1, 'an unranked card stacked, so a second Force Lightning is a card');
+    return '4 ranks kept as 4 entries, capped, and unranked cards still take once';
+  });
+
+  check('run: the taken-set is rebuilt on a level change, not appended to', async () => {
+    // `unload()` disposes the world; the taken-set is not part of the world, so
+    // it survived and spawnPlayer re-added every carried boon to a set that
+    // already held it. Harmless while ids could only be present once. Fatal
+    // with ranks: a four-rung climb counted a rank-2 Vitality as rank 8.
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const i = world.indexOf('  loadLevel(');
+    const body = world.slice(i, i + 1800);
+    assert(/takenBoons = new RankSet\(\)/.test(body),
+      'loadLevel does not rebuild takenBoons, so every carried rank is counted again on every landing');
+    const unloadAt = body.indexOf('this.unload()');
+    const resetAt = body.indexOf('takenBoons = new RankSet()');
+    assert(unloadAt >= 0 && resetAt > unloadAt,
+      'the taken-set is rebuilt before unload, which is the wrong side of the thing that clears the world');
+    return 'takenBoons rebuilt after unload, refilled from the order and the run';
+  });
 }

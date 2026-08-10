@@ -41,7 +41,10 @@ export const MODES = {
   waves:   { name: 'Trial of Waves', blurb: 'Endless escalation. Survive as long as the Force allows.' },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
   duel:    { name: 'Duel', blurb: 'Acolytes only. No blasters, no crowd. Just blades.' },
-  gauntlet: { name: 'Gauntlet', blurb: 'Fixed ladder of set-pieces, ending in a boss.' },
+  // Was "Fixed ladder of set-pieces, ending in a boss" with ZERO implementation
+  // — it fell through to the generic path and was byte-identical to the mode it
+  // claimed to be an alternative to. It is the Spire now; see Run.js.
+  gauntlet: { name: 'The Spire', blurb: 'Four tiers, climbed. The weather is the only thing that tells you how high you are — and at the top the storm is below you.' },
   sandbox: { name: 'Sandbox', blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.' },
 };
 

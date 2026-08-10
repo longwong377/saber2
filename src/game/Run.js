@@ -148,9 +148,15 @@ export class Run {
 
   /** Survived a rung. Returns false when that was the last one. */
   ascend() {
-    this.wave = 0;
     this.hpFrac = Math.min(1, this.hpFrac + LANDING_HEAL);
+    /**
+     * THE CROWN KEEPS ITS WAVES. `wave` is zeroed because the next rung starts
+     * at its first wave — but there is no next rung here, and zeroing it threw
+     * the crown's own five waves out of `depth`. A sixteen-wave climb recorded
+     * itself as eleven, on the one screen that exists to say how far you got.
+     */
     if (this.last) { this.done = true; this.won = true; return false; }
+    this.wave = 0;
     this.tier++;
     return true;
   }
