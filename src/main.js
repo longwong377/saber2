@@ -9,7 +9,8 @@ import { Engine, QUALITY } from './engine/Engine.js';
 import { Input } from './engine/Input.js';
 import { audio } from './engine/Audio.js';
 import { initPhysics } from './physics/Rapier.js';
-import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps } from './engine/Textures.js';
+import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
+  soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
 import { LEVELS } from './game/Levels.js';
 import { DIFFICULTY } from './game/Combat.js';
@@ -140,14 +141,36 @@ const menu = new Menu(settings, {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 async function boot() {
+  /**
+   * EVERY ground a level can name, plus every material a body is built from.
+   *
+   * `materialFrom` caches the expensive half — the pixel bake — under the
+   * texture's NAME, independent of the repeat, so warming with the default
+   * repeat here makes the level-load call a cheap texture-object construction.
+   * A generator missing from this list is not merely unwarmed: it bakes 512²
+   * of procedural noise on the first frame that needs it.
+   *
+   * THREE WERE MISSING, and they were the three that had been added most
+   * recently. `soil` and `snow` are what `Terrain.js`'s ground presets resolve
+   * to for meadow, drifts and alpine — which are the Spire's crown, shoulders
+   * and flanks, so three of the four rungs baked their ground on the first
+   * frame after a landing, at the exact moment the player is looking hardest at
+   * a new place. `skin` is every body in the game, baked on the first spawn.
+   *
+   * tools/checks/levels.mjs fails if a ground preset is not warmed here, so
+   * the next preset cannot quietly repeat this.
+   */
   const steps = [
     ['forging blade', () => { }],
     ['grinding sand', () => sandMaps()],
     ['weathering rock', () => rockMaps()],
+    ['turning soil', () => soilMaps()],
+    ['drifting snow', () => snowMaps()],
     ['milling durasteel', () => metalMaps()],
     ['weaving robes', () => clothMaps()],
     ['casting plastoid', () => armorMaps()],
     ['pouring duracrete', () => duracreteMaps()],
+    ['warming flesh', () => skinMaps()],
     ['tuning the hum', () => { }],
     ['settling the world', null],     // async: see below
   ];

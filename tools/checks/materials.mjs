@@ -18,7 +18,7 @@
  */
 
 import { rawMaps, MEAN_ALBEDO, PERIODIC, sandMaps, rockMaps, metalMaps, clothMaps, armorMaps,
-         duracreteMaps, skinMaps, disposeTextureCache } from '../../src/engine/Textures.js';
+         duracreteMaps, skinMaps, soilMaps, snowMaps, disposeTextureCache } from '../../src/engine/Textures.js';
 
 const SURFACES = ['sand', 'rock', 'metal', 'cloth', 'armor', 'duracrete', 'skin'];
 const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
@@ -345,20 +345,90 @@ export function run({ check, assert, near }) {
     return `4-cycle swing — ${rows.join('  ')}`;
   });
 
-  check('materials: the whole foundry bakes inside its boot budget', () => {
-    // Six surfaces are baked on the loading screen. Rock is 1024² because it is
-    // the coarsest-tiled map in the game (one tile per ~9 m of terrain) and at
-    // 512 its grain aliased; everything else is 512².
+  check('materials: the whole foundry bakes inside its boot budget', async () => {
+    /**
+     * READ FROM THE BOOT LIST, not restated. This used to name six surfaces in
+     * an array here — and the boot list had grown past six, so the check was
+     * measuring a budget for a foundry that no longer existed. The generators
+     * are looked up by name out of `main.js`'s own warm steps, so adding one
+     * there is what changes this.
+     *
+     * Rock is 1024² because it is the coarsest-tiled map in the game (one tile
+     * per ~9 m of terrain) and at 512 its grain aliased; everything else is 512².
+     */
+    const gens = { sandMaps, rockMaps, soilMaps, snowMaps, metalMaps, clothMaps,
+      armorMaps, duracreteMaps, skinMaps };
+    const warmed = await bootWarmList();
+    assert(warmed.length >= 6, `only ${warmed.length} warm steps parsed out of main.js`);
     disposeTextureCache();
     M.clear();
     const times = [];
-    for (const [n, f] of [['sand', sandMaps], ['rock', rockMaps], ['metal', metalMaps],
-                          ['cloth', clothMaps], ['armor', armorMaps], ['duracrete', duracreteMaps]]) {
-      const t = Date.now(); f(); times.push([n, Date.now() - t]);
+    for (const name of warmed) {
+      const f = gens[name];
+      assert(f, `boot warms ${name}, which this check cannot resolve to a generator`);
+      const t = Date.now(); f(); times.push([name.replace('Maps', ''), Date.now() - t]);
     }
     const total = times.reduce((s, t) => s + t[1], 0);
-    assert(total < 12000, `the foundry takes ${total}ms to bake`);
+    // The budget is per-surface-count now rather than a flat number, because the
+    // list is allowed to grow and a flat 12 s would silently become a tighter
+    // and tighter bound as it does. 2 s each is generous against the ~200-400 ms
+    // a 512² bake actually costs.
+    assert(total < 2000 * warmed.length,
+      `the foundry takes ${total}ms to bake ${warmed.length} surfaces`);
     assert(rawMaps('rock').size === 1024, 'rock must stay at 1024²');
     return times.map(([n, t]) => `${n} ${t}ms`).join(' ') + ` — ${total}ms total`;
   });
+
+  check('materials: every ground a level can stand on is warmed at boot', async () => {
+    /**
+     * THE HITCH THIS PREVENTS. `materialFrom` caches the expensive half — the
+     * 512² pixel bake — under the texture's name, so a generator missing from
+     * `main.js`'s warm list is not merely cold: it bakes on the first frame that
+     * needs it.
+     *
+     * Three were missing, and they were the three added most recently. `soil`
+     * and `snow` are what Terrain's ground presets resolve to for meadow,
+     * drifts and alpine — the Spire's crown, shoulders and flanks — so three of
+     * the four rungs baked their ground on the first frame AFTER A LANDING,
+     * measured at ~440 ms and ~335 ms, at the exact moment the player is looking
+     * hardest at a new place. `skin` is every body in the game, on first spawn.
+     *
+     * Pinned against Terrain's own preset table rather than a list here, so the
+     * next ground preset someone authors cannot quietly repeat it.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const terrain = await readFile(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8');
+    // `_mapSet` is the one place a preset name becomes a generator call.
+    const i = terrain.indexOf('  _mapSet()');
+    assert(i > 0, 'Terrain._mapSet is gone');
+    const body = terrain.slice(i, i + 700);
+    const needed = new Set([...body.matchAll(/\b(\w+Maps)\(/g)].map(m => m[1]));
+    assert(needed.size >= 3, `only ${needed.size} generators found in _mapSet — the parse is wrong`);
+    const warmed = new Set(await bootWarmList());
+    const cold = [...needed].filter(n => !warmed.has(n));
+    assert(!cold.length,
+      `${cold.join(', ')} can be a level's ground and ${cold.length === 1 ? 'is' : 'are'} not warmed at boot — `
+      + 'it bakes 512² of procedural noise on the first frame that needs it');
+    // …and every preset the table declares must actually reach _mapSet, or a
+    // level could name a ground this check never sees.
+    const declared = new Set([...terrain.matchAll(/maps:\s*'(\w+)'/g)].map(m => m[1]));
+    const unhandled = [...declared].filter(p => !new RegExp(`case '${p}'`).test(body) && p !== 'sand');
+    assert(!unhandled.length,
+      `ground preset(s) ${unhandled.join(', ')} are declared but have no case in _mapSet — they fall through to sand`);
+    return `${needed.size} ground generators, all warmed; ${declared.size} presets, all handled`;
+  });
+}
+
+/**
+ * The texture generators `main.js` warms on the loading screen, by name.
+ *
+ * Parsed rather than duplicated: a copy of this list is exactly what let the
+ * budget check above go stale, and what let three generators go cold.
+ */
+async function bootWarmList() {
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+  const i = main.indexOf('const steps = [');
+  const list = main.slice(i, main.indexOf('];', i));
+  return [...list.matchAll(/\(\)\s*=>\s*(\w+Maps)\(/g)].map(m => m[1]);
 }
