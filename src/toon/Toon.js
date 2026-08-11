@@ -125,6 +125,9 @@ export function toonMaterial(src, ramp) {
     emissiveIntensity: src.emissiveIntensity ?? 1,
   });
   m.userData.toonOf = src;
+  // Marks this as OURS, so the rim/fog extensions we add below are not later
+  // mistaken by `hasCustomShader` for pre-existing work we must not replace.
+  m.userData.toonOwned = true;
   return m;
 }
 
@@ -147,21 +150,54 @@ export function collectSwappable(root, ramp) {
     const toon = [];
     let any = false;
     for (const m of list) {
-      if (m && m.isMeshStandardMaterial) { toon.push(toonMaterial(m, ramp)); any = true; }
-      else toon.push(m);
+      if (m && m.isMeshStandardMaterial && !hasCustomShader(m)) {
+        toon.push(toonMaterial(m, ramp)); any = true;
+      } else toon.push(m);
     }
     if (any) swaps.push({ mesh: o, pbr: o.material, toon: Array.isArray(o.material) ? toon : toon[0] });
   });
   return swaps;
 }
 
-/** Point every collected mesh at one side of the A/B. */
+/**
+ * Does this material carry shader work a straight swap would throw away?
+ *
+ * MEASURED THE HARD WAY. The terrain is a `MeshStandardMaterial` with an
+ * `onBeforeCompile` that blends TWO map sets — soil against rock, by slope and
+ * height (`Terrain.js`). Converting it to a plain `MeshToonMaterial` kept the
+ * colour and the first map and silently dropped the blend, and the meadow's
+ * ground rendered blown-out white while the PBR side of the same frame looked
+ * correct.
+ *
+ * So the rule is: a material that has been extended is not swappable, because
+ * the swap is not a conversion — it is a replacement, and a replacement loses
+ * whatever the extension was for. Those materials stay PBR. Banding them
+ * properly means injecting into the shader they already have, the way
+ * `bandGrass` does, which is per-material work and not a sweep.
+ */
+export function hasCustomShader(m) {
+  return typeof m.onBeforeCompile === 'function'
+    && m.onBeforeCompile !== THREE.Material.prototype.onBeforeCompile
+    && !m.userData.toonOwned;
+}
+
+/**
+ * Point every collected mesh at one side of the A/B.
+ *
+ * Tolerates a missing list on purpose: on the live page the controls exist
+ * before the world does — the panel is in the DOM from the first frame and the
+ * boot takes seconds — so a click can legitimately arrive before there is
+ * anything to shade. Throwing there would be a crash caused by the user being
+ * quick.
+ */
 export function applyShading(swaps, mode) {
+  if (!swaps) return;
   for (const s of swaps) s.mesh.material = mode === 'toon' ? s.toon : s.pbr;
 }
 
 /** Re-point every toon material at a freshly built ramp. */
 export function retargetRamp(swaps, ramp) {
+  if (!swaps) return;
   for (const s of swaps) {
     const list = Array.isArray(s.toon) ? s.toon : [s.toon];
     for (const m of list) if (m && m.isMeshToonMaterial) { m.gradientMap = ramp; m.needsUpdate = true; }
@@ -199,6 +235,50 @@ export function retargetRamp(swaps, ramp) {
  * inside a silhouette (creases) as well as around it. Both are visible in the
  * demo — the normal-sensitivity slider is exactly the crease control.
  */
+/**
+ * Is this material's drawn silhouette something other than its geometry?
+ *
+ * If so it cannot appear in the outline prepass, because `overrideMaterial`
+ * replaces it with `MeshNormalMaterial` — which has no alpha map, no alpha test
+ * and no blend, and therefore draws a fully opaque copy of whatever quad the
+ * thing happens to live on. See the note in `OutlinePass.prepass`.
+ *
+ * Cached on the material, because the `discard` test reads shader source and
+ * this runs for every object every frame.
+ */
+function cutsItsOwnSilhouette(m) {
+  // Explicitly excluded — see `noOutline`.
+  if (m.userData._toonNoOutline) return true;
+  if (m.userData._toonCut !== undefined) return m.userData._toonCut;
+  const cut = !!(m.transparent || m.alphaTest > 0
+    || m.blending === THREE.AdditiveBlending
+    || (typeof m.fragmentShader === 'string' && m.fragmentShader.indexOf('discard') >= 0));
+  m.userData._toonCut = cut;
+  return cut;
+}
+
+/**
+ * Never ink this material.
+ *
+ * THE GRASS, and this is a design finding rather than a workaround. A field is
+ * tens of thousands of thin blades: every one of them is a genuine silhouette,
+ * so a screen-space edge detector finds an edge on all of them, and at any
+ * distance where a blade is about a pixel wide the result is a band of black
+ * stipple across the middle of the frame. It looked like a bug in the shader
+ * and is not — it is the effect working exactly as specified on input it should
+ * never have been given.
+ *
+ * The reference games do not outline grass either. Ink goes on things that read
+ * as FORMS — figures, rocks, architecture — and not on things that read as
+ * texture. That distinction has to be authored; it cannot be derived.
+ */
+export function noOutline(material) {
+  if (!material) return;
+  for (const m of (Array.isArray(material) ? material : [material])) {
+    if (m) m.userData._toonNoOutline = true;
+  }
+}
+
 export class OutlinePass {
   constructor(renderer, width, height) {
     this.renderer = renderer;
@@ -221,6 +301,17 @@ export class OutlinePass {
       tDepth: { value: this.target.depthTexture },
       uTexel: { value: new THREE.Vector2(1 / width, 1 / height) },
       uWidth: { value: 1.4 },
+      /**
+       * A SECOND, NARROWER WIDTH FOR CREASES.
+       *
+       * One uniform line weight is most of why the first pass read as
+       * "flat-shaded 3D" rather than "drawn". Ink varies: heavy on the
+       * silhouette, light on interior folds. The two terms were already
+       * computed separately here — the depth Sobel finds silhouettes, the
+       * normal Sobel finds creases — so giving them their own sample radius is
+       * nearly free and is the difference between a wireframe and a drawing.
+       */
+      uCreaseWidth: { value: 0.7 },
       uDepthBias: { value: 0.55 },
       uNormalBias: { value: 0.62 },
       uColor: { value: new THREE.Color(0x0b1018) },
@@ -244,7 +335,7 @@ export class OutlinePass {
           uniform sampler2D tNormal;
           uniform sampler2D tDepth;
           uniform vec2  uTexel;
-          uniform float uWidth, uDepthBias, uNormalBias, uOpacity, uNear, uFar;
+          uniform float uWidth, uCreaseWidth, uDepthBias, uNormalBias, uOpacity, uNear, uFar;
           uniform vec3  uColor;
           varying vec2 vUv;
 
@@ -275,6 +366,25 @@ export class OutlinePass {
             // enough to trip the bias and the far field loses all its lines.
             float dEdge = (abs(dL + dR - 2.0 * dC) + abs(dU + dD - 2.0 * dC)) / max(dC, 1.0);
 
+            /**
+             * GRAZING-ANGLE CORRECTION, and without it the horizon is a scribble.
+             *
+             * A depth Sobel asks "does depth change faster here than across a
+             * flat surface" — but on a surface seen edge-on, depth changes
+             * enormously per pixel with no edge present at all. So a rolling
+             * meadow inked a solid black band along every ridgeline and across
+             * the whole mid-distance, which looked like the threshold was
+             * mistuned and was not: it was correct for surfaces facing the
+             * camera and meaningless for surfaces facing away from it.
+             *
+             * The view-space normal's Z is exactly |N·V| for a view-space
+             * frame, so it says how side-on this pixel is. Dividing the
+             * measured gradient by it removes the part of the change that the
+             * angle alone explains, leaving the part an actual edge caused.
+             */
+            float facing = max(abs(normalize(texture2D(tNormal, vUv).xyz * 2.0 - 1.0).z), 0.06);
+            dEdge *= facing;
+
             // NORMALIZED, and this is not defensive tidiness — it was a bug.
             // 1.0 - dot(a, b) is only "the angle between two normals" when
             // both are unit length. Un-normalized, a FLAT region of the buffer
@@ -283,11 +393,13 @@ export class OutlinePass {
             // every one of the four taps contributed 0.52, the sum was 2.08
             // against a 0.62 threshold, and the entire sky was painted with the
             // line colour. It looked exactly like "the background is broken".
+            // Creases sample on their OWN, narrower radius — see uCreaseWidth.
+            vec2 c = uTexel * uCreaseWidth;
             vec3 nC = normalize(texture2D(tNormal, vUv).xyz * 2.0 - 1.0);
-            vec3 nL = normalize(texture2D(tNormal, vUv - vec2(o.x, 0.0)).xyz * 2.0 - 1.0);
-            vec3 nR = normalize(texture2D(tNormal, vUv + vec2(o.x, 0.0)).xyz * 2.0 - 1.0);
-            vec3 nD = normalize(texture2D(tNormal, vUv - vec2(0.0, o.y)).xyz * 2.0 - 1.0);
-            vec3 nU = normalize(texture2D(tNormal, vUv + vec2(0.0, o.y)).xyz * 2.0 - 1.0);
+            vec3 nL = normalize(texture2D(tNormal, vUv - vec2(c.x, 0.0)).xyz * 2.0 - 1.0);
+            vec3 nR = normalize(texture2D(tNormal, vUv + vec2(c.x, 0.0)).xyz * 2.0 - 1.0);
+            vec3 nD = normalize(texture2D(tNormal, vUv - vec2(0.0, c.y)).xyz * 2.0 - 1.0);
+            vec3 nU = normalize(texture2D(tNormal, vUv + vec2(0.0, c.y)).xyz * 2.0 - 1.0);
             float nEdge = (1.0 - dot(nC, nL)) + (1.0 - dot(nC, nR))
                         + (1.0 - dot(nC, nD)) + (1.0 - dot(nC, nU));
 
@@ -325,6 +437,48 @@ export class OutlinePass {
   prepass(scene, camera) {
     this.uniforms.uNear.value = camera.near;
     this.uniforms.uFar.value = camera.far;
+    /**
+     * TRANSPARENT THINGS ARE HIDDEN FOR THE PREPASS, and this is not a polish
+     * detail — without it the effect is unusable on a real scene.
+     *
+     * `overrideMaterial` replaces EVERY material with `MeshNormalMaterial`,
+     * which has no alpha map, no alpha test and no additive blend. So every
+     * camera-facing billboard renders as a fully opaque rectangle in the normal
+     * and depth buffers: the cloud layer became a wall of inked squares across
+     * the sky, and the lightsaber — an additive quad — became an outlined
+     * quadrilateral instead of a blade. Both looked like the outline shader was
+     * broken; neither was.
+     *
+     * The test is not a hand-kept list but the property that actually matters:
+     * IS THIS OBJECT'S SILHOUETTE ITS GEOMETRY? Three ways it can fail to be,
+     * and all three were found by looking at a render:
+     *
+     *   `transparent`  — the cloud layer, which inked a wall of squares.
+     *   additive       — the lightsaber, which became an outlined quadrilateral
+     *                    instead of a blade.
+     *   `alphaTest`    — the ordinary cutout case.
+     *   a `discard`    — the grass CARDS, and the subtle one. They set
+     *                    `transparent: false` and NO alphaTest: the cutout is a
+     *                    `discard` inside their own fragment shader. So the
+     *                    first three rules all let them through, and the
+     *                    mid-field turned into a band of black stipple where
+     *                    every card quad had been inked as a rectangle.
+     *
+     * That last case is why the test ends up looking at shader SOURCE. It is
+     * not elegant, but the alternative is a list of object names, and a list is
+     * wrong the first time somebody adds a cutout material.
+     */
+    const hidden = this._hidden || (this._hidden = []);
+    hidden.length = 0;
+    scene.traverseVisible((o) => {
+      const m = o.material;
+      if (!m) return;
+      const list = Array.isArray(m) ? m : [m];
+      if (list.some((x) => x && cutsItsOwnSilhouette(x))) {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
     const prevMat = scene.overrideMaterial;
     const prevBg = scene.background;
     const prevFog = scene.fog;
@@ -342,6 +496,8 @@ export class OutlinePass {
     scene.overrideMaterial = prevMat;
     scene.background = prevBg;
     scene.fog = prevFog;
+    for (const o of hidden) o.visible = true;
+    hidden.length = 0;
   }
 
   /** Composite the lines over whatever is already in the frame buffer. */
@@ -393,6 +549,118 @@ export const PALETTES = {
     fogNear: 8, fogFar: 46, dark: 0.30,
   },
 };
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The grass                                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * BAND THE GRASS — the single most important surface in this game, and the one
+ * the first demo missed entirely.
+ *
+ * `collectSwappable` converts `MeshStandardMaterial` and nothing else, and the
+ * grass is a hand-written `ShaderMaterial` (`GRASS_FRAG`, Scenery.js). So on a
+ * level whose whole subject is a field, the toon pass skipped the entire
+ * picture — which is a large part of why "the ground barely changed".
+ *
+ * The injection point is one line, and it is the right line:
+ *
+ *     float wrap = clamp(dot(N, L) * 0.62 + 0.38, 0.0, 1.0);
+ *
+ * That is the blade's HALF-LAMBERT diffuse response — the 0.62/0.38 wrap is
+ * there because a blade lit from behind is dim rather than black. Quantising
+ * `wrap` bands exactly the term a ramp is supposed to band, and leaves the
+ * translucency, the sheen, the wave-as-light and the ambient alone. Quantising
+ * the final colour instead would posterise the wind, which is the one thing in
+ * this level that must stay continuous.
+ *
+ * It sits inside `#pragma unroll_loop_start`, so the replacement lands once per
+ * directional light, which is what we want.
+ *
+ * Gated on a uniform rather than compiled in, so the same material is the live
+ * A/B rather than needing a rebuild.
+ */
+const GRASS_WRAP = 'float wrap = clamp(dot(N, L) * 0.62 + 0.38, 0.0, 1.0);';
+
+export function bandGrass(material, bandsRef) {
+  if (!material || material.userData.toonBanded) return false;
+  const src = material.fragmentShader;
+  if (!src || src.indexOf(GRASS_WRAP) < 0) return false;   // not the grass, or it moved
+  material.fragmentShader = src.replace(GRASS_WRAP, /* glsl */`
+        ${GRASS_WRAP}
+        if (uGrassBands > 0.5) {
+          float gb = max(2.0, uGrassBands);
+          // floor, not round: rounding puts the brightest band at the very top
+          // of the range and a fully-lit blade lands a hair under 1.0, so the
+          // crest of the field never reaches the light it should.
+          wrap = clamp(floor(wrap * gb) / (gb - 1.0), 0.0, 1.0);
+        }
+  `);
+  material.fragmentShader = `uniform float uGrassBands;\n${material.fragmentShader}`;
+  material.uniforms.uGrassBands = bandsRef;
+  material.needsUpdate = true;
+  material.userData.toonBanded = true;
+  // Banded, but never inked — see `noOutline` for why a field must not be.
+  noOutline(material);
+  return true;
+}
+
+/**
+ * Find every grass material in a scene and band it.
+ *
+ * By SHADER CONTENT rather than by name or by walking to a known field object:
+ * `GrassField` builds more than one material (blades and cards), rebuilds them
+ * on an LOD change, and a level may hold several. Matching on the wrap line
+ * catches all of them and cannot be fooled by something merely called grass.
+ */
+export function bandAllGrass(scene, bandsRef) {
+  let n = 0;
+  scene.traverse((o) => {
+    const list = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of list) if (m?.isShaderMaterial && bandGrass(m, bandsRef)) n++;
+  });
+  return n;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Rim light                                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A Fresnel rim on the toon materials.
+ *
+ * The cheapest thing missing from the first pass and, per the reference games,
+ * one of the two that most separates a figure from the ground behind it. Added
+ * AFTER the tone-mapped output rather than into the light loop, because a rim
+ * is a drawn convention — an ink-and-paint highlight — and not a light that
+ * obeys the rig.
+ */
+export function installRim(material, rimRef, colorRef) {
+  const prev = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    prev?.call(material, shader, renderer);
+    shader.uniforms.uRim = rimRef;
+    shader.uniforms.uRimColor = colorRef;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n varying vec3 vRimN;\n varying vec3 vRimV;')
+      .replace('#include <fog_vertex>',
+        '#include <fog_vertex>\n vRimN = normalize(normalMatrix * normal);\n vRimV = normalize(-mvPosition.xyz);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\n uniform float uRim;\n uniform vec3 uRimColor;\n varying vec3 vRimN;\n varying vec3 vRimV;')
+      .replace('#include <dithering_fragment>', /* glsl */`
+        #include <dithering_fragment>
+        if (uRim > 0.0) {
+          float f = 1.0 - clamp(dot(normalize(vRimN), normalize(vRimV)), 0.0, 1.0);
+          // Stepped, not smooth: a soft Fresnel is a realism cue and reads as
+          // wet plastic. A hard edge reads as a drawn highlight.
+          float r = step(0.62, f) * uRim;
+          gl_FragColor.rgb += uRimColor * r;
+        }
+      `);
+  };
+  material.needsUpdate = true;
+}
 
 /**
  * Banded distance fog.

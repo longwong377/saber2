@@ -1,13 +1,13 @@
 /**
  * Boot check for the cel-shading experiment page.
  *
- *   node tools/toon-smoke.mjs [--frames 8] [--shot]
+ *   node tools/toon-smoke.mjs [--page meadow.html] [--boot 400000] [--shot]
  *
  * `tools/smoke.mjs` cannot do this job: it is coupled to the GAME's boot
  * sequence — it writes `saber.settings.v2`, waits for the loading screen to
- * finish, deploys a level and drives the wave director. toon.html has none of
- * that. It is a different page with a different lifecycle, so it gets its own
- * short check rather than a pile of flags on the other one.
+ * finish, deploys a level and drives the wave director. The experiment pages
+ * have a different lifecycle, so they get their own short check rather than a
+ * pile of flags on the other one.
  *
  * What this proves, and it is exactly what a headless run CAN prove: the module
  * graph resolves, every import exists, the shaders compile, and nothing throws
@@ -26,6 +26,14 @@ const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
 const FRAMES = parseInt(flag('frames', '8'), 10);
 const SHOT = args.includes('--shot');
+const PAGE = flag('page', 'toon.html');
+/**
+ * The live meadow page boots the whole game — physics, terrain, a grass field,
+ * the sky dome, a player — and under SwiftShader that is minutes, not seconds.
+ * Stated as a flag rather than a bigger constant for everyone, because a check
+ * whose timeout is set for the worst case stops failing usefully on the best.
+ */
+const BOOT_MS = parseInt(flag('boot', '180000'), 10);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -37,7 +45,7 @@ const MIME = {
 const server = createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/') p = '/toon.html';
+    if (p === '/') p = '/' + PAGE;
     const file = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
     if (!file.startsWith(ROOT) || !existsSync(file) || !statSync(file).isFile()) {
       res.writeHead(404); res.end('not found'); return;
@@ -65,7 +73,7 @@ page.on('requestfailed', (r) => errors.push(`requestfailed: ${r.url()} — ${r.f
 // URL. Naming the file is the entire value of this listener.
 page.on('response', (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()}: ${r.url()}`); });
 
-await page.goto(`http://127.0.0.1:${port}/toon.html`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.goto(`http://127.0.0.1:${port}/${PAGE}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
 // Wait for the loop to actually be running rather than for a fixed delay: the
 // scene builds real bodies and bakes real 512² textures, and under SwiftShader
@@ -73,40 +81,56 @@ await page.goto(`http://127.0.0.1:${port}/toon.html`, { waitUntil: 'domcontentlo
 const ran = await page.waitForFunction(() => {
   const el = document.getElementById('fps');
   return el && el.textContent !== '—';
-}, { timeout: 180000 }).then(() => true).catch(() => false);
+}, undefined, { timeout: BOOT_MS }).then(() => true).catch(() => false);
 if (!ran) errors.push('the render loop never produced a frame');
 
 /**
  * Exercise every path, because a shader that only compiles when you flip to it
- * is a shader that is broken for the player and not for the test. Split mode in
- * particular is the only path that runs the scissor + both material sets in one
- * frame, and the outline pass only compiles when it is first drawn.
+ * is broken for the player and not for the test — the outline pass, the split
+ * scissor and the grass injection all compile lazily.
+ *
+ * DISCOVERED, NOT LISTED. The first version named each control by id, so it was
+ * a second copy of the UI that went stale the moment a page had different
+ * controls — and it does: `toon.html` has palettes and a split wipe,
+ * `meadow.html` has grass banding and a rim slider. Walking the DOM sweeps
+ * whatever is actually there, and a control added later is covered for free.
  */
-for (const [label, fn] of [
-  ['toon', () => { window.__app = null; }],
-  ['pbr', () => document.querySelector('#mode button[data-v="pbr"]').click()],
-  ['split', () => document.querySelector('#mode button[data-v="wipe"]').click()],
-  ['toon again', () => document.querySelector('#mode button[data-v="toon"]').click()],
-  ['outlines off', () => document.getElementById('outline').click()],
-  ['outlines on', () => document.getElementById('outline').click()],
-  ['dune palette', () => document.querySelector('#pal button[data-v="dune"]').click()],
-  ['storm palette', () => document.querySelector('#pal button[data-v="storm"]').click()],
-  ['6 bands', () => {
-    const s = document.getElementById('bands'); s.value = '6';
-    s.dispatchEvent(new Event('input'));
-  }],
-]) {
-  await page.evaluate(fn).catch((e) => errors.push(`${label}: ${e.message}`));
-  await page.waitForTimeout(400);
+const controls = await page.evaluate(() => {
+  const out = [];
+  for (const b of document.querySelectorAll('.seg button')) {
+    out.push({ kind: 'button', sel: `#${b.parentElement.id} button[data-v="${b.dataset.v}"]`, name: `${b.parentElement.id}:${b.dataset.v}` });
+  }
+  for (const c of document.querySelectorAll('input[type=checkbox]')) out.push({ kind: 'check', sel: `#${c.id}`, name: c.id });
+  for (const s of document.querySelectorAll('input[type=range]')) out.push({ kind: 'range', sel: `#${s.id}`, name: s.id });
+  return out;
+});
+if (controls.length < 4) errors.push(`only ${controls.length} controls found — the sweep is not exercising the page`);
+
+for (const c of controls) {
+  await page.evaluate(({ kind, sel }) => {
+    const el = document.querySelector(sel);
+    if (!el) throw new Error(`missing ${sel}`);
+    if (kind === 'range') {
+      // Both ends: a shader branch guarded on "bands > 0.5" only compiles on
+      // one side of it, and the interesting failures live at the extremes.
+      el.value = el.max; el.dispatchEvent(new Event('input'));
+      el.value = el.min; el.dispatchEvent(new Event('input'));
+    } else el.click();
+  }, c).catch((e) => errors.push(`${c.name}: ${e.message}`));
+  await page.waitForTimeout(300);
 }
+// …and leave every checkbox back on, so the final frames are the real look.
+await page.evaluate(() => {
+  for (const c of document.querySelectorAll('input[type=checkbox]')) if (!c.checked) c.click();
+}).catch(() => {});
 
 // let a few real frames go by on the last configuration
 await page.waitForTimeout(Math.max(600, FRAMES * 120));
 
 if (SHOT) {
   await mkdir(join(ROOT, '.smoke'), { recursive: true });
-  await page.screenshot({ path: join(ROOT, '.smoke', 'toon.png') });
-  console.log('shot → .smoke/toon.png');
+  await page.screenshot({ path: join(ROOT, '.smoke', PAGE.replace('.html', '') + '.png') });
+  console.log('shot → .smoke/' + PAGE.replace('.html','') + '.png');
 }
 
 const fps = await page.evaluate(() => document.getElementById('fps')?.textContent).catch(() => '?');
@@ -120,4 +144,4 @@ if (errors.length) {
   for (const e of errors.slice(0, 12)) console.log('  ' + e);
   process.exit(1);
 }
-console.log(`clean — every mode, palette and toggle exercised, no console or page errors (${fps})`);
+console.log(`clean — ${controls.length} controls swept on ${PAGE}, no console or page errors (${fps})`);
