@@ -530,6 +530,9 @@ export const CODEX = [
   { keys: ['compel'],
     text: () => 'Force compel, once <b>Domination</b> is drafted. The unit you are looking at '
       + 'turns on its own — or, alone, on itself.' },
+  { keys: ['swap'],
+    text: () => 'Standing over a fallen hilt, take it — crystal, hilt and all, so a friend\'s '
+      + 'blade is theirs in your hand. Standing over nothing, put yours down.' },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   { keys: ['lessonNext', 'lessonBack', 'lessonRepeat'],

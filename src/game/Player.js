@@ -14,6 +14,7 @@ import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
@@ -1125,6 +1126,7 @@ export class Player {
     if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
+    if (input.actHit('swap')) this.swapSaber(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
     // the key moved off Mouse2 — which is why comments name the ACTION.)
@@ -3227,6 +3229,82 @@ export class Player {
           { life: 0.45, size: 0.3, drag: 2.4, gravity: -0.1, color: this._lightningColor(), alpha: 0.3 });
       }
     }
+    return true;
+  }
+
+  /**
+   * PUT IT DOWN, AND PICK ONE UP.
+   *
+   * Note 61, and the two halves are one key: if there is a hilt within reach
+   * you take it, otherwise you drop the one you are holding. That is a single
+   * decision the player makes with their feet rather than two keys they have to
+   * keep straight, and it is what makes taking a fallen acolyte's weapon a
+   * thing you do in the middle of a fight instead of a menu.
+   *
+   * SWAPPING is the case worth being careful about: standing over a hilt with
+   * one already in your hand puts yours down where you stand and takes theirs,
+   * in that order, so nothing is ever destroyed and you can always get your own
+   * back by pressing it again. `Dropped.PICKUP_DELAY` is what stops that second
+   * press picking your own straight back up before you have seen it leave.
+   */
+  swapSaber(ctx) {
+    if (!this.alive) return;
+    const near = hiltWithinReach(this.world, this);
+    if (near) return this._takeSaber(near, ctx);
+    if (this.throwState !== 'held') {
+      return this._refuse('drop', 'your blade is not in your hand');
+    }
+    this._dropSaber(ctx);
+    return true;
+  }
+
+  /** Let go of what is in the hand. */
+  _dropSaber(ctx, opts = {}) {
+    const s = this.saber;
+    if (!s) return null;
+    const put = dropSaber(this.world, {
+      position: _v1.copy(this.gripAnchor).addScaledVector(this.aimDir, 0.25),
+      // Out of the hand and down, not thrown: a drop is a decision, and a hilt
+      // that skitters six metres away is a drop the player did not make.
+      velocity: _v2.copy(this.aimDir).multiplyScalar(1.1).setY(0.6).add(this.velocity),
+      colorIndex: s.colorIndex,
+      hiltStyle: s.hiltStyle,
+      order: s._order ?? null,
+      owner: this,
+      ...opts,
+    });
+    s.retract();
+    this.saberDown = true;
+    this._gesture('cast');
+    audio.thud?.(this.gripAnchor, 0.4);
+    this.world?.notify?.('DROPPED', `${SABER_COLORS[s.colorIndex]?.name ?? 'your blade'} is on the ground`);
+    return put;
+  }
+
+  /**
+   * Take a hilt off the ground, whoever built it.
+   *
+   * The identity travels with the object, so a partner's weapon arrives with
+   * their crystal AND their order's metals — see the note in Dropped.js. The
+   * player's own saved identity is untouched: what changes is the Saber in
+   * their hand, and dropping this one puts back exactly what they took.
+   */
+  _takeSaber(prop, ctx) {
+    const id = prop.saber;
+    if (!id) return false;
+    // yours goes down first, so a swap never destroys a weapon
+    if (this.throwState === 'held' && !this.saberDown) this._dropSaber(ctx);
+    const s = this.saber;
+    s.hiltStyle = id.hiltStyle ?? s.hiltStyle;
+    if (id.order !== undefined) s.setOrderTuning?.(id.order);
+    s.setColor(id.colorIndex ?? 0);
+    s.rebuildHilt?.();
+    this.saberDown = false;
+    prop.destroy ? prop.destroy() : (prop.dead = true);
+    this.hum?.setColor?.(s.color.getHex());
+    this._gesture('reach');
+    audio.force(this.chest, 'pull');
+    this.world?.notify?.('TAKEN', `${SABER_COLORS[s.colorIndex]?.name ?? 'a blade'}, ${s.hiltStyle}`);
     return true;
   }
 

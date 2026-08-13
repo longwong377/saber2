@@ -15,6 +15,7 @@ import { GrassField, Water, Atmosphere } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
+import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
 import { Communion } from './Constellation.js';
@@ -650,6 +651,10 @@ export class World {
       const e = this.enemies[i];
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
     }
+
+    // …and the hilts lying about age, so one just dropped cannot be picked
+    // straight back up before the player has seen it leave their hand.
+    ageDropped(this, dt);
 
     // 3 — blades against everything
     this._resolveBlades(dt);

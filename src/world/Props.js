@@ -1481,7 +1481,11 @@ export class Prop {
     this.dead = true;
     this.world.physics.remove(this.body);
     this.world.scene.remove(this.mesh);
-    if (disposeGeo) this.mesh.geometry.dispose();
+    /* TRAVERSE, because a prop's mesh is not always a Mesh. `mesh.geometry` is
+     * undefined on a Group — a dropped lightsaber hilt is nineteen to
+     * thirty-six separate pieces — so this threw outright on one and silently
+     * leaked the children of every group-shaped prop that ever came through. */
+    if (disposeGeo) this.mesh.traverse((o) => o.geometry?.dispose?.());
     const i = this.world.props.indexOf(this);
     if (i >= 0) this.world.props.splice(i, 1);
   }
@@ -5663,7 +5667,15 @@ class Crowd {
     if (this.dead) return;
     this.dead = true;
     this.world.scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
+    /* TRAVERSE, because a prop's mesh is not always a Mesh.
+     *
+     * This was `this.mesh.geometry.dispose()`, which throws outright on a prop
+     * built as a Group — a dropped lightsaber hilt is nineteen to thirty-six
+     * separate pieces — and silently leaks the children of every group-shaped
+     * prop that ever passed through here. One line, and it now disposes what it
+     * removes whatever shape it is.
+     */
+    this.mesh.traverse?.((o) => { o.geometry?.dispose?.(); }) ?? this.mesh.geometry?.dispose?.();
     const i = this.world.props.indexOf(this);
     if (i >= 0) this.world.props.splice(i, 1);
   }

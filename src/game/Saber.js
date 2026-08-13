@@ -733,6 +733,40 @@ export class Saber {
   }
 
   /**
+   * Take on another order's tuning — or none.
+   *
+   * This exists for the weapon that was not yours. Picking a hilt up off the
+   * ground gives you the blade its builder made, and an order's tuning is most
+   * of what a blade IS here: the emission profile, the metals, the temper. A
+   * Sith hilt in a Jedi's hand should look and cut like a Sith's, or "you can
+   * take their sword" is a recolour. See Dropped.js.
+   */
+  setOrderTuning(orderId) {
+    this._order = orderId && BLADE_TUNING[orderId] ? orderId : null;
+    this.temper = 0;
+    this._retune();
+  }
+
+  /**
+   * Machine a new hilt, because the style changed under a live weapon.
+   *
+   * Only reachable through a pick-up, and it disposes what it replaces — a
+   * player who spends a fight swapping hilts off the floor would otherwise
+   * leave one dead Group per swap in the scene graph for the level's lifetime.
+   */
+  rebuildHilt() {
+    if (this.hilt) {
+      this.root.remove(this.hilt);
+      this.hilt.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose?.();
+      });
+    }
+    this._buildHilt();
+    this._applyColour();
+  }
+
+  /**
    * The blade emits ONE colour. Everything else about how it reads — white
    * core, coloured halo, coloured bloom — comes from the amplitude profile
    * running that colour from 66 down to 0.01 over a quarter of a metre.
@@ -859,190 +893,13 @@ export class Saber {
    * and gold instead of steel and gold without anyone authoring a fifth.
    */
   _buildHilt() {
-    const g = new THREE.Group();
-    const M = this._tuning.metal;
-    const steel = new THREE.MeshStandardMaterial({ color: M.steel, metalness: 1, roughness: M.steelRough });
-    const dark = new THREE.MeshStandardMaterial({ color: M.dark, metalness: 0.75, roughness: 0.55 });
-    const black = new THREE.MeshStandardMaterial({ color: M.black, metalness: 0.3, roughness: 0.82 });
-    const gold = new THREE.MeshStandardMaterial({ color: M.gold, metalness: 1, roughness: M.goldRough });
-    const accent = new THREE.MeshStandardMaterial({
-      color: 0x2a2f38, metalness: 0.9, roughness: 0.3,
-      emissive: this.color, emissiveIntensity: 0.9,
-    });
-    this.hiltAccent = accent;
-    this.hiltMetals = { steel, dark, black, gold };
-    const mats = { steel, dark, black, gold };
-
-    const spec = HILT_SPECS[this.hiltStyle] || HILT_SPECS.Graflex;
-    this.hiltSpec = spec;
-    const R = spec.r;
-    const body = mats[spec.metal] || steel;
-    const add = (mesh, y) => { mesh.position.y = y; mesh.castShadow = true; g.add(mesh); return mesh; };
-
-    // The emitter face, and everything measured down from it.
-    const top = spec.emitter;
-    const bottom = top - spec.len;
-
-    /* ── emitter shroud ─────────────────────────────────────────────── */
-    const [sTop, sBot, sLen] = spec.shroud;
-    add(new THREE.Mesh(new THREE.CylinderGeometry(R * sTop, R * sBot, sLen, 16, 1), body), top - sLen / 2);
-    // the blade window in the shroud's mouth: dark, so the emitter reads as a
-    // hole rather than as a flat end
-    add(new THREE.Mesh(new THREE.CylinderGeometry(R * 0.72, R * 0.72, 0.012, 14), black), top - 0.003);
-
-    /* ── neck rings ─────────────────────────────────────────────────── */
-    const neckTop = top - sLen - 0.004;
-    if (spec.rings) {
-      const [n, gap, rr, th] = spec.rings;
-      for (let i = 0; i < n; i++) {
-        add(new THREE.Mesh(new THREE.TorusGeometry(R * rr, th, 6, 18), gold), neckTop - i * gap)
-          .rotation.x = Math.PI / 2;
-      }
-    }
-
-    /* ── body, grip, pommel ─────────────────────────────────────────── */
-    const gripLen = spec.grip.len;
-    const pommelLen = spec.pommel === 'none' ? 0.008 : 0.030;
-    const gripTop = bottom + pommelLen + gripLen;
-    const bodyLen = Math.max(0.02, top - sLen - gripTop);
-    add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, bodyLen, 18, 1), body), gripTop + bodyLen / 2);
-
-    /* THE GRIP IS ITS OWN GROUP, because a curved hilt bends HERE and nowhere
-     * else: the emitter and the body stay on the blade's axis (they have to —
-     * the blade is solved along it) and the grip and pommel tilt away from it,
-     * which is exactly what a duelling hilt does. */
-    const gg = new THREE.Group();
-    gg.position.y = gripTop;
-    if (spec.grip.bend) gg.rotation.x = spec.grip.bend;
-    g.add(gg);
-    const gr = R * spec.grip.r;
-    const gadd = (mesh, y) => { mesh.position.y = y; mesh.castShadow = true; gg.add(mesh); return mesh; };
-    gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr, gr, gripLen, 18, 1), black), -gripLen / 2);
-
-    const K = spec.grip.kind;
-    if (K === 'ribbed' || K === 'wrapped') {
-      // rings down the grip: a rib is metal and proud, a wrap is cord and sunk
-      const n = Math.max(3, Math.round(gripLen / (K === 'wrapped' ? 0.0072 : 0.0092)));
-      for (let i = 0; i < n; i++) {
-        const ring = new THREE.Mesh(
-          new THREE.TorusGeometry(gr * (K === 'wrapped' ? 1.02 : 0.99), K === 'wrapped' ? 0.0018 : 0.0026, 5, 16),
-          K === 'wrapped' ? black : dark);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = -gripLen + (i + 0.5) * (gripLen / n);
-        gg.add(ring);
-      }
-    } else if (K === 'plain') {
-      /* Even a plain grip is not a bare tube: a machined section has a seam at
-       * each end where it meets the body and the pommel. Two rings, and they
-       * are the difference between "restrained" and "unfinished" — the Ascetic
-       * measured six pieces before them, which tools/checks/hilts.mjs calls a
-       * prop rather than a weapon, and it was right. */
-      for (const yy of [-0.0015, -gripLen + 0.0015]) {
-        const seam = new THREE.Mesh(new THREE.TorusGeometry(gr * 1.01, 0.0014, 5, 16), dark);
-        seam.rotation.x = Math.PI / 2; seam.position.y = yy; gg.add(seam);
-      }
-    } else if (K === 'fluted') {
-      // flutes run ALONG the grip rather than round it, which is the whole
-      // difference between a grip you can turn in the hand and one you cannot
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const f = new THREE.Mesh(new THREE.BoxGeometry(0.0022, gripLen * 0.86, 0.0022), dark);
-        f.position.set(Math.cos(a) * gr, -gripLen / 2, Math.sin(a) * gr);
-        f.castShadow = true; gg.add(f);
-      }
-    }
-
-    /* ── the pommel, on the grip's frame so a bent hilt bends with it ── */
-    const py = -gripLen;
-    if (spec.pommel === 'cap') {
-      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.14, gr * 0.88, pommelLen, 16, 1), body), py - pommelLen / 2);
-    } else if (spec.pommel === 'sphere') {
-      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.10, gr * 1.10, pommelLen * 0.5, 16, 1), body), py - pommelLen * 0.25);
-      gadd(new THREE.Mesh(new THREE.SphereGeometry(gr * 0.86, 14, 10), dark), py - pommelLen * 0.72);
-    } else if (spec.pommel === 'ring') {
-      const ring = gadd(new THREE.Mesh(new THREE.TorusGeometry(gr * 0.95, 0.0042, 8, 20), gold), py - pommelLen * 0.55);
-      ring.rotation.x = Math.PI / 2;
-      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 0.7, gr * 0.7, pommelLen * 0.5, 14), body), py - pommelLen * 0.25);
-    } else if (spec.pommel === 'spike') {
-      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.05, gr * 0.5, pommelLen * 0.45, 14), body), py - pommelLen * 0.22);
-      const sp = gadd(new THREE.Mesh(new THREE.ConeGeometry(gr * 0.5, pommelLen * 0.8, 10), dark), py - pommelLen * 0.82);
-      sp.rotation.x = Math.PI;
-    } else {
-      gadd(new THREE.Mesh(new THREE.CylinderGeometry(R * 0.98, R * 0.94, pommelLen, 14), body), py - pommelLen / 2);
-    }
-
-    /* ── control box and studs ──────────────────────────────────────── */
-    const boxY = gripTop + bodyLen * 0.55;
-    if (spec.box) {
-      const [bw, bh, bd] = spec.box;
-      const box = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), dark);
-      box.position.set(R * 0.92, boxY, 0); box.castShadow = true; g.add(box);
-    }
-    for (let i = 0; i < (spec.studs || 0); i++) {
-      const stud = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.006, 10), accent);
-      stud.rotation.z = Math.PI / 2;
-      stud.position.set(R * 1.35, boxY + 0.012 - i * 0.014, 0);
-      stud.castShadow = true; g.add(stud);
-    }
-
-    /* ── the extras, each of which is what makes one hilt that hilt ─── */
-    const ex = new Set(spec.extras || []);
-    if (ex.has('crossguard')) {
-      for (const side of [-1, 1]) {
-        const arm = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.62, R * 0.5, 0.055, 12), body);
-        arm.rotation.z = Math.PI / 2 * side;
-        arm.position.set(0.032 * side, top - sLen * 0.75, 0);
-        arm.castShadow = true; g.add(arm);
-        // the vent's own glow, so the quillons read as plasma escaping rather
-        // than as two rods welded on
-        const vent = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.30, R * 0.30, 0.010, 10), accent);
-        vent.rotation.z = Math.PI / 2 * side;
-        vent.position.set(0.058 * side, top - sLen * 0.75, 0);
-        g.add(vent);
-      }
-    }
-    if (ex.has('sleeve')) {
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.08, R * 1.08, bodyLen * 0.45, 16), gold);
-      sleeve.position.y = gripTop + bodyLen * 0.28; sleeve.castShadow = true; g.add(sleeve);
-    }
-    if (ex.has('claw')) {
-      const claw = new THREE.Mesh(new THREE.ConeGeometry(R * 1.3, 0.03, 8, 1, true), dark);
-      claw.position.y = top - 0.005; claw.castShadow = true; g.add(claw);
-    }
-    if (ex.has('window')) {
-      // a slot cut down the body with the crystal's own light behind it
-      const win = new THREE.Mesh(new THREE.BoxGeometry(0.004, bodyLen * 0.4, R * 1.1), accent);
-      win.position.set(-R * 0.92, gripTop + bodyLen * 0.5, 0); g.add(win);
-    }
-    if (ex.has('collar')) {
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.16, R * 1.06, 0.010, 16), gold);
-      collar.position.y = gripTop + 0.006; collar.castShadow = true; g.add(collar);
-    }
-    if (ex.has('knurl')) {
-      for (let i = 0; i < 24; i++) {
-        const a = (i / 24) * Math.PI * 2;
-        const k = new THREE.Mesh(new THREE.BoxGeometry(0.0016, 0.010, 0.0016), gold);
-        k.position.set(Math.cos(a) * R * 1.02, gripTop + bodyLen * 0.86, Math.sin(a) * R * 1.02);
-        g.add(k);
-      }
-    }
-    if (ex.has('hook')) {
-      const hook = new THREE.Mesh(new THREE.TorusGeometry(0.010, 0.0026, 6, 14, Math.PI * 1.3), dark);
-      hook.position.set(-R * 1.1, gripTop + bodyLen * 0.25, 0);
-      hook.rotation.set(Math.PI / 2, 0, 0); hook.castShadow = true; g.add(hook);
-    }
-    if (ex.has('wings')) {
-      for (const side of [-1, 1]) {
-        const w = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.006, 0.003), body);
-        w.position.set(side * R * 1.5, top - sLen - 0.006, 0);
-        w.castShadow = true; g.add(w);
-      }
-    }
-
-    g.scale.setScalar(1.0);
-    this.hilt = g;
-    this.root.add(g);
-    this.emitterY = spec.emitter;
+    const built = buildHiltGroup({ tuning: this._tuning, color: this.color, style: this.hiltStyle });
+    this.hiltAccent = built.accent;
+    this.hiltMetals = built.metals;
+    this.hiltSpec = built.spec;
+    this.hilt = built.group;
+    this.root.add(built.group);
+    this.emitterY = built.emitter;
   }
 
   /**
@@ -1820,4 +1677,201 @@ export class Saber {
     this.trailMat.dispose();
     this.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose?.(); });
   }
+}
+
+
+/**
+ * A HILT ON ITS OWN — no blade, no lights, no Saber around it.
+ *
+ * Extracted from `Saber._buildHilt` rather than copied, because a hilt lying on
+ * the ground has to be the SAME OBJECT as the one in the hand: a second builder
+ * is a second place for the Warden's belt hook to be forgotten about. See
+ * `Dropped.js` — when a duellist loses the arm holding its weapon, or a player
+ * puts theirs down, what falls is this group built with that weapon's own
+ * crystal and style, and picking it up hands both back.
+ *
+ * @param tuning  a BLADE_TUNING entry, or nothing for the neutral metals
+ * @param color   the crystal, for the activator studs and any lit window
+ * @param style   a key of HILT_SPECS
+ */
+export function buildHiltGroup({ tuning, color, style }) {
+  const g = new THREE.Group();
+  const M = (tuning || NEUTRAL_TUNING).metal;
+    const steel = new THREE.MeshStandardMaterial({ color: M.steel, metalness: 1, roughness: M.steelRough });
+    const dark = new THREE.MeshStandardMaterial({ color: M.dark, metalness: 0.75, roughness: 0.55 });
+    const black = new THREE.MeshStandardMaterial({ color: M.black, metalness: 0.3, roughness: 0.82 });
+    const gold = new THREE.MeshStandardMaterial({ color: M.gold, metalness: 1, roughness: M.goldRough });
+    const accent = new THREE.MeshStandardMaterial({
+      color: 0x2a2f38, metalness: 0.9, roughness: 0.3,
+      emissive: color ?? 0x57c9ff, emissiveIntensity: 0.9,
+    });
+    const mats = { steel, dark, black, gold };
+
+    const spec = HILT_SPECS[style] || HILT_SPECS.Graflex;
+    const R = spec.r;
+    const body = mats[spec.metal] || steel;
+    const add = (mesh, y) => { mesh.position.y = y; mesh.castShadow = true; g.add(mesh); return mesh; };
+
+    // The emitter face, and everything measured down from it.
+    const top = spec.emitter;
+    const bottom = top - spec.len;
+
+    /* ── emitter shroud ─────────────────────────────────────────────── */
+    const [sTop, sBot, sLen] = spec.shroud;
+    add(new THREE.Mesh(new THREE.CylinderGeometry(R * sTop, R * sBot, sLen, 16, 1), body), top - sLen / 2);
+    // the blade window in the shroud's mouth: dark, so the emitter reads as a
+    // hole rather than as a flat end
+    add(new THREE.Mesh(new THREE.CylinderGeometry(R * 0.72, R * 0.72, 0.012, 14), black), top - 0.003);
+
+    /* ── neck rings ─────────────────────────────────────────────────── */
+    const neckTop = top - sLen - 0.004;
+    if (spec.rings) {
+      const [n, gap, rr, th] = spec.rings;
+      for (let i = 0; i < n; i++) {
+        add(new THREE.Mesh(new THREE.TorusGeometry(R * rr, th, 6, 18), gold), neckTop - i * gap)
+          .rotation.x = Math.PI / 2;
+      }
+    }
+
+    /* ── body, grip, pommel ─────────────────────────────────────────── */
+    const gripLen = spec.grip.len;
+    const pommelLen = spec.pommel === 'none' ? 0.008 : 0.030;
+    const gripTop = bottom + pommelLen + gripLen;
+    const bodyLen = Math.max(0.02, top - sLen - gripTop);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, bodyLen, 18, 1), body), gripTop + bodyLen / 2);
+
+    /* THE GRIP IS ITS OWN GROUP, because a curved hilt bends HERE and nowhere
+     * else: the emitter and the body stay on the blade's axis (they have to —
+     * the blade is solved along it) and the grip and pommel tilt away from it,
+     * which is exactly what a duelling hilt does. */
+    const gg = new THREE.Group();
+    gg.position.y = gripTop;
+    if (spec.grip.bend) gg.rotation.x = spec.grip.bend;
+    g.add(gg);
+    const gr = R * spec.grip.r;
+    const gadd = (mesh, y) => { mesh.position.y = y; mesh.castShadow = true; gg.add(mesh); return mesh; };
+    gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr, gr, gripLen, 18, 1), black), -gripLen / 2);
+
+    const K = spec.grip.kind;
+    if (K === 'ribbed' || K === 'wrapped') {
+      // rings down the grip: a rib is metal and proud, a wrap is cord and sunk
+      const n = Math.max(3, Math.round(gripLen / (K === 'wrapped' ? 0.0072 : 0.0092)));
+      for (let i = 0; i < n; i++) {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(gr * (K === 'wrapped' ? 1.02 : 0.99), K === 'wrapped' ? 0.0018 : 0.0026, 5, 16),
+          K === 'wrapped' ? black : dark);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = -gripLen + (i + 0.5) * (gripLen / n);
+        gg.add(ring);
+      }
+    } else if (K === 'plain') {
+      /* Even a plain grip is not a bare tube: a machined section has a seam at
+       * each end where it meets the body and the pommel. Two rings, and they
+       * are the difference between "restrained" and "unfinished" — the Ascetic
+       * measured six pieces before them, which tools/checks/hilts.mjs calls a
+       * prop rather than a weapon, and it was right. */
+      for (const yy of [-0.0015, -gripLen + 0.0015]) {
+        const seam = new THREE.Mesh(new THREE.TorusGeometry(gr * 1.01, 0.0014, 5, 16), dark);
+        seam.rotation.x = Math.PI / 2; seam.position.y = yy; gg.add(seam);
+      }
+    } else if (K === 'fluted') {
+      // flutes run ALONG the grip rather than round it, which is the whole
+      // difference between a grip you can turn in the hand and one you cannot
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const f = new THREE.Mesh(new THREE.BoxGeometry(0.0022, gripLen * 0.86, 0.0022), dark);
+        f.position.set(Math.cos(a) * gr, -gripLen / 2, Math.sin(a) * gr);
+        f.castShadow = true; gg.add(f);
+      }
+    }
+
+    /* ── the pommel, on the grip's frame so a bent hilt bends with it ── */
+    const py = -gripLen;
+    if (spec.pommel === 'cap') {
+      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.14, gr * 0.88, pommelLen, 16, 1), body), py - pommelLen / 2);
+    } else if (spec.pommel === 'sphere') {
+      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.10, gr * 1.10, pommelLen * 0.5, 16, 1), body), py - pommelLen * 0.25);
+      gadd(new THREE.Mesh(new THREE.SphereGeometry(gr * 0.86, 14, 10), dark), py - pommelLen * 0.72);
+    } else if (spec.pommel === 'ring') {
+      const ring = gadd(new THREE.Mesh(new THREE.TorusGeometry(gr * 0.95, 0.0042, 8, 20), gold), py - pommelLen * 0.55);
+      ring.rotation.x = Math.PI / 2;
+      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 0.7, gr * 0.7, pommelLen * 0.5, 14), body), py - pommelLen * 0.25);
+    } else if (spec.pommel === 'spike') {
+      gadd(new THREE.Mesh(new THREE.CylinderGeometry(gr * 1.05, gr * 0.5, pommelLen * 0.45, 14), body), py - pommelLen * 0.22);
+      const sp = gadd(new THREE.Mesh(new THREE.ConeGeometry(gr * 0.5, pommelLen * 0.8, 10), dark), py - pommelLen * 0.82);
+      sp.rotation.x = Math.PI;
+    } else {
+      gadd(new THREE.Mesh(new THREE.CylinderGeometry(R * 0.98, R * 0.94, pommelLen, 14), body), py - pommelLen / 2);
+    }
+
+    /* ── control box and studs ──────────────────────────────────────── */
+    const boxY = gripTop + bodyLen * 0.55;
+    if (spec.box) {
+      const [bw, bh, bd] = spec.box;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), dark);
+      box.position.set(R * 0.92, boxY, 0); box.castShadow = true; g.add(box);
+    }
+    for (let i = 0; i < (spec.studs || 0); i++) {
+      const stud = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.006, 10), accent);
+      stud.rotation.z = Math.PI / 2;
+      stud.position.set(R * 1.35, boxY + 0.012 - i * 0.014, 0);
+      stud.castShadow = true; g.add(stud);
+    }
+
+    /* ── the extras, each of which is what makes one hilt that hilt ─── */
+    const ex = new Set(spec.extras || []);
+    if (ex.has('crossguard')) {
+      for (const side of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.62, R * 0.5, 0.055, 12), body);
+        arm.rotation.z = Math.PI / 2 * side;
+        arm.position.set(0.032 * side, top - sLen * 0.75, 0);
+        arm.castShadow = true; g.add(arm);
+        // the vent's own glow, so the quillons read as plasma escaping rather
+        // than as two rods welded on
+        const vent = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.30, R * 0.30, 0.010, 10), accent);
+        vent.rotation.z = Math.PI / 2 * side;
+        vent.position.set(0.058 * side, top - sLen * 0.75, 0);
+        g.add(vent);
+      }
+    }
+    if (ex.has('sleeve')) {
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.08, R * 1.08, bodyLen * 0.45, 16), gold);
+      sleeve.position.y = gripTop + bodyLen * 0.28; sleeve.castShadow = true; g.add(sleeve);
+    }
+    if (ex.has('claw')) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(R * 1.3, 0.03, 8, 1, true), dark);
+      claw.position.y = top - 0.005; claw.castShadow = true; g.add(claw);
+    }
+    if (ex.has('window')) {
+      // a slot cut down the body with the crystal's own light behind it
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.004, bodyLen * 0.4, R * 1.1), accent);
+      win.position.set(-R * 0.92, gripTop + bodyLen * 0.5, 0); g.add(win);
+    }
+    if (ex.has('collar')) {
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.16, R * 1.06, 0.010, 16), gold);
+      collar.position.y = gripTop + 0.006; collar.castShadow = true; g.add(collar);
+    }
+    if (ex.has('knurl')) {
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2;
+        const k = new THREE.Mesh(new THREE.BoxGeometry(0.0016, 0.010, 0.0016), gold);
+        k.position.set(Math.cos(a) * R * 1.02, gripTop + bodyLen * 0.86, Math.sin(a) * R * 1.02);
+        g.add(k);
+      }
+    }
+    if (ex.has('hook')) {
+      const hook = new THREE.Mesh(new THREE.TorusGeometry(0.010, 0.0026, 6, 14, Math.PI * 1.3), dark);
+      hook.position.set(-R * 1.1, gripTop + bodyLen * 0.25, 0);
+      hook.rotation.set(Math.PI / 2, 0, 0); hook.castShadow = true; g.add(hook);
+    }
+    if (ex.has('wings')) {
+      for (const side of [-1, 1]) {
+        const w = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.006, 0.003), body);
+        w.position.set(side * R * 1.5, top - sLen - 0.006, 0);
+        w.castShadow = true; g.add(w);
+      }
+    }
+
+  g.scale.setScalar(1.0);
+  return { group: g, accent, metals: mats, spec, emitter: spec.emitter };
 }

@@ -12,6 +12,7 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo } from './Bodies.js';
 import { Saber } from './Saber.js';
+import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
@@ -1040,11 +1041,12 @@ export class Enemy {
     if (this.hp <= 0) this.die(ev.point, source, 'cut');
     else {
       this.stun(0.4);
-      this._loseLimbBehaviour(bone);
+      this._loseLimbBehaviour(bone, ev.point);
     }
   }
 
-  _loseLimbBehaviour(bone) {
+  /** @param point where the blade crossed, so a dropped hilt starts there. */
+  _loseLimbBehaviour(bone, point) {
     // walking on a severed leg does not work
     if (/thigh|shin|foot|femur|tibia|tarsus/.test(bone)) {
       this.legsLost = (this.legsLost || 0) + 1;
@@ -1063,7 +1065,22 @@ export class Enemy {
       if (this.armsLost >= 1 && (this.A.ranged || this.A.saber)) {
         this.disarmed = true;
         if (this.weapon) { this.weapon.parent?.remove(this.weapon); this.weapon = null; }
-        if (this.saber) { this.saber.retract(); }
+        if (this.saber) {
+          /* THE HILT FALLS. It used to simply cease to exist: the most legible
+           * thing that can happen in a swordfight — one of you losing your
+           * sword — produced nothing you could walk over and pick up. It leaves
+           * the severed hand travelling, which is where it was, and note 61's
+           * other half is `Player.swapSaber` walking over and taking it. */
+          dropSaber(this.world, {
+            position: point ? _v1.copy(point) : _v1.copy(this.position).setY(this.position.y + 1.1),
+            velocity: _v2.set((rng() - 0.5) * 3, 2.2, (rng() - 0.5) * 3).add(this.velocity),
+            colorIndex: this.saber.colorIndex,
+            hiltStyle: this.saber.hiltStyle,
+            order: this.saber._order ?? null,
+            owner: this,
+          });
+          this.saber.retract();
+        }
       }
     }
     if (bone === 'head' || bone === 'neck') { this.blinded = true; this.hp = Math.min(this.hp, this.maxHp * 0.1); }
