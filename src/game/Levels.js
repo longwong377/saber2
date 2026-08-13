@@ -3290,8 +3290,17 @@ export const LEVELS = {
        * makes it readable is the curve, not more light. Everything the light
        * does not reach stays genuinely black, which is what leaves the
        * lightning somewhere to be. */
-      exposure: 1.34, bloom: 0.46, saturation: 0.98,
-      lift: [0.004, 0.008, 0.014], gain: [0.97, 1.0, 1.05],
+      /* 0.74, and this is where the NIGHT is. The sky model has to return
+       * enough radiance to be metered — below about rayleigh 2.4 the exposure
+       * meter hits its clamp and the frame stops being exposed by its own
+       * light, which took five checks down with it — so the dome is authored
+       * as a storm at dusk rather than as darkness, and the darkness is put
+       * back here, after it. The first render at 1.34 was a grey overcast
+       * afternoon; at 0.74 it is most of two stops down, which is the difference
+       * between weather and night. The lift keeps the blacks blue so the
+       * lightning has somewhere to arrive from. */
+      exposure: 0.74, bloom: 0.46, saturation: 0.98,
+      lift: [0.004, 0.009, 0.017], gain: [0.95, 0.99, 1.07],
       /* A CEILING, not a deck. 0.94 is the second highest in the game after
        * Mustafar's ash: what is over Kamino is not weather passing through,
        * it is the permanent condition of the planet. */
