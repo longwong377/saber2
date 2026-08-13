@@ -570,12 +570,95 @@ export const ground = {
    * and the aerial-perspective checks would go quietly red. */
   skyBand: null,
 
+  /** Where the frame is centred — published by `frame` every tick. */
+  focus: new THREE.Vector3(),
+
   /** Press / cut / scar the ground cover at a point. Safe with nothing there. */
   disturb(x, z, radius, opts) { ground.grass?.disturb(x, z, radius, opts); },
   /** Ring the water surface. Safe with no water in the level. */
   ripple(x, z, strength) { ground.water?.ripple(x, z, strength); },
   /** Ground height if anyone published a terrain, else null. */
   heightAt(x, z) { return ground.terrain ? ground.terrain.height(x, z) : null; },
+
+  /* ── the ground itself, under whatever is growing on it ─────────────
+   *
+   * These four forward to the terrain's SURFACE MEMORY (src/world/Surface.js),
+   * and they are on the broker rather than called through `world.terrain` for
+   * the same reason `disturb` is: the things that press ground — a footfall in
+   * Particles, a landing, a blade — are emitters that were handed a position
+   * and nothing else, and threading a terrain reference through all of them to
+   * reach one optional feature is how the cover tint ended up with three
+   * different owners. Every one of these is safe on a level with no terrain.
+   */
+
+  /** A footfall, a skid, a body landing. Depth in metres, dir along travel. */
+  tread(x, z, radius, depth, dirX = 0, dirZ = 0, opts) {
+    return ground.terrain?.tread ? ground.terrain.tread(x, z, radius, depth, dirX, dirZ, opts) : 0;
+  },
+  /** Heat laid on the ground: slag, a bolt that missed, a blade held against it. */
+  burn(x, z, radius, heat = 1) {
+    return ground.terrain?.burn ? ground.terrain.burn(x, z, radius, heat) : 0;
+  },
+  /**
+   * A LIT BLADE DRAGGED THROUGH THE GROUND, from `a` to `b`.
+   *
+   * The whole of "saber contact with the ground does something real": a
+   * trench in the loose layer, a glowing line along it that cools over about
+   * four seconds, char that fades over a minute, molten spatter and smoke off
+   * `Particles.bladeScar`, and the cover cut where there is any.
+   */
+  scar(a, b, opts = {}) {
+    const T = ground.terrain;
+    if (!T || !T.scar) return 0;
+    /* THE GATE LIVES HERE, so the call site can be one line.
+     *
+     * Whatever ends up calling this is a per-frame hook holding the blade's
+     * previous and current tip — Saber.js already keeps both — and it has no
+     * business knowing about the heightfield, the decal budget or how often a
+     * mark is worth laying down. Three conditions, all of them this file's:
+     *
+     *   the tip is ON the ground. `reach` is 18 cm, which is a blade that is
+     *     in the sand rather than one waved over it;
+     *   the stroke MOVED. Under 6 cm and it is the same mark again;
+     *   and not more than fifteen times a second, because `bladeScar` spends
+     *     up to eleven decals and forty sparks a call and the decal ring is
+     *     ninety-six deep — an ungated 144 Hz hook would recycle the whole
+     *     field five times a second and nothing would ever be seen to cool.
+     */
+    const reach = opts.reach ?? 0.18;
+    const ha = T.height(a.x, a.z), hb = T.height(b.x, b.z);
+    if (a.y - ha > reach && b.y - hb > reach) return 0;
+    if (a.y - ha < -1.5 && b.y - hb < -1.5) return 0;     // underground: not a cut
+    if (Math.hypot(b.x - a.x, b.z - a.z) < (opts.minLen ?? 0.06)) return 0;
+    /* The clock is the DECAL FIELD'S OWN, because the decal ring is the
+     * resource being rationed and it is advanced by the same `particles
+     * .update(dt)` that consumes it — so a paused game does not quietly burn
+     * through it and a hitstop does not either. */
+    const now = ground.fx ? ground.fx.decals.time : Date.now() / 1000;
+    // `??`, not `||`: the decal clock starts at 0 and `0 || -9` is -9, so a
+    // throttle written the obvious way never fires on the first second of a
+    // level — which is exactly the second a player spends dragging the blade.
+    if (opts.throttle !== false && now - (ground._scarAt ?? -9) < 1 / 15) return 0;
+    ground._scarAt = now;
+    const n = T.scar(a, b, opts);
+    ground.fx?.bladeScar(a, b, opts.color ?? 0xffb040, { ...opts, trench: false });
+    return n;
+  },
+  /**
+   * THE ONE PER-FRAME TICK THE GROUND OWNS.
+   *
+   * Moves every world-space window that follows the player and ages what it
+   * holds. Called from `Atmosphere.update`, which is not an obvious home and
+   * is the right one: it is the only scenery object a level ALWAYS builds and
+   * always updates, and it is handed exactly the two things this needs — the
+   * frame's dt and the player's position. `Terrain.flush` runs every frame too
+   * and is handed neither, and the grass field — which does own a window of
+   * this shape — does not exist on the levels the surface memory is for.
+   */
+  frame(dt, focus) {
+    if (focus) ground.focus.copy(focus);
+    ground.terrain?.tick?.(dt, ground.focus);
+  },
 };
 
 /* ── small shared helpers ────────────────────────────────────────────── */
@@ -1103,6 +1186,7 @@ const GRASS_CARD_VERT = /* glsl */`
   uniform float uNear;
   uniform float uFar;
   uniform float uWidth;
+  uniform float uTile;
   uniform float uBendGain;
   uniform float uWaveGain;
   uniform sampler2D uTrail;
@@ -1118,10 +1202,17 @@ const GRASS_CARD_VERT = /* glsl */`
   varying float vWave;
 
   void main(){
-    // A tuft is many blades, so the sprite tiles across the card and each
-    // instance starts at its own phase — otherwise every clump in the field is
-    // visibly the same four blades.
-    vUv = vec2(uv.x * 3.0 + aOrient.w * 4.0, uv.y);
+    /* A tuft is many blades, so the sprite tiles across the card and each
+     * instance starts at its own phase — otherwise every clump in the field is
+     * visibly the same four blades.
+     *
+     * THE TILE COUNT IS PER RUNG and not a shared 3.0, because the rungs are
+     * not the same width. The sprite holds four blades, so three tiles across
+     * the 0.5 m clump card put a blade at 4 cm — a blade — and the same three
+     * across the 1.0 m sward card and the 5 m swath card put it at 8 cm and at
+     * 40. Measured in the first plate of the dense meadow: the near cover came
+     * out as fat pale wedges, which is a leaf, not grass. */
+    vUv = vec2(uv.x * uTile + aOrient.w * 4.0, uv.y);
     vTint = aTint;
     vWave = 0.0;
     vec3 base = aInst.xyz;
@@ -1637,35 +1728,68 @@ export function makeCoverField(opts = {}) {
  */
 const GRASS_TIERS = [
   /* Real blade geometry, eight to a clump. The only tier the player ever sees
-   * as separate plants, so it is deliberately SMALL and DENSE — 6.5 m at
-   * 27 blades per square metre — and it keeps shrinking every time a plate is
-   * looked at, because a blade is a TERRIBLE way to cover ground: its
-   * silhouette is 0.003 m² against a card's 0.37, so an instance spent here
-   * buys a hundredth of the cover an instance spent one rung out does. What it
-   * buys instead is the only thing a card cannot: a plant, seen as a plant,
-   * where the player is standing. Widening this ring costs density as the
-   * square of the radius and takes the budget straight out of the tier that is
-   * actually covering the ground. */
-  { name: 'blade', card: false, rIn: 0, rOut: 6.5, cell: 2.2, dens: 5.0, per: 8, spread: 0.25,
+   * as separate plants, so it is deliberately SMALL and DENSE — and it keeps
+   * shrinking every time a plate is looked at, because a blade is a TERRIBLE
+   * way to cover ground: its silhouette is 0.003 m² against a card's 0.37, so
+   * an instance spent here buys a hundredth of the cover an instance spent one
+   * rung out does. What it buys instead is the only thing a card cannot: a
+   * plant, seen as a plant, where the player is standing. Widening this ring
+   * costs density as the square of the radius and takes the budget straight
+   * out of the tier that is actually covering the ground — which is why it
+   * came in from 6.5 m to 5.2 when the sward rung below was added.
+   *
+   * The two rungs are not redundant. Measured on the meadow, looking down at
+   * the ground three metres ahead: the blades and the clumps between them hid
+   * 17% of it. What the player said about that was "you can see the soil". */
+  { name: 'blade', card: false, rIn: 0, rOut: 5.2, cell: 2.2, dens: 4.6, per: 8, spread: 0.25,
     width: 0.110, bend: 0.23, wave: 0.62, sheen: 0.30, trans: 0.90,
     base: 0.16, varies: 0.22, shade: true, cut: 0.42 },
+  /* THE SWARD. The rung that actually closes the ground, and the arithmetic
+   * that says how:
+   *
+   * Cover from a scatter of cards is not the sum of their areas, it is
+   * 1 − exp(−λa) — overlaps do not count twice. The near field ran at λa ≈
+   * 0.42, i.e. 34% closed, and no plausible increase in COUNT gets to 95%:
+   * that needs λa ≈ 3, which is seven times the instances at the old size and
+   * is not affordable at any quality tier.
+   *
+   * `a` is the lever, and it is quadratic. A card's footprint is
+   * 2.2 · width · widen · len², so a rung that is 1.5× longer and 1.9× wider
+   * than the clump rung carries 4.3× the ground per instance. That is why this
+   * is a separate rung rather than a density bump on the one above it: what
+   * closes ground at your feet is BROAD, LOW cover — matted sward, not more
+   * tussocks — and what reads as a plant at eye level is the opposite shape.
+   *
+   * It stops at 12 m because past that the clump rung's own grazing coverage
+   * takes over: from eye height a 0.5 m tuft at 12 m already hides three
+   * metres of the ground behind it. */
+  { name: 'sward', card: true, rIn: 0, rOut: 12, cell: 3.0, dens: 2.6, per: 2, spread: 0.66,
+    width: 2.00, tile: 9, bend: 0.30, wave: 0.55, sheen: 0.40, trans: 0.72,
+    base: 0.21, varies: 0.19, shade: true, cut: 0.42 },
   /* Cards: a billboard standing in for a bush, and 50× the silhouette per
    * instance that a blade is. Fades in at 3 m — UNDER the blades rather than
-   * after them, so the handover is a thickening and not a boundary. */
-  { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.62, per: 3, spread: 0.80,
-    width: 1.05, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
-    base: 0.26, varies: 0.26, shade: true, cut: 0.42 },
+   * after them, so the handover is a thickening and not a boundary.
+   *
+   * LONGER AND BROADER than it shipped: 0.36-0.66 m against 0.26-0.52, and
+   * 1.35 wide against 1.05. That is 2.4× the ground per instance for no extra
+   * instances at all, and it is what the meadow's own blurb asks for — "hills
+   * of LONG grass" — against a field that measured knee-high at best. The
+   * ceiling on this is the character: 1.78 m tall, and cover that reaches the
+   * chest stops reading as a meadow and starts reading as a crop. */
+  { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.70, per: 3, spread: 0.80,
+    width: 1.35, tile: 6, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
+    base: 0.36, varies: 0.30, shade: true, cut: 0.42 },
   /* Swathes: one card per patch of ground, wide enough to close the gaps that
    * would otherwise read as bald spots at a hundred metres. */
   { name: 'swath', card: true, rIn: 42, rOut: 150, cell: 17, dens: 0.024, per: 2, spread: 3.2,
-    width: 2.60, bend: 0.30, wave: 0.62, sheen: 0.62, trans: 0.45,
+    width: 2.60, tile: 10, bend: 0.30, wave: 0.62, sheen: 0.62, trans: 0.45,
     base: 0.26, varies: 0.26, shade: false, cut: 0.36 },
   /* The far ground. Six-metre cards at a thousandth of the near tier's
    * density, which at that range is still most of what you see, because you
    * are looking ALONG the ground rather than down at it: from eye height a
    * 0.4 m tuft at 250 m hides the sixty metres of ground behind it. */
   { name: 'far', card: true, rIn: 140, rOut: 400, cell: 46, dens: 0.0026, per: 1, spread: 9.0,
-    width: 6.0, bend: 0.22, wave: 0.55, sheen: 0.66, trans: 0.35,
+    width: 6.0, tile: 14, bend: 0.22, wave: 0.55, sheen: 0.66, trans: 0.35,
     base: 0.26, varies: 0.26, shade: false, cut: 0.30 },
 ];
 
@@ -1737,7 +1861,30 @@ export class GrassField {
     if (terrain && terrain.setGroundCover) {
       const litter = this.tintB.clone().lerp(this.dry, 0.55).multiplyScalar(0.46);
       this.coverTex = this.cover.bake(256, terrain.size || half * 2);
-      terrain.setGroundCover(clamp(0.30 + 0.46 * density, 0, 0.86), litter, 30, this.coverTex);
+      /* THE MAT, and why it is a second pair of colours rather than the litter
+       * turned up. Litter is what is UNDER the cover — dead stem, root mat,
+       * damp soil — and it is correctly dark and brown, and a level that is
+       * entirely grass still shows litter wherever the mat is thin. What it
+       * cannot stand in for is the top of the sward seen from above between
+       * the blades, which is green, and is the thing you are looking at when
+       * you look at your own feet in a meadow.
+       *
+       * Both stops come off the level's own tints so a level still owns its
+       * own colour, and both are DARKENED — 0.62 and 0.40 of the authored
+       * blade. That is not taste: the mat is at the bottom of the canopy with
+       * every blade in the field between it and the sky, and painting it at
+       * the blade's own value is how ground cover ends up reading as a glowing
+       * carpet. It stays under the litter's own luminance test either way.
+       *
+       * `amount` rides the density hard — this is the half of the fix that a
+       * level asking to be ENTIRELY grass gets and a level with tussock in its
+       * troughs does not, so it is gated at 0.55 density and saturates. */
+      const swardA = this.tintA.clone().lerp(this.tintB, 0.35).multiplyScalar(0.62);
+      const swardB = this.tintB.clone().lerp(this.dry, 0.22).multiplyScalar(0.40);
+      const mat = clamp((density - 0.55) / 0.55, 0, 1);
+      terrain.setGroundCover(clamp(0.30 + 0.46 * density, 0, 0.94), litter, 30, this.coverTex, {
+        amount: mat * 0.92, relief: mat * 0.85, comb: 0.26, a: swardA, b: swardB,
+      });
     }
 
     this._buildTrail();
@@ -1787,7 +1934,7 @@ export class GrassField {
       count: t.cap, card: t.T.card,
       geometry: t.T.card ? new THREE.PlaneGeometry(1, 1, 1, 2) : bladeGeometry(),
       near: t.rIn, far: t.rOut,
-      width: t.T.width, bendGain: t.T.bend, waveGain: t.T.wave,
+      width: t.T.width, bendGain: t.T.bend, waveGain: t.T.wave, tile: t.T.tile,
       sheen: t.T.sheen, translucency: t.T.trans, cut: t.T.cut,
       map: t.T.card ? this._cardMap : null,
       tier: t.T, cell: t.cell, spread: t.T.spread * k,
@@ -1798,7 +1945,11 @@ export class GrassField {
     }));
 
     this.near = this.rings[0];            // the two names the checks and the
-    this.far = this.rings[1];             // clippings path already know
+    // clippings path already know. `far` is the CLUMP rung by name and not
+    // rings[1] by index: the sward rung was inserted between them, and an
+    // index that means "the first card rung" reads as "the far one" for
+    // exactly as long as it takes somebody to add a rung.
+    this.far = this.rings.find((r) => r.tier.name === 'clump') || this.rings[1];
     this.mesh = this.near.mesh;           // kept for anything that pokes at `.mesh`
 
     this.center = new THREE.Vector3(1e9, 0, 1e9);
@@ -1970,7 +2121,7 @@ export class GrassField {
   /* ── scatter ───────────────────────────────────────────────────────── */
 
   _buildRing({ count, card, geometry, near, far, width, bendGain, waveGain, sheen, translucency, map,
-               cut, tier, cell, spread, dens, shade }) {
+               cut, tier, cell, spread, dens, shade, tile }) {
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = geometry.index;
     geo.attributes.position = geometry.attributes.position;
@@ -1993,6 +2144,7 @@ export class GrassField {
       uNear: { value: near },
       uFar: { value: far },
       uWidth: { value: width },
+      uTile: { value: tile ?? 3 },
       uBendGain: { value: bendGain },
       // How deep the wave modulates the bend. Below 0.8 `1 + gain·wave` cannot
       // go negative, which would flip the crest of every band upwind.
@@ -2397,7 +2549,8 @@ export class GrassField {
     // heightfield makes every chip and decal land at the wrong altitude
     if (ground.terrain === this.terrain) ground.terrain = null;
     // and hand the mask back, or the terrain keeps sampling a texture this
-    // field is about to delete out from under it
+    // field is about to delete out from under it (and with it the mat: a
+    // level with no cover must not keep painting sward on its ground)
     this.terrain?.setGroundCover?.(0, null, 30, null);
     if (!this.mesh) return;
     for (const m of this.meshes) {
@@ -4615,6 +4768,10 @@ export class Atmosphere {
     this.weather.update(dt);
     this._applyWeather();
     this._readSun();
+    /* The ground's own frame. See `ground.frame` for why this call is here and
+     * not somewhere more obvious: this is the one always-built, always-updated
+     * scenery object that is handed both a dt and the player's position. */
+    ground.frame(dt, center);
     this.motes.update(this.time, center, _col, this.sunDir);
     this.windborne.update(this.time, center);
     this.haze.update(this.time, center, _col, this.sunDir);

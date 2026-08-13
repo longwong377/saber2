@@ -18,6 +18,7 @@
 
 import * as THREE from 'three';
 import { clamp, makeRng } from './MathUtil.js';
+import { utterance, peakGain } from './Voice.js';
 
 /** Finite-or-default. WebAudio params throw on NaN; game maths produces it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -68,6 +69,46 @@ const HEARING_FLOOR = 0.004;
 /** And an absolute backstop, because HRTF panning is not free even at -70 dB. */
 const MAX_RANGE = 190;
 
+/**
+ * SPEECH, and why it has its own rules.
+ *
+ * A voice line is not a louder one-shot. It is 300–1000 ms of continuous,
+ * mid-band, highly structured sound, which is exactly the material a mix turns
+ * to mud with: two of them at once are unintelligible, three are noise, and a
+ * fight can easily ask for six in the same second (four droids spotting you
+ * while you kill a fifth). So three rules, all of them enforced here rather
+ * than left to the callers:
+ *
+ *   1. A HARD CAP on concurrent utterances. Past it, the line is refused and
+ *      counted, exactly like a one-shot past its band.
+ *   2. LINES DUCK EACH OTHER. The second live line drops to `SPEECH_STACK`, and
+ *      anything the player says drops every enemy line to `SPEECH_UNDER` for
+ *      its duration — the player is the camera, and the camera wins.
+ *   3. SPEECH DUCKS THE ROOM. While anyone is talking the effects bus sits at
+ *      `SFX_DUCK`, which is what makes a line audible over a blaster fight
+ *      without making the line loud.
+ *
+ * Speech is wired to the compressor directly rather than through sfxBus, or
+ * rule 3 would duck the voices along with everything else and achieve nothing.
+ */
+const MAX_SPEECH = 3;
+const SPEECH_STACK = 0.55;
+const SPEECH_UNDER = 0.32;
+const SFX_DUCK = 0.62;
+/** How long the room stays down after the last syllable, in seconds. */
+const DUCK_TAIL = 0.16;
+
+/** Footstep timbre by ground, before the body standing on it is considered. */
+const SURFACES = {
+  sand:  { freq: 1500, q: 0.7, gain: 0.09 },
+  stone: { freq: 2600, q: 1.4, gain: 0.11 },
+  metal: { freq: 3400, q: 2.6, gain: 0.10 },
+  water: { freq: 1900, q: 0.9, gain: 0.14 },
+};
+const SURFACE_DEFAULT = { freq: 1800, q: 1, gain: 0.1 };
+/** The mass a footstep is quoted at — one adult in boots. */
+const REF_MASS = 80;
+
 // listener scratch — updateListener runs every frame
 const _lq = new THREE.Quaternion(), _lf = new THREE.Vector3(), _lu = new THREE.Vector3();
 
@@ -78,7 +119,13 @@ export class AudioEngine {
     this.master = null;
     this.volume = 0.8;
     this.musicVolume = 0.45;
+    this.voiceLevel = 0.9;
     this.voices = 0;
+    /** Live utterances, newest last. See MAX_SPEECH above. */
+    this._speech = [];
+    this.maxSpeech = MAX_SPEECH;
+    /** Audio-clock time the effects bus is allowed back up to full. */
+    this._duckUntil = 0;
     this.maxVoices = 44;
     this._listenerPos = new THREE.Vector3();
     this._noiseBuf = null;
@@ -90,7 +137,24 @@ export class AudioEngine {
      * asked for and did not get, and `dropped` is sound thrown away because the
      * context was not running. tools/audiowatch.mjs tabulates all of it.
      */
-    this.stats = { req: 0, alloc: 0, freed: 0, denied: 0, culled: 0, dropped: 0, threw: 0, peak: 0 };
+    this.stats = { req: 0, alloc: 0, freed: 0, denied: 0, culled: 0, dropped: 0, threw: 0, peak: 0,
+      spoke: 0, speechDenied: 0, ducked: 0 };
+  }
+
+  /** How many lines are being spoken right now. */
+  get speaking() { return this._speech.length; }
+
+  /**
+   * The level the effects bus is currently being HELD at, as a number.
+   *
+   * The automation on `sfxBus.gain` is the real thing, but an AudioParam under
+   * a scheduled ramp does not report where it is going — `.value` is where it
+   * was when the ramp was set — so a check that read the param would measure
+   * nothing. This is what was commanded, on the audio clock.
+   */
+  duckLevel() {
+    if (!this.ctx) return 1;
+    return this.ctx.currentTime < this._duckUntil ? SFX_DUCK : 1;
   }
 
   /** The live-voice ceiling for a band, so a caller can state what it expects. */
@@ -126,6 +190,11 @@ export class AudioEngine {
     // music down muted the level's own atmosphere along with it.
     this.ambBus = this.ctx.createGain(); this.ambBus.gain.value = 1;
 
+    // Speech goes to the compressor DIRECTLY. On sfxBus, the duck that exists
+    // to make a line audible over a firefight would duck the line with it.
+    this.speechBus = this.ctx.createGain();
+    this.speechBus.gain.value = num(this.voiceLevel, 0.9);
+
     this.reverb = this.ctx.createConvolver();
     this.reverb.buffer = this._makeImpulse(2.4, 2.6);
     this.reverbSend = this.ctx.createGain(); this.reverbSend.gain.value = 0.16;
@@ -135,6 +204,7 @@ export class AudioEngine {
     this.reverbSend.connect(this.reverb);
     this.reverb.connect(this.comp);
     this.ambBus.connect(this.comp);
+    this.speechBus.connect(this.comp);
     // The score bypasses the compressor: on it, every blaster shot pumped the
     // music down with it.
     this.musicBus.connect(this.master);
@@ -196,6 +266,11 @@ export class AudioEngine {
   setMusicVolume(v) {
     this.musicVolume = num(v, 0.45);
     if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
+  }
+  /** The speech mixer. Zero is a legitimate answer and means "no voices". */
+  setVoiceLevel(v) {
+    this.voiceLevel = clamp(num(v, 0.9), 0, 1.5);
+    if (this.speechBus) this.speechBus.gain.setTargetAtTime(this.voiceLevel, this.ctx.currentTime, 0.03);
   }
 
   /**
@@ -422,7 +497,8 @@ export class AudioEngine {
       done = true;
       if (timer) { clearTimeout(timer); timer = 0; }
       this._release();
-      if (!node || node === this.sfxBus || node === this.musicBus || node === this.master) return;
+      if (!node || node === this.sfxBus || node === this.musicBus || node === this.master
+          || node === this.speechBus || node === this.ambBus || node === this.comp) return;
       try { node.disconnect(); } catch {}
     };
     try { src.onended = release; } catch { /* fall through to the backstop */ }
@@ -524,6 +600,162 @@ export class AudioEngine {
       this.stats.threw++;
       this._release();
       if (out && out !== this.sfxBus) { try { out.disconnect(); } catch {} }
+    }
+  }
+
+  /* ── speech ────────────────────────────────────────────────────────── */
+
+  /**
+   * Say one line, in one voice.
+   *
+   * A whole utterance costs ONE voice from the pool no matter how many grains
+   * it is built from, because it is one sound as far as the player is
+   * concerned: a five-grain syllable is not five sounds any more than a chord
+   * is three notes of separate music. All of the grains hang off a single
+   * per-utterance gain node, which is also the handle the ducking rules move.
+   *
+   * @param spec  a voice spec from src/engine/Voice.js
+   * @param kind  a key of LINES — 'effort', 'kill', 'boss', 'scream', …
+   * @param opts  {pos, gain, vary, self, prio}
+   * @returns the length of the line in seconds, or 0 if it was not spoken.
+   */
+  speak(spec, kind = 'effort', opts = {}) {
+    if (!this.ready || !spec || !this._live()) return 0;
+    if (this.voiceLevel <= 0.001) return 0;
+    const u = utterance(spec, kind, num(opts.vary, rng()));
+    const level = clamp(num(opts.gain, 1), 0, 4);
+    const pos = opts.pos || null;
+
+    // Decide before allocating, in the same order every other sound uses.
+    const reach = this._reach(pos, peakGain(u) * level);
+    if (!reach) { this.stats.culled++; return 0; }
+    this._retireSpeech();
+    if (this._speech.length >= this.maxSpeech) { this.stats.speechDenied++; return 0; }
+    const prio = opts.self ? PRIO.critical : PRIO.combat;
+    if (!this._voice(prio)) return 0;
+
+    let out = null, bus = null;
+    try {
+      const t = this.ctx.currentTime;
+      const stopAt = t + u.dur + 0.09;
+      out = reach === 2 ? this._panner(pos, 2.6, 120) : this.speechBus;
+      if (out !== this.speechBus) out.connect(this.speechBus);
+
+      bus = this.ctx.createGain();
+      // RULE 2, the first half: the second live line sits under the first.
+      const stack = this._speech.length ? SPEECH_STACK : 1;
+      const target = level * stack;
+      bus.gain.value = target;
+      bus.connect(out);
+
+      // The LAST grain to finish, which is not the last in the list: a
+      // syllable's breath layer is shorter than its voiced core, so trusting
+      // the array order retired the line before its own tail had played.
+      let last = null, lastEnd = -1;
+      for (const g of u.grains) {
+        this._grain(g, bus, t, (src, end) => { if (end > lastEnd) { lastEnd = end; last = src; } });
+      }
+      if (!last) throw new Error('an utterance with no grains');
+
+      // RULE 2, the second half: the player talks over the room.
+      if (opts.self) {
+        for (const e of this._speech) {
+          if (e.self) continue;
+          try { e.bus.gain.setTargetAtTime(e.level * SPEECH_UNDER, t, 0.05); } catch {}
+          e.ducked = true;
+          this.stats.ducked++;
+        }
+      }
+
+      const entry = { bus, level: target, endsAt: stopAt, self: !!opts.self, kind, id: spec.id, ducked: false };
+      this._speech.push(entry);
+      this.stats.spoke++;
+      this._duckRoom(u.dur);
+
+      /**
+       * The utterance is retired by its LAST grain.
+       *
+       * `_freeOnEnd` owns the pool voice and the panner and wants a source to
+       * hang an `onended` on; the shim is that source, and the real handler is
+       * chained under the grain's own node cleanup so neither is lost. Its
+       * wall-clock backstop can still fire on its own, which is why
+       * `_retireSpeech` also releases the bus of anything it finds stale.
+       */
+      const shim = {};
+      this._freeOnEnd(shim, out, u.dur + 0.09);
+      const grainCleanup = last.onended;
+      last.onended = () => {
+        try { grainCleanup?.(); } catch {}
+        const i = this._speech.indexOf(entry);
+        if (i >= 0) this._speech.splice(i, 1);
+        try { bus.disconnect(); } catch {}
+        try { shim.onended?.(); } catch {}
+      };
+      return u.dur;
+    } catch {
+      this.stats.threw++;
+      this._release();
+      if (bus) { try { bus.disconnect(); } catch {} }
+      if (out && out !== this.speechBus) { try { out.disconnect(); } catch {} }
+      return 0;
+    }
+  }
+
+  /** One grain of an utterance: source → filter → envelope → the line's bus. */
+  _grain(g, bus, t0, keep) {
+    const t = t0 + num(g.t, 0);
+    const dur = Math.max(0.01, num(g.dur, 0.1));
+    const stopAt = t + dur + 0.01;
+    const src = g.src === 'noise'
+      ? this.ctx.createBufferSource()
+      : this.ctx.createOscillator();
+    if (g.src === 'noise') {
+      src.buffer = this._noiseBuf;
+      src.loop = true;
+      src.playbackRate.value = 0.9 + rng() * 0.2;
+    } else {
+      src.type = g.src;
+      const f0 = Math.max(20, num(g.f0, 120));
+      src.frequency.setValueAtTime(f0, t);
+      src.frequency.exponentialRampToValueAtTime(Math.max(20, num(g.f1, f0)), t + dur);
+    }
+    const flt = this.ctx.createBiquadFilter();
+    flt.type = g.filter?.type || 'bandpass';
+    flt.frequency.value = clamp(num(g.filter?.freq, 900), 30, 18000);
+    flt.Q.value = clamp(num(g.filter?.q, 4), 0.1, 30);
+    const env = this.ctx.createGain();
+    const a = Math.max(0.002, num(g.attack, dur * 0.15));
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.linearRampToValueAtTime(Math.max(0.0002, num(g.gain, 0.2)), t + a);
+    env.gain.setTargetAtTime(0.0001, t + a, dur / 2.2);
+    env.gain.linearRampToValueAtTime(0.0001, stopAt);
+    src.connect(flt); flt.connect(env); env.connect(bus);
+    src.start(t);
+    src.stop(stopAt);
+    src.onended = () => { try { env.disconnect(); } catch {} try { flt.disconnect(); } catch {} };
+    keep(src, stopAt);
+  }
+
+  /** RULE 3 — hold the room down while somebody is talking. */
+  _duckRoom(dur) {
+    const t = this.ctx.currentTime;
+    const until = t + num(dur, 0.3) + DUCK_TAIL;
+    if (until <= this._duckUntil) return;
+    this._duckUntil = until;
+    try {
+      this.sfxBus.gain.cancelScheduledValues(t);
+      this.sfxBus.gain.setTargetAtTime(SFX_DUCK, t, 0.04);
+      this.sfxBus.gain.setTargetAtTime(1, until, 0.10);
+    } catch {}
+  }
+
+  /** Drop anything whose stop time has passed, in case `ended` never came. */
+  _retireSpeech() {
+    const now = this.ctx.currentTime;
+    for (let i = this._speech.length - 1; i >= 0; i--) {
+      if (this._speech[i].endsAt + 0.5 >= now) continue;
+      try { this._speech[i].bus.disconnect(); } catch {}
+      this._speech.splice(i, 1);
     }
   }
 
@@ -711,15 +943,77 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * A footstep, at the mass that made it.
+   *
+   * Every foot in the game landed with the same weight: a 1400 kg acklay and a
+   * 3 kg training remote both got the trooper's boot on sand, and the only
+   * thing that ever varied was the ground. Mass moves three things, and it has
+   * to move all three or the result is the same sound played louder — the band
+   * DROPS (a heavy foot excites the low end of whatever it lands on), the level
+   * RISES, and the contact LENGTHENS. Past `REF_MASS * 2.75` a body also
+   * displaces enough ground to be felt rather than heard, which is the
+   * `bodyThump` layer below: sub-bass, no band, and a separate voice so it can
+   * be refused on its own when the pool is tight.
+   *
+   * At `REF_MASS` every factor is exactly 1 and this is byte-for-byte the sound
+   * it always was, which is what keeps the pool arithmetic in
+   * tools/checks/audio.mjs meaning what it says.
+   */
+  footfall(pos, { surface = 'sand', run = false, mass = REF_MASS } = {}) {
+    const cfg = SURFACES[surface] || SURFACE_DEFAULT;
+    const m = clamp(num(mass, REF_MASS) / REF_MASS, 0.05, 20);
+    const drop = Math.pow(m, -0.26);          // heavier → lower
+    const lift = Math.pow(m, 0.28);           // heavier → louder
+    const dur = (run ? 0.13 : 0.1) * (1 + (m - 1) * 0.14);
+    this.noise({ dur: clamp(dur, 0.05, 0.5), gain: cfg.gain * (run ? 1.5 : 1) * lift, type: 'bandpass',
+      freq: cfg.freq * drop, freqEnd: cfg.freq * drop * 0.3, q: cfg.q, pos, prio: PRIO.chatter });
+    if (m > 2.75) this.bodyThump(pos, mass);
+  }
+
   step(pos, surface = 'sand', run = false) {
-    const cfg = {
-      sand:  { freq: 1500, q: 0.7, gain: 0.09 },
-      stone: { freq: 2600, q: 1.4, gain: 0.11 },
-      metal: { freq: 3400, q: 2.6, gain: 0.10 },
-      water: { freq: 1900, q: 0.9, gain: 0.14 },
-    }[surface] || { freq: 1800, q: 1, gain: 0.1 };
-    this.noise({ dur: run ? 0.13 : 0.1, gain: cfg.gain * (run ? 1.5 : 1), type: 'bandpass',
-      freq: cfg.freq, freqEnd: cfg.freq * 0.3, q: cfg.q, pos, prio: PRIO.chatter });
+    this.footfall(pos, { surface, run, mass: REF_MASS });
+  }
+
+  /** The ground answering something heavy. Felt, not heard. */
+  bodyThump(pos, mass = 400) {
+    const m = clamp(num(mass, 400) / REF_MASS, 1, 24);
+    const f = clamp(96 / Math.pow(m, 0.34), 26, 96);
+    this.tone({ freq: f, freqEnd: f * 0.45, dur: 0.16 + m * 0.012, gain: clamp(0.05 * Math.pow(m, 0.42), 0.05, 0.34),
+      type: 'sine', pos, prio: PRIO.world });
+  }
+
+  /**
+   * A servo. Droids move by motor and motors sing under load.
+   *
+   * `effort` is 0..1 — how hard the thing is working — and it moves the whine
+   * UP in pitch and out in duration, because that is what a loaded stepper
+   * actually does. A droid standing still still ticks; one charging you shrieks.
+   */
+  servo(pos, effort = 0.4, size = 1) {
+    const e = clamp(num(effort, 0.4), 0, 1);
+    const s = clamp(num(size, 1), 0.3, 4);
+    const f = (1350 + e * 1500) / s;
+    this.tone({ freq: f, freqEnd: f * (0.72 + e * 0.5), dur: 0.09 + e * 0.11, gain: 0.020 + e * 0.030,
+      type: 'sawtooth', pos, filter: { type: 'bandpass', freq: f * 1.15, q: 7 }, prio: PRIO.chatter });
+    this.noise({ dur: 0.05 + e * 0.05, gain: 0.014 + e * 0.02, type: 'highpass', freq: 3600,
+      pos, prio: PRIO.chatter });
+  }
+
+  /**
+   * Breathing. Anything with lungs has them, and they are the cheapest way to
+   * know something alive is behind you.
+   *
+   * `pitch` scales the airway — a beast's breath is not a man's slowed down,
+   * it is the same shape an octave and a half lower with more of it.
+   */
+  breath(pos, { out = true, effort = 0.3, pitch = 1 } = {}) {
+    const e = clamp(num(effort, 0.3), 0, 1);
+    const p = clamp(num(pitch, 1), 0.2, 3);
+    const f = (out ? 640 : 900) * p;
+    this.noise({ dur: (out ? 0.34 : 0.26) * (1 + e * 0.4) / p, gain: (0.026 + e * 0.055) * p,
+      type: 'bandpass', freq: f, freqEnd: f * (out ? 0.55 : 1.5), q: 0.85, pos, pink: true,
+      attack: out ? 0.05 : 0.09, prio: PRIO.chatter });
   }
 
   thud(pos, power = 1) {

@@ -204,6 +204,44 @@ export function beginDressing(world, seed) {
   world._siteTaken = [];
   world._stoneField = null;
   rng = makeRng(seed ?? 20250805);
+  world.terrain?.setMight?.(groundMight(world));
+}
+
+/**
+ * HOW HARD THIS GROUND IS ABOUT TO BE HIT.
+ *
+ * "A late-run Force push should visibly crater the ground where an early one
+ * barely scuffs it." It did not, and the reason is one line in Player.js:
+ * `ctx.terrain.crater(_v1.x, _v1.z, 2.6, 0.22)` — two constants. The same hole
+ * on wave one of the foundations as on the crown with a full boon set, at
+ * forcePower 0.25 and at 4. The ground was the only thing in the frame that
+ * never found out the player had got stronger.
+ *
+ * The scale is derived HERE, at dressing time, rather than passed at the call
+ * site, because dressing is the moment where the run and the heightfield are
+ * both in hand and neither Player.js nor World.js has any business knowing
+ * about the other. Three inputs, all of them things the player can see they
+ * have earned:
+ *
+ *   the RUNG    0.22 per tier. Four rungs of the Spire is a 66% deeper hole.
+ *   the BOONS   0.055 each — the small, steady one, because a boon set grows
+ *               faster than the tier does and this is the term that would run
+ *               away if it were the big one.
+ *   the SLIDER  `forcePower`, entering as its CUBE ROOT. It already multiplies
+ *               reach and impulse linearly everywhere else, and cubing that
+ *               into the ground as well puts a forcePower-4 push through a
+ *               13 m crater. The cube root is the honest law anyway: a blast
+ *               that moves k times the material is k^(1/3) wider.
+ *
+ * `Terrain.setMight` clamps to 0.35–3.2, so nothing here can produce a hole
+ * you fall into whatever the settings say.
+ */
+export function groundMight(world) {
+  const run = world?.run && !world.run.done ? world.run : null;
+  const tier = run ? (run.tier ?? 0) : 0;
+  const boons = run && Array.isArray(run.boons) ? run.boons.length : 0;
+  const force = clamp(world?.settings?.forcePower ?? 1, 0.25, 4);
+  return (1 + tier * 0.22 + boons * 0.055) * Math.cbrt(force);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -503,11 +541,22 @@ export const LEVELS = {
       weather: { peak: 0.68, period: 104, duration: 40, fogGain: 3.0, windGain: 2.6,
                  sunLoss: 0.62, fillGain: 1.0, unrest: 0.20, tint: 0.72 },
     },
-    // EVERYTHING is grass. The cover solver clamps at 0.95 and a check forbids
-    // going past 0.98 — "a field with no clearings in it is a carpet" — which
-    // is the check agreeing with the reference rather than fighting it: a
-    // meadow has bare crowns and worn tracks through it.
-    grass: 1.0,
+    /* EVERYTHING is grass, and 1.4 is not a fraction — it is a DENSITY, and
+     * the two things it feeds pull in opposite directions on purpose.
+     *
+     * The cover FIELD saturates: `clamp(0.24 + 0.72·density, 0.12, 0.95)` is
+     * already at its ceiling at density 1, and the ceiling is right — a check
+     * forbids going past 0.98 because "a field with no clearings in it is a
+     * carpet", and a meadow does have bare crowns and worn tracks through it.
+     * So this number cannot and does not make the field cover more ground.
+     *
+     * What it moves is the BUDGET, `count · 2.2 · (0.5 + 0.5·min(density, 1.4))`
+     * — 1.2× the instances, spent on the same 95% of ground — and the ground
+     * TINT under them, 0.94 against 0.76. Both are the difference between a
+     * field that covers 95% of the map at 34% closure and one that closes it.
+     * 1.4 is exactly where the budget term saturates; past it nothing happens.
+     */
+    grass: 1.4,
     grassTint: [0x7f9440, 0x4e6128],
     dress(world) {
       const M = propMaterials();
@@ -575,8 +624,17 @@ export const LEVELS = {
       weather: { peak: 1.0, period: 92, duration: 48, unrest: 0.22, span: 200,
                  fogGain: 6.14, windGain: 3.0, sunLoss: 0.90, fillGain: 1.6, tint: 1.0 },
     },
-    grass: 0.54,
-    grassTint: [0xa89258, 0x6d5c30],
+    /* NO GRASS. "The dune sea must have no grass either — Sahara/Tatooine
+     * sand." A deep erg is moving sand with a storm over it every ninety
+     * seconds; nothing is rooted in it, and 0.54 of a cover field put tussock
+     * on the slip faces of dunes that avalanche.
+     *
+     * What stands in for it is not nothing. This is the level with the
+     * shortest surface memory in the game — see `loose` on the drifts preset —
+     * so the ground here is a record of the last minute of the fight, being
+     * combed out from under you.
+     */
+    grass: 0,
     dress(world) {
       const M = propMaterials();
       beginDressing(world, 20250805 + 43);
@@ -655,8 +713,17 @@ export const LEVELS = {
     // Dead tussock through the snow, not a lawn: it is what tells you the wind
     // direction at a glance, and what makes the white read as ground rather
     // than as paper.
-    grass: 0.44,
-    grassTint: [0xa8a488, 0x6f705c],
+    /* NO GRASS. "The tundra/ice maps must have NO GRASS AT ALL." A cirque
+     * above the treeline is above the treeline; 0.44 of a cover field put
+     * tussock through the snowpack of a level whose base coat is snow, on
+     * ground the same preset declares is under 10 cm to 95 cm of it.
+     *
+     * The snow is the cover. It is ankle to waist deep (Terrain's `mantle`),
+     * it takes a print from the player and from every enemy, and it fills
+     * those in over minutes rather than seconds — the longest memory in the
+     * game, because that is what a snowfield is.
+     */
+    grass: 0,
     dress(world) {
       const M = propMaterials();
       beginDressing(world, 20250805 + 47);
@@ -853,8 +920,11 @@ export const LEVELS = {
     // troughs where the little water there is collects. Sparse on purpose — the
     // clump field puts it in 36 m patches, and the slope term keeps it off the
     // slip faces, so it reads as the desert having a grain rather than a lawn.
-    grass: 0.40,
-    grassTint: [0xb9a463, 0x7d6c3a],
+    // NO GRASS. "Nothing between you and the horde but sand" is this level's
+    // own blurb, and 0.40 of a cover field was a contradiction of it. The
+    // ground answers for itself here: ripple, grain sorting, a deflation
+    // pavement, and now a record of everything that has walked over it.
+    grass: 0,
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
@@ -1138,8 +1208,11 @@ export const LEVELS = {
     },
     // Dry scrub in the sand — the stuff that grows in a place people only visit
     // to kill each other in. Thin: this floor is fought on.
-    grass: 0.36,
-    grassTint: [0xa9985c, 0x6f6234],
+    // NO GRASS. "A bowl of sand ringed by stone", by its own blurb. The one
+    // level whose whole subject is what happened on its floor now keeps a
+    // record of it: the longest-lived print of any sand level, because a
+    // wind-packed silt pan holds a mark the way loose dune sand does not.
+    grass: 0,
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();

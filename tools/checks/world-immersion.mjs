@@ -137,8 +137,42 @@ function fill() {
       : null;
     L.dress(world);
     const occ = occupancy(world);
-    const coverAt = (x, z) => (grass
-      ? grass.cover.at(x, z) * Math.max(0, Math.min(1, (0.30 - terrain.slopeAt(x, z)) / 0.22)) : 0);
+    /* ── GROUND COVER, AND WHAT COUNTS AS IT ──────────────────────────
+     *
+     * This used to be `grass.cover.at()` or zero, which was correct while
+     * every outdoor level had a grass field and became a false question the
+     * moment four of them stopped: "the tundra/ice maps must have NO GRASS AT
+     * ALL… the dune sea must have no grass either." A snowfield with no
+     * tussock in it is not barren ground, and scoring it zero would have made
+     * this check demand the exact thing the level was asked to remove.
+     *
+     * So cover is now COVER APPROPRIATE TO THE SURFACE, and the two halves are
+     * held to the same standard — ground you are IN rather than ground you are
+     * standing on top of:
+     *
+     *   a growing medium   the level's own field, exactly as before;
+     *   snow or sand       the LOOSE LAYER, from Terrain.mantleAt, at least
+     *                      ankle deep and not bare rock. That is a real
+     *                      measurement off the same landform channels the
+     *                      material shades itself with — deep in the lee
+     *                      hollows, stripped on the scoured crests, absent on
+     *                      anything steep enough to slough — and on the alpine
+     *                      preset it spans 0.10 m to 0.95 m, which is the
+     *                      ankle-to-waist the level was asked for.
+     *
+     * A deck plate is neither and scores zero, which is right: the hangar has
+     * always had to answer this on its objects alone, and it does.
+     */
+    const ANKLE = 0.12;
+    const slopeK = (x, z) => Math.max(0, Math.min(1, (0.30 - terrain.slopeAt(x, z)) / 0.22));
+    const coverAt = grass
+      ? (x, z) => grass.cover.at(x, z) * slopeK(x, z)
+      : (x, z) => {
+        const m = terrain.mantleAt ? terrain.mantleAt(x, z) : 0;
+        if (m < ANKLE) return 0;
+        const rock = terrain.preset.rockAt(x, z, terrain.slopeAt(x, z));
+        return rock > 0.5 ? 0 : slopeK(x, z);
+      };
     const R = 90, step = 4;
     let total = 0, footBad = 0, silBad = 0, objBad = 0, covered = 0;
     const foot = [];
@@ -166,6 +200,10 @@ function fill() {
       samples: total, objects: occ.length, meshes,
       foot: footBad / total, objFoot: objBad / total, cover: covered / total,
       sil: silBad / total, hasGrass: !!L.grass,
+      /** What the cover is MADE OF, so the bars below can be per surface. */
+      kind: L.grass ? 'field' : (terrain.preset.loose && terrain.preset.loose.depth >= ANKLE
+        ? 'loose' : 'hard'),
+      mantle: terrain.preset.loose ? terrain.preset.loose.depth : 0,
       p50: foot[(foot.length * 0.5) | 0], p95: foot[(foot.length * 0.95) | 0],
     });
     terrain.dispose();
@@ -214,7 +252,7 @@ export function run({ check, assert, near }) {
       assert(f.foot < 0.10,
         `${key}: ${(f.foot * 100).toFixed(1)}% of the walkable ground has neither an object within 12 m nor cover on it`);
       // and where there is no cover at all, the old bar stands unchanged
-      if (!f.hasGrass) {
+      if (f.kind === 'hard') {
         assert(f.p50 < 6.5, `${key}: the median gap to the nearest object is ${f.p50.toFixed(1)} m`);
       }
       rows.push(`${key} ${(f.foot * 100).toFixed(1)}% (objects alone ${(f.objFoot * 100).toFixed(1)}%, `
@@ -237,18 +275,52 @@ export function run({ check, assert, near }) {
      * The bar is on the walkable disc because that is the ground the player
      * judges, and it is deliberately well under 100%: a field with no
      * clearings is as false as one with no field. */
+    /* RE-DERIVED, and it is a stronger statement than the one it replaces.
+     *
+     * The old form asked "does this level have a grass field, and is it
+     * between 35% and 98%", and skipped anything without one — so a level
+     * could pass by having no ground cover at all as long as it also had no
+     * grass. It survived only because every outdoor level had grass. Four no
+     * longer do, by request, so the question becomes what it should always
+     * have been: EVERY outdoor level must carry cover appropriate to what its
+     * ground is made of, and no level is exempt.
+     *
+     * The two bars are deliberately different, because the two materials are:
+     *
+     *   a field   35%–98%. A meadow has bare crowns and worn tracks; a field
+     *             with no clearings in it is a carpet.
+     *   loose     70% and NO ceiling. Snow and sand do not come in clearings —
+     *             the erg is sand from edge to edge and that is the level's own
+     *             blurb — so the honest bar here is that most of the walkable
+     *             ground is material you are IN, and the ceiling that keeps a
+     *             meadow honest would be a lie about a desert. The floor is
+     *             twice the field's because it is a much easier thing to be.
+     */
     const rows = [];
-    let outdoor = 0;
+    let covered = 0;
     for (const [key, f] of fill()) {
-      if (!f.hasGrass) { rows.push(`${key} —`); continue; }
-      outdoor++;
-      assert(f.cover > 0.35,
-        `${key}: only ${(f.cover * 100).toFixed(0)}% of the walkable ground carries ground cover`);
-      assert(f.cover < 0.98,
-        `${key}: ${(f.cover * 100).toFixed(0)}% covered — a field with no clearings in it is a carpet`);
-      rows.push(`${key} ${(f.cover * 100).toFixed(0)}%`);
+      if (f.kind === 'hard') {
+        assert(f.cover === 0,
+          `${key}: a deck plate is scoring ${(f.cover * 100).toFixed(0)}% ground cover`);
+        rows.push(`${key} — (hard)`);
+        continue;
+      }
+      covered++;
+      if (f.kind === 'field') {
+        assert(f.cover > 0.35,
+          `${key}: only ${(f.cover * 100).toFixed(0)}% of the walkable ground carries ground cover`);
+        assert(f.cover < 0.98,
+          `${key}: ${(f.cover * 100).toFixed(0)}% covered — a field with no clearings in it is a carpet`);
+      } else {
+        assert(f.cover > 0.70,
+          `${key}: only ${(f.cover * 100).toFixed(0)}% of the walkable ground is loose material `
+          + `at least ${(0.12).toFixed(2)} m deep — the rest is a plate`);
+        assert(!LEVELS[key].grass,
+          `${key}: ground made of ${LEVELS[key].terrain} is still growing grass`);
+      }
+      rows.push(`${key} ${(f.cover * 100).toFixed(0)}% (${f.kind})`);
     }
-    assert(outdoor >= 3, `only ${outdoor} levels carry ground cover at all`);
+    assert(covered >= 5, `only ${covered} levels carry any ground cover at all`);
     return rows.join(', ');
   });
 

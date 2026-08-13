@@ -76,14 +76,14 @@ export const PLAYER_VOICES = [
   {
     id: 'negotiator', name: 'The Negotiator',
     blurb: 'Warm, level, unhurried. Sounds like it is still trying to talk you out of it.',
-    f0: 116, wave: 'sawtooth', formants: [600, 1080], q: [5.5, 4.6], mix: 0.44,
-    rasp: 0.09, raspFreq: 1800, cadence: 1.0, bend: 0.07, gain: 1.0,
+    f0: 116, wave: 'sawtooth', formants: [640, 1180], q: [5.5, 4.6], mix: 0.5,
+    rasp: 0.10, raspFreq: 1900, cadence: 1.0, bend: 0.07, gain: 1.0,
   },
   {
     id: 'mask', name: 'The Mask',
     blurb: 'Chest-deep and filtered, every word costing something. Slow on purpose.',
-    f0: 88, wave: 'sawtooth', formants: [400, 760], q: [7.5, 5.5], mix: 0.62,
-    rasp: 0.26, raspFreq: 780, cadence: 0.80, bend: 0.04, gain: 1.05,
+    f0: 88, wave: 'sawtooth', formants: [370, 690], q: [7.5, 5.5], mix: 0.55,
+    rasp: 0.24, raspFreq: 700, cadence: 0.80, bend: 0.04, gain: 1.05,
   },
   {
     id: 'count', name: 'The Count',
@@ -123,13 +123,13 @@ export const ENEMY_VOICES = {
   },
   trooper: {
     id: 'trooper', name: 'Clone trooper',
-    f0: 128, wave: 'sawtooth', formants: [1050, 2400], q: [8, 7], mix: 0.7,
-    rasp: 0.28, raspFreq: 2900, cadence: 1.3, bend: 0.09, gain: 0.85,
+    f0: 128, wave: 'sawtooth', formants: [1150, 2900], q: [8, 5], mix: 0.85,
+    rasp: 0.30, raspFreq: 3400, cadence: 1.3, bend: 0.09, gain: 0.85,
   },
   sith: {
     id: 'sith', name: 'Sith acolyte',
-    f0: 104, wave: 'sawtooth', formants: [520, 1050], q: [6, 5], mix: 0.6,
-    rasp: 0.22, raspFreq: 1500, cadence: 0.95, bend: 0.11, gain: 0.95,
+    f0: 97, wave: 'sawtooth', formants: [470, 960], q: [6, 5], mix: 0.6,
+    rasp: 0.22, raspFreq: 1350, cadence: 0.95, bend: 0.11, gain: 0.95,
   },
   beast: {
     id: 'beast', name: 'Acklay',

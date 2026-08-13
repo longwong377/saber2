@@ -21,6 +21,11 @@ import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
+import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
+// The reticle's shape table and its painter live with the HUD that draws it;
+// the options screen borrows both rather than keeping a second copy that could
+// fall out of step with what is actually on screen.
+import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts } from '../engine/Bindings.js';
 
@@ -162,6 +167,28 @@ export const DEFAULT_SETTINGS = {
   slowmo: true,
   volume: 0.8,
   music: 0.45,
+  /**
+   * VOICES — the mixer, the archetype, and the two halves of who is allowed
+   * to speak.
+   *
+   * `voiceIndex` is an index into PLAYER_VOICES rather than an id string
+   * because it rides a slider, and a slider is the only kind of control the
+   * options screen has that can carry a name and still be one input. Everything
+   * here is read live off `world.settings` by src/ui/Announcer.js and
+   * src/engine/Presence.js, so a box ticked on the pause card bites on the very
+   * next frame — see SETTING_READERS below for where each one lands.
+   */
+  voiceIndex: 0,
+  voiceLevel: 0.9,
+  voiceLines: true,
+  enemyVoices: true,
+  enemyBody: true,
+  /** Killstreak and event popups in the HUD's score column. */
+  popups: true,
+  /** The reticle, which was a hard-coded white ring for the whole project. */
+  reticleShape: 0,
+  reticleSize: 1,
+  reticleColor: 0,
   grassScale: 1,
   particleScale: 1,
   // SaberController.holdPosition has been a real, per-frame-read behaviour
@@ -240,6 +267,24 @@ export const SETTING_READERS = {
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
   particleScale:   ['game/World.js', 'this.settings.particleScale'],
   bladeHold:       ['game/World.js', 'this.settings.bladeHold'],
+  /**
+   * The voice, the room and the reticle.
+   *
+   * Every one of these is read on a FRAME, off `world.settings`, by code that
+   * runs behind HUD.update — not captured at construction and not applied at
+   * deploy. That is what makes them all live from the pause card, and it is
+   * also what makes each of these entries checkable: the named expression is
+   * the line that actually consults the player's answer, once per frame.
+   */
+  voiceIndex:      ['ui/Announcer.js', 'settings?.voiceIndex ?? 0'],
+  voiceLevel:      ['ui/Announcer.js', 'Number.isFinite(settings.voiceLevel)'],
+  voiceLines:      ['ui/Announcer.js', 'settings.voiceLines !== false'],
+  enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
+  enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
+  popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
+  reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
+  reticleSize:     ['ui/HUD.js', 'num(s.reticleSize, 1)'],
+  reticleColor:    ['ui/HUD.js', 'colorAt(s.reticleColor)'],
 };
 
 /**
@@ -1960,6 +2005,88 @@ export class Menu {
     // in flight the moment the box is unticked.
     this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
     this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
+
+    /* ── voices ──────────────────────────────────────────────────────────
+     *
+     * The mixer slider is wired straight into the engine on every move AND on
+     * the first paint (that is what `_slider` does with `_set`), so a stored
+     * level reaches the speech bus before a single line is spoken. Everything
+     * else is read live by the announcer off `world.settings` — the same object
+     * this menu is writing — so no hook is needed and none is faked: a toggle
+     * here is not a message to the game, it IS the game's answer next frame.
+     */
+    /* Three of these sliders index a TABLE, and the tables can grow. Their
+     * `max` is taken from the table rather than typed into index.html, so
+     * adding a sixth voice or an eighth reticle shape cannot leave the new one
+     * unreachable behind a stale attribute. */
+    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
+    cap('opt-voice', PLAYER_VOICES.length);
+    cap('opt-ret-shape', RETICLE_SHAPES.length);
+    cap('opt-ret-color', RETICLE_COLORS.length);
+
+    this._slider('opt-voicelevel', 'voiceLevel', v => (v <= 0 ? 'off' : `${Math.round(v * 100)}%`),
+      v => audio.setVoiceLevel(v));
+    this._slider('opt-voice', 'voiceIndex', v => voiceAt(v).name, (v) => {
+      const el = document.getElementById('voice-blurb');
+      if (el) el.textContent = voiceAt(v).blurb;
+      // Hearing it is the only way to choose one, and a slider you cannot
+      // audition is a slider you set once and never touch again.
+      this._auditionVoice(v);
+    });
+    this._check('opt-voicelines', 'voiceLines');
+    this._check('opt-enemyvoices', 'enemyVoices');
+    this._check('opt-enemybody', 'enemyBody');
+    this._check('opt-popups', 'popups');
+    const test = document.getElementById('btn-voice-test');
+    if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));
+
+    /* ── the reticle ─────────────────────────────────────────────────────
+     *
+     * Painted through the HUD's own applyReticle so the preview box and the
+     * thing in the middle of the screen cannot disagree — one shape table, one
+     * painter. It also has to be applied HERE and not left to HUD.update,
+     * because these three controls are reachable from the pause card, where the
+     * HUD's frame loop is not running: without this, a player would drag the
+     * colour slider and see nothing until they resumed.
+     */
+    const repaintReticle = () => {
+      applyReticle(document.getElementById('reticle'), this.s);
+      applyReticle(document.getElementById('ret-demo'), this.s);
+    };
+    this._slider('opt-ret-shape', 'reticleShape', v => shapeAt(v).name, repaintReticle);
+    this._slider('opt-ret-size', 'reticleSize', v => `${Math.round(v * 100)}%`, repaintReticle);
+    this._slider('opt-ret-color', 'reticleColor', v => colorAt(v).name, repaintReticle);
+    repaintReticle();
+    const blurb = document.getElementById('voice-blurb');
+    if (blurb) blurb.textContent = voiceAt(this.s.voiceIndex).blurb;
+    // Everything above has had its first paint; from here a change is a
+    // PLAYER's change and may be answered out loud.
+    this._optionsReady = true;
+  }
+
+  /**
+   * Play the chosen voice, once, without a fight around it.
+   *
+   * `speak` needs a live context, and the options screen is often the first
+   * thing a player touches — so the context is armed here exactly as the menu
+   * blips arm it. 'streak' rather than 'effort' because a three-syllable rising
+   * line carries the cadence and the pitch contour, which is most of what makes
+   * one archetype different from another; a single grunt does not.
+   */
+  _auditionVoice(index) {
+    // NOT during the build. `_slider` fires its onChange on the first paint —
+    // that is what pushes the stored volume into the mixer — and doing it here
+    // would create an AudioContext while the page is still assembling, before
+    // any gesture, which every browser complains about and none will start.
+    if (!this._optionsReady) return;
+    // Dragging the slider walks every archetype on the way past. One line at a
+    // time is an audition; five overlapping is the mud this whole round is
+    // about, and the engine's cap would hide it rather than fix it.
+    if (audio.speaking > 0) return;
+    audio.init();
+    audio.resume();
+    audio.setVoiceLevel(this.s.voiceLevel);
+    audio.speak(voiceAt(index), 'streak', { gain: 1, self: true });
   }
 
   _buildButtons() {

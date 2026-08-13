@@ -132,6 +132,19 @@ h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:upperca
 .slider input::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--accent);
   box-shadow:0 0 10px var(--accent);cursor:pointer}
 .slider b{font:var(--mono);color:var(--ink);min-width:38px;text-align:right}
+/* A slider whose readout is a NAME rather than a number — the voice, the
+   reticle shape, the reticle colour. Without this the label squeezes the track
+   down to nothing the moment the name is longer than "100%". */
+.slider.wide b{min-width:104px}
+/* The reticle, drawn at its real size with its real colours, next to the three
+   controls that decide it. Painted by Menu through the HUD's own applyReticle,
+   so there is no second copy of the shape table to fall out of step. */
+.ret-preview{display:flex;align-items:center;justify-content:center;height:96px;margin:10px 0 4px;
+  border:1px solid var(--line);border-radius:9px;
+  background:radial-gradient(80% 80% at 50% 50%,rgba(87,201,255,.06),rgba(0,0,0,.35))}
+.ret-preview svg{filter:drop-shadow(0 0 2px rgba(0,0,0,.95))}
+.ret-preview .ret-ring{fill:none;stroke-width:1.6;paint-order:stroke;stroke-linecap:round}
+.ret-preview .ret-tick{stroke-width:2.2;fill:none;stroke-linecap:round}
 .check{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--dim);margin:10px 0;cursor:pointer}
 .check input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
 
@@ -191,10 +204,15 @@ button{font-family:inherit}
    was invisible over the desert — which is most of the game. */
 #reticle{position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%);
   transition:opacity .2s;filter:drop-shadow(0 0 2px rgba(0,0,0,.95)) drop-shadow(0 0 5px rgba(0,0,0,.7))}
-.ret-ring{fill:none;stroke:rgba(255,255,255,.92);stroke-width:1.6;
-  paint-order:stroke;stroke-linecap:round}
-.ret-dot{fill:#fff}
-.ret-tick{stroke:rgba(255,255,255,.98);stroke-width:2.2;fill:none;stroke-linecap:round}
+/* GEOMETRY ONLY. The colour arrives as a presentation attribute from
+   HUD.applyReticle, and a stylesheet rule beats an attribute — so a hard-coded
+   `stroke` here would silently pin every player to white however they set the
+   Colour slider. The `.hot` rules below are stylesheet rules for exactly that
+   reason: whatever colour has been chosen, a body inside five metres still
+   turns the whole thing red, because a customisation that can hide the threat
+   state is a customisation that removes information. */
+.ret-ring{fill:none;stroke-width:1.6;paint-order:stroke;stroke-linecap:round}
+.ret-tick{stroke-width:2.2;fill:none;stroke-linecap:round}
 #reticle.hot .ret-ring{stroke:var(--danger)}
 #reticle.hot .ret-tick{stroke:var(--danger)}
 #reticle.hot .ret-dot{fill:var(--danger)}
@@ -233,6 +251,40 @@ button{font-family:inherit}
   text-shadow:0 0 26px rgba(87,201,255,.75)}
 .combo.on{opacity:1}
 .score{font:var(--mono);font-size:13px;letter-spacing:.2em;color:#cfdaea;margin-top:6px}
+
+/* ── event feed ──────────────────────────────────────────
+   Killstreaks, deflection runs, a boss walking in.
+
+   Deliberately NOT a banner. It lives inside .hud-tr, under the score, in the
+   same right-aligned mono column at the same letter-spacing — so it reads as
+   the score block saying something rather than as an overlay bolted over the
+   game. The only thing that separates a rung from the score above it is a
+   1px hairline and the accent the event carries, which is why each kind gets a
+   colour rather than a shape: the eye is already in this corner after a kill
+   and does not need to be shouted at once it arrives.
+
+   The centre of the screen stays free for HUD.message() and the wave director;
+   two things competing for it is one too many. */
+#event-feed{display:flex;flex-direction:column;align-items:flex-end;gap:5px;margin-top:14px}
+#event-feed .ev{padding:5px 0 5px 12px;border-right:2px solid var(--accent);padding-right:9px;
+  background:linear-gradient(90deg,transparent,rgba(9,13,21,.62));
+  animation:evIn .32s cubic-bezier(.22,1,.36,1) both,evOut .5s 2.3s ease forwards}
+#event-feed .ev b{display:block;font:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.26em;
+  text-transform:uppercase;color:var(--ink)}
+#event-feed .ev span{display:block;margin-top:2px;font:var(--mono);font-size:9px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dimmer)}
+/* One colour per kind. Streaks are the blade's own accent, returns are the
+   cool defensive blue the deflection grades already use, a boss is danger. */
+#event-feed .ev-streak{border-right-color:var(--accent-warm)}
+#event-feed .ev-streak b{color:#ffe0a8}
+#event-feed .ev-return b,#event-feed .ev-perfect b{color:#bfeaff}
+#event-feed .ev-perfect{border-right-color:#8fe8ff}
+#event-feed .ev-boss{border-right-color:var(--danger)}
+#event-feed .ev-boss b{color:#ffc2c6}
+#event-feed .ev-danger{border-right-color:var(--danger)}
+#event-feed .ev-danger b{color:var(--danger)}
+@keyframes evIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
+@keyframes evOut{to{opacity:0;transform:translateX(10px)}}
 
 .hud-bl{position:absolute;left:34px;bottom:30px;animation:riseIn .5s both}
 .bars{display:flex;flex-direction:column;gap:19px}
@@ -287,7 +339,13 @@ button{font-family:inherit}
 #flow-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 48%,rgba(87,201,255,.3) 100%);
   mix-blend-mode:screen}
 
-#killfeed{position:absolute;right:34px;top:120px;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+/* IN THE FLOW of .hud-tr, under the event feed.
+   It was absolutely positioned at top:120px, which is inside the space the
+   score column now occupies — the event feed would have been drawn straight
+   through it. In flow, the whole right-hand column is one stack that grows
+   downward and can never overlap itself: flow meter, combo, score, what just
+   happened, who did what to whom. */
+#killfeed{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-top:12px}
 #killfeed .kf{font:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--dim);
   padding:4px 9px;border-right:2px solid var(--accent);background:rgba(9,13,21,.6);
   animation:kfIn .3s cubic-bezier(.22,1,.36,1) both}

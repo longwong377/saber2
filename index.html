@@ -165,6 +165,35 @@
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
         <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+        <label class="slider">Voices <input type="range" id="opt-voicelevel" min="0" max="1.2" step="0.02" value="0.9"><b></b></label>
+        <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
+        <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
+        <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
+        <p class="hint">Nothing here is a recording. Every voice is built from an oscillator, two formant
+          filters and a breath of noise at the moment it is needed — which is why they can be told apart
+          by measuring them, and why turning the last box off is worth a few frames on a slow machine.</p>
+      </div>
+
+      <div class="col">
+        <h3>Your voice</h3>
+        <label class="slider wide">Character <input type="range" id="opt-voice" min="0" max="4" step="1" value="0"><b></b></label>
+        <p class="hint" id="voice-blurb"></p>
+        <button id="btn-voice-test" class="secondary" style="margin-top:2px">Hear it</button>
+        <p class="hint" style="margin-top:12px">Your Jedi grunts with the effort of a real swing, takes a hard
+          landing badly, and has something to say about a kill, a run of deflections, a boss walking in and
+          being nearly dead. Five larynxes, five throats, five tempos.</p>
+
+        <h3 style="margin-top:24px">Reticle</h3>
+        <label class="slider wide">Shape <input type="range" id="opt-ret-shape" min="0" max="6" step="1" value="0"><b></b></label>
+        <label class="slider">Size <input type="range" id="opt-ret-size" min="0.5" max="2.2" step="0.05" value="1"><b></b></label>
+        <label class="slider wide">Colour <input type="range" id="opt-ret-color" min="0" max="7" step="1" value="0"><b></b></label>
+        <div class="ret-preview"><svg id="ret-demo" viewBox="0 0 100 100" aria-hidden="true"></svg></div>
+        <p class="hint">It still turns red when something is close enough to kill you — a colour that could
+          hide that would be a customisation which removes information.</p>
+
+        <h3 style="margin-top:24px">Interface</h3>
+        <label class="check"><input type="checkbox" id="opt-popups" checked> Event popups</label>
+        <p class="hint">Killstreaks, deflection runs and a boss arriving, in the score column of the HUD.</p>
       </div>
     </section>
 
@@ -201,10 +230,14 @@
 <!-- ══════════════════════ HUD ══════════════════════ -->
 <div id="hud" class="hidden">
   <pre id="hud-perf" class="hidden"></pre>
+  <!-- The DEFAULT reticle only. HUD.applyReticle rewrites this from the three
+       Options controls (shape, size, colour) on the first frame of a run and
+       whenever one of them moves, so what is here is the Ring at Bone — the
+       colours are attributes because styles.css must not pin them. -->
   <svg id="reticle" viewBox="0 0 100 100" aria-hidden="true">
-    <circle class="ret-ring" cx="50" cy="50" r="15"></circle>
-    <circle class="ret-dot" cx="50" cy="50" r="1.4"></circle>
-    <path class="ret-tick" d="M50 26 v6 M50 68 v6 M26 50 h6 M68 50 h6"></path>
+    <circle class="ret-ring" cx="50" cy="50" r="15" stroke="#ffffff"></circle>
+    <circle class="ret-dot" cx="50" cy="50" r="1.4" fill="#ffffff"></circle>
+    <path class="ret-tick" d="M50 26 v6 M50 68 v6 M26 50 h6 M68 50 h6" stroke="#ffffff"></path>
   </svg>
   <div id="blade-cursor"><i></i></div>
 
@@ -258,6 +291,27 @@
     <div id="hud-flow" class="flowmeter"><i></i><span>FLOW</span></div>
     <div id="hud-combo" class="combo"></div>
     <div id="hud-score" class="score">0</div>
+    <!--
+      EVENT FEED — killstreaks, deflection runs, a boss arriving.
+
+      Inside .hud-tr on purpose, under the score and the combo counter, in the
+      same right-aligned mono column. That is where the eye already goes after a
+      kill, so a streak reads as the score block saying something rather than as
+      a banner arriving on top of the game; the centre of the screen belongs to
+      HUD.message() and the wave director, and two things shouting there is one
+      too many. Filled by HUD.popup, emptied by the same. Toggleable: Options →
+      Interface → Event popups.
+    -->
+    <div id="event-feed"></div>
+    <!--
+      …and the kill feed under it, IN THE SAME FLOW.
+
+      It used to be absolutely positioned at top:120px, which is inside the
+      space this column now occupies — the event feed would have been drawn
+      straight through it. Two right-aligned mono lists stacked in one flow is
+      also simply what they are: what just happened, then who did what to whom.
+    -->
+    <div id="killfeed"></div>
   </div>
 
   <div class="hud-bl">
@@ -302,7 +356,6 @@
   <div id="hitmarks"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>
-  <div id="killfeed"></div>
 </div>
 
 <!-- ══════════════════════ OVERLAYS ══════════════════════ -->

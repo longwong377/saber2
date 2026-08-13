@@ -1143,6 +1143,9 @@ export class Particles {
     const grounded = gh !== null ? Math.abs(pos.y - gh) < 0.4 : (normal && normal.y > 0.62);
     if (opts.surface === true || grounded) {
       this.scorch(pos, normal, 0.16 + rng() * 0.1, { heat: 0.8, life: 11 });
+      // and the ground keeps the burn after the decal has faded: a deflected
+      // bolt is the other way a lit blade marks the floor.
+      if (grounded) ground.burn(pos.x, pos.z, 0.26, 0.85);
     }
   }
 
@@ -1196,6 +1199,26 @@ export class Particles {
       press: clamp(0.45 + power * 0.4, 0, 1), dirX, dirZ,
     });
 
+    /* AND THE GROUND ITSELF KEEPS IT.
+     *
+     * This one line is the whole of "the player and every enemy leave
+     * footprints", and it needed no new call site anywhere: `sandPuff` is
+     * already what Player._footstep and Enemy's animator.onFootstep call on
+     * every planted foot, with the position, the power and — through
+     * `_stride` — the direction of travel already recovered. The cover trail
+     * above presses the GRASS; this presses the ground under it, which is the
+     * half that was missing on every level that has no grass, i.e. every level
+     * this was asked for.
+     *
+     * Depth rides `power`, which is `clamp(speed * 0.09, 0.12, 0.5)` for a
+     * walking step and 1.9× the impact speed for a landing, so a sprint digs
+     * in and a stroll does not. `Terrain.tread` then caps it by how much
+     * material is lying at the point, so the same step is a hole in a drift
+     * and a scuff on a scoured rib.
+     */
+    ground.tread(pos.x, pos.z, 0.17 + power * 0.10, 0.10 + power * 0.26, dirX, dirZ,
+      { stretch: stride * clamp(power * 1.2, 0, 1.1) });
+
     if (power >= 1.05) this.landingRing(pos, power, floor, color);
     else if (power >= 0.5) {
       this.decals.add(_v3.set(pos.x, floor + 0.01, pos.z), UP, 0.22 + power * 0.3,
@@ -1231,6 +1254,9 @@ export class Particles {
     this.decals.add(_v3.set(pos.x, floor + 0.012, pos.z), UP, 0.55 + power * 0.75,
       { life: 14, heat: 0, alpha: 0.42 });
     ground.disturb(pos.x, pos.z, 1.1 + power * 0.9, { press: 1 });
+    // A hard arrival craters the loose layer well outside the boot that made
+    // it, with a real berm — that is what the ring of dust is dust OFF.
+    ground.tread(pos.x, pos.z, 0.42 + power * 0.55, 0.16 + power * 0.30, 0, 0, { rim: 0.55 });
   }
 
   /** A skid: a smear of dust and grit dragged along the ground, plus its mark. */
@@ -1259,6 +1285,10 @@ export class Particles {
     ground.disturb(pos.x, pos.z, 0.5 + power * 0.4, {
       press: clamp(0.6 + power * 0.3, 0, 1), dirX: d.x, dirZ: d.z,
     });
+    // A skid is a footfall smeared along its own direction: same bowl, drawn
+    // out, with the berm piled at the back of it.
+    ground.tread(pos.x, pos.z, 0.20 + power * 0.16, 0.09 + power * 0.20, d.x, d.z,
+      { stretch: 1.1 + power * 0.9, rim: 0.5 });
   }
 
   /**
@@ -1266,6 +1296,18 @@ export class Particles {
    * is molten glass spitting out of a line that glows and then cools to a scar.
    */
   bladeScar(a, b, color = 0xffb040, opts = {}) {
+    /* THE GROUND TAKES THE CUT, not just the decal field.
+     *
+     * This emitter shipped with no caller anywhere in src/ — the saber's
+     * contact solver only ever tests enemies, props and doors, so a blade
+     * dragged through the dune did nothing at all. Reaching it is
+     * `ground.scar(a, b)`, which is what the one hook this needs should call;
+     * everything downstream of that hook is here and is live.
+     *
+     * `ground.scar` calls the terrain side first and this second, so guard
+     * against doing the trench twice when it is the caller.
+     */
+    if (opts.trench !== false) ground.terrain?.scar?.(a, b, opts);
     const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
     const len = Math.hypot(dx, dz) || 0.001;
     const steps = Math.min(10, Math.max(1, Math.round(len / 0.32)));
@@ -1274,7 +1316,10 @@ export class Particles {
       _v2.set(a.x + dx * t, a.y + dy * t, a.z + dz * t);
       const floor = ground.heightAt(_v2.x, _v2.z);
       if (floor !== null) _v2.y = floor + 0.02;
-      this.decals.add(_v2, UP, 0.16 + rng() * 0.12, { life: 18, heat: 1, alpha: 0.9 });
+      // 9-16 cm, not 16-28: a stroke is ten of these laid end to end, and at
+      // the old radius a two-metre cut came out as a half-metre-wide molten
+      // snake lying on the snow. A saber kerf is a hand's width.
+      this.decals.add(_v2, UP, 0.09 + rng() * 0.07, { life: 18, heat: 1, alpha: 0.9 });
       for (let i = 0; i < Math.max(2, Math.round(5 * this.scale)); i++) {
         _v.set((rng() - 0.5) * 3.5, 1.5 + rng() * 5.0, (rng() - 0.5) * 3.5);
         this.sparks.spawn(_v2, _v, { life: 0.5 + rng() * 0.7, size: 0.009 + rng() * 0.014,
@@ -1410,6 +1455,10 @@ export class Particles {
         this.scorch(_v2.set(pos.x, gh + 0.02, pos.z), UP, 0.12 + rng() * 0.1, { heat: 1, life: 14 });
       }
     }
+    // Slag is molten metal running off a blade held against something. What it
+    // lands on keeps it, whether or not a decal was spent this frame.
+    const gy = ground.heightAt(pos.x, pos.z);
+    if (gy !== null && Math.abs(pos.y - gy) < 0.6) ground.burn(pos.x, pos.z, 0.17, 1);
   }
 
   dispose() {

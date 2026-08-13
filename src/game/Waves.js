@@ -33,6 +33,7 @@
 import * as THREE from 'three';
 import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, applyModifier } from './Enemy.js';
 import { segmentSegment } from '../physics/Physics.js';
+import { ArrivalDirector } from './Arrivals.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -264,6 +265,26 @@ export class WaveDirector {
     // sandbox bookkeeping — see _sandboxUpdate
     this._fireApplied = null;
     this._diffBase = null;
+
+    /**
+     * HOW A BODY GETS INTO THE WORLD.
+     *
+     * It used to be `ctx.spawnEnemy(type, ctx.pickSpawn(type))` right here, on
+     * a timer, and that single line is the whole of "enemies pop into
+     * existence". Now the request goes to something that has to bring them —
+     * a ship, a gate, or a long walk in from the edge — and `spawnEnemy` is
+     * called by THAT, at the moment and place the arrival delivers. See
+     * src/game/Arrivals.js.
+     *
+     * The sandbox keeps the direct path: it is a debug room whose whole
+     * purpose is putting twenty bodies in front of you in three seconds.
+     */
+    this.arrivals = new ArrivalDirector(world, (type, mod, pos) => {
+      const e = world.spawnEnemy(type, pos);
+      if (e && mod) applyModifier(e, mod);
+      return e;
+    }, ARCHETYPES);
+    this.arrivals.enabled = !this.sandbox;
   }
 
   get sandbox() { return this.mode === 'sandbox'; }
@@ -733,6 +754,9 @@ export class WaveDirector {
 
   update(dt, ctx) {
     if (this.sandbox) { this._sandboxUpdate(dt, ctx); return; }
+    // Ships and gates keep flying through an intermission and a draft: a run
+    // that pauses does not leave a gunship frozen in the sky.
+    this.arrivals.update(dt, ctx);
     if (!this.active) {
       if (this.intermission > 0) {
         this.intermission -= dt;
@@ -743,20 +767,26 @@ export class WaveDirector {
 
     this.spawnTimer -= dt;
     const alive = ctx.enemies.filter(e => !e.dead).length;
-    if (this.spawnQueue.length && alive < this.maxAlive && this.spawnTimer <= 0) {
+    // Bodies already on their way count against the cap. Without this the
+    // director would keep calling for more the whole time a ship was inbound
+    // and land six at once.
+    const inbound = this.arrivals.pending;
+    if (this.spawnQueue.length && alive + inbound < this.maxAlive && this.spawnTimer <= 0) {
       const entry = this.spawnQueue.shift();
       const type = spawnType(entry);
-      const pos = ctx.pickSpawn(type);
-      const e = ctx.spawnEnemy(type, pos);
       const mod = spawnMod(entry);
-      // Promoted after construction because `World.spawnEnemy(type, pos)` is
-      // the only door in and takes no options — see applyModifier.
-      if (e && mod) applyModifier(e, mod);
+      // The arrival owns where and when. If it declines — arrivals off, or a
+      // level with nothing that could bring anything — the old direct path is
+      // still here, because a level must never fail to produce its wave.
+      if (!this.arrivals.request(type, mod)) {
+        const e = ctx.spawnEnemy(type, ctx.pickSpawn(type));
+        if (e && mod) applyModifier(e, mod);
+      }
       this.totalSpawned++;
       this.spawnTimer = lerp(0.85, 0.16, clamp(this.wave / 16, 0, 1)) * (0.6 + rng() * 0.8);
     }
 
-    if (!this.spawnQueue.length && alive === 0) {
+    if (!this.spawnQueue.length && !this.arrivals.pending && alive === 0) {
       this.active = false;
       const draft = this.mode === 'roguelite' && this.isDraftWave(this.wave);
       this.intermission = draft ? 999 : 5.5;
@@ -777,7 +807,11 @@ export class WaveDirector {
   }
 
   get remaining() {
-    return this.spawnQueue.length + this.world.enemies.filter(e => !e.dead).length;
+    // `arrivals.pending` is bodies bought and paid for that are still in a ship
+    // or behind a door. Leaving it out told the HUD "0 remaining" while a
+    // gunship was on final approach, and ended the wave under it.
+    return this.spawnQueue.length + this.arrivals.pending
+      + this.world.enemies.filter(e => !e.dead).length;
   }
 
   resumeAfterDraft() {

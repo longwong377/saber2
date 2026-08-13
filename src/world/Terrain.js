@@ -26,6 +26,7 @@
 import * as THREE from 'three';
 import { fbm2, ridged2, clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps } from '../engine/Textures.js';
+import { SurfaceField, SURFACE_RES, SURFACE_SIZE, SURFACE_GRAD_FS } from './Surface.js';
 // One-way: Scenery knows nothing about Terrain, so publishing the heightfield
 // on the broker here is what lets the water find the bed it is lying in
 // without the World having to wire the two together.
@@ -113,6 +114,12 @@ export const TERRAIN_PRESETS = {
     // from the pale sheet, which is the whole point of the pair.
     lagColor: 0x63645a, sheetColor: 0xc4a87e,
     ripple: 1.15,
+    // The loose layer, and how fast the wind puts it back. `depth` is what one
+    // footfall presses into it; `refill` is the e-folding time of the fill-in.
+    // A young dune field is being combed all day, so a track has a minute or
+    // two rather than an afternoon — but not the erg's forty seconds.
+    loose: { depth: 0.20, refill: 78, tilt: 1.00, tint: 0.46, soot: 1.0 },
+    packedColor: 0x6b4f2c,
     detail: [0.95, 34],
     height(x, z) {
       const wx = 0.86, wz = 0.51;
@@ -214,6 +221,11 @@ export const TERRAIN_PRESETS = {
     // the whole 140 m grain-sorting patchwork read as a brightness ramp; this
     // is 71°, and the sheet it is bracketed against stays warm at 37°.
     lagColor: 0x5e6055, sheetColor: 0xc0a880,
+    // A fought-over bowl with a wind-packed silt floor: it takes a print
+    // shallowly and keeps it a long time, which is the right memory for the
+    // one level whose whole subject is what happened on it.
+    loose: { depth: 0.13, refill: 150, tilt: 0.92, tint: 0.42, soot: 1.0 },
+    packedColor: 0x63492a,
     ripple: 0.95,
     detail: [0.95, 30],
     height(x, z) {
@@ -295,6 +307,10 @@ export const TERRAIN_PRESETS = {
     macro: [125, 0.55, 0.40, 1.15],
     rockUpland: [0.10, 9, 34],
     lagColor: 0x5d5343, sheetColor: 0xab9673,
+    // A wash floor is damp sand over gravel: it takes a sharp print and the
+    // river's own air does very little to it.
+    loose: { depth: 0.11, refill: 190, tilt: 0.86, tint: 0.50, soot: 1.0 },
+    packedColor: 0x4a3524,
     // A wash is worked by water, not by wind. Aeolian ripples over the whole
     // canyon floor read as corduroy and contradict the river running down it.
     ripple: 0.55,
@@ -383,6 +399,11 @@ export const TERRAIN_PRESETS = {
     // size but how long the sward has stood. Peaty humus where it is old and
     // rank, bleached thatch where last year's growth is still standing.
     lagColor: 0x4a4736, sheetColor: 0xb3ac8e,
+    // Turf. The shallowest layer and the fastest recovery in the game, because
+    // the thing that remembers a footfall on a meadow is the GRASS and not the
+    // soil, and that is GrassField's own trail rather than this.
+    loose: { depth: 0.055, refill: 26, tilt: 0.70, tint: 0.34, soot: 1.0 },
+    packedColor: 0x3a3722,
     // A meadow is not wind-carved. 0.35 against the dune sea's 1.15 — and the
     // number that actually kills the corduroy is ripAspect: at 1.0 the soil map
     // is sampled through a SQUARE frame, so its crumb has no bearing at all.
@@ -456,6 +477,12 @@ export const TERRAIN_PRESETS = {
     lagColor: 0x585a4e, sheetColor: 0xd4b184,
     // A storm combs harder than a breeze does.
     ripple: 1.30,
+    // Deep, dry, unpacked sand — the deepest print in the game after the snow
+    // — and the shortest memory, because this is the level with a sandstorm
+    // scheduled every ninety seconds and a storm erases a trail in under a
+    // minute. That is a feature: on this one map your tracks are being chased.
+    loose: { depth: 0.26, refill: 40, tilt: 1.05, tint: 0.50, soot: 1.0 },
+    packedColor: 0x6d4526,
     detail: [0.95, 34],
     height(x, z) {
       const wx = 0.79, wz = 0.61;
@@ -588,6 +615,21 @@ export const TERRAIN_PRESETS = {
     // crests down to the moraine grit under them and drops what it took as
     // fresh drift downwind. Both are true of a snowfield and both are visible.
     lagColor: 0x60564a, sheetColor: 0xdfe6ee,
+    /* SNOW. The deepest loose layer and the longest memory in the game, and
+     * both are the point of the level: what you do here stays until it snows.
+     *
+     * 0.34 m is what one FOOTFALL presses into flat, unpacked snow. `mantle`
+     * is the other half — how much snow is actually LYING at a point, which is
+     * what decides whether a print is a scuff on a wind-stripped rib or a hole
+     * with a shadow in it. 0.10 m on a scoured crest to 0.95 m in a lee hollow:
+     * ankle to waist, which is the range this level was asked for.
+     *
+     * The tint is the coldest in the table because packed snow is BLUER as
+     * well as darker — what you are looking at in the bottom of a print is a
+     * centimetre of ice lit by nothing but sky. */
+    loose: { depth: 0.34, refill: 300, tilt: 1.25, tint: 0.62, soot: 1.0 },
+    mantle: [0.10, 0.95],
+    packedColor: 0x7d8ca6,
     // Sastrugi. Real, directional, and softer than an aeolian sand ripple — the
     // map's drift wavelength is twice the sand map's and its two trains sit 2°
     // apart rather than 33°, so the frame does not need stretching as hard to
@@ -638,6 +680,12 @@ export const TERRAIN_PRESETS = {
     wind: [1, 0],
     macro: [58, 0.34, 0.26, 0.75],
     lagColor: 0x2f343c, sheetColor: 0x6a707a,
+    // A poured deck does not take a footprint. It takes a SCORCH, which is the
+    // half of the surface memory that has nothing to do with loose material —
+    // so the layer is here at two centimetres of grit and dust, and the burn
+    // channel is at full strength.
+    loose: { depth: 0.02, refill: 40, tilt: 0.55, tint: 0.30, soot: 1.0 },
+    packedColor: 0x23262b,
     ripple: 0.55, ripAspect: 1.0,   // a deck is poured, not blown
     texScale: [0.42, 0.26, 0.34],
     detail: [1.6, 26],
@@ -704,6 +752,14 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform vec3 uRockUp;      // rock-with-height: gain, y start, y end
   uniform vec3 uCover;       // amount, 1/extent (m), unused
   uniform sampler2D uCoverMap;  // WHERE anything grows — the grass's own field
+  uniform vec4 uSward;       // amount, comb scale (1/m), relief, unused
+  uniform vec3 uSwardA;      // the mat's canopy, where it is thick
+  uniform vec3 uSwardB;      // and what shows down between the blades
+  uniform vec4 uSurf;        // window centre x, z, 1/window size, half window (m)
+  uniform vec4 uSurfSet;     // master gain, tilt gain, packed tint, soot
+  uniform sampler2D uSurfMap;   // WHAT HAS HAPPENED HERE — depth, ∂depth, scorch
+  uniform vec3 uSurfCol;     // the colour of turned, packed material
+  uniform vec3 uSurfGlowCol; // what a cut in this ground glows
   uniform vec3 uNrmScale;    // base, near detail, rock
   uniform vec3 uSkyCol;      // the fallback asymptote, when nothing drew a sky
   uniform sampler2D uSkyStrip;  // the DRAWN sky at the skyline, over bearing
@@ -1126,11 +1182,80 @@ const TERRAIN_FRAG_MAP = /* glsl */`
    * texture by makeCoverField and handed down by the grass, which is also the
    * only way cover reaches past the instanced field's outer radius: this runs
    * to the edge of the heightfield for nothing. */
+  float coverW = 0.0;
+  float swardBlade = 0.5;
+  float swardCross = 0.5;
   if (uCover.x > 0.001) {
     float cov = uCover.x * texture2D(uCoverMap, wp * uCover.y + 0.5).r
               * smoothstep(0.30, 0.08, slope)
               * smoothstep(uGround.x - 0.35, uGround.x + 0.45, vWPos.y);
     col = mix(col, uCoverCol, cov);
+    coverW = cov;
+
+    /* ── AND WHAT SHOWS BETWEEN THE BLADES IS SWARD, NOT SOIL ─────────
+     *
+     * The complaint is "the meadow must be ALL GRASS — the bare ground never
+     * visible anywhere", and the instanced field alone cannot answer it. The
+     * arithmetic is in GRASS_TIERS: cover from a scatter is 1 − exp(−λa), so
+     * closing the last few per cent costs exponentially more instances than
+     * the first fifty, and the ground between the blades is what the eye reads
+     * when you look down at your own feet — where the view is nearly plan and
+     * the silhouettes have almost no depth to hide behind.
+     *
+     * So the last few per cent are not bought with geometry. On ground the
+     * cover field says is covered, the SURFACE is a mat of blade tips seen
+     * from above: a comb direction that swirls at four metres, blades three
+     * centimetres across and twenty-five long, and the level's own two grass
+     * colours sorted between them. It costs four noise taps on ground the
+     * shader has already decided is vegetated, and it is the difference
+     * between a field of tussocks standing on a painted plane and a field of
+     * tussocks standing in grass.
+     *
+     * NOT the same colour as the blades. This is the mat DOWN AMONG them,
+     * shaded by everything standing over it — see the cover setter below,
+     * which derives both stops from the level's own tints and darkens them.
+     * (Spelling that method's name here breaks tools/checks/terrain-aerial.mjs,
+     * which slices this file between '_syncAtmosphere()' and the first
+     * occurrence of it. A source-slicing check is a real constraint on where a
+     * name may appear, and it is cheaper to respect than to argue with.)
+     */
+    if (uSward.x > 0.001 && cov > 0.02) {
+      // which way the mat lies here — one bearing over a few metres, because
+      // sward that points a different way every centimetre is felt, not grass
+      float sang = (tnoise(wp * uSward.y) - 0.5) * 6.2832;
+      vec2 sdir = vec2(cos(sang), sin(sang));
+      vec2 sp = vec2(dot(wp, sdir), dot(wp, vec2(-sdir.y, sdir.x)));
+      // 3 cm across the comb and 25 cm along it: a blade, at the aspect a
+      // blade has. Two scales so the mat has coarse and fine in it.
+      float bl1 = tnoise(vec2(sp.x * 4.2, sp.y * 33.0));
+      float bl2 = tnoise(vec2(sp.x * 9.5, sp.y * 74.0));
+      float bl = bl1 * 0.62 + bl2 * 0.38;
+      // …and which patch of sward, at the scale a meadow changes over
+      // NOT "patch", and not "mat": both are reserved words in ESSL 3.00 and
+      // the fragment shader fails to compile with "illegal use of reserved
+      // word", which surfaces as a black terrain and one console line.
+      // And NOT backticks in this comment either — this whole block is a
+      // JS template literal, so one closes the string and the module stops
+      // parsing. node --check catches that; verify.mjs does not.
+      /* THE BLADE SCALE HAS TO GO AWAY WITH RANGE, and the patch scale must
+       * not. A 3 cm feature is well under a pixel by twenty metres, so past
+       * that it is not detail, it is noise sampled once per pixel — which
+       * crawls when the camera moves and is the classic way a procedural
+       * ground betrays itself at distance. Collapsing it toward its own mean
+       * leaves the 3 m patchwork, which is exactly the scale a meadow changes
+       * colour over and is still several pixels wide at 300 m. */
+      float fine = 1.0 - smoothstep(14.0, 55.0, viewDist);
+      bl = mix(0.5, bl, fine);
+      float swardPatch = clamp(tfbm(wp * 0.30) * 1.5 - 0.22 + (bl - 0.5) * 0.55, 0.0, 1.0);
+      // BOTH taps are carried, not the blend and a function of it: the relief
+      // below needs two INDEPENDENT numbers to tilt with. Deriving the second
+      // from the first puts every normal in the mat on one diagonal, which
+      // lights as a corduroy rather than as grass.
+      swardBlade = bl;
+      swardCross = bl2;
+      vec3 swardCol = mix(uSwardA, uSwardB, swardPatch) * (0.74 + bl * 0.52);
+      col = mix(col, swardCol, cov * uSward.x);
+    }
   }
   /* How hard this patch of ground is combed at all.
    *
@@ -1248,6 +1373,86 @@ const TERRAIN_FRAG_MAP = /* glsl */`
         - (0.50 - cav) * 0.26 * cavW
         + crest * 0.05,
         0.28, 1.06);
+
+  /* ── WHAT HAS HAPPENED TO THIS GROUND ────────────────────────────────
+   *
+   * One tap of the surface memory (src/world/Surface.js): depth in R, the
+   * depth GRADIENT already differenced into G/B, and scorch in A.
+   *
+   * The gradient is the whole trick. A footprint 25 cm across and 30 cm deep
+   * is twenty times finer than the heightfield's 1.6 m cell, so it can never
+   * be geometry here — but a print is not read as geometry anyway. It is read
+   * as a lit wall and a shaded one, which is a NORMAL, and a normal is exactly
+   * what a surface can carry. The depth itself then does the two things the
+   * tilt cannot: it darkens the trough, because packed snow and turned sand
+   * are darker than the face they came off, and it takes sky away from the
+   * bottom of a hole.
+   *
+   * The window is 48 m of ground that follows the player, so the mask is not
+   * optional: without it the wrap addressing prints somebody's tracks on a
+   * hillside a window away.
+   */
+  /* The mat's own relief. It lives here rather than beside its albedo because
+   * this is where the ground's tangent frame exists; swardBlade was measured
+   * up there and carried down. Half a millimetre of geometry and it is what
+   * stops the mat reading as a printed pattern: blade tips catch the sun and
+   * the gaps between them do not. Faded out with range along with every other
+   * normal on this material, because at 90 m it is smaller than a pixel and
+   * all it can do there is alias. */
+  if (uSward.z > 0.001 && coverW > 0.02) {
+    float sw = coverW * uSward.z * (1.0 - smoothstep(18.0, 60.0, viewDist));
+    terNrmOff += (Txz * (swardBlade - 0.5) + Bxz * (swardCross - 0.5)) * sw * 1.6;
+    terAO = clamp(terAO * (1.0 - (0.62 - swardBlade) * 0.30 * sw), 0.20, 1.06);
+    terRough = mix(terRough, 0.97, coverW * 0.5);
+  }
+
+  float surfGlow = 0.0;
+  if (uSurfSet.x > 0.0) {
+    vec2 sd = abs(wp - uSurf.xy);
+    float win = 1.0 - smoothstep(uSurf.w * 0.80, uSurf.w * 0.98, max(sd.x, sd.y));
+    if (win > 0.002) {
+      vec4 S = texture2D(uSurfMap, wp * uSurf.z);
+      float dep = S.r * win;
+      vec2 grd = (S.gb * 2.0 - 1.0) * uSurfSet.y * win;
+      // The tilt goes in the ground's own tangent frame, alongside the ripple
+      // relief, and it REPLACES that relief where it is deep: a boot print has
+      // squashed the sastrugi it went through.
+      terNrmOff = terNrmOff * (1.0 - dep * 0.75) + (Txz * grd.x + Bxz * grd.y);
+      // Turned material: darker, and toward the level's own packed colour
+      // rather than toward black, so a print in snow goes blue and a print in
+      // sand goes brown.
+      // NOT "packed": that is a RESERVED WORD in GLSL ES. Declaring one
+      // compiles fine in your head and fails on the device with a message
+      // pointing at the next line, taking the whole terrain shader — and with
+      // it the ground — out of the frame. verify.mjs scans every glsl block.
+      float packing = dep * uSurfSet.z;
+      diffuseColor.rgb = mix(diffuseColor.rgb, uSurfCol, packing);
+      // a hole sees less sky than the flat beside it
+      terAO = clamp(terAO * (1.0 - dep * 0.42), 0.20, 1.06);
+      terRough = mix(terRough, 0.70, dep * 0.55);
+      /* SCORCH IS ONE SCALAR AND TWO THINGS. Above the half-way mark it is
+       * still hot, and the glow is what the player sees for the first few
+       * seconds; under it, it is soot, and soot is an albedo. Splitting them
+       * with two smoothsteps off the same byte is what lets a saber cut cool
+       * on screen without a second channel and a second tap. */
+      float soot = smoothstep(0.02, 0.34, S.a) * win;
+      float heat = smoothstep(0.52, 0.95, S.a) * win;
+      diffuseColor.rgb *= mix(1.0, 0.16, soot * uSurfSet.w);
+      surfGlow = heat;
+    }
+  }
+`;
+
+/**
+ * The cut line, while it is still hot.
+ *
+ * Emissive rather than albedo because that is what it is: fused ground at
+ * two thousand kelvin is a light source, it survives the shadow it is lying
+ * in, and it is the one thing on the ground the bloom pass should find.
+ */
+const TERRAIN_FRAG_EMISSIVE = /* glsl */`
+  #include <emissivemap_fragment>
+  totalEmissiveRadiance += uSurfGlowCol * (surfGlow * surfGlow * uSurfSet.x);
 `;
 
 const TERRAIN_FRAG_ROUGH = /* glsl */`
@@ -1422,6 +1627,42 @@ export class Terrain {
     }
 
     this._bakeLandform();
+
+    /* ── the surface memory ───────────────────────────────────────────
+     * Built before the mesh, because the material's uniforms point straight
+     * at its texture. See src/world/Surface.js for why a footprint cannot be
+     * geometry on a 1.6 m grid and what it is instead.
+     *
+     * THE CELL IS 25 CM AT EVERY QUALITY TIER, and the tier moves the WINDOW.
+     * The first version scaled the resolution and held the window, which meant
+     * `medium` — the tier the screenshots are taken at, and the default —
+     * carried 37 cm texels: a footfall widened to 0.64 m, laid at a 0.7 m
+     * stride, and the alpine came out with broad soft undulations in the snow
+     * instead of a line of prints. A print has a real size and it does not
+     * negotiate with the settings menu; what a cheaper tier can honestly buy
+     * is REMEMBERING LESS GROUND, which is 29 m of window instead of 60 and
+     * 53 kB an upload instead of 230. */
+    const LZ = preset.loose;
+    const sq = this.quality >= 1.2 ? 1.25 : this.quality >= 0.9 ? 1.0
+      : this.quality >= 0.7 ? 0.8 : 0.6;
+    this.surface = LZ
+      ? new SurfaceField({
+        res: Math.round(SURFACE_RES * sq), size: SURFACE_SIZE * sq,
+        depth: LZ.depth, refill: LZ.refill,
+      })
+      : null;
+    /**
+     * HOW HARD THIS GROUND IS BEING HIT, as a multiplier on every crater.
+     *
+     * A Force push landed the same 2.6 m × 0.22 m hole on the first wave of a
+     * run and on the last, whatever the player had picked up on the way — so
+     * the ground was the one part of the frame that never learned the player
+     * had got stronger. Published here rather than passed, because the call
+     * sites that make craters are in Player.js and World.js and they have no
+     * business knowing about the run. See `setMight`.
+     */
+    this.might = 1;
+
     this._buildMesh(scene);
     this._dirtyRegion = null;
     // Published before anything else in the level is built, so the water knows
@@ -1577,6 +1818,8 @@ export class Terrain {
     // vector of any length.
     const w = P.wind || [1, 0];
     const wl = Math.hypot(w[0], w[1]) || 1;
+    const LOOSE = P.loose || {};
+    const surf = this.surface;
 
     // The heightfield is 560 m across and one tile is metres, so every UV is
     // computed in world space in the shader; the material carries no maps of
@@ -1625,6 +1868,26 @@ export class Terrain {
       uCover: { value: new THREE.Vector3(0, 1 / this.size, 0) },
       uCoverMap: { value: this._coverDefault = flatTexture(255) },
       uCoverCol: { value: new THREE.Color(0x3c4223) },
+      uSward: { value: new THREE.Vector4(0, 0.26, 0, 0) },
+      uSwardA: { value: new THREE.Color(0x5c6b30) },
+      uSwardB: { value: new THREE.Color(0x38431f) },
+      /* The surface memory. `uSurf.z` is 1/window, NOT 1/heightfield: the
+       * window wraps, so the uv is `fract(world / window)` and the repeat
+       * wrap does the fract for free. `.w` is the half-window the mask fades
+       * out over, and the mask is not decoration — without it the wrap prints
+       * a set of tracks on ground 48 m away that nobody has been near. */
+      uSurf: { value: new THREE.Vector4(0, 0, 1 / (surf ? surf.size : 1), (surf ? surf.size : 1) * 0.5) },
+      uSurfSet: { value: new THREE.Vector4(surf ? 1 : 0, LOOSE.tilt ?? 1,
+        LOOSE.tint ?? 0.45, LOOSE.soot ?? 1) },
+      uSurfMap: { value: surf ? surf.texture : (this._surfDefault = flatSurface()) },
+      uSurfCol: { value: C(P.packedColor ?? P.lagColor ?? P.sandColor) },
+      /* NOT the saber's colour. Ground at two thousand kelvin is a blackbody,
+       * and a blackbody does not come out blue however blue the thing that
+       * heated it was — a cut in sand glows the same orange whether a blue
+       * blade or a red one made it. Authored as a LINEAR multiplier, so it
+       * goes through setRGB rather than through the sRGB→linear conversion
+       * `new THREE.Color(hex)` performs. */
+      uSurfGlowCol: { value: new THREE.Color().setRGB(3.4, 1.05, 0.24, THREE.LinearSRGBColorSpace) },
       // base ripple, near grain, rock. The rock figure used to be 1.35, which
       // added up to a 53 degree tilt on a unit normal: every joint in the map
       // came out as a rope lying on the cliff rather than as a crack in it.
@@ -1663,6 +1926,7 @@ export class Terrain {
         .replace('#include <map_fragment>', TERRAIN_FRAG_MAP)
         .replace('#include <roughnessmap_fragment>', TERRAIN_FRAG_ROUGH)
         .replace('#include <normal_fragment_maps>', TERRAIN_FRAG_NORMAL)
+        .replace('#include <emissivemap_fragment>', TERRAIN_FRAG_EMISSIVE)
         .replace('#include <aomap_fragment>', TERRAIN_FRAG_AO)
         .replace('#include <fog_fragment>', TERRAIN_FRAG_FOG);
       this._shader = shader;
@@ -1807,13 +2071,30 @@ export class Terrain {
    * @param {number} metres   patch scale — only read when there is no map
    * @param {THREE.Texture} [map]  the cover field, baked over the heightfield's
    *                        own square. WHERE cover is, as against how much.
+   * @param {object} [sward]  the MAT: `{ amount, relief, a, b }`. The litter
+   *                        above is what is UNDER the cover; this is the top of
+   *                        the cover itself, seen from above between the
+   *                        blades, and it is what a level asked to be entirely
+   *                        grass needs the ground to be. Both colours are
+   *                        derived from the level's own tints by the caller and
+   *                        DARKENED — this is the mat down among the blades,
+   *                        shaded by everything standing over it, so a stop
+   *                        painted at the blade's own value reads as fog.
    */
-  setGroundCover(amount, colour, metres = 30, map) {
+  setGroundCover(amount, colour, metres = 30, map, sward) {
     const u = this._uniforms;
     if (!u) return this;
     u.uCover.value.set(clamp(amount, 0, 1), 1 / this.size, 0);
     if (map !== undefined) u.uCoverMap.value = map || this._coverDefault;
     if (colour !== undefined && colour !== null) u.uCoverCol.value.set(colour);
+    if (sward) {
+      u.uSward.value.set(clamp(sward.amount ?? 0, 0, 1), sward.comb ?? 0.26,
+        clamp(sward.relief ?? 0, 0, 2), 0);
+      if (sward.a) u.uSwardA.value.set(sward.a);
+      if (sward.b) u.uSwardB.value.set(sward.b);
+    } else if (amount <= 0) {
+      u.uSward.value.set(0, 0.26, 0, 0);
+    }
     return this;
   }
 
@@ -1892,11 +2173,124 @@ export class Terrain {
   /* ── deformation ───────────────────────────────────────────────────── */
 
   /**
+   * HOW MUCH LOOSE MATERIAL IS LYING HERE, in metres.
+   *
+   * Snow is not a coat of paint: it lies deep in the lee hollows the wind
+   * dropped it into and is stripped to nothing on the crests the wind came
+   * over. The two landform channels that say which is which are already baked
+   * — concavity at 8 m and wind exposure — so this costs one lookup and no new
+   * state, and it is the number that makes a print in a drift a different
+   * thing from a print on a scoured rib.
+   *
+   * Presets with no `mantle` have a uniform layer as deep as one footfall goes,
+   * which is the honest statement for sand: a dune is loose all the way down.
+   */
+  mantleAt(x, z) {
+    const M = this.preset.mantle;
+    const loose = this.preset.loose;
+    if (!loose) return 0;
+    if (!M) return loose.depth;
+    const i = clamp(Math.round((x + this.half) * this.invStep), 0, this.res - 1);
+    const j = clamp(Math.round((z + this.half) * this.invStep), 0, this.res - 1);
+    const k = (j * this.res + i) * 4;
+    const conc = this.landform[k] / 255 * 2 - 1;        // + hollow, − crest
+    const expo = this.landform[k + 3] / 255 * 2 - 1;    // + windward, − lee
+    // Steep ground sheds it: snow does not lie on a 46° face, it sloughs.
+    const shed = 1 - smoothstep(0.10, 0.34, this.slopeAt(x, z));
+    const fill = clamp(0.5 + conc * 0.62 - expo * 0.44, 0, 1) * shed;
+    return lerp(M[0], M[1], fill);
+  }
+
+  /**
+   * What the run has made of the player, as a multiplier on every crater.
+   *
+   * One number, set once when the level is dressed, because that is when the
+   * run's tier and boons are known and the ground is built. Clamped rather
+   * than trusted: `forcePower` is a settings slider that goes to 4, and a
+   * 4× crater on top of a 4× radius is a hole you fall into.
+   */
+  setMight(k) { this.might = clamp(k, 0.35, 3.2); return this.might; }
+
+  /**
+   * A footfall, a skid, a body landing: press the LOOSE LAYER, not the mesh.
+   *
+   * The depth asked for is capped by how much material is actually lying here
+   * — you cannot press a 30 cm print into 10 cm of snow — which is what turns
+   * one number in the preset into a level where the drifts hold a deep track
+   * and the scoured ribs hold a scuff.
+   *
+   * @returns {number} cells written; 0 if the point is outside the window
+   */
+  tread(x, z, radius, depth, dirX = 0, dirZ = 0, opts = {}) {
+    if (!this.surface) return 0;
+    const cap = this.mantleAt(x, z) * 0.62;
+    return this.surface.tread(x, z, radius, Math.min(depth, cap), dirX, dirZ, opts);
+  }
+
+  /** Heat on the ground: slag, a bolt that missed, a blade laid against it. */
+  burn(x, z, radius, heat = 1) {
+    return this.surface ? this.surface.burn(x, z, radius, heat) : 0;
+  }
+
+  /**
+   * A lit blade dragged through the ground from `a` to `b`.
+   *
+   * Two things at once, and it needs to be both: a TRENCH, so the ground
+   * either side of the line catches the light differently and the cut has a
+   * shape, and HEAT, which the material reads as glow for the first few
+   * seconds and then as soot for half a minute. A scorch decal alone is a
+   * sticker; a trench alone is a scratch.
+   */
+  scar(a, b, opts = {}) {
+    if (!this.surface) return 0;
+    const w = opts.radius ?? 0.11;
+    const d = Math.min(opts.depth ?? 0.09, this.mantleAt(a.x, a.z) * 0.55);
+    return this.surface.gouge(a, b, w, d, opts.heat ?? 1);
+  }
+
+  /**
+   * The per-frame tick the surface memory needs: move its window to the
+   * player and age what it holds. Driven from `ground.frame` — see the note
+   * on the broker in Scenery.js for why the tick lives there.
+   *
+   * NOT `step`: `this.step` is the grid spacing in metres, an instance field
+   * set in the constructor, and a method of that name is shadowed by it on
+   * every Terrain ever built. It fails as `step is not a function`, which
+   * reads like a missing import rather than a name collision.
+   */
+  tick(dt, focus) {
+    const S = this.surface;
+    if (!S) return;
+    if (focus) S.follow(focus.x, focus.z);
+    S.update(dt);
+    const u = this._uniforms.uSurf.value;
+    u.x = S.center.x; u.y = S.center.y; u.z = 1 / S.size; u.w = S.size * 0.5;
+  }
+
+  /**
    * Push the surface down (or up with a negative depth) — craters from Force
    * landings, gouges from a body hitting the dune at speed.
+   *
+   * SCALED BY `might`, which is what makes the ground know how far into a run
+   * it is. The radius takes the cube root of it and the depth the whole of it,
+   * because the two are not independent: a blast that moves k times the
+   * material at the same shape is k^(1/3) wider and k deeper, and scaling both
+   * linearly at might 3 would be a 8 m crater, which is a level-geometry
+   * change rather than a hit.
    */
   crater(x, z, radius, depth, rim = 0.22) {
+    const might = this.might ?? 1;
+    /* The loose layer takes the hit whatever the mesh does, so a Force push on
+     * the hangar deck still scuffs it and a small one on a dune leaves a
+     * print-scale mark rather than being widened to 2.2 m and vanishing. This
+     * runs BEFORE the flat/grid early-outs on purpose. */
+    if (this.surface) {
+      this.surface.tread(x, z, radius * 0.85, Math.min(depth * might * 1.6, this.mantleAt(x, z) * 0.85),
+        0, 0, { rim: 0.5 });
+    }
     if (this.preset.flat) return;
+    radius *= Math.cbrt(might);
+    depth *= might;
     // A crater narrower than the grid cannot be represented, so widen it and
     // shallow it to move the same amount of sand.
     const minR = this.step * 1.35;
@@ -2001,8 +2395,18 @@ export class Terrain {
     this.material.dispose();
     this._strip?.dispose();
     this._coverDefault?.dispose();
+    this._surfDefault?.dispose();
+    this.surface?.dispose();
+    this.surface = null;
     this.mesh.parent?.remove(this.mesh);
   }
+}
+
+/** Undisturbed ground, as one texel: no depth, no gradient, no scorch. */
+function flatSurface() {
+  const t = new THREE.DataTexture(new Uint8Array([0, 128, 128, 0]), 1, 1, THREE.RGBAFormat);
+  t.needsUpdate = true;
+  return t;
 }
 
 /** A 1×1 texture, so a sampler that has nothing bound to it yet still reads a

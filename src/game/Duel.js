@@ -343,7 +343,7 @@ export class DuelBrain {
     // are different lengths of time; this is the second one, and it is long
     // enough to be an invitation. Capped at 2.2 s so `stun(9999)` on a toppled
     // body does not leave a permanent stagger behind.
-    const t = clamp(Math.max(seconds, 0.42) * lerp(0.75, 1.35, clamp(power, 0, 1.5)), 0.32, 2.2);
+    const t = clamp(Math.max(seconds, 0.42) * clamp(power, 0.6, 1.4), 0.32, 2.2);
     // Never shorten an existing stagger: two parries in a row must not read as
     // one, and `Math.max` is the same rule Enemy.stun already follows.
     if (this.staggered && this.timer > t) return;
