@@ -290,8 +290,29 @@ export class LiveToon {
 
   /* ── frame ─────────────────────────────────────────────────────────── */
 
+  /**
+   * THE FRAME CONTRACT, and it is not optional.
+   *
+   * `Input` ACCUMULATES `mouse.dx/dy` from every mousemove event and clears
+   * them in `end()`. It is a per-frame delta that gameplay consumes exactly
+   * once — so a loop that reads it without ever calling `end()` does not read
+   * "how far the mouse moved this frame", it reads "how far the mouse has moved
+   * since the page opened", and applies that as a yaw every frame. The result
+   * is a camera that spins faster and faster and cannot be stopped. That is
+   * what shipped, and it made the page unusable.
+   *
+   * `end()` also clears `pressed` and `released`, so without it every one-shot
+   * action — jump, attack, ignite — re-fires on every single frame.
+   *
+   * The ordering is copied from `main.js` (`input.begin` before `world.update`,
+   * `input.end` after `engine.render`) rather than approximated, because the
+   * two halves live in different methods here and the temptation to put `end()`
+   * at the bottom of `update` is exactly how the render would come to read
+   * already-cleared input.
+   */
   update(dt) {
     if (!this.ready) return;
+    this.input.begin(dt);
     this.world.update(dt, this.input);
     // Catch materials that appeared since the last sweep — see _convert.
     this._sweep = (this._sweep || 0) + dt;
@@ -318,5 +339,24 @@ export class LiveToon {
     if (lines) this.outlines.prepass(this.engine.scene, this.engine.camera);
     this.engine.render(dt);
     if (lines) this.outlines.draw();
+    // The other half of the frame contract — see `update`. Last, after the
+    // render, exactly where main.js puts it.
+    this.input.end();
+  }
+
+  /**
+   * Drop whatever movement accumulated while the mouse was free.
+   *
+   * Called on a pointer-lock change. Without it, opening the Tab panel, moving
+   * the cursor across the screen to reach a slider and then re-locking delivers
+   * that whole traversal as one enormous yaw on the next frame — a small
+   * version of the same bug, and the one a player would meet every time they
+   * touched a control.
+   */
+  flushLook() {
+    if (!this.input) return;
+    this.input.mouse.dx = 0;
+    this.input.mouse.dy = 0;
+    this.input.mouse.wheel = 0;
   }
 }

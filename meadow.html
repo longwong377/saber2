@@ -230,6 +230,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Escape') panel.classList.remove('hidden');
 });
 
+// Re-locking after a trip to the panel would otherwise deliver the whole
+// cursor traversal as one yaw on the next frame — see LiveToon.flushLook.
+document.addEventListener('pointerlockchange', () => app.flushLook?.());
+
 /* ── frame ──────────────────────────────────────────────────────────── */
 const fpsEl = $('fps');
 let last = performance.now(), smooth = 60, acc = 0;

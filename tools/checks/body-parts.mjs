@@ -29,6 +29,7 @@ import { buildHand, buildJedi, dressHumanoid, addShapeMorph } from '../../src/ga
 import { Rig, humanoidSkeleton, BipedAnimator } from '../../src/game/Rig.js';
 import { Cloak, attachCloak, attachSkirt } from '../../src/game/Cloth.js';
 import { Player } from '../../src/game/Player.js';
+import { weave, weaveLine } from './_weave.mjs';
 import { readFile } from 'node:fs/promises';
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -693,6 +694,34 @@ export async function run({ check, assert }) {
              nyq: tot ? P[P.length - 1] / tot : 0, ridge: rn ? rs / rn : 0 };
   }
 
+  /**
+   * How far the cloth is standing off the body it is wrapped around: signed
+   * distance from each particle to the nearest collider surface, averaged.
+   *
+   * This is the direct reading of the thing `fullness` is for. A pinned SHEET
+   * whose across rest is shortened has nowhere to put the surplus but sideways,
+   * so it buckles; a RING shrinks to the matching radius instead, and once it
+   * reaches the shell it cannot shrink further, so the surplus is spent as
+   * tension over a surface it cannot pass through. Buckling shows as standoff.
+   * Tension shows as zero.
+   */
+  function standoff(cl) {
+    const { cols, rows, pos } = cl;
+    const col = cl.refreshColliders();
+    let s = 0, n = 0;
+    for (let r = 1; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const i = (r * cols + c) * 3;
+        let d = Infinity;
+        for (const o of col) {
+          d = Math.min(d, Math.hypot(pos[i] - o.c.x, pos[i + 1] - o.c.y, pos[i + 2] - o.c.z) - o.r);
+        }
+        s += Math.max(0, d); n++;
+      }
+    }
+    return n ? s / n : 0;
+  }
+
   check('skirt: the cloth closes on itself, in every link family', () => {
     // Links were built with `if (c + 1 < this.cols)`, so column 0 and column
     // cols-1 were never joined. A skirt is a TUBE; without a seam it gapes at
@@ -863,7 +892,7 @@ export async function run({ check, assert }) {
     // running the cape's own fullness on the skirt is how you get it back.
     const run = (o) => {
       const w = walked({ skirt: o, seconds: 6, speed: 0 });
-      return { sk: w.skirt, f: tubeFolds(w.skirt) };
+      return { sk: w.skirt, f: tubeFolds(w.skirt), off: standoff(w.skirt) };
     };
     const ship = run({});
     assert(ship.sk.fullness === 1,
@@ -872,8 +901,22 @@ export async function run({ check, assert }) {
     assert(gathered.f.rms < ship.f.rms * 0.75,
       `fullness 0.86 wrinkles ${(gathered.f.rms * 1000).toFixed(1)} mm against ${(ship.f.rms * 1000).toFixed(1)} at 1 — `
       + 'shortening the ring no longer costs fold depth, so this reasoning needs re-deriving');
-    assert(tight.f.rms < ship.f.rms * 0.35 && tight.f.ridge < 0.5,
-      `fullness 0.75 still wrinkles ${(tight.f.rms * 1000).toFixed(1)} mm at ridge ${tight.f.ridge.toFixed(2)} — re-measure`);
+    assert(tight.f.rms < ship.f.rms * 0.35,
+      `fullness 0.75 still wrinkles ${(tight.f.rms * 1000).toFixed(1)} mm against ${(ship.f.rms * 1000).toFixed(1)} at 1 — re-measure`);
+    /**
+     * The clause that used to sit here read `tight.f.ridge < 0.5` — that at
+     * high gathering the wrinkle must stop lining up row to row. That is not
+     * the mechanism, and lengthening the robe to bury the cone proved it: on a
+     * 700mm tube the gathered cloth reads ridge 0.98 while wrinkling 4mm,
+     * because what is left once the ring is taut is the SHELL showing through,
+     * and a pair of legs is the same shape at every height. Coherence is not
+     * folding. So the tension is read where it happens, against the body: the
+     * cloth stands 26mm off the shell at fullness 1, 9mm at 0.86 and 0.4mm at
+     * 0.75, and that monotone collapse is the whole claim.
+     */
+    assert(tight.off < ship.off * 0.25 && gathered.off < ship.off * 0.6 && gathered.off > tight.off,
+      `gathering does not pull the ring onto the body: ${(ship.off * 1000).toFixed(1)} mm standoff at fullness 1, `
+      + `${(gathered.off * 1000).toFixed(1)} at 0.86, ${(tight.off * 1000).toFixed(1)} at 0.75`);
     // the folds are the pleat's, so removing it has to cost something
     const flat = run({ pleat: 0 });
     assert(flat.f.nyq > ship.f.nyq * 1.5 || flat.f.rms < ship.f.rms * 0.9,
@@ -884,8 +927,9 @@ export async function run({ check, assert }) {
     assert(Math.abs(mean - 1) < 0.02,
       `the pleated row carries ${((mean - 1) * 100).toFixed(1)}% more cloth than it was cut — a pleat must sum to zero`);
     ship.sk.dispose(); gathered.sk.dispose(); tight.sk.dispose(); flat.sk.dispose();
-    return `fullness 1 → ${(ship.f.rms * 1000).toFixed(1)} mm at ridge ${ship.f.ridge.toFixed(2)}; `
-      + `0.86 → ${(gathered.f.rms * 1000).toFixed(1)}; 0.75 → ${(tight.f.rms * 1000).toFixed(1)} at ridge ${tight.f.ridge.toFixed(2)}; `
+    return `fullness 1 → ${(ship.f.rms * 1000).toFixed(1)} mm at ${(ship.off * 1000).toFixed(1)} mm off the body; `
+      + `0.86 → ${(gathered.f.rms * 1000).toFixed(1)} at ${(gathered.off * 1000).toFixed(1)}; `
+      + `0.75 → ${(tight.f.rms * 1000).toFixed(1)} at ${(tight.off * 1000).toFixed(1)}; `
       + `pleat off → ${(flat.f.rms * 1000).toFixed(1)} mm / ${(flat.f.nyq * 100).toFixed(0)}% Nyquist`;
   });
 
@@ -1014,29 +1058,51 @@ export async function run({ check, assert }) {
       + `live proxy ${(live.worst * 1000).toFixed(1)} mm on ${live.bad}/${live.frames}`;
   });
 
-  check('skirt: it costs what the cape costs, and the rigid layer comes back at range', () => {
-    // The cape is 99 particles at 4 iterations and is switched off past
-    // lod > 1. The same budget and the same gate — and because the cloth is
-    // gated, the lathes it stands in for cannot be deleted at build time or a
-    // character at range would have a bare pelvis. attachSkirt hides them
-    // instead, and hands them back through the same call.
+  check('skirt: it dices no finer than the cape, and the rigid layer comes back at range', () => {
+    /**
+     * This check used to read `nSk <= nCl` — the skirt must not spend more than
+     * the cape's 99 particles — and it passed at 98, by one. That bound was not
+     * a measurement. It calls a fine, tiny garment cheap and a coarse, large one
+     * dear, and the first real change it ever met was the one that buried the
+     * rigid cone (the robe had to reach the ankles, so it went from 460mm and 7
+     * rows to 700mm and 10), which it failed.
+     *
+     * A verlet solve costs per particle. A garment's particle count is its area
+     * times its density, and only the second half is the cut's to choose: the
+     * first is dictated by the body it has to cover. So the bound is on the
+     * CELL — the area of one quad of the weave, off the structural links' own
+     * cut lengths — and the count is pinned from both ends without anybody
+     * picking a number, the area by the body and the density by the cape.
+     *
+     * Both are still gated at lod > 1, and because the cloth is gated the
+     * lathes it stands in for cannot be deleted at build time or a character at
+     * range would have a bare pelvis. attachSkirt hides them instead, and hands
+     * them back through the same call.
+     */
     const built = buildJedi({ scale: 1 });
     const rig = built.rig;
     rig.updateMatrices(); rig.root.updateMatrixWorld(true);
     const sk = attachSkirt(new THREE.Scene(), rig, { rigid: built.robeSkirt });
     const cl = attachCloak(new THREE.Scene(), rig, { width: 0.36, length: 0.86, cols: 9, rows: 11 });
     const tris = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
-    const nSk = sk.cols * sk.rows, nCl = cl.cols * cl.rows;
-    assert(nSk <= nCl, `${nSk} particles against the cape's ${nCl}`);
-    assert(sk.links.length <= cl.links.length * 1.1,
-      `${sk.links.length} links against the cape's ${cl.links.length}`);
+    const W = weave(sk, { tube: true }), C = weave(cl);
+    assert(W.cell >= C.cell,
+      `the skirt's weave is ${(W.cell * 1e4).toFixed(1)} cm² a cell against the cape's ${(C.cell * 1e4).toFixed(1)} — `
+      + 'it is buying detail the cape does not get, and the particle count follows');
+    assert(W.density <= C.density,
+      `${W.density.toFixed(0)} particles per m² against the cape's ${C.density.toFixed(0)}`);
+    assert(sk.links.length / W.n <= cl.links.length / C.n * 1.1,
+      `${(sk.links.length / W.n).toFixed(2)} links a particle against the cape's ${(cl.links.length / C.n).toFixed(2)}`);
     assert(sk.iterations === cl.iterations, 'the skirt solves a different number of passes from the cape');
-    const skC = sk.refreshColliders().length, clC = cl.refreshColliders().length;
-    assert(nSk * skC <= nCl * clC, `${nSk * skC} sphere tests per pass against the cape's ${nCl * clC}`);
+    assert(W.n * W.colliders / W.area <= C.n * C.colliders / C.area,
+      `${(W.n * W.colliders / W.area).toFixed(0)} sphere tests per pass per m² against the cape's `
+      + `${(C.n * C.colliders / C.area).toFixed(0)}`);
     // and it must not cost triangles either — it replaces more than it draws
     let rigid = 0;
-    assert(built.robeSkirt && built.robeSkirt.length === 3,
-      `buildJedi handed out ${built.robeSkirt ? built.robeSkirt.length : 0} rigid outer-layer meshes, not 3`);
+    // four lathes below the belt: the two over-skirt panels, the hem, and the
+    // under-robe tube that used to go on showing under a jump as THE CONE.
+    assert(built.robeSkirt && built.robeSkirt.length >= 4,
+      `buildJedi handed out ${built.robeSkirt ? built.robeSkirt.length : 0} rigid outer-layer meshes, not 4`);
     for (const m of built.robeSkirt) rigid += tris(m.geometry);
     assert(tris(sk.geometry) < rigid,
       `the cloth draws ${tris(sk.geometry)} triangles to replace ${rigid}`);
@@ -1050,8 +1116,8 @@ export async function run({ check, assert }) {
     sk.dispose();
     assert(built.robeSkirt.every((m) => m.visible), 'disposing the cloth left the robe invisible');
     cl.dispose();
-    return `skirt ${nSk} particles / ${sk.links.length} links / ${skC} colliders / ${tris(sk.geometry)} tris `
-      + `against cape ${nCl} / ${cl.links.length} / ${clC} / ${tris(cl.geometry)}; replaces ${rigid} rigid triangles`;
+    return `skirt ${weaveLine(W)} / ${W.density.toFixed(0)} per m² / ${tris(sk.geometry)} tris `
+      + `against cape ${weaveLine(C)} / ${C.density.toFixed(0)} per m²; replaces ${rigid} rigid triangles`;
   });
 
   check('skirt: a bigger duellist gets a bigger skirt, not a differently-shaped one', () => {

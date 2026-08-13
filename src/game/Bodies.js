@@ -2948,7 +2948,28 @@ export function buildJedi(opts = {}) {
       }, { floor: 0.28 });
       const underMat = outer.clone();
       underMat.side = THREE.DoubleSide;
-      mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI]);
+      /**
+       * HANDED OUT TOO — and this line is THE CONE.
+       *
+       * The note above the over-skirt diagnoses the problem exactly ("a hem
+       * vertex travels 0.000 mm in the pelvis frame… it is hanging next to a
+       * cylinder") and then fixes it for the OUTER layer only. This mesh — the
+       * LONGER one, 0.72 m from the belt to the ankle, the one that actually
+       * covers the legs — was left welded to the pelvis and was never in
+       * `outerLayer`, so `attachSkirt` never hid it and the cloth never
+       * replaced it.
+       *
+       * The result is that the simulated skirt reaches dy -0.42 and this tube
+       * continues to -0.70: twenty-eight centimetres of rigid cone hanging
+       * below the cloth, from mid-thigh to ankle, covering both legs and
+       * moving with none of them. It is most obvious in a jump, because the
+       * legs travel and it does not. Reported repeatedly; fixed for the wrong
+       * garment each time.
+       *
+       * It joins the outer layer now, so everything below the belt is either
+       * simulated or hidden, and nothing under there is welded to the pelvis.
+       */
+      outerLayer.push(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI]));
       // Two over-panels down the front in the darker cloth, so the layering
       // carries all the way down the figure instead of stopping at the belt.
 

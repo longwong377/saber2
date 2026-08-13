@@ -502,6 +502,58 @@ export async function run({ check, assert }) {
       + `scoreboard in ${readers.get('scoreboard').join(', ')}`;
   });
 
+  check('controls: everything that drives a frame closes the input frame', async () => {
+    /**
+     * THE ENDLESS SPIN.
+     *
+     * `Input` accumulates `mouse.dx/dy` from every mousemove and clears them in
+     * `end()`. It is a per-frame delta, consumed exactly once. A loop that
+     * reads it and never calls `end()` therefore does not read "how far the
+     * mouse moved this frame" — it reads how far the mouse has moved since the
+     * page opened, and yaws by that amount every frame. The camera accelerates
+     * into a spin nothing can stop, which is precisely what the cel-shading
+     * meadow shipped as, and it was reported as unusable and nauseating.
+     *
+     * `end()` also clears `pressed`/`released`, so the same omission re-fires
+     * every one-shot action — jump, ignite, throw — on every frame.
+     *
+     * It is a contract, not a convention, so it is checked as one across the
+     * whole tree rather than in main.js alone. Anything that hands an Input to
+     * a world update owns both halves of the frame.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const files = [];
+    const walk = async (dir, prefix) => {
+      for (const e of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1)) {
+        if (e.name === 'node_modules' || e.name === 'vendor' || e.name.startsWith('.')) continue;
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) await walk(u, prefix + e.name + '/');
+        else if (/\.(js|html)$/.test(e.name)) files.push([prefix + e.name, await readFile(u, 'utf8')]);
+      }
+    };
+    await walk(new URL('../../', import.meta.url), '');
+
+    /*
+     * Whoever CONSTRUCTS an Input owns its frame, and that is the test — not
+     * "who calls a world update", which matches World.js's own signature and
+     * every object it forwards the input to. There are exactly two owners
+     * today, main.js and the toon meadow, and the second one is the one that
+     * shipped broken.
+     */
+    const drivers = files.filter(([, t]) => /\bnew\s+Input\s*\(/.test(t));
+    assert(drivers.length >= 2,
+      `only ${drivers.length} Input owners found — the pattern this check scans for has moved and it is now looking at nothing`);
+    const half = [];
+    for (const [path, text] of drivers) {
+      const b = /\binput\.begin\s*\(/i.test(text), e = /\binput\.end\s*\(\s*\)/i.test(text);
+      if (!b || !e) half.push(`${path} (${b ? 'begin' : 'no begin'}, ${e ? 'end' : 'NO END'})`);
+    }
+    assert(!half.length,
+      `drives a frame without closing the input frame: ${half.join(', ')} — `
+      + 'the mouse delta never clears, so the camera spins faster every frame');
+    return `${drivers.length} Input owners, all closing the frame: ${drivers.map(([p]) => p).join(', ')}`;
+  });
+
   check('controls: the scoreboard overlay exists and Tab is what opens it', async () => {
     const html = await read('index.html');
     const main = await read('src/main.js');

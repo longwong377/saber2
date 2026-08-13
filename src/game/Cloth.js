@@ -509,11 +509,21 @@ export class Cloak {
      * once it reaches the shell it cannot shrink any further, so every across
      * link ends up in TENSION over a surface it cannot pass through — which is
      * a taut garment, the exact thing being fixed. Measured on a standing Jedi
-     * at pleat 0.24: fullness 1 wrinkles 24.8mm, 0.94 gives 20.6, 0.86 gives
-     * 14.2 and 0.75 gives 4.5 with the ridge correlation collapsing from 0.92
-     * to 0.21. At a walk it costs drop as well — the hem at 0.86 sits 147mm
-     * higher than at 1, because a narrower cone on the same slant is a taller
-     * one. So the skirt runs no surplus at all and the folds are the pleat's.
+     * at pleat 0.24, on the shipped 700mm robe: fullness 1 wrinkles 23.7mm and
+     * stands 26.2mm off the body, 0.86 gives 14.2 at 9.4mm off, and 0.75 gives
+     * 4.2 at 0.4mm — the cloth is simply against the legs by then.
+     *
+     * (The reading that used to be quoted here was the ridge correlation, on
+     * the 460mm version: 0.92 falling to 0.21. It does not mean what it says on
+     * a garment this long. Once the ring is taut what is left is the SHELL
+     * showing through, and a pair of legs is the same shape at every height, so
+     * the 700mm robe reads ridge 0.98 while wrinkling 4mm. Coherence is not
+     * folding. The standoff above is the same claim in a frame that does not
+     * change meaning with the hem.)
+     *
+     * At a walk it costs drop as well — the hem at 0.86 sits 147mm higher than
+     * at 1, because a narrower cone on the same slant is a taller one. So the
+     * skirt runs no surplus at all and the folds are the pleat's.
      */
     const pl = this.pleat, ph = this.pleatHarm, phase = this.pleatPhase;
     for (const l of this.links) {
@@ -1211,8 +1221,23 @@ export function attachSkirt(scene, rig, opts = {}) {
   const waist = opts.waist ?? 0.145;
   const waistY = opts.waistY ?? 0.056;
   const cols = opts.cols ?? 14;
-  const rows = opts.rows ?? 7;
-  const length = opts.length ?? 0.46;
+  /**
+   * LONG ENOUGH TO REPLACE BOTH LAYERS.
+   *
+   * 0.46 was the OVER-skirt's length, and it was the right number while the
+   * over-skirt was the only garment this replaced. It is not any more: the
+   * under-robe — 0.72 m from the belt to the ankle — is handed out now too (see
+   * Bodies.js), and cloth that stops at 0.46 would leave the legs bare from
+   * mid-thigh down rather than clothed by a rigid cone. Trading one visible
+   * fault for another is not a fix.
+   *
+   * 0.70 reaches where the under-robe reached. `rows` goes to 10 with it,
+   * because 7 rows over 0.70 m is a 10 cm quad and the solver's bend
+   * constraints stop reading as cloth at that spacing — the hem swings as one
+   * plate instead of gathering.
+   */
+  const rows = opts.rows ?? 10;
+  const length = opts.length ?? 0.70;
 
   /*
    * THE PETTICOAT — where the garment actually sits, in the hips frame.
@@ -1229,6 +1254,19 @@ export function attachSkirt(scene, rig, opts = {}) {
   const petticoat = opts.petticoat ?? [
     [0.056, 0.145], [-0.04, 0.220], [-0.15, 0.235], [-0.26, 0.267],
     [-0.37, 0.292], [-0.42, 0.290],
+    /**
+     * …AND ON DOWN THE SHIN. The table described the over-skirt's outer
+     * surface and stopped at its hem, which was correct while the cloth
+     * stopped there too. Now that it reaches the ankle, a profile ending at
+     * -0.42 leaves `radiusAt` returning the last entry for the bottom third —
+     * a 29 cm-radius cylinder round the shins, which is the cone again wearing
+     * a simulated coat.
+     *
+     * These follow the under-robe's own lathe: its swell peaks at t=0.45
+     * (dy ≈ -0.30) and it tapers to a 0.230 hem, narrowing over the calf the
+     * way a robe does rather than flaring like a bell.
+     */
+    [-0.50, 0.276], [-0.58, 0.258], [-0.66, 0.240], [-0.70, 0.232],
   ];
   const radiusAt = (dy) => {
     if (dy >= petticoat[0][0]) return petticoat[0][1];

@@ -39,6 +39,7 @@ import * as THREE from 'three';
 import { buildJedi } from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Cloak, attachCloak, attachSkirt, ROBE_CUTS, robeCut } from '../../src/game/Cloth.js';
+import { weave } from './_weave.mjs';
 
 /* ── the bench ───────────────────────────────────────────────────────── */
 
@@ -371,8 +372,23 @@ export function run({ check, assert }) {
     const built = buildJedi({ scale: 1 });
     built.rig.updateMatrices(); built.rig.root.updateMatrixWorld(true);
     const sk = attachSkirt(new THREE.Scene(), built.rig, { cut: 'nonesuch', rigid: built.robeSkirt });
-    assert(sk && sk.cols === 14 && sk.rows === 7 && Math.abs(sk.length - 0.46) < 1e-9,
-      'an unknown cut id did not fall back to the temple robe');
+    /**
+     * PINNED AS "FALLBACK EQUALS DEFAULT", not as literal numbers.
+     *
+     * This read `rows === 7 && length === 0.46`, which was the shipped garment
+     * — and those numbers moved deliberately when the skirt was lengthened to
+     * replace the under-robe as well (see THE CONE below). A check that names
+     * the defaults has to be edited every time they are tuned, and an
+     * assertion you edit to make it pass is not an assertion. The invariant
+     * that actually matters and never goes stale is that an unknown id behaves
+     * exactly as no id at all.
+     */
+    const dflt = attachSkirt(new THREE.Scene(), built.rig, { rigid: built.robeSkirt });
+    for (const k of ['cols', 'rows', 'length', 'pleat', 'shear', 'fullness', 'gravity']) {
+      assert(sk[k] === dflt[k],
+        `an unknown cut id gave ${k}=${sk[k]} where the default gives ${dflt[k]}`);
+    }
+    dflt.dispose();
     sk.dispose();
     return `${ROBE_CUTS.length} cuts: ${IDS.join(', ')}`;
   });
@@ -393,15 +409,36 @@ export function run({ check, assert }) {
     const built = buildJedi({ scale: 1 });
     built.rig.updateMatrices(); built.rig.root.updateMatrixWorld(true);
     const sk = attachSkirt(new THREE.Scene(), built.rig, { rigid: built.robeSkirt });
-    const want = { cols: 14, rows: 7, pinRows: 1, iterations: 4, pleat: 0.24, pleatHarm: 5,
+    /**
+     * `rows` and `length` are deliberately NOT in this table any more.
+     *
+     * They were 7 and 0.46 — the over-skirt's dimensions, from when that was
+     * the only garment the cloth replaced. The under-robe is handed out now
+     * too, so the cloth has to reach the ankle instead of mid-thigh, and those
+     * two numbers moved with it. Everything else here is a FEEL constant and
+     * still has to be exactly what shipped; the geometry of what the garment
+     * covers is checked by THE CONE check below, against the meshes it
+     * actually replaces rather than against a remembered number.
+     */
+    const want = { cols: 14, pinRows: 1, iterations: 4, pleat: 0.24, pleatHarm: 5,
                    shear: 0.20, fullness: 1, gravity: -13, foldAO: 0.55, hemBias: 0, closed: true };
     for (const k in want) {
       assert(sk[k] === want[k], `the default skirt's ${k} is ${sk[k]}, not the shipped ${want[k]}`);
     }
-    assert(Math.abs(sk.length - 0.46) < 1e-12, `the default length is ${sk.length}`);
-    // 8 shell spheres at 55mm + 8 leg spheres: the shell step is a parameter now
-    assert(sk.refreshColliders().length === 16,
-      `the default skirt builds ${sk.refreshColliders().length} colliders, not the shipped 16`);
+    /*
+     * The collider count used to be asserted flat, at 16 — 8 shell spheres at
+     * 55mm plus 8 leg spheres, which is what 460mm of drop came to. It is a
+     * consequence of the length, not a constant, so it is derived here instead:
+     * the shell has to reach the hem, and adjacent spheres have to overlap
+     * enough that the cloth cannot dip into the scallop between them. Both of
+     * those are what 55mm was chosen for in the first place (see Cloth.js).
+     */
+    const shell = sk.refreshColliders().length - 8;   // the 8 leg spheres
+    assert(shell >= Math.floor((sk.length - 0.03) / 0.055),
+      `${shell} shell spheres at ${(sk.length * 1000).toFixed(0)}mm of drop — the last of the garment has nothing under it`);
+    const r = 0.210 * 0.80, s = 0.055;                 // shell radius at the widest, and the step
+    assert(r - Math.sqrt(r * r - s * s / 4) < 0.004,
+      'the shell step leaves a scallop the cloth can dip into between two spheres');
     sk.dispose();
 
     // (2) — one rig, both garments, same frames
@@ -776,7 +813,7 @@ export function run({ check, assert }) {
       + `sprint ride-up ${(one * 100).toFixed(0)}% on one ring, ${(two * 100).toFixed(0)}% on two`;
   });
 
-  check('garments: weight is not gravity, and every cut pays the cape\'s budget', () => {
+  check('garments: weight is not gravity, and no cut dices finer than the cape', () => {
     /*
      * TWO CLAIMS THAT BELONG TOGETHER, because both are about what a preset is
      * allowed to spend.
@@ -787,11 +824,22 @@ export function run({ check, assert }) {
      * stiffness. Turning it up buys stretch and nothing else. Heft is damping,
      * a fabric deaf to the air, and a stiff bend down the cloth.
      *
-     * The second is the cape's budget, which the skirt has always had to live
-     * inside: 99 particles, four iterations, and particles × colliders under
-     * what the cape itself costs — and the rigid lathes underneath have to come
-     * back when the simulation is switched off at range, or a distant character
-     * is a bare pelvis.
+     * The second used to read `n <= 99` — the cape's particle count, flat. The
+     * check five above this one already had the argument against it written
+     * out: a cut may not sample its cloth coarser than the leg it drapes, so a
+     * long robe needs MORE particles, and that comment ends by saying a
+     * floor-length one "needs about 145 particles against the 99 the LOD gate
+     * allows". The gate never allowed 99 of anything — it switches the solve
+     * off past lod > 1 — and when the robe was lengthened to 700mm to bury the
+     * rigid cone showing under it, 140 particles is exactly the number that
+     * comment predicted, and the flat bound failed the one change it should
+     * have waved through.
+     *
+     * So the bound is on the WEAVE, not the count: area is the body's to
+     * dictate and density is the cut's to choose, and no cut may dice finer
+     * than the cape does. See tools/checks/_weave.mjs. The rigid lathes
+     * underneath still have to come back when the solve is switched off at
+     * range, or a distant character is a bare pelvis.
      */
     const heavy = [];
     for (const g of [-13, -16]) {
@@ -807,20 +855,26 @@ export function run({ check, assert }) {
     const built = buildJedi({ scale: 1 });
     built.rig.updateMatrices(); built.rig.root.updateMatrixWorld(true);
     const cape = attachCloak(new THREE.Scene(), built.rig, { width: 0.36, length: 0.86, cols: 9, rows: 11 });
-    const nCape = cape.cols * cape.rows, cCape = cape.refreshColliders().length;
+    const C = weave(cape);
+    const capeTests = C.n * C.colliders / C.area;
     let rigidTris = 0;
     for (const m of built.robeSkirt) rigidTris += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3;
-    const worst = { id: '', n: 0, tests: 0 };
+    const worst = { id: '', dens: 0, tests: 0 };
     for (const id of IDS) {
       const sc = new THREE.Scene();
       const sk = attachSkirt(sc, built.rig, { cut: id, rigid: built.robeSkirt });
-      const n = sk.cols * sk.rows, c = sk.refreshColliders().length;
-      assert(n <= nCape, `${id} costs ${n} particles against the cape's ${nCape}`);
-      assert(sk.links.length <= cape.links.length * 1.1,
-        `${id} costs ${sk.links.length} links against the cape's ${cape.links.length}`);
+      const W = weave(sk, { tube: true });
+      const tests = W.n * W.colliders / W.area;
+      assert(W.cell >= C.cell,
+        `${id} weaves ${(W.cell * 1e4).toFixed(1)} cm² a cell against the cape's ${(C.cell * 1e4).toFixed(1)} — `
+        + `it is buying detail the cape does not get, and its ${W.n} particles follow from that, not from its length`);
+      assert(W.density <= C.density,
+        `${id} costs ${W.density.toFixed(0)} particles per m² against the cape's ${C.density.toFixed(0)}`);
+      assert(sk.links.length / W.n <= cape.links.length / C.n * 1.1,
+        `${id} costs ${(sk.links.length / W.n).toFixed(2)} links a particle against the cape's ${(cape.links.length / C.n).toFixed(2)}`);
       assert(sk.iterations === cape.iterations, `${id} solves ${sk.iterations} passes, not the cape's ${cape.iterations}`);
-      assert(n * c <= nCape * cCape,
-        `${id} costs ${n * c} sphere tests a pass against the cape's ${nCape * cCape}`);
+      assert(tests <= capeTests,
+        `${id} costs ${tests.toFixed(0)} sphere tests a pass per m² against the cape's ${capeTests.toFixed(0)}`);
       assert(sk.geometry.index.count / 3 < rigidTris,
         `${id} draws ${sk.geometry.index.count / 3} triangles to replace ${rigidTris} rigid ones`);
       // the LOD gate, both ways, for every cut
@@ -832,10 +886,97 @@ export function run({ check, assert }) {
         `the rigid lathes are still drawn under the ${id}`);
       sk.dispose();
       assert(built.robeSkirt.every((m) => m.visible), `disposing the ${id} left the robe invisible`);
-      if (n * c > worst.tests) { worst.id = id; worst.n = n; worst.tests = n * c; }
+      if (tests > worst.tests) { worst.id = id; worst.dens = W.density; worst.tests = tests; }
     }
     cape.dispose();
     return `gravity -13→-16 costs ${(heavy[0] * 100).toFixed(0)}%→${(heavy[1] * 100).toFixed(0)}% stretch; `
-      + `dearest cut is ${worst.id} at ${worst.n} particles and ${worst.tests} sphere tests against the cape's ${nCape * cCape}`;
+      + `finest cut is ${worst.id} at ${worst.dens.toFixed(0)} particles and ${worst.tests.toFixed(0)} sphere tests per m² `
+      + `against the cape's ${C.density.toFixed(0)} and ${capeTests.toFixed(0)}`;
+  });
+
+  check('garments: THE CONE — nothing below the belt is welded to the pelvis', async () => {
+    /**
+     * THE BUG THIS FILE EXISTS FOR, and it survived several rounds of being
+     * fixed because each round fixed the wrong garment.
+     *
+     * The robe under the belt is two lathes: a 0.46 m OVER-skirt and a 0.72 m
+     * UNDER-robe that runs from the belt to the ankle. Both are welded to the
+     * hips bone. `attachSkirt` replaces and hides whatever it is handed as
+     * `rigid` — and only the over-skirt and its two front panels were ever put
+     * in that list.
+     *
+     * So the simulated cloth reached dy -0.42 and the under-robe carried on to
+     * -0.70: twenty-eight centimetres of rigid cone hanging BELOW the cloth,
+     * covering both legs, moving with neither. Reported over and over as "a
+     * solid cone under the clothes", most obvious in a jump because the legs
+     * travel and it does not.
+     *
+     * The property is not "the skirt is simulated" — that was true the whole
+     * time it was broken. It is: EVERY mesh under the belt is handed out, and
+     * the cloth is long enough to cover what they covered. Both halves, because
+     * handing out a garment the cloth is too short to replace just trades a
+     * cone for bare legs.
+     */
+    const built = buildJedi({});
+    const hips = built.rig.get('hips');
+    assert(hips, 'no hips bone');
+    built.rig.updateMatrices();
+    built.rig.root.updateMatrixWorld(true);
+    const hipY = new THREE.Vector3().setFromMatrixPosition(hips.obj.matrixWorld).y;
+
+    /**
+     * Everything is measured as REACH BELOW THE HIP, in world, and there are
+     * two reasons for both halves of that.
+     *
+     * Height alone flags the pelvis, which is 0.30 m of legitimate body and
+     * lives on this bone for good reason. What separates a body part from a
+     * garment cleanly is reach: the pelvis bottoms out at dy -0.09, the
+     * over-skirt at -0.40 and the under-robe at -0.70. Anything rigid reaching
+     * past -0.15 is cloth pretending to be anatomy.
+     *
+     * And the local geometry box is the wrong frame to read it in: the
+     * under-robe — the cone itself — is mounted rotated a half turn about Z, so
+     * its own box's min.y is the TOP of the garment as worn. Taking every box
+     * through the world matrix is the only reading that cannot be fooled by how
+     * a part happens to be mounted, and it is the frame the cloth reports in
+     * anyway, so the two are directly comparable.
+     */
+    const reach = (m) => {
+      m.geometry.computeBoundingBox();
+      const bb = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
+      return bb.min.y - hipY;
+    };
+    const handed = new Set(built.robeSkirt);
+    let deepest = 0;
+    for (const m of built.robeSkirt) deepest = Math.min(deepest, reach(m));
+
+    const orphans = [];
+    hips.parts.forEach((p) => {
+      if (!p.geometry || handed.has(p)) return;
+      const dy = reach(p);
+      if (dy < -0.15) orphans.push(`a rigid mesh reaching dy ${dy.toFixed(2)}`);
+    });
+    assert(!orphans.length,
+      `welded to the pelvis and never handed to the cloth: ${orphans.join(', ')} — that is the cone`);
+
+    // …and the cloth must reach as far as the deepest thing it replaces, or
+    // the legs are simply bare instead of coned.
+    const sk = attachSkirt(new THREE.Scene(), built.rig, { rigid: built.robeSkirt });
+    assert(sk, 'no skirt was built');
+    // the geometry is written by reset(), on the first step — before that the
+    // mesh is a box at the origin and every number below reads zero. A second
+    // of standing after that, because the laid-out shape is not the hang: the
+    // hem drops another 25mm once gravity has had it.
+    for (let i = 0; i < 60; i++) sk.update(1 / 60, sk.refreshColliders(), new THREE.Vector3());
+    sk.mesh.geometry.computeBoundingBox();
+    const clothY = sk.mesh.geometry.boundingBox.min.y - hipY;
+    assert(clothY <= deepest + 0.05,
+      `the cloth reaches dy ${clothY.toFixed(2)} but replaces a garment reaching ${deepest.toFixed(2)} — `
+      + `${((clothY - deepest) * 100).toFixed(0)} cm of leg is left bare`);
+    assert(built.robeSkirt.every((m) => !m.visible),
+      'a handed-out lathe is still being drawn under the cloth');
+    sk.dispose();
+    return `${built.robeSkirt.length} garments handed out, deepest dy ${deepest.toFixed(2)} m, `
+      + `cloth reaches dy ${clothY.toFixed(2)} m, nothing rigid below the belt`;
   });
 }
