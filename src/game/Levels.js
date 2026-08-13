@@ -3614,7 +3614,28 @@ export const LEVELS = {
      * leaves genuine bare rock between its patches is both what a pumped-out
      * cut looks like and the only version of this the scatter can answer.
      */
-    grass: 1.15,
+    /* 0.55, NOT 1.15 — a cave floor is not a meadow.
+     *
+     * `GrassField` derives its cover mask as `0.24 + 0.72 · density`, clamped
+     * at 0.95, so anything past a density of about 0.99 pins the mask at its
+     * ceiling. At 1.15 the Cut's floor measured 100% mossed inside 30 m and
+     * 97% inside 90: a carpet with no rock showing through it, in a cave whose
+     * whole subject is that there is nothing down here but stone and the light
+     * you brought. It also made the scatter survey unanswerable — stone shuns
+     * plants, and with 3% bare ground there was nowhere for a drift to go, so
+     * the drifts sat on ground MORE covered than the level's own average and
+     * `scatter: the drifts land where the cover is not` failed on a property
+     * that could not be expressed.
+     *
+     * 0.42 puts the mask at 0.542 and gives the floor real clearings. The moss
+     * is still the thing you notice — it is the only living colour in the
+     * level — and now it is growing in the damp places rather than everywhere.
+     * 0.55 was tried first and is recorded because it is instructive: it took
+     * the drifts to 59% cover against the level's 67%, which IS the shun
+     * working, and still failed by a quarter of a point — the bar is a
+     * fraction of the bare ground available, so a level with less bare ground
+     * has to separate by less in absolute terms and the two move together. */
+    grass: 0.42,
     /* The pair is solved rather than picked. `grassPalette` builds a five-stop
      * species ramp by rotating the authored tints 80% of the way toward straw
      * (42°), green (92°) and glaucous (156°), and `ground-cover.mjs` requires
