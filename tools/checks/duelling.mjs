@@ -55,7 +55,7 @@ import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
-import { DuelBrain, FORMS, FORM_KEYS, BladeLock, guardQuat, guardToWorld } from '../../src/game/Duel.js';
+import { duelRng, DuelBrain, FORMS, FORM_KEYS, BladeLock, guardQuat, guardToWorld } from '../../src/game/Duel.js';
 import { DIFFICULTY, resolveBladeClash, bladesTouching, CLASH_RADIUS } from '../../src/game/Combat.js';
 import { segmentSegment } from '../../src/physics/Physics.js';
 
@@ -104,6 +104,15 @@ const stubInput = () => ({
  * duellist is, and the floor on how often blades meet.
  */
 function duel(formKey, seconds, opts = {}) {
+  /* THE SAME FIGHT EVERY TIME. `Duel.js` draws from one module-level stream for
+   * the life of the process, so a form measured after four other suites have
+   * run is not the form measured on its own — which is why this check has
+   * flickered twice now, once on strike COUNT (fixed by running to a count
+   * rather than a clock, see below) and once on whether Djem So landed a single
+   * hit in eight strikes. Seeding per form removes the dependence rather than
+   * widening a bound around it, and the seed is derived from the form's own key
+   * so the five are not handed identical luck. */
+  duelRng.seed(2200 + [...String(formKey || 'x')].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 90000);
   /* `minStrikes` matters more than it looks. The forms differ in cadence by a
    * factor of eight — Ataru throws 1.4 strikes a second, Soresu 0.2, because
    * Soresu's whole character is waiting for you to commit first — so a fixed

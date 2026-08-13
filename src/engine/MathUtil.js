@@ -47,6 +47,19 @@ export function makeRng(seed = 1) {
     while (v === 0) v = rng();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
   };
+  /**
+   * Put the stream back to a known state.
+   *
+   * A module-level generator is shared by every object in its file for the
+   * life of the process, which is right for the game — one duel should not
+   * play out identically to the last one — and is exactly what makes a
+   * measurement of a stochastic system depend on what ran before it. A harness
+   * that wants the same fight twice needs to be able to say so, and the note
+   * over `duel()` in tools/checks/duelling.mjs records what happens without
+   * it: the same check reading 8 strikes in one run and 3 in another purely
+   * because another suite had drawn from the stream first.
+   */
+  rng.seed = (n) => { a = (n >>> 0) || 1; return rng; };
   return rng;
 }
 

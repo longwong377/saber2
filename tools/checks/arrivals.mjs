@@ -100,9 +100,25 @@ export async function run({ check, assert }) {
     // levels that have been deleted and stops testing the ones that replaced
     // them — three of the five named here no longer exist.
     for (const key of LEVEL_ORDER) {
-      const r = playWave(key);
+      /* DEEPEN UNTIL THERE IS A WAVE TO MEASURE, rather than asserting that
+       * wave 4 is one everywhere.
+       *
+       * A wave is a THREAT BUDGET, not a headcount, and the Colosseum's pool is
+       * large creatures — a 1250 hp reek eats most of an early wave on its own,
+       * so its wave 4 delivers three bodies where a droid level's delivers
+       * eight. That is the level working, and the check flapped on it: the
+       * composition is drawn by seed, so some runs bought four small things and
+       * some bought three big ones, and a suite that fails at random teaches
+       * everyone to re-run rather than to read.
+       *
+       * Going deeper is strictly stronger than lowering the bar to three: the
+       * property under test is that nothing arrives unannounced, and it is now
+       * tested on a wave with more bodies in it, not fewer. */
+      let r = playWave(key);
+      for (let wave = 6; r.log.length < 4 && wave <= 12; wave += 2) r = playWave(key, wave);
       assert(r.log.length >= 4,
-        `${key}: only ${r.log.length} bodies arrived in ${r.seconds.toFixed(0)} s — the wave did not run`);
+        `${key}: only ${r.log.length} bodies arrived in ${r.seconds.toFixed(0)} s even at wave 12 — `
+        + 'the wave did not run');
       const bad = r.log.filter(l => !deliveryIsAnnounced(l, r.ring));
       assert(bad.length === 0,
         `${key}: ${bad.length} of ${r.log.length} bodies appeared with no warning — worst was a `

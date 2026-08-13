@@ -20,7 +20,18 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
-const rng = makeRng(8123);
+/**
+ * The duel stream, EXPORTED so a fight can be made reproducible.
+ *
+ * Every DuelBrain in the process draws from it, which is what stops two
+ * acolytes fighting identically — and it is also what makes a measurement of a
+ * form depend on how many duels happened before it. `rng.seed(n)` puts it back;
+ * tools/checks/duelling.mjs calls it before each form so that "does this form's
+ * blade land" is one question asked five times rather than five different
+ * questions.
+ */
+export const duelRng = makeRng(8123);
+const rng = duelRng;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
