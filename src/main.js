@@ -19,11 +19,13 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.j
 import { Net, RemoteAvatar } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
 import { Run } from './game/Run.js';
-import { recordRun, progressLines } from './game/Progress.js';
+import { recordRun, progressLines, loadProgress } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
+import { SkillTree } from './ui/SkillTree.js';
+import { Communion, shapeOf, constellationName, dominantAxis } from './game/Constellation.js';
 
 const canvas = document.getElementById('view');
 
@@ -222,6 +224,17 @@ function buildWorld(levelKey, run = null) {
   };
 
   world.onRungClear = (r) => landing(r);
+  /**
+   * A wave paid out. Said out loud, and a beat after WAVE CLEAR rather than on
+   * top of it — the director notifies first, and a currency that silently
+   * accumulates is a currency the player never learns they have.
+   */
+  world.onInsight = (n, ledger) => {
+    communePrompt.insight = Math.floor(ledger.insight);
+    setTimeout(() => {
+      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to connect to the Force`);
+    }, 1500);
+  };
 
   world.loadLevel(levelKey, { run });
   const player = world.spawnPlayer({ name: net.name || 'Jedi', isLocal: true });
@@ -361,6 +374,183 @@ const screens = new Screens({
 
 const resume = () => screens.resume();
 const pause = () => screens.pause();
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The meditation                                                        */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * CONNECT TO THE FORCE.
+ *
+ * The constellation is opened by KNEELING, and that is the whole design of the
+ * entry point rather than a flourish on it. A key that opens a menu is a menu;
+ * what this is meant to be is a thing you do in the world, at a moment when the
+ * world allows it — so it asks for the three conditions a moment of quiet
+ * actually has:
+ *
+ *    you are still        no movement input, and not sliding
+ *    you are on the floor grounded, not mid-leap
+ *    nothing is near you  no live enemy inside COMMUNE.clear metres
+ *
+ * and then for a full second of holding Crouch, drawn as a ring that fills. It
+ * cannot be triggered by accident in a fight because a fight fails all three,
+ * and it cannot be reached at all when an overlay already owns the screen.
+ *
+ * It uses `crouch`, which is already in ACTIONS and already rebindable, rather
+ * than a new key: the bindings table lives in src/engine/Bindings.js, a raw
+ * `e.code` listener beside it is this project's oldest recurring bug (see
+ * lessonKeys below), and "kneel" is what crouch already means.
+ */
+const COMMUNE = { hold: 1.0, clear: 14, still: 0.6 };
+
+const communePrompt = {
+  el: document.getElementById('commune'),
+  fill: document.getElementById('commune-fill'),
+  key: document.getElementById('commune-key'),
+  held: document.getElementById('commune-insight'),
+  entry: document.getElementById('btn-commune'),
+  charge: 0,
+  shown: false,
+  insight: 0,
+};
+
+const tree = new SkillTree(document, {
+  onBuy: (id) => buyStar(id),
+  onClose: () => closeMeditation(),
+});
+// Screens now knows how to take this card down, which is what makes a pause
+// raised over a meditation (or a callback that threw inside one) recoverable
+// instead of leaving a star map sitting on top of the pause menu.
+screens.card('meditation', () => tree.hide());
+
+/** Is a communion possible this frame? The three conditions, in order. */
+function canCommune() {
+  if (screens.state !== 'playing' || !world) return false;
+  const p = world.player;
+  if (!p || !p.alive || !p.grounded) return false;
+  if (Math.hypot(p.velocity.x, p.velocity.z) > COMMUNE.still) return false;
+  const r2 = COMMUNE.clear * COMMUNE.clear;
+  for (const e of world.enemies) {
+    if (!e.dead && e.position.distanceToSquared(p.position) < r2) return false;
+  }
+  return true;
+}
+
+const _moveAxis = { x: 0, y: 0 };
+/** The kneel, read once a frame with everything else. */
+function communeTick(dt) {
+  const el = communePrompt.el;
+  const ok = canCommune();
+  if (!ok) {
+    communePrompt.charge = 0;
+    if (communePrompt.shown && el) { el.classList.add('hidden'); communePrompt.shown = false; }
+    return;
+  }
+  if (!communePrompt.shown && el) {
+    el.classList.remove('hidden');
+    communePrompt.shown = true;
+    // The label is read off the live binding, never typed in — the same rule
+    // the coach panel and the scoreboard follow, and for the same reason.
+    if (communePrompt.key) communePrompt.key.textContent = keyLabel((input.bindings.crouch || [])[0]);
+    // …and the purse, so the prompt is a reason and not just an instruction.
+    // Written when the prompt is raised rather than every frame: it only moves
+    // on a wave clear, and this runs sixty times a second.
+    const n = Math.floor(world?.communion?.insight ?? communePrompt.insight);
+    if (communePrompt.held) communePrompt.held.textContent = n > 0 ? `${n} Insight` : '';
+  }
+  input.moveAxis(_moveAxis);
+  const holding = input.act('crouch') && !_moveAxis.x && !_moveAxis.y;
+  communePrompt.charge = holding
+    ? communePrompt.charge + dt
+    : Math.max(0, communePrompt.charge - dt * 2.5);
+  if (communePrompt.fill) {
+    communePrompt.fill.style.height = `${Math.round(100 * clamp(communePrompt.charge / COMMUNE.hold, 0, 1))}%`;
+  }
+  if (communePrompt.charge >= COMMUNE.hold) {
+    communePrompt.charge = 0;
+    if (el) { el.classList.add('hidden'); communePrompt.shown = false; }
+    openMeditation();
+  }
+}
+
+/**
+ * The way in from the Temple, between runs.
+ *
+ * A button rather than a kneel, because there is no body to kneel with at the
+ * menu — and it exists at all because a star map you can only see mid-fight is
+ * one you can never study. What it opens there is read-only; see openMeditation.
+ */
+let _entryShown = null;
+function setCommuneEntry(show) {
+  const b = communePrompt.entry;
+  if (!b || show === _entryShown) return;
+  _entryShown = show;
+  b.classList.toggle('hidden', !show);
+}
+communePrompt.entry?.addEventListener('click', () => { audio.ui('click'); openMeditation(); });
+
+/** What the sky is being read with: the run's own alignment. */
+function communeContext(live) {
+  const taken = world ? world.takenBoons : new Set();
+  const ledger = world ? world.communion : new Communion();
+  // Between runs the chart is drawn over the RECORD: the stars this player has
+  // ever held, in a fainter colour. It buys nothing and carries nothing into
+  // the next run (see Progress.js) — it is the answer to "what have I actually
+  // tried", which is the question a star map is for when you cannot spend.
+  const history = live ? null : Object.entries(loadProgress().lit || {});
+  return {
+    taken, ledger, live,
+    wave: world?.director?.wave ?? 1,
+    order: settings.order || null,
+    history: history ? new Map(history) : null,
+    subtitle: live
+      ? 'Insight is earned by surviving. A star may be lit if you already hold one joined to it.'
+      : undefined,
+  };
+}
+
+function openMeditation() {
+  audio.ui('good');
+  if (world) {
+    // Through Screens, exactly as the draft goes: the world stops, the overlay
+    // is remembered, and a throw anywhere inside lands on the pause card.
+    screens.take('meditation', () => tree.show(communeContext(true)));
+    return;
+  }
+  // Between runs there is no world to stop and no Insight to spend. The sky is
+  // a chart you read and a plan you make — see the doctrine note in
+  // Constellation.js about why it is deliberately not a shop.
+  tree.show(communeContext(false));
+}
+
+function closeMeditation() {
+  if (!world) { tree.hide(); return; }
+  // The overlay is forgotten FIRST, or resume() would put the star map straight
+  // back on the screen. Same idiom as answering a draft.
+  tree.hide();
+  screens.overlay = null;
+  screens.state = 'paused';
+  resume();
+}
+
+/**
+ * Spend Insight on a star.
+ *
+ * The purchase itself is `Communion.buy`, which decides and charges; the EFFECT
+ * goes through `World.applyBoon`, which is the only path that records the rank
+ * on the taken-set, tells the Run, applies it to every local player and
+ * re-derives what depends on it. A star that applied its own boon would be a
+ * second, divergent way of taking a card — and the first thing it would break
+ * is a landing, which replays the Run's list into a freshly built player.
+ */
+const buyStar = (id) => screens.guarded('lighting a star', (starId) => {
+  if (!world) return;
+  const boon = world.communion.buy(starId, world.takenBoons, world.director?.wave ?? 1);
+  if (!boon) return;                       // not affordable / not reachable — the UI said so
+  world.applyBoon(boon);
+  hud.setBoons(heldBoons());
+  tree.refresh();
+})(id);
 
 /**
  * Do the three training numbers reach the room the player is standing in?
@@ -509,6 +699,15 @@ function setScoreboard(open) {
   if (!open || !world) return;
 
   const p = world.player;
+  /**
+   * THE HOLDING, AS A SHAPE. `takenBoons` is a set and the chips below are a
+   * list, which is the flat readout the constellation exists to replace: seven
+   * chips tell you what you have and nothing about what you ARE. The two rows
+   * added here are read straight off the same tree the meditation draws, so
+   * they cannot describe a build the sky does not show.
+   */
+  const shape = shapeOf(world.takenBoons).filter((r) => r.lit > 0).sort((a, b) => b.ranks - a.ranks);
+  const axis = dominantAxis(world.takenBoons);
   scoreEl.stats.innerHTML = [
     ['Wave', world.director?.wave ?? 1],
     ['Score', Math.floor(world.score + (p?.score || 0)).toLocaleString()],
@@ -516,6 +715,9 @@ function setScoreboard(open) {
     ['Deflections', p?.deflects ?? 0],
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
+    ['Insight', Math.floor(world.communion?.insight ?? 0)],
+    ['Constellation', axis ? constellationName(axis, settings.order) : '—'],
+    ['Stars lit', shape.reduce((n, r) => n + r.lit, 0)],
   ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 
   // Only in co-op. Solo, a one-row table of yourself is noise.
@@ -616,6 +818,17 @@ function wireNet() {
       attune: !!msg.boss && (msg.w || 0) >= BOSS_EVERY,
     }));
   });
+  /**
+   * An ally's communion reached us.
+   *
+   * Applied through World.applyBond, which writes the same `_bondIn` slot a
+   * same-machine ally's aura writes — so the co-op path and the solo-machine
+   * path are one mechanism with one reader, and a bond card cannot work in a
+   * test and be silently dead over the wire. This is the receiving half; the
+   * sending half is World._bondTick, and Net.js relays a bond addressed to a
+   * peer the sender cannot reach directly.
+   */
+  net.on('bond', (msg, peerId) => { world?.applyBond(msg, peerId); });
   net.on('hit', (msg) => {
     const p = world?.player;
     if (!p || !p.alive || !(msg.d > 0)) return;
@@ -719,6 +932,15 @@ function refreshCoachKeys() {
 refreshCoachKeys();
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && tree.open) {
+    // The star map's own way out, and it is the same one the Return button
+    // uses. Not a special case in the state machine: closing it restores the
+    // world through `resume()` exactly as answering a draft does, so Escape
+    // still changes what is on the screen (rule 1) and still cannot leave the
+    // world stopped with nothing on top of it.
+    closeMeditation();
+    return;
+  }
   if (e.code === 'Escape') {
     // Never a dead key. From 'paused' it resumes; on a death card it puts the
     // card back (idempotent — the card is that state's only exit and a card
@@ -784,6 +1006,8 @@ function frame(now) {
   // own the screen otherwise, and this would sit on top of all three.
   setScoreboard(screens.state === 'playing' && !!world && input.act('scoreboard'));
   lessonKeys();
+  communeTick(dt);
+  setCommuneEntry(screens.state === 'menu' && !tree.open);
 
   if (world && (screens.state === 'playing' || screens.state === 'dead')) {
     world.update(dt, input);

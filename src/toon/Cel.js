@@ -1,0 +1,604 @@
+/**
+ * SABER — the cel render model.
+ *
+ * Read src/toon/REFERENCE.md first. This file is the eight rules in that
+ * document turned into arithmetic.
+ *
+ * ── WHY THIS IS NOT A MATERIAL SWAP ────────────────────────────────────────
+ *
+ * The first attempt at this (src/toon/Toon.js, kept as the record of what was
+ * learned) walked the scene and replaced MeshStandardMaterial with
+ * MeshToonMaterial. It was rejected — "there will be PBR leftovers everywhere",
+ * and there were, necessarily:
+ *
+ *   · a material with an `onBeforeCompile` cannot be swapped without throwing
+ *     the extension away, so the terrain, the particles and the sign material
+ *     all had to stay physical — i.e. the ground, which is 60% of the frame,
+ *     kept its GGX lobe and its smooth Lambert falloff;
+ *   · every hand-written ShaderMaterial (grass, water, sky dome, blade, motes,
+ *     snow, haze, shimmer) was invisible to the sweep;
+ *   · anything constructed AFTER the sweep — a severed limb, a fractured
+ *     chunk, a prop spawned by a wave — came back physical;
+ *   · MeshToonMaterial still runs a specular term and still zeroes the diffuse
+ *     of a metal, so hilts and droid plate came out shiny or black.
+ *
+ * So this file does not touch materials at all. It rewrites the BRDF, once, in
+ * three's own ShaderChunks — the same mechanism Engine.js already uses for
+ * aerial perspective and cascaded shadows, and for the same reason: it reaches
+ * every material in the game, including the ones that do not exist yet, and
+ * including the ones with extensions of their own.
+ *
+ * There is no toggle. A gate would mean a material that failed to receive the
+ * uniform silently rendered physical, which is precisely the failure mode being
+ * fixed. The numbers below are exported so a check can transcribe them into JS
+ * and measure both sides of the change without a GPU (the house pattern — see
+ * tools/checks/terrain-aerial.mjs).
+ *
+ * ── THE FIVE CHANGES TO THE LIGHT TRANSPORT ───────────────────────────────
+ *
+ * 1. TWO TONES, HARD EDGE (rule 1). `saturate(dot(N,L))` becomes a step. Not a
+ *    three-band ramp: a lit level and nothing, meeting over 2.4% of the range.
+ *
+ * 2. THE LIT LEVEL IS THE LIGHT'S OWN HORIZONTAL RESPONSE (see CEL_KEY below).
+ *    This is the one number that is derived rather than chosen, and getting it
+ *    wrong breaks the game's exposure metering.
+ *
+ * 3. NO SPECULAR ANYWHERE (rule 8). The GGX lobe, the sheen lobe and the
+ *    environment reflection are deleted from the shader rather than driven to
+ *    zero — a deleted term cannot come back, and the ALU comes back with it.
+ *
+ * 4. THE INDIRECT TERM IS FLAT (rule 1 again, by implication). A probe sampled
+ *    along the normal is a smooth gradient over every curved surface, and a
+ *    smooth gradient on top of two tones is three tones and a wash. The probe
+ *    and the hemisphere are sampled along a FIXED direction instead, so the
+ *    shadow side of everything is one flat colour — the sky's colour, which is
+ *    what makes shadows read as coloured shapes rather than as darkness.
+ *
+ * 5. CAST SHADOWS ARE HARD (rule 2). The filter still runs — its 50% contour is
+ *    a far better silhouette than a single tap, and it is what keeps acne out —
+ *    but its output is stepped, so there is no penumbra anywhere.
+ *
+ * And two changes to what surfaces ARE:
+ *
+ * 6. METALNESS NO LONGER ZEROES DIFFUSE. In three's physical model a metal has
+ *    no diffuse colour at all; all of its appearance is the specular lobe. Kill
+ *    specular without touching that and every hilt, every droid plate and every
+ *    blast door renders BLACK. This is the single most dangerous PBR leftover
+ *    in the file and it is fixed at the root: under a cel model a metal is a
+ *    flat coloured surface like everything else.
+ *
+ * 7. ALBEDO IS POSTERISED (rule 6, in the shader half — the other half is the
+ *    texture foundry). Value is quantised into CEL_ALBEDO_BANDS plateaus in a
+ *    perceptual space and chroma is lifted, so a procedural map's variation
+ *    collapses into flat fields with drawn boundaries instead of reading as
+ *    photographic grain.
+ */
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The constants                                                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Every number the cel model runs on, in one object, because each one is
+ * inlined into GLSL as a literal and a check has to be able to transcribe the
+ * shader without copying the value.
+ */
+export const CEL = {
+  /**
+   * THE TERMINATOR, as a fraction of the lit level — and the ceiling on it.
+   *
+   * A fixed threshold on N·L cannot work in this game and the reason is
+   * arithmetic. The ground is horizontal, so its N·L is sin(sun elevation):
+   * 0.24 on the canyon's 14° sun, 0.37 on the meadow's 22°, 0.44 on the
+   * arena's 26°. A terminator at the textbook 0.5 puts EVERY level's ground on
+   * the dark side of its own two-tone — the entire landscape in shadow, at
+   * noon. Measured that way once; it looks exactly like a bug.
+   *
+   * So the terminator is placed relative to the light's own horizontal
+   * response: at 0.60 of it, the ground sits comfortably in the lit band on
+   * every level in the game, and a surface has to be tilted more than 40% of
+   * the way further from the sun than flat ground is before it turns. On a
+   * sphere that puts the terminator arc between 8° and 10° off the geometric
+   * limb, so a lit sphere reads a little over half lit — which is what the
+   * mech in reference frame (1) does.
+   *
+   * The ceiling matters for point lights, whose key is 1.0 (see CEL_KEY).
+   */
+  terminatorRel: 0.60,
+  terminatorMax: 0.20,
+
+  /**
+   * HALF-WIDTH OF THE STEP, in N·L.
+   *
+   * 0.012 is about a pixel and a half of gradient across a sphere a third of
+   * the screen high, which is anti-aliasing rather than a ramp. Rule 1 is
+   * explicit that the boundary is crisp and that widening it is the failure
+   * being avoided; this exists only so the terminator does not crawl with
+   * pixel-sized steps as a head turns.
+   */
+  edge: 0.012,
+
+  /**
+   * THE SHADOW BAND'S SHARE OF THE DIRECT TERM. Zero, and it has to be zero.
+   *
+   * A lifted dark band is the usual advice — "never let the shadow side go
+   * black" — and it is advice for a renderer with no other ambient term. This
+   * one has a flat indirect term (see CEL_FLAT) which is exactly what that
+   * advice is asking for, and it is the sky's colour rather than a grey lift.
+   * Putting a floor on the direct term as well would light the shadow side
+   * from the SUN, at a fraction, which is a soft second terminator: a gradient
+   * where the reference has an edge.
+   */
+  shadowBand: 0.0,
+
+  /**
+   * HOW HARD THE INDIRECT TERM IS FLATTENED, 0 = three's directional probe,
+   * 1 = one colour over the whole object.
+   *
+   * 1.0. Anything less leaves a smooth gradient across every curved surface,
+   * and the whole argument of rule 1 is that a surface has two tones.
+   *
+   * What is lost is real and worth stating: an upward-facing plane and a
+   * downward-facing one now receive the same ambient, so overhangs no longer
+   * darken by themselves. The ambient occlusion in the baked maps and the
+   * terrain's own cavity term still do that, and they do it as an albedo
+   * rather than as a light, which is the drawn version of the same cue.
+   */
+  flat: 1.0,
+
+  /** Albedo posterisation: plateaus in sqrt(luminance), and the chroma lift. */
+  albedoBands: 5.0,
+  chroma: 1.14,
+
+  /**
+   * How much of the ambient's own chroma reaches the shadow side. See
+   * saberCelAmbient — this is the colour of every shadow in the game, and at
+   * 1.0 the canyon's blue fill repainted its coral cliffs.
+   */
+  ambientChroma: 0.55,
+
+  /**
+   * DISTANCE IN PLATES (rule 3's other half).
+   *
+   * The aerial term's STRENGTH is quantised, not its colour: the colour is the
+   * sky in the view direction and has to stay a smooth function of bearing
+   * (reference frame 4 grades orange to cyan across the sky and the ground
+   * under it does the same). Quantising the strength is what turns a
+   * continuous veil into the flat plates a background painting is built from.
+   */
+  fogBands: 5.0,
+
+  /**
+   * THE 50% CONTOUR IS THE SHADOW EDGE (rule 2).
+   *
+   * The filter that produces the value being stepped is a 12-tap Poisson disc
+   * whose radius tracks the sun's angular size (Engine.saberSoftShadow). None
+   * of that is wasted: a single-tap hard shadow is a staircase on the shadow
+   * map's own grid, and the 50% contour of a wide filter is a smooth curve
+   * through the same blocker silhouette with the jaggedness bounded by the
+   * texel size rather than by the tap pattern. That is the "deliberate jagged
+   * silhouette" the reference frames have, and it is free — the filter was
+   * already running.
+   */
+  shadowStep: 0.5,
+  /** Half-width of the shadow step, in shadow units. One tap of the 12. */
+  shadowEdge: 0.045,
+};
+
+/**
+ * THE LIT LEVEL, and why it is not 1.0.
+ *
+ * This is the only number in the file that is forced rather than chosen, so it
+ * gets its own note.
+ *
+ * The game meters its own exposure. `atmosphereMeter` computes the irradiance
+ * landing on a horizontal surface from the level's sun and sky and sets
+ * `toneMappingExposure` so that a mid-grey ground lands on KEY = 0.191. Every
+ * level's exposure, every level's bloom threshold headroom and every existing
+ * lighting check is anchored to that arithmetic.
+ *
+ * A two-tone ramp that puts the lit band at 1.0 hands a horizontal surface the
+ * sun's full irradiance instead of `sin(elevation)` of it — 2.7x too much on
+ * the meadow, 4.2x on the canyon. The meter does not know, so every level
+ * comes out one and a half to two stops over, and the fix is not to re-meter:
+ * the frame would then be correct on average and wrong everywhere, because a
+ * vertical wall facing the sun would also be at 1.0 and a landscape in which
+ * every lit surface is equally bright regardless of its orientation is exactly
+ * what the ramp is FOR.
+ *
+ * So the lit band is set to what the light delivers to flat ground:
+ *
+ *     level = saturate( dot( L_world, up ) )
+ *
+ * — a per-light quantity the shader can compute for itself, with no uniform and
+ * no plumbing. Three things fall out of it and all three are wanted:
+ *
+ *   · the ground is EXACTLY as bright as it is under Lambert, so the meter,
+ *     the exposure, the bloom threshold and the lighting checks are untouched;
+ *   · every lit surface in the frame is the same brightness whatever way it
+ *     faces, so value contrast comes from the PALETTE rather than from the
+ *     light — which is rule 5, arrived at from the other direction;
+ *   · a low sun automatically flattens the whole frame toward its ambient,
+ *     which is what a low sun does.
+ *
+ * Point and spot lights have no horizon to be measured against and are local
+ * accents rather than key light, so they keep a level of 1.0.
+ */
+export const CEL_KEY = 'saturate( inverseTransformDirection( dir, viewMatrix ).y )';
+
+/* The two directions a light can be in. Three keeps every light direction in
+ * VIEW space; `inverseTransformDirection` is three's own rigid-inverse helper
+ * out of `common`, so this costs one dot product per light. */
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The GLSL                                                              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Appended to `common`, which every shader in the build includes — including
+ * the hand-written ones in Scenery.js, which is how the grass and the water get
+ * the same arithmetic as the terrain rather than a second copy of it.
+ *
+ * NO DERIVATIVES IN HERE. `common` is included by vertex shaders too and
+ * fwidth/dFdx are fragment-only; a single use would fail to compile every
+ * material in the game. The albedo posteriser therefore quantises on a fixed
+ * grid rather than an screen-space-adaptive one.
+ *
+ * RESERVED WORDS. `flat`, `sample`, `filter`, `packed`, `patch`, `mat` and
+ * `half` are keywords in GLSL ES 3.00 and one of them as a variable name takes
+ * the whole material out of the frame silently. Nothing here is named any of
+ * them; tools/verify.mjs has a check that says so.
+ */
+/**
+ * THE QUANTISER, on its own, because two shaders in the build need it and
+ * neither of them includes three's `common`.
+ *
+ * The sky mesh (three's Sky addon) and the cloud dome (SkyDome.js) are written
+ * from scratch and include only the tone-mapping chunks, so they cannot see
+ * anything appended to `common`. Rule 7 — the sky is flat, or one simple
+ * gradient, and clouds are flat shapes — is exactly the rule that needs this
+ * function, so it is exported for them to paste. Anything that DOES include
+ * `common` must not paste it as well: a second definition is a compile error
+ * and takes the material out of the frame.
+ *
+ * Bands are cut on sqrt(luminance) rather than on luminance, so they are
+ * perceptually even rather than crowded into the highlights, and the plateau
+ * CENTRE is taken rather than its lower edge, so quantising cannot darken a
+ * field on average. Hue and chroma ride through untouched: the band decides
+ * VALUE and nothing else, which is what keeps a posterised colour field
+ * looking chosen rather than crushed.
+ */
+export const CEL_BAND_GLSL = /* glsl */`
+vec3 saberCelBand( const in vec3 c, const in float n ) {
+  float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+  if ( l <= 1.0e-5 ) return c;
+  float q = ( floor( sqrt( l ) * n ) + 0.5 ) / n;
+  return c * ( ( q * q ) / l );
+}
+float saberCelBand1( const in float v, const in float n ) {
+  return ( floor( v * n ) + 0.5 ) / n;
+}
+`;
+
+const CEL_COMMON = CEL_BAND_GLSL + /* glsl */`
+/* How bright this light makes flat ground — see CEL_KEY in src/toon/Cel.js.
+ * A mutable global rather than a parameter because RE_Direct's signature is
+ * three's and the light loop is in a different chunk from the BRDF. */
+float saberCelKey = 1.0;
+
+/* IS THIS LIGHT ALLOWED A TERMINATOR? 1 = yes (a key light), 0 = no (a fill).
+ *
+ * Two two-toned lights give a surface FOUR tones, not two, and the frame goes
+ * straight back to reading as a gradient — which is the whole failure being
+ * fixed. This game's rig is a sun and a sky fill (Engine._setupLights), so left
+ * alone that is exactly what would happen: a sun terminator crossing a fill
+ * terminator, at an angle, on every curved surface in the game.
+ *
+ * The discriminator is the rig's own construction and needs no new plumbing: A
+ * LIGHT THAT OWNS A SHADOW MAP IS A KEY LIGHT. That is not a trick, it is the
+ * definition — a light that casts no shadow is not modelling occlusion, so it
+ * has no business modelling orientation either; it is standing in for the sky,
+ * and the sky in this model is flat. The cascades carry shadow maps and the
+ * fill does not, so the test is three's own UNROLLED_LOOP_INDEX <
+ * NUM_DIR_LIGHT_SHADOWS, resolved at compile time.
+ *
+ * A flat fill still lands EXACTLY the Lambert answer on flat ground, because
+ * its level is the same horizontal response every other light uses — so the
+ * exposure meter does not move. */
+float saberCelShape = 1.0;
+
+/** The two-tone response. In: N.L. Out: the direct term's multiplier. */
+float saberCelTone( const in float dotNL ) {
+  float t = min( ${CEL.terminatorMax.toFixed(4)}, ${CEL.terminatorRel.toFixed(4)} * saberCelKey );
+  float s = smoothstep( t - ${CEL.edge.toFixed(4)}, t + ${CEL.edge.toFixed(4)}, dotNL );
+  return saberCelKey * mix( 1.0, mix( ${CEL.shadowBand.toFixed(4)}, 1.0, s ), saberCelShape );
+}
+
+/** The lit level of a light whose view-space direction is the argument. */
+float saberCelLightKey( const in vec3 dir ) {
+  return ${CEL_KEY};
+}
+
+/** A cast shadow as a flat shape: the filter's 50% contour, nothing softer. */
+float saberCelShadow( const in float s ) {
+  return smoothstep( ${CEL.shadowStep.toFixed(4)} - ${CEL.shadowEdge.toFixed(4)},
+                     ${CEL.shadowStep.toFixed(4)} + ${CEL.shadowEdge.toFixed(4)}, s );
+}
+
+/* The direction every flat-ambient lookup is made along: world up, in view
+ * space. One colour over an object, so its shadow side is a shape rather than
+ * a gradient. viewMatrix is a built-in uniform in both shader stages. */
+vec3 saberCelFlatDir( const in vec3 n ) {
+  vec3 up = normalize( mat3( viewMatrix ) * vec3( 0.0, 1.0, 0.0 ) );
+  return normalize( mix( n, up, ${CEL.flat.toFixed(4)} ) );
+}
+
+/**
+ * The ambient, with its chroma trimmed — the shadow TONE, in one place.
+ *
+ * With the direct term stepped to zero, a surface's shadow side is exactly its
+ * albedo times this, so whatever colour this carries IS the colour of every
+ * shadow in the game. Left at full strength that is the sky's own chroma plus
+ * the fill's, and on the canyon — whose fill runs B/R 5.05 — a coral cliff's
+ * shadow side came out saturated BLUE while its lit side stayed tan. Two hue
+ * families on one rock, which is rule 5 broken by the lighting rather than by
+ * the palette, and it is not what the reference does: "the rock buttes in (1)
+ * are one coral and one darker coral".
+ *
+ * Trimmed to a little over half, so a shadow is still cooler than its own lit
+ * side — which is true, and is most of what makes an outdoor frame read as
+ * outdoors — without the light being allowed to repaint the surface. The
+ * LUMINANCE is untouched, so nothing about the exposure or the light budget
+ * moves; this can only ever change a cast.
+ */
+vec3 saberCelAmbient( const in vec3 c ) {
+  return mix( vec3( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ), c, ${CEL.ambientChroma.toFixed(4)} );
+}
+
+/**
+ * Albedo as a flat graphic colour field.
+ *
+ * Value is quantised on a sqrt grid — perceptually even steps, so the plateaus
+ * are the same visual width in the shadows as in the highlights — and the
+ * plateau CENTRE is taken rather than the nearest edge, so a map whose whole
+ * histogram sits inside one band comes out as one colour. Chroma is lifted
+ * about the same luminance, which is what stops a posterised photographic
+ * texture reading as a greyed-out photograph.
+ */
+vec3 saberCelAlbedo( const in vec3 c ) {
+  float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+  vec3 lifted = mix( vec3( l ), c, ${CEL.chroma.toFixed(4)} );
+  return max( saberCelBand( lifted, ${CEL.albedoBands.toFixed(1)} ), vec3( 0.0 ) );
+}
+
+/** Distance as flat plates rather than as a continuous veil. */
+float saberCelDistance( const in float f ) {
+  float n = ${CEL.fogBands.toFixed(1)};
+  return floor( f * n + 0.5 ) / n;
+}
+`;
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Installation                                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+let _installed = false;
+
+/**
+ * Rewrite three's lighting chunks in place. Idempotent; returns false if it has
+ * already run.
+ *
+ * ORDER MATTERS AND IT IS THE CALLER'S JOB. This must run AFTER
+ * installAerialPerspective (which replaces fog_fragment wholesale — patching
+ * the stock chunk instead would be silently undone) and AFTER
+ * installCascadeShadows (which rewrites the line this wraps in
+ * lights_fragment_begin). Engine.js calls all three in that order.
+ *
+ * Every replacement is checked and reported. A chunk that changes shape between
+ * three releases would otherwise leave the game half physical and half cel,
+ * which is far worse than either.
+ */
+export function installCelShading(THREE_) {
+  if (_installed) return false;
+  _installed = true;
+  const C = THREE_.ShaderChunk;
+  const missed = [];
+  const sub = (chunk, from, to, label) => {
+    const src = C[chunk];
+    if (src.indexOf(from) < 0) { missed.push(label); return; }
+    C[chunk] = src.replace(from, to);
+  };
+
+  C.common += CEL_COMMON;
+
+  /* ── 1, 3, 6: the physical BRDF ─────────────────────────────────────── */
+
+  // TWO TONES. The rest of RE_Direct_Physical is untouched, so `irradiance`
+  // still carries the light's colour and the shadow mask that was folded into
+  // it — only its SHAPE over the surface changes.
+  sub('lights_physical_pars_fragment',
+    'float dotNL = saturate( dot( geometryNormal, directLight.direction ) );\n\tvec3 irradiance = dotNL * directLight.color;',
+    'float dotNL = saturate( dot( geometryNormal, directLight.direction ) );\n'
+    // A fill is standing in for the sky, so it is ambient in every respect —
+    // flat over the surface (saberCelShape) AND chroma-trimmed like the rest of
+    // the ambient (saberCelAmbient). Without the second half the canyon's fill,
+    // which runs B/R 5.05, painted every shadow side in the level saturated
+    // blue on its own: it is the largest single term in a shadow and the only
+    // one that was still arriving at full chroma.
+    + '\tvec3 irradiance = saberCelTone( dotNL )\n'
+    + '\t\t* mix( saberCelAmbient( directLight.color ), directLight.color, saberCelShape );',
+    'two-tone direct');
+
+  // NO GGX LOBE. Deleted, not scaled: rule 8 says nothing in four reference
+  // frames is shiny, and a term that is not in the shader cannot be brought
+  // back by a material setting roughness to 0.06 (Props.MATS.glass does).
+  sub('lights_physical_pars_fragment',
+    '\treflectedLight.directSpecular += irradiance * BRDF_GGX( directLight.direction, geometryViewDir, geometryNormal, material );\n',
+    '',
+    'kill direct GGX');
+
+  // NO SHEEN LOBE. The robes and cloaks use MeshPhysicalMaterial's sheen for a
+  // retroreflective rim; it is a cloth-fibre light-transport effect and reads
+  // as satin, which is the opposite of a flat colour field.
+  sub('lights_physical_pars_fragment',
+    '\t\tsheenSpecularDirect += irradiance * BRDF_Sheen( directLight.direction, geometryViewDir, geometryNormal, material.sheenColor, material.sheenRoughness );\n',
+    '',
+    'kill direct sheen');
+  sub('lights_physical_pars_fragment',
+    '\t\tsheenSpecularIndirect += irradiance * material.sheenColor * IBLSheenBRDF( geometryNormal, geometryViewDir, material.sheenRoughness );\n',
+    '',
+    'kill indirect sheen');
+
+  // NO ENVIRONMENT REFLECTION, and no energy compensation for one either — with
+  // the specular lobe gone the diffuse is not sharing the surface with
+  // anything, so it takes all of it. Removing the `totalScattering` reference
+  // is what lets the compiler drop computeMultiscattering entirely.
+  sub('lights_physical_pars_fragment',
+    'vec3 diffuse = material.diffuseColor * ( 1.0 - max( max( totalScattering.r, totalScattering.g ), totalScattering.b ) );',
+    'vec3 diffuse = material.diffuseColor;',
+    'no specular energy split');
+  sub('lights_physical_pars_fragment',
+    '\treflectedLight.indirectSpecular += radiance * singleScattering;\n',
+    '',
+    'kill IBL specular');
+  sub('lights_physical_pars_fragment',
+    '\treflectedLight.indirectSpecular += multiScattering * cosineWeightedIrradiance;\n',
+    '',
+    'kill IBL multiscatter');
+
+  // METALNESS MUST NOT ZERO THE DIFFUSE — see the header note. This is the one
+  // line standing between "no specular" and "every metal object is black".
+  // Posterisation goes on the same line because this is the last place the
+  // surface colour is written before it is lit.
+  sub('lights_physical_fragment',
+    'material.diffuseColor = diffuseColor.rgb * ( 1.0 - metalnessFactor );',
+    'material.diffuseColor = saberCelAlbedo( diffuseColor.rgb );',
+    'flat albedo, metals keep theirs');
+
+  /* ── 2, 4, 5: the light loop ────────────────────────────────────────── */
+
+  // The key, per light. Point and spot lights are set explicitly rather than
+  // left to the initialiser: the chunk's loop order is point, spot, then
+  // directional today, and a future three that reorders them would otherwise
+  // hand a point light the sun's key.
+  sub('lights_fragment_begin', 'getPointLightInfo( pointLight, geometryPosition, directLight );',
+    'getPointLightInfo( pointLight, geometryPosition, directLight );\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;',
+    'point key');
+  sub('lights_fragment_begin', 'getSpotLightInfo( spotLight, geometryPosition, directLight );',
+    'getSpotLightInfo( spotLight, geometryPosition, directLight );\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;',
+    'spot key');
+  sub('lights_fragment_begin', 'getDirectionalLightInfo( directionalLight, directLight );', [
+    'getDirectionalLightInfo( directionalLight, directLight );',
+    '\t\tsaberCelKey = saberCelLightKey( directLight.direction );',
+    '\t\t#if UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS',
+    '\t\tsaberCelShape = 1.0;',
+    '\t\t#else',
+    '\t\tsaberCelShape = 0.0;',
+    '\t\t#endif',
+  ].join('\n'), 'directional key');
+
+  // HARD CAST SHADOWS. Engine has already replaced this line with its cascade
+  // selector, so the text matched here is Engine's and not three's.
+  sub('lights_fragment_begin',
+    'directLight.color *= ( directLight.visible && receiveShadow ) ? saberCascadeShadow() : 1.0;',
+    'directLight.color *= ( directLight.visible && receiveShadow ) ? saberCelShadow( saberCascadeShadow() ) : 1.0;',
+    'hard cascade shadow');
+  sub('shadowmask_pars_fragment',
+    'shadow *= receiveShadow ? saberCascadeShadow() : 1.0;',
+    'shadow *= receiveShadow ? saberCelShadow( saberCascadeShadow() ) : 1.0;',
+    'hard shadow mask');
+
+  // FLAT AMBIENT. The hemisphere light's sky/ground blend and the probe's
+  // directional convolution are the two smooth gradients left on a surface
+  // once the direct term is a step, and they are the same gradient twice.
+  sub('lights_fragment_begin',
+    'irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );',
+    'irradiance += saberCelAmbient( getHemisphereLightIrradiance( hemisphereLights[ i ], saberCelFlatDir( geometryNormal ) ) );',
+    'flat hemisphere');
+  sub('lights_fragment_maps',
+    'iblIrradiance += getIBLIrradiance( geometryNormal );',
+    'iblIrradiance += saberCelAmbient( getIBLIrradiance( saberCelFlatDir( geometryNormal ) ) );',
+    'flat probe');
+
+  /* ── distance in plates ─────────────────────────────────────────────── */
+
+  // fog_fragment is Engine's rewritten version by the time this runs; the line
+  // is the last one in it, and it is the only place the factor is consumed.
+  sub('fog_fragment',
+    '  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogTone, fogFactor );',
+    '  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogTone, saberCelDistance( fogFactor ) );',
+    'banded distance');
+
+  if (missed.length) {
+    console.warn('SABER: cel shading could not patch: ' + missed.join(', ')
+      + ' — the frame will be part physical.');
+  }
+  return { missed };
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The same arithmetic, in JS                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/* Transcriptions, for checks. This build never boots a GPU under test (see
+ * tools/dom-shim.mjs — there is no GL context anywhere in the harness), so the
+ * house pattern is a JS twin plus source-shape assertions that pin the shader
+ * text it stands for. tools/checks/cel.mjs holds both. */
+
+const saturate = (x) => Math.min(1, Math.max(0, x));
+const smoothstep = (a, b, x) => { const t = saturate((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+/**
+ * saberCelTone(). `key` is the light's lit level — see CEL_KEY. `shape` is 1
+ * for a light that owns a shadow map and 0 for a fill, which lands flat.
+ */
+export function celTone(dotNL, key, shape = 1) {
+  const t = Math.min(CEL.terminatorMax, CEL.terminatorRel * key);
+  const s = smoothstep(t - CEL.edge, t + CEL.edge, dotNL);
+  return key * (1 + shape * (CEL.shadowBand + (1 - CEL.shadowBand) * s - 1));
+}
+
+/** saberCelBand(), on a linear RGB triple. */
+export function celBand(rgb, n) {
+  const l = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  if (l <= 1e-5) return rgb.slice();
+  const q = (Math.floor(Math.sqrt(l) * n) + 0.5) / n;
+  return rgb.map((c) => c * ((q * q) / l));
+}
+
+/** What three's physical model does with the same input, for the control. */
+export function lambertTone(dotNL) { return saturate(dotNL); }
+
+/** saberCelShadow(). */
+export function celShadow(s) {
+  return smoothstep(CEL.shadowStep - CEL.shadowEdge, CEL.shadowStep + CEL.shadowEdge, s);
+}
+
+/** saberCelAlbedo(), on a linear RGB triple. */
+export function celAlbedo(rgb) {
+  const l = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  if (l <= 1e-5) return rgb.slice();
+  const n = CEL.albedoBands;
+  const q = (Math.floor(Math.sqrt(l) * n) + 0.5) / n;
+  const k = (q * q) / l;
+  return rgb.map((c) => Math.max(0, (l + (c - l) * CEL.chroma) * k));
+}
+
+/** saberCelDistance(). */
+export function celDistance(f) {
+  return Math.floor(f * CEL.fogBands + 0.5) / CEL.fogBands;
+}
+
+/**
+ * How many distinct plateaus a smooth 0..1 sweep comes out as, for a
+ * quantiser. The measurement the checks are built on: a cel surface has a
+ * countable number of tones and a PBR one does not.
+ */
+export function bandCount(fn, samples = 4096, tol = 1e-4) {
+  const seen = [];
+  for (let i = 0; i < samples; i++) {
+    const v = fn(i / (samples - 1));
+    if (!seen.some((s) => Math.abs(s - v) < tol)) seen.push(v);
+  }
+  return seen.length;
+}

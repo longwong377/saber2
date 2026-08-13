@@ -71,6 +71,11 @@ const QUALITY_READERS = {
   bloom:      ['main.js', 'QUALITY.high).bloom'],
   grass:      ['game/World.js', 'Math.round(11000 * q.grass)'],
   particles:  ['game/World.js', 'q.particles'],
+  // The outline prepass's resolution, as a fraction of the frame. It is read in
+  // two places on purpose — once when the pass is built and once when the tier
+  // changes under a running composer — and the second one is what the column
+  // actually promises, so it is the one named here.
+  ink:        ['engine/Engine.js', 'this.outline.scale = q.ink'],
 };
 
 const DEG = 180 / Math.PI;

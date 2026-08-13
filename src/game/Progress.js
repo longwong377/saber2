@@ -39,6 +39,23 @@ const blank = () => ({
   /** Boon ids that have appeared in a run that reached the crown. NOT an
    *  unlock — a note about what has worked. */
   crowned: [],
+  /**
+   * THE SKY YOU HAVE WALKED: boon id → how many runs have ever held it.
+   *
+   * Read by the meditation opened from the Temple, which is the one place this
+   * game has where a player looks at the whole system at once and asks what
+   * they have actually tried. Every star is available in every run from the
+   * first; this only draws where you have been, in a fainter colour.
+   *
+   * Emphatically NOT a currency and not an unlock — the file this sits in
+   * exists to make that distinction and would be worthless if the first thing
+   * added after it were a number that buys something. Nothing in src/ reads
+   * this back into a run: `grep -n "\.lit" src/` finds the chart and nothing
+   * else.
+   */
+  lit: {},
+  /** Stars lit by communion, all-time. A tally of a thing done, same rule. */
+  communed: 0,
   recent: [],
 });
 
@@ -89,6 +106,12 @@ export function recordRun(summary) {
     p.crowned = [...set];
   }
 
+  // Once per run, not once per rank: this counts RUNS that held a star, so a
+  // four-rank Vitality is one visit to that star and not four.
+  p.lit = { ...p.lit };
+  for (const id of new Set(summary.boons || [])) p.lit[id] = (p.lit[id] || 0) + 1;
+  p.communed += (summary.lit || []).length;
+
   p.recent.unshift({
     depth: summary.depth || 0, tier: summary.tier || 0, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
@@ -107,6 +130,8 @@ export function progressLines(p = read()) {
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`,
   ];
   if (p.wins) out.push(`${p.wins} ascent${p.wins === 1 ? '' : 's'} of the Spire`);
+  const stars = Object.keys(p.lit || {}).length;
+  if (stars) out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`);
   const orders = Object.entries(p.byOrder).sort((a, b) => b[1] - a[1]);
   if (orders.length) out.push(orders.map(([k, v]) => `${k} ${v}`).join('  ·  '));
   return out;

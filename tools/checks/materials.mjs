@@ -17,6 +17,7 @@
  *     between a material and a sheet of coloured plastic.
  */
 
+import * as THREE from 'three';
 import { rawMaps, MEAN_ALBEDO, PERIODIC, sandMaps, rockMaps, metalMaps, clothMaps, armorMaps,
          duracreteMaps, skinMaps, soilMaps, snowMaps, disposeTextureCache } from '../../src/engine/Textures.js';
 
@@ -289,21 +290,59 @@ export function run({ check, assert, near }) {
     return `sand gain ${gain.toFixed(3)} ±${(s.lumSd * 1.15).toFixed(3)}, rock gain ${(0.55 + r.lum * 1.15).toFixed(3)}`;
   });
 
-  check('materials: the packed ORM map is uploaded once, not twice', () => {
-    // roughnessMap and metalnessMap are the same packed image. Handing three
-    // two CanvasTextures over one canvas cost a second GPU upload and a second
-    // mip chain for every material in the game.
+  check('materials: nothing is bound that nothing reads', async () => {
+    /* THIS USED TO BE "the packed ORM map is uploaded once, not twice", and it
+     * is re-derived rather than relaxed — the property it asserted is now the
+     * weaker half of a stronger one.
+     *
+     * It was: roughnessMap and metalnessMap are the same packed image, so
+     * handing three two CanvasTextures over one canvas costs a second GPU
+     * upload and a second mip chain for every material. One upload instead of
+     * two.
+     *
+     * Under the cel model the answer is ZERO uploads, because there is nothing
+     * left in the shader that could read one. src/toon/Cel.js deletes the GGX
+     * lobe, the sheen lobe and the environment reflection — which is every
+     * consumer of `material.roughness` — and stops `metalnessFactor` dividing
+     * the diffuse, which was the only consumer of metalness. A detail normal
+     * goes the same way: under a two-tone terminator it produces speckle rather
+     * than relief (see TER_RELIEF in Terrain.js).
+     *
+     * So the assertion is now the strongest form of the same idea: a material
+     * may not bind a map the frame does not read. It is stated against the
+     * SHADER rather than against a list, so it fails if either side moves. */
     const sets = [sandMaps(3), rockMaps(3), metalMaps(3), clothMaps(3),
                   armorMaps(3), duracreteMaps(3), skinMaps(3)];
-    let bytes = 0;
+    let bytes = 0, saved = 0;
     for (const s of sets) {
-      assert(s.roughnessMap === s.metalnessMap, 'ORM map is duplicated');
       assert(s.map.colorSpace === 'srgb', 'albedo must be tagged sRGB');
-      assert(s.normalMap.colorSpace !== 'srgb', 'a normal map must not be sRGB decoded');
-      assert(s.roughnessMap.colorSpace !== 'srgb', 'a roughness map must not be sRGB decoded');
+      for (const dead of ['roughnessMap', 'metalnessMap', 'normalMap']) {
+        assert(s[dead] === null,
+          `${dead} is bound again — every lit fragment in the game now fetches a texture `
+          + 'whose result is multiplied by nothing');
+      }
       bytes += s.map.image.width ** 2 * 4;
+      // what a bound ORM + normal pair would have cost, at the same size
+      saved += s.map.image.width ** 2 * 4 * 2;
     }
-    return `${sets.length} sets share one ORM texture each — ${(bytes / 1048576).toFixed(1)} MB of albedo saved a duplicate`;
+    /* …and the reason it is dead, read off the shader rather than asserted from
+     * memory. If any of these came back, the maps would have to as well.
+     *
+     * Engine.js is imported DYNAMICALLY and awaited — see the note at the top
+     * of tools/verify.mjs. A static edge from a check reaches Engine through a
+     * module graph in which `three` resolves out of node_modules while
+     * everything dynamic resolves out of vendor/, so the chunk rewrites land on
+     * the wrong copy and burn their once-only flags. Awaiting it here is also
+     * what guarantees the chunks have been patched at all by the time they are
+     * read: nothing else in this file imports the engine. */
+    await import('../../src/engine/Engine.js');
+    const chunk = THREE.ShaderChunk.lights_physical_pars_fragment;
+    assert(!/BRDF_GGX\( directLight\.direction/.test(chunk), 'the GGX lobe is back — roughness matters again');
+    assert(!/radiance \* singleScattering/.test(chunk), 'the environment reflection is back');
+    assert(!/material\.diffuseColor = diffuseColor\.rgb \* \( 1\.0 - metalnessFactor \)/
+      .test(THREE.ShaderChunk.lights_physical_fragment), 'metalness divides the diffuse again');
+    return `${sets.length} surfaces bind albedo only — ${(bytes / 1048576).toFixed(1)} MB uploaded, `
+      + `${(saved / 1048576).toFixed(1)} MB of ORM and normal maps no longer uploaded or fetched`;
   });
 
   check('materials: a surface bakes once however many tilings ask for it', () => {

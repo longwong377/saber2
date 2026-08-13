@@ -23,6 +23,10 @@
 
 import * as THREE from 'three';
 import { grassSprite, smokeSprite } from '../engine/Textures.js';
+/* The cel model's own arithmetic, so `grassShade` cannot drift from the shader
+ * it stands for. Cel.js imports nothing at all — in particular not Engine.js,
+ * which would close the loop this file's own note at line 566 is about. */
+import { celTone, CEL } from '../toon/Cel.js';
 import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng(70707);
@@ -1349,10 +1353,35 @@ const GRASS_FRAG = /* glsl */`
     // wave travels as a bright ripple across the sward. Derived from the
     // blade's OWN colour — desaturated toward its luminance and lifted — so
     // per-blade variation survives instead of the crest going one flat silver.
-    float lay = clamp(vWave * 0.5 + 0.5, 0.0, 1.0);
+    // STEPPED, not smooth. The wave is a drawn thing — a band of pale blades
+    // travelling across the sward — and a smooth lay term paints it as a soft
+    // airbrushed gradient, which is the single most photographic thing left in
+    // a field once its lighting is two-tone. Three steps is a crest, a flank
+    // and the mat between them.
+    // clamped after the band as well as before it: saberCelBand1 returns the
+    // plateau CENTRE, so an input of exactly 1.0 lands on floor(3)+0.5 over 3,
+    // which is 1.167 — a sixth of a stop of sheen nobody asked for, on the one
+    // blade in the field that is laid over hardest.
+    float lay = min(saberCelBand1(clamp(vWave * 0.5 + 0.5, 0.0, 1.0), 3.0), 1.0);
     vec3 silver = mix(albedo, vec3(dot(albedo, vec3(0.2126, 0.7152, 0.0722))), 0.45)
                 * uSheenLift;
     albedo = mix(albedo, silver, lay * uSheen * smoothstep(0.10, 0.75, vHeight));
+
+    /* ── THE FIELD IS A COLOUR FIELD ───────────────────────────────────
+     *
+     * The complaint that started this work named the grass explicitly. Every
+     * blade carries its own tint (see grassPalette / bladeTint — a hue walk
+     * plus per-instance jitter plus a species field), and eleven thousand
+     * slightly different greens is, at any distance past a few metres, a noise
+     * texture. That is what "the grass still looks non-toon" is: not the
+     * lighting, the PALETTE.
+     *
+     * Posterising the blade's own colour collapses that continuum onto the same
+     * five value plateaus the rest of the game uses, so the field reads as two
+     * or three flat greens with drawn boundaries between them — and the
+     * variation survives where it does work, as the boundary between one patch
+     * and the next, rather than as grain inside every patch. */
+    albedo = saberCelAlbedo(albedo);
 
     // The terrain underneath is lit by sun, hemisphere AND a sky probe. There
     // is no probe here, so the hemisphere term stands in for it.
@@ -1360,7 +1389,12 @@ const GRASS_FRAG = /* glsl */`
     #if NUM_HEMI_LIGHTS > 0
       #pragma unroll_loop_start
       for(int i = 0; i < NUM_HEMI_LIGHTS; i++){
-        irradiance += getHemisphereLightIrradiance(hemisphereLights[i], Nv) * uAmbientBoost;
+        // Flat, along world up — the same lookup direction every lit material
+        // in the game now uses (saberCelFlatDir, src/toon/Cel.js). A blade's
+        // normal is nearly horizontal and gets flipped toward the viewer, so a
+        // normal-dependent hemisphere made the ambient half of the field's
+        // light swing with the camera.
+        irradiance += saberCelAmbient(getHemisphereLightIrradiance(hemisphereLights[i], saberCelFlatDir(Nv))) * uAmbientBoost;
       }
       #pragma unroll_loop_end
     #endif
@@ -1386,16 +1420,43 @@ const GRASS_FRAG = /* glsl */`
            * materials now answer the light rig identically. */
           #if UNROLLED_LOOP_INDEX == 0
             float sh = shadow;
+            // …and the same light is the only one allowed a terminator. See
+            // saberCelShape in src/toon/Cel.js: a light that casts no shadow is
+            // standing in for the sky, and a second two-tone light crossing the
+            // first gives a blade four tones instead of two. Identical rule,
+            // stated with this shader's own loop guard rather than with
+            // NUM_DIR_LIGHT_SHADOWS, because the guard above already IS it.
+            saberCelShape = 1.0;
           #else
             float sh = 1.0;
+            saberCelShape = 0.0;
           #endif
           vec3 L = inverseTransformDirection(directionalLights[i].direction, viewMatrix);
-          // half-lambert: a blade lit from behind is not black, it is dim
-          float wrap = clamp(dot(N, L) * 0.62 + 0.38, 0.0, 1.0);
-          // and light coming THROUGH it is what makes a field glow at low sun
+          /* TWO TONES, on the same grid as the ground the blades stand in.
+           *
+           * This used to be a half-lambert — dot(N,L) * 0.62 + 0.38 — whose
+           * whole purpose was that a blade lit from behind is dim rather than
+           * black. That is a statement about the AMBIENT floor, and the cel
+           * model states it directly: the shadow band is zero direct light plus
+           * a flat sky term, which is what "dim, not black" means.
+           *
+           * saberCelKey is the light's own horizontal response, so a lit blade
+           * receives exactly what the soil beneath it receives. Set per light
+           * inside the loop because the rig carries a sky fill as well as the
+           * sun and the two sit at very different elevations. */
+          saberCelKey = saberCelLightKey(directionalLights[i].direction);
+          float wrap = saberCelTone(dot(N, L));
+          // and light coming THROUGH it is what makes a field glow at low sun.
+          // Kept smooth: it is a translucency, not a light, and it varies with
+          // where the camera is rather than with the shape of the blade — a
+          // step in it would sweep across the field as the player turns.
           float back = pow(clamp(dot(-V, L), 0.0, 1.0), 3.0) * uTranslucency
                      * smoothstep(0.0, 0.6, vHeight);
-          direct += directionalLights[i].color * (wrap * sh + back * (0.35 + 0.65 * sh));
+          // A fill's colour is trimmed the same way the ambient's is — see
+          // saberCelAmbient. It is the sky standing in a light's clothing.
+          vec3 lc = mix(saberCelAmbient(directionalLights[i].color),
+                        directionalLights[i].color, saberCelShape);
+          direct += lc * (wrap * sh + back * (0.35 + 0.65 * sh));
         }
       }
       #pragma unroll_loop_end
@@ -1442,9 +1503,20 @@ export function grassShade(o) {
   if (dot3(N, V) < 0) N = N.map((v) => -v);
 
   const boost = o.ambientBoost ?? GRASS_AMBIENT_BOOST;
-  const hemi = o.hemi
-    ? (() => { const w = 0.5 * N[1] + 0.5; return o.hemi.ground.map((g, i) => (g + (o.hemi.sky[i] - g) * w) * boost); })()
+  // FLAT, along world up: the shader looks the hemisphere up along
+  // saberCelFlatDir(Nv), which is a constant direction, so the blend weight is
+  // 0.5·1 + 0.5 = 1 and the sward takes the sky colour outright. `physical:
+  // true` reproduces the normal-dependent term this replaced.
+  const hemiW = o.physical ? 0.5 * N[1] + 0.5 : 1;
+  let hemi = o.hemi
+    ? o.hemi.ground.map((g, i) => (g + (o.hemi.sky[i] - g) * hemiW) * boost)
     : [0, 0, 0];
+  // …and its chroma trimmed, as saberCelAmbient does for every other material:
+  // this is the colour of a shaded blade and it may not repaint one.
+  if (!o.physical) {
+    const l = hemi[0] * 0.2126 + hemi[1] * 0.7152 + hemi[2] * 0.0722;
+    hemi = hemi.map((v) => l + (v - l) * CEL.ambientChroma);
+  }
   const ambient = o.ambient ?? [0, 0, 0];
   const irradiance = hemi.map((v, i) => v + ambient[i]);
 
@@ -1453,10 +1525,20 @@ export function grassShade(o) {
   const trans = o.translucency ?? 0.9;
   const guard = o.guard !== false;
   const direct = [0, 0, 0];
-  const per = (o.lights ?? []).map((lt, i) => {
+  const chromaTrim = (c) => {
+    const l = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+    return c.map((v) => l + (v - l) * CEL.ambientChroma);
+  };
+  const per = (o.lights ?? []).map((lt0, i) => {
+    // a fill's colour is trimmed like the ambient it stands for
+    const lt = (o.physical || i === 0) ? lt0 : { ...lt0, color: chromaTrim(lt0.color) };
     const sh = (guard && i !== 0) ? 1 : shadow;
     const L = unit(lt.L);
-    const wrap = clamp(dot3(N, L) * 0.62 + 0.38, 0, 1);
+    // Two tones for the sun, flat for everything else — see the note in
+    // GRASS_FRAG. `physical: true` reproduces the half-lambert this replaced,
+    // so a check can measure both sides.
+    const wrap = o.physical ? clamp(dot3(N, L) * 0.62 + 0.38, 0, 1)
+      : celTone(dot3(N, L), clamp(L[1], 0, 1), i === 0 ? 1 : 0);
     const back = Math.pow(clamp(dot3(V.map((v) => -v), L), 0, 1), 3) * trans
                * smoothstep(0, 0.6, h);
     const k = wrap * sh + back * (0.35 + 0.65 * sh);

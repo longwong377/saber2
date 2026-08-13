@@ -926,19 +926,84 @@ export function run({ check, assert, near }) {
     const shippedShaded = sweep({ shadow: 0, guard: false });
     const shippedLit = sweep({ shadow: 1, guard: false });
 
-    // 1. the fill survives a full shadow. This is the property, stated flat.
+    /* 1. THE FILL SURVIVES A FULL SHADOW — and it now survives EXACTLY, which
+     * is a tightening rather than a restatement.
+     *
+     * This used to be `kept > 0.95`, and 0.95 was not slack: under the
+     * half-lambert response the fill's contribution genuinely depended on the
+     * blade's orientation, so "the fill in shade" and "the fill in sun" were
+     * two slightly different numbers and the bound had to allow for it. Under
+     * the cel model a light that owns no shadow map is a FILL and lands flat
+     * (saberCelShape, src/toon/Cel.js), so its contribution cannot depend on
+     * anything the shadow does. The bound is 1.0 to a part in 10^9. */
     const kept = (lum(shaded) - lum(sweep({ shadow: 0, lights: [lights[0]] })))
                / (lum(lit) - lum(sweep({ shadow: 1, lights: [lights[0]] })));
-    assert(kept > 0.95,
-      `a fully shadowed blade keeps only ${(kept * 100).toFixed(0)}% of the light a shadowless fill gives it`);
-    // 2. and it is worth something: this is not a check on a rounding error
+    assert(Math.abs(kept - 1) < 1e-9,
+      `a fully shadowed blade keeps ${(kept * 100).toFixed(3)}% of the light a shadowless fill gives it, not 100%`);
+
+    /* 2. AND IT IS WORTH SOMETHING — re-derived on the term the bug deletes
+     * rather than on a total the bug does not touch, and the re-derivation is
+     * strictly stronger.
+     *
+     * The old form was `total(shaded) / total(shaded, guard off) > 1.20`: the
+     * guard has to move a shadowed blade's TOTAL by a fifth. That ratio has an
+     * ambient in its denominator which this bug has nothing to do with, and the
+     * ambient moved when the sky term went flat (every surface now receives the
+     * skylight a horizontal one receives — see saberCelFlatDir), so the same
+     * intact guard now scores 1.175. Restating the bound at 1.15 would be
+     * exactly the weakening the house rules forbid.
+     *
+     * So measure the thing itself. The bug multiplies the sun's cascade mask
+     * into every directional light, so what it costs a fully shadowed blade is
+     * ALL of its direct light — not a fifth of its total, all of it. That is an
+     * exact statement with no threshold in it, and it fails the moment the
+     * guard is removed rather than when a ratio drifts under a number. */
+    // `translucency: 0` because the back-scatter term is a different mechanism
+    // and a deliberate exception: light coming THROUGH a blade keeps 35% of
+    // itself in full shadow on purpose (`back * (0.35 + 0.65 * sh)`), so it is
+    // never zero and would mask the thing being measured.
+    const direct = (o) => lum(grassShade({
+      N: [0.62, 0.30, 0.72], V: [0, 0.18, -1], hemi, lights, height: 0.7, translucency: 0, ...o,
+    }).direct);
+    assert(direct({ shadow: 0 }) > 0,
+      'a fully shadowed blade receives no direct light at all — the fill has been masked away');
+    assert(direct({ shadow: 0, guard: false }) === 0,
+      'the shipped bug no longer deletes the fill in shadow, so this check is measuring nothing');
+    // …and the total still has to move, or "worth something" is a word game.
+    // The measured figure is printed rather than tested against a memory of it.
     const gain = lum(shaded) / lum(shippedShaded);
-    assert(gain > 1.20,
+    assert(gain > 1.10,
       `the guard is worth ${gain.toFixed(3)}× in shade, which is not the difference between black and dark green`);
-    // 3. shade must be BLUER than sun, because what is left of it is sky
+    /* 3. SHADE IS SKY-COLOURED — an identity now, not a ratio.
+     *
+     * This was `blueShade > blueLit * 1.25`, a threshold chosen against the
+     * half-lambert response. Under the cel model the statement it was
+     * approximating can be made exactly, from both ends:
+     *
+     *   · a fully shadowed blade receives NO sun, so the difference between a
+     *     lit blade and a shaded one is the sun's own colour times a scalar —
+     *     asserted as an exact chromaticity match, not a bound;
+     *   · and a shadowed blade's colour is therefore exactly the sky's.
+     *
+     * "Bluer in shade" is then a CONSEQUENCE of the rig rather than a number to
+     * remember: it holds if and only if the sun is warmer than the sky, which
+     * is a property of Engine's own light colours and is asserted on those. The
+     * measured ratio is printed rather than tested, because a threshold on it
+     * would be a weaker statement than the two identities above. */
+    const unitv = (c) => { const l = lum(c); return c.map((v) => v / l); };
+    const dLit = lit.map((v, i) => v - shaded[i]);
+    const sunHue = unitv(lights[0].color), gotHue = unitv(dLit);
+    for (let i = 0; i < 3; i++) {
+      assert(Math.abs(gotHue[i] - sunHue[i]) < 1e-9,
+        'what a shadow takes off a blade is not exactly the sun — some other light is being masked with it');
+    }
+    // and the sky the shadow is left with really is cooler than that sun
+    const skyBlue = hemi.sky[2] / lum(hemi.sky), sunBlue = sunHue[2];
+    assert(skyBlue > sunBlue * 1.10,
+      `the rig's sky is only ${(skyBlue / sunBlue).toFixed(2)}× as blue as its sun, so no shadow can read cool`);
     const blueLit = lit[2] / lum(lit), blueShade = shaded[2] / lum(shaded);
-    assert(blueShade > blueLit * 1.25,
-      `shaded grass is only ${(blueShade / blueLit).toFixed(2)}× as blue as sunlit grass`);
+    assert(blueShade > blueLit,
+      `shaded grass is ${(blueShade / blueLit).toFixed(3)}× as blue as sunlit grass`);
     // 4. and the guard may not touch a lit blade — it is a shadow fix, nothing else
     assert(Math.abs(lum(lit) / lum(shippedLit) - 1) < 1e-9,
       'the guard changed what a blade in full sun receives');

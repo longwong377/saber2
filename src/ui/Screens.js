@@ -46,10 +46,29 @@
  *      its card is its own exit, and Escape re-raises it.
  */
 
-/** The states in which a world exists and the player is not at a menu. */
-export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead'];
+/**
+ * The states in which a world exists and the player is not at a menu.
+ *
+ * 'meditation' is the constellation, raised mid-run by kneeling. It is here
+ * because rule 1 is about EVERY reachable state: Escape has to get you out of
+ * the star map exactly as it gets you out of a draft, and `guarded` has to be
+ * able to fall back to the pause card from inside it.
+ */
+export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead', 'meditation'];
 
-/** The states in which an overlay owns the screen and the world is stopped. */
+/**
+ * The states in which an overlay owns the screen and the world is stopped, and
+ * whose CARD IS THE MENU'S — `clear()` and `_hide()` know how to take these
+ * three down because they are Menu methods this class was built around.
+ *
+ * An overlay that owns its own card registers a hider with `card()` instead;
+ * it is raised through the identical `take()` and gets the identical
+ * guarantees (remembered as it is raised, restored by resume, escapable), which
+ * is what tools/checks/constellation.mjs drives the meditation through. Adding
+ * such a state to this array would be a lie of a different kind: the array is
+ * consumed by a check that constructs each state through Menu's own show/hide
+ * pair, and there is no Menu pair to construct.
+ */
 export const OVERLAY_STATES = ['draft', 'landing', 'dead'];
 
 export class Screens {
@@ -67,6 +86,26 @@ export class Screens {
     this.state = 'boot';
     /** @type {{state: string, show: () => void}|null} */
     this.overlay = null;
+    /**
+     * Hiders for overlays whose card is not one of Menu's four. A screen this
+     * class did not know how to HIDE would survive `clear()` and sit on top of
+     * the main menu forever, which is the freeze wearing its opposite face.
+     * @type {Map<string, () => void>}
+     */
+    this.cards = new Map();
+  }
+
+  /**
+   * Teach this state machine about an overlay it did not ship with.
+   *
+   * The whole contract: give it the state's name and how to take the card down,
+   * and `take(name, show)` then behaves exactly as it does for the draft — the
+   * overlay is remembered, the world stops, Escape pauses over it and resume
+   * puts it back.
+   */
+  card(name, hide) {
+    if (name && typeof hide === 'function') this.cards.set(name, hide);
+    return this;
   }
 
   /* ── plain transitions ─────────────────────────────────────────────── */
@@ -81,6 +120,7 @@ export class Screens {
   clear() {
     const m = this.io.menu;
     m.hidePause?.(); m.hideDraft?.(); m.hideLanding?.(); m.hideDeath?.();
+    for (const hide of this.cards.values()) hide();
     this.overlay = null;
   }
 
@@ -185,6 +225,8 @@ export class Screens {
 
   /** The card for a state, hidden. */
   _hide(name) {
+    const own = this.cards.get(name);
+    if (own) { own(); return; }
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
     else if (name === 'landing') m.hideLanding?.();

@@ -554,8 +554,16 @@ export function run({ check, assert, near }) {
       const lay = 1 + waveGain * wv;
       const bend = 0.23 * wmag * lay;
       bendMin = Math.min(bendMin, bend); bendMax = Math.max(bendMax, bend);
-      // the fragment shader's silver, at the tip where the height ramp is 1
-      const k = Math.min(1, Math.max(0, wv * 0.5 + 0.5)) * sheen;
+      /* The fragment shader's silver, at the tip where the height ramp is 1 —
+       * and the lay term is STEPPED now, into three plateaus, so the wave
+       * arrives as a band of flat colour rather than as an airbrushed gradient
+       * (see GRASS_FRAG). Porting the step rather than the ramp is what keeps
+       * this a twin: a crest that reads as a hard-edged band is a stronger
+       * claim than one that reads as a smooth one, because the depth measured
+       * below now has to survive quantisation instead of being helped by the
+       * ramp's own extremes. */
+      const v = Math.min(1, Math.max(0, wv * 0.5 + 0.5));
+      const k = Math.min((Math.floor(v * 3) + 0.5) / 3, 1) * sheen;
       const l0 = L(base);
       const silver = base.map((c) => (c + (l0 - c) * 0.45) * lift);
       const out = base.map((c, i) => c + (silver[i] - c) * k);

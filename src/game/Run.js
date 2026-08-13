@@ -116,6 +116,19 @@ export class Run {
     this.startedAt = opts.now ?? 0;
     this.done = false;
     this.won = false;
+    /**
+     * THE CONSTELLATION'S LEDGER, carried for exactly the same reason the boons
+     * are: `World.loadLevel` opens with `unload()`, so anything living on the
+     * World dies at a landing. Insight earned on the flanks and not yet spent
+     * would otherwise be confiscated by the climb — which is the same class of
+     * bug as boons dying with the player, one currency later.
+     *
+     * A SNAPSHOT, not the Communion object itself: the ledger is plain numbers
+     * and a list of ids, so it survives being handed to a freshly built world
+     * without the run holding a reference to a world that has been disposed.
+     * See Constellation.Communion.snapshot.
+     */
+    this.communion = { insight: 0, bought: [], earned: 0 };
   }
 
   get rung() { return SPIRE[Math.min(this.tier, SPIRE.length - 1)]; }
@@ -170,6 +183,11 @@ export class Run {
       kills: this.kills, won: this.won,
       boons: this.boons.map((b) => b.id),
       identity: this.identity,
+      // The stars this run LIT, and how much of the sky it walked. A note about
+      // what was done, never a currency — Progress.js keeps it as history and
+      // nothing reads it back into a run. See the doctrine there.
+      lit: this.communion.bought.slice(),
+      insight: this.communion.earned,
     };
   }
 }

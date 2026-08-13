@@ -202,6 +202,23 @@ export class Net {
       // Host → peers: a draft is open. The moment, not the hand — see the note
       // on World's onDraft.
       case 'draft': this._emit('draft', msg); break;
+      /**
+       * Somebody's communion has reached us — the first message in this game
+       * whose payload is a BUFF rather than a fact about the world.
+       *
+       * ADDRESSED, and relayed once. `to` is the peer the aura was aimed at,
+       * because the sender knows perfectly well how far away everyone is (a
+       * peer is a RemoteAvatar with a position) and an aura that ignored
+       * distance would be a different ability. A client can only reach the
+       * host directly, so a client-to-client bond arrives here addressed to
+       * somebody else and is forwarded — exactly the relay `avatar` already
+       * does, and for the same reason: the host is the only node that can see
+       * everybody.
+       */
+      case 'bond':
+        if (this.isHost && msg.to && msg.to !== this.peer?.id) this.toPeer(msg.to, msg);
+        else this._emit('bond', msg, conn.peer);
+        break;
       // 'event' was routed here with no sender anywhere and no listener
       // anywhere — a channel that existed only as this line. Deleting it is as
       // valid a fix as giving it a purpose, and it is the honest one: nothing

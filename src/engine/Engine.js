@@ -41,6 +41,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { SkyDome } from './SkyDome.js';
+import { installCelShading, CEL, CEL_BAND_GLSL } from '../toon/Cel.js';
+import { OutlinePass } from '../toon/Ink.js';
 import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
@@ -68,10 +70,23 @@ export const QUALITY = {
   // reach roughly doubles again on top of that. The ladder buys reach at every
   // step and density every other step, because reach and density are the same
   // texel budget and there is no tier at which you get both for free.
-  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: true,  grass: 0.25, particles: 0.4, shadowDist: 70, viewDist: 380 },
-  medium: { shadow: 1536, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 105, viewDist: 520 },
-  high:   { shadow: 2560, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 150, viewDist: 700 },
-  ultra:  { shadow: 3072, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 180, viewDist: 900 },
+  //
+  // `ink` is the outline prepass's resolution as a fraction of the frame, and
+  // it is the only knob that pass has. What it costs is a second rasterisation
+  // of every opaque object with a trivial shader (see src/toon/Ink.js): no
+  // texture fetch, no light loop, no shadow lookup, and the whole cover field
+  // and every transparent thing excluded. On the meadow — the heaviest level in
+  // the game for draw calls — that is 118 of the frame's 214 draws, and at 0.6
+  // it rasterises 36% of the pixels the beauty pass does.
+  //
+  //   low     0.50   quarter the fragments; lines ~2 px and a little ragged
+  //   medium  0.60
+  //   high    0.85   the knee — 1 px lines with no visible stair-stepping
+  //   ultra   1.00
+  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: true,  grass: 0.25, particles: 0.4, shadowDist: 70, viewDist: 380, ink: 0.50 },
+  medium: { shadow: 1536, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 105, viewDist: 520, ink: 0.60 },
+  high:   { shadow: 2560, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 150, viewDist: 700, ink: 0.85 },
+  ultra:  { shadow: 3072, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 180, viewDist: 900, ink: 1.00 },
 };
 
 /* ── aerial perspective ──────────────────────────────────────────────────
@@ -464,6 +479,19 @@ function installCascadeShadows(THREE_) {
 
 installCascadeShadows(THREE);
 
+/* ── and then the whole light transport is made cel ───────────────────────
+ *
+ * THIRD, AND THE ORDER IS LOAD-BEARING. `installCelShading` wraps two lines
+ * that `installCascadeShadows` has just written (the cascade selector in
+ * lights_fragment_begin and in shadowmask_pars_fragment) and one that
+ * `installAerialPerspective` has just written (the mix at the end of
+ * fog_fragment). Run it first and all three replacements miss silently and the
+ * frame comes out half physical — which is the exact failure the file exists to
+ * remove. It reports what it could not patch rather than assuming.
+ *
+ * See src/toon/Cel.js for what it does and src/toon/REFERENCE.md for why. */
+installCelShading(THREE);
+
 const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _c3 = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 
@@ -573,6 +601,39 @@ const BLOOM = {
 /** Radiance a mid-grey horizontal surface should land on. Calibrated so the
  *  dune sea, the one level that was correctly exposed, does not move. */
 const KEY = 0.191;
+
+/**
+ * HOW MANY PLATEAUS THE DRAWN SKY IS CUT INTO.
+ *
+ * Six, and it is bounded by the levels rather than chosen.
+ *
+ * The bands are cut on a FIXED grid in sqrt(radiance) — they have to be, or the
+ * same sky would quantise differently as the sun moved and every level would
+ * get its own staircase — so what a level actually gets is however many
+ * boundaries its own range happens to cross. Measured on the shipped
+ * atmospheres, distinct fields drawn across the whole dome:
+ *
+ *                 4 bands   6 bands
+ *     dune sea       4         5      clear air, 26° sun, the widest range
+ *     meadow         3         4
+ *     arena          3         4
+ *     white pass     2         3
+ *     canyon         2         2      a 14° sun; the sky spans very little
+ *
+ * At four, the canyon and the white pass both came out as TWO flat fields with
+ * a single hard arc between them, which does not read as a graphic sky — it
+ * reads as a rendering fault, and both were screenshotted that way. Six lifts
+ * the white pass off that floor and leaves the widest level at five fields,
+ * comfortably inside rule 7's "one simple gradient". Further up starts putting
+ * a visible staircase down the aureole on the dune sea, which is the level with
+ * the most range to spend.
+ *
+ * THE CANYON STAYS AT TWO and no band count fixes it: its sky at a 14° sun
+ * spans less than one band's width however finely the grid is cut. That is a
+ * property of the atmosphere the level authored, not of this number, and it is
+ * left alone — a level whose sky really is two colours should draw two.
+ */
+const SKY_BANDS = 6;
 
 /** How much of the environment probe is allowed to count as light. */
 const ENV_INTENSITY = 0.38;
@@ -847,7 +908,33 @@ export function hazeRadiance(a, out = new THREE.Color(), shoulder = null) {
   // SATURATION into the sky, and a fog swatch authored the same tan as the sand
   // it hides takes no saturation from anything. Keep enough of the author's
   // dust to keep the mood.
-  out.lerp(haze.clone().multiplyScalar(1 / Math.max(0.02, lum(haze))), 0.55);
+  /* 0.88, not 0.55, and this is rule 3 of src/toon/REFERENCE.md as a number:
+   * "aerial perspective is a HUE SHIFT toward the sky, not grey fog … distant
+   * rock in (1) goes lavender; the far cliffs in (3) go pale mint. They move
+   * toward the sky's own colour."
+   *
+   * At 0.55 the authored dust keeps nearly half the say in what distance
+   * converges on, and where the level's sky is close to neutral that is not a
+   * cast, it is a different colour. Measured on the shipped atmospheres, haze
+   * saturation against the saturation of the skyline it is standing in:
+   *
+   *                  sky     haze at 0.55    haze at 0.88
+   *     alpine       0.006      0.186           0.041
+   *     canyon       0.012      0.091           0.023
+   *     arena        0.082      0.045           0.026
+   *     dunes        0.222      0.071           0.058
+   *
+   * — so on the two levels with a near-neutral sky, distance was dissolving
+   * everything into something fifteen to thirty times more chromatic than the
+   * sky behind it. That is the definition of the thing the reference calls
+   * "grey fog": a veil with a colour of its own, laid over the scene, rather
+   * than the scene walking toward the sky. The authored swatch is not
+   * discarded — an eighth of it survives as a cast, which is what keeps a dust
+   * level warm and a snow level cold — but it can no longer set the hue.
+   *
+   * tools/checks/cel.mjs pins the property this is here to satisfy: the haze
+   * may not be more saturated than the sky it converges on. */
+  out.lerp(haze.clone().multiplyScalar(1 / Math.max(0.02, lum(haze))), 0.88);
   const want = clamp(lum(haze), 0.25, 3.2);
   // The lower bound used to be 0.9 — a guard against crushing the authored
   // swatch, from when the sky it was matching to was three times brighter than
@@ -1005,9 +1092,33 @@ const CompositeShader = {
     tNoise:      { value: null },
     uTime:       { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uGrain:      { value: 0.045 },
-    uVignette:   { value: 0.22 },
-    uAberration: { value: 0.30 },
+    /* ── THE LENS IS NOT IN THE PICTURE ────────────────────────────────
+     *
+     * Grain and chromatic aberration are CAMERA artefacts. They say "a lens
+     * and a sensor were here", and they are three of the strongest such cues
+     * available — which is exactly why they were dialled in when the brief was
+     * "does it read as photographed". Under the brief in src/toon/REFERENCE.md
+     * they work directly against everything else in this change: there is no
+     * grain in a painting, and a drawn line does not fringe red on one side and
+     * cyan on the other. Left in, they are the last thing in the frame still
+     * arguing that this is a photograph, and they argue it at pixel level where
+     * flat colour fields make them MORE visible than they were over a noisy
+     * PBR image, not less.
+     *
+     * Both are zeroed rather than removed: the code paths cost nothing at zero
+     * (the shader branches on the uniform), `setGrain` is a player-facing
+     * setting that has to keep working, and the damage flash drives aberration
+     * deliberately as an EVENT — `uHurt` multiplies it — which is a drawn
+     * effect rather than a permanent lens.
+     *
+     * The vignette stays, at a little under half. It is not a lens artefact in
+     * the same sense: every one of the reference frames is darker at its edges
+     * because it was COMPOSED that way, and a vignette is the cheapest possible
+     * version of that composition. At 0.22 it read as a lens; at 0.10 it reads
+     * as the edge of a painted board. */
+    uGrain:      { value: 0 },
+    uVignette:   { value: 0.10 },
+    uAberration: { value: 0 },
     uSaturation: { value: 1.06 },
     uContrast:   { value: 1.04 },
     uLift:       { value: new THREE.Vector3(0.004, 0.006, 0.012) },
@@ -1081,7 +1192,12 @@ const CompositeShader = {
       // — chromatic aberration, stronger toward the corners
       // ~1px of R/B separation at the corners, not seven. The old falloff had
       // a constant term, so even dead centre was fringing.
-      float ca = uAberration * (0.0002 + r2 * 0.0035) * (1.0 + uHurt*0.6);
+      // uHurt ADDS rather than multiplies. It used to be a gain on
+      // uAberration, and uAberration is zero now (see the uniform's note), so a
+      // gain on it is a gain on nothing — the damage fringe would have gone
+      // silently missing along with the permanent one. A hit is an EVENT and a
+      // drawn one; the lens is what was removed.
+      float ca = (uAberration + uHurt * 0.42) * (0.0002 + r2 * 0.0035);
       if(ca > 0.00001){
         // NB: sample through the same path col came from. Reading tDiffuse
         // directly here discarded the radial blur in R and B, so Force Sense
@@ -1340,6 +1456,25 @@ export class Engine {
     // refreshEnvironment.
     m.uniforms.uSkySat = { value: 1 };
     m.fragmentShader = ([
+      /* THE SKY IS FLAT, OR ONE SIMPLE GRADIENT — rule 7 of
+       * src/toon/REFERENCE.md, and the single thing the player named first
+       * ("especially the ground/grass/sky").
+       *
+       * The Preetham model is a smooth two-dimensional radiance field and no
+       * amount of work on the ground will stop a photographic sky reading as
+       * photographic. Banding it into SKY_BANDS plateaus turns it into a set of
+       * concentric colour fields around the sun — which is what every one of
+       * the reference frames has, and what a painted backdrop is.
+       *
+       * The bands are cut BEFORE the sun's disc is added, so the disc stays the
+       * one hole punched through the exposure and keeps its halo. And they are
+       * cut on the shouldered value, i.e. on what is actually drawn, so the
+       * count on screen is the count here rather than whatever survives the
+       * tone curve.
+       *
+       * `saberCelBand` is pasted in rather than reached through <common>: this
+       * shader is three's Sky addon and includes only the tone-mapping chunks. */
+      CEL_BAND_GLSL,
       'uniform float uSkyScale, uSkyKnee, uSkyCeil, uSkySat;',
       'uniform vec3 uSkyDisc;',
       'uniform vec2 uSkyDiscCos;',
@@ -1357,7 +1492,8 @@ export class Engine {
       .replace(size, 'float sundisk = smoothstep( uSkyDiscCos.x, uSkyDiscCos.y, cosTheta );')
       .replace(disc, '')
       .replace(grade, [
-        'vec3 retColor = skyShoulder( texColor * uSkyScale ) + uSkyDisc * sundisk;',
+        `vec3 retColor = saberCelBand( skyShoulder( texColor * uSkyScale ), ${SKY_BANDS.toFixed(1)} )`
+          + ' + uSkyDisc * sundisk;',
         'retColor = mix( vec3( dot( retColor, vec3( 0.2126, 0.7152, 0.0722 ) ) ), retColor, uSkySat );',
       ].join('\n'));
     m.needsUpdate = true;
@@ -1495,7 +1631,44 @@ export class Engine {
       this.scene.fog = fog;
       this.skyDome.setHaze(fog.color, _c1.set(a.horizonColor ?? 0x6d6152)
         .multiplyScalar(clamp(sunI * Math.max(0.12, sunPos.y) / Math.PI, 0.05, 8)));
-    } else { this.scene.fog = null; }
+      // And the ink stops where sight does — see OutlinePass.setHaze. Without
+      // this the outline pass rules a hard black line along the far rim of the
+      // heightfield, which is the edge of the world and the one thing every
+      // level's fog is authored to hide.
+      this.outline?.setHaze(fog.density);
+    } else { this.scene.fog = null; this.outline?.setHaze(0); }
+
+    /* ── THE LINE IS THE LEVEL'S OWN DARKEST NOTE ──────────────────────────
+     *
+     * Rule 5 of src/toon/REFERENCE.md — one hue family per scene — and rule 4,
+     * which is explicit that the ink is "dark brown or charcoal rather than
+     * black". A single ink colour across seven levels breaks both: pure black
+     * on a coral butte reads as a hole punched in it, and a warm brown line on
+     * snow reads as dirt.
+     *
+     * It is DERIVED rather than authored, because there is exactly one right
+     * answer available and no level should have to remember to pick it. Every
+     * level already states the colour of the light its own ground throws back
+     * up — `groundColor`, the hemisphere's lower half and the probe's bounce
+     * hemisphere — and that is the scene's warm/cool axis stated once. Driven
+     * driven down to a fixed linear luminance of 0.021 — sRGB 40/255, dark
+     * enough to read as a drawn line on every ground in the game and never
+     * black — it is precisely the dark chromatic neutral the reference inks in:
+     *
+     *     dune sea   #332515  warm brown       white pass  #23282f  blue charcoal
+     *     arena      #312618  warm brown       meadow      #26282d  cool grey
+     *     canyon     #31261b  warm brown       hangar      #232830  blue charcoal
+     *
+     * Written straight to the pass without an sRGB→linear conversion, because
+     * the ink is composited after the tone curve — see OutlinePass.setColor. */
+    if (this.outline) {
+      const g = _c1.set(a.groundColor ?? 0x60482e);
+      // linear → the sRGB byte the pass mixes with, at a fixed low value
+      const enc = (v) => Math.round(255 * (v <= 0.0031308 ? v * 12.92
+        : 1.055 * Math.pow(v, 1 / 2.4) - 0.055));
+      const k = 0.021 / Math.max(lum(g), 1e-4);
+      this.outline.setColor((enc(g.r * k) << 16) | (enc(g.g * k) << 8) | enc(g.b * k));
+    }
     this.scene.background = a.sky === false ? new THREE.Color(a.bgColor ?? 0x0b0e14) : null;
 
     // Aerial perspective. Interiors get neither term — a hangar has no sun to
@@ -1609,6 +1782,13 @@ export class Engine {
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
 
+    /* THE INK GOES AFTER THE TONE CURVE. See src/toon/Ink.js — the line colour
+     * is an authored sRGB value and this is the first point in the chain where
+     * writing one means it survives to the screen. It is also after the bloom,
+     * because a drawn line that glows is not a drawn line. */
+    this.outline = new OutlinePass(this.scene, this.camera, q.ink ?? 1);
+    this.composer.addPass(this.outline);
+
     this.composite = new ShaderPass(CompositeShader);
     this.composite.material.uniforms.tNoise.value = noiseTexture(256);
     this.composite.material.uniforms.uHeat.value = Array.from({ length: 6 }, () => new THREE.Vector4());
@@ -1627,6 +1807,9 @@ export class Engine {
     }
     this.camera.far = q.viewDist;
     this.camera.updateProjectionMatrix();
+    // The ink's prepass resolution is a tier property; resize() below is what
+    // actually re-allocates its target.
+    if (this.outline) this.outline.scale = q.ink ?? 1;
     this.resize();
   }
 
@@ -1640,7 +1823,16 @@ export class Engine {
 
   /** 0..1 — how hard time is being bent. Drives the Focus grade. */
   setFocus(v) { this._focusTarget = v; }
-  setGrain(on) { this.composite.uniforms.uGrain.value = on ? 0.045 : 0; }
+  /**
+   * The grain switch, now a PAPER TOOTH rather than film grain.
+   *
+   * 0.045 was sensor noise, and it is the wrong artefact for this frame (see
+   * the uniform's note). But the setting exists, it defaults to on, and a
+   * toggle that does nothing is worse than one that does the wrong thing — so
+   * it does a third of what it did, which on flat colour fields reads as the
+   * tooth of the paper rather than as a camera. Off is still exactly zero.
+   */
+  setGrain(on) { this.composite.uniforms.uGrain.value = on ? 0.014 : 0; }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -1770,6 +1962,10 @@ export class Engine {
     // frame would fold our own JS into it and report a number that is neither
     // CPU nor GPU time.
     this.profiler.beginDraw();
+    // Normals and depth for the ink, before the composer takes the frame over.
+    // Inside the profiler bracket because it is part of the frame's GPU cost
+    // and a pass that does not show up in the profile is a pass nobody tunes.
+    this.outline.prepass(this.renderer);
     this.composer.render(dt);
     this.profiler.endDraw();
   }

@@ -16,7 +16,8 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
 import { Enemy, ARCHETYPES } from './Enemy.js';
-import { WaveDirector, RankSet } from './Waves.js';
+import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
+import { Communion } from './Constellation.js';
 import { applyOrder } from './Order.js';
 import { SPIRE } from './Run.js';
 import { LEVELS, groundMight } from './Levels.js';
@@ -61,6 +62,19 @@ export class World {
     this.statics = [];
     this.levelLights = [];
     this.takenBoons = new RankSet();
+    /**
+     * The Insight this run has earned and the stars it has spent it on.
+     *
+     * Lives on the World because the wave director is what earns it and the
+     * meditation is what spends it; carried across a landing by the Run, which
+     * is the only object that outlives a level. See Constellation.js.
+     *
+     * SURVIVING A WAVE IS THE ONLY THING THAT EARNS IT — not kills, not score,
+     * not accuracy. A currency that pays out for anything other than the thing
+     * the mode is about ends up being farmed instead of played, and there is
+     * nothing here to farm. A set-piece pays more because a set-piece cost more.
+     */
+    this.communion = new Communion();
 
     this.timeScale = 1;
     this.focus = new FocusSystem();
@@ -127,6 +141,11 @@ export class World {
      * which are the only two things it should ever have contained.
      */
     this.takenBoons = new RankSet();
+    // …and the same for the Insight ledger, restored from the run rather than
+    // rebuilt: `bought.length` is the price escalator, so a climb that forgot
+    // it would quietly make every star on the next rung cost first-purchase
+    // prices again.
+    this.communion = new Communion(run ? run.communion : {});
     const L = LEVELS[key] || LEVELS.dunes;
     this.level = L;
     this.levelKey = key;
@@ -200,8 +219,17 @@ export class World {
 
     L.dress(this);
 
-    if (L.training) {
-      // the dojo runs lessons instead of waves
+    /**
+     * LESSONS INSTEAD OF WAVES — and now anywhere, not only in the dojo.
+     *
+     * `L.training` is the dojo's own flag and still means what it always did.
+     * The mode is the second door: `DojoDirector` places everything it spawns
+     * relative to the PLAYER and reads nothing at all off the level, so the
+     * eleven lessons work identically on a dune face or in a blizzard, and
+     * pinning them to one octagonal hall was a restriction with no cause. See
+     * MODES.training in Waves.js.
+     */
+    if (L.training || this.settings.mode === 'training') {
       this.director = new DojoDirector(this);
       this.training = true;
       this.running = true;
@@ -247,6 +275,23 @@ export class World {
         this.onRungClear?.(this.run);
       }
     };
+    /**
+     * INSIGHT hangs off the same signal — composed onto it rather than written
+     * inside it, and that is not a style choice.
+     *
+     * tools/checks/run.mjs reads the first 1600 characters after
+     * `onWaveClear = ` and requires the RUNG SIGNAL to be inside them: the whole
+     * Spire turns on that one line, and a check that had to search the rest of
+     * the file for it would pass on a signal fired from anywhere at all. The
+     * callback above is within a line or two of that budget, so anything it
+     * grows from here belongs out here.
+     *
+     * FIRST, not last: `_earnInsight` mirrors the ledger into the run, and the
+     * rung signal inside the callback can end the level.
+     */
+    const cleared = this.director.onWaveClear;
+    this.director.onWaveClear = (w) => { this._earnInsight(w); cleared(w); };
+
     this.director.onDraft = (boons) => {
       this.onDraftOffer?.(boons);
       /**
@@ -334,6 +379,23 @@ export class World {
       p.hp = Math.max(1, Math.round(p.maxHp * this.run.hpFrac));
       this.score = this.run.score;
     }
+    /**
+     * THE OTHER END OF EVERY COMMUNION, installed whether or not this player
+     * holds a single bond card.
+     *
+     * A buff that lands on your ally has to be received by them, and the
+     * receiver cannot be installed by the card — the card is on the GIVER's
+     * player, on the giver's machine. So the seam lives here, on every local
+     * player at spawn, exactly as `boltCatch` does: `_bondIn` is written by
+     * somebody else's aura (locally by Waves.bondAura, across the wire by
+     * applyBond below) and read every frame by these two.
+     *
+     * This is the difference between a co-op buff and a co-op buff that works:
+     * without it, "your ally cuts harder" would have been true only if your
+     * ally had happened to draft the same card you did.
+     */
+    boonTick(p, 'bond-in', bondReceive);
+    boonGuard(p, 'bond-in', bondGuardIn);
     p.camera.firstPerson = !!this.settings.firstPerson;
     p._applyViewMode();
     // Catch-and-throw state lives out here rather than on the Player, because
@@ -618,6 +680,11 @@ export class World {
     // 8 — director (the host owns the horde; clients receive it)
     if (this.netMode !== 'client') this.director.update(dt, ctx);
     if (this.netMode) this._netTick(rawDt);
+    // Solo, the aura still runs — it is what keeps the holder's own half — but
+    // nothing is going to consume what it offered outbound, so it is dropped on
+    // the frame it was written rather than accumulated into a number that grows
+    // for the whole session and is never read.
+    else { this._bondOut = null; this._bondHealOut = 0; this._bondPeers = 0; }
 
     // 9 — intensity drives the score and the mix
     const alive = this.enemies.filter(e => !e.dead).length;
@@ -1254,9 +1321,31 @@ export class World {
    * taken-set, so two people climbing the Spire together arrive at the top with
    * different runs — which is the point of a draft.
    */
+  /**
+   * A wave was survived, so the Force has something to say.
+   *
+   * A METHOD, not four lines inside `onWaveClear`, and that is worth a sentence
+   * because it looks like a style choice and is not: tools/checks/run.mjs reads
+   * the first 1600 characters after `onWaveClear = ` and requires the rung
+   * signal to be inside that window — the callback is where the Spire is judged
+   * complete, and a check that had to search the whole file for it would pass
+   * on a signal fired from anywhere at all. Anything this callback grows from
+   * here belongs out here for the same reason.
+   *
+   * The mirror into the run happens HERE rather than at the landing, because a
+   * run that ends mid-rung still has to report what it earned: `summary()` is
+   * read off a corpse as well as off a winner.
+   */
+  _earnInsight(wave) {
+    const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave));
+    if (this.run && !this.run.done) this.run.communion = this.communion.snapshot();
+    this.onInsight?.(gained, this.communion);
+  }
+
   applyBoon(boon) {
     this.takenBoons.take(boon.id);
     this.run?.take(boon);
+    if (this.run) this.run.communion = this.communion.snapshot();
     for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
     // How hard the ground is hit scales with how strong the player has become,
     // and `might` is otherwise fixed at dressing time — so a boon taken mid-run
@@ -1299,6 +1388,53 @@ export class World {
       net.broadcast(packAvatar(this.player));
       if (this.netMode === 'host') net.broadcast(packSnapshot(this));
     }
+    this._bondTick(net);
+  }
+
+  /**
+   * THE COMMUNION, ACROSS THE WIRE.
+   *
+   * Sent on the same tick as the avatar and to the same peers, because it is
+   * the same kind of fact — "this is what I am doing to you" — and it is
+   * addressed, not broadcast: a peer is a RemoteAvatar with a position on this
+   * machine, so the sender already knows exactly who is inside the aura and
+   * only pays for those. An aura that reached the whole session regardless of
+   * distance would be a different, and much worse, ability.
+   *
+   * `_bondOut` is set by Waves.bondAura, which is installed by the bond cards;
+   * with no bond card there is no descriptor and nothing is sent at all.
+   * `_bondPeers` goes back the other way — it is how the aura knows whether it
+   * reached anybody, which decides whether the holder keeps their solo half.
+   */
+  _bondTick(net) {
+    const p = this.player, desc = this._bondOut;
+    const heal = this._bondHealOut ?? 0;
+    this._bondHealOut = 0;
+    this._bondOut = null;
+    let peers = 0;
+    if (!p || !desc || !this.remotes || !net?.connected) { this._bondPeers = 0; return; }
+    const r = this._bondRange ?? BOND.range;
+    for (const [id, avatar] of this.remotes) {
+      if (!avatar?.position || avatar.position.distanceTo(p.position) > r) continue;
+      peers++;
+      const msg = { t: 'bond', to: id, c: desc.cut, s: desc.spd, g: desc.ward, h: heal };
+      if (this.netMode === 'host') net.toPeer(id, msg); else net.broadcast(msg);
+    }
+    this._bondPeers = peers;
+  }
+
+  /**
+   * A peer's communion reached us. Applied to OUR OWN local player, through the
+   * same `_bondIn` slot a local ally's aura writes, which is what makes the
+   * co-op path and the same-machine path one mechanism with one reader.
+   */
+  applyBond(msg, from) {
+    const p = this.player;
+    if (!p || !msg) return false;
+    // Keyed on the peer it came from, exactly as a local ally's aura is keyed on
+    // the ally: with three in a session the strongest live offer wins rather
+    // than the most recent packet.
+    return bondGive(p, { cut: msg.c, spd: msg.s, ward: msg.g, heal: msg.h }, this.time, from || 'peer');
   }
 
   /** Host → client: reconcile the enemy list against the snapshot. */

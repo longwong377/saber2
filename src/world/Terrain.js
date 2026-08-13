@@ -731,6 +731,23 @@ const TERRAIN_VERT_BODY = /* glsl */`
  * corduroy across the map. The scales still differ, and the warp is what breaks
  * the tiling that used to be the other rotation's job.
  */
+/**
+ * HOW MUCH OF THE GROUND'S TEXTURE RELIEF SURVIVES INTO THE SHADING.
+ *
+ * Zero — see the long note where it is applied, in TERRAIN_FRAG_MAP. It is a
+ * named constant rather than a deletion because the maps, their amplitudes and
+ * their tangent frames all still exist and are all still measured (the ripple
+ * bearing, the joint depth, the sward relief); what this switches off is
+ * whether a two-tone terminator is allowed to see them, and that is one number
+ * with a reason attached rather than a rewrite of two hundred lines that would
+ * have to be undone to change the answer.
+ *
+ * It is exactly 0 and not 0.1: any non-zero value puts speckle back wherever
+ * N·L lands near the terminator, and "a little bit of speckle" is not a smaller
+ * version of the artefact, it is the same artefact in a narrower band.
+ */
+const TER_RELIEF = '0.0';
+
 const TERRAIN_FRAG_COMMON = /* glsl */`
   varying vec3 vWPos;
   varying vec3 vWNrm;
@@ -1406,6 +1423,32 @@ const TERRAIN_FRAG_MAP = /* glsl */`
     terRough = mix(terRough, 0.97, coverW * 0.5);
   }
 
+  /* ── TEXTURE IS DRAWN, NOT SHADED ──────────────────────────────────────
+   *
+   * Rule 6 of src/toon/REFERENCE.md: "There is no bump, no roughness variation,
+   * no detail normal anywhere in these frames." Everything added to terNrmOff
+   * above this line is exactly that — the ripple relief, the rock joints, the
+   * sward blades — and under a two-tone terminator it does not read as relief
+   * at all. It reads as SPECKLE, because that is what a detail normal does to a
+   * step function: the shading is flat wherever N·L is clear of the threshold
+   * and salt-and-pepper wherever it is not, and on a dune field lit at 26° a
+   * ripple map of this amplitude puts most of the near ground within reach of
+   * the threshold. Screenshotted: the whole foreground of the dune sea came out
+   * as a mat of dark dashes.
+   *
+   * NOTHING IS LOST BY REMOVING IT. The ripple, the joints and the sward are
+   * all in the ALBEDO already — the base coat is modulated by the same map's
+   * luminance a few lines up (col *= 0.55 + baseLum * 1.15), which is a drawn
+   * mark and exactly what rule 6 asks for. What goes is the second, shaded copy
+   * of the same information.
+   *
+   * WHAT IS KEPT, and why it is below this line rather than above it: the
+   * SURFACE MEMORY. A boot print, a crater, a scorch trench is not texture, it
+   * is a deformation the player made, it is gameplay feedback, and its tilt is
+   * the only thing that says a print is a hole rather than a stain. It is added
+   * after this scale for that reason. */
+  terNrmOff *= ${TER_RELIEF};
+
   float surfGlow = 0.0;
   if (uSurfSet.x > 0.0) {
     vec2 sd = abs(wp - uSurf.xy);
@@ -1599,7 +1642,16 @@ const TERRAIN_FRAG_FOG = /* glsl */`
     float fogAz = atan(vFogRay.z, vFogRay.x) * 0.15915494 + 0.5;
     vec3 fogSky = texture2D(uSkyStrip, vec2(fogAz, 0.5)).rgb;
     fogTone = mix(fogTone, fogSky, smoothstep(50.0, 230.0, fogRadial) * uHaze.y);
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogTone, fogFactor);
+    /* DISTANCE IN PLATES. The engine bands its own fog chunk the same way (see
+     * saberCelDistance in src/toon/Cel.js, installed into <common>), and the
+     * ground has to be banded on the SAME grid as everything standing on it or
+     * a prop at 90 m sits in a different plate from the ground under its feet.
+     *
+     * Only the strength is quantised. The tone above is the drawn sky in the
+     * view direction, which is a smooth function of bearing and has to stay one
+     * — rule 3 of REFERENCE.md is that distance is a HUE SHIFT toward the sky,
+     * and the whole of that shift lives in fogTone. */
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogTone, saberCelDistance(fogFactor));
   #endif
 `;
 

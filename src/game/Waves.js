@@ -47,6 +47,24 @@ export const MODES = {
   // claimed to be an alternative to. It is the Spire now; see Run.js.
   gauntlet: { name: 'The Spire', blurb: 'Four tiers, climbed. The weather is the only thing that tells you how high you are — and at the top the storm is below you.' },
   sandbox: { name: 'Sandbox', blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.' },
+  /**
+   * TRAINING WAS PINNED TO ONE ROOM.
+   *
+   * The eleven lessons are the only way this game teaches its control scheme,
+   * and the only way to reach them was to pick the level called "The Dojo" —
+   * an octagonal hangar with a flat floor. So you could learn to return a bolt
+   * indoors and had no way at all to practise it on a dune face, in a blizzard,
+   * or on the slope you actually keep dying on. The lessons never needed the
+   * room: `DojoDirector` places its remotes, dummies and sparring partner
+   * relative to the PLAYER, spawns through the world's own `spawnEnemy`, and
+   * reads nothing whatever off the level.
+   *
+   * So training is a MODE now, and the level list beside it is live: the dojo
+   * is still there and still says "start here", and every other theatre in the
+   * game can be a dojo. World.loadLevel takes this branch exactly as it takes
+   * the level's own `training` flag — see the wiring note there.
+   */
+  training: { name: 'Training', blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.' },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -981,7 +999,7 @@ function cleaveAlong(p, from, to, dt) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Four seams, and every conditional boon below is built out of them.
+ * Five seams, and every conditional boon below is built out of them.
  *
  * Cleaving Throw was the first card whose effect was a MECHANIC rather than a
  * number, and it shipped as a flag nothing read. The reason it could is that
@@ -1004,11 +1022,25 @@ function cleaveAlong(p, from, to, dt) {
  *                none of them stamps on the others.
  *   boonGuard    change or intercept a hit before it lands, and answer after.
  *   boonOnSever  hear about every limb this player takes off.
+ *   boonOnKill   hear about every body this player puts down.
  *
- * All four DECLINE cleanly on anything that is not a live player, exactly as
- * cleavingThrow does, and all four return whether they actually installed — so
+ * All five DECLINE cleanly on anything that is not a live player, exactly as
+ * cleavingThrow does, and all five return whether they actually installed — so
  * a card can set its own flag from the result and a dead seam shows up as a
  * card that reports itself dead rather than a card that quietly does nothing.
+ *
+ * ── on where a technique keeps its NUMBERS ────────────────────────────────
+ *
+ * `Player.defaultBoonMods()` is the contract for every key a boon may MOVE, and
+ * it is deliberately closed: verify.mjs fails a card that writes a key Player
+ * never declares, because `undefined * 1.33` is NaN and a NaN in cutPower is a
+ * blade that cuts nothing. A technique whose parameter is not one of those keys
+ * therefore keeps it on the PLAYER INSTANCE, exactly as the existing techniques
+ * keep `_juyoStacks`, `_mendClock`, `_conduitKills` and `_bastionDeflects`
+ * there. The rule that matters is unchanged and is the only one worth having:
+ * the number must be READ, every frame, by the reader the card installed —
+ * which is what tools/checks/constellation.mjs measures, on a real Player, by
+ * driving the fight and watching the difference rather than by reading a flag.
  */
 
 /** Run `fn(dt, ctx)` on the player every frame. Idempotent per `name`. */
@@ -1093,6 +1125,32 @@ export function boonOnSever(p, name, fn) {
     };
   }
   if (!w._boonSever.some(h => h.p === p && h.name === name)) w._boonSever.push({ p, name, fn });
+  return true;
+}
+
+/**
+ * Hear about bodies this player puts down, by wrapping the World hook Enemy
+ * already calls on death. Same shape as boonOnSever and for the same reason:
+ * `World.onEnemyKilled(enemy, source, kind)` is the one place in the game that
+ * knows a kill happened AND who owns it, and a card that wants to answer a kill
+ * (a detonation, a reaping, a stack of momentum) otherwise has to poll
+ * `p.kills` and guess where the body was.
+ *
+ * Dispatch is filtered on `source`, so in co-op one player's card does not fire
+ * on another player's kill.
+ */
+export function boonOnKill(p, name, fn) {
+  const w = p?.world;
+  if (!w || typeof fn !== 'function') return false;
+  if (!w._boonKill) {
+    w._boonKill = [];
+    const base = w.onEnemyKilled;
+    w.onEnemyKilled = function (enemy, source, kind) {
+      if (typeof base === 'function') base.call(this, enemy, source, kind);
+      for (const h of this._boonKill) if (h.p === source) h.fn.call(h.p, enemy, kind);
+    };
+  }
+  if (!w._boonKill.some(h => h.p === p && h.name === name)) w._boonKill.push({ p, name, fn });
   return true;
 }
 
@@ -1295,6 +1353,294 @@ function sunderThrough(enemy, bone, point) {
       normal: _sUp.clone(),
     }, 1 / 60);
   } finally { this._sundering = false; }
+}
+
+/* ── the readers the constellation added ─────────────────────────────── */
+
+/**
+ * Reflection — a share of every blow that lands goes back to whoever struck it.
+ *
+ * The AFTER half of boonGuard, not the before half: the thing that has to be
+ * true is that the hit really landed. `source` is whatever World handed to
+ * `damage`, which is the enemy for a melee strike and for a bolt; anything with
+ * no `damage` of its own (a fall, a grenade with no owner, a peer's claim) is
+ * declined rather than guessed at.
+ */
+function thornsBack(amount, kind, source) {
+  const share = this._thornsShare ?? 0;
+  if (share <= 0 || !(amount > 0)) return;
+  if (!source || source === this || source.dead || typeof source.damage !== 'function') return;
+  source.damage(amount * share, source.position || this.position, this, 'thorns');
+}
+
+/**
+ * Aegis — a barrier that eats the blow before your body does, and mends itself
+ * once nothing has touched it for a while.
+ *
+ * The one survivability shape this game did not have. Vitality is a bigger
+ * pool, Undying is a slow refill, Second Wind is one save a wave — all three
+ * are answers to how much damage you can TAKE. A barrier is an answer to how
+ * much you can take BETWEEN fights: it is free every time it refills, worth
+ * nothing if you never break contact, and it is the reason a tank build has a
+ * rhythm rather than a number.
+ *
+ * AEGIS_RATE is a share of the pool per second, so a deeper barrier refills
+ * proportionally rather than taking forever — the wait, not the rate, is what
+ * makes it a decision.
+ */
+const AEGIS_WAIT = 4.0, AEGIS_RATE = 0.30;
+function aegisSoak(amount) {
+  if (!((this._aegisMax ?? 0) > 0) || !(amount > 0)) return amount;
+  // Any hit at all resets the clock, absorbed or not: a barrier that recharged
+  // while you were being shot at would simply be more health.
+  this._aegisClock = 0;
+  const pool = this._aegis ?? 0;
+  if (pool <= 0) return amount;
+  const eaten = Math.min(pool, amount);
+  this._aegis = pool - eaten;
+  return amount - eaten;
+}
+function aegisMend(dt) {
+  const max = this._aegisMax ?? 0;
+  if (max <= 0) return;
+  this._aegisClock = (this._aegisClock ?? 0) + dt;
+  if (this._aegisClock < AEGIS_WAIT) return;
+  this._aegis = Math.min(max, (this._aegis ?? 0) + max * AEGIS_RATE * dt);
+}
+
+/**
+ * Momentum — killing makes you faster, and stopping costs it.
+ *
+ * Reads `p.kills`, which World increments on every body this player puts down,
+ * for the same reason Juyo reads `limbsRemoved`: it is a counter that already
+ * exists and cannot disagree with the fight. The stacks decay on a clock, so
+ * the card pays for aggression and refuses to pay for a full health bar.
+ */
+const RUSH_MAX = 5, RUSH_DECAY = 4.0;
+function momentumRush(dt) {
+  const per = this._momentumPer ?? 0;
+  const kills = this.kills || 0;
+  const prev = this._momentumKills ?? kills;
+  let s = this._momentumStacks ?? 0;
+  if (kills > prev) s = Math.min(RUSH_MAX, s + (kills - prev));
+  this._momentumKills = kills;
+  this._momentumStacks = Math.max(0, s - dt / RUSH_DECAY);
+  const n = Math.floor(this._momentumStacks);
+  boonFactor(this, 'moveSpeed', 'momentum', 1 + n * per);
+  boonFactor(this, 'attackRate', 'momentum', 1 + n * per * 0.6);
+}
+
+/**
+ * Mercy Stroke — a body already opened does not get to walk away.
+ *
+ * Fires on a SEVER rather than on damage, so it is a consequence of the thing
+ * this game is about: you took a limb, and what was left of them went with it.
+ * The kill is dealt through `enemy.damage(…, this, …)`, so it is credited, it
+ * scores, it feeds healOnKill and it fires every on-kill card — a finisher that
+ * did not count as your kill would be the same lie in a nicer coat.
+ */
+function executeCut(enemy, bone, point) {
+  const at = this._executeAt ?? 0;
+  if (at <= 0 || !enemy || enemy.dead || !(enemy.maxHp > 0)) return;
+  if (enemy.hp > enemy.maxHp * at) return;
+  enemy.damage(enemy.hp + 1, point || enemy.position, this, 'execute');
+}
+
+/**
+ * Detonation — what you fell goes off.
+ *
+ * `_detonating` bounds it to one generation, exactly as `_sundering` does for
+ * Sundering, and for a sharper reason: this handler is fired BY a kill and
+ * deals damage that can kill, so without the latch one body in a crowd unzips
+ * the whole crowd in a single frame and the recursion is exponential rather
+ * than merely wrong.
+ */
+const DETONATE_R = 4.6;
+function detonateBody(enemy) {
+  const dmg = this._detonate ?? 0;
+  const w = this.world;
+  if (dmg <= 0 || this._detonating || !w || !enemy?.position) return;
+  this._detonating = true;
+  try {
+    const at = enemy.position;
+    for (const e of (w.enemies || [])) {
+      if (!e || e.dead || e === enemy || !e.position) continue;
+      const d = e.position.distanceTo(at);
+      if (d > DETONATE_R) continue;
+      // Falloff, but never to nothing: the edge of a blast is still a blast.
+      e.damage(dmg * (0.45 + 0.55 * (1 - d / DETONATE_R)), at, this, 'blast');
+    }
+    w.particles?.explosion?.(at, 0.55);
+  } finally { this._detonating = false; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Communion — the boons that land on somebody else                      */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT WAS MISSING. Every boon in this table is a thing that happens to YOU.
+ * Co-op has existed since Net.js was written and there has never been a single
+ * card whose effect crosses to the other player, so two people in a session are
+ * two solo runs standing next to each other.
+ *
+ * The Communion cards are the other shape: an aura the holder projects and an
+ * ALLY receives. Three properties make it honest rather than decorative:
+ *
+ *   ONE RECEIVER, ONE WRITER. `_bondIn` is written only by somebody else's
+ *   aura — never by your own — and read by `bondReceive`/`bondGuardIn`, which
+ *   World installs on every local player at spawn whether or not that player
+ *   holds a single bond card. A buff that only worked if the RECEIVER had also
+ *   drafted the card would be a co-op feature that needs a rehearsal.
+ *
+ *   IT CROSSES THE WIRE, SPATIALLY. A peer is a RemoteAvatar with a position on
+ *   this machine, so the sender knows perfectly well how far away they are and
+ *   only sends to the ones inside the aura. See World._bondTick and the `bond`
+ *   message in Net.js — sent by one end and handled at the other, which is the
+ *   thing co-op in this project has historically got wrong.
+ *
+ *   IT IS NEVER A DEAD CARD ALONE. Solo, the holder keeps half of their own
+ *   aura. That is not charity: it is what makes the Communion constellation
+ *   draftable in a solo run without being a trap, and the mastery is what turns
+ *   the half back into a whole.
+ */
+export const BOND = {
+  /** How far a communion reaches, in metres. */
+  range: 16,
+  /** How long a received aura survives without being renewed — comfortably more
+   *  than the 1/18 s host tick, so a dropped packet dims rather than blinks. */
+  hold: 1.2,
+  /** The most an ally's ward may take off an incoming blow. */
+  wardCap: 0.35,
+};
+
+/** Local players other than `p` — a RemoteAvatar has no boonMods and is not one. */
+function localAllies(p) {
+  const out = [];
+  for (const q of (p.world?.players || [])) {
+    if (q === p || !q || !q.boonMods || q.alive === false) continue;
+    out.push(q);
+  }
+  return out;
+}
+
+/**
+ * Hand `q` an aura for the next BOND.hold seconds. The only writer of _bondIn.
+ *
+ * KEPT PER GIVER, then collapsed to the strongest live offer. Two things go
+ * wrong with a single slot, and they pull in opposite directions: writing it
+ * outright means a second ally standing beside you can make you WEAKER than the
+ * first one had, and merging by max across renewals means the moment the
+ * strongest ally walks away their aura is latched on you forever, because every
+ * later renewal maxes against the value they left behind. Keyed by giver, both
+ * questions have the same obvious answer: whatever the people actually near you
+ * are offering, right now.
+ *
+ * Healing is not merged at all — it is an event rather than a level, and two
+ * allies each mend you.
+ */
+export function bondGive(q, desc, now, from = 'ally') {
+  if (!q || !desc) return false;
+  const t = now ?? 0;
+  const m = q._bondFrom || (q._bondFrom = new Map());
+  m.set(from, { cut: desc.cut ?? 1, spd: desc.spd ?? 1, ward: desc.ward ?? 0, until: t + BOND.hold });
+  let cut = 1, spd = 1, ward = 0, until = 0;
+  for (const [k, a] of m) {
+    if (t >= a.until) { m.delete(k); continue; }
+    cut = Math.max(cut, a.cut); spd = Math.max(spd, a.spd);
+    ward = Math.max(ward, a.ward); until = Math.max(until, a.until);
+  }
+  q._bondIn = { cut, spd, ward, until };
+  if (desc.heal > 0) q.heal?.(desc.heal);
+  return true;
+}
+
+/** The receiver, installed on every local player by World.spawnPlayer. */
+export function bondReceive() {
+  const b = this._bondIn;
+  const live = !!b && (this.world?.time ?? 0) < b.until;
+  boonFactor(this, 'cutPower', 'bond', live ? b.cut : 1);
+  boonFactor(this, 'moveSpeed', 'bond', live ? b.spd : 1);
+}
+
+/** …and its half of the damage path, for the Vow's ward. */
+export function bondGuardIn(amount) {
+  const b = this._bondIn;
+  if (!b || (this.world?.time ?? 0) >= b.until) return amount;
+  return amount * (1 - Math.min(BOND.wardCap, b.ward || 0));
+}
+
+/**
+ * The aura itself, installed by every Communion card.
+ *
+ * One tick for the whole constellation, because the descriptor is the SUM of
+ * whatever bond parameters the holder has collected — so taking a second bond
+ * card widens the same aura instead of installing a second one that fights it.
+ * The self-share goes through its own boonFactor slot so that an ally's aura
+ * landing on you cannot be confused with your own.
+ */
+function bondAura() {
+  const edge = this._bondEdge ?? 0, ward = this._bondWard ?? 0;
+  if (edge <= 0 && ward <= 0) return;
+  const w = this.world;
+  const now = w?.time ?? 0;
+  const range = this._bondRange ?? BOND.range;
+  const r2 = range * range;
+  const desc = { cut: 1 + edge, spd: 1 + edge * 0.5, ward: Math.min(BOND.wardCap, ward) };
+
+  let reached = 0;
+  for (const q of localAllies(this)) {
+    const near = !this.position || !q.position || q.position.distanceToSquared(this.position) < r2;
+    // Keyed on the giver — this player — so two allies projecting onto the same
+    // third do not overwrite one another. See bondGive.
+    if (near) { bondGive(q, desc, now, this); reached++; }
+  }
+  // The wire half. World owns the sending, because it owns the net and the
+  // remote avatars; this only says what is being offered and how far it reaches.
+  if (w) { w._bondOut = desc; w._bondRange = range; }
+  reached += w?._bondPeers ?? 0;
+  this._bondReached = reached;
+
+  // Solo — or simply nobody in range — you keep half of it. The mastery gives
+  // the whole of it back, which is what "the Force binds you to yourself too"
+  // is worth as a mechanic.
+  const share = this._bondMastery ? 1 : 0.5;
+  boonFactor(this, 'cutPower', 'communion', 1 + edge * share);
+  boonFactor(this, 'moveSpeed', 'communion', 1 + edge * 0.5 * share);
+}
+
+/** The Vow's own half: standing with somebody hardens you as well as them. */
+function vowGuard(amount) {
+  const ward = this._bondWard ?? 0;
+  if (ward <= 0) return amount;
+  const n = this._bondReached ?? 0;
+  return amount * (1 - Math.min(BOND.wardCap, ward * (n > 0 ? 1 : 0.5)));
+}
+
+/**
+ * Suffusion — the limb you take mends somebody else.
+ *
+ * The healer's whole loop, and the one card in this table whose payload is
+ * deliberately WORSE for you than for the person beside you: allies take the
+ * full measure, you take half of it and only when there is nobody to give it
+ * to. `_bondHealOut` is picked up by World's bond tick and sent to the peers in
+ * range on the same wire as the aura.
+ */
+function suffuseSever() {
+  const v = this._bondHeal ?? 0;
+  if (v <= 0) return;
+  const range = this._bondRange ?? BOND.range;
+  const r2 = range * range;
+  let landed = 0;
+  for (const q of localAllies(this)) {
+    if (this.position && q.position && q.position.distanceToSquared(this.position) >= r2) continue;
+    q.heal?.(v);
+    landed++;
+  }
+  const w = this.world;
+  if (w) w._bondHealOut = (w._bondHealOut ?? 0) + v;
+  landed += w?._bondPeers ?? 0;
+  if (!landed || this._bondMastery) this.heal?.(v * 0.5);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1716,6 +2062,61 @@ export const BOONS = [
     },
   },
   {
+    id: 'thorns', icon: '🪞', name: 'Reflection', tag: 'Retribution',
+    rarity: 'common', axes: ['guard'], stack: 3,
+    text: 'What is done to you is done back. A share of every blow that lands returns to whoever struck it.',
+    apply(p, s = 1) {
+      p._thornsShare = (p._thornsShare ?? 0) + 0.35 * s;
+      boonGuard(p, 'thorns', null, thornsBack);
+    },
+  },
+  {
+    id: 'aegis', icon: '🔰', name: 'Aegis', tag: 'Barrier',
+    // THE SHAPE THE GUARD AXIS DID NOT HAVE. Everything else that keeps you
+    // alive is a bigger pool or a slower drain; this is a pool that comes BACK,
+    // and only if you break contact. It is worth nothing to a player who stands
+    // in the middle of a wave for ninety seconds and a great deal to one who
+    // uses the ground — which is the behaviour the guard axis is supposed to
+    // reward and had no way of paying for.
+    rarity: 'common', axes: ['guard'], stack: 3,
+    text: 'A ward of Force stands between you and the blow. It breaks, and it knits itself back together in the quiet.',
+    apply(p, s = 1) {
+      p._aegisMax = (p._aegisMax ?? 0) + 22 * s;
+      p._aegis = p._aegisMax;
+      p._aegisClock = AEGIS_WAIT;
+      boonGuard(p, 'aegis', aegisSoak);
+      boonTick(p, 'aegis', aegisMend);
+    },
+  },
+  {
+    id: 'momentum', icon: '🌠', name: 'Momentum', tag: 'Cadence',
+    rarity: 'common', axes: ['body'], stack: 3,
+    text: 'A body that falls is a step you did not have to take. Each kill drives the next, and standing still spends it.',
+    apply(p, s = 1) {
+      p.boonMods.moveSpeed *= grow(1.06, s);
+      p._momentumPer = (p._momentumPer ?? 0) + 0.05 * s;
+      boonTick(p, 'momentum', momentumRush);
+    },
+  },
+  {
+    id: 'execute', icon: '🗝', name: 'Mercy Stroke', tag: 'Finisher',
+    rarity: 'rare', axes: ['dark'], stack: 3,
+    text: 'Take a limb from something already broken and it does not get up. The kill is yours, and everything a kill pays.',
+    apply(p, s = 1) {
+      p._executeAt = Math.min(0.42, (p._executeAt ?? 0) + 0.14 * s);
+      boonOnSever(p, 'execute', executeCut);
+    },
+  },
+  {
+    id: 'detonate', icon: '☢', name: 'Detonation', tag: 'Blast',
+    rarity: 'rare', axes: ['force', 'dark'], stack: 3,
+    text: 'What you fell goes off. Whatever was standing over the body wishes it had not been.',
+    apply(p, s = 1) {
+      p._detonate = (p._detonate ?? 0) + 14 * s;
+      boonOnKill(p, 'detonate', detonateBody);
+    },
+  },
+  {
     id: 'steadfast', icon: '🗿', name: 'Steadfast', tag: 'Stance',
     rarity: 'rare', axes: ['guard', 'body'], stack: 2,
     text: 'Nothing staggers you, and anything heavy enough to have tried lands for half.',
@@ -1726,6 +2127,42 @@ export const BOONS = [
       p.boonMods.steadfast = Math.min(0.75, (p.boonMods.steadfast ?? 0) + 0.5 * s);
       boonGuard(p, 'steadfast', steadfastGuard);
       boonTick(p, 'steadfast', steadfastStance);
+    },
+  },
+
+  /* ── communion: the cards that land on somebody else ────────────────── */
+
+  {
+    id: 'communion', icon: '🕯', name: 'Communion', tag: 'Bond',
+    rarity: 'common', axes: ['bond'], stack: 3,
+    text: 'Your presence is felt. Anyone fighting beside you cuts harder and moves faster for it — and alone, half of it stays with you.',
+    apply(p, s = 1) {
+      p._bondEdge = (p._bondEdge ?? 0) + 0.16 * s;
+      boonTick(p, 'bond', bondAura);
+    },
+  },
+  {
+    id: 'suffusion', icon: '💠', name: 'Suffusion', tag: 'Bond',
+    rarity: 'rare', axes: ['bond'], stack: 3,
+    text: 'Every limb you take mends the people around you. If there is nobody, half of it mends you.',
+    apply(p, s = 1) {
+      p._bondHeal = (p._bondHeal ?? 0) + 4 * s;
+      boonOnSever(p, 'suffusion', suffuseSever);
+      boonTick(p, 'bond', bondAura);
+    },
+  },
+  {
+    id: 'vow', icon: '🤝', name: 'The Vow', tag: 'Bond',
+    rarity: 'rare', axes: ['bond', 'guard'], stack: 2,
+    // Capped in TWO places on purpose — BOND.wardCap bounds what an ally can be
+    // handed and `vowGuard` bounds what you keep — for the same reason
+    // Encircled and Steadfast are capped: anything that subtracts damage
+    // outright reaches immunity if you let it stack.
+    text: 'You stand between them and it. Anyone inside your communion takes less, and while somebody is there, so do you.',
+    apply(p, s = 1) {
+      p._bondWard = Math.min(BOND.wardCap, (p._bondWard ?? 0) + 0.12 * s);
+      boonGuard(p, 'vow', vowGuard);
+      boonTick(p, 'bond', bondAura);
     },
   },
 
@@ -1766,6 +2203,17 @@ export const BOONS = [
     apply(p) {
       p.boonMods.mend = 7;
       boonTick(p, 'undying', undyingMend);
+    },
+  },
+  {
+    id: 'unity', icon: '♾', name: 'The Unifying Force', tag: 'Mastery of Communion',
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['bond'], requires: mastery('bond'),
+    text: 'The bond closes. Your communion reaches twice as far, and everything you were giving away you now also keep.',
+    apply(p) {
+      p._bondMastery = true;
+      p._bondRange = (p._bondRange ?? BOND.range) * 2;
+      p._bondEdge = (p._bondEdge ?? 0) + 0.10;
+      boonTick(p, 'bond', bondAura);
     },
   },
   {

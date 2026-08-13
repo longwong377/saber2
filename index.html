@@ -432,6 +432,48 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════════════
+     THE MEDITATION — the Force constellation.
+
+     Raised mid-run by kneeling (hold Crouch, still, with nothing near you) and
+     between runs from the Temple. The world behind it is STOPPED and still
+     drawn: the overlay is translucent on purpose, because the whole reason
+     this is reached by kneeling rather than by a menu key is that it happens
+     in the place you were standing. src/ui/SkillTree.js draws it;
+     src/game/Constellation.js decides everything it is allowed to say.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="meditation" class="screen hidden">
+  <div class="med-wrap">
+    <header class="med-head">
+      <div>
+        <h2 id="med-title">Connect to the Force</h2>
+        <p class="hint" id="med-sub"></p>
+      </div>
+      <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
+    </header>
+    <div class="med-body">
+      <svg id="med-sky" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Force constellation"></svg>
+      <aside class="med-side">
+        <div id="med-detail" class="med-detail"></div>
+        <button id="btn-med-buy" class="primary" disabled>Commune</button>
+        <div id="med-shape" class="med-shape"></div>
+      </aside>
+    </div>
+    <footer class="med-foot">
+      <span class="hint" id="med-hint"></span>
+      <button id="btn-med-close" class="secondary">Return</button>
+    </footer>
+  </div>
+</div>
+
+<!-- The kneel, and the way in from the Temple. Both are read in main.js. -->
+<div id="commune" class="hidden">
+  <div class="commune-ring"><i id="commune-fill"></i></div>
+  <span>Hold <b id="commune-key">Ctrl</b> to kneel and connect to the Force</span>
+  <em id="commune-insight"></em>
+</div>
+<button id="btn-commune" class="ghost commune-entry hidden">Connect to the Force</button>
+
 <script>
   // ES modules are blocked on file:// — without this the page would just sit
   // black with a CORS error in a console nobody opened.

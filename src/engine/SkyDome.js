@@ -53,6 +53,7 @@
  */
 
 import * as THREE from 'three';
+import { CEL_BAND_GLSL } from '../toon/Cel.js';
 import { ground } from '../world/Scenery.js';
 /* The sky, from the one place that derives it. Engine imports this file, so
  * this closes a cycle — safe because every one of these is a hoisted function
@@ -124,6 +125,22 @@ function unitLum(c) {
  * same worst case is 1.05, and the property holds on the sky's own numbers
  * rather than on the map's resolution.
  */
+/**
+ * Plateaus in the deck's colour, and steps in its coverage.
+ *
+ * THREE, not four like the sky mesh behind it, and the reason is the range each
+ * one covers. The sky spans eight to one from zenith to aureole and needs four
+ * plates to keep the time of day; a cumulus spans about three to one from its
+ * sunlit shoulder to its shadowed belly, so three plates put a boundary every
+ * 0.8 stops — the same visual step width as the sky's four, on a third of the
+ * range. Matching the COUNT rather than the step width is what makes a deck
+ * read as a smoother object than the sky it hangs in, which is backwards.
+ *
+ * The coverage gets five, because it is a shape and not a tone: fewer and thin
+ * cirrus disappears entirely between one step and the next.
+ */
+const CLOUD_BANDS = 3, CLOUD_ALPHA_BANDS = 5;
+
 const BAND_AZ = 128, BAND_EL = 32;
 /** Top of the map, in sin(elevation). Covers the tallest painted range any
  *  level asks for (canyon: 0.53) and the storm band's reach (0.62). */
@@ -181,9 +198,22 @@ const VERT = /* glsl */`
   }
 `;
 
-const FRAG = /* glsl */`
+/* Assembled from three pieces rather than one literal, and the SHAPE of the
+ * join matters: tools/verify.mjs walks each /* glsl *​/ literal from its own
+ * marker to the first backtick that JS could legally be continuing from, and
+ * accepts `;,)]}` as that continuation. A literal closed with ` + … + ` is
+ * therefore not seen to close at all, and the scan runs on into the next one —
+ * so every backtick between them reads as a stray one inside the GLSL. Joining
+ * an array keeps each piece terminated by a comma.
+ *
+ * `precision highp float;` has to come first: this shader is written from
+ * scratch, a fragment shader has no default float precision in GLSL ES, and
+ * saberCelBand declares floats. */
+const FRAG = [/* glsl */`
   precision highp float;
-
+`,
+CEL_BAND_GLSL,
+/* glsl */`
   uniform vec3  uSunDir;
   uniform float uTime;
   uniform float uCoverage;     // 0 = clear, 1 = overcast
@@ -544,10 +574,36 @@ const FRAG = /* glsl */`
       alpha = na;
     }
 
+    /* ── FLAT SHAPES, HARD EDGES ───────────────────────────────────────
+     *
+     * Rule 7 of src/toon/REFERENCE.md: "clouds are solid shapes with a line
+     * around them, not volumetric anything." Everything above this point is a
+     * volumetric model — self-shadowing through the deck, the powder term at
+     * thin rims, forward scattering toward the sun — and every one of those is
+     * a smooth function that reads, correctly, as photographed cumulus.
+     *
+     * None of it is thrown away. It is QUANTISED, which keeps the shape the
+     * model produces (a cumulus with a bright shoulder and a cold belly) and
+     * loses only the continuity — so the deck comes out as three or four flat
+     * fields with the sun's own direction still legible across them. That is
+     * the difference between a cel sky and a cut-out sky.
+     *
+     * The ALPHA is quantised too, and that is what actually makes the edge. A
+     * cloud whose colour is banded but whose coverage still ramps smoothly to
+     * zero has a soft edge and reads as fog; stepping the coverage is what puts
+     * a boundary there for the eye — and for the ink, which cannot see this
+     * dome at all (it is transparent, and transparent things are excluded from
+     * the outline prepass — see src/toon/Ink.js).
+     *
+     * COARSER THAN THE SKY BEHIND IT, on purpose: the deck is the subject and
+     * the gradient is the ground it sits on. */
+    col = saberCelBand(col, ${CLOUD_BANDS.toFixed(1)});
+    alpha = clamp(saberCelBand1(alpha, ${CLOUD_ALPHA_BANDS.toFixed(1)}), 0.0, 1.0);
     if (alpha < 0.002) discard;
     gl_FragColor = vec4(col, alpha * uOpacity);
   }
-`;
+`,
+].join('\n');
 
 export class SkyDome {
   constructor(scene, opts = {}) {

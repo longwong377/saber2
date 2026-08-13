@@ -405,15 +405,35 @@ function materialFrom(name, size, sampler, opts = {}) {
   if (cache.has(key)) return cache.get(key);
   if (!baked.has(name)) baked.set(name, bake(size, sampler, opts));
   const b = baked.get(name);
-  // One texture object serves both roughnessMap and metalnessMap: they are the
-  // same packed image, and handing three two CanvasTextures over one canvas
-  // uploaded every ORM map to the GPU twice.
-  const orm = toTexture(b.rough, { repeat });
+  /* THE ORM MAP IS NO LONGER BOUND, and this is the cel model paying for
+   * itself rather than a tidy-up.
+   *
+   * It used to be one texture object serving both roughnessMap and
+   * metalnessMap — they are the same packed image, and handing three two
+   * CanvasTextures over one canvas uploaded every ORM map to the GPU twice.
+   * Under the cel model there is nothing left to read it: the GGX lobe, the
+   * sheen lobe and the environment reflection are gone from the shader (see
+   * src/toon/Cel.js), which is every consumer of `material.roughness`; and
+   * `metalnessFactor` no longer divides the diffuse, which was the only other
+   * consumer. A bound ORM map is therefore one texture fetch per fragment, on
+   * every lit material in the game, whose result is multiplied by nothing.
+   *
+   * The BAKE is untouched — `b.rough` still exists, tools/checks/materials.mjs
+   * still measures it, and rawMaps still returns it — because what is dead is
+   * the BINDING, not the data, and a surface whose roughness structure was
+   * never authored is a surface that cannot come back if this is ever revisited.
+   *
+   * Same for the normal map, and for the same reason at one remove: a detail
+   * normal under a two-tone terminator does not read as relief, it reads as
+   * speckle (see TER_RELIEF in Terrain.js for the measurement that showed it).
+   * Dropping the binding also drops the tangent-frame varyings three generates
+   * for it, which is three floats of interpolation per vertex as well as the
+   * fetch. */
   const set = {
     map: toTexture(b.albedo, { repeat, srgb: true }),
-    normalMap: toTexture(b.normal, { repeat }),
-    roughnessMap: orm,
-    metalnessMap: orm,
+    normalMap: null,
+    roughnessMap: null,
+    metalnessMap: null,
   };
   cache.set(key, set);
   return set;
@@ -1236,7 +1256,10 @@ export function rawMaps(name) {
 }
 
 export function disposeTextureCache() {
-  for (const set of cache.values()) for (const t of Object.values(set)) t.dispose?.();
+  // `t?.` and not `t.` — a set's dead slots are null now that the ORM and
+  // normal maps are no longer bound (see materialFrom), and reaching for
+  // `.dispose` on null throws before the optional call can save it.
+  for (const set of cache.values()) for (const t of Object.values(set)) t?.dispose?.();
   cache.clear();
   baked.clear();
   _scratches = null;
