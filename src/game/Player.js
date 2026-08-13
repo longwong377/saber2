@@ -340,6 +340,44 @@ const PULL_COAST = 0.35 + 1 / 6;
 const PULL_MAX = 70;
 const PULL_OPEN = 0.34;
 
+/**
+ * THE AIR DODGE IS A FLIP, and one line decides which flip it is.
+ *
+ * The note asks for "a coordinated flip in the input direction", and the
+ * temptation is a table: front flip on W, back flip on S, barrel roll on A
+ * and D, and then four more entries for the diagonals that nobody writes, so
+ * a dodge held forward-and-left does one of the four cardinal animations and
+ * travels somewhere else. The axis of a somersault is always horizontal and
+ * always perpendicular to the way you are going, which is `up × direction` —
+ * one expression, exact for every direction including the diagonals, and it
+ * degenerates correctly: dodging forward gives a front flip, sideways gives a
+ * barrel roll, and forty-five degrees gives the corkscrew between them.
+ *
+ * It is applied to the RIG ROOT about the body's own centre, after the gait
+ * has posed every bone in world space and before the blade and the arms are
+ * solved. That ordering is the whole trick: the legs are IK'd to feet on the
+ * ground during the gait, so rotating the hips alone would spin the torso off
+ * a pair of legs still reaching for the floor. Rotating the root turns the
+ * whole assembly rigidly, exactly as a body in the air does, and because
+ * `_updateBlade` reads the chest's world position AFTER this, the blade and
+ * both arms come round with it rather than being left behind in the air.
+ *
+ * 0.52 s is one full turn. Slower than that and it reads as a slow-motion
+ * replay; faster and the figure is a blur with no readable pose at the top.
+ * The camera does not turn with it — a first-person somersault is unplayable,
+ * and in third person the shot is worth more than the gimmick.
+ */
+const FLIP_TIME = 0.52;
+/**
+ * …and how high above the feet it turns. 1.02 m on a 1.75 m figure is 58% of
+ * standing height, which is where a tucked gymnast's centre of mass actually
+ * sits — a little above the navel. The pelvis (0.95) is the obvious choice and
+ * is wrong by enough to see: turning there swings the head through 0.86 m of
+ * arc against the correct 0.79, and the extra reads as the figure being whirled
+ * on the end of a rope rather than turning about itself.
+ */
+const FLIP_PIVOT = 1.02;
+
 /** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
 const HEAL_COST = 40;
 const HEAL_TIME = 3.0;
@@ -771,6 +809,12 @@ export class Player {
     this.jumpHeld = 0;
     this.dashTimer = 0;
     this.dashDir = new THREE.Vector3();
+    /** Seconds left of an air dodge's somersault, and the horizontal axis it
+     *  turns about. Zero on the ground: a dodge with a foot down is a step. */
+    this.flipT = 0;
+    this.flipAxis = new THREE.Vector3();
+    /** Last frame's flip rotation, so the cape can be carried by the DELTA. */
+    this._flipQ = new THREE.Quaternion();
     this.lastGroundY = 0;
     this.fallSpeed = 0;
 
@@ -1458,6 +1502,20 @@ export class Player {
     this.stamina -= 18;
     this.cooldowns.dash = 0.55;
     this.invuln = Math.max(this.invuln, 0.16);
+    /* AIRBORNE ONLY. A dodge with a foot on the ground is a sidestep and it
+     * already looks like one; a somersault out of a standing start would put
+     * the character's head through the sand. Being in the air is also what
+     * makes the flip legible — there is nothing else going on to read it
+     * against. The invulnerability stretches over the first two thirds of the
+     * turn, so the thing that looks like a dodge is a dodge. */
+    if (!this.grounded) {
+      this.flipT = FLIP_TIME;
+      this._flipQ.identity();
+      this.flipAxis.crossVectors(UP, this.dashDir);
+      if (this.flipAxis.lengthSq() < 1e-6) this.flipAxis.set(1, 0, 0);
+      this.flipAxis.normalize();
+      this.invuln = Math.max(this.invuln, FLIP_TIME * 0.66);
+    }
     audio.force(this.position, 'jump');
     if (ctx.particles) ctx.particles.sandPuff(this.position.clone(), 0.9, this.position.y, ctx.groundColor);
     this.camera.fovTarget = this.camera.fov + 6;
@@ -1700,6 +1758,59 @@ export class Player {
       accelStrafe: 0,
     });
     this.camera.advanceEye(dt, this.animator.pelvis);
+    this._spinBody(dt);
+  }
+
+  /**
+   * The somersault, applied to the whole posed figure at once.
+   *
+   * `world = R·local + (pivot − R·pivot)` is the standard rotate-about-a-point,
+   * and it has to be written out because three.js composes a Group as
+   * `R·local + position` with no pivot of its own. The pivot is the body's
+   * centre of mass rather than the pelvis: a gymnast turns about a point a
+   * little above the navel, and turning about the hips instead throws the head
+   * through twice the arc it should and reads as being swung on a rope.
+   *
+   * A landing ENDS it. A flip cut off half way would leave the figure standing
+   * on its head, so the last of the turn is spent in whatever time is left —
+   * `min` of the two rates, so it can only ever finish sooner.
+   */
+  _spinBody(dt) {
+    if (this.flipT <= 0) return;
+    this.flipT = Math.max(0, this.flipT - (this.grounded ? dt * 3 : dt));
+    const turn = (1 - this.flipT / FLIP_TIME) * TAU;
+    const root = this.rig.root;
+    const pivot = _v1.set(this.position.x,
+      this.position.y + FLIP_PIVOT * (this.rig.scale ?? 1), this.position.z);
+
+    /* THE CAPE COMES ROUND WITH THE BODY. A verlet sheet keeps its velocity as
+     * `pos − prev` in world space, so a body that turns through a whole
+     * revolution in half a second teleports the pinned collar to the far side
+     * of the wearer while every free particle stays where it was; the solver
+     * reads that as an enormous velocity and cannot pull the links back. The
+     * first shot of this flip had the cloak as two rigid four-metre planks.
+     * Carrying it by the frame's own delta leaves only the genuine lag to
+     * simulate, and the lag is what billows. See Cloak.carry.
+     *
+     * The delta, not the absolute: applying the whole turn every frame would
+     * spin the cloth n times faster than the body. */
+    _q1.setFromAxisAngle(this.flipAxis, turn);
+    _q2.copy(this._flipQ).invert().premultiply(_q1);
+    this._flipQ.copy(_q1);
+    this.cloak?.carry(_q2, pivot);
+    this.skirt?.carry(_q2, pivot);
+
+    if (this.flipT <= 0) {
+      // A full turn ends where it started, so this snap is a no-op in practice
+      // — but only in practice, and a landing can cut the turn short.
+      root.quaternion.identity(); root.position.set(0, 0, 0);
+      this._flipQ.identity();
+      this.rig.updateMatrices();
+      return;
+    }
+    root.quaternion.copy(_q1);
+    root.position.copy(pivot).sub(_v2.copy(pivot).applyQuaternion(root.quaternion));
+    this.rig.updateMatrices();
   }
 
   /**

@@ -597,7 +597,16 @@ export async function run({ check, assert }) {
     };
     const early = share(2), late = share(25);
     assert(early.epic === 0, `wave 2 offered an epic ${(early.epic * 100).toFixed(1)}% of the time`);
-    assert(late.epic > 0.06, `wave 25 offers an epic only ${(late.epic * 100).toFixed(1)}% of the time`);
+    /* 0.045, not 0.06. The table's true wave-25 epic rate is 6.0%, and a bound
+     * placed exactly on the true rate is a coin flip: 9000 draws has a standard
+     * error of 0.25 points, so a threshold at 6.0 fails about half the time.
+     * It did — one run read 5.9% and failed, the next read 6.0% and passed,
+     * with nothing in between but the sampler. A check that fails at random is
+     * worse than no check, because it teaches everyone to re-run rather than to
+     * read. The bound sits three standard errors below the true rate: it still
+     * catches epics being removed, halved, or gated out of reach, which is what
+     * it is for, and it cannot fire on the sampler alone. */
+    assert(late.epic > 0.045, `wave 25 offers an epic only ${(late.epic * 100).toFixed(1)}% of the time`);
     assert(late.rare > early.rare * 1.5,
       `rares are ${(early.rare * 100).toFixed(0)}% of a wave-2 draft and ${(late.rare * 100).toFixed(0)}% of a wave-25 one`);
     assert(early.common > late.common,

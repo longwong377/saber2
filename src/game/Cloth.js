@@ -802,6 +802,44 @@ export class Cloak {
     }
   }
 
+  /**
+   * CARRY THE WHOLE SHEET WITH A BODY THAT IS TURNING, and simulate only what
+   * is left over.
+   *
+   * Verlet keeps velocity implicitly, as `pos − prev`, and both are in WORLD
+   * space. That is fine while the wearer walks, because the pinned row moves a
+   * few centimetres a frame and the free rows chase it — which is exactly what
+   * a cape doing its job looks like. It is not fine when the body turns
+   * through a whole revolution in half a second: the pinned row is teleported
+   * to the other side of the wearer while every other particle stays where it
+   * was, the solver reads that as an enormous velocity, and the constraint
+   * pass cannot pull five hundred stretched links back in one frame. Measured
+   * on the first air-dodge somersault, the cloak came out as two rigid planks
+   * four metres long — a cape drawn as a diving board.
+   *
+   * The fix is the one every cloth system eventually grows: when the FRAME the
+   * cloth lives in moves rigidly, move the cloth with it. Rotating `pos` and
+   * `prev` by the same quaternion about the same pivot leaves their difference
+   * — the velocity — rotated but unchanged in length, so the sheet keeps the
+   * motion it had, expressed in the new frame, and the solver is left with
+   * only the genuine lag to work on. That residual is what billows.
+   *
+   * Pinned particles are carried too. They will be overwritten by `anchorFn`
+   * on the next update, but not carrying them would leave the pinned row a
+   * frame behind the rest of its own sheet, which is a seam at the collar.
+   */
+  carry(quat, pivot) {
+    const n = this.cols * this.rows;
+    const p = this.pos, q = this.prev;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      _v1.set(p[i3] - pivot.x, p[i3 + 1] - pivot.y, p[i3 + 2] - pivot.z).applyQuaternion(quat);
+      p[i3] = pivot.x + _v1.x; p[i3 + 1] = pivot.y + _v1.y; p[i3 + 2] = pivot.z + _v1.z;
+      _v1.set(q[i3] - pivot.x, q[i3 + 1] - pivot.y, q[i3 + 2] - pivot.z).applyQuaternion(quat);
+      q[i3] = pivot.x + _v1.x; q[i3 + 1] = pivot.y + _v1.y; q[i3 + 2] = pivot.z + _v1.z;
+    }
+  }
+
   setVisible(v) { this.mesh.visible = v; }
 
   dispose() {
@@ -1654,6 +1692,9 @@ export function attachLekku(scene, rig, opts = {}) {
     get initialised() { return parts.every((l) => l.initialised); },
     update(dt, wind) {
       for (const l of parts) if (l.enabled) l.update(dt, l.refreshColliders(), wind);
+    },
+    carry(quat, pivot) {
+      for (const l of parts) if (l.enabled && l.initialised) l.carry(quat, pivot);
     },
     setVisible(v) {
       for (const l of parts) l.setVisible(v);
