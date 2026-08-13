@@ -664,7 +664,6 @@ export class Saber {
     }
     this.coreWidth = opts.coreWidth ?? 1;
     this.hiltStyle = opts.hiltStyle ?? 'Graflex';
-    this.isDark = !!c.dark;
 
     this.root = new THREE.Group();
     this.root.matrixAutoUpdate = true;
@@ -728,7 +727,6 @@ export class Saber {
     const c = SABER_COLORS[index] || SABER_COLORS[0];
     this.color.setHex(c.hex);
     this.glowColor.setHex(c.glow);
-    this.isDark = !!c.dark;
     this._applyColour();
   }
 

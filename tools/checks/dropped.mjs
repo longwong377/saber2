@@ -113,7 +113,8 @@ export async function run({ check, assert, THREE: T }) {
     assert(b.p.saber.hiltStyle === 'Warden', `the hilt came back as ${b.p.saber.hiltStyle}`);
     assert(b.p.saber._order === 'sith',
       `their order's tuning did not travel — the blade reads as ${b.p.saber._order}`);
-    assert(b.p.saber.isDark, 'a bled crystal in your hand does not read as one');
+    assert(SABER_COLORS[b.p.saber.colorIndex].dark,
+      'a bled crystal in your hand does not read as one');
 
     // …and it did not cost them their weapon or you yours: the swap put mine
     // down where I stood, so both still exist in the world

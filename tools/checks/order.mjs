@@ -889,9 +889,15 @@ export async function run({ check, assert, near }) {
       const i = SABER_COLORS.findIndex((c) => c.key === key);
       assert(!grey.crystals.includes(i), `the Grey can reach ${SABER_COLORS[i].name}, and they never went to a temple`);
     }
-    // the bled family, cross-checked against Saber's own flag
-    const scene = new THREE.Scene();
-    const bled = SABER_COLORS.map((_, i) => { const s = new Saber(scene, { colorIndex: i }); const d = s.isDark; s.dispose(); return d; });
+    /* The bled family, read off the crystal table.
+     *
+     * This used to build a Saber per crystal and read `s.isDark` back — a field
+     * the constructor computed, wrote twice, and which no line of game code
+     * ever read. A classification with no reader is a second source of truth
+     * waiting to disagree with the first, and the project's own standard for a
+     * setting nothing reads is that it is a bug. `dark` is a field on the
+     * crystal now and this reads it where it lives. */
+    const bled = SABER_COLORS.map((c) => !!c.dark);
     const sith = getOrder('sith');
     for (const i of sith.crystals) {
       const cls = SABER_COLORS[i];
