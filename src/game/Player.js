@@ -283,6 +283,18 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
 const HEAT_NEAR = 0.55;
 
 /**
+ * How far in front of the chest a held body still counts as cover, and how much
+ * of the bolt it takes on the player's behalf.
+ *
+ * The reach is what makes it a shield and not an aura — hold a crate behind
+ * your shoulder and it stops nothing. The bite is what stops it being an
+ * invulnerability window: what the shield blocks, the shield TAKES, so a droid
+ * used as cover is being shot to pieces while you hold it. That is the bargain.
+ */
+const SHIELD_REACH = 3.2;
+const SHIELD_BITE = 1.0;
+
+/**
  * FORCE CHOKE's bite, as a fraction of the victim's own maximum health per
  * second: where it starts, and where it ramps to over three seconds. See the
  * note in _updateGrip for why it is a fraction and not a number.
@@ -2413,6 +2425,47 @@ export class Player {
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
     if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy.chokeT = 0; this.gripEnemy = null; }
     this._endGesture('grip');
+  }
+
+  /**
+   * The thing being held, as a capsule that can eat a bolt — or null.
+   *
+   * Read by World._boltHitTest before the player's own capsule. Two shapes go
+   * through one interface: an enemy contributes its own body capsule, a physics
+   * prop contributes its bounding sphere as a degenerate segment, and both
+   * answer `take`, so the caller does not need to know which it got.
+   *
+   * The reach test is what makes it a SHIELD rather than an aura: the held
+   * thing only covers you while it is actually between you and the world, so a
+   * crate dangling behind your shoulder stops nothing.
+   */
+  shieldBody() {
+    const e = this.gripEnemy, b = this.gripBody;
+    if (!e && !b) return null;
+    const pos = e ? this._enemyPoint(e, _v10) : b.position;
+    if (pos.distanceToSquared(this.chest) > SHIELD_REACH * SHIELD_REACH) return null;
+    if (e) {
+      const r = (e.radius || 0.4) * 1.15;
+      const lo = _v11.copy(e.position).setY(e.position.y + 0.2);
+      const hi = _v12.copy(e.position).setY(e.position.y + (e.A?.big ? 2.6 : 1.7));
+      return { p0: lo, p1: hi, r, victim: e,
+        take: (dmg, at, from) => { e.damage(dmg * SHIELD_BITE, at, from, 'bolt'); } };
+    }
+    const r = Math.max(0.25, b.boundingRadius || 0.4);
+    return { p0: b.position, p1: b.position, r, victim: b,
+      take: (dmg, at) => {
+        b.wake?.();
+        // The prop's own destruction path, reached the way the blade reaches
+        // it — through `body.userData.prop` — so a crate held as cover comes
+        // apart on the same hp and shatters into the same chunks as one that
+        // was cut. Its signature is (amount, point, dir), not the four-argument
+        // one Player/Enemy share; `dir` is what the shatter throws the pieces
+        // along, and a bolt's is the way it was travelling.
+        const prop = b.userData?.prop;
+        if (prop && typeof prop.damage === 'function') {
+          prop.damage(dmg * SHIELD_BITE, at, _v13.subVectors(at, this.chest).normalize());
+        }
+      } };
   }
 
   /**

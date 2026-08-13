@@ -312,4 +312,71 @@ export async function run({ check, assert, THREE: T }) {
     return `return to sender: 3 bolts, ${(spread * 180 / Math.PI).toFixed(0)}° apart; `
       + `aimed volley: ${(aimedSpread * 180 / Math.PI).toFixed(0)}° apart`;
   });
+
+  check('force: a body held in front of you stops the bolts', () => {
+    /**
+     * The grip could lift an enemy or a crate and hold it between the player
+     * and a firing line, and the bolts went straight through into the player.
+     * `World._boltHitTest` knows about players and about enemies, and a held
+     * thing is neither: a bolt aimed at the PLAYER returns on the player's own
+     * capsule before the enemy loop is ever reached.
+     *
+     * Four properties, and the third is the one that keeps it from being an
+     * invulnerability window.
+     */
+    const b = bench({ force: 500 });
+    const hits = [];
+    const held = {
+      dead: false, gripped: true, liftTarget: null, chokeT: 0, maxHp: 200,
+      radius: 0.4, A: { mass: 80, scale: 1 },
+      position: new THREE.Vector3(),
+      damage: (v, at, from, kind) => { hits.push({ v, kind }); },
+    };
+    b.p.gripEnemy = held;
+
+    // 1. in front and close: it is a shield
+    held.position.set(0, 0, -1.6);
+    b.p.chest.set(0, 1.2, 0);
+    const s1 = b.p.shieldBody();
+    assert(s1, 'a body held 1.6 m in front of the chest is not offered as cover at all');
+    assert(s1.victim === held, 'the shield names the wrong victim');
+
+    // 2. what it stops, it TAKES
+    s1.take(24, new THREE.Vector3(0, 1.2, -1.6), null);
+    assert(hits.length === 1 && hits[0].v > 0,
+      `the shield ate a 24-point bolt and passed ${JSON.stringify(hits)} to the thing being held`);
+    assert(hits[0].v >= 24 * 0.5,
+      `the held body took only ${hits[0].v} of a 24-point bolt — cover that does not suffer is invulnerability`);
+
+    // 3. reach: a body dangling behind your shoulder covers nothing
+    held.position.set(0, 0, 9);
+    assert(!b.p.shieldBody(),
+      'a body held nine metres away still counts as cover — that is an aura, not a shield');
+
+    // 4. and nothing held is nothing to hide behind
+    b.p.gripEnemy = null;
+    assert(!b.p.shieldBody(), 'the player is shielded by a body they are not holding');
+    return `cover at 1.6 m, none at 9 m, and it takes ${hits[0].v.toFixed(0)} of a 24-point bolt`;
+  });
+
+  check('force: the bolt test asks the shield before it asks the player', async () => {
+    /*
+     * ORDER IS THE WHOLE FIX. `_boltHitTest` returns on the first thing it
+     * finds, so a shield tested after the player's capsule can never fire — the
+     * player has already been hit and the function has already returned. This
+     * is checked against the source because the alternative is standing up a
+     * whole World, and the property is positional: the shield block has to come
+     * before the `segmentNear(from, to, _v1, _v2, 0.36)` that tests the player.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const test = src.slice(src.indexOf('_boltHitTest(bolt, from, to)'));
+    const shield = test.indexOf('shieldBody');
+    const player = test.indexOf('segmentNear(from, to, _v1, _v2, 0.36)');
+    assert(shield >= 0, 'World._boltHitTest never asks for a held body — the shield cannot fire');
+    assert(player >= 0, 'the player capsule test has moved; this check is looking at the wrong line');
+    assert(shield < player,
+      'the shield is tested AFTER the player capsule, so the bolt has already hit the player and returned');
+    return 'shield tested before the player capsule';
+  });
 }

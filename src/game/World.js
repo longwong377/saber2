@@ -1191,6 +1191,33 @@ export class World {
     if (bolt.team !== 0) {
       for (const p of this.players) {
         if (!p.alive || p.invuln > 0) continue;
+        /**
+         * A BODY HELD IN FRONT OF YOU IS A SHIELD.
+         *
+         * The Force grip could lift an enemy or a crate and hold it between the
+         * player and a firing line, and bolts went straight through it into the
+         * player — because this test knows about players and about enemies and
+         * a held thing was neither: an enemy in the air is skipped by the enemy
+         * loop only if it is dead, but a bolt aimed at the PLAYER never reaches
+         * that loop at all, it returns on the player capsule first.
+         *
+         * So the held thing is tested BEFORE its holder, and it is tested for
+         * every player, because in co-op the useful version of this is holding
+         * something in front of your friend.
+         *
+         * The shield is not free: what it stops, it takes. A droid used as
+         * cover is being shot to pieces while you hold it, which is the whole
+         * bargain and is why this cannot simply be an invulnerability window.
+         */
+        const shield = p.shieldBody?.();
+        if (shield) {
+          const hit = segmentNear(from, to, shield.p0, shield.p1, shield.r);
+          if (hit) {
+            shield.take(bolt.damage, hit, bolt.owner);
+            this.particles.sparkBurst(hit, null, 8, { speed: 5, color: 0xffc070 });
+            return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: shield.victim };
+          }
+        }
         _v1.copy(p.position).setY(p.position.y + 0.35);
         _v2.copy(p.position).setY(p.position.y + 1.72);
         const hit = segmentNear(from, to, _v1, _v2, 0.36);
