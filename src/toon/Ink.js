@@ -116,15 +116,61 @@ export const INK = {
   color: 0x2a2118,
   opacity: 0.92,
   /**
-   * Distance at which a crease line fades out, in metres, and the reach.
+   * Distance over which a crease line fades out, in metres.
    *
    * Interior detail at 300 m is not detail, it is noise: the fold is a fraction
    * of a pixel wide and the line detector finds it every frame in a different
-   * place, which shimmers. Silhouettes are NOT faded by THIS — they are faded
-   * by the haze instead, see setHaze — so a mountain keeps its outline for as
-   * long as you can still see the mountain.
+   * place, which shimmers.
+   *
+   * IT WAS [40, 120] AND THAT WAS TOO FAR, by the frames. The crease term is
+   * the entire difference between .shots/diag-ink.png (the whole mid-field a
+   * scribble) and .shots/diag-ink2.png (the same view with creases off — clean
+   * cream ashlar with a line round it, which is the reference). At 80 m the
+   * arena's ruins were still carrying half-weight crease on every stone.
+   *
+   * The reason is rule 6 rather than a threshold: the interior lines in the
+   * reference frames are DRAWN — strata, mortar — and drawn marks stay the same
+   * width on the page however far away the thing is. A crease detector's line is
+   * a fixed number of PIXELS, so as an object recedes its interior detail
+   * collapses into a mat of them. So the crease term now works over the range a
+   * player actually inspects something at, and the drawn marks in the albedo
+   * (Terrain's strata seams and speckle) carry the rest of the way out.
    */
-  creaseFade: [40, 120],
+  creaseFade: [20, 70],
+
+  /**
+   * THE SAME, FOR SILHOUETTES, AND IT IS NEW.
+   *
+   * Silhouettes used to be faded by the HAZE alone (see setHaze), on the
+   * argument that a mountain should keep its outline for as long as you can
+   * still see the mountain. Two frames disproved it.
+   *
+   *   .shots/diag-ink.png renders the pass's own edge factor in red. The arena's
+   *   far buttes — 130 to 190 m out, raycast — come back solid. Every mark is a
+   *   true depth silhouette: those cliffs are hundreds of separate displaced
+   *   rocks, each one two pixels wide with something further behind it.
+   *
+   *   .shots/probe-noink.png is the same view with the pass off, and it is the
+   *   reference look: flat coral buttes, flat cream ashlar, clean bands.
+   *
+   * The haze cannot fix it, and that is arithmetic rather than tuning: fog
+   * density across the seven levels spans 2.6× while "how far away is the far
+   * wall" does not vary with it at all, so any extinction fraction that clears
+   * the arena's buttes at 130 m puts the drifts' fade start at 36 m — inside a
+   * fight. Distance in METRES is the quantity this is actually about.
+   *
+   * 55 m to 130 m. Everything a fight happens in keeps every line it had; the
+   * mid-field thins; the far field is flat shapes, which is what rule 3 asks
+   * for and what the drawn strata and speckle in the albedo (rule 6) are there
+   * to replace the lost detail with. The haze fade stays on top of it as the
+   * guard for a level whose air closes in sooner than 130 m.
+   *
+   * What is given up is the outline of a distant form ITSELF, along with the
+   * scribble on it, and no screen-space detector can separate those: in
+   * pixel-footprint units — the only unit it has — a hilt against a robe at 3 m
+   * and a boulder against a cliff at 160 m are the same measurement.
+   */
+  edgeFade: [55, 130],
 };
 
 /** Never ink this material. See the note above about grass. */
@@ -160,6 +206,7 @@ const INK_FRAG = /* glsl */`
   uniform vec4  uWeight;      // silhouette px, crease px, depth bias, crease bias
   uniform vec4  uInk;         // rgb line colour, a opacity
   uniform vec4  uRange;       // near, far, crease fade start, crease fade end
+  uniform vec2  uEdge;        // metres over which a SILHOUETTE fades out
   uniform vec2  uHaze;        // metres at which the line starts and finishes fading
   varying vec2 vUv;
 
@@ -228,13 +275,33 @@ const INK_FRAG = /* glsl */`
     vec3 nD = normalize( texture2D( tNormal, vUv - vec2( 0.0, c.y ) ).xyz * 2.0 - 1.0 );
     vec3 nU = normalize( texture2D( tNormal, vUv + vec2( 0.0, c.y ) ).xyz * 2.0 - 1.0 );
     float nEdge = length( nL + nR - 2.0 * n0 ) + length( nD + nU - 2.0 * n0 );
-    // Interior detail fades with range; silhouettes do not. A fold half a pixel
-    // wide is not detail, it is a different pixel every frame.
-    nEdge *= 1.0 - smoothstep( uRange.z, uRange.w, dC );
+    /* INTERIOR DETAIL FADES WITH RANGE, AND IT FADES TWICE — the measurement
+     * and then the line.
+     *
+     * Fading the measurement alone is not enough and the arena said so: a
+     * displaced rock or a folded robe scores nEdge ≈ 2, six times the 0.34
+     * threshold, so cutting it by two thirds at 90 m still leaves it fully
+     * inked, and the whole mid-field of the level came back as scribble
+     * (.shots/diag-ink.png, where the crease term is the difference between that
+     * frame and diag-ink2.png, which is the same view with the crease off and
+     * reads exactly as rule 4 wants). The same factor is applied again to the
+     * line's OPACITY below, so the crease genuinely tapers to nothing over its
+     * range instead of switching off at the far end of it. */
+    float creaseFade = 1.0 - smoothstep( uRange.z, uRange.w, dC );
+    nEdge *= creaseFade;
 
+    /* THE SILHOUETTE FADES WITH RANGE TOO, AND IT FADES THE LINE RATHER THAN
+     * THE MEASUREMENT. Scaling dEdge is the obvious form and it does nothing:
+     * the threshold it is compared against is 4 thousandths wide, so a depth
+     * jump ten times over the line is still over it after being cut by two
+     * thirds, and the far cliffs came back exactly as inked as before. What has
+     * to fade is the OPACITY. (The crease term above fades its measurement
+     * instead, which is correct there — its threshold is 0.16 wide, forty times
+     * this one, so an input fade is an opacity fade.) See INK.edgeFade. */
     float e = max(
-      smoothstep( uWeight.z * 0.02, uWeight.z * 0.02 + 0.004, dEdge ),
-      smoothstep( uWeight.w, uWeight.w + ${INK.creaseSoft.toFixed(3)}, nEdge ) );
+      smoothstep( uWeight.z * 0.02, uWeight.z * 0.02 + 0.004, dEdge )
+        * ( 1.0 - smoothstep( uEdge.x, uEdge.y, dC ) ),
+      smoothstep( uWeight.w, uWeight.w + ${INK.creaseSoft.toFixed(3)}, nEdge ) * creaseFade );
 
     /* ── INK IS A PROPERTY OF A SURFACE YOU CAN STILL SEE ────────────────
      *
@@ -289,8 +356,31 @@ export class OutlinePass extends Pass {
       // No colour space conversion: these are encoded normals, not colour.
       colorSpace: THREE.NoColorSpace,
     });
+    /* ── 24 BITS, AND IT IS THE HORIZON SCRIBBLE ────────────────────────
+     *
+     * This was UnsignedShortType — DEPTH_COMPONENT16 — and that single line was
+     * drawing hard black lines RULED ACROSS THE WHOLE WIDTH OF THE FRAME in the
+     * far field of every outdoor level. It looks like a detector fault and it is
+     * arithmetic:
+     *
+     * A depth buffer quantises 1/z, so the world-space size of one step is
+     * (f-n)·d² / (f·n·2^bits). On the meadow's prepass frustum (0.15 m to
+     * ~190 m) that is 2.3 m at 150 m and 4.1 m at 200 m. The ink's depth term is
+     * a SECOND DIFFERENCE of linear depth divided by depth, so a quantisation
+     * contour — the locus where the far field steps from one code to the next,
+     * which on gently rolling ground is a horizontal line across the picture —
+     * scores 4.1/200 = 0.020 against a 0.019 threshold. The detector was
+     * correctly finding an edge; the edge was in the buffer, not in the world.
+     *
+     * At 24 bits the same step is 1.6 cm and the same contour scores 8e-5, which
+     * is two hundred times under the threshold. The cost is one byte per pixel
+     * of a prepass that is already half resolution on medium: 0.9 MB at 1080p.
+     *
+     * (The other half of the fix is that the fade now starts nearer — see
+     * setHaze — so the band where a 24-bit contour could ever matter carries no
+     * line at all.) */
     this.target.depthTexture = new THREE.DepthTexture(2, 2);
-    this.target.depthTexture.type = THREE.UnsignedShortType;
+    this.target.depthTexture.type = THREE.UnsignedIntType;
 
     this.normalMat = new THREE.MeshNormalMaterial();
 
@@ -302,6 +392,7 @@ export class OutlinePass extends Pass {
       uWeight: { value: new THREE.Vector4(INK.width, INK.creaseWidth, INK.depthBias, INK.creaseBias) },
       uInk: { value: new THREE.Vector4(0, 0, 0, INK.opacity) },
       uRange: { value: new THREE.Vector4(0.15, 400, INK.creaseFade[0], INK.creaseFade[1]) },
+      uEdge: { value: new THREE.Vector2(INK.edgeFade[0], INK.edgeFade[1]) },
       // Clear air until a level says otherwise, so an Ink built without an
       // Engine still draws lines rather than nothing.
       uHaze: { value: new THREE.Vector2(600, 1200) },
@@ -342,10 +433,27 @@ export class OutlinePass extends Pass {
    *
    * `density` is FogExp2's, whose transmittance is exp(-(d·k)²), so the
    * distance at which a given fraction f of a surface has been replaced by air
-   * is sqrt(-ln(1-f))/k — closed form, no tuning. The line starts fading where
-   * the air has taken half the surface and is gone where it has taken 92%,
-   * which is the point past which there is nothing left for a line to be the
-   * edge OF.
+   * is sqrt(-ln(1-f))/k — closed form, no tuning.
+   *
+   * WHERE THE TWO FRACTIONS ARE, AND WHAT THIS IS AND IS NOT FOR NOW. They were
+   * 0.5 and 0.92 — the line held full weight until half the surface was air and
+   * only went out when nearly all of it was — and they are 0.30 and 0.80.
+   *
+   * The far field is NOT this function's job any more, and finding that out was
+   * most of the work. The arena's buttes stand at 130 to 160 m (raycast,
+   * .shots/diag.png) and were coming back as solid scribble; the fraction that
+   * clears them is 0.24, and 0.24 puts the DRIFTS' fade start at 36 m, inside a
+   * fight. Fog density across the levels spans 2.6× while "how far away is the
+   * far wall" does not follow it at all, so no pair of extinction fractions can
+   * do both jobs. Distance in metres does, and that is INK.edgeFade.
+   *
+   * What is left here is the job this always did well: hiding the EDGE OF THE
+   * WORLD on a level whose air closes in sooner than the ink's own range. The
+   * heightfield is a 520 m box and its rim is a genuine depth silhouette; on the
+   * meadow, whose whole subject is mist, that rim disappears into the air at
+   * 144 m, well inside INK.edgeFade's 130. At 0.30 the line is already going
+   * while the object plainly reads, which is what aerial perspective does to a
+   * drawn edge — it takes the CONTRAST first and the shape last.
    *
    * The engine's extinction is height-stratified on top of this (see AERIAL),
    * so the true path is shorter for anything above the haze layer and this is
@@ -358,7 +466,7 @@ export class OutlinePass extends Pass {
   setHaze(density) {
     const k = density > 1e-6 ? density : 0;
     const at = (f) => (k ? Math.sqrt(-Math.log(1 - f)) / k : 1e4);
-    this.uniforms.uHaze.value.set(at(0.5), at(0.92));
+    this.uniforms.uHaze.value.set(at(0.30), at(0.80));
     return this;
   }
 
@@ -383,22 +491,30 @@ export class OutlinePass extends Pass {
      *
      * Two things fall out of one line, and the second one was a visible bug.
      *
-     * COST. This is a second rasterisation of the scene, and the cheapest thing
-     * to do with a draw call is not to issue it. The ink is already zero past
-     * uHaze.y (see setHaze), so everything beyond it is being drawn to produce
-     * pixels the composite multiplies by nothing. Pulling the far plane in to
-     * the fade's end hands the whole question to three's own frustum culling.
+     * COST, AND ONE HONEST CORRECTION TO WHAT THIS NOTE USED TO CLAIM. This is a
+     * second rasterisation of the scene, and the ink is zero past the nearer of
+     * the two fades, so everything beyond that is being drawn to produce pixels
+     * the composite multiplies by nothing. Pulling the far plane in was supposed
+     * to hand that to three's own frustum culling. MEASURED, IT DOES NOT: on the
+     * dune sea, prepass draw calls and submitted triangles are identical at a
+     * 138 m far plane and at a 320 m one (533 calls / 708,444 triangles either
+     * way), because the terrain is ONE mesh whose bounding sphere intersects the
+     * frustum regardless and the scenery is instanced into a handful of batches
+     * that do the same. What the near plane actually saves is FRAGMENTS — the
+     * far geometry is clipped rather than culled, so it costs its vertices and
+     * none of its shading. The precision, below, is the real reason to do it.
      *
-     * PRECISION, and this is the one that mattered. The depth attachment is
-     * DEPTH_COMPONENT16 — one texture rather than the float pair a
-     * higher-precision buffer would cost — and 16 bits over 0.15 m to 520 m
-     * puts a quantisation step of about 8 m at 400 m. The far rim of the
-     * heightfield therefore came back with a depth that was noise, the range
-     * fade could not be trusted to switch anything off out there, and a hard
-     * black line was ruled straight across the whole width of the meadow at the
-     * horizon. Against a 190 m far plane the same step is 1.8 m at 190 m and
-     * 2 cm at 20 m, and anything past it is simply not drawn — so it clears to
-     * the far plane and the shader's own sky test discards it.
+     * PRECISION, and this is the one that mattered. The depth attachment was
+     * DEPTH_COMPONENT16 and is now DEPTH_COMPONENT24 (see the constructor); the
+     * far plane compounds with it. 16 bits over 0.15 m to 520 m puts a
+     * quantisation step of about 8 m at 400 m, and the far rim of the
+     * heightfield therefore came back with a depth that was noise — a hard black
+     * line ruled straight across the whole width of the meadow at the horizon,
+     * plus one for every iso-depth contour behind it. Against the 138 m plane
+     * this now runs at, 24 bits puts the same step at 1.2 cm, which is four
+     * orders of magnitude under the detector's threshold. Anything past the
+     * plane is simply not drawn — it clears to the far value and the shader's
+     * own sky test discards it.
      *
      * Clamped to the real camera in both directions: a level with no fog at all
      * gets the full view distance, and one whose air closes at 40 m still gets
@@ -407,7 +523,10 @@ export class OutlinePass extends Pass {
     cam.copy(this.camera, false);
     cam.matrixWorld.copy(this.camera.matrixWorld);
     cam.matrixWorldInverse.copy(this.camera.matrixWorldInverse);
-    cam.far = Math.min(this.camera.far, Math.max(60, this.uniforms.uHaze.value.y * 1.06));
+    // The ink's real reach is whichever fade ends first — the level's air or
+    // INK.edgeFade — and nothing past it needs rasterising at all.
+    const reach = Math.min(this.uniforms.uHaze.value.y, this.uniforms.uEdge.value.y);
+    cam.far = Math.min(this.camera.far, Math.max(60, reach * 1.06));
     cam.updateProjectionMatrix();
     this.uniforms.uRange.value.x = cam.near;
     this.uniforms.uRange.value.y = cam.far;

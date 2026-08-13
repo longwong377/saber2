@@ -119,10 +119,42 @@ export function run({ check, assert, near }) {
     for (let i = 0; i < N; i++) vals.push(celTone(i / (N - 1), key, 1));
     const hi = Math.max(...vals), lo = Math.min(...vals);
     near(hi, key, 1e-9, 'the lit band is not the light\'s own horizontal response');
-    near(lo, 0, 1e-9, 'the shadow band is not zero');
-    const flat = vals.filter((v) => v < 1e-6 || v > hi - 1e-6).length / N;
+
+    /* RE-DERIVED, and the re-derivation is the point of this round.
+     *
+     * This line used to be `near(lo, 0)` — the shadow band was zero, on the
+     * argument that a floor on the direct term would be a soft second
+     * terminator. The frames said otherwise (a near-black player character, and
+     * a grey ball whose shadow side measured saturation 0.73 blue) and so does
+     * the arithmetic: `mix( shadowBand, 1.0, s )` with s a step is CONSTANT
+     * below the terminator, so a non-zero band is a second flat LEVEL and not a
+     * gradient. See CEL.shadowBand.
+     *
+     * So what is asserted is stronger than `lo === 0` was, in three ways at
+     * once: the band is EXACTLY the authored share of the key (an identity, not
+     * a bound), it is strictly positive (a shadow is a colour), and the low
+     * region is exactly as flat as the high one — which is the property the old
+     * line was really standing in for and never actually tested. */
+    assert(CEL.shadowBand > 0,
+      'the shadow band is zero again — the shadow side of everything is whatever the '
+      + 'ambient happens to be, which on this rig is blue');
+    near(lo, key * CEL.shadowBand, 1e-12, 'the shadow band is not the authored share of the key');
+    const belowT = vals.slice(0, Math.floor(N * 0.15));
+    assert(belowT.every((v) => v === lo),
+      'the shadow band is not flat — some of it is a ramp, which is the second terminator '
+      + 'the band was zero to avoid');
+    const flat = vals.filter((v) => v < lo + 1e-6 || v > hi - 1e-6).length / N;
     assert(flat > 0.97,
       `only ${(flat * 100).toFixed(1)}% of the response is flat — the rest is a ramp`);
+    /* AND THE TWO LEVELS ARE THE SAME COLOUR. The direct term is the light's own
+     * colour times this scalar in BOTH bands, so a shadow is its surface one
+     * step down rather than the ambient's hue — which is what the reference does
+     * ("one coral and one darker coral") and what a shadow band of zero cannot
+     * do at all, because with the direct term switched off there is no term left
+     * carrying the surface's own light. Stated as the identity it is. */
+    near(lo / hi, CEL.shadowBand, 1e-12,
+      'the shadow band is not a pure scalar on the lit band — something is changing the '
+      + 'colour of the light between the two tones');
 
     // And the CONTROL: Lambert, over the same sweep, is flat nowhere at all.
     const lam = [];
@@ -141,7 +173,8 @@ export function run({ check, assert, near }) {
     assert(/vec3 irradiance = saberCelTone\( dotNL \)/.test(src),
       'the direct term no longer goes through saberCelTone');
     return `2 tones over ${(flat * 100).toFixed(1)}% of the sweep, terminator ${deg.toFixed(2)}° wide `
-      + `(Lambert: ${(lamFlat * 100).toFixed(1)}% flat), lit band = ${hi.toFixed(3)} = sin(elevation)`;
+      + `(Lambert: ${(lamFlat * 100).toFixed(1)}% flat), lit band = ${hi.toFixed(3)} = sin(elevation), `
+      + `shadow band = ${lo.toFixed(3)} = ${CEL.shadowBand} of it, in the same colour`;
   });
 
   check('cel: the whole frame is countable — a sphere in the game\'s own rig has two tones', () => {
@@ -160,7 +193,8 @@ export function run({ check, assert, near }) {
     const sunM = /new THREE\.DirectionalLight\(i === 0 \? (0x[0-9a-f]+) : 0x000000, i === 0 \? ([\d.]+) : 0\)/i.exec(src);
     const fillM = /this\.fill = new THREE\.DirectionalLight\(\s*(0x[0-9a-f]+)\s*,\s*([\d.]+)\s*\)/i.exec(src);
     const fillP = /this\.fill\.position\.set\(([-\d., ]+)\)/.exec(src);
-    assert(sunM && fillM && fillP, 'the light rig moved; this check can no longer see it');
+    const hemiM = /new THREE\.HemisphereLight\(\s*(0x[0-9a-f]+)\s*,\s*(0x[0-9a-f]+)\s*,\s*([\d.]+)\s*\)/i.exec(src);
+    assert(sunM && fillM && fillP && hemiM, 'the light rig moved; this check can no longer see it');
     const lin = (hex) => { const c = new THREE.Color(Number(hex)); return [c.r, c.g, c.b]; };
     const sunC = lin(sunM[1]).map((v) => v * +sunM[2]);
     const fillC = lin(fillM[1]).map((v) => v * +fillM[2]);
@@ -168,7 +202,22 @@ export function run({ check, assert, near }) {
     const fl = Math.hypot(...fd);
     const fill = fd.map((v) => v / fl);
     const sun = [0.42, 0.44, 0.79];                     // 26° elevation
-    const amb = [0.030, 0.036, 0.048];                  // flat sky term
+    /* THE FLAT INDIRECT TERM, DERIVED FROM THE RIG RATHER THAN TYPED.
+     *
+     * This was the literal [0.030, 0.036, 0.048], and a hand-typed ambient is
+     * exactly the wrong thing to have in a check whose subject is now the RATIO
+     * between the lit band and the shadow band: it decides that ratio outright,
+     * and at a fortieth of the rig's real skylight it reported a sphere at 11:1
+     * when the rendered frame measured 2.5:1.
+     *
+     * Every lookup in the game now goes along world up (saberCelFlatDir), and a
+     * hemisphere light sampled along its own up axis is exactly its sky colour
+     * times its intensity — so the term can be read straight off the rig, and
+     * then chroma-trimmed the way saberCelAmbient trims it. The probe is added
+     * at the share the level's own meter gives it (see lighting.mjs, which
+     * takes the same quantity from the same place). */
+    const trim = (c) => { const l = lum(c); return c.map((v) => l + (v - l) * CEL.ambientChroma); };
+    const amb = trim(lin(hemiM[1]).map((v) => v * +hemiM[3]));
 
     const tone = (n, cel) => {
       const out = [0, 0, 0];
@@ -229,10 +278,79 @@ export function run({ check, assert, near }) {
       + 'so this measurement is not distinguishing countable from continuous');
     assert(cel2.covered > pbr2.covered * 2.5,
       'the cel sphere is no more countable than the physical one');
+    /* THE TWO TONES ARE SEPARATED, AND BOUNDED FROM BOTH SIDES.
+     *
+     * This was `contrast > 2.5` and only that, which is a lower bound on a
+     * quantity whose failure mode turned out to be the OTHER end: with the
+     * shadow band at zero the same sphere measured 4.3:1 in linear, the player
+     * character rendered as a near-black silhouette in every frame, and no
+     * assertion in the build said a word about it. A one-sided bound on a ratio
+     * whose whole subject is "how far apart should two tones be" is half a
+     * check.
+     *
+     * The upper bound is not a taste knob. It comes off the reference frames
+     * (src/toon/REFERENCE.md): "the coral butte's shadow side is a slightly
+     * deeper coral, the mint mech's shadow panels are a deeper mint" — nothing
+     * in four frames goes to near-black except deliberate ink and one cast
+     * shadow on sand. The lower bound is the old one, kept: two tones a
+     * rounding error apart are one tone.
+     *
+     * Stated in LINEAR, which is what this twin computes. Through ACES and the
+     * grade that band lands at 1.3:1 to 1.6:1 in display, and the rendered frame
+     * agrees: three probe spheres in the arena's own rig measured 1.45:1, 1.45:1
+     * and 1.56:1 (.shots/probe-sphere2.png), against 2.13:1, 2.20:1 and 2.46:1
+     * for the same spheres with the band at zero (.shots/probe-sphere.png). */
     const contrast = cel2.tones[1] / cel2.tones[0];
-    assert(contrast > 2.5,
+    assert(contrast > 1.5,
       `the two tones are only ${contrast.toFixed(2)}:1 apart — that is one tone with a rounding error`);
-    return `cel: 2 tones at ${contrast.toFixed(2)}:1 covering ${(cel2.covered * 100).toFixed(1)}% of the sphere `
+    assert(contrast < 3.0,
+      `the two tones are ${contrast.toFixed(2)}:1 apart — that is a lit side and a hole, and the `
+      + 'reference frames have no hole in them');
+
+    /* AND THE SHADOW TONE IS THE SURFACE'S OWN COLOUR, which is the half of
+     * "readable" that a luminance ratio cannot see. Measured as a chromaticity
+     * distance between the two tones, with the shadow band at zero as the
+     * control — that is the frame in which a grey ball's shadow side came back
+     * saturated blue, because with the direct term switched off the only light
+     * left is the sky's. */
+    const toneAt = (n, band) => {
+      const out = [0, 0, 0];
+      const dS = n[0] * sun[0] + n[1] * sun[1] + n[2] * sun[2];
+      const dF = n[0] * fill[0] + n[1] * fill[1] + n[2] * fill[2];
+      const kS = band * sun[1] + (1 - band) * celTone(dS, sun[1], 1);
+      const kF = celTone(dF, Math.max(fill[1], 0), 0);
+      for (let i = 0; i < 3; i++) out[i] = amb[i] + sunC[i] * kS + fillC[i] * kF;
+      return out;
+    };
+    const chroma = (c) => { const l = Math.max(lum(c), 1e-6); return c.map((v) => v / l); };
+    const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    const litN = [sun[0], sun[1], sun[2]], darkN = litN.map((v) => -v);
+    const gap = dist(chroma(toneAt(litN, 0)), chroma(toneAt(darkN, 0)));
+    // the same sphere with CEL.shadowBand forced to 0, which is what shipped
+    const zeroBand = (n) => {
+      const out = [0, 0, 0];
+      const dS = n[0] * sun[0] + n[1] * sun[1] + n[2] * sun[2];
+      const dF = n[0] * fill[0] + n[1] * fill[1] + n[2] * fill[2];
+      const t = Math.min(CEL.terminatorMax, CEL.terminatorRel * sun[1]);
+      const kS = dS > t ? sun[1] : 0;
+      const kF = celTone(dF, Math.max(fill[1], 0), 0);
+      for (let i = 0; i < 3; i++) out[i] = amb[i] + sunC[i] * kS + fillC[i] * kF;
+      return out;
+    };
+    const gap0 = dist(chroma(zeroBand(litN)), chroma(zeroBand(darkN)));
+    const contrast0 = lum(zeroBand(litN)) / lum(zeroBand(darkN));
+    assert(gap < 0.30,
+      `the shadow side is ${gap.toFixed(3)} of chromaticity away from the lit side — that is a `
+      + 'different hue family on one surface, which is rule 5 broken by the lighting');
+    assert(gap0 > gap * 1.5,
+      `a zero shadow band puts the shadow only ${gap0.toFixed(3)} from the lit side against the `
+      + `band's ${gap.toFixed(3)} — this measurement is not seeing the thing it was written for`);
+    assert(contrast0 > 3.0,
+      `the zero-band control measures ${contrast0.toFixed(2)}:1, inside the bound above — so the `
+      + 'bound is not biting and the check is stale');
+    return `cel: 2 tones at ${contrast.toFixed(2)}:1 covering ${(cel2.covered * 100).toFixed(1)}% of the sphere, `
+      + `shadow ${gap.toFixed(3)} of chromaticity off the lit side `
+      + `(zero band: ${contrast0.toFixed(2)}:1 at ${gap0.toFixed(3)}) `
       + `· physical: ${pbr2.tones.length} tones covering ${(pbr2.covered * 100).toFixed(1)}%`;
   });
 
@@ -966,6 +1084,445 @@ export function run({ check, assert, near }) {
     assert(/baseLum/.test(src) && /0\.55 \+ baseLum/.test(src),
       'the base map no longer modulates the ground colour, so removing the relief removed the ripple');
     return 'relief 0.0 into the shading, ripple still in the albedo, surface memory added after the scale';
+  });
+
+  /* ══ 8. THE SHADOW IS A COLOUR, NOT AN ABSENCE ═════════════════════════ */
+
+  check('cel: a shadow is READABLE — every level lands between 1.3:1 and 2.2:1, in its own hue', () => {
+    /* THE FRAME THAT PROMPTED THIS. With the shadow band at zero the player
+     * character rendered as a near-black silhouette on every level
+     * (.shots/cel9-arena.png, .shots/cel7-meadow.png): you could tell there was
+     * a robe, you could not read the figure. The reference frames do not have
+     * one dark like it — "the coral butte's shadow side is a slightly deeper
+     * coral, the mint mech's shadow panels are a deeper mint", and nothing in
+     * four frames goes to near-black except deliberate ink and one cast shadow.
+     *
+     * The check above measures a sphere in the CONSTRUCTOR's rig. This one
+     * measures every outdoor level as shipped, and takes the indirect term from
+     * the game's own exposure meter rather than from a swatch: `irradiance` is
+     * what a horizontal surface receives, `direct` is the sun's share of it, so
+     * the difference IS the ambient, in the units the shader works in. There is
+     * nothing to type in and nothing to remember.
+     *
+     * A LIT surface receives `irradiance`. A shadowed one receives the ambient
+     * plus the authored band of the direct (CEL.shadowBand) — cast shadow and
+     * terminator alike, because saberCelCast combines with the terminator by min
+     * rather than by product. That is the whole of the rendering claim, and it
+     * is one line of arithmetic.
+     *
+     * Imported dynamically — a static import edge to Engine.js from a check
+     * patches the wrong copy of `three` and burns the once-only chunk flag. */
+    return (async () => {
+      const E = await import('../../src/engine/Engine.js');
+      const { LEVELS } = await import('../../src/game/Levels.js');
+      const OUT = ['dunes', 'meadow', 'canyon', 'arena', 'alpine', 'drifts'];
+      const rows = [], seen = [];
+      let tightest = 0, loosest = Infinity, worstGap = 0;
+      for (const key of OUT) {
+        const a = LEVELS[key].atmosphere;
+        if (!a || a.sky === false) continue;
+        const m = E.atmosphereMeter(a);
+        const ambient = m.irradiance - m.direct;
+        const lit = m.irradiance;
+        const shade = ambient + m.direct * CEL.shadowBand;
+        const ratio = lit / shade;
+        /* THE BAND, and both ends of it are the reference rather than taste.
+         * Below 1.3 the terminator stops reading as a boundary at all; above 2.2
+         * the shadow side stops being a colour. The brief's own target — "the
+         * shadow band should sit somewhere around 0.55–0.75 of the lit band's
+         * luminance" — is 1.33:1 to 1.82:1 stated the other way up, and these
+         * are linear radiances which the tone curve then compresses toward 1. */
+        assert(ratio >= 1.3,
+          `${key}: sunlit ground is only ${ratio.toFixed(2)}:1 over its own shadow — the terminator `
+          + 'has stopped being a boundary');
+        assert(ratio <= 2.2,
+          `${key}: ${ratio.toFixed(2)}:1 into shade. The reference's shadow side is a deeper version `
+          + 'of the surface, not a hole in it');
+        /* THE CONTROL, and it is what shipped: the same level with the band at
+         * zero, which is the ambient alone. It has to FAIL the bound above, or
+         * the bound is decorative. */
+        const ratio0 = lit / ambient;
+        assert(ratio0 > 2.2,
+          `${key}: with the shadow band at zero the ratio is ${ratio0.toFixed(2)}:1, inside the bound — `
+          + 'so the bound is not what is holding the shadow up and this check is stale');
+        /* …AND THE SHADOW KEEPS THE SUN'S WARMTH RATHER THAN TAKING THE SKY'S
+         * COLOUR OUTRIGHT. Measured as the share of a shadowed surface's light
+         * that still arrives from the key. At zero that share is zero by
+         * construction, which is exactly why a grey ball's shadow side measured
+         * saturation 0.73 blue. */
+        const keyShare = (m.direct * CEL.shadowBand) / shade;
+        assert(keyShare > 0.30,
+          `${key}: only ${(keyShare * 100).toFixed(0)}% of a shadowed surface's light comes from the key, `
+          + 'so its hue is the ambient\'s and not the surface\'s');
+        tightest = Math.max(tightest, ratio); loosest = Math.min(loosest, ratio);
+        worstGap = Math.max(worstGap, ratio0);
+        seen.push([m.sunPos.y, keyShare, key]);
+        rows.push(`${key} ${ratio.toFixed(2)}:1 (was ${ratio0.toFixed(2)}:1), key ${(keyShare * 100).toFixed(0)}%`);
+      }
+      assert(rows.length >= 5, `only ${rows.length} outdoor levels were measured`);
+      /* AND THE SHARE ORDERS BY SUN HEIGHT, which is what makes 0.30 a floor on
+       * a physical quantity rather than a number somebody liked. A 14° sun
+       * shines through four times the air a 60° one does, so it delivers less
+       * of the level's light and its shadows are legitimately cooler and closer
+       * to the ambient's hue — the canyon sits at 33% and the arena at 46% for
+       * exactly that reason. A constant pretending to be a physical quantity
+       * fails this line; the floor alone would not have noticed. */
+      seen.sort((p, q) => p[0] - q[0]);
+      for (let i = 1; i < seen.length; i++) {
+        assert(seen[i][1] > seen[i - 1][1],
+          `${seen[i][2]} has a higher sun than ${seen[i - 1][2]} and no more of its shadow comes `
+          + 'from the key — the shadow tone is not tracking the light');
+      }
+      /* AND THE EXPOSURE DID NOT MOVE. The lit band is untouched by all of this —
+       * a lit surface still receives exactly `irradiance` — which is the reason
+       * the meter, the bloom headroom and every existing lighting check are
+       * where they were. Asserted rather than assumed, because it is the one
+       * thing a shadow lift could plausibly have broken. */
+      assert(/mix\( 1\.0, mix\( 0\.3000, 1\.0, onLight \), saberCelShape \)/.test(CEL_SRC())
+        || /mix\( 1\.0, mix\( \$\{CEL\.shadowBand/.test(CEL_SRC()),
+        'the tone function no longer mixes the shadow band under the lit band');
+      assert(/float onLight = min\( s, saberCelCast \);/.test(CEL_SRC()),
+        'the cast shadow no longer combines with the terminator by min — a cast shadow falling on a '
+        + 'shadow face will square the band and go black');
+      assert(/saberCelCast = \( directLight\.visible && receiveShadow \)/.test(CEL_SRC()),
+        'the cascade mask is being multiplied into the light colour again, which skips the band');
+      assert(/saberCelCast = shadow;/.test(SCENERY_SRC()),
+        'the grass is not on the same shadow tone as the ground it grows out of');
+      return rows.join(' · ') + ` — worst zero-band control ${worstGap.toFixed(2)}:1`;
+    })();
+  });
+
+  /* ══ 9. THE FAR FIELD ══════════════════════════════════════════════════ */
+
+  check('ink: the far field carries no line at all, and a fight carries every line it had', () => {
+    /* "The cleanest, flattest part of a Sable frame is the distance. In ours it
+     * is the noisiest." Both halves of that were measured before this was
+     * written: .shots/diag-ink.png renders the pass's own edge factor in red and
+     * the arena's far buttes come back SOLID, and .shots/probe-noink.png is the
+     * same view with the pass switched off and is the reference look outright.
+     *
+     * Every mark out there is a true silhouette — a ruin is a stack of separate
+     * blocks and a butte is several hundred displaced rocks — so the fix cannot
+     * be a threshold. It is range, and it now has to be range in METRES rather
+     * than in extinction, because fog density across the levels spans 2.6× while
+     * "how far away is the far wall" does not follow it at all.
+     *
+     * So: sweep range and measure the line's OPACITY, per term, against the old
+     * behaviour as the control. */
+    const src = INK_SRC();
+    const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+    // A REAL SILHOUETTE, in the shader's own units: a wall with sky behind it,
+    // which is what a ruin's edge and a butte's rim both are. Its dEdge is far
+    // over the threshold, so the only thing that can switch it off is the fade.
+    const BIG = 0.35;                                  // relative depth jump
+    const bias = INK.depthBias * 0.02;
+    const edgeAt = (d) => ss(bias, bias + 0.004, BIG) * (1 - ss(INK.edgeFade[0], INK.edgeFade[1], d));
+    // The crease term, on the 35° chamfer the check above uses, faded twice.
+    const chamfer = 2 * Math.sin(35 * Math.PI / 360);
+    const creaseAt = (d) => {
+      const f = 1 - ss(INK.creaseFade[0], INK.creaseFade[1], d);
+      return ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft, chamfer * f) * f;
+    };
+
+    // 1. INSIDE A FIGHT, NOTHING HAS CHANGED. A duel happens inside 25 m.
+    for (const d of [2, 8, 18, 25]) {
+      near(edgeAt(d), 1, 1e-9, `a silhouette at ${d} m is no longer drawn at full weight`);
+      assert(creaseAt(d) > 0.9, `a chamfer at ${d} m only inks at ${creaseAt(d).toFixed(2)}`);
+    }
+    // 2. AND THE FAR FIELD IS CLEAN. Both terms are exactly zero, not small.
+    for (const d of [140, 200, 400]) {
+      near(edgeAt(d), 0, 1e-9, `a silhouette at ${d} m is still being drawn`);
+      near(creaseAt(d), 0, 1e-9, `a crease at ${d} m is still being drawn`);
+    }
+    // 3. THE CONTROL: the ranges this replaced. Silhouettes had no metre fade at
+    //    all and creases faded only their measurement, so on the arena's buttes
+    //    at 160 m both were still at full weight — which is the frame.
+    // Measured on the fold a RUIN is made of rather than on the 35° chamfer: the
+    // arena's walls are stacked blocks and its ground is displaced rock, so the
+    // crease term out there is seeing 90° corners, and 90° is what was scribbling.
+    const corner = 2 * Math.sin(90 * Math.PI / 360);
+    const creaseOld = (d) => ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft,
+      corner * (1 - ss(40, 120, d)));
+    const cornerAt = (d) => {
+      const f = 1 - ss(INK.creaseFade[0], INK.creaseFade[1], d);
+      return ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft, corner * f) * f;
+    };
+    assert(creaseOld(90) > 0.5,
+      `the old crease fade already had a stacked-block corner at 90 m down to `
+      + `${creaseOld(90).toFixed(2)} — this measurement is not seeing what the frames saw`);
+    near(cornerAt(90), 0, 1e-9,
+      `a block corner at 90 m still inks at ${cornerAt(90).toFixed(2)}`);
+    assert(cornerAt(20) > 0.99, 'a block corner at 20 m is no longer drawn at full weight');
+
+    // 4. …and the shader really does fade the OPACITY rather than the input.
+    //    Scaling a measurement that is ten times over a threshold four
+    //    thousandths wide does nothing at all, which is why the first attempt at
+    //    this changed the frame not at all.
+    assert(/\* \( 1\.0 - smoothstep\( uEdge\.x, uEdge\.y, dC \) \)/.test(src),
+      'the silhouette fade is not applied to the line opacity');
+    assert(/smoothstep\( uWeight\.w, uWeight\.w \+ \$\{INK\.creaseSoft[^}]*\}, nEdge \) \* creaseFade/.test(src),
+      'the crease fade is not applied to the line opacity');
+    assert(/float creaseFade = 1\.0 - smoothstep\( uRange\.z, uRange\.w, dC \);/.test(src),
+      'the crease measurement is no longer faded with range');
+
+    // 5. THE DEPTH BUFFER HAS TO RESOLVE THE WORLD, or the pass inks its own
+    //    quantisation. At 16 bits over the meadow's prepass frustum one code is
+    //    2.3 m at 150 m, and the second difference of a 2.3 m step over 150 m
+    //    scores 0.031 against a 0.019 threshold — a hard line ruled across the
+    //    whole width of the frame, on every iso-depth contour in the far field.
+    assert(/depthTexture\.type = THREE\.UnsignedIntType/.test(src),
+      'the ink prepass is back on a 16-bit depth buffer — its own quantisation contours will '
+      + 'be inked as horizontal lines across the far field');
+    const step = (bits, d, n = 0.15, f = 190) => (f - n) * d * d / (f * n * Math.pow(2, bits));
+    const scoreAt = (bits, d) => 2 * step(bits, d) / d;
+    assert(scoreAt(16, 150) > bias,
+      `a 16-bit contour at 150 m scores ${scoreAt(16, 150).toFixed(4)}, under the ${bias} threshold — `
+      + 'this measurement is not reproducing the bug');
+    assert(scoreAt(24, 150) < bias / 50,
+      `a 24-bit contour at 150 m still scores ${scoreAt(24, 150).toExponential(2)}`);
+
+    // 6. and nothing past the ink's reach is rasterised at all
+    assert(/const reach = Math\.min\(this\.uniforms\.uHaze\.value\.y, this\.uniforms\.uEdge\.value\.y\)/.test(src),
+      'the prepass frustum no longer tracks the nearer of the two fades, so it is drawing geometry '
+      + 'to produce pixels the composite multiplies by nothing');
+    return `silhouette full to ${INK.edgeFade[0]} m, gone by ${INK.edgeFade[1]} m; crease full to `
+      + `${INK.creaseFade[0]} m, gone by ${INK.creaseFade[1]} m (a block corner at 90 m: `
+      + `${creaseOld(90).toFixed(2)} → 0.00) · `
+      + `16-bit contour scores ${scoreAt(16, 150).toFixed(4)} vs 24-bit ${scoreAt(24, 150).toExponential(1)} `
+      + `against a ${bias} threshold`;
+  });
+
+  check('cel: the ground is a countable set of colour fields, not a continuum of mixtures', () => {
+    /* Rule 1 — "two tones per surface, and the boundary is crisp" — applied to
+     * the ground's PALETTE rather than to its shading. A hillside blending sand
+     * into rock through a smoothstep is a continuum in which no two pixels are
+     * the same colour, which is the definition of the thing the whole file is
+     * measuring against.
+     *
+     * AND THE CLAIM THIS REPLACED, because it was wrong and it is worth leaving
+     * the disproof behind. The argument for quantising the blend was that the
+     * albedo posteriser dithers wherever its input drifts across a band
+     * boundary, so the arena's speckled cliff face would be fixed by quantising
+     * the input first. Measured below: a posteriser only dithers on input that
+     * varies PER PIXEL, and the terrain's weights are driven by noise fields at
+     * 9 m and 140 m, which are fifteen pixels and more across at any range you
+     * can see a cliff from. Quantising a smooth input changes the dither by
+     * nothing measurable — the control and the subject come out within a
+     * percentage point of each other, both ways round, at every amplitude.
+     *
+     * The wall was speckling because of the rock MAP, whose features are
+     * centimetres wide and therefore genuinely per-pixel out there. That is
+     * terFlat's job, and it is asserted in the check below this one. */
+    const A = MEAN_ALBEDO.sand, B = MEAN_ALBEDO.rock;
+    const N = 4000;
+
+    /* 1. COUNTABILITY, on the real weight the arena's cliff is blended by:
+     *    rockW = smoothstep(bands, slope + noise), swept across the slope range
+     *    a wall actually spans. */
+    const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    // Measured over THE PART OF THE WALL THAT IS A BLEND — where the raw weight
+    // is neither pinned at all-sand nor at all-rock. Outside it both models are
+    // trivially flat and averaging that in would hide the whole difference.
+    const raw0 = [];
+    for (let i = 0; i < N; i++) {
+      // the slope across a wall, and the 9 m noise the shader adds to it
+      const slope = 0.06 + (i / (N - 1)) * 0.24;   // just the band a wall blends across
+      raw0.push(ss(0.10, 0.32, slope + (fbm2(i * 0.0026, 5.3, 3) - 0.5) * 0.14));
+    }
+    const band = raw0.map((w, i) => (w > 0.02 && w < 0.98 ? i : -1)).filter((i) => i > 0 && i < N - 1);
+    assert(band.length > N * 0.4,
+      `only ${band.length} of ${N} samples across the wall are a blend at all — the sweep is not `
+      + 'crossing the band');
+    const face = (quantise) => {
+      const q = (w) => (quantise ? Math.floor(w * CEL.blendBands + 0.5) / CEL.blendBands : w);
+      const cols = new Set(), blends = new Set();
+      let flat = 0;
+      for (const i of band) {
+        const w = q(raw0[i]);
+        blends.add(w);
+        cols.add(Math.round(lum(celAlbedo([0, 1, 2].map((c) => A[c] + (B[c] - A[c]) * w))) * 4000));
+        if (w === q(raw0[i - 1]) && w === q(raw0[i + 1])) flat++;
+      }
+      return { flat: flat / band.length, blends: blends.size, cols: cols.size };
+    };
+    const q = face(true), raw = face(false);
+    assert(q.blends <= CEL.blendBands + 1,
+      `the ground blends through ${q.blends} weights, more than the ${CEL.blendBands + 1} nodes allow`);
+    assert(raw.blends > band.length * 0.9,
+      `the unquantised control only reaches ${raw.blends} distinct weights across the blend band — `
+      + 'it was never a continuum and this check is measuring nothing');
+    assert(q.flat > 0.99,
+      `only ${(q.flat * 100).toFixed(1)}% of a blended wall is inside a flat field`);
+    assert(raw.flat < 0.01,
+      `the unquantised control measures ${(raw.flat * 100).toFixed(1)}% flat, so "flat field" is not `
+      + 'distinguishing anything');
+
+    /* 2. THE DISPROOF, kept as a live measurement so nobody re-argues it: with
+     *    input that varies per pixel — which the MAP does and the blend does
+     *    not — quantising the blend first buys nothing. */
+    const dither = (quantise) => {
+      const out = [];
+      for (let i = 0; i < N; i++) {
+        let w = Math.min(1, Math.max(0, (i / (N - 1)) * 1.25 - 0.12 + (fbm2(i * 0.37, 11.3, 3) - 0.5) * 0.16));
+        if (quantise) w = Math.floor(w * CEL.blendBands + 0.5) / CEL.blendBands;
+        out.push(Math.round(lum(celAlbedo([0, 1, 2].map((c) => A[c] + (B[c] - A[c]) * w))) * 4000));
+      }
+      let flat = 0;
+      for (let i = 1; i < N - 1; i++) if (out[i] === out[i - 1] && out[i] === out[i + 1]) flat++;
+      return flat / (N - 2);
+    };
+    const dq = dither(true), dr = dither(false);
+    assert(Math.abs(dq - dr) < 0.03,
+      `quantising the blend moved per-pixel dither from ${(dr * 100).toFixed(1)}% flat to `
+      + `${(dq * 100).toFixed(1)}% — it IS an anti-dither measure after all, and both the note in `
+      + 'CEL.blendBands and the one in Terrain.js are now wrong');
+
+    /* 3. THE FORM OF THE QUANTISER. A mask has to be able to reach 0 and 1, so
+     *    it snaps to nodes; the albedo posteriser takes plateau centres, so it
+     *    cannot darken a field on average. They are different operators and the
+     *    two are used for different things. */
+    assert(/float saberCelQuant\( const in float v, const in float n \) \{\n  return floor\( v \* n \+ 0\.5 \) \/ n;/.test(CEL_SRC()),
+      'saberCelQuant is gone or is no longer snapping to nodes');
+    assert(Math.floor(0 * CEL.blendBands + 0.5) / CEL.blendBands === 0
+      && Math.floor(1 * CEL.blendBands + 0.5) / CEL.blendBands === 1,
+      'the blend quantiser cannot reach 0 or 1 — every surface in the game carries a fraction of '
+      + 'every other layer');
+    assert(celBand([0.4, 0.4, 0.4], CEL.blendBands)[0] !== 0.4 * 1,
+      'the two quantisers have become the same operator');
+    const ter = TERRAIN_SRC();
+    for (const w of ['rockW', 'gritW', 'driftW', 'crustW', 'lagW', 'sheetW']) {
+      assert(new RegExp(`float ${w}\\s*=\\s*saberCelQuant\\(`).test(ter),
+        `${w} is not quantised before it picks a colour`);
+    }
+    return `a blended wall is ${q.blends} weights over ${(q.flat * 100).toFixed(1)}% flat field `
+      + `(unquantised: ${raw.blends} weights, ${(raw.flat * 100).toFixed(1)}% flat) · per-pixel `
+      + `dither unmoved: ${(dr * 100).toFixed(1)}% → ${(dq * 100).toFixed(1)}% flat`;
+  });
+
+  check('cel: the ground\'s marks are DRAWN — sparse dots on a lattice, not a thresholded noise field', () => {
+    /* Rule 6, the positive half: "Ground detail as sparse dark speckle dots —
+     * literal dots, widely spaced, no noise field." The shaded relief came out
+     * (TER_RELIEF is 0) and the photographic tone now collapses with range
+     * (terFlat), which between them leave the ground flat — and flat-but-empty
+     * is not flat-but-designed.
+     *
+     * The measurable difference between a mark and a noise field is that marks
+     * are COUNTABLE, SEPARATED and the same size as each other. Transcribed from
+     * terSpeckle in Terrain.js and measured against the game's own fBm
+     * thresholded to the same coverage, which is the thing rule 6 is against. */
+    const thash = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
+    const speckle = (px, pz, cell, fill, rad, soft) => {
+      const qx = px / cell, qz = pz / cell;
+      const ix = Math.floor(qx), iz = Math.floor(qz);
+      const fx = qx - ix, fz = qz - iz;
+      if (thash(ix * 1.031 + 4.7, iz * 1.031 + 4.7) > fill) return 0;
+      const cx = thash(ix + 3.7, iz + 3.7) * 0.56 + 0.22;
+      const cz = thash(ix * 0.917 + 11.3, iz * 0.917 + 11.3) * 0.56 + 0.22;
+      const d = Math.hypot(fx - cx, fz - cz);
+      const t = Math.min(1, Math.max(0, (d - (rad - soft)) / (2 * soft)));
+      return 1 - t * t * (3 - 2 * t);
+    };
+    // the near-field parameters, read off the shader so the twin cannot drift
+    const ter = TERRAIN_SRC();
+    const call = /terSpeckle\(wp, ([\d.]+), ([\d.]+), ([\d.]+), clamp\(spx \/ [\d.]+, ([\d.]+), [\d.]+\)\)/.exec(ter);
+    assert(call, 'the speckle call has moved; this check can no longer read its parameters');
+    const [cell, fill, rad, soft] = call.slice(1).map(Number);
+
+    const SIDE = 48, RES = 6;                       // 48 m of ground at 6 samples/m
+    const n = SIDE * RES;
+    const grid = new Uint8Array(n * n);
+    let covered = 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const v = speckle(i / RES, j / RES, cell, fill, rad, soft);
+        if (v > 0.5) { grid[j * n + i] = 1; covered++; }
+      }
+    }
+    const cov = covered / (n * n);
+    /* SPARSE. The reference's speckle is a scattering, not a stipple: a few per
+     * cent of the ground, so the field between the marks stays the flat colour
+     * the level authored. */
+    assert(cov > 0.001 && cov < 0.03,
+      `the speckle covers ${(cov * 100).toFixed(2)}% of the ground — that is a texture, not marks`);
+
+    // COUNTABLE AND SEPARATED. One dot per filled cell, and no dot touches the
+    // next: the jittered centre sits in [0.22, 0.78] of a cell and the radius is
+    // small enough that the disc cannot cross the cell edge.
+    assert(rad + 0.22 < 0.5,
+      `a dot of radius ${rad} centred as close as 0.22 from a cell edge crosses it — the marks `
+      + 'will merge into blobs');
+    const seen = new Uint8Array(n * n);
+    let blobs = 0; const sizes = [];
+    const stack = [];
+    for (let s = 0; s < n * n; s++) {
+      if (!grid[s] || seen[s]) continue;
+      blobs++; let size = 0; stack.length = 0; stack.push(s); seen[s] = 1;
+      while (stack.length) {
+        const k = stack.pop(); size++;
+        const x = k % n, y = (k - x) / n;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          const t = ny * n + nx;
+          if (grid[t] && !seen[t]) { seen[t] = 1; stack.push(t); }
+        }
+      }
+      sizes.push(size);
+    }
+    const mean = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+    const sd = Math.sqrt(sizes.reduce((a, b) => a + (b - mean) ** 2, 0) / sizes.length);
+    /* THE MARKS ARE ALL THE SAME SIZE, which is what "dots" means and what an
+     * fBm blob field can never be. A coefficient of variation under a fifth is
+     * a set of discs; the control below is over one. */
+    assert(sd / mean < 0.25,
+      `the marks vary in size by ${(sd / mean * 100).toFixed(0)}% — they are blobs, not dots`);
+    assert(blobs > 40, `only ${blobs} marks in ${SIDE}×${SIDE} m — nothing was measured`);
+
+    /* THE CONTROL: the game's own fBm, thresholded to the SAME coverage. It is
+     * the alternative rule 6 names and rejects, and it fails both properties. */
+    const vals = [];
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) vals.push(fbm2(i / RES / 3, j / RES / 3, 4));
+    const sorted = [...vals].sort((a, b) => a - b);
+    const thr = sorted[Math.floor((1 - cov) * sorted.length)];
+    const ngrid = new Uint8Array(n * n);
+    for (let k = 0; k < n * n; k++) ngrid[k] = vals[k] > thr ? 1 : 0;
+    const nseen = new Uint8Array(n * n);
+    let nblobs = 0; const nsizes = [];
+    for (let s = 0; s < n * n; s++) {
+      if (!ngrid[s] || nseen[s]) continue;
+      nblobs++; let size = 0; stack.length = 0; stack.push(s); nseen[s] = 1;
+      while (stack.length) {
+        const k = stack.pop(); size++;
+        const x = k % n, y = (k - x) / n;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          const t = ny * n + nx;
+          if (ngrid[t] && !nseen[t]) { nseen[t] = 1; stack.push(t); }
+        }
+      }
+      nsizes.push(size);
+    }
+    const nmean = nsizes.reduce((a, b) => a + b, 0) / nsizes.length;
+    const nsd = Math.sqrt(nsizes.reduce((a, b) => a + (b - nmean) ** 2, 0) / nsizes.length);
+    assert(nsd / nmean > 0.5,
+      `a thresholded noise field at the same coverage has marks varying by only `
+      + `${(nsd / nmean * 100).toFixed(0)}% — this measurement cannot tell a dot from a blob`);
+
+    // …and the strata are drawn too, in world space, so a bed 150 m out is
+    // drawn exactly as firmly as one at arm's length.
+    assert(/smoothstep\(0\.075, 0\.0, bandF\) \+ smoothstep\(0\.925, 1\.0, bandF\)/.test(ter),
+      'the strata seam is no longer a narrow contour line');
+    assert(/1\.0 - seam \* 0\.46/.test(ter), 'the strata seam has lost its contrast');
+    // and the far field really does collapse onto the map's own calibrated mean
+    assert(/baseLum = mix\(uFarMean\.x, baseLum, terFlat\);/.test(ter),
+      'the ground\'s photographic tone no longer collapses with range');
+    assert(/float rockLum = mix\(uFarMean\.y, dot\(rockC, vec3\(0\.3333\)\), terFlat\);/.test(ter),
+      'the rock\'s photographic tone no longer collapses with range');
+    return `${blobs} marks over ${SIDE}×${SIDE} m covering ${(cov * 100).toFixed(2)}%, size spread `
+      + `${(sd / mean * 100).toFixed(0)}% (thresholded fBm at the same coverage: ${nblobs} blobs, `
+      + `${(nsd / nmean * 100).toFixed(0)}%)`;
   });
 }
 

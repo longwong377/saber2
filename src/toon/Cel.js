@@ -37,7 +37,15 @@
  * ── THE FIVE CHANGES TO THE LIGHT TRANSPORT ───────────────────────────────
  *
  * 1. TWO TONES, HARD EDGE (rule 1). `saturate(dot(N,L))` becomes a step. Not a
- *    three-band ramp: a lit level and nothing, meeting over 2.4% of the range.
+ *    three-band ramp: a lit level and an AUTHORED SHADOW LEVEL, meeting over
+ *    2.4% of the range. The shadow level is 0.30 of the key and arrives in the
+ *    key's own colour — see CEL.shadowBand, which was zero and should not have
+ *    been. A shadow left over from switching the sun off is the ambient's
+ *    colour, and this rig's ambient is blue because the physical model expected
+ *    the direct term to do the work; the frames came back with a near-black
+ *    player character and a grey ball whose shadow side was saturated blue.
+ *    In the reference frames the shadow tone is the SURFACE'S OWN COLOUR, one
+ *    step deeper.
  *
  * 2. THE LIT LEVEL IS THE LIGHT'S OWN HORIZONTAL RESPONSE (see CEL_KEY below).
  *    This is the one number that is derived rather than chosen, and getting it
@@ -61,9 +69,13 @@
  *    saberCelShape, which is what keeps a surface at TWO tones rather than the
  *    four a sun terminator crossing a fill terminator would give it.
  *
- * 5. CAST SHADOWS ARE HARD (rule 2). The filter still runs — its 50% contour is
- *    a far better silhouette than a single tap, and it is what keeps acne out —
- *    but its output is stepped, so there is no penumbra anywhere.
+ * 5. CAST SHADOWS ARE HARD (rule 2) AND LAND ON THE SAME TONE. The filter still
+ *    runs — its 50% contour is a far better silhouette than a single tap, and it
+ *    is what keeps acne out — but its output is stepped, so there is no penumbra
+ *    anywhere. It is then carried into the tone as a mask (saberCelCast) rather
+ *    than multiplied into the light's colour, so a fragment in a cast shadow
+ *    lands on exactly the shadow band a fragment facing away lands on, and a
+ *    cast shadow crossing a shadow face does not square it.
  *
  * And two changes to what surfaces ARE:
  *
@@ -126,17 +138,45 @@ export const CEL = {
   edge: 0.012,
 
   /**
-   * THE SHADOW BAND'S SHARE OF THE DIRECT TERM. Zero, and it has to be zero.
+   * THE SHADOW BAND'S SHARE OF THE DIRECT TERM — THE SHADOW TONE, AUTHORED.
    *
-   * A lifted dark band is the usual advice — "never let the shadow side go
-   * black" — and it is advice for a renderer with no other ambient term. This
-   * one has a flat indirect term (see CEL_FLAT) which is exactly what that
-   * advice is asking for, and it is the sky's colour rather than a grey lift.
-   * Putting a floor on the direct term as well would light the shadow side
-   * from the SUN, at a fraction, which is a soft second terminator: a gradient
-   * where the reference has an edge.
+   * This was 0.0, on the argument that the flat indirect term (CEL.flat) was
+   * already the "never let the shadow side go black" lift and that a floor on
+   * the direct term would be a soft second terminator. Both halves of that were
+   * wrong and the frames said so:
+   *
+   *   IT IS NOT A GRADIENT. `mix( shadowBand, 1.0, s )` with s a step is a
+   *   CONSTANT below the terminator, so the shadow side stays exactly one flat
+   *   value — two tones, hard edge, rule 1 intact. There is no second
+   *   terminator; there is a second LEVEL, which is the thing rule 1 asks for.
+   *
+   *   THE INDIRECT TERM IS NOT A SHADOW TONE. It is what is left over after the
+   *   direct term is switched off, and this rig's indirect is a blue sky probe
+   *   plus a blue fill because the physical model expected the sun to do the
+   *   work. Measured on three probe spheres in the arena's own rig
+   *   (.shots/probe-sphere.png), a mid-grey ball came out sRGB 0.679,0.640,0.637
+   *   on its lit side and 0.143,0.272,0.528 on its shadow side: 2.46:1 in
+   *   display, and a shadow whose SATURATION was 0.73 — the shadow side of a
+   *   grey ball was saturated blue. The player character was a near-black
+   *   silhouette in every frame for the same reason.
+   *
+   * Nothing in the four reference frames does that. "The coral butte's shadow
+   * side is a slightly deeper coral, the mint mech's shadow panels are a deeper
+   * mint" — the shadow is a COLOUR, and it is the surface's own colour. So the
+   * shadow band is authored: a fixed share of the key, arriving in the KEY'S
+   * OWN COLOUR (warm, 0xfff0d8), which both raises the level and dilutes the
+   * blue ambient that was setting the hue.
+   *
+   * 0.30 is where the measurement lands: the lit:shadow ratio comes out between
+   * 1.4:1 and 1.6:1 in display across all five outdoor levels, which is the
+   * reference's own separation, and the shadow side of a grey ball reads grey.
+   *
+   * The LIT band is untouched — a lit surface still gets exactly `key`, which is
+   * what flat ground gets under Lambert — so the exposure meter, the bloom
+   * headroom and every lighting check are exactly where they were. This can only
+   * ever raise a surface the sun does not reach.
    */
-  shadowBand: 0.0,
+  shadowBand: 0.30,
 
   /**
    * HOW HARD THE INDIRECT TERM IS FLATTENED, 0 = three's directional probe,
@@ -156,6 +196,33 @@ export const CEL = {
   /** Albedo posterisation: plateaus in sqrt(luminance), and the chroma lift. */
   albedoBands: 5.0,
   chroma: 1.14,
+
+  /**
+   * HOW MANY STEPS A LAYER BLEND GETS — quantise the blend, then the result.
+   *
+   * Rule 1 applied to the ground's PALETTE rather than to its tone. Unquantised,
+   * a hillside blending from sand to rock is a continuum of mixtures and no two
+   * pixels of it are the same colour — countable is exactly what it is not. With
+   * the weights snapped, the same hillside is a handful of flat fields with a
+   * drawn boundary between each pair, which is what the reference's ground is:
+   * "one coral and one darker coral", not five hundred corals.
+   *
+   * NOT, as it turns out, an anti-dither measure, and the note is here because
+   * the obvious argument for this is wrong and someone will make it again: "a
+   * posteriser dithers where its input drifts across a band boundary, so
+   * quantise the input first". Measured in tools/checks/cel.mjs, a posteriser
+   * only dithers on input that varies per PIXEL, and these weights are driven by
+   * noise at 9 m and 140 m — fifteen pixels and more across at any range you can
+   * see a cliff from. What was actually speckling the arena's far wall was the
+   * rock MAP, whose features are centimetres wide, and that is fixed by
+   * Terrain's terFlat.
+   *
+   * Four steps, snapped to nodes (saberCelQuant, not saberCelBand1 — a blend
+   * that can never reach 0 or 1 puts a quarter of a rock tint on flat sand).
+   * Fewer and a cliff's edge is a staircase you can count; more and the fields
+   * stop being fields.
+   */
+  blendBands: 4.0,
 
   /**
    * How much of the ambient's own chroma reaches the shadow side. See
@@ -285,6 +352,25 @@ vec3 saberCelBand( const in vec3 c, const in float n ) {
 float saberCelBand1( const in float v, const in float n ) {
   return ( floor( v * n ) + 0.5 ) / n;
 }
+/**
+ * THE OTHER QUANTISER, and the difference between the two is not a detail.
+ *
+ * saberCelBand1 takes the plateau CENTRE, which is right for a LEVEL — it
+ * cannot darken a field on average, which is what keeps the albedo posteriser
+ * off the material palette's toes. It is wrong for a BLEND WEIGHT, because it
+ * never returns 0 or 1: a rock mask quantised that way puts an eighth of a
+ * rock tint on the flattest sand in the level and can never reach full rock.
+ *
+ * This one snaps to the nearest NODE, so 0 stays 0, 1 stays 1, and what lies
+ * between arrives as n flat regions with a drawn boundary between them. That
+ * is the form a mask wants, and it is why the far field stopped dithering: a
+ * blend that drifts slowly across a posteriser's band boundary flickers
+ * between two output colours pixel by pixel, and one that is constant over a
+ * region cannot.
+ */
+float saberCelQuant( const in float v, const in float n ) {
+  return floor( v * n + 0.5 ) / n;
+}
 `;
 
 const CEL_COMMON = CEL_BAND_GLSL + /* glsl */`
@@ -314,11 +400,32 @@ float saberCelKey = 1.0;
  * exposure meter does not move. */
 float saberCelShape = 1.0;
 
+/* IS THIS LIGHT REACHING THIS FRAGMENT? 1 = yes, 0 = a cast shadow.
+ *
+ * A GLOBAL RATHER THAN A MULTIPLY ON directLight.color, and the difference is
+ * the whole of why cast shadows are no longer holes.
+ *
+ * three's own arrangement — and this file's, until now — multiplies the shadow
+ * mask into the light's COLOUR before RE_Direct sees it, so a fragment in a cast
+ * shadow is lit by a black light and lands on the ambient. With an authored
+ * shadow band that is wrong twice over: it skips the band entirely, and where a
+ * cast shadow falls on a surface that ALSO faces away from the sun the two
+ * darkenings multiply — shadowBand², a third and much darker tone, on exactly
+ * the surfaces (a character's own self-shadowed robe) where it is most visible.
+ *
+ * Carried as a mask instead, the two questions combine with a min: a surface is
+ * lit if the sun can see it AND it faces the sun, and it is in THE shadow tone —
+ * one tone, the same one — otherwise. Two tones per surface, which is rule 1,
+ * and a cast shadow that reads as the same deliberate colour as a shadow face,
+ * which is what the reference frames do. */
+float saberCelCast = 1.0;
+
 /** The two-tone response. In: N.L. Out: the direct term's multiplier. */
 float saberCelTone( const in float dotNL ) {
   float t = min( ${CEL.terminatorMax.toFixed(4)}, ${CEL.terminatorRel.toFixed(4)} * saberCelKey );
   float s = smoothstep( t - ${CEL.edge.toFixed(4)}, t + ${CEL.edge.toFixed(4)}, dotNL );
-  return saberCelKey * mix( 1.0, mix( ${CEL.shadowBand.toFixed(4)}, 1.0, s ), saberCelShape );
+  float onLight = min( s, saberCelCast );
+  return saberCelKey * mix( 1.0, mix( ${CEL.shadowBand.toFixed(4)}, 1.0, onLight ), saberCelShape );
 }
 
 /** The lit level of a light whose view-space direction is the argument. */
@@ -380,8 +487,7 @@ vec3 saberCelAlbedo( const in vec3 c ) {
 
 /** Distance as flat plates rather than as a continuous veil. */
 float saberCelDistance( const in float f ) {
-  float n = ${CEL.fogBands.toFixed(1)};
-  return floor( f * n + 0.5 ) / n;
+  return saberCelQuant( f, ${CEL.fogBands.toFixed(1)} );
 }
 `;
 
@@ -489,14 +595,20 @@ export function installCelShading(THREE_) {
   // directional today, and a future three that reorders them would otherwise
   // hand a point light the sun's key.
   sub('lights_fragment_begin', 'getPointLightInfo( pointLight, geometryPosition, directLight );',
-    'getPointLightInfo( pointLight, geometryPosition, directLight );\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;',
+    'getPointLightInfo( pointLight, geometryPosition, directLight );'
+    + '\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;\n\t\tsaberCelCast = 1.0;',
     'point key');
   sub('lights_fragment_begin', 'getSpotLightInfo( spotLight, geometryPosition, directLight );',
-    'getSpotLightInfo( spotLight, geometryPosition, directLight );\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;',
+    'getSpotLightInfo( spotLight, geometryPosition, directLight );'
+    + '\n\t\tsaberCelKey = 1.0;\n\t\tsaberCelShape = 1.0;\n\t\tsaberCelCast = 1.0;',
     'spot key');
   sub('lights_fragment_begin', 'getDirectionalLightInfo( directionalLight, directLight );', [
     'getDirectionalLightInfo( directionalLight, directLight );',
     '\t\tsaberCelKey = saberCelLightKey( directLight.direction );',
+    // Reset per light, not once: the cascade line below only runs for light 0,
+    // so without this every later light in the unrolled loop would inherit the
+    // sun's occlusion mask and the fill would be shadowed by the sun.
+    '\t\tsaberCelCast = 1.0;',
     '\t\t#if UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS',
     '\t\tsaberCelShape = 1.0;',
     '\t\t#else',
@@ -504,11 +616,15 @@ export function installCelShading(THREE_) {
     '\t\t#endif',
   ].join('\n'), 'directional key');
 
-  // HARD CAST SHADOWS. Engine has already replaced this line with its cascade
-  // selector, so the text matched here is Engine's and not three's.
+  // HARD CAST SHADOWS, ON THE SHADOW BAND. Engine has already replaced this line
+  // with its cascade selector, so the text matched here is Engine's and not
+  // three's. The mask is CARRIED rather than multiplied into the light — see
+  // saberCelCast: multiplying it in lands a cast shadow on the ambient and skips
+  // the authored shadow tone entirely, and squares it where a cast shadow falls
+  // on a face that was already turned away.
   sub('lights_fragment_begin',
     'directLight.color *= ( directLight.visible && receiveShadow ) ? saberCascadeShadow() : 1.0;',
-    'directLight.color *= ( directLight.visible && receiveShadow ) ? saberCelShadow( saberCascadeShadow() ) : 1.0;',
+    'saberCelCast = ( directLight.visible && receiveShadow ) ? saberCelShadow( saberCascadeShadow() ) : 1.0;',
     'hard cascade shadow');
   sub('shadowmask_pars_fragment',
     'shadow *= receiveShadow ? saberCascadeShadow() : 1.0;',
@@ -557,11 +673,14 @@ const smoothstep = (a, b, x) => { const t = saturate((x - a) / (b - a)); return 
 
 /**
  * saberCelTone(). `key` is the light's lit level — see CEL_KEY. `shape` is 1
- * for a light that owns a shadow map and 0 for a fill, which lands flat.
+ * for a light that owns a shadow map and 0 for a fill, which lands flat. `cast`
+ * is the stepped cast-shadow mask, 1 in the open and 0 in a shadow; it combines
+ * with the terminator by min, so both roads into the shadow arrive at the same
+ * band rather than multiplying.
  */
-export function celTone(dotNL, key, shape = 1) {
+export function celTone(dotNL, key, shape = 1, cast = 1) {
   const t = Math.min(CEL.terminatorMax, CEL.terminatorRel * key);
-  const s = smoothstep(t - CEL.edge, t + CEL.edge, dotNL);
+  const s = Math.min(smoothstep(t - CEL.edge, t + CEL.edge, dotNL), cast);
   return key * (1 + shape * (CEL.shadowBand + (1 - CEL.shadowBand) * s - 1));
 }
 

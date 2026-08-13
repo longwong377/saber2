@@ -965,15 +965,52 @@ export function run({ check, assert, near }) {
     const direct = (o) => lum(grassShade({
       N: [0.62, 0.30, 0.72], V: [0, 0.18, -1], hemi, lights, height: 0.7, translucency: 0, ...o,
     }).direct);
+    /* RE-DERIVED, AND ISOLATED, because the quantity it was standing on moved.
+     *
+     * This was `direct({ shadow: 0, guard: false }) === 0` — with the bug in,
+     * a fully shadowed blade receives NO direct light at all. That worked only
+     * because the sun's own contribution in shadow was also zero, and it is not
+     * any more: the cel model now lands a shadowed surface on an authored band
+     * of the key rather than on nothing (CEL.shadowBand), so light 0 is worth
+     * something in shade whether the guard is there or not.
+     *
+     * The thing the bug actually destroys is THE FILL'S CONTRIBUTION, so that is
+     * what is measured now — the difference between the whole rig and light 0
+     * alone. It is still an identity with no threshold in it, and it is a
+     * stricter statement than the old one: the old form could have passed with
+     * the fill intact if the sun had happened to be zero. */
+    const fillPart = (o) => direct(o) - direct({ ...o, lights: [lights[0]] });
     assert(direct({ shadow: 0 }) > 0,
       'a fully shadowed blade receives no direct light at all — the fill has been masked away');
-    assert(direct({ shadow: 0, guard: false }) === 0,
+    assert(fillPart({ shadow: 0 }) > 0,
+      'a fully shadowed blade gets nothing from the shadowless fill');
+    assert(fillPart({ shadow: 0, guard: false }) === 0,
       'the shipped bug no longer deletes the fill in shadow, so this check is measuring nothing');
-    // …and the total still has to move, or "worth something" is a word game.
-    // The measured figure is printed rather than tested against a memory of it.
+    /* …AND WHAT THE GUARD IS WORTH ON THE TOTAL IS EXACTLY THE FILL — re-derived
+     * from `gain > 1.10` to an identity, because the ratio's denominator moved
+     * underneath it and a restated threshold would be the weakening the house
+     * rules forbid.
+     *
+     * The denominator moved for a real reason: a shadowed blade is no longer
+     * left with nothing from the sun. The cel model lands it on an authored
+     * band of the key (CEL.shadowBand), which is 84% of a shaded blade's direct
+     * light, so the same intact guard that scored 1.175× and then 1.10× now
+     * scores 1.09× while doing precisely as much work as it ever did.
+     *
+     * So the claim is stated exactly instead of approximately: the guard's whole
+     * effect on the total, in shade, IS the fill's whole contribution — no more
+     * and no less — and without it the fill contributes exactly zero. Two
+     * identities with no threshold between them, and they fail the instant the
+     * guard is removed rather than when a ratio drifts under a number. */
     const gain = lum(shaded) / lum(shippedShaded);
-    assert(gain > 1.10,
-      `the guard is worth ${gain.toFixed(3)}× in shade, which is not the difference between black and dark green`);
+    const fillTotal = lum(shaded) - lum(sweep({ shadow: 0, lights: [lights[0]] }));
+    const fillTotal0 = lum(shippedShaded) - lum(sweep({ shadow: 0, guard: false, lights: [lights[0]] }));
+    assert(fillTotal > 0, 'the fill contributes nothing to a shadowed blade even with the guard');
+    assert(Math.abs(fillTotal0) < 1e-12,
+      `the shipped bug leaves ${fillTotal0.toExponential(2)} of the fill on a shadowed blade, so it `
+      + 'is no longer the bug this check is about');
+    assert(Math.abs(lum(shaded) - lum(shippedShaded) - fillTotal) < 1e-12,
+      'the guard is worth something other than exactly the fill — it is doing a second job');
     /* 3. SHADE IS SKY-COLOURED — an identity now, not a ratio.
      *
      * This was `blueShade > blueLit * 1.25`, a threshold chosen against the

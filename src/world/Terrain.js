@@ -25,8 +25,9 @@
 
 import * as THREE from 'three';
 import { fbm2, ridged2, clamp, lerp, smoothstep } from '../engine/MathUtil.js';
-import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps } from '../engine/Textures.js';
+import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { SurfaceField, SURFACE_RES, SURFACE_SIZE, SURFACE_GRAD_FS } from './Surface.js';
+import { CEL } from '../toon/Cel.js';
 // One-way: Scenery knows nothing about Terrain, so publishing the heightfield
 // on the broker here is what lets the water find the bed it is lying in
 // without the World having to wire the two together.
@@ -748,6 +749,21 @@ const TERRAIN_VERT_BODY = /* glsl */`
  */
 const TER_RELIEF = '0.0';
 
+/**
+ * WHERE THE GROUND'S PHOTOGRAPHIC TONE STOPS, in metres: full weight to the
+ * first, gone by the second.
+ *
+ * 45 m is about where a 3 cm ripple crest drops under one pixel at this field
+ * of view and resolution, so past it the map is not describing a surface any
+ * more — it is sampling a noise field once per pixel, which crawls when the
+ * camera moves and dithers when the posteriser lands on it. 150 m is where the
+ * aerial term has taken enough of the surface that nothing is left to modulate.
+ *
+ * The near half of a frame keeps every bit of the detail it had. This is a
+ * statement about distance, not about texture.
+ */
+const TER_FLAT = [45, 150];
+
 const TERRAIN_FRAG_COMMON = /* glsl */`
   varying vec3 vWPos;
   varying vec3 vWNrm;
@@ -777,10 +793,16 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform sampler2D uSurfMap;   // WHAT HAS HAPPENED HERE — depth, ∂depth, scorch
   uniform vec3 uSurfCol;     // the colour of turned, packed material
   uniform vec3 uSurfGlowCol; // what a cut in this ground glows
+  uniform vec2 uFarMean;     // base map / rock map mean tone — what the far field collapses onto
   uniform vec3 uNrmScale;    // base, near detail, rock
   uniform vec3 uSkyCol;      // the fallback asymptote, when nothing drew a sky
   uniform sampler2D uSkyStrip;  // the DRAWN sky at the skyline, over bearing
   uniform vec2 uHaze;        // extra density gain at range, sky blend
+
+  /* How many flat steps a layer blend gets before it picks a colour, and how
+   * far the ground's photographic tone survives. See CEL.blendBands and
+   * TER_FLAT in src/world/Terrain.js. */
+  const float TER_BLEND = ${CEL.blendBands.toFixed(1)};
 
   float thash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float tnoise(vec2 p) {
@@ -793,6 +815,48 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
     float s = 0.0, a = 0.5;
     for (int i = 0; i < 3; i++) { s += tnoise(p) * a; p = p * 2.07 + 17.3; a *= 0.5; }
     return s * 1.1428;
+  }
+
+  /**
+   * DRAWN SPECKLE — literal dots, widely spaced, on a lattice, NOT a noise field.
+   *
+   * Rule 6 of src/toon/REFERENCE.md is exact about this: "Ground detail as
+   * sparse dark speckle dots — literal dots, widely spaced, no noise field."
+   * It is the positive half of the change that took the shaded relief out of
+   * the ground (TER_RELIEF) and collapsed its photographic tone at range
+   * (terFlat); without it the ground reads as flat-but-empty rather than
+   * flat-but-drawn.
+   *
+   * A lattice with a jittered centre per cell, and most cells empty. That is
+   * what makes it read as marks somebody put there: an fBm field thresholded to
+   * the same coverage gives blobs with fractal edges, which is the thing rule 6
+   * is contrasting against.
+   *
+   * THE DOT'S EDGE SOFTENS WITH THE PIXEL FOOTPRINT. A hard-edged 40 cm mark is
+   * about two pixels at 150 m, and a two-pixel hard disc on a lattice is a
+   * sparkling moiré as the camera moves. The soft argument is the footprint in
+   * the same units the radius is in, so the mark stays a mark up close and
+   * dissolves into an even tint exactly when it stops being resolvable —
+   * mip-mapping, done by hand, for a function that has no mip chain.
+   *
+   * (No backticks anywhere in this comment. It lives inside a JS template
+   * literal, and one backtick closes the string and takes the whole material
+   * out of the frame. node --check catches it; tools/verify.mjs does not.)
+   *
+   * @param p    world XZ, metres
+   * @param cell lattice pitch, metres
+   * @param fill fraction of cells that carry a dot
+   * @param rad  dot radius, in cells
+   * @param soft edge width, in cells
+   */
+  float terSpeckle(vec2 p, float cell, float fill, float rad, float soft) {
+    vec2 q = p / cell;
+    vec2 i = floor(q), f = fract(q);
+    float h = thash(i * 1.031 + 4.7);
+    if (h > fill) return 0.0;
+    vec2 c = vec2(thash(i + 3.7), thash(i * 0.917 + 11.3)) * 0.56 + 0.22;
+    float d = length(f - c);
+    return 1.0 - smoothstep(rad - soft, rad + soft, d);
   }
 
   /* The rotation that takes world XZ into a frame whose +x runs along d. */
@@ -972,6 +1036,26 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   float viewDist = length(vViewPosition);
   vec2 wp = vWPos.xz;
 
+  /* ── THE FAR FIELD IS THE FLATTEST PART OF THE PICTURE ──────────────────
+   *
+   * "The cleanest, flattest part of a Sable frame is the distance. In ours it is
+   * the noisiest." That is rule 3 and rule 6 arriving together, and the cause is
+   * one line: the ground's tone is modulated by a PHOTOGRAPHIC map — a ripple
+   * field, a joint network — whose features are centimetres across. Past forty
+   * metres those features are smaller than a pixel, so what the map contributes
+   * is not detail but per-pixel variance, and the posteriser turns per-pixel
+   * variance into salt-and-pepper dither.
+   *
+   * So the map's TONE is collapsed onto its own mean with range. The mean is the
+   * map's real one (uFarMean, from MEAN_ALBEDO), which is what makes this exact
+   * rather than approximate: the far field lands on precisely the colour the
+   * level authored, with the texture contributing nothing either way. Nothing
+   * else changes — the macro fields (mA at 70 m, mD at 140 m) are LOW frequency,
+   * still several pixels wide at 300 m, and they are what a distant hillside is
+   * supposed to vary over. What replaces the lost centimetre detail is drawn:
+   * strata seams and speckle, which do not shrink with distance. */
+  float terFlat = 1.0 - smoothstep(${TER_FLAT[0].toFixed(1)}, ${TER_FLAT[1].toFixed(1)}, viewDist);
+
   // the baked landform channels
   float conc = vTer.x * 2.0 - 1.0;   // + hollow, − crest        (≈8 m)
   float open = vTer.y;               // 0 enclosed, 1 exposed    (≈18 m)
@@ -998,18 +1082,45 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // while the level's own blurb called it stone. Height above the fighting
   // floor is the other half of the answer, and a preset that has no walls
   // worth speaking of simply leaves the gain at zero.
-  float rockW = smoothstep(uBands.x, uBands.y, slope + (mB - 0.5) * 0.14
-                           + smoothstep(uRockUp.y, uRockUp.z, vWPos.y) * uRockUp.x);
-  float gritW = smoothstep(uBands.z, uBands.w, slope + (mC - 0.5) * 0.09) * (1.0 - rockW);
+  /* ── QUANTISE THE BLEND, THEN THE RESULT ────────────────────────────────
+   *
+   * Every weight below is snapped to CEL.blendBands nodes before it is used for
+   * anything.
+   *
+   * ONE HONEST CORRECTION, because the obvious reason for doing this turns out
+   * not to be the true one. The story is that a posteriser dithers wherever its
+   * input drifts across a band boundary, so quantising the blend first stops the
+   * far field speckling. Measured (tools/checks/cel.mjs), that is FALSE for this
+   * shader: a posteriser only dithers on input that varies per PIXEL, the blend
+   * weights here are driven by noise fields at 9 m and 140 m — fifteen pixels
+   * and more across at any range you can see a cliff from — and quantising a
+   * smooth input changes the dither not at all. What was actually speckling the
+   * arena's far wall was the rock MAP, whose features are centimetres wide and
+   * therefore genuinely per-pixel out there, and that is fixed by terFlat above.
+   *
+   * What this does buy, and what the check measures instead, is COUNTABILITY —
+   * rule 1 applied to the ground's palette rather than to its tone. Unquantised,
+   * a hillside is a continuum of mixtures and every pixel of it is its own
+   * colour; snapped, it is a handful of flat fields with a drawn boundary
+   * between each pair, which is what the reference's ground is.
+   *
+   * Snapped to nodes rather than to plateau centres (saberCelQuant, not
+   * saberCelBand1): a mask has to be able to reach 0 and 1, or the flattest sand
+   * in the level carries an eighth of a rock tint. See CEL.blendBands. */
+  float rockW = saberCelQuant(
+    smoothstep(uBands.x, uBands.y, slope + (mB - 0.5) * 0.14
+               + smoothstep(uRockUp.y, uRockUp.z, vWPos.y) * uRockUp.x), TER_BLEND);
+  float gritW = saberCelQuant(
+    smoothstep(uBands.z, uBands.w, slope + (mC - 0.5) * 0.09), TER_BLEND) * (1.0 - rockW);
   // fines blow off the convex windward brinks and settle in the lee and hollows
   float scour = crest * clamp(expo * 1.3 + 0.3, 0.0, 1.0);
-  float driftW = clamp(hollow * 1.25 + lee * 0.5 - 0.12, 0.0, 1.0)
-               * (1.0 - rockW) * smoothstep(uBands.w * 1.6, 0.0, slope);
+  float driftW = saberCelQuant(clamp(hollow * 1.25 + lee * 0.5 - 0.12, 0.0, 1.0)
+               * smoothstep(uBands.w * 1.6, 0.0, slope), TER_BLEND) * (1.0 - rockW);
   // A crust — salt pan, ash flat, dried silt — takes the flat floor of the
   // basins. Modulated at the macro scale, not the patch scale: a pan is one
   // feature you can see the far side of, not a spatter of light patches.
-  float crustW = clamp(uGround.y * smoothstep(0.13, 0.02, slope)
-               * smoothstep(0.25, 0.72, basin) * (0.55 + mA * 0.85), 0.0, 1.0);
+  float crustW = saberCelQuant(clamp(uGround.y * smoothstep(0.13, 0.02, slope)
+               * smoothstep(0.25, 0.72, basin) * (0.55 + mA * 0.85), 0.0, 1.0), TER_BLEND);
   // The two ends of grain sorting, at the scale a landscape actually varies on.
   // Wind strips the fines off the exposed ground and leaves a coarse dark lag;
   // it drops them again downwind as pale sheets. Without this the whole map is
@@ -1018,10 +1129,10 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // 0.16 … 0.86 with p50 at 0.44, so lag takes the top third, sheet the bottom
   // third, and the middle third stays base. Set against the nominal 0…1 range
   // instead, lag only reached full strength in the top tenth of the map.)
-  float lagW   = smoothstep(0.47, 0.61, mD + scour * 0.14 - hollow * 0.10)
-               * uMacro.y * (1.0 - rockW);
-  float sheetW = smoothstep(0.44, 0.28, mD - hollow * 0.10 - lee * 0.08)
-               * uMacro.z * (1.0 - rockW);
+  float lagW   = saberCelQuant(smoothstep(0.47, 0.61, mD + scour * 0.14 - hollow * 0.10)
+               * uMacro.y, TER_BLEND) * (1.0 - rockW);
+  float sheetW = saberCelQuant(smoothstep(0.44, 0.28, mD - hollow * 0.10 - lee * 0.08)
+               * uMacro.z, TER_BLEND) * (1.0 - rockW);
 
   /* ── the ripple frame: crests across the wind, bending with the ground.
    *
@@ -1291,6 +1402,9 @@ const TERRAIN_FRAG_MAP = /* glsl */`
   // barely rippled, so a smooth sheet loses its tonal banding as well as its
   // relief rather than staying a flat-lit corduroy.
   float baseLum = mix(0.389, dot(baseC, vec3(0.3333)), 0.62 + ripMask * 0.27);
+  // …and the whole of it goes away with range, onto the map's own mean, so a
+  // distant slope is the level's authored colour and nothing else. See terFlat.
+  baseLum = mix(uFarMean.x, baseLum, terFlat);
   col *= 0.55 + baseLum * 1.15;
 
   // ── rock, and the strata it is bedded in. Skipped wholesale where nothing is
@@ -1325,14 +1439,29 @@ const TERRAIN_FRAG_MAP = /* glsl */`
                  + (mA - 0.5) * 4.0 + (mB - 0.5) * 0.9) / uGround.w;
     float bandI = floor(bedY), bandF = bedY - bandI;
     float bandR = thash(vec2(bandI, 7.3));
-    float seam = (smoothstep(0.11, 0.0, bandF) + smoothstep(0.89, 1.0, bandF))
+    /* THE STRATA ARE A DRAWN CONTOUR LINE (rule 6), not a shaded ledge.
+     *
+     * "Mint cliffs drawn with contour strata lines" is the third reference
+     * frame, and this seam is the only thing in the game that draws them. It
+     * mattered less when the rock texture was carrying tone at every range;
+     * now that the far field collapses onto a flat colour (terFlat) this IS
+     * the cliff's interior detail, and it has to read as a line.
+     *
+     * So it is narrower and darker than it was — a 7% band rather than an 11%
+     * one, at 0.46 rather than 0.34 — and, unlike a texture, it is procedural
+     * in WORLD space, so a bed 150 m away is drawn exactly as firmly as a bed
+     * at arm's length. That is the property a drawn mark has and a photographed
+     * one does not.
+     */
+    float seam = (smoothstep(0.075, 0.0, bandF) + smoothstep(0.925, 1.0, bandF))
                * (0.25 + thash(vec2(bandI, 21.7)) * 1.1);
     // Beds differ from each other more than the rock inside one bed differs
     // from itself. That ordering is what makes a wall read as bedded; with the
     // fracture network louder than the bedding it reads as cork.
-    vec3 rockTint = mix(uRockCol, uRockCol2, bandR) * (0.72 + bandR * 0.58) * (1.0 - seam * 0.34);
+    vec3 rockTint = mix(uRockCol, uRockCol2, bandR) * (0.72 + bandR * 0.58) * (1.0 - seam * 0.46);
 
-    col = mix(col, rockTint * (0.74 + dot(rockC, vec3(0.3333)) * 0.68), rockW);
+    float rockLum = mix(uFarMean.y, dot(rockC, vec3(0.3333)), terFlat);
+    col = mix(col, rockTint * (0.74 + rockLum * 0.68), rockW);
     terRough = mix(terRough, 0.88, rockW);
     terNrmOff += (Txz * rockN.x + Bxz * rockN.y) * (uNrmScale.z * rockW * nFade);
 
@@ -1353,11 +1482,33 @@ const TERRAIN_FRAG_MAP = /* glsl */`
       vec3 Tv = vec3(tang.x, 0.0, tang.y);
       vec3 Bv = cross(Tv, nW);
       float k = vface * rockW;
-      col = mix(col, rockTint * (0.74 + dot(cv, vec3(0.3333)) * 0.68), k);
+      col = mix(col, rockTint * (0.74 + mix(uFarMean.y, dot(cv, vec3(0.3333)), terFlat) * 0.68), k);
       terNrmOff = mix(terNrmOff, (Tv * nv.x + Bv * nv.y) * (uNrmScale.z * nFade), k);
     }
   #endif
   }
+
+  /* ── THE DRAWN MARKS (rule 6) ───────────────────────────────────────────
+   *
+   * Two lattices rather than one, because one lattice at one size is a pattern
+   * you can read; two coprime pitches at different sizes and coverages read as
+   * scattered stones and grit. Both are in WORLD space, so they sit on the
+   * ground rather than on the screen, and neither is a noise field.
+   *
+   * The footprint handed to terSpeckle is the world size of one pixel at this
+   * range — 2·tan(fov/2)/height · viewDist, and the constant below is that for
+   * this game's 52° vertical field at 1080p — divided by the lattice pitch to
+   * put it in the same units as the radius. Past about 250 m a dot is under a
+   * pixel and the term has softened into a flat tint of exactly its own mean,
+   * which is the correct answer rather than a fade.
+   */
+  float spx = viewDist * 0.00090;
+  float speck = terSpeckle(wp, 2.7, 0.16, 0.150, clamp(spx / 2.7, 0.020, 0.150))
+              + terSpeckle(wp + 41.3, 6.1, 0.085, 0.115, clamp(spx / 6.1, 0.016, 0.115));
+  // Dark on loose ground and darker on rock, and nowhere near a crust or a
+  // sward: a salt pan and a grass mat are not stony ground and do not get grit.
+  col *= 1.0 - clamp(speck, 0.0, 1.0) * (0.115 + rockW * 0.085)
+             * (1.0 - crustW * 0.8) * (1.0 - coverW * 0.85);
 
   // Macro tone anchored to the landform rather than to noise alone: uplands
   // bleach, basins hold the darker fines, and mA keeps it off the vertex grid.
@@ -1847,6 +1998,23 @@ export class Terrain {
     }
   }
 
+  /**
+   * What the far field collapses onto — the mean tone of the two maps this
+   * preset actually binds, in the same `dot(rgb, 1/3)` the shader takes.
+   *
+   * Read out of MEAN_ALBEDO rather than measured off the canvas: those are the
+   * calibrated figures the whole material palette is built on (the terrain
+   * carriers are pinned to 0.389 precisely so `0.55 + mean·1.15` lands on 1.0),
+   * and taking them from the same place is what makes "the distance is the
+   * level's authored colour" an identity rather than a near miss.
+   */
+  _mapMeans() {
+    const m3 = (n) => { const v = MEAN_ALBEDO[n]; return (v[0] + v[1] + v[2]) / 3; };
+    const pair = { deck: ['duracrete', 'metal'], soil: ['soil', 'rock'], snow: ['snow', 'rock'] };
+    const [b, r] = pair[this.preset.maps] || ['sand', 'rock'];
+    return new THREE.Vector2(m3(b), m3(r));
+  }
+
   _buildMesh(scene) {
     const geo = new THREE.PlaneGeometry(this.size, this.size, this.res - 1, this.res - 1);
     geo.rotateX(-Math.PI / 2);
@@ -1951,6 +2119,9 @@ export class Terrain {
        * goes through setRGB rather than through the sRGB→linear conversion
        * `new THREE.Color(hex)` performs. */
       uSurfGlowCol: { value: new THREE.Color().setRGB(3.4, 1.05, 0.24, THREE.LinearSRGBColorSpace) },
+      // What a distant slope's tone falls back to once its texture is under a
+      // pixel — see terFlat and _mapMeans.
+      uFarMean: { value: this._mapMeans() },
       // base ripple, near grain, rock. The rock figure used to be 1.35, which
       // added up to a 53 degree tilt on a unit normal: every joint in the map
       // came out as a rope lying on the cliff rather than as a crack in it.

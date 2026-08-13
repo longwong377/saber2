@@ -1427,9 +1427,16 @@ const GRASS_FRAG = /* glsl */`
             // stated with this shader's own loop guard rather than with
             // NUM_DIR_LIGHT_SHADOWS, because the guard above already IS it.
             saberCelShape = 1.0;
+            // THE CAST SHADOW IS A TONE, NOT A MULTIPLY. Handed to saberCelTone
+            // rather than multiplied into the result, so a blade standing in a
+            // shadow lands on exactly the shadow band a blade facing away from
+            // the sun lands on — one shadow tone in the frame, and no square
+            // where the two coincide. See saberCelCast in src/toon/Cel.js.
+            saberCelCast = shadow;
           #else
             float sh = 1.0;
             saberCelShape = 0.0;
+            saberCelCast = 1.0;
           #endif
           vec3 L = inverseTransformDirection(directionalLights[i].direction, viewMatrix);
           /* TWO TONES, on the same grid as the ground the blades stand in.
@@ -1437,8 +1444,9 @@ const GRASS_FRAG = /* glsl */`
            * This used to be a half-lambert — dot(N,L) * 0.62 + 0.38 — whose
            * whole purpose was that a blade lit from behind is dim rather than
            * black. That is a statement about the AMBIENT floor, and the cel
-           * model states it directly: the shadow band is zero direct light plus
-           * a flat sky term, which is what "dim, not black" means.
+           * model states it directly and better: the shadow band is an AUTHORED
+           * share of the key in the key's own colour plus a flat sky term, which
+           * is what "dim, not black" means without the half-lambert's gradient.
            *
            * saberCelKey is the light's own horizontal response, so a lit blade
            * receives exactly what the soil beneath it receives. Set per light
@@ -1456,7 +1464,7 @@ const GRASS_FRAG = /* glsl */`
           // saberCelAmbient. It is the sky standing in a light's clothing.
           vec3 lc = mix(saberCelAmbient(directionalLights[i].color),
                         directionalLights[i].color, saberCelShape);
-          direct += lc * (wrap * sh + back * (0.35 + 0.65 * sh));
+          direct += lc * (wrap + back * (0.35 + 0.65 * sh));
         }
       }
       #pragma unroll_loop_end
@@ -1534,14 +1542,22 @@ export function grassShade(o) {
     const lt = (o.physical || i === 0) ? lt0 : { ...lt0, color: chromaTrim(lt0.color) };
     const sh = (guard && i !== 0) ? 1 : shadow;
     const L = unit(lt.L);
-    // Two tones for the sun, flat for everything else — see the note in
-    // GRASS_FRAG. `physical: true` reproduces the half-lambert this replaced,
-    // so a check can measure both sides.
-    const wrap = o.physical ? clamp(dot3(N, L) * 0.62 + 0.38, 0, 1)
-      : celTone(dot3(N, L), clamp(L[1], 0, 1), i === 0 ? 1 : 0);
+    /* WHERE THE CAST SHADOW GOES, in each of the two models this reproduces.
+     *
+     * Under the cel model it is a TONE: handed to celTone, which combines it
+     * with the terminator by min, so both roads into shade arrive at the one
+     * authored band (CEL.shadowBand) instead of at zero. `drop` is then 1 for
+     * light 0 and only leaves 1 when the guard is on.
+     *
+     * `guard: false` is the SHIPPED form, and it is reproduced exactly as it
+     * shipped — a raw `wrap * sh` multiply with the sun's mask applied to every
+     * directional light, which is what deleted the fill on a shaded blade. */
+    const cast = i === 0 ? sh : 1;
+    const wrap = o.physical ? clamp(dot3(N, L) * 0.62 + 0.38, 0, 1) * sh
+      : celTone(dot3(N, L), clamp(L[1], 0, 1), i === 0 ? 1 : 0, cast) * (i === 0 ? 1 : sh);
     const back = Math.pow(clamp(dot3(V.map((v) => -v), L), 0, 1), 3) * trans
                * smoothstep(0, 0.6, h);
-    const k = wrap * sh + back * (0.35 + 0.65 * sh);
+    const k = wrap + back * (0.35 + 0.65 * sh);
     for (let c = 0; c < 3; c++) direct[c] += lt.color[c] * k;
     return lt.color.map((v) => v * k);
   });
