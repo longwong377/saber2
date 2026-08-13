@@ -942,12 +942,31 @@ export class BladeContactSolver {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
+ * How close two blades have to come to be touching.
+ *
+ * Named and exported because two systems now have to agree on it: World's
+ * clash resolution, and the enemy blade's own body hit test, which must stand
+ * DOWN when the blades are in contact so that meeting steel always beats
+ * cutting flesh. When that number lived only inside resolveBladeClash the
+ * second caller had no way to ask the question without also paying for the
+ * answer, and the obvious workaround — a slightly different radius — is
+ * exactly how a blade ends up cutting through a block.
+ */
+export const CLASH_RADIUS = 0.10;
+
+/** Are these two blades in contact? The cheap half of resolveBladeClash. */
+export function bladesTouching(a, b, r = CLASH_RADIUS) {
+  if (!a || !b || a.ignition < 0.6 || b.ignition < 0.6) return false;
+  return segmentSegment(a.base, a.tip, b.base, b.tip, _a, _b).distSq <= r * r;
+}
+
+/**
  * @returns null | { type:'chamber'|'parry'|'bind'|'clash', point, winner, power }
  */
 export function resolveBladeClash(a, b, ctxA, ctxB) {
   if (a.ignition < 0.6 || b.ignition < 0.6) return null;
   const res = segmentSegment(a.base, a.tip, b.base, b.tip, _a, _b);
-  const r = 0.10;
+  const r = CLASH_RADIUS;
   if (res.distSq > r * r) return null;
 
   const point = _a.clone().lerp(_b, 0.5);

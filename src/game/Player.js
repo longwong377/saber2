@@ -936,7 +936,7 @@ export class Player {
     if (input.actHit('grip')) this.toggleGrip(ctx);
     if (input.actHit('throw')) this.throwOrRecall(ctx);
     if (input.actHit('sense')) this.toggleSense(ctx);
-    if (input.actHit('lightning') && this.boonMods.lightning) this.forceLightning(ctx);
+    if (input.actHit('lightning')) this.forceLightning(ctx);
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
@@ -1930,6 +1930,33 @@ export class Player {
     this.force -= c;
     return true;
   }
+  /**
+   * WHY A FORCE KEY DID NOTHING.
+   *
+   * The player reported "force lightning does nothing when pressed", and it was
+   * true, and the reason is one this codebase already has a name for: the key
+   * is in ACTIONS, printed in the Codex, listed on the pause card — and
+   * `forceLightning` opens with three silent `return`s. Not attuned, not enough
+   * Force, still recovering: three different states, one indistinguishable
+   * outcome, which is nothing at all happening. A bound key that does nothing
+   * and does not say why is the same lie as a dead checkbox.
+   *
+   * The precedent is `TOO HEAVY` — a refused lift already names the mass, the
+   * cap and the slider that moves it — and this is that everywhere else.
+   *
+   * Rate-limited per ability, because a held key is 60 refusals a second and a
+   * notice that repeats is a notice that gets ignored.
+   */
+  _refuse(name, reason) {
+    const now = this.world?.time ?? 0;
+    const last = this._refusals || (this._refusals = new Map());
+    if (now - (last.get(name) ?? -99) < 0.7) return false;
+    last.set(name, now);
+    this.world?.notify?.(name.toUpperCase(), reason);
+    audio.ui('bad');
+    return false;
+  }
+
   _canSpend(cost) {
     const drain = this.world.settings?.forceDrain ?? 1;
     return drain <= 0 || this.force >= cost * drain * this.boonMods.forceCost;
@@ -2113,7 +2140,8 @@ export class Player {
   /* ── force powers ────────────────────────────────────────────────── */
 
   forcePush(ctx) {
-    if (this.cooldowns.push > 0 || !this._spend(20)) return;
+    if (this.cooldowns.push > 0) return this._refuse('force push', `recovering — ${this.cooldowns.push.toFixed(1)}s`);
+    if (!this._spend(20)) return this._refuse('force push', `20 Force needed, you have ${Math.round(this.force)}`);
     this.cooldowns.push = 0.55;
     this._gesture('push');
     audio.force(this.chest, 'push');
@@ -2187,7 +2215,8 @@ export class Player {
   }
 
   forcePull(ctx) {
-    if (this.cooldowns.pull > 0 || !this._spend(16)) return;
+    if (this.cooldowns.pull > 0) return this._refuse('force pull', `recovering — ${this.cooldowns.pull.toFixed(1)}s`);
+    if (!this._spend(16)) return this._refuse('force pull', `16 Force needed, you have ${Math.round(this.force)}`);
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
     audio.force(this.chest, 'pull');
@@ -2636,8 +2665,17 @@ export class Player {
   }
 
   forceLightning(ctx) {
+    if (!this.boonMods.lightning) {
+      return this._refuse('force lightning', 'not attuned — it comes from a boon, and the draft offers it');
+    }
     const cost = 30 * this.boonMods.forceCost;
-    if (this.force < cost || this.cooldowns.lightning > 0) return;
+    if (this.cooldowns.lightning > 0) {
+      return this._refuse('force lightning', `recovering — ${this.cooldowns.lightning.toFixed(1)}s`);
+    }
+    if (this.force < cost) {
+      return this._refuse('force lightning',
+        `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
+    }
     this.force -= cost;
     this.cooldowns.lightning = 1.5;
     this._gesture('lightning');
@@ -2677,7 +2715,8 @@ export class Player {
    */
   toggleStasis(ctx) {
     if (this.stasis.active) { this.releaseStasis(ctx, true); return; }
-    if (this.cooldowns.stasis > 0 || !this._spend(26)) return;
+    if (this.cooldowns.stasis > 0) return this._refuse('force stop', `recovering — ${this.cooldowns.stasis.toFixed(1)}s`);
+    if (!this._spend(26)) return this._refuse('force stop', `26 Force needed, you have ${Math.round(this.force)}`);
     const S = this.stasis;
     const P = this.forceScale;
     S.active = true;
@@ -2932,7 +2971,7 @@ export class Player {
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
       .map(x => x.c);
     if (!live.length) return;
-    if (!this._spend(38)) return;
+    if (!this._spend(38)) return this._refuse('sundering', `38 Force needed, you have ${Math.round(this.force)}`);
 
     this.cooldowns.rend = 2.4;
     this._gesture('rend', centre);

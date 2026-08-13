@@ -18,6 +18,8 @@ import { clamp, lerp, damp, smoothstep, shortestArc, quatToRotVec, Ema, TAU } fr
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
+/** The roll's own axis. _v1.._v5 are all live across solveTargets. */
+const _vRoll = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -959,6 +961,34 @@ export class SaberController {
 
     this._handTarget = this._handTarget || new THREE.Vector3();
     this._handTarget.copy(handTarget);
+
+    /**
+     * THE WRIST ROLL, WHICH USED TO BE INVISIBLE.
+     *
+     * `this.roll` reached the blade as `_q2.setFromAxisAngle(dir, this.roll)`
+     * below — a rotation of the blade ABOUT ITS OWN AXIS. The blade is a
+     * cylinder. Rotating a cylinder about its own axis changes nothing that can
+     * be seen, so the only thing that moved was the hilt in the hand and, with
+     * it, the hands and forearms. Reported exactly that way: "the wrist roll
+     * rotates the hands but not the blade."
+     *
+     * A wrist rolls about the FOREARM, which runs out from the body along the
+     * aim, so that is the axis — and what it has to turn is the blade's whole
+     * pose about the hand, guard point included. Turning the direction alone
+     * would tilt the drawn blade while every zone, the guard rose and the
+     * deflection tests went on describing a guard that was somewhere else; they
+     * all read `guardWorld`, so `guardWorld` is what moves. The blade sweeps
+     * round the aim axis like a clock hand and everything downstream agrees
+     * with it.
+     *
+     * It is a different control from `gx/gy`, which walk the guard around a
+     * sphere centred on the CHEST and carry the hands with it. This pivots
+     * about the HANDS, which is the joint a wrist actually is.
+     */
+    if (Math.abs(this.roll) > 1e-4) {
+      _vRoll.set(0, 0, -1).applyQuaternion(aimQuat);
+      guardWorld.sub(handTarget).applyAxisAngle(_vRoll, this.roll).add(handTarget);
+    }
 
     // blade direction: hands → guard point
     const dir = _v5.subVectors(guardWorld, handTarget);

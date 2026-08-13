@@ -27,6 +27,53 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 const D = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Guard space → world, and the 180° that made every duel free           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE BUG THIS FUNCTION EXISTS TO KILL.
+ *
+ * Guard space is −Z forward, +X right, +Y up — the file header says so, and
+ * the arcs above are all written in it. A duellist's heading, however, is a
+ * yaw where FORWARD IS +Z: Enemy._move sets `facing = atan2(toTarget.x,
+ * toTarget.z)` and everything that draws a body reads `(sin f, 0, cos f)` as
+ * the way it is looking.
+ *
+ * Three places converted between the two with a bare
+ *
+ *     q.setFromAxisAngle(UP, facing)
+ *
+ * which takes local −Z to `(−sin f, 0, −cos f)` — exactly BEHIND the duellist.
+ * So every acolyte in the game held its blade over its own back, telegraphed
+ * its arcs behind itself, and swung at the empty air on the far side of its
+ * body. Measured on a real Enemy driven at a real Player for 30 s at 1.6 m:
+ *
+ *     hilt offset · toPlayer   −0.71     (the hands were behind the body)
+ *     blade direction · toPlayer −0.84
+ *     closest tip → player      2.18 m   (the test needs 0.44 m)
+ *     closest blade → blade     1.25 m   (a clash needs 0.10 m)
+ *     hits landed               0
+ *
+ * That is the whole of "enemy lightsabers do no damage" and the whole of
+ * "blade-on-blade contact has never been observed": both hit tests were real,
+ * both were correct, and neither could ever fire because the weapon was
+ * pointing the wrong way. The conversion lives here now, once, so a body, its
+ * telegraph and its chamber test cannot disagree about which way is forward.
+ *
+ * +π is the whole fix: it takes local −Z to `(sin f, 0, cos f)` and local +X
+ * to `fwd × up`, which is the duellist's actual right hand.
+ */
+export function guardQuat(yaw, spin = 0, out = new THREE.Quaternion()) {
+  return out.setFromAxisAngle(UP, yaw + spin + Math.PI);
+}
+
+/** A guard-space direction, in world space, for a body facing `yaw`. */
+export function guardToWorld(dir, yaw, spin = 0, out = new THREE.Vector3()) {
+  return out.copy(dir).applyQuaternion(guardQuat(yaw, spin, _qg)).normalize();
+}
+const _qg = new THREE.Quaternion();
+
 /** How an attack must be answered — and what colour says so. */
 export const TIER = {
   light:       { colour: 0x9fd8ff, label: 'parry or chamber', chamberable: true,  parryable: true,  guardBreak: 0.6 },
@@ -174,7 +221,9 @@ export class Telegraph {
    * @param outer   distance from chest to the blade tip
    */
   shape(origin, yaw, from, to, inner, outer) {
-    _q1.setFromAxisAngle(UP, yaw);
+    // guardQuat, not a bare yaw: the ghost has to be drawn where the blade will
+    // actually go, and for four months it was drawn behind the duellist.
+    guardQuat(yaw, 0, _q1);
     for (let i = 0; i < this.n; i++) {
       const t = i / (this.n - 1);
       // slerp-ish: normalise the lerp so the arc bows the way a swing does
@@ -238,6 +287,10 @@ export class DuelBrain {
     this._cued = false;
     this.lastPhase = 'guard';
     this.timeScale = 1;      // < 1 slows the whole form down, for sparring
+    /** Where the guard was driven when the blade was beaten aside. */
+    this.staggerDir = null;
+    /** How many follow-ups this duellist has taken off one connected hit. */
+    this.followUps = 0;
 
     enemy.saberPhase = 'guard';
     enemy.saberTimer = 0.35 + rng() * 0.5;
@@ -256,6 +309,93 @@ export class DuelBrain {
     this.phase = 'recover';
     this.timer = recoverTime;
     this.telegraph?.hide();
+  }
+
+  /** True while the blade is out of line and nothing can be thrown from it. */
+  get staggered() { return this.phase === 'stagger'; }
+
+  /**
+   * THE BLADE BEATEN ASIDE.
+   *
+   * `interrupt` was the only thing a parry could do to a duellist, and all it
+   * does is start the recovery early — the guard slides back to rest, the body
+   * keeps circling, and 0.45 s later the same attack comes again. There was no
+   * way to SEE that you had won the exchange, so beating a blade aside felt
+   * like nothing and the fight had no rhythm above "swing until it dies".
+   *
+   * A stagger is a phase of its own because it has to be three things at once:
+   *   • legible   — the guard is driven wide and low, off the body's line, and
+   *                 held there. You can see the opening from across the room.
+   *   • punishing — no attack, no chamber, no telegraph, for `seconds`.
+   *   • directional — beaten from the left, it opens to the right.
+   *
+   * `power` scales how far the guard is thrown and how long it stays there, so
+   * a light parry is a beat and a won blade-lock is an invitation.
+   *
+   * @param seconds  how long the duellist is out of line
+   * @param worldDir the direction the blade was driven, in WORLD space
+   * @param power    0..1+, how hard
+   */
+  stagger(seconds = 0.55, worldDir = null, power = 1) {
+    // A FLOOR, and it is the whole reason this reads on screen. World's parry
+    // path stuns for 0.18 s — three frames at 60 Hz, which is a body twitching,
+    // not a body beaten. Being unable to MOVE and having your guard OUT OF LINE
+    // are different lengths of time; this is the second one, and it is long
+    // enough to be an invitation. Capped at 2.2 s so `stun(9999)` on a toppled
+    // body does not leave a permanent stagger behind.
+    const t = clamp(Math.max(seconds, 0.42) * lerp(0.75, 1.35, clamp(power, 0, 1.5)), 0.32, 2.2);
+    // Never shorten an existing stagger: two parries in a row must not read as
+    // one, and `Math.max` is the same rule Enemy.stun already follows.
+    if (this.staggered && this.timer > t) return;
+    this.attack = null;
+    this.attackKey = null;
+    this.chainLeft = 0;
+    this.followUps = 0;
+    this.chamberOpen = false;
+    this.telegraph?.hide();
+    this.phase = 'stagger';
+    this.timer = t;
+    this._staggerLen = t;
+
+    // Which side the guard is thrown to, in the duellist's own frame. The
+    // world direction is taken back into guard space so the opening is on the
+    // side the blade was actually driven, whatever way the body happens to be
+    // pointing.
+    let side = this.guardDir.x >= 0 ? -1 : 1;
+    if (worldDir) {
+      _v1.copy(worldDir).applyQuaternion(guardQuat(this.e.facing, 0, _q1).invert());
+      if (Math.abs(_v1.x) > 1e-4) side = Math.sign(_v1.x);
+    }
+    this.staggerDir = (this.staggerDir || new THREE.Vector3())
+      .set(side * lerp(0.9, 1.5, clamp(power, 0, 1)), -0.45, -0.3).normalize();
+  }
+
+  /**
+   * A LANDED HIT IS PRESSURE, NOT A FULL STOP.
+   *
+   * The one thing World did after an enemy blade connected was
+   * `e.duel.interrupt(0.45)` — the duellist landed a cut and then politely
+   * stepped back and reset. So the only thing that ever punished a mistake was
+   * the mistake itself; there was no reason to disengage after being hit,
+   * because being hit bought you half a second of quiet.
+   *
+   * Now a connected hit shortens the recovery and chambers exactly one chained
+   * attack, so the answer to taking a cut is to MOVE. Capped at one — a hit
+   * must not be able to loop into a stunlock, and `followUps` resets the
+   * moment the duellist returns to guard.
+   */
+  followUp(max = 1) {
+    if (this.followUps >= max) { this.interrupt(0.45); return false; }
+    this.followUps++;
+    const sp = this._speed();
+    this.attack = null;
+    this.chamberOpen = false;
+    this.telegraph?.hide();
+    this.chainLeft = Math.max(this.chainLeft, 1);
+    this.phase = 'recover';
+    this.timer = this.form.recover * sp * 0.5;
+    this._recoverLen = this.timer;
+    return true;
   }
 
   /** Speeds scale with difficulty so Grandmaster genuinely reads faster. */
@@ -373,8 +513,30 @@ export class DuelBrain {
           } else {
             this.phase = 'guard';
             this.attack = null;
+            this.followUps = 0;
             this.timer = 0.16 + rng() * 0.34;
           }
+        }
+        break;
+      }
+
+      case 'stagger': {
+        // Out of line and staying there. The guard is DRIVEN to the opening
+        // rather than eased to it — a beaten blade travels, it does not drift —
+        // and it comes back on the last third so the window has a visible end.
+        const k = 1 - clamp(this.timer / (this._staggerLen || 0.5), 0, 1);
+        this.trackSpeed = k < 0.66 ? 22 : 7;
+        this.chamberOpen = false;
+        this.guardTargetDir = k < 0.66
+          ? (this.staggerDir || this.restDir)
+          : _v1.copy(this.staggerDir || this.restDir).lerp(this.restDir, (k - 0.66) * 3).normalize();
+        if (this.timer <= 0) {
+          this.phase = 'guard';
+          this.attack = null;
+          this.followUps = 0;
+          this.staggerDir = null;
+          // A beaten duellist does not attack on the frame it recovers.
+          this.timer = 0.18 + rng() * 0.26;
         }
         break;
       }
@@ -434,7 +596,7 @@ export class DuelBrain {
   /** Does a swing in this direction chamber the current attack? */
   chambersWith(worldSwingDir) {
     if (!this.chamberOpen || !this.attack) return false;
-    _q1.setFromAxisAngle(UP, this.e.facing);
+    guardQuat(this.e.facing, 0, _q1);
     _v1.copy(this.attack.to).sub(this.attack.from).applyQuaternion(_q1).normalize();
     return _v1.dot(_v2.copy(worldSwingDir).normalize()) < -0.55;
   }

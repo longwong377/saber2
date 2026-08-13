@@ -12,12 +12,13 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo } from './Bodies.js';
 import { Saber } from './Saber.js';
-import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER } from './Duel.js';
+import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
-import { TOUGHNESS } from './Combat.js';
+import { TOUGHNESS, bladesTouching } from './Combat.js';
+import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
@@ -32,6 +33,18 @@ const rng = makeRng(4711);
  * unnatural at any approach speed.
  */
 const BACKPEDAL = 0.5;
+
+/**
+ * How much wider than the body a blade's contact is.
+ *
+ * A lightsaber's core is 3 cm and it burns rather than bruises, so touching a
+ * body at all is a cut — but a hit test that demands the blade's centreline
+ * come inside the torso's own radius misses every glancing pass and reads as
+ * the blade going through you. The player's own solver takes the capsule
+ * radius plus the blade's, and this is the same allowance for the one capsule
+ * the player presents.
+ */
+const BLADE_BITE = 0.10;
 
 /**
  * Slow the part of a desired velocity that points AWAY from `toTarget`, leaving
@@ -1090,7 +1103,21 @@ export class Enemy {
     }
   }
 
-  stun(t) { this.stunTimer = Math.max(this.stunTimer, t); }
+  /**
+   * Stunned — and, if it is holding a blade, visibly beaten.
+   *
+   * Every caller that stuns a duellist has already decided that its guard lost:
+   * a parry, a chamber, a lost blade lock, a Force shove, a heavy cut. All of
+   * them used to produce a body that stood still for a moment with its guard
+   * exactly where it was, which is why "the enemy reacts to being parried" was
+   * a thing the code did and not a thing you could see. Routing it through the
+   * duel brain gives the same event a blade that is thrown out of line and
+   * stays there — see DuelBrain.stagger.
+   */
+  stun(t, fromDir = null, power = 1) {
+    this.stunTimer = Math.max(this.stunTimer, t);
+    if (this.duel && !this.dead) this.duel.stagger(t, fromDir, power);
+  }
 
   dropShield() {
     if (!this.shieldUp) return;
@@ -1318,7 +1345,17 @@ export class Enemy {
     this.toTarget = _v1.clone();
 
     if (this.gripped) { this.wish = null; return; }
-    if (this.stunTimer > 0 || this.toppled) { this.wish = null; return; }
+    if (this.stunTimer > 0 || this.toppled) {
+      this.wish = null;
+      // A beaten guard has to TRAVEL while the body is reeling. The brain is
+      // otherwise frozen for the length of the stun, so the blade would sit
+      // exactly where it was parried and only fly wide afterwards — the
+      // reaction would play late, after the window it is advertising has half
+      // gone. Only the stagger phase runs here; a stunned duellist still
+      // cannot think, aim or attack.
+      if (this.duel?.staggered && !this.toppled) this.duel.update(dt, ctx, dist);
+      return;
+    }
     if (A.inert) { this.wish = null; return; }
     if (A.custom === 'remote') { this._remoteBrain(dt, ctx, dist); return; }
 
@@ -1569,6 +1606,98 @@ export class Enemy {
     t.velocity?.add(_v2);
     t.camera?.addShake(0.16);
     audio.swing(18, this.offSaber.base);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  The main blade's hit                                              */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * WHY THE DUELLIST'S OWN BLADE TESTS ITSELF.
+   *
+   * World had a test for this blade and it was written correctly — the tip's
+   * sweep against the player's spine capsule, gated on the strike phase. It
+   * never fired, because the blade was 180° out (see guardQuat in Duel.js) and
+   * the tip's closest approach over thirty seconds of duelling was 2.18 m.
+   *
+   * Once the blade points the right way that test starts landing, and its two
+   * remaining weaknesses become the difference between "sometimes hits" and
+   * "cuts you the way you cut it":
+   *
+   *  1. IT IS A TIP TEST. Only `prevTip → tip` is checked, so the middle of a
+   *     1.12 m blade passes through a body for free. The player's blade is a
+   *     swept QUAD against capsules — the whole edge cuts — and this is the
+   *     same test in the same spirit: the blade is sampled along its length as
+   *     well as through the frame.
+   *  2. IT TAKES A SINGLE SAMPLE PER FRAME. A strike phase is 0.11–0.19 s and
+   *     the tip covers ~2 m in it; one sample per frame at 30 fps steps 0.7 m
+   *     at a time and tunnels straight through a 0.8 m-wide body.
+   *
+   * Contact of steel on steel outranks contact of steel on flesh, exactly as
+   * World's own ordering says, so this stands down whenever the player's blade
+   * is on this one — the clash a few lines later in the frame is the answer,
+   * and a hit here would be a blade cutting through a block.
+   *
+   * Runs from _poseSaber, AFTER the blade has been posed and updated, so the
+   * prev→cur sweep it reads is this frame's. Enemies update before
+   * World._resolveBlades, and a hit here interrupts the strike phase, so the
+   * older tip test cannot fire a second time on the same swing.
+   */
+  _saberStrike(ctx) {
+    const duel = this.duel;
+    if (!duel || !this.saber || this.saber.ignition < 0.6 || this.lock) return false;
+    if (duel.phase !== 'strike') { this._strikePhase = duel.phase; return false; }
+    // once per strike, and the phase edge is what defines "once"
+    if (this._strikePhase !== 'strike') { this._strikePhase = 'strike'; this._struck = false; }
+    if (this._struck) return false;
+
+    const t = this.target;
+    if (!t || !t.position || t.alive === false || !t.damage) return false;
+    if (t.invuln > 0) return false;
+    // steel on steel wins: leave it to the clash
+    if (t.saber && bladesTouching(t.saber, this.saber)) return false;
+
+    // The body, as one capsule from the shins to the crown. `crouch` shortens
+    // it because a crouching player really is a smaller target.
+    const crouch = clamp(t.crouch ?? 0, 0, 1);
+    const p0 = _v1.copy(t.position).setY(t.position.y + 0.35);
+    const p1 = _v2.copy(t.position).setY(t.position.y + lerp(1.72, 1.26, crouch));
+    const rad = (t.radius ?? 0.34) + BLADE_BITE;
+
+    // Enough samples that the fastest tip in the game cannot step past a body:
+    // the tip covers up to ~0.9 m in a 30 fps frame and the body is 0.8 m wide.
+    const travel = this.saber.tip.distanceTo(this.saber.prevTip);
+    const steps = clamp(Math.ceil(travel / 0.16), 1, 8);
+    let best = null, bestD = Infinity;
+    for (let i = 1; i <= steps; i++) {
+      const k = i / steps;
+      _v3.lerpVectors(this.saber.prevBase, this.saber.base, k);
+      _v4.lerpVectors(this.saber.prevTip, this.saber.tip, k);
+      const res = segmentSegment(_v3, _v4, p0, p1, _v5, _v6);
+      if (res.distSq < bestD) { bestD = res.distSq; best = _v5.clone(); }
+      if (res.distSq <= rad * rad) break;
+    }
+    if (bestD > rad * rad) return false;
+
+    this._struck = true;
+    const dmg = this.attackDamage * duel.damageScale * (this.rallyTimer > 0 ? RALLY.damage : 1);
+    t.damage(dmg, best, this, 'saber');
+
+    // shoved off the line, not merely dinged
+    _v3.subVectors(t.position, this.position).setY(0.3);
+    if (_v3.lengthSq() < 1e-6) _v3.set(0, 0.3, 0);
+    _v3.normalize().multiplyScalar(6);
+    t.velocity?.add(_v3);
+    t.camera?.addShake(0.28);
+    this.world.particles?.cutFlare(best, null, this.saber.color.getHex(), 20);
+    this.world.notifyFloating?.(best, duel.attack?.label?.toUpperCase() ?? 'HIT', '#ff8a6a');
+    audio.cut(best, false);
+    this.world.addHitstop?.(0.05);
+    this.saber.strain(0.7);
+
+    // …and it presses. See DuelBrain.followUp.
+    duel.followUp();
+    return true;
   }
 
   /**
@@ -1860,8 +1989,11 @@ export class Enemy {
     const guard = this.duel.guardDir;
     const fast = this.duel.phase === 'strike';
 
-    // convert to world using the enemy's facing, plus any spin the move carries
-    _q1.setFromAxisAngle(UP, this.facing + this.duel.spin);
+    // Guard space is −Z forward; `facing` is a +Z-forward yaw. guardQuat owns
+    // the half turn between them — see the note on it in Duel.js. With a bare
+    // yaw here the hands sat BEHIND the body and the blade swung backwards,
+    // which is why no duellist had ever hit anything.
+    guardQuat(this.facing, this.duel.spin, _q1);
     const dirWorld = _v5.copy(guard).applyQuaternion(_q1).normalize();
     const reach = 0.34 + (this.duel.attack?.reach ?? 0);
     const handTarget = _v6.copy(chest).addScaledVector(dirWorld, reach * S).addScaledVector(UP, -0.08 * S);
@@ -1876,6 +2008,10 @@ export class Enemy {
 
     this.saber.setHiltPose(this.saberHand, this.saberQuat);
     this.saber.update(dt, ctx.time, this.velocity);
+    // HERE, and not in _meleeBrain, because the blade's prev→cur sweep only
+    // exists once it has been posed: think() runs before pose(), so a hit test
+    // up there would be reading where the blade was LAST frame.
+    this._saberStrike(ctx);
     // set() issues nine AudioParam automations and move() three more, per hum,
     // per frame. Twenty duellists at 60fps is 14,400 events/second queued onto
     // parameter timelines — so distant blades update at a coarser cadence.
@@ -1933,7 +2069,7 @@ export class Enemy {
     const chest = rig.worldPos('chest', _o1);
     const fwd = _o2.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     const right = _o3.set(fwd.z, 0, -fwd.x);
-    _oq.setFromAxisAngle(UP, this.facing + this.duel.spin);
+    guardQuat(this.facing, this.duel.spin, _oq);
     const dir = _o4.copy(this.duel.guardDir).applyQuaternion(_oq).normalize();
 
     // mirror the guard about the body's own right axis, then drop it a little:
