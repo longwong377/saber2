@@ -110,7 +110,8 @@ Math.random = () => 0.31830988618;
 const Waves = await import('../src/game/Waves.js');
 Math.random = _realRandom;
 
-const { WaveDirector, BOONS, ATTUNEMENTS, RankSet, rankScale, maxRank } = Waves;
+const { WaveDirector, BOONS, ATTUNEMENTS, RankSet, rankScale, maxRank, rankOf, BOSS_EVERY,
+  RANK_DIMINISH } = Waves;
 const { defaultBoonMods } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
@@ -902,8 +903,20 @@ function makePlayer(diffKey = 'knight') {
   return p;
 }
 
-function applyBoon(p, boon) {
-  boon.apply(p);
+/**
+ * Apply a card AT ITS RANK, which is what the game does and what this harness
+ * did not.
+ *
+ * `boon.apply(p, s)` takes a rank SCALE — `grow(1.5, s)` shrinks the excess
+ * over 1 rather than the multiplier — and every ranked card in the table reads
+ * it. Calling `apply(p)` with no second argument gave every rank the default
+ * `s = 1`, so a card taken four times applied its full effect four times and
+ * the geometric diminishment that BOUNDS a build was never once exercised by
+ * the thing that exists to measure builds. That is the whole of task 11's first
+ * half: not that ranks were mis-measured, but that they were absent.
+ */
+function applyBoon(p, boon, rank = 1) {
+  boon.apply(p, rankScale(rank));
   p.boons.add(boon.id);
 }
 
@@ -1036,13 +1049,37 @@ export function simulateRun(opts) {
   const {
     difficulty = 'knight', level = LEVEL_ORDER[0], seed = 1,
     sigma = MODEL.guardSigma, boonPolicy = null, maxWave = MODEL.maxWave,
+    /**
+     * Cards HELD FROM WAVE ONE, as `[boon, ranks]` — the build, rather than the
+     * draft that produced it.
+     *
+     * The draft path cannot answer a question about ranks. A modelled run dies
+     * at wave 5.3 (median, knight, twelve seeds), and drafts fall on waves 3, 6
+     * and 9 — so the second copy of a card is taken in a small minority of runs
+     * and the third almost never. Measured through drafts, every rank past the
+     * first reads 0.000 for want of a run that lived to see it, which is a
+     * property of the survival model and nothing at all about ranks.
+     *
+     * Granting is the same experiment with the noise removed: hold k ranks,
+     * play, and read the depth. It answers "what is a build with k of these
+     * worth" exactly, which is the question the rank curve is about.
+     */
+    grant = null,
   } = opts;
   const diff = DIFFICULTY[difficulty];
   const rng = makeRng(seed >>> 0 || 1);
   const p = makePlayer(difficulty);
   const answer = answerRate(diff, sigma);
   const swing = measureSwing();
-  const taken = new Set();
+  // A RankSet, not a Set: the game's own, so "taken" means the same thing here
+  // as it does in a run. `drawSeeded` filters on `has`, so an unranked card
+  // still leaves the pool after one take and a ranked one does not.
+  const taken = new RankSet();
+  if (grant) {
+    for (const [boon, ranks] of grant) {
+      for (let k = 0; k < (ranks ?? 1); k++) applyBoon(p, boon, taken.take(boon.id));
+    }
+  }
   const waveLog = [];
   let modelFailure = null;
   // Damage goes through p.damage() and healing through p.heal(), so every boon
@@ -1238,7 +1275,7 @@ export function simulateRun(opts) {
     if (wave % 3 === 0) {
       const offer = drawSeeded(rng, 3, taken);
       const pick = boonPolicy ? boonPolicy(offer, wave, taken) : offer[0];
-      if (pick) { applyBoon(p, pick); taken.add(pick.id); }
+      if (pick) applyBoon(p, pick, taken.take(pick.id));
     }
   }
   return { died: maxWave + 1, depth: maxWave + 1, waveLog, boons: [...taken], survived: true, modelFailure };
@@ -1251,7 +1288,10 @@ export function simulateRun(opts) {
  * tools/checks/balance.mjs asserts this mirror still matches its contract.
  */
 export function drawSeeded(rng, n, taken) {
-  const copy = BOONS.filter(b => !taken.has(b.id));
+  // A ranked card stays in the pool until its ranks are spent — the property
+  // `drawBoons` has and this mirror did not, which is why a paired run could
+  // never take the same card twice and the rank sweep below had to force it.
+  const copy = BOONS.filter(b => rankOf(taken, b.id) < maxRank(b));
   const out = [];
   for (let i = 0; i < n && copy.length; i++) out.push(copy.splice(Math.floor(rng() * copy.length), 1)[0]);
   return out;
@@ -1335,6 +1375,227 @@ function greedyPolicy(offer) {
   let best = offer[0], bs = -Infinity;
   for (const b of offer) { const s = _rank.get(b.id) ?? 0; if (s > bs) { bs = s; best = b; } }
   return best;
+}
+
+/**
+ * WHAT A SECOND COPY OF A CARD IS WORTH — and whether the diminishment is real.
+ *
+ * `RANK_DIMINISH` is a geometric series: rank n is worth `d^(n-1)` of the
+ * first, so a stack converges to `1/(1-d)` of one card and a build is bounded
+ * by construction. That is the design. Nothing had ever measured it, because
+ * `applyBoon` dropped the rank on the floor and `drawSeeded` removed a card
+ * from the pool after one take — so the harness could not have taken a card
+ * twice even if it had wanted to.
+ *
+ * The sweep forces it: the same seeded run, granted the same card k times at
+ * consecutive drafts, for k = 1..stack. What must be true, and is asserted in
+ * tools/checks/balance.mjs:
+ *
+ *   · MORE IS MORE. Rank k must beat rank k-1. A diminishing return is still a
+ *     return, and a card whose second copy is worth nothing is a dead card in
+ *     every draft after the first.
+ *   · AND LESS THAN LINEAR. Rank k must be worth less than k times rank 1, or
+ *     the diminishment is not happening and a single axis runs away — which is
+ *     exactly the failure the ranks were introduced to prevent.
+ */
+export function rankReport(cfg) {
+  const out = [];
+  out.push('');
+  out.push('══ RANKS — the same card taken again, and again ══');
+  out.push('');
+  out.push('  Same seed, same run. The treatment HOLDS k ranks of this card from wave one');
+  out.push('  and nothing else, ever. Δ is paired against a run that holds nothing. Granted');
+  out.push('  rather than drafted because a modelled run dies at wave 5.3 and the drafts');
+  out.push('  fall on waves 3, 6 and 9 — through drafts, every rank past the first reads');
+  out.push('  0.000 for want of a run that lived to see it.');
+  const ranked = BOONS.filter((b) => maxRank(b) > 1);
+  const rows = [];
+  const perCard = new Map();
+  for (const boon of ranked) {
+    const cap = maxRank(boon);
+    const byRank = [];
+    for (let k = 1; k <= cap; k++) {
+      const ds = [];
+      for (const dk of cfg.boonTiers) {
+        for (let sd = 0; sd < cfg.boonRuns; sd++) {
+          const seed = 7000 + sd * 13;
+          const a2 = simulateRun({ difficulty: dk, level: cfg.level, seed, boonPolicy: () => null });
+          const b2 = simulateRun({ difficulty: dk, level: cfg.level, seed, boonPolicy: () => null,
+            grant: [[boon, k]] });
+          ds.push(b2.depth - a2.depth);
+        }
+      }
+      byRank.push(mean(ds));
+    }
+    perCard.set(boon.id, byRank);
+    rows.push([boon.name, boon.id, String(cap),
+      ...byRank.map((v) => v.toFixed(3)),
+      ...Array(4 - byRank.length).fill(''),
+      (byRank[byRank.length - 1] / (byRank[0] || 1e-9)).toFixed(2) + '×']);
+  }
+  rows.sort((a2, b2) => Number(b2[3]) - Number(a2[3]));
+  out.push('');
+  out.push(table(['card', 'id', 'cap', 'r1', 'r2', 'r3', 'r4', 'full/r1'], rows, { left: [0, 1] }));
+
+  /* AND THE DIMINISHMENT WHERE IT ACTUALLY LIVES.
+   *
+   * Depth is a NON-LINEAR function of a stat — thirty more health is worth more
+   * than thirty when it carries you into a wave you would not have seen — so a
+   * card can diminish perfectly in the stat and still look superlinear in
+   * depth, and Communion does exactly that above (3.34× at rank 3 against a
+   * geometric 1.96×). Asserting sublinearity on the depth column would
+   * therefore be asserting the wrong thing about the right property.
+   *
+   * So it is also measured where it is exact: apply k ranks to a player, read
+   * the field the card moves, and compare the EXCESS over baseline against the
+   * geometric series. This has no noise in it at all. */
+  const statRows = [];
+  const perStat = new Map();
+  for (const boon of ranked) {
+    const cap = maxRank(boon);
+    const base = makePlayer('knight');
+    const b0 = modsOf(base);
+    const excess = [];
+    for (let k = 1; k <= cap; k++) {
+      const q = makePlayer('knight');
+      for (let i = 1; i <= k; i++) boon.apply(q, rankScale(i));
+      const b1 = modsOf(q);
+      // the one field this card moved the most, as a fraction over baseline
+      let best = 0;
+      for (const key of Object.keys(b1)) {
+        if (typeof b1[key] !== 'number' || typeof b0[key] !== 'number' || !b0[key]) continue;
+        best = Math.max(best, Math.abs(b1[key] / b0[key] - 1));
+      }
+      excess.push(best);
+    }
+    if (!excess[0]) continue;                       // nothing modsOf can see
+    const norm = excess.map((v) => v / excess[0]);
+    const series = norm.map((_, i) => {
+      let t = 0;
+      for (let j = 0; j <= i; j++) t += Math.pow(RANK_DIMINISH, j);
+      return t;
+    });
+    perStat.set(boon.id, { norm, series });
+    statRows.push([boon.name, boon.id,
+      ...norm.map((v) => v.toFixed(3)), ...Array(4 - norm.length).fill(''),
+      series[series.length - 1].toFixed(3)]);
+  }
+  out.push('');
+  out.push('  …and the same thing measured on the STAT, where it is exact and noiseless:');
+  out.push('');
+  out.push(table(['card', 'id', 'r1', 'r2', 'r3', 'r4', 'geometric'], statRows, { left: [0, 1] }));
+  out.push('');
+  out.push(`  A geometric series at d=${RANK_DIMINISH} converges to `
+    + `${(1 / (1 - RANK_DIMINISH)).toFixed(2)}× one card, so rank 3 is 1.960× and rank 4 is 2.176×.`);
+  return { text: out.join('\n'), perCard, perStat };
+}
+
+/**
+ * THE RACE THAT HAS NO FINISH LINE.
+ *
+ * Attunements exist because ranks converge and the wave budget does not: the
+ * budget goes 7 → 162 over twenty waves, and nothing that converges can answer
+ * that. Each attunement step is small BECAUSE it is unbounded. So the property
+ * to measure is not "is an attunement strong" — it is "does taking them every
+ * boss wave keep pace, where taking cards eventually cannot".
+ *
+ * Three runs, same seeds: one takes nothing, one takes cards greedily, one
+ * takes an attunement on every boss wave and cards otherwise. Run deep — past
+ * the point where the card pool's ranks are spent — and read the depths.
+ */
+export function attunementReport(cfg) {
+  const out = [];
+  out.push('');
+  out.push('══ ATTUNEMENTS — the growth with no cap, against the budget with no cap ══');
+  out.push('');
+  out.push('  Held from wave one rather than drafted, for the reason the rank sweep gives:');
+  out.push(`  a modelled run dies at wave 5.3 and an attunement is offered on boss waves`);
+  out.push(`  (every ${BOSS_EVERY}), so through the draft path it is never taken at all.`);
+  out.push('');
+  const byAxis = new Map();
+  const rows = [];
+  for (const att of ATTUNEMENTS) {
+    const ds = [];
+    for (const dk of cfg.boonTiers) {
+      for (let sd = 0; sd < cfg.boonRuns; sd++) {
+        const seed = 7000 + sd * 13;
+        const a2 = simulateRun({ difficulty: dk, level: cfg.level, seed, boonPolicy: () => null });
+        const b2 = simulateRun({ difficulty: dk, level: cfg.level, seed, boonPolicy: () => null,
+          grant: [[att, 1]] });
+        ds.push(b2.depth - a2.depth);
+      }
+    }
+    byAxis.set(att.id, mean(ds));
+    rows.push([att.name, att.id, att.attune, mean(ds).toFixed(3), median(ds).toFixed(2),
+      (100 * ds.filter((d) => d > 0.001).length / ds.length).toFixed(0) + '%']);
+  }
+  rows.sort((a2, b2) => Number(b2[3]) - Number(a2[3]));
+  out.push(table(['one step', 'id', 'axis', 'mean Δdepth', 'median Δ', 'helped'], rows, { left: [0, 1, 2] }));
+
+  /* THE RACE ITSELF, which is the claim the design makes and the only thing
+   * that says whether attunements answer the problem they were built for.
+   *
+   * A rank converges: stack one for ever and it is worth 2.50 of itself. The
+   * wave budget does not converge. So the question is not "is one attunement
+   * strong" — it is whether taking one every boss wave GROWS LIKE THE BUDGET
+   * GROWS. Both sides are computed here at the same waves: the budget from
+   * `budgetFor`, and the player's own multiplier from applying k steps to a
+   * real player and reading the field back. A ranked card is shown beside it
+   * at its own cap, which is the comparison that makes the point. */
+  out.push('');
+  out.push('  THE RACE — one attunement per boss wave, against the PRESSURE it is racing:');
+  out.push('');
+  /* AGAINST RAW DPS, NOT AGAINST THE BUDGET. The budget is a currency the
+   * director spends; what actually kills the player is what the wave puts on
+   * them per second, and the two differ by a lot because each extra unit of
+   * budget buys less dps than the last (the compositions get tankier, not
+   * only bigger). Measured over the first twenty waves: budget 23.1× against
+   * dps 15.8×. Racing the budget would overstate the pressure by half. */
+  const dpsAt = (w) => compositionPool(cfg.level, w).map((q) => q.reduce((sum, e) => {
+    const bp = boltPressure(e, DIFFICULTY.knight);
+    if (bp) return sum + bp.boltsPerSec * bp.pHitStill * bp.damage;
+    const mp = meleePressure(e, 'knight', 'ataru');
+    return sum + (mp ? mp.strikesPerSec * mp.connect * mp.damage : 0);
+  }, 0)).reduce((a2, b2) => a2 + b2, 0) / Math.max(1, compositionPool(cfg.level, w).length);
+  const raceRows = [];
+  const d0 = dpsAt(1);
+  for (const w of [5, 10, 20, 40, 60, 100]) {
+    const k = Math.floor(w / BOSS_EVERY);
+    const q = makePlayer('knight');
+    const att = ATTUNEMENTS[0];
+    for (let i = 0; i < k; i++) att.apply(q, 1);        // attunements IGNORE the rank scale
+    const cut = q.boonMods.cutPower;
+    raceRows.push([String(w), String(k), dpsAt(w).toFixed(1), (dpsAt(w) / d0).toFixed(2) + '×',
+      cut.toFixed(2) + '×', (cut / (dpsAt(w) / d0)).toFixed(3)]);
+  }
+  out.push(table(['wave', 'attunements', 'raw dps', 'dps/w1', 'player cut', 'ratio'], raceRows));
+  out.push('');
+  out.push('  WHAT THIS SAYS, and it corrects a claim the design comment in Waves.js made.');
+  out.push('  That comment reads "1.12^20 by wave 100 is 9.6×, which is the same order as');
+  out.push('  the ramp it is racing" — but 20 attunements is wave 100 and the ramp figures');
+  out.push('  it cites are over 20 WAVES. At wave 100 the pressure is far past 9.6×, so');
+  out.push('  attunements alone do NOT keep pace and were never going to: cards, ranks,');
+  out.push('  skill and a blade that cuts anything carry most of it. What attunements');
+  out.push('  actually provide is growth that is UNBOUNDED and MONOTONE where a rank');
+  out.push('  converges at 2.50× — so the reward half of the loop never goes quiet, which');
+  out.push('  is a different property and the one worth pinning.');
+
+  /* Only the axes this model can SEE, on the same rule boonReport uses: a
+   * declared channel or a measured difference. `attune-force` moves forceCost
+   * and forceRegen and this harness has no Force powers in it, so it reads a
+   * true 0.000 — dividing by it printed a 643,816,600× spread, which is a
+   * harness gap wearing the costume of a balance finding. */
+  const seenAxes = [...byAxis.entries()].filter(([, v]) => Math.abs(v) > 1e-9);
+  const blind = [...byAxis.entries()].filter(([, v]) => Math.abs(v) <= 1e-9).map(([k]) => k);
+  const vals = seenAxes.map(([, v]) => v);
+  out.push('');
+  if (vals.length) {
+    out.push(`  spread across the ${vals.length} axes this model can see: `
+      + `${Math.min(...vals).toFixed(3)} … ${Math.max(...vals).toFixed(3)}`
+      + `  (${(Math.max(...vals) / Math.min(...vals)).toFixed(1)}× worst to best)`);
+  }
+  if (blind.length) out.push(`  UNMODELLED here (no Force powers in this harness): ${blind.join(', ')}`);
+  return { text: out.join('\n'), byAxis };
 }
 
 export function boonReport(cfg) {
@@ -1595,6 +1856,8 @@ async function main() {
   // runs can draft greedily by a ranking this file computed rather than by
   // "whatever was first in the array".
   if (want('boons')) console.log(boonReport(cfg).text);
+  if (want('ranks')) console.log(rankReport(cfg).text);
+  if (want('attune')) console.log(attunementReport(cfg).text);
   if (want('survival')) console.log(survivalReport(cfg).text);
   if (want('knobs')) console.log(deadKnobReport());
 

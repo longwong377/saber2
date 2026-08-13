@@ -36,7 +36,39 @@ export async function run({ check, assert }) {
   const { DIFFICULTY, SPEED_GRADE } = await import('../../src/game/Combat.js');
   const { ARCHETYPES, MODIFIERS, modifierThreat } = await import('../../src/game/Enemy.js');
   const { defaultBoonMods } = await import('../../src/game/Player.js');
-  const { WaveDirector, BOONS, ATTUNEMENTS } = await import('../../src/game/Waves.js');
+  const { WaveDirector, BOONS, ATTUNEMENTS, maxRank, rankScale, RANK_DIMINISH } =
+    await import('../../src/game/Waves.js');
+
+  /**
+   * A player-shaped thing a card can be applied to, and the biggest fractional
+   * move any card made to it.
+   *
+   * Deliberately a stub rather than a real Player: the question is what the
+   * CARD does, and a real Player drags in a scene, a saber and a rig whose own
+   * defaults would have to be held constant anyway. `biggestMove` reads every
+   * numeric field back against a pristine copy and returns the largest relative
+   * change, which is how one function can measure thirty cards that each move
+   * something different.
+   */
+  const stubPlayer = () => ({
+    boonMods: defaultBoonMods(), maxHp: 100, hp: 100, maxStamina: 100, stamina: 100,
+    maxForce: 100, force: 100, control: { deadzone: 0.24, sensitivity: 1 },
+    saber: { bladeLength: 1.15, coreWidth: 1 },
+  });
+  const _pristine = stubPlayer();
+  const biggestMove = (p) => {
+    let best = 0;
+    const walk = (a2, b2) => {
+      for (const k of Object.keys(b2)) {
+        if (typeof b2[k] === 'number' && typeof a2[k] === 'number') {
+          if (a2[k]) best = Math.max(best, Math.abs(b2[k] / a2[k] - 1));
+          else if (b2[k]) best = Math.max(best, Math.abs(b2[k]));
+        } else if (b2[k] && typeof b2[k] === 'object' && a2[k]) walk(a2[k], b2[k]);
+      }
+    };
+    walk(_pristine, p);
+    return best;
+  };
 
   /* ══ 1. the ladder the whole difficulty system is ══════════════════════ */
 
@@ -341,6 +373,158 @@ export async function run({ check, assert }) {
     assert(new Set(rows).size === ATTUNEMENTS.length,
       `attunement axes collide: ${rows.join(', ')}`);
     return `${ATTUNEMENTS.length} attunements on ${new Set(rows).size} axes, each still paying at rank 5`;
+  });
+
+  check('balance: a rank is a return, and a diminishing one', () => {
+    /**
+     * The property RANKS EXIST FOR, and nothing had ever measured it — the
+     * harness dropped the rank on the floor (`boon.apply(p)` with no second
+     * argument, so every rank applied at full strength) and its draw mirror
+     * removed a card from the pool after one take, so it could not have taken
+     * one twice even if it had wanted to.
+     *
+     * Two halves, and they pull in opposite directions on purpose:
+     *
+     *   MORE IS MORE. Rank k must beat rank k-1 on the stat. A card whose
+     *     second copy is worth nothing is a dead card in every draft after the
+     *     first, and the draft would go on offering it.
+     *   AND LESS THAN LINEAR. The excess over baseline must follow the
+     *     geometric series `1 + d + d² + …` — that convergence is what BOUNDS a
+     *     build, and it is the whole reason attunements had to exist separately.
+     *
+     * Measured on the STAT rather than on run depth, because depth is a
+     * non-linear function of a stat: thirty more health is worth more than
+     * thirty when it carries you into a wave you would not otherwise have seen,
+     * so a card can diminish perfectly and still look superlinear in depth.
+     * Communion does exactly that — 3.34x at rank 3 against a geometric 1.96x —
+     * and asserting on the depth column would be asserting the wrong thing
+     * about the right property. On the stat there is no noise at all.
+     */
+    const ranked = BOONS.filter((b) => maxRank(b) > 1);
+    assert(ranked.length >= 15, `only ${ranked.length} ranked cards — the ladder is not the spine`);
+    const rows = [];
+    let checked = 0;
+    for (const boon of ranked) {
+      const cap = maxRank(boon);
+      const excess = [];
+      for (let k = 1; k <= cap; k++) {
+        const p = stubPlayer();
+        for (let i = 1; i <= k; i++) boon.apply(p, rankScale(i));
+        excess.push(biggestMove(p));
+      }
+      if (!excess[0]) continue;              // nothing the stub can see; boonReport reports those
+      checked++;
+      const norm = excess.map((v) => v / excess[0]);
+      for (let k = 1; k < norm.length; k++) {
+        assert(norm[k] > norm[k - 1] + 1e-9,
+          `${boon.id} rank ${k + 1} is worth ${norm[k].toFixed(3)} against rank ${k}'s `
+          + `${norm[k - 1].toFixed(3)} — a second copy that pays nothing is a dead draft slot`);
+      }
+      const geo = norm.map((_, i) => {
+        let t = 0;
+        for (let j = 0; j <= i; j++) t += Math.pow(RANK_DIMINISH, j);
+        return t;
+      });
+      /* ON THE SERIES, OR UNDER IT, OR A WHOLE COUNT — and the third case is
+       * recognised STRUCTURALLY rather than by name, because a list of allowed
+       * exceptions is a list somebody adds to.
+       *
+       * `grow` now returns the increment that lands rank k exactly on
+       * `1 + a·S_k`, so every multiplicative card sits on the series to within
+       * floating point. Two do not, and both are deliberate:
+       *
+       *   a WHOLE COUNT — Second Wind is a number of second chances and its own
+       *     comment says 0.6 of one is not a thing, so it ignores the scale and
+       *     grows linearly. Allowed only up to stack 2, because linear growth
+       *     with a high cap is exactly the runaway the ladder exists to stop.
+       *   a HARD CAP — Steadfast clamps at 0.75 because two full ranks would be
+       *     immunity to every heavy blow. It pays LESS than the series, which is
+       *     always safe.
+       *
+       * What is never allowed is paying MORE than the series with a cap above
+       * two, which is the runaway direction and is what both Makashi and
+       * Shatterpoint did before `grow` was fixed — their second rank was worth
+       * more than their first. */
+      const last = norm.length - 1;
+      const onSeries = Math.abs(norm[last] - geo[last]) < 0.02;
+      const linear = norm.every((v, i) => Math.abs(v - (i + 1)) < 0.02);
+      const under = norm[last] < geo[last] + 1e-6;
+      assert(onSeries || under || (linear && cap <= 2),
+        `${boon.id} at rank ${norm.length} is worth ${norm[last].toFixed(3)}x its first copy `
+        + `against the geometric ${geo[last].toFixed(3)}x — it is off the ladder in the runaway `
+        + 'direction, and it is not a whole-count card with a cap of two');
+      // and no card, on any shape, may reach linear with room to keep going
+      assert(norm[last] < norm.length - 1e-6 || cap <= 2,
+        `${boon.id} grows linearly to rank ${norm.length} — the diminishment is not happening `
+        + 'and one axis runs away');
+      rows.push(`${boon.id} ${norm.map((v) => v.toFixed(2)).join('/')}`);
+    }
+    assert(checked >= 10, `only ${checked} ranked cards moved a stat this check can read`);
+    return `${checked} ranked cards on the ${(1 / (1 - RANK_DIMINISH)).toFixed(2)}x series; `
+      + rows.slice(0, 4).join(', ');
+  });
+
+  check('balance: an attunement does NOT converge, which is the whole of why it exists', () => {
+    /**
+     * The complement of the check above, and the pair is the design: a rank
+     * converges so a build is bounded, an attunement does not so the reward
+     * half of an endless mode never goes quiet.
+     *
+     * Stated as a ratio between the two rather than as an absolute, because an
+     * absolute is a number somebody chose and this is a structural claim: take
+     * twenty of each and the attunement must be worth MULTIPLES of what the
+     * ranked card converged to. At ATTUNE_STEP 0.12 twenty steps is 9.65x
+     * against a rank ladder's 2.50x ceiling.
+     *
+     * AND THE CORRECTION THIS CHECK CARRIES. The design comment in Waves.js
+     * used to claim attunements "race the ramp" — it compared twenty
+     * attunements, which is wave 100, against ramp figures measured over twenty
+     * WAVES. They do not race it and were never going to: measured against raw
+     * dps, wave 100 is 203x the pressure of wave 1 and twenty attunements are
+     * 9.65x. Cards, ranks and skill carry the rest. What is asserted here is
+     * the property they DO have.
+     */
+    const N = 20;
+    for (const att of ATTUNEMENTS) {
+      const p = stubPlayer();
+      const steps = [];
+      for (let i = 0; i < N; i++) { att.apply(p, 1); steps.push(biggestMove(p)); }
+      assert(steps[0] > 0, `${att.id} moves nothing this check can read`);
+      // strictly increasing, for ever — no ceiling, no plateau
+      for (let i = 1; i < N; i++) {
+        assert(steps[i] > steps[i - 1] + 1e-9,
+          `${att.id} stopped growing at step ${i + 1} (${steps[i].toFixed(4)} against `
+          + `${steps[i - 1].toFixed(4)}) — it is capped, and it is offered for ever`);
+      }
+      /* AND THE STEPS DO NOT SHRINK, which IS non-convergence and is the whole
+       * distinction from a rank.
+       *
+       * A converging series has steps that fall away — that is what converging
+       * means, and a rank ladder's fall by RANK_DIMINISH each time. An
+       * attunement's must not: a multiplicative one grows its steps (1.12^k),
+       * an additive one holds them level, and either is unbounded. Stated this
+       * way rather than as "must reach some multiple of the rank ceiling",
+       * which is a number somebody picked — the first cut of this check used
+       * 2x the ceiling and failed Attunement of the Body at 4.60x, which is
+       * +18 hp twenty times over: perfectly unbounded, and caught by an
+       * arbitrary bar rather than by the property. */
+      const first = steps[1] - steps[0];
+      const lastStep = steps[N - 1] - steps[N - 2];
+      assert(lastStep >= first - 1e-9,
+        `${att.id}'s twentieth step is worth ${lastStep.toFixed(4)} against its second's `
+        + `${first.toFixed(4)} — the steps are shrinking, so it converges like the ranks it `
+        + 'was built to escape');
+      const ceiling = 1 / (1 - RANK_DIMINISH);
+      const grew = 1 + steps[N - 1];
+      assert(grew > ceiling,
+        `${att.id} over ${N} takes reaches ${grew.toFixed(2)}x, under a rank ladder's own `
+        + `${ceiling.toFixed(2)}x ceiling — twenty permanent choices are worth less than one card`);
+    }
+    const p = stubPlayer();
+    for (let i = 0; i < N; i++) ATTUNEMENTS[0].apply(p, 1);
+    return `${N} steps of each axis: all strictly increasing, blade reaches `
+      + `${(1 + biggestMove(p)).toFixed(2)}x against a rank ladder's `
+      + `${(1 / (1 - RANK_DIMINISH)).toFixed(2)}x ceiling`;
   });
 
   /* ══ 6. the instrument must survive being used ═════════════════════════ */

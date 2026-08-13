@@ -1848,7 +1848,47 @@ export function maxRank(boon) { return Math.max(1, boon?.stack ?? 1); }
  * what shrinks, not the multiplier itself, because scaling 1.4 directly would
  * make a high rank a *penalty* (1.4 × 0.36 = 0.5).
  */
-export function grow(v, scale = 1) { return 1 + (v - 1) * scale; }
+/**
+ * The factor rank k multiplies by, so that k ranks land EXACTLY on the series.
+ *
+ * WHAT THIS USED TO BE: `1 + (v - 1) * scale`, i.e. the rank-scaled multiplier
+ * itself, applied afresh on every take. That reads like the comment above it —
+ * "the excess over 1 is what shrinks" — and it is not what it does, because the
+ * factors COMPOUND. Three ranks of a 1.5x card are
+ *
+ *     (1 + a)(1 + 0.6a)(1 + 0.36a),  a = 0.5
+ *
+ * whose excess is 1.96a PLUS the cross terms, and the cross terms grow with the
+ * square of the multiplier. Measured across the table: every ranked card
+ * overshot its own series, and TWO ESCAPED THE LADDER ENTIRELY — Makashi's 2.0x
+ * and Shatterpoint's 1.9x both have a SECOND rank worth more than their first
+ * (ratios 1.20 and 1.14). The bound is `v < 1 + (1/d - 1)` = 1.667x, and
+ * nothing in the design said so because nobody had done the arithmetic. A rank
+ * ladder whose second step is bigger than its first is not a rank ladder.
+ *
+ * WHAT IT IS NOW. Rank k multiplies by the ratio of the cumulative series at k
+ * to the series at k-1, so after k takes the total is exactly `1 + a·S_k` where
+ * `S_k = 1 + d + … + d^(k-1)`. That is the geometric series the design has
+ * always claimed, for EVERY multiplier, with no per-card bound and no card
+ * nerfed: rank 1 is `1 + a` for every card exactly as before, and only ranks 2
+ * and up change — which is the half that was wrong.
+ *
+ * THE RANK COMES BACK OUT OF THE SCALE, rather than the contract changing.
+ * `apply(p, s)` is called from two places and thirteen cards read `s`; some
+ * multiply through `grow` and some use it directly on an additive term, where
+ * `d^(k-1)` is already the right number. So `grow` inverts `rankScale` —
+ * `k = 1 + log(s)/log(d)` — which is exact for every scale `rankScale`
+ * produces, and leaves `grow(v)` and `grow(v, 1)` meaning what they always did.
+ */
+export function grow(v, scale = 1) {
+  const a = v - 1;
+  if (!(scale > 0) || !a) return 1 + a * (scale > 0 ? scale : 0);
+  const d = RANK_DIMINISH;
+  // which rank produced this scale; `rankScale(k) = d^(k-1)` inverted
+  const k = Math.max(1, Math.round(1 + Math.log(scale) / Math.log(d)));
+  const S = (n) => (n <= 0 ? 0 : (1 - Math.pow(d, n)) / (1 - d));
+  return (1 + a * S(k)) / (1 + a * S(k - 1));
+}
 
 /**
  * A taken-set that counts.
@@ -2333,9 +2373,30 @@ export const BOONS = [
  * So: one choice, on every boss wave, that does NOT diminish and has NO cap.
  * Five axes — the same five the masteries already name, so a run's attunements
  * and its cards pull in the same direction and a build has one identity rather
- * than two. Each step is small BECAUSE it is unbounded: 1.12^20 by wave 100 is
- * 9.6x, which is the same order as the ramp it is racing. That race, with no
- * finish line, is what an endless mode actually is.
+ * than two.
+ *
+ * WHAT THEY DO NOT DO, corrected here because this comment used to claim it.
+ * It read "1.12^20 by wave 100 is 9.6x, which is the same order as the ramp it
+ * is racing", and that compares twenty ATTUNEMENTS — which is wave 100 — against
+ * ramp figures measured over twenty WAVES. Measured properly, at the same waves,
+ * with the pressure taken as raw dps rather than as the threat budget (each
+ * extra unit of budget buys less dps than the last, so the budget overstates by
+ * half):
+ *
+ *     wave   attunements   dps/w1    player   ratio
+ *        5             1     4.02×    1.12×   0.279
+ *       20             4    16.37×    1.57×   0.096
+ *      100            20   203.33×    9.65×   0.047
+ *
+ * Attunements alone do not keep pace and were never going to. Cards, ranks,
+ * skill and a blade that cuts anything carry most of it. What an attunement
+ * actually provides is growth that is UNBOUNDED and MONOTONE where a rank
+ * converges at 2.50x of one card — so the reward half of the loop never goes
+ * quiet however deep the run gets, which is a different property from keeping
+ * pace and is the one that makes an endless mode endless.
+ *
+ * `node --import ./tools/register.mjs tools/balance.mjs --only=attune` prints
+ * that table; tools/checks/balance.mjs pins the property.
  *
  * They are shaped exactly like a boon — same `id`, `icon`, `name`, `text`,
  * `apply` — so they travel the whole existing path (draft screen, World.applyBoon,
