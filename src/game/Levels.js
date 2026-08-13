@@ -3383,7 +3383,12 @@ export const LEVELS = {
     dust: {
       // Spray off the deck, not dust. Almost colourless, and there is a lot of
       // it: the air over an ocean platform in a storm is half water.
-      count: 1400, color: 0xa8bccc, opacity: 0.20, size: 16, shimmer: false,
+      /* `size` 9 and not 16, and it was a screenshot that said so. The dust
+       * field draws its flecks as shaped sprites, and at 16 over an ocean
+       * platform the spray came out as a field of blue paper darts hanging in
+       * the air — big enough to read as objects rather than as the air. Spray
+       * is the smallest thing in this frame and should be. */
+      count: 1400, color: 0xa8bccc, opacity: 0.16, size: 9, shimmer: false,
       fleckColor: 0xcfe0ee,
       wind: { from: 128, strength: 8.5, gustiness: 0.5, wander: 0.18 },
       /**
@@ -3393,11 +3398,16 @@ export const LEVELS = {
        * their own terminal speed with the wind raking them across. What makes
        * this rain and not snow is three numbers — `fall` 2.6 against snow's
        * 1.0, so it comes down nearly three times as fast and the instances
-       * stretch into streaks; `size` 0.09, a quarter of a snowflake, because a
-       * raindrop is a line and not a flake; and `calm` 0.92, which is what
-       * says this planet is not having weather, it IS weather.
+       * stretch into streaks; `size` 0.05, a seventh of a snowflake, because a
+       * raindrop is a LINE and the streak is what draws it; and `calm` 0.92,
+       * which is what says this planet is not having weather, it IS weather.
+       *
+       * 0.05 and not the 0.09 first written, and it was a screenshot that said
+       * so rather than a check: the instance is stretched along its fall by the
+       * speed, so `size` sets the streak's WIDTH, and at 0.09 with fall 2.6 the
+       * air came out full of blue paper darts.
        */
-      snow: { count: 11000, calm: 0.92, color: 0xbfd4e4, fall: 2.6, size: 0.09 },
+      snow: { count: 11000, calm: 0.92, color: 0xbfd4e4, fall: 2.6, size: 0.05 },
       // and the squalls that cross it on top of that
       weather: { peak: 1.0, period: 88, duration: 44, unrest: 0.20, span: 170,
                  fogGain: 1.5, windGain: 2.2, sunLoss: 0.66, fillGain: 1.4, tint: 0.90 },
