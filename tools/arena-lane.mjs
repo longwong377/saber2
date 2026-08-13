@@ -354,8 +354,10 @@ async function cmdAtmos() {
   }
 
   // The one cross-level assertion: the authored exposures must still disagree.
+  // Over every metered level rather than three named ones — the spread is a
+  // claim about the whole roster, and two of the three it used to name are gone.
   const auth = [];
-  for (const key of ['dunes', 'arena', 'canyon']) {
+  for (const key of LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere?.sky !== false)) {
     const a = LEVELS[key].atmosphere;
     auth.push(E.atmosphereMeter(a).key * (a.exposure ?? 1.05));
   }

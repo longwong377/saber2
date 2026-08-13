@@ -15,6 +15,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, resolve, normalize } from 'node:path';
+import { resolveLevel } from './_roster.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const OUT = join(ROOT, '.smoke');
@@ -40,8 +41,9 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
 page.on('pageerror', e => console.log('pageerror', e.message));
 await page.goto(url, { waitUntil: 'domcontentloaded' });
-await page.evaluate(() => localStorage.setItem('saber.settings.v2', JSON.stringify({
-  level: 'dunes', quality: 'low', resolutionScale: 1, difficulty: 'knight', mode: 'roguelite', volume: 0, music: 0 })));
+const level = await resolveLevel(page, null);
+await page.evaluate((lv) => localStorage.setItem('saber.settings.v2', JSON.stringify({
+  level: lv, quality: 'low', resolutionScale: 1, difficulty: 'knight', mode: 'roguelite', volume: 0, music: 0 })), level);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
 await page.click('#btn-deploy');

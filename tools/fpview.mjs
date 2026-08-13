@@ -34,13 +34,14 @@
 import { writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, extname, normalize } from 'node:path';
+import { resolveLevel } from './_roster.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const argv = process.argv.slice(2);
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 const has = (n) => argv.includes('--' + n);
 
-const LEVEL = flag('level', 'dunes');
+const LEVEL = flag('level', null);
 const TAG = flag('tag', 'now');
 const LIT = has('lit');
 const CELL_W = Number(flag('cellw', 480));
@@ -101,6 +102,7 @@ async function boot(level) {
   page.on('pageerror', (e) => errors.push(String(e.message)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  level = await resolveLevel(page, level);
   await page.evaluate((lv) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level: lv, quality: 'medium', resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',

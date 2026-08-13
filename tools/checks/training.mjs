@@ -455,12 +455,12 @@ export async function run({ check, assert }) {
     // bump without anyone remembering to come back here.
     const CUR = STORE_KEY;
     for (const k of [CUR, ...LEGACY_KEYS]) localStorage.removeItem(k);
-    localStorage.setItem(CUR, JSON.stringify({ level: 'dunes', colorIndex: 7 }));
-    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'hangar', scheme: 'hold', fov: 77 }));
-    localStorage.setItem('saber.settings.v2', JSON.stringify({ level: 'canyon' }));
+    localStorage.setItem(CUR, JSON.stringify({ level: 'meadow', colorIndex: 7 }));
+    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'temple', scheme: 'hold', fov: 77 }));
+    localStorage.setItem('saber.settings.v2', JSON.stringify({ level: 'alpine' }));
 
     const a = loadSettings();
-    assert(a.level === 'canyon', `the v2 preset was ignored — loaded level "${a.level}"`);
+    assert(a.level === 'alpine', `the v2 preset was ignored — loaded level "${a.level}"`);
     assert(a.colorIndex === 7, 'adopting the old blobs threw away the current one');
     assert(a.fov === 77, `the v3 blob was dropped whole — fov came back ${a.fov}`);
     assert(a.scheme === DEFAULT_SETTINGS.scheme,
@@ -473,7 +473,7 @@ export async function run({ check, assert }) {
     // Second read: neither retired key may speak again. Asserted against a
     // value that is NOT a default, so an empty store cannot fake it.
     const b = loadSettings();
-    assert(b.level === 'dunes', `a retired blob still won on the second read ("${b.level}")`);
+    assert(b.level === 'meadow', `a retired blob still won on the second read ("${b.level}")`);
     assert(b.fov === DEFAULT_SETTINGS.fov,
       `the retired v3 blob spoke twice — fov ${b.fov} instead of ${DEFAULT_SETTINGS.fov}`);
     assert(b.colorIndex === 7, 'the current blob was lost between reads');

@@ -3,7 +3,7 @@
  * simulated input, and report every console error, page error and failed
  * request along the way. Also grabs screenshots so the frame can be eyeballed.
  *
- *   node tools/smoke.mjs [--shots] [--seconds 6] [--level dunes]
+ *   node tools/smoke.mjs [--shots] [--seconds 6] [--level alpine]
  */
 
 import { chromium } from 'playwright-core';
@@ -15,12 +15,29 @@ import { extname, join, resolve, normalize } from 'node:path';
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const OUT = process.env.SMOKE_OUT || join(ROOT, '.smoke');
 const args = process.argv.slice(2);
-const flag = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
+// Both spellings. `--level=alpine` used to parse as "no --level given" and take
+// the default, which is a silent wrong answer from a flag you did pass.
+const flag = (n, d) => {
+  const eq = args.find((a) => a.startsWith(`--${n}=`));
+  if (eq) return eq.slice(n.length + 3);
+  const i = args.indexOf('--' + n);
+  return i >= 0 ? args[i + 1] : d;
+};
 const has = (n) => args.includes('--' + n);
 
 const SECONDS = parseFloat(flag('seconds', '6'));
 const FRAMES = parseInt(flag('frames', '40'), 10);
-const LEVEL = flag('level', 'dunes');
+/**
+ * Null means "whichever level the game lists first", resolved against the real
+ * roster once the page is up (see the settings step). It was the literal
+ * `'dunes'`, and it outlived that level: the harness went on writing a dead key
+ * into the profile, the world quietly substituted a level it could load, and
+ * the run failed several steps later somewhere else entirely. A harness that
+ * names content is a harness that stops testing the game when the content
+ * moves — and this one is the boot probe, so it is the last place that should
+ * be reporting a phantom failure.
+ */
+const LEVEL = flag('level', null);
 const QUALITY = flag('quality', 'medium');
 const MODE = flag('mode', 'roguelite');
 
@@ -88,14 +105,29 @@ await step('load', async () => {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
 });
 
+/**
+ * The roster, asked of the running game rather than kept in step with it by
+ * hand. The page has the importmap, so this is the same module the game itself
+ * loaded — no second copy of three, no loader flags on the harness.
+ */
+const ROSTER = await step('roster', () =>
+  page.evaluate(() => import('/src/game/Levels.js').then((m) => m.LEVEL_ORDER))) || [];
+
 await step('preset settings', async () => {
+  // A named level must EXIST. Silently substituting for a typo is how you spend
+  // an afternoon reading a screenshot of the wrong map.
+  if (LEVEL && ROSTER.length && !ROSTER.includes(LEVEL)) {
+    throw new Error(`no level "${LEVEL}" — the game lists ${ROSTER.join(', ')}`);
+  }
+  const level = LEVEL || ROSTER[0];
   await page.evaluate(([level, quality, mode]) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level, quality, resolutionScale: 0.6, difficulty: 'knight', mode,
       volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6,
     }));
-  }, [LEVEL, QUALITY, MODE]);
+  }, [level, QUALITY, MODE]);
   await page.reload({ waitUntil: 'domcontentloaded' });
+  return level;
 });
 
 await step('boot completes', async () => {

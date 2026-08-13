@@ -2207,24 +2207,21 @@ export const LEVEL_ORDER = ['mustafar', 'temple', 'meadow', 'drifts', 'alpine', 
   'intake', 'foundry', 'deeps'];
 
 /**
- * DELETED LEVELS, and the two references that outlive this file.
+ * DELETED LEVELS.
  *
  * The dune sea, the wash, Hangar Bay Nine and the dojo were removed at the
- * player's request. Three of the four go cleanly: nothing outside this module
- * named them. Two things did name `dunes`, and both live in files this change
- * may not touch —
+ * player's request, and they are gone — no aliases, no shim.
  *
- *     src/ui/Menu.js    DEFAULT_SETTINGS.level = 'dunes'
- *     src/game/World.js loadLevel's `LEVELS[key] || LEVELS.dunes` fallback
+ * There WAS a shim, four non-enumerable getters, because two lines outside this
+ * module named `dunes` and the lane that deleted the levels could not edit
+ * them: `Menu.DEFAULT_SETTINGS.level` and `World.loadLevel`'s
+ * `LEVELS[key] || LEVELS.dunes` fallback. Both are fixed at the source now —
+ * the default is a level that exists, and the fallback is `LEVEL_ORDER[0]`,
+ * because a fallback that names a level is exactly how a deleted level stays
+ * load-bearing after it is deleted.
  *
- * — so deleting the key outright would have crashed a fresh profile on its
- * first deploy and turned every unknown level key into a hard error. These
- * four aliases are the compatibility shim for exactly that, and they are
- * NON-ENUMERABLE: `Object.keys(LEVELS)`, `for…in` and every check in the suite
- * that walks the table see a game with nine levels in it, while a saved
- * profile pointing at a deleted one still boots into the first surviving
- * level. They are a bridge and they should be deleted the moment those two
- * lines can be edited.
+ * A saved profile pointing at a dead level still boots: it misses in LEVELS and
+ * takes the first surviving level, which is what the fallback is for.
  *
  * The dojo needs one more sentence, because deleting it looks riskier than it
  * is. Training is no longer pinned to that room: `World.loadLevel` opens
@@ -2234,11 +2231,7 @@ export const LEVEL_ORDER = ['mustafar', 'temple', 'meadow', 'drifts', 'alpine', 
  * theatre the player picked, which is what the comment in World.js already
  * said they should. `Dojo.js` still exports `DOJO_LEVEL`; nothing imports it.
  */
-for (const dead of ['dunes', 'canyon', 'hangar', 'dojo']) {
-  Object.defineProperty(LEVELS, dead, {
-    get() { return LEVELS[LEVEL_ORDER[0]]; }, enumerable: false, configurable: true,
-  });
-}
+
 
 /**
  * HOW EACH NEW GROUND BRINGS ENEMIES IN.

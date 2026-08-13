@@ -20,7 +20,7 @@ import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, b
 import { Communion } from './Constellation.js';
 import { applyOrder } from './Order.js';
 import { SPIRE } from './Run.js';
-import { LEVELS, groundMight } from './Levels.js';
+import { LEVELS, LEVEL_ORDER, groundMight } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
@@ -146,9 +146,20 @@ export class World {
     // it would quietly make every star on the next rung cost first-purchase
     // prices again.
     this.communion = new Communion(run ? run.communion : {});
-    const L = LEVELS[key] || LEVELS.dunes;
+    // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
+    // level stays load-bearing after it is gone. See Levels.js's alias block.
+    //
+    // `levelKey` names the level that was ACTUALLY loaded, not the one that was
+    // asked for. It used to record the request, which made the fallback a trap
+    // rather than a safety net: the world came up fine on the substitute and
+    // then whoever read the key back — `main.js` does, for the HUD's level
+    // name — indexed LEVELS with a key that is not in it and threw. A saved
+    // profile pointing at a deleted level took the game down on the frame after
+    // it had already recovered.
+    const resolved = LEVELS[key] ? key : LEVEL_ORDER[0];
+    const L = LEVELS[resolved];
     this.level = L;
-    this.levelKey = key;
+    this.levelKey = resolved;
     this.groundColor = L.groundColor;
     /**
      * A rung BORROWS a level and changes only its height. `air` is merged over

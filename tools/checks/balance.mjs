@@ -29,6 +29,7 @@
  * Every tolerance is stated where it is used, with what it is protecting.
  */
 import * as THREE from 'three';
+import { LEVEL_ORDER } from '../../src/game/Levels.js';
 
 export async function run({ check, assert }) {
   const B = await import('../balance.mjs');
@@ -365,10 +366,10 @@ export async function run({ check, assert }) {
     const scene = B.reportScene?.();
     assert(scene && typeof scene.children?.length === 'number',
       'balance.mjs does not expose its scene, so this cannot be measured');
-    B.simulateRun({ difficulty: 'knight', level: 'dunes', seed: 1, sigma: 75 });
+    B.simulateRun({ difficulty: 'knight', level: LEVEL_ORDER[0], seed: 1, sigma: 75 });
     const before = scene.children.length;
     for (let s = 0; s < 12; s++) {
-      B.simulateRun({ difficulty: 'knight', level: 'dunes', seed: 400 + s, sigma: 75 });
+      B.simulateRun({ difficulty: 'knight', level: LEVEL_ORDER[0], seed: 400 + s, sigma: 75 });
     }
     const after = scene.children.length;
     assert(after - before <= 2,

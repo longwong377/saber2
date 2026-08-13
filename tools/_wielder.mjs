@@ -82,6 +82,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'no
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve, normalize } from 'node:path';
 import { inflateSync, deflateSync } from 'node:zlib';
+import { resolveLevel } from './_roster.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const OUT = join(ROOT, '.smoke', 'wielder');
@@ -509,7 +510,7 @@ const CLIPS = {
 };
 
 async function sweepMode() {
-  const LEVEL = flag('level', 'dunes');
+  let LEVEL = flag('level', null);
   const TAG = flag('tag', 'now');
   const CELL_W = Number(flag('cellw', 560)), CELL_H = Number(flag('cellh', 400));
   const CLIP = flag('clip', 'walk');
@@ -566,6 +567,7 @@ async function sweepMode() {
   page.on('pageerror', (e) => errors.push(String(e.message)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto('http://127.0.0.1:' + port + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  LEVEL = await resolveLevel(page, LEVEL);
   await page.evaluate((lv) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level: lv, quality: 'medium', resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',

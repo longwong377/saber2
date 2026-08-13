@@ -96,7 +96,10 @@ export async function run({ check, assert }) {
     // THE PROPERTY. On the old code every delivery had a lead of exactly 0 and
     // sat inside the level's own ring, which is the definition of popping in.
     const rows = [];
-    for (const key of ['dunes', 'arena', 'hangar', 'meadow', 'canyon']) {
+    // Enumerated, not named. A hand-written list is how a check keeps testing
+    // levels that have been deleted and stops testing the ones that replaced
+    // them — three of the five named here no longer exist.
+    for (const key of LEVEL_ORDER) {
       const r = playWave(key);
       assert(r.log.length >= 4,
         `${key}: only ${r.log.length} bodies arrived in ${r.seconds.toFixed(0)} s — the wave did not run`);

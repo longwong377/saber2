@@ -102,7 +102,7 @@ export const HAIR_COLORS = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  level: 'dunes',
+  level: 'mustafar',
   order: 'jedi',
   difficulty: 'knight',
   mode: 'roguelite',
@@ -1234,39 +1234,262 @@ export class Menu {
 
   /* ── level cards ─────────────────────────────────────────────────── */
 
+  /**
+   * A LEVEL'S CARD, DRAWN FROM THE LEVEL.
+   *
+   * This was a hand-keyed palette — eight `key: [top, bottom]` pairs, plus two
+   * `key === 'hangar'` special cases inside the silhouette loop — and by the
+   * time the roster moved it was wrong in both directions at once. Four of its
+   * eight entries named levels that had been deleted. The five newest levels
+   * had no entry at all, so Mustafar, the Temple, the Intake, the Foundry and
+   * the Deeps every one of them fell to the same dark default and the same
+   * wavy hill: five identical cards, which is a menu telling the player those
+   * five places are the same place.
+   *
+   * Everything here now comes off the level's own atmosphere, ground colour
+   * and terrain. A level added tomorrow arrives with art; a level deleted takes
+   * its art with it; and no list has to be kept in step by hand.
+   *
+   * The drawing rules are src/toon/REFERENCE.md's, so the card and the game
+   * agree: FLAT bands rather than gradients inside a shape, aerial perspective
+   * as a hue shift TOWARD THE SKY rather than a wash of grey, an ink line
+   * around each shape, and nothing shiny.
+   */
   _levelArt(key) {
+    /* 320x112 rather than 320x140, and the composition kept between y=26 and
+     * y=100. `.card .art` is a 96 px box filled with `background-size:cover`,
+     * so a canvas taller than the box's aspect has its TOP AND BOTTOM cut off —
+     * which is where a landscape keeps its sky and its floor. At 2.86:1 a card
+     * has to be wider than 275 px before anything vertical is lost, and the
+     * margins above and below the composition absorb the rest. Mustafar's
+     * fissure and the Foundry's pour were both authored at y=121 and neither
+     * was ever on screen. */
+    const W = 320, H = 112;
     const c = document.createElement('canvas');
-    c.width = 320; c.height = 140;
+    c.width = W; c.height = H;
     const g = c.getContext('2d');
     const L = LEVELS[key];
-    const sky = { dunes: ['#cfe0f5', '#e8d0a0'], arena: ['#c0d4ee', '#d8b98a'],
-                  hangar: ['#1b2430', '#0a0d13'], canyon: ['#a8c8f0', '#c08a60'],
-                  drifts: ['#dcd0b4', '#c8a870'], meadow: ['#bcd8f4', '#7f9440'],
-                  alpine: ['#c8dcfa', '#aebfd4'],
-                  dojo: ['#20293a', '#0b0f16'] }[key] || ['#20293a', '#0b0f16'];
-    const grad = g.createLinearGradient(0, 0, 0, 140);
-    grad.addColorStop(0, sky[0]); grad.addColorStop(1, sky[1]);
-    g.fillStyle = grad; g.fillRect(0, 0, 320, 140);
+    if (!L) return c.toDataURL();
+    const A = L.atmosphere || {};
+    const indoor = A.sky === false;
 
-    // silhouette
-    g.fillStyle = 'rgba(0,0,0,0.42)';
-    g.beginPath(); g.moveTo(0, 140);
-    for (let x = 0; x <= 320; x += 8) {
-      const y = key === 'hangar' ? 96 + (x % 64 < 32 ? 0 : -18)
-        : key === 'dojo' ? 104 + (Math.abs(x - 160) > 118 ? -40 : 0)
-        : 92 + Math.sin(x * 0.021 + (key === 'canyon' ? 2 : 0)) * (key === 'arena' ? 8 : 20)
-             + Math.sin(x * 0.061) * 7;
-      g.lineTo(x, y);
+    /* ── colour, in sRGB bytes, because a canvas is not a renderer ─────── */
+    const rgb = (n) => [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    const css = ([r, gg, b], a = 1) =>
+      a >= 1 ? `rgb(${r | 0},${gg | 0},${b | 0})` : `rgba(${r | 0},${gg | 0},${b | 0},${a})`;
+    const mix = (p, q, t) => p.map((v, i) => v + (q[i] - v) * t);
+    const shade = (p, t) => mix(p, [8, 9, 12], t);
+
+    const sky = rgb(A.skyColor ?? 0x9fb4d8);
+    const sun = rgb(A.sunColor ?? 0xffe2b4);
+    const fog = rgb(A.fogColor ?? A.skyColor ?? 0x9fb4d8);
+    /* The colour of the ground the player will actually be looking at. A level
+     * with grass on it is GREEN, and `groundColor` is the soil underneath it —
+     * so the meadow, whose blurb is "hills of long grass", was drawing a card
+     * the colour of turned earth. `grassTint[0]` is the near blade colour the
+     * field itself is built from, so the card and the level agree by
+     * construction rather than by a second number someone has to remember. */
+    const ground = rgb(L.grass && L.grassTint ? L.grassTint[0] : (L.groundColor ?? 0x50443c));
+
+    /* THE SKY IS TWO FLAT BANDS, not a gradient. A gradient is the one thing
+     * the reference frames never have; the horizon glow is a separate SHAPE
+     * that happens to sit under the zenith band. Indoors the same two bands are
+     * the far dark of the room and the light coming in at floor level. */
+    const zenith = indoor ? shade(sky, 0.72) : sky;
+    const horizon = indoor ? shade(fog, 0.35) : mix(sky, sun, 0.45);
+    g.fillStyle = css(zenith); g.fillRect(0, 0, W, H);
+    g.fillStyle = css(horizon); g.fillRect(0, 40, W, H - 40);
+
+    /* ── the deterministic wobble ──────────────────────────────────────── */
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    const rand = () => (((h = Math.imul(h ^ (h >>> 15), 2246822507)) >>> 9) % 4096) / 4096;
+    const jitter = [];
+    for (let i = 0; i < 24; i++) jitter.push(rand());
+    const j = (i) => jitter[i % jitter.length];
+
+    /**
+     * THE SUN AND THE CLOUD DECK, off the level's own atmosphere.
+     *
+     * `elevation`, `azimuth`, `cloudCover`, `cloudLit` and `cloudDark` are
+     * already authored on every outdoor level — they are what the sky shader
+     * runs on — so the card can draw the level's own weather instead of
+     * inventing some. Mustafar is 96% covered in ash lit orange from below;
+     * the meadow is 42% covered in white; the White Pass is 66% and grey. That
+     * is three completely different skies, and the old card had one empty
+     * gradient for all of them.
+     *
+     * Both are FLAT SHAPES WITH AN INK LINE. A soft-edged sun with a radial
+     * bloom is the single most photographic thing you can put in a picture,
+     * and src/toon/REFERENCE.md's whole seventh rule is that the sky is flat
+     * and the clouds are outlined.
+     */
+    if (!indoor) {
+      const elev = A.elevation ?? 25, azim = A.azimuth ?? 180;
+      // The card looks along the azimuth, so the sun's screen x is where its
+      // bearing falls across a ~150° field, and its y is its elevation.
+      const off = (((azim - 180) % 360) + 540) % 360 - 180;
+      const sx = W / 2 + (off / 75) * (W / 2);
+      const sy = 44 - Math.max(0, Math.min(1, elev / 60)) * 34;
+      if (sx > -20 && sx < W + 20) {
+        g.fillStyle = css(mix(sun, [255, 255, 255], 0.45), 0.95);
+        g.beginPath(); g.arc(sx, sy, 9, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = css(shade(sun, 0.25), 0.5); g.lineWidth = 1.5;
+        g.beginPath(); g.arc(sx, sy, 13, 0, Math.PI * 2); g.stroke();
+      }
+
+      const cover = A.cloudCover ?? 0.4;
+      const lit = rgb(A.cloudLit ?? 0xfdf8ee), dark = rgb(A.cloudDark ?? 0x8a97a8);
+      const decks = Math.round(2 + cover * 5);
+      for (let i = 0; i < decks; i++) {
+        const cy = 12 + j(i * 3) * 30;
+        const cw = 34 + j(i * 3 + 1) * (40 + cover * 70);
+        const cx = -20 + j(i * 3 + 2) * (W + 40);
+        const ch = 6 + j(i * 3 + 1) * 7;
+        // Two tones and a crisp boundary, which is the first rule in the file:
+        // the underside is the dark colour, the top the lit one, and the seam
+        // between them is a straight edge.
+        const puff = (yy, hh, fill) => {
+          g.fillStyle = fill;
+          g.beginPath();
+          g.moveTo(cx, yy + hh);
+          g.arc(cx + cw * 0.28, yy + hh * 0.35, hh * 0.95, Math.PI, 0);
+          g.arc(cx + cw * 0.62, yy + hh * 0.15, hh * 1.15, Math.PI, 0);
+          g.arc(cx + cw * 0.88, yy + hh * 0.45, hh * 0.8, Math.PI, 0);
+          g.lineTo(cx + cw, yy + hh); g.closePath(); g.fill();
+        };
+        puff(cy, ch, css(dark, 0.55 + cover * 0.4));
+        puff(cy - ch * 0.34, ch, css(lit, 0.75 + cover * 0.25));
+      }
     }
-    g.lineTo(320, 140); g.closePath(); g.fill();
 
-    // a lone blade
-    g.strokeStyle = 'rgba(120,215,255,0.95)';
-    g.lineWidth = 3; g.shadowColor = 'rgba(90,200,255,0.95)'; g.shadowBlur = 14;
-    g.beginPath(); g.moveTo(170, 112); g.lineTo(186, 60); g.stroke();
+    /**
+     * THE SKYLINE, per terrain rather than per level, because the terrain is
+     * what the ground is MADE of and two levels on the same ground should look
+     * like the same country. Each returns a height in pixels at x, for a range
+     * whose base sits at `base`.
+     */
+    /** A triangle wave. `abs(sin)` is the obvious jagged-looking thing and is
+     *  not jagged at all — it is a row of round humps, which is why the White
+     *  Pass came out looking like the meadow. A mountain has straight sides. */
+    const tri = (t) => 1 - Math.abs(((t / Math.PI) % 2) - 1) * 2;
+    const PROFILE = {
+      // long wavelength, one slip face per dune: sand has a preferred shape
+      drifts: (x, s) => Math.sin(x * 0.017 + s) * 13 + Math.sin(x * 0.006) * 9
+        + Math.max(0, Math.sin(x * 0.017 + s + 1.2)) * 5,
+      // straight-sided peaks at two scales, and the amplitude is the point —
+      // this is the only skyline in the game the player looks UP at
+      alpine: (x, s) => 6 + Math.max(0, tri(x * 0.0138 + s)) * 30
+        + Math.max(0, tri(x * 0.062 + s * 2)) * 7,
+      // mesas: flat tops, sheer sides, made by quantising a smooth curve
+      mustafar: (x, s) => Math.round((Math.sin(x * 0.0115 + s) * 20 + Math.sin(x * 0.031) * 7) / 8) * 8,
+      // low broken ground with one landmark rise
+      arena: (x, s) => Math.sin(x * 0.021 + s) * 8 + Math.sin(x * 0.058) * 4
+        + Math.max(0, 22 - Math.abs(x - 232) * 0.5),
+      /* Rounded hills, and a treeline in CLUMPS. The first cut tested one sine
+       * against a threshold, which puts a tree every 15 px whether or not
+       * anything about the hill wanted one, and the card came out with a zip
+       * fastener along the top of it. Two incommensurate rates gate each other,
+       * so trees come in stands with gaps between them. */
+      meadow: (x, s) => Math.sin(x * 0.015 + s) * 11 + Math.sin(x * 0.044) * 4
+        + (Math.sin(x * 0.031 + s) > 0.25 && Math.sin(x * 0.55 + s * 3) > 0.1
+          ? 7 + Math.sin(x * 0.21) * 3 : 0),
+      // a colonnade: an arcade of piers with the gaps cut out of the sky
+      temple: (x) => (Math.abs(((x + 13) % 46) - 23) < 9 ? 44 : 18)
+        + (Math.abs(x - 160) < 34 ? 14 : 0),
+      // stacks and gantries
+      works: (x) => 16 + (Math.abs(((x + 7) % 58) - 29) < 6 ? 28 : 0)
+        + (x > 92 && x < 128 ? 36 : 0) + (x > 214 && x < 236 ? 24 : 0),
+      foundry: (x) => 14 + (Math.abs(((x + 21) % 72) - 36) < 8 ? 32 : 0)
+        + (x > 150 && x < 196 ? 28 : 0),
+      /* A cave mouth: rock to the top of the frame, with one arch cut out of
+       * it. The first cut made the arch a V that dipped to 10 px above the
+       * base and left the "wall" only 54 px tall, so it read as a valley
+       * between two hills — the opposite picture. Rock has to reach the top
+       * edge or there is no cave. */
+      cavern: (x) => {
+        const d = Math.abs(x - 168) / 82;
+        return d >= 1 ? 104 : 104 - 64 * Math.sqrt(1 - d * d);
+      },
+    };
+    const profile = PROFILE[L.terrain] || PROFILE.arena;
+
+    /**
+     * THREE RANGES, and the whole aerial-perspective rule in one line: each is
+     * mixed TOWARD THE SKY by how far away it is, never toward grey. The far
+     * range is 68% sky and reads as distance; the near one is the ground's own
+     * colour, darkened.
+     */
+    /* [air, base, dark]. The bases are HIGH — the nearest range starts at
+     * y=84 of 112 — because `cover` trims the bottom of the canvas and the
+     * near band is the one carrying the level's own colour. Composed at 96 it
+     * came out a ten-pixel sliver and every sand, snow and grass level read as
+     * the same pale wash of far-distance blue. */
+    const ranges = indoor
+      ? [[0.34, 66, 0.40], [0.00, 84, 0.56]]
+      : [[0.62, 58, 0.08], [0.32, 70, 0.18], [0.04, 84, 0.28]];
+    ranges.forEach(([air, base, dark], i) => {
+      const tint = mix(shade(ground, dark), indoor ? horizon : sky, air);
+      g.fillStyle = css(tint);
+      g.beginPath();
+      g.moveTo(-2, H);
+      for (let x = -2; x <= W + 2; x += 2) g.lineTo(x, base - profile(x, j(i) * 6.28) * (1 - i * 0.22));
+      g.lineTo(W + 2, H); g.closePath();
+      g.fill();
+      // The ink line, on the ridge only — a drawn edge, not a rim light.
+      g.strokeStyle = css(shade(tint, 0.55), 0.9);
+      g.lineWidth = 1.5;
+      g.beginPath();
+      for (let x = -2; x <= W + 2; x += 2) {
+        const y = base - profile(x, j(i) * 6.28) * (1 - i * 0.22);
+        if (x < 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    });
+
+    /* Mustafar gets its fissure and the Foundry its pour: one hot line each,
+     * because the thing that identifies both places is that the LIGHT comes
+     * off the floor. Everything else here is lit from above. */
+    if (L.terrain === 'mustafar' || L.terrain === 'foundry') {
+      g.fillStyle = css(sun, 0.26);
+      g.fillRect(0, 82, W, 12);
+      g.fillStyle = css(mix(sun, [255, 255, 255], 0.35), 0.92);
+      g.fillRect(0, 87, W, 3);
+    }
+
+    /* AND THE DEEPS ARE LIT BY THE BLADE, which is the whole blurb: the last
+     * room of the Descent has no light of its own. So the nearest edge takes a
+     * rim in the crystal's colour, falling off with distance from the hilt —
+     * on the four indoor levels it is the only warm thing in the picture, and
+     * on the Cut it is the only light at all. */
+    if (indoor) {
+      const lit = rgb((SABER_COLORS[this.s?.colorIndex ?? 0] || SABER_COLORS[0]).glow);
+      const base = 84, prof = PROFILE[L.terrain] || PROFILE.arena;
+      g.lineWidth = 2;
+      for (let x = -2; x <= W + 2; x += 4) {
+        const fall = Math.max(0, 1 - Math.abs(x - 178) / 150) ** 2;
+        if (fall < 0.02) continue;
+        g.strokeStyle = css(lit, 0.55 * fall);
+        g.beginPath();
+        g.moveTo(x, base - prof(x, 0));
+        g.lineTo(x + 4, base - prof(x + 4, 0));
+        g.stroke();
+      }
+    }
+
+    /* ── the blade, in the crystal the player actually chose ───────────── */
+    const cry = SABER_COLORS[this.s?.colorIndex ?? 0] || SABER_COLORS[0];
+    const blade = rgb(cry.hex), glow = rgb(cry.glow);
+    g.strokeStyle = css(glow, 0.95);
+    g.lineWidth = 3;
+    g.shadowColor = css(blade, 0.95); g.shadowBlur = 14;
+    g.beginPath(); g.moveTo(172, 88); g.lineTo(188, 40); g.stroke();
     g.shadowBlur = 0;
-    g.fillStyle = 'rgba(10,12,16,0.9)';
-    g.fillRect(166, 110, 8, 16);
+    g.strokeStyle = css(mix(glow, [255, 255, 255], 0.8), 1);
+    g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(172, 88); g.lineTo(188, 40); g.stroke();
+    g.fillStyle = 'rgba(10,12,16,0.92)';
+    g.fillRect(168, 86, 8, 14);
     return c.toDataURL();
   }
 
@@ -2538,9 +2761,13 @@ export class Menu {
     // entirely. So the sliders showed for all eleven and bit on one, and a
     // player pausing on lesson three could drag "Enemies" from 5 to 0 and watch
     // nothing at all happen. The live director is the only thing that knows.
+    // The fallback names a MODE, never a level. It used to say `level ===
+    // 'dojo'`, and the dojo has since been deleted — so the second half of this
+    // test had quietly become a constant `false`, and a player who paused in
+    // training with no live director to ask lost the sliders entirely.
     const live = sandboxLive !== undefined
       ? !!sandboxLive
-      : (this.s.mode === 'sandbox' || this.s.level === 'dojo');
+      : (this.s.mode === 'sandbox' || this.s.mode === 'training');
     const box = this._buildPauseTraining();
     if (box) {
       box.style.display = live ? '' : 'none';

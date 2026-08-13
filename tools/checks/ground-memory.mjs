@@ -521,7 +521,10 @@ export function run({ check, assert, near }) {
     }
     // and a storm level forgets faster than a snowfield, because it is being
     // combed out from under you
-    const tau = (k) => TERRAIN_PRESETS[LEVELS[k].terrain].loose.refill;
+    // Keyed by PRESET, like the depth check above it: `dunes` and `hangar` are
+    // still perfectly good grounds that surviving levels stand on, and going
+    // through LEVELS meant this died the day those level keys were deleted.
+    const tau = (k) => TERRAIN_PRESETS[k].loose.refill;
     assert(tau('alpine') > tau('arena') && tau('arena') > tau('dunes') && tau('dunes') > tau('drifts'),
       `the memory ordering is wrong: alpine ${tau('alpine')}, arena ${tau('arena')}, `
       + `dunes ${tau('dunes')}, drifts ${tau('drifts')}`);

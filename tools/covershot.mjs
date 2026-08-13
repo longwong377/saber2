@@ -30,6 +30,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync, statSync, mkdirSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
+import { resolveLevel } from './_roster.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const argv = process.argv.slice(2);
@@ -49,7 +50,8 @@ const POSES = {
   vista: { y: 7.0, pitch: 3, reach: 400 },
 };
 
-const level = flag('level', 'canyon');
+// No default here — the page decides; see tools/_roster.mjs.
+let level = flag('level', null);
 const tag = flag('tag', 'now');
 const quality = flag('quality', 'medium');
 const out = join(ROOT, '.smoke', 'cover');
@@ -80,6 +82,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+level = await resolveLevel(page, level, { sky: true });
 await page.evaluate(([lv, q]) => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
     level: lv, quality: q, resolutionScale: 0.7, difficulty: 'knight', mode: 'roguelite',

@@ -62,10 +62,12 @@ export const MODES = {
    * relative to the PLAYER, spawns through the world's own `spawnEnemy`, and
    * reads nothing whatever off the level.
    *
-   * So training is a MODE now, and the level list beside it is live: the dojo
-   * is still there and still says "start here", and every other theatre in the
-   * game can be a dojo. World.loadLevel takes this branch exactly as it takes
-   * the level's own `training` flag — see the wiring note there.
+   * So training is a MODE now, and the level list beside it is live: every
+   * theatre in the game can be a dojo. World.loadLevel takes this branch
+   * exactly as it takes the level's own `training` flag — see the wiring note
+   * there. (The dojo itself has since been deleted, which this paragraph used
+   * to describe as still present. Nothing was lost with it: the room was the
+   * one thing the lessons never read.)
    */
   training: { name: 'Training', blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.' },
 };

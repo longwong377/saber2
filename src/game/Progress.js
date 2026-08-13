@@ -129,7 +129,7 @@ export function progressLines(p = read()) {
     `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`,
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`,
   ];
-  if (p.wins) out.push(`${p.wins} ascent${p.wins === 1 ? '' : 's'} of the Spire`);
+  if (p.wins) out.push(`${p.wins} descent${p.wins === 1 ? '' : 's'} of the works`);
   const stars = Object.keys(p.lit || {}).length;
   if (stars) out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`);
   const orders = Object.entries(p.byOrder).sort((a, b) => b[1] - a[1]);

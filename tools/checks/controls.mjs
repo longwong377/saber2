@@ -738,13 +738,25 @@ export async function run({ check, assert }) {
   });
 
   check('controls: the pause training sliders show exactly where they bite', async () => {
-    // `s.level === 'dojo'` showed them for all eleven lessons; Dojo.inSandbox
-    // is the one lesson that reads them.
+    // Gating on the level name showed them for all eleven lessons;
+    // Dojo.inSandbox is the one lesson that reads them. The forbidden pattern
+    // below no longer names a level either: it used to spell out the exact
+    // `level === 'dojo'` line that shipped, which stopped being a possible
+    // regression the day that level was deleted while `level === 'meadow'`
+    // remained perfectly writable. Any level name in that position is the bug.
     const main = await read('src/main.js');
     assert(/inSandbox/.test(main), 'main.js never asks the dojo whether this lesson is the sandbox');
     const menu = await readFile(src('ui/Menu.js'), 'utf8');
-    assert(!/const live = this\.s\.mode === 'sandbox' \|\| this\.s\.level === 'dojo'/.test(menu),
-      'showPause is gated on the level name again');
+    /* Scoped to showPause's own body. The first cut of this asserted "no
+     * `this.s.level ===` anywhere in Menu.js", which is not the claim: the
+     * level cards compare the selected key to each card's key to mark one
+     * selected, and that is exactly what they should do. A guard that fails on
+     * the correct code teaches people to delete the guard. */
+    const body = menu.slice(menu.indexOf('showPause(stats, sandboxLive)'));
+    const showPause = body.slice(0, body.indexOf('\n  }\n'));
+    assert(showPause.length > 200 && showPause.length < 4000,
+      `showPause could not be isolated (${showPause.length} chars) — the scan is not scanning`);
+    assert(!/\bthis\.s\.level\s*===/.test(showPause), 'showPause is gated on the level name again');
     assert(/showPause\(stats, sandboxLive\)/.test(menu), 'showPause no longer takes the live answer');
 
     // And the predicate main.js computes has to agree with the director on

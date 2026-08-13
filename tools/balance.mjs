@@ -133,7 +133,7 @@ const spawnCost = Waves.spawnCost ?? ((e) => ARCHETYPES[spawnType(e)]?.threat ??
 const { Saber } = await import('../src/game/Saber.js');
 const { SaberController, OVERHEAD } = await import('../src/game/SaberController.js');
 const { DuelBrain, FORMS, FORM_KEYS } = await import('../src/game/Duel.js');
-const { LEVELS } = await import('../src/game/Levels.js');
+const { LEVELS, LEVEL_ORDER } = await import('../src/game/Levels.js');
 const Bodies = await import('../src/game/Bodies.js');
 const { makeRng, clamp, lerp } = await import('../src/engine/MathUtil.js');
 
@@ -748,7 +748,7 @@ function closeTime(entry, mods) {
  */
 function armTime(entry, diff, levelKey) {
   const { A } = archetypeOf(entry);
-  const ring = (LEVELS[levelKey] || LEVELS.dunes).spawnRadius || [34, 56];
+  const ring = (LEVELS[levelKey] || LEVELS[LEVEL_ORDER[0]]).spawnRadius || [34, 56];
   const from = (ring[0] + ring[1]) / 2;
   const need = A.melee ? A.preferred[1] : A.preferred[1] + 12;
   const speed = Math.max(0.2, A.speed * lerp(0.86, 1.12, diff.enemyAggression / 1.25));
@@ -997,7 +997,7 @@ const _pool = new Map();
 function compositionPool(levelKey, wave, mode = 'roguelite') {
   const key = `${levelKey}|${wave}|${mode}`;
   if (_pool.has(key)) return _pool.get(key);
-  const L = LEVELS[levelKey] || LEVELS.dunes;
+  const L = LEVELS[levelKey] || LEVELS[LEVEL_ORDER[0]];
   const d = new WaveDirector(_stubWorld, { mode, pool: L.pool });
   const out = [];
   for (let i = 0; i < MODEL.poolPerWave; i++) {
@@ -1034,7 +1034,7 @@ function answerRate(diff, sigmaDeg) {
  */
 export function simulateRun(opts) {
   const {
-    difficulty = 'knight', level = 'dunes', seed = 1,
+    difficulty = 'knight', level = LEVEL_ORDER[0], seed = 1,
     sigma = MODEL.guardSigma, boonPolicy = null, maxWave = MODEL.maxWave,
   } = opts;
   const diff = DIFFICULTY[difficulty];
@@ -1442,7 +1442,7 @@ export function rampReport(cfg) {
     rows.push([w, b, d, prevD === null ? '' : (d - prevD).toFixed(0),
       mean(counts).toFixed(1), mean(elites).toFixed(1), mean(threat).toFixed(1),
       mean(hpSum).toFixed(0), mean(dps).toFixed(1),
-      new WaveDirector(_stubWorld, { pool: (LEVELS[cfg.level] || LEVELS.dunes).pool })
+      new WaveDirector(_stubWorld, { pool: (LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]).pool })
         .unlockedAt(w).filter((x, i, a) => a.indexOf(x) === i).join(' ')]);
     prevD = d; prev = b;
   }
@@ -1557,7 +1557,7 @@ export const DEAD_DIFFICULTY_COLUMNS = ['deflectWindow', 'chamberWindow'];
 
 function parseArgs(argv) {
   const cfg = {
-    runs: 40, boonRuns: 14, level: 'dunes', sigma: null,
+    runs: 40, boonRuns: 14, level: LEVEL_ORDER[0], sigma: null,
     boonTiers: ['knight', 'master'],
     only: null,
   };

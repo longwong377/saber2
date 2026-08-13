@@ -12,7 +12,6 @@ import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
-import { LEVELS } from './game/Levels.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
@@ -250,7 +249,10 @@ function buildWorld(levelKey, run = null) {
   // there is no rig until there is a player.
   applyFeelSettings(world, settings);
 
-  hud.setLevel(world.rung ? world.rung.name : LEVELS[levelKey].name, world.difficulty.name);
+  // `world.level`, not `LEVELS[levelKey]`: loadLevel is allowed to substitute
+  // a level for a key it does not know, and the world is the only thing that
+  // knows which one it settled on.
+  hud.setLevel(world.rung ? world.rung.name : world.level.name, world.difficulty.name);
   hud.setBoons(heldBoons());
 
   if (world.training) {
@@ -294,7 +296,12 @@ function deploy(run = startRun()) {
 
   if (net.enabled && net.connected) {
     world.attachNet(net, net.isHost ? 'host' : 'client');
-    if (net.isHost) net.broadcast({ t: 'start', level: levelKey, difficulty: settings.difficulty, mode: settings.mode });
+    // …and `world.levelKey` for the same reason: a host whose own key missed
+    // and fell back would otherwise tell every client to load the key that
+    // missed, and each of them would fall back independently. They would agree
+    // today, by luck, because the fallback is deterministic — but "the host
+    // sends the level it is standing in" is the thing that has to be true.
+    if (net.isHost) net.broadcast({ t: 'start', level: world.levelKey, difficulty: settings.difficulty, mode: settings.mode });
   }
 
   hud.show(true);
@@ -304,7 +311,7 @@ function deploy(run = startRun()) {
 
   if (world.netMode !== 'client' && !world.training) world.director.start(1);
   if (run) world.notify(run.rung.name.toUpperCase(), run.rung.brief);
-  else world.notify('MAY THE FORCE BE WITH YOU', LEVELS[levelKey].name);
+  else world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
 }
 
 /**
@@ -323,7 +330,7 @@ function landing(run) {
   if (!more) return crowned(run);
 
   const next = run.rung;
-  const ascend = screens.guarded('ascending a rung', () => { screens.overlay = null; deploy(run); });
+  const ascend = screens.guarded('going down a rung', () => { screens.overlay = null; deploy(run); });
   screens.take('landing', () => menu.showLanding({
     altitude: next.altitude,
     name: next.name,

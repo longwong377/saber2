@@ -33,6 +33,7 @@ import { readFileSync } from 'node:fs';
 import './dom-shim.mjs';
 import { inflateSync } from 'node:zlib';
 import { resolve, join, basename } from 'node:path';
+import { resolveLevel, nodeLevel } from './_roster.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const argv = process.argv.slice(2);
@@ -218,7 +219,7 @@ function say(tag, rgb, exposure, a) {
 /* ══ model ═══════════════════════════════════════════════════════════════ */
 
 async function cmdModel() {
-  const key = flag('level', 'dunes');
+  const key = await nodeLevel(flag('level', null), { sky: true });
   const air = await levelAir(key);
   const a = air.a;
   const nearArg = flag('near', null);
@@ -262,7 +263,7 @@ async function cmdModel() {
 
 async function cmdSweep() {
   const file = positional()[0];
-  const key = flag('level', 'dunes');
+  const key = await nodeLevel(flag('level', null), { sky: true });
   const png = decodePng(file);
   const THREE = await import('three');
   const { Terrain } = await import(join(ROOT, 'src/world/Terrain.js'));
@@ -383,7 +384,7 @@ async function cmdFrame() {
   const { readFile } = await import('node:fs/promises');
   const { existsSync, statSync, mkdirSync } = await import('node:fs');
   const { extname, normalize } = await import('node:path');
-  const level = flag('level', 'dunes'), tag = flag('tag', 'now');
+  let level = flag('level', null); const tag = flag('tag', 'now');
   // Eye height above the ground datum. The standing pose is 1.75 m, and from
   // there a dune sea occludes its own ground past about 95 m — so the one thing
   // the aerial term exists for cannot be photographed from it. `--eye 26` puts
@@ -414,6 +415,7 @@ async function cmdFrame() {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message)));
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  level = await resolveLevel(page, level, { sky: true });
   await page.evaluate((lv) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level: lv, quality: 'medium', resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',
@@ -472,7 +474,7 @@ async function cmdTone() {
   const E = await import(join(ROOT, 'src/engine/Engine.js'));
   const { LEVELS } = await import(join(ROOT, 'src/game/Levels.js'));
   const THREE = await import('three');
-  const key = flag('level', 'dunes');
+  const key = await nodeLevel(flag('level', null), { sky: true });
   const base = LEVELS[key].atmosphere;
   const sets = (flag('set', '') || '').split(',').filter(Boolean);
   const a = { ...base };

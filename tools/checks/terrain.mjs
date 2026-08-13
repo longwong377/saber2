@@ -527,16 +527,36 @@ export function run({ check, assert, near }) {
     const KEY = Number((ENGINE_SRC().match(/^const KEY = ([\d.]+);/m) || [])[1]);
     assert(KEY > 0, 'Engine no longer states the key it exposes for');
 
-    // the identity, on the levels that have an atmosphere to check it against
+    /*
+     * The identity, on the levels it is an identity FOR — and asked rather than
+     * named, twice over, because both vocabularies here have moved.
+     *
+     * The list used to be three literal level keys, two of which have since been
+     * deleted; note also that OUTDOOR above is a list of TERRAIN PRESETS, a
+     * different vocabulary that happens to share several spellings. But
+     * "every level with an atmosphere" is too wide, and wrong in an
+     * instructive way: the identity is the OUTDOOR branch of atmosphereMeter,
+     * where exposure = bias·KEY/key and key = E·0.18/π, so E cancels. The
+     * indoor branch does not meter at all — it returns bias·EXPOSURE flat,
+     * because an interior is lit by lamps the atmosphere cannot see — and
+     * against that the identity is out by up to 82% on the deeps. That is not
+     * a fault in the grade; it is the check asking a question the indoor path
+     * never claimed to answer. So the loop asks the meter which branch it took
+     * rather than deciding for it.
+     */
     const drift = [];
-    for (const name of ['dunes', 'arena', 'canyon']) {
+    let metered = 0;
+    for (const name of LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere)) {
       const A = LEVELS[name].atmosphere;
       const m = atmosphereMeter(A);
+      if (!m.outdoor) continue;
+      metered++;
       assert(m.exposure > 0.2001 && m.exposure < 2.9999, `${name}: the exposure meter is on its clamp`);
       const direct = (m.irradiance / Math.PI) * m.exposure;      // a 1.0 albedo ground
       const identity = (A.exposure ?? 1.05) * KEY / 0.18;
       drift.push(Math.abs(direct - identity) / identity);
     }
+    assert(metered >= 3, `only ${metered} metered levels to verify the identity against`);
     assert(Math.max(...drift) < 0.02,
       `the exposure identity is out by ${(Math.max(...drift) * 100).toFixed(1)}% — the measurement below is measuring nothing`);
 

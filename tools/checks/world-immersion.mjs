@@ -37,8 +37,15 @@ import { SkyDome } from '../../src/engine/SkyDome.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-/** The levels with open ground and a sun on it. */
-const OUTDOOR_LEVELS = ['dunes', 'arena', 'canyon'];
+/** The levels with open ground and a sun on it, ASKED rather than listed.
+ *
+ *  This was a literal `['dunes', 'arena', 'canyon']` and it outlived two of the
+ *  three: a check that names levels stops measuring the game the moment the
+ *  roster changes, and it does not fail loudly when it does — it throws on
+ *  `undefined.terrain`, which reads as a bug in the check rather than as
+ *  coverage quietly going to one level. `atmosphere.sky !== false` is the same
+ *  question the draw-call check below already asks, so both now ask it once. */
+const OUTDOOR_LEVELS = LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere?.sky !== false);
 
 /** Vertex rows per column in a horizon ring: deep root, grade, crest. The row
  *  at grade is what lets the visible band converge on the sky it actually
@@ -357,7 +364,7 @@ export function run({ check, assert, near }) {
       // enough to be seen properly, and instancing its crates would buy
       // nothing. Holding it to the same ratio would be measuring the wrong
       // thing and would push someone to instance a workshop.
-      if (LEVELS[key].atmosphere.sky !== false) ratios.push(f.objects / f.meshes);
+      if (OUTDOOR_LEVELS.includes(key)) ratios.push(f.objects / f.meshes);
     }
     const worst = Math.min(...ratios);
     assert(ratios.length >= 3, `only ${ratios.length} outdoor levels to measure`);

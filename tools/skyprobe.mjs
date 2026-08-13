@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { atmosphereMeter, skyRadiance, skyShoulder, sunDirection, hazeRadiance,
   skyDisplayShoulder, cloudLight, SKY_PHYSICAL, AERIAL } from '../src/engine/Engine.js';
 import { SkyDome } from '../src/engine/SkyDome.js';
-import { LEVELS } from '../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../src/game/Levels.js';
 
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const sat = (c) => { const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b); return mx <= 1e-6 ? 0 : (mx - mn) / mx; };
@@ -43,7 +43,9 @@ function toDisplay(col, exposure, grade = {}) {
 }
 
 const names = process.argv.slice(2).filter((a) => !a.startsWith('-'));
-const keys = names.length ? names : ['arena', 'dunes', 'canyon'];
+// Every level with a sky, asked rather than listed.
+const keys = names.length ? names
+  : LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere?.sky !== false);
 
 for (const key of keys) {
   const a = LEVELS[key]?.atmosphere;
