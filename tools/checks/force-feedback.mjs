@@ -245,4 +245,71 @@ export async function run({ check, assert, THREE: T }) {
       `healing at full health said ${JSON.stringify(d.notices)}`);
     return `40 → ${b.p.hp.toFixed(0)} hp over 3s for ${(200 - b.p.force).toFixed(0)} Force; a hit breaks it`;
   });
+
+  check('force: the stasis field can send every bolt back to whoever fired it', () => {
+    /**
+     * The field had ONE answer — everything at the thing under your reticle —
+     * and that is the right one when a squad has walked into a crossfire you
+     * can point somewhere. It is the wrong one when six of them have shot at you
+     * from six directions, which is exactly the situation the field is easiest
+     * to catch. So `hurl` still throws the whole field at the aim, and pressing
+     * the stasis key again returns every bolt to its own shooter.
+     *
+     * `owner` was already on every bolt — BoltPool.fire takes one — and nothing
+     * had ever read it back. This check is what makes that field load-bearing:
+     * three bolts from three different places have to leave along three
+     * different vectors, which is a thing no aimed volley can do.
+     */
+    const b = bench({ force: 500 });
+    const shooters = [
+      { dead: false, position: new THREE.Vector3(10, 0, 0), chestY: 1.2, A: { scale: 1 } },
+      { dead: false, position: new THREE.Vector3(-10, 0, 0), chestY: 1.2, A: { scale: 1 } },
+      { dead: false, position: new THREE.Vector3(0, 0, 12), chestY: 1.2, A: { scale: 1 } },
+    ];
+    const released = [];
+    b.ctx.bolts = { release: (bolt, dir, speed) => released.push({ bolt, dir: dir.clone(), speed }) };
+    b.ctx.enemies = shooters;
+    const S = b.p.stasis;
+    S.active = true;
+    S.point.set(0, 1.2, 4);
+    S.held = shooters.map((o, i) => ({ bolt: {
+      active: true, pos: new THREE.Vector3(i - 1, 1.2, 1), vel: new THREE.Vector3(0, 0, 1),
+      speed: 90, damage: 8, life: 1, owner: o, team: 1, held: null,
+    } }));
+    b.p.releaseStasis(b.ctx, true, true);
+    for (let i = 0; i < 40; i++) b.p._flushStasisFire(1 / 60, b.ctx);
+    assert(released.length === 3, `${released.length} of 3 bolts left the field`);
+    // each one points at its OWN shooter
+    for (let i = 0; i < 3; i++) {
+      const want = shooters[i].position.clone().sub(released[i].bolt.pos).normalize();
+      const dot = want.dot(released[i].dir);
+      assert(dot > 0.9,
+        `bolt ${i} left ${(Math.acos(Math.min(1, dot)) * 180 / Math.PI).toFixed(0)}° away from the enemy that fired it`);
+    }
+    // and they are genuinely three different directions, which an aimed volley is not
+    const spread = Math.max(
+      ...released.map((r, i) => Math.max(...released.map((q, j) => i === j ? 0 : r.dir.angleTo(q.dir)))));
+    assert(spread > 1.0,
+      `the three bolts left within ${(spread * 180 / Math.PI).toFixed(0)}° of each other — they are not going back to senders`);
+    // …while the aimed release still puts them all on one line
+    const c = bench({ force: 500 });
+    const hit = [];
+    c.ctx.bolts = { release: (bolt, dir) => hit.push(dir.clone()) };
+    c.ctx.enemies = shooters;
+    const S2 = c.p.stasis;
+    S2.active = true; S2.point.set(0, 1.2, 4);
+    S2.held = S.firing.length ? [] : shooters.map((o, i) => ({ bolt: {
+      active: true, pos: new THREE.Vector3(i - 1, 1.2, 1), vel: new THREE.Vector3(0, 0, 1),
+      speed: 90, damage: 8, life: 1, owner: o, team: 1, held: null,
+    } }));
+    c.p.releaseStasis(c.ctx, true, false);
+    for (let i = 0; i < 40; i++) c.p._flushStasisFire(1 / 60, c.ctx);
+    const aimedSpread = Math.max(
+      ...hit.map((r, i) => Math.max(...hit.map((q, j) => i === j ? 0 : r.angleTo(q)))));
+    assert(aimedSpread < spread,
+      `the aimed volley spread ${(aimedSpread * 180 / Math.PI).toFixed(0)}° against return-to-sender's `
+      + `${(spread * 180 / Math.PI).toFixed(0)}° — the two modes are the same mode`);
+    return `return to sender: 3 bolts, ${(spread * 180 / Math.PI).toFixed(0)}° apart; `
+      + `aimed volley: ${(aimedSpread * 180 / Math.PI).toFixed(0)}° apart`;
+  });
 }

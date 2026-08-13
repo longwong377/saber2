@@ -760,7 +760,7 @@ export class Player {
      * the per-frame capture sweep is not quadratic.
      */
     this.stasis = {
-      active: false, timer: 0, radius: 0, fireT: 0, target: null,
+      active: false, timer: 0, radius: 0, fireT: 0, target: null, toOwner: false,
       held: [], firing: [], bodies: new Set(),
       centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
     };
@@ -2815,7 +2815,10 @@ export class Player {
    * StasisAnchor for why that is not a hack but the point.
    */
   toggleStasis(ctx) {
-    if (this.stasis.active) { this.releaseStasis(ctx, true); return; }
+    // Pressing the key again is RETURN TO SENDER — see releaseStasis. `hurl`
+    // is the other half, and fires the whole field at whatever you are looking
+    // at. Two answers to "and now what", on the two keys already involved.
+    if (this.stasis.active) { this.releaseStasis(ctx, true, true); return; }
     if (this.cooldowns.stasis > 0) return this._refuse('force stop', `recovering — ${this.cooldowns.stasis.toFixed(1)}s`);
     if (!this._spend(26)) return this._refuse('force stop', `26 Force needed, you have ${Math.round(this.force)}`);
     const S = this.stasis;
@@ -2930,7 +2933,25 @@ export class Player {
    * Let the field go. `fire` sends everything at the target; otherwise it all
    * just falls, which is what running out of Force in the middle looks like.
    */
-  releaseStasis(ctx, fire = true) {
+  /**
+   * @param toOwner  send every held bolt back to WHOEVER FIRED IT, instead of
+   *   throwing the whole field at one target.
+   *
+   * The field always had one answer — everything at the thing under your
+   * reticle — and that is the right one when a squad has walked into a crossfire
+   * you can point somewhere. It is the wrong one when six of them have shot at
+   * you from six directions, which is the situation the field is easiest to
+   * catch. Return to sender answers that, and it is the more interesting power:
+   * it kills the shooters rather than the target, and it scales with how badly
+   * you were being flanked instead of with how well you aimed.
+   *
+   * Bolts already record their `owner` — BoltPool.fire takes one and nothing
+   * had ever read it back — so the shooter is known and no bookkeeping is added
+   * for this. A bolt whose owner has since died, or that came out of a turret
+   * with nobody behind it, falls back to the aimed target rather than
+   * evaporating.
+   */
+  releaseStasis(ctx, fire = true, toOwner = false) {
     const S = this.stasis;
     if (!S.active) return;
     S.active = false;
@@ -2950,6 +2971,7 @@ export class Player {
 
     const aim = this._aimTarget(ctx, S.point);
     S.target = aim.enemy;
+    S.toOwner = toOwner;
     this._gesture('unleash', S.point);
     // Fired in a RIPPLE. Twenty bolts leaving on one frame is a single white
     // flash; 28 ms apart they read as a volley, which is the entire reason it
@@ -2976,8 +2998,13 @@ export class Player {
 
   _launchStasisItem(ctx, h) {
     const S = this.stasis;
-    const live = S.target && !S.target.dead;
-    const at = live ? this._enemyPoint(S.target, _g1) : _g1.copy(S.point);
+    let target = S.target;
+    // Return to sender: this bolt's own shooter, if it still has one standing.
+    if (S.toOwner && h.bolt && h.bolt.owner && !h.bolt.owner.dead && h.bolt.owner !== this) {
+      target = h.bolt.owner;
+    }
+    const live = target && !target.dead && target !== this;
+    const at = live ? this._enemyPoint(target, _g1) : _g1.copy(S.point);
     const P = this.forceScale;
 
     if (h.bolt) {
