@@ -13,7 +13,7 @@ import { SaberController } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
-import { Rig, BipedAnimator } from './Rig.js';
+import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
@@ -38,6 +38,13 @@ const rng = makeRng(1212);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
+/** The two wrist targets, which have to survive the whole arm solve, and their scratch. */
+const _v7 = new THREE.Vector3(), _v8 = new THREE.Vector3(), _v9 = new THREE.Vector3();
+/** _gripPole's own, so it cannot tread on the arm solve running around it. */
+const _v10 = new THREE.Vector3(), _v11 = new THREE.Vector3();
+const _v12 = new THREE.Vector3(), _v13 = new THREE.Vector3();
+const _v12Q = new THREE.Quaternion(), _q5 = new THREE.Quaternion();
 // The Force powers get scratch of their own. _v1.._v6 are threaded through the
 // blade solve, the collide pass and the body pose in the same frame, and a
 // gesture that borrowed one of them would corrupt whichever of those ran next —
@@ -261,7 +268,97 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
  * the top of the frame — tools/fpview.mjs, `--only 'level gaze'` — and that is
  * a picture, not an inequality.
  */
-const FP_HILT_DROP = 0.15;
+const FP_HILT_DROP = 0.02;
+/** …and how far in front of it. See FP_HILT_DROP. */
+const FP_HILT_FWD = 0.16;
+
+/**
+ * WHERE A HAND HOLDS A HILT — and it was nowhere near where the game put one.
+ *
+ * `solveIK('armR', 'foreR', gripR, poleR)` places the WRIST JOINT on the grip
+ * point, and the grip point is on the hilt's own axis. So the hand bone's
+ * origin sat exactly on the axis of the cylinder it was supposed to be
+ * holding: measured, the grip point in hand space was (0, 0, 0) to four
+ * decimals. The palm slab is 30 mm thick and centred on that origin, so the
+ * hilt ran through the middle of the palm and out the back of the hand.
+ *
+ * And it ran the WRONG WAY. `buildHand` documents its own frame — "+Y runs
+ * wrist → knuckles, +Z is the way the palm faces" — and the hand's world
+ * quaternion was copied straight off the hilt, whose axis is its own +Y. So the
+ * hilt was threaded from the wrist out through the knuckles, along the fingers,
+ * when a hand grips a cylinder ACROSS the palm: the tunnel a closed hand makes
+ * runs thumb-to-little-finger, which is this hand's X.
+ *
+ * The remarkable part is that the hand was already built to hold one. Replaying
+ * buildHand's own finger construction to recover the joint positions the bake
+ * throws away, the four phalanx joints of the middle finger sit at
+ *
+ *       (0.087, 0.005) (0.096, 0.033) (0.081, 0.052) (0.063, 0.057)
+ *
+ * in the hand's YZ plane — an arc about (0.075, 0.030) of radius 25 mm, and
+ * taking off the 9.7 mm the finger itself is thick leaves a bore of about 15
+ * mm. A lightsaber hilt is 17. Independently, the largest circle that fits in
+ * the gap between the palm face and the returning fingers, found by search
+ * rather than by construction, is at (0.060, 0.030) with 15.5 mm of clearance.
+ * The fist has always closed on a hilt-sized hole in exactly the right place.
+ * Nothing ever put a hilt in it.
+ *
+ * So: the bore, in hand space, at the scale buildHand is called with here.
+ */
+export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
+
+/**
+ * The hand's world orientation, given the hilt's.
+ *
+ * A quarter turn about the hilt's own axis-of-roll is the whole of it. The hand
+ * needs its X along the blade (the bore's axis) and its Z — the way the palm
+ * faces — pointing at the hilt, which is where the bore already is. Taking
+ * handZ = hiltZ and handX = -hiltY for the right hand leaves handY = +hiltX,
+ * which is an orthonormal basis and a -90 degree turn about hiltZ. The left
+ * hand is the mirror: +90, so both palms face the same way round a two-handed
+ * grip, one above the other, as two hands on a bar do.
+ *
+ * The thumb decides the sign. buildHand puts it "on the +X side for a left
+ * hand", so a right hand's thumb is on -X, and -X has to point up the blade —
+ * a sabre grip has the thumb toward the emitter.
+ */
+export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+
+/**
+ * Where each hand takes the hilt, in the saber root's own frame.
+ *
+ * Both moved 2 cm up the hilt toward the emitter. It costs nothing — there is
+ * more pommel under the hands and that is what a pommel is for — and it lifts
+ * the whole pair in the first-person frame, which was the difference between
+ * the off hand sitting at NDC y -0.93, a hair off the bottom edge, and sitting
+ * where a player can see it. The 65 mm between the two hands is unchanged.
+ */
+export const GRIP_AT = { R: 0.050, L: -0.015 };
+
+
+/**
+ * THE ONE STATEMENT OF HOW A HAND HOLDS THIS WEAPON.
+ *
+ * Exported because it had two readers and one of them was a REGULAR EXPRESSION:
+ * the creator's preview parents a saber under a hand bone, and the check that
+ * kept it honest did so by matching Player.js's source for
+ * `getWorldQuaternion(_q1) ... quaternion.copy(_q2.invert()).multiply(_q1)`.
+ * That is a coupling to the spelling rather than to the fact, and it went stale
+ * the moment the fact changed. Both callers use this now.
+ *
+ * @param side 'R' | 'L'
+ * @param hiltQuat  the saber root's world quaternion
+ * @param outQuat   receives the hand's world orientation
+ * @param outWrist  receives the offset from the grip point BACK to the wrist,
+ *                  in world space; add it to a point on the hilt's axis to get
+ *                  where the wrist joint belongs.
+ */
+export function handPoseOnHilt(side, hiltQuat, outQuat, outWrist) {
+  outQuat.copy(hiltQuat).multiply(side === 'L' ? GRIP_ROLL_L : GRIP_ROLL_R);
+  if (outWrist) outWrist.copy(GRIP_BORE).applyQuaternion(outQuat).negate();
+  return outQuat;
+}
 
 // Scratch for the viewmodel alone. It runs in the middle of the arm solve,
 // which is already holding _v1.._v6 AND _g1.._g5, so it may borrow neither.
@@ -1311,7 +1408,7 @@ export class Player {
       // a different weapon.
       this.gripAnchor.copy(eye)
         .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), -FP_HILT_DROP)
-        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), 0.28);
+        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), FP_HILT_FWD);
     }
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
@@ -1456,6 +1553,67 @@ export class Player {
     this.camera.advanceEye(dt, this.animator.pelvis);
   }
 
+  /**
+   * SOLVE THE ARM FROM THE GRIP'S ORIENTATION, NOT JUST ITS POSITION.
+   *
+   * The long note further down records two attempts at the wrist problem, both
+   * measured and both thrown away, and ends by saying what the answer has to
+   * be: "the arm has to be solved from the grip's ORIENTATION as well as its
+   * position, so the forearm arrives already pointing somewhere a wrist can
+   * finish from." This is that, and it is only possible now that the hand's
+   * orientation is known BEFORE the IK runs rather than stamped on afterwards.
+   *
+   * The bug is one line in `solveIK`: the lower bone's roll comes from
+   * `aimY(lowerDir, poleDir)`. The pole is a hint about which way the elbow
+   * BENDS — a plane — and it is being asked to decide the forearm's TWIST as
+   * well. Those are different questions with different right answers, and the
+   * forearm was answering the wrong one: hence 6874 deg/s of spin on a hand
+   * that is barely moving, and a wrist left to absorb the whole difference.
+   *
+   * (Aiming the pole itself at the grip was tried first and is worse — 8780
+   * deg/s. It has to be: `aimY` substitutes a fixed reference whenever the
+   * direction and the reference come within 10 degrees of parallel, and a pole
+   * pointed along the arm is that degeneracy by construction.)
+   *
+   * So the roll is set here instead, off the hand the grip has already fixed.
+   * The forearm keeps exactly the direction solveIK gave it — the elbow does
+   * not move — and only turns about its own axis, until its X agrees with the
+   * hand's. Pronation is a forearm motion; this is the bone that should be
+   * doing it.
+   */
+  _rollForearm(foreName, handName, handQuat) {
+    const bone = this.rig.get(foreName);
+    const hand = this.rig.get(handName);
+    if (!bone || !bone.obj.parent || !hand) return;
+    bone.obj.updateMatrixWorld(true);
+    bone.obj.getWorldQuaternion(_q4);
+    // the direction solveIK chose, which must not change
+    const dir = _v10.set(0, 1, 0).applyQuaternion(_q4);
+    /*
+     * The forearm the WRIST wants is the one that leaves the hand sitting at
+     * its own rest pose: `hand.restQuat` is the local rotation a relaxed wrist
+     * has, so the orientation that costs the wrist nothing is
+     * `handWorld * restQuat^-1`. Call that Qd.
+     *
+     * Qd's own +Y will not be the direction the IK chose, so it is SWUNG onto
+     * it — the minimal rotation from one to the other, pre-multiplied. That
+     * keeps every bit of Qd's twist and changes only where the bone points,
+     * which is the one thing this must not touch.
+     *
+     * Done as a swing rather than as `aimY(dir, someAxisOfQd)`, which was the
+     * first spelling and is not continuous: aimY substitutes a fixed reference
+     * whenever the two come within 10 degrees of parallel, so on the frames
+     * where Qd's X lines up with the bone the roll jumped and the forearm
+     * spun at 5496 deg/s — the very fault this method exists to remove.
+     */
+    _q5.copy(handQuat).multiply(_v12Q.copy(hand.restQuat).invert());
+    const y = _v11.set(0, 1, 0).applyQuaternion(_q5);
+    _q4.setFromUnitVectors(y, dir).multiply(_q5);
+    bone.obj.parent.getWorldQuaternion(_v12Q);
+    bone.obj.quaternion.copy(_v12Q.invert()).multiply(_q4);
+    bone.obj.updateMatrixWorld(true);
+  }
+
   _updateBody(dt, ctx) {
     const rig = this.rig;
 
@@ -1489,8 +1647,23 @@ export class Player {
       ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
     if (this.throwState === 'held') {
-      const gripR = this.saber.root.localToWorld(_v2.set(0, 0.03, 0));
-      const gripL = this.saber.root.localToWorld(_v3.set(0, -0.035, 0));
+      const gripR = this.saber.root.localToWorld(_v2.set(0, GRIP_AT.R, 0));
+      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L, 0));
+      /**
+       * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
+       *
+       * These two points are on the hilt's axis, which is where the BORE of the
+       * closed hand has to land — not where the wrist joint goes. Solving the
+       * arm straight to them put the wrist on the axis and the hilt through the
+       * middle of the palm. The wrist is one bore-offset back from it, in the
+       * hand's own frame, which is the hilt's frame turned a quarter about its
+       * roll.
+       */
+      this.saber.root.getWorldQuaternion(_q1);
+      handPoseOnHilt('R', _q1, _q2, _v9);
+      const wristR = _v7.copy(gripR).add(_v9);
+      handPoseOnHilt('L', _q1, _q3, _v9);
+      const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
 
@@ -1503,11 +1676,13 @@ export class Player {
 
       const poleR = _v6.copy(chest).addScaledVector(right, 0.75 + side)
         .addScaledVector(UP, -0.75 + lift).addScaledVector(fwd, -0.2);
-      rig.solveIK('armR', 'foreR', gripR, poleR);
+      rig.solveIK('armR', 'foreR', wristR, poleR);
+      this._rollForearm('foreR', 'handR', _q2);
       if (twoHanded) {
         const poleL = _v6.copy(chest).addScaledVector(right, -0.62 + side)
           .addScaledVector(UP, -0.8 + lift).addScaledVector(fwd, -0.2);
-        rig.solveIK('armL', 'foreL', gripL, poleL);
+        rig.solveIK('armL', 'foreL', wristL, poleL);
+        this._rollForearm('foreL', 'handL', _q3);
       } else {
         // handL's local quaternion is force-set while two-handed; nothing put it
         // back, so switching to one hand left it frozen 167 degrees off rest.
@@ -1583,12 +1758,14 @@ export class Player {
       // a wrist can finish from. That is a real solver change and it is worth
       // doing; what is written down here is that the two cheaper answers have
       // both now been measured and neither one is it.
-      this.saber.root.getWorldQuaternion(_q1);
-      for (const h of twoHanded ? ['handR', 'handL'] : ['handR']) {
+      // …in the orientation handPoseOnHilt already worked out above, which is
+      // the hilt's turned a quarter about its roll so the bore lies ALONG the
+      // blade instead of the fingers pointing down it. See GRIP_BORE.
+      for (const [h, want] of twoHanded ? [['handR', _q2], ['handL', _q3]] : [['handR', _q2]]) {
         const b = rig.get(h);
         if (!b || !b.obj.parent) continue;
-        b.obj.parent.getWorldQuaternion(_q2);
-        b.obj.quaternion.copy(_q2.invert()).multiply(_q1);
+        b.obj.parent.getWorldQuaternion(_q4);
+        b.obj.quaternion.copy(_q4.invert()).multiply(want);
       }
     } else {
       // saber is in flight — the throwing hand stays extended, calling it back
