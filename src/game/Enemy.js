@@ -598,6 +598,18 @@ export class Enemy {
     /** Seconds left of the "just dragged off my feet" window a Force pull
      *  opens. Read by Combat.openness; decayed in update. */
     this.yankT = 0;
+    /**
+     * FORCE COMPEL: who this one is fighting for, and for how long.
+     *
+     * `{ target, t }`, or null for a mind of its own. The target is an Enemy —
+     * possibly THIS enemy — and while it is set, `_think` uses it in place of
+     * whatever `ctx.pickTarget` would have said. Everything else about the
+     * brain is untouched on purpose: a compelled droid advances, takes cover,
+     * leads its shots and calls out exactly as it always did, at the wrong
+     * people. A separate "compelled" behaviour would have been a second AI to
+     * maintain and would have looked like a different unit.
+     */
+    this.compelled = null;
 
     const diff = world.difficulty;
     this.hp = A.hp * (world.hpScale ?? 1);
@@ -1307,6 +1319,12 @@ export class Enemy {
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
+    if (this.compelled) {
+      this.compelled.t -= dt;
+      // It ends when the clock runs out, when the victim dies (there is nothing
+      // left to be turned against), or when the compelled unit dies itself.
+      if (this.compelled.t <= 0 || this.compelled.target?.dead || this.dead) this.compelled = null;
+    }
     if (this.actor) this.actor.update(dt);
 
     // level of detail: distant enemies skip the expensive solves
@@ -1340,7 +1358,10 @@ export class Enemy {
 
   _think(dt, ctx) {
     const A = this.A;
-    const target = this.target = ctx.pickTarget(this);
+    // A compelled unit's target REPLACES the world's pick. `_shoot`, the cover
+    // logic and the melee brain all read `this.target`, so one substitution
+    // here turns the whole unit rather than only its trigger finger.
+    const target = this.target = this.compelled?.target ?? ctx.pickTarget(this);
     if (!target) { this.wish = null; return; }
 
     _v1.subVectors(target.position, this.position);
@@ -1531,6 +1552,19 @@ export class Enemy {
     if (!target) return;
     const from = this._muzzleWorld(_v1).clone();
     const aimAt = _v2.copy(target.chest ?? target.position);
+    /* SHOOTING ITSELF is aimed at the chest like everything else, but the
+     * muzzle is already past it — a rifle held at the shoulder has its barrel
+     * end a good half metre in FRONT of the ribs — so `aimAt - from` points
+     * backwards and the shot goes over the droid's shoulder into the sky. The
+     * bolt has to start behind the chest and travel through it. Dropping the
+     * muzzle to the hip and aiming up under the chin is the pose a unit turning
+     * its own weapon on itself actually takes, and it is the only special case
+     * compulsion needs anywhere in this file. */
+    if (target === this) {
+      from.set(this.position.x, this.position.y + 0.55 * (A.scale ?? 1), this.position.z)
+        .addScaledVector(_v5.set(Math.sin(this.facing), 0, Math.cos(this.facing)), 0.26 * (A.scale ?? 1));
+      aimAt.set(this.position.x, this.position.y + 1.35 * (A.scale ?? 1), this.position.z);
+    }
 
     const diff = this.world.difficulty;
     const acc = diff ? diff.enemyAccuracy : 0.7;
@@ -1550,6 +1584,14 @@ export class Enemy {
       color: A.boltColor ?? BOLT_COLORS.red,
       owner: this, team: this.team, big: !!A.big,
       length: A.big ? 2.4 : 1.15, radius: A.big ? 0.1 : 0.05,
+      /* The flag the hit test needs. A bolt is normally sorted by TEAM, and a
+       * compelled droid is still on the droids' team — it has not changed
+       * sides, it has been made to point the wrong way — so without this its
+       * shots pass harmlessly through the ally it is aiming at and the whole
+       * ability is a droid doing an impression. `turned` is read beside
+       * `deflected` in World._boltHitTest, which is the existing seam for "a
+       * bolt that may hurt the side that fired it". */
+      turned: !!this.compelled,
     });
     audio.blaster(from, !!A.big);
     this.world.particles?.plasma.spawn(from, _v4.set(0, 0, 0), {

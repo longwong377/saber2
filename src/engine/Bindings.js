@@ -98,6 +98,11 @@ export const ACTIONS = [
   { id: 'stasis',     group: 'Force',    label: 'Stasis field',      keys: ['KeyB'] },
   { id: 'heal',       group: 'Force',    label: 'Force heal',        keys: ['Digit3'] },
   { id: 'rend',       group: 'Force',    label: 'Rend apart',        keys: ['KeyN'] },
+  // Digit4 rather than a letter: it sits beside `heal` on Digit3, and the two
+  // powers that act on a MIND — yours and someone else's — should be neighbours
+  // under the same hand. Every letter within reach of WASD is already spoken
+  // for, and findConflict is what proves it rather than anyone's memory.
+  { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'] },
 
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },

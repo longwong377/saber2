@@ -522,10 +522,15 @@ export const CODEX = [
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'],
     text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },
+  { keys: ['compel'],
+    text: () => 'Force compel, once <b>Domination</b> is drafted. The unit you are looking at '
+      + 'turns on its own — or, alone, on itself.' },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   { keys: ['lessonNext', 'lessonBack', 'lessonRepeat'],
-    text: () => 'In the <b>Dojo</b>: next lesson, previous lesson, start this one again.' },
+    // "In the Dojo" named a level that has been deleted; training is a MODE now
+    // and runs in whichever theatre the player picked. See MODES.training.
+    text: () => 'In <b>Training</b>: next lesson, previous lesson, start this one again.' },
 ];
 
 /**

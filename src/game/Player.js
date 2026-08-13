@@ -378,6 +378,20 @@ const FLIP_TIME = 0.52;
  */
 const FLIP_PIVOT = 1.02;
 
+/**
+ * FORCE COMPEL: what it costs, how long a turned mind stays turned, and how far
+ * a turned unit will look for someone of its own to shoot.
+ *
+ * Six seconds is about two firing cycles for a B1 — long enough to watch it
+ * work and to plan a flank around, short enough that a wave cannot be taken
+ * apart by clicking through it. 14 m is a little over the spacing a wave
+ * actually spawns at, so a unit in a squad always finds a neighbour and one
+ * that has been driven off on its own does not.
+ */
+const COMPEL_COST = 34;
+const COMPEL_TIME = 6.0;
+const COMPEL_SPREAD = 14;
+
 /** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
 const HEAL_COST = 40;
 const HEAL_TIME = 3.0;
@@ -733,6 +747,8 @@ export function defaultBoonMods() {
     riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
     conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
     guardRefund: 0, tempest: 0, sunderReach: 0, mend: 0, absorb: false,
+    /** Domination. Force compel refuses by name without it — see forceCompel. */
+    compel: false,
   };
 }
 
@@ -875,7 +891,7 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0 };
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0 };
     this.boons = new RankSet();
     this.boonMods = defaultBoonMods();
     this.airJumps = 0;
@@ -1061,6 +1077,7 @@ export class Player {
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
+    if (input.actHit('compel')) this.forceCompel(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
     // the key moved off Mouse2 — which is why comments name the ACTION.)
@@ -3068,6 +3085,97 @@ export class Player {
     this._healFrom = this.hp;
     this._gesture('mend');
     audio.force(this.chest, 'pull');
+  }
+
+  /**
+   * FORCE COMPEL — turn a mind, not a body.
+   *
+   * Note 44: "make an enemy fire on itself or its allies." Every other power in
+   * this file moves matter; this one is the only one that touches a decision,
+   * and that is the whole reason to have it. It also does something no other
+   * power does to a crowd: it removes a gun from the line AND adds one to your
+   * side, so a wave of eight becomes seven against one for as long as it holds.
+   *
+   * WHO IT TURNS THEM ON, in order of preference:
+   *
+   *   1. the nearest living ally within COMPEL_SPREAD. This is the good
+   *      outcome and it is what the ability is for.
+   *   2. failing that, ITSELF. A lone droid with nobody left to shoot puts its
+   *      own rifle under its chin, which is both the second half of the note
+   *      and the correct answer to "there is nobody else here" — far better
+   *      than the power silently doing nothing, which is exactly the class of
+   *      bug tools/checks/force-feedback.mjs exists to prevent.
+   *
+   * Deliberately NOT included: turning them on the player's co-op partner. It
+   * would be funny once and then it would be the reason nobody plays with you.
+   *
+   * A CLOCK, not a permanent conversion. Six seconds is about two firing
+   * cycles for a B1 — long enough to see it work and to plan around, short
+   * enough that a crowd cannot be dismantled by clicking through it. Bosses
+   * are exempt: a boss whose mind can be taken is a boss fight that ends with
+   * a keypress.
+   */
+  forceCompel(ctx) {
+    if (!this.boonMods.compel) {
+      return this._refuse('force compel', 'not attuned — draft Domination to reach a mind');
+    }
+    if (this.cooldowns.compel > 0) {
+      return this._refuse('force compel', `recovering — ${this.cooldowns.compel.toFixed(1)}s`);
+    }
+    if (!this._canSpend(COMPEL_COST)) {
+      return this._refuse('force compel', `${COMPEL_COST} Force needed, you have ${Math.round(this.force)}`);
+    }
+
+    // The unit under the crosshair, by the same cone-and-ray rule the grip
+    // uses: pixel accuracy on a droid at twenty metres is not a skill worth
+    // testing, and the two powers should feel like they are aimed the same way.
+    const reach = this.forceReach;
+    let best = null, bestScore = -1;
+    for (const e of ctx.enemies || []) {
+      if (e.dead || e === this) continue;
+      _v1.subVectors(this._enemyPoint(e, _v2), this.chest);
+      const d = _v1.length();
+      if (d > reach || d < 0.5) continue;
+      const dot = _v1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (dot < 0.90) continue;
+      const score = dot * 2 - d / reach;
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    if (!best) return this._refuse('force compel', 'nothing in your sights within reach');
+    if (best.A?.boss) return this._refuse('force compel', `${best.A.label ?? 'it'} is too strong to turn`);
+    if (!best.A?.ranged) {
+      return this._refuse('force compel', `${best.A?.label ?? 'it'} carries no blaster to turn`);
+    }
+
+    // …and who it turns them on.
+    let victim = null, bestD = Infinity;
+    for (const e of ctx.enemies || []) {
+      if (e.dead || e === best || e.team !== best.team) continue;
+      const d = e.position.distanceToSquared(best.position);
+      if (d < bestD && d < COMPEL_SPREAD * COMPEL_SPREAD) { bestD = d; victim = e; }
+    }
+    victim = victim || best;
+
+    this._spend(COMPEL_COST);
+    this.cooldowns.compel = 7;
+    this._gesture('reach');
+    best.compelled = { target: victim, t: COMPEL_TIME };
+    // Whatever it was doing, it is not doing any more: the reload, the burst
+    // counter and the cover crouch all belong to the fight it was in.
+    best.stun?.(0.35);
+    audio.force(this._enemyPoint(best, _v1), 'pull');
+    this.world?.notify?.('COMPELLED',
+      victim === best
+        ? `${best.A?.label ?? 'it'} turns its blaster on itself`
+        : `${best.A?.label ?? 'it'} opens fire on ${victim.A?.label ?? 'its own'}`);
+    if (ctx.particles) {
+      for (let i = 0; i < 14; i++) {
+        _v1.set((rng() - 0.5) * 1.2, rng() * 1.6, (rng() - 0.5) * 1.2);
+        ctx.particles.plasma.spawn(this._enemyPoint(best, _v2), _v1,
+          { life: 0.45, size: 0.3, drag: 2.4, gravity: -0.1, color: this._lightningColor(), alpha: 0.3 });
+      }
+    }
+    return true;
   }
 
   /** One frame of the channel. Called from update while `healing` is a number. */

@@ -38,7 +38,7 @@ export class BoltPool {
       this.bolts.push({
         active: false, pos: new THREE.Vector3(), prev: new THREE.Vector3(),
         vel: new THREE.Vector3(), color: new THREE.Color(), life: 0, damage: 10,
-        owner: null, team: 1, deflected: false, deflector: null, speed: 90,
+        owner: null, team: 1, deflected: false, turned: false, deflector: null, speed: 90,
         length: 1.1, radius: 0.05, homing: 0, target: null, big: false,
         // While `held` the bolt is stuck to a blade: it does not fly, does not
         // hit anything, and does not age. See update().
@@ -115,6 +115,9 @@ export class BoltPool {
     b.owner = opts.owner ?? null;
     b.team = opts.team ?? 1;
     b.deflected = false;
+    // Fired by a mind that is not its owner's. See Player.forceCompel and the
+    // friendly-fire branch in World._boltHitTest.
+    b.turned = !!opts.turned;
     b.deflector = null;
     b.big = !!opts.big;
     b.length = opts.length ?? (b.big ? 2.0 : 1.15);

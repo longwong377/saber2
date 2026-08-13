@@ -1900,6 +1900,25 @@ export const BOONS = [
     apply(p) { p.boonMods.lightning = true; },
   },
   {
+    /**
+     * The only card in the table that hands you an ALLY rather than a number.
+     *
+     * Epic, and gated to wave 9 rather than lightning's 7, because it is worth
+     * more than one enemy's health: a compelled droid is a gun taken out of the
+     * line AND a gun added to yours, so in arithmetic alone it is worth about
+     * twice a kill for as long as it holds, and in a crowded wave it is worth
+     * more than that because the crowd shoots back at it.
+     *
+     * `dark` and `force`, not `blade`: it is the one power in the game that
+     * acts on a mind, and the alignment system already reads `dark` as the axis
+     * of things done TO people rather than to bodies.
+     */
+    id: 'compel', icon: '👁', name: 'Domination', tag: 'Dark',
+    rarity: 'epic', minWave: 9, axes: ['force', 'dark'],
+    text: 'Take a mind. The one you touch turns its blaster on its own — or, alone, on itself.',
+    apply(p) { p.boonMods.compel = true; },
+  },
+  {
     id: 'saberthrow', icon: '🪃', name: 'Cleaving Throw', tag: 'Technique',
     rarity: 'epic', minWave: 7, axes: ['blade'],
     text: 'The thrown blade cuts clean through everything it passes, and returns twice as fast.',

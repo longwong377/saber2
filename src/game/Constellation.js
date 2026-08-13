@@ -288,8 +288,16 @@ export const STARS = [
     jedi: 'Sustenance', sith: 'Dark Sustenance' },
   { id: 'juyo', axis: 'dark', dx: 100, dy: 48, to: ['fury'],
     jedi: 'Form VII — Vaapad Unbound', sith: 'Form VII — Juyo' },
-  { id: 'lightning', axis: 'dark', dx: 6, dy: -92, to: [],
+  { id: 'lightning', axis: 'dark', dx: 6, dy: -92, to: ['compel'],
     jedi: 'The Refused Lightning', sith: 'Force Lightning' },
+  /* Hung off lightning rather than off the heart, and further out than any
+   * other star on this axis, because it is the deepest thing the dark side
+   * offers here: every other card in the game acts on a body, and this one
+   * acts on a decision. Reaching it means having already taken the lightning,
+   * which is the point — you do not arrive at taking someone's mind by
+   * accident. The Jedi name is the honest one for a Jedi who has done it. */
+  { id: 'compel', axis: 'dark', dx: 12, dy: -186, to: [],
+    jedi: 'The Unforgivable Word', sith: 'Domination' },
   { id: 'execute', axis: 'dark', dx: -142, dy: 148, to: ['darkside'],
     jedi: 'Mercy Stroke', sith: 'Cull the Weak' },
   { id: 'fury', axis: 'dark', dx: 146, dy: 142, to: ['darkside'],

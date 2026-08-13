@@ -1244,11 +1244,20 @@ export class World {
     // enemies
     for (const e of this.enemies) {
       if (e.dead) continue;
-      if (bolt.team === 1 && bolt.owner !== e) {
-        // enemies do not shoot each other unless the bolt came back at them
-        if (!bolt.deflected) continue;
-      }
-      if (bolt.team === 1 && !bolt.deflected) continue;
+      /* TWO WAYS A DROID'S BOLT MAY HURT A DROID, and they are the same seam.
+       *
+       * `deflected` is a bolt the player sent back. `turned` is a bolt fired by
+       * a unit under Force compulsion, which has not changed sides — it is
+       * still team 1 — but has been made to point the wrong way. Sorting purely
+       * by team meant a compelled droid's shots passed through the ally it was
+       * aiming at, and the ability was an expensive impression of itself.
+       *
+       * `owner !== e` is deliberately NOT required for a turned bolt: "make an
+       * enemy fire on itself" is half of what the note asks for, and a shot
+       * that cannot hit the thing that fired it cannot do that. */
+      const friendly = bolt.deflected || bolt.turned;
+      if (bolt.team === 1 && !friendly) continue;
+      if (bolt.team === 1 && bolt.owner === e && !bolt.turned) continue;
       const caps = e.capsules();
       for (const c of caps) {
         if (c.shield) {
