@@ -354,12 +354,31 @@ export function run({ check, assert, near }) {
       }
       t.dispose();
     }
-    // the ordering that says what each ground is made of
-    const depth = (k) => TERRAIN_PRESETS[LEVELS[k].terrain].loose.depth;
+    /* The ordering that says what each ground is made of.
+     *
+     * READ OFF THE PRESET TABLE, not off a level, and that is a correction
+     * rather than a convenience. This used to be `LEVELS[k].terrain`, which
+     * made a statement about MATERIALS depend on which levels happened to
+     * exist — so deleting the dune sea and Hangar Bay Nine (both removed at
+     * the player's request) took two of the four comparisons with them, and
+     * `dunes`/`hangar` are still perfectly good ground presets that other
+     * levels stand on. The property was always about the preset; now it says
+     * so, and it covers every preset in the file rather than the subset a
+     * level currently points at. */
+    const depth = (name) => TERRAIN_PRESETS[name].loose.depth;
     assert(depth('alpine') > depth('drifts'), 'a boot goes deeper into an erg than into fresh snow');
     assert(depth('drifts') > depth('dunes'), 'the deep erg is firmer than the young dune field');
     assert(depth('meadow') < depth('arena') * 0.6, 'turf takes a print like a silt pan does');
     assert(depth('hangar') < 0.05, 'a poured deck takes a footprint');
+    assert(depth('works') < 0.05 && depth('temple') < 0.05,
+      'a poured works floor and a flagged temple hall take a footprint');
+    assert(depth('mustafar') > depth('dunes') && depth('mustafar') < depth('drifts'),
+      'an ash fall lies deeper than a young dune field and shallower than a deep erg');
+    assert(depth('cavern') > depth('works') * 4, 'a flooded cut is as firm as the deck above it');
+    // and every preset that is not a built floor carries a real layer
+    for (const name of Object.keys(TERRAIN_PRESETS)) {
+      assert(TERRAIN_PRESETS[name].loose, `${name} declares no loose layer at all`);
+    }
     return rows.join('; ');
   });
 

@@ -84,12 +84,27 @@ const COVERED = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].grass > 0 && LE
 const BARE = LEVEL_ORDER.filter((k) => LEVELS[k] && !LEVELS[k].grass && LEVELS[k].dress
   && LEVELS[k].terrain !== 'hangar');
 /**
- * What the stone-scatter surveys dress and measure: the three levels those
- * checks were written against, plus every level that carries cover — because
- * the cover-avoidance test below has nothing to compare on a level with no
- * cover, and had been silently measuring only the two of the three that did.
+ * What the stone-scatter surveys dress and measure.
+ *
+ * RE-DERIVED, and it is strictly more than it was. This read
+ * `['dunes', 'arena', 'canyon', ...COVERED]` — three level keys written out by
+ * hand because they were the three levels the scatter work was done against.
+ * Two of those levels no longer exist (the dune sea and the wash were deleted
+ * at the player's request), so the list had to change; what it changed INTO is
+ * the general statement it was always a sample of: every level with open
+ * ground to scatter over is held to the clustering bar, not just the three
+ * somebody happened to measure. Six levels are surveyed here where four were
+ * before, and two of the new ones (`drifts`, `alpine`) were never checked at
+ * all despite strewing thousands of stones each.
+ *
+ * `...COVERED` stays in the union because the cover-avoidance test below has
+ * nothing to compare on a level with no cover, and one covered level — the
+ * flooded cut at the bottom of the descent — is indoors.
  */
-const OUTDOOR = [...new Set(['dunes', 'arena', 'canyon', ...COVERED])];
+const OUTDOOR = [...new Set([
+  ...LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].dress && LEVELS[k].atmosphere.sky !== false),
+  ...COVERED,
+])];
 const DEG = 180 / Math.PI;
 
 function stubWorld(terrain) {

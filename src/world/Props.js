@@ -4979,6 +4979,176 @@ export function addAntenna(world, pos, opts = {}) {
   return kitClose(world, kit, pos, opts);
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Plant — the three shapes an interior is actually made of              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHY THREE NEW MAKERS AND NOT THIRTY.
+ *
+ * The descent, the temple and any ship interior all have the same problem the
+ * hangar had and solved by hand: an interior is DENSE, and the surveys hold it
+ * to that — `world-immersion` asks a level with no ground cover for a median
+ * gap to the nearest object under 6.5 m over a 160 m room, and `f.sil` wants
+ * something over 1.2 m across within 25 m of everywhere. Answering that with
+ * `addWall` boxes costs a draw call apiece and the mesh budget is 520.
+ *
+ * These three are the shapes that answer it, and between them they are most of
+ * what stands on a factory floor:
+ *
+ *   addMachine     the mid-size block. A plinth, a body, a cowl, a control
+ *                  face. This is the density.
+ *   addTank        the vertical. A skirt, a shell, hoops, a domed head — the
+ *                  thing that reads on the skyline of a room.
+ *   addStanchion   the structure. What is holding the roof up, and the only
+ *                  one of the three that is allowed to be repeated on a grid,
+ *                  because structure IS repeated on a grid.
+ *
+ * All three merge through `Kit`, so a machine is two or three draw calls
+ * whatever it is made of, and all three are built from `slab`, `post`,
+ * `cylGeo` and `pipeBetween` — the primitives the see-through survey has
+ * already proven closed. Nothing here revolves a hand-written profile, which
+ * is where every winding bug in this file has come from.
+ */
+
+/**
+ * A machine block. `size` is the body: width × height × depth in metres.
+ *
+ * Everything about it is authored for the cel pass — big flat faces, a hard
+ * change of plane rather than a bevel you have to shade to see, and the panel
+ * seams the ink pass draws for free because they are real geometry. There is
+ * exactly one saturated thing on it, the control face, and it is 20 cm wide.
+ */
+export function addMachine(world, pos, opts = {}) {
+  const kit = kitOpen(pos, opts, 1818);
+  const M = propMaterials();
+  const W = opts.width ?? 3.4, H = opts.height ?? 2.8, D = opts.depth ?? 2.2;
+  const body = opts.mat || M.panel;
+  const trim = opts.trimMat || M.darkSteel;
+  const glow = opts.glowMat || M.glowAmber;
+  const rr = kit.rng;
+
+  // The plinth. A machine is bolted to a pad, and the pad is what makes it
+  // read as installed rather than as set down — and it is what beds the whole
+  // assembly, so the seating survey measures concrete on the floor.
+  kit.slab(M.duracrete, W + 0.5, 0.22, D + 0.5, 0, 0.11, 0, { tile: ARCH_TILE, seg: 3 });
+  // The body, in two courses so the silhouette has a shoulder.
+  const hLow = H * 0.62;
+  kit.slab(body, W, hLow, D, 0, 0.22 + hLow / 2, 0, { tile: ARCH_TILE, seg: 3, bevel: 0.05 });
+  kit.slab(body, W * 0.82, H - hLow, D * 0.86, 0, 0.22 + hLow + (H - hLow) / 2, 0,
+    { tile: ARCH_TILE, seg: 3, bevel: 0.05 });
+  // Ribs down the long faces: the seams the outline pass draws.
+  const ribs = Math.max(2, Math.round(W / 0.9));
+  for (let i = 0; i < ribs; i++) {
+    const x = (i / (ribs - 1) - 0.5) * (W - 0.5);
+    for (const sz of [-1, 1]) {
+      kit.slab(trim, 0.13, hLow * 0.86, 0.09, x, 0.22 + hLow / 2, sz * (D / 2 + 0.04),
+        { tile: FINE_TILE, seg: 2, collide: false });
+    }
+  }
+  // The cowl and its duct — the vertical that stops a machine being a crate.
+  const ch = opts.cowl ?? (0.5 + rr() * 0.9);
+  kit.post(trim, W * 0.16, W * 0.13, ch, W * 0.22, 0.22 + H + ch / 2, 0, { radial: 10, tile: TRIM_TILE });
+  kit.put(torusGeo(W * 0.17, 0.055, 5, 12, TAU, FINE_TILE), M.rust, W * 0.22, 0.22 + H + ch * 0.82, 0);
+  // A run of conduit off the back, dropping to the floor.
+  kit.put(pipeBetween(new THREE.Vector3(-W * 0.3, 0.22 + H * 0.9, -D / 2 - 0.05),
+    new THREE.Vector3(-W * 0.3, 0.28, -D / 2 - 0.3), 0.055, 6), M.cable);
+  // The control face. One accent, on the side a player walks up to.
+  kit.slab(trim, W * 0.34, 0.5, 0.1, W * 0.2, 0.22 + hLow * 0.78, D / 2 + 0.06,
+    { tile: FINE_TILE, seg: 2, collide: false });
+  kit.slab(glow, W * 0.2, 0.11, 0.05, W * 0.2, 0.22 + hLow * 0.86, D / 2 + 0.11,
+    { tile: FINE_TILE, seg: 2, collide: false });
+  if (opts.light) kit.light(W * 0.2, 0.22 + hLow * 0.86, D / 2 + 0.4, opts);
+  kit.collider(0, 0.22 + H / 2, 0, W / 2, (H + 0.22) / 2, D / 2);
+  return kitClose(world, kit, pos, opts);
+}
+
+/**
+ * A vertical tank on a skirt: shell, hoops, a domed head and a ladder.
+ *
+ * The head is a SPHERE scaled down in y, not a revolved profile, and that is
+ * the whole reason this maker exists in this form: every see-through top this
+ * file has ever had came from a hand-wound profile or a fan cap, and a sphere
+ * is closed by construction. Its lower half sits inside the shell where it is
+ * never seen, which costs a few hundred triangles and cannot be wrong.
+ */
+export function addTank(world, pos, opts = {}) {
+  const kit = kitOpen(pos, opts, 1919);
+  const M = propMaterials();
+  const R = opts.radius ?? 2.0, H = opts.height ?? 6.0;
+  const shell = opts.mat || M.steel;
+  const trim = opts.trimMat || M.rust;
+  const skirt = opts.skirtHeight ?? Math.min(1.2, H * 0.16);
+
+  // skirt and its base ring
+  kit.slab(M.duracrete, R * 2.5, 0.24, R * 2.5, 0, 0.12, 0, { tile: ARCH_TILE, seg: 3 });
+  kit.post(M.darkSteel, R * 0.92, R * 0.92, skirt, 0, 0.24 + skirt / 2, 0, { radial: 14, tile: ARCH_TILE });
+  // the shell
+  const sy = 0.24 + skirt;
+  kit.post(shell, R, R, H, 0, sy + H / 2, 0, { radial: 18, tile: ARCH_TILE });
+  // hoops — drawn marks, in geometry, which is what the ink pass wants
+  const hoops = Math.max(2, Math.round(H / 1.8));
+  for (let i = 1; i < hoops; i++) {
+    kit.put(torusGeo(R * 1.02, 0.055, 5, 18, TAU, TRIM_TILE), trim, 0, sy + (i / hoops) * H, 0);
+  }
+  // the head
+  const dome = tubeUv(new THREE.SphereGeometry(R, 18, 10), TAU * R, Math.PI * R, ARCH_TILE);
+  dome.scale(1, (opts.domeRise ?? 0.42), 1);
+  kit.put(dome, shell, 0, sy + H, 0);
+  kit.put(cylGeo(R * 0.12, R * 0.1, R * 0.5, 8, TRIM_TILE), trim, 0, sy + H + R * 0.42 + R * 0.2, 0);
+  // the ladder, on the side, with its cage hoops
+  const lx = R + 0.12;
+  for (const sx of [-1, 1]) {
+    kit.put(pipeBetween(new THREE.Vector3(lx, 0.24, sx * 0.24),
+      new THREE.Vector3(lx, sy + H + 0.5, sx * 0.24), 0.038, 5), M.darkSteel);
+  }
+  for (let i = 0; i * 0.32 < sy + H + 0.3; i++) {
+    kit.put(pipeBetween(new THREE.Vector3(lx, 0.4 + i * 0.32, -0.24),
+      new THREE.Vector3(lx, 0.4 + i * 0.32, 0.24), 0.02, 4), M.darkSteel);
+  }
+  // an outlet main leaving the skirt
+  kit.put(pipeBetween(new THREE.Vector3(0, 0.24 + skirt * 0.5, -R * 0.7),
+    new THREE.Vector3(0, 0.24 + skirt * 0.5, -R * 2.1), 0.13, 8), trim);
+  kit.collider(0, (sy + H) / 2, 0, R, (sy + H) / 2, R);
+  return kitClose(world, kit, pos, opts);
+}
+
+/**
+ * A structural steel column: base plate, box shaft with flanges, and a haunch
+ * bracket at the head. The one maker in this file that is MEANT to be placed
+ * on a grid — a bay grid is what an industrial roof is, and breaking it up
+ * would be a lie about how the room stands up.
+ */
+export function addStanchion(world, pos, opts = {}) {
+  const kit = kitOpen(pos, opts, 2020);
+  const M = propMaterials();
+  const H = opts.height ?? 9, W = opts.width ?? 0.62;
+  const steel = opts.mat || M.darkSteel;
+  kit.slab(M.duracrete, W * 2.6, 0.26, W * 2.6, 0, 0.13, 0, { tile: ARCH_TILE, seg: 3 });
+  kit.slab(steel, W * 1.7, 0.1, W * 1.7, 0, 0.31, 0, { tile: TRIM_TILE, seg: 2, collide: false });
+  // the shaft, as a web with two flanges: three slabs, one I-section
+  kit.slab(steel, W * 0.34, H, W, 0, 0.36 + H / 2, 0, { tile: ARCH_TILE, seg: 3 });
+  for (const sx of [-1, 1]) {
+    kit.slab(steel, W * 0.22, H, W * 0.28, sx * W * 0.36, 0.36 + H / 2, 0,
+      { tile: ARCH_TILE, seg: 3, collide: false });
+  }
+  // the head: a cap plate and two gusset braces reaching out to the roof
+  kit.slab(steel, W * 2.0, 0.16, W * 1.5, 0, 0.36 + H + 0.08, 0, { tile: TRIM_TILE, seg: 2, collide: false });
+  for (const sx of [-1, 1]) {
+    kit.put(pipeBetween(new THREE.Vector3(sx * W * 0.2, 0.36 + H - 1.5, 0),
+      new THREE.Vector3(sx * W * 1.5, 0.36 + H + 0.1, 0), 0.075, 6), steel);
+  }
+  if (opts.lamp) {
+    // a hazard lamp bracketed to the shaft, at head height for whatever walks
+    // past it. Not a light unless asked: a dark level is dark on purpose.
+    kit.slab(M.glowAmber, 0.28, 0.4, 0.1, 0, 0.36 + H * 0.62, W * 0.6,
+      { tile: FINE_TILE, seg: 2, collide: false });
+    if (opts.light) kit.light(0, 0.36 + H * 0.62, W * 0.9, opts);
+  }
+  kit.collider(0, 0.36 + H / 2, 0, W * 0.6, H / 2, W * 0.6);
+  return kitClose(world, kit, pos, opts);
+}
+
 /**
  * A lamp standard with a cowl and an emissive lens. Pass `light: true` to hang
  * a real PointLight off it (registered with the level so it unloads cleanly).

@@ -700,6 +700,411 @@ export const TERRAIN_PRESETS = {
     },
     rockAt() { return 1; },
   },
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE DESCENT — two floors, four rooms
+   *
+   *  The Spire could not build a tower because terrain is a single
+   *  heightfield h(x, z): no floors, no overhangs. A DESCENT has exactly the
+   *  same constraint and exactly the same answer — the depth is not geometry,
+   *  it is the AIR and the LIGHT — but it gets one thing the climb never
+   *  could. A room has walls, and a heightfield can raise them: `d` below is
+   *  the CHEBYSHEV distance, so the shell that closes each level is a
+   *  rectangular hall rather than a bowl, and the ground the player can stand
+   *  on is exactly the ground inside it.
+   *
+   *  Two presets carry four rooms. The works is what people built — poured
+   *  rockcrete, drainage falls, a casting sink. The cavern is what they cut it
+   *  out of and what has come back since. Sharing them is deliberate: the
+   *  rooms differ by their DRESSING and by their light, which is the whole
+   *  claim the descent makes, and two rooms on one floor plan is what a
+   *  facility actually looks like.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE WORKS. A poured floor in a cut hall — the intake, the foundry and the
+   * core all stand on it.
+   *
+   * Authored for the cel pass, which means the palette is stated once here and
+   * not re-litigated per level: ONE HUE FAMILY, a cold blue-grey rockcrete,
+   * with no warm anywhere in the ground at all. Every warm note in the foundry
+   * is LIGHT — the melt, the tap-holes, the hazard lamps — so the same floor
+   * reads as a cold receiving hall two hundred metres up and as a foundry
+   * floor down here without a single colour changing. A ground authored warm
+   * would have fought the one accent each room is allowed.
+   */
+  works: {
+    scale: 320, res: 180, waterLevel: -999, flat: true,
+    /* Rockcrete, and its darker aggregate core where the surface has gone.
+     * NEUTRAL rather than blue-grey, and that is the correction the first
+     * render forced. Authored at 0x4b525d — a cold swatch — under a cold key
+     * and a cold fill, every pixel of the intake came out the same blue and
+     * the room had one hue in it and no accent to read against. A floor is
+     * lit; it does not need to be coloured as well. */
+    sandColor: 0x53545a, rockColor: 0x3a3b40,
+    maps: 'deck',
+    gritColor: 0x3d444f, rockColor2: 0x262b33,
+    // The two ends of the same 84 m patchwork: swept floor against the grey
+    // pan of spill that has soaked into it. Both inside the one hue family.
+    dustColor: 0x686a70, crustColor: 0x424349,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    crust: 0.0, strataH: 2.2,
+    wind: [1, 0],
+    macro: [84, 0.36, 0.24, 0.85],
+    lagColor: 0x2c323b, sheetColor: 0x6b7480,
+    // A poured floor does not take a footprint, it takes a SCORCH — the same
+    // reasoning as the hangar deck, and the burn channel is what the foundry
+    // is actually about. Two centimetres of swarf and grit over the top.
+    loose: { depth: 0.025, refill: 44, tilt: 0.55, tint: 0.30, soot: 1.0 },
+    packedColor: 0x1f242b,
+    ripple: 0.5, ripAspect: 1.0,     // poured, not blown
+    texScale: [0.42, 0.26, 0.34],
+    detail: [1.6, 26],
+    height(x, z) {
+      // The shell. Chebyshev, so the room is rectangular: 152 m of floor
+      // inside walls that climb 46 m, which is what makes the walkable ground
+      // and the fighting ground the same thing.
+      const d = Math.max(Math.abs(x), Math.abs(z));
+      // 66 → 84, and both numbers are measured rather than chosen.
+      //
+      // The RUN first: over 18 m the wall stands at 68°, whose 1 − cos is 0.63,
+      // past the 0.55 every survey in the suite uses to mean "ground you can
+      // stand on". Written first as 78 → 134 it was a 51° RAMP, so the room had
+      // no walls at all — the walkable disc ran straight up and over them.
+      //
+      // Then the SIZE, which is the number an interior lives or dies on.
+      // `world-immersion` wants over 900 walkable samples on a 4 m grid (so at
+      // least ~14,400 m² of floor) AND, on ground with no cover, a median gap
+      // to the nearest object under 6.5 m. Those pull opposite ways: every
+      // extra metre of room is more floor to fill, and filling it costs draw
+      // calls against a cap of 520. A 132 m hall is about 16,000 m² — a
+      // thousand samples, and a 22 m plant grid that clears the median with
+      // objects this file can afford.
+      const shell = smoothstep(66, 84, d) * 46;
+      // Drainage falls on a 9 m bay grid. A poured floor is never level — it
+      // is laid to a channel — and the falls are what give a flat deck a
+      // highlight to break on.
+      const gx = Math.abs(fract(x / 9) - 0.5), gz = Math.abs(fract(z / 9) - 0.5);
+      const drain = -smoothstep(0.42, 0.5, Math.max(gx, gz)) * 0.09;
+      // The casting sink: the middle of the room is 1.3 m low over a 30 m
+      // dish, so the fight has a floor with a lip you can be pushed over
+      // rather than a plane. Gentle enough (1.3 m over 16) that nothing about
+      // it is unwalkable — the drama is the lip, not the gradient.
+      const sink = -smoothstep(34, 17, Math.hypot(x * 0.94, (z + 5) * 1.08)) * 1.3;
+      // A loading apron down one side, one step up. It is the only thing in
+      // the room that tells you which way is out.
+      const apron = smoothstep(46, 56, x) * 1.5;
+      return shell + drain + sink + apron + fbm2(x * 0.085, z * 0.085, 2) * 0.035;
+    },
+    rockAt() { return 1; },
+  },
+
+  /**
+   * THE FOUNDRY. The works' floor with a MELT CANAL cut across it.
+   *
+   * It gets a preset of its own rather than borrowing the works', and the
+   * reason is a shape and not a colour: a foundry is a room you have to cross
+   * something to fight in. The canal is 2.2 m deep with banks at 40°, which is
+   * a deliberate compromise measured against two things it must not break —
+   * the gait solver and the enemy nav both read one heightfield and will walk
+   * anything they can climb, so a canal steep enough to be a wall would have
+   * droids grinding against an invisible edge, and a canal shallow enough to
+   * ignore is a decal. At 40° they march down into the melt and out the other
+   * side, which is what a droid does and what a person will not.
+   *
+   * Everything else is the works, verbatim: same palette, same falls, same
+   * shell. The two rooms are the same building.
+   */
+  foundry: {
+    scale: 320, res: 180, waterLevel: -1.45, flat: true,
+    // The works' palette verbatim: the two rooms are the same building, and
+    // run.mjs holds their floors to within 30° of hue of each other for it.
+    sandColor: 0x53545a, rockColor: 0x3a3b40,
+    maps: 'deck',
+    gritColor: 0x3d444f, rockColor2: 0x262b33,
+    dustColor: 0x686a70, crustColor: 0x424349,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    crust: 0.0, strataH: 2.2,
+    wind: [1, 0],
+    macro: [84, 0.36, 0.24, 0.85],
+    lagColor: 0x2c323b, sheetColor: 0x6b7480,
+    // Slag and swarf, and a floor that remembers a burn for a very long time —
+    // which is the whole of what a foundry floor is.
+    loose: { depth: 0.03, refill: 90, tilt: 0.55, tint: 0.30, soot: 1.0 },
+    packedColor: 0x1f242b,
+    ripple: 0.5, ripAspect: 1.0,
+    texScale: [0.42, 0.26, 0.34],
+    detail: [1.6, 26],
+    height(x, z) {
+      const d = Math.max(Math.abs(x), Math.abs(z));
+      const shell = smoothstep(66, 84, d) * 46;
+      const gx = Math.abs(fract(x / 9) - 0.5), gz = Math.abs(fract(z / 9) - 0.5);
+      const drain = -smoothstep(0.42, 0.5, Math.max(gx, gz)) * 0.09;
+      // The canal, running across the hall on a slow S so it is never a ruled
+      // line. `across` is the distance from its centre line.
+      const centre = Math.sin(x * 0.0121) * 13 + Math.sin(x * 0.0047 + 2.1) * 7;
+      const across = Math.abs(z - centre);
+      // 2.2 m deep, 9 m of flat bed, banks over 2.6 m of run — that is 40°.
+      const canal = -smoothstep(11.2, 8.6, across) * 2.2;
+      // …crossed twice. The bridges are terrain rather than props so that the
+      // ground the nav walks and the ground the player walks are one thing.
+      const cross = Math.max(smoothstep(6.0, 3.4, Math.abs(x + 26)),
+        smoothstep(6.0, 3.4, Math.abs(x - 22)));
+      // The tap ladle track down one side: a shallow trough the melt was run
+      // off into, so the room has a second line in it.
+      const tap = -smoothstep(2.6, 1.4, Math.abs(z - centre + 26)) * 0.45;
+      return shell + drain + canal * (1 - cross) + tap
+        + fbm2(x * 0.085, z * 0.085, 2) * 0.035;
+    },
+    rockAt() { return 1; },
+  },
+
+  /**
+   * THE CAVERN. What the works was cut out of, three hundred metres further
+   * down: wet rock, a silt floor, and standing water in the low bays.
+   *
+   * `damp` and a water level are what make this the one preset below ground
+   * that anything grows on — ground-memory.mjs holds `maps: 'soil'` or
+   * `damp > 0.2` to mean "this must carry cover", and it should: a flooded
+   * excavation is the wettest floor in the game and it is not bare.
+   */
+  cavern: {
+    scale: 320, res: 190, waterLevel: 0.30,
+    // Wet blue-grey stone. The family is the works' own, one step colder and
+    // darker, because this is the same rock with the lights off.
+    sandColor: 0x414b52, rockColor: 0x2e373e,
+    maps: 'soil',
+    gritColor: 0x39434a, rockColor2: 0x232a30,
+    dustColor: 0x4e5a60, crustColor: 0x35403f,
+    // 0.050 is 18.2° and 0.185 is 35.6°: silt lies on the floor and the flats,
+    // bare rock on the ribs and the spoil banks, which is the whole read.
+    slopeBands: [0.050, 0.185, 0.014, 0.060],
+    stoneSlope: 0.12,
+    crust: 0.30, damp: 0.45, strataH: 3.4, cliffs: true,
+    wind: [0.31, 0.95],
+    macro: [96, 0.52, 0.30, 1.10],
+    lagColor: 0x2f3a3a, sheetColor: 0x707d7e,
+    // The deepest loose layer under ground: this is silt that water has been
+    // laying down since the pumps stopped, and it holds a print for a very
+    // long time because nothing down here disturbs it.
+    loose: { depth: 0.22, refill: 210, tilt: 0.84, tint: 0.52, soot: 1.0 },
+    mantle: [0.10, 0.62],
+    packedColor: 0x27302f,
+    ripple: 0.30, ripAspect: 1.0,    // still water, not wind
+    texScale: [0.50, 0.29, 0.215],
+    detail: [1.0, 30],
+    height(x, z) {
+      const d = Math.max(Math.abs(x), Math.abs(z));
+      const shell = smoothstep(76, 96, d) * 44;
+      // The cut. Benches left by whatever took the rock out, quantised into
+      // steps that run across the room — the same `strata` the canyon walls
+      // use, at a bench height a person can climb.
+      const bench = strata(fbm2(x * 0.0072 + 3.1, z * 0.0072 - 4.4, 3) * 5.2,
+        1.15, 0.55, 7.3);
+      // Ribs of rock left standing between the bays, along the cut direction.
+      const rib = Math.max(0, ridged2(x * 0.0142, z * 0.0061 + 2.2, 3) - 0.42) * 6.4;
+      // and the sumps: where the water is. Two long low bays, so the level has
+      // standing water you fight around instead of a puddle in the middle.
+      const sump = -smoothstep(0.30, 0.86, Math.max(0,
+        ridged2(x * 0.0049 - 1.7, z * 0.0088 + 6.1, 2))) * 1.9;
+      const floor = fbm2(x * 0.055, z * 0.055, 3) * 0.16;
+      return shell + bench + rib + sump + floor;
+    },
+    // Matched to the 0.050 → 0.185 band above, so the JS twin calls rock where
+    // the material paints it and the cover survey believes the same floor.
+    rockAt(x, z, slope) { return clamp(slope * 7.4 - 0.37, 0, 1); },
+  },
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  MUSTAFAR
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * A basalt shelf standing out of a lava sea, under an ash fall.
+   *
+   * The landform argument is the same one the dune sea makes and the opposite
+   * shape: a shield volcano's flank is not noise, it is FLOWS — long lobes
+   * running downhill from the vent, each one a metre or two proud of the one
+   * it ran over, with the levees standing at their edges and the channel
+   * sunk between them. That is what `lobe` is, and it is the only thing in
+   * this heightfield that is not underneath something else.
+   *
+   * The shelf falls away to the north-east into the sea. Everything below
+   * `waterLevel` is lava (Levels.js dresses the sheet), so the coastline is
+   * where the flow lobes drown — an outline with real bays and headlands
+   * rather than a circle, because the lobes decide it.
+   */
+  mustafar: {
+    scale: 460, res: 300, waterLevel: 0.0,
+    /* THE PALETTE IS ONE HUE AND IT IS NOT ORANGE. Rule 5: one family plus one
+     * or two saturated accents, and the accent is the SUBJECT. Every warm
+     * pixel in this level is lava, lit lava, or ash lit by lava; the rock is a
+     * cold near-neutral charcoal that exists to make the accent read. Author
+     * the basalt warm — the instinct, because the frame is warm — and the
+     * accent has nothing to be an accent against.
+     *
+     * WHERE THE FIRST ATTEMPT WENT WRONG, because it is the more interesting
+     * half. The instinct above was taken literally and the basalt was authored
+     * COLD — base at hue 232°, the second rock band at 250° — on the argument
+     * that a warm rock leaves the orange nothing to be an accent against.
+     * Rendered, the ground came out LAVENDER: a two-tone cel ramp has no
+     * midtones to hide a cast in, the shaded band is most of the ground on a
+     * 15° sun, and a cold dark swatch under a warm sky bands straight to
+     * violet. That reads as moonlight, which is the one thing this level is
+     * not.
+     *
+     * So the family is a warm NEAR-NEUTRAL charcoal instead — base 15°, second
+     * band 355°, both under 0.14 saturation — which is dark enough and flat
+     * enough to sit under the accent without competing, and lands on the warm
+     * side of neutral where the firelight can find it. The one genuinely
+     * chromatic band is the OXIDISED crust on a cooling flow, and it is
+     * deliberately the minority material. */
+    sandColor: 0x3a3533, rockColor: 0x4e3c33,
+    maps: 'sand',
+    gritColor: 0x2f2b28, rockColor2: 0x332b2c,
+    /* The ash. Pale and dry — the only thing here with any value in it, so it
+     * is what draws the shape of the ground, and therefore the swatch that
+     * decides what colour the SHADE is.
+     *
+     * WARM, not neutral, and that is a correction the frame forced. Authored
+     * at 0x6f6a6a / 0x8a8280 (both dead neutral) the shaded ground rendered
+     * lavender: the IBL probe is baked from the physical sky, which is blue at
+     * any turbidity the exposure meter can afford, and a neutral albedo under
+     * a blue probe returns blue. An albedo cannot change what is falling on
+     * it, but it decides what comes back — a warm ash multiplies most of that
+     * blue out, and it is also what ash lit by a red sun actually is. */
+    dustColor: 0x7a6a5e, crustColor: 0x968878,
+    // 0.10 is 25.8° and 0.34 is 48.7°: ash lies on the flow tops and the
+    // benches, bare basalt on the levee faces and the sea cliffs.
+    slopeBands: [0.10, 0.34, 0.030, 0.11],
+    stoneSlope: 0.16,
+    crust: 0.45, strataH: 2.6, cliffs: true,
+    // Down the flow line, so the ash streaks the way the wind off the sea
+    // actually lays it.
+    wind: [0.62, -0.78],
+    macro: [118, 0.58, 0.46, 1.10],
+    rockUpland: [0.12, 6, 28],
+    lagColor: 0x33363c, sheetColor: 0x7d7876,
+    // Ash is the loosest ground in the game and it holds nothing: it is dry,
+    // it is being fed from the sky continuously, and a print fills back in
+    // inside a minute. Deeper than snow, shorter memory than sand.
+    loose: { depth: 0.24, refill: 62, tilt: 0.92, tint: 0.44, soot: 1.0 },
+    mantle: [0.09, 0.70],
+    packedColor: 0x201f24,
+    ripple: 0.70,
+    detail: [0.95, 30],
+    height(x, z) {
+      /* The regional tilt: the shelf drains to the north-east. 0.045 and not
+       * 0.085, because a tilt is meant to MODULATE the coastline — giving the
+       * island a lee shore and a windward one, bays on the low side and
+       * headlands on the high — and at 0.085 it swung the ground by ±27 m,
+       * which is more than the shelf itself stands, so half the compass had no
+       * shore inside the heightfield at all. */
+      const down = (-x * 0.62 + z * 0.78);
+      const tilt = -down * 0.045;
+
+      // THE FLOWS. Phase across the flow line gives lobes about 46 m wide;
+      // each lobe is a PLATEAU with a levee at its margin, which is what the
+      // smoothstep buys over a sine — flat on top, hard at the edge, and
+      // bounded in gradient where `pow(cos, 0.35)` (tried first) is not: that
+      // form has an infinite derivative wherever the cosine crosses zero, and
+      // it measured 8.2 of gradient at 5 cm going to 11.4 at 5 mm, i.e. a
+      // heightfield reporting itself as very nearly discontinuous.
+      const across = (x * 0.78 + z * 0.62) + fbm2(x * 0.0041, z * 0.0041, 3) * 34;
+      const ph = fract(across / 46);
+      const lobe = smoothstep(0.015, 0.20, Math.sin(ph * Math.PI)) * 3.4
+        * clamp(fbm2(across * 0.0062, down * 0.0034, 2) * 2.0 + 0.55, 0, 1);
+      // The channel each flow ran down, cut into its own lobe.
+      const chan = -Math.max(0, ridged2(across * 0.0210 + 5.5, down * 0.0043, 2) - 0.52) * 3.0;
+
+      /* The shelf itself, and its SIZE is the whole design of the level.
+       *
+       * Written first at smoothstep(196, 54) it was a 460 m field with the sea
+       * in one corner: measured, the shoreline in the downhill direction sat
+       * 125 m from the middle of the fight, and at this level's fog density
+       * (half-light at 73 m) the lava was a pale band on the horizon. A map
+       * whose subject is a lava sea cannot keep it a hundred and twenty metres
+       * away. At 132 → 48 the shelf is a genuine ISLAND: 95-125 m of basalt
+       * depending on which way the regional tilt runs, so the melt is in the
+       * frame from anywhere on it, the shore is somewhere you can be driven,
+       * and the walkable disc the surveys measure is the island itself. */
+      const d = Math.hypot(x, z);
+      const shelf = smoothstep(132, 48, d) * 17.5;
+      // …and the sea floor beyond it. Without this the tilt alone decides
+      // where the coast is, and the uphill half of the compass never reaches
+      // it: measured, no shore at all within 220 m on two of four bearings.
+      const deep = -smoothstep(104, 208, d) * 34;
+      // Spatter cones on the high ground. Steep, small and everywhere — the
+      // silhouettes that stop a lava plain reading as a table.
+      const cone = Math.max(0, ridged2(x * 0.0165 + 9.1, z * 0.0165 - 3.3, 3) - 0.55) * 26;
+
+      // Sea cliffs: the shelf does not ramp into the lava, it BREAKS off. The
+      // strata quantiser is what makes that edge read as stacked flows.
+      const raw = shelf + deep + tilt + lobe + chan + cone;
+      return strata(raw, 1.9, smoothstep(9.0, 1.5, raw) * 0.55, 4.7)
+        + fbm2(x * 0.062, z * 0.062, 3) * 0.22;
+    },
+    rockAt(x, z, slope) { return clamp(slope * 4.2 - 0.42, 0, 1); },
+  },
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE TEMPLE
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * A cut floor of temple flags, dead level because somebody levelled it.
+   *
+   * The only preset in the game whose ground is a BUILDING. It carries the
+   * least relief of anything here on purpose: everything vertical on this
+   * level is masonry the dressing pass places, and a heightfield with an
+   * opinion underneath it would fight the plinths standing on it.
+   */
+  temple: {
+    scale: 300, res: 172, waterLevel: -999, flat: true,
+    /* Warm pale stone and one cool shadow band — the cream ashlar of the
+     * reference frames, not the grey of a deck. The accent this level is
+     * authored around is the BLADES, so the ground is held light and low in
+     * chroma and the only saturated thing in the room is what people are
+     * holding. */
+    sandColor: 0x8d8471, rockColor: 0x6d6556,
+    maps: 'deck',
+    gritColor: 0x776f5e, rockColor2: 0x4c4f56,
+    dustColor: 0xa39a86, crustColor: 0x6b6a63,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    crust: 0.0, strataH: 2.4,
+    wind: [0.71, 0.71],
+    macro: [70, 0.30, 0.22, 0.80],
+    lagColor: 0x59554a, sheetColor: 0xb0a794,
+    // Stone flags take no print. What they take is dust, and blood, and the
+    // mark of a blade laid against them — so the layer is thin and the burn
+    // channel is at full strength, exactly as a deck's is.
+    loose: { depth: 0.02, refill: 260, tilt: 0.5, tint: 0.34, soot: 1.0 },
+    packedColor: 0x413d34,
+    ripple: 0.35, ripAspect: 1.0,
+    texScale: [0.44, 0.27, 0.32],
+    detail: [1.5, 28],
+    height(x, z) {
+      const d = Math.max(Math.abs(x), Math.abs(z));
+      // The precinct wall. Nearer than the works' because a temple hall is a
+      // room and not a shed, and 68 m of floor is already an enormous room.
+      const shell = smoothstep(64, 82, d) * 40;
+      // The flagging, on a 2.4 m course. Half a centimetre of relief: enough
+      // for the ink pass to find the joints and for a raking light to catch
+      // them, and far too little to trip anybody.
+      const fx = Math.abs(fract(x / 2.4) - 0.5), fz = Math.abs(fract(z / 2.4) - 0.5);
+      const joint = -smoothstep(0.40, 0.5, Math.max(fx, fz)) * 0.05;
+      // The dais. Three steps up at the far end of the hall, which is where
+      // the thing you came to kill is standing.
+      const dais = smoothstep(30, 26, Math.hypot(x - 4, (z + 34) * 1.35)) * 1.35;
+      // and the crack the level's own history put across it
+      const rift = -Math.max(0, 0.55 - Math.abs(z - 8 + Math.sin(x * 0.031) * 9) * 0.09) * 0.9;
+      return shell + joint + dais + rift + fbm2(x * 0.075, z * 0.075, 2) * 0.03;
+    },
+    rockAt() { return 1; },
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

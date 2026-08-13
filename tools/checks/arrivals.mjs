@@ -33,7 +33,7 @@
 import * as THREE from 'three';
 import { WaveDirector } from '../../src/game/Waves.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import {
   ArrivalDirector, ARRIVAL_LEAD, MARCH_RADIUS, MAX_CONCURRENT,
@@ -133,29 +133,50 @@ export async function run({ check, assert }) {
   });
 
   check('arrivals: an interior gets a door, an open sky gets a ship', () => {
-    // The one thing an arrival cannot do is be impossible. A gunship inside
-    // Hangar Bay Nine, or a free-standing sally port in the middle of the dune
-    // sea, is worse than the pop it replaced.
-    const seen = {};
-    for (const key of ['dunes', 'arena', 'hangar']) {
+    /* The one thing an arrival cannot do is be impossible. A gunship inside a
+     * roofed foundry, or a free-standing sally port in the middle of an open
+     * erg, is worse than the pop it replaced.
+     *
+     * OVER EVERY LEVEL, not three named ones. This used to run on the dune
+     * sea, the arena and Hangar Bay Nine; two of those were deleted at the
+     * player's request, and naming levels was the weaker form of the question
+     * anyway — the property is about whether a level HAS A SKY, which every
+     * level states, so every level can be asked. Nine levels are covered here
+     * where three were, and a new one cannot be added without answering it. */
+    const seen = {}, rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L || L.training) continue;
       const r = playWave(key);
-      seen[key] = [...new Set(r.log.map(l => l.kind))].sort();
+      const kinds = [...new Set(r.log.map(l => l.kind))].sort();
+      seen[key] = kinds;
+      const roofed = L.atmosphere.sky === false;
+      // A walled bowl has a sky and still cannot take a ship, so "no dropship"
+      // is asserted off the level's own arrival table rather than off the sky.
+      const table = ARRIVAL_BY_TERRAIN[L.terrain] || ['march'];
+      if (!table.includes('dropship')) {
+        assert(!kinds.includes('dropship'),
+          `a dropship flew into ${key}, which has no sky to fly it through (kinds: ${kinds.join(', ')})`);
+        assert(kinds.includes('gate') || kinds.includes('march'),
+          `${key} never opened a gate or marched anything in (kinds: ${kinds.join(', ')})`);
+      } else {
+        assert(!roofed, `${key} is roofed and its arrival table still lists a dropship`);
+        assert(kinds.includes('dropship'),
+          `open ${key} never once used a dropship (kinds seen: ${kinds.join(', ')})`);
+      }
+      rows.push(`${key}: ${kinds.join('+')}`);
     }
-    assert(!seen.hangar.includes('dropship'),
-      `a dropship flew inside Hangar Bay Nine (kinds seen: ${seen.hangar.join(', ')})`);
-    assert(!seen.arena.includes('dropship'),
-      `a dropship flew into the walled arena (kinds seen: ${seen.arena.join(', ')})`);
-    assert(seen.dunes.includes('dropship'),
-      `the open dune sea never once used a dropship (kinds seen: ${seen.dunes.join(', ')})`);
-    assert(seen.hangar.includes('gate') && seen.arena.includes('gate'),
-      'the enclosed levels never opened a gate');
-    return Object.entries(seen).map(([k, v]) => `${k}: ${v.join('+')}`).join(', ');
+    const anyGate = Object.values(seen).some((k) => k.includes('gate'));
+    const anyShip = Object.values(seen).some((k) => k.includes('dropship'));
+    assert(anyGate && anyShip, 'the game no longer produces both set pieces');
+    assert(rows.length >= 6, `only ${rows.length} levels exercised`);
+    return rows.join(', ');
   });
 
   check('arrivals: something too big for a ship walks in', () => {
     // A spider walker does not fit in a gunship and an acklay does not queue
     // at a door. Both walk, from beyond the ring, on every level.
-    for (const key of ['dunes', 'arena', 'hangar']) {
+    for (const key of ['drifts', 'arena', 'foundry', 'mustafar', 'temple']) {
       for (const type of ['walker', 'beast']) {
         const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => 0.5);
         assert(kind === 'march', `${type} arrives by ${kind} on ${key}`);
@@ -176,14 +197,14 @@ export async function run({ check, assert }) {
     const ships = new Set();
     let shipDeliveries = 0, peak = 0;
     for (const wave of [4, 6, 8, 10]) {
-      const r = playWave('dunes', wave);
+      const r = playWave('drifts', wave);
       peak = Math.max(peak, r.peakLive);
       for (const l of r.log) {
         byKind[l.kind] = (byKind[l.kind] || 0) + 1;
         if (l.kind === 'dropship') { shipDeliveries++; ships.add(l.flight); }
       }
     }
-    assert(ships.size > 0, 'four waves on the dunes produced no dropship at all');
+    assert(ships.size > 0, 'four waves on the erg produced no dropship at all');
     const perShip = shipDeliveries / ships.size;
     assert(perShip > 1.4,
       `${shipDeliveries} bodies came off ${ships.size} gunships — ${perShip.toFixed(2)} each, `
@@ -199,7 +220,7 @@ export async function run({ check, assert }) {
     // are in neither list, so a wave could be declared clear with a full
     // gunship thirty metres up, and the HUD would read 0 remaining.
     const w = fakeWorld('dunes');
-    const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.dunes.pool });
+    const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.drifts.pool });
     d.start(3);
     const ctx = { enemies: w.enemies, particles: null, terrain: w.terrain,
       pickSpawn: () => V(40, 0, 0), spawnEnemy: (t, p) => w.spawnEnemy(t, p) };
@@ -258,7 +279,7 @@ export async function run({ check, assert }) {
     // leak per ship.
     const w = fakeWorld('dunes');
     const before = w.scene.children.length;
-    const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.dunes.pool });
+    const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.drifts.pool });
     assert(w.scene.children.length === before + 1,
       `the arrival director added ${w.scene.children.length - before} objects to the scene root`);
     assert(w.statics.includes(d.arrivals.group),

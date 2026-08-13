@@ -679,7 +679,8 @@ export function run({ check, assert, near }) {
         'the sky mesh is no longer banded');
 
       const rows = [];
-      for (const key of ['dunes', 'meadow', 'canyon', 'arena', 'alpine']) {
+      const { LEVEL_ORDER: ORDER1 } = await import('../../src/game/Levels.js');
+      for (const key of ORDER1.filter((k) => LEVELS[k] && LEVELS[k].atmosphere.sky !== false)) {
         const a = LEVELS[key].atmosphere;
         const sun = E.sunDirection(a, new THREE.Vector3());
         const disp = E.skyDisplayShoulder(a);
@@ -946,7 +947,8 @@ export function run({ check, assert, near }) {
       pass.uniforms = { uHaze: { value: new THREE.Vector2() } };
       const rows = [];
       let widest = 0, narrowest = Infinity;
-      for (const key of ['dunes', 'meadow', 'canyon', 'arena', 'alpine', 'drifts']) {
+      const { LEVEL_ORDER: ORDER2 } = await import('../../src/game/Levels.js');
+      for (const key of ORDER2.filter((k) => LEVELS[k] && LEVELS[k].atmosphere.sky !== false)) {
         const a = LEVELS[key].atmosphere;
         if (!a || a.fog === false) continue;
         pass.setHaze(a.fogDensity);
@@ -990,21 +992,50 @@ export function run({ check, assert, near }) {
         const k = 0.021 / Math.max(lum([g.r, g.g, g.b]), 1e-4);
         return [enc(g.r * k), enc(g.g * k), enc(g.b * k)];
       };
-      // which way each level's ground light leans, from the level's own blurb
-      const WARM = { dunes: 1, drifts: 1, arena: 1, canyon: 1 };
-      const COOL = { meadow: 1, alpine: 1, hangar: 1 };
-      const rows = [];
-      for (const key of [...Object.keys(WARM), ...Object.keys(COOL)]) {
-        const a = LEVELS[key].atmosphere;
+      /* WHICH WAY EACH LEVEL LEANS is read off the level, not off a table.
+       *
+       * This used to be two hand-written sets — WARM = dunes/drifts/arena/
+       * canyon, COOL = meadow/alpine/hangar — which broke the moment three of
+       * those levels were deleted, and was the weaker question anyway: it
+       * asked whether seven named levels came out on the side somebody had
+       * written down. What the ink actually has to do is follow ITS OWN
+       * LEVEL's ground light, whichever way that leans, for every level in the
+       * game — so the expected side is derived from `groundColor` and the
+       * assertion is that the derivation survives being driven down to a fixed
+       * luminance. A constant ink fails that on every level at once, which is
+       * the fault this exists to catch, and now nine levels are covered where
+       * seven were.
+       *
+       * The SPREAD is the second half and it is new: a game whose levels all
+       * ink within a hair of each other has a constant with extra steps,
+       * however well derived. */
+      const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+      const rows = [], leans = [];
+      for (const key of LEVEL_ORDER) {
+        const a = LEVELS[key] && LEVELS[key].atmosphere;
         if (!a) continue;
-        const [r, g, b] = inkOf(a);
-        assert(Math.max(r, g, b) < 70, `${key} inks at ${r},${g},${b} — too light to read as a drawn line`);
-        assert(Math.max(r, g, b) > 20, `${key} inks at ${r},${g},${b} — that is black, which rule 4 excludes`);
+        const g = new THREE.Color(a.groundColor ?? 0x60482e);
+        const want = (g.r - g.b);                       // the level's own warm/cool axis
+        const [r, g2, b] = inkOf(a);
+        assert(Math.max(r, g2, b) < 70, `${key} inks at ${r},${g2},${b} — too light to read as a drawn line`);
+        assert(Math.max(r, g2, b) > 20, `${key} inks at ${r},${g2},${b} — that is black, which rule 4 excludes`);
         const lean = r - b;
-        if (WARM[key]) assert(lean > 12, `${key} is a warm level and inks cool or neutral (r-b ${lean})`);
-        else assert(lean < -3, `${key} is a cool level and inks warm or neutral (r-b ${lean})`);
-        rows.push(`${key} ${r},${g},${b}`);
+        if (want > 0.004) {
+          assert(lean > 6, `${key}'s ground light is warm (r-b ${want.toFixed(3)} linear) and it inks `
+            + `cool or neutral (r-b ${lean})`);
+        } else if (want < -0.004) {
+          assert(lean < -3, `${key}'s ground light is cool (r-b ${want.toFixed(3)} linear) and it inks `
+            + `warm or neutral (r-b ${lean})`);
+        }
+        leans.push(lean);
+        rows.push(`${key} ${r},${g2},${b}`);
       }
+      assert(rows.length >= 6, `only ${rows.length} levels inked`);
+      assert(Math.max(...leans) - Math.min(...leans) > 20,
+        `every level in the game inks within ${(Math.max(...leans) - Math.min(...leans)).toFixed(0)} of the `
+        + 'same warm/cool lean — that is a constant with a derivation in front of it');
+      assert(Math.max(...leans) > 6 && Math.min(...leans) < -3,
+        'no level inks warm, or none inks cool — the derivation is not reaching both sides');
       return rows.join(' · ');
     })();
   });
@@ -1115,7 +1146,10 @@ export function run({ check, assert, near }) {
     return (async () => {
       const E = await import('../../src/engine/Engine.js');
       const { LEVELS } = await import('../../src/game/Levels.js');
-      const OUT = ['dunes', 'meadow', 'canyon', 'arena', 'alpine', 'drifts'];
+      /* Derived rather than listed: two of the six named here were deleted,
+       * and "every outdoor level" is what the property was always about. */
+      const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+      const OUT = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].atmosphere.sky !== false);
       const rows = [], seen = [];
       let tightest = 0, loosest = Infinity, worstGap = 0;
       for (const key of OUT) {

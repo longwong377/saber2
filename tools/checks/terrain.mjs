@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { GrassField, Water, ground, waterShade } from '../../src/world/Scenery.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { sunDirection, atmosphereMeter } from '../../src/engine/Engine.js';
 import { rawMaps, sandMaps, soilMaps, snowMaps, duracreteMaps } from '../../src/engine/Textures.js';
 
@@ -540,10 +540,12 @@ export function run({ check, assert, near }) {
     assert(Math.max(...drift) < 0.02,
       `the exposure identity is out by ${(Math.max(...drift) * 100).toFixed(1)}% — the measurement below is measuring nothing`);
 
-    // The dune sea's own authored bias, used for every level here so the
-    // numbers compare. A level is free to bias its own, and that moves every
-    // row by the same factor.
-    const BIAS = LEVELS.dunes.atmosphere.exposure;
+    // ONE authored bias, used for every level here so the numbers compare. A
+    // level is free to bias its own, and that moves every row by the same
+    // factor. It used to be read off the dune sea, which no longer exists; the
+    // erg carries the same 0.86 and is the same kind of place, so not a digit
+    // in any row below moves.
+    const BIAS = LEVELS.drifts.atmosphere.exposure;
     const K = BIAS * KEY / 0.18;
     const disp = (c, k = 1) => LUMT(throughTone([c[0] * K * k, c[1] * K * k, c[2] * K * k]));
     const rows = [];
@@ -1211,14 +1213,14 @@ export function run({ check, assert, near }) {
     return 'refracted bed, per-channel extinction, ray-chosen mirror, a lap at the shore and wet ground under it';
   });
 
-  check('water: the river reads as water, and along it the surface is a mirror', () => {
+  check('water: standing water reads as water, and along it the surface is a mirror', () => {
     /*
      * The canyon river shipped as a flat near-white sheet: hue 189, saturation
      * 0.192 measured off a frame, against an authored shallow swatch of 0.62,
      * and 11.8% of the frame over 0.80 luminance with none of it sky.
      *
      * Three things were wrong and only one of them was the reflection:
-     *   · the lap was keyed on DEPTH, and 71% of this wash is 2.5-30 cm deep,
+     *   · the lap was keyed on DEPTH, and 71% of that wash was 2.5-30 cm deep,
      *     so 0.86 of linear white went down over a body colour of 0.14 across
      *     nearly the whole river;
      *   · the Fresnel was pow(1-N.V, 3.2) folded into 0.62 of the mix, so at
@@ -1226,71 +1228,115 @@ export function run({ check, assert, near }) {
      *     back mostly DIFFUSE — water does not do that;
      *   · the mirror was a 55/45 blend of haze and sky, two chromas cancelling.
      *
-     * Measured here on the canyon's own heightfield, every wet cell at the
-     * elevation a 1.7 m eye actually sees it from, averaged over the ripple
-     * normal's own distribution (a single flat facet overstates the mirror at a
-     * grazing view by a mile), and pushed through the shipped ACES + grade —
-     * because saturation is a DISPLAY quantity and judging it in linear
-     * radiance is how the last two rounds measured the wrong channel.
+     * ── RE-DERIVED, IN TWO HALVES, AND BOTH ARE STRONGER ───────────────────
      *
-     *            shipped        now
-     *   sat        0.113       0.428     (gate: 60% of the authored 0.620)
-     *   lum        0.731       0.446
-     *   >0.80     48.13%       0.00%
+     * This used to be one measurement on ONE named level, the wash, which has
+     * since been deleted at the player's request. Re-pointing it at another
+     * level would have been the weak fix, and it would also have been wrong:
+     * the mirror half of the claim silently depended on that level having a
+     * BRIGHT SKY over it. The game's remaining standing water is a pool at the
+     * bottom of a mine with a near-black ceiling — measured, it returns 0.52 of
+     * reflection per unit of scatter at a grazing view, and it SHOULD, because
+     * there is nothing above it to mirror. A check that failed that would be
+     * demanding a physical impossibility.
+     *
+     * So the two halves are separated and each is asked of the right thing.
+     *
+     *   THE MIRROR is a property of the MODEL, and is now measured against a
+     *   controlled environment — one surface, one sky brighter than its bed,
+     *   swept from overhead to grazing. That is strictly more than the old
+     *   form: it pins the whole curve (monotone, and crossing over between 30°
+     *   and 6°) rather than one sample of it, and it cannot be lost again by
+     *   deleting a level.
+     *
+     *   THE DISPLAY is a property of each LEVEL, and is now asked of EVERY
+     *   level that has a body of liquid on it — three of them, where one was
+     *   surveyed before, and two of those are molten rather than water.
+     *
+     *            shipped wash    now (deeps)
+     *   sat        0.113          0.622      (gate: 60% of the authored swatch)
+     *   >0.80     48.13%          0.00%
      */
-    const t = terrainOf('canyon');
-    const L = LEVELS.canyon, A = L.atmosphere;
     const lin = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
-    const env = {
-      shallow: lin(L.water.shallow), deep: lin(L.water.deep), bed: lin(0x6b5a41),
-      sky: lin(A.skyColor), fog: lin(A.fogColor), sun: sunDirection(A).normalize().toArray(),
+    const linToSrgb = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+
+    /* ── one: the model mirrors at a grazing view and scatters from above ── */
+    const ctrl = {
+      shallow: [0.06, 0.22, 0.30], deep: [0.006, 0.028, 0.055], bed: [0.14, 0.11, 0.07],
+      sky: [0.35, 0.52, 0.95], fog: [0.42, 0.46, 0.52], sun: [0.4, 0.24, 0.3],
     };
-    // the ripple normal WATER_FRAG builds: normalize(vec3(a, 1, -a)) with a
-    // triangular on ±0.55, sampled at seven points with its own weights
+    const sweep = [];
+    for (const deg of [60, 30, 12, 6, 4, 2]) {
+      let R = 0, S = 0;
+      for (const d of [0.2, 0.6, 1.2, 2.4]) {
+        const s = waterShade({ ...ctrl, depth: d, bedDepth: d, climb: 0.05, viewDeg: deg, ny: 0.996 });
+        R += s.reflected; S += s.scattered;
+      }
+      sweep.push({ deg, ratio: R / S });
+    }
+    for (let i = 1; i < sweep.length; i++) {
+      assert(sweep[i].ratio > sweep[i - 1].ratio,
+        `the mirror does not strengthen toward grazing: ${sweep[i - 1].deg}° gives `
+        + `${sweep[i - 1].ratio.toFixed(2)} and ${sweep[i].deg}° gives ${sweep[i].ratio.toFixed(2)}`);
+    }
+    assert(sweep[0].ratio < 0.25,
+      `seen from 60° above, the surface is already ${sweep[0].ratio.toFixed(2)} mirror — water is not a plate of chrome`);
+    assert(sweep[sweep.length - 1].ratio > 1.6,
+      `seen along it at 2°, the surface returns only ${sweep[sweep.length - 1].ratio.toFixed(2)} `
+      + 'reflected per unit scattered — a river seen along it is a mirror');
+    const cross = sweep.find((s) => s.ratio > 1);
+    assert(cross && cross.deg <= 30 && cross.deg >= 6,
+      `the mirror takes over at ${cross ? cross.deg : '∞'}° — that is not where Fresnel puts it`);
+
+    /* ── two: every body of liquid in the game, on its own level ────────── */
     const FACET = [-0.44, -0.28, -0.14, 0, 0.14, 0.28, 0.44];
     const WT = [0.06, 0.13, 0.19, 0.24, 0.19, 0.13, 0.06];
-    let wsat = 0, wlum = 0, n = 0, hot = 0, grazeRefl = 0, grazeScat = 0;
-    for (let z = -110; z <= 110; z += 1.5) {
-      for (let x = -110; x <= 110; x += 1.5) {
-        const d = L.water.level - t.height(x, z);
-        if (d <= 0.005) continue;
-        const climb = Math.hypot(t.height(x + 0.7, z) - t.height(x - 0.7, z),
-          t.height(x, z + 0.7) - t.height(x, z - 0.7)) / 1.4;
-        const dist = Math.max(6, Math.hypot(x, z) * 0.35 + 8);
-        const viewDeg = Math.atan(1.7 / dist) * 180 / Math.PI;
-        const col = [0, 0, 0];
-        for (let k = 0; k < FACET.length; k++) {
-          const a = FACET[k], ny = 1 / Math.sqrt(1 + 2 * a * a);
-          const s = waterShade({ ...env, depth: d, bedDepth: d, climb, viewDeg, ny });
-          for (let i = 0; i < 3; i++) col[i] += s.col[i] * WT[k];
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L || !L.water) continue;
+      const A = L.atmosphere;
+      const t = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const env = {
+        shallow: lin(L.water.shallow), deep: lin(L.water.deep), bed: lin(L.water.bed ?? 0x6b5a41),
+        sky: lin(A.skyColor), fog: lin(A.fogColor), sun: sunDirection(A).normalize().toArray(),
+      };
+      let wsat = 0, wlum = 0, n = 0, hot = 0;
+      for (let z = -110; z <= 110; z += 1.5) {
+        for (let x = -110; x <= 110; x += 1.5) {
+          const d = L.water.level - t.height(x, z);
+          if (d <= 0.005) continue;
+          const climb = Math.hypot(t.height(x + 0.7, z) - t.height(x - 0.7, z),
+            t.height(x, z + 0.7) - t.height(x, z - 0.7)) / 1.4;
+          const dist = Math.max(6, Math.hypot(x, z) * 0.35 + 8);
+          const viewDeg = Math.atan(1.7 / dist) * 180 / Math.PI;
+          const col = [0, 0, 0];
+          for (let k = 0; k < FACET.length; k++) {
+            const a = FACET[k], ny = 1 / Math.sqrt(1 + 2 * a * a);
+            const s = waterShade({ ...env, depth: d, bedDepth: d, climb, viewDeg, ny });
+            for (let i = 0; i < 3; i++) col[i] += s.col[i] * WT[k];
+          }
+          const disp = throughTone(col, A.exposure, A);
+          const mx = Math.max(...disp), mn = Math.min(...disp);
+          wsat += mx <= 1e-9 ? 0 : (mx - mn) / mx;
+          const lum = 0.2126 * disp[0] + 0.7152 * disp[1] + 0.0722 * disp[2];
+          wlum += lum; if (lum > 0.80) hot++;
+          n++;
         }
-        const disp = throughTone(col, A.exposure, A);
-        const mx = Math.max(...disp), mn = Math.min(...disp);
-        wsat += mx <= 1e-9 ? 0 : (mx - mn) / mx;
-        const lum = 0.2126 * disp[0] + 0.7152 * disp[1] + 0.0722 * disp[2];
-        wlum += lum; if (lum > 0.80) hot++;
-        n++;
-        // and the same cell on a level facet at 4°, which is the question
-        // "along a river, does the surface mirror or does it scatter?"
-        const g = waterShade({ ...env, depth: d, bedDepth: d, climb, viewDeg: 4, ny: 0.996 });
-        grazeRefl += g.reflected; grazeScat += g.scattered;
       }
+      const s0 = env.shallow.map(linToSrgb), smx = Math.max(...s0), smn = Math.min(...s0);
+      const authored = (smx - smn) / smx;
+      const sat = wsat / n, lum = wlum / n, hotShare = (hot / n) * 100;
+      assert(n > 500, `${key}: only ${n} wet cells surveyed`);
+      assert(sat >= authored * 0.60,
+        `${key}: the surface displays at saturation ${sat.toFixed(3)}, under 60% of the authored ${authored.toFixed(3)}`);
+      assert(hotShare < 2.0,
+        `${key}: ${hotShare.toFixed(1)}% of the surface is over 0.80 luminance — it is a white sheet again`);
+      rows.push(`${key} sat ${sat.toFixed(3)}/${authored.toFixed(3)} lum ${lum.toFixed(3)} hot ${hotShare.toFixed(2)}%`);
+      t.dispose();
     }
-    const authored = (() => {
-      const s = env.shallow.map(linToSrgb), mx = Math.max(...s), mn = Math.min(...s);
-      return (mx - mn) / mx;
-    })();
-    const sat = wsat / n, lum = wlum / n, hotShare = (hot / n) * 100;
-    assert(n > 1500, `only ${n} wet cells surveyed`);
-    assert(sat >= authored * 0.60,
-      `the river displays at saturation ${sat.toFixed(3)}, under 60% of the authored ${authored.toFixed(3)}`);
-    assert(grazeRefl > grazeScat,
-      `along the water the surface returns ${grazeRefl.toFixed(2)} reflected against ${grazeScat.toFixed(2)} scattered — a river seen along it is a mirror`);
-    assert(hotShare < 2.0,
-      `${hotShare.toFixed(1)}% of the river is over 0.80 luminance — it is a white sheet again`);
-    t.dispose();
-    return `sat ${sat.toFixed(3)} vs authored ${authored.toFixed(3)} (was 0.113), lum ${lum.toFixed(3)} (was 0.731), `
-      + `${hotShare.toFixed(2)}% over 0.80 (was 48.1%), grazing reflect/scatter ${(grazeRefl / grazeScat).toFixed(2)}:1`;
+    assert(rows.length >= 2, `only ${rows.length} level(s) carry a body of liquid`);
+    return `model ${sweep.map((s) => `${s.deg}°:${s.ratio.toFixed(2)}`).join(' ')}; ${rows.join('; ')}`;
   });
 
   check('water: a level with no terrain still gets a river, just a flat one', () => {

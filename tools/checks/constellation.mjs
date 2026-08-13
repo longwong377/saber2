@@ -49,7 +49,7 @@ import { Screens, LIVE } from '../../src/ui/Screens.js';
 import { ORDER_IDS } from '../../src/game/Order.js';
 import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const src = (p) => new URL('../../src/' + p, import.meta.url);
@@ -979,7 +979,7 @@ export async function run({ check, assert }) {
       player: { position: V(12, 0, -30) },              // deliberately not the origin
       bolts: { clear() {} }, bladeSolver: { clearTarget() {} },
       terrain: { inBounds: () => true, slopeAt: () => 0, height: () => 0 },
-      level: LEVELS.dunes, levelKey: 'dunes',
+      level: LEVELS.drifts, levelKey: 'drifts',
       notify() {},
       spawnEnemy(type, pos) {
         const A = Foe.ARCHETYPES[type] || Foe.ARCHETYPES.b1;
@@ -1007,9 +1007,25 @@ export async function run({ check, assert }) {
       }
       rows.push(`${LESSONS[i].id}:${w.enemies.length}`);
     }
-    // The dojo's own flag still means what it always did.
-    assert(LEVELS.dojo.training, 'the dojo stopped being a training level');
-    assert(!LEVELS.dunes.training, 'the dunes became a training level, which would break every other mode');
-    return `${LESSONS.length} lessons built in "${LEVELS.dunes.name}" around a player at (12, -30): ${rows.slice(0, 4).join(' ')}…`;
+    /* RE-DERIVED, and it is now the strongest form this property can take.
+     *
+     * It used to read "the dojo keeps its `training` flag, and the dune sea
+     * does not" — a pair of assertions about two named levels, which was the
+     * best available while training was still half pinned to one room. THE
+     * DOJO HAS BEEN DELETED, at the player's request, and that is precisely
+     * why this check now says more rather than less: with no level carrying
+     * the flag at all, the eleven lessons above ran on an ordinary theatre
+     * with no help from a purpose-built room, which is the thing the mode was
+     * always claimed to do and could never previously be shown to do.
+     *
+     * `World.loadLevel` opens the director on `L.training || mode ===
+     * 'training'`, so the flag remains a supported door for a level that wants
+     * it. Nothing may claim it by accident, though: a level with `training`
+     * set would silently lose its wave director in every other mode. */
+    const flagged = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].training);
+    assert(flagged.length === 0,
+      `${flagged.join(', ')} still carries the training flag — that level cannot be played in any other mode`);
+    return `${LESSONS.length} lessons built in "${LEVELS.drifts.name}", a level with no training flag at all, `
+      + `around a player at (12, -30): ${rows.slice(0, 4).join(' ')}…`;
   });
 }

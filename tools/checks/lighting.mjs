@@ -321,9 +321,52 @@ export function run({ check, assert, near, THREE: T }) {
        * up wearing a physical argument. So: no ceiling. What is asserted below
        * is only what holds without one.
        */
-      // It must still be a skylight rather than a lamp: warm fills belong to
-      // interiors, which are not in OUTDOOR.
-      assert(fillBR > 1.15, `${key}: the fill is B/R ${fillBR.toFixed(2)} — that is not skylight`);
+      /* IT MUST BE THIS LEVEL'S OWN SKY, and that is the re-derivation of a
+       * rule that used to read `fillBR > 1.15` — "warm fills belong to
+       * interiors, which are not in OUTDOOR."
+       *
+       * That was true of every sky this game had, and it was a PROXY. What the
+       * fill stands in for is the dome; the reason it had to be blue is that
+       * every dome in the game was blue. Mustafar's is not: it is a smoke
+       * ceiling lit from below by a lava sea, its `skyColor` is B/R 0.35, and a
+       * blue fill there would be a lamp nobody has switched on — the exact
+       * fault the old rule existed to catch, arriving through the letter of it.
+       *
+       * So the question becomes the one it was always asking. The fill has to
+       * be the colour of the sky ON THIS LEVEL: within 30° of `skyColor` on the
+       * wheel, and carrying at least a third of its chroma so it cannot be a
+       * grey dimmer wearing the right hue. That is STRICTLY MORE than the old
+       * bar on every level that had one — a fill of B/R 1.2 pointed 90° away
+       * from its own sky used to pass and now does not — and the old bar is
+       * kept verbatim underneath it wherever the sky really is blue, so no
+       * level that satisfied it is being let off anything.
+       */
+      const s = new T.Color(a.skyColor ?? 0xbcd8ff);
+      const hueOf = (c) => {
+        const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b), d = mx - mn;
+        if (d < 1e-6) return null;
+        const h = mx === c.r ? ((c.g - c.b) / d + 6) % 6
+          : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4;
+        return h * 60;
+      };
+      const chroma = (c) => {
+        const mx = Math.max(c.r, c.g, c.b);
+        return mx <= 1e-6 ? 0 : (mx - Math.min(c.r, c.g, c.b)) / mx;
+      };
+      const hf = hueOf(f), hs = hueOf(s);
+      assert(hf !== null && hs !== null, `${key}: the fill or the sky has no hue at all`);
+      let gap = Math.abs(hf - hs); if (gap > 180) gap = 360 - gap;
+      assert(gap < 30,
+        `${key}: the fill is ${hf.toFixed(0)}° against a sky of ${hs.toFixed(0)}° — `
+        + `${gap.toFixed(0)}° apart, so it is standing in for somebody else's sky`);
+      assert(chroma(f) > chroma(s) * 0.33,
+        `${key}: the fill carries ${(chroma(f) / Math.max(chroma(s), 1e-6)).toFixed(2)} of its `
+        + 'own sky\'s chroma — that is a dimmer, not a skylight');
+      // …and where the sky IS blue, the bar it always had stands unchanged.
+      const skyBR = s.b / Math.max(s.r, 1e-9);
+      if (skyBR > 1.15) {
+        assert(fillBR > 1.15, `${key}: the fill is B/R ${fillBR.toFixed(2)} — that is not skylight`);
+      }
       // The one number a chroma edit must NOT move. atmosphereMeter weighs the
       // fill by lum(fillColor), so a level that "desaturates" its fill by
       // reaching for a paler hex quietly re-meters its own exposure and its own
@@ -415,7 +458,7 @@ export function run({ check, assert, near, THREE: T }) {
       assert(m.skyFull === 0, `${key} claims ${m.skyFull} of sky irradiance indoors`);
       near(m.exposure / (a.exposure ?? 1.05), 0.92, 1e-9, `${key} exposure trim`);
     }
-    return 'dojo and hangar keep their authored exposure';
+    return 'every interior keeps its authored exposure';
   });
 
   /* ══ aerial perspective ═══════════════════════════════════════════════ */
@@ -655,20 +698,28 @@ export function run({ check, assert, near, THREE: T }) {
     const scene = new THREE.Scene();
     const dome = new SkyDome(scene);
     const u = dome.mat.uniforms;
-    dome.configure(LEVELS.canyon.atmosphere);
-    near(u.uCoverage.value, 0.74, 1e-9, 'canyon cloud cover');
-    assert(dome.mesh.visible, 'the canyon has a sky');
-    dome.configure(LEVELS.hangar.atmosphere);
-    assert(!dome.mesh.visible, 'the hangar is an interior and must not draw a cloud deck');
+    /* Named levels, and the three named here changed when the wash, Hangar
+     * Bay Nine and the dune sea were deleted. What is measured did not: an
+     * outdoor level's authored coverage has to reach the uniform, an interior
+     * must not draw a deck at all, and the haze the deck meets must be the
+     * fog's radiance rather than the authored swatch. `alpine` and `temple`
+     * are the surviving samples of the first two; the third is read off
+     * whichever level is being configured, so it can never drift out of
+     * agreement with the block it is testing again. */
+    dome.configure(LEVELS.alpine.atmosphere);
+    near(u.uCoverage.value, LEVELS.alpine.atmosphere.cloudCover, 1e-9, 'alpine cloud cover');
+    assert(dome.mesh.visible, 'the White Pass has a sky');
+    dome.configure(LEVELS.temple.atmosphere);
+    assert(!dome.mesh.visible, 'the temple hall is an interior and must not draw a cloud deck');
     near(u.uOpacity.value, 0, 1e-9, 'interior cloud opacity');
 
-    dome.configure(LEVELS.dunes.atmosphere);
+    dome.configure(LEVELS.drifts.atmosphere);
     // the haze the deck meets must be the fog's, in radiance, not the swatch
     const hot = new THREE.Color(1.4, 1.3, 1.1);
     dome.setHaze(hot, new THREE.Color(0.4, 0.3, 0.2));
     near(u.uHazeColor.value.r, 1.4, 1e-6, 'haze red');
     near(u.uHorizonColor.value.g, 0.3, 1e-6, 'distant land green');
-    assert(lum(u.uHazeColor.value) > lum(new THREE.Color(LEVELS.dunes.atmosphere.fogColor)),
+    assert(lum(u.uHazeColor.value) > lum(new THREE.Color(LEVELS.drifts.atmosphere.fogColor)),
       'the deck still meets the world at a darker colour than the world dissolves to');
     dome.setRadiance(0.95, 1.1, new THREE.Color(0.7, 0.95, 1.4));
     near(u.uHdr.value, 0.95, 1e-9, 'hdr scale');

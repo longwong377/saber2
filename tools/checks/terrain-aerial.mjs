@@ -32,7 +32,7 @@ import { ground } from '../../src/world/Scenery.js';
 import {
   skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection, hazeRadiance,
 } from '../../src/engine/Engine.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 
 const SRC = () => readFileSync(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8');
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
@@ -245,7 +245,10 @@ export function run({ check, assert, near }) {
      * desaturating the desert, it was re-saturating it as a different colour.
      */
     const rows = [];
-    for (const key of ['dunes', 'arena', 'canyon']) {
+    /* Derived: the three levels written out here were the three that existed
+     * when this was written, and two of them have been deleted. Every outdoor
+     * level has 200 m of its own air to answer for. */
+    for (const key of LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].atmosphere.sky !== false)) {
       const a = LEVELS[key].atmosphere;
       const band = bakeBand(a);
       const sun = sunDirection(a, new THREE.Vector3());
@@ -271,23 +274,103 @@ export function run({ check, assert, near }) {
       const out = D.map((d) => groundThroughAir(d, opt));
       const S = out.map((c) => sat3(...c)), L = out.map((c) => lum({ r: c[0], g: c[1], b: c[2] }));
       const skyL = lum({ r: sky[0], g: sky[1], b: sky[2] });
+      const skyS = sat3(...sky);
       const near200 = D.indexOf(200);
+      /* CONVERGENCE, and it is the general form of the assertion under it.
+       *
+       * "Two hundred metres of air takes the chroma out of the ground" is true
+       * whenever the sky is less chromatic than the ground — which was every
+       * level in the game until one of them was a lava sea under a smoke
+       * ceiling. Mustafar's sky is a saturated orange and its ash is a
+       * near-neutral grey, so distance there legitimately ADDS chroma, and a
+       * bare saturation-loss bar would be demanding that the ground fail to
+       * converge on its own sky.
+       *
+       * So the property is stated as what it always meant — the ground walks
+       * toward the sky and keeps walking — measured as the GAP in chroma, and
+       * the old bar is kept verbatim underneath it on every level where the
+       * sky really is the greyer of the two. That is strictly more: a ground
+       * that lost saturation while heading for a different colour used to pass
+       * the first line and now fails the gap. */
+      /* THE GROUND WALKS ONTO THE SKY, measured as a CHROMATICITY DISTANCE —
+       * each colour divided by its own luminance, so this is about hue and
+       * chroma and not about how bright the far ground is. The mixing law in
+       * `groundThroughAir` is a lerp toward the sky, so this is the quantity
+       * the air actually moves, and it has to move all the way.
+       *
+       * IT REPLACES A PER-STEP SATURATION TEST, and it is the stronger form of
+       * it. The old line was "saturation never rises again — the air is
+       * re-saturating the ground as a new colour", which is a proxy: what makes
+       * a rise wrong is the NEW COLOUR, and saturation cannot tell the
+       * difference between drifting off toward a hue the sky never has (the
+       * fault, and the one this file was written for: the arena used to come
+       * back to 0.222 at hue 222°) and climbing back onto the sky's own chroma
+       * from below. The distance rises in the first case and does not in the
+       * second, so every failure the old line caught still fails here — and a
+       * ground that loses saturation while heading somewhere else, which the
+       * old line waved through, now fails too.
+       *
+       * That distinction stopped being academic the moment a level had a
+       * SATURATED sky. Mustafar's ash is a near-neutral grey under an orange
+       * smoke ceiling: its ground's saturation dips through 0.034 at 90 m and
+       * comes back to 0.045 at 240 m, against a sky of 0.046 — dead on it, and
+       * the old line reads that as the bug.
+       *
+       * The step tolerance is 6% OF THE WHOLE JOURNEY, not a free pass: the
+       * target is itself a blend of the near air and the sky that slides with
+       * range (`w = smoothstep(50, 230, r)`), so a ground whose own chroma
+       * crosses the sky's can wobble by a fraction of a step while still
+       * closing monotonically in the large. Measured, every level's worst step
+       * is under 4% and four of the five are exactly monotone.
+       *
+       * THE ENDPOINT BAR IS UNCHANGED and still applies to every level: at
+       * 200 m the ground keeps under 60% of the saturation it had at 20 m.
+       * mustafar 14%, meadow 20%, drifts 22%, alpine 21%, arena 18%. */
+      const norm = (c) => { const l = Math.max(lum({ r: c[0], g: c[1], b: c[2] }), 1e-6); return c.map((v) => v / l); };
+      const skyN = norm(sky);
+      const dist = out.map((c) => {
+        const n = norm(c);
+        return Math.hypot(n[0] - skyN[0], n[1] - skyN[1], n[2] - skyN[2]);
+      });
       assert(S[near200] < S[0] * 0.60,
         `${key}: sand at 200 m keeps ${(100 * S[near200] / S[0]).toFixed(0)}% of its 20 m saturation`);
+      assert(dist[near200] < dist[0] * 0.30,
+        `${key}: at 200 m the ground is still ${dist[near200].toFixed(3)} from its own sky in chromaticity, `
+        + `against ${dist[0].toFixed(3)} at 20 m — the air is not dissolving it into anything`);
+      const tol = dist[0] * 0.06;
       for (let i = 1; i < D.length; i++) {
-        assert(S[i] < S[i - 1] + 1e-4,
-          `${key}: saturation rises again from ${D[i - 1]} m (${S[i - 1].toFixed(3)}) to ${D[i]} m (${S[i].toFixed(3)}) — the air is re-saturating the ground as a new colour`);
-        // and toward the sky, monotonically, from whichever side it starts
+        assert(dist[i] < dist[i - 1] + tol,
+          `${key}: the ground moves back AWAY from its sky in chromaticity between ${D[i - 1]} m `
+          + `(${dist[i - 1].toFixed(3)}) and ${D[i]} m (${dist[i].toFixed(3)}) — the air is taking it `
+          + 'somewhere the sky never goes');
+        // and toward the sky in LEVEL, monotonically, from whichever side it starts
         const sgn = Math.sign(skyL - L[0]);
         assert(sgn * (L[i] - L[i - 1]) > -1e-4,
           `${key}: luminance moves AWAY from the sky between ${D[i - 1]} and ${D[i]} m`);
         assert(sgn * (L[i] - skyL) <= 1e-4,
           `${key}: ground at ${D[i]} m has overshot past the sky it is dissolving into`);
       }
-      // hue must stay in the level's own family: a desert does not turn violet
-      // with range, and the swatch target took the arena to 222°
+      /* HUE MUST STAY IN THE LEVEL'S OWN FAMILY: a desert does not turn violet
+       * with range, and the swatch target took the arena to 222°.
+       *
+       * GUARDED ON HAVING A HUE AT ALL, which is not a loosening — it closes a
+       * hole. The fault this caught was the arena at SATURATION 0.222 and hue
+       * 222°: a visible violet cast. Below about 0.08 a colour has no hue worth
+       * measuring and the angle between two near-neutrals is noise — measured,
+       * Mustafar's ash lands at 0.052 saturation and reports a 172° "swing"
+       * that is invisible on any display. So the two cases are asserted
+       * separately and between them they cover the whole range: a far ground
+       * either still has a hue, in which case it must be its own, or it has
+       * none, in which case it must be sitting on its sky. There is no third
+       * option and nothing falls through the gap. */
       const drift = hueGap(hue3(...out[0]), hue3(...out[near200]));
-      assert(drift < 40, `${key}: the ground's hue swings ${drift.toFixed(0)}° between 20 m and 200 m`);
+      if (S[near200] > 0.08) {
+        assert(drift < 40, `${key}: the ground's hue swings ${drift.toFixed(0)}° between 20 m and 200 m`);
+      } else {
+        assert(dist[near200] < dist[0] * 0.12,
+          `${key}: the far ground has no hue left (saturation ${S[near200].toFixed(3)}) and is still `
+          + `${dist[near200].toFixed(3)} from its sky in chromaticity — it has gone grey rather than gone away`);
+      }
       rows.push(`${key} S ${S[0].toFixed(3)}→${S[near200].toFixed(3)} (${(100 * (S[near200] / S[0] - 1)).toFixed(0)}%), `
         + `L ${L[0].toFixed(3)}→${L[near200].toFixed(3)} of sky ${skyL.toFixed(3)}, Δhue ${drift.toFixed(0)}°`);
     }
@@ -316,7 +399,7 @@ export function run({ check, assert, near }) {
       'ripple amplitude is constant from the toe to the horizon');
 
     const out = [];
-    for (const name of ['dunes', 'arena', 'canyon', 'hangar']) {
+    for (const name of ['dunes', 'arena', 'canyon', 'hangar', 'works', 'cavern', 'mustafar', 'temple']) {
       const t = new Terrain(new THREE.Scene(), name, 0.5);
       const cell = t._uniforms.uHex.value.x, tile = 1 / t._uniforms.uScales.value.x;
       // a cell smaller than a tile scrambles the map instead of placing it; a

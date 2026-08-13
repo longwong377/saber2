@@ -31,7 +31,7 @@ import {
   skyDisplayShoulder, hazeRadiance, cloudLight, SKY_PHYSICAL, AERIAL,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const sat = (c) => {
@@ -297,9 +297,17 @@ export function run({ check, assert, near }) {
 
   check('clouds: an interior draws no deck and gets no sky-derived light', () => {
     const dome = new SkyDome(new THREE.Scene());
-    dome.configure(LEVELS.hangar.atmosphere);
-    assert(!dome.mesh.visible, 'the hangar is an interior and must not draw a cloud deck');
-    const L = cloudLight(LEVELS.hangar.atmosphere);
+    // Hangar Bay Nine was deleted at the player's request; the property is
+    // about `sky: false` and not about that room, so it is asserted over EVERY
+    // interior the game has rather than over one named one.
+    for (const key of LEVEL_ORDER.filter((k) => LEVELS[k].atmosphere.sky === false)) {
+      dome.configure(LEVELS[key].atmosphere);
+      assert(!dome.mesh.visible, `${key} is an interior and must not draw a cloud deck`);
+      near(cloudLight(LEVELS[key].atmosphere).amb, 0.42, 1e-9,
+        `${key}: an interior must fall back to the neutral default`);
+    }
+    dome.configure(LEVELS.temple.atmosphere);
+    const L = cloudLight(LEVELS.temple.atmosphere);
     near(L.amb, 0.42, 1e-9, 'an interior must fall back to the neutral default');
     near(lum(L.tint), 1, 1e-6, 'an interior cloud tint must be white');
     dome.dispose();

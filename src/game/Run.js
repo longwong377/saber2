@@ -17,72 +17,118 @@
  *
  * This is that object.
  *
- * ── THE SPIRE ──────────────────────────────────────────────────────────
+ * ── THE DESCENT ────────────────────────────────────────────────────────
  *
- * The engine cannot build a literal tower. Terrain is a single heightfield
- * `h(x, z)` — no floors, no overhangs — and the gait solver, the spawn picker,
- * the cloak colliders and the enemy nav all assume it. So the ascent is not
- * geometry. It is ALTITUDE, told by the air.
+ * WHAT THIS REPLACES, and why. The ladder used to be THE SPIRE: four outdoor
+ * arenas at four altitudes, with the weather telling the story — fog thinning,
+ * sun strengthening, the cloud deck sinking past your eyes until the storm you
+ * climbed through was the floor. It was a good idea and it did not read. The
+ * player's verdict on it was flat: "it reads as a canyon and does not work."
+ * The failure is structural rather than a matter of tuning. Nothing about
+ * standing in a meadow tells you it is a thousand metres above the gorge you
+ * started in; altitude is a fact about a place that a place cannot show you
+ * from the inside, and four unrelated landscapes in a row is a tour, not a
+ * climb.
  *
- * Every tier is its own arena at its own height, and the weather carries the
- * story, because the weather system already couples fog, sun colour, wind and
- * fill to one number:
+ * So: the same machinery, pointed DOWN.
  *
- *    the foundations   fog so thick there is no sky at all, and no horizon
- *    the flanks        inside the storm — wind screaming, visibility 40 m
- *    the shoulders     breaking through: the cloud deck level with your eyes
- *    the crown         above it. Thin clear light, and the storm is a FLOOR
+ * The engine still cannot build a literal tower or a literal stair. Terrain is
+ * one heightfield `h(x, z)` — no floors, no overhangs — and the gait solver,
+ * the spawn picker, the cloak colliders and the enemy nav all assume it. The
+ * descent does not need one. Going down has two things going up never had:
  *
- * That progression is authored, not built, and it does something no wall could:
- * the bound of the world stops being an invisible edge and becomes cloud. A
- * player who can see the weather they climbed out of, below them, knows how far
- * they have come without being told.
+ *   IT IS ONE BUILDING. The intake, the foundry and the cut share a palette,
+ *   a shell and a bay grid (see Levels.js), so arriving somewhere new that is
+ *   made of the same cold grey concrete as the last place is itself the
+ *   evidence that you went down a level rather than travelled.
+ *
+ *   AND THE LIGHT GOES. That is the part altitude could never do. Depth has a
+ *   monotone, unambiguous, entirely visible consequence: less and less of
+ *   somebody else's light, until on the last rung there is none of it at all
+ *   and the only thing lighting the room is the blade in your hand. A player
+ *   who has to fight by their own weapon knows exactly how far down they are.
+ *
+ *    the intake    daylight, straight down a hole in the roof
+ *    the foundry   no daylight. A canal of melt, lighting the room from the
+ *                  floor, which is a light source you can be pushed into
+ *    the cut       whatever was left switched on. Four lamps, and rock
+ *    the deeps     the same room with the power off — lit only by lightsabers
+ *
+ * The last two rungs are THE SAME LEVEL, entered twice. That is not a saving,
+ * it is the point: a room you have already fought in and can no longer see is
+ * a stronger statement about depth than a fifth room would be, and it is
+ * exactly the mechanism the ladder was built on — "a rung borrows a level and
+ * changes only its air" (World.loadLevel).
  */
 
 import { maxRank } from './Waves.js';
 
 /**
  * One rung. `level` is a key into LEVELS; `air` is merged over that level's own
- * atmosphere, so a tier borrows a place and changes only its height.
+ * atmosphere, so a rung borrows a place and changes only how it is lit.
  *
- * `waves` is how many waves this tier asks for before the way up opens. It is
- * deliberately short at the bottom — the first rung is where a run is learned,
- * not where it is decided.
+ * `waves` is how many waves this rung asks for before the way down opens. It is
+ * deliberately short at the top — the first rung is where a run is learned, not
+ * where it is decided.
+ *
+ * `altitude` is metres relative to the surface and is therefore NEGATIVE all
+ * the way down. main.js hands it straight to the landing card, which prints it
+ * with a unit; "−480 m" is the whole story that card has to tell.
  */
-export const SPIRE = [
+export const DESCENT = [
   {
-    id: 'foundations', name: 'The Foundations', waves: 3,
-    level: 'canyon', altitude: 0,
-    brief: 'Below the weather. Nothing above you but rock.',
-    air: { fogDensity: 0.0125, fogHeight: 60, sunIntensity: 2.6, ambient: 0.52,
-      cloudCover: 0.95, exposure: 0.80, horizon: false },
-    weather: { peak: 0.55, period: 96, duration: 34 },
+    id: 'intake', name: 'The Intake', waves: 3,
+    level: 'intake', altitude: 0,
+    brief: 'The roof is open to the sky. It is the last sky there is.',
+    air: { fogDensity: 0.0042, sunIntensity: 5.6, ambient: 0.78,
+      fillIntensity: 0.62, exposure: 1.16 },
+    weather: { peak: 0.30, period: 120, duration: 26 },
   },
   {
-    id: 'flanks', name: 'The Flanks', waves: 4,
-    level: 'alpine', altitude: 340,
-    brief: 'Inside the storm. It gets a vote on where your blade goes.',
-    air: { fogDensity: 0.0092, fogHeight: 44, sunIntensity: 4.2, ambient: 0.44,
-      cloudCover: 0.88, exposure: 0.86 },
-    weather: { peak: 1.0, period: 74, duration: 38 },
+    id: 'foundry', name: 'The Foundry', waves: 4,
+    level: 'foundry', altitude: -210,
+    brief: 'No daylight. What is lighting the room is running in the canal.',
+    air: { fogDensity: 0.0072, sunIntensity: 2.4, ambient: 0.20,
+      fillIntensity: 1.05, exposure: 1.10 },
+    weather: { peak: 0.42, period: 104, duration: 30 },
   },
   {
-    id: 'shoulders', name: 'The Shoulders', waves: 4,
-    level: 'drifts', altitude: 720,
-    brief: 'The cloud deck is level with your eyes.',
-    air: { fogDensity: 0.0058, fogHeight: 30, sunIntensity: 6.4, ambient: 0.34,
-      cloudCover: 0.72, exposure: 0.92 },
-    weather: { peak: 0.72, period: 88, duration: 30 },
+    id: 'cut', name: 'The Cut', waves: 4,
+    level: 'deeps', altitude: -480,
+    brief: 'Four working lights left in a mile of excavation. Nobody left them for you.',
+    air: { fogDensity: 0.0108, sunIntensity: 0.90, ambient: 0.10,
+      fillIntensity: 0.34, exposure: 1.42 },
+    weather: { peak: 0.34, period: 116, duration: 28 },
   },
   {
-    id: 'crown', name: 'The Crown', waves: 5, boss: true,
-    level: 'meadow', altitude: 1180,
-    brief: 'Above it. The storm you climbed through is the floor.',
-    air: { fogDensity: 0.0026, fogHeight: 22, sunIntensity: 8.2, ambient: 0.24,
-      cloudCover: 0.34, exposure: 1.0 },
-    weather: { peak: 0.42, period: 130, duration: 26 },
+    id: 'deeps', name: 'The Deeps', waves: 5, boss: true,
+    level: 'deeps', altitude: -760,
+    brief: 'The same cut with the power off. Whatever is down here can see better than you.',
+    /**
+     * THE BOTTOM OF THE LADDER, AS NUMBERS. 0.12 of key against the intake's
+     * 5.6 — a factor of 47 — and 0.03 of ambient against 0.34. What is left is
+     * the four lamps the level dresses itself with, the standing water
+     * reflecting them, and the blade.
+     *
+     * `exposure` goes UP rather than the key being quietly raised, and the
+     * difference matters: opening the curve keeps what light there IS readable
+     * while leaving everything the light does not reach genuinely black. A
+     * brighter key would have filled the room back in and undone the rung.
+     */
+    air: { fogDensity: 0.0146, sunIntensity: 0.12, ambient: 0.03,
+      fillIntensity: 0.10, exposure: 1.74, bloom: 0.54 },
+    weather: { peak: 0.26, period: 140, duration: 24 },
   },
 ];
+
+/**
+ * The name the rest of the codebase still imports. `World.loadLevel` and
+ * `main.js` both `import { SPIRE }`, and neither is a file this change may
+ * edit — so the ladder keeps its old export as an alias rather than the two
+ * call sites keeping a name that no longer describes anything. Delete this the
+ * moment those imports can be renamed.
+ */
+export const SPIRE = DESCENT;
 
 /**
  * How much of your health a landing gives back.
@@ -131,13 +177,13 @@ export class Run {
     this.communion = { insight: 0, bought: [], earned: 0 };
   }
 
-  get rung() { return SPIRE[Math.min(this.tier, SPIRE.length - 1)]; }
-  get last() { return this.tier >= SPIRE.length - 1; }
+  get rung() { return DESCENT[Math.min(this.tier, DESCENT.length - 1)]; }
+  get last() { return this.tier >= DESCENT.length - 1; }
 
-  /** Waves completed across the whole climb, which is what "depth" means. */
+  /** Waves cleared across the whole descent, which is what "depth" means. */
   get depth() {
     let n = this.wave;
-    for (let i = 0; i < this.tier && i < SPIRE.length; i++) n += SPIRE[i].waves;
+    for (let i = 0; i < this.tier && i < DESCENT.length; i++) n += DESCENT[i].waves;
     return n;
   }
 
@@ -159,14 +205,16 @@ export class Run {
   /** Ranks of `id` this run holds. */
   rank(id) { return this.boons.reduce((n, b) => n + (b.id === id ? 1 : 0), 0); }
 
-  /** Survived a rung. Returns false when that was the last one. */
+  /** Survived a rung. Returns false when that was the last one — `ascend` is
+   *  the name main.js and Menu.js call, and it now means "went down one". */
   ascend() {
     this.hpFrac = Math.min(1, this.hpFrac + LANDING_HEAL);
     /**
-     * THE CROWN KEEPS ITS WAVES. `wave` is zeroed because the next rung starts
-     * at its first wave — but there is no next rung here, and zeroing it threw
-     * the crown's own five waves out of `depth`. A sixteen-wave climb recorded
-     * itself as eleven, on the one screen that exists to say how far you got.
+     * THE LAST RUNG KEEPS ITS WAVES. `wave` is zeroed because the next rung
+     * starts at its first wave — but there is no next rung here, and zeroing
+     * it threw the bottom's own five waves out of `depth`. A sixteen-wave run
+     * recorded itself as eleven, on the one screen that exists to say how far
+     * you got.
      */
     if (this.last) { this.done = true; this.won = true; return false; }
     this.wave = 0;

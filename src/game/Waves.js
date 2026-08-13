@@ -44,8 +44,11 @@ export const MODES = {
   duel:    { name: 'Duel', blurb: 'Acolytes only. No blasters, no crowd. Just blades.' },
   // Was "Fixed ladder of set-pieces, ending in a boss" with ZERO implementation
   // — it fell through to the generic path and was byte-identical to the mode it
-  // claimed to be an alternative to. It is the Spire now; see Run.js.
-  gauntlet: { name: 'The Spire', blurb: 'Four tiers, climbed. The weather is the only thing that tells you how high you are — and at the top the storm is below you.' },
+  // claimed to be an alternative to. It was then the Spire, four outdoor arenas
+  // at four altitudes, and that did not read either: nothing about standing in
+  // a meadow says it is a thousand metres above the gorge you started in. It is
+  // the Descent now; see Run.js for why down works where up did not.
+  gauntlet: { name: 'The Descent', blurb: 'Four rungs into one facility. The only thing that tells you how deep you are is how little light is left — and at the bottom there is none.' },
   sandbox: { name: 'Sandbox', blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.' },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.

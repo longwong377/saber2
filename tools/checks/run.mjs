@@ -17,14 +17,15 @@
  * one that matters: a run must be able to cross a level change without losing
  * what it earned.
  */
-import { Run, SPIRE, LANDING_HEAL } from '../../src/game/Run.js';
+import { Run, DESCENT, SPIRE, LANDING_HEAL } from '../../src/game/Run.js';
 import { recordRun, loadProgress, clearProgress, progressLines } from '../../src/game/Progress.js';
 
 export async function run({ check, assert }) {
-  check('run: the Spire ends, and every rung is somewhere the game can go', async () => {
+  check('run: the Descent ends, and every rung is somewhere the game can go', async () => {
     const { LEVELS } = await import('../../src/game/Levels.js');
-    assert(SPIRE.length >= 3, `a ladder of ${SPIRE.length} is not a climb`);
-    for (const t of SPIRE) {
+    assert(SPIRE === DESCENT, 'the alias World.js and main.js import no longer points at the ladder');
+    assert(DESCENT.length >= 3, `a ladder of ${DESCENT.length} is not a descent`);
+    for (const t of DESCENT) {
       assert(LEVELS[t.level], `rung "${t.id}" wants level "${t.level}", which does not exist`);
       assert(t.waves > 0, `rung "${t.id}" asks for no waves`);
       assert(t.brief && t.name, `rung "${t.id}" has no name or brief to show`);
@@ -33,32 +34,109 @@ export async function run({ check, assert }) {
     const r = new Run({ seed: 1 });
     let guard = 0;
     while (r.ascend() && guard++ < 500);
-    assert(guard < 500, 'the climb never terminates — that is the endless wave spawner again');
+    assert(guard < 500, 'the ladder never terminates — that is the endless wave spawner again');
     assert(r.done && r.won, 'finishing the last rung does not end the run as a win');
-    return `${SPIRE.length} rungs, ${SPIRE.reduce((n, t) => n + t.waves, 0)} waves, and it finishes`;
+    return `${DESCENT.length} rungs, ${DESCENT.reduce((n, t) => n + t.waves, 0)} waves, and it finishes`;
   });
 
-  check('run: the climb goes UP, and the air tells you so', () => {
-    // The ascent is not geometry — terrain is a single heightfield and cannot
-    // have floors. It is altitude, told by the weather, so the weather has to
-    // actually change monotonically or the story is not being told.
-    let lastAlt = -1, lastFog = Infinity, lastSun = -1;
+  check('run: the descent goes DOWN, and the light tells you so', () => {
+    /* RE-DERIVED, and it is a strictly stronger statement than the one it
+     * replaces — which is what a check has to be when the thing it measures
+     * genuinely changes direction.
+     *
+     * The old form was "the climb goes UP, and the air tells you so": altitude
+     * rising, fog thinning, sun strengthening, and the bottom rung's air at
+     * least 3× the top's. Every one of those is a monotonicity claim about the
+     * ladder's atmosphere, and every one of them survives here with its sign
+     * flipped — depth deepening, air thickening, sun failing.
+     *
+     * What is ADDED, and could not be asked of the Spire at all, is the last
+     * two assertions. A climb has no equivalent of them: however bright the
+     * crown got, the foundations were still a lit place, so "the story is
+     * told" was never falsifiable beyond the ordering. A descent's story ends
+     * somewhere specific — a room where the player's own weapon is the only
+     * light in it — and that is a NUMBER: the whole authored light budget of
+     * the last rung, key plus ambient plus fill, against the first rung's. If
+     * anybody ever quietly raises the bottom's key to make it easier to see,
+     * this fails, which is the entire reason it is here.
+     */
+    let lastAlt = Infinity, lastFog = -Infinity, lastSun = Infinity, lastAmb = Infinity;
     const rows = [];
-    for (const t of SPIRE) {
-      assert(t.altitude > lastAlt, `rung "${t.id}" is not above the one below it`);
-      assert(t.air.fogDensity < lastFog,
-        `rung "${t.id}" has thicker air than the rung below — you are climbing INTO the weather`);
-      assert(t.air.sunIntensity > lastSun,
-        `rung "${t.id}" gets less sun than the one below it`);
-      lastAlt = t.altitude; lastFog = t.air.fogDensity; lastSun = t.air.sunIntensity;
+    for (const t of DESCENT) {
+      assert(t.altitude < lastAlt, `rung "${t.id}" is not below the one above it`);
+      assert(t.air.fogDensity > lastFog,
+        `rung "${t.id}" has clearer air than the rung above — the deeper room is the better ventilated one`);
+      assert(t.air.sunIntensity < lastSun,
+        `rung "${t.id}" gets more of somebody else's light than the one above it`);
+      assert(t.air.ambient <= lastAmb,
+        `rung "${t.id}" has more ambient than the rung above it`);
+      lastAlt = t.altitude; lastFog = t.air.fogDensity;
+      lastSun = t.air.sunIntensity; lastAmb = t.air.ambient;
       rows.push(`${t.id} ${t.altitude}m fog ${t.air.fogDensity} sun ${t.air.sunIntensity}`);
     }
-    // and the top must actually break out of it
-    const top = SPIRE[SPIRE.length - 1], bot = SPIRE[0];
-    assert(bot.air.fogDensity / top.air.fogDensity > 3,
-      `the foundations are only ${(bot.air.fogDensity / top.air.fogDensity).toFixed(1)}x the crown's air — `
-      + 'the climb does not break through anything');
-    return rows.join(' | ');
+    const top = DESCENT[0], bot = DESCENT[DESCENT.length - 1];
+    assert(bot.air.fogDensity / top.air.fogDensity > 2,
+      `the deeps' air is only ${(bot.air.fogDensity / top.air.fogDensity).toFixed(1)}x the intake's — `
+      + 'the descent does not get into anything');
+    // THE BOTTOM IS LIT BY YOU. Everything the level authors is counted, so a
+    // rung cannot pass this by moving its light from `sunIntensity` to
+    // `ambient` or into the fill.
+    const budget = (t) => t.air.sunIntensity + t.air.ambient * 3 + (t.air.fillIntensity ?? 0);
+    assert(budget(bot) / budget(top) < 0.06,
+      `the deepest rung carries ${(budget(bot) / budget(top) * 100).toFixed(0)}% of the top's `
+      + 'light budget — that is a dim room, not a dark one');
+    assert(bot.air.sunIntensity < 0.25 && bot.air.ambient < 0.06,
+      `the bottom of the descent still runs a key of ${bot.air.sunIntensity} and ${bot.air.ambient} `
+      + 'of ambient — nothing down there is being lit by a lightsaber');
+    // …and the exposure is what keeps it readable, rather than the key being
+    // raised back up. A dark room whose curve was not opened is a black frame.
+    assert((bot.air.exposure ?? 1) > (top.air.exposure ?? 1) * 1.3,
+      'the deepest rung did not open its tone curve, so nothing in it will read at all');
+    return rows.join(' | ') + ` | light budget ${(budget(bot) / budget(top) * 100).toFixed(1)}%`;
+  });
+
+  check('run: the descent is one building, and two rungs prove it', async () => {
+    /* The claim the Spire could never make and the reason this ladder reads.
+     * Altitude cannot be seen from inside a place; DEPTH can, if the places
+     * are the same place. Two properties, both structural:
+     *
+     *   the rooms share a palette and a shell, which here means they share a
+     *   terrain preset family — the intake and the foundry stand on the same
+     *   poured floor with the same colours, so arriving in the second is
+     *   evidence of having gone down rather than of having travelled;
+     *
+     *   and at least one level is entered TWICE at different depths, which is
+     *   the mechanism the ladder is built on ("a rung borrows a level and
+     *   changes only its air") used for the one thing it is uniquely good at.
+     */
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    const { TERRAIN_PRESETS } = await import('../../src/world/Terrain.js');
+    const seen = new Map();
+    for (const t of DESCENT) seen.set(t.level, (seen.get(t.level) ?? 0) + 1);
+    const repeated = [...seen.values()].filter((n) => n > 1).length;
+    assert(repeated >= 1,
+      'no room in the descent is revisited deeper — the light story has nothing to act on');
+    // every rung is indoors: a descent that surfaces is not a descent
+    for (const t of DESCENT) {
+      assert(LEVELS[t.level].atmosphere.sky === false,
+        `rung "${t.id}" draws a sky dome — you are not underground`);
+    }
+    // and the ground is the same ground: same base colour family, so the
+    // rooms read as one building rather than as a tour of four places
+    const base = DESCENT.map((t) => TERRAIN_PRESETS[LEVELS[t.level].terrain].sandColor);
+    const hue = (c) => {
+      const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+      if (d < 1e-6) return 0;
+      const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return h * 60;
+    };
+    const hs = base.map(hue);
+    const spread = Math.max(...hs) - Math.min(...hs);
+    assert(spread < 30,
+      `the descent's floors span ${spread.toFixed(0)}° of hue (${hs.map((h) => h.toFixed(0)).join(', ')}) — `
+      + 'four unrelated grounds in a row is a tour, not one building');
+    return `${seen.size} rooms over ${DESCENT.length} rungs, ${spread.toFixed(0)}° of hue between their floors`;
   });
 
   check('run: what you earned survives the rung you earned it on', () => {
