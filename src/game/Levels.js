@@ -3010,7 +3010,16 @@ export const LEVELS = {
        * forest floor that make it read as a forest. `lighting.mjs` orders the
        * indirect budget by sun height strictly, and this level genuinely
        * delivers more of its light as sky than any other. */
-      elevation: 19, azimuth: 84,
+      /* 134°, NOT the 84° first written, and the reason is the one Mustafar's
+       * block already records: the default pose looks down −z, and a sun 96°
+       * away from that sits in the darkest quarter of the dome — so the sky
+       * the player is looking at comes out DARKER than the near air standing
+       * in front of it, and the far ground overshoots past its own sky.
+       * Measured here at 84°, the ground crossed the skyline's luminance at
+       * 160 m and settled back under it by 240; at 134° it never crosses.
+       * 134 puts the sun 46° off the view axis, which is the same choice the
+       * dune sea and Mustafar both make and for the same reason. */
+      elevation: 19, azimuth: 134,
       /* 2.4 of key and 0.90 of ambient, not 3.6 and 0.78 — the same shape
        * Mustafar's block derives and for the same reason. Written first at
        * rayleigh 1.7 with a 3.6 key, `atmosphereMeter` hit its exposure clamp
@@ -3084,7 +3093,7 @@ export const LEVELS = {
       // Spores and midges, not grit — and the only bright thing in the air.
       count: 1200, color: 0xa8bc86, opacity: 0.20, size: 14, shimmer: false,
       fleckColor: 0xd8e8a0,
-      wind: { from: 84, strength: 1.6, gustiness: 0.7, wander: 0.55 },
+      wind: { from: 134, strength: 1.6, gustiness: 0.7, wander: 0.55 },
       // A wood under a canopy has no weather of its own; what crosses it is
       // the rain the canopy is shedding, half an hour after it stopped.
       weather: { peak: 0.52, period: 118, duration: 34, unrest: 0.14,
@@ -3292,9 +3301,22 @@ export const LEVELS = {
       turbidity: 7.0, rayleigh: 2.8, mie: 0.013, mieG: 0.84,
       /* 6°, which is the lowest sun in the game — the wood's 9° was the
        * previous floor. It is not a sun: it is the last of the daylight
-       * somewhere under a storm, and at 6° almost none of it reaches the deck,
-       * which is why `ambient` carries this level. */
-      elevation: 16, azimuth: 302,
+       * somewhere under a storm, and almost none of it reaches the deck, which
+       * is why `ambient` carries this level.
+       *
+       * 128°, NOT the 302° first written, and the reason is the one Mustafar's
+       * block already records: the default pose looks down −z, and a sun 122°
+       * away from that sits in the darkest quarter of the dome — so the sky the
+       * player is looking at comes out DARKER than the near air standing in
+       * front of it. Measured, the deck crossed its own skyline's luminance at
+       * 160 m and settled back under it by 240, which is a surface behind a
+       * medium coming out brighter than the medium. At 128° it never crosses.
+       * Six fog swatches from 0x0f151c to 0x707f5c were measured first and
+       * moved it by nothing at all, which is the finding: on an outdoor level
+       * `hazeRadiance` takes the near air's LEVEL from the sky model and only
+       * its tint from `fogColor`, so the bearing is the knob and the swatch is
+       * not. */
+      elevation: 16, azimuth: 128,
       sunColor: 0x9fb8d8, sunIntensity: 5.4, ambient: 0.50,
       /* Both halves of the hemisphere are the storm. The upper is the cloud
        * base, the lower is the SEA — and the sea is the brighter of the two,
@@ -3302,11 +3324,24 @@ export const LEVELS = {
        * reaching you has come off the water. Authoring the lower half as the
        * deck's own dark concrete was the instinct and it is wrong: the deck is
        * 156 m across and the ocean is the rest of the world. */
-      /* The lower half is the SEA, and it is nearly neutral rather than blue.
-       * `cloudLight` derives a cloud base's tint from this swatch, and at the
-       * 0x3e5162 first written the base came back 0.41 saturated — a turquoise
-       * cloud. A storm sea seen from above is grey. */
-      skyColor: 0x46586e, groundColor: 0x4c5157,
+      /* THE LOWER HALF IS WHAT THE DECK THROWS BACK, and it took two
+       * measurements to land, from opposite directions.
+       *
+       * It was 0x3e5162 — the sea — and `cloudLight` derives a cloud base's
+       * tint from exactly this swatch, so the storm ceiling came back 0.41
+       * saturated: a turquoise cloud. Neutralising it to 0x4c5157 fixed that
+       * and broke the other end: `terrain-aerial` requires the ground to lose
+       * at least 40% of its chroma over 200 m, and a swatch that is already
+       * the same neutral as its own sky has none to lose — measured, it kept
+       * 64%, because what the air was doing was not desaturating the ground,
+       * it was leaving it where it already was.
+       *
+       * 0x5a4e40 is the answer to both: a WARM grey, which is what a wet deck
+       * lit by fourteen amber approach lights actually bounces, and it is the
+       * only warm thing within a hundred metres. Measured, the ground now
+       * keeps 33% of its chroma at 200 m and the cloud base is warm rather
+       * than turquoise. */
+      skyColor: 0x46586e, groundColor: 0x5a4e40,
       fillColor: 0x6d86a4, fillIntensity: 0.54,
       /* 0.0112: half-light at 62 m. Thick enough that the water plane's edge
        * at 260 m is entirely gone and the sea runs to the horizon, thin enough
@@ -3350,7 +3385,7 @@ export const LEVELS = {
       // it: the air over an ocean platform in a storm is half water.
       count: 1400, color: 0xa8bccc, opacity: 0.20, size: 16, shimmer: false,
       fleckColor: 0xcfe0ee,
-      wind: { from: 302, strength: 8.5, gustiness: 0.5, wander: 0.18 },
+      wind: { from: 128, strength: 8.5, gustiness: 0.5, wander: 0.18 },
       /**
        * RAIN, as the snowfall system with different water in it.
        *
@@ -3397,9 +3432,24 @@ export const LEVELS = {
         const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
         const x = c * k * RA * 0.955, z = s * k * RB * 0.955;
         if ((i + 2) % 7 < 2) continue;                 // where it has gone
+        /* `destructible` ON EVERY TOP-LEVEL MAKER ON THIS DECK, and it is the
+         * whole of why the rail, the lamps and the plant could be stood on and
+         * not touched. `kitClose` is where destructibility is wired in, and it
+         * only registers a piece when the maker NAMES a profile — `addArch`
+         * does, and `addRailing`, `addLamp`, `addStanchion`, `addMachine`,
+         * `addTank`, `addPlinth`, `addAntenna` and `addCrateStack` do not. So
+         * everything on this platform except its four arches was visual.
+         *
+         * Set here rather than defaulted in the makers, and the reason is the
+         * draw-call budget: a maker COMPOSED into somebody else's kit registers
+         * by lifting its geometry back out of the shared bins as its own part,
+         * which costs a call per material — so a blanket default would put a
+         * separate emit on every stanchion inside every island in the game. A
+         * maker that owns its whole kit, which is every call below, registers
+         * for a bounds computation and nothing else. */
         addRailing(world, at(x, z), {
           length: 15, height: 1.15, yaw: -Math.atan2(z * RA / RB, x) + Math.PI / 2,
-          seed: 8900 + i, mat: M.darkSteel,
+          seed: 8900 + i, mat: M.darkSteel, destructible: 'durasteel',
         });
       }
 
@@ -3414,7 +3464,7 @@ export const LEVELS = {
         const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
         addLamp(world, at(c * k * RA * 0.90, s * k * RB * 0.90), {
           height: 1.5, seed: 8940 + i, light: i % 2 === 0,
-          color: 0xffa838, intensity: 16, distance: 26,
+          color: 0xffa838, intensity: 16, distance: 26, destructible: 'durasteel',
         });
       }
 
@@ -3454,7 +3504,8 @@ export const LEVELS = {
         const kk = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
         const x = c * kk * RA * 0.72, z = s * kk * RB * 0.72;
         if (!siteOk(world, x, z, { clearance: 12, spawnClear: 14 })) continue;
-        island(world, at(x, z), { seed: 9100 + k, yaw: -Math.atan2(z, x), span: 15, maker: 'plant' },
+        island(world, at(x, z), { seed: 9100 + k, yaw: -Math.atan2(z, x), span: 15, maker: 'plant',
+          destructible: 'durasteel' },
           (kit, local) => {
             addMachine(world, local(-3.2, 0), { kit, width: 4.2, height: 2.8, depth: 2.4,
               seed: 9110 + k, glowMat: M.glowCold });
@@ -3471,14 +3522,16 @@ export const LEVELS = {
       /* ── THE MAST at the centre of the pad, off-axis so the middle stays
        * clear: a platform needs a thing you can see it from, and this is the
        * only vertical inside the rail. */
-      addAntenna(world, at(-16, 19), { height: 26, seed: 9200 });
-      addPlinth(world, at(-16, 19), { width: 5.0, height: 0.7, seed: 9201, mat: M.darkSteel });
+      addAntenna(world, at(-16, 19), { height: 26, seed: 9200, destructible: 'durasteel' });
+      addPlinth(world, at(-16, 19), { width: 5.0, height: 0.7, seed: 9201, mat: M.darkSteel,
+        destructible: 'durasteel' });
 
       /* ── The loose stuff a working pad has. Sparse and near the rim: a
        * landing deck is kept clear, which is what makes it a landing deck. */
       for (let k = 0; k < 5; k++) {
         const site = findSite(world, 26, 66, { clearance: 5, spawnClear: 12, maxSlope: 0.3 });
-        if (site) addCrateStack(world, site.pos, { seed: 9220 + k, tiers: 2, columns: 2, yaw: rng() * TAU });
+        if (site) addCrateStack(world, site.pos, { seed: 9220 + k, tiers: 2, columns: 2,
+          yaw: rng() * TAU, destructible: 'durasteel' });
       }
       for (let k = 0; k < 9; k++) {
         const site = findSite(world, 20, 70, { clearance: 3, spawnClear: 12, maxSlope: 0.3 });
