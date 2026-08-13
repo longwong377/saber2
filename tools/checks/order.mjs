@@ -838,9 +838,10 @@ export async function run({ check, assert, near }) {
      * crystal into SABER_COLORS then fails here loudly instead of quietly
      * handing the Sith a green blade. */
     const NAMES = {
-      jedi: ['Cerulean', 'Verdant', 'Amethyst', 'Sunfire', 'Cyanite'],
+      jedi: ['Cerulean', 'Verdant', 'Amethyst', 'Sunfire', 'Cyanite',
+             'Gold', 'Jade', 'Azure', 'Indigo'],
       sith: ['Crimson', 'Bronze', 'Rose', 'Void'],
-      grey: ['Ivory', 'Rose', 'Bronze'],
+      grey: ['Ivory', 'Rose', 'Bronze', 'Orchid'],
     };
     const ROBES = { jedi: ['Sand', 'Ivory', 'Ochre', 'Umber'], sith: ['Night', 'Ash'], grey: ['Ash', 'Umber', 'Night'] };
     for (const o of ORDERS) {

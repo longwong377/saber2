@@ -106,16 +106,34 @@ import { SABER_COLORS, HILT_STYLES, BLADE_TUNING, TEMPER } from './Saber.js';
  * inserting a crystal into SABER_COLORS fails loudly instead of silently
  * handing the Sith a green blade.
  *
- * The union is all ten: no crystal is orphaned by the split, and a player who
- * has not chosen an order still sees the whole rack.
+ * The union is all fifteen: no crystal is orphaned by the split, and a player
+ * who has not chosen an order still sees the whole rack.
+ *
+ * WHERE THE FIVE NEW ONES WENT, because the placement says something and the
+ * checks hold it to what it says:
+ *
+ *   Gold and Jade to the JEDI. Gold is the Temple Guard's colour and Jade is
+ *     the other half of the green a temple grows; both are crystals that came
+ *     out of Ilum and were never bled.
+ *   Azure and Indigo to the JEDI as well — they sit either side of Cerulean
+ *     and belong with it.
+ *   Orchid to the GREY. It is a hue no temple issues and no Sith bleeds, which
+ *     is exactly what the Grey's rack is for, and it does not break their one
+ *     rule: they have no blue and no green because they never went to a temple.
+ *
+ * Nothing new goes on the SITH rack, and that is a rule rather than an
+ * oversight: their rack is the bled family (plus the two the check names by
+ * hand), and a crystal is not bled because someone liked the colour. Adding a
+ * bled one now takes a `dark: true` in SABER_COLORS and an entry here, and
+ * tools/checks/order.mjs will fail until both are done.
  */
 const CRYSTALS = {
-  //          Cerulean Verdant Amethyst Sunfire Cyanite
-  jedi: [0, 1, 2, 3, 7],
+  //          Cerulean Verdant Amethyst Sunfire Cyanite | Gold Jade Azure Indigo
+  jedi: [0, 1, 2, 3, 7, 10, 11, 12, 13],
   //          Crimson Bronze Rose Void
   sith: [4, 6, 8, 9],
-  //          Ivory Rose Bronze
-  grey: [5, 8, 6],
+  //          Ivory Rose Bronze | Orchid
+  grey: [5, 8, 6, 14],
 };
 
 /**

@@ -15,17 +15,78 @@ const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vect
 const _v4 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
+/**
+ * THE RACK.
+ *
+ * APPENDED TO, NEVER INSERTED INTO. `colorIndex` is an index — it is what the
+ * menu stores in a saved profile, what Order.js's crystal sets are written in,
+ * and what World hands the Player — so putting a new crystal in the middle
+ * would silently change the colour of every saved character and every order's
+ * rack at once. New crystals go on the end. tools/checks/order.mjs pins each
+ * index to the name it is meant to be, so an insertion fails loudly.
+ *
+ * `dark` is the bled family, and it is a FIELD rather than a rule about keys.
+ * It used to be `key === 'red' || key === 'black'` written out twice inside
+ * Saber, which is a classification living in an expression: nothing could
+ * declare a new bled crystal without editing two lines of the constructor, and
+ * the two lines could disagree with each other.
+ *
+ * WHERE THE FIVE NEW ONES CAME FROM, because "more colours" is not a licence
+ * to fill the wheel evenly. Every one of them is a gap in the hue circle the
+ * ten had left open — the shipped rack ran 0° 25° 38° then jumped to 148°,
+ * which is a hundred and ten degrees of yellow and green with nothing in it —
+ * and every one was MEASURED against the two bounds that actually constrain a
+ * crystal before it was chosen. See tools/checks/saber-bloom.mjs: the halo has
+ * to survive 120 mm from the axis and clear 5:1 against the white core, and
+ * both bounds are minima over the whole rack, so a new crystal can only ever
+ * lower them.
+ *
+ * That is a real constraint and it threw a candidate out. A deep indigo
+ * (0x4a2cff) measures 76 mm — blue carries 7% of luminance, so a blue-dominant
+ * emission falls under the visibility gate close to the axis and its coloured
+ * halo is tight. The shipped Void sits at 121 mm for the same reason and is
+ * the tightest thing on the rack. The indigo here is lifted to 0x8878ff, which
+ * measures 129 mm: it is a paler violet than the one I wanted, and it is the
+ * one the blade can actually draw.
+ *
+ *     Gold     182 mm  15.4:1  core 11.8 mm     Jade    183 mm  13.7:1  13.4 mm
+ *     Azure    164 mm  11.1:1       14.8 mm     Indigo  129 mm   9.5:1  13.6 mm
+ *     Orchid   142 mm  13.0:1       11.0 mm
+ *
+ * THE THIRD BOUND THREW OUT A SECOND CANDIDATE, and it is the one I had not
+ * measured. `blade: the white core is a core, not a bar` caps the widest white
+ * core in the game at 24 mm, and a PALE crystal blows it: the tone curve
+ * desaturates a wide band around a low-chroma emitter, so a cold near-white
+ * "Frost" measured 28.8 mm untuned and 38.4 mm under an order's tuning — the
+ * exact "fat white bar" the player reported and this bound exists to stop.
+ * Ivory only survives because its chroma is under 0.15 and the measurement
+ * skips it entirely, and nothing paler than Ivory is far enough from Ivory to
+ * be worth a slot. So the rack has no second white on it, and the fifth
+ * crystal is a saturated Azure instead.
+ */
 export const SABER_COLORS = [
   { name: 'Cerulean',  hex: 0x3ba7ff, glow: 0x8fd8ff, key: 'blue' },
   { name: 'Verdant',   hex: 0x37f07a, glow: 0xa6ffc8, key: 'green' },
   { name: 'Amethyst',  hex: 0xa459ff, glow: 0xd7b0ff, key: 'purple' },
   { name: 'Sunfire',   hex: 0xffb02e, glow: 0xffe0a0, key: 'amber' },
-  { name: 'Crimson',   hex: 0xff2d2d, glow: 0xff9a90, key: 'red' },
+  { name: 'Crimson',   hex: 0xff2d2d, glow: 0xff9a90, key: 'red', dark: true },
   { name: 'Ivory',     hex: 0xf2f6ff, glow: 0xffffff, key: 'white' },
   { name: 'Bronze',    hex: 0xff7a1a, glow: 0xffc888, key: 'orange' },
   { name: 'Cyanite',   hex: 0x21f0e0, glow: 0xa8fff8, key: 'cyan' },
   { name: 'Rose',      hex: 0xff5fae, glow: 0xffc0e0, key: 'rose' },
-  { name: 'Void',      hex: 0x241a3a, glow: 0x7a4fd0, key: 'black' },
+  { name: 'Void',      hex: 0x241a3a, glow: 0x7a4fd0, key: 'black', dark: true },
+  // ── the five, in the five gaps ──────────────────────────────────────
+  // 53°, between Sunfire's amber and the green side. The Temple Guard yellow.
+  { name: 'Gold',      hex: 0xffe019, glow: 0xfff5a8, key: 'gold' },
+  // 90°. The yellow-green nothing on the rack reached.
+  { name: 'Jade',      hex: 0x8ef03a, glow: 0xd6ffa8, key: 'jade' },
+  // 192°, in the 30° between Cyanite's turquoise and Cerulean's sky.
+  { name: 'Azure',     hex: 0x14c8ff, glow: 0xa0e6ff, key: 'azure' },
+  // 248°, in the gap between Cerulean and Amethyst. See the note above for
+  // why it is this pale and not the deep indigo it wants to be.
+  { name: 'Indigo',    hex: 0x8878ff, glow: 0xd0c8ff, key: 'indigo' },
+  // 296°, between Amethyst and Rose.
+  { name: 'Orchid',    hex: 0xf03cff, glow: 0xffb0f8, key: 'orchid' },
 ];
 
 export const HILT_STYLES = ['Graflex', 'Guardian', 'Sentinel', 'Consular', 'Crossguard'];
@@ -466,7 +527,7 @@ export class Saber {
     }
     this.coreWidth = opts.coreWidth ?? 1;
     this.hiltStyle = opts.hiltStyle ?? 'Graflex';
-    this.isDark = c.key === 'red' || c.key === 'black';
+    this.isDark = !!c.dark;
 
     this.root = new THREE.Group();
     this.root.matrixAutoUpdate = true;
@@ -530,7 +591,7 @@ export class Saber {
     const c = SABER_COLORS[index] || SABER_COLORS[0];
     this.color.setHex(c.hex);
     this.glowColor.setHex(c.glow);
-    this.isDark = c.key === 'red' || c.key === 'black';
+    this.isDark = !!c.dark;
     this._applyColour();
   }
 
