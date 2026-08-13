@@ -397,9 +397,56 @@ const HEAL_COST = 40;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
-const FP_HILT_DROP = 0.02;
-/** …and how far in front of it. See FP_HILT_DROP. */
-const FP_HILT_FWD = 0.16;
+/**
+ * WHERE THE HILT HANGS — AND WHY IT IS STILL TWO PLACES.
+ *
+ * Third person solves the blade from the chest; first person solves it from
+ * 0.26 m above and 0.16 m in front of it, in the aim frame, so that the hands
+ * are in front of the lens where you can see them. The blade tip therefore
+ * reaches 1.89 m from the chest in first person and 1.49 in third — 27% more
+ * sword for pressing the camera key, held by a ratchet in
+ * tools/checks/first-person.mjs whose note names the only fix there is: give
+ * both views one anchor.
+ *
+ * THAT WAS BUILT AND MEASURED, AND IT IS BLOCKED. The unification itself works
+ * — one offset from the chest, applied directly in third person and applied to
+ * the eye with the eye-to-chest height taken back out in first, which lands on
+ * the same point plus the eye's own ride. It takes the ratio from 1.27 to
+ * between 1.06 and 1.11. What it cannot do is satisfy the other three bounds at
+ * the same time. tools/_anchor.mjs sweeps the offset — as an ANGLE, because the
+ * 0.30 m radius is how far in front of the body the weapon is and is not free —
+ * and prints all five numbers:
+ *
+ *     angle  rise  fwd    ratio   forearm°/s  wrist°  hand-down°
+ *      20     0.10 0.28   1.125      2182      127.7     34.3
+ *      30     0.15 0.26   1.110      2626      128.1     31.2
+ *      36     0.18 0.24   1.101      2847      128.2     29.5
+ *      50     0.23 0.19   1.077      5159      132.5     26.3
+ *      74     0.29 0.08   1.055      2619      157.7     25.7
+ *     bounds                <1.30      <2700     <145      <30
+ *
+ * The hands are only in the frame past about 36 degrees and the forearm is only
+ * under its ratchet below about 30. There is no window. Raising the radius makes
+ * the forearm worse, not better (0.32 m at 36 degrees reads 3965).
+ *
+ * And the forearm spike is not a discontinuity that could be smoothed away. At
+ * the worst frame the HAND is turning at 2432 deg/s while its position moves at
+ * 0.61 m/s — the hilt rolling over in place — and the forearm follows it,
+ * because pronation follows the hand. The median over the same run is 217. So
+ * the number is measuring how fast SaberController rolls the guard, which is
+ * exactly what the wrist ratchet in tools/checks/viewmodel.mjs already says is
+ * the outstanding fault: "the CONTROLLER placing the hands where a wrist could
+ * actually hold that blade, which is a change to SaberController's guard model,
+ * not to the rig."
+ *
+ * So: unifying the anchor is blocked on the guard model, and the guard model is
+ * the prerequisite rather than the other way round. The offsets below are the
+ * shipped ones, unchanged. The sweep is committed so nobody has to derive this
+ * twice.
+ */
+const HILT = { rise: 0.26, fwd: 0.16 };
+/** Exported so tools/_anchor.mjs can sweep it. */
+export const HILT_ANCHOR = HILT;
 
 /**
  * WHERE A HAND HOLDS A HILT — and it was nowhere near where the game put one.
@@ -1578,6 +1625,7 @@ export class Player {
     // have been shooting over the head of a player who looked at the sky.
     // They are two points and they are now two fields.
     this.chest.copy(this.position).setY(this.position.y + lerp(1.34, 1.0, this.crouch));
+    const chestH = lerp(1.34, 1.0, this.crouch), eyeH = lerp(1.62, 1.22, this.crouch);
     this.gripAnchor.copy(this.chest);
     if (this.camera.firstPerson) {
       // OFF THE EYE, AND OFF THE SAME EYE THE CAMERA USES.
@@ -1589,7 +1637,7 @@ export class Player {
       // walk, before this, the wrist travelled 97mm up and down the frame per
       // stride against a shoulder that was already pinned to the lens — the
       // arm stretching and folding to reach a weapon that was swimming.
-      const eye = this.camera.eyePosition(this.position, lerp(1.62, 1.22, this.crouch), _v5);
+      const eye = this.camera.eyePosition(this.position, eyeH, _v5);
       // FORWARD and down, not back. The hands sit ~0.29m out along the guard
       // from this anchor; at 0.30m below the eye they need to be at least
       // 0.30/tan(30) = 0.52m in FRONT of it to fall inside a 60 degree vertical
@@ -1609,9 +1657,13 @@ export class Player {
       // in front of you is real reach. 0.45 looked best but handed first person
       // a third more range than third person, which is not a view option, it is
       // a different weapon.
+      // The offset, from the eye, with the eye-to-chest height taken back out —
+      // so it lands where the same offset from the CHEST would, plus the eye's
+      // own ride. Written this way rather than as a bare drop because it is the
+      // form a unified anchor needs, and see HILT for how close that came.
       this.gripAnchor.copy(eye)
-        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), -FP_HILT_DROP)
-        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), FP_HILT_FWD);
+        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), HILT.rise - (eyeH - chestH))
+        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd);
     }
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
