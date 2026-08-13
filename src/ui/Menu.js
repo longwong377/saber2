@@ -369,6 +369,8 @@ export const CODEX = [
   { keys: ['sense'], text: () => 'Force sense — see through walls.' },
   { keys: ['stasis'],
     text: k => `Stasis field — freeze what is near you, bolts included. ${k('hurl')} fires the whole field.` },
+  { keys: ['heal'],
+    text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to stop.' },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'],
     text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },

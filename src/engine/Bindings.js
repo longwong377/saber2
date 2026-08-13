@@ -96,6 +96,7 @@ export const ACTIONS = [
   // way for findConflict to warn that something else wanted the key. Their
   // default keys are unchanged — what changes is that they are now sayable.
   { id: 'stasis',     group: 'Force',    label: 'Stasis field',      keys: ['KeyB'] },
+  { id: 'heal',       group: 'Force',    label: 'Force heal',        keys: ['Digit3'] },
   { id: 'rend',       group: 'Force',    label: 'Rend apart',        keys: ['KeyN'] },
 
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },

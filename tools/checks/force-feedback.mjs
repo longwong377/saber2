@@ -161,4 +161,88 @@ export async function run({ check, assert, THREE: T }) {
     return `${forceIds.length} Force actions, all read across Player.js and World.js; `
       + `${spenders.length} spenders, all able to say why not`;
   });
+
+  check('force: holding a living thing off the ground chokes it', () => {
+    /**
+     * THE GRIP DID NO HARM. It could lift an enemy, walk them about and hurl
+     * them, and for as long as it held them nothing happened — so the most
+     * cinematic thing in the source material was a way to move a droid around.
+     * Force choke is that grip with a consequence, which is why it has no key
+     * of its own.
+     *
+     * The rate is a FRACTION OF MAX HP, because this roster spans 28 hp on a B1
+     * and 900 on an Acklay and a flat number is either an instant kill or a
+     * joke depending on which one you grabbed. So the check is on the FRACTION,
+     * measured on two bodies an order of magnitude apart, and it has to come
+     * out the same for both — a flat rate would fail it on the second one.
+     */
+    const rows = [];
+    for (const [name, maxHp, big] of [['acolyte', 400, false], ['acklay', 900, true]]) {
+      const b = bench({ force: 1e6 });
+      let hp = maxHp;
+      const e = {
+        maxHp, dead: false, gripped: false, liftTarget: null, chokeT: 0,
+        position: new THREE.Vector3(2, 0, 0),
+        A: { mass: 80, big }, rig: null,
+        damage: (v) => { hp -= v; },
+      };
+      b.p.gripEnemy = e;
+      b.p._liftPoint.copy(e.position);
+      b.ctx.enemies = [e];
+      for (let i = 0; i < 180; i++) { b.ctx.time = i / 60; b.p._updateGrip(1 / 60, b.ctx); }
+      const lost = (maxHp - hp) / maxHp;
+      assert(lost > 0.01, `${name}: three seconds of being held off the ground cost it ${(lost * 100).toFixed(1)}% — nothing is happening`);
+      assert(e.chokeT > 2.9, `${name}: the choke timer reached ${e.chokeT.toFixed(2)}s in three seconds of holding`);
+      rows.push(`${name} ${(lost * 100).toFixed(0)}%/3s`);
+    }
+    // …and the same fraction on both, allowing for the big body's half rate
+    const [a, c] = rows.map((r) => parseFloat(r.split(' ')[1]));
+    assert(Math.abs(a / 2 - c) < a * 0.15,
+      `a big body took ${c}% where the half-rate rule says about ${(a / 2).toFixed(0)}% — the rate is not a fraction of max hp`);
+    // and letting go clears it
+    const b2 = bench();
+    const e2 = { maxHp: 100, dead: false, gripped: true, chokeT: 4, liftTarget: {}, position: new THREE.Vector3(), A: { mass: 80 }, damage() {} };
+    b2.p.gripEnemy = e2;
+    b2.p.releaseGrip();
+    assert(e2.chokeT === 0 && !e2.gripped, 'letting go left the victim mid-choke');
+    return rows.join(', ');
+  });
+
+  check('force: heal is three seconds you have to survive, not a button', () => {
+    /*
+     * An instant heal is simply more health. The whole design is the channel:
+     * it costs time standing still with your hands down, and a single hit ends
+     * it. Four things, and the third is the one that makes it a decision.
+     */
+    const b = bench({ force: 200 });
+    b.p.hp = 40;
+    b.p.forceHeal(b.ctx);
+    assert(b.p.healing === 0, 'force heal did not start');
+    for (let i = 0; i < 30; i++) { b.ctx.time = i / 60; b.p._updateHeal(1 / 60, b.ctx); }
+    const half = b.p.hp;
+    assert(half > 40 && half < 40 + b.p.maxHp * 0.45,
+      `half a second in, hp went 40 → ${half.toFixed(1)} — a channel does not pay out all at once`);
+    for (let i = 0; i < 200; i++) { b.ctx.time = 0.5 + i / 60; b.p._updateHeal(1 / 60, b.ctx); }
+    assert(b.p.healing === null, 'the channel never finished');
+    const healed = b.p.hp - 40;
+    assert(healed > b.p.maxHp * 0.40, `a completed heal restored ${healed.toFixed(0)} of ${b.p.maxHp}`);
+    assert(b.p.force < 200, 'the heal cost no Force at all');
+
+    // interrupted by a hit
+    const c = bench({ force: 200 });
+    c.p.hp = 40;
+    c.p.forceHeal(c.ctx);
+    for (let i = 0; i < 30; i++) { c.ctx.time = i / 60; c.p._updateHeal(1 / 60, c.ctx); }
+    c.p.hp -= 5;                                   // a bolt lands
+    c.p._updateHeal(1 / 60, c.ctx);
+    assert(c.p.healing === null, 'taking a hit did not break the channel');
+    assert(c.notices.some((n) => /broke/i.test(n.title)), 'the broken channel said nothing');
+
+    // at full health it refuses, out loud
+    const d = bench({ force: 200 });
+    d.p.forceHeal(d.ctx);
+    assert(d.notices.length === 1 && /whole/i.test(d.notices[0].sub),
+      `healing at full health said ${JSON.stringify(d.notices)}`);
+    return `40 → ${b.p.hp.toFixed(0)} hp over 3s for ${(200 - b.p.force).toFixed(0)} Force; a hit breaks it`;
+  });
 }

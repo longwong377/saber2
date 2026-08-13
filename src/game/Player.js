@@ -111,6 +111,9 @@ const GESTURES = {
   lightning: { attack: 0.08, release: 0.52, out: 0.70, side: -0.08, up: 0.14, palm: 0.70, lean: 0.24, twist: -0.14 },
   sense:     { attack: 0.26, release: 0.62, out: 0.10, side: -0.28, up: 0.42, palm: 0.00, lean: -0.12, twist: 0.10 },
   cast:      { attack: 0.06, release: 0.34, out: 0.58, side: -0.30, up: 0.04, palm: 0.20, lean: 0.30, twist: -0.26 },
+  // Force heal is the one gesture that is not thrown at anything: the palm
+  // comes IN to the chest and stays there for as long as the channel holds.
+  mend:      { attack: 0.30, release: 0.45, out: 0.02, side: -0.16, up: -0.06, palm: 0.90, lean: -0.10, twist: 0.06, sustain: true },
 };
 
 /**
@@ -278,6 +281,19 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
  * stops smearing the lens on its way past.
  */
 const HEAT_NEAR = 0.55;
+
+/**
+ * FORCE CHOKE's bite, as a fraction of the victim's own maximum health per
+ * second: where it starts, and where it ramps to over three seconds. See the
+ * note in _updateGrip for why it is a fraction and not a number.
+ */
+const CHOKE_RATE = 0.12;
+const CHOKE_RATE_MAX = 0.30;
+
+/** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
+const HEAL_COST = 40;
+const HEAL_TIME = 3.0;
+const HEAL_FRACTION = 0.45;
 
 const FP_HILT_DROP = 0.02;
 /** …and how far in front of it. See FP_HILT_DROP. */
@@ -720,6 +736,9 @@ export class Player {
     // ── force powers
     this.gripBody = null;
     this.gripEnemy = null;
+    /** null when not channelling a heal, otherwise seconds elapsed. */
+    this.healing = null;
+    this._healFrom = 0;
     this.gripDistance = 4;
     /** Where the lifted enemy is being walked to — see _updateGrip. */
     this._liftPoint = new THREE.Vector3();
@@ -754,7 +773,7 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 };
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0 };
     this.boons = new RankSet();
     this.boonMods = defaultBoonMods();
     this.airJumps = 0;
@@ -938,6 +957,7 @@ export class Player {
     if (input.actHit('sense')) this.toggleSense(ctx);
     if (input.actHit('lightning')) this.forceLightning(ctx);
     if (input.actHit('stasis')) this.toggleStasis(ctx);
+    if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
@@ -2391,7 +2411,7 @@ export class Player {
 
   releaseGrip() {
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
-    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy = null; }
+    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy.chokeT = 0; this.gripEnemy = null; }
     this._endGesture('grip');
   }
 
@@ -2585,6 +2605,35 @@ export class Player {
       // actually manage rather than teleporting it there every frame.
       dampVec(this._liftPoint, hold, 0.8 + 3.4 * this._heft(m), dt);
       e.liftTarget = this._liftPoint;
+
+      /**
+       * FORCE CHOKE, which is what holding a living thing off the ground IS.
+       *
+       * The grip could already lift an enemy, walk them about and hurl them,
+       * and while it held them it did no harm at all — so the most cinematic
+       * thing in the source material was a way to move a droid around. It did
+       * not need a key of its own; it needed a consequence.
+       *
+       * The rate is a FRACTION OF MAX HP rather than a flat number, because
+       * this roster spans 28 hp on a B1 and 900 on an Acklay and a flat rate is
+       * either an instant kill or a joke depending on which one you grabbed.
+       * 12% a second ramping to 30% over three seconds kills anything held from
+       * full in about four and a half — which is a long time to stand still
+       * with both hands full and no blade up, and that is the trade. Big bodies
+       * take it at half rate so a boss cannot simply be held to death.
+       *
+       * `chokeT` is published for the enemy's own animation: hands to the
+       * throat, feet off the floor. Enemy.js owns that half.
+       */
+      e.chokeT = (e.chokeT || 0) + dt;
+      const ramp = CHOKE_RATE + (CHOKE_RATE_MAX - CHOKE_RATE) * clamp(e.chokeT / 3, 0, 1);
+      const rate = ramp * (e.A?.big ? 0.5 : 1);
+      e.damage(e.maxHp * rate * dt, this._enemyPoint(e, _v3), this, 'choke');
+      if (!this._chokeSound || ctx.time - this._chokeSound > 0.9) {
+        this._chokeSound = ctx.time;
+        audio.tone({ freq: 150, freqEnd: 90, dur: 0.5, gain: 0.10, type: 'sawtooth',
+          pos: this._enemyPoint(e, _v3) });
+      }
       if (ctx.particles && rng() < 0.3) {
         ctx.particles.plasma.spawn(this._enemyPoint(e, _v3), _v4.set(0, 0, 0),
           { life: 0.3, size: 0.8, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.12 });
@@ -2698,6 +2747,58 @@ export class Player {
         }
       }
     }
+  }
+
+  /**
+   * FORCE HEAL.
+   *
+   * A channel, not a button: `HEAL_TIME` of standing still with your hands
+   * down, and it is interrupted by taking a hit. That is the entire design
+   * question for a heal in a game about deflecting things — an instant one is
+   * simply more health, while one you have to buy with three seconds of not
+   * fighting is a decision you make about the room you are standing in.
+   *
+   * It restores a fraction of MAXIMUM health rather than a flat number so that
+   * boons which raise the pool do not quietly make it worthless.
+   */
+  forceHeal(ctx) {
+    if (this.healing) { this._endHeal(false); return; }
+    if (this.hp >= this.maxHp) return this._refuse('force heal', 'already whole');
+    if (this.cooldowns.heal > 0) {
+      return this._refuse('force heal', `recovering — ${this.cooldowns.heal.toFixed(1)}s`);
+    }
+    if (!this._canSpend(HEAL_COST)) {
+      return this._refuse('force heal', `${HEAL_COST} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this.healing = 0;
+    this._healFrom = this.hp;
+    this._gesture('mend');
+    audio.force(this.chest, 'pull');
+  }
+
+  /** One frame of the channel. Called from update while `healing` is a number. */
+  _updateHeal(dt, ctx) {
+    if (this.healing === null) return;
+    // Interrupted by damage — checked against the hp we started with, so a
+    // single bolt ends it rather than being outrun by the heal itself.
+    if (this.hp < this._healFrom - 0.01) { this._endHeal(false); return; }
+    if (!this._spend(HEAL_COST / HEAL_TIME * dt)) { this._endHeal(false); return; }
+    this.healing += dt;
+    this.hp = Math.min(this.maxHp, this.hp + this.maxHp * HEAL_FRACTION / HEAL_TIME * dt);
+    this._healFrom = this.hp;
+    if (ctx.particles && rng() < 0.5) {
+      _v1.copy(this.chest).addScalar(0);
+      ctx.particles.plasma.spawn(_v1, _v2.set((rng() - 0.5) * 0.6, 0.8, (rng() - 0.5) * 0.6),
+        { life: 0.5, size: 0.35, drag: 2, gravity: -0.2, color: 0x9fffd0, alpha: 0.35 });
+    }
+    if (this.healing >= HEAL_TIME) this._endHeal(true);
+  }
+
+  _endHeal(completed) {
+    this.healing = null;
+    this._endGesture('mend');
+    this.cooldowns.heal = completed ? 9 : 3;
+    if (!completed) this.world?.notify?.('HEAL BROKEN', 'you were hit');
   }
 
   /* ── force stop ──────────────────────────────────────────────────── */
@@ -3039,6 +3140,7 @@ export class Player {
   _updateForce(dt, ctx) {
     this._advanceGesture(dt);
     if (this.gripBody || this.gripEnemy) this._updateGrip(dt, ctx);
+    if (this.healing !== null) this._updateHeal(dt, ctx);
     if (this.stasis.active || this.stasis.firing.length) this._updateStasis(dt, ctx);
     if (this.hurled.length) this._updateHurled(dt, ctx);
   }
