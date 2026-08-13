@@ -485,6 +485,91 @@ const WHITE = new THREE.Color(1, 1, 1);
  */
 const EXPOSURE = 0.92;
 
+/**
+ * WHAT THE BLOOM PASS IS ALLOWED TO ADD, and why it is one table rather than
+ * a literal in two places.
+ *
+ * Bloom is added to the LINEAR buffer, before exposure and before ACES. So the
+ * halo it lays down does not brighten a pixel by a fixed amount on screen — it
+ * spends whatever headroom that pixel had left on the tone curve, and a high
+ * albedo surface has almost none. That is the whole of the snow complaint, and
+ * it is not what it looks like. Measured on the White Pass, first person, one
+ * frozen frame, in the linear buffer the pass actually thresholds:
+ *
+ *     the snow itself, p50 0.240, p90 0.389 linear    — 4.6x UNDER the threshold
+ *     ground pixels over the 1.8 threshold             0.004%
+ *     whole frame with the blade hidden, over 1.8      0.003%, max 2.41
+ *     as shipped, with the blade drawn                 1.32%, max 19.9
+ *
+ * i.e. the snow is not a bloom source and never was — raising the threshold
+ * would do nothing for it, and would only strip the colour out of the halo by
+ * pushing the blade's glow lobe under the line (see the flux check in
+ * tools/checks/saber-light.mjs). The blade is the entire source. What the snow
+ * does is receive: the same frame in DISPLAY luminance, bloom off then on —
+ *
+ *     pixels blown past 0.97          1.9%  ->  8.0%
+ *     pixels past 0.90               14.0%  -> 23.4%
+ *     widest run of blown pixels       24px ->   77px
+ *     darkest tenth of the ground     0.128 ->  0.346
+ *
+ * a halo three times the width of the blade that drew it, and the shadowed
+ * snow lifted nearly 3x. On the dune sea the same measurement is 1.3% -> 2.9%
+ * and 17px -> 33px: half the damage, on a level whose ground sits at 0.183
+ * linear against the snow's 0.240 and which had authored its own bloom.
+ *
+ * TRIM is that authored scale, pulled down across every level at once, because
+ * the complaint is not level-specific. FALLBACK is the second half of the snow
+ * fault and is a bug on its own: the three levels that never authored a bloom
+ * value — the White Pass, the Shifting Waste and the meadow — were handed 0.5,
+ * MORE than every hand-authored outdoor level in the game (0.36 to 0.42) and
+ * more than the pass is even constructed with. A default may not be the hottest
+ * setting in the build.
+ *
+ * WHAT THE TWO OF THEM BOUGHT, together with the pinched emission profile,
+ * re-measured on the shipped tree by the same script (a fresh boot, so the
+ * blade's pose is not bit-identical — read the magnitudes, not the last digit):
+ *
+ *     White Pass, first person       before      after     bloom off
+ *       widest blown run              77 px      23 px       24 px
+ *       frame past 0.97               8.0 %      2.7 %       1.9 %
+ *       frame past 0.90              23.4 %     16.3 %      14.0 %
+ *       ground, darkest tenth         0.346      0.141       0.128
+ *       ground, interquartile range   0.352      0.388       0.389
+ *
+ * The last two lines are the report itself: the snow's own contrast — the thing
+ * a "white flurry" has none of — is back to what the frame has with the pass
+ * switched off entirely, while the blade keeps a halo.
+ */
+const BLOOM = {
+  radius: 0.55,
+  /** LINEAR HDR. See the note in _setupComposer before moving it. */
+  threshold: 1.8,
+  /** A level that authored no bloom of its own gets what the pass is built with. */
+  fallback: 0.42,
+  /**
+   * Every level's authored strength, trimmed by this.
+   *
+   * Chosen against the widest run of blown-to-white pixels across the blade in
+   * a first-person frame, which is the "fat white bar" as one number. On the
+   * White Pass, with the thinner emission profile already in (see
+   * Saber.PROFILE), sweeping the strength on one frozen frame:
+   *
+   *     strength   blown run   frame past 0.97   frame past 0.90
+   *     0.50 (was)     39 px        3.3 %            21.3 %
+   *     0.34           18 px        1.6 %            17.7 %
+   *     0.30           16 px        1.4 %            17.1 %
+   *     0.26           14 px        1.2 %            16.2 %
+   *     bloom off      ~13 px       ~1.0 %           ~15 %
+   *
+   * The halo has to be a halo, so the target is not the bloom-off floor: it is
+   * the smallest number that still reads as one. Past about 0.30 the curve has
+   * flattened onto the floor and further trimming buys nothing but a duller
+   * blade. 0.42 x 0.72 = 0.3024 for the snow levels; the dune sea, which
+   * authored 0.36, lands at 0.259.
+   */
+  trim: 0.72,
+};
+
 /** Radiance a mid-grey horizontal surface should land on. Calibrated so the
  *  dune sea, the one level that was correctly exposed, does not move. */
 const KEY = 0.191;
@@ -1437,7 +1522,7 @@ export class Engine {
     this.composite.uniforms.uLift.value.set(...(a.lift ?? [0.004, 0.006, 0.012]));
     this.composite.uniforms.uGain.value.set(...(a.gain ?? [1.02, 1.0, 0.98]));
     this.composite.uniforms.uSaturation.value = a.saturation ?? 1.06;
-    this.bloom.strength = a.bloom ?? 0.5;
+    this.bloom.strength = (a.bloom ?? BLOOM.fallback) * BLOOM.trim;
 
     // What the ground throws back up, for the probe: albedo × the irradiance
     // actually landing on it. A 26° sun over pale sand is a genuine second
@@ -1505,8 +1590,17 @@ export class Engine {
     // Threshold is in LINEAR HDR, and the Preetham sky sits at 0.7-1.5 there — at
     // 0.92 the sky bloomed harder than the lightsaber did, which is the milky
     // smear across the top of every outdoor frame. Above 1.8 only the blade,
-    // bolts and molten cuts qualify.
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.42, 0.55, 1.8);
+    // bolts and molten cuts qualify. It stays at 1.8 and the trim went on the
+    // STRENGTH instead: nothing in a snow level's ground ever reaches 1.8 to
+    // begin with (see BLOOM), and lifting the line would take the blade's glow
+    // lobe with it and leave a bloom with no crystal left in it.
+    //
+    // The three numbers are BLOOM.fallback × BLOOM.trim, BLOOM.radius and
+    // BLOOM.threshold, spelled out as literals rather than read off the table:
+    // tools/checks/saber-light.mjs and tools/checks/order.mjs both learn the
+    // bloom threshold by matching this line, so it has to stay a line with
+    // numbers in it. tools/checks/saber-bloom.mjs pins the two forms equal.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3024, 0.55, 1.8);
     this.composer.addPass(this.bloom);
     // Always on. Sampling costs a few microseconds, and a profiler you have to
     // remember to enable is off at the exact moment the stutter happens.

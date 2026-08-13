@@ -203,7 +203,12 @@ button{font-family:inherit}
   will-change:transform}
 /* Where the BLADE is pointing, as distinct from where you are looking. This is
    the one piece of feedback that makes blade control legible, so it has to be
-   clearly visible and clearly a different thing from the reticle. */
+   clearly visible and clearly a different thing from the reticle.
+   FIRST PERSON ONLY — HUD.js hides it with .hidden in third person, and that is
+   not a style choice to be undone here: it is drawn at the projected guard
+   point, which is the base of the blade, so in third person the ring sits ON
+   the weapon and reads as a second reticle glued to it. Reported as exactly
+   that. In third person the blade is its own cursor. */
 #blade-cursor i{display:block;width:100%;height:100%;border-radius:50%;border:2px solid rgba(140,220,255,.95);
   box-shadow:0 0 10px rgba(87,201,255,.9),inset 0 0 8px rgba(87,201,255,.5),0 0 2px 1px rgba(0,0,0,.8)}
 #blade-cursor.steering i{border-color:#fff;box-shadow:0 0 16px rgba(160,230,255,1),inset 0 0 10px rgba(120,210,255,.7),0 0 2px 1px rgba(0,0,0,.85)}

@@ -774,13 +774,76 @@ export function torusGeo(r, tube, radial = 6, tubular = 12, arc = TAU, tile = 1.
   return tubeUv(g, TAU * r, TAU * tube, tile);
 }
 
-/** A tube swept along world-space points — cables, conduit, guy wires. */
-export function tubeAlong(points, radius, radial = 6, tile = 1.2) {
+/**
+ * A triangle fan closing one end of a swept tube, facing along `dir`.
+ * `dir` is the way OUT of the tube at that end, so the winding does not depend
+ * on which end it is or which way the curve was drawn.
+ */
+function endCap(ring, dir, k) {
+  const n = ring.length;
+  const c = new THREE.Vector3();
+  for (const p of ring) c.add(p);
+  c.multiplyScalar(1 / n);
+  const pos = new Float32Array((n + 1) * 3), uv = new Float32Array((n + 1) * 2);
+  pos[0] = c.x; pos[1] = c.y; pos[2] = c.z;
+  // a frame in the cap's own plane, so the UVs carry the tube's texel density
+  const u = new THREE.Vector3(0, 1, 0).cross(dir);
+  if (u.lengthSq() < 1e-8) u.set(1, 0, 0);
+  u.normalize();
+  const v = new THREE.Vector3().crossVectors(dir, u).normalize();
+  for (let i = 0; i < n; i++) {
+    const p = ring[i], o = (i + 1) * 3;
+    pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
+    _v1.subVectors(p, c);
+    uv[(i + 1) * 2] = _v1.dot(u) * k; uv[(i + 1) * 2 + 1] = _v1.dot(v) * k;
+  }
+  // orientation from the first triangle, flipped if it disagrees with `dir`
+  _v1.subVectors(ring[0], c); _v2.subVectors(ring[1 % n], c);
+  const flip = _v1.cross(_v2).dot(dir) < 0;
+  const idx = [];
+  for (let i = 0; i < n; i++) {
+    const a = 1 + i, b = 1 + ((i + 1) % n);
+    if (flip) idx.push(0, b, a); else idx.push(0, a, b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A tube swept along world-space points — cables, conduit, guy wires.
+ *
+ * CLOSED AT BOTH ENDS, because THREE.TubeGeometry is not. Every cable, guy
+ * wire, conduit and reinforcing bar in the file is one of these, and an
+ * uncapped one is a pipe you can see down: measured with the downward-ray
+ * survey, the rebar bursting out of a broken column's crown put a hole through
+ * the cap under it that fell 6.6 m down the shaft, and a console's floor cable
+ * did the same at its foot. Two fans of `radial` triangles each. Pass
+ * `open: true` for a tube whose ends are buried in something anyway.
+ */
+export function tubeAlong(points, radius, radial = 6, tile = 1.2, opts = {}) {
   const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.4);
   const len = curve.getLength();
   const seg = clamp(Math.round(len * 2.2), 6, 96);
-  const g = new THREE.TubeGeometry(curve, seg, radius, radial, false);
-  return tubeUv(g, TAU * radius, len, tile);
+  const g = tubeUv(new THREE.TubeGeometry(curve, seg, radius, radial, false), TAU * radius, len, tile);
+  if (opts.open) return g;
+  // TubeGeometry lays out (seg + 1) rings of (radial + 1) vertices, the last
+  // of each ring a seam duplicate of the first
+  const pos = g.attributes.position;
+  const ring = (base) => {
+    const out = [];
+    for (let j = 0; j < radial; j++) out.push(new THREE.Vector3().fromBufferAttribute(pos, base + j));
+    return out;
+  };
+  const k = uvm(tile);
+  const caps = [
+    endCap(ring(0), curve.getTangent(0).negate(), k),
+    endCap(ring(seg * (radial + 1)), curve.getTangent(1), k),
+  ];
+  return mergeGeos([g, ...caps]);
 }
 
 /** A straight run of pipe between two points, capped, cheap. */
@@ -863,6 +926,110 @@ export function strataTint(y, seed = 0, scale = 1.1, out = [1, 1, 1]) {
 
 function groundY(world, x, z) {
   return world.terrain ? world.terrain.height(x, z) : 0;
+}
+
+/**
+ * WHERE A PROP'S BODY HAS TO SIT FOR THE THING TO REST ON WHAT IS UNDER IT —
+ * measured off the assembly's own underside, which is the only place that
+ * number exists.
+ *
+ * THE BUG THIS EXISTS TO KILL. Every `addX` in this file builds from its
+ * footprint UP, so its `pos` is the point on the ground and a level can hand
+ * it a terrain sample straight. Every `makeX` builds around its CENTRE, so its
+ * `pos` was half a prop too low — and the levels compensated by hand, with a
+ * constant per prop type:
+ *
+ *     makeCrate(world, pos.setY(pos.y + 0.45), 0.7)
+ *     makeBarrel(world, pos.setY(pos.y + 0.55))
+ *     makeVaporator(world, pos.setY(pos.y + 1.3))
+ *     makeSpire(world, V(x, y + 3, z), 5 + rng() * 4)
+ *
+ * A constant cannot be right, because the maker RANDOMISES its own size:
+ * makeCrate takes `size` and builds at size·(0.85…1.20), so a "0.7 m" crate is
+ * 0.54–0.76 m tall and the one offset the level knew about was wrong by up to
+ * 11 cm in either direction. Measured over the dressed levels, lowest vertex
+ * minus terrain directly beneath it:
+ *
+ *     makeCrate      median +0.08 m, 90th +0.15, worst +0.58   (hovering)
+ *     makeBarrel     +0.09 m on every single one
+ *     makeVaporator  +0.10 m on every single one
+ *     makeSpire      −0.41 median, +0.27 worst  (half of them buried instead)
+ *
+ * Nine to fifteen centimetres of daylight under a crate is exactly what
+ * "objects floating in the air on every map" looks like from eye level, and it
+ * was on every crate, drum and vaporator in the game.
+ *
+ * So `pos` means the same thing for every maker in this file now: THE POINT ON
+ * THE GROUND THE PROP STANDS ON. The lift comes from the geometry.
+ *
+ * @param mesh        the assembled prop, still at the origin
+ * @param quaternion  the body's rotation — the underside turns with it
+ * @param ground      the point it stands on
+ * @param opts.bed    how far to sink it in, metres (default 1.5 cm)
+ * @param opts.centre pass true for the old meaning: `ground` IS the centre
+ */
+export function seatOnGround(world, mesh, quaternion, ground, opts = {}) {
+  /* NO GROUND, NO SEATING. `world.terrain` IS the ground in this game — every
+   * level builds one — so a host without a heightfield is a physics rig, not a
+   * place, and the only thing `pos` can mean there is where to put the body.
+   * That is what the solver harnesses want: they drop a crate from y = 3 and
+   * watch it land, or fire one at a corpse's chest height. */
+  if (opts.centre || !world || !world.terrain) return ground.clone();
+  mesh.updateMatrixWorld(true);
+  const q = quaternion || IDENT;
+  const verts = [];
+  let minY = Infinity, maxY = -Infinity;
+  mesh.traverse((o) => {
+    const p = o.isMesh && o.geometry && o.geometry.attributes && o.geometry.attributes.position;
+    if (!p) return;
+    for (let i = 0; i < p.count; i++) {
+      _v1.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).applyQuaternion(q);
+      verts.push(_v1.x, _v1.y, _v1.z);
+      if (_v1.y < minY) minY = _v1.y;
+      if (_v1.y > maxY) maxY = _v1.y;
+    }
+  });
+  if (!isFinite(minY)) return ground.clone();
+  /* THE CONTACT PATCH, not the bounding box. What decides how high a thing has
+   * to sit is the ground under the part of it that TOUCHES the ground — and
+   * makeSpire leans its crown up to 1.1 m sideways, so a footprint taken off
+   * the full bounds went looking for terrain two metres away from anything the
+   * spire rests on and hoisted it onto that. The bottom eighth of the height
+   * is the part doing the standing. */
+  const band = minY + Math.max(0.04, (maxY - minY) * 0.12);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < verts.length; i += 3) {
+    if (verts[i + 1] > band) continue;
+    if (verts[i] < x0) x0 = verts[i];
+    if (verts[i] > x1) x1 = verts[i];
+    if (verts[i + 2] < z0) z0 = verts[i + 2];
+    if (verts[i + 2] > z1) z1 = verts[i + 2];
+  }
+  /* The ground under a prop is not one number: a crate is 70 cm across and the
+   * dunes roll. Never below the y the caller asked for, so a crate on top of a
+   * stack seats on the stack and not on the sand four metres under it — and
+   * then BEDDED into whatever the contact patch is standing on, by half the
+   * relief across it. A rigid box perched on its uphill contact hangs its
+   * downhill corner in the air by the full relief, which on canyon's slopes
+   * measured 0.89 m under a 0.8 m crate; sitting it on the middle of the
+   * relief halves the daylight and buries the uphill edge instead, which is
+   * what every rock in this file already does deliberately. */
+  let base = ground.y, low = ground.y;
+  for (let i = 0; i <= 2; i++) for (let j = 0; j <= 2; j++) {
+    const h = world.terrain.height(ground.x + lerp(x0, x1, i / 2), ground.z + lerp(z0, z1, j / 2));
+    if (h > base) base = h;
+    if (h < low) low = h;
+  }
+  /* Capped at 30% of the prop's own height, because half the relief is the
+   * right instinct and an unbounded one is not: the dunes let a crate sit on a
+   * 47° face, where the sand falls 0.75 m across the 0.7 m the crate covers,
+   * and half of that put 53% of the crate underground. A crate more than a
+   * third buried is a lid lying on the sand. The cap costs nothing on the
+   * float side — the seat is exactly −bed either way — it only decides how
+   * much of the thing you can still see. */
+  const bed = (opts.bed ?? 0.015)
+    + Math.min((base - low) * (opts.bedSlope ?? 0.5), (maxY - minY) * (opts.bedMax ?? 0.3));
+  return new THREE.Vector3(ground.x, base - minY - bed, ground.z);
 }
 
 /** Park a finished mesh in the world as level scenery. */
@@ -1179,8 +1346,15 @@ export class Prop {
     // where a cut lands, not how the prop behaves when it falls over.
     const spheres = opts.spheres || spheresForGeometry(this.mesh.geometry, 8);
     const shape = opts.shape || hullFromGeometry(this.mesh.geometry);
+    /* `position` is the point on the ground this prop STANDS on — see
+     * seatOnGround. `centre: true` is the escape hatch for the two callers
+     * that genuinely hand in a body centre: a cut half, which is placed at the
+     * centroid the slice left it at, and anything spawned in mid-air. */
+    const position = opts.position
+      ? seatOnGround(world, this.mesh, opts.quaternion, opts.position, opts)
+      : opts.position;
     this.body = new Body({
-      position: opts.position, quaternion: opts.quaternion,
+      position, quaternion: opts.quaternion,
       spheres, shape, mass: opts.mass ?? 24,
       friction: opts.friction ?? 0.72, restitution: opts.restitution ?? 0.08,
       layer: LAYER.PROP,
@@ -1238,6 +1412,8 @@ export class Prop {
       const volScale = clamp(geo.boundingSphere.radius / (this.mesh.geometry.boundingSphere?.radius || 1), 0.12, 1);
       const half = new Prop(this.world, {
         kind: this.kind, mesh, position: worldOff, quaternion: this.body.quaternion,
+        // a severed half belongs exactly where the cut left it, in mid-air
+        centre: true,
         spheres, mass: Math.max(1.2, this.body.mass * volScale),
         toughness: this.toughness, hp: this.hp * volScale,
         explosive: false, generation: this.generation + 1, bladeColor: this.bladeColor,
@@ -1319,7 +1495,13 @@ export class Prop {
  */
 export function makeCrate(world, pos, size = 0.7, opts = {}) {
   const M = propMaterials();
-  const s = size * (0.85 + rng() * 0.35);
+  /* A scattered crate varies ±18% around the size it was asked for, because
+   * forty identical boxes are forty copies of one box. A crate in a STACK does
+   * not: it has to be the size of the crates it is stacked with. The draw is
+   * still made either way so that every seeded layout downstream lands exactly
+   * where it did. */
+  const vary = 0.85 + rng() * 0.35;
+  const s = size * (opts.exactSize ? 1 : vary);
   const h = s * 0.9;
   // the body carries a shallow recessed panel on each face, modelled in, so
   // the silhouette is not a rectangle from any angle
@@ -1412,8 +1594,16 @@ export function makePillar(world, pos, height = 4.2, opts = {}) {
   const trim = [];
   const cap = slabGeo(r * 2.5, 0.26, r * 2.5, { bevel: 0.05, seg: 3, tile: 1.6 });
   cap.translate(0, height / 2 - 0.12, 0); trim.push(cap);
+  /* The echinus flares to r·1.12 and NOT to the r·1.22 it used to, because the
+   * abacus above it is 2.5r across with a 5 cm bevel and therefore only flat
+   * out to r·1.131. At 1.22 the flare stood proud of the lid over it, and since
+   * a lathe is a single sheet with nothing behind it, the ring of plan area
+   * between the two — 8 columns out of 676 in the downward-ray survey — looked
+   * straight past the culled underside of the flare and down onto the pillar's
+   * own BASE four metres below. A capital's abacus overhangs its echinus; this
+   * one is now the right way round. */
   const ech = new THREE.LatheGeometry([
-    new THREE.Vector2(r * 0.88, 0), new THREE.Vector2(r * 1.1, 0.12), new THREE.Vector2(r * 1.22, 0.25),
+    new THREE.Vector2(r * 0.88, 0), new THREE.Vector2(r * 1.04, 0.12), new THREE.Vector2(r * 1.12, 0.25),
   ], 16);
   tubeUv(ech, TAU * r, 0.25, 1.0);
   ech.translate(0, height / 2 - 0.25, 0); trim.push(ech);
@@ -1555,7 +1745,11 @@ export function makeConsole(world, pos, opts = {}) {
   keys.applyMatrix4(_km.makeRotationX(-0.16));
   keys.translate(0, 0.42, 0.2);
   dark.push(keys);
-  dark.push(tubeAlong([new THREE.Vector3(0.3, -0.28, -0.3), new THREE.Vector3(0.5, -0.4, -0.5),
+  // The cable starts INSIDE the plinth (which spans ±0.3 in z and ±0.31 in y),
+  // not on its corner. A tube is open at both ends, so an end left in the air
+  // is a hole you can see down: it was the last see-through surface in the
+  // maker survey, 1 downward ray in 1443 falling clean through the console.
+  dark.push(tubeAlong([new THREE.Vector3(0.28, -0.22, -0.22), new THREE.Vector3(0.5, -0.4, -0.5),
     new THREE.Vector3(0.62, -0.48, -0.4)], 0.035, 5, FINE_TILE));
   mesh.add(new THREE.Mesh(mergeGeos(dark), M.darkSteel));
   return new Prop(world, {
@@ -2105,9 +2299,16 @@ export function addRockArch(world, pos, opts = {}) {
       if (i < SIDES && (j === 0 || j === N)) ends[j === 0 ? 0 : 1].push(new THREE.Vector3(px, py, pz));
     }
   }
+  /* The sweep runs LEFT LEG → OVER → RIGHT LEG, so its tangent points along
+   * +x over the crown while the section is walked anticlockwise about it; for
+   * that pair (a, c, b) has its normal pointing back down the radius, i.e. the
+   * entire span was inside out. It is the biggest single see-through surface
+   * in the file — 81% of the arch's plan area had a back face on top — and it
+   * hides well, because a tube inverted along its whole length still shades
+   * plausibly from underneath, where an arch is usually looked at. */
   for (let j = 0; j < N; j++) for (let i = 0; i < SIDES; i++) {
     const a = j * (SIDES + 1) + i, b = a + 1, c = a + SIDES + 1, d = c + 1;
-    idx.push(a, c, b, b, c, d);
+    idx.push(a, b, c, b, d, c);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos3, 3));
@@ -2214,6 +2415,15 @@ export function addBoulderCluster(world, centre, opts = {}) {
    * bare ground between them, for a handful of extra tries. */
   const field = opts.field || null;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  // each variant's corners, so a tumbled boulder can be asked where its lowest
+  // one lands and follow the ground THERE — see CHIP_HULL
+  const hull = [];
+  for (let v = 0; v < NV; v++) {
+    const g = boulderGeo(v, seed), pa = g.attributes.position, out = [];
+    for (let i = 0; i < pa.count; i++) out.push(pa.getX(i), pa.getY(i), pa.getZ(i));
+    g.dispose();
+    hull.push(out);
+  }
   for (let i = 0; i < n; i++) {
     let a = 0, rad = 0, ok = !field;
     for (let attempt = 0; attempt < (field ? 7 : 1); attempt++) {
@@ -2233,6 +2443,19 @@ export function addBoulderCluster(world, centre, opts = {}) {
     q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.7, r() * TAU, (r() - 0.5) * 0.7));
     s.set(sc * (0.8 + r() * 0.5), sc * (0.6 + r() * 0.5), sc * (0.8 + r() * 0.5));
     const v = i % NV;
+    // and the ground under its LOW SIDE, not just under its middle: a boulder
+    // that sits proud by 0.16·sc across a break of slope hangs otherwise. One
+    // in 2646 canyon objects did, by 0.11 m. Never lifts, only beds.
+    {
+      const hv = hull[v];
+      let lowY = Infinity, lowX = 0, lowZ = 0;
+      for (let k = 0; k < hv.length; k += 3) {
+        _cv.set(hv[k] * s.x, hv[k + 1] * s.y, hv[k + 2] * s.z).applyQuaternion(q);
+        if (_cv.y < lowY) { lowY = _cv.y; lowX = _cv.x; lowZ = _cv.z; }
+      }
+      p.y += Math.min(0, groundY(world, centre.x + p.x + lowX, centre.z + p.z + lowZ)
+        - groundY(world, centre.x + p.x, centre.z + p.z));
+    }
     lists[v].push(m.clone().compose(p, q, s));
     const t = 0.78 + r() * 0.42;
     cols[v].push(c.clone().setRGB(t, t * (0.96 + r() * 0.08), t * (0.9 + r() * 0.1)));
@@ -2275,6 +2498,22 @@ const CHIP_REPOSE = 0.62;    // rad, 36° from vertical, whatever the ground doe
  * worst, and there is no reason for the ceiling on a chip's SIZE to be set by
  * anything softer than the thing that ceiling exists to prevent. */
 const CHIP_SPAN = 1.35;      // metres across, the long axis
+/* The unit chip's corners, so a chip can be asked where its LOWEST one lands
+ * once it has been turned and scaled. An icosahedron flattened to 0.52 in y;
+ * built once, because addScree places three thousand of them a level. */
+const CHIP_HULL = (() => {
+  const g = new THREE.IcosahedronGeometry(0.5, 0);
+  const p = g.attributes.position, out = [], seen = new Set();
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i) * 0.52, z = p.getZ(i);
+    const k = x.toFixed(3) + ',' + y.toFixed(3) + ',' + z.toFixed(3);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(x, y, z);
+  }
+  g.dispose();
+  return out;
+})();
+const _cv = new THREE.Vector3();
 
 /**
  * Scree: the chips a rock face sheds. One instanced draw, no physics, density
@@ -2367,7 +2606,26 @@ export function addScree(world, centre, opts = {}) {
      * matters, and 0.16·sc left the thinnest of them hovering clear of the
      * sand. A fifth of the half-thickness is enough to close the gap without
      * swallowing the chip. */
-    p.y += -0.2 * (0.5 * 0.52 * s.y)
+    /* And it follows the ground under its LOW CORNER as well as under its
+     * middle. The height is sampled at the chip's origin and its plate axis is
+     * the terrain normal — but that normal is a central difference over a
+     * terrain cell, so on ground that curves inside one cell the chip's
+     * downhill corner hangs. Measured on the arena, 22 chips of 3610 objects
+     * stood clear of the ground by up to 0.34 m, which on a 0.6 m chip is most
+     * of its own thickness. This term only ever pushes DOWN — it is the drop
+     * from the middle of the chip to the ground beneath its lowest vertex — so
+     * on flat ground nothing moves at all. */
+    let drop = 0;
+    if (onGround) {
+      let lowY = Infinity, lowX = 0, lowZ = 0;
+      for (let k = 0; k < CHIP_HULL.length; k += 3) {
+        _cv.set(CHIP_HULL[k] * s.x, CHIP_HULL[k + 1] * s.y, CHIP_HULL[k + 2] * s.z).applyQuaternion(q);
+        if (_cv.y < lowY) { lowY = _cv.y; lowX = _cv.x; lowZ = _cv.z; }
+      }
+      drop = Math.min(0, groundY(world, centre.x + p.x + lowX, centre.z + p.z + lowZ)
+        - groundY(world, centre.x + p.x, centre.z + p.z));
+    }
+    p.y += -0.2 * (0.5 * 0.52 * s.y) + drop
       + (onGround ? groundY(world, centre.x + p.x, centre.z + p.z) - groundY(world, centre.x, centre.z) : 0);
     list.push(m.clone().compose(p, q, s));
     const t = 0.72 + r() * 0.5;
@@ -2477,21 +2735,56 @@ function kitClose(world, kit, pos, opts, destructible = null) {
   return res;
 }
 
-/** Triangle fan closing a ring of points — broken tops, open shell ends. */
+/**
+ * Triangle fan closing a ring of points — broken tops, open shell ends.
+ *
+ * THE `up` FLAG USED TO DO THE OPPOSITE OF WHAT IT SAYS, and that is the whole
+ * of "you can see through the tops of things".
+ *
+ * A fan of (apex, pts[i], pts[i+1]) over a rim walked with increasing azimuth
+ * — which is how every caller here builds one — has geometric normal
+ * (0, -r²·dθ, 0): it faces DOWN. So `up: true` emitted a cap that pointed at
+ * the floor, the rasteriser culled it as a back face, and a vertical ray onto
+ * the object passed straight through the lid into the hollow underneath.
+ * Measured with a grid of downward rays over each maker, counting columns
+ * whose topmost surface crossing is back-facing: addRock 36.4%, addOutcrop
+ * 24.7%, addRockArch 81.6%, a broken addColumn 9.1%. 36.4% is not a rounding
+ * error either — rockGeo's top ring sits at 0.606 of its widest radius, and
+ * 0.606² = 0.367 is exactly the plan area the lid covers.
+ *
+ * The fix is not "swap the two branches", because that would only be right for
+ * a caller that happens to walk its rim the same way. The RING'S OWN signed
+ * area in plan decides: positive means it was walked anticlockwise seen from
+ * +Y, and for that winding (apex, a, b) faces down. So a caller may hand this
+ * a rim in either direction and still get the face it asked for.
+ */
 function fanCap(pts, cy, up = true, tile = 1.6, jog = 0) {
   const n = pts.length;
   const k = uvm(tile);
   const pos = new Float32Array((n + 1) * 3), uv = new Float32Array((n + 1) * 2);
-  pos[1] = cy + jog;                     // the apex is off-level too
+  /* THE APEX SITS OVER THE RING, not over the maker's origin. It used to be
+   * hard-wired to (0, cy, 0), which is invisible while every caller happens to
+   * hand in a rim centred on its own axis — and addColossus does not: it caps
+   * the break where an arm tore off, four and a half metres out to the side, so
+   * the "cap" was a five-metre funnel sweeping from the statue's centre line
+   * out to the stump. */
+  let mx = 0, mz = 0;
+  for (const p of pts) { mx += p.x; mz += p.z; }
+  pos[0] = mx / n; pos[1] = cy + jog; pos[2] = mz / n;   // the apex is off-level too
+  let area2 = 0;
   for (let i = 0; i < n; i++) {
-    const p = pts[i], o = (i + 1) * 3;
+    const p = pts[i], q = pts[(i + 1) % n], o = (i + 1) * 3;
     pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
     uv[(i + 1) * 2] = p.x * k; uv[(i + 1) * 2 + 1] = p.z * k;
+    area2 += (p.x - pos[0]) * (q.z - pos[2]) - (q.x - pos[0]) * (p.z - pos[2]);
   }
+  uv[0] = pos[0] * k; uv[1] = pos[2] * k;
+  // (apex, a, b) faces down for an anticlockwise ring, up for a clockwise one
+  const reverse = (area2 > 0) === !!up;
   const idx = [];
   for (let i = 0; i < n; i++) {
     const a = 1 + i, b = 1 + ((i + 1) % n);
-    if (up) idx.push(0, a, b); else idx.push(0, b, a);
+    if (reverse) idx.push(0, b, a); else idx.push(0, a, b);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -2729,10 +3022,25 @@ function ashlarFace(w, opts = {}) {
       tri(B, [inner[0][0], inner[0][1], proud], [inner[i][0], inner[i][1], proud],
         [inner[i + 1][0], inner[i + 1][1], proud], col);
     }
+    /* THE CHAMFER OF A RECESSED STONE FACES THE OTHER WAY, and the one winding
+     * this used to emit was only right for a stone standing proud. A raised
+     * block's chamfer is the outside of a plinth — normals away from the
+     * block. An eroded one's is the inside of a socket — normals toward it.
+     * `relief` above is negative for every empty socket and for one facing
+     * stone in eight, so about an eighth of every ashlar surface in the game
+     * was culled, showing the mortar bed behind it instead of the chamfer, and
+     * on a ruined wallhead where nothing covers it that is a hole: measured on
+     * a 10 × 6 m broken wall, 9 of 1221 downward rays fell through the crown
+     * and landed up to 1.34 m inside the wall. */
     for (let i = 0; i < o.length; i++) {
       const j = (i + 1) % o.length;
-      quad(B, [o[i][0], o[i][1], 0], [o[j][0], o[j][1], 0],
-        [inner[j][0], inner[j][1], proud], [inner[i][0], inner[i][1], proud], col);
+      if (proud < 0) {
+        quad(B, [o[j][0], o[j][1], 0], [o[i][0], o[i][1], 0],
+          [inner[i][0], inner[i][1], proud], [inner[j][0], inner[j][1], proud], col);
+      } else {
+        quad(B, [o[i][0], o[i][1], 0], [o[j][0], o[j][1], 0],
+          [inner[j][0], inner[j][1], proud], [inner[i][0], inner[i][1], proud], col);
+      }
     }
   };
 
@@ -3787,11 +4095,46 @@ export function addFloorSlab(world, pos, size, opts = {}) {
  * A surface of revolution from a [radius, y] profile, with optional vertical
  * folds (robes, drapery, fluting) and a jagged top (broken statuary). The
  * profile is walked for arc length so UVs do not stretch at the flares.
+ *
+ * THE SWEEP'S WINDING FOLLOWS THE DIRECTION THE PROFILE IS WRITTEN IN, which
+ * is the second half of "you can see through the tops of things". Sweeping
+ * (r, y) → (r+dr, y+dy) gives a face normal proportional to (dy, -dr) in the
+ * profile plane, so a profile written BOTTOM-UP faces out of the solid and one
+ * written TOP-DOWN faces into it — the whole shell inside out, culled from
+ * every angle it should be visible from. Two callers wrote theirs top-down,
+ * because that is the order the shape reads in: addLamp's cowl (0.3 m down to
+ * -0.02) and addColossus's mantle (0.625H down to 0.40H). Measured with the
+ * downward-ray survey, 36.5% of the lamp's plan area and 13.5% of the
+ * colossus's had a back face on top.
+ *
+ * So the direction is NORMALISED here rather than left as a rule nobody can
+ * see. An open profile is swept low-to-high; a closed one (a shell with a
+ * thickness, like the antenna dish) is swept so its cross-section runs
+ * anticlockwise in (r, y), which is the same statement for a loop. Pass
+ * `inward: true` for the rare surface that genuinely wants to face its own
+ * axis; nothing in the file does yet.
  */
 function revolveGeo(profile, opts = {}) {
   const seg = opts.seg ?? 20;
   const folds = opts.folds ?? 0, fd = opts.foldDepth ?? 0.05;
   const k = uvm(opts.tile ?? 2.2);
+  {
+    const f = profile[0], l = profile[profile.length - 1];
+    const span = profile.reduce((a, p) => Math.max(a, Math.abs(p[1] - f[1])), 0);
+    const closed = Math.hypot(l[0] - f[0], l[1] - f[1]) < Math.max(1e-6, span * 0.02);
+    let orient;
+    if (closed) {                       // signed area of the cross-section in (r, y)
+      let a2 = 0;
+      for (let j = 0; j < profile.length; j++) {
+        const p = profile[j], q = profile[(j + 1) % profile.length];
+        a2 += p[0] * q[1] - q[0] * p[1];
+      }
+      orient = a2;
+    } else {
+      orient = l[1] - f[1];             // net climb: written bottom-up or top-down
+    }
+    if ((orient < 0) !== !!opts.inward) profile = profile.slice().reverse();
+  }
   const n = profile.length;
   const vArc = [0];
   for (let j = 1; j < n; j++) {
@@ -4089,15 +4432,30 @@ export function addHullSection(world, pos, opts = {}) {
     tear.push([lo * Math.PI, hi * Math.PI]);
   }
   const k = uvm(ARCH_TILE);
-  const build = (radius, flip) => {
+  // shallow dents so the shell is not a perfect extrusion — SHARED with the
+  // torn edges below, because a lip built off the undented radius stands up to
+  // 22 cm away from the sheet it is supposed to be closing
+  const dentAt = (a, j, z) => 1 + Math.sin(a * 3.1 + j * 0.7) * 0.012 + Math.sin(z * 0.4 + a * 1.7) * 0.016;
+  /* EVERY SURFACE IN THIS MAKER USED TO FACE THE WRONG WAY. The shell is swept
+   * with i running along the arc and j along the length, and (a, c, b) for that
+   * parameterisation gives a normal pointing at the CYLINDER AXIS — so the
+   * outer plate faced inwards, the inner plate (built with the reversed index)
+   * faced outwards, and both torn edges pointed back into the metal. The wreck
+   * is a trough lying open side up, so what the player looks down into is the
+   * inner face: measured with a grid of downward rays, 91.6% of its plan area
+   * had a back face on top, and with those culled you saw the far side of the
+   * hull through the near side.
+   *
+   * `faceAxis` now says which way a sheet is meant to look, instead of `flip`
+   * saying which of two windings to use and neither of them being right. */
+  const build = (radius, faceAxis) => {
     const pos3 = new Float32Array((nz + 1) * (na + 1) * 3), uv = new Float32Array((nz + 1) * (na + 1) * 2);
     for (let j = 0; j <= nz; j++) {
       const z = (j / nz - 0.5) * L;
       const [a0, a1] = tear[j];
       for (let i = 0; i <= na; i++) {
         const a = lerp(a0, a1, i / na);
-        // shallow dents so the shell is not a perfect extrusion
-        const dent = 1 + Math.sin(a * 3.1 + j * 0.7) * 0.012 + Math.sin(z * 0.4 + a * 1.7) * 0.016;
+        const dent = dentAt(a, j, z);
         const o = (j * (na + 1) + i) * 3, o2 = (j * (na + 1) + i) * 2;
         pos3[o] = Math.sin(a) * radius * dent;
         pos3[o + 1] = -Math.cos(a) * radius * dent;
@@ -4108,7 +4466,7 @@ export function addHullSection(world, pos, opts = {}) {
     const idx = [];
     for (let j = 0; j < nz; j++) for (let i = 0; i < na; i++) {
       const a = j * (na + 1) + i, b = a + 1, c = a + na + 1, d = c + 1;
-      if (flip) idx.push(a, b, c, b, d, c); else idx.push(a, c, b, b, c, d);
+      if (faceAxis) idx.push(a, c, b, b, c, d); else idx.push(a, b, c, b, d, c);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos3, 3));
@@ -4118,6 +4476,7 @@ export function addHullSection(world, pos, opts = {}) {
     return g;
   };
   const outerG = build(R, false), innerG = build(R - t, true);
+  // outer plate looks away from the axis, inner plate looks into the trough
   kit.add(outerG, hull);
   kit.add(innerG, inner);
   // close the torn edges so the plate has thickness you can see
@@ -4125,14 +4484,16 @@ export function addHullSection(world, pos, opts = {}) {
     const pos3 = [], uv = [], idx = [];
     for (let j = 0; j <= nz; j++) {
       const z = (j / nz - 0.5) * L, a = tear[j][side];
+      const dent = dentAt(a, j, z);
       for (const r of [R, R - t]) {
-        pos3.push(Math.sin(a) * r, -Math.cos(a) * r, z);
+        pos3.push(Math.sin(a) * r * dent, -Math.cos(a) * r * dent, z);
         uv.push(z * k * 2, r * k * 2);
       }
     }
+    // the strip looks ALONG the tear, out of the metal, on whichever lip it is
     for (let j = 0; j < nz; j++) {
       const a = j * 2, b = a + 1, c = a + 2, d = a + 3;
-      if (side) idx.push(a, c, b, b, c, d); else idx.push(a, b, c, b, d, c);
+      if (side) idx.push(a, b, c, b, d, c); else idx.push(a, c, b, b, c, d);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos3, 3));
@@ -4379,7 +4740,27 @@ export function addCrateStack(world, pos, opts = {}) {
   kit.push(0, 0, 0, yaw);
 
   const cell = size * 1.06;
-  let y = 0;
+  /* EVERY CRATE SITS ON WHAT IS ACTUALLY UNDER IT, not on its tier's nominal
+   * height. The tiers used to advance by a fixed 0.9·size and lay each one out
+   * on its own lattice as the stack narrows — so a tier that lost its only cell
+   * to the 18% "gaps, not a wall" roll left the crate above it standing on
+   * nothing. Measured on the arena: a live top crate hanging 0.86 m over the
+   * tier below, and the tiers never quite touched anyway — 0.88·s of box under
+   * a 0.9·s advance is a 2 cm gap under every crate in the game.
+   *
+   * `restOn` returns the top of the highest crate this one OVERLAPS, so a tier
+   * laid on a different lattice rests across the joint below it the way a real
+   * stack does, and a skipped crate makes the one above it drop instead of
+   * hover. */
+  const placed = [];
+  const restOn = (x, z, s) => {
+    let h = 0;
+    for (const p of placed) {
+      if (Math.abs(p.x - x) >= (p.s + s) * 0.5 || Math.abs(p.z - z) >= (p.s + s) * 0.5) continue;
+      if (p.top > h) h = p.top;
+    }
+    return h;
+  };
   for (let t = 0; t < tiers; t++) {
     const w = Math.max(1, cols - Math.floor(t * 0.7));
     const d = Math.max(1, cols - 1 - Math.floor(t * 0.5));
@@ -4388,8 +4769,12 @@ export function addCrateStack(world, pos, opts = {}) {
       if (t > 0 && rr() < 0.18) continue;                     // gaps, not a wall
       const x = (i - (w - 1) / 2) * cell, z = (j - (d - 1) / 2) * cell;
       const jitter = (rr() - 0.5) * 0.12;
+      const y = restOn(x, z, s);
       if (t === tiers - 1 && rr() < 0.5 && dyn.length < (opts.dynamic ?? 2)) {
-        dyn.push([x, y + s * 0.5, z, s]);                     // this one is a live prop
+        // this one is a live prop, and it stands on the tier — `y`, not the
+        // tier's mid-height, because makeCrate seats itself on what it is given
+        dyn.push([x, y, z, s]);
+        placed.push({ x, z, s, top: y + s * 0.88 });
         continue;
       }
       const box = slabGeo(s, s * 0.88, s, { bevel: s * 0.055, seg: 3, tile: FINE_TILE });
@@ -4399,14 +4784,18 @@ export function addCrateStack(world, pos, opts = {}) {
           M.crateDark, x, y + s * 0.44 + ry, z, 0, jitter, 0);
       }
       kit.collider(x, y + s * 0.44, z, s / 2, s * 0.44, s / 2, jitter, 0.85);
+      placed.push({ x, z, s, top: y + s * 0.88 });
     }
-    y += size * lerp(1, 0.82, t / Math.max(1, tiers)) * 0.9;
   }
   kit.pop();
   const stats = kit.emit(world, pos, opts.quaternion || IDENT, opts);
   for (const [x, yy, z, s] of dyn) {
+    /* EXACTLY the size of the crates it is stacked with. `s / 0.85` asked for
+     * a crate between 1.00 and 1.41 times its own slot — 24% oversized on
+     * average — so the live crate on top of a stack overlapped the static ones
+     * beside it by up to 12 cm and stood on their lids instead of on the tier. */
     const p = new THREE.Vector3(x, yy, z).applyAxisAngle(UP, yaw).add(pos);
-    world.addProp(makeCrate(world, p, s / 0.85, { toughness: TOUGHNESS.plastoid }));
+    world.addProp(makeCrate(world, p, s, { exactSize: true, toughness: TOUGHNESS.plastoid }));
   }
   return stats;
 }
@@ -4567,13 +4956,22 @@ export function addAntenna(world, pos, opts = {}) {
   // whip and lamp
   kit.put(cylGeo(0.015, 0.035, H * 0.24, 5, 1.2), steel, 0, H * 1.1, 0);
   kit.put(tubeUv(new THREE.SphereGeometry(0.12, 8, 6), TAU * 0.12, Math.PI * 0.12, FINE_TILE), M.glowRed, 0, H * 1.23, 0);
-  // guy wires
+  /* Guy wires, anchored on the GROUND rather than on the mast's own datum.
+   * The anchors sit six or seven metres out, and a kit is flat: on the dunes
+   * that put a 40 cm anchor block 0.72 m in the air with its wire running to
+   * nothing — measured, on both of the level's masts. `dy` is the drop from
+   * the mast's foot to the ground under each anchor, so the block follows the
+   * dune and the catenary lengthens to meet it. Only when this maker owns the
+   * kit: composed into a parent (an outpost) the kit frame is not world. */
   if (opts.guys !== false) {
+    const onGround = !opts.kit && world && world.terrain;
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.6;
-      const anchor = new THREE.Vector3(Math.cos(a) * H * 0.55, 0.1, Math.sin(a) * H * 0.55);
+      const ax = Math.cos(a) * H * 0.55, az = Math.sin(a) * H * 0.55;
+      const dy = onGround ? Math.min(0, groundY(world, pos.x + ax, pos.z + az) - pos.y) : 0;
+      const anchor = new THREE.Vector3(ax, dy + 0.1, az);
       kit.add(tubeAlong(catenaryPoints(leg(i, 0.82), anchor, 0.012, 8), 0.022, 4, FINE_TILE), M.cable);
-      kit.put(cylGeo(0.09, 0.13, 0.4, 6, FINE_TILE), M.duracreteDark, anchor.x, 0.2, anchor.z);
+      kit.put(cylGeo(0.09, 0.13, 0.4, 6, FINE_TILE), M.duracreteDark, anchor.x, dy + 0.2, anchor.z);
     }
   }
   kit.slab(M.duracrete, base * 3, 0.32, base * 3, 0, 0.16, 0, { tile: 1.6 });
@@ -4732,6 +5130,14 @@ export function addDebrisField(world, centre, opts = {}) {
   const lists = [[], [], []], cols = [[], [], []];
   const c = new THREE.Color();
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  // the three rubble shapes' corners, so a piece can be asked where its lowest
+  // one lands once it has been turned and scaled — same reason as CHIP_HULL
+  const hull = composing ? null : [0, 1, 2].map((v) => {
+    const g = rubbleGeo(v, seed), a = g.attributes.position, out = [];
+    for (let i = 0; i < a.count; i++) out.push(a.getX(i), a.getY(i), a.getZ(i));
+    g.dispose();
+    return out;
+  });
   let big = 0;
   for (let i = 0; i < n; i++) {
     const a = r() * TAU;
@@ -4744,6 +5150,21 @@ export function addDebrisField(world, centre, opts = {}) {
     q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.9, r() * TAU, (r() - 0.5) * 0.9));
     s.set(sc * (0.8 + r() * 0.6), sc * (0.6 + r() * 0.7), sc * (0.8 + r() * 0.6));
     const v = sc > scale * 0.85 ? 0 : (r() < 0.55 ? 1 : 2);
+    /* A block tumbled by three Euler angles lands on a CORNER, and where that
+     * corner falls is nothing like where its middle is: the height was sampled
+     * at the middle only, so a slab lying across a break of slope hung its low
+     * end in the air. Measured on the arena, 4 pieces of 3610 objects, up to
+     * 0.27 m clear. Only ever pushes down, so flat ground is untouched. */
+    if (hull) {
+      const hv = hull[v];
+      let lowY = Infinity, lowX = 0, lowZ = 0;
+      for (let k = 0; k < hv.length; k += 3) {
+        _cv.set(hv[k] * s.x, hv[k + 1] * s.y, hv[k + 2] * s.z).applyQuaternion(q);
+        if (_cv.y < lowY) { lowY = _cv.y; lowX = _cv.x; lowZ = _cv.z; }
+      }
+      p.y += Math.min(0, groundY(world, centre.x + p.x + lowX, centre.z + p.z + lowZ)
+        - groundY(world, centre.x + p.x, centre.z + p.z));
+    }
     lists[v].push(m.clone().compose(p, q, s));
     const t = 0.74 + r() * 0.44;
     cols[v].push(c.clone().setRGB(t, t * (0.97 + r() * 0.06), t * (0.93 + r() * 0.08)));
@@ -4957,7 +5378,7 @@ export function addOutpost(world, pos, opts = {}) {
   for (let i = 0; i < (opts.barrels ?? 5); i++) {
     const a = rr() * TAU, rad = R * (0.35 + rr() * 0.5);
     const p = at(Math.cos(a) * rad, Math.sin(a) * rad);
-    p.y = groundY(world, p.x, p.z) + 0.5;
+    p.y = groundY(world, p.x, p.z);          // the ground, not the ground plus a guess
     world.addProp(rr() < 0.4 ? makeBarrel(world, p) : makeCrate(world, p, 0.8));
   }
   return stats;

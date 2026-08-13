@@ -268,6 +268,17 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
  * the top of the frame — tools/fpview.mjs, `--only 'level gaze'` — and that is
  * a picture, not an inequality.
  */
+/**
+ * How close the blade may come to the lens and still throw a heat haze.
+ *
+ * 0.55 m is the first-person hilt's own distance from the eye plus a margin:
+ * the sword hand sits about 0.5 m out, so a held blade's midpoint is always
+ * further than this and first person keeps its shimmer, while anything that
+ * comes at the camera — a recalled saber, a blade knocked out of your hand —
+ * stops smearing the lens on its way past.
+ */
+const HEAT_NEAR = 0.55;
+
 const FP_HILT_DROP = 0.02;
 /** …and how far in front of it. See FP_HILT_DROP. */
 const FP_HILT_FWD = 0.16;
@@ -308,57 +319,96 @@ const FP_HILT_FWD = 0.16;
 export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
 
 /**
- * The hand's world orientation, given the hilt's.
+ * THE HAND'S WORLD ORIENTATION, GIVEN THE HILT'S — and where the arm is.
  *
- * A quarter turn about the hilt's own axis-of-roll is the whole of it. The hand
- * needs its X along the blade (the bore's axis) and its Z — the way the palm
- * faces — pointing at the hilt, which is where the bore already is. Taking
- * handZ = hiltZ and handX = -hiltY for the right hand leaves handY = +hiltX,
- * which is an orthonormal basis and a -90 degree turn about hiltZ. The left
- * hand is the mirror: +90, so both palms face the same way round a two-handed
- * grip, one above the other, as two hands on a bar do.
+ * One axis is forced and one is free, and getting the free one wrong is what
+ * makes a grip look like a prop stuck to a glove.
  *
- * The thumb decides the sign. buildHand puts it "on the +X side for a left
- * hand", so a right hand's thumb is on -X, and -X has to point up the blade —
- * a sabre grip has the thumb toward the emitter.
- */
-export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
-export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
-
-/**
- * Where each hand takes the hilt, in the saber root's own frame.
+ * FORCED: the bore's axis is the hand's X (see GRIP_BORE), and the bore has to
+ * lie along the blade, so handX = ±hiltY. The sign is the thumb's: buildHand
+ * puts it "on the +X side for a left hand", so a right hand's thumb is on -X,
+ * and -X points up the blade because a sabre grip has the thumb toward the
+ * emitter.
  *
- * Both moved 2 cm up the hilt toward the emitter. It costs nothing — there is
- * more pommel under the hands and that is what a pommel is for — and it lifts
- * the whole pair in the first-person frame, which was the difference between
- * the off hand sitting at NDC y -0.93, a hair off the bottom edge, and sitting
- * where a player can see it. The 65 mm between the two hands is unchanged.
- */
-export const GRIP_AT = { R: 0.050, L: -0.015 };
-
-
-/**
- * THE ONE STATEMENT OF HOW A HAND HOLDS THIS WEAPON.
+ * FREE: everything left is a turn about that axis — WHERE ROUND THE HILT the
+ * hand sits. It was a constant, and a constant cannot be right: the hand has to
+ * be on the side the arm arrives from, and the arm arrives from a different
+ * side every time the guard crosses the body. Pinned at zero it left the wrist
+ * 176 degrees from its own rest — the singularity — and the forearm juddering
+ * at 9912 deg/s. Swept as a constant the best value was 130 degrees, at 140/2746.
  *
- * Exported because it had two readers and one of them was a REGULAR EXPRESSION:
- * the creator's preview parents a saber under a hand bone, and the check that
- * kept it honest did so by matching Player.js's source for
- * `getWorldQuaternion(_q1) ... quaternion.copy(_q2.invert()).multiply(_q1)`.
- * That is a coupling to the spelling rather than to the fact, and it went stale
- * the moment the fact changed. Both callers use this now.
+ * Solved instead: the wrist has to end up on the shoulder's side of the hilt.
+ * `grip - wrist` is the bore offset, mostly along the hand's +Y, so +Y is the
+ * direction from the shoulder to the hilt with the blade's own component taken
+ * out. No constant, nothing to tune, and it follows the guard round the body.
  *
- * @param side 'R' | 'L'
+ * @param side    'R' | 'L'
  * @param hiltQuat  the saber root's world quaternion
- * @param outQuat   receives the hand's world orientation
- * @param outWrist  receives the offset from the grip point BACK to the wrist,
- *                  in world space; add it to a point on the hilt's axis to get
- *                  where the wrist joint belongs.
+ * @param toward  the direction from the arm's shoulder to the grip point. Pass
+ *                null for the fixed fallback, which is what a preview with no
+ *                arm behind it wants.
+ * @param outQuat receives the hand's world orientation
+ * @param outWrist receives the offset from the grip point BACK to the wrist, in
+ *                world space; add it to a point on the hilt's axis to get where
+ *                the wrist joint belongs.
  */
-export function handPoseOnHilt(side, hiltQuat, outQuat, outWrist) {
-  outQuat.copy(hiltQuat).multiply(side === 'L' ? GRIP_ROLL_L : GRIP_ROLL_R);
+export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
+  const L = side === 'L';
+  const bore = _hp1.set(0, 1, 0).applyQuaternion(hiltQuat);      // the blade
+  const x = _hp2.copy(bore).multiplyScalar(L ? 1 : -1);          // thumb to the emitter
+  let ok = false;
+  if (toward) {
+    _hp3.copy(toward).addScaledVector(bore, -toward.dot(bore));  // across the blade
+    ok = _hp3.lengthSq() > 1e-6;
+  }
+  if (ok) {
+    const y = _hp3.normalize().applyAxisAngle(x, GRIP_TWIST);
+    const z = _hp4.crossVectors(x, y).normalize();
+    _hpM.makeBasis(x, y, z);
+    outQuat.setFromRotationMatrix(_hpM);
+  } else {
+    // no arm to ask: the hilt's own frame, turned a quarter
+    outQuat.copy(hiltQuat).multiply(L ? GRIP_ROLL_L : GRIP_ROLL_R);
+  }
   if (outWrist) outWrist.copy(GRIP_BORE).applyQuaternion(outQuat).negate();
   return outQuat;
 }
+
+const _hp1 = new THREE.Vector3(), _hp2 = new THREE.Vector3();
+const _hp3 = new THREE.Vector3(), _hp4 = new THREE.Vector3();
+const _hpM = new THREE.Matrix4();
+
+/**
+ * The last degree of freedom, and it is the hand's own rest pose.
+ *
+ * Pointing the hand's +Y from the shoulder to the hilt puts the wrist on the
+ * side the arm arrives from, which is the geometry. It is not quite the whole
+ * answer, because `handR.restQuat` — the pose a relaxed wrist holds — is not
+ * square to that frame, so the solve lands a little off the pose the wrist can
+ * hold cheapest. Swept against the real rig through a mouse-driven slash:
+ *
+ *       twist    wrist from rest    forearm peak
+ *        -40         151.5           7355 deg/s
+ *          0         157.8           6549
+ *         20         143.8           3595
+ *         35         140.0           2548     <-
+ *         40         139.9           2711
+ *         60         150.5           4029
+ *        100         177.0           9983
+ *
+ * against 179.7 / 7052 with no correction at all. Both curves bottom in the
+ * same place, which is what says this is one real quantity and not two knobs
+ * fighting.
+ */
+const GRIP_TWIST = 35 * Math.PI / 180;
+
+/** The fixed fallback turn, for a caller with no arm to point at. */
+export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+
+export const GRIP_AT = { R: 0.050, L: -0.015 };
+
+
 
 // Scratch for the viewmodel alone. It runs in the middle of the arm solve,
 // which is already holding _v1.._v6 AND _g1.._g5, so it may borrow neither.
@@ -1463,15 +1513,36 @@ export class Player {
       this.stamina = Math.max(0, this.stamina - clamp(swing * 0.055, 0, 2.4) * (this.difficulty?.staminaDrain ?? 1));
     }
 
-    // Heat haze off the blade — but ONLY while it is genuinely moving. Emitting
-    // this at rest parked a permanent refractive smear over screen centre,
-    // where a third-person blade lives, and read as condensation on the lens.
-    if (this.saber.ignition > 0.5 && this.world.settings.bloom && swing > 9) {
-      _v1.copy(this.saber.pointAt(0.5, _v2)).project(ctx.camera);
-      if (_v1.z < 1) {
-        const heat = clamp((swing - 9) / 22, 0, 1);
-        this.world.engine.addHeat((_v1.x * 0.5 + 0.5), (_v1.y * 0.5 + 0.5),
-          0.07 + heat * 0.05, heat * 0.42);
+    /**
+     * Heat haze off the blade — and three things it must not be.
+     *
+     * It must not be emitted AT REST: that parked a permanent refractive smear
+     * over screen centre, where a third-person blade lives.
+     *
+     * It must not be emitted BY A THROWN BLADE. `swingSpeed` is the hilt's own
+     * speed through the world, and a saber hurled at 30 m/s and recalled
+     * through the camera reports far more of it than any swing does — so the
+     * throw painted a haze at screen centre for the whole flight, and the
+     * recall brought it straight at the lens and blew it up as it came. That
+     * is the "condensation in front of the camera on throw and recall" the
+     * player reported, and it is not heat off a blade, it is a projectile
+     * flying through the shot. `throwState === 'held'` is the whole gate.
+     *
+     * And it must not be emitted CLOSE UP. The effect is a screen-space blob of
+     * 70-120 mm of NDC; within about a metre of the lens the blade subtends
+     * more than that, so the haze stops reading as air over a hot object and
+     * starts reading as a dirty lens. HEAT_NEAR is where that line is.
+     */
+    if (this.throwState === 'held' && this.saber.ignition > 0.5
+        && this.world.settings.bloom && swing > 9) {
+      const at = this.saber.pointAt(0.5, _v2);
+      if (at.distanceTo(ctx.camera.position) > HEAT_NEAR) {
+        _v1.copy(at).project(ctx.camera);
+        if (_v1.z < 1) {
+          const heat = clamp((swing - 9) / 22, 0, 1);
+          this.world.engine.addHeat((_v1.x * 0.5 + 0.5), (_v1.y * 0.5 + 0.5),
+            0.07 + heat * 0.05, heat * 0.42);
+        }
       }
     }
   }
@@ -1660,9 +1731,9 @@ export class Player {
        * roll.
        */
       this.saber.root.getWorldQuaternion(_q1);
-      handPoseOnHilt('R', _q1, _q2, _v9);
+      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9);
       const wristR = _v7.copy(gripR).add(_v9);
-      handPoseOnHilt('L', _q1, _q3, _v9);
+      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);

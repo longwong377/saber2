@@ -141,14 +141,34 @@ export class HUD {
     this._power('sense', 0, player.force >= 25, player.senseActive);
 
     // ── reticle & blade cursor
+    const firstPerson = !!player.camera.firstPerson;
     const threat = world.enemies.some(e => !e.dead && e.position.distanceToSquared(player.position) < 25);
     el.reticle.classList.toggle('hot', threat);
     // full strength: a reticle you cannot see is not a reticle
-    el.reticle.style.opacity = player.camera.firstPerson ? 1 : 0.9;
-    // and mark the blade cursor while the player is actually driving the blade
-    el.cursor?.classList.toggle('steering', !!player.control?.steering);
+    el.reticle.style.opacity = firstPerson ? 1 : 0.9;
 
-    if (player.control._grip) {
+    /* THE BLADE CURSOR IS A FIRST-PERSON INSTRUMENT AND NOTHING ELSE.
+     *
+     * It answers one question — where is the blade pointing, as distinct from
+     * where am I looking — and that question only exists when the blade is not
+     * on screen. In third person it IS on screen: screenGuard projects the
+     * guard point, which is the base of the blade, so the ring lands ON the
+     * blade every frame of every third-person game and reads as a second
+     * reticle stuck to the weapon. Reported as exactly that. The answer is not
+     * to move it, it is that in third person the blade is its own cursor.
+     *
+     * Hidden with the class rather than by leaving it transparent: `opacity`
+     * is written below out of the steering branch, so an invisible-by-opacity
+     * cursor comes back the moment the player grips, and a display:none node
+     * costs no layout either. The centre reticle is untouched — it is the AIM,
+     * a different instrument, and it is drawn in both views. */
+    if (el.cursor) {
+      el.cursor.classList.toggle('hidden', !firstPerson);
+      // and mark the blade cursor while the player is actually driving the blade
+      el.cursor.classList.toggle('steering', firstPerson && !!player.control?.steering);
+    }
+
+    if (firstPerson && el.cursor && player.control._grip) {
       const g = player.control.screenGuard(camera, player.chest, player.camera.aimQuat, _screen);
       const x = (g.x * 0.5 + 0.5) * window.innerWidth;
       const y = (-g.y * 0.5 + 0.5) * window.innerHeight;

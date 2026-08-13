@@ -756,11 +756,58 @@ export class Saber {
    * 0.084 whatever the amplitude, because red is already at 0.73 radiance
    * before the blade adds anything. On the wielder's dark robe the same profile
    * reaches B−R = 0.53. Saturated halos live against dark, never against sun.
+   *
+   * ── AND THEN IT WAS TOO FAT ─────────────────────────────────────────────
+   *
+   * The paragraph above solved the OPPOSITE fault — a hairline core with
+   * nothing for bloom to find — and overshot. Reported as "the blade covers way
+   * too much of the screen" and "reads as a white flurry", and the numbers
+   * agree: the white — the part with no crystal left in it, measured through
+   * ACES on the same probe vfx.mjs uses — ran 13 to 37 mm of RADIUS depending
+   * on the crystal, i.e. a blown bar up to 74 mm across on a weapon whose prop
+   * is 40 mm of glass, and the band over the bloom threshold reached 47 mm.
+   * Two lobes were doing that and only one of them was the core: at coreWidth 1
+   * the GLOW lobe's own 6.5 is over the ACES white point all by itself, so it
+   * whited out to 17 mm before the core was counted.
+   *
+   * So the fix is on the two inner lobes and the fix is geometric — sigma, not
+   * amplitude. The core stays at 58 because that is what keeps it CLIPPED (the
+   * blown radius only goes as sqrt(ln amp), so halving the amplitude would buy
+   * 13% of width and cost the core its share of the flux, which is the one
+   * thing CORE_WHITE depends on — see tools/checks/saber-light.mjs). Pinching
+   * the sigmas costs nothing but width, which is the complaint.
+   *
+   *                        was                 now
+   *   core sigma          11.0 mm             7.0 mm
+   *   glow sigma          33.0 mm            20.0 mm   amp 6.50 -> 5.20
+   *   halo sigma         105.0 mm            90.0 mm   amp 1.50 -> 1.45
+   *   quad radius        360   mm           309   mm   (same 3.43 halo sigmas)
+   *
+   * measured on the same five crystals vfx.mjs pins, white core radius and the
+   * radius the crystal's own chroma still survives to:
+   *
+   *     crystal   white mm        coloured mm      coloured/white
+   *     red       13.0 ->  8.0    159 -> 134        12.2 -> 16.8
+   *     amber     17.6 -> 10.8    196 -> 166        11.1 -> 15.4
+   *     purple    18.8 -> 11.4    146 -> 123         7.7 -> 10.8
+   *     blue      22.6 -> 13.2    174 -> 148         7.7 -> 11.2
+   *     green     36.8 -> 20.6    214 -> 182         5.8 ->  8.8
+   *
+   * The white core roughly halves; the coloured halo gives up a sixth. That
+   * ratio is the design statement — a bright thin core in a coloured halo —
+   * and every crystal's is now HIGHER than it was, so the existing bound in
+   * vfx.mjs (`coloured/white > 5`) is met by a wider margin than before rather
+   * than re-derived down to fit. The band over the bloom threshold falls from
+   * 47 mm to 28 mm, which is what the bloom pass actually eats.
+   *
+   * The core keeps 63% of the blade's flux (63.2% before, 63.4% now): the
+   * sigmas moved almost proportionally on purpose, because that share is what
+   * makes neutralising the core the right lever and it was not up for trade.
    */
   static PROFILE = {
-    width: [0.0110, 0.0330, 0.105],
-    amp:   [58.0,   6.50,   1.50],
-    radius: 0.36,
+    width: [0.0070, 0.0200, 0.090],
+    amp:   [58.0,   5.20,   1.45],
+    radius: 0.309,
   };
 
   /**
@@ -990,14 +1037,20 @@ export class Saber {
      * 1.8 threshold:
      *
      *     width   trail peak lum   was
-     *     0.45         1.63        4.30    under the line: the slider can now
-     *     0.70         2.75        4.30    switch the smear's bloom OFF
-     *     1.00         4.30        4.30
-     *     1.60         8.07        4.30
+     *     0.45         1.34        4.30    under the line: the slider can now
+     *     0.70         2.30        4.30    switch the smear's bloom OFF
+     *     1.00         3.65        4.30
+     *     1.60         6.99        4.30
      *
      * i.e. it went from a flat 4.30 at every setting — a player who dragged the
      * width to minimum got the identical blooming ribbon — to a 5:1 range with
-     * the bottom of it under the threshold entirely. */
+     * the bottom of it under the threshold entirely.
+     *
+     * The left column moved down a further sixth when the blade's own profile
+     * was pinched (see PROFILE — glow 6.50 -> 5.20, halo 1.50 -> 1.45): the
+     * smear is DEFINED as a fraction of those two lobes, so it inherits the
+     * thinning without anything here changing, which is the whole point of
+     * stating it as a fraction. Full width was 4.30 then and is 3.65 now. */
     this.trailHot = glow * Saber.TRAIL_HOT_OF_GLOW;
     this.trailGlow = halo * Saber.TRAIL_GLOW_OF_HALO;
   }

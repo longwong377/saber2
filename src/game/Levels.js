@@ -893,7 +893,7 @@ export const LEVELS = {
           angle: site.a, satClearance: 1.3, maxSlope: 0.42 }, (pos, i2, d) => {
           const near = 1 - clamp(d / 15, 0, 1);
           if (rng() < near * 0.55) {
-            world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.6 + near * 0.9));
+            world.addProp(makeCrate(world, pos, 0.6 + near * 0.9));
           } else {
             const sz = 0.6 + near * 1.9;
             addRock(world, pos.clone().setY(pos.y + sz * 0.2),
@@ -910,13 +910,13 @@ export const LEVELS = {
       run(world,
         { x: fx - Math.cos(dir) * 26, z: fz - Math.sin(dir) * 26 },
         { x: fx + Math.cos(dir) * 26, z: fz + Math.sin(dir) * 26 },
-        6, (pos) => world.addProp(makeVaporator(world, pos.clone().setY(pos.y + 1.3))),
+        6, (pos) => world.addProp(makeVaporator(world, pos)),
         { jitter: 3.5, clearance: 5, maxSlope: 0.3 });
       // and the clutter of working them
       cluster(world, { rmin: 0, rmax: 0, count: 9, spread: 9, angle: fa,
         satClearance: 1.2 }, (pos) => {
-        if (rng() < 0.5) world.addProp(makeBarrel(world, pos.clone().setY(pos.y + 0.55)));
-        else world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.7));
+        if (rng() < 0.5) world.addProp(makeBarrel(world, pos));
+        else world.addProp(makeCrate(world, pos, 0.7));
       });
 
       // ── Rock. Outcrops come in groups along a fault, with scree trailing off
@@ -961,7 +961,7 @@ export const LEVELS = {
       // there is no band of ground with nothing on it at all.
       for (let i = 0; i < 10; i++) {
         const site = findSite(world, 14, 46, { bias: 0.7, clearance: 4 });
-        if (site) world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.85));
+        if (site) world.addProp(makeCrate(world, site.pos, 0.85));
       }
       /* Broken rock in the middle distance, where the eye needs something to
        * land on between the fight and the ranges. Real boulder geometry rather
@@ -1253,8 +1253,8 @@ export const LEVELS = {
         const site = findSite(world, 12, 46, { clearance: 2.6 });
         if (!site) continue;
         world.addProp(rng() < 0.3
-          ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
-          : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.75));
+          ? makeBarrel(world, site.pos)
+          : makeCrate(world, site.pos, 0.75));
       }
 
       // ── The sand of the bowl itself. Nothing here takes a collider, because
@@ -1350,8 +1350,14 @@ export const LEVELS = {
       // roof trusses + lights
       for (let i = -4; i <= 4; i++) {
         addWall(world, new THREE.Vector3(0, H - 0.6, i * 10), new THREE.Vector3(92, 0.9, 1.1), new THREE.Quaternion(), M.darkSteel);
+        /* The fixture hangs FLUSH under the truss. It used to sit at H − 1.6
+         * with a 0.3 m box on it, so its underside was at 10.25 while the truss
+         * it is nominally bolted to stops at 10.95 — a 40 cm gap, i.e. a
+         * lighting rig floating in the dark with nothing holding it. The truss
+         * is 0.9 m deep centred on H − 0.6, so its soffit is at H − 1.05 and a
+         * 0.3 m fixture under it is centred at H − 1.2. */
         const lamp = new THREE.PointLight(0xcfe4ff, 26, 34, 2);
-        lamp.position.set((i % 2 ? -14 : 14), H - 1.6, i * 10);
+        lamp.position.set((i % 2 ? -14 : 14), H - 1.2, i * 10);
         world.scene.add(lamp);
         world.levelLights.push(lamp);
         const fixture = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 1.0),
@@ -1377,7 +1383,13 @@ export const LEVELS = {
           V(side * 41, 6.6, -34), V(side * 41, 6.6, -8),
           V(side * 41, 7.4, 8), V(side * 41, 7.4, 34),
         ], { radius: 0.34, seed: 1710 + side });
-        addCableRun(world, V(side * 39, 8.2, -20), V(side * 39, 7.4, 12), { seed: 1720 + side, sag: 1.4 });
+        /* Against the wall, not five metres out in front of it. The run's own
+         * brackets are 30 cm blocks at each end, and at x = ±39 they were
+         * bolted to thin air eight metres up — the cable and its two fixings
+         * were the only things in the bay touching nothing at all. The shell
+         * wall is 2.4 m thick on ±46, so its inner face is ±44.8 and a bracket
+         * centred on ±44.7 bites into it. */
+        addCableRun(world, V(side * 44.7, 8.2, -20), V(side * 44.7, 7.4, 12), { seed: 1720 + side, sag: 1.4 });
       }
 
       // working bays down each side: scaffold, crate stacks, a tarp, a console
@@ -1389,7 +1401,7 @@ export const LEVELS = {
         const yaw = side > 0 ? -Math.PI / 2 : Math.PI / 2;
         if (rng() < 0.5) addScaffold(world, at(x, z), { width: 4.5, depth: 2.2, lifts: 2, seed: 1800 + b });
         else addCrateStack(world, at(x, z), { seed: 1810 + b, height: 3 });
-        world.addProp(makeConsole(world, at(x - side * 4, z + 3, 0.5)));
+        world.addProp(makeConsole(world, at(x - side * 4, z + 3)));
         // low cover in front of the bay — this is what you actually fight behind
         addWall(world, at(x - side * 7, z - 4, 1.1), V(5.5, 2.2, 1.4),
           new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), yaw), M.duracrete);
@@ -1405,15 +1417,15 @@ export const LEVELS = {
         cluster(world, { rmin: 12, rmax: 40, count: 7, spread: 5, satClearance: 1.3, spawnClear: 10 },
           (pos) => {
             world.addProp(rng() < 0.28
-              ? makeBarrel(world, pos.clone().setY(pos.y + 0.55))
-              : makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.8));
+              ? makeBarrel(world, pos)
+              : makeCrate(world, pos, 0.8));
           });
       }
       // and the aisle to the door stays clear, so the fight has a spine
       for (let i = 0; i < 8; i++) {
         const site = findSite(world, 14, 40, { clearance: 3, spawnClear: 11 });
         if (site && Math.abs(site.pos.x) > 7) {
-          world.addProp(makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.8));
+          world.addProp(makeCrate(world, site.pos, 0.8));
         }
       }
       // THE blast door
@@ -1552,7 +1564,7 @@ export const LEVELS = {
         const y = T.height(x, z);
         if (y < wet + 2.5) continue;
         if (!siteOk(world, x, z, { clearance: 6, maxSlope: 0.8 })) continue;
-        world.addProp(makeSpire(world, V(x, y + 3, z), 5 + rng() * 4));
+        world.addProp(makeSpire(world, V(x, y, z), 5 + rng() * 4));
       }
 
       // ── Somebody camped in the gorge: a small outpost on a dry bench, and a
@@ -1562,8 +1574,8 @@ export const LEVELS = {
         addOutpost(world, camp.pos, { radius: 10, seed: 1500, yaw: rng() * TAU });
         cluster(world, { rmin: 0, rmax: 0, count: 10, spread: 12, angle: camp.a,
           satClearance: 1.6, minHeight: wet + 0.5 }, (pos) => {
-          if (rng() < 0.35) world.addProp(makeBarrel(world, pos.clone().setY(pos.y + 0.55)));
-          else world.addProp(makeCrate(world, pos.clone().setY(pos.y + 0.45), 0.8));
+          if (rng() < 0.35) world.addProp(makeBarrel(world, pos));
+          else world.addProp(makeCrate(world, pos, 0.8));
         });
         // NB: addCableRun takes TWO endpoints, not a position and options.
         addCableRun(world,
@@ -1587,8 +1599,8 @@ export const LEVELS = {
         const site = findSite(world, 10, 75, { clearance: 3, minHeight: wet + 0.4, maxSlope: 0.35 });
         if (!site) continue;
         world.addProp(rng() < 0.3
-          ? makeBarrel(world, site.pos.clone().setY(site.pos.y + 0.55))
-          : makeCrate(world, site.pos.clone().setY(site.pos.y + 0.45), 0.8));
+          ? makeBarrel(world, site.pos)
+          : makeCrate(world, site.pos, 0.8));
       }
 
       // ── The bed of the wash. A river bed is the single most cluttered
@@ -1659,7 +1671,7 @@ export const LEVELS = {
         const y = T.height(x, z);
         if (y < wet + 2.5) continue;
         if (!siteOk(world, x, z, { clearance: 6, maxSlope: 0.85 })) continue;
-        world.addProp(makeSpire(world, V(x, y + 3, z), 4 + rng() * 5));
+        world.addProp(makeSpire(world, V(x, y, z), 4 + rng() * 5));
       }
       const arch2 = findSite(world, 60, 130, { clearance: 18, maxSlope: 0.7, tries: 22 });
       if (arch2) addRockArch(world, arch2.pos, { span: 19, height: 14, seed: 4200 });

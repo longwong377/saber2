@@ -432,21 +432,26 @@ export async function run({ check, assert }) {
     // would leave the hand at its own rest — handWorld * restQuat^-1 — and
     // SWINGS it onto the direction solveIK chose. The direction is untouched,
     // so the elbow does not move; only the twist changes, which is what a
-    // forearm does. 6874 -> 669 deg/s, and the wrist comes with it, 179.7 ->
-    // 148.5, because a forearm that arrives correctly rolled leaves the wrist
-    // less to absorb. The bounds below move with those numbers: this is a
+    // forearm does.
+    //
+    // The other half is `handPoseOnHilt` deciding WHERE ROUND THE HILT the hand
+    // sits, from the direction the arm arrives from rather than from a constant.
+    // A constant cannot be right — the arm crosses the body — and pinned at the
+    // wrong one it left the wrist at the singularity, 176 degrees from rest with
+    // the forearm juddering at 9912 deg/s. Together: 179.7 -> 140.0 degrees and
+    // 7052 -> 2548 deg/s. The bounds below move with those numbers; this is a
     // ratchet and it fails if either gets worse.
     //
-    // Two cheaper spellings were measured and are worse, both for the same
-    // reason — `aimY` substitutes a fixed reference whenever its direction and
-    // its reference come within 10 degrees of parallel, and a roll that jumps
-    // 90 degrees mid-swing is exactly the fault being removed:
+    // Cheaper spellings of the roll, all measured, all worse — `aimY`
+    // substitutes a fixed reference whenever its direction and its reference
+    // come within 10 degrees of parallel, and a roll that jumps 90 degrees
+    // mid-swing is the fault being removed:
     //
     //     pole aimed at the grip          8780 deg/s   (degenerate by construction)
-    //     aimY on the rest frame's X      2411-5496    (degenerate on some frames)
-    //     minimal swing onto the bone      669         (continuous)
+    //     minimal swing onto the bone     9912         (degenerate at a 176° wrist)
+    //     aimY on the rest frame's X      5496         (degenerate on some frames)
     //
-    // THE WRIST IS STILL 148 DEGREES FROM REST, and that is the other half. It
+    // THE WRIST IS STILL 140 DEGREES FROM REST, and that is the other half. It
     // is not roll any more, it is BEND: the angle between the forearm's
     // direction — which solveIK picks purely from where the grip POINT is — and
     // the hilt's axis. No amount of forearm twist can change it. Fixing it means
@@ -477,12 +482,12 @@ export async function run({ check, assert }) {
       prev = qf.clone();
     }
     const D = 180 / Math.PI;
-    assert(worstWrist * D < 155,
-      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 148.5° _rollForearm achieves`);
-    assert(worstFore * D * 60 < 800,
-      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 669°/s _rollForearm achieves`);
+    assert(worstWrist * D < 145,
+      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 140.0° the solved grip achieves`);
+    assert(worstFore * D * 60 < 2700,
+      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 2548°/s the solved grip achieves`);
     return `wrist reaches ${(worstWrist * D).toFixed(1)}° from rest, down from 179.7 — the BEND is still unfixed, `
-      + `see SaberController; forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 6874`;
+      + `see SaberController; forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 7052`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

@@ -8,8 +8,15 @@
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf } from '../game/Bodies.js';
+import { BipedAnimator } from '../game/Rig.js';
+// Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
+// closes a cycle. It is safe and it is checked: nothing here reads a Player
+// binding at module scope — `handPoseOnHilt` is a hoisted function declaration
+// and GRIP_AT is only ever read inside poseSaberArm, long after both modules
+// have finished evaluating, whichever of the two the browser reaches first.
+import { handPoseOnHilt, GRIP_AT } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
-import { ROBE_CUTS } from '../game/Cloth.js';
+import { ROBE_CUTS, attachCloak, attachSkirt } from '../game/Cloth.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
@@ -518,6 +525,405 @@ export function saveSettings(s) {
 
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE CHARACTER PREVIEW                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE THREE THINGS THE PREVIEW BOX GOT WRONG, AND WHAT EACH ONE MEASURED.
+ *
+ * All three were reported by a player, all three were invisible to the suite,
+ * and all three lived in Menu methods that cannot be imported outside a
+ * browser — which is why they survived a character creator's worth of checks
+ * about the figure itself. The logic is out here as plain functions for the
+ * same reason src/ui/Screens.js is a module: tools/checks/preview.mjs drives
+ * every one of them with no DOM at all.
+ *
+ * 1. THE FIGURE HUNG BELOW THE FLOOR AND WAS CROPPED AT THE WAIST.
+ *
+ * `buildJedi` returns a rig whose ROOT IS THE HIPS. Nothing in the preview ran
+ * the animator, so the root sat at the origin and the figure hung off it:
+ * measured, its bounding box was y ∈ [-0.959, +0.779] — the feet a metre BELOW
+ * the origin. The camera meanwhile aimed at (0, 0.95, 0), which is 17 cm above
+ * the top of that figure's head. Projected through the shipped shot the whole
+ * body landed at NDC y ∈ [-2.367, -0.119]: the top of the head just under the
+ * centre line, and everything from the ribs down past the bottom of the frame.
+ * 63% of the character was off screen. The screenshot is unambiguous.
+ *
+ * The fix is both halves. `standPreviewFigure` runs the same BipedAnimator the
+ * game runs, which plants the feet on y = 0 (box y ∈ [0.000, 1.690]), and
+ * `framePreviewCamera` derives the shot from the figure that is actually there
+ * instead of from three typed constants. Measured over 9 figures at 3 aspect
+ * ratios, 6 pitches and 24 bearings of the spin, the furthest anything now
+ * reaches is NDC 0.873 of the 1.0 edge, and the figure fills 67% of the frame
+ * height at the default view.
+ *
+ * 2. THE SABER WAS HELD BACKWARDS.
+ *
+ * The preview parented the hilt to `handR` with `rotation.set(-π/2, 0, 0)`,
+ * which maps the blade's own +Y onto the hand's -Z. The figure faces +Z, so the
+ * blade left the fist pointing at the wall BEHIND the character and the pommel
+ * pointed forward — measured, the tip landed 1.29 m behind the pommel and 90.0°
+ * off the direction the game holds it in.
+ *
+ * There is no room for taste here, because the game states the relationship
+ * outright and now exports it: `handPoseOnHilt` in Player.js is where a fist
+ * closes on a weapon, bore and all. `poseSaberArm` picks the guard, asks that
+ * function where the hand goes, solves the arm to it with the rig's own IK and
+ * the same elbow pole Player uses, and lets `attach` work out what that is in
+ * the hand's frame. Nothing about the grip is typed in here twice.
+ *
+ * 3. THE ROBE CUT DID NOTHING AT ALL — IN THE PREVIEW.
+ *
+ * Measured in Chromium, cut by cut, on the preview box at 292×360: switching
+ * between all six changed AT MOST ONE PIXEL of 105 120, and that one pixel was
+ * the blade's own flicker. Not "too subtle" — the preview never asked for a cut
+ * and had no cloth in it to ask with. A cut is a set of parameters for the
+ * cloth solver, and what was on screen was the RIGID lathe under the
+ * simulation: the garment `attachSkirt` hides the moment a real one exists.
+ * The same shots taken again after the fix move 1 916-3 900 of those pixels.
+ *
+ * The in-game path was never broken. World.js:301 reads the setting, Player.js
+ * hands it to `attachCloak`/`attachSkirt` as `cut`, and tools/checks/garments.mjs
+ * measures what the six cuts do to a walking figure. What was missing was
+ * anywhere to SEE it before deploying.
+ *
+ * And it is not subtle once it is on screen. Settled standing, this is the hem
+ * of each cut above the floor, the widest the garment gets, where the cape
+ * finishes, and how far out of level the hem is with itself:
+ *
+ *      cut          hem y     width     cape hem   hem level
+ *      temple       0.238 m   0.559 m   0.454 m     20 mm
+ *      cassock      0.415     0.550     0.476       21
+ *      tabard       0.654     0.468     0.482       24
+ *      ceremonial   0.411     0.749     0.422       51
+ *      coat         0.466     0.488     0.476       28
+ *      wrap         0.361     0.546     0.451      312
+ *
+ * 416 mm between the longest and the shortest hem and 280 mm between the
+ * narrowest and the widest, on a figure 1.69 m tall. The wrap's hem finishes
+ * 312 mm out of level with itself — that is `hemBias`, and it is the one cut
+ * you can ONLY read standing still, which is what a preview is.
+ */
+
+/** The skin tones of a species, falling back to the shared row. */
+export function skinRackFor(species) {
+  const sp = speciesOf(species);
+  return (sp && sp.skinTones && sp.skinTones.length) ? sp.skinTones : SKIN_TONES;
+}
+
+/**
+ * How long the cloth is left to settle before the shot is taken, in frames of
+ * 1/60 s.
+ *
+ * The preview is a STILL, so the garment has to have stopped moving before it
+ * is looked at. The two garments settle at very different rates and the CAPE is
+ * what sets this number — it is 860 mm of cloth falling from the shoulders,
+ * against a skirt that is already pinned round the hips. Hem height in mm above
+ * the floor, against its own 600-frame rest:
+ *
+ *          frame     15    30    45    60    90   120   180   600
+ *   temple skirt    239   238   236   236   239   238   239   239
+ *   temple cape     690   675   449   437   447   454   458   457
+ *   cerem. cape     822   903   430   417   421   422   422   422
+ *
+ * The skirt is done by frame 15. The cape is still 8-12 mm out at 45 and inside
+ * 3 mm of its rest by 120, on every cut. 120 frames of both garments cost about
+ * 20-40 ms, which is a menu click nobody feels.
+ */
+export const PREVIEW_SETTLE = 120;
+
+/**
+ * A FIXED WRINKLE, which the game does not have and this does.
+ *
+ * Every Cloak draws its own seed out of a module-level stream, so two Jedi in
+ * one shot do not crease identically — right for the game, wrong for a
+ * portrait: it means the robe re-folds itself differently every time you touch
+ * a swatch, and it means the same six cuts are a different picture on every
+ * run. Measured on the silhouette at the box's own 290×357, one cut rendered
+ * twice under two free seeds differs by 131-268 pixels depending on the
+ * bearing — the same order as the 336 that separates the two CLOSEST cuts.
+ * Pinned, that noise is exactly 0 at every bearing, and a pixel that moves in
+ * the box is a choice the player made.
+ *
+ * The two numbers are tools/checks/garments.mjs's, so the wardrobe suite and
+ * the preview are looking at the same two garments.
+ */
+export const PREVIEW_SEED = { cloak: 4242, skirt: 991 };
+
+/**
+ * The shot: 34° vertical, 24.3° round from the front and 8.1° up.
+ *
+ * The two angles are the direction the old camera looked from, kept to the
+ * third decimal, because the framing was the fault and the angle never was.
+ * What changed is that the DISTANCE is now solved rather than typed.
+ */
+export const PREVIEW_VIEW = { fov: 34, azimuth: 0.4232, elevation: 0.1418, margin: 0.06 };
+
+/**
+ * HOW A HAND HOLDS A HILT — the game's own statement of it, not a copy.
+ *
+ * `handPoseOnHilt` and `GRIP_AT` come out of Player.js, which is where the fist
+ * closes on a weapon for real: GRIP_AT.R is the point on the hilt's axis the
+ * right hand takes, the function returns the hand's world orientation for a
+ * given hilt orientation, and the offset from that point back to the wrist
+ * joint — which is NOT zero, because the bore of a closed fist is 65 mm up the
+ * hand and 30 mm in front of it, and solving the arm straight to the hilt puts
+ * the hilt through the middle of the palm.
+ *
+ * Imported rather than restated because the first version of this file DID
+ * restate it, and Player.js's own note is worth repeating: a preview that
+ * agrees with the game by having the same numbers typed into it stops agreeing
+ * the day one of them is tuned. The check that keeps this honest imports the
+ * same function.
+ */
+
+/**
+ * Stand the figure up.
+ *
+ * The rig's root is the pelvis and its rest pose is a mannequin hanging off it.
+ * This is the game's own solver, run to rest: 60 frames of standing still, and
+ * the arm swing at zero speed for the shoulders. Afterwards the feet are on
+ * y = 0 and the crown is at y = 1.690 — a figure standing on the floor, which
+ * is what everything downstream measures against.
+ */
+export function standPreviewFigure(rig) {
+  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  anim.setFacing(0);
+  const at = new THREE.Vector3(), vel = new THREE.Vector3();
+  const ground = () => 0;
+  for (let i = 0; i < 60; i++) {
+    anim.update(1 / 60, { position: at, facing: 0, velocity: vel, grounded: true,
+      groundAt: ground, crouch: 0, accelForward: 0, accelStrafe: 0 });
+  }
+  anim.swingArms(1 / 60, 0, 1);
+  rig.updateMatrices();
+  return anim;
+}
+
+/**
+ * Put the saber in the right hand the way the game puts it there.
+ *
+ * In play the hilt is driven by the mouse and the arm follows it; here the
+ * hilt is the thing being placed, so the order is reversed — pick the guard,
+ * ask the game where a fist goes on a hilt held like that, solve the arm to
+ * that wrist. The RELATIONSHIP that comes out is the game's own, because it is
+ * the game's own function that produced it, and tools/checks/preview.mjs pins
+ * that by calling the same one.
+ *
+ * The elbow pole is Player's, to the centimetre (`chest + right·0.75 -
+ * up·0.75 - fwd·0.2`), because an elbow that folds through the ribs is the
+ * other way this goes wrong and that pole is the tested answer to it.
+ */
+export function poseSaberArm(rig, saber, out = {}) {
+  const chest = rig.worldPos('chest', new THREE.Vector3());
+  // the figure faces +Z, so its own right hand is toward -X
+  const right = new THREE.Vector3(-1, 0, 0), up = new THREE.Vector3(0, 1, 0), fwd = new THREE.Vector3(0, 0, 1);
+  // The guard: hilt in front of the right hip, blade up and 21.7° forward. Far
+  // enough forward that the fist clears the robe — measured, 445 mm of air
+  // between the pommel and the nearest cloth particle — and low enough that the
+  // tip of a capped 1.45 m blade still lands inside the frame.
+  const grip = chest.clone().addScaledVector(right, 0.28).addScaledVector(up, -0.16).addScaledVector(fwd, 0.26);
+  const blade = new THREE.Vector3(0, 0.93, 0.37).normalize();
+  // The hilt's frame: +Y up the blade, +Z as near the way the figure faces as
+  // a blade at that angle allows. `x = y × ref` then `z = x × y` — the same
+  // construction Rig.aimY makes, written out because the roll matters here.
+  const bx = new THREE.Vector3().crossVectors(blade, fwd).normalize();
+  const bz = new THREE.Vector3().crossVectors(bx, blade).normalize();
+  const hiltQ = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(bx, blade, bz));
+  // …and the hand's, from the game's own grip model. `back` is the offset from
+  // the point on the hilt to the WRIST JOINT, which is not the same place.
+  const handQ = new THREE.Quaternion(), back = new THREE.Vector3();
+  handPoseOnHilt('R', hiltQ, null, handQ, back);
+  const wrist = grip.clone().add(back);
+  const pole = chest.clone().addScaledVector(right, 0.75).addScaledVector(up, -0.75).addScaledVector(fwd, -0.2);
+  rig.solveIK('armR', 'foreR', wrist, pole);
+  const hand = rig.get('handR');
+  if (hand && hand.obj.parent) {
+    const pq = new THREE.Quaternion();
+    hand.obj.parent.getWorldQuaternion(pq);
+    hand.obj.quaternion.copy(pq.invert()).multiply(handQ);
+  }
+  rig.updateMatrices();
+  if (hand && saber) {
+    // Put the hilt where it was decided to be and let `attach` work out what
+    // that is in the hand's frame. This is the whole of the second bug: the
+    // hilt used to be parented with a bare -90° about X and an offset typed in
+    // centimetres, which put the blade out of the character's back.
+    saber.root.quaternion.copy(hiltQ);
+    saber.root.position.copy(grip).sub(new THREE.Vector3(0, GRIP_AT.R, 0).applyQuaternion(hiltQ));
+    saber.root.updateMatrixWorld(true);
+    hand.obj.attach(saber.root);
+  }
+  out.grip = grip; out.blade = blade; out.wrist = wrist; out.hiltQ = hiltQ;
+  return out;
+}
+
+/**
+ * Dress the figure in the chosen cut and settle it.
+ *
+ * Every number here is Player._makeCloak's, because the point of a preview is
+ * that it is the same garment: width 0.36, length 0.86, 9 columns, 11 rows,
+ * flare 1.0, the cape's live collision proxy fed from the skirt, and the rigid
+ * lathe handed over so `attachSkirt` can hide it. tools/checks/preview.mjs
+ * reads those constants back out of Player.js so this cannot drift from it in
+ * silence.
+ */
+export function dressPreviewFigure(host, built, cut) {
+  const rig = built.rig;
+  const mat = built.palette.outer.clone();
+  mat.side = THREE.DoubleSide;
+  const cloak = attachCloak(host, rig, {
+    material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0, cut,
+    seed: PREVIEW_SEED.cloak,
+  });
+  let skirt = null;
+  if (built.robeSkirt) {
+    const smat = (built.palette.over || built.palette.outer).clone();
+    smat.side = THREE.DoubleSide;
+    skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut, seed: PREVIEW_SEED.skirt });
+    if (cloak) cloak.outer = skirt;
+  }
+  const wind = new THREE.Vector3();
+  for (let i = 0; i < PREVIEW_SETTLE; i++) {
+    if (skirt) skirt.update(1 / 60, skirt.refreshColliders(), wind);
+    if (cloak) cloak.update(1 / 60, cloak.refreshColliders(), wind);
+  }
+  return { cloak, skirt };
+}
+
+/**
+ * What the shot has to contain: a cylinder about the figure's own axis.
+ *
+ * A cylinder rather than a box because the preview SPINS. A box fitted at one
+ * yaw is the wrong box a quarter turn later, and the figure would breathe in
+ * and out of the frame as it turned; a cylinder is invariant under the only
+ * rotation the idle preview applies, so a shot that fits it fits at every yaw.
+ */
+export function previewContent(objects = [], points = []) {
+  const box = new THREE.Box3();
+  for (const o of objects) { o.updateMatrixWorld(true); box.expandByObject(o); }
+  const v = new THREE.Vector3();
+  for (const p of points) box.expandByPoint(v.copy(p));
+  if (box.isEmpty()) return { y0: 0, y1: 1, radius: 0.5 };
+  return {
+    y0: box.min.y, y1: box.max.y,
+    radius: Math.hypot(Math.max(Math.abs(box.min.x), Math.abs(box.max.x)),
+      Math.max(Math.abs(box.min.z), Math.abs(box.max.z))),
+  };
+}
+
+/** Every particle of a settled garment, as points for previewContent. */
+export function clothPoints(cloth, out = []) {
+  if (!cloth || !cloth.pos) return out;
+  const p = cloth.pos;
+  for (let i = 0; i < p.length; i += 3) out.push(new THREE.Vector3(p[i], p[i + 1], p[i + 2]));
+  return out;
+}
+
+/**
+ * THE WHOLE FIGURE, ASSEMBLED — stood up, armed, dressed and measured.
+ *
+ * One function rather than four calls in a Menu method, because the check that
+ * proves the shot is framed has to assemble the same figure the menu does, and
+ * a check that re-implements the assembly is a check that agrees with itself.
+ * The caller owns `built` and `saber`; everything after that is in here.
+ */
+export function assemblePreview(host, built, saber, s = {}) {
+  const rig = built.rig;
+  if (host && rig.root.parent !== host) host.add(rig.root);
+  standPreviewFigure(rig);
+  poseSaberArm(rig, saber);
+  const { cloak, skirt } = dressPreviewFigure(host, built, s.robeCut);
+  const pts = [];
+  clothPoints(cloak, pts);
+  clothPoints(skirt, pts);
+  if (saber) {
+    /*
+     * The blade counts toward the shot, CLAMPED at the training cap.
+     *
+     * Off the leash the slider reaches 4 m, and framing that honestly would put
+     * a 1.69 m character at about a third of the frame height — the creator
+     * would stop showing you the character in order to show you a strip light.
+     * Measured: at the stock 1.15 m the tip lands 2.060 m up, 370 mm over the
+     * crown, and the figure keeps 67.0% of the frame height; at the 1.45 m cap
+     * 2.338 m and 59.2%; and 4 m is framed as 1.45 m, identically.
+     */
+    const len = Math.min(s.bladeLength ?? 1.15, BLADE_CAP);
+    pts.push(saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
+    pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
+  }
+  return { cloak, skirt, content: previewContent([rig.root], pts) };
+}
+
+const _RING = 16;
+/**
+ * Solve the camera distance instead of typing it.
+ *
+ * The old shot was `position.set(1.15·pull, 1.35·pull, 2.55·pull)` looking at
+ * (0, 0.95, 0), with `pull` growing with the blade — three constants that
+ * described a figure nobody had measured. This projects the content cylinder's
+ * two rims at 16 bearings and walks the distance in until the worst of the 32
+ * lands on the frame edge less the margin. Four iterations get it inside a
+ * fifth of a percent.
+ *
+ * The pitch is an argument because dragging changes it: a figure tipped 63°
+ * away projects differently from an upright one, and re-solving per frame is
+ * ~200 vector projections, which is nothing beside the draw.
+ *
+ * The content is expected to be centred on the origin — see the pivot in
+ * _startPreview.
+ */
+export function framePreviewCamera(camera, content, opts = {}) {
+  const { pitch = 0, aspect = camera.aspect, margin = PREVIEW_VIEW.margin } = opts;
+  camera.aspect = aspect || 1;
+  camera.fov = PREVIEW_VIEW.fov;
+  const half = Math.max(1e-3, (content.y1 - content.y0) / 2);
+  const r = Math.max(1e-3, content.radius);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const pts = [];
+  for (let i = 0; i < _RING; i++) {
+    const th = (i / _RING) * Math.PI * 2;
+    const x = Math.sin(th) * r, z = Math.cos(th) * r;
+    for (const y of [-half, half]) pts.push(new THREE.Vector3(x, y * cp - z * sp, y * sp + z * cp));
+  }
+  const dir = new THREE.Vector3(
+    Math.sin(PREVIEW_VIEW.azimuth) * Math.cos(PREVIEW_VIEW.elevation),
+    Math.sin(PREVIEW_VIEW.elevation),
+    Math.cos(PREVIEW_VIEW.azimuth) * Math.cos(PREVIEW_VIEW.elevation));
+  const want = 1 - margin;
+  const v = new THREE.Vector3();
+  // Place the camera, then say how close to the frame edge the worst of the 32
+  // lands. The two are never separated: an earlier draft scaled the distance
+  // one last time after the final measurement and returned a number the camera
+  // was not actually at.
+  const at = (d) => {
+    camera.position.copy(dir).multiplyScalar(d);
+    camera.near = Math.max(0.02, d * 0.02);
+    camera.far = d * 3 + 8;
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    let worst = 0;
+    for (const p of pts) {
+      v.copy(p).project(camera);
+      worst = Math.max(worst, Math.abs(v.x), Math.abs(v.y));
+    }
+    return worst;
+  };
+  const clamp40 = (d) => Math.min(40, Math.max(0.4, d));
+  let d = clamp40((half + r) * 2.2);
+  for (let it = 0; it < 6; it++) {
+    const worst = at(d);
+    // ndc ≈ k/d for a point near the axis, so this is Newton's method with the
+    // derivative known: it converges in three or four passes from anywhere.
+    if (Math.abs(worst - want) < 0.002) return { distance: d, fill: worst };
+    d = clamp40(d * worst / want);
+  }
+  return { distance: d, fill: at(d) };
+}
+
 export class Menu {
   constructor(settings, hooks = {}) {
     this.s = settings;
@@ -734,7 +1140,7 @@ export class Menu {
         this.s.hiltStyle = h;
         [...this.el.hilts.children].forEach(c => c.classList.toggle('sel', c === card));
         saveSettings(this.s);
-        this._refreshPreview(true);
+        this._refreshPreview('saber');       // a hilt is not a body either
       });
       this.el.hilts.appendChild(card);
     }
@@ -788,17 +1194,31 @@ export class Menu {
       this._refreshPreview(true);
     });
     this._cardRow('face-list', 'h-face', 'face', FACE_PRESETS, () => this._refreshPreview(true));
-    // The cut is a CLOTH SIM, and the preview is a still frame — so it is
-    // honest about that rather than pretending: no rebuild here, because
-    // there is nothing a static pose can show about how a garment moves.
-    this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS);
+    /*
+     * THE CUT, WHICH USED TO BE THE ONE DEAD CARD IN THE CREATOR.
+     *
+     * This row was written with no handler at all, on the argument that a cut
+     * is a cloth sim and a preview is a still frame. Measured in the browser,
+     * that cost at most ONE changed pixel of 105 120 across all six cuts, and
+     * that pixel was the blade flickering — the player reported it, correctly,
+     * as "choosing a robe cut does nothing".
+     *
+     * The argument was wrong twice over. The preview had no cloth in it to be
+     * still, so what was on screen was the rigid lathe the simulation replaces;
+     * and a cut is mostly not a motion at all — it is a length, a silhouette,
+     * a fold count and a hem line, which is exactly what a still frame shows.
+     * Settled standing, the six hems sit between 0.238 m and 0.654 m off the
+     * floor and the widths run 0.468 m to 0.749 m. See the preview note above.
+     */
+    this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
     this._swatchRow('skin-list', 'skinIndex', this._skinRack(), () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
 
     this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
       () => this._refreshPreview(true));
-    this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, () => this._refreshPreview(true));
-    this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview(true));
+    // 'saber', not true: neither of these is a new body. See _reforgeSaber.
+    this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, () => this._refreshPreview('saber'));
+    this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview('saber'));
   }
 
   _slider(id, key, fmt, onChange) {
@@ -854,9 +1274,9 @@ export class Menu {
     host.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(34, 1.15, 0.05, 40);
-    camera.position.set(0.55, 0.35, 1.1);
-    camera.lookAt(0, 0.32, 0);
+    // Placed by framePreviewCamera from the figure that ends up in the box —
+    // the aspect and the distance here are only what it starts from.
+    const camera = new THREE.PerspectiveCamera(PREVIEW_VIEW.fov, 1.15, 0.05, 40);
     scene.add(new THREE.HemisphereLight(0x9fc4ff, 0x2a2418, 1.1));
     const key = new THREE.DirectionalLight(0xffffff, 2.4);
     key.position.set(2, 3, 2); scene.add(key);
@@ -865,8 +1285,20 @@ export class Menu {
 
     const group = new THREE.Group();
     scene.add(group);
+    /**
+     * THE PIVOT, and it is not the group.
+     *
+     * The drag rotates `group`, and a group whose origin is the figure's FEET
+     * swings the head through an arc 1.7 m long the moment you tilt — which is
+     * the crop coming back by another route. `pivot` carries the whole figure
+     * down by the content's own centre height, so both drag axes turn about the
+     * middle of the shot and the camera can keep looking at the origin.
+     */
+    const pivot = new THREE.Group();
+    group.add(pivot);
 
-    this.preview = { renderer, scene, camera, group, running: true, drag: false, yaw: 0.4, pitch: 0.1, t: 0 };
+    this.preview = { renderer, scene, camera, group, pivot, running: true, drag: false,
+      yaw: 0.4, pitch: 0.1, t: 0, content: null, cloth: [], w: 0, h: 0 };
     this._refreshPreview(true);
 
     let lastX = 0, lastY = 0;
@@ -889,11 +1321,14 @@ export class Menu {
       p.group.rotation.set(p.pitch, p.yaw, 0);
       if (p.saber) p.saber.update(0.016, p.t);
       const w = host.clientWidth || 300, h = host.clientHeight || 260;
-      if (p.renderer.domElement.width !== w || p.renderer.domElement.height !== h) {
-        p.renderer.setSize(w, h, false);
-        p.camera.aspect = w / h;
-        p.camera.updateProjectionMatrix();
-      }
+      // Compared against the size we last ASKED for, not against the drawing
+      // buffer: setPixelRatio makes those two different numbers on any HiDPI
+      // screen, so `domElement.width !== w` was true every single frame and the
+      // renderer was resized 60 times a second forever.
+      if (p.w !== w || p.h !== h) { p.w = w; p.h = h; p.renderer.setSize(w, h, false); }
+      // Re-framed every frame: dragging changes the pitch, and the pitch
+      // changes how tall the figure projects. ~200 projections, against a draw.
+      this._framePreview();
       p.renderer.render(p.scene, p.camera);
     };
     loop();
@@ -901,23 +1336,8 @@ export class Menu {
 
   _stopPreview() { if (this.preview) this.preview.running = false; }
 
-  /**
-   * The forge shot is framed on the HILT: at the stock 1.15 m the tip already
-   * projects to NDC y = 2.53, two and a half screens above the top of the
-   * frame, and that crop is the intent — you are choosing a hilt here.
-   *
-   * An unlimited blade would simply crop identically (4 m puts the tip at NDC
-   * 10.9) and the setting would be invisible in the one place that shows you
-   * the weapon. So past the stock cap the camera walks back in proportion,
-   * which holds the crop steady instead: 42% of the blade stays in frame at any
-   * length, against 53% at 1.15 m, and the hilt shrinks by the same factor
-   * rather than vanishing.
-   */
   /** The skin tones of the chosen species, falling back to the shared row. */
-  _skinRack() {
-    const sp = speciesOf(this.s.species);
-    return (sp && sp.skinTones && sp.skinTones.length) ? sp.skinTones : SKIN_TONES;
-  }
+  _skinRack() { return skinRackFor(this.s.species); }
 
   /** Redraw every row whose contents depend on another row's choice. */
   _buildForge() { this._buildSaber(); }
@@ -978,23 +1398,37 @@ export class Menu {
 
   _framePreview() {
     const p = this.preview;
-    if (!p) return;
-    // Framed on the whole figure now that there is one, and pulled back a
-    // little further for a longer blade so the choice still reads.
-    const pull = Math.max(1, this.s.bladeLength / BLADE_CAP);
-    p.camera.position.set(1.15 * pull, 1.35 * pull, 2.55 * pull);
-    p.camera.far = 40 * pull;
-    p.camera.lookAt(0, 0.95, 0);
-    p.camera.updateProjectionMatrix();
+    if (!p || !p.content) return;
+    const host = this.el.preview;
+    const w = host?.clientWidth || p.w || 300, h = host?.clientHeight || p.h || 260;
+    framePreviewCamera(p.camera, p.content, { pitch: p.pitch, aspect: w / h });
   }
 
   _refreshPreview(rebuild = false) {
     if (!this.preview) return;
-    this._framePreview();
     const p = this.preview;
+    // A BLADE IS NOT A BODY. Measured in Chromium, a full rebuild — a Jedi, two
+    // garments and 120 frames of cloth — costs 73-234 ms, and the length and
+    // width sliders fire on every pointer move: that is 8 frames a second of
+    // drag for a change that touches nothing but the weapon. 2.7-11.7 ms this
+    // way. See _reforgeSaber.
+    if (rebuild === 'saber' && p.saber && p.figure) return this._reforgeSaber();
     if (rebuild || !p.saber) {
-      if (p.saber) { p.saber.dispose(); }
-      p.group.clear();
+      this._clearPreview();
+      /*
+       * ASSEMBLED WITH THE SPIN TAKEN OFF, and that is not tidiness.
+       *
+       * A Cloak writes WORLD positions straight into a mesh that carries no
+       * transform of its own, so the frame it is settled in is the frame its
+       * vertices are read back in. Settled while the box was mid-rotation, the
+       * robe would be laid out sideways and then rotated a second time by the
+       * group it hangs in. The pivot goes back to the origin for the same
+       * reason: it is offset by a content height that has not been measured yet.
+       */
+      const spin = p.group.rotation.clone();
+      p.group.rotation.set(0, 0, 0);
+      p.pivot.position.set(0, 0, 0);
+      p.group.updateMatrixWorld(true);
       // THE FIGURE, not just the blade. Robe colour has been a setting since
       // the menu was written and the preview never showed it, so choosing one
       // was choosing blind — and skin and hair were not choices at all. A
@@ -1010,33 +1444,100 @@ export class Menu {
           scale: 1,
         });
         p.figure = built;
-        p.group.add(built.rig.root);
-        built.rig.updateMatrices();
       } catch { p.figure = null; }   // a stripped DOM in tests has no body kit
-      p.saber = new Saber(p.group, {
+      p.saber = new Saber(p.pivot, {
         colorIndex: this.s.colorIndex,
         bladeLength: this.s.bladeLength,
         coreWidth: this.s.coreWidth,
         hiltStyle: this.s.hiltStyle,
         order: this.s.order,
       });
-      // Held in the right hand rather than floating: parented to the bone, so
-      // it stays put whatever the rest pose does.
-      const hand = p.figure?.rig?.get('handR')?.obj;
-      if (hand) {
-        hand.add(p.saber.root);
-        p.saber.root.position.set(0, 0.04, 0.02);
-        p.saber.root.rotation.set(-Math.PI * 0.5, 0, 0);
+      // On the floor, held in the right hand the way the game holds it, and
+      // wearing the cut that was chosen. The hilt used to be parented with a
+      // -90° roll that pointed the blade out of the back of the figure, and
+      // there was no cloth on the body at all for a cut to change.
+      if (p.figure) {
+        const a = assemblePreview(p.pivot, p.figure, p.saber, this.s);
+        if (a.cloak) p.cloth.push(a.cloak);
+        if (a.skirt) p.cloth.push(a.skirt);
+        p.content = a.content;
+        // the drag turns about the middle of the shot — see the pivot
+        p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;
+        p.pivot.updateMatrixWorld(true);
       } else {
         p.saber.root.position.set(0, -0.05, 0);
+        p.content = { y0: -0.2, y1: this.s.bladeLength ?? 1.15, radius: 0.2 };
       }
       p.saber.trail.visible = false;
       p.saber.ignite();
       p.saber.ignition = 1;
+      p.group.rotation.copy(spin);
+      p.group.updateMatrixWorld(true);
     } else {
       p.saber.setColor(this.s.colorIndex);
       p.saber.order = this.s.order;   // the hilt re-machines live
     }
+    this._framePreview();
+  }
+
+  /**
+   * A new weapon in the same hand — the cheap half of a rebuild.
+   *
+   * The figure, its clothes and their settled fold pattern all survive; only
+   * the hilt is re-machined and the shot re-measured, because a longer blade is
+   * a taller thing to frame. `poseSaberArm` is re-run rather than the old local
+   * transform copied, so the one statement of how a hand holds a hilt stays the
+   * only one.
+   */
+  _reforgeSaber() {
+    const p = this.preview;
+    const spin = p.group.rotation.clone();
+    p.group.rotation.set(0, 0, 0);
+    p.pivot.position.set(0, 0, 0);
+    p.group.updateMatrixWorld(true);
+    // removeFromParent BEFORE dispose: Saber.dispose only unhooks the root from
+    // the scene it was built in, and this one has been re-homed onto a hand
+    // bone since — left to itself it would stay in the fist and the new hilt
+    // would be the second one in there.
+    p.saber.root.removeFromParent();
+    p.saber.dispose();
+    p.saber = new Saber(p.pivot, {
+      colorIndex: this.s.colorIndex,
+      bladeLength: this.s.bladeLength,
+      coreWidth: this.s.coreWidth,
+      hiltStyle: this.s.hiltStyle,
+      order: this.s.order,
+    });
+    poseSaberArm(p.figure.rig, p.saber);
+    p.saber.trail.visible = false;
+    p.saber.ignite();
+    p.saber.ignition = 1;
+    const pts = [];
+    for (const c of p.cloth) clothPoints(c, pts);
+    const len = Math.min(this.s.bladeLength ?? 1.15, BLADE_CAP);
+    pts.push(p.saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
+    pts.push(p.saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
+    p.content = previewContent([p.figure.rig.root], pts);
+    p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;
+    p.pivot.updateMatrixWorld(true);
+    p.group.rotation.copy(spin);
+    p.group.updateMatrixWorld(true);
+    this._framePreview();
+  }
+
+  /** Everything the last build put in the box, disposed and forgotten. */
+  _clearPreview() {
+    const p = this.preview;
+    if (!p) return;
+    if (p.saber) { p.saber.dispose(); p.saber = null; }
+    // Cloak.dispose leaves a material it was HANDED alone, because in the game
+    // the wearer owns it. Here the preview cloned it for this one figure, so
+    // the preview is the owner and nothing else will ever free it.
+    for (const c of p.cloth) { c.dispose?.(); c.mat?.dispose?.(); }
+    p.cloth.length = 0;
+    p.pivot.clear();
+    p.figure = null;
+    p.content = null;
   }
 
   /* ── training ────────────────────────────────────────────────────── */
@@ -1114,7 +1615,11 @@ export class Menu {
     this._slider('opt-sandbox-fire', 'sandboxFire',
       v => (v <= 0 ? 'held' : `${v.toFixed(2)}×`));
     this._slider('opt-train-bladelen', 'bladeLength', v => `${v.toFixed(2)}m`, (v) => {
-      this._refreshPreview(true);
+      // This registration is the FIRST for `bladeLength` — _buildTraining runs
+      // before _buildSaber — so it is this handler that both sliders fire, and
+      // the forge's own is never reached. Which is why 'saber' has to be here
+      // too: on the full rebuild, dragging either one is 8 fps.
+      this._refreshPreview('saber');
       // The seam for making length live. World.spawnPlayer reads bladeLength
       // once, at construction, so today this lands on the next Ignite — but the
       // Saber itself reads this.bladeLength every frame, so one line in main.js
