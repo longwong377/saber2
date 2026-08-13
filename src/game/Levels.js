@@ -14,7 +14,7 @@ import {
   addDebrisField, addCrateStack, addRuin, addOutpost, addGantry, addPipeRun,
   addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
   addAntenna, addPlinth, addStair, addRailing, addFloorSlab, addSign, addRuinedGate,
-  addMachine, addTank, addStanchion, addButtress, addBalcony,
+  addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd,
 } from '../world/Props.js';
 import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
@@ -27,7 +27,8 @@ import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
 import { ARCHETYPES } from './Enemy.js';
 import { SET_PIECE } from './Waves.js';
 import { TOUGHNESS } from './Combat.js';
-import { buildBodyguard } from './Bodies.js';
+import { buildBodyguard, buildQuadruped } from './Bodies.js';
+import { attachRiders, saddleThreat } from './Riders.js';
 
 let rng = makeRng(20250805);
 
@@ -2607,6 +2608,257 @@ export const LEVELS = {
     },
   },
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE COLOSSEUM
+   *
+   *  "360° crowds, lords watching from a box, and a wave of unique large
+   *   creatures each fought differently, some ridden. Scales with player
+   *   count."
+   *
+   *  FOUR CLAIMS, and each is answered by a different piece of machinery.
+   *
+   *  THE CROWD is `addCrowd` in Props.js: 3,000-odd figures in ONE draw call,
+   *  with per-instance colour out of six garment families and a rolling
+   *  animation that touches 240 of them a frame. A crowd is the one piece of
+   *  scenery whose whole job is a NUMBER — two hundred spectators is a village
+   *  meeting — so it had to be the instanced path from the first line.
+   *
+   *  THE BOX is the pulvinar, on the long axis, above the gate the beasts come
+   *  out of. The lords in it are the same instanced figure at 1.5× scale, seated
+   *  under a canopy, and they are the only saturated colour in the bowl.
+   *
+   *  THE CREATURES are three archetypes, registered at the bottom of this file
+   *  beside the warship's general. They are `boss: false` and carry `unlockAt`,
+   *  so unlike a set-piece they arrive as the WAVE — which is what "a wave of
+   *  creatures" means — and `heavyLimit` bounds how many are on the sand at
+   *  once. What makes each a different fight is written out where they are
+   *  declared; the short version is that `_beastBrain` gates its move set on
+   *  the fraction of health remaining, so a 420 hp animal reaches its charge
+   *  phase in seconds and a 1,250 hp one spends the whole fight in its first.
+   *
+   *  SCALING WITH PLAYER COUNT is `party` below, and it is the only level in
+   *  the game that declares one — see `WaveDirector.partyScale`.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  colosseum: {
+    name: 'The Colosseum',
+    blurb: 'Raked sand under thirty thousand people. They did not come to watch you win.',
+    terrain: 'colosseum',
+    /* THE HANDLERS AND THE MENAGERIE. The droids are the arena's staff — the
+     * thing that opens the gates and shoots you if the animals fail — and they
+     * are thin on purpose: this is not a horde level, it is three or four very
+     * large problems at once with a screen of gunfire behind them. */
+    pool: ['charger', 'stalker', 'b1', 'beast', 'charger', 'b2', 'stalker', 'droideka', 'sniper'],
+    groundColor: 0xc9a970,
+    spawnRadius: [30, 50],
+    /**
+     * HOW MUCH BIGGER A SECOND BLADE MAKES THE SHOW.
+     *
+     * 0.72 of a full extra budget per additional player, and it is not 1.0 for
+     * a reason worth stating: two players are worth more than two players
+     * fighting separately. They cover each other's back, one of them can be
+     * winding up a Force push while the other holds a guard, and a horde that
+     * has to split its attention loses value per body. A game that scales at
+     * 1.0 per head is a game that gets EASIER with company, which is the
+     * common failure. 0.72 is the share that keeps two blades under about the
+     * same pressure per blade as one — and because `heavyLimit` takes the same
+     * multiplier, what the second player actually buys is a second CREATURE
+     * rather than more droids, which is the fight this level is about.
+     */
+    party: 0.72,
+    atmosphere: {
+      /* Full daylight, high and hard. Every other outdoor level in this game
+       * is at 15-34° because a raking sun is what gives a landscape its
+       * silhouette; an arena has no landscape, its subject is what is standing
+       * on a flat floor, and a 56° sun is what puts a hard-edged black shape
+       * on the sand under every one of them. `lighting.mjs` orders the
+       * indirect budget by elevation across every outdoor level strictly, and
+       * this is the highest sun in the game with the smallest sky share to
+       * match. */
+      turbidity: 4.4, rayleigh: 2.2, mie: 0.008, mieG: 0.80,
+      elevation: 56, azimuth: 196,
+      sunColor: 0xfff2d8, sunIntensity: 7.4, ambient: 0.30,
+      skyColor: 0xa4c4f2, groundColor: 0x8a7248,
+      fillColor: 0x92a6d0, fillIntensity: 0.42,
+      // Clear air: the bowl is 200 m across and the far side of the crowd is
+      // the subject. 0.0026 puts half-light at 320 m, so the top rows read.
+      fogColor: 0xc8c4b8, fogDensity: 0.0026,
+      exposure: 0.92, bloom: 0.34, saturation: 1.10,
+      lift: [0.003, 0.005, 0.012], gain: [1.0, 1.0, 1.01],
+      cloudCover: 0.30, cloudLit: 0xfff6e8, cloudDark: 0x98a2b2,
+      cloudWindDir: 0.9, cloudWindSpeed: 0.7,
+      /* NO PAINTED RANGES. The bowl's own arcade stands 45 m over the floor at
+       * a radius of 120, which subtends 21° — so a painted curtain at 340 m
+       * would be entirely behind it, and the parts of the sky that are not
+       * behind it are the parts directly overhead. This is the one level whose
+       * horizon is a building. */
+      horizon: false,
+    },
+    ambience: { wind: 0.10, windFreq: 300, drone: 0.16 },
+    dust: {
+      count: 900, color: 0xd2b98c, opacity: 0.22, size: 22,
+      fleckColor: 0xc0a578,
+      wind: { from: 196, strength: 2.2, gustiness: 0.5, wander: 0.4 },
+      /* A bowl this deep is sheltered, so what crosses it is mostly the dust
+       * the fight itself is putting up. But a front is a whole frame and not a
+       * fog slider: `sunLoss` and `fillGain` are authored rather than left on
+       * their defaults, because the property that matters is that the light
+       * goes SOFT as well as dim. Measured on the peak: key-to-fill 24.7:1 in
+       * the clear against 7.1:1 at the height of it, which is a shadowless
+       * arena full of blown sand, and the wind reaches 6.0 m/s, which lays the
+       * dust over rather than lifting it straight up. */
+      weather: { peak: 0.62, period: 96, duration: 26, unrest: 0.18,
+                 fogGain: 4.0, windGain: 2.8, sunLoss: 0.72, fillGain: 1.5, tint: 0.85 },
+    },
+    grass: 0,
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 97);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+      attachRiders(world);
+
+      /* ── THE FOUR GATES, cut through the podium by the heightfield. What
+       * stands here is the frame: a barred arch under a keystone, at the scale
+       * of the thing that comes through it. */
+      const gates = [0.32, 0.32 + Math.PI / 2, 0.32 + Math.PI, 0.32 + Math.PI * 1.5];
+      for (let g = 0; g < gates.length; g++) {
+        const a = gates[g];
+        const cx = Math.cos(a) * 66, cz = Math.sin(a) * 49;
+        addArch(world, at(cx, cz), {
+          span: 9.5, rise: 5.0, thickness: 2.0, yaw: -Math.atan2(cz, cx) + Math.PI / 2,
+          seed: 6100 + g, mat: M.sandstone, trimMat: M.duracreteWarm, broken: g === 3 ? 0.3 : 0,
+        });
+      }
+
+      /* ── THE PULVINAR — the lords' box, on the long axis over the beast
+       * gate. It is the only thing in the bowl that is not either sand or
+       * crowd, and it is where your eye goes because it is the only thing with
+       * a roof: rule 5 of the art direction says the accent is the SUBJECT,
+       * and the people who decided you would be here today are the subject. */
+      const bx = -74, bz = 0;
+      island(world, at(bx, bz, 0), { seed: 6200, yaw: 0, span: 22, maker: 'pulvinar' },
+        (kit) => {
+          // the box itself, standing off the podium
+          kit.slab(M.sandstone, 20.0, 2.4, 11.0, 0, 6.4, 0, { tile: 2.4, seg: 5 });
+          kit.slab(M.duracreteWarm, 21.0, 1.2, 12.0, 0, 8.2, 0, { tile: 2.4, seg: 5, collide: false });
+          // the parapet in front of it, which is what they lean on
+          kit.slab(M.sandstone, 20.0, 1.1, 0.9, 0, 8.9, 5.4, { tile: 2.0, seg: 5, collide: false });
+          // six columns and the canopy over them
+          for (let i = 0; i < 6; i++) {
+            const x = (i / 5 - 0.5) * 17.0;
+            kit.slab(M.sandstone, 0.8, 6.2, 0.8, x, 11.9, -2.6, { tile: 2.0, seg: 3, collide: false });
+          }
+          kit.slab(M.duracreteWarm, 21.0, 1.0, 13.0, 0, 15.4, -0.4, { tile: 2.4, seg: 5, collide: false });
+          kit.slab(M.sandstone, 22.0, 0.7, 14.0, 0, 16.2, -0.4, { tile: 2.4, seg: 5, collide: false });
+        });
+      // and the banners hung off it — the one saturated thing in the bowl
+      for (let i = 0; i < 4; i++) {
+        addTarp(world, at(bx + 7.6, bz - 7.5 + i * 5.0, 0), {
+          width: 3.0, depth: 0.4, height: 5.5, seed: 6220 + i, mat: M.tarpBlue,
+        });
+      }
+
+      /* ── THE PRAECINCTIONES. Two dividing walls running round the cavea at a
+       * third and two thirds of its depth, with the radial stairs landing on
+       * them. They are what a real amphitheatre uses to break 46 m of seating
+       * into banks you can actually get out of, and they are the only thing on
+       * the bank with a silhouette: measured before they existed, 27.7% of the
+       * level's ground had nothing over 1.2 m within 25 m, all of it up here,
+       * because three thousand seated people are each a metre tall and a metre
+       * is not a landmark. Sixteen segments to a ring — one continuous ring
+       * would be over 120 m across and every survey in the suite would file it
+       * as scenery rather than as a thing standing in the view, which is
+       * exactly what it is not. */
+      for (const [t, h] of [[0.34, 2.6], [0.68, 3.0]]) {
+        const rad = lerp(72, 118, t), y = 6.2 + t * 19 * 1.62;
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * TAU + 0.1;
+          const x = Math.cos(a) * rad, z = Math.sin(a) * rad * 0.74;
+          island(world, V(x, y, z), { seed: 6250 + i + t * 100, yaw: -Math.atan2(z, x) + Math.PI / 2, span: 22, maker: 'praecinctio' },
+            (kit) => {
+              kit.slab(M.sandstone, 20.0, h, 1.3, 0, h / 2, 0, { tile: 2.4, seg: 5, collide: false });
+              kit.slab(M.duracreteWarm, 20.6, 0.45, 1.9, 0, h + 0.2, 0, { tile: 2.4, seg: 5, collide: false });
+              // the stair mouth through it, every fourth segment
+              if (i % 4 === 1) kit.slab(M.duracreteDark, 3.2, h * 1.15, 2.6, 0, h * 0.58, -0.8, { tile: 2.0, seg: 3, collide: false });
+            });
+        }
+      }
+
+      /* ── THE HOUSE. `rmin` is just outside the podium and `rmax` just inside
+       * the arcade, and the gaps are the four gates and the box — a crowd
+       * sitting on top of the lords' canopy is the kind of thing that only
+       * shows up in a screenshot. */
+      /* THE ONLY HOLE IN THE HOUSE IS THE BOX. The four gates are cut through
+       * the PODIUM, under the seating, which is where an amphitheatre puts
+       * them — so the crowd sits straight over the top of them and does not
+       * need a gap. Leaving one at each gate as well was measured at 18% of
+       * the bearings round the arena with nobody on them, and a crowd with
+       * four holes in it reads as a set. */
+      const gaps = [[Math.PI - 0.22, Math.PI + 0.22]];
+      addCrowd(world, V(0, 0, 0), {
+        seed: 6300, rows: 20, rmin: 72, rmax: 118, rise: 1.62, y0: 6.2,
+        aspect: 0.74, gaps, fill: 0.86, pitch: 1.2, stride: 240, excite: 1,
+      });
+      /* THE LORDS, as the same instanced figure at 1.5× on three short rows
+       * inside the box. One more draw call for the whole party, and the scale
+       * is what says they are not the crowd. */
+      addCrowd(world, V(bx + 1.5, 0, bz), {
+        seed: 6360, rows: 3, rmin: 3.0, rmax: 6.4, rise: 0.9, y0: 9.0,
+        aspect: 1.0, gaps: [[1.5, 4.8]], fill: 0.9, pitch: 2.6, stride: 24, excite: 0.35, scale: 1.5,
+        palette: [0xa8452a, 0x7d2f4a, 0xb08a3c, 0x3c4a6b, 0x8a7358, 0xd8c8a8],
+      });
+
+      /* ── THE FLOOR. An arena floor is raked sand and almost nothing else —
+       * the whole point of the space is that there is nowhere to hide — so
+       * what stands on it is only what a show needs: the traps the animals
+       * came up through, and the wreck of the last one. */
+      for (let k = 0; k < 5; k++) {
+        const a = 0.8 + k * 1.26;
+        const p = at(Math.cos(a) * (18 + (k % 2) * 12), Math.sin(a) * (14 + (k % 2) * 9));
+        island(world, p, { seed: 6400 + k, yaw: rng() * TAU, span: 7, maker: 'trap' },
+          (kit) => {
+            // the hatch: a stone kerb with a grating in it, flush with the sand
+            kit.slab(M.sandstone, 4.6, 0.5, 4.6, 0, 0.20, 0, { tile: 2.2, seg: 3, collide: false });
+            kit.slab(M.grating, 3.6, 0.14, 3.6, 0, 0.42, 0, { tile: 2.2, seg: 3, collide: false });
+            for (const sx of [-1, 1]) {
+              kit.slab(M.rust, 0.4, 1.6, 0.4, sx * 2.0, 1.0, 2.0, { tile: 1.4, seg: 2 });
+            }
+          });
+        siteOk(world, p.x, p.z, { clearance: 5, spawnClear: 0 });
+      }
+      // the spina: a low masonry spine down the long axis, which is the one
+      // piece of cover on the floor and the thing a charge has to go round
+      for (const sx of [-1, 1]) {
+        island(world, at(sx * 24, 0), { seed: 6440 + sx, yaw: 0, span: 14, maker: 'spina' },
+          (kit) => {
+            kit.slab(M.sandstone, 6.0, 1.5, 11.0, 0, 0.75, 0, { tile: 2.4, seg: 4 });
+            kit.slab(M.duracreteWarm, 6.8, 0.4, 11.8, 0, 1.7, 0, { tile: 2.4, seg: 4, collide: false });
+            addColumn(world, new THREE.Vector3(0, 1.5, 0), {
+              kit, height: 7.5, radius: 0.62, seed: 6450 + sx, mat: M.sandstone, flutes: 0,
+            });
+          });
+      }
+      // what is left of the last show
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 16, 52, { clearance: 6, maxSlope: 0.2, tries: 20 });
+        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 6480 + k, count: 18 });
+      }
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 20, 50, { clearance: 4, maxSlope: 0.2 });
+        if (site) addCrateStack(world, site.pos, { seed: 6490 + k, tiers: 2, columns: 2, yaw: rng() * TAU });
+      }
+      /* The sand itself. Very light: this floor is the fight, and a shin-high
+       * rock you cannot see past your own blade is worse than bare ground —
+       * the same call the execution ground made about its own bowl. */
+      strewGround(world, { seed: 6500, radius: 58, inner: 5, spread: 0.20, mat: M.stone,
+        landmarks: 0.15, boulders: 0.35, cobble: 0.9 });
+
+      world.notify('THE COLOSSEUM', 'the gates are already opening');
+    },
+  },
+
   deeps: {
     name: 'The Cut',
     blurb: 'The excavation the works was taken out of. Whatever is still lit down here was not left on for you.',
@@ -2686,8 +2938,8 @@ export const LEVELS = {
  * The order the menu lists them in: the places you choose first, then the four
  * rooms of the descent in the order you meet them.
  */
-export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'meadow', 'drifts', 'alpine',
-  'arena', 'intake', 'foundry', 'deeps'];
+export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'meadow',
+  'drifts', 'alpine', 'arena', 'intake', 'foundry', 'deeps'];
 
 /**
  * DELETED LEVELS.
@@ -2746,6 +2998,7 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   cavern: ['gate'],
   temple: ['gate'],
   warship: ['gate'],
+  colosseum: ['gate'],
 });
 
 /**
@@ -2805,3 +3058,81 @@ Object.assign(ARCHETYPES, {
 });
 SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
 
+/**
+ * THE MENAGERIE, and what makes each of them a different fight.
+ *
+ * "A wave of unique large creatures each fought differently, some ridden."
+ *
+ * These are NOT bosses, and that is the first decision. A `boss` archetype can
+ * only reach the field through `_setPiece`, which fires on every fifth wave and
+ * fields two or three bodies — so a roster of bosses is a roster you meet one
+ * at a time on a schedule. What the brief asks for is a WAVE of them, so they
+ * carry `unlockAt` instead and arrive as ordinary fill on the levels whose pool
+ * names them, with `big: true` putting them under `heavyLimit` — one, plus one
+ * per ten waves, times the party multiplier. Two players in the colosseum meet
+ * two creatures at once at wave 1, which is exactly the intent.
+ *
+ * ── EACH FOUGHT DIFFERENTLY, and here is the mechanism rather than the claim.
+ *
+ * `Enemy._beastBrain` gates its move set on the fraction of health remaining:
+ * phase 1 (over 66%) can only LUNGE, phase 2 (over 33%) adds the SWEEP, and
+ * phase 3 adds the CHARGE, with the interval between attacks falling from 2.4 s
+ * to 1.15 s across the three. So a creature's health pool is not only how long
+ * it takes to kill — it is how much of the fight is spent in each move set, and
+ * an animal with a quarter of the health reaches its most dangerous phase in a
+ * quarter of the time. Add the hit radii, which scale with `scale`, and the
+ * engagement band, which is `preferred`, and three numbers produce three fights:
+ *
+ *   the STALKER   420 hp, 8.6 m/s, scale 1.7, reach [1.8, 3.4]. It is through
+ *                 all three phases inside about twelve seconds of contact, so
+ *                 what you actually fight is the phase-3 animal: charge after
+ *                 charge, 1.15 s apart, from an animal that outruns you. You
+ *                 cannot walk away from it and you cannot out-trade it; you
+ *                 parry it or you step off the line. It dies to two good cuts.
+ *   the CHARGER   1250 hp, 6.0 m/s, scale 2.4, reach [2.2, 4.2]. The mirror
+ *                 image: it spends most of the fight in phase 1, so it is a
+ *                 long sequence of single telegraphed lunges with a 2.4 s gap
+ *                 you can do work in — and the work is its LEGS, because three
+ *                 of the four brings it down. Meeting it head-on is the one
+ *                 thing that does not work: its frill and horns are carried in
+ *                 front of its eyes, and the charge does 54.
+ *   the ACKLAY    900 hp, 4.6 m/s, scale 2.9, reach [2.5, 5]. Already in the
+ *                 game and left exactly as it is. It is the REACH problem —
+ *                 the only one of the three that can hit you from outside your
+ *                 own reach — and it stays a `boss`, so in the colosseum it
+ *                 arrives on the fifth wave as the thing the show builds to.
+ *
+ * ── SOME RIDDEN. The charger carries a B2 (see src/game/Riders.js): a gunner
+ * three metres up, out of the blade's reach, on something that will not stand
+ * still. The pairing asks a question neither half asks alone — you cannot
+ * answer the gun without answering the animal — and it is PAID FOR: the mount's
+ * threat includes the rider's, so a wave with two crewed chargers in it is a
+ * wave with six fewer droids, not a wave 30% over budget.
+ *
+ * `saddleThreat` reads that price off the archetype table, so the arithmetic
+ * cannot drift out of step with the body it is paying for.
+ */
+Object.assign(ARCHETYPES, {
+  charger: {
+    label: 'Reek', build: (o) => buildQuadruped({ ...o, kind: 'charger' }),
+    scale: 2.4, hp: 1250, mass: 2400,
+    speed: 6.0, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 54, preferred: [2.2, 4.2], score: 2600,
+    big: true, unlockAt: 1,
+    /* The rider, and the price of it. Set below rather than here, because the
+     * number is `ARCHETYPES.b2.threat` and reading it at declaration time
+     * would freeze a copy of a value that lives in another module. */
+    saddle: 'b2', threat: 0,
+  },
+  stalker: {
+    label: 'Nexu', build: (o) => buildQuadruped({ ...o, kind: 'stalker' }),
+    scale: 1.7, hp: 420, mass: 420,
+    speed: 8.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 26, preferred: [1.8, 3.4], score: 1200, threat: 7,
+    big: true, unlockAt: 1,
+  },
+});
+/* Priced with what it carries. 11 of its own — between the walker's 12 and the
+ * droideka's 5, which is where a 1250 hp animal that cannot shoot belongs — and
+ * the B2 on its back at whatever a B2 costs. */
+ARCHETYPES.charger.threat = 11 + saddleThreat('charger');

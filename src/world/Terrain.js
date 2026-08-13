@@ -1218,6 +1218,122 @@ export const TERRAIN_PRESETS = {
     rockAt() { return 1; },
   },
 
+  /**
+   * THE COLOSSEUM. An oval of raked sand with the whole world watching it.
+   *
+   * The landform is three things and the boundary between the first two is the
+   * only one that matters:
+   *
+   *   THE FLOOR       an ellipse, 62 × 46 m, raked flat and dished by 40 cm so
+   *                   the middle is where everything ends up.
+   *   THE PODIUM      a 5.2 m wall standing straight off the sand, all the way
+   *                   round. It is 68° — 1 − cos is 0.63, past the 0.55 every
+   *                   solver in this game uses for "ground you can stand on" —
+   *                   and that is the entire reason it exists. The player, the
+   *                   nav and the mounts are all held on the sand by the
+   *                   GROUND rather than by an invisible wall, which is what a
+   *                   real arena wall was for as well.
+   *   THE CAVEA       banks of seating above it, rising 34 m at 30°, which is
+   *                   the rake of a real amphitheatre and is what puts the top
+   *                   row's sight line over the heads in front.
+   *
+   * The cavea is walkable by the numbers (0.13 of slope) and unreachable in
+   * fact, because the podium is between it and everything. That is deliberate:
+   * a crowd you could walk into is a crowd the fight has to be balanced around.
+   *
+   * The floor is authored as SAND over a stone sub-base, because the one thing
+   * an arena floor does that no other floor does is take and hold a mark: this
+   * preset has the longest surface memory in the game after the alpine
+   * snowpack (refill 240 s against the old execution ground's 150), and what
+   * that buys is a floor that visibly accumulates the whole fight.
+   */
+  colosseum: {
+    scale: 400, res: 240, waterLevel: -999,
+    /* Raked sand over a masonry bowl. The sand is a pale bleached ochre and
+     * the stone is the cream ashlar of the reference frames — one warm family,
+     * exactly as rule 5 asks — and the accent this level is authored around is
+     * the CROWD, which carries the only saturated colour in the bowl. */
+    sandColor: 0xa88a5c, rockColor: 0x9a8f78,
+    maps: 'sand',
+    gritColor: 0x7d6743, rockColor2: 0x6e6455,
+    dustColor: 0xc2a878, crustColor: 0xa79c86,
+    // The podium is 68° and the cavea 30°; the stone band has to claim the
+    // first and not the second, so it opens at 1 − cos 26° and is complete by
+    // 1 − cos 48°.
+    slopeBands: [0.10, 0.33, 0.05, 0.16],
+    stoneSlope: 0.22,
+    crust: 0.35, strataH: 3.0, cliffs: true,
+    wind: [0.94, 0.34],
+    macro: [110, 0.55, 0.42, 1.0],
+    rockUpland: [0.12, 4, 20],
+    lagColor: 0x6b6355, sheetColor: 0xd0b98e,
+    /* THE LONGEST MEMORY ON ANY SAND IN THE GAME, AND THE THINNEST LAYER.
+     *
+     * Both halves are what an arena floor actually is. It is raked before the
+     * show and then not touched again, so every footfall, every skid and every
+     * body that lands on it is still there at the end: 240 s of e-folding
+     * against the execution ground's 150 and the erg's 40, the longest memory
+     * in the game outside the alpine snowpack.
+     *
+     * And it is a HAND'S DEPTH of sand spread over a stone sub-base, not a
+     * dune. 0.11 m is deeper than any other built floor in the game — the
+     * temple's flagging is 0.02 and the works' deck 0.025 — and it is
+     * deliberately under the 0.12 m that `world-immersion` uses to divide
+     * ground you are IN from ground you are standing ON. That division decides
+     * which bar the level answers: a sand sea has to be 70% covered material,
+     * and an arena has to answer for its emptiness with its ARCHITECTURE
+     * instead, which is the right question to ask of a building. Measured, it
+     * answers it — 3.0% of its walkable ground has nothing within twelve
+     * metres, against a bar of 10%. */
+    loose: { depth: 0.11, refill: 240, tilt: 0.94, tint: 0.46, soot: 1.0 },
+    packedColor: 0x6d5735,
+    // Raked, and a rake leaves parallel furrows: this is the one preset where
+    // the ripple field is not aeolian and is not apologising for it.
+    ripple: 1.25, ripAspect: 0.30,
+    detail: [0.95, 30],
+    height(x, z) {
+      // the ellipse, as a normalised radius: 1.0 is the foot of the podium
+      const e = Math.hypot(x / 62, z / 46);
+      // the floor: raked flat, dished 0.4 m over the whole oval so the middle
+      // of it is where a fight collects, and scuffed at the scale of a footfall
+      const dish = -smoothstep(1.0, 0.0, e) * 0.4;
+      const rake = fbm2(x * 0.05, z * 0.05, 3) * 0.10;
+
+      /* THE PODIUM. 5.2 m over 2 m of run, which is 68°, which is 0.63 of
+       * 1 − cos θ, which is past the 0.55 every walkability survey in this
+       * project uses. Written first as 5.2 over 4 it was 52° — 0.39 — and the
+       * player could walk up the arena wall and out into the crowd. */
+      const podium = smoothstep(1.0, 1.045, e) * 5.2;
+
+      /* THE CAVEA. 34 m of seating at 30°, in courses of 0.72 m so the ink
+       * pass has a step to draw on every row — a smooth bank reads as a hill
+       * with people on it, and the rows are the whole of what says "seating".
+       * `strata` is the quantiser the cliffs already use. */
+      const bank = smoothstep(1.05, 1.95, e) * 34;
+      const seating = strata(bank, 0.72, smoothstep(1.04, 1.10, e) * 0.85, 5.7);
+
+      /* THE ARCADE at the top, and it is what stops the bowl from ending in a
+       * line against the sky: a parapet standing 6 m proud of the last row. */
+      const arcade = smoothstep(1.95, 2.06, e) * 6.0;
+
+      // the four gates the floor is entered by, cut through the podium as
+      // ramps so the mounts can be walked in
+      const a = Math.atan2(z, x);
+      let gate = 0;
+      for (let g = 0; g < 4; g++) {
+        const ga = g * (Math.PI / 2) + 0.32;
+        let d = Math.abs(((a - ga + Math.PI) % TAU + TAU) % TAU - Math.PI);
+        gate = Math.max(gate, smoothstep(0.075, 0.0, d));
+      }
+      const cut = gate * smoothstep(0.99, 1.12, e) * smoothstep(1.34, 1.16, e);
+
+      return dish + rake + (podium + seating + arcade) * (1 - cut * 0.94);
+    },
+    // matched to the 0.10 → 0.33 band above: sand on the floor and on the
+    // shallow rake of the cavea, stone on the podium
+    rockAt(x, z, slope) { return clamp(slope * 4.35 - 0.43, 0, 1); },
+  },
+
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -362,7 +362,9 @@ export class WaveDirector {
    */
   budgetFor(wave) {
     const base = 4 + wave * 2.6 + Math.pow(wave, 1.62) * 0.65;
-    return Math.floor(base * Math.pow(BOON_POWER, (wave - 1) / 6));
+    // `partyScale` is exactly 1 on every level that does not declare a `party`
+    // share, so this line is a no-op for all of them — see partyScale.
+    return Math.floor(base * Math.pow(BOON_POWER, (wave - 1) / 6) * this.partyScale());
   }
 
   /**
@@ -387,7 +389,59 @@ export class WaveDirector {
     if (wave >= 6) list.push('droideka');
     if (wave >= 7) list.push('acolyte');
     if (wave >= 12) list.push('walker');
+    /**
+     * …AND ANYTHING A LEVEL'S POOL BRINGS THAT THIS LADDER HAS NEVER HEARD OF.
+     *
+     * The seven lines above are the roster this director was written against,
+     * and they are a list kept by hand: an archetype registered anywhere else
+     * in the game could be named in a level's pool, pass `pool.includes`, and
+     * still never spawn, because it is not on this list — which is a silent
+     * wrong answer, not an error. An archetype may now declare its own depth
+     * with `unlockAt`, and it enters the fill at that depth on the levels that
+     * name it and nowhere else.
+     *
+     * WITHOUT ONE IT IS A SET-PIECE, which is the safe default and is what a
+     * boss wants: `_setPiece` reaches SET_PIECE directly and never consults
+     * this list, so a body with no `unlockAt` can only ever arrive on a boss
+     * wave. That is exactly the property the warship's general depends on.
+     */
+    for (const t of this.pool) {
+      const A = ARCHETYPES[t];
+      if (A && A.unlockAt !== undefined && wave >= A.unlockAt && !list.includes(t)) list.push(t);
+    }
     return list.filter(t => this.pool.includes(t));
+  }
+
+  /**
+   * HOW MANY BLADES THE WAVE IS BEING COMPOSED FOR.
+   *
+   * Co-op in this game is real — see `tools/checks/coop.mjs` — and until now
+   * the wave director did not know it existed: two players got exactly the
+   * wave one player got, which is the same fight at half the difficulty and
+   * twice the cover. Nothing in the ramp accounted for it because nothing
+   * asked.
+   *
+   * IT IS OPT-IN PER LEVEL, and that is deliberate rather than timid. The
+   * budget curve above is tuned, measured and pinned by four checks; making
+   * every level in the game scale would move all of them at once, for a
+   * property only one level has been asked to have. A level declares `party`
+   * as the share of a full extra budget each additional blade is worth, and
+   * every level that does not declare one gets `1` — the identical number,
+   * to the floor, that it gets today.
+   *
+   * 1.0 would be "each player brings their own wave", which is wrong: two
+   * players are worth more than two players fighting separately, because they
+   * cover each other's back and a horde that has to split its attention is
+   * worth less per body. The colosseum authors 0.72, and states why there.
+   */
+  partySize() {
+    const ps = this.world && this.world.players;
+    return Array.isArray(ps) && ps.length ? clamp(ps.length, 1, 8) : 1;
+  }
+
+  partyScale() {
+    const k = this.world?.level?.party ?? 0;
+    return k > 0 ? 1 + k * (this.partySize() - 1) : 1;
   }
 
   /**
@@ -450,7 +504,11 @@ export class WaveDirector {
   heavyBias(wave) { return clamp((wave - 4) * 0.035, 0, 0.9); }
 
   /** How many `big` units a wave may field — a walker is 66 meshes. */
-  heavyLimit(wave) { return 1 + Math.floor(wave / 10); }
+  /* One heavy, plus one per ten waves — and per party, on a level that scales
+   * with it. A second blade in the arena does not want a bigger crowd of the
+   * same droids, it wants the second creature that the first player cannot
+   * also be watching. */
+  heavyLimit(wave) { return Math.max(1, Math.round((1 + Math.floor(wave / 10)) * this.partyScale())); }
 
   _pickType(types, wave, bigLeft) {
     const bias = this.heavyBias(wave);

@@ -5553,3 +5553,249 @@ export function addOutpost(world, pos, opts = {}) {
   }
   return stats;
 }
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Crowd                                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A CROWD, and the only interesting thing about it is the draw-call budget.
+ *
+ * The brief for the colosseum is "360° crowds", and the number that makes a
+ * crowd a crowd rather than a decorated wall is somewhere north of two
+ * thousand — measured on the finished tiers, 3,240 figures fill a 60 m bowl at
+ * the density of a full house. At one draw call each that is six times the
+ * whole level's budget, so the crowd is ONE InstancedMesh and one geometry, in
+ * exactly the way `addScree` puts six hundred stones on the ground for one
+ * call. `world-immersion` measures the ratio; this is 3240:1.
+ *
+ * The figure is deliberately crude — a wedge for a seated body and a ball for
+ * a head, 96 triangles — and that is not a saving, it is the right drawing. At
+ * 40 to 90 m a spectator is between four and nine pixels tall, so what carries
+ * is the SILHOUETTE and the COLOUR, and per-instance colour is free: the
+ * material reads `instanceColor`, so three thousand figures in six garment
+ * families cost nothing over three thousand figures in one. Rule 6 of the art
+ * direction — texture is drawn, not shaded — is why the variation is in flat
+ * per-figure tone rather than in a noise field on the material.
+ *
+ * MOTION: a crowd that does not move is a terracotta army, and animating
+ * three thousand instance matrices every frame costs 3,240 matrix composes and
+ * a full 51 KB buffer upload at 60 Hz. So it is a ROLLING update — `stride`
+ * figures a frame, cycling through the whole crowd about twice a second — and
+ * what it writes is a small vertical bob and lean on a per-figure phase, plus
+ * a travelling wave whose crest sweeps the bowl. At 240 a frame that is 7% of
+ * the buffer touched per frame, which the driver uploads as one partial range,
+ * and the eye cannot tell it from every figure moving because every figure IS
+ * moving — just not on this frame.
+ */
+class Crowd {
+  constructor(world, mesh, seats, opts = {}) {
+    this.id = 'crowd' + (_propId++);
+    this.world = world;
+    this.mesh = mesh;
+    this.seats = seats;                 // Float32Array, 6 per seat: x y z yaw scale phase
+    this.n = seats.length / 6;
+    this.time = 0;
+    this.cursor = 0;
+    this.stride = opts.stride ?? 240;
+    this.excite = opts.excite ?? 1;
+    this.dead = false;
+    this.kind = 'crowd';
+    this.grippable = false;
+    this.generation = 0;
+    this.toughness = Infinity;
+    this.hp = Infinity;
+    /* The duck-typed prop's body, exactly as `DestructionProxy` does it: this
+     * rides in `world.props` so that it gets a per-frame `update` without a
+     * line of World.js changing. `capsules()` returns nothing, so the blade
+     * solver never offers it a contact and nothing here can be cut — a
+     * spectator sixty metres up a bank is scenery, and making three thousand of
+     * them cuttable would put three thousand capsules in the solver's list. */
+    this.body = {
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
+      boundingRadius: 0, mass: 0, invMass: 0, static: true,
+      applyImpulse() {}, wake() {},
+    };
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._p = new THREE.Vector3();
+    this._s = new THREE.Vector3();
+  }
+
+  capsules(out = []) { out.length = 0; return out; }
+  cut() { return []; }
+  shatter() {}
+  damage() { return false; }
+
+  update(dt) {
+    if (!(dt > 0) || !this.mesh) return;
+    this.time += dt;
+    const S = this.seats, n = this.n;
+    const end = Math.min(this.cursor + this.stride, n);
+    for (let i = this.cursor; i < end; i++) {
+      const k = i * 6;
+      const phase = S[k + 5];
+      /* Two motions, and they do different jobs. The per-figure bob at 1.9 Hz
+       * is what makes a still frame read as a crowd rather than as a pattern;
+       * the travelling wave — one crest going round the bowl every eleven
+       * seconds — is what makes a MOVING frame read as a crowd, because a
+       * field of independent oscillators averages out to noise at range and a
+       * coherent wave does not. */
+      const wave = Math.sin(this.time * 0.56 - phase * 2.0);
+      const lift = (Math.sin(this.time * 1.9 + phase * 7.3) * 0.045
+        + Math.max(0, wave) * 0.30 * this.excite) * S[k + 4];
+      const lean = Math.sin(this.time * 1.3 + phase * 4.1) * 0.06;
+      this._p.set(S[k], S[k + 1] + lift, S[k + 2]);
+      this._q.setFromEuler(_ke.set(lean, S[k + 3], lean * 0.5));
+      this._s.setScalar(S[k + 4]);
+      this._m.compose(this._p, this._q, this._s);
+      this.mesh.setMatrixAt(i, this._m);
+    }
+    this.cursor = end >= n ? 0 : end;
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  destroy() {
+    if (this.dead) return;
+    this.dead = true;
+    this.world.scene.remove(this.mesh);
+    this.mesh.geometry.dispose();
+    const i = this.world.props.indexOf(this);
+    if (i >= 0) this.world.props.splice(i, 1);
+  }
+}
+
+/**
+ * Seat a crowd on tiers around an oval.
+ *
+ * `rows` bands of seating between `rmin` and `rmax`, each row lifted by `rise`
+ * per row, every figure facing the middle. `aspect` squashes the ring into the
+ * oval a real amphitheatre is.
+ *
+ * `gaps` are angular spans, in radians as [from, to] pairs, that stay empty —
+ * the gates the fight walks out of, and the lords' box, which has its own
+ * occupants and does not want a crowd sitting on top of them.
+ */
+export function addCrowd(world, centre, opts = {}) {
+  const rng2 = makeRng(opts.seed ?? 5150);
+  const rows = opts.rows ?? 18;
+  const rmin = opts.rmin ?? 58, rmax = opts.rmax ?? 96;
+  const rise = opts.rise ?? 1.35;
+  const y0 = opts.y0 ?? 2.0;
+  const aspect = opts.aspect ?? 1.0;
+  const gaps = opts.gaps || [];
+  const fill = clamp(opts.fill ?? 0.88, 0, 1);
+  const pitch = opts.pitch ?? 1.15;              // metres of bench per figure
+  /* A multiplier on every figure. It exists for one caller — the lords in the
+   * box — and it is the whole of what tells them apart from the house: from
+   * the sand, at ninety metres, a figure is four pixels tall and NOTHING about
+   * a costume survives that. Scale does. */
+  const size = opts.scale ?? 1;
+
+  /* ONE FIGURE, built once. A seated body is a wedge — shoulders back, knees
+   * forward — because a box reads as a box and a wedge reads as somebody
+   * leaning. The head is the part that actually carries at range: it is the
+   * only convex highlight on the silhouette.
+   *
+   * THE KNEES ARE NOT DECORATION. A seated person occupies about 0.5 m of
+   * bench and 0.8 m of depth, and the depth is all legs — so a figure built as
+   * a torso alone is 0.48 × 0.46 in plan, which is a 0.24 m footprint. That
+   * matters because `world-immersion`'s barrenness survey only counts an
+   * object with a silhouette of 0.35 m or more, and without the legs a bank
+   * with three thousand people sitting on it measured as bare ground: 34% of
+   * the level's walkable area with "nothing within twelve metres" on it. With
+   * them the plan is 0.48 × 0.79 and a spectator is what a spectator is. */
+  const bodyG = extrudeBeveled([[-0.21, -0.42], [0.21, -0.42], [0.24, 0.30], [-0.24, 0.30]],
+    0.46, { bevel: 0.05, tile: FINE_TILE });
+  bodyG.translate(0, 0.42, -0.04);
+  const headG = new THREE.SphereGeometry(0.115, 6, 5);
+  headG.translate(0, 0.90, 0.02);
+  scaleUv(headG, uvm(0.6));
+  const shoulderG = plateGeo(0.44, 0.16, 0.30, 0.05, 1);
+  shoulderG.translate(0, 0.70, -0.02);
+  const thighG = plateGeo(0.40, 0.20, 0.44, 0.05, 1);
+  thighG.translate(0, 0.30, 0.30);
+  const shinG = plateGeo(0.36, 0.34, 0.20, 0.05, 1);
+  shinG.translate(0, 0.12, 0.46);
+  const geo = mergeGeos([bodyG, headG, shoulderG, thighG, shinG]);
+
+  /* The material reads vertex colour AND instance colour, so the garment
+   * families are free. Held ROUGH and matte: rule 8 — nothing is shiny — and a
+   * specular lobe on three thousand heads is a field of sparkle. */
+  const mat = readsVertexColour(new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 0.96, metalness: 0.0,
+  }));
+  mat.userData.weather = 0;
+
+  /* SIX GARMENT FAMILIES, and no more. Rule 5 of the art direction is one hue
+   * family plus an accent; a crowd painted from a continuous random hue is the
+   * single fastest way to put six competing hues in a frame. These are one
+   * ochre-to-umber family with a single cool note and one saturated accent
+   * that appears in about a twentieth of the seats — which reads, from the
+   * floor, as banners and finery scattered through a drab house. */
+  const FAMILY = opts.palette || [0x6b5a44, 0x7d6a4e, 0x574a3a, 0x8a7358, 0x4a4a52, 0xa8452a];
+  const WEIGHT = [0.26, 0.24, 0.20, 0.16, 0.09, 0.05];
+  const fam = FAMILY.map((h) => new THREE.Color(h));
+
+  const inGap = (a) => gaps.some(([f, t]) => {
+    const d = ((a - f) % TAU + TAU) % TAU;
+    return d <= ((t - f) % TAU + TAU) % TAU;
+  });
+
+  const seats = [];
+  const colors = [];
+  for (let r = 0; r < rows; r++) {
+    const t = rows === 1 ? 0 : r / (rows - 1);
+    const rad = lerp(rmin, rmax, t);
+    const y = y0 + r * rise;
+    // one figure per `pitch` of bench, so the outer rows genuinely hold more
+    const count = Math.max(8, Math.round((TAU * rad * (0.5 + 0.5 * aspect)) / pitch));
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * TAU + (r % 2) * (Math.PI / count);
+      if (inGap(a)) continue;
+      if (rng2() > fill) continue;                 // the empty seats
+      const x = centre.x + Math.cos(a) * rad;
+      const z = centre.z + Math.sin(a) * rad * aspect;
+      // a little shuffle along the bench, so the rows are not a comb
+      const jx = (rng2() - 0.5) * 0.34, jz = (rng2() - 0.5) * 0.34;
+      seats.push(x + jx, y, z + jz, -a + Math.PI / 2 + (rng2() - 0.5) * 0.5,
+        (0.92 + rng2() * 0.22) * size, rng2() * TAU + a);
+      let pick = rng2(), k = 0, acc = 0;
+      while (k < WEIGHT.length - 1 && (acc += WEIGHT[k]) < pick) k++;
+      colors.push(fam[k]);
+    }
+  }
+  const n = seats.length / 6;
+  if (!n) return null;
+
+  const im = new THREE.InstancedMesh(geo, mat, n);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const p = new THREE.Vector3(), s = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const k = i * 6;
+    p.set(seats[k], seats[k + 1], seats[k + 2]);
+    q.setFromAxisAngle(UP, seats[k + 3]);
+    s.setScalar(seats[k + 4]);
+    im.setMatrixAt(i, m.compose(p, q, s));
+    im.setColorAt(i, colors[i]);
+  }
+  im.instanceMatrix.needsUpdate = true;
+  if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  /* NO SHADOWS FROM THE CROWD. Three thousand casters in a shadow map that is
+   * sized for a fight on the floor buys nothing — every one of them is a
+   * four-pixel figure on a bank that is already in its own shade — and it
+   * costs the whole crowd a second pass. They RECEIVE, so the bowl's own
+   * shadow falls across them, which is the half that reads. */
+  im.castShadow = false;
+  im.receiveShadow = true;
+  im.name = 'crowd';
+  im.frustumCulled = true;
+  im.computeBoundingSphere?.();
+  world.scene.add(im);
+  world.statics.push(im);
+
+  const crowd = new Crowd(world, im, new Float32Array(seats), opts);
+  if (world.addProp) world.addProp(crowd);
+  else if (world.props) world.props.push(crowd);
+  return crowd;
+}

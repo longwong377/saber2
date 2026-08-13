@@ -5402,6 +5402,193 @@ export function buildBeast(opts = {}) {
   return { rig, palette: { hide, chitin, belly, eye }, scale: S };
 }
 
+/* ── the menagerie: four-legged arena beasts ─────────────────────────── */
+
+/**
+ * TWO CREATURES OUT OF ONE BUILDER, and the reason they are one builder is the
+ * reason they read as different animals: everything that differs between them
+ * is a PROPORTION, and proportion is what the eye actually uses to tell one
+ * animal from another at fifty metres.
+ *
+ *   the CHARGER   short, deep and front-heavy: shoulder mass at 1.45× the
+ *                 haunch, legs at 0.78 of standard length, and a horn boss and
+ *                 frill carried out in front of the eyes. Everything about the
+ *                 silhouette says the weight is at the head end and it is
+ *                 coming at you.
+ *   the STALKER   long, low and back-heavy: the body stretched to 1.5× and
+ *                 slung at 0.62 of the charger's hip height, legs at 1.06, a
+ *                 quill mane over the shoulders and a tail as long as the body
+ *                 again. Everything says it is about to leave the ground.
+ *
+ * Both stand on `walkerSkeleton(S, 4)`, so both inherit the quadruped gait,
+ * the sever points, the ragdoll and `Enemy.capsules`'s four-leg case for free.
+ * The acklay's six-legged builder is left alone: three creatures out of two
+ * skeletons is the right ratio, and forcing the acklay through here would have
+ * cost it the thing that makes it the acklay, which is that it has six legs.
+ *
+ * The head goes on the HEAD BONE and is built FORWARD out of it, the same
+ * trick and for the same reason `buildBeast` documents: walkerSkeleton hangs
+ * that bone 0.6 units behind the body, so a skull placed at its origin is
+ * inside the ribcage and invisible from every angle.
+ */
+export function buildQuadruped(opts = {}) {
+  const S = opts.scale ?? 2.2;
+  const heavy = opts.kind !== 'stalker';           // the charger is the default
+  const rig = new Rig(walkerSkeleton(S, 4), { scale: S });
+  const hide = hideMat(opts.hide ?? (heavy ? 0x6a5f4e : 0x7a3a2c), 0.92);
+  const plate = chitinMat(opts.plate ?? (heavy ? 0x9a8b6c : 0x4a3128), 0.52);
+  const belly = hideMat(opts.belly ?? (heavy ? 0x8d8168 : 0xa8846a), 0.94);
+  const eye = emissiveMat(opts.eye ?? (heavy ? 0xffb03a : 0x66ff9a), 2.8);
+  const tooth = boneMat(0xd6cbb0, 0.34);
+
+  /* ── the barrel ── */
+  const body = rig.get('body');
+  const LONG = heavy ? 1.0 : 1.5;                  // how far the body is drawn out
+  const FRONT = heavy ? 1.45 : 0.90;               // shoulder mass over haunch
+  const barrel = assemble([
+    [(() => { const g = new THREE.SphereGeometry(0.60 * S, 14, 10); g.scale(0.80, 0.86, 1.20 * LONG); return g; })(),
+      [0, 0.10 * S, -0.10 * S]],
+    // shoulders forward, haunches back — the two masses a quadruped reads as
+    [(() => { const g = new THREE.SphereGeometry(0.44 * S * FRONT, 10, 8); g.scale(0.94, 0.96, 0.92); return g; })(),
+      [0, 0.16 * S, 0.36 * S * LONG]],
+    [(() => { const g = new THREE.SphereGeometry(0.44 * S * (2.35 - FRONT), 10, 8); g.scale(0.92, 0.94, 0.96); return g; })(),
+      [0, 0.12 * S, -0.62 * S * LONG]],
+  ], 'barrel');
+  const bm = mesh(barrel, hide, body.obj);
+  body.primary = bm; body.parts.push(bm); body.radius = 0.62 * S;
+
+  const kb = new Kit();
+  if (heavy) {
+    // armour scutes down the spine, heaviest over the shoulder
+    kb.row(6, (i, t) => kb.add(plate, plateGeo((0.56 - Math.abs(t - 0.3) * 0.30) * S, 0.09 * S, 0.20 * S, 0.03 * S, 1),
+      [0, (0.60 - Math.abs(t - 0.35) * 0.16) * S, (0.44 - t * 1.24) * S], [0.08, 0, 0]));
+  } else {
+    /* THE MANE, and it is the stalker's whole read at range. Quills raked back
+     * off the shoulders in three rows: a low animal with a smooth back is a
+     * dog, and a low animal with a crest is a predator. */
+    kb.row(3, (i, t) => kb.pair((sx) => kb.add(plate, clawGeo((0.62 - t * 0.16) * S, 0.045 * S, 0.008 * S, -0.35, 6, 3),
+      [sx * (0.06 + t * 0.14) * S, 0.54 * S, (0.44 - t * 0.42) * S], [-0.85, sx * (0.1 + t * 0.3), sx * (0.2 + t * 0.5)])));
+  }
+  // ribbed flanks and a soft belly — the one place on either animal a blade
+  // meets flesh rather than plate
+  kb.pair((sx) => kb.row(4, (i, t) => kb.add(plate, plateGeo(0.05 * S, 0.40 * S, 0.15 * S, 0.02 * S, 1),
+    [sx * 0.46 * S, 0.02 * S, (0.30 - t * 1.00 * LONG) * S], [0, 0, sx * 0.2])));
+  kb.add(belly, (() => { const g = new THREE.SphereGeometry(0.44 * S, 12, 8); g.scale(0.88, 0.40, 1.24 * LONG); return g; })(),
+    [0, -0.24 * S, -0.14 * S]);
+
+  /* THE TAIL, on the body bone rather than a bone of its own: the skeleton has
+   * no tail chain, and a tail welded to the hips would swing with the hips,
+   * which is what a tail does. Six tapering segments, and the stalker's is as
+   * long again as its body. */
+  {
+    const n = heavy ? 4 : 7;
+    const reach = (heavy ? 0.9 : 2.2) * S;
+    let z = -0.86 * S * LONG, y = 0.10 * S, pitch = heavy ? 0.55 : 0.18;
+    for (let i = 0; i < n; i++) {
+      const len = reach / n;
+      const r0 = (heavy ? 0.13 : 0.10) * S * (1 - i / (n + 1.5));
+      kb.add(hide, limbGeo(len * 1.12, r0, r0 * 0.78, 7, true, { rings: 2, capN: 2 }),
+        [0, y, z], [Math.PI / 2 + pitch, 0, 0]);
+      z -= Math.cos(pitch) * len; y += Math.sin(pitch) * len;
+      pitch += heavy ? 0.10 : -0.06;
+    }
+  }
+  kb.bake(body.obj);
+
+  /* ── neck and head, built forward out of the head bone ── */
+  const head = rig.get('head');
+  const parts = [];
+  let hy = 0, hz = 0, pitch = heavy ? 0.32 : 0.10;
+  const segs = heavy ? 3 : 4;
+  for (let i = 0; i < segs; i++) {
+    const len = (heavy ? 0.40 : 0.34) * S;
+    const r0 = (heavy ? 0.30 : 0.20) * S - i * 0.03 * S;
+    parts.push([limbGeo(len * 1.10, r0, r0 * 0.88, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
+      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
+    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
+    pitch += heavy ? -0.10 : 0.02;
+  }
+  // the skull: a long wedge on both, but the charger's is a brick and the
+  // stalker's is a blade
+  parts.push([(() => {
+    const g = new THREE.SphereGeometry(0.26 * S, 12, 10);
+    g.scale(heavy ? 0.98 : 0.66, heavy ? 0.86 : 0.62, heavy ? 1.24 : 1.72);
+    return g;
+  })(), [0, hy + 0.02 * S, hz + 0.24 * S]]);
+  parts.push([plateGeo(0.26 * S, 0.12 * S, (heavy ? 0.38 : 0.48) * S, 0.04 * S, 1),
+    [0, hy - 0.13 * S, hz + 0.30 * S], [0.10, 0, 0]]);
+  const skull = assemble(parts, 'skull');
+  const hm = mesh(skull, hide, head.obj);
+  head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
+
+  const kh = new Kit();
+  if (heavy) {
+    /* THE FRILL AND THE HORNS. A charging animal's threat display is carried
+     * where you will hit it, and it is what makes the head-on silhouette a
+     * wall rather than a face — which is the whole counter-play: you do not
+     * meet this from the front. */
+    kh.add(plate, plateGeo(1.00 * S, 0.62 * S, 0.10 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.10 * S], [-0.30, 0, 0]);
+    kh.pair((sx) => {
+      kh.add(plate, clawGeo(0.66 * S, 0.085 * S, 0.016 * S, 0.55, 7, 4),
+        [sx * 0.21 * S, hy + 0.12 * S, hz + 0.28 * S], [1.05, sx * 0.42, 0]);
+      kh.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 6), [sx * 0.17 * S, hy + 0.10 * S, hz + 0.22 * S]);
+    });
+    // a nose horn on the centre line, which is the thing that actually hits you
+    kh.add(plate, clawGeo(0.46 * S, 0.090 * S, 0.014 * S, -0.30, 7, 4), [0, hy + 0.06 * S, hz + 0.44 * S], [0.55, 0, 0]);
+  } else {
+    /* FOUR EYES, in two pairs. It is one line of geometry and it is the single
+     * most alien thing about this animal — a face with the wrong number of
+     * eyes on it reads as wrong from further away than any amount of horn. */
+    kh.pair((sx) => {
+      kh.add(eye, new THREE.SphereGeometry(0.040 * S, 7, 6), [sx * 0.12 * S, hy + 0.09 * S, hz + 0.24 * S]);
+      kh.add(eye, new THREE.SphereGeometry(0.028 * S, 6, 5), [sx * 0.15 * S, hy + 0.02 * S, hz + 0.14 * S]);
+      // the fangs, and the whiskers of quill either side of the jaw
+      kh.add(tooth, clawGeo(0.30 * S, 0.032 * S, 0.005 * S, 0.5, 5, 3),
+        [sx * 0.09 * S, hy - 0.14 * S, hz + 0.40 * S], [0.9, 0, 0]);
+      kh.add(plate, clawGeo(0.44 * S, 0.026 * S, 0.005 * S, -0.4, 5, 3),
+        [sx * 0.15 * S, hy + 0.02 * S, hz + 0.10 * S], [-0.6, sx * 0.9, 0]);
+    });
+  }
+  // the jaw teeth, on both
+  kh.pair((sx) => kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
+    [sx * 0.10 * S, hy - 0.18 * S, hz + (0.18 + t * 0.28) * S], [0.5, 0, 0])));
+  kh.bake(head.obj);
+
+  /* ── legs. The charger's are short and thick and the stalker's long and
+   * light, which is 78% and 106% of the same numbers. */
+  const LEG = heavy ? 0.78 : 1.06;
+  for (let i = 0; i < 4; i++) {
+    for (const [name, r0, r1, mat, bulge] of [
+      [`hipL${i}`, 0.17, 0.14, plate, 0.08], [`femur${i}`, 0.16, 0.10, hide, 0.20],
+      [`tibia${i}`, 0.105, 0.058, hide, 0.14], [`tarsus${i}`, 0.060, 0.030, plate, 0.05]]) {
+      const b = rig.get(name);
+      if (!b) continue;
+      const rr0 = r0 * S * LEG, rr1 = r1 * S * LEG;
+      const m = mesh(limbGeo(b.length, rr0, rr1, 8, true, { rings: 4, bulge, bulgeAt: 0.26, capN: 3 }), mat, b.obj);
+      m.userData.limb = { r0: rr0, r1: rr1, seg: 8 };
+      b.parts.push(m); b.primary = m; b.radius = rr0;
+    }
+    const hip = rig.get(`hipL${i}`);
+    if (hip) { const k = new Kit(); k.add(plate, new THREE.SphereGeometry(0.16 * S * LEG, 8, 6), [0, hip.length, 0]); k.bake(hip.obj); }
+    const femur = rig.get(`femur${i}`);
+    if (femur) {
+      const k = new Kit(); const L = femur.length;
+      k.add(plate, limbPlate(femur, L * 0.10, L * 0.66, 2.5, { thick: 0.024 * S, seg: 7, gap: 0.008 * S }), [0, L * 0.10, 0]);
+      k.bake(femur.obj);
+    }
+    const tarsus = rig.get(`tarsus${i}`);
+    if (tarsus) {
+      const k = new Kit(); const L = tarsus.length;
+      // a hoof on the charger, a splayed claw on the stalker
+      if (heavy) k.add(plate, new THREE.CylinderGeometry(0.13 * S, 0.15 * S, 0.16 * S, 8), [0, L * 0.94, 0.02 * S]);
+      else k.row(3, (j, t) => k.add(plate, clawGeo(0.34 * S, 0.036 * S, 0.008 * S, 1.05, 6, 4),
+        [(t - 0.5) * 0.14 * S, L * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
+      k.bake(tarsus.obj);
+    }
+  }
+  return { rig, palette: { hide, chitin: plate, belly, eye }, scale: S };
+}
+
 /* ── bodyguard droid (boss) ──────────────────────────────────────────── */
 
 /**
