@@ -518,6 +518,13 @@ function catalogue() {
     ['addScree', (o) => P.addScree(o, V(0, 0, 0), { radius: 10, count: 60 })],
     ['addPipeRun', (o) => P.addPipeRun(o, [V(0, 3, 0), V(8, 3.2, 0), V(16, 2.6, 2)], { count: 3 })],
     ['addCableRun', (o) => P.addCableRun(o, V(0, 8, 0), V(20, 7, 0), { count: 4 })],
+    /* A crowd is instanced and its figures are 1 m tall, so the see-through
+     * surveys below rasterise it at the same resolution as a crate — which is
+     * the right test: a spectator with a hole in its top is a spectator with a
+     * hole in its top. `onGround: false` because this stub's terrain is a
+     * plane and the seating ladder is what is being built. */
+    ['addCrowd', (o) => P.addCrowd(o, V(0, 0, 0), { rows: 4, rmin: 4, rmax: 9, rise: 0.9,
+      y0: 0.2, pitch: 1.2, onGround: false })],
     ['addCrateStack', (o) => P.addCrateStack(o, V(0, 0, 0))],
     ['addTarp', (o) => P.addTarp(o, V(0, 0, 0))],
     ['addScaffold', (o) => P.addScaffold(o, V(0, 0, 0))],
@@ -554,6 +561,12 @@ const NOT_A_MAKER = new Set([
   'weatherStats', 'paintGeo', 'mergeGeos', 'extrudeBeveled', 'slabGeo', 'catenaryPoints', 'cylGeo',
   'torusGeo', 'tubeAlong', 'pipeBetween', 'brokenEdge', 'strataTint', 'addStatic', 'seatOnGround',
   'Kit', 'Prop', 'rockGeo', 'addInstanced', 'ROCK_TILE', 'TEXEL_BAND', 'WEAR', 'ARCH',
+  /* `addStorm` emits no geometry at all — it is one directional light and a
+   * schedule of when to turn it on — so there is nothing for a see-through
+   * survey to look through. It is in this list for the same reason
+   * `addInstanced` is: the name matches the maker pattern and the thing does
+   * not make a prop. */
+  'addStorm',
 ]);
 
 function pct(a, p) {

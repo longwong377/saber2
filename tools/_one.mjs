@@ -4,6 +4,7 @@
  * not cost a four-minute full run.
  */
 import './dom-shim.mjs';
+import * as THREE from 'three';
 
 const name = process.argv[2];
 const mod = await import(`./checks/${name}.mjs`);
@@ -18,6 +19,8 @@ const check = (label, fn) => {
 };
 const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
 const near = (a, b, tol = 1e-6, m = '') => assert(Math.abs(a - b) <= tol, `${m} ${a} != ${b}`);
-await mod.run({ check, assert, near });
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const Q = (x, y, z, w) => new THREE.Quaternion(x, y, z, w);
+await mod.run({ check, assert, near, V, Q, THREE });
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

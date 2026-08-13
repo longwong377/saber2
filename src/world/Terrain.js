@@ -1171,8 +1171,14 @@ export const TERRAIN_PRESETS = {
       /* The hull, in plan. Anisotropic so the ship is longer than it is wide,
        * and Chebyshev rather than Euclidean so the beam is a straight run of
        * wall amidships instead of a barrel. */
-      const d = Math.max(Math.abs(x) / 84, Math.abs(z) / 116);
-      let wall = smoothstep(0.80, 1.0, d) * 44;
+      /* 104 and 0.86, not 116 and 0.80. `descent.mjs` asks a room to be walled
+       * by ground the player cannot walk up — over 0.55 of 1 − cos θ, i.e.
+       * 63° — along every bearing out to 112 m, and the first version put the
+       * fore and aft hull at 44 m over 23 m of run, which is 62.4°: two of
+       * sixteen bearings opened onto a ramp the player could walk out over.
+       * At 46 m over 14.6 it is 72°. */
+      const d = Math.max(Math.abs(x) / 84, Math.abs(z) / 104);
+      let wall = smoothstep(0.86, 1.0, d) * 46;
 
       /* THE SPINE IS NARROW, and it has to be narrow in the GROUND rather than
        * in the props standing on it. The first version put ribs 22 m apart on a
@@ -1450,19 +1456,31 @@ export const TERRAIN_PRESETS = {
      * bright pixel on this level is either the sea, a lamp or lightning. The
      * one hue family is blue-grey and the accents are the platform's own
      * approach lights, which are the only warm thing for a hundred metres. */
-    sandColor: 0x4c545c, rockColor: 0x3a4048,
+    /* WET duracrete, not dry. With `damp` held under the cover rule's 0.2 (see
+     * below) the albedo has to carry the wetness on its own, and the way a wet
+     * surface differs from a dry one is that it is DARKER and more saturated —
+     * water fills the pores and stops them scattering. Measured against the
+     * works' dry deck: luminance 0.72× and chroma 1.9×. */
+    sandColor: 0x3d454f, rockColor: 0x2e343d,
     maps: 'deck',
-    gritColor: 0x424a54, rockColor2: 0x282e36,
+    gritColor: 0x333c48, rockColor2: 0x1e242c,
     // swept deck against the streaks of salt the spray leaves on it
     dustColor: 0x5e6771, crustColor: 0x353c44,
     slopeBands: [0.05, 0.20, 0.010, 0.045],
     stoneSlope: 0.2,
-    /* `damp` 0.85 is the second highest in the file after the bog's 0.9, and
-     * on THIS preset it is the whole material: the shader darkens and
-     * saturates toward the water table, so the deck gets visibly wetter as it
-     * falls toward a pan and the pools have a soaked margin round them rather
-     * than a line. That margin is what stops a puddle reading as a decal. */
-    crust: 0.0, damp: 0.85, strataH: 2.0,
+    /* `damp` 0.18, AND NOT THE 0.85 THIS WANTED. `ground-memory.mjs` holds one
+     * rule about the channel: ground that is soil, or damp past 0.2, must
+     * carry a cover field, and nothing else may — because damp is the term
+     * that says "things grow here". Nothing grows on a poured deck in the
+     * middle of an ocean, so the deck may not claim it.
+     *
+     * What the 0.85 was for — a soaked margin round every pool, so a puddle
+     * has a wet edge instead of a line — is done by the ALBEDO instead: the
+     * base and grit swatches are authored as wet duracrete rather than dry,
+     * two stops down and half a step more saturated than the works' deck, and
+     * the transition at the waterline is `Water`'s own shoreline band, which
+     * is analytic and knows where the shore is. */
+    crust: 0.0, damp: 0.18, strataH: 2.0,
     wind: [0.42, 0.91],
     macro: [70, 0.30, 0.26, 0.90],
     lagColor: 0x2c333c, sheetColor: 0x6b747f,

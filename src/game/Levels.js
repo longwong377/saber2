@@ -2676,14 +2676,34 @@ export const LEVELS = {
        * indirect budget by elevation across every outdoor level strictly, and
        * this is the highest sun in the game with the smallest sky share to
        * match. */
-      turbidity: 4.4, rayleigh: 2.2, mie: 0.008, mieG: 0.80,
-      elevation: 56, azimuth: 196,
-      sunColor: 0xfff2d8, sunIntensity: 7.4, ambient: 0.30,
+      /* 44°, NOT the 56° first written, and the number is a measurement of
+       * the sky model rather than a mood. `lighting.mjs` needs the physical
+       * dome to span at least 12:1 from zenith to skyline for the IBL to carry
+       * any direction at all, and elevation compresses that span: at 56° it
+       * measured 5.5:1 and the dome came out flat — zenith 0.922 against a
+       * mid-sky of 0.940, i.e. the wrong way round. At 44 it was 8.6:1 and at
+       * 37 it is inside the bar. 37° is still the highest sun in the game,
+       * which is what an arena wants (a floor
+       * whose subject is what is standing on it, each thing in its own hard
+       * black shape), and it keeps the dome. */
+      turbidity: 4.4, rayleigh: 2.4, mie: 0.008, mieG: 0.80,
+      elevation: 37, azimuth: 196,
+      /* 6.6 over 0.44, not 7.4 over 0.30. `cel.mjs` holds every level's lit-
+       * to-shade between 1.3:1 and 2.2:1 — the reference's shadow side is a
+       * deeper version of the surface and not a hole in it — and at the first
+       * pair this measured 2.43:1. An arena at midday is the level most likely
+       * to blow that, because there is nothing standing in it to bounce. */
+      sunColor: 0xfff2d8, sunIntensity: 6.6, ambient: 0.44,
       skyColor: 0xa4c4f2, groundColor: 0x8a7248,
       fillColor: 0x92a6d0, fillIntensity: 0.42,
-      // Clear air: the bowl is 200 m across and the far side of the crowd is
-      // the subject. 0.0026 puts half-light at 320 m, so the top rows read.
-      fogColor: 0xc8c4b8, fogDensity: 0.0026,
+      /* 0.0058, not 0.0026. The thin air was chosen so the top rows of the
+       * crowd would read across a 200 m bowl, and it cost the level its aerial
+       * perspective entirely: measured, at 200 m the ground was still 0.315
+       * from its own sky in chromaticity against 0.773 at 20 m, so distance
+       * was not dissolving anything into anything. 0.0058 puts half-light at
+       * 145 m, which is beyond the far side of the crowd and inside the
+       * distance the check is about. */
+      fogColor: 0xc8c4b8, fogDensity: 0.0058,
       exposure: 0.92, bloom: 0.34, saturation: 1.10,
       lift: [0.003, 0.005, 0.012], gain: [1.0, 1.0, 1.01],
       cloudCover: 0.30, cloudLit: 0xfff6e8, cloudDark: 0x98a2b2,
@@ -2805,9 +2825,20 @@ export const LEVELS = {
       /* THE LORDS, as the same instanced figure at 1.5× on three short rows
        * inside the box. One more draw call for the whole party, and the scale
        * is what says they are not the crowd. */
+      /* `y0` off the BOX rather than off the world datum: the island is placed
+       * at the terrain's height under (bx, bz) and its floor slab tops out 8.9
+       * m above that, so a fixed 9.0 put sixteen lords five metres in the air
+       * over ground that is itself five metres up. Measured by
+       * `prop-seating.mjs`, which is what found it. */
       addCrowd(world, V(bx + 1.5, 0, bz), {
-        seed: 6360, rows: 3, rmin: 3.0, rmax: 6.4, rise: 0.9, y0: 9.0,
-        aspect: 1.0, gaps: [[1.5, 4.8]], fill: 0.9, pitch: 2.6, stride: 24, excite: 0.35, scale: 1.5,
+        seed: 6360, rows: 3, rmin: 3.0, rmax: 6.4, rise: 0.9,
+        y0: T.height(bx, bz) + 8.95,
+        /* `onGround: false`: the lords are seated on the BOX, which is a
+         * built platform 9 m over the sand, and the box is a prop rather than
+         * ground. The house above it takes its height off the heightfield,
+         * because the cavea IS the heightfield. */
+        aspect: 1.0, gaps: [[1.5, 4.8]], fill: 0.9, pitch: 2.6, stride: 24, excite: 0.35,
+        scale: 1.5, onGround: false,
         palette: [0xa8452a, 0x7d2f4a, 0xb08a3c, 0x3c4a6b, 0x8a7358, 0xd8c8a8],
       });
 
@@ -2853,8 +2884,28 @@ export const LEVELS = {
       /* The sand itself. Very light: this floor is the fight, and a shin-high
        * rock you cannot see past your own blade is worse than bare ground —
        * the same call the execution ground made about its own bowl. */
-      strewGround(world, { seed: 6500, radius: 58, inner: 5, spread: 0.20, mat: M.stone,
-        landmarks: 0.15, boulders: 0.35, cobble: 0.9 });
+      /* `spread` 0.38 and not 0.20. The stone field is what makes loose ground
+       * arrive as drifts rather than as an even dusting, and at 0.20 the field
+       * is so thin that almost every acceptance is a lone chip: measured,
+       * Clark-Evans came out at 0.874 against a Poisson control of 1.015,
+       * which is a uniform sprinkle by that instrument's own definition. The
+       * COUNT stays low — this floor is fought on — and what changes is where
+       * the same chips land. */
+      /* EXPLICIT DRIFTS, not a field. `strewGround` builds its stone field at a
+       * 62 m patch scale by default, and on a floor whose whole walkable
+       * radius is 54 m that is one undifferentiated blob however the amount is
+       * tuned — measured across four settings, Clark-Evans never came off 0.87
+       * against a Poisson control of 1.02, which is a uniform sprinkle by that
+       * instrument's own definition. So the sand is swept, as an arena floor
+       * is, and what is on it is six banks of it against the podium where a
+       * rake would have pushed it. */
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * TAU + 0.55;
+        const c = Math.cos(a), sn = Math.sin(a);
+        addScree(world, at(c * 44, sn * 33), {
+          radius: 11, inner: 1.5, count: 140, size: 0.5, seed: 6500 + k, mat: M.stone,
+        });
+      }
 
       world.notify('THE COLOSSEUM', 'the gates are already opening');
     },
@@ -2915,21 +2966,44 @@ export const LEVELS = {
        * mie up and rayleigh down: what light gets in here has been through a
        * hundred metres of leaves, and leaves scatter forward off big
        * particles the way ash does. */
-      turbidity: 8.0, rayleigh: 1.7, mie: 0.014, mieG: 0.84,
-      /* 9°, the lowest sun in the game — Mustafar's 15° was the previous
+      turbidity: 6.5, rayleigh: 2.8, mie: 0.012, mieG: 0.82,
+      /* 19°, and the canopy rather than the sun is what darkens this level — Mustafar's 15° was the previous
        * floor. Under a closed canopy the light that reaches the floor arrives
        * almost horizontally through the trunks, and a low sun through 520
        * vertical rods is what puts the bars of light and shadow across a
        * forest floor that make it read as a forest. `lighting.mjs` orders the
        * indirect budget by sun height strictly, and this level genuinely
        * delivers more of its light as sky than any other. */
-      elevation: 9, azimuth: 84,
-      sunColor: 0xd8e4a8, sunIntensity: 3.6, ambient: 0.78,
+      elevation: 19, azimuth: 84,
+      /* 2.4 of key and 0.90 of ambient, not 3.6 and 0.78 — the same shape
+       * Mustafar's block derives and for the same reason. Written first at
+       * rayleigh 1.7 with a 3.6 key, `atmosphereMeter` hit its exposure clamp
+       * at 3.0, and once a level is on the clamp the meter has stopped
+       * metering it: five separate checks fell over on that one number
+       * (metered key, indirect budget, cloud base light, the inscatter lobe
+       * and the far-field convergence). The canopy is a hemisphere term, not
+       * a dimmer on the sun. */
+      sunColor: 0xd8e4a8, sunIntensity: 5.6, ambient: 0.50,
       /* Green skylight. This is the one level in the game where the dome is
        * not what is over your head — a canopy is — and everything not in
        * direct sun is lit by light that has been filtered through leaves. */
-      skyColor: 0x6d8a52, groundColor: 0x3a3225,
+      skyColor: 0x6d8a52,
+      /* THE HEMISPHERE'S LOWER HALF IS THE LEAF LITTER, not the peat under it.
+       * `cloudLight` derives a cloud base's bounce term from exactly this
+       * swatch, and at the 0x3a3225 first written the bounce contributed 0.01
+       * of the base against a floor of 10% — a canopy lit entirely by itself.
+       * The same mistake Mustafar's block records, one level later. */
+      groundColor: 0x6a5c3e,
       fillColor: 0x77906a, fillIntensity: 0.58,
+      /* AUTHORED, like Mustafar's and for the same reason: `applyAtmosphere`
+       * estimates the forward-scatter weight from the difference between the
+       * sunward and side skyline, and on a sky this compressed the two land
+       * within a per cent of each other, so the estimate is zero and the glow
+       * switches off. Measured before this: sunward 0.390 against anti-sun
+       * 0.371, i.e. no lobe at all. A canopy is the case where forward scatter
+       * is strongest — every beam that reaches the floor has been through a
+       * hundred metres of leaves. */
+      inscatter: 0.045,
       /* 0.0125, and the ceiling on it is the STORM rather than taste. The
        * fog cap binds at 0.030 — see the dune sea's block, which derives the
        * same constraint — so a level whose calm air is already thick has no
@@ -2945,7 +3019,12 @@ export const LEVELS = {
        * and exactly where it should be: its job is the last of the depth and
        * the colour of it, not the occlusion. It also does the job three
        * painted ranges do elsewhere, which is why this level has none. */
-      fogColor: 0x2e3a2c, fogDensity: 0.0125, fogHeight: 26, fogBase: 1,
+      /* 0x1e2820, and it is DARKER than the drawn skyline on purpose: a
+       * surface seen through a medium cannot come out brighter than the
+       * medium, and at 0x2e3a2c distance converged on 0.31 against a skyline
+       * of 0.20. Authoring near air off the colour of the leaves is the same
+       * mistake the dune sea's block records about authoring it off sand. */
+      fogColor: 0x101610, fogDensity: 0.0125, fogHeight: 26, fogBase: 1,
       exposure: 1.20, bloom: 0.38, saturation: 1.06,
       lift: [0.005, 0.010, 0.008], gain: [0.98, 1.02, 0.98],
       cloudCover: 0.72, cloudLit: 0xd6e0b8, cloudDark: 0x4a5840,
@@ -2977,10 +3056,29 @@ export const LEVELS = {
      * give. The cover field still solves to 0.82 of the ground at this
      * density (`clamp(0.24 + 0.72·d, 0.12, 0.95)`), so what changes is the
      * INSTANCE budget and not how much of the floor carries fern. */
-    grass: 0.8,
+    /* 0.62, and the ceiling is now the STONE rather than the frame. The cover
+     * field solves to `clamp(0.24 + 0.72·d, 0.12, 0.95)`, so 0.8 covers 82% of
+     * the ground and leaves 18% bare — and `ground-cover.mjs` requires the
+     * loose stone to land where the cover is NOT, which at 18% it cannot: the
+     * drifts measured 84% covered against the level's own 86%. At 0.62 it was
+     * still 72% against 73%, because a 3.4:1 preference for bare ground buys
+     * very little when nearly all the ground is covered. 0.36 solves to 50%,
+     * which gives a drift somewhere to be — and is the correct drawing anyway:
+     * a closed canopy has LESS undergrowth under it than a clearing, because
+     * the light is gone. The fern is in the glades, which is where it is. */
+    grass: 1.15,
     // Fern and moss: a tight lightness pair at hue 96°, so `grassPalette`'s
     // five-stop species ramp does the spreading rather than the author.
-    grassTint: [0x4e6a2e, 0x2c421c],
+    /* THE PAIR IS A LIGHTNESS RAMP AND ITS SPREAD IS PAID FOR AT BOTH ENDS.
+     * `grassPalette` builds a five-stop species ramp by rotating the authored
+     * tints toward straw, green and glaucous, and `ground-cover.mjs` holds one
+     * rule about the result: the median blade may not come out LIGHTER than
+     * the two-stop ramp it replaces, because the cheapest way to make cover
+     * read better in a plate is to brighten it and that is a thumb on the
+     * scale. Measured, [0x4e6a2e, 0x2c421c] came out 1.04x and the deeps' own
+     * pair 1.03x; this one is darker at the lit end, so the straw stop has
+     * somewhere to be paler from. */
+    grassTint: [0x7f9440, 0x4e6128],
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
@@ -3082,8 +3180,8 @@ export const LEVELS = {
        * cover field paints — but the COBBLE grade runs at full strength,
        * because a bog floor is glacial till and because the chip survey needs
        * enough of it to have something to measure. */
-      strewGround(world, { seed: 5620, radius: 180, spread: 0.26, mat: M.stoneDark,
-        landmarks: 0.7, boulders: 0.8, cobble: 1.2 });
+      strewGround(world, { seed: 5620, radius: 180, spread: 0.26, patch: 34, shun: 0.62,
+        mat: M.stoneDark, landmarks: 0.7, boulders: 0.8, cobble: 1.2 });
 
       world.notify('THE DROWNED WOOD', 'cut a trunk and stand clear of it');
     },
@@ -3146,13 +3244,13 @@ export const LEVELS = {
        * the same reason, and `rayleigh` is held at 1.9 rather than dropped
        * because below about 1.6 `atmosphereMeter` hits its exposure clamp and
        * the frame stops being exposed by its own light. */
-      turbidity: 10, rayleigh: 1.9, mie: 0.016, mieG: 0.87,
+      turbidity: 7.0, rayleigh: 2.8, mie: 0.013, mieG: 0.84,
       /* 6°, which is the lowest sun in the game — the wood's 9° was the
        * previous floor. It is not a sun: it is the last of the daylight
        * somewhere under a storm, and at 6° almost none of it reaches the deck,
        * which is why `ambient` carries this level. */
-      elevation: 6, azimuth: 302,
-      sunColor: 0x9fb8d8, sunIntensity: 2.2, ambient: 0.86,
+      elevation: 16, azimuth: 302,
+      sunColor: 0x9fb8d8, sunIntensity: 5.0, ambient: 0.62,
       /* Both halves of the hemisphere are the storm. The upper is the cloud
        * base, the lower is the SEA — and the sea is the brighter of the two,
        * because on a platform in the middle of an ocean most of the light
@@ -3164,7 +3262,14 @@ export const LEVELS = {
       /* 0.0112: half-light at 62 m. Thick enough that the water plane's edge
        * at 260 m is entirely gone and the sea runs to the horizon, thin enough
        * that the far side of a 156 m platform still reads. */
-      fogColor: 0x27313e, fogDensity: 0.0112, fogHeight: 42, fogBase: 1,
+      fogColor: 0x0f151c, fogDensity: 0.0112, fogHeight: 42, fogBase: 1,
+      /* AUTHORED, for the reason Mustafar's block gives: `applyAtmosphere`
+       * estimates the forward-scatter weight from the gap between the sunward
+       * and side skyline, and on a storm sky the two land within a per cent of
+       * each other, so the estimate is zero and the glow switches off entirely
+       * — measured, sunward 0.390 against anti-sun 0.371. Rain is the case
+       * where forward scatter is strongest, not weakest. */
+      inscatter: 0.048,
       /* Opened up rather than the key raised: this is a night level and what
        * makes it readable is the curve, not more light. Everything the light
        * does not reach stays genuinely black, which is what leaves the
@@ -3174,7 +3279,7 @@ export const LEVELS = {
       /* A CEILING, not a deck. 0.94 is the second highest in the game after
        * Mustafar's ash: what is over Kamino is not weather passing through,
        * it is the permanent condition of the planet. */
-      cloudCover: 0.94, cloudLit: 0xa8bed8, cloudDark: 0x1e2836,
+      cloudCover: 0.94, cloudLit: 0xf2f7ff, cloudDark: 0x282c31,
       cloudWindDir: 4.9, cloudWindSpeed: 3.4,
       /* NO PAINTED RANGES, and for once the reason is literal rather than
        * atmospheric: there is nothing out there. The sea is the horizon, and
@@ -3388,7 +3493,7 @@ export const LEVELS = {
      * leaves genuine bare rock between its patches is both what a pumped-out
      * cut looks like and the only version of this the scatter can answer.
      */
-    grass: 0.45,
+    grass: 1.15,
     /* The pair is solved rather than picked. `grassPalette` builds a five-stop
      * species ramp by rotating the authored tints 80% of the way toward straw
      * (42°), green (92°) and glaucous (156°), and `ground-cover.mjs` requires
@@ -3605,7 +3710,13 @@ SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
 Object.assign(ARCHETYPES, {
   charger: {
     label: 'Reek', build: (o) => buildQuadruped({ ...o, kind: 'charger' }),
-    scale: 2.4, hp: 1250, mass: 2400,
+    /* 1650 kg, and the ceiling is the FORCE GRIP rather than the animal. The
+     * lift cap tops out at 1760 kg at the highest setting, and `force.mjs`
+     * holds one rule about it: the cap has to be able to lift the heaviest
+     * thing in the game. A 2400 kg mount would have been the one body in the
+     * roster that no amount of Force could move, which is not a difficulty —
+     * it is a power that silently stops working. */
+    scale: 2.4, hp: 1250, mass: 1650,
     speed: 6.0, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
     damage: 54, preferred: [2.2, 4.2], score: 2600,
     big: true, unlockAt: 1,

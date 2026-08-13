@@ -5746,6 +5746,21 @@ export function addCrowd(world, centre, opts = {}) {
     return d <= ((t - f) % TAU + TAU) % TAU;
   });
 
+  /* SEATED ON THE GROUND, not on a ladder of numbers.
+   *
+   * The first version stacked the rows at `y0 + r·rise` in absolute world
+   * space, which is a second, independent model of a landform the terrain
+   * already has — and the two disagreed. Measured by `prop-seating.mjs`: 246
+   * of the bowl's figures stood on nothing, the worst of them 5.47 m in the
+   * air, because the cavea's seating courses are quantised by `strata` and a
+   * straight ladder cannot follow that.
+   *
+   * So the row PITCH is still the level's, because that is the thing an author
+   * is choosing, and the HEIGHT is asked of the heightfield. `rise` survives
+   * as the fallback for a caller with no terrain under it — the lords in the
+   * box are seated on a prop, not on the ground.
+   */
+  const T = world.terrain;
   const seats = [];
   const colors = [];
   for (let r = 0; r < rows; r++) {
@@ -5762,7 +5777,9 @@ export function addCrowd(world, centre, opts = {}) {
       const z = centre.z + Math.sin(a) * rad * aspect;
       // a little shuffle along the bench, so the rows are not a comb
       const jx = (rng2() - 0.5) * 0.34, jz = (rng2() - 0.5) * 0.34;
-      seats.push(x + jx, y, z + jz, -a + Math.PI / 2 + (rng2() - 0.5) * 0.5,
+      const gy = opts.onGround === false || !T ? y
+        : T.height(x + jx, z + jz) + (opts.sit ?? 0.05);
+      seats.push(x + jx, gy, z + jz, -a + Math.PI / 2 + (rng2() - 0.5) * 0.5,
         (0.92 + rng2() * 0.22) * size, rng2() * TAU + a);
       let pick = rng2(), k = 0, acc = 0;
       while (k < WEIGHT.length - 1 && (acc += WEIGHT[k]) < pick) k++;

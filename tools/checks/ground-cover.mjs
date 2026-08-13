@@ -136,6 +136,24 @@ function stones(world, { minCount = 40, wide = false } = {}) {
   const q = new THREE.Quaternion(), s = new THREE.Vector3();
   world.scene.traverse((o) => {
     if (!o.isInstancedMesh || o.count < minCount) return;
+    /* GROUND LITTER, and until the colosseum and the wood every instanced mesh
+     * in the game was some grade of it — so this collected all of them, and
+     * "is the litter clustered" was the same question as "is every instanced
+     * mesh clustered". Neither of the two that are not is litter. A crowd is
+     * 6,900 instances spanning 236 m and it is uniform BY DESIGN, because a
+     * full house is: it dragged the arena's Clark-Evans to 0.87 whatever the
+     * stone was doing. A forest is the same failure with a louder symptom —
+     * its trunks and its crowns are two instanced meshes at the same 1,800
+     * positions, so nine tenths of the "stones" measured 0.00 m from another
+     * one, and the survey was reporting that a wood is a heap of gravel.
+     *
+     * The discriminator is the mesh's own NAME, which is the convention this
+     * codebase already keeps for exactly this reason (`addInstanced`: "Name
+     * it. Hunting one stray polygon through a frame cost a round of this
+     * project"). It is a list kept by hand and it will be short of one again —
+     * and that direction of error is the safe one, because an unnamed mesh is
+     * measured rather than skipped. */
+    if (o.name === 'crowd' || o.name.startsWith('forest.')) return;
     o.updateMatrixWorld(true);
     const mine = [];
     let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
