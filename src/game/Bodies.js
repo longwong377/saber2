@@ -1653,6 +1653,20 @@ function faceOf(face) {
   let src = face;
   if (typeof face === 'string') src = (FACE_PRESETS.find(p => p.id === face) || FACE_PRESETS[0]).face;
   if (src && typeof src === 'object') {
+    /**
+     * A SHEET MAY NAME ITS PRESET instead of carrying its numbers.
+     *
+     * The menu spreads the preset's eight numbers into the sheet so the object
+     * that reaches here is self-contained — but "the menu remembers to spread"
+     * is precisely the kind of unwritten obligation this file's history is
+     * made of, and a saved blob or a caller that writes `{ preset: 'heavy' }`
+     * by hand would otherwise get the neutral face and no error. Read first, so
+     * explicit numbers in the same object still win.
+     */
+    if (typeof src.preset === 'string') {
+      const p = FACE_PRESETS.find(f => f.id === src.preset);
+      if (p) for (const k of FACE_KEYS) if (typeof p.face[k] === 'number') out[k] = clamp(p.face[k], -1, 1);
+    }
     for (const k of FACE_KEYS) if (typeof src[k] === 'number' && isFinite(src[k])) out[k] = clamp(src[k], -1, 1);
   }
   return out;
@@ -1700,6 +1714,142 @@ function buildOf(build) {
   t = clamp(t, BUILD_RANGE[0], BUILD_RANGE[1]);
   return { t, k: (t - 0.5) * 2 };
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE CHARACTER SHEET — grooming, years and muscle                      */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `face` IS THE CHARACTER SHEET, not eight numbers.
+ *
+ * This is a plumbing fact before it is a design one, and it is worth stating
+ * because it looks like a hack until you follow the wire. The appearance a
+ * player chooses reaches the figure through exactly one object:
+ *
+ *     Menu.settings.face → World.spawnPlayer → new Player → buildJedi({face})
+ *
+ * `face` is the only appearance argument on that path that is allowed to be an
+ * OBJECT — `faceOf()` has taken "a preset id, a raw parameter object, or
+ * nothing" since face presets were written, and it reads FACE_KEYS and ignores
+ * everything else. So a hair cut, a beard, a number of years and an amount of
+ * muscle ride in the same object, `sheetOf()` reads those four, `faceOf()` goes
+ * on reading its eight, and neither has to know about the other. The
+ * alternative was four more arguments through two files this workstream does
+ * not own, which would have shipped four more parameters nobody passes — the
+ * exact defect this file's history is a monument to.
+ *
+ * `buildJedi` also accepts all four at the top level (`buildJedi({ hair:
+ * 'long' })`), and the top level WINS, because the checks and the menu preview
+ * call the builder directly and should not have to fake a face object.
+ *
+ * THE NEUTRAL SHEET IS THE IDENTITY, to the float: hair `temple`, beard `none`,
+ * age 0, muscle 0.5 — and every use below is `x * (1 + g*0)` or `x + g*0`.
+ */
+export const SHEET_KEYS = ['hair', 'beard', 'age', 'muscle'];
+
+/**
+ * THE CUTS.
+ *
+ * Eight, and the list is short for the same reason the face presets are: what
+ * survives is the OUTLINE. src/toon/REFERENCE.md rule 6 — "texture is DRAWN,
+ * not shaded" — settles how hair is authored here, and it agrees with the
+ * measurement: at 8 m a head is 24 pixels tall and a strand is 0.06 of one, so
+ * fine detail is speckle under a step terminator and nothing else. Every cut is
+ * therefore a small number of FLAT MASSES with a deliberate silhouette, merged
+ * to one geometry on one material, shaded by a scalp-relative occlusion field
+ * and nothing else. No strand normal, no anisotropic sheen ramp along a curl.
+ *
+ * `crown` says the cut covers the top of the skull. It is not decoration: the
+ * head shell's own occlusion bake drives everything above the ear line down to
+ * 0.28 SO THAT a poke-through reads as a dark root instead of as bare bone, and
+ * painting that on a shaved head is a black skullcap — the defect
+ * `creator: a bald species is bald` was written for. A shaved human is exactly
+ * as bald as a Twi'lek and now gets the same bake.
+ *
+ * `braid` is a separate tapered strand and a DIRECT child of the head object,
+ * for the reason written at the shipped braid: Ragdoll.addBone() re-homes only
+ * direct children, so a strand inside a positioning Group survives first
+ * person's `visible = false` and is missed by the re-show. Cutting your own
+ * head off must not leave the braid behind.
+ *
+ * `tris` is what the cut measured when it was authored, so a future edit that
+ * doubles one is visible in the diff and in the check's pass line rather than
+ * only in a frame time. The budget is set out at THE COST OF A HAIRCUT below.
+ */
+export const HAIR_STYLES = [
+  { id: 'temple',  name: 'Temple crop', blurb: 'short, with the learner\u2019s braid', crown: true,  braid: true },
+  { id: 'shorn',   name: 'Shaved',      blurb: 'nothing at all',                  crown: false, braid: false },
+  { id: 'crop',    name: 'Short crop',  blurb: 'close at the nape',                crown: true,  braid: false },
+  { id: 'padawan', name: 'Padawan',     blurb: 'a crop and a 30\u2009cm braid',        crown: true,  braid: true },
+  { id: 'topknot', name: 'Top knot',    blurb: 'gathered up off the temples',      crown: true,  braid: false },
+  { id: 'tail',    name: 'Warrior tail', blurb: 'a crest and a heavy tail',        crown: true, braid: true },
+  { id: 'long',    name: 'Long',        blurb: 'past the shoulders',               crown: true,  braid: false },
+  { id: 'mane',    name: 'Mane',        blurb: 'long, and the outline broken',     crown: true,  braid: false },
+];
+
+/**
+ * THE BEARDS.
+ *
+ * Same authoring rule and the same reason. A beard is read as a SHAPE against
+ * the jaw — where its edge runs, how far it stands off the chin, whether the
+ * moustache joins it — and none of that is strands. `jaw` is the mass along the
+ * mandible, `chin` the mass under the lip, `moustache` the bar over it, and
+ * `fall` the length that hangs below the chin in metres at scale 1; a `plaits`
+ * count adds that many tapered strands down the fall, which is the one piece of
+ * a beard whose silhouette is genuinely a line rather than a mass.
+ */
+export const BEARD_STYLES = [
+  { id: 'none',       name: 'Clean',       blurb: 'shaved',                        band: 0,      reach: 0,    chin: 0,      moustache: 0,    fall: 0,     plaits: 0 },
+  { id: 'stubble',    name: 'Stubble',     blurb: 'days, not years',             band: 0.0062, reach: 1.0,  chin: 0.0078, moustache: 0.50, fall: 0,     plaits: 0 },
+  { id: 'goatee',     name: 'Goatee',      blurb: 'chin and moustache',           band: 0.0072, reach: 0.34, chin: 0.0140, moustache: 0.90, fall: 0.030, plaits: 0 },
+  { id: 'shortbeard', name: 'Short beard', blurb: 'trimmed to the jaw',      band: 0.0104, reach: 0.92, chin: 0.0140, moustache: 1.0,  fall: 0.016, plaits: 0 },
+  { id: 'full',       name: 'Full beard',  blurb: 'a hand\u2019s breadth',        band: 0.0150, reach: 1.0,  chin: 0.0180, moustache: 1.0,  fall: 0.040, plaits: 0 },
+  { id: 'long',       name: 'Long beard',  blurb: 'onto the chest',        band: 0.0158, reach: 1.0,  chin: 0.0200, moustache: 1.0,  fall: 0.078, plaits: 0 },
+  { id: 'plaited',    name: 'Plaited',     blurb: 'full, with two plaits',       band: 0.0076, reach: 1.0,  chin: 0.0130, moustache: 0.70, fall: 0.072, plaits: 2 },
+];
+
+/** Years and muscle both ride sliders, so both need their bounds exported. */
+export const AGE_RANGE = [0, 1];
+export const MUSCLE_RANGE = [0, 1];
+
+const HAIR_BY_ID = new Map(HAIR_STYLES.map((h) => [h.id, h]));
+const BEARD_BY_ID = new Map(BEARD_STYLES.map((b) => [b.id, b]));
+
+/**
+ * Resolve the sheet out of `opts` and out of `opts.face`, in that order.
+ *
+ * `a` is the signed year parameter, 0 at the young end because a figure has to
+ * be able to be young without asking; `m` is the signed muscle parameter and is
+ * centred like `build`, because wiry and powerful are two directions off one
+ * body and not two boxes.
+ */
+function sheetOf(opts = {}) {
+  const src = (opts.face && typeof opts.face === 'object') ? opts.face : {};
+  const pick = (k) => (opts[k] !== undefined ? opts[k] : src[k]);
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? clamp(v, 0, 1) : d);
+  const hair = HAIR_BY_ID.get(pick('hair')) || HAIR_STYLES[0];
+  const beard = BEARD_BY_ID.get(pick('beard')) || BEARD_STYLES[0];
+  const age = num(pick('age'), 0);
+  const muscle = num(pick('muscle'), 0.5);
+  return { hair, beard, age, muscle, a: age, m: (muscle - 0.5) * 2 };
+}
+
+/**
+ * WHAT THE YEARS DO TO A FACE, as a bias on the eight numbers.
+ *
+ * Written here rather than as a seventh face preset because age is orthogonal
+ * to the preset: a gaunt twenty-year-old and a gaunt eighty-year-old are both
+ * things a player wants, and a preset cannot express the product of two lists.
+ * The terms are the ones that survive 8.55 mm a pixel — the brow shelf gets
+ * heavier, the cheek hollows, the jaw softens and loses its corner, the nose
+ * and chin carry on growing (they do), and the eyes sit deeper. It is
+ * deliberately NOT a wrinkle map: rule 6 again, and a 1 mm crease is an eighth
+ * of a pixel.
+ */
+const AGE_FACE = { brow: 0.55, cheek: 0.72, jaw: -0.30, chin: 0.34, nose: 0.38, eyes: -0.22, skull: 0.10 };
+
+/** Grey. Hair goes white from the temples in, so the whole mass shifts. */
+const GREY = 0xdcd6c8;
 
 /**
  * WHAT THE PLAYER CAN BE.
@@ -1775,6 +1925,17 @@ export const SPECIES = [
       { name: 'Deep indigo', hex: 0x3d4f86 }, { name: 'Ash', hex: 0x8b8578 },
     ],
     face: { cheek: 0.35, brow: -0.35, jaw: -0.25 },
+    /**
+     * WHERE A LEK ROOTS, so the cloth solver can hang one there.
+     *
+     * The rigid pair below in SPECIES_HEADS is still built — it is what a
+     * distant character wears and what comes back when the simulation is
+     * switched off at LOD range, exactly as the rigid robe does under the
+     * skirt. `at` is the first node of that same path, `r` its radius there and
+     * `len` the length of the path it replaces (0.44 m, integrated along the
+     * seven nodes). See attachLekku() in Cloth.js.
+     */
+    lekku: { at: [0.056, 0.116, -0.030], r: 0.036, len: 0.44, taper: 0.22 },
   },
   {
     id: 'togruta', name: 'Togruta', hair: false, brows: false, eyes: true, ears: false,
@@ -1821,6 +1982,40 @@ export const SPECIES = [
       { name: 'Bone', hex: 0xd9c3a4 }, { name: 'Umber', hex: 0x6a462c },
     ],
     face: { skull: 0.85, brow: -0.70, cheek: 0.85, jaw: -0.55, nose: -1.0, chin: -0.20 },
+  },
+  {
+    id: 'smallfolk', name: "Yoda's species", hair: true, brows: true, eyes: true, ears: false,
+    /**
+     * SMALL FOLK — and the whole point of the row is that it is NOT a human
+     * scaled down.
+     *
+     * A uniform 0.40 would have given a 68 cm figure that is still seven heads
+     * tall, which reads as a doll or as a distant adult and never as a small
+     * person: the thing the eye actually measures is HEAD-TO-BODY, and every
+     * small-bodied species in the fiction is three to four heads tall, not
+     * seven. So `frame` carries two scales. The body goes to 0.40 and the head
+     * to 0.62 — the head is 1.55 times the size a uniform shrink would have
+     * given it — and the figure comes out 3.6 heads tall at 0.72 m.
+     *
+     * `armLen`/`legLen` are the second half. Short legs and long arms is the
+     * rest of the proportion (the reach is nearly a human's fraction of the
+     * body while the stride is not), and both are already parameters of
+     * humanoidSkeleton, so this costs no new bones and no second gait.
+     *
+     * The ears are the silhouette: two swept-back blades off the temples, and
+     * on a head this size they reach further from the axis than anything else
+     * on the figure. `ears: false` turns OFF the human ear lump, which would
+     * otherwise sit inside their roots — the same defect the Togruta hit.
+     */
+    frame: { scale: 0.40, head: 0.74, armLen: 1.06, legLen: 0.80, stature: 0.66 },
+    skin: 0x94a35a, eye: 0x7a6a28, sclera: 0xe8e2cc,
+    skinTones: [
+      { name: 'Sage', hex: 0x94a35a }, { name: 'Moss', hex: 0x74874a },
+      { name: 'Olive', hex: 0xa8ad72 }, { name: 'Ash green', hex: 0x8a9678 },
+      { name: 'Umber', hex: 0x8a7a4a }, { name: 'Pale', hex: 0xc0c294 },
+      { name: 'Slate', hex: 0x7d8a86 }, { name: 'Warm', hex: 0xc79a76 },
+    ],
+    face: { skull: -0.55, brow: 0.65, cheek: -0.30, jaw: -0.60, chin: -0.45, nose: -0.35, eyes: 0.85, mouth: 0.30 },
   },
 ];
 
@@ -1879,7 +2074,7 @@ function vaultOf(F) {
  * or three millimetres, gets a gain that makes it read in the menu preview and
  * nowhere else. That is an honest description of what a nose is.
  */
-function skullGeo(s, F, sp) {
+function skullGeo(s, F, sp, covered = sp.hair) {
   const ball = (rx, ry, rz, w = 12, h = 9) => {
     const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
   };
@@ -1972,11 +2167,13 @@ function skullGeo(s, F, sp) {
     // and behind the hairline is driven to 0.28, so a poke-through reads
     // as a dark root rather than as bare bone.
     //
-    // ONLY UNDER HAIR. A Twi'lek has no hair over the crown, and painting the
-    // top two thirds of a bare head down to 0.28 is not insurance, it is a
-    // black skullcap — which is exactly what the first pass at the species
-    // shipped before this was gated.
-    sp.hair
+    // ONLY UNDER HAIR, and only under hair that COVERS. A Twi'lek has no hair
+    // over the crown and neither does a shaved human, and painting the top two
+    // thirds of a bare head down to 0.28 is not insurance, it is a black
+    // skullcap — which is exactly what the first pass at the species shipped
+    // before this was gated. `covered` defaults to `sp.hair`, so every caller
+    // that does not know about haircuts gets the behaviour it always had.
+    covered
       ? (x, y, z) => {
         const above = clamp((y / s - 0.062) / 0.030, 0, 1);
         const face = clamp((z / s - 0.030) / 0.030, 0, 1) * clamp((0.112 - y / s) / 0.030, 0, 1);
@@ -1994,12 +2191,20 @@ function skullGeo(s, F, sp) {
   ), { floor: 0.30 });
 }
 
-/** The species' own face bias, plus whatever the player chose, clamped once. */
-function faceFor(sp, face) {
+/**
+ * The species' own face bias, plus the years, plus whatever the player chose,
+ * clamped once.
+ *
+ * `age` at 0 adds exactly nothing and the no-species path still returns
+ * `faceOf(face)` itself, so the neutral figure is unchanged object for object.
+ */
+function faceFor(sp, face, age = 0) {
   const chosen = faceOf(face);
-  if (!sp.face) return chosen;
+  if (!sp.face && !age) return chosen;
   const out = {};
-  for (const k of FACE_KEYS) out[k] = clamp(chosen[k] + (sp.face[k] || 0), -1.2, 1.2);
+  for (const k of FACE_KEYS) {
+    out[k] = clamp(chosen[k] + (sp.face ? sp.face[k] || 0 : 0) + (AGE_FACE[k] || 0) * age, -1.2, 1.2);
+  }
   return out;
 }
 
@@ -2263,6 +2468,45 @@ const SPECIES_HEADS = {
     }
     k.bake(headObj);
   },
+
+  /**
+   * SMALL FOLK — two swept ears, and they are the whole silhouette.
+   *
+   * On a head that is 1.55 times its body's share, an ear the size of a human's
+   * is nothing; these are 7 cm blades reaching back and UP off the temples, so
+   * the outline of the head is two thirds again as wide as the skull and the
+   * profile carries a point at the back that no other row in the list has.
+   *
+   * They are built out of `tubeGeo` rather than a plate for a reason worth
+   * recording: a plate has a constant thickness and reads as a card taped to
+   * the head, while a swept tube whose radius runs 1.8 cm → 0.5 cm has a taper
+   * in it and closes to an edge, which is what an ear does. Four nodes, 24
+   * triangles a side, and the taper is the whole read.
+   */
+  smallfolk(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    for (const sx of [-1, 1]) {
+      // Rooted HIGH on the temple and swept up, not back off the jaw. Seated at
+      // 0.086 and swept at (0.74, 0.50, -0.45) the pair dipped 3 of its 590
+      // vertices into the trapezius at a head yaw of -0.42 rad — this head is
+      // 1.85× its body's share and the shoulder is closer to it than a human's
+      // is, so an ear that reaches back also reaches DOWN into the yoke.
+      const d = new THREE.Vector3(sx * 0.94, 0.30, -0.16).normalize();
+      const p = onSurface(hg, d, -0.004 * s, new THREE.Vector3(0, 0.100 * s, -0.004 * s));
+      // The sweep: out, back and up, with the tip lifted well clear of the
+      // shoulder line. Straight out sideways it would be a wing; angled back
+      // and down it would be a jowl. Up and back is an ear.
+      const L = 0.072 * s;
+      const ax = new THREE.Vector3(sx * 0.66, 0.68, -0.32).normalize();
+      k.add(skin, tubeGeo([
+        [p[0], p[1], p[2], 0.0180 * s],
+        [p[0] + ax.x * L * 0.42, p[1] + ax.y * L * 0.42, p[2] + ax.z * L * 0.42, 0.0155 * s],
+        [p[0] + ax.x * L * 0.78, p[1] + ax.y * L * 0.78, p[2] + ax.z * L * 0.78, 0.0092 * s],
+        [p[0] + ax.x * L, p[1] + ax.y * L, p[2] + ax.z * L, 0.0022 * s],
+      ], 6, { tip: 1.15 }));
+    }
+    k.bake(headObj);
+  },
 };
 
 function speciesHead(sp, headObj, s, hg, ctx) {
@@ -2270,29 +2514,468 @@ function speciesHead(sp, headObj, s, hg, ctx) {
   if (fn) fn(headObj, s, hg, ctx);
 }
 
+/* ── what a haircut is made of ───────────────────────────────────────── */
+
+/**
+ * THE COST OF A HAIRCUT.
+ *
+ * `characters: no archetype has quietly doubled in cost` caps a body at 13 000
+ * triangles and 76 meshes and the Jedi measures 12 924 in 66, so there are 76
+ * triangles of headroom and ten meshes. A beard is two hundred triangles. That
+ * arithmetic is the whole reason the tables below look the way they do, and it
+ * resolves in three moves rather than by raising a cap:
+ *
+ *   · THE DEFAULT DOES NOT MOVE. `temple` emits, part for part and float for
+ *     float, the cut this file shipped — so `buildJedi()` is still 12 924/66
+ *     and every check that measures the untouched figure is untouched.
+ *   · A BEARD COSTS NO MESHES. It is authored on the hair material and merged
+ *     into the hair's own geometry, so the mesh count — which is what the
+ *     budget comment actually argues about, a draw call per material per bone
+ *     doubled by the shadow pass — is the same 66 for every combination the
+ *     creator can reach. That is the number twenty characters on screen
+ *     multiply.
+ *   · THE CUTS PAY FOR THE BEARDS. Every cut but `temple` is authored cheaper
+ *     than `temple` is, out of low-segment masses rather than eight-by-six
+ *     spheres, because a flat cel shape does not need the tessellation a
+ *     specular one did. The full set is measured over every cut × every beard
+ *     in tools/checks/grooming.mjs, and the worst combination is stated there
+ *     against a bound derived from the mesh count rather than from the previous
+ *     total.
+ */
+
+/** A squashed sphere at the origin — the mass every cut is made of. */
+function hairLump(s, rx, ry, rz, w = 8, h = 6) {
+  const g = new THREE.SphereGeometry(1, w, h);
+  g.scale(rx * s, ry * s, rz * s);
+  return g;
+}
+
+/**
+ * The skullcap every cut but a shaved one starts from, as a sphere sector
+ * swept back off the crown.
+ *
+ * `phi` is how far down the sector reaches, `tilt` how far back it is rotated
+ * about its OWN centre — rotating the mesh instead swings the cap 2 cm off the
+ * skull — and both matter more than they look. Measured on the shipped cut: at
+ * a tilt of -0.30 rad the rim comes down to 0.081 and the fringe hangs over
+ * both eyes; at -0.75 it lands at 0.130, above a brow ridge topping out at
+ * 0.122, and covers 100% of the braincase behind the hairline.
+ */
+function hairCap(s, V, { phi = 0.62, tilt = -0.75, w = 14, h = 10, sx = 1.02, sy = 1.32, sz = 1.24,
+  y = 0.092, z = -0.010, wide = 0, recede = 0 } = {}) {
+  const cap = new THREE.SphereGeometry(0.0890 * s, w, h, 0, Math.PI * 2, 0, Math.PI * phi);
+  cap.scale(sx * (V.w + wide), sy * V.h, sz * V.d);
+  /**
+   * THE YEARS, ON THE ONE PART OF A HEAD WHERE THEY ARE WORTH PIXELS.
+   *
+   * A wrinkle is 1 mm and one pixel at 8 m is 8.55, so a crease map is nothing
+   * at the range the game is played at. A HAIRLINE is: `recede` tips the cap a
+   * further 0.16 rad back and lifts its front rim, which walks the parting up
+   * the forehead. Measured at 8 m over a lifetime, the first attempt — moving
+   * only the two fringe masses back by 34 mm — changed TWO silhouette pixels;
+   * with the cap travelling too it is worth an order of magnitude more, which
+   * is the difference between a feature and a field.
+   */
+  cap.rotateX(tilt - 0.16 * recede);
+  cap.translate(0, (y + 0.020 * recede) * s, (z - 0.012 * recede) * s);
+  return cap;
+}
+
+/**
+ * The eight cuts, as lists of masses.
+ *
+ * Each returns `{ parts, strands }`: `parts` is fed straight to assemble() and
+ * becomes one merged geometry, `strands` are tapered tubes that go on as direct
+ * children of the head object (see `braid` in HAIR_STYLES for why).
+ *
+ * `recede` is the years: a hairline goes BACK, and it is the one age cue on a
+ * head that is worth whole pixels in silhouette rather than a shading
+ * difference. It moves the cap's fringe and the two front masses, not the nape.
+ */
+const HAIR_CUTS = {
+  /**
+   * TEMPLE CROP — the cut this file shipped, reproduced float for float.
+   *
+   * A sphere sector laid on a sphere is a swimming cap, and that is precisely
+   * what the first portrait showed: a dark, perfectly circular helmet with a
+   * hard rim. Hair is read at silhouette range by its OUTLINE, and an outline
+   * needs to be broken — a parting, a fringe with a corner in it, a mass over
+   * each ear, a tail at the nape.
+   */
+  temple(s, V, R) {
+    return { parts: [
+      [hairCap(s, V, { wide: R.wide, recede: R.thin })],
+      // the swept fringe: a wedge over the brow, heavier on one side, which
+      // is what puts an asymmetric corner in the outline
+      [hairLump(s, 0.052 * V.w * (1 - 0.42 * R.thin), 0.026 * (1 - 0.42 * R.thin), 0.030, 8, 5), [0.020 * V.w * s, 0.150 * V.h * s, (0.050 - R.back) * s], [0.36, 0.22, -0.14]],
+      [hairLump(s, 0.030 * V.w * (1 - 0.42 * R.thin), 0.021 * (1 - 0.42 * R.thin), 0.024, 7, 4), [-0.040 * V.w * s, 0.143 * V.h * s, (0.042 - R.back) * s], [0.30, -0.30, 0.20]],
+      // a mass over each ear, covering the top of it the way hair does
+      [hairLump(s, 0.030, 0.050 * V.h, 0.054, 7, 5), [0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, 0.16]],
+      [hairLump(s, 0.030, 0.050 * V.h, 0.054, 7, 5), [-0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, -0.16]],
+      // the nape, filling in under the cap's back edge and running down to
+      // the collar rather than stopping in mid-air
+      [hairLump(s, 0.066 * V.w, 0.062, 0.062 * V.d, 8, 6), [0, 0.056 * s, -0.052 * s]],
+      [hairLump(s, 0.042 * V.w, 0.034, 0.032, 7, 4), [0, 0.014 * s, -0.058 * s], [0.35, 0, 0]],
+    ], strands: [
+      // a short braid, one tapered strand rather than the five spheres it used
+      // to be, which cost 400 triangles on their own
+      { len: 0.115, r0: 0.0080, r1: 0.0042, seg: 7, rings: 6,
+        at: [0.064 * V.w, 0.078, 0.008], rot: [0.10, 0, 0.09] },
+    ] };
+  },
+
+  /** SHAVED. No cut at all, and the skull bake goes with it. */
+  shorn() { return { parts: [], strands: [] }; },
+
+  /**
+   * SHORT CROP — the cap and the ear masses, no nape and no braid, cut close
+   * enough at the back that the neck shows. Nine masses down to five.
+   */
+  crop(s, V, R) {
+    return { parts: [
+      // A CLOSE crop — hair cut to the skull rather than a smaller version of
+      // the cut above it. Measured at 8 m against the padawan the first attempt
+      // was 20 silhouette pixels, which is one cut offered twice; the whole
+      // difference now is that this one has no height on it at all.
+      [hairCap(s, V, { phi: 0.62, tilt: -0.62, w: 12, h: 8, sx: 0.99, sy: 1.12, sz: 1.09,
+        y: 0.086, wide: R.wide, recede: R.thin })],
+      // TUCKED UNDER THE RIM, not laid over it. Sized to poke through, the fringe
+      // draws a lit bar right across the crown — the same poke-through the scalp
+      // bake exists to hide, arriving from the front. What fills the gap is the
+      // cap's own rim coming DOWN to the brow (tilt -0.62 rather than -0.70),
+      // not a bigger lump on top of it.
+      [hairLump(s, 0.044 * V.w * (1 - 0.42 * R.thin), 0.013 * (1 - 0.42 * R.thin), 0.022, 7, 4), [0.010 * V.w * s, 0.138 * V.h * s, (0.046 - R.back) * s], [0.32, 0.18, -0.10]],
+      [hairLump(s, 0.024, 0.040 * V.h, 0.044, 6, 4), [0.064 * V.w * s, 0.092 * s, -0.014 * s], [0, 0, 0.16]],
+      [hairLump(s, 0.024, 0.040 * V.h, 0.044, 6, 4), [-0.064 * V.w * s, 0.092 * s, -0.014 * s], [0, 0, -0.16]],
+      [hairLump(s, 0.048 * V.w, 0.032, 0.038 * V.d, 7, 4), [0, 0.058 * s, -0.048 * s]],
+    ], strands: [] };
+  },
+
+  /**
+   * PADAWAN — a crop with the learner's braid, which is the single most
+   * recognisable silhouette in the setting and is 34 cm of strand rather than
+   * a mass. It hangs beside the jaw on the right and is swept OUTWARD as it
+   * falls: a rigid strand parented to the head sweeps 30 cm sideways across the
+   * ±0.85 rad the player's glance is clamped to, and one that hangs straight
+   * down would be inside the shoulder at either end of that. Measured in
+   * tools/checks/grooming.mjs, vertex by vertex, against the torso soup.
+   */
+  padawan(s, V, R) {
+    // NOT the crop plus a braid. Measured at 8 m, `crop` and a crop-with-a-braid
+    // were 11 silhouette pixels apart — a 7 mm strand is under one pixel wide
+    // out there, so the two cuts were the same head at the range the game is
+    // played at. A padawan wears its hair shorter at the sides and closer to
+    // the skull, and THAT is the difference a player can see across an arena;
+    // the braid is what they see in the creator.
+    const c = {
+      parts: [
+        [hairCap(s, V, { phi: 0.58, tilt: -0.62, w: 12, h: 8, sx: 1.00, sy: 1.20, sz: 1.12,
+          y: 0.094, wide: R.wide, recede: R.thin })],
+        // THE QUIFF. Measured at 8 m, a padawan that was a crop plus a braid
+        // was 17 silhouette pixels from the crop — a 7 mm strand is under one
+        // pixel wide out there. The hair swept UP off the brow is 2 cm of extra
+        // height across the whole width of the head, which is the part of this
+        // cut a player can read across an arena.
+        [hairLump(s, 0.046 * V.w * (1 - 0.42 * R.thin), 0.032 * (1 - 0.42 * R.thin), 0.030, 8, 5),
+          [0.006 * V.w * s, 0.170 * V.h * s, (0.036 - R.back) * s], [0.26, 0.10, -0.10]],
+        [hairLump(s, 0.018, 0.026 * V.h, 0.036, 6, 4), [0.060 * V.w * s, 0.108 * s, -0.018 * s], [0, 0, 0.16]],
+        [hairLump(s, 0.018, 0.026 * V.h, 0.036, 6, 4), [-0.060 * V.w * s, 0.108 * s, -0.018 * s], [0, 0, -0.16]],
+        [hairLump(s, 0.042 * V.w, 0.026, 0.032 * V.d, 7, 4), [0, 0.074 * s, -0.044 * s]],
+      ],
+    };
+    return { parts: [...c.parts,
+      // the short queue at the nape a padawan wears with it
+      [hairLump(s, 0.020 * V.w, 0.030, 0.020, 6, 4), [0, 0.028 * s, -0.062 * s], [0.30, 0, 0]],
+    ], strands: [
+      // BEHIND the ear and swept out, not in front of it. Hung at z +0.020 it
+      // read as a chopstick laid down the cheek; a padawan's braid roots at the
+      // temple BEHIND the ear line and falls outside the jaw, which is also the
+      // only place it can hang without entering the shoulder at either end of
+      // the ±0.85 rad the player's glance is clamped to.
+      // Rolled 0.50 rad OUT so it falls outside the shoulder line. At 0.34 the
+      // tip finished on the centre line at z +0.004 — 25 of its 96 vertices
+      // inside the ribcage at a head yaw of -0.42 rad, which is the same defect
+      // a rigid lek has and is measured the same way.
+      { len: 0.205, r0: 0.0072, r1: 0.0036, seg: 6, rings: 7,
+        at: [0.066 * V.w, 0.070, -0.016], rot: [-0.16, 0, 0.62] },
+    ] };
+  },
+
+  /**
+   * TOP KNOT — temples taken in tight, everything gathered UP. The knot stands
+   * 4 cm above the crown, which is the only cut in the list that makes the
+   * figure taller in outline.
+   */
+  topknot(s, V, R) {
+    return { parts: [
+      [hairCap(s, V, { phi: 0.58, tilt: -0.66, w: 12, h: 9, sx: 0.99, sy: 1.30, sz: 1.14, y: 0.100, wide: R.wide, recede: R.thin })],
+      // the pulled-back temples: two long flat masses running from the brow to
+      // the crown, which is what stops a knot reading as a bun on a bald head
+      [hairLump(s, 0.022, 0.026 * V.h, 0.056, 6, 4), [0.056 * V.w * s, 0.128 * s, (0.020 - R.back * 0.5) * s], [0.10, 0, 0.30]],
+      [hairLump(s, 0.022, 0.026 * V.h, 0.056, 6, 4), [-0.056 * V.w * s, 0.128 * s, (0.020 - R.back * 0.5) * s], [0.10, 0, -0.30]],
+      // the knot itself, and the wrap under it
+      // Measured against the warrior tail's crest at 8 m the knot was 21
+      // silhouette pixels away — two cuts with a lump on top. A top knot is
+      // GATHERED BACK: the mass belongs behind the crown, where it breaks the
+      // outline of the occiput instead of competing with a crest for the same
+      // twelve pixels of skyline.
+      [hairLump(s, 0.040, 0.044, 0.042, 8, 6), [0, 0.196 * V.h * s, -0.058 * s]],
+      [hairLump(s, 0.020, 0.016, 0.022, 6, 4), [0, 0.160 * V.h * s, -0.040 * s]],
+      [hairLump(s, 0.044 * V.w, 0.034, 0.038 * V.d, 7, 4), [0, 0.070 * s, -0.052 * s]],
+    ], strands: [] };
+  },
+
+  /**
+   * WARRIOR TAIL — shaved at the sides, a ridge over the crown, a heavy tail
+   * off the back of it. The ridge is what makes this read from the front at
+   * all; without one it is a bald head with something behind it.
+   */
+  tail(s, V, R) {
+    return { parts: [
+      [hairCap(s, V, { phi: 0.54, tilt: -0.80, w: 11, h: 8, sx: 0.80, sy: 1.14, sz: 1.22, y: 0.092, wide: R.wide, recede: R.thin })],
+      // the crest, running fore-and-aft over the crown: without one this is a
+      // bald head with something behind it, which is what the first render was
+      // Measured against `shorn` at 8 m the first crest was 19 silhouette
+      // pixels — a bald head with something behind it. A crest has to stand
+      // PROUD of the skull to be an outline at all, so it is 40 mm tall and it
+      // runs the whole length of the crown.
+      [hairLump(s, 0.030 * V.w, 0.062, 0.090, 7, 5), [0, 0.176 * V.h * s, (0.002 - R.back * 0.6) * s], [0.12, 0, 0]],
+      [hairLump(s, 0.024 * V.w, 0.042, 0.040, 6, 4), [0, 0.208 * V.h * s, -0.030 * s], [0.30, 0, 0]],
+      [hairLump(s, 0.048 * V.w, 0.052, 0.048 * V.d, 7, 5), [0, 0.074 * s, -0.058 * s]],
+    ], strands: [
+      // +0.34, not -0.34: `pos` is (0, -len, 0) through this Euler, so a
+      // positive x sends the strand BACK. At -0.34 the tail swung forward
+      // under the jaw and finished at z +0.024, which is inside the sternum —
+      // measured, 28 of its 88 vertices in the ribcage with the head at rest.
+      { len: 0.170, r0: 0.0150, r1: 0.0055, seg: 8, rings: 7,
+        at: [0, 0.054, -0.072], rot: [0.62, 0, 0] },
+    ] };
+  },
+
+  /**
+   * LONG — past the shoulders, in two side falls and a back mass.
+   *
+   * The back mass is the one place a rigid cut can go wrong, and the reason it
+   * stops where it does: the hair is parented to the HEAD, the head yaws ±0.85
+   * rad under the player's own glance, and a fall that reaches the shoulder
+   * blade at rest is inside the trapezius at the ends of that sweep. It is cut
+   * to reach dy -0.135 at scale 1 — the base of the neck — and the length past
+   * that is carried by the two side falls, which hang OUTSIDE the shoulder line
+   * where there is nothing to pass through.
+   */
+  long(s, V, R) {
+    return { parts: [
+      [hairCap(s, V, { phi: 0.66, tilt: -0.70, w: 14, h: 9, sy: 1.30, sz: 1.26, wide: R.wide, recede: R.thin })],
+      [hairLump(s, 0.050 * V.w * (1 - 0.42 * R.thin), 0.024 * (1 - 0.42 * R.thin), 0.030, 7, 5), [0.016 * V.w * s, 0.150 * V.h * s, (0.048 - R.back) * s], [0.34, 0.20, -0.12]],
+      // the side falls: flat slabs down the line of the jaw, standing clear of
+      // the shoulder because they are 8 cm out from the axis
+      [hairLump(s, 0.026, 0.074 * V.h, 0.042, 6, 6), [0.076 * V.w * s, 0.042 * s, 0.000 * s], [0, 0, 0.15]],
+      [hairLump(s, 0.026, 0.074 * V.h, 0.042, 6, 6), [-0.076 * V.w * s, 0.042 * s, 0.000 * s], [0, 0, -0.15]],
+      // the back mass
+      [hairLump(s, 0.070 * V.w, 0.064, 0.054 * V.d, 8, 6), [0, 0.056 * s, -0.050 * s]],
+      // The back fall stops at the base of the NECK, and this is where. Measured
+      // with the head at rest, a mass centred 20 mm below the head bone reaches
+      // 10 vertices into the trapezius; the length past here is carried by the
+      // two side falls, which hang outside the shoulder line where there is
+      // nothing to pass through.
+      [hairLump(s, 0.052 * V.w, 0.038, 0.032, 7, 5), [0, 0.004 * s, -0.062 * s], [0.18, 0, 0]],
+    ], strands: [] };
+  },
+
+  /**
+   * MANE — the long cut with the outline broken open. Wider at the temples,
+   * higher over the crown and asymmetric at the shoulders, which is the whole
+   * difference between "long hair" and "wild": a symmetric fall reads as a
+   * hood.
+   */
+  mane(s, V, R) {
+    const l = HAIR_CUTS.long(s, V, R);
+    return { parts: [...l.parts,
+      // Wider at the temples, higher over the crown and ASYMMETRIC at the
+      // shoulders. Measured against `long` at 8 m the first attempt was 9
+      // silhouette pixels apart — two long cuts, not a long one and a wild one
+      // — so every mass here is now outside the long cut's own outline rather
+      // than inside it.
+      [hairLump(s, 0.046, 0.038, 0.042, 6, 4), [0.076 * V.w * s, 0.146 * V.h * s, -0.034 * s], [0, 0, 0.50]],
+      [hairLump(s, 0.038, 0.032, 0.036, 6, 4), [-0.082 * V.w * s, 0.132 * V.h * s, -0.042 * s], [0, 0, -0.44]],
+      [hairLump(s, 0.036, 0.042, 0.030, 6, 5), [0.098 * V.w * s, 0.002 * s, -0.014 * s], [0.08, 0, 0.36]],
+      [hairLump(s, 0.030, 0.038, 0.028, 6, 4), [-0.094 * V.w * s, 0.040 * s, -0.022 * s], [0, 0, -0.30]],
+    ], strands: [] };
+  },
+};
+
+/**
+ * THE BEARD, AS ONE SWEPT BAND ALONG THE JAW — not a pile of lumps.
+ *
+ * The first pass was four ellipsoids and a slab, and the render settled it:
+ * two mutton chops, a ball under the chin with a gap of bare skin between them
+ * and a black bar floating over the lip. A beard is not read as masses, it is
+ * read as ONE SHAPE with a clean edge where it meets the skin — which is
+ * exactly what src/toon/REFERENCE.md rule 6 says about drawn marks, and also
+ * what a tube is for.
+ *
+ * So the band is a `tubeGeo` whose nodes are raycast onto the assembled skull
+ * from ear to chin to ear, and it is continuous by construction. That fixes
+ * three things at once: no seam, a taper that closes at the ears rather than
+ * stopping square, and 96 triangles instead of 224.
+ *
+ * Everything is seated on the SKULL rather than typed against a nominal one,
+ * for the reason every other face feature is: the face mass reaches further
+ * forward than the cranium at mouth height, so a beard authored against a
+ * sphere is half inside the chin at `gaunt` and floating off it at `broad`.
+ */
+function beardParts(s, hg, B) {
+  if (!B.band && !B.chin && !B.moustache) return { parts: [], strands: [] };
+  const parts = [], strands = [];
+  /**
+   * One node of the jaw band. `t` runs -1 (left ear) → 0 (under the chin) →
+   * +1 (right ear); the ray sweeps with it and its ORIGIN rises toward the
+   * ears, because a mandible is not a circle about one point — the hinge is
+   * 4 cm above the chin and 3 cm behind it, and a band probed from a single
+   * origin either climbs the cheek at the sides or cuts the throat at the
+   * front.
+   */
+  const jawNode = (t, r) => {
+    const th = t * Math.PI * 0.5;
+    const c = Math.cos(th), sn = Math.sin(th);
+    const d = new THREE.Vector3(sn * 0.95, -0.20 - 0.44 * c, c * 0.90);
+    const o = new THREE.Vector3(0, (0.030 + 0.054 * Math.abs(t)) * s, (0.014 - 0.030 * Math.abs(t)) * s);
+    const p = onSurface(hg, d, -0.0022 * s, o);
+    return [p[0], p[1], p[2], r * s];
+  };
+  if (B.band > 0 && B.reach > 0) {
+    const N = 9, nodes = [];
+    for (let i = 0; i < N; i++) {
+      const t = (-1 + (2 * i) / (N - 1)) * B.reach;
+      // thickest at the jaw corner and thinning to nothing at the ear, which
+      // is where a beard's own edge actually runs
+      const w = 0.42 + 0.58 * Math.cos(t * Math.PI * 0.5) + 0.30 * (1 - Math.abs(t)) * B.reach;
+      nodes.push(jawNode(t, B.band * Math.min(1.25, w)));
+    }
+    parts.push([tubeGeo(nodes, 6, { tip: 0.35 })]);
+  }
+  if (B.chin > 0) {
+    // The chin, and the fall below it, as one tube straight down off the
+    // point of the jaw. The fall is what separates Obi-Wan from Qui-Gon and it
+    // is a LENGTH, so it is a node position rather than a scale on a blob.
+    const d = new THREE.Vector3(0, -0.58, 0.81);
+    const p = onSurface(hg, d, -0.0030 * s, new THREE.Vector3(0, 0.034 * s, 0.012 * s));
+    const nodes = [[p[0], p[1] + 0.008 * s, p[2], B.chin * 0.72 * s],
+      [p[0], p[1], p[2], B.chin * s]];
+    if (B.fall > 0) {
+      const steps = B.fall > 0.06 ? 3 : 2;
+      for (let i = 1; i <= steps; i++) {
+        const f = i / steps;
+        // A beard WIDENS on the way down before it closes — a fall that only
+        // tapers is a stalactite, which is what the first render showed.
+        /*
+         * FORWARD as it falls, not straight down. The chest's own lathe domes
+         * to z +0.105 at the shoulder line, which is 145 mm below the chin —
+         * so a 155 mm beard hung vertically finishes INSIDE the sternum, and
+         * measured at a head yaw of -0.42 rad that is 13 of the beard's 387
+         * vertices in the ribcage. A beard lies ON a chest, in front of it.
+         */
+        nodes.push([p[0], p[1] - B.fall * f * s, p[2] + 0.190 * f * f * s,
+          B.chin * (1 + 0.34 * f - 0.72 * f * f * f) * s]);
+      }
+    }
+    parts.push([tubeGeo(nodes, 6, { tip: 0.6 })]);
+  }
+  if (B.moustache > 0) {
+    // A bar across the lip was the loudest thing wrong with the first pass.
+    // A moustache follows the mouth's own curve and drops at the CORNERS,
+    // which is the whole difference between a moustache and a smudge.
+    const N = 5, nodes = [];
+    for (let i = 0; i < N; i++) {
+      const t = -1 + (2 * i) / (N - 1);
+      const d = new THREE.Vector3(t * 0.62, 0.10 - 0.30 * t * t, 0.86);
+      const o = new THREE.Vector3(0, (0.048 - 0.006 * t * t) * s, 0.022 * s);
+      const p = onSurface(hg, d, -0.0020 * s, o);
+      nodes.push([p[0], p[1], p[2], (0.0034 + 0.0044 * B.moustache) * (1 - 0.34 * t * t) * s]);
+    }
+    parts.push([tubeGeo(nodes, 6, { tip: 0.4 })]);
+  }
+  for (let i = 0; i < B.plaits; i++) {
+    const sx = i === 0 ? 1 : -1;
+    // Forward and SHORT. Hung straight down at 0.13 m they reached into the
+    // ribcage at a head yaw of -0.85 rad — 65 vertices inside the tabard — and
+    // a plait that passes through a chest is the rigid-lek defect on a smaller
+    // scale. Swung 0.62 rad forward, the fall clears the collar entirely.
+    /*
+     * NEGATIVE x, and the sign is the whole bug. `pos` is (0, -len, 0) rotated
+     * by this Euler, and a rotation about +X sends a DOWNWARD strand BACKWARD
+     * — measured, 35 of a pair of plaits' 96 vertices inside the ribcage at a
+     * head yaw of -0.42 rad, with the tips at z +0.033 where the neck is. -0.55
+     * swings them forward, over the chest and clear of it.
+     */
+    /*
+     * ROOTED ON THE CHIN and swung forward, not hung below the fall.
+     *
+     * Two sign-and-place bugs, both measured. `pos` is (0, -len, 0) rotated by
+     * this Euler, so a POSITIVE x sends a downward strand BACKWARD — the first
+     * pair finished at z +0.033 with 35 of their 96 vertices inside the neck.
+     * And hung below a 98 mm fall they reach the chest dome, which tops out at
+     * z +0.105 only 145 mm under the chin. Rooted at the chin and swung 0.75
+     * rad forward they lie along the front of the beard and touch nothing.
+     */
+    strands.push({ len: 0.058, r0: 0.0062, r1: 0.0026, seg: 5, rings: 4,
+      at: [sx * 0.020, 0.006, 0.052], rot: [-0.75, 0, sx * 0.18] });
+  }
+  return { parts, strands };
+}
+
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
 export function buildJedi(opts = {}) {
-  const S = opts.scale ?? 1;
-  const robe = ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0];
-  const rig = new Rig(humanoidSkeleton(S), { scale: S });
   /**
-   * The three creator axes. `sp` is a row of SPECIES, `F` the eight face
-   * numbers (the species' own bias folded in), and `k` the signed frame
-   * parameter, -1 slight to +1 heavy.
+   * The creator's axes. `sp` is a row of SPECIES, `G` the character sheet (cut,
+   * beard, years, muscle — see SHEET_KEYS), `F` the eight face numbers with the
+   * species' bias and the years folded in, `k` the signed frame parameter (-1
+   * slight to +1 heavy) and `mu` the signed muscle parameter (-1 wiry to +1
+   * powerful).
    *
-   * All three are written so that the DEFAULT IS THE IDENTITY: species human
+   * ALL OF THEM ARE WRITTEN SO THAT THE DEFAULT IS THE IDENTITY: species human
    * carries no face bias, an absent face preset is eight zeros, an absent build
-   * is exactly 0.5 and therefore k exactly 0, and every use below has the shape
-   * `x * (1 + gain*k)` or `x + gain*k`. `x * 1` and `x + 0` are exact in IEEE
-   * float, so buildJedi() with no arguments emits byte-for-byte the geometry it
-   * emitted before any of this existed — which Player, Enemy, Net and the menu
-   * preview all depend on, and which is asserted against the previous build
-   * rather than assumed.
+   * is exactly 0.5 and therefore k exactly 0, an absent sheet is the temple cut
+   * with no beard at age 0 and muscle 0.5 — therefore a exactly 0 and mu
+   * exactly 0 — and every use below has the shape `x * (1 + gain*k)` or
+   * `x + gain*k`. `x * 1` and `x + 0` are exact in IEEE float, so buildJedi()
+   * with no arguments emits byte-for-byte the geometry it emitted before any of
+   * this existed — which Player, Enemy, Net and the menu preview all depend on,
+   * and which is asserted against the previous build rather than assumed.
    */
   const sp = speciesOf(opts.species);
-  const F = faceFor(sp, opts.face);
+  const G = sheetOf(opts);
+  /**
+   * A SPECIES MAY BE A DIFFERENT SIZE, and its head a different fraction of it.
+   *
+   * `sp.frame` multiplies the rig's own scale, the arm and leg lengths the
+   * skeleton is laid out at, and — separately — the size everything on the HEAD
+   * is authored at. Separately is the whole point: a small figure built by
+   * turning one scale down is a scaled-down human, which is exactly the thing
+   * the small-folk row exists not to be. Its body is 0.40 of a human's and its
+   * head 0.62, so the head is 1.55 times the size the body would have given it
+   * and the figure is three and a half heads tall instead of seven.
+   *
+   * The animator needs no telling. BipedAnimator measures the legs it is handed
+   * (`standHip = min(hipHeight, ankleY + legLen * 0.965)`), so a rig with 34 cm
+   * legs stands 37 cm at the hip with the same knee extension as an adult, on
+   * the same `hipHeight: 0.95` every caller passes.
+   */
+  const FR = sp.frame || null;
+  const S = (opts.scale ?? 1) * (FR ? FR.scale : 1);
+  // `frame.head` is the head's scale against the CALLER's, not against the
+  // body's — 0.40 body and 0.62 head means the head is 1.55 times the size a
+  // uniform shrink would have given it, which is the entire point of the row.
+  // Written the other way round (S * FR.head) it compounds to 0.248 and the
+  // figure comes out with a head SMALLER than its body's share: measured at
+  // 10.5 heads tall, which is a stick insect.
+  const HS = (opts.scale ?? 1) * (FR ? FR.head : 1);
+  const robe = ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0];
+  const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
+  const F = faceFor(sp, opts.face, G.a);
   const { k } = buildOf(opts.build);
+  const mu = G.m;
 
   /**
    * Five cloth tones off a two-tone palette, not two.
@@ -2332,15 +3015,31 @@ export function buildJedi(opts = {}) {
   // cloth bake rather than bare: hair with no normal detail at all is a
   // moulded plastic wig, and it is 20cm from the camera in every menu shot.
   // Tiled hard so the weave reads as strands rather than as burlap.
-  const hair = clothMat(opts.hairColor ?? 0x2a1d14, 0.72,
+  /**
+   * AND IT GOES GREY, which is the other half of the years.
+   *
+   * `mix(chosen, GREY, 0.88 * age)` and not a separate white swatch, because
+   * the two are not alternatives: a black-haired sixty-year-old is iron grey
+   * and a sand-haired one is nearly white, and a player who picked Auburn and
+   * dragged the years across should watch that auburn go. At age 0 the factor
+   * is 0 and `Color.lerp(x, 0)` returns the colour untouched, so the neutral
+   * material is the one this line always built.
+   */
+  // Guarded rather than relying on `lerp(c, 0)` being the identity: mix()
+  // round-trips through Color.getHex(), which quantises to 8 bits per channel,
+  // and the neutral figure has to come out on the same integer it always did.
+  const base = opts.hairColor ?? 0x2a1d14;
+  const hairHex = G.a > 0 ? mix(base, GREY, 0.88 * G.a) : base;
+  const browHex = G.a > 0 ? mix(mix(base, GREY, 0.62 * G.a), 0x000000, 0.32) : mix(base, 0x000000, 0.32);
+  const hair = clothMat(hairHex, 0.72,
     { vc: true, repeat: 8.0, normal: 1.25, sheen: 0.34, sheenColor: 0x6b5540, sheenRough: 0.58 });
   hair.side = THREE.DoubleSide;
   // Brows and lashes are two square centimetres of nearly-flat plate facing
   // the sun, and on the hair material's sheen lobe they rendered BRIGHTER than
   // the forehead behind them — a pale bar across the face, which is the
   // opposite of what a brow is for. Matte, and a third darker than the hair.
-  const brow = clothMat(mix(opts.hairColor ?? 0x2a1d14, 0x000000, 0.32), 0.86,
-    { vc: true, repeat: 9.0 });
+  // Brows grey too, and later than the hair does — 0.62 against 0.88.
+  const brow = clothMat(browHex, 0.86, { vc: true, repeat: 9.0 });
 
   /* The torso lathe is circular and the mesh is squashed on Z, so a garment
    * revolved about the same axis follows the body EXACTLY when it is stretched
@@ -2363,16 +3062,38 @@ export function buildJedi(opts = {}) {
    * slider. There is a check that walks every band on every build and measures
    * whether the limb is still inside it.
    */
-  const KTOR = 1 + 0.105 * k;      // ribcage: tabard caps, the V of the tunic
-  const KHIP = 1 + 0.030 * k;      // pelvis: both skirts and the front panels
+  /**
+   * MUSCLE RIDES THE SAME NUMBERS, and that is why it is safe to add.
+   *
+   * The frame slider is GIRTH: everything gets wider together, which is what a
+   * heavy build is. Muscle is DISTRIBUTION — a shoulder and a chest that grow
+   * while the waist comes IN — and that is the difference a viewer actually
+   * reads as strength rather than as size. So the waist term below is negative
+   * and the shoulder term is the largest positive one on the figure: across the
+   * muscle slider the shoulder-to-waist ratio runs 1.02 → 1.29, which is more
+   * than the frame slider moves it.
+   *
+   * Every garment scalar takes its muscle term from the SAME expression as the
+   * limb it is worn on, exactly as the frame terms do, so a bracer stays outside
+   * its own forearm and an obi stays on a waist that just came in by 5%. The
+   * garment-fit sweep in tools/checks/grooming.mjs walks both sliders at once
+   * rather than one at a time, because the corner that fails is the corner.
+   */
+  const KTOR = 1 + 0.105 * k + 0.055 * mu;  // ribcage: tabard caps, the V of the tunic
+  const KHIP = 1 + 0.030 * k - 0.010 * mu;  // pelvis: both skirts and the front panels
   // The obi is a WAIST band, not a hip band, and the waist carries five times
   // the hip's gain — so scaling the belt group with the pelvis buried 15% more
   // of the obi at the heavy end than at the middle. Halfway between the two is
   // what actually keeps a belt on a waist while its skirt still covers a hip.
-  const KBELT = 1 + 0.080 * k;     // obi, belt, buckle, pouches, hanging ends
-  const KARM = 1 + 0.150 * k;      // humerus and forearm: mantle, hem, cuff, bracer
-  const KLEG = 1 + 0.120 * k;      // shin: boot shaft, cuff, ankle strap
-  const KNECK = 1 + 0.135 * k;     // collar
+  const KBELT = 1 + 0.080 * k - 0.028 * mu; // obi, belt, buckle, pouches, hanging ends
+  const KARM = 1 + 0.150 * k + 0.105 * mu;  // humerus and forearm: mantle, hem, cuff, bracer
+  // The boot shaft is a circular lathe over a shin whose section carries a calf
+  // lobe behind it, so its muscle term has to track the CALF and not the shaft
+  // radius. At 0.055 against a calf swell of 0.42 the gastrocnemius came out
+  // 22 mm outside its own boot at the powerful end — measured per height on the
+  // built mesh, which is the only place that shows up.
+  const KLEG = 1 + 0.120 * k + 0.105 * mu; // shin: boot shaft, cuff, ankle strap
+  const KNECK = 1 + 0.135 * k + 0.090 * mu; // collar
 
   /**
    * The outer layer of the robe below the belt — the over-skirt and the two
@@ -2380,6 +3101,11 @@ export function buildJedi(opts = {}) {
    * simulated cloth. See attachSkirt() in Cloth.js and the note at the lathe.
    */
   const outerLayer = [];
+  /**
+   * Whatever the species hangs on its head, so a runtime that simulates one of
+   * them can hide the rigid version. Empty for a human.
+   */
+  const speciesMeshes = [];
 
   dressHumanoid(rig, {
     scale: S,
@@ -2410,19 +3136,22 @@ export function buildJedi(opts = {}) {
     //
     // Measured across the range at the 8 m sampling density in
     // tools/checks/body-parts.mjs.
-    parts: { chestR: 0.162 * (1 + 0.105 * k), shoulderR: 0.138 * (1 + 0.115 * k),
-             hipR: 0.138 * (1 + 0.025 * k), waistR: 0.122 * (1 + 0.135 * k),
-             armR: 0.045 * (1 + 0.150 * k), armR0: 0.052 * (1 + 0.165 * k),
-             armR1: 0.039 * (1 + 0.130 * k), foreR0: 0.044 * (1 + 0.150 * k),
-             foreR1: 0.030 * (1 + 0.110 * k),
-             clavR: 0.062 * (1 + 0.100 * k), thighR: 0.090 * (1 + 0.120 * k),
-             neckR: 0.058 * (1 + 0.135 * k), torsoDepth: DEPTH },
+    parts: { chestR: 0.162 * (1 + 0.105 * k + 0.055 * mu), shoulderR: 0.138 * (1 + 0.115 * k + 0.125 * mu),
+             hipR: 0.138 * (1 + 0.025 * k - 0.010 * mu), waistR: 0.122 * (1 + 0.135 * k - 0.028 * mu),
+             armR: 0.045 * (1 + 0.150 * k + 0.105 * mu), armR0: 0.052 * (1 + 0.165 * k + 0.115 * mu),
+             armR1: 0.039 * (1 + 0.130 * k + 0.060 * mu), foreR0: 0.044 * (1 + 0.150 * k + 0.105 * mu),
+             foreR1: 0.030 * (1 + 0.110 * k + 0.035 * mu),
+             clavR: 0.062 * (1 + 0.100 * k + 0.085 * mu), thighR: 0.090 * (1 + 0.120 * k + 0.075 * mu),
+             neckR: 0.058 * (1 + 0.135 * k + 0.090 * mu), torsoDepth: DEPTH },
     // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
     // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
     // instead of bolted on as a ball — see dressHumanoid. Its amplitude is the
     // strongest single frame cue on a limb: a shoulder cap is either there or
     // it is not, and unlike a radius it changes the SHAPE of the outline.
-    deltoid: [0.34 * (1 + 0.36 * k), 0.15, 0.155],
+    // Muscle moves the deltoid harder than the frame does — 0.62 against 0.36 —
+    // and deliberately: a shoulder cap is either there or it is not, and unlike
+    // a radius it changes the SHAPE of the outline rather than its width.
+    deltoid: [0.34 * (1 + 0.36 * k + 0.62 * mu), 0.15, 0.155],
     seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
     limbOpts: {
       // The thigh carries the quadriceps high and the condyles at the knee;
@@ -2435,7 +3164,9 @@ export function buildJedi(opts = {}) {
       // three shin tests in tools/checks: this lands the worst calf-into-
       // hamstring penetration at 16mm where the shipped shaping gave 31mm,
       // while carrying MORE calf (mass 0.36 against 0.28) rather than less.
-      shin: { rings: 8, swells: [[0.33, 0.22, 0.16]],
+      // The calf's own belly follows the muscle slider; its position and width
+      // do not, because where a gastrocnemius sits is anatomy and not training.
+      shin: { rings: 8, swells: [[0.33, 0.22 * (1 + 0.20 * mu), 0.16]],
               section: calfSection({ flat: 0.11, mass: 0.36, at: 0.33,
                                      hollow: 0.28, hollowAt: 0.03, hollowW: 0.25 }) },
     },
@@ -2493,11 +3224,16 @@ export function buildJedi(opts = {}) {
         'open');
     },
     hands: { curl: 0.95 },
-    headRadius: 0.098,
-    // The trapezius. A heavy frame carries the shoulder line higher and further
-    // out from the neck; a slight one has a longer, thinner neck showing above
-    // the collar, which is the cue the collar itself frames.
-    yoke: { reach: 0.62 * (1 + 0.055 * k), rise: 0.031 * (1 + 0.30 * k), depth: 0.064 * (1 + 0.14 * k),
+    headRadius: 0.098 * (HS / S),
+    // The trapezius, and it is where MUSCLE reads loudest on a clothed figure.
+    // A heavy frame carries the shoulder line higher and further out from the
+    // neck; a slight one has a longer, thinner neck showing above the collar,
+    // which is the cue the collar itself frames. Muscle is a bigger term than
+    // frame on `rise` for the reason a trapezius is: it is the one muscle on the
+    // body whose whole job is to lift the shoulder girdle, and it is the only
+    // one visible through a robe from behind.
+    yoke: { reach: 0.62 * (1 + 0.055 * k + 0.070 * mu), rise: 0.031 * (1 + 0.30 * k + 0.46 * mu),
+            depth: 0.064 * (1 + 0.14 * k + 0.16 * mu),
             at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
     yokeMat: outer,
     // The skull.
@@ -2511,8 +3247,19 @@ export function buildJedi(opts = {}) {
     // It is also one assembled shell rather than a loose pile of meshes, for
     // the reason every other archetype already is: `surfacePoint` can only
     // answer "where does the face actually end" if there is one thing to ask.
-    headGeo: (s) => skullGeo(s, F, sp),
-    buildHead(headObj, s, hg) {
+    // `HS` and not `s`, and the two are the same number for everything but the
+    // small-folk row: the head is authored at its own scale so a species can be
+    // three and a half heads tall rather than a human shrunk.
+    //
+    // `covered` is the cut, and it is not decoration. The shell's occlusion bake
+    // drives everything above the ear line down to 0.28 SO THAT a hair
+    // poke-through reads as a dark root instead of as bare bone — and painted
+    // on a SHAVED head that is a black skullcap, which is the exact defect
+    // `creator: a bald species is bald` was written for. A shaved human is as
+    // bald as a Twi'lek and now takes the same bake.
+    headGeo: () => skullGeo(HS, F, sp, sp.hair && G.hair.crown !== false),
+    buildHead(headObj, _s, hg) {
+      const s = HS;
       // Every feature is raycast onto the assembled skull. Authored against a
       // nominal sphere radius they went missing four separate times — both
       // eyes, both pupils, both brows and the nose had literally never been
@@ -2607,90 +3354,100 @@ export function buildJedi(opts = {}) {
       // hook allows it) has the hair laid over its own crown rather than under
       // it, and every mesh it makes is a child of headObj, which is what makes
       // it come off with a severed head. See speciesHead().
-      speciesHead(sp, headObj, s, hg, { skin, F });
+      // Kept, not just built: attachLekku hides these while the simulated pair
+      // is live and shows them again at LOD range, which is the same swap
+      // attachSkirt does with the rigid robe. Snapshotting the children either
+      // side of the call is how they are identified without Kit having to
+      // report what it baked.
+      {
+        const before = headObj.children.length;
+        speciesHead(sp, headObj, s, hg, { skin, F });
+        for (let i = before; i < headObj.children.length; i++) speciesMeshes.push(headObj.children[i]);
+      }
       if (!sp.hair) return;
 
-      // ── hair ─────────────────────────────────────────────────────────
-      // What was here was one smooth spherical cap. A sphere sector laid on a
-      // sphere is a swimming cap, and that is precisely what the portrait
-      // showed: a dark, perfectly circular helmet with a hard rim. Hair is
-      // read at silhouette range by its OUTLINE, and an outline needs to be
-      // broken — a parting, a fringe with a corner in it, a mass over each
-      // ear, a tail at the nape. Six pieces, still one geometry and one mesh.
-      // The hair is most of the head's OUTLINE, so it is sized off the same
+      // ── hair and beard ───────────────────────────────────────────────
+      // What was here was one smooth spherical cap, then one hard-coded cut,
+      // and now it is a library — but the argument has not changed and it is
+      // worth keeping: hair is read at silhouette range by its OUTLINE, and an
+      // outline needs to be BROKEN. A parting, a fringe with a corner in it, a
+      // mass over each ear, a tail at the nape. Every cut in HAIR_CUTS is a
+      // handful of flat masses chosen for that outline, still merged to one
+      // geometry on one material.
+      //
+      // The hair is most of the head's outline, so it is sized off the same
       // vault the braincase is — see vaultOf(). Sized against a fixed skull it
       // was a wig standing off a narrow head, or a cap with a wide one growing
       // through it, and `skull` moved the rendered silhouette by two pixels
       // instead of the seven it is worth.
       const V = vaultOf(F);
-      const cap = new THREE.SphereGeometry(0.0890 * s, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62);
-      // A hair of margin on the WIDE end only. Measured: at skull = -1 the
-      // braincase grew through the cap at one vertex of 117 behind the hairline,
-      // which the scalp bake would have rendered as a dark root rather than as
-      // bare bone — but zero is cheaper than an excuse.
-      cap.scale(1.02 * (V.w + 0.020 * Math.max(0, -F.skull)), 1.32 * V.h, 1.24 * V.d);
-      // Tipped about its OWN centre — rotating the mesh instead swings the cap
-      // 2cm off the skull. NB the sign: +0.38 tips the axis forward, which
-      // drags the rim down over the eyes, the opposite of what is wanted.
-      // Swept BACK 43 degrees, not 17. The sign and the size of this are both
-      // measurable: the rim has to land above the brow at the front (0.130,
-      // against a brow ridge topping out at 0.122 and an eye centred at 0.084 —
-      // at -0.30 rad it came down to 0.081 and the fringe hung over both eyes,
-      // which tools/verify caught as a face feature buried in the head) and
-      // below the ear line at the sides (0.060). Measured across the whole
-      // braincase behind the hairline, 0% of it is now left bare; the shape
-      // this replaced left 0.5%, and every one of those patches rendered as a
-      // cream pentagon at luminance 0.80 against hair at 0.03.
-      cap.rotateX(-0.75);
-      cap.translate(0, 0.092 * s, -0.010 * s);
-      const lump = (rx, ry, rz, w = 8, h = 6) => {
-        const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
-      };
-      const hairGeo = assemble([
-        [cap],
-        // the swept fringe: a wedge over the brow, heavier on one side, which
-        // is what puts an asymmetric corner in the outline
-        [lump(0.052 * V.w, 0.026, 0.030, 8, 5),  [0.020 * V.w * s, 0.150 * V.h * s, 0.050 * s], [0.36, 0.22, -0.14]],
-        [lump(0.030 * V.w, 0.021, 0.024, 7, 4),  [-0.040 * V.w * s, 0.143 * V.h * s, 0.042 * s], [0.30, -0.30, 0.20]],
-        // a mass over each ear, covering the top of it the way hair does
-        [lump(0.030, 0.050 * V.h, 0.054, 7, 5),  [0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, 0.16]],
-        [lump(0.030, 0.050 * V.h, 0.054, 7, 5),  [-0.066 * V.w * s, 0.092 * s, -0.012 * s], [0, 0, -0.16]],
-        // the nape, filling in under the cap's back edge and running down to
-        // the collar rather than stopping in mid-air
-        [lump(0.066 * V.w, 0.062, 0.062 * V.d, 8, 6),  [0, 0.056 * s, -0.052 * s]],
-        [lump(0.042 * V.w, 0.034, 0.032, 7, 4),  [0, 0.014 * s, -0.058 * s], [0.35, 0, 0]],
-      ], 'hair');
-      // Hair is self-shadowing and nearly black at the roots: dark under the
-      // fringe, dark at the nape, lit along the crown. On a single sun this is
-      // the only thing that separates the strands from one another at all.
-      shadeAO(hairGeo, ao(
-        creaseAt(0, 0.040 * s, -0.050 * s, 0.070 * s, 0.46, 0.5),
-        creaseAt(0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
-        creaseAt(-0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
-        (x, y) => 0.62 + 0.38 * clamp((y / s - 0.045) / 0.11, 0, 1),
-      ), { floor: 0.26 });
-      mesh(hairGeo, hair, headObj);
-      // a short braid, because of course — one tapered strand rather than the
-      // five spheres it used to be, which cost 400 triangles on their own.
+      /**
+       * THE YEARS, as a hairline.
+       *
+       * `wide` is a hair of margin on the WIDE end only: at skull = -1 the
+       * braincase grew through the cap at one vertex of 117 behind the
+       * hairline, which the scalp bake would have rendered as a dark root
+       * rather than as bare bone — but zero is cheaper than an excuse.
+       * `back` is age: a hairline recedes, and unlike a wrinkle it is worth
+       * whole pixels of silhouette at the range the game is played at.
+       */
+      const R = { wide: 0.020 * Math.max(0, -F.skull), back: 0.034 * G.a, thin: G.a };
+      const cut = (HAIR_CUTS[G.hair.id] || HAIR_CUTS.temple)(s, V, R);
+      const beard = beardParts(s, hg, G.beard);
+      const parts = [...cut.parts, ...beard.parts];
+      if (parts.length) {
+        const hairGeo = assemble(parts, 'hair');
+        // Hair is self-shadowing and nearly black at the roots: dark under the
+        // fringe, dark at the nape, lit along the crown. On a single sun this is
+        // the only thing that separates the strands from one another at all.
+        // The same field runs over the beard, and correctly: everything under
+        // the jaw is in the head's own shadow, which is the whole reason a
+        // beard reads as a mass rather than as a painted patch.
+        shadeAO(hairGeo, ao(
+          creaseAt(0, 0.040 * s, -0.050 * s, 0.070 * s, 0.46, 0.5),
+          creaseAt(0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
+          creaseAt(-0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
+          (x, y) => 0.62 + 0.38 * clamp((y / s - 0.045) / 0.11, 0, 1),
+        ), { floor: 0.26 });
+        mesh(hairGeo, hair, headObj);
+      }
+      // The strands — a padawan's braid, a warrior's tail, a plaited beard.
       //
-      // A DIRECT CHILD OF THE HEAD, not a mesh inside a positioning Group, and
-      // that is a bug fix rather than tidying. Player._applyViewMode hides first
-      // person's own head with `neck.obj.traverse(o => o.visible = !fp)`, which
-      // reaches every descendant; Ragdoll's addBone() re-shows only the DIRECT
-      // children of the bone it is re-homing. A mesh one level down inside a
-      // Group is hidden by the first and missed by the second, so cutting your
-      // own head off in first person produced a head with no braid on it.
-      // Measured before this change: 13 of the severed head's 14 meshes came
-      // back visible. Everything a species hangs on a head goes on through
-      // Kit.bake(), which is already a direct child; this was the last one.
+      // EACH ONE IS A DIRECT CHILD OF THE HEAD, not a mesh inside a positioning
+      // Group, and that is a bug fix rather than tidying. Player._applyViewMode
+      // hides first person's own head with `neck.obj.traverse(o => o.visible =
+      // !fp)`, which reaches every descendant; Ragdoll's addBone() re-shows only
+      // the DIRECT children of the bone it is re-homing. A mesh one level down
+      // inside a Group is hidden by the first and missed by the second, so
+      // cutting your own head off in first person produced a head with no braid
+      // on it. Measured before that change: 13 of the severed head's 14 meshes
+      // came back visible.
       //
-      // The group's transform is composed into the mesh's own rather than
-      // deleted, so the braid lands on exactly the matrix it always did.
-      const braidRot = new THREE.Euler(0.10, 0, 0.09);
-      const braidPos = new THREE.Vector3(0, -0.115 * s, 0).applyEuler(braidRot)
-        .add(new THREE.Vector3(0.064 * V.w * s, 0.078 * s, 0.008 * s));
-      mesh(limbGeo(0.115 * s, 0.0080 * s, 0.0042 * s, 7, true, { rings: 6, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
-        hair, headObj, [braidPos.x, braidPos.y, braidPos.z], [braidRot.x, braidRot.y, braidRot.z]);
+      // The positioning group's transform is composed into the mesh's own
+      // rather than deleted, so a strand lands on exactly the matrix it would
+      // have had inside one.
+      for (const st of [...cut.strands, ...beard.strands]) {
+        /**
+         * A STRAND'S LENGTH IS A BODY MEASUREMENT, not a head one.
+         *
+         * Where it roots and how thick it is belong to the head and scale with
+         * it; how far it FALLS is decided by where the shoulder is, which is
+         * the body's business. On a species whose head is 1.85 times its body's
+         * share, a braid cut at head scale is 85 mm on a 660 mm figure and
+         * lands inside the trapezius — measured, 3 of the braid's 80 vertices
+         * inside the torso at a head yaw of -0.42 rad, which is exactly the
+         * property `creator: nothing a species hangs on a head passes through
+         * the body under it` forbids. `S === HS` for every human-framed row, so
+         * nothing that shipped moves by a float.
+         */
+        const L = st.len * S;
+        const rot = new THREE.Euler(st.rot[0], st.rot[1], st.rot[2]);
+        const pos = new THREE.Vector3(0, -L, 0).applyEuler(rot)
+          .add(new THREE.Vector3(st.at[0] * s, st.at[1] * s, st.at[2] * s));
+        mesh(limbGeo(L, st.r0 * s, st.r1 * s, st.seg, true,
+          { rings: st.rings, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
+          hair, headObj, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z]);
+      }
     },
     dress(r, s) {
       const chestB = r.get('chest'), chest = chestB.obj;
@@ -3132,6 +3889,20 @@ export function buildJedi(opts = {}) {
   });
 
   return { rig, robeSkirt: outerLayer,
+           /**
+            * THE HEAD-TAILS, as a spec plus the rigid meshes that stand in for
+            * them. `lekku` is null for every species that has none, which is
+            * what a caller tests rather than testing the species id — see
+            * attachLekku() in Cloth.js and the seam in ui/Menu.js.
+            *
+            * Scaled here rather than at the far end, because `S` already
+            * carries the species' own frame and a caller has no business
+            * knowing that a row may be a different size.
+            */
+           lekku: sp.lekku ? [{ at: sp.lekku.at.map((v) => v * S / (opts.scale ?? 1)),
+             r: sp.lekku.r * S / (opts.scale ?? 1), len: sp.lekku.len * S / (opts.scale ?? 1),
+             taper: sp.lekku.taper }] : null,
+           speciesMeshes,
            palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
 }
 

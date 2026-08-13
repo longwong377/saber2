@@ -49,7 +49,7 @@
 
 import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
-import { buildJedi, SPECIES } from '../../src/game/Bodies.js';
+import { buildJedi, SPECIES, speciesOf } from '../../src/game/Bodies.js';
 import { Saber } from '../../src/game/Saber.js';
 import { ROBE_CUTS, attachSkirt } from '../../src/game/Cloth.js';
 // The grip model itself, not a copy of it and not a regex over its source.
@@ -207,8 +207,22 @@ export async function run({ check, assert }) {
       const box = new THREE.Box3().setFromObject(rig.root);
       assert(Math.abs(box.min.y) < 0.02,
         `${species}/${build}: the feet are ${(box.min.y * 1000).toFixed(0)} mm off the floor`);
-      assert(box.max.y > 1.55 && box.max.y < 1.95,
-        `${species}/${build}: the crown is at ${box.max.y.toFixed(3)} m — that is not a standing figure`);
+      /**
+       * A SPECIES MAY BE A DIFFERENT SIZE, and 1.55–1.95 m was written when
+       * every body on the shared skeleton was a human's. `frame.stature` is the
+       * row's own declaration of how tall it stands — the number a small-folk
+       * figure is FOR — so the window travels with it instead of being a
+       * constant that only one stature can satisfy.
+       *
+       * This is not a loosening: the window is the same ±11% it always was, and
+       * a species that declares no frame is measured against exactly 1.55–1.95
+       * as before. What it stops is the other failure mode, which is worse: a
+       * declared 0.66 m species passing a bound it was never measured against.
+       */
+      const stature = speciesOf(species).frame?.stature ?? 1.75;
+      assert(box.max.y > stature * 0.886 && box.max.y < stature * 1.114,
+        `${species}/${build}: the crown is at ${box.max.y.toFixed(3)} m against a declared stature of `
+        + `${stature.toFixed(2)} m — that is not a standing figure`);
       if (build === 0.5) rows.push(`${species} ${box.max.y.toFixed(3)}`);
     }
     return `feet on y=0 for ${SPECIES.length * 3} figures; crowns ${rows.join(', ')}`;
@@ -234,10 +248,31 @@ export async function run({ check, assert }) {
       { bladeLength: 0.85 }, { bladeLength: BLADE_CAP }, { bladeLength: 4.0 },
     ];
     let worst = 0, worstAt = '', smallest = 1, smallAt = '', offCentre = 0, offAt = '';
+    /**
+     * THE SHARE, and why the fill bound is now relative to it.
+     *
+     * `framePreviewCamera` fits the CONTENT — the figure plus its blade — and
+     * the figure is then whatever fraction of that it is. A 1.69 m Jedi with
+     * the stock 1.15 m blade is 82% of its own content and lands at 67% of the
+     * frame, which is where 0.55 came from. A 0.66 m one holding the SAME blade
+     * is 45% of its content and cannot reach 55% of the frame without cropping
+     * the weapon off, which would be a worse picture and a worse check.
+     *
+     * So the bound is scaled by the figure's share of its own content, measured
+     * rather than typed, against the default figure's share measured the same
+     * way. For every figure that existed when 0.55 was written the factor is
+     * exactly 1 and the number is unchanged.
+     */
+    const shareOf = (b) => {
+      const fb = figureBox(b);
+      return (fb.max.y - fb.min.y) / Math.max(1e-6, b.content.y1 - b.content.y0);
+    };
+    const baseShare = shareOf(bench({}));
     for (const over of combos) {
       const b = bench(over);
       const pts = corners(figureBox(b));
       const name = JSON.stringify(over) || '{}';
+      const fill = 0.55 * Math.min(1, shareOf(b) / baseShare);
       for (const aspect of ASPECTS) {
         const cam = new THREE.PerspectiveCamera(PREVIEW_VIEW.fov, aspect, 0.05, 40);
         for (const pitch of [-1.1, -0.5, 0, 0.1, 0.5, 1.1]) {
@@ -251,8 +286,9 @@ export async function run({ check, assert }) {
           if (pitch === 0.1 && aspect === ASPECTS[0]) {
             if (r.height < smallest) { smallest = r.height; smallAt = name; }
             if (Math.abs(r.centre) > offCentre) { offCentre = Math.abs(r.centre); offAt = name; }
-            assert(r.height > 0.55,
-              `${name}: the figure is only ${(r.height * 100).toFixed(0)}% of the frame height`);
+            assert(r.height > fill,
+              `${name}: the figure is only ${(r.height * 100).toFixed(0)}% of the frame height, `
+              + `against ${(fill * 100).toFixed(0)}% for its share of its own content`);
             assert(Math.abs(r.centre) < 0.32,
               `${name}: the figure's middle sits at NDC ${r.centre.toFixed(3)}, not near the centre of the box`);
           }

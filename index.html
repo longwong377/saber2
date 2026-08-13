@@ -80,9 +80,20 @@
         <div id="face-list" class="cards small"></div>
         <h3 id="h-build" style="margin-top:22px">Build</h3>
         <label class="slider" id="build-row">Frame <input type="range" id="opt-build" min="0" max="1" step="0.01" value="0.5"><b></b></label>
+        <!-- Muscle and years are NOT keys of DEFAULT_SETTINGS: they live in the
+             character sheet, which is the `face` object, because that object is
+             the only appearance argument the World → Player → buildJedi path
+             carries. Hence `sheet-` ids rather than `opt-` ones — the checks
+             that hold `opt-*` to a setting name would be lying about these. -->
+        <label class="slider" id="muscle-row">Muscle <input type="range" id="sheet-muscle" min="0" max="1" step="0.01" value="0.5"><b></b></label>
+        <label class="slider" id="age-row">Years <input type="range" id="sheet-age" min="0" max="1" step="0.01" value="0"><b></b></label>
+        <h3 id="h-hairstyle" style="margin-top:22px">Hair</h3>
+        <div id="hairstyle-list" class="cards small"></div>
+        <h3 id="h-beard" style="margin-top:22px">Beard</h3>
+        <div id="beard-list" class="cards small"></div>
         <h3 style="margin-top:22px">Skin</h3>
         <div id="skin-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Hair</h3>
+        <h3 style="margin-top:22px">Hair colour</h3>
         <div id="hair-list" class="swatches"></div>
         <h3 id="h-cut" style="margin-top:22px">Robe cut</h3>
         <div id="cut-list" class="cards small"></div>
@@ -90,6 +101,8 @@
         <div id="robe-list" class="swatches"></div>
         <h3 style="margin-top:22px">Crystal</h3>
         <div id="color-list" class="swatches"></div>
+        <h3 style="margin-top:22px">Force lightning</h3>
+        <div id="lightning-list" class="swatches"></div>
         <h3 style="margin-top:22px">Hilt</h3>
         <div id="hilt-list" class="cards small"></div>
         <h3 style="margin-top:22px">Blade</h3>
@@ -160,6 +173,7 @@
         <label class="check"><input type="checkbox" id="opt-bloom" checked> Bloom</label>
         <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
+        <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
         <h3 style="margin-top:22px">Audio</h3>

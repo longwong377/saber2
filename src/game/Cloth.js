@@ -1492,3 +1492,179 @@ export function attachSkirt(scene, rig, opts = {}) {
   };
   return skirt;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  LEKKU — the head-tails, simulated                                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A Twi'lek's lekku, as two closed tubes of cloth on the head.
+ *
+ * THE COMPLAINT. The species pass says so itself: "Lekku, montrals and
+ * tentacles are RIGID geometry hung off the head object, not simulated:
+ * Cloth.js belongs to another workstream". A rigid lek is welded to the skull,
+ * so it tracks the head's yaw exactly and moves not one micron relative to it —
+ * which is the same defect the rigid skirt had against the pelvis, and it reads
+ * the same way: a prop, not a body part. Measured on a walking Twi'lek, a rigid
+ * lek tip travels 0.000 mm in the head's frame over seven seconds while the
+ * cape's hem beside it travels 217.
+ *
+ * THE SHAPE. A lek is a tapered tube, which is what `closed` already builds and
+ * what `profile` already cuts: `profile(t)` is the radial multiplier down the
+ * cloth, so a taper is one expression rather than a new class. Everything else
+ * — the seam, the welded normals, the pinned ring, the fold occlusion — is the
+ * skirt's machinery unchanged.
+ *
+ * THE COST, and it is the part that had to be designed rather than chosen. The
+ * budget in tools/checks/_weave.mjs is per unit AREA: no garment may dice its
+ * cloth finer than the cape does (cell ≥ the cape's cell), cost more particles
+ * per m² (density), more links per particle, more solver passes, or more sphere
+ * tests per m². A lek is small — 0.063 m² against the cape's 0.46 — so the
+ * temptation is to dice it finely and "it is only a few particles". That is
+ * exactly the reasoning the weave check exists to refuse. So:
+ *
+ *   cols 5, rows 6 — 30 particles a lek, 60 for the pair, 0.063 m² each,
+ *   which is a cell of 41 cm² against the cape's 34: coarser, as required.
+ *
+ * FIVE COLLIDERS, not the cape's sixteen, for the same arithmetic: sphere tests
+ * are particles × colliders ÷ area, and a small garment with a long collider
+ * list blows that ratio even though the absolute number is tiny. Head, neck,
+ * chest and one sphere per shoulder is what a lek can actually hit.
+ *
+ * @param opts.roots  [{ at:[x,y,z], r, len, taper }] in the head bone's frame,
+ *                    mirrored on X. `at` is where the lek roots on the temple.
+ * @param opts.rigid  the rigid meshes this replaces; hidden while it is live
+ *                    and shown again by setVisible(false) at LOD range, exactly
+ *                    as the skirt does with the rigid robe.
+ */
+export function attachLekku(scene, rig, opts = {}) {
+  const S = opts.scale ?? 1;
+  const headB = rig.get('head');
+  if (!headB || !opts.roots || !opts.roots.length) return null;
+  const cols = opts.cols ?? 5;
+  const rows = opts.rows ?? 6;
+  const parts = [];
+
+  for (const root of opts.roots) {
+    for (const sx of [-1, 1]) {
+      const at = new THREE.Vector3(root.at[0] * sx, root.at[1], root.at[2]);
+      const r0 = root.r, len = root.len, taper = root.taper ?? 0.24;
+      const lek = new Cloak(scene, {
+        closed: true,
+        cols, rows,
+        length: len * S,
+        /*
+         * THE TAPER. `profile` is a multiplier on the anchor ring, so a lek
+         * that ends at `taper` of its root is one line — and it has to be a
+         * curve rather than a straight ramp, because a lek is nearly parallel
+         * for its first third and only closes over the last. Linear, it read as
+         * a traffic cone.
+         */
+        profile: opts.profile ?? ((t) => 1 - (1 - taper) * t * t * (3 - 2 * t)),
+        material: opts.material,
+        color: opts.color ?? 0x6f8f6a,
+        /*
+         * NO SURPLUS AND NO PLEAT. A lek is skin over muscle, not cloth: it has
+         * no gathered fabric in it and nothing to buckle. `fullness` 1 and
+         * `pleat` 0 leave the ring at its cut circumference, which is what the
+         * taper wants — and the note in reset() is the reason it matters, since
+         * on a closed cloth a shortened across-rest does not fold, it shrinks.
+         */
+        fullness: 1, pleat: 0,
+        /*
+         * STIFF, and stiffer DOWN than across.
+         *
+         * This is the one place a lek is not a garment. Cloth's bend is nearly
+         * nothing because fabric does not resist curving; a lek does — it is
+         * held by muscle and it carries its own shape, so it should swing as a
+         * heavy pendulum and arrive rather than ripple. bendDown 0.92 against
+         * the cape's 0.55 is what stops the tip whipping, and `bendStretchOnly`
+         * stays on because a lek that resisted being FOLDED as hard as being
+         * pulled straight could not lie over a shoulder at all.
+         */
+        stiffness: opts.stiffness ?? 0.94,
+        shear: opts.shear ?? 0.55,
+        bend: opts.bend ?? 0.30,
+        bendDown: opts.bendDown ?? 0.92,
+        bendStretchOnly: true,
+        // Heavier than cloth and much deafer to the air: a lek does not flutter.
+        damping: opts.damping ?? 0.955,
+        lift: opts.lift ?? 0.25,
+        drift: opts.drift ?? 0.20,
+        gravity: opts.gravity ?? -13,
+        iterations: opts.iterations ?? 4,
+        jitter: opts.jitter ?? 0,
+        seed: opts.seed,
+        foldAO: opts.foldAO ?? 0.30,
+        anchorFn: (c, n, out) => {
+          const th = (c / n) * Math.PI * 2;
+          _m.copy(headB.obj.matrixWorld);
+          out.set(at.x * S + Math.sin(th) * r0 * S * sx,
+            at.y * S + Math.cos(th) * r0 * S * 0.42,
+            at.z * S + Math.cos(th) * r0 * S);
+          out.applyMatrix4(_m);
+        },
+      });
+      lek._sharedMat = !!opts.material;
+      lek.side = sx;
+      parts.push(lek);
+    }
+  }
+
+  /*
+   * WHAT A LEK CAN HIT, and nothing else.
+   *
+   * The head it roots on, the neck beside it, the ribcage it lies against and
+   * one sphere per shoulder — five, because the cost gate is particles ×
+   * colliders ÷ area and a 0.063 m² garment carrying the cape's sixteen would
+   * cost four times the cape's sphere tests per m² while looking cheap.
+   */
+  const bones = ['head', 'neck', 'chest'];
+  const radii = [0.086, 0.062, 0.170];
+  for (const lek of parts) {
+    lek.refreshColliders = () => {
+      const out = lek.colliders;
+      out.length = 0;
+      for (let i = 0; i < bones.length; i++) {
+        const b = rig.get(bones[i]);
+        if (!b || b.severed) continue;
+        b.obj.updateMatrixWorld(false);
+        _v3.set(0, b.length * (i === 2 ? 0.55 : 0.45), 0).applyMatrix4(b.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: radii[i] * S });
+      }
+      // the shoulder on this lek's own side, which is the surface it lies over
+      const cb = rig.get(lek.side > 0 ? 'clavL' : 'clavR');
+      if (cb && !cb.severed) {
+        cb.obj.updateMatrixWorld(false);
+        _v3.set(0, cb.length * 0.7, 0).applyMatrix4(cb.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: 0.105 * S });
+      }
+      return out;
+    };
+  }
+
+  const rigid = opts.rigid || [];
+  /**
+   * The pair, as one thing to update, hide and dispose — because the caller is
+   * a seam in the menu rather than a line inside Player, and a seam should hand
+   * back one object rather than an array the caller has to loop.
+   */
+  const group = {
+    parts,
+    get initialised() { return parts.every((l) => l.initialised); },
+    update(dt, wind) {
+      for (const l of parts) if (l.enabled) l.update(dt, l.refreshColliders(), wind);
+    },
+    setVisible(v) {
+      for (const l of parts) l.setVisible(v);
+      for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v;
+    },
+    dispose() {
+      for (let i = 0; i < rigid.length; i++) rigid[i].visible = true;
+      for (const l of parts) l.dispose();
+      parts.length = 0;
+    },
+  };
+  group.setVisible(true);
+  return group;
+}

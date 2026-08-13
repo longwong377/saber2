@@ -298,7 +298,8 @@ export class RemoteAvatar {
     const built = buildJedi({ robeIndex: opts.robeIndex ?? 1 });
     this.rig = built.rig;
     world.scene.add(this.rig.root);
-    this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
+    // the rig's own scale — see the note in Player.js; a remote Yoda floats without it
+    this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
 
     this.saber = new Saber(world.scene, {
       colorIndex: opts.colorIndex ?? 1, bladeLength: opts.bladeLength ?? 1.15,

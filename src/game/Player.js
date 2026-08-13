@@ -683,7 +683,15 @@ export class Player {
     this.built = built;
     this.robeCut = opts.robeCut;
     world.scene.add(this.rig.root);
-    this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
+    /*
+     * THE RIG'S OWN SCALE, not 1.
+     *
+     * Enemy.js has always passed `A.scale` here for exactly this reason, and
+     * the player did not — which was invisible while every player was 1.78 m.
+     * A 0.66 m figure of Yoda's species has its ankle planted at 72 mm by a
+     * gait solved for a human, and floats 43 mm off the floor.
+     */
+    this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
     this._makeCloak();
 
@@ -1101,7 +1109,7 @@ export class Player {
           audio.force(this.position, 'jump');
           if (ctx.particles) {
             _v5.copy(this.position).setY(this.position.y + 0.4);
-            ctx.particles.plasma.spawn(_v5, _v6.set(0, 0, 0), { life: 0.35, size: 1.6, drag: 1, gravity: 0, color: 0x9fd8ff, alpha: 0.7 });
+            ctx.particles.plasma.spawn(_v5, _v6.set(0, 0, 0), { life: 0.35, size: 1.6, drag: 1, gravity: 0, color: this._lightningColor(), alpha: 0.7 });
           }
         }
       }
@@ -1989,6 +1997,16 @@ export class Player {
     return false;
   }
 
+  /**
+   * The colour the Force comes out at.
+   *
+   * One reader for three sites — the lightning arc, the plasma flash and the
+   * stasis burst were three copies of `0x9fd8ff`, so a player who picked a
+   * colour would have got it in one of the three and been left wondering about
+   * the other two. That is the shape of bug this project keeps finding.
+   */
+  _lightningColor() { return this.world?.settings?.lightningColor ?? 0x9fd8ff; }
+
   _canSpend(cost) {
     const drain = this.world.settings?.forceDrain ?? 1;
     return drain <= 0 || this.force >= cost * drain * this.boonMods.forceCost;
@@ -2559,7 +2577,7 @@ export class Player {
         gravity: 0.3, color: 0xdce6f2, alpha: 0.16 });
     }
     ctx.particles.plasma.spawn(pos, _g2.set(0, 0, 0),
-      { life: 0.22, size: radius * 3.2, drag: 1, gravity: 0, color: 0x9fd8ff, alpha: 0.5 });
+      { life: 0.22, size: radius * 3.2, drag: 1, gravity: 0, color: this._lightningColor(), alpha: 0.5 });
   }
 
   /**
@@ -2796,7 +2814,7 @@ export class Player {
           _v3.copy(origin).lerp(e.position, i / 12);
           _v3.x += (rng() - 0.5) * 0.6; _v3.y += (rng() - 0.5) * 0.6; _v3.z += (rng() - 0.5) * 0.6;
           ctx.particles.sparks.spawn(_v3, _v4.set((rng() - .5) * 3, (rng() - .5) * 3, (rng() - .5) * 3),
-            { life: 0.2, size: 0.06, drag: 1, gravity: 0, color: 0x9fd8ff, alpha: 1 });
+            { life: 0.2, size: 0.06, drag: 1, gravity: 0, color: this._lightningColor(), alpha: 1 });
         }
       }
     }
@@ -3324,7 +3342,15 @@ export class Player {
     this.palette = built.palette;
     this.built = built;          // _makeCloak needs robeSkirt on a respawn too
     this.world.scene.add(this.rig.root);
-    this.animator = new BipedAnimator(this.rig, { scale: 1, hipHeight: 0.95 });
+    /*
+     * THE RIG'S OWN SCALE, not 1.
+     *
+     * Enemy.js has always passed `A.scale` here for exactly this reason, and
+     * the player did not — which was invisible while every player was 1.78 m.
+     * A 0.66 m figure of Yoda's species has its ankle planted at 72 mm by a
+     * gait solved for a human, and floats 43 mm off the floor.
+     */
+    this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, s) => this._footstep(p, s);
     this._makeCloak();
     this._applyViewMode();

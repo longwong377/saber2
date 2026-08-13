@@ -7,7 +7,8 @@
 
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
-import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf } from '../game/Bodies.js';
+import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
+         HAIR_STYLES, BEARD_STYLES } from '../game/Bodies.js';
 import { BipedAnimator } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -16,7 +17,8 @@ import { BipedAnimator } from '../game/Rig.js';
 // have finished evaluating, whichever of the two the browser reaches first.
 import { handPoseOnHilt, GRIP_AT } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
-import { ROBE_CUTS, attachCloak, attachSkirt } from '../game/Cloth.js';
+import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku } from '../game/Cloth.js';
+import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 import { DIFFICULTY } from '../game/Combat.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
@@ -105,9 +107,29 @@ export const DEFAULT_SETTINGS = {
   difficulty: 'knight',
   mode: 'roguelite',
   colorIndex: 0,
+  // 0x9fd8ff is what the Force has always come out at, so a player who never
+  // touches the row keeps exactly the lightning they had. See LIGHTNING_COLORS.
+  lightningColor: 0x9fd8ff,
   hiltStyle: 'Graflex',
   species: 'human',
-  face: FACE_PRESETS[0]?.id ?? 'even',
+  /**
+   * THE CHARACTER SHEET, and it is ONE object on purpose.
+   *
+   * `face` used to be a preset id. It is now the whole of who the figure is
+   * below the neck-up level — the preset's eight numbers, the cut, the beard,
+   * the years and the muscle — because `face` is the ONLY appearance argument
+   * that survives the trip World.spawnPlayer → new Player → buildJedi as an
+   * object, and `faceOf()` in Bodies.js has always read FACE_KEYS out of a raw
+   * object and ignored the rest. Six more top-level settings would each have
+   * needed a line in two files this workstream does not own, and the one thing
+   * this codebase is not short of is parameters nobody passes.
+   *
+   * The preset's numbers are SPREAD IN rather than referenced, so the object
+   * that reaches the builder needs no lookup and a stale preset id cannot
+   * silently change a saved character. `preset` is kept beside them only so the
+   * card row knows which card to light.
+   */
+  face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5 },
   robeCut: 'temple',
   robeIndex: 1,
   skinIndex: 2,
@@ -163,6 +185,15 @@ export const DEFAULT_SETTINGS = {
   // a millisecond.
   showPerf: false,
   grain: true,
+  /**
+   * WHAT A FIGHT LEAVES ON THE BODY.
+   *
+   * On, because it is the feature; the box is here to switch it OFF, for the
+   * same reason `grain` has one. It is live on the same seam as shake and
+   * hitstop — see applyInjury in game/Injury.js — so unticking it wipes the
+   * marks already on the body rather than only stopping new ones.
+   */
+  injury: true,
   shake: true,
   slowmo: true,
   volume: 0.8,
@@ -226,8 +257,24 @@ export function bladeCeiling(s) { return s.unlimitedBlade ? BLADE_MAX : BLADE_CA
  * ceiling on the blade sliders and is a menu-scope number by nature, and the
  * feel gates below are the seam where `shake` and `slowmo` finally bite.
  */
+/**
+ * What the Force can be coloured, and why it is a list.
+ *
+ * Five that all clear the two-tone shading against every level's sky. Ivory is
+ * first because it is what the game shipped with (0x9fd8ff), so a player who
+ * never touches this row keeps exactly the lightning they had.
+ */
+export const LIGHTNING_COLORS = [
+  { name: 'Pale Ion',   hex: 0x9fd8ff },
+  { name: 'Sith Gold',  hex: 0xffd070 },
+  { name: 'Crimson',    hex: 0xff5a4a },
+  { name: 'Verdant',    hex: 0x7cf0a0 },
+  { name: 'Amethyst',   hex: 0xc08cff },
+];
+
 export const SETTING_READERS = {
   level:           ['main.js', 'settings.level'],
+  lightningColor:  ['game/Player.js', 'this.world?.settings?.lightningColor'],
   order:           ['game/World.js', 'applyOrder(p, this.settings.order)'],
   difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
   mode:            ['game/World.js', 'this.settings.mode'],
@@ -260,6 +307,7 @@ export const SETTING_READERS = {
   bloom:           ['main.js', '!!settings.bloom &&'],
   showPerf:        ['main.js', 'hud.perf(engine.profiler, settings.showPerf)'],
   grain:           ['main.js', 'engine.setGrain(settings.grain)'],
+  injury:          ['game/Injury.js', 's.injury !== false'],
   shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
   slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
   volume:          ['main.js', 'audio.setVolume(settings.volume)'],
@@ -342,7 +390,62 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // box would not have bitten until the next deploy. Pushed here it lands on
   // the very next frame, on every player in the world.
   for (const p of world.players || []) if (p.control) p.control.holdPosition = !!s.bladeHold;
+  // "Injuries show on the body" is the same shape again — a funnel gate on
+  // Player.damage, installed once and reading its setting live — so it rides
+  // the same call rather than needing a second hook in main.js. See
+  // applyInjury() for why the funnel and not the frame.
+  applyInjury(world, s);
+  applyLekku(world);
   return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
+ * SIMULATE THE HEAD-TAILS, on the same seam and for the same reason.
+ *
+ * The species pass wrote it down as a known cost: "Lekku, montrals and
+ * tentacles are RIGID geometry hung off the head object, not simulated:
+ * Cloth.js belongs to another workstream". They are the same defect the rigid
+ * skirt was — welded to a bone, moving zero millimetres relative to it, reading
+ * as a prop — and the fix is the solver that is already here.
+ *
+ * It rides applyFeelSettings for the same reason the injury gate does: Player
+ * builds its own cloak in `_makeCloak` and steps it in `update`, and neither
+ * line is this workstream's to edit. So the garment is attached from out here
+ * and stepped by wrapping the player's own `update` — which is not a
+ * convenience, it is the only way it can be stepped on the right clock, with
+ * the world's wind, inside the same frame the head it hangs from was posed in.
+ * A separate rAF would be a frame behind the skull every frame.
+ *
+ * Idempotent: a player who already has one keeps it.
+ */
+export function applyLekku(world) {
+  if (!world) return false;
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || p.lekku || !p.built || !p.built.lekku || !p.rig) continue;
+    const mat = p.built.palette?.skin?.clone();
+    if (mat) mat.side = THREE.DoubleSide;
+    const lek = attachLekku(world.scene, p.rig, {
+      roots: p.built.lekku, rigid: p.built.speciesMeshes, material: mat,
+    });
+    if (!lek) continue;
+    p.lekku = lek;
+    const update = p.update.bind(p);
+    p.update = (dt, ctx) => {
+      update(dt, ctx);
+      // The head has just been posed by the animator inside that call, so the
+      // anchors are this frame's. Wind comes from the world if it has any.
+      // Optional: `die` below nulls it, and the wrapper outlives the garment.
+      p.lekku?.update(dt, world.wind || undefined);
+    };
+    // A corpse's tails go with it: Player.die() disposes its own cloak and
+    // skirt and knows nothing about this one, so the dispose is chained onto
+    // the same call rather than polled for.
+    const die = p.die.bind(p);
+    p.die = (src) => { p.lekku?.dispose(); p.lekku = null; die(src); };
+    n++;
+  }
+  return n > 0;
 }
 
 /**
@@ -554,6 +657,32 @@ function drainLegacy() {
   return out;
 }
 
+/**
+ * Normalise anything that has ever been stored under `face` into a sheet.
+ *
+ * Accepts a preset id (every saved blob before the sheet existed), a raw
+ * parameter object, a full sheet, or nothing. The preset's eight numbers are
+ * spread in from FACE_PRESETS each time, so a sheet is self-contained by the
+ * time it reaches the builder and re-picking a preset cannot leave the previous
+ * preset's numbers behind it.
+ */
+export function characterSheet(face) {
+  const D = DEFAULT_SETTINGS.face;
+  const src = (face && typeof face === 'object') ? face : {};
+  const id = typeof face === 'string' ? face : src.preset;
+  const preset = FACE_PRESETS.find(f => f.id === id) || FACE_PRESETS[0];
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? Math.max(0, Math.min(1, v)) : d);
+  const has = (list, v, d) => (list.some(x => x.id === v) ? v : d);
+  return {
+    ...preset.face,
+    preset: preset.id,
+    hair: has(HAIR_STYLES, src.hair, D.hair),
+    beard: has(BEARD_STYLES, src.beard, D.beard),
+    age: num(src.age, D.age),
+    muscle: num(src.muscle, D.muscle),
+  };
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -563,6 +692,13 @@ export function loadSettings() {
     // A blob written with the leash off and then read with it on would carry a
     // 4 m blade into a normal run without a single control saying so.
     s.bladeLength = Math.min(s.bladeLength, bladeCeiling(s));
+    // Every blob ever written carries `face: 'heavy'` — a preset ID string,
+    // which is what the setting was. Spreading that over the object default
+    // REPLACES it, so the sheet would come back as a string and the cut, the
+    // beard, the years and the muscle would all be gone. Normalised rather than
+    // version-bumped, because a bump does not help: drainLegacy spreads the old
+    // key over the new default too, so the string arrives either way.
+    s.face = characterSheet(s.face);
     return s;
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
@@ -696,7 +832,7 @@ export const PREVIEW_SETTLE = 120;
  * The two numbers are tools/checks/garments.mjs's, so the wardrobe suite and
  * the preview are looking at the same two garments.
  */
-export const PREVIEW_SEED = { cloak: 4242, skirt: 991 };
+export const PREVIEW_SEED = { cloak: 4242, skirt: 991, lekku: 7311 };
 
 /**
  * The shot: 34° vertical, 24.3° round from the front and 8.1° up.
@@ -735,7 +871,20 @@ export const PREVIEW_VIEW = { fov: 34, azimuth: 0.4232, elevation: 0.1418, margi
  * is what everything downstream measures against.
  */
 export function standPreviewFigure(rig) {
-  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  /**
+   * `rig.scale`, not 1 — and this is the line that a small species turns from
+   * a detail into a defect.
+   *
+   * BipedAnimator measures the LEGS it was handed but not the ankle: `ankleY =
+   * 0.072 * s` is how far the ankle sits above the contact point, and the foot
+   * under it is 0.062·(the rig's own scale) deep. Told scale 1 over a 0.40
+   * rig, the solver plants the ankle at 72 mm and the boot's sole finishes at
+   * 25 — measured, a 0.72 m figure standing 43 mm off the floor, which is 6% of
+   * its own height. Every archetype in Enemy.js already passes `A.scale` for
+   * exactly this reason; the preview had a 1 typed into it because every body
+   * that had ever reached it was the same size.
+   */
+  const anim = new BipedAnimator(rig, { scale: rig.scale ?? 1, hipHeight: 0.95 });
   anim.setFacing(0);
   const at = new THREE.Vector3(), vel = new THREE.Vector3();
   const ground = () => 0;
@@ -832,12 +981,29 @@ export function dressPreviewFigure(host, built, cut) {
     skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut, seed: PREVIEW_SEED.skirt });
     if (cloak) cloak.outer = skirt;
   }
+  /**
+   * THE HEAD-TAILS, if this species has any.
+   *
+   * On the same material family as the head — a lek is skin, so it takes the
+   * skin material rather than the robe's — and it hides the rigid pair the
+   * builder made, exactly as the skirt hides the rigid robe. `built.lekku` is
+   * null for every species that has none, so this is a test of the FIGURE and
+   * not of a species id.
+   */
+  let lekku = null;
+  if (built.lekku) {
+    const lmat = built.palette.skin.clone();
+    lmat.side = THREE.DoubleSide;
+    lekku = attachLekku(host, rig, { roots: built.lekku, rigid: built.speciesMeshes,
+      material: lmat, seed: PREVIEW_SEED.lekku });
+  }
   const wind = new THREE.Vector3();
   for (let i = 0; i < PREVIEW_SETTLE; i++) {
     if (skirt) skirt.update(1 / 60, skirt.refreshColliders(), wind);
     if (cloak) cloak.update(1 / 60, cloak.refreshColliders(), wind);
+    if (lekku) lekku.update(1 / 60, wind);
   }
-  return { cloak, skirt };
+  return { cloak, skirt, lekku };
 }
 
 /**
@@ -882,10 +1048,13 @@ export function assemblePreview(host, built, saber, s = {}) {
   if (host && rig.root.parent !== host) host.add(rig.root);
   standPreviewFigure(rig);
   poseSaberArm(rig, saber);
-  const { cloak, skirt } = dressPreviewFigure(host, built, s.robeCut);
+  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut);
   const pts = [];
   clothPoints(cloak, pts);
   clothPoints(skirt, pts);
+  // A lek reaches 34 cm below the jaw and swings; leaving it out of the shot
+  // would crop the one feature the species is chosen FOR.
+  if (lekku) for (const l of lekku.parts) clothPoints(l, pts);
   if (saber) {
     /*
      * The blade counts toward the shot, CLAMPED at the training cap.
@@ -901,7 +1070,7 @@ export function assemblePreview(host, built, saber, s = {}) {
     pts.push(saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
     pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
   }
-  return { cloak, skirt, content: previewContent([rig.root], pts) };
+  return { cloak, skirt, lekku, content: previewContent([rig.root], pts) };
 }
 
 const _RING = 16;
@@ -974,6 +1143,12 @@ export function framePreviewCamera(camera, content, opts = {}) {
 export class Menu {
   constructor(settings, hooks = {}) {
     this.s = settings;
+    // Not every caller comes through loadSettings — the check suites build a
+    // Menu straight off DEFAULT_SETTINGS or off a hand-written blob, and a
+    // `face` that is still a preset id would give every row `undefined` to
+    // light and every slider `undefined` to paint. One line, and the sheet is
+    // an object from here on.
+    this.s.face = characterSheet(this.s.face);
     this.hooks = hooks;
     this.el = {
       menu: document.getElementById('menu'),
@@ -984,6 +1159,7 @@ export class Menu {
       diffs: document.getElementById('diff-list'),
       modes: document.getElementById('mode-list'),
       colors: document.getElementById('color-list'),
+      lightning: document.getElementById('lightning-list'),
       hilts: document.getElementById('hilt-list'),
       robes: document.getElementById('robe-list'),
       preview: document.getElementById('saber-preview'),
@@ -1154,6 +1330,42 @@ export class Menu {
     saveSettings(this.s);
   }
 
+  /**
+   * The colour the Force comes out at.
+   *
+   * A row rather than a free picker because the whole palette is authored: an
+   * arbitrary hex would let a player choose a lightning that vanishes against
+   * their own level's sky, and this game's colours are picked to survive the
+   * two-tone shading rather than to be any colour at all.
+   *
+   * It sits under the crystals because it is the same kind of choice, and it
+   * writes `settings.lightningColor`, which Player._lightningColor reads for
+   * all three places the Force draws itself — the arc, the plasma flash and the
+   * stasis burst were three copies of one constant, so a player who picked a
+   * colour would have got it in one of the three.
+   */
+  _buildLightningRow() {
+    const host = this.el.lightning;
+    if (!host) return;
+    host.innerHTML = '';
+    for (const l of LIGHTNING_COLORS) {
+      const sw = document.createElement('div');
+      sw.className = 'sw' + ((this.s.lightningColor ?? LIGHTNING_COLORS[0].hex) === l.hex ? ' sel' : '');
+      const hex = '#' + l.hex.toString(16).padStart(6, '0');
+      sw.style.background = `radial-gradient(circle at 35% 30%, #fff, ${hex} 62%)`;
+      sw.style.boxShadow = `0 0 16px -2px ${hex}`;
+      sw.title = l.name;
+      sw.addEventListener('click', () => {
+        audio.ui('click');
+        this.s.lightningColor = l.hex;
+        [...host.children].forEach((x) => x.classList.toggle('sel', x === sw));
+        saveSettings(this.s);
+        if (this.hooks.onLightning) this.hooks.onLightning(l.hex);
+      });
+      host.appendChild(sw);
+    }
+  }
+
   /* ── saber forge ─────────────────────────────────────────────────── */
 
   _buildSaber() {
@@ -1175,6 +1387,8 @@ export class Menu {
       });
       this.el.colors.appendChild(sw);
     });
+
+    this._buildLightningRow();
 
     this.el.hilts.innerHTML = '';
     for (const h of HILT_STYLES) {
@@ -1240,7 +1454,23 @@ export class Menu {
       this._buildForge();
       this._refreshPreview(true);
     });
-    this._cardRow('face-list', 'h-face', 'face', FACE_PRESETS, () => this._refreshPreview(true));
+    /**
+     * THE SHEET'S OWN CONTROLS.
+     *
+     * Four rows and two sliders that write INTO `this.s.face` rather than into
+     * a setting of their own — see DEFAULT_SETTINGS.face for why there is one
+     * object and not six settings. Each writes through `_sheet`, which is the
+     * single place the object is rebuilt and saved, so a control cannot half-
+     * update it and the preset spread happens exactly once.
+     */
+    this._sheetCardRow('face-list', 'h-face', 'preset', FACE_PRESETS);
+    this._sheetCardRow('hairstyle-list', 'h-hairstyle', 'hair', HAIR_STYLES);
+    this._sheetCardRow('beard-list', 'h-beard', 'beard', BEARD_STYLES);
+    this._sheetSlider('sheet-muscle', 'muscle',
+      (v) => (v < 0.34 ? 'wiry' : v > 0.66 ? 'powerful' : 'even'));
+    // Years, shown as years. A slider labelled 0.62 is a number; a slider
+    // labelled 62 is a person, and the range is what a Jedi's career is.
+    this._sheetSlider('sheet-age', 'age', (v) => `${Math.round(18 + v * 62)}`);
     /*
      * THE CUT, WHICH USED TO BE THE ONE DEAD CARD IN THE CREATOR.
      *
@@ -1419,6 +1649,67 @@ export class Menu {
     }
   }
 
+  /**
+   * A card row bound to a key of the CHARACTER SHEET rather than to a setting.
+   *
+   * Identical in behaviour to _cardRow — it is deliberately not folded into it,
+   * because _cardRow's contract is "writes `this.s[key]`" and that is the exact
+   * string tools/checks/controls.mjs matches to prove a picked setting has a
+   * control. A helper that wrote sometimes one and sometimes the other would
+   * make that check unable to tell the two apart.
+   */
+  _sheetCardRow(hostId, headId, key, list) {
+    const host = document.getElementById(hostId), head = headId && document.getElementById(headId);
+    if (!host) return;
+    host.innerHTML = '';
+    const empty = !list || !list.length;
+    if (head) head.style.display = empty ? 'none' : '';
+    host.style.display = empty ? 'none' : '';
+    if (empty) return;
+    for (const it of list) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.face[key] === it.id ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${it.blurb || ''}</span></div>`;
+      d.addEventListener('click', () => {
+        audio.ui('click');
+        this._sheet(key, it.id);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === d));
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /** A slider bound to a key of the character sheet. */
+  _sheetSlider(id, key, fmt) {
+    const input = document.getElementById(id);
+    if (!input) return;
+    const paint = (v) => {
+      if (parseFloat(input.value) !== v) input.value = v;
+      const label = input.parentElement?.querySelector('b');
+      if (label) label.textContent = fmt ? fmt(v) : Number(v).toFixed(2);
+    };
+    // Keyed by element id, because _buildForge re-runs whenever the species
+    // changes and a list would grow a duplicate painter every time.
+    this._sheetInputs = this._sheetInputs || new Map();
+    this._sheetInputs.set(id, { key, paint });
+    if (!input.dataset.sheetBound) {
+      input.dataset.sheetBound = '1';
+      input.addEventListener('input', () => this._sheet(key, parseFloat(input.value)));
+    }
+    paint(this.s.face[key]);
+  }
+
+  /**
+   * Write one field of the character sheet, rebuild it, save it, and rebuild
+   * the figure. The ONE place the sheet is written.
+   */
+  _sheet(key, value) {
+    this.s.face = characterSheet({ ...this.s.face, [key]: value });
+    for (const e of (this._sheetInputs || new Map()).values()) e.paint(this.s.face[e.key]);
+    saveSettings(this.s);
+    this._refreshPreview(true);
+  }
+
   /** One row of colour swatches bound to an index setting. */
   _swatchRow(hostId, key, palette, onPick) {
     const host = document.getElementById(hostId);
@@ -1507,6 +1798,7 @@ export class Menu {
         const a = assemblePreview(p.pivot, p.figure, p.saber, this.s);
         if (a.cloak) p.cloth.push(a.cloak);
         if (a.skirt) p.cloth.push(a.skirt);
+        if (a.lekku) for (const l of a.lekku.parts) p.cloth.push(l);
         p.content = a.content;
         // the drag turns about the middle of the shot — see the pivot
         p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;
@@ -2003,6 +2295,9 @@ export class Menu {
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every
     // shake and every hitstop, so the hook exists only to kill what is already
     // in flight the moment the box is unticked.
+    // Same hook as shake and slow-motion: onFeel re-runs applyFeelSettings,
+    // which is where the injury gate is re-armed and the marks wiped.
+    this._check('opt-injury', 'injury', () => this.hooks.onFeel?.(this.s));
     this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
     this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
 

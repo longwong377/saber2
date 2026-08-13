@@ -118,6 +118,9 @@ const menu = new Menu(settings, {
     world.settings.forceDrain = settings.forceDrain;
   },
   onSaberChange: (s) => { if (world?.player) world.player.setSaberColor(s.colorIndex); },
+  // Live, like every other appearance hook: the world reads it every time the
+  // Force draws itself, so a colour picked mid-run lands on the next bolt.
+  onLightning: (hex) => { if (world) world.settings.lightningColor = hex; },
   // The training panel promised "a change lands on your next Ignite" and this
   // hook — declared in Menu, called by both blade-length sliders — had no
   // implementation, so it landed on nothing: build a Saber at 1.15, drag the

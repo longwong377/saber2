@@ -275,10 +275,22 @@ function inside(tris, p) {
 function speciesParts(built) {
   const head = built.rig.get('head');
   const out = [];
+  /**
+   * 0.10 m WAS the threshold, and it was a length on a human head.
+   *
+   * A species may now be a different SIZE (SPECIES[].frame), and a 0.66 m
+   * figure's whole head is 16 cm tall — so an absolute 100 mm floor does not
+   * separate "a lek" from "a stud" on it, it excludes everything and reports
+   * that the row put nothing on its head. Measured against the head SHELL's own
+   * span instead, which is what the sentence meant all along: a species part is
+   * a thing of the same order as the head it is on, not a detail.
+   */
+  head.primary.geometry.computeBoundingBox();
+  const span = head.primary.geometry.boundingBox.getSize(new THREE.Vector3()).length();
   for (const o of head.obj.children) {
     if (!o.isMesh || o === head.primary) continue;
     const b = new THREE.Box3().setFromObject(o);
-    if (b.getSize(new THREE.Vector3()).length() > 0.10) out.push(o);
+    if (b.getSize(new THREE.Vector3()).length() > span * 0.30) out.push(o);
   }
   return out;
 }
@@ -573,10 +585,24 @@ export function run({ check, assert, near }) {
       const built = unit({ species: sp.id });
       const shell = built.rig.get('head').primary.geometry;
       const C = shell.attributes.color, P = shell.attributes.position;
+      /**
+       * The crown window, in units of the SKULL rather than in metres.
+       *
+       * 0.135 and 0.02 are a human skull's ear line and brow plane, and a
+       * species that declares its own frame does not have them there — on a
+       * 0.66 m figure the whole head fits below 0.135 and the window sampled
+       * zero vertices, which passed the `n > 12` guard straight into a failure
+       * that had nothing to do with the bake. Taken off the shell's own box,
+       * the same fractions land on the same part of any head.
+       */
+      shell.computeBoundingBox();
+      const sb = shell.boundingBox;
+      const yLine = sb.min.y + (sb.max.y - sb.min.y) * 0.734;
+      const zLine = sb.min.z + (sb.max.z - sb.min.z) * 0.630;
       let sum = 0, n = 0;
       for (let i = 0; i < C.count; i++) {
         // the crown: above the ear line, behind the brow
-        if (P.getY(i) < 0.135 || P.getZ(i) > 0.02) continue;
+        if (P.getY(i) < yLine || P.getZ(i) > zLine) continue;
         sum += C.getX(i); n++;
       }
       assert(n > 12, `${sp.id}: only ${n} crown vertices sampled`);
