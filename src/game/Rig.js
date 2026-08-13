@@ -333,11 +333,17 @@ export class Rig {
 // which hold live vectors of their own, so it may not borrow theirs.
 const _b1 = new THREE.Vector3(), _b2 = new THREE.Vector3(), _b3 = new THREE.Vector3();
 const _b4 = new THREE.Vector3(), _b5 = new THREE.Vector3(), _b6 = new THREE.Vector3();
-const _b7 = new THREE.Vector3();
+const _b7 = new THREE.Vector3(), _b8 = new THREE.Vector3();
 const _bq = new THREE.Quaternion(), _bq2 = new THREE.Quaternion();
 const _be = new THREE.Euler();
 
 const wrapPi = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
+
+/**
+ * How far the lower body may turn into the direction of travel while the aim
+ * stays where it was. See "THE CRAB WALK" in BipedAnimator.update.
+ */
+const LOWER_TURN = 55 * Math.PI / 180;
 
 /*
  * WHY THE PELVIS REACH CLAMP IS STILL A HARD Math.min, AND WHAT IS ACTUALLY
@@ -676,6 +682,8 @@ export class BipedAnimator {
     this._fallV = 0;
     this._chestLag = 0;
     this._facing = 0;
+    /** The lower body's turn into its own travel — see THE CRAB WALK. */
+    this.lowerTurn = 0;
     // per-frame gait constants, held as fields so the swing solver can read
     // them without an allocation per foot per frame
     this._gMoving = false; this._gSep = this.stanceWidth; this._gToeOut = 0.1;
@@ -752,11 +760,54 @@ export class BipedAnimator {
     const vn = speed / this.legRef;
 
     const fwd = _b1.set(Math.sin(p.facing), 0, Math.cos(p.facing));
-    const left = _b2.set(fwd.z, 0, -fwd.x);
+
+    const aimLeft = _b8.set(fwd.z, 0, -fwd.x);
     const moveDir = _b3.set(p.velocity.x, 0, p.velocity.z);
     if (moveDir.lengthSq() > 1e-4) moveDir.normalize(); else moveDir.copy(fwd);
     this._moveDir.copy(moveDir);
     const moving = speed > 0.35 * this.legRef && p.grounded;
+
+    /**
+     * THE CRAB WALK.
+     *
+     * `p.facing` is where the body is AIMED, and with a lit blade the player
+     * holds the camera's yaw whatever direction they are travelling — so a
+     * sidestep was the whole body sliding across the ground still square to the
+     * front, feet paddling sideways underneath it. Reported as crab-walking,
+     * and it is: a crab is the only thing that walks with its stance line
+     * across its travel.
+     *
+     * A person does not do that. The LOWER body turns into the direction of
+     * travel — most of the way at a walk, a little less at a sprint where the
+     * upper body has to come round too — and the torso counter-rotates to keep
+     * facing where it was looking. The two together are the "strafe lean" every
+     * third-person shooter has, and the counter-rotation is what stops it
+     * reading as simply turning to run away.
+     *
+     * `LOWER_TURN` is capped well under a right angle on purpose: past about 55
+     * degrees the shoulders have to come with it, and a player who is aiming
+     * does not want their aim dragged. At the cap a pure sidestep still shows
+     * 35 degrees of shoulder line, which is a person side-stepping rather than
+     * one being carried on a rail.
+     */
+    let driftYaw = 0;
+    if (moving && speed > 0.35) {
+      driftYaw = clamp(wrapPi(Math.atan2(moveDir.x, moveDir.z) - p.facing), -LOWER_TURN, LOWER_TURN);
+    }
+    this.lowerTurn = damp(this.lowerTurn ?? 0, driftYaw, 7, dt);
+    const lowerFace = p.facing + this.lowerTurn;
+    /*
+     * ONE FRAME FOR THE WHOLE LOWER BODY. The stance line, the step
+     * separation, the hip sway and the hip SOCKETS are all perpendicular to the
+     * direction the legs are actually walking, not to where the eyes are
+     * pointed. Getting only the pelvis quaternion turned and leaving these in
+     * the aim frame put the socket 8 mm from where the leg was solving to — the
+     * gait check caught it immediately, which is what it is for.
+     *
+     * `aimLeft` survives for the one thing that really is about the aim: the
+     * sideways acceleration proxy that banks the hips into a corner.
+     */
+    const left = _b2.set(Math.cos(lowerFace), 0, -Math.sin(lowerFace));
 
     if (!this.initialised) {
       for (const f of this.feet) {
@@ -781,7 +832,7 @@ export class BipedAnimator {
     _b4.subVectors(p.velocity, this._prevVel).divideScalar(Math.max(dt, 1e-4));
     this._prevVel.copy(p.velocity);
     this._accelF = damp(this._accelF, clamp(_b4.dot(fwd) / 16, -1, 1), 9, dt);
-    this._accelS = damp(this._accelS, clamp(_b4.dot(left) / 16, -1, 1), 9, dt);
+    this._accelS = damp(this._accelS, clamp(_b4.dot(aimLeft) / 16, -1, 1), 9, dt);
 
     /* ── the gait itself ──────────────────────────────────────────────── */
     const runness = smoothstep(1.9, 3.4, vn);
@@ -948,7 +999,7 @@ export class BipedAnimator {
         f.pos.y = p.position.y + lerp(0.40, 0.10, fall) * tuck * s;
         f.planted.copy(f.pos);
         f.normal.set(0, 1, 0); f.toN.set(0, 1, 0);
-        f.yaw = p.facing + side * this._gToeOut;
+        f.yaw = lowerFace + side * this._gToeOut;
         f.pitch = damp(f.pitch, lerp(-0.34, 0.20, fall), 8, dt);
         f.ankleRise = 0; f.lift = 1;
         f.grounded = false; f.air = true;
@@ -1176,7 +1227,9 @@ export class BipedAnimator {
 
     _be.set(this.spineLean * 0.55 + crouch * 0.28 - this.landDip * 1.5,
       pelvisYaw, pelvisList - bank * 0.55, 'XYZ');
-    hips.quaternion.setFromAxisAngle(YAXIS, p.facing).multiply(_bq2.setFromEuler(_be));
+    // …about the LOWER facing, so the pelvis is square to the stride rather
+    // than to the aim. The chest takes the difference back out below.
+    hips.quaternion.setFromAxisAngle(YAXIS, lowerFace).multiply(_bq2.setFromEuler(_be));
 
     /* ── spine, ribcage, neck ─────────────────────────────────────────── */
     // Player.js overwrites `spine` with its own blade-driven twist; this is
@@ -1192,13 +1245,21 @@ export class BipedAnimator {
     // The ribcage counter-rotates against the pelvis — that is what an arm
     // swing hangs off — and lags a turn, so a corner starts at the hips.
     this._chestLag = damp(this._chestLag, clamp(this.turnRate * 0.085, -0.30, 0.30), 7, dt);
+    // The strafe's whole lower-body turn comes back out at the CHEST below —
+    // not here, and not in the neck's sum. The shoulders have to end up square
+    // to the aim, and the head has to end up square to the shoulders; folding
+    // the strafe into `chestYaw` itself does the first and then undoes it in
+    // the second, because the neck negates three quarters of that sum and so
+    // adds 0.75 of the strafe straight back. Measured: the head came out 41°
+    // off the aim on a 3 m/s sidestep, which is the crab walk moved up the
+    // spine rather than removed. It is applied to the chest bone alone.
     const chestYaw = -pelvisYaw * 1.15 - this._chestLag;
     const chestRoll = -pelvisList * 0.6;
     const chest = rig.get('chest');
     if (chest) {
       chest.obj.quaternion.copy(chest.restQuat).multiply(
         _bq.setFromEuler(_be.set(breath * 0.016 * (0.4 + 0.6 * idleGate) - this.spineLean * 0.18,
-          chestYaw, chestRoll, 'XYZ')));
+          chestYaw - this.lowerTurn, chestRoll, 'XYZ')));
     }
 
     // The head is the last thing in a body to move and the first to be held

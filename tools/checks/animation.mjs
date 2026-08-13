@@ -530,4 +530,48 @@ export function run({ check, assert, near, THREE: T }) {
     }
     return `4 scales × 600 frames of zero-dt, 0.9s-dt, cliffs and mid-air, ${checked} bone transforms all finite`;
   });
+
+  check('gait: a sidestep turns the legs into it — the crab walk', () => {
+    /**
+     * THE CRAB WALK, reported and reported again.
+     *
+     * `p.facing` is where the body is AIMED, and with a lit blade the player
+     * holds the camera's yaw whatever way they are travelling. Everything below
+     * the belt was built off that facing — the stance line, the step
+     * separation, the hip sway, the pelvis quaternion — so a sidestep was the
+     * whole body sliding across the ground still square to the front, feet
+     * paddling underneath it. A crab is the only thing that walks with its
+     * stance line across its travel.
+     *
+     * Three numbers say it is fixed, and they have to be read together or a
+     * body that simply turned to run away would pass:
+     *
+     *   the PELVIS comes round into the travel — it did not move at all;
+     *   the SHOULDERS do not, because the player is aiming;
+     *   and the feet still land on the stride, which is what the existing
+     *   "leg REACHES the foot" and "legs pass each other" checks hold.
+     */
+    const rows = [];
+    for (const [name, o, wantPelvis] of [
+      ['straight', { speed: 4.6 }, 0],
+      ['sidestep', { strafe: 3.0 }, 40],
+      ['fast sidestep', { strafe: 4.6 }, 40],
+      ['diagonal', { speed: 3.2, strafe: 3.2 }, 20],
+    ]) {
+      const r = walk({ ...o, seconds: 6 });
+      const e = new THREE.Euler();
+      // mean, not peak: the gait's own transverse rotation swings ±7° a stride
+      // and would otherwise be mistaken for the turn being measured.
+      const mean = (sel) => r.rec.reduce((a, s) => a + relYaw(s[sel], s.facing, e), 0) / r.rec.length;
+      const pelvis = Math.abs(mean('hipQ')) * 180 / Math.PI;
+      const head = Math.abs(mean('headQ')) * 180 / Math.PI;
+      assert(pelvis >= wantPelvis,
+        `${name}: the pelvis is ${pelvis.toFixed(0)}° off the aim where it needs at least ${wantPelvis}° — `
+        + 'the legs are being carried sideways');
+      assert(head < 22,
+        `${name}: the head is ${head.toFixed(0)}° off the aim — the strafe is dragging the player's gaze round with it`);
+      rows.push(`${name} pelvis ${pelvis.toFixed(0)}° head ${head.toFixed(0)}°`);
+    }
+    return rows.join(', ');
+  });
 }
