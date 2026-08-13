@@ -2227,9 +2227,13 @@ check('focus: the held layer is deep, costs Force, and stops at empty', () => {
   const f = new FocusSystem();
   let spent = 0;
   for (let i = 0; i < 60; i++) spent += f.update(1 / 60, true, 100, []);
-  assert(f.scale < 0.45, `held Focus only reached ${f.scale.toFixed(3)}`);
+  // 0.25, not 0.45. See the note over FOCUS.heldScale: at 0.35 a bolt from ten
+  // metres still arrived in 0.32 s, which is a slightly slower bolt rather than
+  // time to answer one. This is a ratchet on the depth the player paid for.
+  assert(f.scale < 0.25, `held Focus only reached ${f.scale.toFixed(3)}`);
   assert(spent > 25 && spent < 45, `one second of Focus cost ${spent.toFixed(1)} Force`);
   // the player keeps most of their own speed — that asymmetry IS the ability
+  const deep = f.scale;                       // before the empty-Force test below resets it
   const effective = f.scale * f.playerCompensation;
   assert(effective > 0.7, `the player was slowed to ${effective.toFixed(2)} of real time along with the world`);
 
@@ -2237,7 +2241,7 @@ check('focus: the held layer is deep, costs Force, and stops at empty', () => {
   for (let i = 0; i < 60; i++) f.update(1 / 60, true, 2, []);
   near(f.scale, 1, 0.02, `Focus held at ${f.scale.toFixed(3)} on an empty Force bar`);
   assert(f.update(1 / 60, true, 2, []) === 0, 'it charged Force it did not have');
-  return `world ${(0.35).toFixed(2)}x / player ${effective.toFixed(2)}x, ${spent.toFixed(0)} Force/s, cuts out at empty`;
+  return `world ${deep.toFixed(2)}x / player ${effective.toFixed(2)}x, ${spent.toFixed(0)} Force/s, cuts out at empty`;
 });
 
 check('focus: the two layers stack and never stop or reverse time', () => {

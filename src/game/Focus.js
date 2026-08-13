@@ -32,8 +32,22 @@ export const FOCUS = {
   passiveEta: 0.30,        // seconds-to-impact that arms it
   passiveRange: 26,        // only bolts this close are considered
 
-  // held: deep, costly, deliberate
-  heldScale: 0.35,         // world time scale at full Focus
+  /*
+   * HELD: DEEP, COSTLY, DELIBERATE — and it was not deep enough.
+   *
+   * 0.35 was reported as "slow-motion bolts are still too fast", and the
+   * arithmetic agrees. A blaster bolt travels at 90 m/s; at 0.35 it is still
+   * covering 31 m/s, so a bolt fired from ten metres reaches you in 0.32 s.
+   * That is not bullet time, it is a slightly slower bolt — and the whole point
+   * of spending 38 Force a second is to be given TIME to answer with a guard.
+   *
+   * 0.18 puts the same bolt at 16 m/s and 0.62 s of flight, which is long
+   * enough to see where it is going and flick into the zone. The player is
+   * compensated back up to `playerScale` of real time as before, so the
+   * asymmetry — you fast, world slow — widens with it rather than the player
+   * simply being slowed too.
+   */
+  heldScale: 0.18,         // world time scale at full Focus
   playerScale: 0.85,       // the player keeps most of their own speed
   drain: 38,               // Force per second while held
   minToEnter: 8,           // do not let it flicker on at empty
