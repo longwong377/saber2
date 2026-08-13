@@ -84,18 +84,41 @@ function crate(cx, cy, cz, h = 0.35) {
 }
 
 /**
+ * Something big enough to land on, in the shape `Enemy.platform()` returns.
+ *
+ * `deck` is the world height of the surface; the record hands back `position`
+ * at the feet and `extent.y` as the height above them, which is exactly what
+ * supportHeight's dynamic-prop branch reads — a rideable enemy and a crate are
+ * the same question, and that is the point.
+ */
+function rideable(cx, cz, deck, r) {
+  const e = {
+    position: new THREE.Vector3(cx, 0, cz),
+    dead: false, toppled: false,
+    // a hard landing throws a shockwave through ctx.enemies, so this has to be
+    // enough of an Enemy to be knocked about by one
+    applyKnockback() {}, damage() {}, stun() {}, capsules: () => [],
+    platform() {
+      if (e.dead || e.toppled) return null;
+      return { position: e.position, extent: new THREE.Vector3(r, deck - e.position.y, r) };
+    },
+  };
+  return e;
+}
+
+/**
  * Drop a player from `fromY` onto whatever the world contains and run it.
  * Returns the per-frame trace so a property can be asserted over the tail
  * rather than at one lucky instant.
  */
-function drop(world, fromY, { frames = 240, x = 0, z = 0 } = {}) {
+function drop(world, fromY, { frames = 240, x = 0, z = 0, enemies = null } = {}) {
   const p = new Player(world, { isLocal: true });
   p.position.set(x, fromY, z);
   p.velocity.set(0, 0, 0);
   const input = stubInput();
   const ctx = {
     input, terrain: world.terrain, physics: world.physics, particles: null,
-    camera: world.engine.camera, time: 0, groundColor: 0,
+    camera: world.engine.camera, time: 0, groundColor: 0, enemies,
   };
   const trace = [];
   let landings = 0, footsteps = 0;
@@ -240,6 +263,110 @@ export async function run({ check, assert, THREE: T }) {
       `stood on a crate whose top is at 0.70 and ended at y=${end.y.toFixed(2)} — fell through it`);
     assert(end.grounded, 'standing on a crate does not count as being on the ground');
     return `rest at y=${end.y.toFixed(3)} on a crate topping out at 0.70`;
+  });
+
+  check('standing: you land ON a spider walker instead of falling through it', () => {
+    /**
+     * THE SECOND HALF OF THE SAME BUG, reported separately: "you fall through
+     * the giant spiders instead of landing on them."
+     *
+     * `_supportAt` asks one question of every surface at once, and the comment
+     * above it says so — "one query, every surface, highest wins". Enemies were
+     * not in the list. `_gatherNear` takes bodies on the PROP, DEBRIS and
+     * RAGDOLL layers and skips everything else, so LAYER.ENEMY never reached
+     * the query and a four-metre chassis was fog.
+     */
+    const w = stubWorld();
+    w.terrain = flatTerrain();
+    const walker = rideable(0, 0, 5.23, 1.27);
+    const r = drop(w, 7.4, { enemies: [walker], frames: 260 });
+    const end = r.trace[r.trace.length - 1];
+    assert(end.y > 5.0,
+      `dropped onto a walker whose deck is at 5.23 and ended at y=${end.y.toFixed(2)} — fell straight through it`);
+    assert(end.grounded, 'standing on a walker does not count as being on the ground');
+    assert(swing(r.trace, 200) < 0.05,
+      `the deck is not solid: the body still moves ${(swing(r.trace, 200) * 1000).toFixed(0)} mm a frame after settling`);
+    return `rest at y=${end.y.toFixed(3)} on a deck at 5.23, ${r.landings} landing(s)`;
+  });
+
+  check('standing: a walker is only floor where the walker is', () => {
+    // The deck is 1.27 m of radius, not a plane at that height. Standing four
+    // metres away from one has to leave you on the sand — a support query that
+    // answers "5.23" everywhere is worse than one that answers nothing.
+    const w = stubWorld();
+    w.terrain = flatTerrain();
+    const r = drop(w, 0.05, { enemies: [rideable(4.2, 0, 5.23, 1.27)], frames: 40 });
+    const end = r.trace[r.trace.length - 1];
+    assert(end.y < 0.01, `standing 4.2 m from a walker put the body at y=${end.y.toFixed(2)}`);
+    return 'a deck 4.2 m away is not floor';
+  });
+
+  check('standing: a dead walker is not a floor', () => {
+    // You do not stand in mid-air on something that has fallen over. Both the
+    // corpse and the toppled state have to withdraw the platform, and the
+    // player has to come down.
+    const w = stubWorld();
+    w.terrain = flatTerrain();
+    const walker = rideable(0, 0, 5.23, 1.27);
+    const r = drop(w, 5.4, { enemies: [walker], frames: 90 });
+    assert(r.trace[89].y > 5.0, `did not land on the walker in the first place (y=${r.trace[89].y.toFixed(2)})`);
+    for (const kill of ['dead', 'toppled']) {
+      const w2 = stubWorld();
+      w2.terrain = flatTerrain();
+      const e = rideable(0, 0, 5.23, 1.27);
+      e[kill] = true;
+      const r2 = drop(w2, 5.4, { enemies: [e], frames: 200 });
+      const end = r2.trace[r2.trace.length - 1];
+      assert(end.y < 0.05, `a ${kill} walker still held the player up at y=${end.y.toFixed(2)}`);
+    }
+    return 'live deck holds; dead and toppled both drop you';
+  });
+
+  check('standing: the deck is measured off the chassis, over the middle of it', async () => {
+    /**
+     * The measurement itself, against the real geometry, because the number
+     * that matters is not "the top of the bounding box". On a walker that is a
+     * turret 0.35 m above the hull, and a player standing on it floats over a
+     * sloped glacis. `_measurePlatform` takes the highest vertex inside the
+     * central 60% of the hull's own footprint instead.
+     *
+     * Run through Enemy's own method on a real built rig rather than through a
+     * full Enemy, which needs a scene, a physics world and an audio context.
+     */
+    const [{ Enemy }, { buildWalker, buildBeast, buildB1 }] = await Promise.all([
+      import('../../src/game/Enemy.js'), import('../../src/game/Bodies.js'),
+    ]);
+    const out = [];
+    for (const [name, build, S, big, bodyH] of [
+      ['walker', buildWalker, 2.4, true, 1.6 * 2.4],
+      ['acklay', buildBeast, 2.9, true, 1.5 * 2.9],
+      ['b1', buildB1, 1.0, false, 0],
+    ]) {
+      const rig = build({ scale: S }).rig;
+      const e = { A: { big, scale: S }, rig, position: new THREE.Vector3(), dead: false, toppled: false };
+      Enemy.prototype._measurePlatform.call(e);
+      if (!big) {
+        assert(!e.platformRadius && !Enemy.prototype.platform.call(e),
+          `a ${name} has a platform — landing on a battle droid's head is a bug with a nicer name`);
+        out.push(`${name} none`);
+        continue;
+      }
+      const box = new THREE.Box3().setFromObject(rig.get('body').parts[0]);
+      assert(e.platformTop > 0.8,
+        `${name}'s deck measured ${e.platformTop.toFixed(2)} m above the hips — that is inside the chassis`);
+      assert(e.platformTop <= box.max.y + 1e-6,
+        `${name}'s deck is ${e.platformTop.toFixed(2)} m, above the hull's own top at ${box.max.y.toFixed(2)}`);
+      assert(e.platformRadius > 1.0 && e.platformRadius < (box.max.x - box.min.x),
+        `${name}'s deck is ${e.platformRadius.toFixed(2)} m of radius on a hull ${(box.max.x - box.min.x).toFixed(2)} m wide`);
+      // and it rides the pose: move the bone, the deck moves with it
+      rig.hipsBone.obj.position.y = bodyH;
+      const p = Enemy.prototype.platform.call(e);
+      const top = p.position.y + p.extent.y;
+      assert(Math.abs(top - (bodyH + e.platformTop)) < 1e-6,
+        `${name}'s deck did not follow its chassis: bone at ${bodyH.toFixed(2)} put the deck at ${top.toFixed(2)}`);
+      out.push(`${name} deck ${top.toFixed(2)} m, r ${e.platformRadius.toFixed(2)}`);
+    }
+    return out.join('; ');
   });
 
   check('standing: a ledge above your head does not snatch you out of the air', () => {

@@ -48,6 +48,7 @@ export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _box = new THREE.Box3(), _box2 = new THREE.Box3();
 /** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
 const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
 const _o4 = new THREE.Vector3(), _o5 = new THREE.Vector3(), _o6 = new THREE.Vector3();
@@ -752,6 +753,90 @@ export class Enemy {
       this.shieldMax = 260;
       this.deployTimer = 0;
     }
+    this._measurePlatform();
+  }
+
+  /**
+   * THE TOP OF A SPIDER WALKER, AND WHY YOU USED TO FALL THROUGH IT.
+   *
+   * `Player._supportAt` asks one question of every surface at once — terrain,
+   * static boxes, dynamic props — and the comment above it says so: "one query,
+   * every surface, highest wins." Enemies were not in the list. `_gatherNear`
+   * takes bodies on the PROP, DEBRIS and RAGDOLL layers and skips everything
+   * else, so LAYER.ENEMY never reached the query and the player dropped
+   * straight through a four-metre chassis as if it were fog. Reported as
+   * falling through the giant spiders instead of landing on them.
+   *
+   * A humanoid gets no platform — landing on a B1's head is not a mechanic, it
+   * is a bug with a nicer name. `big` bodies are the walker and the Acklay, and
+   * both of them are large enough that leaping onto one and cutting down
+   * through it is exactly what the shape of the thing invites.
+   *
+   * Measured off the built geometry rather than guessed, and measured over the
+   * MIDDLE of the hull rather than at its highest point. The bounding box's top
+   * is a turret or an antenna at the edge — on the walker that is 0.35 m above
+   * the deck, and a player standing there floats over a sloped glacis. So the
+   * height is the highest vertex inside the central 60% of the hull's own
+   * footprint, which is the flat part you would actually stand on: 1.39 m above
+   * the hips bone on a walker, 2.78 on an Acklay.
+   *
+   * `_poseWalker` puts that bone at `position.y + 1.6·scale` and bobs it with
+   * the gait, so the platform bobs too — which is right, and is what makes
+   * riding one read as standing on a machine rather than on an invisible shelf.
+   */
+  _measurePlatform() {
+    this.platformTop = 0;
+    this.platformRadius = 0;
+    if (!this.A.big || !this.rig) return;
+    const bone = this.rig.get('body') || this.rig.hipsBone;
+    const hips = this.rig.hipsBone;
+    if (!bone?.parts?.length || !hips) return;
+    this.rig.updateMatrices();
+    this.rig.root.updateMatrixWorld(true);
+    const hipsY = _v6.setFromMatrixPosition(hips.obj.matrixWorld).y;
+
+    const box = _box.makeEmpty();
+    for (const m of bone.parts) if (m.geometry) box.union(_box2.setFromObject(m));
+    if (box.isEmpty()) return;
+    const halfX = (box.max.x - box.min.x) * 0.5, halfZ = (box.max.z - box.min.z) * 0.5;
+    const cx = (box.max.x + box.min.x) * 0.5, cz = (box.max.z + box.min.z) * 0.5;
+
+    const CORE = 0.6;
+    let top = -Infinity;
+    for (const m of bone.parts) {
+      const pos = m.geometry?.attributes?.position;
+      if (!pos) continue;
+      m.updateWorldMatrix(true, false);
+      for (let i = 0; i < pos.count; i++) {
+        _v5.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+        if (Math.abs(_v5.x - cx) > halfX * CORE || Math.abs(_v5.z - cz) > halfZ * CORE) continue;
+        if (_v5.y > top) top = _v5.y;
+      }
+    }
+    if (!isFinite(top)) return;
+    this.platformTop = top - hipsY;
+    // The NARROWER of the two half-spans: a deck you can stand on the corner of
+    // is a deck you fall off, and erring narrow means the player has to land on
+    // the thing rather than beside it.
+    this.platformRadius = Math.min(halfX, halfZ);
+  }
+
+  /**
+   * The deck, in world units, or null if this body has none.
+   *
+   * Shaped as `{ position, extent }` because that is what `supportHeight`'s
+   * dynamic-prop branch already reads, so a rideable enemy is answered by the
+   * same query as a crate and the player cannot tell them apart — which is the
+   * whole point of Support.js.
+   */
+  platform() {
+    if (!this.platformRadius || this.dead || this.toppled) return null;
+    const hips = this.rig?.hipsBone?.obj;
+    if (!hips) return null;
+    const p = this._plat || (this._plat = { position: new THREE.Vector3(), extent: new THREE.Vector3() });
+    p.position.copy(this.position);
+    p.extent.set(this.platformRadius, (hips.position.y + this.platformTop) - this.position.y, this.platformRadius);
+    return p;
   }
 
   /* ── queries ─────────────────────────────────────────────────────── */

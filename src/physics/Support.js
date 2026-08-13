@@ -64,17 +64,30 @@ export function supportHeight(terrain, boxes, props, x, z, feetY, radius, stepUp
       if (y > best && y <= ceil) best = y;
     }
   }
-  if (props) {
-    for (let i = 0; i < props.length; i++) {
-      const b = props[i];
-      const e = b.extent;
-      if (!e) continue;
-      const dx = b.position.x - x, dz = b.position.z - z;
-      const rr = Math.max(e.x, e.z) + radius;
-      if (dx * dx + dz * dz > rr * rr) continue;
-      const top = b.position.y + e.y;
-      if (top > best && top <= ceil) best = top;
-    }
+  return topOfProps(props, x, z, feetY, radius, stepUp, best);
+}
+
+/**
+ * The same question for a list of `{position, extent}` boxes, raised above a
+ * floor you already have.
+ *
+ * Split out because more than one kind of thing answers it and they are not
+ * interchangeable everywhere else: a crate is a body the player also shoves,
+ * and the deck of a spider walker is a surface they can only stand on. Both are
+ * floor; only one of them moves when you walk into it. See Player._gatherNear.
+ */
+export function topOfProps(props, x, z, feetY, radius, stepUp, best) {
+  if (!props) return best;
+  const ceil = feetY + stepUp;
+  for (let i = 0; i < props.length; i++) {
+    const b = props[i];
+    const e = b.extent;
+    if (!e) continue;
+    const dx = b.position.x - x, dz = b.position.z - z;
+    const rr = Math.max(e.x, e.z) + radius;
+    if (dx * dx + dz * dz > rr * rr) continue;
+    const top = b.position.y + e.y;
+    if (top > best && top <= ceil) best = top;
   }
   return best;
 }

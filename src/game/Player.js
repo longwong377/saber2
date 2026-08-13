@@ -16,7 +16,7 @@ import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator } from './Rig.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale } from './Combat.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -538,6 +538,12 @@ export class Player {
     /** Colliders near enough to stand on, rebuilt once a frame by _gatherNear. */
     this._nearBoxes = [];
     this._nearProps = [];
+    /**
+     * Things you can stand on but not shove: the deck of a spider walker.
+     * Kept apart from `_nearProps` because that list is fed to the push loop,
+     * and a four-metre chassis is not a crate you barge out of the way.
+     */
+    this._nearDecks = [];
     /** The height of whatever the feet are over — terrain, rock or crate. */
     this.supportY = 0;
     this.coyote = 0;
@@ -993,8 +999,10 @@ export class Player {
    * you onto it.
    */
   _supportAt(ctx, x, z, feetY) {
-    return supportHeight(ctx.terrain, this._nearBoxes, this._nearProps,
+    const floor = supportHeight(ctx.terrain, this._nearBoxes, this._nearProps,
       x, z, feetY, this.radius, STEP_UP);
+    // …and the things you can stand on but not shove, raised above it.
+    return topOfProps(this._nearDecks, x, z, feetY, this.radius, STEP_UP, floor);
   }
 
   /** The short list of colliders near enough to matter, rebuilt once a frame. */
@@ -1017,6 +1025,30 @@ export class Player {
       if (b.layer !== LAYER.PROP && b.layer !== LAYER.DEBRIS && b.layer !== LAYER.RAGDOLL) continue;
       const dx = b.position.x - this.position.x, dz = b.position.z - this.position.z;
       if (dx * dx + dz * dz < (b.boundingRadius + R) ** 2) props.push(b);
+    }
+    /**
+     * AND THE THINGS BIG ENOUGH TO LAND ON.
+     *
+     * The loop above takes PROP, DEBRIS and RAGDOLL and skips everything else,
+     * which meant LAYER.ENEMY never reached the support query and the player
+     * fell straight through a four-metre spider walker. Reported exactly like
+     * that. `Enemy.platform()` answers with the same `{position, extent}` shape
+     * a crate does — see the note above it for why only `big` bodies have one —
+     * so the query cannot tell a chassis from a rooftop, and neither can the
+     * player, which is the point of Support.js.
+     *
+     * The reach is wider than R because these are wide: a walker's deck is
+     * 2.4 m across and standing on its edge has to find it.
+     */
+    const decks = this._nearDecks; decks.length = 0;
+    if (ctx.enemies) {
+      const RR = R + 3;
+      for (const e of ctx.enemies) {
+        const dx = e.position.x - this.position.x, dz = e.position.z - this.position.z;
+        if (dx * dx + dz * dz > RR * RR) continue;
+        const plat = e.platform?.();
+        if (plat) decks.push(plat);
+      }
     }
   }
 
