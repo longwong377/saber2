@@ -1367,8 +1367,27 @@ export function boonReport(cfg) {
       deltas.push(...ds);
     }
     const m = mean(deltas);
-    perBoon.set(boon.id, { mean: m, deltas, chans, perSkill });
-    rows.push([boon.name, boon.id, chans.length ? chans.join('+') : 'UNMODELLED',
+    /**
+     * A THIRD STATE, because two was a lie.
+     *
+     * `boonChannels` decides "modelled" by DECLARATION — it diffs the keys in
+     * MODELLED_CHANNELS and MODELLED_HOOKS and reports what moved. A card that
+     * works some other way therefore printed UNMODELLED, "this harness has no
+     * Force powers / jumps / cosmetics", even when the paired runs beside it
+     * had just measured a real effect. Aegis came out at Δ1.008, fourth of
+     * thirty-nine, 50% helped and 0% hurt, and was filed under "cannot see it"
+     * — and excluded from the median and from the dominant/weakest line with it.
+     *
+     * The paired runs are same-seed and differ in exactly one thing, so they
+     * are deterministic: if ANY of them differed, the simulation saw the card.
+     * That is evidence, and evidence outranks the declaration. Such a card is
+     * MEASURED, and the fact that no declared channel names it is a gap in the
+     * channel list — reported as one rather than as a property of the card.
+     */
+    const seen = deltas.some((d) => d !== 0);
+    const label = chans.length ? chans.join('+') : (seen ? 'measured, unnamed' : 'UNMODELLED');
+    perBoon.set(boon.id, { mean: m, deltas, chans, perSkill, seen, named: !!chans.length });
+    rows.push([boon.name, boon.id, label,
       m.toFixed(3), median(deltas).toFixed(2),
       (100 * deltas.filter(d => d > 0.001).length / deltas.length).toFixed(0) + '%',
       (100 * deltas.filter(d => d < -0.001).length / deltas.length).toFixed(0) + '%']);
@@ -1377,15 +1396,24 @@ export function boonReport(cfg) {
   out.push('');
   out.push(table(['boon', 'id', 'channel in this model', 'mean Δdepth', 'median Δ', 'helped', 'hurt'], rows, { left: [0, 1, 2] }));
 
-  const modelled = [...perBoon.entries()].filter(([, v]) => v.chans.length);
+  // Everything the simulation actually SAW, named or not — see the note above.
+  const modelled = [...perBoon.entries()].filter(([, v]) => v.chans.length || v.seen);
   const med = median(modelled.map(([, v]) => v.mean));
   const top = modelled.slice().sort((a, b) => b[1].mean - a[1].mean)[0];
   const bottom = modelled.slice().sort((a, b) => a[1].mean - b[1].mean)[0];
   out.push('');
   out.push(`  median modelled boon: Δ${med.toFixed(3)}   dominant: ${top[0]} (Δ${top[1].mean.toFixed(3)}, ${(top[1].mean / (med || 1e-9)).toFixed(1)}× median)`);
   out.push(`  weakest modelled:     ${bottom[0]} (Δ${bottom[1].mean.toFixed(3)})`);
-  const unmodelled = [...perBoon.entries()].filter(([, v]) => !v.chans.length).map(([k]) => k);
+  const unmodelled = [...perBoon.entries()].filter(([, v]) => !v.chans.length && !v.seen).map(([k]) => k);
   out.push(`  UNMODELLED (this harness has no Force powers / jumps / cosmetics): ${unmodelled.join(', ')}`);
+  // The gap, stated as a gap. These moved the run and no declared channel
+  // names them, which is a hole in MODELLED_CHANNELS/MODELLED_HOOKS rather
+  // than anything about the cards.
+  const unnamed = [...perBoon.entries()].filter(([, v]) => !v.chans.length && v.seen);
+  if (unnamed.length) {
+    out.push(`  MEASURED BUT UNNAMED (a gap in this file's channel list, not in the card): `
+      + unnamed.map(([k, v]) => `${k} Δ${v.mean.toFixed(3)}`).join(', '));
+  }
   _rank = new Map([...perBoon].map(([k, v]) => [k, v.mean]));
   return { text: out.join('\n'), perBoon, median: med };
 }
