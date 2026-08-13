@@ -17,6 +17,7 @@ import {
   addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd, addStorm,
 } from '../world/Props.js';
 import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
+import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
 /* The warship's set-piece is registered at the bottom of this file — see the
@@ -885,6 +886,38 @@ export function island(world, pos, opts, build) {
   kit.pop();
   const res = kit.emit(world, pos, new THREE.Quaternion(), opts);
   if (res && res.meshes) for (const m of res.meshes) m.userData.__maker = opts.maker || 'island';
+
+  /**
+   * AND THE BLADE CAN REACH IT, which it could not before and which is notes 9
+   * and 57: "some objects ignore the saber entirely but can be stood on",
+   * "everything touchable must have real physics and be sliceable".
+   *
+   * A maker called on its own goes through `kitClose`, which registers the
+   * piece with the Destruction manager and is why a column placed by a level
+   * can be cut down. An island BYPASSES that: it merges several makers into
+   * one Kit and emits it here, and `kitClose` explicitly lifts a composed
+   * maker's parts back out rather than registering them, because half a merged
+   * mesh cannot be hidden when it breaks. So everything built as an island was
+   * a static box with a picture on it — measured by `sliceable.mjs`, the Jedi
+   * Temple had FIFTY-ONE reachable human-scale objects in it and not one of
+   * them could be touched, because the whole hall is islands.
+   *
+   * Registering the merged mesh fixes it for one draw call and a bounds
+   * computation: the manager pre-fractures only what is ever threatened, so an
+   * island nobody swings at costs exactly what it cost before.
+   *
+   * `stone` is the default because most islands in this file are masonry, and
+   * the two that are not — a plant bank and a ship's frame — say so. A caller
+   * may pass `destructible: false` for something that genuinely should be
+   * scenery, which is the same escape hatch the crowd uses.
+   */
+  if (res && res.meshes && res.meshes.length && opts.destructible !== false) {
+    registerDestructible(world, {
+      kind: opts.maker || 'island', profile: opts.destructible || 'stone',
+      seed: opts.seed ?? 1, meshes: res.meshes, boxes: res.boxes,
+      position: pos, quaternion: new THREE.Quaternion(),
+    });
+  }
   // …and the island takes its own room on the site map, so the next one does
   // not land inside it.
   siteOk(world, pos.x, pos.z, { clearance: span * 0.5, spawnClear: 0 });
