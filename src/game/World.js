@@ -602,8 +602,17 @@ export class World {
     if (P && P.alive && P.isLocal) {
       const threats = this.bolts ? this.bolts.threatsNear(P.chest, this.focus.passiveRange) : null;
       const hostile = threats ? threats.filter(t => t.bolt.team !== P.team) : null;
-      const spent = this.focus.update(rawDt, input?.act('focus'), P.force, hostile);
-      if (spent) P.force = Math.max(0, P.force - spent);
+      /* UNLIMITED FOCUS is a bill that is not sent, not a different system.
+       * The world still runs at heldScale and the player is still compensated
+       * back to playerScale, so what the player learns inside it is the same
+       * thing they will use when they turn it off — which is the whole reason
+       * to spell it this way rather than by handing the FocusSystem a zero
+       * drain, which would also stop `minToEnter` gating and let it flicker on
+       * at an empty bar. */
+      const free = !!this.settings.unlimitedFocus;
+      const spent = this.focus.update(rawDt, input?.act('focus'),
+        free ? Math.max(P.force, this.focus.minToEnter + 1) : P.force, hostile);
+      if (spent && !free) P.force = Math.max(0, P.force - spent);
     } else this.focus.reset();
 
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);

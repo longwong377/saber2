@@ -162,6 +162,10 @@ export const DEFAULT_SETTINGS = {
   sandboxFire: 1,
   sandboxType: 'mixed',
   unlimitedBlade: false,
+  // The other half of note 46. The slow-motion itself was deepened (heldScale
+  // 0.35 -> 0.18, see FOCUS); this is the option that lets a player who is
+  // still learning to read a volley hold it without paying for it.
+  unlimitedFocus: false,
   sensitivity: 1,
   camFollow: 0,
   fov: 60,
@@ -293,6 +297,7 @@ export const SETTING_READERS = {
   sandboxFire:     ['game/Waves.js', 's.sandboxFire'],
   sandboxType:     ['game/Waves.js', 's.sandboxType'],
   unlimitedBlade:  ['ui/Menu.js', 's.unlimitedBlade ? BLADE_MAX : BLADE_CAP'],
+  unlimitedFocus:  ['game/World.js', 'this.settings.unlimitedFocus'],
   sensitivity:     ['game/World.js', 'sensitivity: this.settings.sensitivity'],
   camFollow:       ['game/World.js', 'followStrength: this.settings.camFollow'],
   fov:             ['main.js', 'settings.fov'],
@@ -2161,6 +2166,12 @@ export class Menu {
       <div class="col narrow">
         <h3>Blade</h3>
         <label class="check"><input type="checkbox" id="opt-unlimited-blade"> Unlimited blade length</label>
+        <label class="check"><input type="checkbox" id="opt-unlimited-focus"> Unlimited Focus</label>
+        <p class="hint">Focus costs 38 Force a second, which is the trade the whole system exists
+          to create — every second inside it is a push you cannot make. Off the leash it costs
+          nothing, so you can sit inside a volley for as long as it takes to learn to read one.
+          The world still runs at ${(0.18).toFixed(2)} of real time and you still run at
+          ${(0.85).toFixed(2)} of yours; what goes away is the bill.</p>
         <label class="slider">Length <input type="range" id="opt-train-bladelen"
           min="0.85" max="${BLADE_CAP}" step="0.01" value="1.15"><b></b></label>
         <p class="hint">Off the leash the blade reaches ${BLADE_MAX.toFixed(2)} m instead of
@@ -2250,6 +2261,14 @@ export class Menu {
       apply(box.checked);
       this._refreshPreview(true);
     });
+
+    // …and the one beside it, through `_check` rather than by hand. The blade
+    // ceiling above needs the `apply` side effect and so is wired here; this
+    // one needs nothing but the setting, and going through the helper is what
+    // puts it in the bound table that controls.mjs reads — a hand-wired box
+    // has to be excused by name in PICKED, and an excuse is a thing that can
+    // be granted to something that does not deserve one.
+    this._check('opt-unlimited-focus', 'unlimitedFocus', () => audio.ui('click'));
     this._applyBladeCeiling = apply;
   }
 

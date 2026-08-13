@@ -21,10 +21,15 @@
  *     foundry    58/74      warship   97/113    intake    83/95
  *     arena      49/51      mustafar  21/23     colosseum  8/10
  *
- * The Jedi Temple had FIFTY-ONE reachable objects and not one of them could be
- * cut — a hall full of furniture you can stand on and cannot touch, which is
- * precisely the note. The two rules that make the survey honest are worth
- * stating because both were wrong in earlier cuts of it:
+ * …AND THE FIRST NUMBER IN THAT TABLE WAS THE SURVEY'S OWN FAULT, which is
+ * worth keeping because it is the most instructive thing in this file. The
+ * Temple's furniture IS cuttable; it is destructible architecture, and
+ * `DestructionProxy.capsules()` publishes only within 3.4 m of
+ * `world.player.position`. A headless survey has no player, so the proxy sat at
+ * the origin and the check reported a hall full of untouchable furniture that a
+ * player would have had no trouble cutting. The survey moves the observer to
+ * each object now — see `contacts`. Three rules make it honest, and all three
+ * were wrong in earlier cuts of it:
  *
  *   · HUMAN SCALE ONLY, nothing over 3.2 m in any dimension. "Everything
  *     touchable" means the things in a room. A colonnade, a hull plate or a
@@ -49,8 +54,33 @@ function stubWorld(terrain) {
   return {
     scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: {
-      addStaticBox(b) { this.staticBoxes.push(b); return b; }, staticBoxes: [],
+      /* THE SAME RECORD THE REAL ONE BUILDS, minus the Rapier collider — which
+       * this survey never needs, because it asks for capsules and never steps.
+       *
+       * A stub that merely pushed its argument was the second reason the first
+       * survey saw no destructible architecture: `Structure.bladeCapsules`
+       * reads `.center`, `.halfExtents` and `.quat` off these records, and a
+       * record without them throws on the first `distanceToSquared`. The
+       * caller passes (center, halfExtents, quat, opts) positionally, so a
+       * one-argument stub was not even receiving the box. */
+      addStaticBox(center, halfExtents, quat = new THREE.Quaternion(), opts = {}) {
+        const rec = {
+          center: center.clone(), halfExtents: halfExtents.clone(),
+          quat: quat.clone(), invQuat: quat.clone().invert(),
+          radius: halfExtents.length(),
+          friction: opts.friction ?? 0.7, restitution: opts.restitution ?? 0.02,
+          userData: opts.userData || {}, disabled: false, onContact: opts.onContact || null,
+        };
+        this.staticBoxes.push(rec);
+        return rec;
+      },
+      staticBoxes: [],
+      removeStaticBox(rec) {
+        const i = this.staticBoxes.indexOf(rec);
+        if (i >= 0) this.staticBoxes.splice(i, 1);
+      },
       add(b) { this.bodies.push(b); return b; }, bodies: [], raycast: () => null,
+      addJoint() {}, removeJoint() {}, remove() {},
     },
     addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
     addDoor(d) { this.doors.push(d); return d; },
@@ -61,17 +91,60 @@ function stubWorld(terrain) {
   };
 }
 
-/** Every capsule the blade solver would be offered this frame. */
+/**
+ * Every capsule the blade solver would be offered — WITH THE PLAYER STANDING
+ * THERE, which is the whole difficulty.
+ *
+ * `DestructionProxy.capsules()` is `manager.bladeCapsules(this.body.position)`,
+ * and that body's position is copied from `world.player.position` every frame
+ * with a 3.4 m reach. A headless survey has no player, so the proxy sits at the
+ * world origin and publishes nothing anywhere else — which means the first cut
+ * of this check was measuring each level's ordinary Props and NOTHING ELSE, and
+ * scored every level whose furniture is destructible architecture at zero. The
+ * Temple's 0/51 was that: the objects were cuttable and the survey could not
+ * see it.
+ *
+ * So the survey walks. Props and doors are collected once, because their
+ * capsules do not depend on where anyone is standing; anything player-relative
+ * is asked again at each candidate, with the observer moved there first. That
+ * is also exactly what the game does — the proxy follows the player — so the
+ * answer this returns is the answer a player standing in front of the object
+ * would get.
+ */
 function contacts(world) {
-  const caps = [];
-  const take = (src) => {
+  const fixed = [];
+  const roving = [];
+  const take = (src, into) => {
     let list = null;
     try { list = src.capsules?.(); } catch { list = null; }
-    for (const c of list || []) if (c && c.p0 && c.p1) caps.push(c);
+    for (const c of list || []) if (c && c.p0 && c.p1) into.push(c);
   };
-  for (const p of world.props) take(p);
-  for (const d of world.doors) take(d);
-  return caps;
+  for (const p of world.props) {
+    // A proxy answers differently depending on where it is asked from; that is
+    // what makes it roving. Everything else is fixed geometry.
+    if (p.manager && p.body && typeof p.capsules === 'function') roving.push(p);
+    else take(p, fixed);
+  }
+  for (const d of world.doors) take(d, fixed);
+  return {
+    fixed,
+    /** Capsules available to a blade held at `at`. */
+    at(at) {
+      if (!roving.length) return fixed;
+      const out = fixed.slice();
+      // The manager pre-fractures and publishes around whoever is standing
+      // there, so the observer has to be MOVED and the manager STEPPED before
+      // it will answer. `world.player` is what it reads.
+      world.player = { position: at };
+      for (const p of roving) {
+        p.body.position.copy(at);
+        try { p.manager.update(1 / 60); } catch { /* nothing to prepare */ }
+        take(p, out);
+      }
+      return out;
+    },
+    rovers: roving.length,
+  };
 }
 
 /** Does a capsule reach inside this box? Sampled along its segment. */
@@ -107,11 +180,13 @@ function survey(key) {
     const vol = ex[0] * ex[1] * ex[2];
     if (vol < 0.02 || Math.max(...ex) > 3.2) return;
     total++;
-    if (caps.some((c) => reaches(box, c, p))) hit++;
+    // …asked from where a player swinging at it would stand: at the object,
+    // which is where the proxy would have been carried to.
+    if (caps.at(v).some((c) => reaches(box, c, p))) hit++;
     else misses.push([vol, v.x.toFixed(0), v.z.toFixed(0)]);
   });
   misses.sort((a, b) => b[0] - a[0]);
-  return { total, hit, misses, caps: caps.length };
+  return { total, hit, misses, caps: caps.fixed.length, rovers: caps.rovers };
 }
 
 export function run({ check, assert }) {
@@ -148,16 +223,21 @@ export function run({ check, assert }) {
      * four moving parts that could each silently empty it — the reach filter,
      * the scale filter, the capsule collection and the dressing itself. So:
      * enough levels with enough objects, and capsules actually being offered. */
-    let levels = 0, objects = 0, caps = 0;
+    let levels = 0, objects = 0, caps = 0, rovers = 0;
     for (const key of LEVEL_ORDER) {
       const s = survey(key);
       if (s.total >= 8) levels++;
       objects += s.total;
       caps += s.caps;
+      rovers += s.rovers;
     }
     assert(levels >= 6, `only ${levels} levels have enough reachable objects to measure`);
     assert(objects > 200, `only ${objects} reachable objects across the whole game`);
-    assert(caps > 400, `only ${caps} blade contacts offered across every level`);
-    return `${objects} reachable objects over ${levels} measurable levels, ${caps} contacts offered`;
+    assert(caps > 400, `only ${caps} fixed blade contacts offered across every level`);
+    // The roving half has to be exercised too, or the fix above is untested and
+    // the survey is back to seeing Props alone.
+    assert(rovers >= 3, `only ${rovers} levels publish a player-relative contact set`);
+    return `${objects} reachable objects over ${levels} measurable levels, `
+      + `${caps} fixed contacts and ${rovers} roving publishers`;
   });
 }
