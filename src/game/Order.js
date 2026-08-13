@@ -206,7 +206,12 @@ export const ORDERS = [
     doctrine: 'There is no emotion, there is peace.',
     crystals: CRYSTALS.jedi,
     crystalOrigin: 'attuned — the crystal is alive and it picked you',
-    hilts: ['Graflex', 'Guardian', 'Consular'],
+    // Five each now that there are ten. An order's rack says something about it:
+    // the Jedi build the plain ones and the ceremonial one, and the Shoto is
+    // here because it is the hilt a temple issues to someone who is still
+    // growing. Nobody builds all ten — a rack that is the whole catalogue says
+    // nothing.
+    hilts: ['Graflex', 'Guardian', 'Consular', 'Ascetic', 'Shoto'],
     // ROBE_COLORS indices: Sand, Ivory, Ochre, Umber. Named in the check so
     // this file does not have to import a 3800-line module to hold four numbers.
     robes: [0, 3, 5, 1],
@@ -226,7 +231,9 @@ export const ORDERS = [
     doctrine: 'Peace is a lie. There is only passion.',
     crystals: CRYSTALS.sith,
     crystalOrigin: 'bled — a crystal made to scream; over-bled, it cracks and goes dark',
-    hilts: ['Sentinel', 'Crossguard', 'Graflex'],
+    // The Sith take the ones with teeth on them, and the Duelist, which is the
+    // hilt of somebody who learned to fence before they learned to fight.
+    hilts: ['Sentinel', 'Crossguard', 'Graflex', 'Duelist', 'Warden'],
     // ROBE_COLORS: Night, Ash.
     robes: [4, 2],
     robeDefault: 4,
@@ -247,7 +254,9 @@ export const ORDERS = [
     doctrine: 'There is no code. There is what the moment asks.',
     crystals: CRYSTALS.grey,
     crystalOrigin: 'healed — a bled crystal talked back; fully purified it is white',
-    hilts: ['Guardian', 'Sentinel', 'Crossguard'],
+    // The Grey carry what they were given and what they found: the Archaic is
+    // older than either order and belongs to neither.
+    hilts: ['Guardian', 'Sentinel', 'Crossguard', 'Archaic', 'Duelist'],
     // ROBE_COLORS: Ash, Umber, Night.
     robes: [2, 1, 4],
     robeDefault: 2,
