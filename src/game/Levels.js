@@ -19,6 +19,15 @@ import {
 import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
+/* The warship's set-piece is registered at the bottom of this file — see the
+ * note there. These three edges add nothing to anybody's static import graph
+ * that was not already in it: Waves.js already pulls Enemy.js, Enemy.js
+ * already pulls Bodies.js, and none of the three reaches Engine.js, which is
+ * the edge that matters (see the note at src/world/Scenery.js:566). */
+import { ARCHETYPES } from './Enemy.js';
+import { SET_PIECE } from './Waves.js';
+import { TOUGHNESS } from './Combat.js';
+import { buildBodyguard } from './Bodies.js';
 
 let rng = makeRng(20250805);
 
@@ -2295,6 +2304,309 @@ export const LEVELS = {
     },
   },
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE WARSHIP
+   *
+   *  "All droids — b1, b2, droideka, and the walker if it fits. The opening of
+   *   Revenge of the Sith: corridors, a hangar, a bridge. A boss at the end."
+   *
+   *  THE POOL IS DROIDS AND NOTHING ELSE, and it is the first level in the
+   *  game of which that is true. Every other roster has clone troopers and
+   *  marksmen in it because they are the bodies that shoot straight and make a
+   *  wave dangerous at range; a Separatist ship has neither, and taking them
+   *  away changes the fight rather than just the costume. What replaces the
+   *  marksman's pressure is VOLUME — a B1 costs 1 threat against a marksman's
+   *  3.2, so the same budget buys three times the bodies — and what replaces
+   *  the trooper's grenade is the droideka, which arrives at wave 6 and is a
+   *  problem you have to solve rather than one you can walk away from.
+   *
+   *  THE BOSS IS REGISTERED FROM HERE, at the bottom of this file, beside the
+   *  arrival table and for exactly the reason stated there: a level and the
+   *  thing at the end of it are one decision. It is not in `unlockedAt`, so it
+   *  can never arrive as fill — it is a SET-PIECE, which means it comes on the
+   *  boss wave and it comes to the bridge.
+   *
+   *  THE SHIP IS ONE HEIGHTFIELD, which is the honest limitation, and the
+   *  `warship` preset's own comment says what was done about it: the three
+   *  spaces are strung along one spine at three levels rather than stacked as
+   *  decks, because this engine has no floors and the gait solver, the nav and
+   *  the spawn picker all assume it does not.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  warship: {
+    name: 'The Invisible Hand',
+    blurb: 'A Separatist flagship with its bridge still lit. Everything aboard is a machine, and all of it is between you and the front.',
+    terrain: 'warship',
+    // Droids only. `unlockedAt` still gates them — b1 from the first wave, b2
+    // at 3, droideka at 6, the walker at 12 — so the opening of this level is
+    // a corridor full of B1s, which is exactly the right opening.
+    pool: ['b1', 'b1', 'b1', 'b2', 'droideka', 'b2', 'b1', 'walker', 'bodyguard'],
+    groundColor: 0x2a3038,
+    spawnRadius: [26, 52],
+    atmosphere: {
+      /* `sky: false`: there is a hull over this. `bgColor` is what shows
+       * through the launch bay mouth and the bridge viewport, and it is the
+       * one cold saturated thing on the level — a battle happening outside,
+       * seen from inside a dark ship. 0.0052 puts half-light at 133 m, which
+       * is most of the length of the spine: you can see the far end of the
+       * ship, and it is a long way off. */
+      sky: false, bgColor: 0x14304e, fog: true, fogColor: 0x16212e, fogDensity: 0.0052,
+      /* The key comes in through the launch bay mouth on the port side, low
+       * and cold: the only daylight aboard is a star. 12° is nearly along the
+       * deck, so everything standing on it throws a long hard-edged shadow
+       * across the plating — rule 2 of the art direction at the scale of a
+       * hangar. */
+      sunColor: 0xbcd4ff, sunIntensity: 5.0, ambient: 0.70,
+      /* THE HEMISPHERE IS WHERE THIS ROOM IS ACTUALLY LIT, and the first render
+       * is what says so: at ambient 0.34 — the figure a level under an open sky
+       * would use — a 12° key through one opening left four fifths of the frame
+       * at nothing, and the ship read as a cave. It is 0.70 for the same reason
+       * the intake's is 0.78: a roofed room's ambient IS its lighting rig, and
+       * the two halves of it are the two things a ship bounces light off —
+       * plated overhead above, and below, a deck lit by hazard strips, which is
+       * why the lower half is authored WARM against a cold key. */
+      /* 0x55606e and not the 0x4a6488 first tried, which is a NAVY: measured
+       * as authored swatches those are 0.32 and 0.14 of chroma, and the first
+       * render came back with the whole deck a saturated blue. What is over
+       * this floor is plated overhead, not sky — there is no Rayleigh
+       * scattering inside a hull — so the upper half of the hemisphere is a
+       * cold grey and the COLD comes from the key. */
+      skyColor: 0x55606e, groundColor: 0x3c3026, elevation: 12, azimuth: 268,
+      /* What the ship's own lighting throws back: the hazard strips, the
+       * console banks and the reactor glow, all of which are WARM on a
+       * Separatist hull. This is the level's second light and it is authored
+       * against the key rather than with it — cold star, warm ship. */
+      fillColor: 0xc06a2e, fillIntensity: 0.62,
+      exposure: 1.22, bloom: 0.46, saturation: 1.04,
+      lift: [0.004, 0.006, 0.013], gain: [1.00, 1.0, 1.03],
+      clouds: false, horizon: false,
+    },
+    ambience: { wind: 0.04, windFreq: 120, drone: 0.32 },
+    dust: { count: 640, color: 0x8fa2ba, opacity: 0.18, size: 18, fleckColor: 0xffa040 },
+    grass: 0,
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 91);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      /* ── THE OVERHEAD. One panel over the whole ship at 24 m with the ribs
+       * under it. An interior with `sky: false` and no roof has a flat
+       * `bgColor` field filling the top third of every frame, which reads as
+       * night rather than as indoors — see `roof`. No `shadow`, because the
+       * key on this level comes in almost horizontally through the bay mouth
+       * and a roof that cast would simply delete it. */
+      roof(world, { height: 24, half: 96, mat: M.hull, beamCount: 13, thickness: 2.0 });
+
+      /* ── THE FRAMES. A ship is a row of ring frames with plating on them,
+       * and the single strongest cue that you are inside a hull rather than in
+       * a shed is that the ribs are REGULAR and they run all the way to the
+       * vanishing point. Every 13 m down the whole 186 m length, both sides,
+       * merged one frame to an island. */
+      /* TWO MATERIALS TO A FRAME, and that number is the whole design of this
+       * loop. A `Kit` emits one mesh per material, so a frame built out of a
+       * broken-wall maker, a pipe run and a stanchion — which is what this was
+       * — costs ten draw calls apiece, and thirty of them came to 300 against a
+       * level budget of 520 before anything stood on the floor. The plating is
+       * a slab in the frame's own two materials instead, and the conduits and
+       * the hazard lamps are placed sparsely afterwards where they read rather
+       * than at every station where they only cost. Measured: 300 → 62. */
+      for (let i = 0; i < 13; i++) {
+        const z = -90 + i * 15;
+        const beam = 84 * (1 - Math.pow(Math.abs(z) / 116, 3) * 0.34);   // the hull closes fore and aft
+        for (const sx of [-1, 1]) {
+          const x = sx * (beam - 22);
+          if (!siteOk(world, x, z, { clearance: 6, spawnClear: 12 })) continue;
+          const open = i % 3 === 1;                 // a service bay in every third frame
+          island(world, at(x, z), { seed: 9100 + i * 2 + (sx > 0 ? 1 : 0), yaw: sx > 0 ? 0 : Math.PI, span: 13, maker: 'frame' },
+            (kit) => {
+              // the frame itself: a deep web with a flange, standing off the
+              // shell so there is a walkway behind it
+              kit.slab(M.darkSteel, 1.5, 15.0, 11.0, 0, 7.5, 0, { tile: 2.4, seg: 4 });
+              kit.slab(M.darkSteel, 0.6, 1.2, 12.4, -0.9, 14.6, 0, { tile: 2.4, seg: 3, collide: false });
+              // plating between the frames. Where a bay is open it is two
+              // panels with a doorway between them rather than one.
+              if (open) {
+                for (const dz of [-1, 1]) {
+                  kit.slab(M.panel, 1.1, 11.0, 4.4, 1.6, 5.5, dz * 4.0, { tile: 2.4, seg: 3 });
+                }
+                kit.slab(M.panel, 1.1, 5.6, 3.6, 1.6, 8.2, 0, { tile: 2.4, seg: 3, collide: false });
+              } else {
+                kit.slab(M.panel, 1.1, 11.0, 12.4, 1.6, 5.5, 0, { tile: 2.4, seg: 4 });
+              }
+              // the conduit run, in the frame's own steel so it is free
+              kit.slab(M.darkSteel, 0.34, 0.34, 12.4, -0.5, 9.8, 0, { tile: 1.8, seg: 3, collide: false });
+              kit.slab(M.darkSteel, 0.34, 0.34, 12.4, -0.5, 10.4, 0, { tile: 1.8, seg: 3, collide: false });
+            });
+          // the hazard lamp, on every third frame and on one side only: the
+          // ship is lit by what somebody left running, not by a lighting rig
+          if (i % 3 === 0 && sx > 0) {
+            addStanchion(world, at(x - 2.2, z), {
+              height: 6.0, lamp: true, light: true,
+              color: 0xff7a28, intensity: 14, distance: 24, seed: 9180 + i,
+            });
+          }
+        }
+      }
+
+      /* ── THE BAY MOUTH, port side. A 56 m opening in the hull with the
+       * battle outside it: on an interior the `bgColor` behind a hole in a
+       * wall IS the view, and it is the only thing on this level that is not
+       * made of metal. Framed heavily, because a hole in a hull that is not
+       * framed reads as a hole in the geometry. */
+      for (const dz of [-30, 30]) {
+        island(world, at(64, dz), { seed: 9200 + dz, yaw: Math.PI / 2, span: 16, maker: 'baymouth' },
+          (kit) => {
+            kit.slab(M.darkSteel, 12.0, 20.0, 4.0, 0, 10.0, 0, { tile: 2.4, seg: 4 });
+            kit.slab(M.rust, 12.4, 1.4, 4.6, 0, 20.4, 0, { tile: 2.0, seg: 3, collide: false });
+            kit.slab(M.glowAmber, 11.0, 0.4, 0.5, 0, 1.2, 2.3, { tile: 1.6, seg: 2, collide: false });
+          });
+      }
+      // the lintel over the mouth, and the door leaves stowed either side
+      island(world, at(66, 0), { seed: 9210, yaw: Math.PI / 2, span: 20, maker: 'baymouth' },
+        (kit) => {
+          kit.slab(M.hull, 62.0, 5.0, 3.4, 0, 20.5, 0, { tile: 2.4, seg: 8, collide: false });
+          kit.slab(M.panel, 62.0, 1.0, 4.2, 0, 17.6, 0, { tile: 2.4, seg: 8, collide: false });
+        });
+
+      /* ── THE HANGAR FLOOR. Launch cradles down the trench, the gantries that
+       * loaded them, and the wrecks of what did not get out. This is the wide
+       * part of the level and the only part where a walker has room. */
+      for (let k = 0; k < 6; k++) {
+        const x = -46 + k * 19;
+        const z = -4 - Math.sin(x * 0.026) * 3.5 + (k % 2 ? 15 : -15);
+        if (!siteOk(world, x, z, { clearance: 9, spawnClear: 12 })) continue;
+        island(world, at(x, z), { seed: 9300 + k, yaw: rng() * 0.6 - 0.3, span: 14, maker: 'cradle' },
+          (kit, local) => {
+            // the cradle: two arms and the hoist gantry over them
+            for (const sx of [-1, 1]) {
+              kit.slab(M.darkSteel, 1.0, 2.4, 9.0, sx * 3.2, 1.2, 0, { tile: 2.4, seg: 3 });
+              kit.slab(M.rust, 1.4, 0.3, 9.4, sx * 3.2, 2.5, 0, { tile: 1.8, seg: 3, collide: false });
+            }
+            kit.slab(M.grating, 8.0, 0.16, 2.2, 0, 2.6, 3.4, { tile: 2.2, seg: 3, collide: false });
+            addMachine(world, local(-5.4, -4.2), { kit, width: 3.2, height: 2.6, depth: 2.2, seed: 9310 + k,
+              glowMat: M.glowAmber });
+            addTank(world, local(5.2, -4.0), { kit, radius: 1.5, height: 4.0, seed: 9320 + k });
+            addStanchion(world, local(0, -5.0), { kit, height: 8.0, lamp: true, light: k % 2 === 0,
+              color: 0xff7a28, intensity: 16, distance: 26, seed: 9330 + k });
+          });
+      }
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 22, 56, { clearance: 13, spawnClear: 14, maxSlope: 0.3, tries: 22 });
+        if (site) addHullSection(world, site.pos, { length: 16 + rng() * 9, radius: 3.0, yaw: rng() * TAU, seed: 9350 + k });
+      }
+      for (const sx of [-1, 1]) {
+        addGantry(world, at(sx * 40, -18), { length: 30, height: 7.0, yaw: 0, seed: 9360 + sx, lights: true });
+        addCableRun(world, at(sx * 52, -26, 9.0), at(sx * 52, 22, 8.2), { seed: 9370 + sx, sag: 1.6 });
+      }
+
+      /* ── THE SPINE, forward of the hangar. A CORRIDOR is a rhythm and
+       * nothing else: ribs at a fixed pitch, the same conduit run at the same
+       * height past every one of them, and a light every other rib. The one
+       * thing that makes it read as a corridor rather than as a hall is that
+       * the ribs come in PAIRS across a narrow gap — 22 m here against the
+       * hangar's 128 — so the two sides are both in frame at once. */
+      for (let i = 0; i < 7; i++) {
+        const z = 40 + i * 8.5;
+        island(world, at(0, z), { seed: 9400 + i, yaw: 0, span: 24, maker: 'rib' },
+          (kit, local) => {
+            for (const sx of [-1, 1]) {
+              kit.slab(M.darkSteel, 1.6, 8.4, 2.6, sx * 11.0, 4.2, 0, { tile: 2.4, seg: 3 });
+              kit.slab(M.panel, 3.0, 6.2, 0.9, sx * 13.4, 3.1, 0, { tile: 2.4, seg: 3 });
+            }
+            // the header across the top, which is what closes a corridor
+            kit.slab(M.darkSteel, 23.6, 1.5, 2.6, 0, 9.1, 0, { tile: 2.4, seg: 5, collide: false });
+            kit.slab(M.rust, 23.6, 0.5, 3.2, 0, 10.1, 0, { tile: 2.0, seg: 5, collide: false });
+            addPipeRun(world, [
+              new THREE.Vector3(-10.2, 6.6, -3.6), new THREE.Vector3(-10.2, 7.0, 3.6),
+            ], { kit, count: 3, radius: 0.13, seed: 9420 + i, supports: false, valves: i % 2 === 0 });
+            addLamp(world, local(9.6, 0), { kit, height: 4.0, seed: 9440 + i, light: i % 2 === 1,
+              color: 0xff8a30, intensity: 12, distance: 18 });
+          });
+      }
+      // the blast-door threshold where the spine meets the hangar
+      island(world, at(0, 34), { seed: 9460, yaw: 0, span: 26, maker: 'threshold' },
+        (kit) => {
+          for (const sx of [-1, 1]) kit.slab(M.hull, 16.0, 12.0, 3.0, sx * 20.0, 6.0, 0, { tile: 2.4, seg: 4 });
+          kit.slab(M.hull, 56.0, 3.4, 3.0, 0, 13.7, 0, { tile: 2.4, seg: 7, collide: false });
+          kit.slab(M.glowRed, 22.0, 0.3, 0.4, 0, 11.6, 1.6, { tile: 1.6, seg: 4, collide: false });
+        });
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 44, 88, { clearance: 3.4, spawnClear: 12, maxSlope: 0.3 });
+        if (site) world.addProp(rng() < 0.35 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
+      }
+
+      /* ── THE BRIDGE, aft and five metres up. Two crew pits of consoles, the
+       * command walkway between them, and the viewport. This is the end of the
+       * level: the ramp up to it is the only way in, and the thing that is
+       * waiting up here does not go down it. */
+      addStair(world, at(4, -32), { width: 22, steps: 6, rise: 0.3, run: 1.1, yaw: 0, railing: true, mat: M.darkSteel });
+      for (const sx of [-1, 1]) {
+        island(world, at(sx * 17, -52), { seed: 9500 + sx, yaw: sx > 0 ? 0.3 : -0.3, span: 15, maker: 'crewpit' },
+          (kit, local) => {
+            kit.slab(M.darkSteel, 13.0, 1.0, 8.0, 0, -0.5, 0, { tile: 2.4, seg: 4 });
+            addRailing(world, local(0, 4.2), { kit, length: 12.0, height: 1.1, seed: 9510 + sx });
+            for (let c = 0; c < 3; c++) {
+              addMachine(world, local(-4.4 + c * 4.4, -2.6), {
+                kit, width: 3.0, height: 1.4, depth: 1.8, seed: 9520 + c + sx * 3,
+                glowMat: M.glowCold,
+              });
+            }
+            addStanchion(world, local(-5.8, 3.0), { kit, height: 5.0, lamp: true, light: true,
+              color: 0x9fc8ff, intensity: 12, distance: 18, seed: 9540 + sx });
+          });
+        for (let c = 0; c < 3; c++) {
+          const p = at(sx * (11 + c * 4.0), -58 - (c % 2) * 3.5);
+          if (siteOk(world, p.x, p.z, { clearance: 2.4, spawnClear: 0 })) world.addProp(makeConsole(world, p));
+        }
+      }
+      // the viewport: the ship's own bow, opened. Everything behind it is
+      // `bgColor`, which on this level is the battle.
+      addBrokenWall(world, at(4, -84), V(64, 16, 2.6), {
+        yaw: 0, seed: 9560, mat: M.hull, ruin: 0.44,
+        openings: [{ x: -16, y: 1.4, w: 11, h: 8.5 }, { x: 0, y: 1.4, w: 13, h: 9.5 },
+                   { x: 16, y: 1.4, w: 11, h: 8.5 }],
+      });
+      addDebrisField(world, at(4, -80), { radius: 16, seed: 9570, count: 30 });
+      // the command dais, where the thing at the end of the level stands
+      island(world, at(4, -66), { seed: 9580, yaw: 0, span: 12, maker: 'dais' },
+        (kit, local) => {
+          addPlinth(world, local(0, 0), { kit, width: 8.0, depth: 6.0, height: 0.9, steps: 2,
+            mat: M.darkSteel, bandMat: M.rust });
+          addMachine(world, local(0, -2.2), { kit, width: 4.4, height: 1.6, depth: 1.6, seed: 9590,
+            glowMat: M.glowRed });
+          for (const sx of [-1, 1]) {
+            addStanchion(world, local(sx * 4.2, 1.6), { kit, height: 5.6, lamp: true, light: true,
+              color: 0xff5a20, intensity: 15, distance: 20, seed: 9595 + sx });
+          }
+        });
+
+      /* ── The floor of a ship that has been boarded: cargo that broke loose,
+       * plate that came off the overhead, and the swarf a hangar deck is
+       * always covered in. Instanced — see strewGround. */
+      const field = makeCoverField({ seed: 9600, amount: 0.32, patch: 30, grain: 11, edge: 0.30, extent: 90 });
+      drift(world, {
+        field: (x, z) => field.at(x, z), rmin: 14, rmax: 82, count: 26,
+        clearance: 2.6, spawnClear: 12, maxSlope: 0.3, tries: 14,
+      }, (pos) => {
+        world.addProp(rng() < 0.32 ? makeBarrel(world, pos) : makeCrate(world, pos, 0.85));
+      });
+      for (let k = 0; k < 7; k++) {
+        const site = findSite(world, 18, 84, { clearance: 5, spawnClear: 12, maxSlope: 0.3 });
+        if (site) addCrateStack(world, site.pos, { seed: 9620 + k, tiers: 2 + (rng() < 0.5 ? 1 : 0), columns: 2, yaw: rng() * TAU });
+      }
+      for (let k = 0; k < 8; k++) {
+        const site = findSite(world, 16, 88, { clearance: 6, maxSlope: 0.35 });
+        if (site) addDebrisField(world, site.pos, { radius: 8, seed: 9640 + k, count: 22 });
+      }
+      strewGround(world, { seed: 9660, radius: 92, inner: 3, spread: 0.30, mat: M.stoneDark,
+        landmarks: 0.3, boulders: 0.7, cobble: 1.4 });
+
+      world.notify('THE INVISIBLE HAND', 'the bridge is aft, and so is the general');
+    },
+  },
+
   deeps: {
     name: 'The Cut',
     blurb: 'The excavation the works was taken out of. Whatever is still lit down here was not left on for you.',
@@ -2374,8 +2686,8 @@ export const LEVELS = {
  * The order the menu lists them in: the places you choose first, then the four
  * rooms of the descent in the order you meet them.
  */
-export const LEVEL_ORDER = ['mustafar', 'temple', 'meadow', 'drifts', 'alpine', 'arena',
-  'intake', 'foundry', 'deeps'];
+export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'meadow', 'drifts', 'alpine',
+  'arena', 'intake', 'foundry', 'deeps'];
 
 /**
  * DELETED LEVELS.
@@ -2433,6 +2745,63 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   foundry: ['gate'],
   cavern: ['gate'],
   temple: ['gate'],
+  warship: ['gate'],
 });
 
+/**
+ * THE THING AT THE END OF THE WARSHIP, registered here for the same reason the
+ * arrivals above are: a level and the set-piece it ends with are one decision,
+ * and this is the module that decides what levels exist.
+ *
+ * It is deliberately NOT in `WaveDirector.unlockedAt`, which is the list the
+ * fill is drawn from — so no amount of budget can ever buy one as an ordinary
+ * body. The only path to the field is `_setPiece`, which fires on boss waves
+ * and only on levels whose `pool` names it. Today that is exactly one level.
+ *
+ * `from: 10` AND NOT 5, and the reason is a structural property of
+ * `_setPiece` rather than a feeling about pacing. That function floors its
+ * spend at "twice the lightest rung", and then, if the ladder had exactly one
+ * rung and it bought exactly one body, it buys a second. So a boss that is the
+ * ONLY rung a wave can reach always arrives in a pair — measured: at `from: 5`
+ * on this pool, where the droideka's rung is still two waves away and no
+ * acolyte is in the pool at all, wave 5 fielded two of these. Two 1050-hp
+ * duellists is not an escalation of one, it is the same fight twice at once,
+ * which is the exact mistake the comment above `_setPiece` says it exists to
+ * avoid. At 10 the walker's rung and the droideka's are both open, so the
+ * ladder has three rungs and the doubling branch cannot fire.
+ *
+ * The cost of that is a boss wave 5 with no set-piece on it, and that is a
+ * pre-existing consequence of a droid-only pool rather than something this
+ * introduced: with `acolyte` out of the pool and the droideka gated to 6, the
+ * wave-5 ladder was already empty before this rung existed. What wave 5 gets
+ * instead is the whole budget spent on bodies, which on this level is a great
+ * many B1s.
+ *
+ * THE THREAT NUMBER IS DERIVED, not felt. `_setPiece` spends the greater of
+ * BOSS_SHARE (28%) of the wave budget and twice the lightest rung: at wave 10
+ * that is 0.28 × 61 = 17.1. At 13 the general fits inside it and leaves 4.1,
+ * which is under the walker's 12 and under the droideka's 5 — so he arrives
+ * ALONE on the first boss wave that can afford him, and by wave 20, where the
+ * spend is 45, he arrives with a walker and a droideka behind him. That is the
+ * escalation, and it is the ladder doing it rather than a branch.
+ */
+Object.assign(ARCHETYPES, {
+  bodyguard: {
+    label: 'IG Bodyguard Droid', build: buildBodyguard, scale: 1.3, hp: 1050, mass: 240,
+    speed: 4.4, toughness: TOUGHNESS.armour, melee: true, saber: true,
+    /* An electrostaff, not a lightsaber, and the game already has the right
+     * knob for that: `saberColor` indexes the crystal table and 5 is the cold
+     * violet-white end of it, which is what an arc weapon looks like against a
+     * ship's warm hazard lighting. The duel brain, the telegraph, the clash
+     * and the blade lock all work off `saber` alone and need nothing else. */
+    saberColor: 5, hilt: 'Sentinel', damage: 34, preferred: [1.8, 3.8],
+    score: 3200, threat: 13, boss: true, hipHeight: 1.12,
+    /* `armorPlus` is read by Enemy._boneToughness and sends the TORSO to
+     * durasteel while leaving the limbs alone. On a boss that is the whole of
+     * the counter-play: you are not going to cut this in half across the
+     * chest, and you do not have to — the legs are still legs. */
+    armorPlus: true,
+  },
+});
+SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
 

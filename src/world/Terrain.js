@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { fbm2, ridged2, clamp, lerp, smoothstep } from '../engine/MathUtil.js';
+import { fbm2, ridged2, clamp, lerp, smoothstep, TAU } from '../engine/MathUtil.js';
 import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { SurfaceField, SURFACE_RES, SURFACE_SIZE, SURFACE_GRAD_FS } from './Surface.js';
 import { CEL } from '../toon/Cel.js';
@@ -1105,6 +1105,119 @@ export const TERRAIN_PRESETS = {
     },
     rockAt() { return 1; },
   },
+
+  /**
+   * THE WARSHIP. One deck of a capital ship, read fore to aft.
+   *
+   * The brief is "corridors, a hangar, a bridge", and the honest constraint is
+   * that this engine has ONE heightfield: no floors, no overhangs, no stairs
+   * that go anywhere the nav cannot walk. A ship laid out as three DECKS is
+   * therefore not available. What is available — and is what a capital ship
+   * actually is anyway — is one enormous spine with the three spaces strung
+   * along it at three different levels, all of them reachable on a ramp.
+   *
+   *   z < −30    THE BRIDGE. A raised platform, +5.4 m, reached up a 12° ramp
+   *              through the aft bulkhead. It is the highest ground on the
+   *              level and it is where the thing you came for is standing.
+   *   |z| < 30   THE HANGAR. The floor at datum, 150 m of it, with the launch
+   *              trench cut across it. The wide part of the level.
+   *   z > 30     THE SPINE. The corridor run forward, narrowed by the shell to
+   *              about 40 m and stepped down 1.2 m at a blast-door threshold,
+   *              so walking it feels like going through a ship rather than
+   *              across a room.
+   *
+   * THE SHELL IS ELLIPTICAL IN PLAN, and that is the one thing that stops this
+   * reading as the works with a different palette. A hull section is not a
+   * rectangle: it is wide amidships and it closes in fore and aft. `d` below is
+   * an anisotropic Chebyshev — the room is 84 m half-width across the beam and
+   * 116 m half-length along the keel — so the corridor genuinely narrows toward
+   * the bow because the SHIP does, not because a wall was put there.
+   *
+   * The gait solver and the enemy nav read this heightfield and will walk
+   * anything they can climb, so every transition here is a ramp under 15°: the
+   * bridge approach is 5.4 m over 26 (12°), the spine threshold 1.2 m over 8
+   * (9°), and the launch trench's banks 1.6 m over 5 (18°, which droids march
+   * down and which reads as a lip rather than as a wall).
+   */
+  warship: {
+    scale: 340, res: 190, waterLevel: -999, flat: true,
+    /* DURASTEEL, and it is a COOL neutral where the works' rockcrete is a warm
+     * one. The two interiors must not be the same room: measured as authored
+     * swatches, the works' floor sits at hue 232° and 0.06 of saturation, and
+     * this at 213° and 0.13 — a plated metal deck against a poured one. The
+     * accent this level is authored around is the BOLTS, which are red, so the
+     * ground is held cold and low so that red has somewhere to be. */
+    sandColor: 0x474e58, rockColor: 0x333a45,
+    maps: 'deck',
+    gritColor: 0x39424f, rockColor2: 0x22272f,
+    // Swept plate against the grey pan of hydraulic spill that has soaked into
+    // the seams: the two ends of the same 76 m patchwork.
+    dustColor: 0x5d6570, crustColor: 0x3a4048,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    crust: 0.0, strataH: 2.2,
+    wind: [0, 1],                                  // fore-and-aft, along the keel
+    macro: [76, 0.34, 0.22, 0.85],
+    lagColor: 0x282e37, sheetColor: 0x616a76,
+    // A plated deck takes no footprint at all; what it takes is a SCORCH, and
+    // this is a level fought entirely with blaster bolts. 1.5 cm of grit and
+    // shed carbon over the top, and a very long memory for a burn.
+    loose: { depth: 0.015, refill: 220, tilt: 0.5, tint: 0.28, soot: 1.0 },
+    packedColor: 0x1b2027,
+    ripple: 0.4, ripAspect: 1.0,                   // rolled plate, not blown sand
+    texScale: [0.40, 0.25, 0.32],
+    detail: [1.6, 26],
+    height(x, z) {
+      /* The hull, in plan. Anisotropic so the ship is longer than it is wide,
+       * and Chebyshev rather than Euclidean so the beam is a straight run of
+       * wall amidships instead of a barrel. */
+      const d = Math.max(Math.abs(x) / 84, Math.abs(z) / 116);
+      let wall = smoothstep(0.80, 1.0, d) * 44;
+
+      /* THE SPINE IS NARROW, and it has to be narrow in the GROUND rather than
+       * in the props standing on it. The first version put ribs 22 m apart on a
+       * deck that was still 134 m across, so the corridor was a pair of
+       * doorframes in a hall: you could walk round them, the nav walked round
+       * them, and nothing about being in it felt like being in a ship. Forward
+       * of the threshold the hull closes to 26 m half-width over 12 m of run.
+       * `max` rather than `+`, because the two walls are the same hull seen at
+       * two stations and adding them would stack 88 m of it at the bow. */
+      const corridor = smoothstep(38, 50, z) * smoothstep(26, 34, Math.abs(x)) * 40;
+      wall = Math.max(wall, corridor);
+
+      // Deck plate, on a 6 m module. Half a centimetre of relief: enough for
+      // the ink pass to find the seams and for a raking lamp to catch them.
+      const px = Math.abs(fract(x / 6) - 0.5), pz = Math.abs(fract(z / 6) - 0.5);
+      const seam = -smoothstep(0.40, 0.5, Math.max(px, pz)) * 0.055;
+
+      /* THE BRIDGE. Raised aft, on a ramp that starts at z = −30 and tops out
+       * at −56. 5.4 m over 26 is 12°, which every solver in the game walks. */
+      const bridge = smoothstep(-30, -56, z) * 5.4;
+      // and its own bulkhead, closing the bridge off from the hangar except at
+      // the ramp. Two piers with a 22 m opening between them.
+      const gap = smoothstep(24, 11, Math.abs(x - 4));
+      const bulk = smoothstep(6, 2, Math.abs(z + 34)) * (1 - gap) * 9.0;
+
+      /* THE SPINE, forward. One step down through the blast-door threshold at
+       * z = +34, so the corridor sits below the hangar floor and you can see
+       * where the ship changes. */
+      const spine = -smoothstep(30, 38, z) * 1.2;
+
+      /* THE LAUNCH TRENCH across the hangar, where the racks ran. 1.6 m deep
+       * with 18° banks: a lip to be pushed over, never a wall. Crossed twice,
+       * and the crossings are TERRAIN rather than props so that the ground the
+       * nav walks and the ground the player walks are one thing. */
+      const across = Math.abs(z + 4 - Math.sin(x * 0.026) * 3.5);
+      const cross = Math.max(smoothstep(6.5, 3.6, Math.abs(x + 30)),
+        smoothstep(6.5, 3.6, Math.abs(x - 26)));
+      const trench = -smoothstep(7.2, 5.0, across) * 1.6 * (1 - cross);
+
+      return wall + seam + bridge + bulk + spine + trench
+        + fbm2(x * 0.09, z * 0.09, 2) * 0.03;
+    },
+    rockAt() { return 1; },
+  },
+
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

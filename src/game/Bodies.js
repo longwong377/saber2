@@ -5402,6 +5402,95 @@ export function buildBeast(opts = {}) {
   return { rig, palette: { hide, chitin, belly, eye }, scale: S };
 }
 
+/* ── bodyguard droid (boss) ──────────────────────────────────────────── */
+
+/**
+ * THE THING AT THE END OF THE WARSHIP, and the one droid in the game that
+ * meets your blade instead of shooting at you.
+ *
+ * It is a B2 chassis and that is a decision rather than a shortcut. Everything
+ * a saber archetype needs is already true of that body — a humanoid skeleton
+ * with a right hand for a hilt, a chest and neck for `attachCloak` to hang a
+ * cape off, and shoulders for `installPlates` — and reaching for a fresh
+ * skeleton would have meant re-deriving the gait, the sever points and the
+ * ragdoll for a body the player sees for ninety seconds. What it needs on top
+ * is a SILHOUETTE that is not a B2's, because the whole claim of a boss is
+ * that you know what it is the moment it walks through the door.
+ *
+ * Three changes do that, in the order they read at distance:
+ *
+ *  THE HEAD. A B2's is a flat-topped wedge 14 cm across. This one wears a
+ *  narrow tapered cowl over it with two horns raked back off the crown, which
+ *  turns a 0.14 m box into a 0.34 m spike and puts a shape on the skyline no
+ *  other body in the game has. The photoreceptor under it is a single vertical
+ *  slot rather than the B2's horizontal band — one lit line, not two.
+ *
+ *  THE COLOUR. 0x4a4d52 gunmetal against the B2's 0x7d7266 tan. That is the
+ *  cheap half and it is the half that stops working at forty metres, which is
+ *  why it is not the only one.
+ *
+ *  THE SHOULDERS. A pair of raked pauldrons and the mast that carries the
+ *  cape. Without them the cloak the saber path attaches hangs off a bare neck
+ *  and reads as a bug rather than as a garment.
+ *
+ * Everything here is parented to a BONE (chest, head), never to `rig.root`, so
+ * `Actor.cut` hands it to the DetachedPiece with the limb it was sitting past
+ * and `Actor.goRagdoll` re-homes it — the same path every rivet and armour
+ * plate in this file already travels.
+ */
+export function buildBodyguard(opts = {}) {
+  const S = opts.scale ?? 1.3;
+  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52 });
+  const rig = built.rig;
+  const dark = metalMat(0x24262a, 0.44, 0.92, 2.6);
+  const trim = armorMat(0x8d3a20, 0.12, 0.52, 3.0);      // the one warm accent
+  const slot = emissiveMat(0xffc24a, 3.4);
+
+  const head = rig.get('head');
+  if (head) {
+    const k = new Kit();
+    /* The cowl: a four-sided taper from the jaw to a point 34 cm up. Built as
+     * plates rather than a cone because a cone under a two-tone cel ramp has
+     * one continuous terminator running round it and reads as a lampshade; a
+     * faceted mass has a lit face and a shadow face with a hard edge between,
+     * which is rule 1 of the art direction. */
+    k.add(dark, plateGeo(0.150 * S, 0.130 * S, 0.165 * S, 0.018 * S, 2), [0, 0.086 * S, 0.004 * S]);
+    k.add(dark, plateGeo(0.108 * S, 0.120 * S, 0.126 * S, 0.014 * S, 1), [0, 0.180 * S, -0.006 * S]);
+    k.add(dark, plateGeo(0.062 * S, 0.110 * S, 0.076 * S, 0.010 * S, 1), [0, 0.262 * S, -0.014 * S]);
+    // the two horns, raked back — the read from behind and from above
+    k.pair((sx) => {
+      k.add(dark, plateGeo(0.026 * S, 0.190 * S, 0.034 * S, 0.008 * S, 1),
+        [sx * 0.052 * S, 0.268 * S, -0.052 * S], [-0.52, 0, sx * 0.20]);
+      k.add(trim, plateGeo(0.020 * S, 0.052 * S, 0.026 * S, 0.006 * S, 1),
+        [sx * 0.068 * S, 0.348 * S, -0.098 * S], [-0.52, 0, sx * 0.20]);
+    });
+    // one vertical lit slot, standing proud of the mask
+    k.add(slot, plateGeo(0.018 * S, 0.098 * S, 0.010 * S, 0.003 * S, 1), [0, 0.150 * S, 0.084 * S]);
+    k.add(dark, plateGeo(0.048 * S, 0.126 * S, 0.008 * S, 0.003 * S, 1), [0, 0.150 * S, 0.079 * S]);
+    k.bake(head.obj);
+  }
+
+  const chest = rig.get('chest');
+  if (chest) {
+    const k = new Kit();
+    k.pair((sx) => {
+      // pauldron, raked outward and back off the deltoid
+      k.add(dark, plateGeo(0.150 * S, 0.058 * S, 0.190 * S, 0.024 * S, 2),
+        [sx * 0.196 * S, 0.096 * S, -0.010 * S], [0, 0, sx * -0.34]);
+      k.add(trim, plateGeo(0.116 * S, 0.016 * S, 0.150 * S, 0.008 * S, 1),
+        [sx * 0.206 * S, 0.126 * S, -0.010 * S], [0, 0, sx * -0.34]);
+      // the mast the cape hangs from
+      k.add(dark, new THREE.CylinderGeometry(0.016 * S, 0.012 * S, 0.170 * S, 6),
+        [sx * 0.104 * S, 0.170 * S, -0.086 * S], [0.26, 0, sx * 0.12]);
+    });
+    // a gorget, so the cowl has a collar to sit in rather than a neck
+    k.add(dark, plateGeo(0.190 * S, 0.052 * S, 0.170 * S, 0.020 * S, 2), [0, 0.140 * S, -0.006 * S]);
+    k.bake(chest.obj);
+  }
+
+  return { ...built, palette: { ...built.palette, dark, trim, slot }, scale: S };
+}
+
 /* ── weapons ─────────────────────────────────────────────────────────── */
 
 /**
