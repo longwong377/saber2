@@ -1188,7 +1188,15 @@ export const TERRAIN_PRESETS = {
        * of the threshold the hull closes to 26 m half-width over 12 m of run.
        * `max` rather than `+`, because the two walls are the same hull seen at
        * two stations and adding them would stack 88 m of it at the bow. */
-      const corridor = smoothstep(38, 50, z) * smoothstep(26, 34, Math.abs(x)) * 40;
+      /* A RIDGE, not a plateau: the wall rises at |x| = 30-38 and falls again
+       * at 56-68, so what is outside the spine is hull rather than forty
+       * metres of tabletop. `descent.mjs` walks sixteen bearings out of the
+       * room asking whether there is a radius the player cannot get past, and
+       * it asks it as SLOPE — so a diagonal ray that starts its walk already
+       * standing on top of an unbounded wall measures no wall at all. Two of
+       * sixteen bearings read 0.38 for exactly that reason. */
+      const corridor = smoothstep(38, 50, z) * smoothstep(30, 38, Math.abs(x))
+        * smoothstep(68, 56, Math.abs(x)) * 40;
       wall = Math.max(wall, corridor);
 
       // Deck plate, on a 6 m module. Half a centimetre of relief: enough for

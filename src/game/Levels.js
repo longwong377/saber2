@@ -2535,7 +2535,10 @@ export const LEVELS = {
           kit.slab(M.glowRed, 22.0, 0.3, 0.4, 0, 11.6, 1.6, { tile: 1.6, seg: 4, collide: false });
         });
       for (let k = 0; k < 9; k++) {
-        const site = findSite(world, 44, 88, { clearance: 3.4, spawnClear: 12, maxSlope: 0.3 });
+        // maxSlope 0.10, not 0.3: the bridge ramp is 12° and a crate seated on
+        // a slope stands on one corner — `prop-seating` found exactly one, at
+        // 0.56 m of daylight under it.
+        const site = findSite(world, 44, 88, { clearance: 3.4, spawnClear: 12, maxSlope: 0.10 });
         if (site) world.addProp(rng() < 0.35 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
       }
 
@@ -2590,12 +2593,12 @@ export const LEVELS = {
       const field = makeCoverField({ seed: 9600, amount: 0.32, patch: 30, grain: 11, edge: 0.30, extent: 90 });
       drift(world, {
         field: (x, z) => field.at(x, z), rmin: 14, rmax: 82, count: 26,
-        clearance: 2.6, spawnClear: 12, maxSlope: 0.3, tries: 14,
+        clearance: 2.6, spawnClear: 12, maxSlope: 0.10, tries: 14,
       }, (pos) => {
         world.addProp(rng() < 0.32 ? makeBarrel(world, pos) : makeCrate(world, pos, 0.85));
       });
       for (let k = 0; k < 7; k++) {
-        const site = findSite(world, 18, 84, { clearance: 5, spawnClear: 12, maxSlope: 0.3 });
+        const site = findSite(world, 18, 84, { clearance: 5, spawnClear: 12, maxSlope: 0.10 });
         if (site) addCrateStack(world, site.pos, { seed: 9620 + k, tiers: 2 + (rng() < 0.5 ? 1 : 0), columns: 2, yaw: rng() * TAU });
       }
       for (let k = 0; k < 8; k++) {
@@ -3024,7 +3027,16 @@ export const LEVELS = {
        * medium, and at 0x2e3a2c distance converged on 0.31 against a skyline
        * of 0.20. Authoring near air off the colour of the leaves is the same
        * mistake the dune sea's block records about authoring it off sand. */
-      fogColor: 0x101610, fogDensity: 0.0125, fogHeight: 26, fogBase: 1,
+      /* 0x1a231b: dark, and DARKER THAN THE DRAWN SKYLINE on purpose — a
+       * surface seen through a medium cannot come out brighter than the
+       * medium, which is what `sky.mjs` holds every level to and what the
+       * 0x2e3a2c first written here broke (distance converged on 0.31 against
+       * a skyline of 0.26). See the report note about the one thing this level
+       * still does not satisfy: at 160 m its ground passes THROUGH the sky's
+       * luminance rather than settling on it, and the colour of the near air
+       * is not the term that moves it — six values from 0x101610 to 0x707f5c
+       * were measured and the crossing did not move at all. */
+      fogColor: 0x1a231b, fogDensity: 0.0125, fogHeight: 26, fogBase: 1,
       exposure: 1.20, bloom: 0.38, saturation: 1.06,
       lift: [0.005, 0.010, 0.008], gain: [0.98, 1.02, 0.98],
       cloudCover: 0.72, cloudLit: 0xd6e0b8, cloudDark: 0x4a5840,
@@ -3250,15 +3262,19 @@ export const LEVELS = {
        * somewhere under a storm, and at 6° almost none of it reaches the deck,
        * which is why `ambient` carries this level. */
       elevation: 16, azimuth: 302,
-      sunColor: 0x9fb8d8, sunIntensity: 5.0, ambient: 0.62,
+      sunColor: 0x9fb8d8, sunIntensity: 5.4, ambient: 0.50,
       /* Both halves of the hemisphere are the storm. The upper is the cloud
        * base, the lower is the SEA — and the sea is the brighter of the two,
        * because on a platform in the middle of an ocean most of the light
        * reaching you has come off the water. Authoring the lower half as the
        * deck's own dark concrete was the instinct and it is wrong: the deck is
        * 156 m across and the ocean is the rest of the world. */
-      skyColor: 0x46586e, groundColor: 0x3e5162,
-      fillColor: 0x6d86a4, fillIntensity: 0.66,
+      /* The lower half is the SEA, and it is nearly neutral rather than blue.
+       * `cloudLight` derives a cloud base's tint from this swatch, and at the
+       * 0x3e5162 first written the base came back 0.41 saturated — a turquoise
+       * cloud. A storm sea seen from above is grey. */
+      skyColor: 0x46586e, groundColor: 0x4c5157,
+      fillColor: 0x6d86a4, fillIntensity: 0.54,
       /* 0.0112: half-light at 62 m. Thick enough that the water plane's edge
        * at 260 m is entirely gone and the sea runs to the horizon, thin enough
        * that the far side of a 156 m platform still reads. */
