@@ -1411,6 +1411,102 @@ export const TERRAIN_PRESETS = {
     rockAt(x, z, slope) { return clamp(slope * 3.85 - 0.62, 0, 1); },
   },
 
+  /**
+   * KAMINO. A landing platform standing out of an ocean, at night, in a storm.
+   *
+   * ── THE WET FLOOR, AND HOW IT IS DRAWN RATHER THAN SHADED ────────────────
+   *
+   * The brief asks for reflective wet surfaces "within the cel-shaded art
+   * direction", and rule 8 of that direction is NOTHING IS SHINY: there is no
+   * specular highlight anywhere in the four reference frames, and a screen-
+   * space reflection or a mirrored render is exactly the PBR leftover the whole
+   * look exists to avoid. So the reflection here is not a reflection. It is a
+   * SHAPE.
+   *
+   * The deck is laid so that its drainage pans sit four centimetres BELOW the
+   * sea, which is the level surface `Water` already draws. What that produces
+   * is standing water lying on the deck as flat pools with a hard edge, holding
+   * `uSky` — the level's own flat sky colour — exactly as rule 7 asks a sky to
+   * be drawn and rule 1 asks a boundary to be. The machinery is the game's own
+   * water shader, which is analytic and knows where the shoreline is, so the
+   * pools have a rim band and a depth ramp for nothing.
+   *
+   * That is the difference between a wet floor you can afford and one you
+   * cannot: the puddles are geometry the level already had, and what makes them
+   * puddles is that the DECK is 4 cm lower there.
+   *
+   * ── THE PLATFORM ─────────────────────────────────────────────────────────
+   *
+   * A rounded-rectangular deck 156 × 128 m standing 5.6 m out of the sea, with
+   * a raised outer kerb so you can be driven to an edge you can see, and a
+   * chamfer past it so the drop reads as a drop rather than as a hole. Outside
+   * that there is nothing at all for 240 m, which is the point: `waterLevel` is
+   * 0 and the heightfield falls to −9, so the sea runs to the edge of the world
+   * and the level's own `Water` mesh runs a long way past it.
+   */
+  kamino: {
+    scale: 460, res: 280, waterLevel: 0.0,
+    /* Wet duracrete under a storm: a cold, very dark neutral, because every
+     * bright pixel on this level is either the sea, a lamp or lightning. The
+     * one hue family is blue-grey and the accents are the platform's own
+     * approach lights, which are the only warm thing for a hundred metres. */
+    sandColor: 0x4c545c, rockColor: 0x3a4048,
+    maps: 'deck',
+    gritColor: 0x424a54, rockColor2: 0x282e36,
+    // swept deck against the streaks of salt the spray leaves on it
+    dustColor: 0x5e6771, crustColor: 0x353c44,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    /* `damp` 0.85 is the second highest in the file after the bog's 0.9, and
+     * on THIS preset it is the whole material: the shader darkens and
+     * saturates toward the water table, so the deck gets visibly wetter as it
+     * falls toward a pan and the pools have a soaked margin round them rather
+     * than a line. That margin is what stops a puddle reading as a decal. */
+    crust: 0.0, damp: 0.85, strataH: 2.0,
+    wind: [0.42, 0.91],
+    macro: [70, 0.30, 0.26, 0.90],
+    lagColor: 0x2c333c, sheetColor: 0x6b747f,
+    // A poured deck in a permanent storm takes no print at all; what it takes
+    // is water, and the water is a surface rather than a memory.
+    loose: { depth: 0.02, refill: 30, tilt: 0.5, tint: 0.30, soot: 1.0 },
+    packedColor: 0x1e242b,
+    ripple: 0.4, ripAspect: 1.0,
+    texScale: [0.42, 0.26, 0.34],
+    detail: [1.5, 26],
+    height(x, z) {
+      /* The deck, as a rounded rectangle: a superellipse of order 6, which is
+       * square enough to read as built and round enough that the kerb does not
+       * have four corners you can be trapped in. */
+      const e = Math.pow(Math.pow(Math.abs(x) / 78, 6) + Math.pow(Math.abs(z) / 64, 6), 1 / 6);
+      const deck = smoothstep(1.02, 0.98, e) * 5.6;
+      // the kerb: a 0.9 m lip round the rim, so an edge you can be driven to
+      // is an edge you can see coming
+      const kerb = smoothstep(0.90, 0.965, e) * smoothstep(1.01, 0.98, e) * 0.9;
+      // and the chamfer below it, 5.6 m over 6 m of run — 43°, which is a face
+      // you slide off rather than a wall you stand against
+      const skirt = -smoothstep(1.02, 1.10, e) * 3.4;
+
+      /* THE PANS. Drainage falls on a 13 m module, cut 0.14 m deep — which is
+       * 4 cm BELOW the sea, so `Water` lies in them. The falls are diagonal
+       * rather than square to the deck because a deck is laid to drain toward
+       * its edge, and because a diagonal pool has a silhouette. */
+      const u = (x + z) / 13, v = (x - z) / 13;
+      const gu = Math.abs(u - Math.round(u)), gv = Math.abs(v - Math.round(v));
+      const pan = -smoothstep(0.16, 0.44, Math.min(gu, gv)) * 0.14;
+
+      /* …and the plates between them, half a centimetre proud, so the ink
+       * pass has a seam to draw on a floor that is otherwise featureless. */
+      const px = Math.abs(fract(x / 6.5) - 0.5), pz = Math.abs(fract(z / 6.5) - 0.5);
+      const seam = -smoothstep(0.40, 0.5, Math.max(px, pz)) * 0.05;
+
+      // and the sea. −9 m, so nothing standing on it is ever half submerged.
+      const sea = -9;
+      const onDeck = smoothstep(1.10, 1.0, e);
+      return lerp(sea, deck + kerb + skirt + pan * onDeck + seam * onDeck, onDeck)
+        + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
+    },
+    rockAt() { return 1; },
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -40,6 +40,10 @@ import { plateGeo, limbGeo } from '../game/Bodies.js';
 import { makeCapMaterial } from '../game/Ragdoll.js';
 import { TOUGHNESS } from '../game/Combat.js';
 import { clamp, lerp, smoothstep, makeRng, fbm2, noise2, TAU } from '../engine/MathUtil.js';
+/* Thunder. Audio is a module singleton with a no-op path when there is no
+ * context, so this is safe headless and costs nothing on a level with no
+ * storm over it. */
+import { audio } from '../engine/Audio.js';
 
 const rng = makeRng(9091);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -5798,4 +5802,138 @@ export function addCrowd(world, centre, opts = {}) {
   if (world.addProp) world.addProp(crowd);
   else if (world.props) world.props.push(crowd);
   return crowd;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Storm                                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * LIGHTNING, and the two things that make it read as lightning rather than as
+ * a screen flash.
+ *
+ * IT COMES FROM SOMEWHERE. A full-screen white frame is a camera artefact; a
+ * strike is a light with a POSITION, and everything standing between the
+ * player and it goes to a hard-edged silhouette for two frames. So a strike is
+ * a directional light placed on a bearing, at an elevation, with the level's
+ * own key briefly replaced — which is what puts the cast shadow of a railing
+ * across a wet deck in a direction it has never been in before.
+ *
+ * AND THE THUNDER IS LATE. Sound travels 343 m/s, so a strike two kilometres
+ * out is heard six seconds after it is seen, and that delay is most of what
+ * makes a storm feel like it is happening to a landscape rather than to a
+ * camera. The distance is drawn per strike and the delay derived from it.
+ *
+ * It rides in `world.props` for a per-frame tick, exactly as `Crowd` and the
+ * destruction proxy do, and it publishes nothing the blade can touch.
+ */
+class Storm {
+  constructor(world, opts = {}) {
+    this.id = 'storm' + (_propId++);
+    this.world = world;
+    this.dead = false;
+    this.kind = 'storm';
+    this.grippable = false;
+    this.generation = 0;
+    this.toughness = Infinity;
+    this.hp = Infinity;
+    this.rng = makeRng(opts.seed ?? 8801);
+    /** Mean seconds between strikes, and how much that varies. */
+    this.period = opts.period ?? 9;
+    this.jitter = opts.jitter ?? 0.7;
+    this.color = new THREE.Color(opts.color ?? 0xdfe8ff);
+    this.intensity = opts.intensity ?? 26;
+    /** How far out the storm is, in metres — thunder is derived from it. */
+    this.range = opts.range ?? [700, 3400];
+    this.next = 1.5 + this.rng() * this.period;
+    this.time = 0;
+    /** Strikes in flight: [t, dur] pairs on the one light. */
+    this.flash = 0;
+    this.flashFor = 0;
+    this.pending = [];
+    this.body = {
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
+      boundingRadius: 0, mass: 0, invMass: 0, static: true,
+      applyImpulse() {}, wake() {},
+    };
+    this.mesh = null;
+
+    /* ONE light, reused. It is a DirectionalLight rather than a point light
+     * because a strike two kilometres away is a parallel source, and because a
+     * point light at that distance needs an intensity that overflows the
+     * tone curve before it reaches the deck. It casts nothing: the level's own
+     * key owns the shadow map, and a second caster would cost a whole extra
+     * pass for two frames of use. */
+    this.light = new THREE.DirectionalLight(this.color, 0);
+    this.light.castShadow = false;
+    world.scene.add(this.light);
+    world.levelLights?.push(this.light);
+  }
+
+  capsules(out = []) { out.length = 0; return out; }
+  cut() { return []; }
+  shatter() {}
+  damage() { return false; }
+
+  strike() {
+    const r = this.rng;
+    const a = r() * TAU;
+    const el = 0.35 + r() * 0.5;                 // 20-49° above the horizon
+    const d = lerp(this.range[0], this.range[1], r() * r());
+    this.light.position.set(Math.cos(a) * Math.cos(el), Math.sin(el), Math.sin(a) * Math.cos(el))
+      .multiplyScalar(400);
+    /* A near strike is brighter, and it is brighter by the inverse square of
+     * how far out it is rather than by a random draw: the reason a storm reads
+     * as having WEATHER in it is that the strikes are at different distances,
+     * and every other cue for that follows from this one number. */
+    const k = clamp(Math.pow(this.range[0] / d, 1.4), 0.18, 1);
+    this.flash = this.intensity * k;
+    /* Two frames of full brightness and then a fast decay — 0.16 s, which is
+     * about the persistence of a real return stroke and is long enough for the
+     * eye to catch the silhouette it drew. */
+    this.flashFor = 0.16 + r() * 0.10;
+    this.world.engine?.flash?.(0.25 * k);
+    // and the thunder, at 343 m/s
+    this.pending.push({ t: d / 343, k });
+  }
+
+  update(dt) {
+    if (!(dt > 0)) return;
+    this.time += dt;
+    this.next -= dt;
+    if (this.next <= 0) {
+      this.next = this.period * (1 - this.jitter + this.rng() * this.jitter * 2);
+      this.strike();
+    }
+    if (this.flash > 0) {
+      this.flash = Math.max(0, this.flash - (this.intensity / this.flashFor) * dt);
+      this.light.intensity = this.flash;
+    } else if (this.light.intensity !== 0) this.light.intensity = 0;
+
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i];
+      p.t -= dt;
+      if (p.t > 0) continue;
+      this.pending.splice(i, 1);
+      const at = this.world.player?.position;
+      if (at) audio.explosion(at, 0.7 + p.k * 1.6);
+    }
+  }
+
+  destroy() {
+    if (this.dead) return;
+    this.dead = true;
+    this.world.scene.remove(this.light);
+    const i = this.world.props.indexOf(this);
+    if (i >= 0) this.world.props.splice(i, 1);
+  }
+}
+
+/** Put a storm over the level. */
+export function addStorm(world, opts = {}) {
+  const s = new Storm(world, opts);
+  if (world.addProp) world.addProp(s);
+  else if (world.props) world.props.push(s);
+  return s;
 }

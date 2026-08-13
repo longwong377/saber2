@@ -14,7 +14,7 @@ import {
   addDebrisField, addCrateStack, addRuin, addOutpost, addGantry, addPipeRun,
   addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
   addAntenna, addPlinth, addStair, addRailing, addFloorSlab, addSign, addRuinedGate,
-  addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd,
+  addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd, addStorm,
 } from '../world/Props.js';
 import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
@@ -3089,6 +3089,260 @@ export const LEVELS = {
     },
   },
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  KAMINO
+   *
+   *  "Night, storm, endless ocean, rain-soaked floors. Reflective wet surfaces
+   *   (within the cel-shaded art direction), lightning, and the sea to the
+   *   horizon."
+   *
+   *  THE REFLECTION IS A SHAPE, NOT A MIRROR, and it is the one thing on this
+   *  level worth reading the code for. Rule 8 of the art direction is that
+   *  nothing is shiny — there is no specular highlight anywhere in the four
+   *  reference frames — so a screen-space reflection or a mirrored render is
+   *  precisely the PBR leftover the whole look exists to remove.
+   *
+   *  What a wet floor actually is, drawn: flat pools of standing water with a
+   *  crisp edge, holding the sky's own flat colour. Rule 1 (two tones, hard
+   *  boundary) and rule 7 (the sky is flat, and its shapes are outlined) are
+   *  the same statement about a puddle. So the deck is LAID four centimetres
+   *  below the sea in its drainage pans, and the level surface the game
+   *  already draws — `Water`, analytic, with a shoreline band and a depth ramp
+   *  — lies in them. The puddles are not a material and not a post effect;
+   *  they are the sea, on the floor, because the floor is lower there.
+   *
+   *  THE SEA TO THE HORIZON is the same surface at the other end of its
+   *  extent, and the honest note is that it is 520 m across rather than
+   *  infinite — `World.loadLevel` sizes it from the heightfield. At this
+   *  level's air (half-light 62 m) the water plane is 99.7% fogged by 260 m,
+   *  so its edge is dissolved a hundred and fifty metres before it arrives,
+   *  which is exactly how the meadow hides the end of its own world.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  kamino: {
+    name: 'Kamino',
+    blurb: 'A landing platform in the middle of an ocean, at night, in the rain. There is nowhere else to go.',
+    terrain: 'kamino',
+    // A platform in the open sea is reached by ship, and what comes out of a
+    // ship is a boarding party: shooters, with blades behind them.
+    pool: ['trooper', 'b1', 'trooper', 'b2', 'sniper', 'acolyte', 'droideka', 'b1'],
+    groundColor: 0x39414a,
+    spawnRadius: [26, 44],
+    /**
+     * THE SEA, AT THE DATUM, and the four colours are the whole trick.
+     *
+     * `sky` is what the surface hands back where it is thin, and on a level
+     * with no other light it is the brightest thing in the frame — so the
+     * puddles on the deck come out as pale flat shapes and the deep water
+     * comes out as almost nothing. That contrast IS the wet floor: a sheet of
+     * water four centimetres deep reads as sky, and the ocean nine metres
+     * deep reads as a hole.
+     */
+    water: { level: 0.0, shallow: 0x4a6a78, deep: 0x060d14, sky: 0x8fa8c4, bed: 0x1a2028 },
+    atmosphere: {
+      /* A storm sky, which the model can nearly do: turbidity and mie up,
+       * rayleigh down — mie is forward scatter off big particles, and rain is
+       * nothing but big particles. Same shape as Mustafar's ash sky and for
+       * the same reason, and `rayleigh` is held at 1.9 rather than dropped
+       * because below about 1.6 `atmosphereMeter` hits its exposure clamp and
+       * the frame stops being exposed by its own light. */
+      turbidity: 10, rayleigh: 1.9, mie: 0.016, mieG: 0.87,
+      /* 6°, which is the lowest sun in the game — the wood's 9° was the
+       * previous floor. It is not a sun: it is the last of the daylight
+       * somewhere under a storm, and at 6° almost none of it reaches the deck,
+       * which is why `ambient` carries this level. */
+      elevation: 6, azimuth: 302,
+      sunColor: 0x9fb8d8, sunIntensity: 2.2, ambient: 0.86,
+      /* Both halves of the hemisphere are the storm. The upper is the cloud
+       * base, the lower is the SEA — and the sea is the brighter of the two,
+       * because on a platform in the middle of an ocean most of the light
+       * reaching you has come off the water. Authoring the lower half as the
+       * deck's own dark concrete was the instinct and it is wrong: the deck is
+       * 156 m across and the ocean is the rest of the world. */
+      skyColor: 0x46586e, groundColor: 0x3e5162,
+      fillColor: 0x6d86a4, fillIntensity: 0.66,
+      /* 0.0112: half-light at 62 m. Thick enough that the water plane's edge
+       * at 260 m is entirely gone and the sea runs to the horizon, thin enough
+       * that the far side of a 156 m platform still reads. */
+      fogColor: 0x27313e, fogDensity: 0.0112, fogHeight: 42, fogBase: 1,
+      /* Opened up rather than the key raised: this is a night level and what
+       * makes it readable is the curve, not more light. Everything the light
+       * does not reach stays genuinely black, which is what leaves the
+       * lightning somewhere to be. */
+      exposure: 1.34, bloom: 0.46, saturation: 0.98,
+      lift: [0.004, 0.008, 0.014], gain: [0.97, 1.0, 1.05],
+      /* A CEILING, not a deck. 0.94 is the second highest in the game after
+       * Mustafar's ash: what is over Kamino is not weather passing through,
+       * it is the permanent condition of the planet. */
+      cloudCover: 0.94, cloudLit: 0xa8bed8, cloudDark: 0x1e2836,
+      cloudWindDir: 4.9, cloudWindSpeed: 3.4,
+      /* NO PAINTED RANGES, and for once the reason is literal rather than
+       * atmospheric: there is nothing out there. The sea is the horizon, and
+       * `horizonColor` is the sea seen edge-on through 260 m of rain. */
+      horizon: false, horizonColor: 0x2c3a48,
+    },
+    ambience: { wind: 0.42, windFreq: 520, drone: 0.18 },
+    dust: {
+      // Spray off the deck, not dust. Almost colourless, and there is a lot of
+      // it: the air over an ocean platform in a storm is half water.
+      count: 1400, color: 0xa8bccc, opacity: 0.20, size: 16, shimmer: false,
+      fleckColor: 0xcfe0ee,
+      wind: { from: 302, strength: 8.5, gustiness: 0.5, wander: 0.18 },
+      /**
+       * RAIN, as the snowfall system with different water in it.
+       *
+       * Mechanically a fall is a fall: a column of instances descending at
+       * their own terminal speed with the wind raking them across. What makes
+       * this rain and not snow is three numbers — `fall` 2.6 against snow's
+       * 1.0, so it comes down nearly three times as fast and the instances
+       * stretch into streaks; `size` 0.09, a quarter of a snowflake, because a
+       * raindrop is a line and not a flake; and `calm` 0.92, which is what
+       * says this planet is not having weather, it IS weather.
+       */
+      snow: { count: 11000, calm: 0.92, color: 0xbfd4e4, fall: 2.6, size: 0.09 },
+      // and the squalls that cross it on top of that
+      weather: { peak: 1.0, period: 88, duration: 44, unrest: 0.20, span: 170,
+                 fogGain: 1.5, windGain: 2.2, sunLoss: 0.66, fillGain: 1.4, tint: 0.90 },
+    },
+    // Nothing grows on a poured deck in the middle of an ocean.
+    grass: 0,
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 103);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      /* ── THE STORM. See `addStorm`: a strike is a directional light on a
+       * bearing with the thunder derived from how far out it was, which is
+       * what makes a flash read as something happening to a landscape rather
+       * than to a camera. Every seven seconds on average — often enough that
+       * you are never long without one, rare enough that each is an event. */
+      addStorm(world, { seed: 8801, period: 7, jitter: 0.75, intensity: 30,
+        color: 0xd6e4ff, range: [600, 3200] });
+
+      /* ── THE RAIL round the deck, and it is the level's most important prop
+       * because it is the only thing between the fight and a nine-metre drop
+       * into the sea. Broken in four places, because a rail that is intact all
+       * the way round is a fence and the point of this floor is that you can
+       * be pushed off it. */
+      const RA = 78, RB = 64;
+      for (let i = 0; i < 28; i++) {
+        const a = (i / 28) * TAU;
+        // the deck is a superellipse; walk its rim rather than a circle
+        const c = Math.cos(a), s = Math.sin(a);
+        const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
+        const x = c * k * RA * 0.955, z = s * k * RB * 0.955;
+        if ((i + 2) % 7 < 2) continue;                 // where it has gone
+        addRailing(world, at(x, z), {
+          length: 15, height: 1.15, yaw: -Math.atan2(z * RA / RB, x) + Math.PI / 2,
+          seed: 8900 + i, mat: M.darkSteel,
+        });
+      }
+
+      /* ── THE APPROACH LIGHTS. The one warm colour on the level, and the only
+       * saturated thing in the frame that is not lightning — rule 5's accent,
+       * on a level whose hue family is one blue-grey from the sea to the
+       * cloud base. Set into the deck at the rim so they light the rail and
+       * the standing water rather than the air. */
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * TAU + 0.11;
+        const c = Math.cos(a), s = Math.sin(a);
+        const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
+        addLamp(world, at(c * k * RA * 0.90, s * k * RB * 0.90), {
+          height: 1.5, seed: 8940 + i, light: i % 2 === 0,
+          color: 0xffa838, intensity: 16, distance: 26,
+        });
+      }
+
+      /* ── THE CITY, beyond the rail. Kamino's buildings stand on legs out of
+       * the sea, and the silhouette is the whole of it: a dome on a stalk.
+       * They are outside the playable deck entirely — the heightfield is at
+       * −9 out there — so they are pure skyline, and at this level's air they
+       * are 60-90% dissolved, which is what a city in a storm looks like. */
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * TAU + 0.4;
+        const d = 118 + (i % 3) * 46;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d * 0.84;
+        const h = 26 + (i % 4) * 11;
+        island(world, V(x, -9, z), { seed: 9000 + i, yaw: rng() * TAU, span: 30, maker: 'citydome' },
+          (kit) => {
+            // the legs
+            for (let g = 0; g < 4; g++) {
+              const ga = g * Math.PI / 2 + 0.4;
+              kit.slab(M.darkSteel, 1.8, h, 1.8, Math.cos(ga) * 7.5, h / 2, Math.sin(ga) * 7.5,
+                { tile: 2.4, seg: 3, collide: false });
+            }
+            // the drum they carry, and the dome over it
+            kit.slab(M.duracrete, 24, 7.0, 24, 0, h + 3.5, 0, { tile: 2.4, seg: 4, collide: false });
+            const dome = new THREE.SphereGeometry(13.5, 12, 7, 0, TAU, 0, Math.PI * 0.52);
+            kit.put(dome, M.duracreteWarm, 0, h + 6.5, 0);
+            // the ring of lit ports round it, which is what you actually see
+            kit.slab(M.glowAmber, 25, 0.7, 25, 0, h + 1.6, 0, { tile: 2.0, seg: 4, collide: false });
+          });
+      }
+
+      /* ── THE PLATFORM'S OWN PLANT, on the deck: the machinery a landing
+       * platform has, kept to the rim so the middle stays clear to fight in.
+       * Everything here is one island so a bank of gear is one object. */
+      for (let k = 0; k < 6; k++) {
+        const a = 0.62 + k * 1.05;
+        const c = Math.cos(a), s = Math.sin(a);
+        const kk = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
+        const x = c * kk * RA * 0.72, z = s * kk * RB * 0.72;
+        if (!siteOk(world, x, z, { clearance: 12, spawnClear: 14 })) continue;
+        island(world, at(x, z), { seed: 9100 + k, yaw: -Math.atan2(z, x), span: 15, maker: 'plant' },
+          (kit, local) => {
+            addMachine(world, local(-3.2, 0), { kit, width: 4.2, height: 2.8, depth: 2.4,
+              seed: 9110 + k, glowMat: M.glowCold });
+            addTank(world, local(3.4, -2.6), { kit, radius: 1.7, height: 4.6, seed: 9120 + k });
+            addStanchion(world, local(0.4, 3.2), { kit, height: 7.0, lamp: true, light: k % 2 === 0,
+              color: 0xbcd8ff, intensity: 13, distance: 22, seed: 9130 + k });
+            addPipeRun(world, [
+              new THREE.Vector3(-3.2, 3.2, 1.2), new THREE.Vector3(0.4, 3.6, 1.8),
+              new THREE.Vector3(3.4, 4.8, -0.8),
+            ], { kit, count: 2, radius: 0.12, seed: 9140 + k });
+          });
+      }
+
+      /* ── THE MAST at the centre of the pad, off-axis so the middle stays
+       * clear: a platform needs a thing you can see it from, and this is the
+       * only vertical inside the rail. */
+      addAntenna(world, at(-16, 19), { height: 26, seed: 9200 });
+      addPlinth(world, at(-16, 19), { width: 5.0, height: 0.7, seed: 9201, mat: M.darkSteel });
+
+      /* ── The loose stuff a working pad has. Sparse and near the rim: a
+       * landing deck is kept clear, which is what makes it a landing deck. */
+      for (let k = 0; k < 5; k++) {
+        const site = findSite(world, 26, 66, { clearance: 5, spawnClear: 12, maxSlope: 0.3 });
+        if (site) addCrateStack(world, site.pos, { seed: 9220 + k, tiers: 2, columns: 2, yaw: rng() * TAU });
+      }
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 20, 70, { clearance: 3, spawnClear: 12, maxSlope: 0.3 });
+        if (site) world.addProp(rng() < 0.4 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
+      }
+      for (let k = 0; k < 5; k++) {
+        const site = findSite(world, 22, 70, { clearance: 7, maxSlope: 0.3 });
+        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 9240 + k, count: 16 });
+      }
+      /* Salt, grit and shed plate over the deck: the grade a floor reads as
+       * ground while you are standing on it, and the only INSTANCED thing on
+       * the level — which is why it runs heavy rather than thin.
+       *
+       * `world-immersion` holds every outdoor level to five objects per draw
+       * call, and it is right to: the rail, the lamps and the city are 224
+       * hand-placed calls between them, so if the floor is not instanced this
+       * level packs 4.0 and the check catches it. At cobble 2.4 it is 7.6,
+       * and what that buys on the frame is a deck that reads as SALTED rather
+       * than as poured — which is also the correct drawing for a platform that
+       * has spent forty years in an ocean. */
+      strewGround(world, { seed: 9260, radius: 76, inner: 3, spread: 0.30, mat: M.stoneDark,
+        landmarks: 0.2, boulders: 1.0, cobble: 2.4 });
+
+      world.notify('KAMINO', 'the rail is not everywhere');
+    },
+  },
+
   deeps: {
     name: 'The Cut',
     blurb: 'The excavation the works was taken out of. Whatever is still lit down here was not left on for you.',
@@ -3168,8 +3422,8 @@ export const LEVELS = {
  * The order the menu lists them in: the places you choose first, then the four
  * rooms of the descent in the order you meet them.
  */
-export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood', 'meadow',
-  'drifts', 'alpine', 'arena', 'intake', 'foundry', 'deeps'];
+export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood', 'kamino',
+  'meadow', 'drifts', 'alpine', 'arena', 'intake', 'foundry', 'deeps'];
 
 /**
  * DELETED LEVELS.
@@ -3232,6 +3486,9 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   // Open sky over a bog — but a canopy no gunship can come through, and no
   // gate either. Whatever is in this wood walks out of it.
   bog: ['march', 'march', 'dropship'],
+  // A platform in the middle of an ocean. There is no edge to march in from
+  // and nothing to walk out of: everything that arrives here flies.
+  kamino: ['dropship'],
 });
 
 /**
