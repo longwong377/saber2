@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
+import { ground } from '../world/Scenery.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
@@ -1274,6 +1275,23 @@ export class Saber {
     this.axis.subVectors(this.tip, this.base);
     const alen = this.axis.length();
     if (alen > 1e-5) this.axis.multiplyScalar(1 / alen); else this.axis.set(0, 1, 0);
+
+    /**
+     * THE BLADE ON THE GROUND.
+     *
+     * Reported as "saber contact with the ground must do something with a real
+     * effect", and it did nothing at all: `Particles.bladeScar` — molten line,
+     * spatter, smoke, cooling scorch — existed with ZERO callers anywhere in
+     * src/, because the blade solver only ever tests enemies, props and doors,
+     * and the ground is none of those.
+     *
+     * This is the whole call. `ground.scar` owns the ground-proximity gate, the
+     * minimum stroke, the 15 Hz throttle against the decal ring, the trench it
+     * presses into the loose layer, the glow, the char it cools to and the
+     * spatter — see Scenery.js — so the blade does not have to know what it is
+     * dragging through.
+     */
+    if (this.lit && this.valid) ground.scar(this.prevTip, this.tip);
 
     if (this.valid && dt > 0) {
       this.tipVelocity.subVectors(this.tip, this.prevTip).multiplyScalar(1 / dt);

@@ -93,17 +93,22 @@ function build() {
   _built = true;
 
   // ── dropship
-  G.hull = new THREE.BoxGeometry(2.0, 1.15, 5.6);
-  G.nose = new THREE.ConeGeometry(1.05, 2.2, 4);
+  // Sized for the range it is actually seen at. A ship delivers at roughly
+  // 0.82 of the level's outer spawn ring — 44 to 57 m on the dune sea — and the
+  // first pass at 5.6 m long subtended about 7° there, which reads as a bird.
+  // 8 m long with a 10 m span is a gunship: big enough to be a machine at
+  // fifty metres, small enough that four of them are not the skyline.
+  G.hull = new THREE.BoxGeometry(2.7, 1.55, 7.6);
+  G.nose = new THREE.ConeGeometry(1.45, 3.0, 4);
   G.nose.rotateX(-Math.PI / 2);
-  G.wing = new THREE.BoxGeometry(3.4, 0.22, 1.7);
-  G.nacelle = new THREE.CylinderGeometry(0.42, 0.5, 1.9, 8);
+  G.wing = new THREE.BoxGeometry(4.6, 0.3, 2.3);
+  G.nacelle = new THREE.CylinderGeometry(0.57, 0.68, 2.6, 8);
   G.nacelle.rotateX(Math.PI / 2);
-  G.strut = new THREE.BoxGeometry(0.18, 0.9, 0.18);
-  G.glow = new THREE.SphereGeometry(0.34, 8, 6);
+  G.strut = new THREE.BoxGeometry(0.24, 1.2, 0.24);
+  G.glow = new THREE.SphereGeometry(0.46, 8, 6);
   // the light a ship throws down at a landing zone: a wide, soft cone
-  G.wash = new THREE.ConeGeometry(3.6, 7.0, 16, 1, true);
-  G.wash.translate(0, -3.5, 0);
+  G.wash = new THREE.ConeGeometry(4.6, 8.0, 16, 1, true);
+  G.wash.translate(0, -4.0, 0);
 
   // ── gate
   G.pillar = new THREE.BoxGeometry(0.9, 5.0, 1.3);
@@ -212,7 +217,9 @@ class Arrival {
     parent.add(this.group);
 
     this.yaw = Math.atan2(toward.x - at.x, toward.z - at.z);
-    this[`_make${kind[0].toUpperCase()}${kind.slice(1)}`]?.();
+    if (kind === 'dropship') this._makeDropship();
+    else if (kind === 'gate') this._makeGate();
+    else this._makeMarch();
   }
 
   get capacity() { return capacityOf(this.kind); }
@@ -229,22 +236,22 @@ class Arrival {
     const g = this.group;
     const hull = mesh(G.hull, M.hull, g);
     hull.castShadow = true;
-    const nose = mesh(G.nose, M.hull, g); nose.position.z = -3.6;
+    const nose = mesh(G.nose, M.hull, g); nose.position.z = -4.9;
     for (const s of [-1, 1]) {
       const w = mesh(G.wing, M.trim, g);
-      w.position.set(s * 2.4, -0.1, 0.7);
+      w.position.set(s * 3.2, -0.14, 0.95);
       w.rotation.z = s * 0.16;
       const n = mesh(G.nacelle, M.trim, g);
-      n.position.set(s * 3.3, -0.16, 0.9);
+      n.position.set(s * 4.5, -0.22, 1.2);
       const fire = mesh(G.glow, M.engine, g);
-      fire.position.set(s * 3.3, -0.16, 1.9);
+      fire.position.set(s * 4.5, -0.22, 2.6);
       fire.scale.set(0.8, 0.8, 1.5);
       this[`_fire${s > 0 ? 'R' : 'L'}`] = fire;
       const strut = mesh(G.strut, M.trim, g);
-      strut.position.set(s * 1.0, -0.95, 1.4);
+      strut.position.set(s * 1.35, -1.3, 1.9);
     }
     const lamp = mesh(G.glow, M.lamp, g);
-    lamp.position.set(0, -0.5, -2.8);
+    lamp.position.set(0, -0.7, -3.8);
     lamp.scale.setScalar(0.45);
     this._lamp = lamp;
 
@@ -290,12 +297,15 @@ class Arrival {
 
     const low = 1 - clamp((g.position.y - this.at.y) / 16, 0, 1);
     const w = this._wash;
-    w.position.set(0, -0.6, 0);
+    w.position.set(0, -0.8, 0);
     w.material.opacity = low * 0.16;
     w.scale.setScalar(lerp(0.55, 1, low));
     const flare = 0.8 + Math.sin(t * 31) * 0.12;
     if (this._fireL) this._fireL.scale.set(0.8 * flare, 0.8 * flare, 1.5 * flare);
     if (this._fireR) this._fireR.scale.set(0.8 * flare, 0.8 * flare, 1.5 * flare);
+    // A strobe under the nose, because at fifty metres against a bright sky the
+    // hull is a silhouette and a blinking light is the thing the eye catches.
+    if (this._lamp) this._lamp.scale.setScalar(0.45 * (Math.sin(t * 8) > 0 ? 1.35 : 0.5));
 
     // sand off the pad while it is down
     if (low > 0.5 && ctx.particles && rng() < 0.5) {
@@ -308,7 +318,7 @@ class Arrival {
 
   /** Where a dropship puts a body: under its belly, in the air. */
   _dropPoint(out) {
-    return out.copy(this.group.position).setY(this.group.position.y - 1.5);
+    return out.copy(this.group.position).setY(this.group.position.y - 1.9);
   }
 
   /* ── the gate ──────────────────────────────────────────────────────── */
@@ -337,9 +347,9 @@ class Arrival {
       l.castShadow = true;
       this._leaves.push(l);
     }
+    // the warning light over a door that is about to open
     const strip = mesh(G.strip, M.strip, g);
     strip.position.set(0, 4.55, 0.35);
-    this._strip = strip;
     audio.noise({ dur: 1.8, gain: 0.13, type: 'lowpass', freq: 180, q: 0.7, pos: this.at });
   }
 

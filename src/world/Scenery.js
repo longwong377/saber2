@@ -1760,11 +1760,20 @@ const GRASS_TIERS = [
    * closes ground at your feet is BROAD, LOW cover — matted sward, not more
    * tussocks — and what reads as a plant at eye level is the opposite shape.
    *
-   * It stops at 12 m because past that the clump rung's own grazing coverage
-   * takes over: from eye height a 0.5 m tuft at 12 m already hides three
-   * metres of the ground behind it. */
-  { name: 'sward', card: true, rIn: 0, rOut: 12, cell: 3.0, dens: 2.6, per: 2, spread: 0.66,
-    width: 2.00, tile: 9, bend: 0.30, wave: 0.55, sheen: 0.40, trans: 0.72,
+   * It stops at 15 m because past that the clump rung's own grazing coverage
+   * takes over: from eye height a 0.5 m tuft at 15 m already hides four metres
+   * of the ground behind it. 15 and not 12 because the handover was VISIBLE at
+   * 12 — the sward fades out over 9.4-11.9 m and the clump rung alone carries
+   * the ground beyond it, which rendered as a ring of thinner cover concentric
+   * on the player. Overlapping the two rungs by three metres buries it.
+   *
+   * FIVE SPRITE TILES ACROSS, not nine. The sprite holds four blades, so nine
+   * tiles over a 1 m card puts a blade at 2.8 cm — which is the right size for
+   * a blade and the wrong size for an ALPHA-TESTED one: at a metre from the
+   * eye each blade is a couple of pixels wide, the test either takes the pixel
+   * or does not, and the near cover rendered as a field of pale specks. */
+  { name: 'sward', card: true, rIn: 0, rOut: 15, cell: 3.0, dens: 2.6, per: 2, spread: 0.66,
+    width: 2.00, tile: 5, bend: 0.30, wave: 0.55, sheen: 0.40, trans: 0.72,
     base: 0.21, varies: 0.19, shade: true, cut: 0.42 },
   /* Cards: a billboard standing in for a bush, and 50× the silhouette per
    * instance that a blade is. Fades in at 3 m — UNDER the blades rather than
@@ -1777,7 +1786,7 @@ const GRASS_TIERS = [
    * ceiling on this is the character: 1.78 m tall, and cover that reaches the
    * chest stops reading as a meadow and starts reading as a crop. */
   { name: 'clump', card: true, rIn: 2.5, rOut: 46, cell: 6.0, dens: 0.70, per: 3, spread: 0.80,
-    width: 1.35, tile: 6, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
+    width: 1.35, tile: 4, bend: 0.34, wave: 0.62, sheen: 0.55, trans: 0.55,
     base: 0.36, varies: 0.30, shade: true, cut: 0.42 },
   /* Swathes: one card per patch of ground, wide enough to close the gaps that
    * would otherwise read as bald spots at a hundred metres. */

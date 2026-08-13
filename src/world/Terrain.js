@@ -1413,7 +1413,11 @@ const TERRAIN_FRAG_MAP = /* glsl */`
     if (win > 0.002) {
       vec4 S = texture2D(uSurfMap, wp * uSurf.z);
       float dep = S.r * win;
-      vec2 grd = (S.gb * 2.0 - 1.0) * uSurfSet.y * win;
+      /* DECODED, THEN GAINED. The byte holds the depth gradient over a full
+       * scale of SURFACE_GRAD_FS (2.0 m per m), so "S.gb·2−1" is the gradient
+       * DIVIDED BY TWO — reading it straight put a 30-degree print wall on
+       * screen at 14. The preset's tilt is a gain about 1, not the decode. */
+      vec2 grd = (S.gb * 2.0 - 1.0) * (2.0 * uSurfSet.y) * win;
       // The tilt goes in the ground's own tangent frame, alongside the ripple
       // relief, and it REPLACES that relief where it is deep: a boot print has
       // squashed the sastrugi it went through.
@@ -1425,10 +1429,17 @@ const TERRAIN_FRAG_MAP = /* glsl */`
       // compiles fine in your head and fails on the device with a message
       // pointing at the next line, taking the whole terrain shader — and with
       // it the ground — out of the frame. verify.mjs scans every glsl block.
-      float packing = dep * uSurfSet.z;
+      //
+      // A SMOOTHSTEP, not the depth itself: linear in depth spends most of its
+      // range on holes deeper than any boot makes. A footfall in half a metre
+      // of snow reaches 0.29 of the encoded scale, so linear gave it 29% of
+      // the tint and the print rendered as a faint smudge on white. What is
+      // wanted is that undisturbed snow is untouched and anything actually
+      // stepped in is most of the way to packed.
+      float packing = smoothstep(0.04, 0.52, dep) * uSurfSet.z;
       diffuseColor.rgb = mix(diffuseColor.rgb, uSurfCol, packing);
       // a hole sees less sky than the flat beside it
-      terAO = clamp(terAO * (1.0 - dep * 0.42), 0.20, 1.06);
+      terAO = clamp(terAO * (1.0 - smoothstep(0.03, 0.60, dep) * 0.42), 0.20, 1.06);
       terRough = mix(terRough, 0.70, dep * 0.55);
       /* SCORCH IS ONE SCALAR AND TWO THINGS. Above the half-way mark it is
        * still hot, and the glow is what the player sees for the first few

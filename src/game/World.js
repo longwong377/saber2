@@ -19,7 +19,7 @@ import { Enemy, ARCHETYPES } from './Enemy.js';
 import { WaveDirector, RankSet } from './Waves.js';
 import { applyOrder } from './Order.js';
 import { SPIRE } from './Run.js';
-import { LEVELS } from './Levels.js';
+import { LEVELS, groundMight } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
@@ -1258,6 +1258,10 @@ export class World {
     this.takenBoons.take(boon.id);
     this.run?.take(boon);
     for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
+    // How hard the ground is hit scales with how strong the player has become,
+    // and `might` is otherwise fixed at dressing time — so a boon taken mid-run
+    // would not have landed until the next level. See Levels.groundMight.
+    this.terrain?.setMight?.(groundMight(this));
     this.director.resumeAfterDraft();
     this.notify(boon.name.toUpperCase(), boon.tag);
   }

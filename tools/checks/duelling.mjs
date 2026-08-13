@@ -458,6 +458,34 @@ export async function run({ check, assert }) {
       .join(', ') + `; worst form's closest approach ${worst.toFixed(3)} m`;
   });
 
+  check('duel: a clash stops, sparks, sounds and shoves', async () => {
+    // The four things a player asked to see when steel meets steel. They were
+    // all already written — and unreachable, which is the same as absent. Now
+    // that the contact happens they are load-bearing, so they are pinned: this
+    // is the only place in the suite that reads World.js, because World owns
+    // the clash and this suite may not edit it.
+    const { readFile } = await import('node:fs/promises');
+    const src = (await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const i = src.indexOf('  _applyClash(');
+    assert(i > 0, 'World._applyClash is gone — nothing resolves blade on blade');
+    const body = src.slice(i, src.indexOf('\n  notifyFloating(', i));
+    const need = {
+      'a shower of sparks': /sparkBurst\(clash\.point/,
+      'a sound': /audio\.clash\(clash\.point/,
+      'strain on both blades': /player\.saber\.strain\([\s\S]*?enemy\.saber\.strain\(/,
+      'a stop': /addHitstop\(/,
+      'a push on the blade': /hitImpulse\(clash\.point/,
+      'a camera kick': /camera\.addShake\(/,
+    };
+    const missing = Object.entries(need).filter(([, re]) => !re.test(body)).map(([k]) => k);
+    assert(missing.length === 0, `a clash no longer produces: ${missing.join(', ')}`);
+    // and the contact throttle has to still be there, or a held blade fires a
+    // clash every frame — 60 spark bursts and 60 voices a second
+    assert(/_lastClash/.test(body), 'the per-enemy clash cooldown is gone');
+    return `${Object.keys(need).length} clash consequences present, behind a per-enemy cooldown`;
+  });
+
   check('duel: a blade lock can be entered from normal play, and it resolves', () => {
     // The lock was reachable only from a state nothing produced. Two halves:
     // ordinary duelling has to REACH the bind, and the bind has to finish.
@@ -552,8 +580,13 @@ export async function run({ check, assert }) {
     // being hit BOUGHT you half a second of quiet. Now a connected hit chains
     // exactly one attack, and the second one in a row does not.
     const { e, ctx } = posedDuellist('makashi', 2.0, 60);
-    const F = FORMS.makashi;
-    e.duel.phase = 'strike'; e.duel.timer = 0.01; e.duel.attack = { ...{ damage: 1 } };
+    // The sixty settle frames are a real duel at knife range, so the duellist
+    // may already have landed a cut and spent its one follow-up. Reset the
+    // counter rather than assume a clean brain — a fixture that only passes
+    // when the warm-up happened to miss is a coin toss, and under verify.mjs
+    // (where the shared rng starts somewhere else) it came up tails.
+    e.duel.followUps = 0;
+    e.duel.phase = 'strike'; e.duel.timer = 0.01; e.duel.attack = { damage: 1 };
     const chained = e.duel.followUp();
     assert(chained, 'a connected hit did not chain anything');
     assert(e.duel.chainLeft >= 1, 'the follow-up left no chained attack behind it');
@@ -581,8 +614,6 @@ export async function run({ check, assert }) {
     // they were. What changed is that they now apply. So the job here is to
     // state what that means in hp and check it stayed sane.
     const A = ARCHETYPES.acolyte;
-    const scales = Object.values(FORMS).flatMap(f => f.moves).map(k => k);
-    const worst = Math.max(...Object.values(FORMS).map(f => f.strength ?? 1));
     const perHit = A.damage * 1.6;                       // the heaviest arc in the table
     const taken = perHit * DIFFICULTY.grandmaster.damageTaken;
     assert(taken < 100,

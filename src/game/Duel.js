@@ -534,7 +534,8 @@ export class DuelBrain {
           this.phase = 'guard';
           this.attack = null;
           this.followUps = 0;
-          this.staggerDir = null;
+          // `staggerDir` is deliberately kept rather than nulled: the next
+          // parry writes into the same vector instead of allocating one.
           // A beaten duellist does not attack on the frame it recovers.
           this.timer = 0.18 + rng() * 0.26;
         }

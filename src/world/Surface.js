@@ -38,14 +38,18 @@
  * vertex shader), and it does not exist at all on a level with no grass, which
  * is every level this feature is for. The two windows are siblings, not one
  * thing, and they follow the same rules because the rules are right: toroidal
- * addressing so scrolling the window is clearing a column, a hold timer so a
- * still field costs no uploads, and a float mirror of the 8-bit buffer so a
- * decay slower than one part in 255 per tick is not entirely truncation.
+ * addressing so scrolling the window is clearing a column, a live-cell count
+ * so a still field costs no uploads at all, and a float mirror of the 8-bit
+ * buffer so a decay slower than one part in 255 per tick is not entirely
+ * truncation.
  *
- * THE COST, measured and stated. One RGBA8 texture, 192² by default — 147 kB,
- * uploaded at most ten times a second and only while something in it is still
- * changing, so a field nobody has walked on costs one texture and zero
- * bandwidth. In the fragment shader it is ONE texture2D tap on a branch the
+ * THE COST, measured and stated. One RGBA8 texture, 192² at the reference
+ * quality tier — 144 kB, uploaded at most ten times a second and only while
+ * something in it is still changing, so a field nobody has walked on costs one
+ * texture and zero bandwidth. The tier moves the WINDOW and not the cell: a
+ * cheaper machine remembers 29 m of ground instead of 60 at the same 25 cm,
+ * because a footprint has a real size and a settings menu does not get to make
+ * it bigger. In the fragment shader it is ONE texture2D tap on a branch the
  * whole ground takes together, and everything else is arithmetic on the four
  * bytes it returns; there is no second tap for the gradient because the
  * gradient is computed here, on the CPU, when the texel is written.
@@ -58,8 +62,6 @@ import { clamp } from '../engine/MathUtil.js';
 export const SURFACE_RES = 192;
 /** Metres across the window. Beyond it the ground forgets. */
 export const SURFACE_SIZE = 48;
-/** Seconds of ageing after the last mark before the field goes quiet. */
-const SURFACE_HOLD = 0.35;
 /** The ageing tick. Decay and upload happen at this rate, never per frame. */
 const SURFACE_TICK = 0.1;
 /**
@@ -117,7 +119,6 @@ export class SurfaceField {
 
     this.center = new THREE.Vector2(0, 0);
     this._ci = 0; this._cj = 0;
-    this._hot = 0;
     this._accum = 0;
     this._dirty = null;      // {i0,j0,i1,j1} in unwrapped cell coordinates
     this._live = 0;          // cells still holding anything
@@ -143,7 +144,6 @@ export class SurfaceField {
       if (i0 < d.i0) d.i0 = i0; if (j0 < d.j0) d.j0 = j0;
       if (i1 > d.i1) d.i1 = i1; if (j1 > d.j1) d.j1 = j1;
     }
-    this._hot = SURFACE_HOLD;
   }
 
   /* ── the window follows the player ─────────────────────────────────── */
@@ -362,7 +362,7 @@ export class SurfaceField {
    */
   update(dt) {
     if (this._dirty) this._encode();
-    if (this._live === 0) { this._hot = 0; return; }
+    if (this._live === 0) return;
     this._accum += dt;
     if (this._accum < SURFACE_TICK) return;
     const step = this._accum;

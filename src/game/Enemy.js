@@ -65,6 +65,8 @@ const _box = new THREE.Box3(), _box2 = new THREE.Box3();
 /** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
 const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
 const _o4 = new THREE.Vector3(), _o5 = new THREE.Vector3(), _o6 = new THREE.Vector3();
+/** The closest point the blade came to a body this frame — see _saberStrike. */
+const _hit = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -1668,17 +1670,23 @@ export class Enemy {
     // the tip covers up to ~0.9 m in a 30 fps frame and the body is 0.8 m wide.
     const travel = this.saber.tip.distanceTo(this.saber.prevTip);
     const steps = clamp(Math.ceil(travel / 0.16), 1, 8);
-    let best = null, bestD = Infinity;
+    let bestD = Infinity;
     for (let i = 1; i <= steps; i++) {
       const k = i / steps;
       _v3.lerpVectors(this.saber.prevBase, this.saber.base, k);
       _v4.lerpVectors(this.saber.prevTip, this.saber.tip, k);
       const res = segmentSegment(_v3, _v4, p0, p1, _v5, _v6);
-      if (res.distSq < bestD) { bestD = res.distSq; best = _v5.clone(); }
+      // `_hit` rather than a clone per sample: this runs eight times a frame
+      // for every duellist in a strike, and a Vector3 per sample is garbage
+      // for the eight frames in a row that a swing lasts.
+      if (res.distSq < bestD) { bestD = res.distSq; _hit.copy(_v5); }
       if (res.distSq <= rad * rad) break;
     }
     if (bestD > rad * rad) return false;
 
+    // one clone, once a hit is real: it is handed to damage(), the particles
+    // and the floating label, all of which may hold on to it
+    const best = _hit.clone();
     this._struck = true;
     const dmg = this.attackDamage * duel.damageScale * (this.rallyTimer > 0 ? RALLY.damage : 1);
     t.damage(dmg, best, this, 'saber');
