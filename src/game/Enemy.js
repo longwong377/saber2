@@ -1866,6 +1866,33 @@ export class Enemy {
     const terrain = ctx.terrain;
 
     if (this.gripped && this.liftTarget) {
+      /**
+       * HELD BODIES HANG. Note 48.
+       *
+       * This used to be the whole of it: damp the position toward the hold
+       * point and let the animator go on walking. A droid lifted off the floor
+       * slid through the air in a jogging pose, which is the least cinematic
+       * possible reading of the most cinematic thing in the source material.
+       *
+       * A body held off the ground is ragdolled and SUSPENDED by the chest —
+       * see Ragdoll.suspend — so the arms fall, the head lolls, the legs trail
+       * and swinging the mouse swings a real joint solve. `position` follows
+       * the ragdoll's own centre rather than driving it, so everything that
+       * asks where this enemy is still gets an answer.
+       *
+       * Anything without an actor to ragdoll (a stub, a droideka mid-transform)
+       * falls back to the old rigid path rather than losing the grip.
+       */
+      if (this.actor && !this.dead) {
+        if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
+        if (this.actor.suspend?.(this.liftTarget, dt)) {
+          this.actor.centre(this.position);
+          this.velocity.set(0, 0, 0);
+          this.grounded = false;
+          this._syncBody();
+          return;
+        }
+      }
       dampVec(this.position, this.liftTarget, 8, dt);
       this.velocity.set(0, 0, 0);
       this.grounded = false;

@@ -356,6 +356,40 @@ export class Actor {
     return broke;
   }
 
+  /**
+   * HOLD IT UP BY THE CHEST, and let everything else hang.
+   *
+   * Note 48: "held bodies have real limb physics as you swing them." A gripped
+   * enemy used to be moved rigidly — `dampVec(position, liftTarget)` with the
+   * animator still walking its legs — so the most cinematic thing in the source
+   * material was a droid sliding through the air in a jogging pose.
+   *
+   * This is the whole of the other way: ragdoll it, then drive ONE body toward
+   * the hold point every frame and leave the joints to do the rest. The arms
+   * fall, the head lolls, the legs trail, and swinging the mouse swings a
+   * hundred and thirty kilos of joint solve rather than a rigid transform. It
+   * is also almost free — the ragdoll already exists for corpses, and this adds
+   * a velocity write per frame.
+   *
+   * A VELOCITY, not a teleport. Setting the position directly would leave every
+   * other bone behind and let the solver tear the shoulders off — the same
+   * failure the cape had through a somersault, one layer down. Driving the
+   * chest at the speed that closes the gap keeps the joints inside their
+   * budget, and `clampLength` is what stops a grip across the arena arriving as
+   * an explosion.
+   */
+  suspend(target, dt, strength = 12) {
+    if (!this.ragdolled) return false;
+    const b = this.bodies.get('chest') || this.bodies.get('spine') || this.bodies.get('hips');
+    if (!b) return false;
+    b.wake?.();
+    _v1.subVectors(target, b.position);
+    b.velocity.copy(_v1).multiplyScalar(strength).clampLength(0, 26);
+    // A held body turns slowly under its own weight rather than spinning.
+    b.angularVelocity.multiplyScalar(Math.max(0, 1 - dt * 3));
+    return true;
+  }
+
   centre(out = new THREE.Vector3()) {
     if (this.ragdolled) {
       const b = this.bodies.get('chest') || this.bodies.get('spine') || this.bodies.get('hips');
