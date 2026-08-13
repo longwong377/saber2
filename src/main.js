@@ -23,6 +23,7 @@ import { recordRun, progressLines } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
+import { Screens } from './ui/Screens.js';
 
 const canvas = document.getElementById('view');
 
@@ -67,7 +68,6 @@ audio.setVolume(settings.volume);
 audio.setMusicVolume(settings.music);
 
 let world = null;
-let state = 'boot';         // boot | menu | playing | paused | dead | draft
 let last = performance.now();
 let accum = 0;
 let fpsSmooth = 60;
@@ -194,7 +194,7 @@ async function boot() {
   await new Promise(r => setTimeout(r, 260));
   menu.hideBoot();
   menu.showMenu();
-  state = 'menu';
+  screens.set('menu');
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -270,9 +270,7 @@ function startRun() {
 function deploy(run = startRun()) {
   saveSettings(settings);
   menu.hideMenu();
-  menu.hideDeath();
-  menu.hidePause();
-  menu.hideLanding();
+  screens.clear();
 
   // A rung BORROWS a level; outside the Spire the player's own choice stands.
   const levelKey = run && !run.done ? run.rung.level : settings.level;
@@ -284,7 +282,7 @@ function deploy(run = startRun()) {
   }
 
   hud.show(true);
-  state = 'playing';
+  screens.state = 'playing';
   input.enabled = true;
   input.requestLock();
 
@@ -302,10 +300,6 @@ function deploy(run = startRun()) {
  * they want to keep climbing.
  */
 function landing(run) {
-  state = 'landing';
-  world.paused = true;
-  input.enabled = false;
-  input.exitLock();
   audio.ui('wave');
 
   const cleared = run.rung;
@@ -313,7 +307,8 @@ function landing(run) {
   if (!more) return crowned(run);
 
   const next = run.rung;
-  menu.showLanding({
+  const ascend = screens.guarded('ascending a rung', () => { screens.overlay = null; deploy(run); });
+  screens.take('landing', () => menu.showLanding({
     altitude: next.altitude,
     name: next.name,
     brief: next.brief,
@@ -323,49 +318,49 @@ function landing(run) {
       ['Vitality', `${Math.round(run.hpFrac * 100)}%`],
       ['Score', Math.floor(run.score).toLocaleString()],
     ],
-    onAscend: () => deploy(run),
-  });
+    onAscend: ascend,
+  }));
 }
 
 /** The crown. The one way this game has ever had of being finished. */
 function crowned(run) {
-  state = 'dead';
-  input.enabled = false;
-  input.exitLock();
   recordRun(run.summary());
   showRecord();
-  menu.showDeath([
+  screens.take('dead', () => menu.showDeath([
     ['Waves climbed', run.depth],
     ['Score', Math.floor(run.score).toLocaleString()],
     ['Kills', run.kills],
     ['Boons held', run.boons.length],
-  ], 'You stand above the storm');
+  ], 'You stand above the storm'));
 }
 
-function resume() {
-  menu.hidePause();
-  state = 'playing';
-  world.paused = false;
-  input.enabled = true;
-  input.requestLock();
-}
+/**
+ * THE FREEZE — the state machine that could strand the player lives in
+ * src/ui/Screens.js now, with the whole story of the bug written above it and
+ * tools/checks/screens.mjs driving it with a menu that throws on demand. What
+ * is left here is the wiring: which world, which menu, which numbers go on the
+ * pause card.
+ */
+const screens = new Screens({
+  world: () => world,
+  input,
+  menu,
+  sandboxLive: () => sandboxRoomLive(),
+  pauseStats: () => {
+    const p = world?.player;
+    return [
+      ['Wave', world?.director?.wave ?? '—'],
+      ['Score', Math.floor((world?.score ?? 0) + (p?.score || 0)).toLocaleString()],
+      ['Kills', p?.kills ?? 0],
+      ['Deflections', p?.deflects ?? 0],
+      ['Perfect returns', p?.perfects ?? 0],
+      ['Limbs taken', p?.limbsRemoved ?? 0],
+    ];
+  },
+});
 
-function pause() {
-  if (state !== 'playing') return;
-  state = 'paused';
-  world.paused = true;
-  input.enabled = false;
-  input.exitLock();
-  const p = world.player;
-  menu.showPause([
-    ['Wave', world.director.wave],
-    ['Score', Math.floor(world.score + (p?.score || 0)).toLocaleString()],
-    ['Kills', p?.kills ?? 0],
-    ['Deflections', p?.deflects ?? 0],
-    ['Perfect returns', p?.perfects ?? 0],
-    ['Limbs taken', p?.limbsRemoved ?? 0],
-  ], sandboxRoomLive());
-}
+const resume = () => screens.resume();
+const pause = () => screens.pause();
 
 /**
  * Do the three training numbers reach the room the player is standing in?
@@ -393,9 +388,7 @@ function restartWave() {
 }
 
 function quitToMenu() {
-  menu.hidePause();
-  menu.hideDeath();
-  menu.hideLanding();
+  screens.clear();
   hud.show(false);
   input.enabled = false;
   input.exitLock();
@@ -405,7 +398,7 @@ function quitToMenu() {
   if (world) { world.dispose(); world = null; }
   showRecord();
   menu.showMenu();
-  state = 'menu';
+  screens.set('menu');
 }
 
 /** The one line of history the main menu carries. See Progress.js. */
@@ -418,7 +411,7 @@ function showRecord() {
 showRecord();
 
 function gameOver(stats) {
-  state = 'dead';
+  screens.state = 'dead';
   input.enabled = false;
   // A run that ended is a run that happened. `gameOver` used to reduce it to a
   // card and throw it away — the only two localStorage keys in the tree were
@@ -429,17 +422,23 @@ function gameOver(stats) {
     world.run.end();
     recordRun(world.run.summary());
   }
-  setTimeout(() => {
-    input.exitLock();
-    menu.showDeath([
-      ['Wave reached', stats.wave],
-      ['Score', Math.floor(stats.score).toLocaleString()],
-      ['Kills', stats.kills],
-      ['Deflections', stats.deflects],
-      ['Perfect returns', stats.perfects],
-      ['Limbs taken', stats.limbs],
-    ]);
-  }, 2600);
+  // Remembered rather than shown and forgotten: 2.6 seconds is a long time for
+  // the only exit from a state to be in flight, and if the call throws the
+  // player is watching their own corpse with nothing on screen. Escape puts it
+  // back — see the keydown handler.
+  const card = () => menu.showDeath([
+    ['Wave reached', stats.wave],
+    ['Score', Math.floor(stats.score).toLocaleString()],
+    ['Kills', stats.kills],
+    ['Deflections', stats.deflects],
+    ['Perfect returns', stats.perfects],
+    ['Limbs taken', stats.limbs],
+  ]);
+  // Remembered before it is shown: 2.6 seconds is a long time for the only exit
+  // from a state to be in flight, and a throw in there used to leave the player
+  // watching their own corpse with nothing on screen. Escape asks for it again.
+  screens.overlay = { state: 'dead', show: card };
+  setTimeout(screens.guarded('the death card', () => { input.exitLock(); card(); }), 2600);
 }
 
 /**
@@ -462,15 +461,16 @@ function heldBoons() {
 
 function offerDraft(boons) {
   if (!boons || !boons.length) { world.director.resumeAfterDraft(); return; }
-  state = 'draft';
-  world.paused = true;
-  input.enabled = false;
-  input.exitLock();
-  menu.showDraft(boons, (b) => {
+  const pick = screens.guarded('taking a boon', (b) => {
+    // The overlay is forgotten FIRST: resume() would otherwise put the draft
+    // the player has just answered straight back on the screen.
+    screens.overlay = null;
+    screens.state = 'paused';        // so resume() takes the playing branch
     world.applyBoon(b);
     hud.setBoons(heldBoons());
     resume();
   });
+  screens.take('draft', () => menu.showDraft(boons, pick));
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -588,7 +588,7 @@ function wireNet() {
     settings.level = msg.level;
     settings.difficulty = msg.difficulty;
     settings.mode = msg.mode;
-    if (state === 'menu') deploy();
+    if (screens.state === 'menu') deploy();
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
@@ -674,7 +674,7 @@ async function joinSession(code) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 input.onLockChange = (locked) => {
-  if (!locked && state === 'playing') pause();
+  if (!locked && screens.state === 'playing') pause();
 };
 
 /**
@@ -693,7 +693,7 @@ input.onLockChange = (locked) => {
  * rebound from the options screen like everything else.
  */
 function lessonKeys() {
-  if (state !== 'playing' || !world?.training) return;
+  if (screens.state !== 'playing' || !world?.training) return;
   const d = world.director;
   if (!d) return;
   if (input.actHit('lessonNext')) { d.skip(); hud.setCoach(d.state()); }
@@ -720,8 +720,12 @@ refreshCoachKeys();
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
-    if (state === 'playing') pause();
-    else if (state === 'paused') resume();
+    // Never a dead key. From 'paused' it resumes; on a death card it puts the
+    // card back (idempotent — the card is that state's only exit and a card
+    // that failed to arrive is the only way to be stuck there); from every
+    // other state with a live world it raises the pause card, which can always
+    // resume or abandon. See pause().
+    screens.escape();
   }
   // NOT the scoreboard — that is the `scoreboard` action, read once a frame in
   // frame() so it stays rebindable. This only stops the browser walking focus
@@ -755,7 +759,7 @@ window.addEventListener('keydown', startScore, true);
 
 canvas.addEventListener('pointerdown', () => {
   audio.init(); audio.resume();
-  if (state === 'playing' && !input.locked) input.requestLock();
+  if (screens.state === 'playing' && !input.locked) input.requestLock();
 });
 
 // A hidden tab suspends the context; nothing re-armed it on return.
@@ -778,17 +782,17 @@ function frame(now) {
 
   // Held, and only while a run is live: the menus, the draft and the death card
   // own the screen otherwise, and this would sit on top of all three.
-  setScoreboard(state === 'playing' && !!world && input.act('scoreboard'));
+  setScoreboard(screens.state === 'playing' && !!world && input.act('scoreboard'));
   lessonKeys();
 
-  if (world && (state === 'playing' || state === 'dead')) {
+  if (world && (screens.state === 'playing' || screens.state === 'dead')) {
     world.update(dt, input);
     if (world.remotes) for (const r of world.remotes.values()) {
       r.update(dt, { terrain: world.terrain, camera: engine.camera, time: world.time });
     }
     hud.update(dt, world, world.player, engine.camera);
     setGuardRose(world);
-  } else if (world && (state === 'paused' || state === 'draft' || state === 'landing')) {
+  } else if (world && screens.state !== 'menu') {
     // keep the camera alive behind the overlay
     world.player?.camera.update(dt, world.player.position, { physics: world.physics, terrain: world.terrain });
   }

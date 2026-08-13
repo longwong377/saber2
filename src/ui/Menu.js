@@ -1538,6 +1538,7 @@ export class Menu {
     }
     this.el.draft.classList.remove('hidden');
   }
+  hideDraft() { this.el.draft.classList.add('hidden'); }
 
   /**
    * The two sandbox numbers, repeated where you can actually reach them.

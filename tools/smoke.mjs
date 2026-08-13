@@ -22,6 +22,7 @@ const SECONDS = parseFloat(flag('seconds', '6'));
 const FRAMES = parseInt(flag('frames', '40'), 10);
 const LEVEL = flag('level', 'dunes');
 const QUALITY = flag('quality', 'medium');
+const MODE = flag('mode', 'roguelite');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -88,12 +89,12 @@ await step('load', async () => {
 });
 
 await step('preset settings', async () => {
-  await page.evaluate(([level, quality]) => {
+  await page.evaluate(([level, quality, mode]) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
-      level, quality, resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',
+      level, quality, resolutionScale: 0.6, difficulty: 'knight', mode,
       volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6,
     }));
-  }, [LEVEL, QUALITY]);
+  }, [LEVEL, QUALITY, MODE]);
   await page.reload({ waitUntil: 'domcontentloaded' });
 });
 
