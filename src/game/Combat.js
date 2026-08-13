@@ -317,6 +317,47 @@ const WORK_RATE = 2.4;   // unchanged, so every authored TOUGHNESS keeps its mea
 
 /** No contact for this long and accumulated cut work begins to fade. */
 const PROGRESS_GRACE = 1.5;
+
+/**
+ * A BODY THAT CANNOT SET ITSELF PARTS FASTER — which is the whole reason to
+ * pull something to you instead of just hitting it where it stands.
+ *
+ * The player asked for two things that sound like separate features and are
+ * really one: "bring things fully to melee range" and "impale/cut them while
+ * held". Bringing them close is a movement problem and it is solved in
+ * `Player.forcePull`. What makes it WORTH doing is this: everything a fighter
+ * does to survive a cut — turning with the blade, giving ground, dropping a
+ * shoulder, tensing — needs feet on the ground and a moment's notice, and a
+ * body in the air with a hand round its throat has neither.
+ *
+ * These are multipliers on cutting work, not on damage, so they shorten the
+ * road to a SEVER rather than adding a damage number the model does not have.
+ * The three states are deliberately different sizes:
+ *
+ *   held      3.0×  both feet off the floor and nothing to brace against. This
+ *                   is the impale: an acolyte held at arm's length comes apart
+ *                   in about a third of the passes it takes standing up.
+ *   yanked    2.0×  dragged off balance in the last third of a second. It is a
+ *                   window, not a state, and it is what makes pull→cut read as
+ *                   one move instead of two.
+ *   downed    1.5×  toppled or stunned. Smaller because it was already easier
+ *                   in practice — a stunned enemy stops dodging — so a large
+ *                   number here would be paying twice for the same advantage.
+ *
+ * Bosses take the held multiplier at a quarter, for the reason the choke rate
+ * halves for them: a boss you can hold is a boss you can hold to death, and
+ * "grab the boss" is not a fight.
+ */
+const OPEN_HELD = 3.0, OPEN_YANK = 2.0, OPEN_DOWN = 1.5;
+
+export function openness(e) {
+  if (!e || e.dead) return 1;
+  const big = e.A?.big || e.A?.boss;
+  if (e.gripped) return big ? 1 + (OPEN_HELD - 1) * 0.25 : OPEN_HELD;
+  if (e.yankT > 0) return big ? 1 + (OPEN_YANK - 1) * 0.25 : OPEN_YANK;
+  if (e.toppled || e.stunTimer > 0) return OPEN_DOWN;
+  return 1;
+}
 const PROGRESS_FADE = 0.8;   // e-folds per second after the grace
 
 /**
@@ -859,7 +900,10 @@ export class BladeContactSolver {
         // speeding that up carved a 0.30 m notch into something that dropped a
         // whole column. The complaint this whole change answers is about things
         // that bleed and things you can pick up, so that is where it applies.
-        const slash = cap.structure ? 1 : coverage * Math.min(SLASH_CAP, 1 + rush);
+        // Architecture is exempt from openness for the same reason it is exempt
+        // from speed: a wall is never off balance.
+        const slash = cap.structure ? 1
+          : coverage * Math.min(SLASH_CAP, 1 + rush) * openness(target.enemy);
         const dWork = speed * dt * WORK_RATE * slash;
         const need = cutNeed(cap);
 

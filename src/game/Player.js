@@ -302,6 +302,44 @@ const SHIELD_BITE = 1.0;
 const CHOKE_RATE = 0.12;
 const CHOKE_RATE_MAX = 0.30;
 
+/**
+ * WHERE A PULL PUTS THINGS, and how long they stay open when they land.
+ *
+ * PULL_TO is measured from the chest and is 2.2 m because that is inside the
+ * blade's own reach — a 1.15 m blade held at arm's length covers about 2.4 m
+ * from the chest — so the thing you pulled arrives already cuttable. Putting
+ * it at 1.4 (the grip's minimum) drags bodies THROUGH the player, which reads
+ * as a bug however correct the physics is.
+ *
+ * PULL_COAST is how far a knocked body actually travels per metre-per-second
+ * of the speed it was given, READ OFF THE INTEGRATOR rather than guessed:
+ * `applyKnockback(gentle)` sets knockTimer to 0.35 s during which Enemy._move
+ * applies no horizontal damping at all, and after that it damps toward zero at
+ * 6 s⁻¹, which carries a further v/6. So travel = v·(0.35 + 1/6) = 0.517·v and
+ * the speed that closes a gap `g` is `g / 0.517`.
+ *
+ * The first cut of this used 6 m/s per metre — three times too much, because it
+ * assumed the WALKING damp rate applied during the knock. Measured, a pull from
+ * 4 m put its victim 18.4 m behind the player. The number is derived here
+ * rather than tuned because a tuned constant would have to be re-tuned every
+ * time either of those two numbers moved, and neither of them is in this file.
+ *
+ * PULL_MAX is scaled by heft at the call site, so mass shows itself as TIME:
+ * a B1 crosses twelve metres in about a quarter of a second and a beast, at
+ * the 0.28 floor of the heft curve, takes four times as long over the same
+ * ground. Falling short is the wrong way to say "heavy" — the note asks for
+ * things to arrive, and something that stops two thirds of the way just looks
+ * like the power missed.
+ *
+ * PULL_OPEN is the window the arrival leaves — see `openness` in Combat.js.
+ * A third of a second is about one swing at combat tempo, which is the point:
+ * long enough to be a combo, short enough that it has to be intended.
+ */
+const PULL_TO = 2.2;
+const PULL_COAST = 0.35 + 1 / 6;
+const PULL_MAX = 70;
+const PULL_OPEN = 0.34;
+
 /** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
 const HEAL_COST = 40;
 const HEAL_TIME = 3.0;
@@ -2275,6 +2313,25 @@ export class Player {
     // stayed at 17 m while the grip reached 36 was the odd one out.
     const P = this.forceScale;
     const origin = this.chest, dir = this.aimDir, range = 17 * Math.sqrt(P);
+    /**
+     * A PULL ENDS IN FRONT OF YOU, at the length of your own arm and blade.
+     *
+     * This used to be `-min(d * 3.2, 22)` along the line: an impulse that made
+     * things move toward the player and had no idea where the player was. At
+     * 4 m it overshot straight past and out the other side; at 16 it fell
+     * three quarters short, so the only distance it worked at was the one it
+     * was tuned at. The player's note is exact — "bring things fully to melee
+     * range" — and that is a DESTINATION, not a shove.
+     *
+     * So the target is PULL_TO metres in front of the chest, and the impulse is
+     * whatever covers the gap: the enemy's own damping (Enemy._move, rate 5-8
+     * on the horizontal) means a body carries roughly `v/6` before it stops, so
+     * the speed to close a gap `g` is about `6g`, capped so that a pull across
+     * the whole arena is fast rather than instantaneous. The lift is a fixed
+     * fraction of the closing speed instead of a constant, or a short pull
+     * threw its victim over the player's head.
+     */
+    const want = _v8.copy(origin).addScaledVector(dir, PULL_TO);
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
       _v1.subVectors(e.position, origin);
@@ -2283,8 +2340,18 @@ export class Player {
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < 0.72) continue;
       const heft = this._heft(e.A ? e.A.mass : 80);
-      _v2.copy(_v1).multiplyScalar(-Math.min(d * 3.2, 22) * heft).setY(4.5 * heft);
+      // gap along the ground, because the vertical is the arc, not the aim
+      _v2.subVectors(want, e.position).setY(0);
+      const gap = _v2.length();
+      const close = Math.min(gap / PULL_COAST, PULL_MAX * heft);
+      // The lift is a fraction of the closing speed rather than a constant, or
+      // a one-metre pull throws its victim over the player's head.
+      _v2.multiplyScalar(gap > 1e-3 ? close / gap : 0).setY(close * 0.12 + 1.2);
       e.applyKnockback(_v2, 2, this, true);
+      /* And it arrives OPEN. A body dragged off its feet cannot set itself, so
+       * the window this opens is the whole point of pulling rather than
+       * pushing — see `_saberDamageScale`, which is where it is spent. */
+      e.yankT = PULL_OPEN;
     }
     for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
       if (b.invMass === 0 || b === this.body) continue;
@@ -2294,7 +2361,16 @@ export class Player {
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < 0.72) continue;
       const heft = this._heft(b.mass);
-      _v2.copy(_v1).multiplyScalar(-b.mass * Math.min(d * 2.2, 16) * heft).setY(b.mass * 3.4 * heft);
+      /* Same destination for a crate, but through an impulse rather than a
+       * velocity, so it is mass-scaled. A rigid body has no damping term to
+       * undo — it is a ballistic arc into whatever it lands on — so the speed
+       * that covers a gap is set by the flight time instead: with the lift
+       * below, a body is airborne for about 2·vy/g, and 0.45 of the walker's
+       * coasting distance lands a crate at about the same place. */
+      _v2.subVectors(want, b.position).setY(0);
+      const gap = _v2.length();
+      const close = Math.min(gap / (PULL_COAST * 2.2), PULL_MAX * heft);
+      _v2.multiplyScalar(gap > 1e-3 ? b.mass * close / gap : 0).setY(b.mass * (close * 0.16 + 1.6));
       b.applyImpulse(_v2, b.position);
     }
   }
@@ -2440,6 +2516,7 @@ export class Player {
   }
 
   releaseGrip() {
+    this._holdT = 0;
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
     if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy.chokeT = 0; this.gripEnemy = null; }
     this._endGesture('grip');
@@ -2648,13 +2725,48 @@ export class Player {
     this.gripDistance = lead + out;
     const hold = _v1.copy(this.camera.pos).addScaledVector(this.aimDir, this.gripDistance);
 
+    /**
+     * WHAT A HOLD COSTS — mass, distance and time, and less of all three the
+     * stronger you are.
+     *
+     * Mass was already in it. The other two were not, and their absence is what
+     * made the grip the flattest power in the game: holding a B1 at arm's
+     * length and holding one at thirty-six metres cost exactly the same, and
+     * holding it for a tenth of a second cost the same per second as holding it
+     * for a minute. So there was no reason ever to bring anything closer and no
+     * moment at which a hold became a decision.
+     *
+     *   distance   0.70 at the chest to 1.60 at full reach. Measured against
+     *              the reach rather than a fixed metre count, so a Force Power
+     *              of 4 does not make every hold "near".
+     *   time       1.00 rising to 1.75 over six seconds, and it does not reset
+     *              until the hold ends. Six seconds is deliberately longer than
+     *              the choke takes to become dangerous (three), so the ramp
+     *              bites AFTER the interesting part rather than during it.
+     *   power      ÷√forceScale, the same law reach and capacity already use.
+     *              At forcePower 4 a hold is half the cost per second, which is
+     *              what "it grows with power" has to mean if the top of the
+     *              slider is to feel like mastery rather than a bigger number.
+     *
+     * `_holdT` is the hold's own clock, zeroed in `releaseGrip`.
+     */
+    // Only while something is actually held. This ran unconditionally in its
+    // first form, and `_updateGrip` is called every frame the key is down
+    // whether or not the pick found anything — so the wear clock advanced
+    // while the player was holding nothing at all, and the next real grip
+    // started already tired.
+    if (this.gripBody || this.gripEnemy) this._holdT = (this._holdT || 0) + dt;
+    const far = 0.70 + 0.90 * clamp((this.gripDistance - lead) / Math.max(this.forceReach, 1e-3), 0, 1);
+    const wear = 1 + 0.75 * clamp(this._holdT / 6, 0, 1);
+    const effort = far * wear / Math.sqrt(Math.max(this.forceScale, 0.05));
+
     if (this.gripBody) {
       const b = this.gripBody;
       if (b.dead || b.mass > cap) { this.releaseGrip(); return; }
       // Heavy things cost more to hold, which is what stops the top of the
       // slider from being free. Only drop it when the Force actually ran out —
       // with drain disabled the bar sits wherever it was and this must not fire.
-      if (!this._spend((7 + 6 * clamp(b.mass / cap, 0, 1)) * dt)) { this.releaseGrip(); return; }
+      if (!this._spend((7 + 6 * clamp(b.mass / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       const heft = this._heft(b.mass);
       b.wake();
       _v2.subVectors(hold, b.position);
@@ -2669,7 +2781,7 @@ export class Player {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
       if (e.dead || m > cap) { this.releaseGrip(); return; }
-      if (!this._spend((11 + 9 * clamp(m / cap, 0, 1)) * dt)) { this.releaseGrip(); return; }
+      if (!this._spend((11 + 9 * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       // Enemy.update damps its own position toward liftTarget at a fixed rate,
       // so the only place a heavy body can be made to FEEL heavy from here is
       // the target: walk it toward the hold point at a speed the Force can

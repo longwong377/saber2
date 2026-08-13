@@ -595,6 +595,9 @@ export class Enemy {
     this.grippable = !A.big && !A.boss;
     this.gripped = false;
     this.liftTarget = null;
+    /** Seconds left of the "just dragged off my feet" window a Force pull
+     *  opens. Read by Combat.openness; decayed in update. */
+    this.yankT = 0;
 
     const diff = world.difficulty;
     this.hp = A.hp * (world.hpScale ?? 1);
@@ -1303,6 +1306,7 @@ export class Enemy {
     this.stateTime += dt;
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
+    this.yankT = Math.max(0, this.yankT - dt);
     if (this.actor) this.actor.update(dt);
 
     // level of detail: distant enemies skip the expensive solves
