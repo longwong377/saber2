@@ -1194,9 +1194,47 @@ export const LEVELS = {
     },
   },
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE SANCTUM  (key: `arena` — see below)
+   *
+   *  "Monumental alien ruins of a grand Jedi/Sith temple — colossal broken
+   *   architecture, a sense of something that was once sacred and is now a
+   *   killing floor."
+   *
+   *  THE KEY STAYS `arena`. Nine files and four checks name it, `LEVEL_ORDER`
+   *  lists it, and a saved profile pointing at it must keep working — so this
+   *  is a rework of a level rather than a new one beside it. What changed is
+   *  the name, the blurb and the whole of `dress`.
+   *
+   *  THE ATMOSPHERE DID NOT CHANGE, and that is a decision. The block below is
+   *  a measured artefact: it records a hue-separation study (80% of the frame
+   *  inside 13° of hue, and the four causes of it), and every number in it is
+   *  load-bearing for `lighting.mjs`'s strict ordering of the indirect budget
+   *  by sun elevation, for the range-chroma test, and for the cast-shadow
+   *  study in `_shade.mjs`. A ruined temple in a desert bowl is lit by exactly
+   *  the same sun as an execution ground in a desert bowl. Re-deriving all of
+   *  that to change a mood would have been a different, larger change, and a
+   *  worse one: what makes this place read as sacred is its ARCHITECTURE.
+   *
+   *  WHAT MAKES IT MONUMENTAL IS ONE NUMBER, and it is the height of the
+   *  order. The old ring was 8.4 m walls with 7.5 m columns in front of them
+   *  and a 17 m toppled statue for a landmark — measured on the dressed level,
+   *  the tallest object in it stood 18.3 m and NOTHING reached 20. That is a
+   *  town wall. A temple is a building whose columns are taller than the
+   *  trees, and the whole of "colossal" is that a person standing at the foot
+   *  of one is a detail on it: at 30 m and a 2.3 m shaft, the player is 6% of
+   *  the height of a column and a third of its diameter.
+   *
+   *  It costs less than what it replaces, which is the part worth writing
+   *  down. Thirty-six broken wall bays plus eighteen colonnade columns is 54
+   *  emits; fourteen colossal columns merged two to an island with their own
+   *  entablature and rubble is seven. Measured: 411 draw calls before, and
+   *  the budget `world-immersion` holds a level to is 520.
+   * ═════════════════════════════════════════════════════════════════════ */
+
   arena: {
-    name: 'The Execution Arena',
-    blurb: 'A bowl of sand ringed by stone. Nowhere to run, and something large is waking up.',
+    name: 'The Sanctum',
+    blurb: 'A temple the size of a mountain, broken open to the sky. It was sacred once, and the floor has other uses now.',
     terrain: 'arena',
     pool: ['b1', 'b1', 'trooper', 'b2', 'droideka', 'acolyte', 'beast', 'walker', 'sniper'],
     groundColor: 0xcfae82,
@@ -1380,75 +1418,201 @@ export const LEVELS = {
         ],
       });
 
-      // ── The ring. Still a ring — it is what makes the arena an arena — but
-      // built as ARCHITECTURE rather than 44 identical slabs: a colonnade on a
-      // stepped stylobate, with tiers of seating behind it, broken open where
-      // the horde comes through. Evenly spaced identical boxes is the single
-      // clearest tell that nobody designed the space.
-      const R = 56, bays = 36;
-      const gates = [0.7, 0.7 + TAU / 4, 0.7 + TAU / 2, 0.7 + TAU * 0.75];
-      const nearGate = (a) => gates.some(g => {
-        let d = Math.abs(((a - g + Math.PI) % TAU + TAU) % TAU - Math.PI);
-        return d < 0.10;
-      });
+      /* ── THE PERISTYLE, and it is the level.
+       *
+       * FOURTEEN COLUMNS, NOT THIRTY-SIX BAYS. The rhythm of a monumental
+       * order is slow — an intercolumniation of four to six diameters, which
+       * at a 2.3 m shaft is 20 to 28 m — and that slowness is most of what
+       * says "colossal" from inside the sanctum: at 36 bays the eye reads a
+       * fence, at 14 it has to travel from one shaft to the next and the
+       * travelling is the scale.
+       *
+       * TWO TO AN ISLAND, and the arithmetic is the same one the temple's
+       * colonnade derives: a 30 m column plus its plinth, entablature block
+       * and fallen drum is four or five separate emits, so fourteen of them
+       * placed singly is roughly 60 emits and 90 draw calls out of a budget of
+       * 520 that this level was already spending 411 of. Merged in pairs it is
+       * seven emits. The pair straddles the gap rather than sitting on it, so
+       * what merges is a column, the ARCHITRAVE that spans to its neighbour,
+       * and that neighbour — which is genuinely one piece of building.
+       *
+       * `flutes: 0` and `volutes: false`: this is not a classical order. A
+       * fluted shaft with a scrolled capital reads as Greek, and what the note
+       * asks for is ALIEN — so the shafts are plain monoliths with a heavy
+       * square abacus, which is the one profile that reads as enormous rather
+       * than as ornate, and the ornament is in the entablature instead.
+       */
+      /* SIXTEEN STATIONS, twelve of which carry a column and four of which are
+       * the gates the horde walks out of. The gates are ON the order's own
+       * rhythm rather than cut into the gaps between it, and that is not
+       * tidiness: at fourteen stations with the gates at their own four
+       * angles, the gate pylons landed 12.3 m from the nearest shaft and their
+       * stone stood inside it. A processional gateway is a bay of the
+       * peristyle built taller and opened up, which is what a temple front
+       * actually is.
+       *
+       * Which columns have gone: a ruin that fails at random reads as damage;
+       * one that fails in a RUN reads as a collapse — something came through
+       * the south-west and took three consecutive bays of the order and their
+       * entablature with it, and one more shaft went on its own. */
+      const R = 62, N = 16;
+      const GATE = new Set([2, 6, 10, 14]);
+      const DOWN = new Set([4, 11, 12, 13]);
 
-      for (let i = 0; i < bays; i++) {
-        const a = (i / bays) * TAU;
-        if (nearGate(a)) continue;
+      /* ONE ISLAND PER COLUMN, with the architrave living in the island of the
+       * shaft at its LEFT end. Merging the pair instead was tried and it costs
+       * half as many emits — but `occupancy` records a merged mesh as one box
+       * at its own half-width, so a pair whose architrave has gone would have
+       * claimed a 17 m radius of "something within reach" over 28 m of empty
+       * sand between two columns. Attached to one end, the box the survey sees
+       * is either a column (6 m) or a column and the beam that genuinely spans
+       * away from it, and both of those are true. */
+      const span = 2 * Math.sin(Math.PI / N) * R;          // 24.2 m at R = 62
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * TAU;
         const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
+        // the island's own frame points at the middle of the bowl, so `local`
+        // x runs along the peristyle and z runs in toward the fight
         const yaw = -a + Math.PI / 2;
-        // Every fourth bay has fallen. A wall that is uniformly intact reads as
-        // a texture; one that fails in places reads as having a history.
-        const fallen = (i * 7 + 3) % 9 < 2;
-        // NB: addBrokenWall takes its dimensions as a Vector3 THIRD argument,
-        // not as fields on the options object. Passing an options object here
-        // makes every dimension undefined, which propagates NaN into the rebar
-        // curve and throws out of the whole dressing pass.
-        addBrokenWall(world, at(cx, cz),
-          V(9.4, fallen ? 3.2 + rng() * 1.6 : 8.4, 2.1),
-          { yaw, seed: 400 + i, mat: M.duracrete, ruin: fallen ? 0.75 : 0.28 });
-        // colonnade standing in front of the wall, some columns snapped
-        if (i % 2 === 0) {
-          const ix = Math.cos(a) * (R - 5.5), iz = Math.sin(a) * (R - 5.5);
-          addColumn(world, at(ix, iz), {
-            height: 7.5, radius: 0.55, yaw, seed: 500 + i,
-            standing: fallen ? 0.35 + rng() * 0.3 : 1,
-            mat: M.sandstone,
+        if (GATE.has(i)) {
+          /* THE GATE, at the scale of the order. A 7.5 m arch under a 30 m
+           * colonnade is a cat flap; this is a 20 m opening under a 26 m
+           * entablature, which is a door for the thing the temple was built
+           * around rather than for a person. */
+          /* 17 m of opening under a 22 m entablature — still four times the
+           * arch it replaced, and 30% cheaper than the 20 × 26 first written:
+           * the maker builds pylons, a voussoir ring, chains, a banner and its
+           * own rubble, all of it tessellated to 1.15 m, so a gate's triangle
+           * count goes with its AREA and four of them at 20 × 26 came to 98k.
+           * `debris` and `drift` off because the loop below lays its own. */
+          addRuinedGate(world, at(cx, cz), {
+            span: 17, height: 22, yaw, seed: 4600 + i,
+            mat: M.duracreteWarm, trimMat: M.sandstone, broken: i === 10 ? 0.55 : 0.22,
+            debris: false, drift: false,
           });
+          addDebrisField(world, at(cx, cz), { radius: 13, seed: 4460 + i, count: 22 });
+          continue;
         }
+        const gone = DOWN.has(i);
+        // The architrave reaches the NEXT shaft, and only where both ends of it
+        // are still there to carry it — that is the whole reason a collapse
+        // propagates along a colonnade rather than stopping at one bay.
+        const nxt = (i + 1) % N;
+        const carries = !gone && !DOWN.has(nxt) && !GATE.has(nxt);
+        island(world, at(cx, cz), { seed: 4400 + i, yaw, span: carries ? span * 1.05 : 6.5, maker: 'peristyle' },
+          (kit, local) => {
+            addColumn(world, local(0, 0), {
+              kit, height: 30, radius: 2.3, seed: 4410 + i, mat: M.duracreteWarm,
+              // 13 sides on a 4.6 m shaft is 1.1 m of chord — under the width
+              // of the outline pass's own stroke at the range you see it from
+              trimMat: M.sandstone, flutes: 0, volutes: false, seg: 13,
+              // a snapped 30 m shaft still leaves 9-15 m of stump standing,
+              // which is taller than the wall it replaced
+              standing: gone ? 0.30 + rng() * 0.20 : 1,
+            });
+            if (carries) {
+              // the bay runs anticlockwise in world space, which is -x in the
+              // island's frame; the beam is drawn from the shaft to the next
+              kit.slab(M.sandstone, span, 2.6, 4.4, -span / 2, 31.4, 0, { tile: 2.4, seg: 5, collide: false });
+              kit.slab(M.duracreteDark, span, 1.1, 5.2, -span / 2, 33.3, 0, { tile: 2.4, seg: 5, collide: false });
+            }
+          });
+        /* …and what fell off it, banked at the foot where it landed. Every
+         * OTHER station: at all sixteen this was 288 separate broken stones
+         * round a ring the player only ever sees a third of at a time, and it
+         * cost 60k triangles for rubble that reads identically at half the
+         * count. */
+        if (i % 2 === 0) addDebrisField(world, at(cx, cz), { radius: 12, seed: 4460 + i, count: 14 });
       }
 
-      // ── Four gates the horde walks out of, framed properly.
-      for (let g = 0; g < gates.length; g++) {
-        const a = gates[g];
-        const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
-        addArch(world, at(cx, cz), {
-          span: 7.5, rise: 5.4, thickness: 2.2, yaw: -a + Math.PI / 2,
-          seed: 600 + g, mat: M.duracrete, broken: g === 2,
+      /* ── NO TEMENOS WALL, and it is a decision rather than an omission.
+       *
+       * A precinct wall standing behind the order was built, measured and
+       * taken out again. What it was for is real — a colonnade seen against
+       * open sky is a row of sticks, and seen against a wall it is a building
+       * with depth — but this level already has the wall: its own heightfield
+       * climbs from −0.8 m at the centre to 27 m of rim at 116 and 64 m at
+       * 172, so every column stands against forty metres of bedded stone
+       * whichever way you look. The wall was a second copy of that, and it was
+       * the most expensive thing on the level: measured by ablation, six
+       * segments of 38 × 13 m came to 66k triangles of 510k, because
+       * `weatherGeo` tessellates every surface to 1.15 m vertices and a wall
+       * is nothing but surface.
+       *
+       * The frame budget is the reason it was measured and the composition is
+       * the reason it stayed out.
+       */
+
+      /* ── THE GUARDIANS. Four hooded colossi facing in over the floor, at 34
+       * and 30 m — taller than the order they stand between, which is what a
+       * cult statue is for. Three of them are wrecked; one is not, and the one
+       * that is not is the thing your eye goes to from anywhere in the bowl.
+       *
+       * Set at r = 46 rather than against the wall: a statue at the rim is
+       * scenery, and a statue you can be driven into the feet of is cover. */
+      /* THREE STANDING AND ONE DOWN, not four and one. A guardian is 13k
+       * triangles and the frame's budget is the reason there is not one on
+       * every quarter — which is also the better composition: three round a
+       * ring reads as what is LEFT of a set, and four reads as a complete
+       * one. */
+      const guardians = [[0.42, 34, true], [0.42 + TAU / 3, 30, true],
+                         [0.42 + TAU * 2 / 3, 34, false]];
+      for (let i = 0; i < guardians.length; i++) {
+        const [a, h, ruined] = guardians[i];
+        const cx = Math.cos(a) * 46, cz = Math.sin(a) * 46;
+        /* `seg: 13`, not the maker's default 20. Every one of these is a
+         * revolve — robe, torso, mantle, cowl — so the segment count multiplies
+         * through four lathes and fourteen fold ridges apiece. At 34 m the
+         * silhouette is what carries and a 13-sided revolve is under a degree
+         * of error on it; measured, the drop is 22k triangles a statue. */
+        addColossus(world, at(cx, cz), { height: h, yaw: -a + Math.PI, seed: 4700 + i, ruined, seg: 13 });
+        addDebrisField(world, at(cx, cz), { radius: 14, seed: 4710 + i, count: 26 });
+        siteOk(world, cx, cz, { clearance: 15, spawnClear: 0 });
+      }
+
+      /* ── THE FIFTH GUARDIAN, down. It fell across the floor and it is the
+       * one piece of architecture the fight is actually inside: a 26 m shaft
+       * of a body lying on its side, the head off it, and the hand it was
+       * holding out. This is the level's landmark, and it is off-centre so the
+       * middle of the bowl stays clear to fight in.
+       *
+       * `standing: 0.13` on a colossal drum is `addColumn`'s stump-and-shaft
+       * case: what you get is a broken base with the shaft lying beside it,
+       * which is exactly the shape of a toppled statue's plinth and torso and
+       * costs one emit rather than a bespoke maker. */
+      addColumn(world, at(-24, 14), {
+        height: 30, radius: 2.6, yaw: 2.1, seed: 4800, standing: 0.13,
+        mat: M.sandstone, flutes: 0, volutes: false,
+      });
+      addColossus(world, at(-31, 22), { height: 22, yaw: 2.1, seed: 4801, ruined: true, seg: 13 });
+      addDebrisField(world, at(-27, 18), { radius: 18, seed: 4802, count: 34 });
+      addScree(world, at(-27, 18), { radius: 22, count: 420, size: 0.72, seed: 4803, mat: M.stone });
+
+      /* ── THE ALTAR, at the focus. Whatever was worshipped here stood on
+       * this, and the reason the place is a killing floor is that somebody
+       * decided it was a good stage. Off the exact centre by 9 m: the middle
+       * of a duelling floor belongs to the duel. */
+      island(world, at(8, -7), { seed: 4900, yaw: 0.6, span: 15, maker: 'altar' },
+        (kit, local) => {
+          addPlinth(world, local(0, 0), { kit, width: 9.5, depth: 9.5, height: 2.2, steps: 3,
+            mat: M.sandstone, bandMat: M.duracreteDark });
+          // the ring that stood on it, broken in half and lying where it fell
+          for (const [dx, dz, ry] of [[-5.5, 3.2, 0.5], [4.8, -4.4, 2.3]]) {
+            kit.slab(M.duracreteWarm, 8.5, 1.5, 1.6, dx, 0.8, dz, { tile: 2.4, seg: 4, ry });
+          }
+          for (let i = 0; i < 4; i++) {
+            const a = i * Math.PI / 2 + 0.4;
+            addColumn(world, local(Math.cos(a) * 6.4, Math.sin(a) * 6.4), {
+              kit, height: 11, radius: 0.9, seed: 4910 + i, mat: M.sandstone,
+              flutes: 0, volutes: false, standing: i === 1 ? 0.34 : i === 3 ? 0.52 : 1,
+            });
+          }
         });
-      }
 
-      // ── The landmark. An execution arena has something at its focus, and a
-      // toppled colossus gives the space a story and the fight a centrepiece to
-      // circle. Off-centre so the middle stays clear to fight in.
-      addColossus(world, at(-14, 11, 0), { height: 17, yaw: 2.1, seed: 707, ruined: true });
-      addDebrisField(world, at(-14, 11), { radius: 11, seed: 708, count: 26 });
-
-      // ── The execution pillars themselves — the reason the place has a name.
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * TAU + 0.4;
-        const cx = Math.cos(a) * 9.5, cz = Math.sin(a) * 9.5;
-        addColumn(world, at(cx, cz), {
-          height: 6.4, radius: 0.42, seed: 800 + i, mat: M.sandstone,
-          standing: i === 1 ? 0.55 : 1,
-        });
-        siteOk(world, cx, cz, { clearance: 4, spawnClear: 0 });
-      }
-
-      // ── Rock spilling in through the broken bays, and the debris of a place
-      // that has been fought in before.
+      // ── Rock spilling in where the bowl wall has come down onto the
+      // precinct, and the debris of a place that has been fought in before.
       for (let k = 0; k < 4; k++) {
-        const site = findSite(world, 30, 50, { clearance: 9, maxSlope: 0.5 });
+        const site = findSite(world, 34, 56, { clearance: 9, maxSlope: 0.5 });
         if (!site) continue;
         addOutcrop(world, site.pos, { size: 4.5 + rng() * 2.5, seed: 900 + k });
         addScree(world, site.pos, { radius: 9, count: 90, seed: 910 + k });
@@ -1477,11 +1641,12 @@ export const LEVELS = {
       // your own blade is worse than bare ground. Purely what the eye reads.
       strewGround(world, { seed: 3302, radius: 108, inner: 4, boulders: 0.85 });
 
-      // ── Rubble banked against the foot of the ring, where thirty-six bays'
-      // worth of fallen masonry would actually be. A wall standing on clean
-      // sand is a wall that was put there this morning. Five arcs of it rather
-      // than one per bay: each covers 72° of the circumference, and five
-      // instanced calls buy what thirty-six would have cost in draw calls.
+      // ── Rubble banked against the foot of the order, where fourteen thirty
+      // metre columns' worth of fallen masonry would actually be. A wall
+      // standing on clean sand is a wall that was put there this morning. Five
+      // arcs of it rather than one per bay: each covers 72° of the
+      // circumference, and five instanced calls buy what fourteen would have
+      // cost in draw calls.
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * TAU + 0.21;
         addScree(world, at(Math.cos(a) * (R - 4) * 0.62, Math.sin(a) * (R - 4) * 0.62),
@@ -1490,17 +1655,22 @@ export const LEVELS = {
             field: stoneField(world) });
       }
 
-      // ── Fallen columns and broken plinths lying in the sand across the bowl.
-      // Horizontal masonry at ground level is exactly the size band the floor
-      // was missing: too big to be litter, too small to be architecture.
-      for (let k = 0; k < 7; k++) {
-        const site = findSite(world, 20, 50, { clearance: 6, maxSlope: 0.4, tries: 20 });
+      /* ── FALLEN DRUMS across the floor, and they are the size band this
+       * level's floor is now missing rather than the one it used to miss.
+       *
+       * A 30 m shaft comes down as eight drums 2.3 m across and nearly 4 m
+       * long, each one a boulder somebody quarried. `standing` under about 0.4
+       * is `addColumn`'s stump-with-its-shaft-beside-it case, and at radius 1.9
+       * what it leaves lying in the sand is a cylinder you have to go round —
+       * cover at the scale of the building rather than a kerb.
+       */
+      for (let k = 0; k < 8; k++) {
+        const site = findSite(world, 22, 56, { clearance: 9, maxSlope: 0.4, tries: 20 });
         if (!site) continue;
-        // `standing` below about 0.4 is a stump with its shaft lying beside it
         addColumn(world, site.pos, {
-          height: 5.4 + rng() * 2.4, radius: 0.42 + rng() * 0.18,
-          yaw: rng() * TAU, seed: 3500 + k, standing: 0.14 + rng() * 0.22,
-          mat: M.sandstone,
+          height: 13 + rng() * 8, radius: 1.5 + rng() * 0.6,
+          yaw: rng() * TAU, seed: 3500 + k, standing: 0.14 + rng() * 0.20,
+          mat: M.sandstone, flutes: 0, volutes: false,
         });
       }
       for (let k = 0; k < 2; k++) {
@@ -1508,9 +1678,9 @@ export const LEVELS = {
         if (site) addPlinth(world, site.pos, { width: 2.6 + rng() * 1.6, height: 1.1 + rng() * 0.7, seed: 3600 + k });
       }
 
-      // ── And outside the ring: the ground the horde walks in over. It was
-      // completely bare, which is what you saw through every broken bay.
-      strewGround(world, { seed: 3303, radius: 165, inner: 62, boulders: 1.1, grit: 0.3 });
+      // ── And outside the peristyle: the ground the horde walks in over. It
+      // was completely bare, which is what you saw through every broken bay.
+      strewGround(world, { seed: 3303, radius: 165, inner: 68, boulders: 1.1, grit: 0.3 });
       strewWrecks(world, { count: 4, rmin: 74, rmax: 168, seed: 2640 });
       // Two groups, not four: `addRock` is a draw call apiece and the instanced
       // landmark grade inside strewGround already covers this ground. These are
@@ -1525,13 +1695,14 @@ export const LEVELS = {
         });
       }
       for (let k = 0; k < 4; k++) {
-        const site = findSite(world, 66, 168, { clearance: 11, maxSlope: 0.5, tries: 20 });
-        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.5, seed: 4600 + k });
+        const site = findSite(world, 74, 168, { clearance: 11, maxSlope: 0.5, tries: 20 });
+        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.5, seed: 5600 + k });
       }
       for (let k = 0; k < 3; k++) {
-        const site = findSite(world, 80, 170, { clearance: 16, maxSlope: 0.55, tries: 24 });
+        const site = findSite(world, 86, 170, { clearance: 16, maxSlope: 0.55, tries: 24 });
         if (site) addOutcrop(world, site.pos, { size: 7 + rng() * 5, seed: 3800 + k });
       }
+      world.notify('THE SANCTUM', 'it was holy once');
     },
   },
 
@@ -2263,3 +2434,5 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   cavern: ['gate'],
   temple: ['gate'],
 });
+
+
