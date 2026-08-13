@@ -1,6 +1,26 @@
 /**
  * SABER — a stylised render path, as an experiment.
  *
+ * ── SUPERSEDED. READ src/toon/Cel.js INSTEAD. ─────────────────────────────
+ *
+ * The game is cel shaded now, and it is not shaded by this file. This one
+ * SWAPS MATERIALS, and the verdict on it was "there will be PBR leftovers
+ * everywhere" — correctly, because a sweep over MeshStandardMaterial cannot
+ * reach a material carrying an onBeforeCompile (the terrain, i.e. most of the
+ * frame), cannot reach a hand-written ShaderMaterial (the grass, the water, the
+ * sky dome), and cannot reach anything built after it runs (a severed limb, a
+ * fractured chunk). src/toon/Cel.js rewrites three's BRDF chunks instead, once,
+ * so every material in the build is cel shaded including the ones that do not
+ * exist yet.
+ *
+ * This file is kept because `toon.html` is still the A/B page and because the
+ * four bugs written up in OutlinePass below — the inked sky, the inked cloud
+ * rectangles, the inked saber quad and the grass stipple — are the record of
+ * how the ink in src/toon/Ink.js came to have the four exclusions it has. Read
+ * it as a lab notebook, not as the renderer.
+ *
+ * ──────────────────────────────────────────────────────────────────────────
+ *
  * This is NOT wired into the game. It exists so the question "should this game
  * be cel-shaded?" can be answered by looking at the real thing rather than by
  * arguing about it, and it is deliberately additive: nothing under src/game or

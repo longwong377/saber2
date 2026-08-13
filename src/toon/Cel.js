@@ -54,6 +54,13 @@
  *    shadow side of everything is one flat colour — the sky's colour, which is
  *    what makes shadows read as coloured shapes rather than as darkness.
  *
+ *    …and its CHROMA is trimmed, because that flat colour is now literally the
+ *    colour of every shadow in the game and at full strength the canyon's blue
+ *    fill repainted its coral cliffs. See saberCelAmbient. A light that owns no
+ *    shadow map is part of this term rather than a second key — see
+ *    saberCelShape, which is what keeps a surface at TWO tones rather than the
+ *    four a sun terminator crossing a fill terminator would give it.
+ *
  * 5. CAST SHADOWS ARE HARD (rule 2). The filter still runs — its 50% contour is
  *    a far better silhouette than a single tap, and it is what keeps acne out —
  *    but its output is stepped, so there is no penumbra anywhere.
