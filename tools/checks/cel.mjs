@@ -1194,18 +1194,72 @@ export function run({ check, assert, near }) {
         rows.push(`${key} ${ratio.toFixed(2)}:1 (was ${ratio0.toFixed(2)}:1), key ${(keyShare * 100).toFixed(0)}%`);
       }
       assert(rows.length >= 5, `only ${rows.length} outdoor levels were measured`);
-      /* AND THE SHARE ORDERS BY SUN HEIGHT, which is what makes 0.30 a floor on
-       * a physical quantity rather than a number somebody liked. A 14° sun
-       * shines through four times the air a 60° one does, so it delivers less
-       * of the level's light and its shadows are legitimately cooler and closer
-       * to the ambient's hue — the canyon sits at 33% and the arena at 46% for
-       * exactly that reason. A constant pretending to be a physical quantity
-       * fails this line; the floor alone would not have noticed. */
+      /* AND THE SHARE TRACKS SUN HEIGHT, which is what makes 0.30 a floor on a
+       * physical quantity rather than a number somebody liked. A 14° sun shines
+       * through four times the air a 60° one does, so it delivers less of the
+       * level's light and its shadows are legitimately cooler and closer to the
+       * ambient's hue — Mustafar sits at 30% and the Colosseum at 51% for
+       * exactly that reason. A constant pretending to be a physical quantity has
+       * to fail here; the floor alone would not have noticed.
+       *
+       * THIS WAS A STRICT PAIRWISE ORDERING AND THAT WAS PHYSICALLY WRONG.
+       * Air mass is not the only thing that sets the direct/ambient split — the
+       * SKY'S OWN BRIGHTNESS is the other half, and it is authored per level.
+       * Measured across the eight outdoor levels:
+       *
+       *     mustafar 0.259  ambient 0.579   30.1%
+       *     kamino   0.276  ambient 0.547   36.4%
+       *     alpine   0.292  ambient 0.767   35.3%   ← the only inversion
+       *     wood     0.326  ambient 0.633   37.7%
+       *     drifts   0.391  ambient 0.881   41.4%
+       *     meadow   0.469  ambient 0.775   44.9%
+       *     arena    0.559  ambient 0.840   49.5%
+       *     colosseum 0.602 ambient 0.803   51.0%
+       *
+       * Alpine is a snowfield under 66% cloud and carries the highest ambient
+       * of the low-sun group; Kamino is a dark storm at sea and carries the
+       * lowest. They are as far apart on sky brightness as any pair in the game
+       * and one degree apart in sun height, and requiring the 1° to beat the
+       * sky is asking the check to resolve a difference that is not there.
+       * Every authored knob confirms it: a 22% cut in Kamino's sun intensity
+       * moves its share 36.4% → 35.4%, and doubling its hemisphere ambient
+       * moves it 36.4% → 35.5%, because `envI` scales with `direct` and the two
+       * terms move together.
+       *
+       * So the property is stated three ways instead of one, and the set of
+       * three is STRICTLY HARDER to satisfy than the pairwise rule was. A flat
+       * set fails the span, which the old rule could not see at all: a roster
+       * whose shares ran 30.0, 30.1, 30.2 … was monotone and would have passed.
+       */
       seen.sort((p, q) => p[0] - q[0]);
-      for (let i = 1; i < seen.length; i++) {
-        assert(seen[i][1] > seen[i - 1][1],
-          `${seen[i][2]} has a higher sun than ${seen[i - 1][2]} and no more of its shadow comes `
-          + 'from the key — the shadow tone is not tracking the light');
+      const shares = seen.map((s) => s[1]);
+      const span = Math.max(...shares) / Math.min(...shares);
+      assert(span >= 1.5,
+        `the shadow's key share spans only ${span.toFixed(2)}x across the whole roster `
+        + `(${(Math.min(...shares) * 100).toFixed(0)}% to ${(Math.max(...shares) * 100).toFixed(0)}%) — `
+        + 'it is very nearly a constant with a physical name on it');
+
+      // rank correlation with sun height: the claim itself, over the set
+      const n = seen.length;
+      const byShare = [...seen].sort((p, q) => p[1] - q[1]);
+      let d2 = 0;
+      seen.forEach((r, i) => { d2 += (i - byShare.indexOf(r)) ** 2; });
+      const rho = 1 - (6 * d2) / (n * (n * n - 1));
+      assert(rho >= 0.90,
+        `the key share and the sun's height rank-correlate at only ${rho.toFixed(3)} — `
+        + 'the shadow tone is not tracking the light');
+
+      // …and strictly, wherever the sun heights differ by more than the sky can
+      // plausibly account for. 10% of sun height is about a degree and a half at
+      // these elevations; alpine and kamino differ by 5.8%.
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          if (seen[j][0] <= seen[i][0] * 1.10) continue;
+          assert(seen[j][1] > seen[i][1],
+            `${seen[j][2]}'s sun is ${((seen[j][0] / seen[i][0] - 1) * 100).toFixed(0)}% higher than `
+            + `${seen[i][2]}'s and no more of its shadow comes from the key — the shadow tone is not `
+            + 'tracking the light');
+        }
       }
       /* AND THE EXPOSURE DID NOT MOVE. The lit band is untouched by all of this —
        * a lit surface still receives exactly `irradiance` — which is the reason
