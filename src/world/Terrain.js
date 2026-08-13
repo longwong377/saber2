@@ -1334,6 +1334,83 @@ export const TERRAIN_PRESETS = {
     rockAt(x, z, slope) { return clamp(slope * 4.35 - 0.43, 0, 1); },
   },
 
+  /**
+   * THE BOG. A drowned forest floor, and the one landform in this file whose
+   * job is to be CLOSE.
+   *
+   * Every other outdoor preset here is built for distance: a dune train, a
+   * canyon wall, a cirque, three painted ranges. This one is the opposite
+   * claim, and the whole of it is in one number — the relief is under 3.5 m
+   * over the entire 480 m map. There is nothing to see over and nothing to
+   * navigate by, because in a dense wood there is nothing to see over and
+   * nothing to navigate by: what you steer by is the trees, and the trees are
+   * props (see src/world/Trees.js).
+   *
+   * What the ground does instead is DRAIN. It is a mosaic of hummocks standing
+   * a metre and a half out of standing water, with the channels between them
+   * connected — so the walkable ground is a network rather than a plane, and
+   * crossing the level means picking a line through it. Two scales do it: a
+   * 46 m ridged field for the hummocks and a 12 m one for the tussocks on top
+   * of them, with the water table at 0.
+   *
+   * `damp: 0.9` is the highest in the file and it is what makes the material
+   * read as a swamp rather than as a lawn: the shader darkens and saturates
+   * toward the water table, so the ground gets visibly wetter as it goes down
+   * into a channel instead of meeting the water on a line.
+   */
+  bog: {
+    scale: 480, res: 240, waterLevel: 0.0,
+    /* One hue family, and it is not green. The COVER is green — the grass
+     * field carries the moss and the fern — so the ground under it is the peat
+     * and leaf litter that a forest floor actually is: a very dark warm brown
+     * at 28°, against the cover's 95°. Authoring the soil green as well is
+     * what turns a wood into a golf course. */
+    sandColor: 0x3f3527, rockColor: 0x4a4a44,
+    maps: 'soil',
+    gritColor: 0x33301f, rockColor2: 0x38423a,
+    // the two ends of the 58 m patchwork: dry leaf litter against black peat
+    dustColor: 0x584a33, crustColor: 0x2a2a1e,
+    // Nothing here is steep enough to be rock; what stone there is sits in the
+    // water as boulders, and the dressing puts it there.
+    slopeBands: [0.16, 0.42, 0.08, 0.24],
+    stoneSlope: 0.34,
+    crust: 0.0, damp: 0.9, strataH: 2.0,
+    wind: [0.36, 0.93],
+    macro: [58, 0.42, 0.30, 1.05],
+    lagColor: 0x3a3b2c, sheetColor: 0x63563c,
+    /* Peat, and it is the deepest and slowest-recovering surface in the game
+     * after the alpine snowpack. A footprint in saturated peat fills with
+     * water and stays: 0.20 m of give and 420 s of e-folding, which is seven
+     * minutes — longer than a run spends here. */
+    loose: { depth: 0.20, refill: 420, tilt: 0.72, tint: 0.52, soot: 1.0 },
+    packedColor: 0x241f14,
+    // Water does not ripple a forest floor into corduroy.
+    ripple: 0.25, ripAspect: 1.0,
+    detail: [1.15, 26],
+    height(x, z) {
+      /* The hummocks: a ridged field at 46 m, squared so the tops are broad
+       * and the channels between them are narrow — which is the shape of
+       * ground that drains, and the opposite of the smooth swell an fbm gives.
+       */
+      const hum = Math.pow(Math.max(0, ridged2(x * 0.0215, z * 0.0215, 3)), 1.35) * 3.2;
+      // tussock on top of the hummocks, and nothing in the channels: the
+      // gating is what stops this reading as noise laid over everything
+      const tus = Math.max(0, ridged2(x * 0.084 + 3.7, z * 0.084 - 1.2, 2) - 0.30)
+        * 0.85 * Math.min(1, hum * 0.55);
+      // the channels themselves, cut a little below the water table so they
+      // hold standing water rather than meeting it exactly on a line
+      const cut = -Math.max(0, 0.44 - hum) * 1.5;
+      // a bank round the edge of the map, so the wood does not end in a cliff
+      // of sky: 6 m over 90 is 4°, which reads as ground rising into the trees
+      const d = Math.hypot(x, z);
+      const rim = smoothstep(150, 240, d) * 6.0;
+      return hum + tus + cut + rim + fbm2(x * 0.13, z * 0.13, 3) * 0.16 - 0.35;
+    },
+    // Nothing on this level is steep enough to strip to rock; the boulders in
+    // the water are props. Matched to the 0.16 → 0.42 band above.
+    rockAt(x, z, slope) { return clamp(slope * 3.85 - 0.62, 0, 1); },
+  },
+
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

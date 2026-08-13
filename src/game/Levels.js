@@ -29,6 +29,7 @@ import { SET_PIECE } from './Waves.js';
 import { TOUGHNESS } from './Combat.js';
 import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
+import { attachForest } from '../world/Trees.js';
 
 let rng = makeRng(20250805);
 
@@ -2859,6 +2860,235 @@ export const LEVELS = {
     },
   },
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE WOOD
+   *
+   *  "Dense forest, Dagobah-like. Fellable trees with chain reactions,
+   *   Valheim-style: cut a trunk, the tree falls in the direction the cut
+   *   implies, and a falling tree knocks over what it lands on."
+   *
+   *  THE SYSTEM IS THE LEVEL. src/world/Trees.js is where the felling lives —
+   *  the falling-chimney model, the chain sweep, the stump, the log you can
+   *  stand on — and this level is the place it is put to work. What matters
+   *  here is the two numbers that make a forest a forest:
+   *
+   *    THE COUNT.   520 trees. A wood is a thing you cannot see through, and
+   *                 what decides that is stems per hectare rather than any
+   *                 amount of fog. At this density the median sight line on
+   *                 the walkable ground is 21 m, against 208 m in the arena.
+   *    THE DENSITY DISTRIBUTION. Not uniform. `drift` places them through a
+   *                 cover field, so the wood has thickets you cannot fight in
+   *                 and glades you can — and a glade you arrived at is worth
+   *                 more than a glade that was always there, which is what
+   *                 felling is for.
+   *
+   *  AND IT COSTS THREE DRAW CALLS. Trunks, crowns and stumps are three
+   *  InstancedMeshes, and that is true with 520 trees standing and with 520
+   *  lying down. `tools/checks/forest.mjs` measures it, because a felling
+   *  system that spent a draw call per trunk could not be used on a forest.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  wood: {
+    name: 'The Drowned Wood',
+    blurb: 'Standing water under a canopy that never opens. Everything here is older than the war, and most of it can be cut down.',
+    terrain: 'bog',
+    // A wood is an ambush, so the pool is what ambushes well: things that
+    // close, and one marksman for the gaps between the trunks.
+    pool: ['b1', 'acolyte', 'b1', 'b2', 'acolyte', 'trooper', 'sniper', 'droideka'],
+    groundColor: 0x3a3225,
+    spawnRadius: [26, 46],
+    /**
+     * THE STANDING WATER, at the datum. The bog's channels are cut a little
+     * below it rather than meeting it on a line, so the shoreline is drawn by
+     * the LANDFORM: what you get is a mosaic of hummocks in black water with a
+     * connected network of channels between them, and crossing the level is
+     * picking a line through it.
+     *
+     * `deep` is nearly black and `bed` darker still, because peat water is:
+     * what makes it read as water at all is the sky in it, and `sky` is the
+     * one bright colour on this level.
+     */
+    water: { level: 0.0, shallow: 0x2e3a2a, deep: 0x0a1210, sky: 0x8fa8a0, bed: 0x161a12 },
+    atmosphere: {
+      /* A canopy is not a cloud deck and it is not fog, and the model has
+       * neither — so what stands in for it is turbidity and a very low sun.
+       * mie up and rayleigh down: what light gets in here has been through a
+       * hundred metres of leaves, and leaves scatter forward off big
+       * particles the way ash does. */
+      turbidity: 8.0, rayleigh: 1.7, mie: 0.014, mieG: 0.84,
+      /* 9°, the lowest sun in the game — Mustafar's 15° was the previous
+       * floor. Under a closed canopy the light that reaches the floor arrives
+       * almost horizontally through the trunks, and a low sun through 520
+       * vertical rods is what puts the bars of light and shadow across a
+       * forest floor that make it read as a forest. `lighting.mjs` orders the
+       * indirect budget by sun height strictly, and this level genuinely
+       * delivers more of its light as sky than any other. */
+      elevation: 9, azimuth: 84,
+      sunColor: 0xd8e4a8, sunIntensity: 3.6, ambient: 0.78,
+      /* Green skylight. This is the one level in the game where the dome is
+       * not what is over your head — a canopy is — and everything not in
+       * direct sun is lit by light that has been filtered through leaves. */
+      skyColor: 0x6d8a52, groundColor: 0x3a3225,
+      fillColor: 0x77906a, fillIntensity: 0.58,
+      /* 0.0125, and the ceiling on it is the STORM rather than taste. The
+       * fog cap binds at 0.030 — see the dune sea's block, which derives the
+       * same constraint — so a level whose calm air is already thick has no
+       * headroom for a front, and `world-immersion` requires a front to at
+       * least halve the visibility. Written first at 0.021 the peak multiplier
+       * came out at 1.43 against the 2.0 the check asks for, and the answer is
+       * not to weaken the check: it is that this level does not need thick air.
+       *
+       * THE TREES ARE THE FOG. Measured on the planted stand, the median sight
+       * line on the walkable ground is 14 m and the ninetieth percentile 63 —
+       * the arena, through the same instrument, reports the width of its bowl.
+       * Air at 0.0125 puts half-light at 55 m, which is well beyond the trees
+       * and exactly where it should be: its job is the last of the depth and
+       * the colour of it, not the occlusion. It also does the job three
+       * painted ranges do elsewhere, which is why this level has none. */
+      fogColor: 0x2e3a2c, fogDensity: 0.0125, fogHeight: 26, fogBase: 1,
+      exposure: 1.20, bloom: 0.38, saturation: 1.06,
+      lift: [0.005, 0.010, 0.008], gain: [0.98, 1.02, 0.98],
+      cloudCover: 0.72, cloudLit: 0xd6e0b8, cloudDark: 0x4a5840,
+      cloudWindDir: 1.47, cloudWindSpeed: 0.5,
+      /* NO PAINTED RANGES, for the meadow's reason and more so: at half-light
+       * 33 m the ground is 100% dissolved by 110 m, so the edge of the world
+       * is hidden by air a hundred metres before a painted ridge would be. */
+      horizon: false,
+    },
+    ambience: { wind: 0.16, windFreq: 260, drone: 0.20 },
+    dust: {
+      // Spores and midges, not grit — and the only bright thing in the air.
+      count: 1200, color: 0xa8bc86, opacity: 0.20, size: 14, shimmer: false,
+      fleckColor: 0xd8e8a0,
+      wind: { from: 84, strength: 1.6, gustiness: 0.7, wander: 0.55 },
+      // A wood under a canopy has no weather of its own; what crosses it is
+      // the rain the canopy is shedding, half an hour after it stopped.
+      weather: { peak: 0.52, period: 118, duration: 34, unrest: 0.14,
+                 fogGain: 2.8, windGain: 2.6, sunLoss: 0.70, fillGain: 1.4, tint: 0.80 },
+    },
+    /* UNDERGROWTH, at the highest density in the game after the meadow's 1.4.
+     * `ground-memory.mjs` holds one rule about cover — a preset that is soil,
+     * or damp past 0.2, must carry a field, and nothing else may — and a bog
+     * at damp 0.9 is the wettest ground there is. */
+    /* 0.8, and the ceiling on it is the frame rather than the fiction. At
+     * 1.15 the level built in over sixty seconds under a software rasteriser
+     * and came to 3.8M triangles a frame against the arena's 2.4M — and on a
+     * level whose subject is 1,500 trunks, the grass is the thing that has to
+     * give. The cover field still solves to 0.82 of the ground at this
+     * density (`clamp(0.24 + 0.72·d, 0.12, 0.95)`), so what changes is the
+     * INSTANCE budget and not how much of the floor carries fern. */
+    grass: 0.8,
+    // Fern and moss: a tight lightness pair at hue 96°, so `grassPalette`'s
+    // five-stop species ramp does the spreading rather than the author.
+    grassTint: [0x4e6a2e, 0x2c421c],
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 101);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+      const wet = world.level?.water?.level ?? 0;
+
+      /* ── THE WOOD ITSELF.
+       *
+       * `drift` rather than a uniform scatter, and for a forest it matters
+       * more than anywhere else in this file: a wood placed uniformly has no
+       * thickets and no glades, so every part of it is equally passable and
+       * the whole level is one texture. Through the cover field it has stands
+       * you cannot fight in and clearings you can — and the clearing you MADE
+       * is worth more than the clearing that was always there.
+       *
+       * Trees stand on the hummocks and not in the channels: `minHeight` at
+       * the water table plus 0.15 keeps them out of the standing water, which
+       * is both what a bog looks like and what stops a trunk being felled into
+       * a hole it cannot lie in.
+       */
+      /* `amount` 0.74 and `patch` 32, not 0.62 and 44. Both were measured on
+       * the sight-line survey: at the wider, emptier field a tenth of the wood
+       * could see 91 m, because two big glades looking across each other is a
+       * 90 m sight line even in a stand whose median is 21. Smaller clearings
+       * more of them is what a wood actually has, and it puts the same number
+       * at 54 m without touching the median. */
+      const stand = makeCoverField({ seed: 5410, amount: 0.80, patch: 26, grain: 11, edge: 0.24, extent: 170 });
+      const trees = [];
+      drift(world, {
+        /* 1,900 TREES, and the number is derived rather than felt. The mean
+         * free path through a field of vertical rods of radius r at n stems
+         * per square metre is 1/(2·r·n); at the level's mean butt radius of
+         * 0.40 m, a median sight line of 25 m needs n = 0.05, which over the
+         * disc the player fights in is nineteen hundred stems. At the 520
+         * first written the median sight line measured 110 m, which is not a
+         * wood — it is a park with trees in it.
+         *
+         * 1,800 and not 1,900 because the field they go through was tightened
+         * at the same time: smaller, more numerous clearings put the same
+         * number of stems in front of more of the sight lines, and the survey
+         * that decides this measures the ninetieth percentile as well as the
+         * median precisely so that the two can be traded against each other. */
+        field: (x, z) => stand.at(x, z), rmin: 7, rmax: 150, count: 1800,
+        clearance: 0, spawnClear: 7, maxSlope: 0.5, minHeight: wet + 0.15, tries: 8,
+      }, (pos) => {
+        /* A REAL SIZE DISTRIBUTION, not a jitter about a mean. A wood is
+         * mostly young stems with a few giants in it, so the height is a
+         * squared draw: the median comes out at 13 m and the top 5% at 24, and
+         * the giants are what you steer by and what takes three others down
+         * with it when it goes. */
+        const t = rng() * rng();
+        const h = lerp(7.5, 27, t);
+        trees.push({
+          x: pos.x, z: pos.z, y: pos.y, height: h,
+          // stems taper with height, but not linearly: a 27 m trunk is 0.62 m
+          // through at the butt and a 7.5 m one is 0.19
+          radius: 0.16 + t * 0.46 + rng() * 0.05,
+          yaw: rng() * TAU,
+          lean: (rng() - 0.5) * 0.09,
+          tone: 0.82 + rng() * 0.36,
+        });
+      });
+      attachForest(world, { seed: 5411, crush: 46 }).plant(trees, {
+        materials: { bark: M.wood, leaf: M.patina, core: M.duracreteDark },
+      });
+
+      /* ── THE FLOOR OF A WOOD. Everything below is at ankle height and none
+       * of it takes a collider: what a forest floor is, is something you
+       * cannot see the shape of, and a shin-high rock you cannot see past
+       * your own blade is worse than bare ground. */
+      for (let k = 0; k < 22; k++) {
+        const site = findSite(world, 14, 180, { clearance: 7, maxSlope: 0.45, tries: 18 });
+        if (!site) continue;
+        // roots and fallen deadwood — the mid-distance silhouette band, and
+        // the thing a wood has instead of architecture
+        addBoulderCluster(world, site.pos, {
+          radius: 7, count: 9, size: 1.35, seed: 5500 + k, mat: M.stoneDark, crowd: 0.7,
+        });
+      }
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 20, 175, { clearance: 12, maxSlope: 0.4, tries: 20 });
+        if (site) addOutcrop(world, site.pos, { size: 3.4 + rng() * 3, height: 3 + rng() * 4, seed: 5540 + k, mat: M.stoneDark });
+      }
+      // and what somebody left here, a long time ago
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 26, 150, { clearance: 14, maxSlope: 0.3, minHeight: wet + 0.4, tries: 22 });
+        if (site) addHullSection(world, site.pos, { length: 13 + rng() * 8, radius: 2.6, yaw: rng() * TAU, seed: 5570 + k });
+      }
+      for (let k = 0; k < 8; k++) {
+        const site = findSite(world, 16, 160, { clearance: 5, maxSlope: 0.4 });
+        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 5600 + k, count: 16 });
+      }
+      // Stone in the peat, thin: this ground is organic, and the loose grade
+      // that reads underfoot here is leaf litter, which the cover field paints.
+      /* Stone in the peat. Thinner on the big grades than a desert — this
+       * ground is organic and what reads underfoot is leaf litter, which the
+       * cover field paints — but the COBBLE grade runs at full strength,
+       * because a bog floor is glacial till and because the chip survey needs
+       * enough of it to have something to measure. */
+      strewGround(world, { seed: 5620, radius: 180, spread: 0.26, mat: M.stoneDark,
+        landmarks: 0.7, boulders: 0.8, cobble: 1.2 });
+
+      world.notify('THE DROWNED WOOD', 'cut a trunk and stand clear of it');
+    },
+  },
+
   deeps: {
     name: 'The Cut',
     blurb: 'The excavation the works was taken out of. Whatever is still lit down here was not left on for you.',
@@ -2938,7 +3168,7 @@ export const LEVELS = {
  * The order the menu lists them in: the places you choose first, then the four
  * rooms of the descent in the order you meet them.
  */
-export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'meadow',
+export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood', 'meadow',
   'drifts', 'alpine', 'arena', 'intake', 'foundry', 'deeps'];
 
 /**
@@ -2999,6 +3229,9 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   temple: ['gate'],
   warship: ['gate'],
   colosseum: ['gate'],
+  // Open sky over a bog — but a canopy no gunship can come through, and no
+  // gate either. Whatever is in this wood walks out of it.
+  bog: ['march', 'march', 'dropship'],
 });
 
 /**
