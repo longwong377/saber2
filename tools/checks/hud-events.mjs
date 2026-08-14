@@ -583,30 +583,46 @@ export async function run({ check, assert }) {
      * Two of the nine gates were the wrong number outright — lightning at 14
      * against a real 30, stasis at 30 against a real 26 — so the wheel said
      * READY and the key answered "30 FORCE NEEDED, YOU HAVE 20", and dimmed a
-     * power for four Force it did not need. Every number in POWER_COST is
-     * matched against the line of Player.js that spends it; the named pattern
-     * is part of the contract, exactly as SETTING_READERS' substrings are.
+     * power for four Force it did not need.
+     *
+     * This used to be nine regular expressions matching each number against
+     * the line of Player.js that spends it, which is the best a check can do
+     * while the two sides keep separate copies. They do not any more:
+     * src/game/Powers.js is a leaf module both import — a leaf because
+     * HUD → Player → Menu → HUD is a real cycle — so the assertion moves from
+     * "do the copies agree" to "is there still only one copy". A bare literal
+     * anywhere in Player's spend path is the defect returning.
      */
-    const SPENT_AT = {
-      push: /_spend\((\d+)\)\) return this\._refuse\('force push'/,
-      pull: /_spend\((\d+)\)\) return this\._refuse\('force pull'/,
-      grip: /_canSpend\((\d+)\)\) return;/,
-      throw: /if \(!this\.saber\.lit \|\| this\.force < (\d+)/,
-      sense: /if \(this\.force < (\d+)\) return;\s*\n\s*this\.senseActive = true/,
-      lightning: /const cost = (\d+) \* this\.boonMods\.forceCost/,
-      stasis: /_spend\((\d+)\)\) return this\._refuse\('force stop'/,
-      heal: /const HEAL_COST = (\d+)/,
-      compel: /const COMPEL_COST = (\d+)/,
-    };
-    const wrong = [];
-    for (const [key, re] of Object.entries(SPENT_AT)) {
-      const m = PLAYER_SRC.match(re);
-      assert(m, `Player.js no longer spends ${key} in the shape this check knows — re-read it`);
-      const paid = Number(m[1]);
-      const quoted = POWER_COST[key]?.force;
-      if (paid !== quoted) wrong.push(`${key}: wheel says ${quoted}, Player charges ${paid}`);
+    for (const key of Object.keys(POWER_COST)) {
+      assert(typeof POWER_COST[key] === 'number' && POWER_COST[key] > 0,
+        `POWER_COST.${key} is ${JSON.stringify(POWER_COST[key])}, not a price`);
     }
-    assert(!wrong.length, wrong.join('; '));
+    assert(Object.keys(POWER_COST).length === POWERS.length,
+      `the wheel draws ${POWERS.length} powers and prices ${Object.keys(POWER_COST).length}`);
+    for (const key of Object.keys(POWER_COST)) {
+      assert(new RegExp(`POWER_COST\\.${key}\\b`).test(PLAYER_SRC),
+        `Player.js never names POWER_COST.${key}, so the ${key} price has been typed in again `
+        + 'somewhere and the wheel can drift off it');
+    }
+    /* …and no bare number equal to one of the nine prices survives in a spend
+     * or a comparison against the bar. The continuous drains — the air jump's
+     * 12, the grip's per-second bite, sundering's 38 — are not wheel powers
+     * and are deliberately left alone; this only fires on a price that has
+     * been written out longhand next to the table that already holds it. */
+    const bare = [];
+    const scan = (re, what) => {
+      for (const m of PLAYER_SRC.matchAll(re)) {
+        const n = Number(m[1]);
+        const hit = Object.entries(POWER_COST).find(([, v]) => v === n);
+        if (hit) bare.push(`${hit[0]} written as ${what} ${n}`);
+      }
+    };
+    scan(/_(?:can)?[Ss]pend\(\s*(\d+)\s*\)/g, '_spend(');
+    scan(/this\.force\s*[<>]=?\s*(\d+)/g, 'this.force <');
+    scan(/this\.force\s*-=\s*(\d+)/g, 'this.force -=');
+    assert(!bare.length,
+      `Player.js prices a power in place — ${bare.join('; ')} — instead of reading Powers.js, which `
+      + 'is how the wheel and the key came to disagree in the first place');
 
     // …and the gate is the player's own, so the two settings that move the
     // price move the wheel with them.
@@ -625,9 +641,14 @@ export async function run({ check, assert }) {
       // Player._spend returns true unconditionally there.
       world.settings.forceDrain = 0;
       p.force = 1;
+      p.boonMods.lightning = true;
       hud.update(1 / 60, world, p, cam);
-      assert(ready('push') && ready('heal') && ready('compel'),
-        'with Drain at 0 every power is free, and the wheel still greys them out');
+      const dim = ['push', 'pull', 'grip', 'throw', 'sense', 'lightning', 'stasis', 'heal', 'compel']
+        .filter((k) => !ready(k));
+      assert(!dim.length,
+        `with Drain at 0 — the slider labelled "unlimited Force" — the wheel still greys out `
+        + `${dim.join(', ')}. Throw, sense and lightning bypassed Player's own economy, so the `
+        + 'setting freed six powers and kept charging for three.');
       // A boon that halves the cost is the other direction.
       world.settings.forceDrain = 1;
       p.force = 30;
@@ -640,7 +661,8 @@ export async function run({ check, assert }) {
       p.force = 100;
       hud.update(1 / 60, world, p, cam);
       assert(!ready('lightning'), 'the wheel marks Force Lightning ready for a player who never drafted it');
-      return `9 costs matched to Player.js; drain 0, half-price boons and the lightning attunement all land`;
+      return 'one price table, no bare literal left in Player; drain 0 frees all nine, and '
+        + 'half-price boons and the lightning attunement both reach the wheel';
     } finally { restore(); }
   });
 

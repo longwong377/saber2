@@ -170,10 +170,12 @@ export const DEFAULT_SETTINGS = {
   // still bit-for-bit what it always was.
   coreWidth: 0.7,
   // ── training ──────────────────────────────────────────────────────────
-  // These bite in Sandbox mode and in the dojo, and nowhere else: they are
-  // practice controls, not difficulty controls. Zero is legal for both
-  // numbers — an empty arena and a room of droids that never fire are both
-  // things a player asked for and could not have.
+  // These bite in Sandbox mode and in Training, and nowhere else: they are
+  // practice controls, not difficulty controls. (It said "in the dojo" until
+  // the panel that quotes it was audited — the dojo level was deleted with no
+  // alias, and three separate strings were still sending players there.) Zero
+  // is legal for both numbers — an empty arena and a room of droids that never
+  // fire are both things a player asked for and could not have.
   sandboxCount: 5,
   sandboxFire: 1,
   sandboxType: 'mixed',
@@ -2821,14 +2823,25 @@ export class Menu {
     // would create an AudioContext while the page is still assembling, before
     // any gesture, which every browser complains about and none will start.
     if (!this._optionsReady) return;
-    // Dragging the slider walks every archetype on the way past. One line at a
-    // time is an audition; five overlapping is the mud this whole round is
-    // about, and the engine's cap would hide it rather than fix it.
-    if (audio.speaking > 0) return;
     audio.init();
     audio.resume();
     audio.setVoiceLevel(this.s.voiceLevel);
-    audio.speak(voiceAt(index), 'streak', { gain: 1, self: true });
+    /**
+     * `audition`, NOT `speak` behind an `if (audio.speaking > 0) return`.
+     *
+     * Dragging the slider walks every archetype on the way past, and the guard
+     * that used to be here dropped every line after the first — so the slider
+     * auditioned whatever voice you happened to DRAG THROUGH and stayed silent
+     * on the one you released on. Measured on a five-step drag: it spoke the
+     * negotiator and never spoke the sage the player actually chose.
+     *
+     * `AudioEngine.audition` is leading edge plus a 180 ms trailing edge: a
+     * click answers at once, and a drag answers again with the LAST index,
+     * fading out whatever the drag left running so the chosen line is not
+     * ducked underneath it. The "Hear it" button is unaffected — a call more
+     * than 180 ms after the previous one speaks immediately.
+     */
+    audio.audition(voiceAt(index), 'streak', { gain: 1, self: true });
   }
 
   _buildButtons() {

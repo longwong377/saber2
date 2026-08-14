@@ -3372,7 +3372,24 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
   const dir = new URL('./checks/', import.meta.url);
   let files = [];
   try { files = (await readdir(dir)).filter(f => f.endsWith('.mjs')).sort(); } catch {}
+  /**
+   * ONE SUITE AT A TIME, AND SAY WHICH.
+   *
+   * `check()` pushes every async check onto `pending` and nothing awaited it
+   * until the very end, so all eighty suites' asynchronous work ran
+   * CONCURRENTLY — physics benches, headless Worlds, an HTTP server on an
+   * ephemeral port, page-driving checks — while the results buffer printed
+   * nothing at all. A run that stalled did so silently and for as long as you
+   * let it: the only way to find out where was to read /proc/<pid>/fd.
+   *
+   * So each suite's own async checks are drained before the next suite starts,
+   * which bounds the concurrency to what one file asked for, and each file is
+   * named on stderr as it begins. Stderr rather than stdout because the result
+   * table is what stdout is for, and a `| tail -60` must not eat the answer.
+   */
   for (const f of files) {
+    const from = pending.length;
+    process.stderr.write(`  … ${f}\n`);
     try {
       const mod = await import(new URL(f, dir).href);
       if (typeof mod.run === 'function') await mod.run({ check, assert, near, V, Q, THREE, lerpN });
@@ -3380,6 +3397,8 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
       fail++;
       results.push(['✗', `suite ${f}`, e.message]);
     }
+    // These never reject: check() attaches both handlers before pushing.
+    await Promise.all(pending.slice(from));
   }
 }
 

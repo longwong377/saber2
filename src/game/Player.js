@@ -20,6 +20,7 @@ import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js'
 import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale } from './Combat.js';
+import { POWER_COST } from './Powers.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -389,12 +390,12 @@ const FLIP_PIVOT = 1.02;
  * actually spawns at, so a unit in a squad always finds a neighbour and one
  * that has been driven off on its own does not.
  */
-const COMPEL_COST = 34;
+const COMPEL_COST = POWER_COST.compel;
 const COMPEL_TIME = 6.0;
 const COMPEL_SPREAD = 14;
 
 /** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
-const HEAL_COST = 40;
+const HEAL_COST = POWER_COST.heal;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
@@ -2446,7 +2447,9 @@ export class Player {
 
   forcePush(ctx) {
     if (this.cooldowns.push > 0) return this._refuse('force push', `recovering — ${this.cooldowns.push.toFixed(1)}s`);
-    if (!this._spend(20)) return this._refuse('force push', `20 Force needed, you have ${Math.round(this.force)}`);
+    if (!this._spend(POWER_COST.push)) {
+      return this._refuse('force push', `${POWER_COST.push} Force needed, you have ${Math.round(this.force)}`);
+    }
     this.cooldowns.push = 0.55;
     this._gesture('push');
     audio.force(this.chest, 'push');
@@ -2521,7 +2524,9 @@ export class Player {
 
   forcePull(ctx) {
     if (this.cooldowns.pull > 0) return this._refuse('force pull', `recovering — ${this.cooldowns.pull.toFixed(1)}s`);
-    if (!this._spend(16)) return this._refuse('force pull', `16 Force needed, you have ${Math.round(this.force)}`);
+    if (!this._spend(POWER_COST.pull)) {
+      return this._refuse('force pull', `${POWER_COST.pull} Force needed, you have ${Math.round(this.force)}`);
+    }
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
     audio.force(this.chest, 'pull');
@@ -2668,7 +2673,7 @@ export class Player {
 
   toggleGrip(ctx) {
     if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
-    if (!this._canSpend(10)) return;
+    if (!this._canSpend(POWER_COST.grip)) return;
 
     const target = this._pickGripTarget(ctx);
     this.lastGripRefusal = null;
@@ -3043,8 +3048,14 @@ export class Player {
 
   throwOrRecall(ctx) {
     if (this.throwState === 'held') {
-      if (!this.saber.lit || this.force < 14 || this.cooldowns.throw > 0) return;
-      this.force -= 14 * this.boonMods.forceCost;
+      if (!this.saber.lit || this.cooldowns.throw > 0) return;
+      /* Through `_spend`, not `this.force -= …`. The hand-rolled version
+       * applied the boon multiplier and ignored the drain slider entirely, so
+       * Force Drain at 0 — the setting whose own label reads "unlimited Force"
+       * — freed six powers and kept charging for this one. */
+      if (!this._spend(POWER_COST.throw)) {
+        return this._refuse('saber throw', `${POWER_COST.throw} Force needed, you have ${Math.round(this.force)}`);
+      }
       this.cooldowns.throw = 0.4;
       this._gesture('cast');
       this.throwState = 'flying';
@@ -3102,7 +3113,13 @@ export class Player {
       this.world.engine.setSense(0);
       return;
     }
-    if (this.force < 25) return;
+    /* `_canSpend`, not `force < 25`: Sense is a THRESHOLD rather than a cost —
+     * it takes nothing out of the bar, it stops the bar refilling while it is
+     * on (see _regen) — so the fix is to ask the economy whether the threshold
+     * applies at all, which it does not when the drain slider is at 0. */
+    if (!this._canSpend(POWER_COST.sense)) {
+      return this._refuse('force sense', `${POWER_COST.sense} Force needed, you have ${Math.round(this.force)}`);
+    }
     this.senseActive = true;
     // A one-shot, not a hold. Sense is a mode you can leave running for a whole
     // fight, and a sustained gesture would have the off hand raised — and the
@@ -3117,15 +3134,16 @@ export class Player {
     if (!this.boonMods.lightning) {
       return this._refuse('force lightning', 'not attuned — it comes from a boon, and the draft offers it');
     }
-    const cost = 30 * this.boonMods.forceCost;
     if (this.cooldowns.lightning > 0) {
       return this._refuse('force lightning', `recovering — ${this.cooldowns.lightning.toFixed(1)}s`);
     }
-    if (this.force < cost) {
+    /* This one applied the boon multiplier by hand and the drain not at all,
+     * which is the half-wired version of the same bug the throw had. */
+    if (!this._spend(POWER_COST.lightning)) {
+      const cost = POWER_COST.lightning * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
       return this._refuse('force lightning',
         `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.force -= cost;
     this.cooldowns.lightning = 1.5;
     this._gesture('lightning');
     audio.force(this.chest, 'lightning');
@@ -3387,7 +3405,9 @@ export class Player {
     // at. Two answers to "and now what", on the two keys already involved.
     if (this.stasis.active) { this.releaseStasis(ctx, true, true); return; }
     if (this.cooldowns.stasis > 0) return this._refuse('force stop', `recovering — ${this.cooldowns.stasis.toFixed(1)}s`);
-    if (!this._spend(26)) return this._refuse('force stop', `26 Force needed, you have ${Math.round(this.force)}`);
+    if (!this._spend(POWER_COST.stasis)) {
+      return this._refuse('force stop', `${POWER_COST.stasis} Force needed, you have ${Math.round(this.force)}`);
+    }
     const S = this.stasis;
     const P = this.forceScale;
     S.active = true;

@@ -75,6 +75,17 @@ export const ACTIONS = [
   // the thumb button and is the nicer way to hold it if you have one.
   { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true },
   { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'] },
+  // One key for both halves of note 61: over a fallen hilt it takes, otherwise
+  // it puts yours down.
+  //
+  // KeyM, and the first three letters I reached for were all taken — G is grip,
+  // R is ignite, F is push. That is the binding table doing its job: the shipped
+  // set already puts something under every letter within reach of WASD, and the
+  // four checks that failed when this said `KeyG` are why nobody has to
+  // remember which. M is free, it is under the same hand, and picking a weapon
+  // up off the ground is a deliberate act rather than a combat reflex, so it
+  // does not need to be the nearest key left.
+  { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'] },
 
   { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3', 'KeyT'], hold: true },
   { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'] },
@@ -103,18 +114,6 @@ export const ACTIONS = [
   // under the same hand. Every letter within reach of WASD is already spoken
   // for, and findConflict is what proves it rather than anyone's memory.
   { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'] },
-  // One key for both halves of note 61: over a fallen hilt it takes, otherwise
-  // it puts yours down.
-  //
-  // KeyM, and the first three letters I reached for were all taken — G is grip,
-  // R is ignite, F is push. That is the binding table doing its job: the shipped
-  // set already puts something under every letter within reach of WASD, and the
-  // four checks that failed when this said `KeyG` are why nobody has to
-  // remember which. M is free, it is under the same hand, and picking a weapon
-  // up off the ground is a deliberate act rather than a combat reflex, so it
-  // does not need to be the nearest key left.
-  { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'] },
-
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },
 

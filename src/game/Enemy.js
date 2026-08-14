@@ -101,7 +101,7 @@ export const ARCHETYPES = {
     speed: 3.5, toughness: TOUGHNESS.droid, ranged: true, weapon: 'e5',
     fireRate: 1.5, burst: 3, burstGap: 0.13, spread: 0.075, damage: 9,
     preferred: [7, 15], boltColor: BOLT_COLORS.red, score: 100, threat: 1,
-    voice: 'droid', hipHeight: 0.96,
+    hipHeight: 0.96,
   },
   b2: {
     label: 'B2 Super Battle Droid', build: buildB2, scale: 1.18, hp: 96, mass: 130,

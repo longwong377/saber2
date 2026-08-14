@@ -10,6 +10,7 @@ import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
 import { keyLabel } from '../engine/Bindings.js';
+import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 
 const _v = new THREE.Vector3();
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -128,40 +129,26 @@ export const POWERS = [
 ];
 
 /**
- * WHAT EACH SLOT COSTS, AND HOW ITS PRICE IS CHECKED.
+ * WHAT EACH SLOT COSTS — IMPORTED, NOT COPIED.
  *
- * `force` is the number Player spends. `gate` says which of Player's three
- * ways of asking applies, because they are not the same and the difference is
- * visible on screen:
+ * This file used to carry its own nine numbers, and it had already been burned
+ * by them once: the copies had lightning at 14 against a real 30 and stasis at
+ * 30 against a real 26. The stopgap was tools/checks/hud-events.mjs GREPPING
+ * each spend out of Player.js and matching it here, which holds only for as
+ * long as the regex recognises the shape of the line it is looking for.
  *
- *   'spend'    — goes through Player._spend/_canSpend, so `forceDrain` (the
- *                Options slider whose 0 is labelled "unlimited Force") and the
- *                `forceCost` boons both apply. Six of the nine.
- *   'boonCost' — the boon multiplier applies, the drain does not. Lightning
- *                only (Player.js:3109 `const cost = 30 * boonMods.forceCost`).
- *   'raw'      — a bare `this.force < N`, so neither applies. Throw
- *                (Player.js:3034) and Sense (Player.js:3094).
+ * It also had to describe three DIFFERENT gates, because three of Player's
+ * nine powers bypassed `_spend`/`_canSpend`: throw and sense compared raw
+ * force against a literal, and lightning applied the boon multiplier by hand
+ * but not the drain. So Force Drain at 0 — the Options slider whose own label
+ * reads "unlimited Force" — freed six powers and left three still charging,
+ * and this wheel had to state that rather than the rule.
  *
- * Every number here is a copy of one in src/game/Player.js, which is a thing
- * this file has already been burned by: the previous copies had lightning at 14
- * against a real 30 and stasis at 30 against a real 26. So they are held to the
- * original by tools/checks/hud-events.mjs, which greps the assignment out of
- * Player.js and fails if the two disagree — the same shape as SETTING_READERS.
- * The right end state is a table exported from Player and imported here; that
- * is a change to a file this lane does not own, and it is written down in the
- * handover.
+ * Both are fixed in Player. One table, one gate, one import — and the table
+ * lives in a leaf module rather than in Player, because HUD → Player → Menu →
+ * HUD is a real import cycle in this tree.
  */
-export const POWER_COST = {
-  push:      { force: 20, gate: 'spend' },
-  pull:      { force: 16, gate: 'spend' },
-  grip:      { force: 10, gate: 'spend' },
-  throw:     { force: 14, gate: 'raw' },
-  sense:     { force: 25, gate: 'raw' },
-  lightning: { force: 30, gate: 'boonCost', boon: 'lightning' },
-  stasis:    { force: 26, gate: 'spend' },
-  heal:      { force: 40, gate: 'spend' },
-  compel:    { force: 34, gate: 'spend' },
-};
+export { POWER_COST, POWER_BOON };
 
 /** A key label is drawn into innerHTML; three characters can break it. */
 const escKey = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -382,7 +369,7 @@ export class HUD {
     // exists nowhere in src/, so that slot's active border could never light.
     this._power('lightning', cd.lightning, this._afford(player, 'lightning'));
     this._power('stasis', cd.stasis, this._afford(player, 'stasis'), player.stasis?.bodies?.size > 0);
-    // `healing` is elapsed seconds or null (Player.js:927/3162), so it is `0`
+    // `healing` is elapsed seconds or null (`Player.forceHeal` sets it to 0), so it is `0`
     // on the first frame of a heal — `!!player.healing` would blink the border
     // off at exactly the moment the power starts.
     this._power('heal', cd.heal, this._afford(player, 'heal'), player.healing != null);
@@ -526,7 +513,7 @@ export class HUD {
    * `cd` is SECONDS REMAINING. It used to be a fraction the caller computed by
    * dividing by a cooldown constant typed into HUD.update, and four of the nine
    * divisors disagreed with the power they described: lightning divided by 0.35
-   * against a real 1.5 s (Player.js:3118), stasis by 0.8 against 1.4, heal by 8
+   * against a real 1.5 s (`Player.forceLightning`), stasis by 0.8 against 1.4, heal by 8
    * against 9, compel by 6 against 7. Since `clamp(cd, 0, 1)` pins anything
    * over 1 to a full shutter, Force Lightning read "just used" for 1.15 s of
    * its 1.5 s wait and then emptied in the last 0.35 s — the bar said nothing
@@ -536,7 +523,7 @@ export class HUD {
    * cooldown at all: it watches the number it is given, remembers the highest
    * value of the current wait, and draws the ratio. That is right for every
    * power automatically, including heal, whose cooldown is 9 s when it
-   * completes and 3 s when it is interrupted (Player.js:3356) — a constant
+   * completes and 3 s when it is interrupted (`Player._endHeal`) — a constant
    * divisor cannot be right for both, and a peak is right for both. Change a
    * cooldown in Player and this follows it in the same frame, with no second
    * copy of the number anywhere.
@@ -564,7 +551,7 @@ export class HUD {
    *
    * The wheel used to compare `player.force` against a literal per slot, and
    * two of the nine literals were simply the wrong price — lightning was gated
-   * at 14 against a real 30 (Player.js:3109), so the slot said READY and the
+   * at 14 against a real 30 (`Player.forceLightning`), so the slot said READY and the
    * key answered "30 FORCE NEEDED, YOU HAVE 20"; stasis was gated at 30 against
    * a real 26, so the slot dimmed for four Force it did not need. On top of
    * that, a raw comparison cannot see either of the two things that move the
@@ -576,26 +563,28 @@ export class HUD {
    * function Player uses to decide, and it reads drain and the boon multiplier
    * live. Three powers do NOT go through it in Player and are marked here
    * accordingly, because the HUD's job is to state the game that exists rather
-   * than the one it would prefer: `throw` (Player.js:3034) and `sense`
-   * (Player.js:3094) compare raw force against a literal and so ignore drain
-   * entirely, and `lightning` (Player.js:3109) applies the boon multiplier by
+   * than the one it would prefer: `throwOrRecall` and `toggleSense` compare raw
+   * force against a literal and so ignore drain entirely, and `forceLightning`
+   * applies the boon multiplier by
    * hand but not the drain. Those three are a real inconsistency in Player's
    * Force economy and are worth fixing THERE; until they are, this wheel tells
    * the truth about them. See tools/checks/hud-events.mjs, which pins every
    * number below to the line of Player.js it came from.
    */
   _afford(player, key) {
-    const spec = POWER_COST[key];
-    if (!spec || !player) return true;
-    const mods = player.boonMods?.forceCost ?? 1;
+    const cost = POWER_COST[key];
+    if (cost == null || !player) return true;
     // Force Lightning is drafted, not learned: without the boon the key
     // refuses no matter how much Force is in the bar.
-    if (spec.boon && !player.boonMods?.[spec.boon]) return false;
-    if (spec.gate === 'raw') return player.force >= spec.force;
-    if (spec.gate === 'boonCost') return player.force >= spec.force * mods;
+    const boon = POWER_BOON[key];
+    if (boon && !player.boonMods?.[boon]) return false;
+    // ONE gate for all nine — `_canSpend` is the single function Player uses to
+    // decide, and it reads the drain slider and the boon multiplier live. There
+    // used to be three gates here because three powers bypassed it; they do not
+    // any more, so the wheel no longer has to describe an exception.
     return typeof player._canSpend === 'function'
-      ? player._canSpend(spec.force)
-      : player.force >= spec.force * mods;
+      ? player._canSpend(cost)
+      : player.force >= cost * (player.boonMods?.forceCost ?? 1);
   }
 
   /** Dojo coaching panel. */
