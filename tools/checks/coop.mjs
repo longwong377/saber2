@@ -383,6 +383,79 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: a joining player\'s blade does not take the host\'s frame down', async () => {
+    /**
+     * THE HOST FREEZES, AND IT IS THE FIX FOR SOMETHING ELSE THAT DID IT.
+     *
+     * `RemoteAvatar` was put into `world.players` deliberately — that is what
+     * lets an enemy blade cut a joining player. Avatars carry a real ignited
+     * `Saber`, so `_resolveBlades` feeds their contacts to `_applyBladeEvent`
+     * exactly like a local player's. Four `addShake` calls in there read
+     * `player.camera`, and an avatar has none.
+     *
+     * `TypeError: cannot read properties of undefined (reading 'addShake')`
+     * is thrown out of `World.update()` — so the rest of the frame is
+     * abandoned ON THE HOST: no render, no director tick, no snapshot sent.
+     * With one idle avatar holding a lit blade against level geometry, an
+     * auditor measured 295 of 300 host frames abandoned. That is a freeze, not
+     * a stutter, and it takes the whole session down with it.
+     *
+     * Two of the eight Audit 3 dimensions hit it independently, one of them
+     * while measuring something unrelated — which is what a defect that fires
+     * on any contact looks like.
+     *
+     * Driven through the real `_applyBladeEvent` with a real avatar, because
+     * the whole defect is which object is in `world.players`.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { host, client, pump } = await H.bootPair();
+    pump(0.5);
+
+    /* The avatar is built HERE because `main.js:1118` is the only place the
+     * product builds one and main.js cannot be imported under Node — it
+     * dereferences the DOM at module scope. These two lines are that call
+     * site, verbatim in shape: construct, and put it in both `remotes` and
+     * `players`. Being in `players` is the whole precondition of the defect. */
+    const avatar = new RemoteAvatar(host, { id: 'PEER', name: 'Jedi', look: null });
+    host.remotes.set('PEER', avatar);
+    host.players.push(avatar);
+    assert(!avatar.camera,
+      'the avatar grew a camera — this check is then vacuous and needs a different subject');
+    assert(host.players.includes(avatar),
+      'the avatar is not in world.players, which is the precondition this measures');
+
+    // Every event kind _resolveBlades can hand a player, against a real avatar.
+    const point = new THREE.Vector3(0, 1, 0);
+    const evs = [
+      { type: 'clang', point },
+      { type: 'grind', point, target: { id: 'x' }, speed: 3 },
+      { type: 'cut', point, normal: new THREE.Vector3(0, 1, 0), impulse: new THREE.Vector3(0, 1, 0),
+        speed: 22, bone: 'armR', cutT: 0.5, target: { prop: null, enemy: null, id: 'y' } },
+    ];
+    let threw = 0;
+    for (const ev of evs) {
+      try { host._applyBladeEvent(avatar, ev, 1 / 60); } catch { threw++; }
+    }
+    assert(threw === 0,
+      `${threw} of ${evs.length} blade events thrown by a joining player threw out of the host's `
+      + '_applyBladeEvent — every one of those abandons the rest of World.update() on the host, '
+      + 'before the render, the director tick and the snapshot');
+
+    // …and the host's own frame keeps running with an avatar blade in contact.
+    let frames = 0, lost = 0;
+    for (let i = 0; i < 120; i++) {
+      try { pump(1 / 60); frames++; } catch { lost++; }
+    }
+    void client;
+    assert(lost === 0, `${lost} of ${frames + lost} host frames were abandoned with a remote blade live`);
+    const line = `${evs.length} event kinds and ${frames} frames with a remote blade in contact, `
+      + '0 thrown';
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: a replicated enemy runs the gait its body is actually covering', async () => {
     /**
      * `velocity = (netTarget - position) * min(1/dt, 18)` is the remaining

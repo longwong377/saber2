@@ -402,6 +402,47 @@ export class World {
     if (this.particles) this.particles.scale = (this.settings.particleScale ?? 1) * q.particles;
   }
 
+  /**
+   * WHERE THE PLAYER STANDS UP, AND WHY IT IS NOT (0, 0, 8).
+   *
+   * It was exactly that — a literal, the same on all thirteen levels, tested
+   * against nothing. On The Foundry the floor at (0, 8) is −2.29 and the melt
+   * sheet is at −1.45, so the game began with the player 0.84 m under a hazard
+   * that deals 58 HP a second: dead at 2.40 s having pressed no key, at every
+   * quality tier, and four of the five directions you might run also kill you.
+   *
+   * `spawnClear` — which the ENEMY spawn picker has used since the same pass
+   * that added the hazard — answers both halves of it, the collider and the
+   * level's own water block. Note it must be handed the TERRAIN HEIGHT: the
+   * literal's y of 0 is above the melt, so even a spawnClear test at the old
+   * coordinate would have passed while the body stood under the sheet. That is
+   * why the deeps, also submerged, is fine — its water carries no `damage`
+   * key — and why this was invisible for so long.
+   *
+   * The search is a widening ring rather than a random scatter so the opening
+   * shot of a level stays where its author put it whenever that spot is legal,
+   * which on twelve of thirteen levels it is.
+   */
+  _playerSpawn() {
+    const t = this.terrain;
+    const h = (x, z) => (t ? t.height(x, z) : 0);
+    const home = new THREE.Vector3(0, h(0, 8), 8);
+    if (spawnClear(this, home.x, home.y, home.z)) return home;
+    for (let r = 4; r <= 44; r += 4) {
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2 + r * 0.37;
+        const x = Math.cos(a) * r, z = 8 + Math.sin(a) * r;
+        if (t && !t.inBounds(x, z, 3)) continue;
+        if (t?.slopeAt && t.slopeAt(x, z) > 0.5) continue;
+        const y = h(x, z);
+        if (spawnClear(this, x, y, z)) return new THREE.Vector3(x, y, z);
+      }
+    }
+    // Nothing legal anywhere: the level is the problem, and standing the player
+    // in the authored spot is a better failure than standing them in the void.
+    return home;
+  }
+
   spawnPlayer(opts = {}) {
     const p = new Player(this, {
       ...opts,
@@ -420,7 +461,7 @@ export class World {
       sensitivity: this.settings.sensitivity,
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,
-      spawn: opts.spawn || new THREE.Vector3(0, 0, 8),
+      spawn: opts.spawn || this._playerSpawn(),
     });
 
     // THE ORDER, before any boon. It writes the same `boonMods` a boon card
@@ -1064,6 +1105,29 @@ export class World {
     }
   }
 
+  /**
+   * A BLADE TOUCHED SOMETHING — AND THE HOLDER MAY NOT BE A LOCAL PLAYER.
+   *
+   * Every `addShake` below used to be `player.camera.addShake(...)`, and a
+   * `RemoteAvatar` has no camera. Avatars were put into `world.players` on
+   * purpose — that is what let an enemy blade cut a joining player — and they
+   * carry a real ignited `Saber`, so `_resolveBlades` feeds their contacts
+   * through here like anyone else's.
+   *
+   * The consequence was not a cosmetic miss. `TypeError: cannot read
+   * properties of undefined (reading 'addShake')` is thrown out of
+   * `World.update()`, which abandons the rest of the frame ON THE HOST —
+   * before `engine.render`, before the director ticks, before the snapshot
+   * goes out. Measured over 600 frames with one idle avatar holding a lit
+   * blade against level geometry: 7 of 7 grind events threw, the host's screen
+   * stopped repainting and the session stalled for everyone. Two separate
+   * auditors hit it independently, one of them while measuring something else.
+   *
+   * `?.` rather than a guard clause at the top, because everything else in
+   * here — the cut, the damage, the score, the claim to the host — is exactly
+   * as valid for a remote as for a local. The camera is the only part of the
+   * feedback that belongs to one machine.
+   */
   _applyBladeEvent(player, ev, dt) {
     const P = this.particles;
     if (ev.type === 'clang') {
@@ -1073,7 +1137,7 @@ export class World {
       // second — 72 voices, half the pool, and it buzzed. Throttle it the way
       // grind already is.
       if (this._clangSound <= 0) { this._clangSound = 0.1; audio.clash(ev.point, 0.5); }
-      player.camera.addShake(0.06);
+      player.camera?.addShake(0.06);
       return;
     }
 
@@ -1121,7 +1185,7 @@ export class World {
         this._grindSound = 0.14;
         audio.noise({ dur: 0.16, gain: 0.13, type: 'bandpass', freq: 2800, freqEnd: 1400, q: 2.4, pos: ev.point });
       }
-      player.camera.addShake(0.02);
+      player.camera?.addShake(0.02);
       return;
     }
 
@@ -1143,7 +1207,7 @@ export class World {
       player.score += 60;
       if (player.boonMods.lifesteal) player.heal(player.boonMods.lifesteal);
       this.addHitstop(ev.speed > 20 ? 0.055 : 0.03);
-      player.camera.addShake(clamp(ev.speed / 60, 0.05, 0.3));
+      player.camera?.addShake(clamp(ev.speed / 60, 0.05, 0.3));
       this.onHitmark?.(ev.point, wasAlive && e.dead ? 'kill' : 'cut', ev.bone);
     } else if (t.prop) {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
@@ -1157,7 +1221,7 @@ export class World {
       this.bladeSolver.clearTarget(t.id, ev.cap?.structure ? ev.cap.name : null);
       P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
       audio.cut(ev.point, false);
-      player.camera.addShake(0.06);
+      player.camera?.addShake(0.06);
       player.score += 10;
     }
   }

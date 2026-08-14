@@ -720,4 +720,72 @@ export async function run({ check, assert }) {
       + `player in ${SECONDS} s — ${rows.join(', ')}. The rest are pressing a wall they walked into.`);
     return `${got}/${tot} arrive (${(got / tot * 100).toFixed(0)}%): ${rows.join(', ')}`;
   });
+
+  check('levels: the game does not start you somewhere that kills you', async () => {
+    /**
+     * `spawnPlayer` placed the player at the literal `new THREE.Vector3(0, 0, 8)`
+     * on all thirteen levels, tested against nothing. On The Foundry the floor
+     * at (0, 8) is −2.29 and the melt sheet is at −1.45, so a run began with
+     * the body 0.84 m UNDER a hazard dealing 58 HP a second: dead at 2.38 s
+     * having pressed no key, at every quality tier, with four of five escape
+     * directions also lethal.
+     *
+     * THE TERRAIN HEIGHT IS THE HALF THAT HID IT. `spawnClear` has guarded the
+     * ENEMY picker since the same pass that added hazards — but the literal's
+     * y of 0 sits above the melt, so even a spawnClear test at the old
+     * coordinate would have returned true while the body stood under the
+     * sheet. The deeps is the control: also submerged, also unmoved for years,
+     * and harmless, because its water block carries no `damage` key.
+     *
+     * Driven rather than asserted: build every level, spawn, and press nothing
+     * for ten seconds.
+     */
+    const THREE = await import('three');
+    const { World } = await import('../../src/game/World.js');
+    const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const stub = () => {
+      const scene = new THREE.Scene();
+      const sun = new THREE.DirectionalLight(0xffffff, 1);
+      sun.shadow.camera.updateProjectionMatrix();
+      scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+      return { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+        sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+        renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+        profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+        applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+        setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+        setQuality() {}, setResolutionScale() {}, render() {} };
+    };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const w = new World(stub(), { ...DEFAULT_SETTINGS, quality: 'low' });
+      await w.loadLevel(key);
+      w.spawnPlayer();
+      const p = w.player;
+      const at = p.position.clone();
+      let died = -1;
+      for (let f = 0; f < 10 * 60; f++) {
+        w.update(1 / 60, idle);
+        if (!p.alive && died < 0) died = f / 60;
+      }
+      const hp = Math.max(0, p.hp);
+      w.unload();
+      assert(died < 0,
+        `${key} killed a player who pressed nothing, ${died.toFixed(2)} s after the run began, `
+        + `at (${at.x.toFixed(1)}, ${at.y.toFixed(2)}, ${at.z.toFixed(1)})`);
+      assert(hp >= 100,
+        `${key} took a player who pressed nothing from 100 hp to ${hp.toFixed(0)} in ten seconds, `
+        + `at (${at.x.toFixed(1)}, ${at.y.toFixed(2)}, ${at.z.toFixed(1)})`);
+      rows.push(`${key} ${at.y.toFixed(2)}`);
+    }
+    return `${LEVEL_ORDER.length} levels, ten seconds of no input each, nobody hurt (spawn y: `
+      + `${rows.join(', ')})`;
+  });
 }
