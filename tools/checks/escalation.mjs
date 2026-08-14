@@ -539,6 +539,14 @@ export async function run({ check, assert }) {
   });
 
   check('escalation: a Leader multiplies the wave, and only inside its ring', () => {
+    /* SEEDED, because the thing being compared is stochastic and the stream is
+     * shared. `enemyRng` is module-scope in Enemy.js, so every body's speed
+     * jitter is drawn from wherever the PREVIOUS suite left the generator —
+     * and this compares two b1s against a 5% margin on a 15% buff. It passes
+     * alone and fails in some orderings, which is the worst way for a check to
+     * be wrong: it reads as a defect in the game. See the note over `seed` in
+     * MathUtil's makeRng. */
+    Foe.enemyRng.seed(41000);
     const world = gameWorld();
     const leader = spawn(world, 'trooper', 'leader');
     const near = spawn(world, 'b1');
@@ -550,25 +558,41 @@ export async function run({ check, assert }) {
     assert(near.rallyTimer > 0, 'a body standing inside the ring was not rallied');
     assert(!(far.rallyTimer > 0), 'a body well outside the ring was rallied anyway');
 
-    // the buff is real, not a field nobody reads: same wish, more ground covered
-    const drive = (e) => {
+    /**
+     * The buff is real, not a field nobody reads: same wish, more ground.
+     *
+     * THE SAME BODY TWICE, and that is the correction. This drove `near`
+     * rallied and `far` plain and its own comment claimed "both are b1s with
+     * the same speed jitter seed order, so the ratio is the buff" — which is
+     * false. They are spawned one after the other off `enemyRng`, so they take
+     * DIFFERENT draws and their base speeds differ by the jitter. Against a 5%
+     * bar on a 15% buff, that difference swamps the signal: measured at 1.45 m
+     * against 1.44 m, and 1.49 against 1.47 on a pristine tree, i.e. the check
+     * failed for a reason that had nothing to do with the aura.
+     *
+     * Driving one body twice removes the variable rather than trying to
+     * cancel it, so the ratio IS the buff and no seeding is required to make
+     * the comparison honest. (`enemyRng` is seeded above anyway, because a
+     * module-scope stream makes the whole suite order-dependent.)
+     */
+    const runOnce = (e, rally) => {
       e.wish = V(1, 0, 0); e.toTarget = V(1, 0, 0);
       e.velocity.set(0, 0, 0); e.stunTimer = 0; e.knockTimer = 0;
+      const start = e.position.clone();
       const x0 = e.position.x;
-      for (let i = 0; i < 30; i++) { e.rallyTimer = Math.max(e.rallyTimer, 0.2); e._move(1 / 60, {
-        terrain: world.terrain, physics: world.physics, particles: null }); }
-      return e.position.x - x0;
+      for (let i = 0; i < 30; i++) {
+        e.rallyTimer = rally ? Math.max(e.rallyTimer, 0.2) : 0;
+        e._move(1 / 60, { terrain: world.terrain, physics: world.physics, particles: null });
+      }
+      const covered = e.position.x - x0;
+      e.position.copy(start);
+      return covered;
     };
-    const rallied = drive(near);
-    far.rallyTimer = 0;
-    far.wish = V(1, 0, 0); far.toTarget = V(1, 0, 0); far.velocity.set(0, 0, 0);
-    const x0 = far.position.x;
-    for (let i = 0; i < 30; i++) { far.rallyTimer = 0; far._move(1 / 60, {
-      terrain: world.terrain, physics: world.physics, particles: null }); }
-    const plainRun = far.position.x - x0;
-    // both are b1s with the same speed jitter seed order, so the ratio is the buff
+    const rallied = runOnce(near, true);
+    const plainRun = runOnce(near, false);
     assert(rallied > plainRun * 1.05,
-      `a rallied body covered ${rallied.toFixed(2)} m and a plain one ${plainRun.toFixed(2)} m — the aura is a field nobody reads`);
+      `the SAME body covered ${rallied.toFixed(3)} m rallied and ${plainRun.toFixed(3)} m plain `
+      + `(${(rallied / plainRun).toFixed(3)}x) — the aura is a field nobody reads`);
 
     leader.die(V(0, 0, 0), null, 'cut');
     settle(leader, world);

@@ -56,6 +56,7 @@ import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
 import { duelRng, DuelBrain, FORMS, FORM_KEYS, BladeLock, guardQuat, guardToWorld } from '../../src/game/Duel.js';
+import { enemyRng } from '../../src/game/Enemy.js';
 import { DIFFICULTY, resolveBladeClash, bladesTouching, CLASH_RADIUS } from '../../src/game/Combat.js';
 import { segmentSegment } from '../../src/physics/Physics.js';
 
@@ -113,6 +114,11 @@ function duel(formKey, seconds, opts = {}) {
    * widening a bound around it, and the seed is derived from the form's own key
    * so the five are not handed identical luck. */
   duelRng.seed(2200 + [...String(formKey || 'x')].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 90000);
+  /* …and the ENEMY stream beside it, for the same reason. A duellist's speed
+   * jitter, its strafe side and its spawn offset all come off `enemyRng`,
+   * which is module-scope — so seeding only the duel brain leaves half of what
+   * this measures depending on which suite ran before it. */
+  enemyRng.seed(41000 + FORM_KEYS.indexOf(formKey) + 1);
   /* `minStrikes` matters more than it looks. The forms differ in cadence by a
    * factor of eight — Ataru throws 1.4 strikes a second, Soresu 0.2, because
    * Soresu's whole character is waiting for you to commit first — so a fixed
