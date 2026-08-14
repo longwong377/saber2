@@ -1849,7 +1849,7 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, at] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
@@ -1883,7 +1883,6 @@ export class World {
       // against. See _reconcileClaims.
       e._netHp = hp;
       e._netDead = !!dead;
-      e.netAttack = at || 0;
       // The marksman's laser: the fairness contract of the ranged game, and a
       // client had never seen one. `_pose` already aims it every frame — it
       // simply never became visible, because `_beginTelegraph` is reached only

@@ -40,9 +40,14 @@ export const PEER_TIMEOUT = 8;
  *
  * Sent ONCE, on hello/welcome, and carried on the roster — it is identity, not
  * state, so putting it in the 24 Hz avatar packet would pay for it forever.
+ *
+ * The ten of the twelve that a RemoteAvatar can actually wear. `robeCut` and
+ * `order` are deliberately absent: the first dresses a simulated cloak a remote
+ * body does not have, and the second grants boons rather than describing a
+ * face. Sending them would be two more fields on the wire with no reader.
  */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'robeCut', 'species', 'face', 'order'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
 
 export function packLook(settings = {}) {
   const out = {};
@@ -693,8 +698,12 @@ export function packAvatar(player) {
  *           walking. See World's client integration.
  *   tg      is a telegraph lit. A marksman's laser is the fairness contract of
  *           the whole ranged game.
- *   at      the attack phase, so a strike can be posed rather than teleporting
- *           damage into the player.
+ *
+ * The MELEE half of the same defect is not closed here: posing a strike needs
+ * the duel's guard direction, spin and attack, and both the pose and the brain
+ * live in src/game/Enemy.js and src/game/Duel.js. That record field is not sent
+ * until something reads it — a field on the wire with no reader is the defect
+ * this file has just spent a pass removing.
  *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
@@ -709,7 +718,6 @@ export function packSnapshot(world) {
       r2(e.facing), Math.round(e.hp), e.dead ? 1 : 0,
       r2(e.velocity?.x || 0), r2(e.velocity?.z || 0),
       e.aimCharge > 0 ? 1 : 0,
-      attackPhase(e),
     ]);
   }
   const fires = world._netFires || [];
@@ -731,14 +739,6 @@ export function packSnapshot(world) {
   return snap;
 }
 
-/** 0 none · 1 winding up · 2 striking · 3 recovering. Read by Enemy._pose. */
-function attackPhase(e) {
-  const p = e.duel?.phase;
-  if (p === 'windup') return 1;
-  if (p === 'strike') return 2;
-  if (p === 'recover') return 3;
-  return 0;
-}
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
