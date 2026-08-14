@@ -53,6 +53,8 @@ import {
 } from '../../src/toon/Cel.js';
 import { INK } from '../../src/toon/Ink.js';
 import { Cloak } from '../../src/game/Cloth.js';
+import { waterShade } from '../../src/world/Scenery.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { rawMaps, MEAN_ALBEDO } from '../../src/engine/Textures.js';
 import { fbm2 } from '../../src/engine/MathUtil.js';
 
@@ -437,10 +439,19 @@ export function run({ check, assert, near }) {
 
   /* ══ 2. NO LOBE ════════════════════════════════════════════════════════ */
 
-  check('cel: nothing is shiny — the frame does not depend on roughness or on where the camera is', () => {
+  check('cel: the BRDF has no lobe — no roughness, no view direction', () => {
     /* Rule 8, and the re-derivation the brief asked for: where an existing
      * check measures a roughness or specular ladder, the stronger property is
      * that a flat field has no specular lobe AT ALL.
+     *
+     * SCOPED TO THE BRDF, AND THE NAME SAYS SO NOW. This used to be called
+     * "the frame does not depend on … where the camera is", which is a claim
+     * about the FRAME made by a function that has no view vector to sweep:
+     * `celDirect` takes dotNL, key and albedo, so `cMax - cMin === 0` is an
+     * identity of the transcription and cannot fail. It is still worth having —
+     * the physical control beside it does move by 4309× — but it says nothing
+     * about the hand-written shaders, which is where the lobes actually
+     * survived. The frame-wide claim is the check below this one.
      *
      * Measured as a sensitivity rather than as a look: hold the surface and the
      * light still, sweep the roughness across the whole range the game
@@ -492,6 +503,115 @@ export function run({ check, assert, near }) {
     return `physical response spans ${(pMax / pMin).toFixed(0)}× over roughness 0.06–1.0 and 40 view `
       + `angles; cel spans exactly 0 (${cMax.toFixed(6)} everywhere)`;
   });
+
+  check('cel: nothing in the FRAME is shiny — the water and the lava included', () => (async () => {
+    /* THE CHECK ABOVE CANNOT SEE THIS, AND THAT IS WHY IT SHIPPED.
+     *
+     * Rewriting three's BRDF reaches every material in the game EXCEPT the ones
+     * that do not use three's BRDF, and the largest of those is the water
+     * sheet: `WATER_FRAG` in src/world/Scenery.js is a hand-written
+     * ShaderMaterial that includes <common> — so `saberCelBand`, `saberCelQuant`
+     * and `saberCelTone` are all in scope — and calls none of them. It carries
+     * a Fresnel mirror and TWO view-dependent specular lobes:
+     *
+     *     float sd   = max(dot(reflect(-L, N), V), 0.0);
+     *     float spec = pow(sd, 90.0) * 1.9 + pow(sd, 8.0) * 0.34;
+     *     col += vec3(1.0,0.96,0.88) * spec * fres * (0.35 + dw * 0.65);
+     *
+     * It is the surface of FIVE levels — mustafar's lava, the foundry's melt,
+     * the wood, kamino and the deeps — and Scenery.js copies the live engine
+     * sun direction into uSunDir every frame, so the lobe tracks the sun in
+     * play. Rule 8 is not "less shiny": "there is no specular highlight in any
+     * of the four frames".
+     *
+     * MEASURED WITH THE FILE'S OWN CPU TWIN, `waterShade`, which exists exactly
+     * so this can be a measurement instead of a regex. The eye is walked right
+     * round the sheet at a fixed elevation by rotating the sun about Y; with
+     * `climb` 0 the bed normal is +Y, so `dot(bedN, L)` is invariant under that
+     * rotation and the ONLY thing that can move is the view-dependent term.
+     * From a standing eye (8° above the surface), linear luminance at 3 m depth:
+     *
+     *     mustafar 0.833 vs 0.126 = 6.63×      wood   0.671 vs 0.099 = 6.80×
+     *     kamino   0.815 vs 0.113 = 7.20×      foundry 0.731 vs 0.251 = 2.91×
+     *     deeps    0.025 vs 0.016 = 1.58×
+     *
+     * WHAT HAS TO CHANGE, precisely, in src/world/Scenery.js (not this agent's
+     * file — see the handover note in the commit that added this check):
+     *
+     *   1. DELETE the three lines quoted above outright. They are the whole of
+     *      the bearing dependence and rule 8 deletes specular rather than
+     *      softening it — a term that is still in the shader can be turned back
+     *      up by a uniform.
+     *   2. BAND the mirror instead of ramping it. `fres` and `facet` are smooth
+     *      functions of the view, and a smooth view-dependent gradient is the
+     *      PBR leftover rule 1 is about. `fres = saberCelQuant(fres, 2.0)` and
+     *      `facet = saberCelQuant(facet, 2.0)` turn the reflection into a flat
+     *      plate with one hard edge across the sheet, which is what water is in
+     *      a drawn frame: a shape, not a gradient.
+     *   3. BAND the body. `col = saberCelBand(col, 3.0)` after the mirror mix,
+     *      so the depth ramp arrives as three flat fields with drawn boundaries
+     *      rather than as a continuum — rule 6 applied to the one surface in the
+     *      game that still has a continuum in it.
+     *
+     * DO NOT WEAKEN THE BOUND TO GO GREEN. It is 1.001, i.e. "the eye's bearing
+     * changes nothing", because after (1) the twin's answer is bit-identical
+     * round the sweep; anything looser is a lobe that has been turned down.
+     */
+    /* Engine imported DYNAMICALLY and nowhere near the top of this file. A
+     * STATIC edge to Engine.js from the first suite that runs is the exact
+     * mistake tools/checks/materials.mjs documents: it makes this file the
+     * first importer, and six checks that were reading the patched chunks
+     * quietly went red. `sunDirection` is all that is wanted here. */
+    const { sunDirection } = await import('../../src/engine/Engine.js');
+    const wet = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].water);
+    assert(wet.length >= 4, `only ${wet.length} levels carry a water sheet — re-derive this check`);
+    const rgb = (h) => { const c = new THREE.Color(h); return [c.r, c.g, c.b]; };
+    const rows = [];
+    let worst = 1, worstAt = '';
+    for (const key of wet) {
+      const L = LEVELS[key], w = L.water, a = L.atmosphere;
+      const sun = sunDirection(a, new THREE.Vector3());
+      const base = {
+        depth: 3, bedDepth: 3, climb: 0,
+        shallow: rgb(w.shallow), deep: rgb(w.deep), bed: rgb(w.bed),
+        sky: rgb(w.sky ?? a.skyColor ?? 0xbcd8ff), fog: rgb(a.fogColor ?? 0x9fb4c8),
+      };
+      for (const viewDeg of [8, 40]) {
+        let hi = 0, lo = Infinity;
+        for (let d = 0; d < 360; d += 5) {
+          const t = d * Math.PI / 180;
+          const s = [sun.x * Math.cos(t) - sun.z * Math.sin(t), sun.y,
+            sun.x * Math.sin(t) + sun.z * Math.cos(t)];
+          const v = lum(waterShade({ ...base, viewDeg, sun: s }).col);
+          hi = Math.max(hi, v); lo = Math.min(lo, v);
+        }
+        const r = hi / Math.max(lo, 1e-9);
+        if (r > worst) { worst = r; worstAt = `${key} at ${viewDeg}°`; }
+        if (viewDeg === 8) rows.push(`${key} ${r.toFixed(2)}×`);
+      }
+    }
+    assert(worst < 1.001,
+      `${worstAt}: walking the eye round the sheet swings its luminance ${worst.toFixed(2)}× — that `
+      + 'is a specular lobe, and rule 8 deletes specular everywhere. src/world/Scenery.js WATER_FRAG '
+      + 'still runs `pow(sd,90.0)*1.9 + pow(sd,8.0)*0.34`; delete those three lines and band `fres`, '
+      + '`facet` and the body through saberCelQuant/saberCelBand — see this check\'s comment for the '
+      + 'exact edit. Do not relax this bound.');
+    /* …and the surface is countable in the other axis too: elevation may change
+     * the water, because a mirror plate is a legitimate drawn shape, but it has
+     * to arrive as a handful of flat plateaus rather than as a ramp. */
+    const key0 = wet[0], w0 = LEVELS[key0].water, a0 = LEVELS[key0].atmosphere;
+    const sun0 = sunDirection(a0, new THREE.Vector3());
+    const steps = bandCount((t) => lum(waterShade({
+      depth: 3, bedDepth: 3, climb: 0,
+      shallow: rgb(w0.shallow), deep: rgb(w0.deep), bed: rgb(w0.bed),
+      sky: rgb(w0.sky ?? 0xbcd8ff), fog: rgb(a0.fogColor ?? 0x9fb4c8),
+      viewDeg: 2 + t * 78, sun: [sun0.x, sun0.y, sun0.z],
+    }).col), 512, 1e-4);
+    assert(steps <= 6,
+      `${key0}'s sheet comes out as ${steps} distinct tones over an elevation sweep — a drawn `
+      + 'surface has a countable number of tones; band the Fresnel and the body');
+    return `${wet.length} sheets, worst bearing swing ${worst.toFixed(3)}× — ` + rows.join(' · ');
+  })());
 
   check('cel: a metal is a colour, not a black hole', () => {
     /* THE MOST DANGEROUS PBR LEFTOVER IN THE BUILD, and the one a ramp-on-top
