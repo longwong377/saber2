@@ -3373,6 +3373,29 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
   let files = [];
   try { files = (await readdir(dir)).filter(f => f.endsWith('.mjs')).sort(); } catch {}
   /**
+   * SABER_CHECK_ORDER=reverse RUNS THE SAME SUITES BACKWARDS.
+   *
+   * The suite was not deterministic. Three clean runs of this file returned
+   * 1062/8, 1068/2 and 1069/1, and a fourth returned 1070/0 — the same tree,
+   * the same commit, four different answers. Every one of those differences is
+   * a check reading module-scope state that a PREVIOUS suite left behind:
+   * `enemyRng` and `duelRng` (Enemy.js, Duel.js), the wave stream, `ground`'s
+   * terrain/fx/clock/_scarAt (Scenery.js), `wind`, and Engine's once-only
+   * ShaderChunk flags. Alphabetical order is not a design; it is the order
+   * `readdir` happened to give.
+   *
+   * A harness that answers differently each time is worse than a red one,
+   * because the failure looks like whatever you changed last. It is the
+   * mechanism by which the cone survived several rounds of being fixed, and by
+   * which three tautological checks got through a whole audit pass.
+   *
+   * Reversing is the cheapest signal that finds it: any check that passes one
+   * way and fails the other is order-dependent by construction, and the pair
+   * of runs names it. `tools/checks/determinism.mjs` asserts the property;
+   * this is the switch it drives.
+   */
+  if (process.env.SABER_CHECK_ORDER === 'reverse') files.reverse();
+  /**
    * ONE SUITE AT A TIME, AND SAY WHICH.
    *
    * `check()` pushes every async check onto `pending` and nothing awaited it
