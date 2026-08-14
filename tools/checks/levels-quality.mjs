@@ -626,14 +626,27 @@ export async function run({ check, assert }) {
      * bearings instead, and a placement that is inside geometry or off the map
      * is DROPPED rather than nudged, so the denominator is stable too.
      *
-     * Measured, 16 bearings at 26 m, 40 s, four levels, arrivals within 6 m:
+     * Measured BY THIS CHECK, 16 bearings at 26 m, 40 s, four levels, arrivals
+     * within 6 m:
      *
-     *     before   temple 11/13   warship  8/12   intake 14/14   cut 16/16   49/55
-     *     after    temple 12/13   warship 10/12   intake 14/14   cut 16/16   52/55
+     *     before   temple 11/13   warship  9/13   intake 14/14   cut 16/16   50/56
+     *     after    temple 12/13   warship 10/13   intake 14/14   cut 16/16   52/56
      *
-     * The bar is 90%, under the 95% this holds and well over the 89% it
-     * replaces, because the remaining three are bodies placed in rooms with no
-     * route out and this check must not become an argument about level layout.
+     * BY THIS CHECK, and the emphasis is the correction. The table here first
+     * read 49/55 · 52/55, which is what the scratchpad probe this grew out of
+     * reported — a different harness, admitting one fewer bearing on the
+     * warship because it tested placement itself instead of calling
+     * `spawnClear`. A number copied from the thing that inspired a check
+     * rather than taken from the check is a number that does not reproduce,
+     * which is precisely the defect this file exists to catch elsewhere.
+     *
+     * The bar is 92%: the fixed tree measures 93% and the tree it replaces
+     * 89.3%. It was 90%, which is 50.4 bodies against a pre-fix 50 — one extra
+     * arrival anywhere, from a tuning tweak or a level edit or a spawn change,
+     * and the check could no longer tell navigation from no navigation. It is
+     * not higher than 92% because the bodies that still fail are placed in
+     * rooms with no route out, and this must not become an argument about
+     * level layout.
      */
     const THREE = await import('three');
     const { World } = await import('../../src/game/World.js');
@@ -702,7 +715,7 @@ export async function run({ check, assert }) {
       got += r.arrived; tot += r.n;
       rows.push(`${level} ${r.arrived}/${r.n}`);
     }
-    assert(got / tot >= 0.90,
+    assert(got / tot >= 0.92,
       `${got} of ${tot} bodies (${(got / tot * 100).toFixed(0)}%) got within 6 m of a stationary `
       + `player in ${SECONDS} s — ${rows.join(', ')}. The rest are pressing a wall they walked into.`);
     return `${got}/${tot} arrive (${(got / tot * 100).toFixed(0)}%): ${rows.join(', ')}`;
