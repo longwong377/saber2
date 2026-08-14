@@ -856,6 +856,10 @@ export class HUD {
     if (this.freecam.on) {
       if (!this.freecam.step(dt, input, world, camera)) this.freecam.exit(this);
       else {
+        // A wheel left open across a detach would commit its slot the moment
+        // the camera came back — an emote from a key you released a minute ago,
+        // in a mode you entered to take a photograph. It closes with the HUD.
+        this.emotes.close();
         this.el.freecam?.classList?.toggle('hidden', false);
         this.el.freecam?.classList?.toggle('fade', this.freecam.hintT <= 0);
         return;

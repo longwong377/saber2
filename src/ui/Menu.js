@@ -477,14 +477,18 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
  *
  * `boonMods.moveSpeed` is the multiplier `_move` reads, and it is the ONLY
  * thing in this file's reach that lands on the player's pace without touching
- * a line of Player. It is read exactly once per update (Player.js:1267,
- * `const base = 4.6 * this.boonMods.moveSpeed`) and nothing else in the whole
- * tree reads it during a frame — the three boons that write it (Waves.js) do so
- * at draft time — so borrowing it for the length of one call is exact rather
- * than approximate.
+ * a line of Player. It is read exactly once per update — the line that begins
+ * `const base = 4.6 * this.boonMods.moveSpeed` — and nothing else in the whole
+ * tree reads it during a frame, because the three boons that write it
+ * (Waves.js) do so at draft time. Borrowing it for the length of one call is
+ * therefore exact rather than approximate.
  *
  * THE HANDOVER. When Player.js is free, this whole function should be deleted
- * and line 1267–1268 should read
+ * and the line after that one, which today reads
+ *
+ *     let speed = base * (sprinting ? 1.62 : 1) * lerp(1, 0.48, this.crouch);
+ *
+ * should read
  *
  *     let speed = base * walkScale(input) * (sprinting ? 1.62 : 1) * lerp(1, 0.48, this.crouch);
  *
@@ -492,7 +496,9 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
  * arithmetic in the place that owns it, and it is one line. Until then this is
  * the same arithmetic in the only place that can reach it, and the check that
  * measures the four gaits does not care which of the two is producing them —
- * which is the property that makes the handover safe to take.
+ * which is the property that makes the handover safe to take. (Expressions and
+ * not line numbers, on purpose: five files in this tree are being edited in
+ * parallel and a quoted line number is stale before it is read.)
  *
  * LOCAL BODIES ONLY, and `isRemote` is tested as well as `isLocal` because the
  * two are not each other's negation: `world.players` carries RemoteAvatars
