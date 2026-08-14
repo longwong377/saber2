@@ -118,10 +118,23 @@ export function rampTexture(bands = 3, softness = 0, dark = 0.34) {
 /**
  * A toon twin of a MeshStandardMaterial, keeping everything worth keeping.
  *
- * WHAT CARRIES OVER, and this is the interesting half: `map` and `normalMap`.
- * The normal map is why the procedural surfaces still read at all — it perturbs
- * the N used for the ramp lookup, so a soil map's crumb structure still breaks
- * the terminator into something with texture rather than a flat plate.
+ * WHAT CARRIES OVER: `map` and `normalMap`.
+ *
+ * AND `normalMap` IS A LIE IN THE SHIPPED GAME, WHICH THIS FILE IS NOT. This
+ * paragraph used to read "the normal map is why the procedural surfaces still
+ * read at all — it perturbs the N used for the ramp lookup, so a soil map's
+ * crumb structure still breaks the terminator into something with texture
+ * rather than a flat plate". That was true of the ramp prototype this file IS,
+ * and it is false of what shipped: src/engine/Textures.js binds
+ * `normalMap: null` on every surface (see materialFrom), because a detail
+ * normal under the two-tone terminator of src/toon/Cel.js produces speckle
+ * rather than relief — the same measurement TER_RELIEF records for the
+ * terrain. Nothing in the frame perturbs N any more.
+ *
+ * It is left carried over here because this file is the RECORD of the rejected
+ * approach and has to keep working as one; a reader arriving from Cel.js should
+ * know that `src.normalMap` is null for every material the foundry hands out,
+ * so the line below is a no-op on anything the game builds today.
  *
  * WHAT DOES NOT: `roughnessMap` and `metalnessMap`. A toon ramp has no GGX
  * lobe to roughen. That is a real cost of this direction and worth being honest

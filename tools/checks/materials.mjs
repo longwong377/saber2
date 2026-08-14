@@ -19,7 +19,8 @@
 
 import * as THREE from 'three';
 import { rawMaps, MEAN_ALBEDO, PERIODIC, sandMaps, rockMaps, metalMaps, clothMaps, armorMaps,
-         duracreteMaps, skinMaps, soilMaps, snowMaps, disposeTextureCache } from '../../src/engine/Textures.js';
+         duracreteMaps, skinMaps, soilMaps, snowMaps, disposeTextureCache,
+         unboundCanvases } from '../../src/engine/Textures.js';
 
 const SURFACES = ['sand', 'rock', 'metal', 'cloth', 'armor', 'duracrete', 'skin'];
 const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
@@ -506,8 +507,37 @@ export function run({ check, assert, near }) {
     // a 512² bake actually costs.
     assert(total < 2000 * warmed.length,
       `the foundry takes ${total}ms to bake ${warmed.length} surfaces`);
+
+    /* …AND IT BUILDS NOTHING THE FRAME CANNOT READ.
+     *
+     * `materialFrom` binds `normalMap: null` and `roughnessMap: null` — the
+     * check above this one asserts that against the shader — but the bake was
+     * still allocating a canvas for each of them, running createImageData and
+     * putImageData over it, and handing it to nobody. At 512² that is two 1 MB
+     * backing stores and 262 144 pixel writes per surface, on the load screen,
+     * for every surface in the warm list. The bytes are still computed (rawMaps
+     * needs them and this file measures their structure); the DOM object is
+     * deferred. This is asserted BEFORE the rawMaps call below, because that
+     * call is exactly the thing that is allowed to build them. */
+    const idle = unboundCanvases();
+    assert(idle === 0,
+      `the boot warm materialised ${idle} canvases for maps nothing binds — ${warmed.length} `
+      + 'surfaces of normal and ORM uploaded into a DOM object the shader cannot read');
+
     assert(rawMaps('rock').size === 1024, 'rock must stay at 1024²');
-    return times.map(([n, t]) => `${n} ${t}ms`).join(' ') + ` — ${total}ms total`;
+    /* …and asking for them still works, or the data has been lost rather than
+     * deferred. rawMaps('rock') above read both, so the counter has to move. */
+    const woken = unboundCanvases();
+    assert(woken >= 2,
+      `rawMaps built ${woken} of the deferred canvases — the normal and ORM bytes are no longer `
+      + 'reachable at all, which is a deletion and not a deferral');
+    const rm = rawMaps('rock');
+    let flatN = 0;
+    for (let i = 0; i < rm.size * rm.size; i += 97) if (rm.normal[i * 4 + 2] > 250) flatN++;
+    assert(flatN < (rm.size * rm.size / 97) * 0.9,
+      'the deferred normal map comes back flat — the lazy path is not returning the bake');
+    return times.map(([n, t]) => `${n} ${t}ms`).join(' ') + ` — ${total}ms total, `
+      + `0 unbound canvases at boot (${woken} once rawMaps asks)`;
   });
 
   check('materials: every ground a level can stand on is warmed at boot', async () => {

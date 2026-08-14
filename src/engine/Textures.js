@@ -382,7 +382,35 @@ function bake(size, sampler, opts = {}) {
     if (!canvasReadable()) c.pixels = data;
     return c;
   };
-  return { albedo: mk(albedo), normal: mk(nrm), rough: mk(rough), size };
+  /*
+   * THE ALBEDO GETS A CANVAS AT BOOT. THE OTHER TWO GET ONE WHEN SOMEBODY ASKS,
+   * WHICH IN THE SHIPPED GAME IS NEVER.
+   *
+   * `materialFrom` binds `normalMap: null` and `roughnessMap: null` — there is
+   * nothing left in the shader that reads either (see the note there) — so the
+   * two canvases below were allocated, filled with createImageData and written
+   * with putImageData at boot, for every surface in the foundry, and then
+   * handed to nothing. At 512² that is two 1 MB backing stores and 262 144
+   * pixel writes each, nine surfaces deep: 18 MB of canvas and 4.7 million
+   * writes on the load screen, none of it uploaded and none of it read.
+   *
+   * The BYTES are still computed eagerly and that is deliberate — they are a
+   * few tight loops over arrays that already exist, `rawMaps` needs them, and
+   * tools/checks/materials.mjs measures the structure precisely so that a
+   * surface whose relief was authored can come back if this is ever revisited.
+   * What is deferred is the DOM object, which is the part that costs. Ask for
+   * `.normal` or `.rough` and it is built once and memoised, so the checks that
+   * read them see exactly what they saw before.
+   */
+  let nrmCanvas = null, roughCanvas = null;
+  return {
+    albedo: mk(albedo),
+    get normal() { return (nrmCanvas ||= mk(nrm)); },
+    get rough() { return (roughCanvas ||= mk(rough)); },
+    /** Has a canvas been materialised for the unbound maps? For the check. */
+    get lazyBuilt() { return (nrmCanvas ? 1 : 0) + (roughCanvas ? 1 : 0); },
+    size,
+  };
 }
 
 function toTexture(canvas, { repeat = 1, srgb = false, aniso = 8 } = {}) {
@@ -1253,6 +1281,22 @@ export function rawMaps(name) {
   const px = (c) => c.pixels
     || c.getContext('2d').getImageData(0, 0, b.size, b.size).data;
   return { size: b.size, albedo: px(b.albedo), normal: px(b.normal), rough: px(b.rough) };
+}
+
+/**
+ * How many canvases the foundry has materialised for maps nothing binds.
+ *
+ * Zero after a boot warm, because `materialFrom` binds `normalMap: null` and
+ * `roughnessMap: null` and never touches either getter — which is the whole
+ * point of them being getters. Non-zero only once something has explicitly
+ * asked, which in the shipped game is nothing and in the harness is `rawMaps`.
+ * Exported so tools/checks/materials.mjs can assert the boot path against it
+ * rather than against a comment.
+ */
+export function unboundCanvases() {
+  let n = 0;
+  for (const b of baked.values()) n += b.lazyBuilt;
+  return n;
 }
 
 export function disposeTextureCache() {
