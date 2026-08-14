@@ -39,9 +39,10 @@ import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
 // the options screen borrows both rather than keeping a second copy that could
 // fall out of step with what is actually on screen.
-import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS } from './HUD.js';
+import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
-import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts } from '../engine/Bindings.js';
+import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
+         WALK_SCALE, walkScale } from '../engine/Bindings.js';
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
@@ -264,6 +265,17 @@ export const DEFAULT_SETTINGS = {
   enemyBody: true,
   /** Killstreak and event popups in the HUD's score column. */
   popups: true,
+  /**
+   * THE MINIMAP, on by default and switchable off.
+   *
+   * On because a fight against 25 bodies with no idea where the other 24 are is
+   * the thing the player asked to stop having; off because a map is also the
+   * single biggest thing you can take off the screen to make the game look like
+   * a film, and this build has a free camera in it now. Read live off this blob
+   * by HUD.Minimap, so unticking it takes the disc down on the next frame and
+   * stops it costing anything at all — see MINIMAP for the budget.
+   */
+  minimap: true,
   /** The reticle, which was a hard-coded white ring for the whole project. */
   reticleShape: 0,
   reticleSize: 1,
@@ -380,6 +392,7 @@ export const SETTING_READERS = {
   enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
+  minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
   reticleSize:     ['ui/HUD.js', 'num(s.reticleSize, 1)'],
   reticleColor:    ['ui/HUD.js', 'colorAt(s.reticleColor)'],
@@ -446,7 +459,129 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // applyInjury() for why the funnel and not the frame.
   applyInjury(world, s);
   applyLekku(world);
+  applyGait(world);
+  tapFrame(world);
   return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
+ * THE SLOW WALK, on the same seam and for the same reason as everything above.
+ *
+ * The gait itself is four characters of arithmetic. What it needs is a place to
+ * happen: `Player._move` computes `4.6 × boonMods.moveSpeed × (sprint ? 1.62 :
+ * 1) × crouch` on one line, and src/game/Player.js belongs to another lane this
+ * round. So the multiplier goes on the funnel the same way the shake, the
+ * hitstop, the injury marks and the head-tails do — by wrapping the one method
+ * the frame goes through, reading the binding LIVE off the context that method
+ * is handed, and putting the number back afterwards.
+ *
+ * `boonMods.moveSpeed` is the multiplier `_move` reads, and it is the ONLY
+ * thing in this file's reach that lands on the player's pace without touching
+ * a line of Player. It is read exactly once per update (Player.js:1267,
+ * `const base = 4.6 * this.boonMods.moveSpeed`) and nothing else in the whole
+ * tree reads it during a frame — the three boons that write it (Waves.js) do so
+ * at draft time — so borrowing it for the length of one call is exact rather
+ * than approximate.
+ *
+ * THE HANDOVER. When Player.js is free, this whole function should be deleted
+ * and line 1267–1268 should read
+ *
+ *     let speed = base * walkScale(input) * (sprinting ? 1.62 : 1) * lerp(1, 0.48, this.crouch);
+ *
+ * with `walkScale` imported from ../engine/Bindings.js. That is the same
+ * arithmetic in the place that owns it, and it is one line. Until then this is
+ * the same arithmetic in the only place that can reach it, and the check that
+ * measures the four gaits does not care which of the two is producing them —
+ * which is the property that makes the handover safe to take.
+ *
+ * LOCAL BODIES ONLY, and `isRemote` is tested as well as `isLocal` because the
+ * two are not each other's negation: `world.players` carries RemoteAvatars
+ * (Net.js), which set `isRemote` and never set `isLocal` at all, and which ship
+ * a deliberately EMPTY `boonMods` — so multiplying a key of it would write NaN
+ * onto a pace that arrives from another machine already walked.
+ *
+ * Idempotent. Returns the number of bodies now walking on demand.
+ */
+export function applyGait(world) {
+  if (!world) return 0;
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || p.isRemote || p.isLocal === false || typeof p.update !== 'function' || !p.boonMods) continue;
+    if (!p._gaitGated) {
+      const update = p.update.bind(p);
+      p.update = (dt, ctx) => {
+        const k = walkScale(ctx?.input);
+        if (k === 1 || !p.boonMods) { update(dt, ctx); return; }
+        const was = p.boonMods.moveSpeed;
+        p.boonMods.moveSpeed = was * k;
+        try { update(dt, ctx); } finally {
+          // Undo the FACTOR, not the value, if the number moved underneath us.
+          // A boon taken inside that call (a landing replays a run's cards into
+          // a freshly built player) would otherwise be thrown away by a restore
+          // that writes back what it captured.
+          p.boonMods.moveSpeed = p.boonMods.moveSpeed === was * k ? was : p.boonMods.moveSpeed / k;
+        }
+      };
+      p._gaitGated = true;
+    }
+    n++;
+  }
+  return n;
+}
+
+/**
+ * THE SEAM BETWEEN THE FRAME AND THE THINGS THAT ONLY LOOK AT IT.
+ *
+ * Two jobs, one wrapper, because both are about the same call.
+ *
+ * ── 1. HAND THE PRESENTATION LAYER THE INPUT THAT IS ALREADY GOING PAST.
+ *
+ * `HUD.update(dt, world, player, camera)` is the one call main.js makes every
+ * frame with everything on screen in hand, and it has never been given the
+ * input — which was fine while the HUD only ever DREW things. It is not fine
+ * for a wheel you hold a key to open or a camera you press a key to detach:
+ * both are presentation, neither belongs in World, and neither can exist
+ * without knowing what is held down.
+ *
+ * So the input is remembered off the call World already receives. It is a
+ * REFERENCE and not a copy, which is the whole reason this works while the
+ * world is stopped: main.js keeps running `input.begin()`/`input.end()` on
+ * every frame regardless of `paused`, so the object stays live even though
+ * `World.update` returns on its first line. That is exactly what a free camera
+ * needs — the frozen world's own input.
+ *
+ * `liveInput` and not `input`, deliberately: World.js belongs to another lane
+ * and may well want `this.input` for itself, and a field that quietly means two
+ * things is the shape of bug this project keeps a table for.
+ *
+ * ── 2. AND STOP THE GAME WHILE THE CAMERA IS OFF THE BODY.
+ *
+ * `FreeCam` also writes `world.paused`, which is World.update's own first line
+ * and the right STATE for anything else that asks. It is not enough on its own,
+ * and the frame order is why: main.js runs `world.update` BEFORE `hud.update`,
+ * so anything that writes `paused = false` between two HUD frames — its own
+ * `resume()`, after a pause menu raised over a free camera — buys the game one
+ * full frame of simulation before the camera can re-assert itself. One frame is
+ * enough to see a wave assemble, and a detached camera over a running world is
+ * a wallhack rather than a screenshot tool.
+ *
+ * A gate here cannot leak that frame, because it IS the call. Measured in
+ * tools/checks/spectacle.mjs: the world clock does not move by a single
+ * millisecond across seventy frames, including ten after something else has
+ * un-paused it.
+ *
+ * Idempotent.
+ */
+export function tapFrame(world) {
+  if (!world || typeof world.update !== 'function' || world._frameTapped) return false;
+  const update = world.update.bind(world);
+  world.update = (dt, input) => {
+    world.liveInput = input || world.liveInput;
+    if (world.freeCamera) return;
+    update(dt, input);
+  };
+  world._frameTapped = true;
+  return true;
 }
 
 /**
@@ -540,7 +675,12 @@ export const CODEX = [
   { keys: ['attackStab'], text: () => 'Stab. Same lunge as the thrust, on the other half of the wheel.' },
   { keys: ['thrust'], text: () => 'Thrust — drive the hands forward along the blade.' },
   { keys: ['moveF', 'moveL', 'moveB', 'moveR'],
-    text: k => `Move. ${k('sprint')} sprint, ${k('crouch')} crouch.` },
+    // The walk's share is READ off WALK_SCALE rather than typed as "a third".
+    // Every number this grid has ever typed by hand has eventually described a
+    // game that stopped existing — see the Focus row, which said "a third" for a
+    // whole round after the dilation was deepened to 0.18.
+    text: k => `Move. ${k('sprint')} sprint, ${k('crouch')} crouch, ${k('walk')} slow walk `
+      + `(${Math.round(WALK_SCALE * 100)}% pace — hold it, it is not a mode).` },
   { keys: ['jump'], text: () => 'Force jump — hold to leap higher. Landing sends out a shockwave.' },
   { keys: ['jump', 'jump'], text: () => 'Double jump. Hold on the way up to feed Force into the leap.' },
   { keys: ['dash'], text: () => 'Dash, in any direction you are holding. No direction = dash back.' },
@@ -587,6 +727,13 @@ export const CODEX = [
       + 'blade is theirs in your hand. Standing over nothing, put yours down.' },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
+  // The slot count is read off the table, so a ninth emote changes this line.
+  { keys: ['emote'], hold: true,
+    text: () => `Emote wheel — ${EMOTES.length} things to say, in your own voice. `
+      + 'Hold it, move the mouse to a slot, let go.' },
+  { keys: ['freecam'],
+    text: () => '<b>Free camera</b> — the view comes off your body and the game '
+      + 'STOPS while it is off. Fly it with the movement keys; press again to put it back.' },
   { keys: ['lessonNext', 'lessonBack', 'lessonRepeat'],
     // "In the Dojo" named a level that has been deleted; training is a MODE now
     // and runs in whichever theatre the player picked. See MODES.training.
@@ -2991,6 +3138,10 @@ export class Menu {
     this._check('opt-enemyvoices', 'enemyVoices');
     this._check('opt-enemybody', 'enemyBody');
     this._check('opt-popups', 'popups');
+    // No hook: the map asks `world.settings` on the frame it draws, and that is
+    // the same object this menu is writing. A hook here would be a message to a
+    // system that is already reading the answer.
+    this._check('opt-minimap', 'minimap');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));
 

@@ -245,6 +245,10 @@
         <h3 style="margin-top:24px">Interface</h3>
         <label class="check"><input type="checkbox" id="opt-popups" checked> Event popups</label>
         <p class="hint">Killstreaks, deflection runs and a boss arriving, in the score column of the HUD.</p>
+        <label class="check"><input type="checkbox" id="opt-minimap" checked> Minimap</label>
+        <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
+          anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
+          all rather than being drawn invisible.</p>
       </div>
     </section>
 
@@ -402,8 +406,33 @@
   </div>
 
   <div class="hud-br">
+    <!--
+      THE MINIMAP, in the flow of the bottom-right block and above the power
+      wheel — not floated somewhere of its own.
+
+      That is the same rule the event feed and the kill feed were moved to obey:
+      two absolutely-positioned HUD boxes are two boxes measured against
+      different things, and the first viewport where they meet is the first
+      viewport where one is drawn through the other. In a column they cannot
+      overlap at any size, and the map takes no space at all when it is off,
+      because HUD.Minimap sets `hidden` on it rather than drawing it clear.
+
+      The canvas has no width/height attributes here on purpose: Minimap writes
+      the backing store from MINIMAP.size, so the resolution the arcs are drawn
+      into and the budget that justifies them are the same number.
+    -->
+    <canvas id="minimap" aria-hidden="true"></canvas>
     <div id="power-wheel" class="powers"></div>
   </div>
+
+  <!--
+    THE EMOTE WHEEL. Eight slots, built by HUD.EmoteWheel from the EMOTES table
+    and placed by emoteAngle() — there is deliberately no markup for a slot
+    here, because eight hand-written positions and one hit test that computes
+    them is two answers to "where is this slot", and the player finds out which
+    one is wrong by pressing it and getting the wrong emote.
+  -->
+  <div id="emote-wheel" class="hidden" aria-hidden="true"></div>
 
   <div id="bossbar" class="bossbar hidden">
     <div class="boss-name"><b id="boss-label">—</b><em id="boss-phase"></em></div>
@@ -434,6 +463,22 @@
   <div id="hitmarks"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>
+</div>
+
+<!--
+  THE FREE CAMERA'S ONE LINE, and it is OUTSIDE #hud because #hud is the thing
+  the free camera hides. A legend inside it would vanish with the rest and leave
+  a player flying a detached camera with no way to learn how to get back.
+
+  It fades to nearly nothing after a few seconds (HUD.FREECAM.hint), because the
+  entire point of the mode is a clean frame and a permanent caption would be in
+  every screenshot anyone ever took with it. The key is filled from the live
+  binding by HUD.setBindings — there is no key name typed here, for the same
+  reason there is none anywhere else on this page.
+-->
+<div id="freecam-bar" class="hidden">
+  <span>FREE CAMERA — the game is stopped</span>
+  <em id="freecam-key">—</em>
 </div>
 
 <!-- ══════════════════════ OVERLAYS ══════════════════════ -->

@@ -47,6 +47,20 @@ export const ACTIONS = [
   { id: 'moveR',      group: 'Movement', label: 'Move right',        keys: ['KeyD'],       hold: true },
   { id: 'jump',       group: 'Movement', label: 'Force jump',        keys: ['Space'],      hold: true },
   { id: 'sprint',     group: 'Movement', label: 'Sprint',            keys: ['ShiftLeft'],  hold: true },
+  // Backquote, and every other candidate was taken. A slow walk is a HOLD you
+  // keep for tens of seconds while strafing on WASD, so it belongs under the
+  // LEFT PINKY — the column that already carries Shift (sprint), Ctrl
+  // (crouch), Caps (one-handed grip) and Tab (scoreboard). Backquote is the
+  // only key left in that column, and the alternatives are all worse for the
+  // same reason: 19 of the 26 letters are claimed and the seven that are free
+  // (I J K L O P U) sit under the hand that is on the MOUSE, and the digit row
+  // wants the index finger, which is on W.
+  //
+  // A modifier and not a toggle, because the whole point of the gait is that
+  // it is a THING YOU ARE DOING — you hold it to walk into a room, and the
+  // moment you let go you are moving normally again. A toggled walk is a mode
+  // you forget you are in, and the first time you forget is a bolt in the back.
+  { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['Backquote'],  hold: true },
   { id: 'crouch',     group: 'Movement', label: 'Crouch',            keys: ['ControlLeft'], hold: true },
   { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft', 'Mouse4'] },
 
@@ -116,6 +130,18 @@ export const ACTIONS = [
   { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'] },
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },
+  // Digit5 for the wheel, on the same argument the guard stance made for
+  // Digit1: the digit row is what is left under the left hand once every
+  // letter within reach of WASD is spoken for, and `stance` already proves a
+  // HOLD works there. It is a hold rather than a toggle because the mouse
+  // picks the slot while the key is down and the release is the commit — the
+  // same gesture every radial wheel in every game uses, and the one that
+  // cannot leave the player stuck in a menu they did not mean to open.
+  { id: 'emote',      group: 'Interface', label: 'Emote wheel',      keys: ['Digit5'],     hold: true },
+  // P for photo. This one may live under the right hand precisely BECAUSE it
+  // is a press and not a hold: you take the mouse off the game the moment it
+  // is on, and everything you do afterwards is flown with the movement keys.
+  { id: 'freecam',    group: 'Interface', label: 'Free camera',      keys: ['KeyP'] },
 
   // The dojo's lesson navigation. Last round moved stasis and rend into this
   // table so that B and N could be SEEN to collide — and then left main.js's
@@ -136,6 +162,55 @@ export const ACTIONS = [
 ];
 
 export const ACTION_IDS = ACTIONS.map(a => a.id);
+
+/**
+ * HOW MUCH OF THE ORDINARY PACE A HELD SLOW WALK LEAVES.
+ *
+ * 0.34 of the base, which is 1.56 m/s against the game's 4.6. That is not a
+ * number picked to look small: 1.4 m/s is the pace a person walks down a
+ * corridor, a crouch already takes the player to 2.21 m/s (0.48), and a gait
+ * that is not clearly UNDER the crouch is not a gait, it is a rounding error
+ * with a key on it. At 0.34 the four upright speeds a player can be at are
+ *
+ *     slow walk 1.56   crouch 2.21   walk 4.60   sprint 7.45   (m/s)
+ *
+ * — four steps that are each about half again the one below, which is the
+ * spacing at which a player can actually feel which one they are in.
+ *
+ * Those four are not typed here from arithmetic; they are the line
+ * tools/checks/spectacle.mjs prints, measured off the real integrator on every
+ * run. Three of them belong to src/game/Player.js (the 4.6 base, the 0.48
+ * crouch, the 1.62 sprint) and this file does not own any of them, so if one
+ * moves the check's printed ladder moves with it and THIS comment is what has
+ * to follow — the check holds the ORDER and the ratio, which is the part that
+ * decides whether a player can feel the difference.
+ *
+ * It also has to survive the ANIMATOR. Rig.js stops solving a gait below
+ * `0.35 × legRef` and drives stride frequency off ground speed, so a walk that
+ * crept under that floor would slide the feet instead of stepping them; 1.56
+ * is comfortably above it, and the stride solver simply reads a slower body.
+ */
+export const WALK_SCALE = 0.34;
+
+/**
+ * The multiplier a HELD SLOW WALK puts on the player's pace, this frame.
+ *
+ * It lives beside the table rather than at the site that multiplies by it for
+ * the same reason `moveAxis` reads the table and not `down('KeyW')`: the gait
+ * is a BINDING, and the one thing every version of this project's key bugs had
+ * in common is a control that was read somewhere the table could not see.
+ *
+ * Sprint wins outright rather than the two multiplying. A player holding both
+ * has asked for two contradictory things, and 0.34 × 1.62 is a fifth gait
+ * nobody asked for and no readout describes; "let go of sprint and you are
+ * walking" is a rule you can hold in your head. Note that this asks the two
+ * ACTIONS and not the two KEYS, so it keeps meaning that after any rebind.
+ */
+export function walkScale(input) {
+  if (!input || typeof input.act !== 'function') return 1;
+  if (input.act('sprint')) return 1;
+  return input.act('walk') ? WALK_SCALE : 1;
+}
 
 export function defaultBindings() {
   const out = {};

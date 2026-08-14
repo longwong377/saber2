@@ -188,6 +188,26 @@ export const LINES = {
 
 export const LINE_KINDS = Object.keys(LINES);
 
+/**
+ * WHICH CONTOURS BELONG TO THE ROOM, AND WHICH BELONG TO YOU.
+ *
+ * The split exists because the emote wheel needs to know what the PLAYER's
+ * voice can be asked for — a wheel slot that plays the droid alarm call out of
+ * a Jedi's throat is not an emote, it is a bug — and because the answer must be
+ * derived rather than typed twice. So exactly one of the two lists is written
+ * down, and it is the shorter and more stable one: the four calls only an enemy
+ * ever makes. Everything else in LINES is the player's, by construction, which
+ * means a contour added below is on the wheel the day it is authored instead of
+ * the day someone remembers the wheel exists.
+ *
+ * `die` is deliberately on BOTH sides of that line and is therefore in neither
+ * list of exclusions: a droid powers down on the same three descending
+ * syllables the player dies on (see Announcer._enemyLine, which picks 'die' for
+ * anything with a `ring` partial and 'scream' for anything with a throat).
+ */
+export const ENEMY_LINES = ['alarm', 'panic', 'scream', 'chatter'];
+export const PLAYER_LINES = LINE_KINDS.filter(k => !ENEMY_LINES.includes(k));
+
 /** Seconds one syllable of length 1.0 lasts at cadence 1. */
 const SYLL_BASE = 0.30;
 /** Silence between syllables, before cadence. */

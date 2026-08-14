@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
-import { keyLabel } from '../engine/Bindings.js';
+import { keyLabel, walkScale } from '../engine/Bindings.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 
 const _v = new THREE.Vector3();
@@ -180,6 +180,519 @@ const POWER_ICONS = {
   rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
 };
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE MINIMAP                                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT THE MINIMAP IS ALLOWED TO COST.
+ *
+ * The budget is the design, not a limit bolted onto it. Wave 20 puts 25 bodies
+ * in the arena and this thing draws every one of them, so the only question
+ * that matters is how often. `hz` is the answer: a contact blip repainted 20
+ * times a second is indistinguishable from one repainted 60 times — a body
+ * moving at a sprint covers 12 cm between repaints, which is a third of a
+ * pixel on this canvas — and it is a third of the work. At 25 bodies that is
+ * 500 arcs a second against 1500, on a 132-px canvas. Per-body allocation is
+ * zero — no vector, no object and no string is built for a contact; the one
+ * allocation a repaint makes is the `plot` closure, twenty a second whatever
+ * the roster is.
+ *
+ * `range` is the radius the rim stands for. Levels spawn inside 60 m; 42 m
+ * covers the fight you are in without shrinking it to a smear, and anything
+ * outside is CLAMPED to the rim rather than dropped, because "there is
+ * something behind you, far away" is the single most useful thing a radar can
+ * say and a dropped contact says nothing.
+ */
+export const MINIMAP = { range: 42, hz: 20, size: 132 };
+
+/**
+ * The palette, exported so the checks can name a colour instead of matching a
+ * hex literal they typed themselves — "the boss is not drawn in the same colour
+ * as everything else" is a claim about this table, and a check with its own copy
+ * of it would go green on a build where every blip was the same red.
+ */
+export const MINIMAP_COLORS = {
+  self: '#7fd6ff',
+  enemy: '#ff6b74',
+  boss: '#ffb64a',
+  ally: '#5dffa8',
+  edge: 'rgba(255,107,116,.45)',
+};
+
+/**
+ * A radar, heading-up, driven off the same arrays the HUD already holds.
+ *
+ * HEADING-UP AND NOT NORTH-UP. A north-up map asks the player to rotate the
+ * world in their head every time they turn, and this is a game in which you
+ * turn constantly and are being shot at while you do it. Heading-up means a
+ * blip on the left of the disc is a body on your left, always, with no
+ * arithmetic — which is the entire reason to draw a map at a size where you
+ * can only glance at it.
+ *
+ * It takes its canvas rather than looking one up, so a check can hand it a
+ * context that COUNTS instead of one that paints. That is not a testing
+ * convenience: "does not cost a frame" is a claim about how many operations
+ * this issues per second, and the only way to hold a claim like that is to
+ * count them through the shipped code.
+ */
+export class Minimap {
+  constructor(canvas) {
+    this.canvas = canvas || null;
+    this.ctx = null;
+    this.acc = 0;
+    /** Repaints since construction. The budget in MINIMAP.hz is a rate, and
+     *  this is the only way to state a rate as something a check can read. */
+    this.repaints = 0;
+    this.on = null;
+    if (canvas && typeof canvas.getContext === 'function') {
+      // BOTH sizes, from the one number, here rather than in the stylesheet.
+      // A canvas has two of them — the backing store the arcs are drawn into
+      // and the box CSS lays out — and a canvas whose two disagree is a blurred
+      // map on every display. Writing them together from MINIMAP.size means the
+      // budget that justifies the arcs and the resolution they land in cannot
+      // be different numbers, and it leaves styles.css with only the ring
+      // around it, which is the part that is genuinely a style.
+      canvas.width = MINIMAP.size;
+      canvas.height = MINIMAP.size;
+      canvas.style.width = canvas.style.height = `${MINIMAP.size}px`;
+      this.ctx = canvas.getContext('2d');
+    }
+  }
+
+  /**
+   * One frame's worth of minimap, which is usually no work at all.
+   *
+   * The setting is read LIVE off the world's own settings blob — the same
+   * object the pause card is writing — so unticking the box takes the map off
+   * the screen on the next frame rather than on the next deploy. When it is
+   * off the element is display:none, which is the difference between a map
+   * that is not drawn and a map that is drawn transparent: the second one
+   * still costs a composite every frame.
+   */
+  update(dt, world, player, settings) {
+    const want = !!settings && settings.minimap !== false && !!player;
+    if (want !== this.on) {
+      this.on = want;
+      this.canvas?.classList?.toggle('hidden', !want);
+    }
+    if (!want || !this.ctx) return false;
+    this.acc += dt;
+    const step = 1 / MINIMAP.hz;
+    if (this.acc < step) return false;
+    // Clamped rather than accumulated: a stall must not buy the map a burst of
+    // catch-up repaints of a world that has only moved once.
+    this.acc = Math.min(this.acc - step, step);
+    this.draw(world, player);
+    return true;
+  }
+
+  /** Paint it. Public so the checks can drive exactly one repaint. */
+  draw(world, player) {
+    const g = this.ctx;
+    if (!g || !player) return 0;
+    const S = MINIMAP.size, R = S / 2, rim = R - 7;
+    g.clearRect(0, 0, S, S);
+    this.repaints++;
+    let n = 0;
+
+    // The heading the disc is rotated by. `camera.yaw` is where the player is
+    // LOOKING, which is what a player means by "in front of me" — the body
+    // faces the blade in combat and the movement otherwise, and a map that
+    // spun with the feet would swing wildly during a strafe.
+    const yaw = num(player.camera?.yaw, 0);
+    const cos = Math.cos(yaw), sin = Math.sin(yaw);
+    const px = num(player.position?.x, 0), pz = num(player.position?.z, 0);
+
+    // The blip loop, twice over one shared body. Nothing is allocated in here.
+    const plot = (x, z, colour, size) => {
+      const dx = x - px, dz = z - pz;
+      // Rotate world → screen. The camera's forward is -Z rotated by yaw, so
+      // "up the screen" is that direction and the sign work below is what puts
+      // it there; see CameraRig for the same pair of terms.
+      let sx = dx * cos - dz * sin;
+      // Canvas y grows DOWNWARD, and the camera's forward is `-(sin, cos)`, so
+      // the two negations cancel and this reads as a plain dot with the heading.
+      // Getting it wrong is one character and produces a map that is perfect
+      // until the moment you turn round — which is why both signs are measured
+      // at five yaws in tools/checks/spectacle.mjs rather than reasoned about.
+      let sy = dx * sin + dz * cos;
+      const d = Math.hypot(sx, sy);
+      const scale = d > 1e-4 ? Math.min(d, MINIMAP.range) / d * (rim / MINIMAP.range) : 0;
+      sx *= scale; sy *= scale;
+      const edge = d > MINIMAP.range;
+      g.beginPath();
+      g.arc(R + sx, R + sy, edge ? size * 0.62 : size, 0, 6.2832);
+      g.fillStyle = edge ? MINIMAP_COLORS.edge : colour;
+      g.fill();
+      n++;
+    };
+
+    for (const e of world?.enemies || []) {
+      if (!e || e.dead || !e.position) continue;
+      plot(e.position.x, e.position.z, (e.A?.boss || e.A?.big) ? MINIMAP_COLORS.boss : MINIMAP_COLORS.enemy,
+        (e.A?.boss || e.A?.big) ? 3.4 : 2.3);
+    }
+    // Co-op. `world.players` carries the local body too, which is already the
+    // arrow in the middle, so it is skipped by identity rather than by name.
+    for (const p of world?.players || []) {
+      if (!p || p === player || p.alive === false || !p.position) continue;
+      plot(p.position.x, p.position.z, MINIMAP_COLORS.ally, 2.6);
+    }
+    for (const r of world?.remotes?.values?.() || []) {
+      if (!r || !r.position) continue;
+      plot(r.position.x, r.position.z, MINIMAP_COLORS.ally, 2.6);
+    }
+
+    // …and you, pointing up the screen, because heading-up means you always do.
+    g.beginPath();
+    g.moveTo(R, R - 5.5);
+    g.lineTo(R - 3.6, R + 4.2);
+    g.lineTo(R + 3.6, R + 4.2);
+    g.closePath();
+    g.fillStyle = MINIMAP_COLORS.self;
+    g.fill();
+
+    return n;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE EMOTE WHEEL                                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT THE PLAYER CAN SAY ON PURPOSE.
+ *
+ * Every one of these already existed. src/engine/Voice.js authors twelve pitch
+ * contours and five larynxes to speak them with, tools/checks/voices.mjs
+ * measures all sixty player utterances and holds them apart, and the ONLY
+ * thing that could reach any of it was the announcer — which speaks when the
+ * GAME decides something happened. A player who wanted to salute an opponent,
+ * or curse a hit, or say anything at all at a moment of their own choosing had
+ * no way to. That is what a wheel is for.
+ *
+ * `line` names a contour in LINES. It is not a second copy of the contour and
+ * it is not a new one: the slot is a NAME for a shape that is already there,
+ * which is why the eight of them cover PLAYER_LINES exactly — a wheel with a
+ * slot missing would be an authored voice line the player cannot reach, and a
+ * wheel with a slot too many would be a name for a contour that does not
+ * exist. tools/checks/spectacle.mjs holds both directions, so adding a contour
+ * to Voice.js fails the build until it has a name here.
+ *
+ * `gesture` is what the BODY does, and there is exactly one thing this layer
+ * can honestly make it do: SaberController's flourish, the idle twirl that is
+ * already a bound action. It is on the two slots where a blade moving is the
+ * gesture — the salute and the shout — and absent from the six where standing
+ * still and saying it is the gesture. The rest of the body belongs to
+ * src/game/Player.js and src/game/Rig.js, and a wheel that faked a bow by
+ * writing into a bone another workstream solves every frame would be a bow
+ * that lasted until the next pose.
+ */
+export const EMOTES = [
+  { id: 'taunt',   name: 'Taunt',   line: 'streak', blurb: 'come on, then', gesture: 'flourish' },
+  { id: 'dismiss', name: 'Dismiss', line: 'kill',   blurb: 'that was nothing' },
+  { id: 'oath',    name: 'Oath',    line: 'boss',   blurb: 'a long, low promise' },
+  { id: 'yield',   name: 'Yield',   line: 'low',    blurb: 'enough' },
+  { id: 'lament',  name: 'Lament',  line: 'die',    blurb: 'for the ones who fell' },
+  { id: 'bow',     name: 'Bow',     line: 'land',   blurb: 'one note, downward' },
+  { id: 'curse',   name: 'Curse',   line: 'hurt',   blurb: 'through the teeth' },
+  { id: 'shout',   name: 'Shout',   line: 'effort', blurb: 'all of it at once', gesture: 'flourish' },
+];
+
+/** How far the cursor has to leave the middle before a slot is chosen, in px. */
+export const EMOTE_DEADZONE = 26;
+/**
+ * Pixels of mouse travel from the middle of the wheel to a slot.
+ *
+ * The cursor is CLAMPED to 1.6× this rather than to this, so a player who
+ * overshoots — and everyone overshoots, the wheel is open for under a second —
+ * keeps the slot they were heading for instead of wrapping past it into the
+ * next one. Only the direction is read; the distance past the deadzone does
+ * nothing but say "I mean it".
+ */
+export const EMOTE_REACH = 96;
+
+/**
+ * The angle the centre of slot `i` sits at, measured the way a screen measures.
+ *
+ * Derived and exported rather than written into a stylesheet eight times: the
+ * markup, the hit test and the check all ask this one function, so a ninth
+ * emote lands in the right place without anybody moving a transform by hand.
+ * Slot 0 is straight up, because the top of a radial wheel is where a player
+ * looks first and the first entry in the table should be the one they find.
+ */
+export function emoteAngle(i, n = EMOTES.length) {
+  return -Math.PI / 2 + (i / n) * Math.PI * 2;
+}
+
+/** Which slot a cursor at (x, y) picks, or -1 for none. */
+export function emoteAt(x, y, n = EMOTES.length) {
+  if (Math.hypot(x, y) < EMOTE_DEADZONE) return -1;
+  // Measured from the top and wrapped, then rounded to the nearest slot centre
+  // — which is the same statement as emoteAngle read backwards, and is why the
+  // two cannot disagree about where a slot is.
+  const a = Math.atan2(y, x) + Math.PI / 2;
+  const turns = a / (Math.PI * 2);
+  return ((Math.round(turns * n) % n) + n) % n;
+}
+
+/**
+ * The wheel: a held key, a cursor driven by the mouse, and a release that
+ * commits.
+ *
+ * The cursor is INTEGRATED FROM THE MOUSE DELTA rather than read off
+ * `input.mouse.x`, and that is not a stylistic choice. The game is
+ * pointer-locked while it is being played, and under pointer lock the browser
+ * stops reporting a position at all — `Input` only fills `mouse.x/y` on the
+ * unlocked path. A wheel that read the position would work perfectly on the
+ * menu and be dead in the one place it exists for.
+ */
+export class EmoteWheel {
+  constructor(host) {
+    this.host = host || null;
+    this.on = false;
+    this.x = 0; this.y = 0;
+    this.sel = -1;
+    this.slots = [];
+    this._build();
+  }
+
+  _build() {
+    if (!this.host) return;
+    this.host.innerHTML = '';
+    for (let i = 0; i < EMOTES.length; i++) {
+      const e = EMOTES[i];
+      const a = emoteAngle(i);
+      const d = document.createElement('div');
+      d.className = 'em';
+      // The slot's own position, in the wheel's own units. Written here from
+      // emoteAngle rather than typed into styles.css because eight hand-typed
+      // transforms is eight chances for the markup and the hit test to point
+      // at different places, and the player would only find out by pressing.
+      d.style.left = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
+      d.style.top = `${(50 + Math.sin(a) * 37).toFixed(3)}%`;
+      d.innerHTML = `<b>${esc(e.name)}</b><span>${esc(e.blurb)}</span>`;
+      this.host.appendChild(d);
+      this.slots.push(d);
+    }
+  }
+
+  /**
+   * One frame of the wheel.
+   *
+   * @returns the EMOTE that was just committed, or null.
+   */
+  update(input, hud) {
+    if (!input || typeof input.act !== 'function') { this.close(); return null; }
+    const held = input.act('emote');
+    if (held && !this.on) {
+      this.on = true;
+      this.x = 0; this.y = 0; this.sel = -1;
+      this.host?.classList?.remove('hidden');
+    }
+    if (!held) {
+      if (!this.on) return null;
+      const picked = this.sel >= 0 ? EMOTES[this.sel] : null;
+      this.close();
+      return picked;
+    }
+    // The same delta the camera would have used. It is safe to READ it here
+    // without stealing it: main.js clears the accumulator once per frame in
+    // input.end(), and while the wheel is open the blade controller is the
+    // only other reader — which is the point, since a player picking an emote
+    // is not aiming.
+    this.x = clamp(this.x + num(input.mouse?.dx, 0), -EMOTE_REACH * 1.6, EMOTE_REACH * 1.6);
+    this.y = clamp(this.y + num(input.mouse?.dy, 0), -EMOTE_REACH * 1.6, EMOTE_REACH * 1.6);
+    const sel = emoteAt(this.x, this.y);
+    if (sel !== this.sel) {
+      this.sel = sel;
+      for (let i = 0; i < this.slots.length; i++) this.slots[i].classList.toggle('sel', i === sel);
+      if (sel >= 0 && hud) hud._emoteTick?.();
+    }
+    return null;
+  }
+
+  close() {
+    if (!this.on) return;
+    this.on = false;
+    this.sel = -1;
+    for (const s of this.slots) s.classList.remove('sel');
+    this.host?.classList?.add('hidden');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE FREE CAMERA                                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * How the detached camera flies.
+ *
+ * `look` is radians per pixel of mouse travel and it is SaberController's own
+ * `camGain`, so the free camera turns at exactly the rate the game does and
+ * nobody has to relearn their wrist to frame a shot. Quoted rather than
+ * imported: HUD.js must not take an import edge into the blade controller for
+ * one number, and a quoted number is a number that can drift — so
+ * tools/checks/spectacle.mjs reads `camGain` out of src/game/SaberController.js
+ * and fails if the two stop agreeing. The player's own sensitivity slider
+ * multiplies both, one layer up.
+ *
+ * `boost` and the slow-walk scale on the other side of it are the two
+ * modifiers a photographer actually needs: cross a level in a second, then
+ * creep the last half-metre to line the shot up.
+ */
+export const FREECAM = { speed: 9, boost: 3.2, look: 0.0024, pitchMax: 1.53, hint: 4.5 };
+
+const _fq = new THREE.Quaternion(), _fe = new THREE.Euler(0, 0, 0, 'YXZ');
+const _fwd = new THREE.Vector3(), _rgt = new THREE.Vector3();
+
+/**
+ * A CAMERA THAT COMES OFF THE BODY — AND A GAME THAT STOPS WHILE IT IS OFF.
+ *
+ * The second half is the whole design. A detached camera that let the world run
+ * is not a screenshot tool, it is a wallhack: you would fly it over a wall,
+ * watch a wave assemble, fly back and know where everything is. So entering
+ * sets `world.paused`, which is World.update's own first line and therefore the
+ * one gate in the project that is guaranteed to stop every system at once —
+ * physics, spawning, the director, the blade solver, the net tick. Nothing
+ * advances, nothing can be learned that was not already on screen, and the shot
+ * you are framing is the frame you froze.
+ *
+ * It flies on the MOVEMENT BINDINGS rather than on keys of its own: forward is
+ * whatever moves you forward, up is whatever jumps, down is whatever crouches,
+ * fast is sprint and slow is the new walk. Rebind W and the free camera follows,
+ * for free, and there is nothing here for the Codex to get wrong.
+ *
+ * GETTING BACK IS THE FEATURE. The camera's transform and the world's previous
+ * paused state are both stored on the way in and put back on the way out, so
+ * leaving a free camera cannot strand a player in a paused world or leave the
+ * view a metre off where the rig had it. Leaving is also forced by anything
+ * that makes the state meaningless — a different world, a HUD driven without a
+ * camera — because the one unrecoverable bug this feature can have is being
+ * stuck in it.
+ */
+export class FreeCam {
+  constructor() {
+    this.on = false;
+    this.yaw = 0; this.pitch = 0;
+    this.world = null;
+    this.camera = null;
+    this.hintT = 0;
+    this._pos = new THREE.Vector3();
+    this._quat = new THREE.Quaternion();
+    this._wasPaused = false;
+  }
+
+  toggle(world, camera, hud) {
+    if (this.on) this.exit(hud);
+    else this.enter(world, camera, hud);
+    return this.on;
+  }
+
+  enter(world, camera, hud) {
+    if (this.on || !world || !camera) return false;
+    this.world = world;
+    this.camera = camera;
+    this._pos.copy(camera.position);
+    this._quat.copy(camera.quaternion);
+    // Start pointing exactly where the rig had it, or the first frame of a
+    // photo mode is a lurch away from the shot you pressed the key for.
+    _fe.setFromQuaternion(camera.quaternion, 'YXZ');
+    this.yaw = _fe.y;
+    this.pitch = clamp(_fe.x, -FREECAM.pitchMax, FREECAM.pitchMax);
+    /**
+     * TWO WRITES, AND BOTH ARE NEEDED.
+     *
+     * `paused` is World.update's own first line and therefore the right STATE
+     * for anything else that asks whether the game is running. `freeCamera` is
+     * what the frame gate in Menu.tapFrame reads, and it is what makes the stop
+     * airtight: main.js runs `world.update` BEFORE `hud.update`, so anything
+     * that writes `paused = false` between two HUD frames — its own resume(),
+     * after a pause menu raised over a free camera — would buy the game one
+     * whole frame of simulation before this could re-assert itself, and one
+     * frame is enough to watch a wave assemble.
+     */
+    this._wasPaused = !!world.paused;
+    world.paused = true;
+    world.freeCamera = true;
+    this.on = true;
+    this.hintT = FREECAM.hint;
+    hud?.show?.(false);
+    return true;
+  }
+
+  exit(hud) {
+    if (!this.on) return false;
+    if (this.camera) {
+      this.camera.position.copy(this._pos);
+      this.camera.quaternion.copy(this._quat);
+    }
+    if (this.world) {
+      this.world.freeCamera = false;
+      this.world.paused = this._wasPaused;
+    }
+    this.on = false;
+    this.world = null;
+    this.camera = null;
+    hud?.show?.(true);
+    return true;
+  }
+
+  /**
+   * One frame of flying, on REAL time.
+   *
+   * `dt` here is the frame length main.js measured, not the world clock — the
+   * world clock is stopped, which is the point, and a camera that could not
+   * move while the game was frozen would be a camera that could not move at
+   * all.
+   */
+  step(dt, input, world, camera) {
+    if (!this.on) return false;
+    // Anything that makes the stored state meaningless takes the camera down
+    // rather than flying a camera that is not the one we detached.
+    if (!world || !camera || world !== this.world || camera !== this.camera) return false;
+    // Re-asserted every frame, for the same pair of reasons they are written on
+    // the way in: `paused` is the state everything else reads, and `freeCamera`
+    // is the gate that cannot be raced by the frame order.
+    world.paused = true;
+    world.freeCamera = true;
+
+    if (input && typeof input.act === 'function') {
+      this.yaw -= num(input.mouse?.dx, 0) * FREECAM.look;
+      this.pitch = clamp(this.pitch - num(input.mouse?.dy, 0) * FREECAM.look, -FREECAM.pitchMax, FREECAM.pitchMax);
+
+      // Fast on sprint, precise on the slow walk — the same two modifiers that
+      // move the body, doing the same two things to the camera. walkScale is
+      // the gait's own function, so the creep here is the creep there.
+      const boost = input.act('sprint') ? FREECAM.boost : walkScale(input);
+      const v = FREECAM.speed * boost * dt;
+      let f = 0, r = 0, u = 0;
+      if (input.act('moveF')) f += 1;
+      if (input.act('moveB')) f -= 1;
+      if (input.act('moveR')) r += 1;
+      if (input.act('moveL')) r -= 1;
+      if (input.act('jump')) u += 1;
+      if (input.act('crouch')) u -= 1;
+      if (f || r) {
+        const len = Math.hypot(f, r);
+        f /= len; r /= len;
+      }
+      _fe.set(this.pitch, this.yaw, 0, 'YXZ');
+      _fq.setFromEuler(_fe);
+      _fwd.set(0, 0, -1).applyQuaternion(_fq);
+      _rgt.set(1, 0, 0).applyQuaternion(_fq);
+      camera.position.addScaledVector(_fwd, f * v).addScaledVector(_rgt, r * v);
+      camera.position.y += u * v;
+    }
+    _fe.set(this.pitch, this.yaw, 0, 'YXZ');
+    camera.quaternion.setFromEuler(_fe);
+    camera.updateMatrixWorld?.();
+    if (this.hintT > 0) this.hintT = Math.max(0, this.hintT - dt);
+    return true;
+  }
+}
+
 export class HUD {
   constructor(root = document) {
     this.el = {
@@ -224,6 +737,15 @@ export class HUD {
       cursor: root.getElementById('blade-cursor'),
       flowVig: root.getElementById('flow-vignette'),
       dmgVig: root.getElementById('dmg-vignette'),
+      minimap: root.getElementById('minimap'),
+      emotes: root.getElementById('emote-wheel'),
+      // The free camera's own line lives OUTSIDE #hud, because #hud is the
+      // thing it hides — a legend inside it would go away with everything else
+      // and leave a player flying a detached camera with no way to learn how to
+      // get back. It is the one element in this file that is deliberately not
+      // part of the HUD it belongs to.
+      freecam: root.getElementById('freecam-bar'),
+      freecamKey: root.getElementById('freecam-key'),
     };
     this.hpGhostValue = 1;
     this.centerTimer = 0;
@@ -243,6 +765,19 @@ export class HUD {
     this.presence = new Presence();
     this._pops = [];
     this.popupsOn = true;
+    /**
+     * The three surfaces this file gained for the spectacle pass, all driven
+     * off the one call main.js already makes once a frame.
+     *
+     * They are here rather than in World for the same reason the announcer is:
+     * none of them is simulation. The map READS positions, the wheel READS the
+     * input and plays a voice line that was already authored, and the free
+     * camera writes the render camera and World's own `paused` flag and touches
+     * nothing else. Nothing in this file advances a game.
+     */
+    this.minimap = new Minimap(this.el.minimap);
+    this.emotes = new EmoteWheel(this.el.emotes);
+    this.freecam = new FreeCam();
   }
 
   /**
@@ -288,6 +823,13 @@ export class HUD {
       const p = this.powerEls[key];
       if (p && p.label) p.label.textContent = keyLabel((bindings[action] || [])[0]);
     }
+    // The free camera's own legend, from the same table and on the same call.
+    // It is the only text on screen while the HUD is hidden, so it is the one
+    // place a stale key name would be unrecoverable: a player who cannot read
+    // the way out has to reload the page.
+    if (this.el.freecamKey) {
+      this.el.freecamKey.textContent = `${keyLabel((bindings.freecam || [])[0])} to come back`;
+    }
   }
 
   show(on) { this.el.hud.classList.toggle('hidden', !on); }
@@ -298,6 +840,28 @@ export class HUD {
   }
 
   update(dt, world, player, camera) {
+    /**
+     * THE FREE CAMERA IS READ BEFORE THE EARLY RETURN, ON PURPOSE.
+     *
+     * Everything below this block describes a living player. The free camera
+     * describes a STOPPED world and may well outlive the body — a player can
+     * freeze the frame their Jedi died on, which is exactly the frame worth
+     * photographing — so it is stepped up here where `player` has not been
+     * required yet. It also returns, because a frozen world has nothing to say:
+     * no bars to move, no announcer, no room. See FreeCam for why the world is
+     * paused rather than merely unwatched.
+     */
+    const input = world ? world.liveInput : null;
+    if (input && input.actHit('freecam') && camera) this.freecam.toggle(world, camera, this);
+    if (this.freecam.on) {
+      if (!this.freecam.step(dt, input, world, camera)) this.freecam.exit(this);
+      else {
+        this.el.freecam?.classList?.toggle('hidden', false);
+        this.el.freecam?.classList?.toggle('fade', this.freecam.hintT <= 0);
+        return;
+      }
+    }
+    this.el.freecam?.classList?.add('hidden');
     if (!player) return;
     const el = this.el;
 
@@ -491,7 +1055,67 @@ export class HUD {
     this.popupsOn = world.settings ? world.settings.popups !== false : true;
     this.announcer.update(dt, world, player, this);
     this.presence.update(dt, world);
+
+    /**
+     * ── the map, and what the player has to say
+     *
+     * After the announcer, so an emote committed on this frame speaks into a
+     * budget the announcer has already stepped, and last of all because both
+     * are readouts: neither may run before the HUD has agreed the frame is
+     * drawable, and neither may change anything the lines above it read.
+     */
+    this.minimap.update(dt, world, player, world.settings);
+    const picked = this.emotes.update(input, this);
+    if (picked) this.emote(picked, world, player);
   }
+
+  /**
+   * PLAY ONE EMOTE — the voice, the blade, and the word for it.
+   *
+   * `force` on the announcer's budget, because this is not a quip. The gaps in
+   * Announcer exist to stop the game talking over itself when it decides
+   * something happened; a player who has held a key open, moved the mouse to a
+   * slot and let go has decided, and a deliberate act refused by a rate limit
+   * reads as a broken key rather than as restraint. It still SETS the budget on
+   * the way through, so the next automatic line waits for this one.
+   *
+   * Every gate the rest of the voice honours is honoured here too: a player who
+   * has switched their own voice off gets the gesture and the caption and no
+   * sound, and one who has switched popups off gets the gesture and the sound.
+   * An emote is not a reason to overrule an option.
+   */
+  emote(e, world, player) {
+    if (!e) return null;
+    const s = world?.settings || {};
+    const at = player?.chest || player?.position || null;
+    const said = this.announcer.say(s, e.line, at);
+    /**
+     * THE ONLY THING THE BODY CAN HONESTLY BE ASKED TO DO FROM HERE.
+     *
+     * `flourishT` is SaberController's own timer and `actHit('flourish')` sets
+     * it exactly this way, guard and all — the guard is what stops an emote
+     * interrupting a raised blade or a thrust, and re-checking `< 0` is what
+     * stops a held key restarting the twirl sixty times a second. Everything
+     * else a body could do is a pose, and a pose written from here would be
+     * overwritten by the animator on the very next frame.
+     */
+    if (e.gesture === 'flourish' && player?.control && player.control.flourishT < 0) {
+      player.control.flourishT = 0;
+    }
+    this.popup(e.name.toUpperCase(), e.blurb, 'emote');
+    return { emote: e, said: !!said };
+  }
+
+  /**
+   * A tick as the cursor crosses into a slot.
+   *
+   * `hover` and not a new sound: it is the one AudioEngine.ui already ships for
+   * "the cursor is now on this", it is 50 ms at gain 0.05, and it goes out at
+   * PRIO.critical like every other menu sound so a wheel opened mid-firefight
+   * still answers. A kind that is not in that map plays SILENTLY, which is how
+   * a wheel ends up with no feedback and nothing to show for it.
+   */
+  _emoteTick() { try { this.announcer.audio?.ui?.('hover'); } catch {} }
 
   /**
    * ONE EVENT, IN THE HUD'S OWN VOICE.

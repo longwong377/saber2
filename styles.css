@@ -392,7 +392,25 @@ button{font-family:inherit}
 .boons .bn{padding:4px 9px;border:1px solid var(--line);border-radius:20px;background:rgba(9,13,21,.75);
   font:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 
-.hud-br{position:absolute;right:34px;bottom:30px}
+/* A COLUMN, not two boxes. The map sits on the power wheel, right-aligned with
+   it, in one flow — the same rule the score column was moved to obey after the
+   kill feed and the event feed were found stacked on top of one another at
+   `position:absolute; top:120px`. Boxes in a flow cannot overlap at any
+   viewport; boxes pinned to the same corner eventually do. */
+.hud-br{position:absolute;right:34px;bottom:30px;display:flex;flex-direction:column;
+  align-items:flex-end;gap:12px}
+/* The disc, and it has NO SIZE HERE on purpose.
+   A canvas has two sizes — the backing store the arcs are drawn into and the
+   box CSS lays out — and HUD.Minimap writes both of them from MINIMAP.size,
+   which is the number its whole per-second budget is argued from. Typing 132px
+   here would be a third copy, and the first thing to go wrong when the budget
+   moves is a map drawn at one resolution and scaled to another. What is here is
+   the frame around it: a ring, because a radar is a radius, and a square would
+   lie about its corners, where the range is 1.41× what the rim says. */
+#minimap{border-radius:50%;border:1px solid var(--line);
+  background:radial-gradient(circle at 50% 50%,rgba(9,13,21,.52),rgba(9,13,21,.86));
+  box-shadow:inset 0 0 22px -6px rgba(87,201,255,.28)}
+#minimap.hidden{display:none}
 .powers{display:flex;gap:8px}
 .pw{position:relative;width:46px;height:46px;border:1px solid var(--line);border-radius:10px;background:rgba(9,13,21,.75);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;overflow:hidden;transition:.15s}
@@ -419,6 +437,59 @@ button{font-family:inherit}
   16%{opacity:1;transform:translate(-50%,-6px) scale(1.12)}
   32%{transform:translate(-50%,-12px) scale(1)}
   100%{opacity:0;transform:translate(-50%,-46px) scale(.95)}}
+
+/* ══════════════════ the emote wheel ══════════════════
+   Centred on the screen and NOT on the reticle's own box, because the wheel is
+   read while the mouse is being moved to it — it wants the whole middle of the
+   screen, and the reticle is 44 px. The slots are placed from emoteAngle() in
+   JS, so nothing here knows how many there are: add a ninth and the ring
+   re-spaces itself. */
+#emote-wheel{position:absolute;left:50%;top:50%;width:440px;height:440px;
+  transform:translate(-50%,-50%);pointer-events:none;
+  animation:emoteIn .13s cubic-bezier(.22,1,.36,1) both}
+#emote-wheel.hidden{display:none}
+/* The dim disc under it, and it has to reach PAST the slots.
+   A wheel over a firefight is unreadable without one — measured against a real
+   Mustafar sunset, eight labels in the HUD's dim grey over a 90%-white sky were
+   illegible at every one of the eight positions. The scrim therefore covers the
+   ring the slots sit on (37% of the box) and fades out beyond it, rather than
+   stopping at 22% where it lit nothing but the middle. This is the only moment
+   in the game where taking contrast AWAY from the fight is right: you have
+   already decided not to be fighting. */
+#emote-wheel::before{content:"";position:absolute;inset:-9%;border-radius:50%;
+  background:radial-gradient(circle at 50% 50%,rgba(5,7,12,.86) 20%,rgba(5,7,12,.74) 48%,
+    rgba(5,7,12,.34) 70%,transparent 86%)}
+.em{position:absolute;transform:translate(-50%,-50%);width:118px;text-align:center;
+  padding:7px 4px;border-radius:9px;transition:.11s;opacity:.9}
+.em b{display:block;font:var(--mono);font-size:11px;font-weight:700;letter-spacing:.22em;
+  text-transform:uppercase;color:#cdd9e8}
+.em span{display:block;margin-top:3px;font:var(--mono);font-size:8.5px;letter-spacing:.1em;
+  color:var(--dim)}
+/* The chosen slot. It lights rather than growing, because a wheel whose slots
+   change size moves the target the cursor is already heading for. */
+.em.sel{opacity:1;background:rgba(87,201,255,.12);box-shadow:0 0 26px -8px var(--accent)}
+.em.sel b{color:var(--accent)}
+.em.sel span{color:#a9b8cc}
+@keyframes emoteIn{from{opacity:0;transform:translate(-50%,-50%) scale(.94)}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+/* An emote in the event feed is the player's own doing, so it reads in the
+   blade's colour rather than in a streak's warm one or a boss's red. */
+#event-feed .ev-emote{border-right-color:var(--accent)}
+#event-feed .ev-emote b{color:#bfeaff}
+
+/* ══════════════════ the free camera ══════════════════
+   OUTSIDE #hud in the markup, so it survives the HUD being hidden — this rule
+   is what makes that visible rather than merely true. It fades to almost
+   nothing a few seconds in: the mode exists to produce a clean frame and a
+   permanent caption would be in every screenshot taken with it. */
+#freecam-bar{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:21;
+  display:flex;align-items:center;gap:12px;padding:8px 16px;border-radius:999px;
+  border:1px solid var(--line);background:rgba(5,7,12,.6);pointer-events:none;
+  font:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--dim);transition:opacity .8s ease}
+#freecam-bar.hidden{display:none}
+#freecam-bar.fade{opacity:.12}
+#freecam-bar em{font-style:normal;color:var(--accent);letter-spacing:.14em}
 
 #dmg-vignette,#flow-vignette{position:absolute;inset:0;opacity:0;transition:opacity .35s;pointer-events:none}
 #dmg-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 42%,rgba(255,30,50,.55) 100%)}

@@ -32,9 +32,21 @@
  */
 
 import { audio as defaultAudio } from '../engine/Audio.js';
-import { ENEMY_VOICES, voiceAt } from '../engine/Voice.js';
+import { ENEMY_VOICES, voiceAt, LINE_KINDS } from '../engine/Voice.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp } from '../engine/MathUtil.js';
+
+/**
+ * Is this a contour that exists?
+ *
+ * `utterance()` falls back to LINES.effort for anything it does not recognise,
+ * which is right for the game — a trigger must never be able to throw mid-fight
+ * — and wrong for a caller handing over a name from a table. A wheel slot
+ * pointing at a contour that has been renamed would silently play the grunt for
+ * every emote, and every one of them would sound identical, which is precisely
+ * the failure src/engine/Voice.js is shaped around.
+ */
+const LINES_HAS = (kind) => LINE_KINDS.includes(kind);
 
 /** Seconds between quips (kill, streak, boss, low health) whatever happens. */
 export const QUIP_GAP = 4.5;
@@ -88,10 +100,33 @@ export const CHAMBERS = [
   { at: 5, title: 'NOTHING GETS THROUGH', sub: 'five, unbroken' },
 ];
 
-const rung = (ladder, n) => {
+/**
+ * THE HIGHEST RUNG THIS COUNT HAS JUST CROSSED — not the rung it landed on.
+ *
+ * This used to be `hit.at === n ? hit : null`, an exact match, and the effect
+ * of that one comparison is the opposite of what the ladders are for. A count
+ * does NOT climb one at a time: `player.kills` is differenced once a frame, and
+ * a Force rend, a thrown blade down a corridor or one explosion take three,
+ * four, six bodies inside a single frame. Measured against the shipped ladder,
+ * the run of streaks a player could actually be told about was
+ *
+ *     0→2 DOUBLE STRIKE   0→3 TRIPLE STRIKE   0→4 ONSLAUGHT   0→5 RELENTLESS
+ *     0→6 nothing at all  0→8 nothing at all  0→9 nothing at all
+ *
+ * — so a two-kill exchange announced itself and a SIX-kill exchange, the most
+ * spectacular thing the game can produce, went by with the ordinary one-kill
+ * grunt and no popup. The same hole sat under RETURNS (two bolts can land on
+ * one frame) and under CHAMBERS.
+ *
+ * `from` is the count before the jump, so a rung is announced when it is passed
+ * and never twice: 3→6 says RELENTLESS (5, the highest rung crossed), and the
+ * next kill at 7 says UNSTOPPABLE rather than repeating it. A ladder that
+ * cannot be jumped is a ladder that only rewards killing things slowly.
+ */
+const rung = (ladder, n, from = n - 1) => {
   let hit = null;
-  for (const r of ladder) if (n >= r.at) hit = r;
-  return hit && hit.at === n ? hit : null;
+  for (const r of ladder) if (n >= r.at && from < r.at) hit = r;
+  return hit;
 };
 
 export class Announcer {
@@ -124,6 +159,30 @@ export class Announcer {
 
   /** The voice the player has chosen, live off the settings blob. */
   voice(settings) { return voiceAt(settings?.voiceIndex ?? 0); }
+
+  /**
+   * SAY SOMETHING BECAUSE THE PLAYER ASKED, not because the game noticed.
+   *
+   * The whole of this file below here is OBSERVATION: it differences numbers
+   * and speaks when one of them moves, and every budget in it exists to stop
+   * the game talking over itself. None of that reasoning applies to a line the
+   * player deliberately chose off the emote wheel, so this is the one entry
+   * point that goes in with `force` — the quip gap may not swallow a key press.
+   *
+   * It still goes THROUGH `_say` rather than round it, which is the part that
+   * matters: the utterance is built from the player's chosen larynx, it is
+   * counted in `stats.quips`, it respects `voiceLines` (a player who has turned
+   * their own voice off stays silent and gets the gesture instead), and — the
+   * reason it is not simply `audio.speak` — it SETS the quip budget on the way
+   * out, so the automatic line that would have followed waits for it instead of
+   * landing on top of it.
+   *
+   * @returns true if it actually spoke.
+   */
+  say(settings, kind, pos = null) {
+    if (!kind || !LINES_HAS(kind)) return false;
+    return this._say(this.voice(settings), kind, pos, 1.0, settings?.voiceLines !== false, true);
+  }
 
   /**
    * One frame.
@@ -205,9 +264,10 @@ export class Announcer {
     const kills = player.kills ?? 0;
     if (kills > P.kills) {
       const got = kills - P.kills;
-      this.streak = (this.streakT > 0 ? this.streak : 0) + got;
+      const was = this.streakT > 0 ? this.streak : 0;
+      this.streak = was + got;
       this.streakT = STREAK_WINDOW;
-      const r = rung(STREAKS, this.streak);
+      const r = rung(STREAKS, this.streak, was);
       if (r) {
         this._popup(hud, settings, r.title, r.sub, 'streak');
         this._say(spec, 'streak', at, 1.0, spk);
@@ -220,9 +280,10 @@ export class Announcer {
     /* deflections, and the run of them */
     const deflects = player.deflects ?? 0;
     if (deflects > P.deflects) {
+      const was = this.returns;
       this.returns += deflects - P.deflects;
       this.returnT = STREAK_WINDOW * 1.6;
-      const r = rung(RETURNS, this.returns);
+      const r = rung(RETURNS, this.returns, was);
       if (r) {
         this._popup(hud, settings, r.title, r.sub, 'return');
         this._say(spec, 'streak', at, 0.9, spk);
@@ -250,9 +311,10 @@ export class Announcer {
      */
     const chambers = player.chambers ?? 0;
     if (chambers > P.chambers) {
-      this.chamberRun = this.chamberT > 0 ? this.chamberRun + (chambers - P.chambers) : (chambers - P.chambers);
+      const was = this.chamberT > 0 ? this.chamberRun : 0;
+      this.chamberRun = was + (chambers - P.chambers);
       this.chamberT = STREAK_WINDOW * 1.6;
-      const c = rung(CHAMBERS, this.chamberRun);
+      const c = rung(CHAMBERS, this.chamberRun, was);
       if (c) {
         this._popup(hud, settings, c.title, c.sub, 'perfect');
         this._say(spec, 'streak', at, 0.95, spk);
