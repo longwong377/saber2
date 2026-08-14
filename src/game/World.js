@@ -272,14 +272,19 @@ export class World {
     /**
      * LESSONS INSTEAD OF WAVES — and now anywhere, not only in the dojo.
      *
-     * `L.training` is the dojo's own flag and still means what it always did.
-     * The mode is the second door: `DojoDirector` places everything it spawns
+     * THE MODE IS THE ONLY DOOR NOW. `DojoDirector` places everything it spawns
      * relative to the PLAYER and reads nothing at all off the level, so the
      * eleven lessons work identically on a dune face or in a blizzard, and
      * pinning them to one octagonal hall was a restriction with no cause. See
      * MODES.training in Waves.js.
+     *
+     * `L.training ||` used to lead this test — the dojo level's own flag. That
+     * level is gone (see the note at the foot of Levels.js) and `grep -c
+     * 'training:' src/game/Levels.js` returns 0, so the clause was a reader
+     * with no writer: a condition that could never be true, sitting in front of
+     * the one that decides. A dead disjunct reads like a supported path.
      */
-    if (L.training || this.settings.mode === 'training') {
+    if (this.settings.mode === 'training') {
       this.director = new DojoDirector(this);
       this.training = true;
       this.running = true;
@@ -509,6 +514,12 @@ export class World {
     this.physics.clear();
     this.physics.terrain = null;
     this.bladeSolver.reset();
+    // The dressing pass's own bookkeeping. `beginDressing` resets it at the
+    // start of every level, so it never grew without bound — but it is the
+    // departed level's state and it was still standing (64 entries on the
+    // arena) after a quit to the menu, for as long as the World was held.
+    this._siteTaken = null;
+    this._stoneField = null;
     this.running = false;
     this.over = false;
   }

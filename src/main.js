@@ -248,7 +248,13 @@ function buildWorld(levelKey, run = null) {
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
   world = new World(engine, worldSettings());
-  world.difficulty = DIFFICULTY[sessionOr('difficulty')] || DIFFICULTY.knight;
+  // The player's own difficulty — and then the host's over the top of it, if
+  // this is their session. Two statements rather than one `sessionOr`, because
+  // `settings.difficulty` is the named reader Menu.SETTING_READERS points at
+  // and a setting whose only reader is behind an indirection is a setting the
+  // "every control reaches the game" check can no longer see.
+  world.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
+  if (session?.difficulty) world.difficulty = DIFFICULTY[session.difficulty] || world.difficulty;
 
   world.onNotify = (t, s) => hud.message(t, s);
   world.onFloating = (p, text, color) => hud.floating(p, text, color);
