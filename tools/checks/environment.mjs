@@ -44,8 +44,29 @@ import { MEAN_ALBEDO, rawMaps, sandMaps, rockMaps, duracreteMaps, metalMaps, arm
  * while every number written down about it was correct.
  */
 const PEAK = new Map();
+/**
+ * WHICH BAKE A TEXTURE CAME FROM, BY NAME.
+ *
+ * `PEAK` was keyed on the texture OBJECT — `PEAK.set(fn(2).map, …)` — and read
+ * back with `PEAK.get(tex) ?? 3`. The `?? 3` is the defect: a cache miss was
+ * silent and answered with a magic number, so the check measured the fallback
+ * instead of the map. `max(albedo) * 3` is 1.56 on the drift, and 1.56 is
+ * exactly what the failure printed.
+ *
+ * It missed because texture identity is not stable across a whole run. The map
+ * factories memoise per resolution, and by the time this suite runs, another
+ * suite may have built the same bake at a different size — so `fn(2).map` and
+ * the material's own `map` are two different objects carrying the same pixels.
+ * Forward through the suite list it happened to hit; backwards it did not.
+ * FOUND BY `SABER_CHECK_ORDER=reverse`, on its first run.
+ *
+ * Keyed on the bake's NAME now, taken from the texture rather than from a
+ * lookup, and a miss THROWS instead of guessing. A check that cannot identify
+ * its subject must say so, not carry on with a plausible number.
+ */
+const PEAK_BY_NAME = new Map();
 function mapPeak(tex) {
-  if (PEAK.size === 0) {
+  if (PEAK_BY_NAME.size === 0) {
     const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
     for (const [name, fn] of [['sand', sandMaps], ['rock', rockMaps], ['duracrete', duracreteMaps],
       ['metal', metalMaps], ['armor', armorMaps], ['cloth', clothMaps]]) {
@@ -57,10 +78,19 @@ function mapPeak(tex) {
         lum[i] = l; s += l;
       }
       lum.sort();
-      PEAK.set(fn(2).map, lum[Math.floor(0.99 * (N - 1))] / (s / N));
+      PEAK_BY_NAME.set(name, lum[Math.floor(0.99 * (N - 1))] / (s / N));
+      PEAK.set(fn(2).map, name);
     }
   }
-  return PEAK.get(tex);
+  /* By name where the texture carries one, by identity as a fallback — and if
+   * neither answers, that is a failure of the measurement and it says so. */
+  const name = tex?.userData?.saberBake ?? tex?.name ?? PEAK.get(tex);
+  const peak = PEAK_BY_NAME.get(name);
+  if (peak == null) {
+    throw new Error(`mapPeak cannot identify the bake behind this texture (name ${JSON.stringify(name)}) `
+      + `— it used to answer 3 here, which is a number this check would then measure instead of the map`);
+  }
+  return peak;
 }
 
 /* ── a world stub that records everything a maker does ───────────────── */
@@ -393,7 +423,7 @@ export function run({ check, assert, near }) {
      * white reflector, so it clipped, and a bank of desert sand rendered as
      * white marble. Whatever bake it is on, the drift's brightest texel has to
      * stay inside physical albedo. */
-    const peak = Math.max(...alb) * (mapPeak(dm.map) ?? 3);
+    const peak = Math.max(...alb) * mapPeak(dm.map);
     assert(peak < 0.95, `the drift's 99th-percentile albedo is ${peak.toFixed(2)} — that clips to white`);
     return `${rows.join(', ')}; drift albedo ${alb.map((x) => x.toFixed(2)).join('/')} ` +
       `vs sand ${s.map((x) => x.toFixed(2)).join('/')}, p99 ${peak.toFixed(2)}`;

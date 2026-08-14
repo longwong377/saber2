@@ -413,12 +413,28 @@ function bake(size, sampler, opts = {}) {
   };
 }
 
-function toTexture(canvas, { repeat = 1, srgb = false, aniso = 8 } = {}) {
+function toTexture(canvas, { repeat = 1, srgb = false, aniso = 8, bake = null } = {}) {
   const t = new THREE.CanvasTexture(canvas);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat, repeat);
   t.anisotropy = aniso;
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  /**
+   * WHICH BAKE THIS CAME FROM, CARRIED ON THE TEXTURE.
+   *
+   * Tiling lives on the texture object, so one bake produces a DIFFERENT
+   * texture per repeat — `sand@2` and `sand@26` are two objects over the same
+   * pixels. Anything downstream that wants to know "which surface is this"
+   * had to keep its own map keyed on object identity, and identity is exactly
+   * what varies: `tools/checks/environment.mjs` did that, missed, and fell
+   * back to a hard-coded 3, so it measured the fallback instead of the map and
+   * reported an albedo that was really `max(colour) * 3`.
+   *
+   * The name is on the texture now. It costs one string per texture and it
+   * removes a whole class of "I could not identify my own subject" from every
+   * consumer, present and future.
+   */
+  if (bake) { t.name = bake; t.userData.saberBake = bake; }
   t.needsUpdate = true;
   return t;
 }
@@ -458,7 +474,7 @@ function materialFrom(name, size, sampler, opts = {}) {
    * for it, which is three floats of interpolation per vertex as well as the
    * fetch. */
   const set = {
-    map: toTexture(b.albedo, { repeat, srgb: true }),
+    map: toTexture(b.albedo, { repeat, srgb: true, bake: name }),
     normalMap: null,
     roughnessMap: null,
     metalnessMap: null,
