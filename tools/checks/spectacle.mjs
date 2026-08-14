@@ -297,11 +297,17 @@ export async function run({ check, assert }) {
     const after = Math.hypot(r.p.velocity.x, r.p.velocity.z);
     assert(Math.abs(after - base) < 0.05, `letting go left the body at ${after.toFixed(2)} m/s, not ${base.toFixed(2)}`);
 
-    // A boon taken while the key is held survives the restore.
-    const g = walker();
-    applyGait({ players: [g] });
+    /**
+     * A boon taken WHILE the key is held survives the restore.
+     *
+     * The gate borrows `boonMods.moveSpeed` for the length of one update and
+     * puts it back afterwards, and a landing replays a run's whole card list
+     * into a freshly built player — so a restore that wrote back the value it
+     * captured would throw a Fleet-Footed away for anyone who happened to be
+     * walking on the frame it landed. The gate undoes the FACTOR instead, which
+     * is what this measures.
+     */
     const gi = hold(freshInput(), 'moveF', 'walk');
-    g.update(1 / 60, { input: gi, terrain: null, particles: null, take: null });
     const inside = walker({ update(dt, ctx) { this.boonMods.moveSpeed *= 1.2; this._move(dt, ctx); } });
     applyGait({ players: [inside] });
     inside.update(1 / 60, { input: gi, terrain: null, particles: null });
