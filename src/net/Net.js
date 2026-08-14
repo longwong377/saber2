@@ -717,6 +717,39 @@ export function packAvatar(player) {
  *           animates locally and bills damage locally would hit twice. Sabers
  *           are billed by the host over `hit`, as they were.
  *
+ *   md      WHICH ELITE THIS IS, and it is the field the whole escalation model
+ *           was missing. `e.type` names the archetype and NOTHING named the
+ *           modifier, so on a joining player's screen every elite in the game
+ *           wore the plain chassis: measured on two real Worlds fielding one of
+ *           every producible (archetype, modifier) pair — 23 of them — 23 of 23
+ *           arrived with `e.mod` undefined and 0 of 23 carried a single tell.
+ *           Host vs client, per tell: deflector bubbles 4 vs 0, reactor cores
+ *           5 vs 0, rally rings 4 vs 0, off-hand blades 1 vs 0, tinted bodies
+ *           18 vs 0. The labels came across as "Sith Acolyte" where the host
+ *           read "Armoured Sith Acolyte". Enemy.js's MODIFIERS block opens by
+ *           saying a difficulty you cannot see coming is not difficulty, it is
+ *           a surprise; this is the field that makes that true off-host.
+ *
+ *           It is worth a slot for a second reason that is not cosmetic at all.
+ *           `applyModifier` resets `maxHp`, and the client's grind billing —
+ *           `share * e.maxHp * GRIND_LETHALITY` in World._applyBladeEvent — is
+ *           read off the CLIENT's copy. With the base archetype's maxHp under
+ *           an elite's health the same swing billed the host anywhere from
+ *           0.667× (armoured, leader) to 1.724× (frenzied) of what it should,
+ *           and 7 of those 23 arrived carrying more hp than the client believed
+ *           the body could hold at all.
+ *
+ *           The KEY, not an index into MODIFIER_KEYS: `e.type` in the same
+ *           record is already a bare string, an index decodes as a DIFFERENT
+ *           elite the day that table is reordered, and a plain body — which is
+ *           most of every wave — pays one byte for `0` either way. Priced on
+ *           the worst realistic composition rather than guessed at: a real
+ *           director run to wave 20 on the arena fields 21 bodies of which 12
+ *           are elite, and one snapshot of it is 1443 bytes with no field,
+ *           1582 with the key, 1494 with an index — 25.4, 27.8 and 26.3 KB/s
+ *           at the host's 18 Hz. 1.5 KB/s is not worth a decoder that can be
+ *           silently wrong.
+ *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
  * protocol can never contain one.
@@ -731,6 +764,7 @@ export function packSnapshot(world) {
       r2(e.velocity?.x || 0), r2(e.velocity?.z || 0),
       e.aimCharge > 0 ? 1 : 0,
       packDuel(e.duel),
+      e.mod || 0,
     ]);
   }
   const fires = world._netFires || [];

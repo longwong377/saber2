@@ -345,6 +345,14 @@ export class WaveDirector {
     this.onWaveClear = null;
     this.onDraft = null;
     this.totalSpawned = 0;
+    /**
+     * THE HIGHEST WAVE THIS LADDER HAS ALREADY PAID FOR — see `payWave`.
+     *
+     * Zero rather than `floor`, because `floor` is read off the run and a
+     * director outlives nothing: `start()` clamps the first wave to `floor + 1`
+     * anyway, so the first clear on any rung is above this and pays.
+     */
+    this._paid = 0;
     // sandbox bookkeeping — see _sandboxUpdate
     this._fireApplied = null;
     this._diffBase = null;
@@ -765,6 +773,43 @@ export class WaveDirector {
   }
 
   /**
+   * HAS THIS WAVE ALREADY BEEN PAID FOR?
+   *
+   * Everything a cleared wave is worth used to hang off the clear SIGNAL, which
+   * is fired every time the last body of a wave falls — and `restartWave` (the
+   * pause card's own button, reachable in every mode and at any moment) hands
+   * the director the same wave number back: `this.director.start(Math.max(1,
+   * this.director.wave))`. So the wave was re-composed, re-fought and re-paid,
+   * for as many times as the player cared to press it.
+   *
+   * Measured on a real world, arena/roguelite/knight, seeded, with the player
+   * pinned unkillable and drafts answered exactly as main.js's pick callback
+   * answers them: reaching wave 2 legitimately gives 1 draft, 1 boon, 3,260
+   * score and 2 Insight. Ten restarts of that same wave, each fought to a real
+   * clear, gave 11 drafts, 9 boons, 23,660 score and 12 Insight — +10 drafts,
+   * +8 boons, +20,400 score, +10 Insight — and `director.wave` read 2 at every
+   * single step. World.js's own note on Insight says surviving a wave is the
+   * only thing that earns it and that there is nothing here to farm; this was
+   * the thing to farm.
+   *
+   * Highest-paid rather than a set of wave numbers because the ladder only ever
+   * goes up: `start()` clamps to `floor + 1`, the escalation asks for
+   * `this.wave + 1`, and `restartWave` asks for a number it has already had. A
+   * `>` against the high-water mark is the whole rule.
+   *
+   * NOT reset by `restartWave`, and that is the point — re-composing the wave
+   * is what a restart is FOR, and it still does that. What it no longer does is
+   * pay for it twice.
+   *
+   * @returns {boolean} true the first time this wave number is cleared.
+   */
+  payWave(wave) {
+    if (!(wave > this._paid)) return false;
+    this._paid = wave;
+    return true;
+  }
+
+  /**
    * Try to promote one queued body to an elite, if the budget can carry it.
    *
    * The surcharge comes out of the SAME budget the plain bodies are bought
@@ -1041,7 +1086,9 @@ export class WaveDirector {
 
     if (!this.spawnQueue.length && !this.arrivals.pending && alive === 0) {
       this.active = false;
-      const draft = this.drafts && this.isDraftWave(this.wave) && !this.rungEnds;
+      // ONCE PER WAVE, NOT ONCE PER CLEAR. See payWave.
+      const fresh = this.payWave(this.wave);
+      const draft = fresh && this.drafts && this.isDraftWave(this.wave) && !this.rungEnds;
       this.intermission = draft ? 999 : 5.5;
       /**
        * RUNG-LOCAL, and it is the only number in this file that is.
@@ -1051,8 +1098,14 @@ export class WaveDirector {
        * below back on. Handing it the run-wide number would end the foundry
        * after one wave. Everything else about a cleared wave reads
        * `director.wave`, which is run-wide.
+       *
+       * `fresh` rides along because the payouts World hangs off this signal —
+       * `score += 500 * w`, the party's 8 hp and 0.35 flow, and INSIGHT — are
+       * the same kind of thing as the draft and have to be gated by the same
+       * ledger. The announcement is not: a wave that was cleared was cleared,
+       * and the player should hear so however many times they fought it.
        */
-      if (this.onWaveClear) this.onWaveClear(this.rungWave);
+      if (this.onWaveClear) this.onWaveClear(this.rungWave, fresh);
       if (draft && this.onDraft) {
         const boss = this.isBossWave(this.wave);
         this.onDraft(drawBoons(this.draftSize(this.wave), this.world.takenBoons, this.wave, {
@@ -1182,7 +1235,12 @@ function cleaveAlong(p, from, to, dt) {
   const reach = p.saber?.bladeLength ?? 1.15;
   const seen = p.throwCleaved;
 
-  const meet = (id, caps, target) => {
+  /**
+   * `key` is what the flight REMEMBERS and `id` is what the cut is addressed
+   * to, and for everything except a forest they are the same string. See the
+   * stand of trees below: one prop id, many independent bodies.
+   */
+  const meet = (id, caps, target, key = id) => {
     let best = null, bestGap = Infinity;
     for (const cap of caps) {
       const r = segmentSegment(from, to, cap.p0, cap.p1, _c1, _c2);
@@ -1190,7 +1248,7 @@ function cleaveAlong(p, from, to, dt) {
       if (gap < bestGap) { bestGap = gap; best = { cap, t: r.t }; }
     }
     if (!best || bestGap > reach) return;
-    seen.add(id);
+    seen.add(key);
     p.throwCleaves++;
 
     // The disc cuts on the horizontal plane it is spinning in, so where it
@@ -1233,7 +1291,46 @@ function cleaveAlong(p, from, to, dt) {
   // two parts, and the disc has already been through it.
   for (let i = 0, n = props.length; i < n && i < props.length; i++) {
     const pr = props[i];
-    if (!pr || pr.dead || seen.has(pr.id)) continue;
+    if (!pr || pr.dead) continue;
+    /**
+     * A STAND OF TREES IS ONE PROP AND MANY BODIES.
+     *
+     * `attachForest` pushes the whole wood into `world.props` as a single
+     * duck-typed prop — one `id`, one `capsules()` returning every trunk near
+     * the blade, each named `t<i>`. So the loop below reached it perfectly
+     * well and then `seen.add(pr.id)` retired ALL EIGHTEEN HUNDRED TRUNKS
+     * after the first one, and `meet` only ever picks the single closest
+     * capsule out of what it is handed anyway. Measured on the wood, a disc
+     * thrown 24 m through a dense line: `throwCleaved` held exactly one entry
+     * — `forest1` — and `throwCleaves` read 1 for the whole flight. The card
+     * says the blade cuts clean through everything it passes.
+     *
+     * What made it invisible is worth writing down, because it is why this is
+     * a smaller defect than it looks: trees are `TOUGHNESS.plastoid`, which a
+     * disc at 24 m/s parts through the ORDINARY solver without any help, so
+     * the wood came down either way. Measured on the same throw, 17 trunks
+     * felled with the technique switched off against 15 with it on — the boon
+     * was contributing nothing, and nothing is what it looked like.
+     *
+     * One key per TRUNK fixes both halves: each tree is offered on its own,
+     * cut once per flight, and the counter is the number of bodies the blade
+     * actually went through. The cut is still addressed to `pr` — the prop
+     * branch of `World._applyBladeEvent` calls `Forest.cut(point, …)`, which
+     * resolves the trunk from the point via `nearestStanding` and fells it
+     * with its chain. There is nothing to add there; a target carrying neither
+     * `enemy` nor `prop` is dropped by that function in silence.
+     */
+    if (pr.kind === 'forest' && typeof pr.capsules === 'function') {
+      // `Forest.capsules()` already culls to the trunks near the blade — its
+      // body position follows the disc in flight — so this must not cull again.
+      for (const cap of pr.capsules()) {
+        const key = pr.id + ':' + cap.name;
+        if (seen.has(key)) continue;
+        meet(pr.id, [cap], { prop: pr }, key);
+      }
+      continue;
+    }
+    if (seen.has(pr.id)) continue;
     const before = props.length;
     meet(pr.id, pr.capsules(), { prop: pr });
     for (let k = before; k < props.length; k++) if (props[k]) seen.add(props[k].id);

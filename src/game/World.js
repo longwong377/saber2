@@ -16,7 +16,7 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
 import { Communion } from './Constellation.js';
 import { applyOrder } from './Order.js';
@@ -300,8 +300,6 @@ export class World {
     this.director.onWaveClear = (w) => {
       this.notify('WAVE CLEAR', 'the Force is with you');
       audio.ui('good');
-      this.score += 500 * w;
-      for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
       if (!this.run || this.run.done) return;
       this.run.wave = w;
       this.run.score = this.score;
@@ -359,7 +357,40 @@ export class World {
      * as if it were sixteen first waves (18 over the climb instead of 22, and
      * one set-piece counted instead of three). `cleared(w)` must keep the local
      * one — World's own `run.wave >= rung.waves` is written against it. */
-    this.director.onWaveClear = (w) => { this._earnInsight(this.director.wave); cleared(w); this._reviveDowned(); };
+    /**
+     * EVERYTHING A CLEARED WAVE PAYS, IN ONE PLACE, ONCE PER WAVE.
+     *
+     * The score and the party's heal used to sit INSIDE the callback above,
+     * beside the announcement, and both of them are payouts rather than
+     * announcements — which is what made them farmable. `restartWave` (the
+     * pause card's button, present in every mode) re-composes the wave the
+     * player is standing in and hands the director the SAME number back, so
+     * the clear signal fires again and everything hanging off it paid again:
+     * measured, ten restarts of wave 2 each fought to a real clear were worth
+     * +10 drafts, +8 boons, +20,400 score and +10 Insight with the counter
+     * reading 2 throughout. `WaveDirector.payWave` is the ledger; `fresh` is
+     * its answer, and it gates the three payouts and the draft and nothing
+     * else. The WAVE CLEAR line and the revive still happen every time,
+     * because a wave that was survived was survived.
+     *
+     * `fresh = true` by default so a caller that predates the ledger — a check
+     * driving the director by hand, a mode that fires the callback itself —
+     * still pays. The two callers in the tree both pass it explicitly.
+     *
+     * Out here rather than inside for the reason the note above gives:
+     * tools/checks/run.mjs reads the first 1600 characters after
+     * `onWaveClear = ` for the rung signal, and the callback had 16 characters
+     * of that budget left.
+     */
+    this.director.onWaveClear = (w, fresh = true) => {
+      if (fresh) {
+        this._earnInsight(this.director.wave);
+        this.score += 500 * w;
+        for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
+      }
+      cleared(w);
+      this._reviveDowned();
+    };
 
     this.director.onDraft = (boons) => {
       this.onDraftOffer?.(boons);
@@ -1218,7 +1249,15 @@ export class World {
       // the prefix sweep was resetting grind progress on every column and wall
       // in the level each time one cell came away. A real Prop is genuinely
       // gone — replaced by halves carrying new ids — so it still clears whole.
-      this.bladeSolver.clearTarget(t.id, ev.cap?.structure ? ev.cap.name : null);
+      //
+      // …AND A FOREST IS THE SAME SHAPE. `attachForest` rides the whole stand
+      // in `world.props` as one duck-typed prop with one id, and its capsules
+      // are named per TRUNK (`t0`, `t1`, …) — so the prefix sweep threw away
+      // the accumulated grind on all 1,800 of them every time one tree came
+      // down, and the tree beside the one you just felled started again from
+      // zero. `cap.forest` is the marker the capsule already carries, exactly
+      // as `cap.structure` is the proxy's.
+      this.bladeSolver.clearTarget(t.id, (ev.cap?.structure || ev.cap?.forest) ? ev.cap.name : null);
       P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
       audio.cut(ev.point, false);
       player.camera?.addShake(0.06);
@@ -1913,7 +1952,7 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
@@ -1922,6 +1961,35 @@ export class World {
         e.netDriven = true;
         this._netEnemyIndex.set(id, e);
       }
+      /**
+       * THE ELITE, AND IT NEVER CROSSED.
+       *
+       * `spawnEnemy` builds the bare archetype, `applyModifier` had exactly two
+       * call sites — both inside `WaveDirector.update`, which a client never
+       * runs — and nothing else in the tree ever called it. So on a joining
+       * player's screen every elite in the game was a plain body: measured on
+       * two real Worlds fielding one of every producible (archetype, modifier)
+       * pair, 23 of 23 arrived with `e.mod` undefined, host-vs-client tells 4/0
+       * deflector bubbles, 5/0 reactor cores, 4/0 rally rings, 1/0 off-hand
+       * blades, 18/0 tinted bodies, and the labels read "Sith Acolyte" against
+       * the host's "Armoured Sith Acolyte". The one tell that did cross is the
+       * marksman's laser, as `tg` below, and only because it is a boolean.
+       *
+       * It is not only what the player sees. `_applyBladeEvent` bills a grind
+       * as `share * e.maxHp * GRIND_LETHALITY` off THIS copy, so a client's
+       * identical swing claimed 0.667× on an armoured or leader body and
+       * 1.724× on a frenzied one, and 7 of those 23 arrived carrying more hp
+       * than this machine believed the chassis could hold.
+       *
+       * Applied on any frame the copy is still plain rather than only on the
+       * frame it is created: the host applies its modifier immediately after
+       * `spawnEnemy`, so today it is always the first frame — but a body that
+       * were ever promoted later would otherwise be an elite the client could
+       * never catch up with. `applyModifier` is idempotent (it returns false
+       * once `e.mod` is set) and it runs BEFORE `e.hp = hp` below, so the
+       * host's health still wins over the full-health reset inside it.
+       */
+      if (md && !e.mod) this._applyNetModifier(e, md);
       /**
        * `_netPos`, NOT `netTarget` — and that one rename is a bug fix.
        *
@@ -1995,6 +2063,51 @@ export class World {
   }
 
   /**
+   * PROMOTE A REPLICATED BODY TO THE ELITE THE HOST SAYS IT IS.
+   *
+   * Everything `applyModifier` does is wanted here: the patched archetype (so
+   * `A.label` reads "Armoured Sith Acolyte" and `armorPlus` sends the blade off
+   * a durasteel torso exactly as it does on the host), the reset `maxHp` (which
+   * is what the grind bills against), and `install` — the bubble, the core, the
+   * plates, the standard and its rally ring, the off-hand blade, the tint. Six
+   * of the seven tells in the game arrive through this one call; the seventh,
+   * the marksman's laser, was already crossing as `tg`.
+   *
+   * ONE THING IS HELD BACK, AND IT IS HELD BACK ON PURPOSE.
+   *
+   * `_updateElite` runs before Enemy.update's netDriven branch — for the living
+   * and the dead alike, because a fuse burns on a corpse — so an Unstable body
+   * promoted here would light its fuse in `die()` and 0.85 s later run
+   * `_detonate` on THIS machine: `hurt()` over `world.players` and
+   * `world.enemies`, off interpolated positions, on a machine that is not the
+   * authority for any of it. Measured with the naive version of this fix: a
+   * client's local player 2 m from an unstable B1 lost 24.8 hp to its own copy
+   * of a blast the host was billing at the same moment over `hit` — and the
+   * same loop would have taken hp off every net-driven body in the radius,
+   * which `_reconcileClaims` would then have claimed to the host as damage this
+   * machine had dealt. Two double-counts from one blast.
+   *
+   * Net.js's own note on `hit` already states the rule: "`hit` keeps everything
+   * the peer CANNOT see: sabers, explosions, the unstable core." So the core
+   * goes on the chest, where it is the tell that lets a player decide whether
+   * to kill this thing next to their friend — and the detonation stays the
+   * host's, marked spent before it can ever be armed. `die()` reads
+   * `!this._detonated` before lighting the fuse, so this one assignment is the
+   * whole disarm.
+   *
+   * The clean version of this belongs one line inside `Enemy._detonate` — skip
+   * the two `hurt` loops when `this.netDriven`, keeping the particles, the
+   * flash and the scream — at which point this line comes out and the client
+   * gets the fuse and the blast as well. That file is not this workstream's to
+   * edit; the handover is written up rather than half-applied.
+   */
+  _applyNetModifier(e, key) {
+    if (!applyModifier(e, key)) return false;
+    if (e.mod === 'unstable') e._detonated = true;
+    return true;
+  }
+
+  /**
    * THE WAVE SIGNAL, FOR A MACHINE WITH NO DIRECTOR.
    *
    * `director.update` is gated off on a client, and everything a wave is worth
@@ -2017,10 +2130,21 @@ export class World {
       st.started = true;
       this.director.onWaveStart?.(msg.w, msg.rem ?? 0);
     } else if (!act && st.act && st.started) {
-      // The same callback the host runs, so a client cannot silently receive a
-      // different wave-clear than everyone else. The rung signal inside it is
-      // gated on `netMode !== 'client'` — the host owns the ladder.
-      this.director.onWaveClear?.(st.w);
+      /**
+       * The same callback the host runs, so a client cannot silently receive a
+       * different wave-clear than everyone else. The rung signal inside it is
+       * gated on `netMode !== 'client'` — the host owns the ladder.
+       *
+       * …AND THE SAME LEDGER, applied to the same number. `payWave` is asked
+       * here rather than sent on the wire because the host's own edge is all a
+       * client needs: a co-op host who presses Restart Wave leaves `act` at 1
+       * and `w` unchanged, so no edge is raised by the restart itself, and the
+       * re-clear that follows would otherwise have paid every peer a second
+       * time for a wave they had already been paid for. `st.w` is `msg.w`,
+       * which is the host's run-wide `director.wave` — the same number the
+       * host's own ledger is keyed on.
+       */
+      this.director.onWaveClear?.(st.w, this.director.payWave?.(st.w) ?? true);
       this._reviveDowned();
     }
     st.act = act;
@@ -2097,6 +2221,29 @@ export class World {
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     this._netEnemyIndex?.clear();
+    /**
+     * …AND WHAT IS STILL IN THE AIR, which this did not touch.
+     *
+     * A wave does not arrive all at once: `ArrivalDirector` holds bodies that
+     * have been bought and paid for in flights and in staging, and they land
+     * over the following seconds. Emptying `world.enemies` and re-composing
+     * left every one of those inbound — so the restarted wave fielded its own
+     * seven AND the leftovers of the wave the player had just abandoned.
+     *
+     * Measured on a real world, arena/roguelite/knight, seeded, 90 s a trial:
+     * with no restart the director announced 7 contacts and fielded exactly 7.
+     * Restarting once at t = 1, 2, 3 and 5 s announced 7 every time and fielded
+     * 8, 10, 10 and 9. Four restarts 2.5 s apart announced 7 and fielded 14 —
+     * exactly twice the wave the banner named. At the call, `arrivals.flights`
+     * and `arrivals.staging` were byte-identical either side of the restart
+     * (3 flights and 1 staged before, 3 and 1 after) while `world.enemies`
+     * went 4 → 0.
+     *
+     * `ArrivalDirector.clear()` already existed and already does exactly this;
+     * its own comment names "a wave reset, a level change, a run ending" as its
+     * callers, and a wave reset was not one of them.
+     */
+    this.director.arrivals?.clear();
     for (const p of this.players) {
       if (!p.isLocal) continue;
       p.hp = p.maxHp; p.force = p.maxForce; p.stamina = p.maxStamina;

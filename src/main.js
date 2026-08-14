@@ -776,9 +776,36 @@ function cardAfter(ms, what, show) {
  *
  * `Progress.recordRun` decides which modes count; training and the sandbox are
  * refused there rather than here.
+ *
+ * ONCE PER WORLD, AND IT WAS ONCE PER CALLER.
+ *
+ * `gameOver` records, and `quitToMenu` records — and the death card's second
+ * button IS `quitToMenu` (Menu.js binds `#btn-menu` to `onQuit`). So the very
+ * first thing a new player does after their very first death, on the shipped
+ * default mode, wrote the same run to the store twice. Driven in a browser
+ * against the real page with both localStorage keys removed so the game chose
+ * its own defaults (mustafar / knight / roguelite): kill the player and the
+ * store reads `{runs: 1, recent: 1}`; click "Return to the Temple" on that same
+ * card, with no other input, and it reads `{runs: 2, recent: 2}` and the menu
+ * prints "2 runs, 0 felled · deepest 1 wave" after one run.
+ *
+ * The Descent was immune because `Run.end()` sets `done` and the branch below
+ * returns on it — which is exactly this guard, written for one mode out of six.
+ * `startRun` builds a Run for the gauntlet alone, so roguelite (the default),
+ * waves and duel had nothing playing that part. The flag lives on the WORLD
+ * rather than in a module-level variable for the same reason `run.done` does: a
+ * world is one session, and the next Ignite builds a new one.
+ *
+ * Not every total doubled, which is why this was easy to look at and not see:
+ * `Progress.recordRun` adds `runs`, `kills`, `communed`, the lit stars and the
+ * forty-entry `recent` history, but takes `Math.max` for `bestDepth`,
+ * `bestScore`, `bestTier` and the by-order/species/mode maps. Hence a record
+ * line reading "2 runs" beside "roguelite 1".
  */
 function record(stats = null) {
   if (!world) return;
+  if (world._recorded) return;
+  world._recorded = true;
   if (world.run) {
     if (world.run.done) return;                 // already recorded at the crown
     world.run.end();
@@ -1034,6 +1061,42 @@ function wireNet() {
    * was unrecoverable. A client's own Run can never ascend either (the rung
    * signal is host-only, by design), so this message is the ONLY thing that can
    * take a joining player down the ladder.
+   *
+   * …AND ONLY THE `screens.state === 'menu'` GATE CAME OFF. The level did not.
+   *
+   * `deploy()` fell through to its default argument, `startRun()`, which builds
+   * a BRAND NEW gauntlet Run at tier 0 — and `deploy`'s own next line is
+   * `const levelKey = run && !run.done ? run.rung.level : sessionOr('level')`,
+   * so that fresh run's rung won over `msg.level`, which the line above has
+   * just put into `session`. Evaluated against the real Run and DESCENT
+   * (`0:intake 1:foundry 2:deeps 3:deeps`): the host sends intake and the
+   * client builds intake; the host sends foundry, then deeps, then deeps, and
+   * the client builds intake, intake, intake. THREE OF FOUR RUNGS, and every
+   * one of them puts the joining player in a different building from everyone
+   * else while snapshots keep arriving at the host's coordinates — measured on
+   * two real Worlds, a host on the foundry and a client on the intake: all 8
+   * bodies arrive, 5 buried and 3 floating against the client's own terrain,
+   * and the foundry's 58 dps melt hazard does not exist over there at all. The
+   * atmosphere follows the client's tier too (`SPIRE[run.tier]`), so the bottom
+   * of the ladder is lit like the top of it.
+   *
+   * `deploy(null)` and not `deploy()`, and the difference is the whole fix: a
+   * default parameter fires on `undefined` only, so passing an explicit null
+   * makes `levelKey` fall through to `sessionOr('level')` — which is `msg.level`
+   * one line up. Nothing else can carry it; there is no level key on the wire
+   * anywhere else, and `packSnapshot` writes the host's absolute coordinates
+   * into whatever terrain the client happens to have.
+   *
+   * A client has no ladder of its own to keep, so it loses nothing by not
+   * holding a Run: the score it shows comes off the snapshot's `sc`, and
+   * `run.wave`/`kills`/`hpFrac` are written only in `onWaveClear`'s host half.
+   * What a client's Run did hold is its drafted boons, and those did not
+   * survive a landing before this either — the Run was rebuilt from scratch on
+   * every one. Carrying a joining player's build down the ladder is a separate
+   * piece of work and wants a run that accumulates without ever ascending.
+   *
+   * Only in the gauntlet, note: in every other mode `startRun()` already
+   * returns null and the client already loaded the host's level correctly.
    */
   net.on('start', (msg) => {
     session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
@@ -1047,7 +1110,7 @@ function wireNet() {
       screens.clear();
       world.dispose(); world = null;
     }
-    deploy();
+    deploy(null);
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));

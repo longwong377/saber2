@@ -290,6 +290,119 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: an elite arrives on a joining player\'s screen wearing its tells', async () => {
+    /**
+     * EVERY ELITE IN THE GAME WAS A PLAIN BODY OFF-HOST.
+     *
+     * `packSnapshot` carried twelve fields and `e.mod` was not among them, and
+     * `applyModifier` had exactly two call sites, both inside
+     * `WaveDirector.update`, which a client never runs. So a joining player
+     * fought an escalation with none of its seven tells: no deflector bubble on
+     * a Shielded body, no reactor core on an Unstable one, no plates, no
+     * burning standard and no rally ring under a Leader, no second lit blade on
+     * a Dual-Wielder, no red heat on a Frenzied one. The archetype's own name
+     * came across too — "Sith Acolyte" where the host read "Armoured Sith
+     * Acolyte". Enemy.js's MODIFIERS block opens by saying a difficulty you
+     * cannot see coming is not difficulty, it is a surprise.
+     *
+     * And it was not only cosmetic. `_applyBladeEvent` bills a grind as
+     * `share * e.maxHp * GRIND_LETHALITY` off the CLIENT's copy, so the same
+     * swing claimed 0.667× on an armoured or leader body and 1.724× on a
+     * frenzied one, and 7 of 23 elites arrived carrying more hp than this
+     * machine believed the chassis could hold at all.
+     *
+     * ONE OF EVERY PRODUCIBLE PAIR, not a sample: `modifiersFor(type)` is asked
+     * which modifiers each archetype can wear and every answer is fielded, so a
+     * tell added to MODIFIERS later is covered the day it is written.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { modifiersFor, applyModifier } = await import('../../src/game/Enemy.js');
+    const { host, client, pump } = await H.bootPair();
+
+    const pairs = [];
+    for (const t of ['b1', 'trooper', 'acolyte', 'droideka', 'walker']) {
+      for (const k of modifiersFor(t)) pairs.push([t, k]);
+    }
+    assert(pairs.length >= 20, `only ${pairs.length} (archetype, modifier) pairs are producible — the table is wrong`);
+    pairs.forEach(([t, k], i) => {
+      const p = new THREE.Vector3((i % 6) * 3 - 8, 0, Math.floor(i / 6) * 3 - 6);
+      p.y = host.terrain.height(p.x, p.z);
+      const e = host.spawnEnemy(t, p);
+      assert(e && applyModifier(e, k), `the host could not field a ${k} ${t}`);
+    });
+    pump(0.5);   // real packets, packed and applied by the shipping code
+
+    /** The tells, as the meshes and materials the MODIFIERS table installs. */
+    const tells = (e) => ({
+      bubble: !!e.shieldMesh, core: !!e.coreMesh, ring: !!e.rallyRing,
+      offhand: !!e.offSaber, tint: (e._modMaterials || []).length > 0,
+    });
+    const H0 = { bubble: 0, core: 0, ring: 0, offhand: 0, tint: 0 };
+    const C0 = { ...H0 };
+    let plain = 0, wrongLabel = 0, overHp = 0, worstBill = 1, missing = 0;
+    for (const he of host.enemies) {
+      const ce = client._netEnemyIndex.get(he.id);
+      if (!ce) { missing++; continue; }
+      if (!ce.mod) plain++;
+      if (ce.A.label !== he.A.label) wrongLabel++;
+      // Math.round(e.hp) on the wire is worth up to half a point either way;
+      // anything past that is a client billing against a chassis it invented.
+      if (ce.hp > ce.maxHp + 0.5) overHp++;
+      const ratio = ce.maxHp / he.maxHp;
+      if (Math.abs(Math.log(ratio)) > Math.abs(Math.log(worstBill))) worstBill = ratio;
+      for (const [k, v] of Object.entries(tells(he))) if (v) H0[k]++;
+      for (const [k, v] of Object.entries(tells(ce))) if (v) C0[k]++;
+    }
+    assert(!missing, `${missing} of the host's ${host.enemies.length} elites never reached the client at all`);
+    assert(!plain,
+      `${plain} of ${host.enemies.length} elites arrived on the joining player's screen as plain bodies — `
+      + 'no bubble, no core, no plates, no standard, no second blade, no tint');
+    assert(!wrongLabel, `${wrongLabel} elites are named for the bare archetype on the client`);
+    for (const k of Object.keys(H0)) {
+      assert(H0[k] > 0, `the host fielded no ${k} at all — the scene is wrong, not the wire`);
+      assert(C0[k] === H0[k],
+        `the host shows ${H0[k]} ${k} tell(s) and the joining player shows ${C0[k]}`);
+    }
+    assert(!overHp,
+      `${overHp} elites arrived carrying more hp than the client's own copy can hold — its blade grinds `
+      + 'them against a maximum health the body does not have');
+    assert(Math.abs(Math.log(worstBill)) < 0.02,
+      `the client's copy of an elite is ${worstBill.toFixed(3)}× the host's maxHp, so an identical swing `
+      + 'bills the host that multiple of what it dealt');
+
+    /**
+     * …AND THE ELITE THAT CARRIES A BOMB DOES NOT GO OFF TWICE.
+     *
+     * `_updateElite` runs ahead of Enemy.update's netDriven branch, for the
+     * living and the dead alike, so an Unstable body promoted on the client
+     * would burn its own fuse and run `_detonate` here — hurting the local
+     * player and every net-driven body in a 5 m radius, off interpolated
+     * positions, while the host bills the identical blast over `hit`. Measured
+     * with that version: 24.8 hp off a client's local player standing 2 m away.
+     * World._applyNetModifier marks the client's copy spent for exactly this.
+     */
+    const bomb = host.enemies.find((e) => e.mod === 'unstable');
+    const cb = client._netEnemyIndex.get(bomb.id);
+    client.player.position.copy(cb.position).add(new THREE.Vector3(1.5, 0, 0));
+    client.player.position.y = client.terrain.height(client.player.position.x, client.player.position.z);
+    client.player.hp = client.player.maxHp;
+    const hp0 = client.player.hp;
+    assert(!!cb.coreMesh, 'an Unstable elite reached the client with no reactor core on its chest');
+    bomb.damage(9999, bomb.position.clone(), null, 'saber');
+    pump(3);
+    assert(bomb._detonated, 'the host never detonated its own bomb — the scene is wrong');
+    assert(client.player.hp >= hp0 - 0.01,
+      `a client's own copy of an Unstable elite took ${(hp0 - client.player.hp).toFixed(1)} hp off its `
+      + 'local player — the host bills that blast over `hit`, so the joining player pays for it twice');
+
+    const line = `${host.enemies.length} elite pairs, ${host.enemies.length} on the client with tells `
+      + `${Object.entries(H0).map(([k, v]) => `${k} ${v}/${C0[k]}`).join(', ')}, `
+      + `worst maxHp ratio ${worstBill.toFixed(3)}, 0 hp of double blast`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: a duellist swings on a joining player\'s screen, and telegraphs it', async () => {
     /**
      * THE MELEE HALF OF THE SAME DEFECT. A client's enemies are `netDriven`,
@@ -357,28 +470,85 @@ export async function run({ check, assert }) {
       'a duellist wound up an attack and the joining player never saw the arc — the telegraph is the '
       + 'fairness contract of the melee game exactly as the marksman\'s laser is of the ranged one');
 
-    // …and the client did not ALSO bill it. Driven rather than read: a real
-    // strike phase against a real body, with _saberStrike called directly.
+    /**
+     * …and the client did not ALSO bill it. Driven rather than read: a real
+     * strike phase against a real body, with _saberStrike called directly.
+     *
+     * AND THE BLADE IS POSED ACROSS THE BODY FIRST, WHICH IS THE WHOLE CHECK.
+     *
+     * This block used to be `e.position.set(0, 0, 0.6)` and nothing else, and
+     * it could not fail. `e.position` moves the BODY; the saber's world-space
+     * `base`/`tip` are only ever written by `_poseSaber`, so they stayed
+     * wherever the last real pump left them — measured at the call, the two
+     * blades sat with their mid-points 7.62 m and 7.86 m from the victim's
+     * chest, against a hit radius of 0.34 + BLADE_BITE. `bestD > rad*rad`
+     * returned false long before `netDriven` was ever consulted. Bypassing the
+     * guard (`e.netDriven = false`, which is the pre-fix tree exactly) left
+     * `billed` at 0 and the suite at 28 green; deleting `Enemy.js`'s
+     * `if (this.netDriven) return false;` outright leaves the FULL gate green
+     * at 1031. So the one assertion the co-op work named as guarding the
+     * regression it could introduce was guarding nothing at all.
+     *
+     * Two setHiltPose+update frames sweeping the hilt through the victim give
+     * `prev → cur` a real segment — mid-blade 0.69 m from the chest — and now
+     * the numbers separate: 0 billed with the guard in place, 2 billed with it
+     * bypassed.
+     *
+     * AND THE SAME SCENARIO IS RUN TWICE, THE SECOND TIME WITH `netDriven`
+     * CLEARED, so the check proves its own reach instead of asserting it. A
+     * zero that is never contrasted with a non-zero is the state this block was
+     * already in; the second pass is what makes the first pass mean something,
+     * and it goes on meaning something however the pose, the reach or the
+     * capsule are retuned later.
+     */
     let billed = 0;
     const victim = { position: new THREE.Vector3(0, 0, 0), chest: new THREE.Vector3(0, 1.3, 0),
       hp: 500, maxHp: 500, alive: true, invuln: 0, radius: 0.34,
       camera: { addShake() {} }, damage() { billed++; } };
-    for (const e of client.enemies) {
-      if (!e.duel) continue;
+    const acrossTheChest = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+    const swingers = client.enemies.filter((e) => e.duel && e.saber);
+    /** Put the body on the victim and sweep its blade through the victim's chest. */
+    const swingThrough = (e) => {
       e.duel.phase = 'strike';
       e._strikePhase = 'guard';
       e._struck = false;
+      // A blade lock pins both fighters and `_saberStrike` returns on it — one
+      // in progress after 20 s of real fighting is what made an earlier draft
+      // of this block pass and fail on alternate runs.
+      e.lock = null;
       e.saber.ignition = 1;
       e.position.set(0, 0, 0.6);
       victim.position.set(0, 0, 0);
-      e._saberStrike(null, victim);
-    }
+      // `valid = false` discards the stale previous frame, so the first pose
+      // establishes prev and the second is the swing itself.
+      e.saber.valid = false;
+      e.saber.setHiltPose(new THREE.Vector3(0.6, 1.2, 0.4), acrossTheChest);
+      e.saber.update(1 / 60, 0);
+      e.saber.setHiltPose(new THREE.Vector3(-0.6, 1.2, 0.4), acrossTheChest);
+      e.saber.update(1 / 60, 0);
+      return e._saberStrike(null, victim);
+    };
+    assert(swingers.length >= 2,
+      `only ${swingers.length} client duellist(s) had a blade to swing — the scene is wrong, not the wire`);
+    for (const e of swingers) swingThrough(e);
     assert(billed === 0,
       `a client resolved ${billed} saber hit(s) of its own — the host bills sabers over 'hit', so this `
       + 'is the same blow landing twice on the joining player');
 
+    // …and the zero above is the GUARD, not the geometry. Same bodies, same
+    // sweep, same victim, with the one line under test taken out of the way.
+    let reach = 0;
+    const victimBilled = victim.damage;
+    victim.damage = () => { reach++; };
+    for (const e of swingers) { e.netDriven = false; swingThrough(e); e.netDriven = true; }
+    victim.damage = victimBilled;
+    assert(reach > 0,
+      'the same blades, swept through the same body with `netDriven` cleared, still billed nothing — so '
+      + 'the zero above proves nothing about the guard and this check is decoration');
+
     const line = `guard travel host ${hSpan.toFixed(2)} → client ${cSpan.toFixed(2)}, phases `
-      + `{${[...cPhases].sort().join(', ')}}, ${cTele} telegraph frames, 0 hits billed locally`;
+      + `{${[...cPhases].sort().join(', ')}}, ${cTele} telegraph frames, ${swingers.length} blades swept `
+      + `through a body: 0 billed with the guard, ${reach} without it`;
     host.unload(); client.unload();
     return line;
   });
@@ -898,13 +1068,82 @@ export async function run({ check, assert }) {
     const i = main.indexOf("net.on('start'");
     assert(i > 0, 'the start handler is gone');
     const body = main.slice(i, i + 1200);
-    assert(!/screens\.state === 'menu'\s*\)\s*deploy\(\)/.test(body),
+    assert(!/screens\.state === 'menu'\s*\)\s*deploy\(/.test(body),
       'the start message is still only acted on from the menu, so a client that is already playing '
       + 'never follows the host to the next rung');
-    assert(/deploy\(\)/.test(body), 'the start message no longer deploys anything');
+    assert(/deploy\(/.test(body), 'the start message no longer deploys anything');
     assert(/world\.dispose\(\)|world = null/.test(body),
       'the old level is not torn down before the new one is built');
-    return 'a start from any state redeploys into the level the host is standing in';
+
+    /**
+     * …AND THE LEVEL IT DEPLOYS INTO, WHICH THE GATE WAS NOT.
+     *
+     * Only `screens.state === 'menu'` came off. `deploy()` still fell through
+     * to its default argument — `startRun()`, which builds a brand new gauntlet
+     * Run at tier 0 — and `deploy`'s own next line is
+     * `const levelKey = run && !run.done ? run.rung.level : sessionOr('level')`,
+     * so that fresh run's rung beat the `msg.level` the handler had just put
+     * into `session` one line above. Evaluated against the real Run and DESCENT
+     * this was three of four rungs wrong: the host sends foundry, deeps, deeps
+     * and the client builds intake, intake, intake — a different building from
+     * everyone else while snapshots keep arriving at the host's coordinates.
+     *
+     * main.js cannot be imported under Node (it dereferences the DOM at module
+     * scope), so the four statements that decide the level are LIFTED FROM THE
+     * FILE and evaluated against the real `Run`. The lift refuses to run if any
+     * of them stops matching, which is what stops this from decaying into a
+     * regex that passes on a file it no longer describes. It is the strongest
+     * thing available here and it is stronger than reading the text: the answer
+     * below is computed by main.js's own arithmetic over the shipping ladder.
+     */
+    const raw = await src('main.js');
+    const lift = (re, what) => {
+      const m = raw.match(re);
+      assert(m, `main.js no longer contains ${what}, so this check is describing a file that is gone`);
+      return m[0];
+    };
+    const stSessionOr = lift(/const sessionOr = \(key\) => [^\n]*;/, 'sessionOr');
+    lift(/function deploy\(run = startRun\(\)\)/, "deploy's default-argument signature");
+    lift(/if \(sessionOr\('mode'\) !== 'gauntlet'\) return null;/, "startRun's gauntlet gate");
+    const stLevelKey = lift(/const levelKey = [^\n]*;/, "deploy's levelKey line");
+    const stDeployCall = lift(/deploy\((null)?\);\s*\}\);/, "the start handler's deploy call");
+
+    const { Run, DESCENT } = await import('../../src/game/Run.js');
+    const settings = { level: 'mustafar', difficulty: 'knight', mode: 'roguelite', order: 'jedi', species: 'human' };
+    let session = null;
+    // eslint-disable-next-line no-eval
+    const sessionOr = eval(`(${stSessionOr.replace('const sessionOr = ', '').replace(/;\s*$/, '')})`);
+    const startRun = () => (sessionOr('mode') !== 'gauntlet'
+      ? null : new Run({ identity: {}, mode: 'spire' }));
+    // `deploy(null)` and `deploy()` are not the same call: a default parameter
+    // fires on `undefined` only, so an explicit null is what makes levelKey
+    // fall through to the level the host actually sent.
+    const passesNull = /deploy\(null\)/.test(stDeployCall);
+    const buildFor = (msg) => {
+      session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
+      const run = passesNull ? null : startRun();
+      // eslint-disable-next-line no-eval
+      return eval(`(() => { ${stLevelKey} return levelKey; })()`);
+    };
+
+    const host = new Run({ identity: {}, mode: 'spire' });
+    assert(DESCENT.length >= 4, `the Descent is ${DESCENT.length} rungs long — this check is calibrated on four`);
+    const wrong = [];
+    for (let rung = 0; rung < 4; rung++) {
+      const sent = host.rung.level;
+      const built = buildFor({ level: sent, difficulty: 'knight', mode: 'gauntlet' });
+      if (built !== sent) wrong.push(`rung ${rung}: host '${sent}' → client '${built}'`);
+      host.ascend();
+    }
+    assert(!wrong.length,
+      `${wrong.length} of 4 rungs of a co-op Descent put the joining player in a different level from `
+      + `the host — ${wrong.join('; ')}. The level is not on the wire anywhere else, and applySnapshot `
+      + 'writes the host\'s absolute coordinates into whatever terrain the client happens to have.');
+    // …and every other mode was always fine, because startRun returns null there.
+    assert(buildFor({ level: 'kamino', difficulty: 'knight', mode: 'waves' }) === 'kamino',
+      'a co-op client no longer follows the host outside the gauntlet either');
+    return 'a start from any state redeploys into the level the host is standing in — 4 of 4 rungs of '
+      + 'the Descent, and every other mode';
   });
 
   /* ══ the buffer, and the shape World assumes ═══════════════════════════ */
