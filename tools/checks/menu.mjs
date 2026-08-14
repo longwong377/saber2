@@ -28,7 +28,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
-import { Menu, DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
+import { Menu, DEFAULT_SETTINGS, DEATH_TITLE } from '../../src/ui/Menu.js';
 import { ACTIONS } from '../../src/engine/Bindings.js';
 import { DESCENT } from '../../src/game/Run.js';
 import { FOCUS } from '../../src/game/Focus.js';
@@ -150,10 +150,15 @@ export async function run({ check, assert }) {
     try {
       // A card, a difflist row and a swatch: the three shapes every picker in
       // the menu is built from. Driven by KEY, with no click anywhere.
-      const level = doc.getElementById('level-list').children[4];
+      const cards = doc.getElementById('level-list').children;
+      const level = cards.find(c => !c.classList.contains('sel'));
+      const levelBefore = settings.level;
       level.dispatchEvent({ type: 'keydown', key: 'Enter' });
-      assert(settings.level === [...doc.getElementById('level-list').children].indexOf(level) >= 0
-        && level.classList.contains('sel'), 'Enter on a theatre card did not select it');
+      assert(settings.level !== levelBefore,
+        `Enter on a theatre card left settings.level at ${settings.level}`);
+      assert(level.classList.contains('sel'), 'the card the keyboard picked is not the lit one');
+      assert(cards.filter(c => c.classList.contains('sel')).length === 1,
+        'two theatre cards are lit at once');
       const diffs = doc.getElementById('diff-list').children;
       const before = settings.difficulty;
       diffs[diffs.length - 1].dispatchEvent({ type: 'keydown', key: ' ' });
@@ -308,6 +313,7 @@ export async function run({ check, assert }) {
       const focusable = [...list.children].filter(c => c.tabIndex >= 0);
       assert(!focusable.length, `${focusable.length} discarded cards are still in the tab order`);
       const note = doc.getElementById('level-note');
+      assert(note, 'there is no note beside the Theatre column to say the mode owns the choice');
       assert(!note.classList.contains('hidden') && note.textContent.length > 20,
         'nothing on screen says the column is not this mode\'s to choose');
       for (const rung of DESCENT) {
@@ -337,7 +343,9 @@ export async function run({ check, assert }) {
       const box = doc.getElementById('opt-bloom');
       assert(box.disabled, 'on Performance the Bloom box is live and does nothing');
       assert(box.checked === false, 'the box shows itself ticked while the tier ignores it');
-      const label = doc.getElementById('opt-bloom-label').textContent;
+      const labelEl = doc.getElementById('opt-bloom-label');
+      assert(labelEl, 'the Bloom label is a bare text node again, so nothing can rewrite it');
+      const label = labelEl.textContent;
       assert(/performance/i.test(label), `the label says "${label}" and never says why`);
       const card = [...doc.getElementById('opt-quality').children][0];
       assert(/no bloom/i.test(card.textContent), 'the Performance card does not say what it removed');
@@ -438,5 +446,42 @@ export async function run({ check, assert }) {
       'a fixed-position .ghost with no width of its own is 100vw wide — it spans the screen');
     assert(/display:\s*inline-block/.test(rule[1]), 'it is still a block, so it fills its line');
     return 'fixed + width:auto + inline-block: the box is its label, not the viewport';
+  });
+
+  check('menu: the death card does not keep the crown\'s congratulation', () => {
+    /**
+     * THE CARD IS SHARED DOM WRITTEN ON TWO PATHS. `showDeath(stats, title)`
+     * read `if (title) this.el.deathTitle.textContent = title;` — total when
+     * given, absent when not — and `main.js` has exactly two callers:
+     * `gameOver()` passes no title, `crowned()` passes "You stand above the
+     * storm". The element's starting text was a literal in index.html that
+     * nothing ever restored.
+     *
+     * So: finish the Descent once, and every death for the rest of the
+     * session, in any mode, is announced with the crown's congratulation
+     * printed over the stats of a run the player just lost. Driven here in
+     * the order that produces it — lose, win, lose — because a check that only
+     * calls it once cannot see a defect that is about state left behind.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const title = () => doc.getElementById('death-title').textContent;
+      const seed = title();
+      assert(seed === DEATH_TITLE,
+        `index.html seeds the death title as "${seed}" and Menu.js defaults to "${DEATH_TITLE}" — `
+        + 'two owners of one string is how this drifts back');
+
+      menu.showDeath([['Waves', '3']]);
+      assert(title() === DEATH_TITLE, `an ordinary death reads "${title()}"`);
+
+      menu.showDeath([['Waves', '12']], 'You stand above the storm');
+      assert(title() === 'You stand above the storm', 'the crown lost its own title');
+
+      menu.showDeath([['Waves', '2']]);
+      assert(title() === DEATH_TITLE,
+        `after one crowned run every later death still reads "${title()}" — the card keeps the `
+        + 'congratulation over the stats of a run the player lost');
+      return `lose "${DEATH_TITLE}" → crown "You stand above the storm" → lose "${title()}"`;
+    } finally { close(); }
   });
 }

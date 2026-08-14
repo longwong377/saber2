@@ -78,6 +78,16 @@ export const LEGACY_KEYS = ['saber.settings.v5', 'saber.settings.v4', 'saber.set
  * the trail keeps 113 ms of its 150 ms span. Past about 6 m the trail starts
  * visibly shortening and past 10 the cull begins eating real hits.
  */
+/**
+ * What the death card says when the caller does not say otherwise.
+ *
+ * Here rather than in index.html's markup, because the markup is a SEED — it
+ * is written once at parse time and never restored, and the one path that
+ * overwrites it (the Descent's crown) then owned the element for the rest of
+ * the session. A default that lives next to the only writer cannot go stale.
+ */
+export const DEATH_TITLE = 'You are one with the Force';
+
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
 
@@ -3081,8 +3091,19 @@ export class Menu {
   }
   hidePause() { this.el.pause.classList.add('hidden'); }
 
+  /**
+   * The death card. `title` is TOTAL, not optional.
+   *
+   * It used to be `if (title) …`, and the card is shared DOM written on two
+   * paths: `gameOver()` passes nothing, `crowned()` passes "You stand above
+   * the storm". So finishing the Descent once left that line in the element
+   * for the rest of the session — every subsequent death, in any mode, was
+   * announced with the crown's congratulation printed over the stats of a run
+   * the player had just lost. The seed used to live in index.html, which is
+   * why nothing here felt responsible for putting it back.
+   */
   showDeath(stats, title) {
-    if (title) this.el.deathTitle.textContent = title;
+    this.el.deathTitle.textContent = title || DEATH_TITLE;
     this.el.deathStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     this.el.death.classList.remove('hidden');
   }
