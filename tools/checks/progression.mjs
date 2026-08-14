@@ -486,8 +486,39 @@ export async function run({ check, assert }) {
       `two rungs opened with the identical wave (${firsts.join(' || ')}) — the stream is seeded per `
       + 'RUN, so every rung replays the intake');
     assert(typeof Waves.seedWaves === 'function', 'nothing can put the wave stream on a stated number');
-    return `seed 0xA11CE reproduced ${a.waves.length} waves exactly; 0xB0B differed; `
-      + `${firsts.length} rungs, ${new Set(firsts).size} distinct openings`;
+
+    /**
+     * AND THE TWO STREAMS THAT DECIDE WHAT THE WAVE DOES ONCE IT IS THERE.
+     *
+     * Seeding the composition alone gets you a run that fields the same bodies
+     * in the same order and then plays out completely differently: `enemyRng`
+     * chooses modifiers, strafe sides and spawn jitter, and `duelRng` chooses
+     * forms, attacks, feints and every wind-up length in the game. Both were
+     * built from `Math.random()` at module load, so "the seed EVERYTHING random
+     * in this run derives from" derived about a third of it.
+     *
+     * Measured on the streams themselves rather than on a fight, because a
+     * fight is the thing that would be non-reproducible if this regressed.
+     */
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    const { duelRng } = await import('../../src/game/Duel.js');
+    const draws = (rng, n = 8) => Array.from({ length: n }, () => rng().toFixed(6)).join(',');
+    await descend(0xA11CE);
+    const e1 = draws(enemyRng), d1 = draws(duelRng);
+    await descend(0xA11CE);
+    const e2 = draws(enemyRng), d2 = draws(duelRng);
+    await descend(0xB0B);
+    const e3 = draws(enemyRng), d3 = draws(duelRng);
+    assert(e1 === e2,
+      'the same seed gave two runs different enemy streams — modifiers, strafe sides and spawn '
+      + 'jitter are all off this one, so the run fields the same bodies and then behaves differently');
+    assert(d1 === d2,
+      'the same seed gave two runs different duel streams — forms, attacks, feints and every '
+      + 'wind-up length are off this one');
+    assert(e1 !== e3 && d1 !== d3, 'two different seeds gave identical enemy and duel streams');
+    return `seed 0xA11CE reproduced ${a.waves.length} waves exactly, and the enemy and duel `
+      + `streams with them; 0xB0B differed in all three; ${firsts.length} rungs, `
+      + `${new Set(firsts).size} distinct openings`;
   });
 
   check('progression: every field a finished run records is read by something', () => {

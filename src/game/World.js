@@ -2133,28 +2133,10 @@ export class World {
    */
   dispose() {
     this.unload();
-    const p = this.physics;
-    if (!p) return;
-    /**
-     * AND NOTHING MAY BIND INTO IT AFTERWARDS.
-     *
-     * Freeing the world exposed a use-after-teardown the reallocation had been
-     * quietly absorbing: `Player.die()` builds its ragdoll from a DYNAMIC
-     * import, so an Actor can land a tick or two after the world it belongs to
-     * has gone, and `Body._bind` reaches straight into `world.world`. With the
-     * old reset it bound into a fresh world nobody steps — invisible, and part
-     * of what was leaking. Refusing is the honest version of the same outcome:
-     * the body is marked dead and handed back, exactly as `remove` leaves one.
-     *
-     * These are stubbed on an instance that is being thrown away — the Rapier
-     * world is per-World and this is terminal (main.js drops its reference on
-     * the next line), so nothing else can observe them.
-     */
-    p.add = (b) => { if (b) b.dead = true; return b; };
-    p.addJoint = (j) => { if (j) j.broken = true; return j; };
-    p.step = () => {};
-    p.raycast = () => null;
-    if (p.world) { try { p.world.free?.(); } catch {} p.world = null; }
+    /* Terminal, and RapierWorld owns what that means — see its dispose(),
+     * which frees the Rapier world instead of allocating a fresh one nobody
+     * will ever step, and refuses anything that binds in afterwards. */
+    this.physics?.dispose();
   }
 }
 

@@ -3847,6 +3847,17 @@ export class Player {
     if (pos) this.position.copy(pos);
     this.invuln = 2.2;
     if (this.actor) { this.actor.dispose(); this.actor = null; }
+    /**
+     * AND THE OLD RIG GOES WITH IT.
+     *
+     * `die()` hands the body's meshes to a ragdoll Actor, and `Actor.dispose()`
+     * removes its own HOLDERS from the scene — not the rig root those meshes
+     * were reparented out of. So the root stayed in the scene, and the line
+     * below adds a second one next to it. This never showed while `respawn()`
+     * had no callers; co-op's revive is the first thing that runs it, and it
+     * runs it once per death for the whole session.
+     */
+    if (this.rig) { this.world.scene.remove(this.rig.root); this.rig.dispose(); }
     const built = buildJedi({
       robeIndex: this.world.settings.robeIndex ?? 0,
       skinColor: skinHex(this.world.settings.species, this.world.settings.skinIndex),

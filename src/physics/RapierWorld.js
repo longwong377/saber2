@@ -774,6 +774,8 @@ export class RapierWorld {
     this.world = new R.World({ x: 0, y: this.gravity.y, z: 0 });
     this.world.numSolverIterations = opts.iterations ?? 4;
     this._iterations = this.world.numSolverIterations;
+    /** Terminal. Set by dispose(); every entry point refuses once it is true. */
+    this.dead = false;
 
     /** Every body in the level, in the order it was added. */
     this.bodies = [];
@@ -880,6 +882,7 @@ export class RapierWorld {
   /* ── bodies ──────────────────────────────────────────────────────── */
 
   add(body) {
+    if (this.dead) { if (body) body.dead = true; return body; }
     if (!body.isRapier) throw new Error('RapierWorld.add: not a Rapier body — pass a `shape:`.');
     if (this.bodies.length >= this.maxBodies) this._cullOldestDebris();
     this.bodies.push(body);
@@ -903,7 +906,10 @@ export class RapierWorld {
 
   /* ── joints ──────────────────────────────────────────────────────── */
 
-  addJoint(j) { this.joints.push(j); j._bind(this); return j; }
+  addJoint(j) {
+    if (this.dead) { if (j) j.broken = true; return j; }
+    this.joints.push(j); j._bind(this); return j;
+  }
 
   removeJoint(j) {
     const i = this.joints.indexOf(j);
@@ -1089,6 +1095,7 @@ export class RapierWorld {
   /* ── step ────────────────────────────────────────────────────────── */
 
   step(dt) {
+    if (this.dead) return;
     const t0 = performance.now();
     dt = Math.min(dt, 1 / 30);
     if (dt <= 0) return;
@@ -1189,6 +1196,7 @@ export class RapierWorld {
    * normal, distance }` — and, as before, `filter` applies only to bodies.
    */
   raycast(origin, dir, maxDist = 200, filter = null) {
+    if (this.dead) return null;
     if (!(maxDist > 0)) return null;
     const d = _v1.copy(dir);
     const len = d.length();
@@ -1231,7 +1239,13 @@ export class RapierWorld {
 
   /* ── lifecycle ───────────────────────────────────────────────────── */
 
-  clear() {
+  /**
+   * Empty the world and start a fresh one — a LEVEL CHANGE.
+   *
+   * `realloc: false` is the terminal form and belongs only to `dispose()`;
+   * everything else wants a world to carry on with.
+   */
+  clear(realloc = true) {
     for (const b of this.bodies) { b.dead = true; b.rb = null; b.colliders = null; b._world = null; }
     for (const j of this.joints) { j.broken = true; j.joint = null; j._world = null; }
     this.bodies.length = 0;
@@ -1242,11 +1256,32 @@ export class RapierWorld {
     this._hfSeq = -1;
     // A fresh Rapier world is cheaper and far safer than unpicking every
     // collider, joint and island by hand.
-    this.world.free?.();
-    this.world = new this.R.World({ x: 0, y: this.gravity.y, z: 0 });
-    this.world.numSolverIterations = this._iterations;
+    this.world?.free?.();
+    this.world = realloc ? new this.R.World({ x: 0, y: this.gravity.y, z: 0 }) : null;
+    if (this.world) this.world.numSolverIterations = this._iterations;
     this._terrain = null;
   }
 
-  dispose() { this.clear(); }
+  /**
+   * TERMINAL. The last thing teardown does is not allocate.
+   *
+   * `dispose()` was `{ this.clear(); }` — and `clear()` ends by constructing a
+   * fresh Rapier world, so the final act of tearing a World down was to
+   * allocate the one thing tearing it down exists to release, and nothing
+   * would ever free that one.
+   *
+   * AND NOTHING MAY BIND INTO IT AFTERWARDS. Freeing the world for real
+   * exposed a use-after-teardown the reallocation had been quietly absorbing:
+   * `Player.die()` builds its ragdoll from a DYNAMIC import, so an Actor can
+   * land a tick or two after the world it belongs to has gone, and
+   * `Body._bind` reaches straight into `world.world`. With the old reset it
+   * bound into a fresh world nobody steps — invisible, and part of what was
+   * leaking. Refusing is the honest version of the same outcome: the body is
+   * marked dead and handed back, exactly as `remove` leaves one.
+   */
+  dispose() {
+    if (this.dead) return;
+    this.clear(false);
+    this.dead = true;
+  }
 }

@@ -31,7 +31,8 @@
  */
 
 import * as THREE from 'three';
-import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, applyModifier } from './Enemy.js';
+import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, applyModifier, enemyRng } from './Enemy.js';
+import { duelRng } from './Duel.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { ArrivalDirector } from './Arrivals.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
@@ -319,7 +320,27 @@ export class WaveDirector {
      * meant to play out identically to the last one.
      */
     this.seed = (world?.run && !world.run.done) ? world.run.seed ?? null : null;
-    if (this.seed !== null) seedWaves(this.seed, world.run.tier | 0);
+    if (this.seed !== null) {
+      const tier = world.run.tier | 0;
+      seedWaves(this.seed, tier);
+      /**
+       * …AND THE TWO STREAMS THAT DECIDE WHAT THE WAVE DOES ONCE IT IS THERE.
+       *
+       * `Run.seed` is generated, stored and recorded, and until `seedWaves`
+       * it was read by nothing at all. Seeding the composition alone gets you
+       * a run that fields the same bodies in the same order and then plays out
+       * completely differently: `enemyRng` chooses modifiers, strafe sides and
+       * spawn jitter, and `duelRng` chooses forms, attacks, feints and every
+       * wind-up length in the game. Both were built from `Math.random()` at
+       * module load.
+       *
+       * Offset per stream so a run does not hand three different systems the
+       * same sequence of draws, and the tier is mixed in the way seedWaves
+       * mixes it, so rung 2 of one seed is not rung 2 of another.
+       */
+      enemyRng.seed((this.seed ^ 0x9e3779b9) + tier * 0x85ebca6b);
+      duelRng.seed((this.seed ^ 0xc2b2ae35) + tier * 0x27d4eb2f);
+    }
     this.onWaveStart = null;
     this.onWaveClear = null;
     this.onDraft = null;
