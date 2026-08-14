@@ -17,6 +17,17 @@ import { Saber } from '../game/Saber.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { ATTACK_KEYS, DUEL_PHASES } from '../game/Duel.js';
+/**
+ * The side rules, from the file that owns `Player.team`.
+ *
+ * A RemoteAvatar is in `world.players` and World's loops treat it as a Player,
+ * so it has to answer the same questions with the same code — the alternative
+ * is a second `canHarm` with its own idea of a team, on the one machine that
+ * cannot see the fight it is arbitrating. This direction (net depends on game)
+ * is the one Net.js already has: it imports Bodies, Rig, Saber, Duel and Menu.
+ */
+import { canHarm, asSide, TEAM, rigCapsules, DuelMatch } from '../game/Player.js';
+import { TOUGHNESS } from '../game/Combat.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
@@ -96,6 +107,8 @@ export class Net {
     this.look = null;
     this.handlers = new Map();
     this.roster = [];
+    /** peer id → side. Written by the host through setSides; see _sideOf. */
+    this.sides = new Map();
     /** Round trip / 2, from the ping World sends every 2 s. Read by the scoreboard. */
     this.latency = 0;
     this.enabled = false;
@@ -127,7 +140,10 @@ export class Net {
       const fail = (err) => { this._emit('error', err); reject(err); };
       peer.on('open', () => {
         this.connected = true;
-        this.roster = [{ id: peer.id, name: this.name, host: true, look: this.look }];
+        // Through _refreshRoster's shape rather than a second literal: the two
+        // drifted the moment the roster grew a `team`, and a host sitting alone
+        // in a lobby had an entry with no side on it at all.
+        this.roster = [{ id: peer.id, name: this.name, host: true, look: this.look, team: this._sideOf(peer.id) }];
         this._emit('roster', this.roster);
         this._emit('open', code);
         resolve(code);
@@ -235,10 +251,51 @@ export class Net {
   }
 
   _refreshRoster() {
-    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look }];
-    for (const [id, c] of this.conns) this.roster.push({ id, name: c.name, host: false, look: c.look || null });
+    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look, team: this._sideOf(this.peer?.id) }];
+    for (const [id, c] of this.conns) {
+      this.roster.push({ id, name: c.name, host: false, look: c.look || null, team: this._sideOf(id) });
+    }
     this._emit('roster', this.roster);
     if (this.isHost) this.broadcast({ t: 'roster', roster: this.roster });
+  }
+
+  /**
+   * WHICH SIDE A PEER IS ON, and why it rides the roster.
+   *
+   * A side is IDENTITY for the length of a match, not per-frame state, so it
+   * belongs beside `name` and `look` on the roster rather than in the 24 Hz
+   * avatar packet — exactly the argument LOOK_KEYS makes above, and for the
+   * same price: sending it in the avatar record would pay for it forever, and
+   * it changes about once a match.
+   *
+   * `sides` is a Map the HOST writes and everybody else receives. There is no
+   * client-side assignment at all: two machines that disagreed about who is on
+   * whose side would disagree about who may hit whom, which is the worst thing
+   * a networked rule can do. `asSide` on the way out so a corrupt entry lands
+   * a body in co-op rather than on the horde's number.
+   */
+  _sideOf(id) { return asSide(this.sides?.get(id) ?? TEAM.PARTY); }
+
+  /**
+   * Host: hand out sides and tell everyone.
+   *
+   * Takes a Map of peer id → side (build it with `assignSides` in Player.js,
+   * which is pure and deterministic so a client can verify the same roster
+   * reaches the same answer). Refuses on a client: a peer that could set its own
+   * side could set itself onto yours and stop your blade.
+   */
+  setSides(map) {
+    if (!this.isHost) return this.roster;
+    this.sides = map instanceof Map ? map : new Map(Object.entries(map || {}));
+    this._refreshRoster();
+    return this.roster;
+  }
+
+  /** Everybody's side, as the roster currently states it. id → team. */
+  get teams() {
+    const out = new Map();
+    for (const r of this.roster) out.set(r.id, asSide(r.team));
+    return out;
   }
 
   /**
@@ -293,6 +350,20 @@ export class Net {
       // Host → peers: a draft is open. The moment, not the hand — see the note
       // on World's onDraft.
       case 'draft': this._emit('draft', msg); break;
+      /**
+       * Host → peers: the state of the duel.
+       *
+       * One direction only, and there is no client branch on purpose. A round
+       * ends when a side has nobody standing, and the only node that can see
+       * every body is the host — a client knows its own health for certain and
+       * everybody else's as of 90 ms ago. A client that scored its own rounds
+       * would award itself one every time a packet was late.
+       *
+       * Sent on a phase change and at 1 Hz, not in the snapshot: it is under
+       * 150 bytes and changes about four times a minute, so folding it into the
+       * 18 Hz record would cost 2.7 KB/s to say the same thing 18 times.
+       */
+      case 'match': if (!this.isHost) this._emit('match', readMatch(msg)); break;
       /**
        * Somebody's communion has reached us — the first message in this game
        * whose payload is a BUFF rather than a fact about the world.
@@ -404,7 +475,19 @@ export class RemoteAvatar {
     this.world = world;
     this.id = opts.id;
     this.name = opts.name || 'Jedi';
-    this.team = 0;
+    /**
+     * THE SIDE THIS PLAYER IS ON — and it was the literal `0`, read by nothing.
+     *
+     * That is the field a duel is made of. Every remote body in every session
+     * was on the party's side, so `canHarm` would have said "no" to every blade
+     * in a duel even after the blade could find a body — and there was no way
+     * to say otherwise, because nothing ever wrote to it. It arrives on the
+     * ROSTER, not in the avatar packet: a side is identity for the length of a
+     * match, and the host is the only node allowed to decide it (see
+     * `Net.setSides`). Through `asSide`, so a corrupt or absent value lands a
+     * body in co-op rather than on the horde's ledger.
+     */
+    this.team = asSide(opts.team);
     this.alive = true;
     this.isRemote = true;
 
@@ -521,6 +604,44 @@ export class RemoteAvatar {
   get dead() { return !this.alive; }
 
   /**
+   * A FRIEND'S BODY, AS SOMETHING A BLADE CAN FIND.
+   *
+   * The same absence a local Player had, and the same fix, through the same
+   * function — `rigCapsules` is called by both, so a Jedi you are duelling has
+   * exactly the shape of the Jedi you are playing whichever machine is asking.
+   * A second copy of the bone walk here is how the two would end up disagreeing
+   * about where a chest is, which in a duel is the difference between a hit and
+   * a miss.
+   *
+   * The rig is REAL on this machine: `update()` runs the same `BipedAnimator`
+   * and the same IK the local player does, off interpolated snapshots. So these
+   * capsules are where the body is DRAWN, which is the only place a player can
+   * be asked to aim at.
+   */
+  capsules() {
+    const out = (this._caps ||= []);
+    out.length = 0;
+    if (!this.alive) return out;
+    return rigCapsules(this.rig, { into: out, owner: this, toughness: TOUGHNESS.flesh });
+  }
+
+  /**
+   * Shoved. The call shape every force power ends in, so a duel's push reaches
+   * a peer through the same line it reaches an acolyte through.
+   *
+   * The impulse moves `velocity`, which `update()` overwrites from the next
+   * snapshot 42 ms later — and that is correct rather than a bug: the peer's
+   * own machine is running its own body, and this copy is a drawing of it. The
+   * DAMAGE is the part that has to travel, and it goes through `damage()`
+   * below, which is addressed to the one peer that owns the health.
+   */
+  applyKnockback(impulse, damage = 0, source = null, gentle = false) {
+    if (!this.alive) return false;
+    if (impulse) this.velocity.add(impulse);
+    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+  }
+
+  /**
    * Something on THIS machine hurt a player on ANOTHER one.
    *
    * It does not touch `this.hp`, and that is the whole design rather than an
@@ -540,6 +661,21 @@ export class RemoteAvatar {
    */
   damage(amount, point, source, kind) {
     if (!(amount > 0) || !this.alive) return false;
+    /**
+     * THE SAME GATE THE LOCAL PLAYER PASSES THROUGH, AND THE SAME FUNCTION.
+     *
+     * Without it a duel's rule and co-op's rule would be enforced in two
+     * places, one of which is the only machine in the session that can see both
+     * fighters. `canHarm` reads `world.rules`, and the host is the node that
+     * sets them, so the answer here is the answer everywhere.
+     *
+     * A null source is the environment and is never gated — `World.onExplosion`
+     * passes null, and a wave-clear blast has always reached every body in the
+     * room. Note what this does NOT do: it does not stop a peer being told
+     * about a hit it already resolved. That is the bolt rule below, and the two
+     * are separate questions — "may this land" and "who bills it".
+     */
+    if (!canHarm(source, this)) return false;
     const net = this.world?.net;
     if (this.world?.netMode !== 'host' || !net) return false;
     /**
@@ -789,6 +925,37 @@ export function packSnapshot(world) {
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
+
+/**
+ * THE DUEL, AS IT CROSSES THE WIRE — packed and read off ONE list.
+ *
+ * `DuelMatch.WIRE` is the list, it lives with the class it describes, and both
+ * of these loop it. That is not fastidiousness: this repository has already
+ * shipped a hand-typed twelve-slot wire record against a thirteen-slot packer,
+ * and six times in one session a hand-typed table drifted from its generated
+ * twin. A duel record with a field the far end silently drops is a client that
+ * thinks the match is still on after it has been won.
+ *
+ * `clock` is rounded because it is a countdown a human reads and 0.01 s is
+ * below anything a round announcement can express; nothing else is touched,
+ * because a score you rounded is a score you got wrong.
+ */
+export function packMatch(match) {
+  const out = { t: 'match' };
+  for (const k of DuelMatch.WIRE) {
+    const v = match[k];
+    if (v === undefined) continue;
+    out[k] = k === 'clock' ? r2(v) : v;
+  }
+  return out;
+}
+
+/** The far end of packMatch. Same list, so neither can grow a field alone. */
+export function readMatch(msg) {
+  const out = {};
+  for (const k of DuelMatch.WIRE) if (msg && msg[k] !== undefined) out[k] = msg[k];
+  return out;
+}
 
 /**
  * A duellist's blade, as the six numbers `Enemy._poseSaber` actually reads.

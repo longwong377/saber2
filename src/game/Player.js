@@ -19,7 +19,7 @@ import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { RankSet, rankScale } from './Waves.js';
-import { parryScale } from './Combat.js';
+import { parryScale, TOUGHNESS } from './Combat.js';
 import { POWER_COST } from './Powers.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -809,6 +809,526 @@ export class CameraRig {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  Sides, and who may harm whom                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A PLAYER COULD NOT FIGHT A PLAYER, AND `team` IS THE FIELD THAT SAID SO.
+ *
+ * `Player.team` was the literal `0`, written once in the constructor and read
+ * only to compare a bolt against; `RemoteAvatar.team` was the literal `0`,
+ * written once and read by NOTHING. Every damage path in the game therefore had
+ * two answers available — "is this a player?" and "is this an enemy?" — and no
+ * third, so there was no shape of fight in which the thing across the room was
+ * both.
+ *
+ * MEASURED, before any of this existed, on two real Players in one arena
+ * (tools/checks/pvp.mjs reproduces the whole paragraph):
+ *
+ *   · the second player's blade swept through the first one's chest for 3 s —
+ *     180 frames of genuine contact — for 0.0 damage, and 0 of the blade
+ *     target records built that frame were a player. `World._resolveBlades`
+ *     assembles its list from `enemies`, `props` and `doors`, and a Player had
+ *     no `capsules()` to offer it in the first place.
+ *   · a force push aimed point-blank left the other player's velocity at
+ *     0.000 m/s. Force lightning at 1.2 m took them 100 hp → 100 hp. Every one
+ *     of those loops reads `ctx.enemies`, and `ctx.players` — which World has
+ *     always put in the same object — was read by nothing in this file.
+ *   · and the converse, which is the half nobody notices: an explicit
+ *     `ally.damage(25, point, me, 'saber')` landed for 21.2, because nothing
+ *     anywhere consulted a team before applying a number. Co-op was never
+ *     "friendly fire is off". It was "no path exists that could deliver it",
+ *     which is the same thing right up until the day one does.
+ *
+ * THE NUMBERS, and why they are these. `Enemy.team` is 1, `Bolt.team` defaults
+ * to 1, and World's bolt hit test is written in terms of the literals 0 and 1
+ * in six places. So the horde keeps 1 forever, the first player side keeps 0
+ * forever — every existing comparison in the game stays exactly as true as it
+ * was — and further player sides take the numbers above it. `SIDES` is the
+ * whole of that decision and `sideTeam` is the only thing allowed to make one,
+ * so nobody can hand out a player side of 1 and post half a duel to the horde's
+ * ledger.
+ *
+ * This lives beside `Player.team` rather than in Combat.js because the meaning
+ * of a side belongs next to the field that carries it, and because Net.js needs
+ * the same rule for a RemoteAvatar and already depends on this direction.
+ */
+export const TEAM = { PARTY: 0, HORDE: 1 };
+
+/**
+ * The four player sides, in order. Four because four is the session cap (see
+ * Net.js), so a free-for-all between the whole party is expressible and so is
+ * 2v2 by handing out the first two.
+ *
+ * 1 is skipped, and that is the only interesting thing about this list.
+ */
+export const SIDES = [TEAM.PARTY, 2, 3, 4];
+
+/** The team number for the i-th side, wrapping. Nothing else may invent one. */
+export function sideTeam(i) {
+  const n = SIDES.length;
+  return SIDES[(((i | 0) % n) + n) % n];
+}
+
+/**
+ * A team number somebody handed us, made safe. Anything that is not one of the
+ * four player sides — undefined, a string off a settings blob, the horde's 1 —
+ * becomes the party's side, which is the number every player already had. So
+ * the worst a bad value can do is leave a body in co-op.
+ */
+export function asSide(v) {
+  return SIDES.includes(v) ? v : TEAM.PARTY;
+}
+
+/**
+ * Which side a thing is on, or `undefined` if it never said.
+ *
+ * `undefined` rather than a default, and it is worth the extra branch in
+ * `canHarm`. Everything in the game that can be hurt or do hurting declares a
+ * team — Player, Enemy, RemoteAvatar all set one in their constructors — but a
+ * `source` reaching `damage()` can also be a prop, a destruction fragment, or
+ * a stub in a check, and NONE of those are on a side. Handing them all one
+ * shared default would make any two of them allies, which is how a gate turns
+ * into silent invulnerability. See the branch that guards it.
+ */
+export function teamOf(entity) {
+  return entity && entity.team !== undefined ? entity.team : undefined;
+}
+
+/**
+ * THE RULES OF A FIGHT, AND WHY THERE IS ONE OBJECT FOR THEM.
+ *
+ * `friendlyFire` is one boolean and it wants one home, because the failure mode
+ * of a rule like this is never that it is wrong — it is that it is right in
+ * four call sites and absent from the fifth, and the fifth is the explosion at
+ * a wave clear that kills the friend who just revived you. `canHarm` below is
+ * the only code in the game permitted to answer the question and `world.rules`
+ * is the only place the answer is configured.
+ *
+ * Frozen, so a caller that reaches for the default cannot quietly turn friendly
+ * fire on for every co-op session in the process.
+ */
+export const CO_OP_RULES = Object.freeze({ pvp: false, friendlyFire: false });
+
+/** The rules in force, with co-op's as the answer for a world that has none. */
+export function harmRules(world) {
+  return (world && world.rules) || CO_OP_RULES;
+}
+
+/**
+ * MAY THIS THING HURT THAT THING? ONE GATE, ONE PLACE.
+ *
+ * Read the branches in order; each is a decision somebody would otherwise have
+ * made slightly differently in each of five files:
+ *
+ *   no attacker       → YES. Falling, drowning, an explosion with nobody's name
+ *                       on it. Every existing caller that passes `null` —
+ *                       `Player.damage(…, 'fall')`, `World.onExplosion` — is
+ *                       unchanged by this, deliberately: the environment is not
+ *                       on a side.
+ *   attacker is victim → YES. A bolt you deflected into your own feet still
+ *                       hurts. That is today's behaviour; switching it off is a
+ *                       separate change with its own argument.
+ *   either has no side → YES, and this branch is load-bearing. A prop, a
+ *                       destruction fragment or a hazard is not on a team, and
+ *                       the first version of this gate defaulted them all to
+ *                       the horde's — which made any two of them allies and
+ *                       silently refused their damage. `tools/checks/vitals.mjs`
+ *                       caught it within the hour, on a duellist stub with no
+ *                       `team`: 20 hp took a lethal 23.8 and lived. THE GATE
+ *                       FAILS OPEN, always. Its wrong answer must be the old
+ *                       behaviour, never invulnerability — a hit that does not
+ *                       land is silent, and `damage()`'s own NaN note is about
+ *                       precisely that class of unrecoverable, unnoticeable bug.
+ *   different sides   → YES.
+ *   same side         → only if this fight has friendly fire.
+ *
+ * `rules` falls back to the VICTIM's world before the attacker's, because the
+ * victim is the one whose health is about to move, and a peer's avatar carries
+ * the world it was built in.
+ */
+export function canHarm(attacker, victim, rules = null) {
+  if (!attacker) return true;
+  if (attacker === victim) return true;
+  const a = teamOf(attacker), v = teamOf(victim);
+  if (a === undefined || v === undefined) return true;
+  if (a !== v) return true;
+  const R = rules || harmRules((victim && victim.world) || (attacker && attacker.world));
+  return !!R.friendlyFire;
+}
+
+/**
+ * Everyone `actor` is allowed to fight, out of a list of candidates.
+ *
+ * The horde's targeting question — "the opposing team, or all of them?" — is
+ * this function with the horde as the actor, and it needs no mode branch: in
+ * co-op every player is side 0 and every one of them is opposed to the horde's
+ * 1, so all four come back and nothing about wave play changes. In a duel each
+ * side is still opposed to the horde, so a wave running through a duel still
+ * hunts everybody. Sorted by nothing — the caller picks nearest, as
+ * `World.pickTarget` does.
+ *
+ * `into` so a caller with two lists to filter — every force power in this file
+ * has exactly two, the horde and the players — pays for one array rather than
+ * three. `Player._foes` is that caller and it is why this is not a function
+ * with a single user waiting for a handover to land.
+ */
+export function hostileTo(actor, candidates, rules = null, into = null) {
+  const out = into || [];
+  for (const c of candidates || []) {
+    if (!c || c.dead || c.alive === false) continue;
+    if (c === actor) continue;
+    if (canHarm(actor, c, rules)) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * The player bodies `holder`'s blade is allowed to find, as the target records
+ * `BladeContactSolver.solve` takes directly.
+ *
+ * Exported so the one line World needs is a call rather than a second copy of
+ * the rule with its own idea of what a duel is — this repository has been bitten
+ * six times by a hand-typed twin of a generated table, and a targeting rule is a
+ * table with one row. `capsules()` is asked for rather than assumed: a body that
+ * has not got one is simply not a target, which is the pre-change behaviour and
+ * a safe thing to land on mid-handover.
+ */
+export function bladeTargets(holder, players, rules = null) {
+  const out = [];
+  for (const p of players || []) {
+    if (!p || p === holder || typeof p.capsules !== 'function') continue;
+    if (p.alive === false) continue;
+    if (!canHarm(holder, p, rules)) continue;
+    out.push({ id: p.id, capsules: p.capsules(), player: p, dead: false });
+  }
+  return out;
+}
+
+/**
+ * A POSED RIG, AS THE CAPSULES A BLADE CAN MEET.
+ *
+ * The bone walk — world matrix, bone axis, `length * cutT`, the 1.12 fat on the
+ * radius — is `Enemy.capsules()`'s, lifted to a function both bodies call so
+ * that a Jedi and an acolyte are the same shape to the same solver. What
+ * DIFFERS between them is the two callbacks: what each bone is made of, and how
+ * much of the body it is.
+ *
+ * `vital` is deliberately left undefined unless a caller supplies it. Enemy.js
+ * keeps a nineteen-row `VITAL` table as a module-private const, and typing a
+ * second copy of it here is exactly the drift this codebase has paid for
+ * repeatedly — `World._boltHitTest` scales bolt damage by
+ * `lerp(0.6, 1.9, vital)`, so two tables that disagreed would make a duel's
+ * headshots and a wave's headshots different sizes. Nothing on the player's
+ * path reads it yet (the contact solver never does; World's bolt test uses a
+ * single 0.36 m capsule for a player, not this), and the one-word handover that
+ * exports the real table is in this lane's notes.
+ *
+ * `severed` and empty bones are skipped for the reason they always were: a rig
+ * lists every joint it could have, and an arm already taken off is not standing
+ * in the way of the next swing.
+ */
+const _rc1 = new THREE.Vector3(), _rc2 = new THREE.Vector3(), _rc3 = new THREE.Vector3();
+const _rcq = new THREE.Quaternion();
+export function rigCapsules(rig, opts = {}) {
+  const out = opts.into || [];
+  if (!rig) return out;
+  const owner = opts.owner || null;
+  const tough = opts.toughness;
+  const vital = opts.vital;
+  const fat = opts.fat ?? 1.12;
+  for (const b of rig.list) {
+    if (b.severed || !b.parts.length) continue;
+    b.obj.updateMatrixWorld(false);
+    _rc1.setFromMatrixPosition(b.obj.matrixWorld);
+    _rcq.setFromRotationMatrix(b.obj.matrixWorld);
+    _rc2.copy(_rc1).add(_rc3.set(0, b.length * b.cutT, 0).applyQuaternion(_rcq));
+    const cap = {
+      name: b.name, p0: _rc1.clone(), p1: _rc2.clone(), r: b.radius * fat,
+      toughness: typeof tough === 'function' ? tough(b.name) : tough,
+      player: owner, owner,
+    };
+    if (vital) cap.vital = typeof vital === 'function' ? vital(b.name) : vital;
+    out.push(cap);
+  }
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  A duel between players                                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * FREE DUELS WITH FRIENDS — THE PART THAT WAS NOT THERE AT ALL.
+ *
+ * `MODES.duel` exists and its blurb is honest about what it is: "Acolytes only.
+ * No blasters, no crowd. Just blades." — a wave of `acolyte` archetypes, with
+ * the player alone in it. The owner asked for something else: "Free duels with
+ * friends: choose rounds, health, boons." Three settings and a winner, none of
+ * which had anywhere to live. There is no ROUND in this game; there is a wave,
+ * and a wave has no other side.
+ *
+ * So this is a small authoritative state machine, and it deliberately holds no
+ * bodies, no scene and no physics. It is driven by facts — "this side has
+ * nobody standing" — rather than by reading the arena, and that is what lets
+ * the host own it, put it on the wire in ten fields, and have the far end agree
+ * without simulating anything. It is also what lets it be tested headlessly to
+ * the last transition, which the wave director cannot be.
+ *
+ * The four states:
+ *
+ *   'countdown'  bodies placed, blades cold, nobody may score. It exists
+ *                because a round that begins the instant the last one ended
+ *                hands the round to whoever happened to be mid-swing.
+ *   'fighting'   the clock runs and a side can be eliminated.
+ *   'round-over' someone took the round; `winner` is their side. Held for
+ *                `PVP_INTERMISSION` so the announcement can be read.
+ *   'match-over' someone reached the round target. `winner` is the match's.
+ *
+ * BEST-OF-N WITH THE TARGET DERIVED. `rounds: 5` means first to 3, and `need`
+ * is `floor(rounds / 2) + 1` computed once here rather than configured beside
+ * it, because two numbers that must agree are one number. An even `rounds` is
+ * legal and simply means the match can be decided a round early — best of 4 is
+ * still first to 3.
+ */
+
+/**
+ * The three settings the owner named, and the range each is allowed.
+ *
+ * `health` spans one clean exchange to a long grind: at 100 the shipped saber
+ * damage ends a round in a handful of passes. `rounds` is odd-friendly but does
+ * not demand odd. `boons` is the whole of "with build synergies, or without" —
+ * on, a duel is the roguelite kit against another player, which is what note 63
+ * (healer, tank, synergies) is asking to be able to test; off, it is the five
+ * forms and nothing else.
+ */
+export const PVP_LIMITS = {
+  rounds: { min: 1, max: 9, def: 3 },
+  health: { min: 50, max: 300, def: 100 },
+  /** Seconds before a round with nobody dead is decided on remaining health. */
+  roundTime: { min: 30, max: 300, def: 120 },
+};
+
+/** How long blades stay cold at the top of a round, and after one is decided. */
+export const PVP_COUNTDOWN = 3;
+export const PVP_INTERMISSION = 4;
+
+const pvpLimit = (spec, v) => (Number.isFinite(v) ? clamp(Math.round(v), spec.min, spec.max) : spec.def);
+
+/**
+ * Read a duel's rules off a settings blob — the same shape `sandboxConfig` has
+ * and for the same reason: a menu writes free-form numbers and exactly one
+ * function decides what they mean.
+ *
+ * `friendlyFire` is DERIVED from `pvp`, not offered as its own switch. The
+ * owner's note is "friendly fire as a rule, not an accident"; a duel in which
+ * you cannot hit the other player is not a duel, and a co-op run in which you
+ * can is the accident. One boolean, two consequences, and no way to set them
+ * inconsistently.
+ */
+export function pvpRules(settings = {}) {
+  const s = settings || {};
+  const pvp = !!s.pvp;
+  return {
+    pvp,
+    friendlyFire: pvp,
+    rounds: pvpLimit(PVP_LIMITS.rounds, s.duelRounds),
+    health: pvpLimit(PVP_LIMITS.health, s.duelHealth),
+    roundTime: pvpLimit(PVP_LIMITS.roundTime, s.duelRoundTime),
+    boons: s.duelBoons === undefined ? false : !!s.duelBoons,
+  };
+}
+
+/**
+ * Hand out sides.
+ *
+ * `teams: 2` is the duel proper — the roster alternates, so a four-player
+ * session is 2v2 in roster order and a three-player one is 2v1 with the host on
+ * the larger side. `teams: 0` is a free-for-all: everybody gets their own
+ * number, which is what `SIDES` having four entries is for.
+ *
+ * Deterministic and pure, on purpose. It runs on the host and its result goes
+ * out on the roster, but a client that recomputes it from the same roster must
+ * reach the same answer or the two machines disagree about who may hit whom,
+ * which is the worst possible disagreement for a rule that decides damage.
+ */
+export function assignSides(roster, teams = 2) {
+  const n = teams > 0 ? Math.min(teams, SIDES.length) : SIDES.length;
+  const out = new Map();
+  (roster || []).forEach((r, i) => out.set(r.id, sideTeam(i % n)));
+  return out;
+}
+
+export class DuelMatch {
+  /**
+   * @param rules  from pvpRules()
+   * @param sides  the side numbers in play, e.g. [0, 2]
+   */
+  constructor(rules = null, sides = [SIDES[0], SIDES[1]]) {
+    this.rules = rules || pvpRules({ pvp: true });
+    this.sides = sides.slice();
+    /** Rounds won, keyed by side. A plain object so it crosses the wire whole. */
+    this.scores = {};
+    for (const s of this.sides) this.scores[s] = 0;
+    this.phase = 'countdown';
+    this.round = 1;
+    this.rounds = this.rules.rounds;
+    /** Rounds needed to take the match. DERIVED — see the note above. */
+    this.need = Math.floor(this.rounds / 2) + 1;
+    this.health = this.rules.health;
+    this.boons = this.rules.boons;
+    this.clock = PVP_COUNTDOWN;
+    /** The side that took the last round — or the match, once it is over. */
+    this.winner = null;
+    /** Written on every transition; the caller drains it. Cleared each update. */
+    this.events = [];
+  }
+
+  get over() { return this.phase === 'match-over'; }
+  get live() { return this.phase === 'fighting'; }
+  /** True once the last round has been played out, whoever took it. */
+  get spent() { return this.round >= this.rounds; }
+
+  _emit(type, extra) { this.events.push({ type, round: this.round, ...extra }); }
+
+  /** A fresh round: the clock, the phase, and a request for bodies to be reset. */
+  beginRound() {
+    this.phase = 'countdown';
+    this.clock = PVP_COUNTDOWN;
+    this.winner = null;
+    this._emit('round-begin', { health: this.health });
+    return this;
+  }
+
+  /**
+   * Award the round, and decide whether that ends the match.
+   *
+   * A null side is a genuine draw — both fighters eliminated on the same frame,
+   * which a mutual blade pass really does do — and it burns a round without
+   * moving either score. Without that, two players who kill each other every
+   * round play forever.
+   */
+  endRound(side) {
+    if (this.phase === 'round-over' || this.phase === 'match-over') return this;
+    this.winner = side ?? null;
+    if (side !== null && side !== undefined) this.scores[side] = (this.scores[side] || 0) + 1;
+    this._emit('round-end', { winner: this.winner, scores: { ...this.scores } });
+    const champion = this._champion();
+    if (champion !== undefined) {
+      this.phase = 'match-over';
+      this.winner = champion;
+      this._emit('match-end', { winner: champion, scores: { ...this.scores } });
+    } else {
+      this.phase = 'round-over';
+      this.clock = PVP_INTERMISSION;
+    }
+    return this;
+  }
+
+  /**
+   * Who has taken the match — `undefined` for "nobody yet", which is not the
+   * same value as `null` for "drawn". Two ways to win, and both are needed:
+   * reach `need`, or be ahead when the last round is spent. The second is what
+   * makes an even `rounds` — and a draw — terminate at all. Three draws in a
+   * best-of-3 leaves nobody on `need` and no rounds left, and a match that
+   * cannot end is worse than one decided on a tiebreak. Level at the end of the
+   * last round is a DRAWN match, reported as null rather than invented for one
+   * side.
+   */
+  _champion() {
+    let best = null, bestN = -1, tied = false;
+    for (const s of this.sides) {
+      const n = this.scores[s] || 0;
+      if (n > bestN) { bestN = n; best = s; tied = false; }
+      else if (n === bestN) tied = true;
+    }
+    if (bestN >= this.need) return best;
+    if (this.round >= this.rounds) return tied ? null : best;
+    return undefined;
+  }
+
+  /**
+   * One tick.
+   *
+   * @param standing side → how many of that side are still on their feet. The
+   *                 caller counts bodies; this decides what the count means.
+   *                 Passing a count rather than the players is what keeps the
+   *                 match free of the world, and it is what lets the host send
+   *                 a client the same record when the client has authority over
+   *                 no body but its own.
+   * @param health   side → total remaining health, for the clock tiebreak.
+   */
+  update(dt, standing = null, health = null) {
+    this.events.length = 0;
+    if (this.phase === 'match-over') return this.events;
+    this.clock = Math.max(0, this.clock - dt);
+
+    if (this.phase === 'countdown') {
+      if (this.clock <= 0) {
+        this.phase = 'fighting';
+        this.clock = this.rules.roundTime;
+        this._emit('fight');
+      }
+      return this.events;
+    }
+
+    if (this.phase === 'round-over') {
+      if (this.clock <= 0) {
+        if (this.spent) {
+          this.phase = 'match-over';
+          this.winner = this._champion() ?? null;
+          this._emit('match-end', { winner: this.winner, scores: { ...this.scores } });
+        } else { this.round++; this.beginRound(); }
+      }
+      return this.events;
+    }
+
+    // fighting
+    if (standing) {
+      const alive = this.sides.filter((s) => (standing[s] || 0) > 0);
+      if (alive.length <= 1) { this.endRound(alive.length === 1 ? alive[0] : null); return this.events; }
+    }
+    if (this.clock <= 0) {
+      // Decided on health rather than left drawn: a timed-out round in which one
+      // fighter is at 12 hp and the other at 96 has a winner, and calling that a
+      // draw rewards whoever ran away.
+      this.endRound(health ? this._healthiest(health) : null);
+    }
+    return this.events;
+  }
+
+  _healthiest(health) {
+    let best = null, bestH = -Infinity, tied = false;
+    for (const s of this.sides) {
+      const h = health[s] || 0;
+      if (h > bestH) { bestH = h; best = s; tied = false; }
+      else if (h === bestH) tied = true;
+    }
+    return tied ? null : best;
+  }
+
+  /**
+   * THE MATCH, AS IT CROSSES THE WIRE — the field list, in ONE place.
+   *
+   * Net.js's `packMatch` and `readMatch` both loop this, so a field added here
+   * arrives at the far end with no second edit, and there is no way to end up
+   * with a reader that knows twelve slots meeting a packer that sends thirteen
+   * — which this repository has already shipped once. Long names rather than
+   * the snapshot's two-letter ones, deliberately: this message goes out on a
+   * phase change, not at 18 Hz, so the whole record is under 150 bytes either
+   * way and legibility is worth more than the difference.
+   */
+  static WIRE = ['phase', 'round', 'rounds', 'need', 'clock', 'scores', 'health', 'boons', 'winner', 'sides'];
+
+  /** Overwrite from the host's record. A client owns none of this. */
+  apply(rec) {
+    if (!rec) return this;
+    for (const k of DuelMatch.WIRE) if (rec[k] !== undefined) this[k] = rec[k];
+    return this;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Player                                                                */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -849,7 +1369,14 @@ export class Player {
     this.id = opts.id ?? 'local';
     this.name = opts.name ?? 'Jedi';
     this.isLocal = opts.isLocal !== false;
-    this.team = 0;
+    /**
+     * The side this body fights for. Was the literal `0` — see the note above
+     * TEAM for what that cost. Through `asSide` rather than taken raw, so
+     * nothing can hand a player the horde's number and post half a duel to its
+     * ledger; an absent option lands on the party's side, which IS 0, so every
+     * existing caller and every co-op session is byte-for-byte unchanged.
+     */
+    this.team = asSide(opts.team);
 
     // ── body
     // skinColor and hairColor have been parameters of buildJedi since it was
@@ -1064,6 +1591,60 @@ export class Player {
   get difficulty() { return this.world.difficulty; }
   aimPoint(out = new THREE.Vector3()) { return out.copy(this.chest); }
   get dead() { return !this.alive; }
+
+  /**
+   * THIS BODY, AS SOMETHING A BLADE CAN FIND.
+   *
+   * A Player had no `capsules()` at all, and that single absence is most of why
+   * a player could not cut a player: `World._resolveBlades` builds its target
+   * list out of `enemies`, `props` and `doors`, and a target record is
+   * `{ id, capsules }`. Measured before this existed — 180 frames of a lit
+   * blade swept through another player's chest, 0.0 damage, 0 target records
+   * that were a player. There was nothing to hit, not a rule saying not to.
+   *
+   * `flesh` for every bone, and it is worth saying why rather than reaching for
+   * the acolyte's `_boneToughness`: a Jedi wears cloth, not plate, and cloth
+   * over flesh is `TOUGHNESS.flesh`. A duel between players should be decided
+   * by the blade arriving, not by which robe somebody picked in the creator —
+   * making a robe armour would make an appearance setting a combat setting,
+   * which is a different feature and a worse one.
+   *
+   * `_caps` is reused between frames exactly as Enemy's is: this is called once
+   * per player per swinging blade per frame and allocating twenty capsule
+   * records each time is the kind of garbage that shows up as a stutter.
+   */
+  capsules() {
+    const out = (this._caps ||= []);
+    out.length = 0;
+    if (!this.alive && !this.actor?.ragdolled) return out;
+    return rigCapsules(this.rig, { into: out, owner: this, toughness: TOUGHNESS.flesh });
+  }
+
+  /**
+   * KNOCKED ABOUT — the call shape `Enemy` has always had, and a Player did not.
+   *
+   * Every force power in this file ends in `e.applyKnockback(impulse, damage,
+   * source)`, and the reason none of them could ever reach another player is
+   * partly that `ctx.players` was never read and partly that a Player had no
+   * such method to call. Giving it the enemy's signature is what lets the push
+   * and the pull loops take one list rather than growing a second body of code
+   * per power — the shape this codebase has twice had to un-duplicate.
+   *
+   * The damage goes through `damage()`, so it passes the friendly-fire gate
+   * like everything else; the shove does not, because being pushed is not being
+   * hurt and shoving your ally out of a firing line is a co-op move worth
+   * keeping. `staggerTimer` rather than an `Enemy.stun`: a player is never
+   * taken off the controls, which is a rule the whole game already keeps.
+   */
+  applyKnockback(impulse, damage = 0, source = null, gentle = false) {
+    if (!this.alive) return false;
+    if (impulse) {
+      this.velocity.add(impulse);
+      this.grounded = false;
+    }
+    if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
+    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+  }
 
   setSaberColor(i) {
     this.saber.setColor(i);
@@ -2509,6 +3090,43 @@ export class Player {
 
   /* ── force powers ────────────────────────────────────────────────── */
 
+  /**
+   * EVERY BODY THIS PLAYER IS ALLOWED TO FIGHT — one list, built once.
+   *
+   * Every force power in this file opened with `for (const e of ctx.enemies)`,
+   * and World has put `players` in that same ctx object since the day co-op
+   * landed. Nothing in this file had ever read it. That is the entire reason a
+   * force push aimed point-blank at another player left their velocity at
+   * 0.000 m/s and lightning at 1.2 m took them 100 hp → 100 hp: not a rule
+   * against it, an iteration that could not see them.
+   *
+   * ONE helper rather than a second loop pasted into each power, because the
+   * alternative is five copies of a targeting rule and this repository has
+   * twice had to un-duplicate exactly that shape — see the note in
+   * `World._resolveBlades` about the enemy blade test that existed twice and
+   * disagreed with itself on five terms.
+   *
+   * IN CO-OP THIS APPENDS NOTHING. Every player is on side 0, `canHarm` says no
+   * without friendly fire, and each power iterates precisely the list it always
+   * did. That is the property to hold on to: PvP is not a branch through the
+   * powers, it is a longer list going into the loop they already had.
+   *
+   * The array is retained between calls — a power is a button, but a held one
+   * fires several times a second and this is a hot path in a crowd.
+   *
+   * Both lists go through `hostileTo`, which is the same rule World needs for
+   * `pickTarget`. Filtering the horde through it costs one `canHarm` per body
+   * and buys the property that matters: there is no list anywhere built from a
+   * different idea of who is fighting whom.
+   */
+  _foes(ctx) {
+    const out = (this._foeList ||= []);
+    out.length = 0;
+    hostileTo(this, ctx.enemies, null, out);
+    hostileTo(this, ctx.players, null, out);
+    return out;
+  }
+
   forcePush(ctx) {
     if (this.cooldowns.push > 0) return this._refuse('force push', `recovering — ${this.cooldowns.push.toFixed(1)}s`);
     if (!this._spend(POWER_COST.push)) {
@@ -2527,7 +3145,9 @@ export class Player {
     const P = this.forceScale;
     const range = 13 * Math.sqrt(P), halfAngle = 0.72;
 
-    for (const e of ctx.enemies || []) {
+    // `_foes`, not `ctx.enemies`: in co-op this is the same list it always was,
+    // and in a duel it is the list with the other player in it. See _foes.
+    for (const e of this._foes(ctx)) {
       if (e.dead) continue;
       _v1.subVectors(e.position, origin);
       const d = _v1.length();
@@ -2618,13 +3238,15 @@ export class Player {
      * threw its victim over the player's head.
      */
     const want = _v8.copy(origin).addScaledVector(dir, PULL_TO);
-    for (const e of ctx.enemies || []) {
+    for (const e of this._foes(ctx)) {
       if (e.dead) continue;
       _v1.subVectors(e.position, origin);
       const d = _v1.length();
       if (d > range || d < 1.5) continue;
       _v1.multiplyScalar(1 / d);
       if (_v1.dot(dir) < 0.72) continue;
+      // `A.mass` is the archetype's; a player has no archetype and the 80 kg
+      // fallback was already here for exactly that class of body.
       const heft = this._heft(e.A ? e.A.mass : 80);
       // gap along the ground, because the vertical is the arc, not the aim
       _v2.subVectors(want, e.position).setY(0);
@@ -3246,14 +3868,17 @@ export class Player {
     this._gesture('lightning');
     audio.force(this.chest, 'lightning');
     const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.4);
-    for (const e of ctx.enemies || []) {
+    for (const e of this._foes(ctx)) {
       if (e.dead) continue;
       _v2.subVectors(e.position, origin);
       const d = _v2.length();
       if (d > 16) continue;
       if (_v2.normalize().dot(this.aimDir) < 0.8) continue;
       e.damage(46, e.position, this, 'lightning');
-      e.stun(1.4, _v2, 1.4);      // `_v2` is the normalised line from the hand
+      // `?.` because a player is never taken off the controls — there is no
+      // `Player.stun` and there should not be one. The stagger a player gets
+      // instead is applied by `damage()` itself, at its own threshold.
+      e.stun?.(1.4, _v2, 1.4);    // `_v2` is the normalised line from the hand
       if (ctx.particles) {
         for (let i = 0; i < 12; i++) {
           _v3.copy(origin).lerp(e.position, i / 12);
@@ -3868,6 +4493,22 @@ export class Player {
 
   damage(amount, point, source, kind) {
     if (!this.alive || this.invuln > 0) return false;
+    /**
+     * THE GATE, AND THIS IS THE ONLY PLACE A LOCAL PLAYER PASSES THROUGH IT.
+     *
+     * Not one caller in the game consulted a team before this line existed, so
+     * "friendly fire is off in co-op" was true only because no code path had
+     * been built that could deliver it — measured: an explicit
+     * `ally.damage(25, point, me, 'saber')` landed for 21.2 hp. Putting the
+     * rule at the sink rather than at each of the sources is the whole point:
+     * a new power, a new hazard or a new wire message written next month
+     * inherits it without knowing it exists.
+     *
+     * `source` is the attacker, and a null one is the environment, which is
+     * never on a side — see canHarm. So falls, drowning and unattributed
+     * explosions are untouched by this.
+     */
+    if (!canHarm(source, this)) return false;
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
     // A NaN here is unrecoverable and SILENT: hp becomes NaN, every later

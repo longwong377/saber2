@@ -1448,4 +1448,68 @@ export async function run({ check, assert }) {
       'nothing handles the host disappearing — a client is left in a world where nothing arrives');
     return 'a departed peer leaves both remotes and players; a vanished host is announced';
   });
+
+  check('co-op: a friend cannot be hurt by a friend, and the host is where that is decided', async () => {
+    /**
+     * "FRIENDLY FIRE IS OFF IN CO-OP" WAS NOT A RULE ANYBODY HAD WRITTEN.
+     *
+     * It was the absence of a path that could deliver it — which is the same
+     * thing right up until the day one exists, and the duel lane has just
+     * built several. Measured on this build before the gate went in: an
+     * explicit `avatar.damage(25, point, ally, 'saber')` on the HOST sent a
+     * `hit` packet addressed to the friend, and `Player.damage(25, point,
+     * ally, 'saber')` on a local body took 21.2 hp off them.
+     *
+     * The host is the node this matters on, because the host is the only node
+     * that resolves anything for anybody else — a `hit` it sends is applied by
+     * the peer with no further argument (see main.js's handler, which calls
+     * `p.damage` with a null source and cannot re-check anything).
+     *
+     * Driven through both damage sinks, on a real session, with the real
+     * `world.rules` a co-op run has: none.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { SIDES, CO_OP_RULES, pvpRules } = await import('../../src/game/Player.js');
+
+    const { world } = await H.bootWorld({ level: 'arena' });
+    assert(!world.rules || !world.rules.friendlyFire,
+      'a co-op world boots with friendly fire already on');
+
+    const sent = [];
+    world.attachNet({ connected: true, isHost: true, name: 'HOST', roster: [], sweep() {},
+      broadcast() {}, toHost() {}, toPeer(id, m) { sent.push([id, m]); } }, 'host');
+    const ally = new RemoteAvatar(world, { id: 'ALPHA', name: 'ALPHA' });
+    world.players.push(ally);
+    const me = world.player;
+    assert(me.team === ally.team, `co-op put the party on sides ${me.team} and ${ally.team}`);
+
+    // 1 — the host, billing a friend it can see.
+    ally.damage(25, ally.chest, me, 'saber');
+    assert(!sent.length,
+      `the host sent ${sent.length} hit packet(s) charging an ally for an ally's blade`);
+    // 2 — a local body, hurt by a friend standing next to it.
+    me.invuln = 0;
+    const before = me.hp;
+    me.damage(25, me.chest, ally, 'saber');
+    assert(me.hp === before, `an ally's blade took ${(before - me.hp).toFixed(1)} hp off a friend`);
+    // 3 — and the horde is unaffected by all of it, which is the whole point.
+    me.invuln = 0;
+    me.damage(25, me.chest, { team: 1, world }, 'saber');
+    assert(me.hp < before, 'the gate now blocks the horde as well as your friends');
+
+    // 4 — the same session with duel rules is the opposite, from the same code.
+    world.rules = pvpRules({ pvp: true });
+    ally.team = SIDES[1];
+    ally.damage(25, ally.chest, me, 'saber');
+    assert(sent.length === 1 && sent[0][0] === 'ALPHA',
+      'a rival on the other side of a duel is still unhittable on the host');
+    assert(CO_OP_RULES.friendlyFire === false,
+      'the co-op default was mutated by a duel — the rules object is not frozen');
+
+    const line = `ally: 0 hit packets, 0 hp; horde: ${(before - me.hp).toFixed(0)} hp; rival: 1 packet`;
+    ally.dispose();
+    world.unload(); world.dispose?.();
+    return line;
+  });
 }
