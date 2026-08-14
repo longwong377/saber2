@@ -3117,6 +3117,40 @@ export class Player {
       this.throwPos.addScaledVector(this.throwVel, dt);
     }
 
+    /**
+     * AND IT DOES NOT GO UNDER THE FLOOR.
+     *
+     * `_updateThrow` had no terrain reference of any kind: the disc flew a
+     * straight line from wherever it left the hand at whatever pitch, and the
+     * ground was not in the simulation. The player's note 26 opens "thrown
+     * saber vanishes into the ground", and it is not an edge case you have to
+     * aim for — `Player.js`'s own default camera pitch is -0.06 rad, so at the
+     * RESTING aim, with no deliberate downward throw at all, the blade spends
+     * 125 of its 176 flight frames below the surface, up to 5.04 m down. At
+     * -25 degrees it reaches 15.03 m.
+     *
+     * A disc that grazes the ground rides ALONG it rather than through it, and
+     * the sparks and the cut line come for free: `Saber.update` already calls
+     * `ground.scar(prevTip, tip)` on every lit frame, which is why the buried
+     * blade was measured gouging a trench 8-34 times while invisible. The mark
+     * was always right; the height was not.
+     *
+     * `clear` is the disc's own half-height plus the blade's glow, so it skims
+     * with the emitter just proud of the surface instead of clipping into it.
+     * Killing only the DOWNWARD velocity leaves the steering and the return
+     * untouched — the blade still turns toward where you look, and a return
+     * leg climbing to the hand is unaffected because it is already rising.
+     */
+    const terrain = ctx.terrain || this.world.terrain;
+    if (terrain) {
+      const clear = 0.34;
+      const gh = terrain.height(this.throwPos.x, this.throwPos.z) + clear;
+      if (this.throwPos.y < gh) {
+        this.throwPos.y = gh;
+        if (this.throwVel.y < 0) this.throwVel.y = 0;
+      }
+    }
+
     // the flying blade is a horizontal spinning disc
     _q1.setFromAxisAngle(UP, this.throwSpin);
     _q2.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);

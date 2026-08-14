@@ -766,6 +766,92 @@ export async function run({ check, assert, near }) {
     return `real handL travel on a ${(span * 100).toFixed(0)} cm arm — ${rows.join(' ')}`;
   });
 
+  check('force: a thrown saber rides the ground instead of vanishing into it', async () => {
+    /**
+     * The player's note 26 opens "thrown saber vanishes into the ground", and
+     * `_updateThrow` had no terrain reference of any kind — the disc flew a
+     * straight line from wherever it left the hand at whatever pitch, and the
+     * ground was simply not in the simulation.
+     *
+     * It is not an edge case you have to aim for. `Player.js` sets the default
+     * camera pitch to -0.06 rad, so at the RESTING aim, with no deliberate
+     * downward throw at all, the blade goes under. Measured over all thirteen
+     * levels at three pitches (-3, -11, -25 degrees):
+     *
+     *     before   3804 of 4897 flight frames below the surface, deepest 18.47 m
+     *     after    0 of 4571
+     *
+     * The mark it leaves was never the problem: `Saber.update` already calls
+     * `ground.scar(prevTip, tip)` on every lit frame, which is why the buried
+     * blade was measured gouging a trench 8-34 times while invisible. Riding
+     * the surface turns that from a bug into the effect the note asks for.
+     *
+     * Three pitches rather than one, because a check that only threw level
+     * would have passed on the old tree too.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const stub = () => {
+      const scene = new THREE.Scene();
+      const sun = new THREE.DirectionalLight(0xffffff, 1);
+      sun.shadow.camera.updateProjectionMatrix();
+      scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+      return { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+        sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+        renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+        profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+        applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+        setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+        setQuality() {}, setResolutionScale() {}, render() {} };
+    };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    // The game's own resting pitch first: if only a deliberate downward throw
+    // went under, this would be a much smaller finding than it is.
+    const PITCHES = [-0.06, -0.20, -0.44];
+    let under = 0, frames = 0, deepest = 0, worst = '';
+    for (const key of LEVEL_ORDER) {
+      const w = new World(stub(), { ...DEFAULT_SETTINGS, quality: 'low' });
+      await w.loadLevel(key);
+      w.spawnPlayer();
+      const p = w.player;
+      for (let i = 0; i < 60; i++) w.update(1 / 60, idle);
+      for (const pitch of PITCHES) {
+        p.camera.pitch = pitch;
+        p.aimDir.set(0, Math.sin(pitch), -Math.cos(pitch)).normalize();
+        p.force = p.maxForce;
+        p.cooldowns.throw = 0;
+        p.saber.lit = true;
+        p.throwOrRecall({ terrain: w.terrain, particles: w.particles, enemies: w.enemies });
+        for (let f = 0; f < 240; f++) {
+          w.update(1 / 60, idle);
+          if (!p.throwState || p.throwState === 'held') break;
+          frames++;
+          const d = w.terrain.height(p.throwPos.x, p.throwPos.z) - p.throwPos.y;
+          if (d > 0.02) {
+            under++;
+            if (d > deepest) { deepest = d; worst = `${key} at ${(pitch * 180 / Math.PI).toFixed(0)}°`; }
+          }
+        }
+        for (let i = 0; i < 120; i++) w.update(1 / 60, idle);   // let it come home
+      }
+      w.unload();
+    }
+    assert(frames > 3000, `only ${frames} flight frames were measured — the throw is not being driven`);
+    assert(under === 0,
+      `${under} of ${frames} flight frames put the blade under the surface, deepest ${deepest.toFixed(2)} m `
+      + `(${worst}) — the note this answers opens "thrown saber vanishes into the ground"`);
+    return `${LEVEL_ORDER.length} levels x ${PITCHES.length} pitches, ${frames} flight frames, none below the surface`;
+  });
+
 }
 
 /** The hold range has to span the reach, not a slice of it. */
