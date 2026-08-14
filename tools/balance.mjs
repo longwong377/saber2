@@ -111,7 +111,7 @@ const Waves = await import('../src/game/Waves.js');
 Math.random = _realRandom;
 
 const { WaveDirector, BOONS, ATTUNEMENTS, RankSet, rankScale, maxRank, rankOf, BOSS_EVERY,
-  RANK_DIMINISH } = Waves;
+  RANK_DIMINISH, refreshWaveBoons } = Waves;
 const { defaultBoonMods } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
@@ -1091,8 +1091,14 @@ export function simulateRun(opts) {
     const queue = pool[Math.floor(rng() * pool.length)].slice();
     const total = queue.length;
     let mods = modsOf(p);
-    // Second Wind is "once each wave", and the wave boundary is here.
-    if (p.boons.has('secondwind')) p.boonMods.secondWind = 1;
+    /* Second Wind is "once each wave", and the wave boundary is here — but
+     * through the GAME's own refresh rather than a hand-written restatement of
+     * it. The line this replaces was `p.boonMods.secondWind = 1`, which is a
+     * copy of a rule that has since grown a rank: two ranks are worth two
+     * saves, and this harness reported the card at 1.00x because it kept
+     * handing out one whatever the player had bought. A harness that restates
+     * a rule measures its own copy of the game. */
+    refreshWaveBoons({ players: [p] });
 
     const alive = [];
     p.world.enemies = alive;

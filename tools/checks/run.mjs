@@ -303,7 +303,12 @@ export async function run({ check, assert }) {
     // changes what "abandon" means in all of them.
     const i = main.indexOf('function startRun');
     assert(i > 0, 'there is no single place a run begins');
-    assert(/mode !== 'gauntlet'/.test(main.slice(i, i + 400)),
+    /* The mode may be read off `settings` or through a session accessor, so the
+     * pattern is on the COMPARISON and not on the expression in front of it —
+     * the co-op lane changed `settings.mode` to `sessionOr('mode')` and this
+     * went red for a rename. What must stay true is that the climb is the only
+     * mode that gets a Run. */
+    assert(/mode'?\)?\s*!== 'gauntlet'/.test(main.slice(i, i + 400)),
       'a run is created for every mode, not only the climb');
     return 'main.js starts a run, lands between rungs, ascends, and records the result';
   });
