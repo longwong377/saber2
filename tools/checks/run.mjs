@@ -19,6 +19,7 @@
  */
 import { Run, DESCENT, SPIRE, LANDING_HEAL } from '../../src/game/Run.js';
 import { recordRun, loadProgress, clearProgress, progressLines } from '../../src/game/Progress.js';
+import { functionBody, lines } from './_source.mjs';
 
 export async function run({ check, assert }) {
   check('run: the Descent ends, and every rung is somewhere the game can go', async () => {
@@ -242,9 +243,7 @@ export async function run({ check, assert }) {
     const { readFile } = await import('node:fs/promises');
     const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
 
-    const i = world.indexOf('  loadLevel(key');
-    assert(i > 0, 'loadLevel is gone');
-    const head = world.slice(i, i + 900);
+    const head = functionBody(world, '  loadLevel(key');
     // The run must be read BEFORE unload, or unload clears the thing that was
     // supposed to survive it.
     const readAt = head.indexOf('opts.run');
@@ -254,8 +253,7 @@ export async function run({ check, assert }) {
       'the run is read AFTER unload() — unload is allowed to clear the world, so it would be gone');
 
     // and it has to be re-applied, as boons rather than as a snapshot
-    const j = world.indexOf('  spawnPlayer(');
-    const body = world.slice(j, j + 2600);
+    const body = functionBody(world, '  spawnPlayer(');
     assert(/this\.run/.test(body), 'spawnPlayer never looks at the run');
     assert(/applyBoon\(/.test(body), 'the run\'s boons are not re-applied to the new player');
     assert(/hpFrac/.test(body), 'health does not carry across a landing');
@@ -276,8 +274,7 @@ export async function run({ check, assert }) {
     assert(/\.\.\.rung\.air/.test(world), 'a rung does not change the atmosphere it borrows');
     assert(/\.\.\.rung\.weather/.test(world), 'a rung does not change the weather it borrows');
     // and the merge must be OVER the level, not under it
-    const k = world.indexOf('applyAtmosphere(');
-    const line = world.slice(k, k + 140);
+    const line = lines(world, 'applyAtmosphere(', 3);
     assert(line.indexOf('L.atmosphere') < line.indexOf('rung.air'),
       'the level is merged over the rung, so the climb is overwritten by the place it borrowed');
     return 'air and weather both merged over the borrowed level';
@@ -301,14 +298,13 @@ export async function run({ check, assert }) {
     assert(/gauntlet/.test(main), 'main.js never mentions the gauntlet, so the mode still falls through');
     // A run is created for the SPIRE only: handing every mode a Run silently
     // changes what "abandon" means in all of them.
-    const i = main.indexOf('function startRun');
-    assert(i > 0, 'there is no single place a run begins');
+    assert(main.includes('function startRun'), 'there is no single place a run begins');
     /* The mode may be read off `settings` or through a session accessor, so the
      * pattern is on the COMPARISON and not on the expression in front of it —
      * the co-op lane changed `settings.mode` to `sessionOr('mode')` and this
      * went red for a rename. What must stay true is that the climb is the only
      * mode that gets a Run. */
-    assert(/mode'?\)?\s*!== 'gauntlet'/.test(main.slice(i, i + 400)),
+    assert(/mode'?\)?\s*!== 'gauntlet'/.test(functionBody(main, 'function startRun')),
       'a run is created for every mode, not only the climb');
     return 'main.js starts a run, lands between rungs, ascends, and records the result';
   });
@@ -316,9 +312,7 @@ export async function run({ check, assert }) {
   check('run: the world says when a rung is done, and only the host says it', async () => {
     const { readFile } = await import('node:fs/promises');
     const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
-    const i = world.indexOf('onWaveClear = ');
-    assert(i > 0, 'onWaveClear is gone');
-    const body = world.slice(i, i + 1600);
+    const body = functionBody(world, 'onWaveClear = ');
     assert(/onRungClear/.test(body), 'clearing the last wave of a rung signals nothing');
     // The ladder lives on one side. A client reconstructing "was that the last
     // wave of this tier" from a wave number and a table is a second copy of it.
@@ -395,8 +389,7 @@ export async function run({ check, assert }) {
     // with ranks: a four-rung climb counted a rank-2 Vitality as rank 8.
     const { readFile } = await import('node:fs/promises');
     const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
-    const i = world.indexOf('  loadLevel(');
-    const body = world.slice(i, i + 1800);
+    const body = functionBody(world, '  loadLevel(');
     assert(/takenBoons = new RankSet\(\)/.test(body),
       'loadLevel does not rebuild takenBoons, so every carried rank is counted again on every landing');
     const unloadAt = body.indexOf('this.unload()');

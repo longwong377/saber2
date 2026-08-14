@@ -39,6 +39,7 @@
  * so that rule covers everything here. See tools/checks/materials.mjs.
  */
 import { readFile, readdir } from 'node:fs/promises';
+import { functionBody } from './_source.mjs';
 
 const src = (rel) => readFile(new URL(`../../src/${rel}`, import.meta.url), 'utf8');
 
@@ -1067,9 +1068,8 @@ export async function run({ check, assert }) {
      */
     const main = strip(await src('main.js'));
     for (const handler of ["net.on('welcome'", "net.on('start'"]) {
-      const i = main.indexOf(handler);
-      assert(i > 0, `${handler} is gone`);
-      const body = main.slice(i, i + 1100);
+      assert(main.includes(handler), `${handler} is gone`);
+      const body = functionBody(main, handler);
       assert(!/settings\.(level|difficulty|mode)\s*=/.test(body),
         `${handler} writes the host's choice onto the player's own settings, which deploy() persists `
         + 'to localStorage — their next solo run starts in the host\'s level');
@@ -1093,9 +1093,8 @@ export async function run({ check, assert }) {
      * unrecoverable run.
      */
     const main = strip(await src('main.js'));
-    const i = main.indexOf("net.on('start'");
-    assert(i > 0, 'the start handler is gone');
-    const body = main.slice(i, i + 1200);
+    assert(main.includes("net.on('start'"), 'the start handler is gone');
+    const body = functionBody(main, "net.on('start'");
     assert(!/screens\.state === 'menu'\s*\)\s*deploy\(/.test(body),
       'the start message is still only acted on from the menu, so a client that is already playing '
       + 'never follows the host to the next rung');
@@ -1306,9 +1305,9 @@ export async function run({ check, assert }) {
     // An acceptable default and an unacceptable hard dependency.
     const net = await src('net/Net.js');
     assert(/SABER_SIGNAL/.test(net), 'there is no way to point co-op at a different signalling server');
-    const i = net.indexOf('function peerOptions');
-    assert(i > 0, 'peerOptions is gone');
-    assert(/iceServers/.test(net.slice(i, i + 700)), 'no ICE servers configured — direct connections only');
+    assert(net.includes('function peerOptions'), 'peerOptions is gone');
+    assert(/iceServers/.test(functionBody(net, 'function peerOptions')),
+      'no ICE servers configured — direct connections only');
     return 'window.SABER_SIGNAL overrides the broker; ICE servers are configured';
   });
 
@@ -1437,9 +1436,8 @@ export async function run({ check, assert }) {
     // live in every loop over the player list: enemies kept picking it as a
     // target and walking to a body that no longer updated.
     const main = strip(await src('main.js'));
-    const i = main.indexOf("net.on('peer-left'");
-    assert(i > 0, 'the peer-left handler is gone');
-    const body = main.slice(i, i + 900);
+    assert(main.includes("net.on('peer-left'"), 'the peer-left handler is gone');
+    const body = functionBody(main, "net.on('peer-left'");
     assert(/remotes\.delete/.test(body), 'the avatar is not removed from remotes');
     assert(/players\.splice|players\.indexOf/.test(body),
       'the avatar is left in world.players, where it stays a target forever');

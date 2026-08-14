@@ -54,6 +54,7 @@ import { Saber } from '../../src/game/Saber.js';
 import { ROBE_CUTS, attachSkirt } from '../../src/game/Cloth.js';
 // The grip model itself, not a copy of it and not a regex over its source.
 import { handPoseOnHilt, GRIP_AT } from '../../src/game/Player.js';
+import { functionBody } from './_source.mjs';
 import {
   assemblePreview, dressPreviewFigure, standPreviewFigure, framePreviewCamera, previewContent,
   skinRackFor, HAIR_COLORS, PREVIEW_VIEW, PREVIEW_SETTLE, PREVIEW_SEED,
@@ -470,9 +471,9 @@ export async function run({ check, assert }) {
     const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
     assert(/_cardRow\('cut-list',\s*'h-cut',\s*'robeCut',\s*ROBE_CUTS,\s*\(\)\s*=>\s*this\._refreshPreview\(true\)\)/.test(menu),
       'picking a robe cut does not rebuild the preview');
-    const i = menu.indexOf('_refreshPreview(rebuild');
-    assert(i > 0, '_refreshPreview is gone');
-    assert(/assemblePreview\(p\.pivot, p\.figure, p\.saber, this\.s\)/.test(menu.slice(i, i + 3000)),
+    assert(menu.includes('_refreshPreview(rebuild'), '_refreshPreview is gone');
+    assert(/assemblePreview\(p\.pivot, p\.figure, p\.saber, this\.s\)/
+      .test(functionBody(menu, '_refreshPreview(rebuild')),
       'the preview no longer assembles the figure from the live settings');
     assert(/dressPreviewFigure\(host, built, s\.robeCut\)/.test(menu),
       'the assembled figure is not dressed in the chosen cut');

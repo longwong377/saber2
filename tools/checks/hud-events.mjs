@@ -30,6 +30,7 @@ import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
 import { PLAYER_VOICES } from '../../src/engine/Voice.js';
 import { defaultBindings, keyLabel } from '../../src/engine/Bindings.js';
+import { OPEN_STATES, openState, openMul } from '../../src/game/Combat.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -522,6 +523,78 @@ export async function run({ check, assert }) {
       // and the word is an element, not a text node found by position
       assert(doc.getElementById('hud-wave-word'), 'the word has no element of its own again');
       return `${before} → ${during} → ${after}`;
+    } finally { restore(); }
+  });
+
+  check('hud: what the blade is being paid extra for is on the screen', () => {
+    /**
+     * `Combat.openness()` pays a cut 3× through a body you are holding, 2×
+     * through one still being yanked and 1.5× through one that is down. The
+     * comment on it says it exists "to make pull→cut read as ONE MOVE instead
+     * of two" — and that cannot happen while the second half is invisible,
+     * which it was: the strongest damage multiplier in the game was unsignposted
+     * from the day it was written. `claims.mjs` already holds the table against
+     * `openness`; nothing held that anything DRAWS it.
+     *
+     * Every string and every number here is read off Combat.js. Typing "3× CUT"
+     * into this check would make it the eighth hand-maintained table in this
+     * repo to drift from its generated twin — and this one would pass while the
+     * HUD quoted a multiplier the blade was not being paid.
+     */
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      world.director.state = () => ({ need: 4, progress: 1 });
+      const p = player();
+      const cam = new THREE.PerspectiveCamera();
+      const foe = {
+        dead: false, gripped: false, yankT: 0, toppled: false, stunTimer: 0,
+        hp: 60, maxHp: 60, position: new THREE.Vector3(3, 0, 0), A: { label: 'PROBE' },
+      };
+      world.enemies = [foe];
+      const el = doc.getElementById('target-open');
+      assert(el, "the HUD has no element for the target's open state");
+
+      hud.update(1 / 60, world, p, cam);
+      assert(el.classList.contains('hidden'), 'an ordinary body is announced as open');
+
+      /* Into each state in turn, through the table's OWN test — so a state
+       * added to Combat.js without a way to reach it fails here rather than
+       * being silently skipped. */
+      const seen = [];
+      for (const s of OPEN_STATES) {
+        Object.assign(foe, { gripped: false, yankT: 0, toppled: false, stunTimer: 0 });
+        if (s.key === 'held') foe.gripped = true;
+        else if (s.key === 'yanked') foe.yankT = 0.4;
+        else if (s.key === 'downed') foe.toppled = true;
+        assert(openState(foe) === s,
+          `no way to put a body into the ${s.key} state from this check — the state is undrawable and untested`);
+        hud.update(1 / 60, world, p, cam);
+        assert(!el.classList.contains('hidden'), `a ${s.key} body draws nothing`);
+        assert(el.firstChild.textContent === s.label,
+          `${s.key} reads "${el.firstChild.textContent}" against the table's "${s.label}"`);
+        assert(el.lastChild.textContent === `${openMul(s, foe)}× CUT`,
+          `${s.key} quotes "${el.lastChild.textContent}" against the ${openMul(s, foe)}× it is actually paid`);
+        seen.push(`${s.label} ${openMul(s, foe)}×`);
+      }
+
+      /* A BOSS TAKES A QUARTER of the held and yanked bonuses, which is the
+       * half a readout is most likely to get wrong: printing `state.mul`
+       * passes every assertion above and overstates at a boss by exactly the
+       * factor the design intends. */
+      Object.assign(foe, { gripped: true, yankT: 0, toppled: false, stunTimer: 0, A: { label: 'PROBE', boss: true } });
+      hud.update(1 / 60, world, p, cam);
+      const held = OPEN_STATES.find(s => s.key === 'held');
+      assert(openMul(held, foe) !== held.mul,
+        'a boss now takes the full held bonus, so this half of the check proves nothing');
+      assert(el.lastChild.textContent === `${openMul(held, foe)}× CUT`,
+        `a boss is advertised at "${el.lastChild.textContent}" and cut for ${openMul(held, foe)}×`);
+      const bossHeld = openMul(held, foe);
+
+      Object.assign(foe, { gripped: false, A: { label: 'PROBE' } });
+      hud.update(1 / 60, world, p, cam);
+      assert(el.classList.contains('hidden'), 'the readout never clears — it names a state the body has left');
+      return `${seen.join(', ')}; boss held ${bossHeld}×`;
     } finally { restore(); }
   });
 

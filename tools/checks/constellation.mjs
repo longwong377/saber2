@@ -47,6 +47,7 @@ import * as Waves from '../../src/game/Waves.js';
 import { Player, defaultBoonMods } from '../../src/game/Player.js';
 import { Screens, LIVE } from '../../src/ui/Screens.js';
 import { ORDER_IDS } from '../../src/game/Order.js';
+import { functionBody } from './_source.mjs';
 import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -500,8 +501,7 @@ export async function run({ check, assert }) {
       'the price escalator reset across a rung');
     // And World must actually do it, in both directions.
     const world = await read('game/World.js');
-    const at = world.indexOf('  loadLevel(key');
-    assert(/new Communion\(run/.test(world.slice(at, at + 2600)),
+    assert(/new Communion\(run/.test(functionBody(world, '  loadLevel(key')),
       'loadLevel does not restore the ledger from the run — a landing confiscates the Insight');
     assert(/run\.communion = this\.communion\.snapshot\(\)/.test(world),
       'nothing ever writes the ledger back to the run, so a landing loses everything since the last one');
@@ -782,9 +782,7 @@ export async function run({ check, assert }) {
     // by the card, which is on the giver's machine. Without that line the aura
     // would work only between two players who had drafted the same card, which
     // is a co-op feature that needs a rehearsal.
-    const spawn = (await read('game/World.js'));
-    const at = spawn.indexOf('  spawnPlayer(');
-    const body = spawn.slice(at, at + 3600);
+    const body = functionBody(await read('game/World.js'), '  spawnPlayer(');
     assert(/bondReceive/.test(body) && /bondGuardIn/.test(body),
       'World.spawnPlayer does not install the bond receiver, so a communion lands on nobody');
 
@@ -929,9 +927,9 @@ export async function run({ check, assert }) {
      * state machine's wiring, and pins the parts that would silently rot.
      */
     const main = await read('main.js');
-    const i = main.indexOf('function canCommune');
-    assert(i > 0, 'nothing decides whether a communion is possible — the star map has no in-world door');
-    const body = main.slice(i, i + 900);
+    assert(main.includes('function canCommune'),
+      'nothing decides whether a communion is possible — the star map has no in-world door');
+    const body = functionBody(main, 'function canCommune');
     assert(/screens\.state !== 'playing'/.test(body), 'the kneel is possible while an overlay owns the screen');
     assert(/grounded/.test(body), 'you can kneel in mid-air');
     assert(/velocity/.test(body), 'you can kneel at a dead run');

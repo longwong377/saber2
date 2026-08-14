@@ -23,6 +23,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { Player } from '../../src/game/Player.js';
 import { LAYER } from '../../src/physics/RapierWorld.js';
+import { lines } from './_source.mjs';
 
 /** Every .js under src/, as [relative path, text]. */
 async function sources() {
@@ -73,9 +74,10 @@ export async function run({ check, assert }) {
     const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
     // The REFUSAL SITE, not the first mention — the constructor initialises the
     // field, and a window measured from there reaches nothing.
-    const i = src.indexOf('lastGripRefusal = {');
-    assert(i > 0, 'the refusal no longer records the mass and the cap');
-    const near = src.slice(i, i + 620);
+    assert(src.includes('lastGripRefusal = {'), 'the refusal no longer records the mass and the cap');
+    // The refusal and the notify that follows it: a neighbourhood, counted in
+    // lines, so a comment added above the notify does not push it out of range.
+    const near = lines(src, 'lastGripRefusal = {', 12);
     assert(/notify/.test(near), 'a refused lift still tells the player nothing');
     assert(/mass/.test(near) && /cap/.test(near),
       'the refusal message does not carry both the mass and the cap');

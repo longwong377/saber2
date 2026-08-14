@@ -18,6 +18,7 @@
  */
 
 import * as THREE from 'three';
+import { functionBody } from './_source.mjs';
 import { rawMaps, MEAN_ALBEDO, PERIODIC, sandMaps, rockMaps, metalMaps, clothMaps, armorMaps,
          duracreteMaps, skinMaps, soilMaps, snowMaps, disposeTextureCache,
          unboundCanvases } from '../../src/engine/Textures.js';
@@ -560,9 +561,8 @@ export function run({ check, assert, near }) {
     const { readFile } = await import('node:fs/promises');
     const terrain = await readFile(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8');
     // `_mapSet` is the one place a preset name becomes a generator call.
-    const i = terrain.indexOf('  _mapSet()');
-    assert(i > 0, 'Terrain._mapSet is gone');
-    const body = terrain.slice(i, i + 700);
+    assert(terrain.includes('  _mapSet()'), 'Terrain._mapSet is gone');
+    const body = functionBody(terrain, '  _mapSet()');
     const needed = new Set([...body.matchAll(/\b(\w+Maps)\(/g)].map(m => m[1]));
     assert(needed.size >= 3, `only ${needed.size} generators found in _mapSet — the parse is wrong`);
     const warmed = new Set(await bootWarmList());

@@ -338,6 +338,16 @@ button{font-family:inherit}
 .combo.on{opacity:1}
 .score{font:var(--mono);font-size:13px;letter-spacing:.2em;color:#cfdaea;margin-top:6px}
 
+/* What the blade is being paid extra for right now. Sits under the score in the
+   same right-aligned mono column, so it reads as part of the same readout
+   rather than as a banner. The colour is set inline from Combat.js's table —
+   one authority for the name, the colour and the number. */
+.targetopen{margin-top:10px;font:var(--mono);font-size:11px;letter-spacing:.18em;
+  display:flex;gap:8px;align-items:baseline;opacity:.92}
+.targetopen b{font-weight:600}
+.targetopen i{font-style:normal;opacity:.7}
+.targetopen.hidden{display:none}
+
 /* ── event feed ──────────────────────────────────────────
    Killstreaks, deflection runs, a boss walking in.
 

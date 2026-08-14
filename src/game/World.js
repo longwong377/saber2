@@ -335,17 +335,21 @@ export class World {
     };
     /**
      * INSIGHT hangs off the same signal — composed onto it rather than written
-     * inside it, and that is not a style choice.
+     * inside it.
      *
-     * tools/checks/run.mjs reads the first 1600 characters after
-     * `onWaveClear = ` and requires the RUNG SIGNAL to be inside them: the whole
-     * Spire turns on that one line, and a check that had to search the rest of
-     * the file for it would pass on a signal fired from anywhere at all. The
-     * callback above is within a line or two of that budget, so anything it
-     * grows from here belongs out here.
+     * THE REASON THIS COMMENT GIVES USED TO BE FALSE, and it is worth leaving
+     * the correction in place. It said the split was forced because
+     * tools/checks/run.mjs "reads the first 1600 characters after
+     * `onWaveClear = `" and the callback "is within a line or two of that
+     * budget" — a magic number in the harness dictating the structure of the
+     * game. Two other comments in this file said the same. The check now reads
+     * the callback by counting braces to its real end
+     * (tools/checks/_source.mjs), so there is no budget and nothing here is
+     * held to a character count.
      *
-     * FIRST, not last: `_earnInsight` mirrors the ledger into the run, and the
-     * rung signal inside the callback can end the level.
+     * What stands is the ordering, which was always a real reason: FIRST, not
+     * last, because `_earnInsight` mirrors the ledger into the run and the rung
+     * signal inside the callback can end the level.
      */
     const cleared = this.director.onWaveClear;
     /**
@@ -381,10 +385,10 @@ export class World {
      * driving the director by hand, a mode that fires the callback itself —
      * still pays. The two callers in the tree both pass it explicitly.
      *
-     * Out here rather than inside for the reason the note above gives:
-     * tools/checks/run.mjs reads the first 1600 characters after
-     * `onWaveClear = ` for the rung signal, and the callback had 16 characters
-     * of that budget left.
+     * Out here rather than inside because of a character budget that no longer
+     * exists — see the correction on the note above. It stays out here because
+     * moving it back would buy nothing, but nothing about this file is held to
+     * a length any more.
      */
     this.director.onWaveClear = (w, fresh = true) => {
       if (fresh) {
@@ -1829,13 +1833,12 @@ export class World {
   /**
    * A wave was survived, so the Force has something to say.
    *
-   * A METHOD, not four lines inside `onWaveClear`, and that is worth a sentence
-   * because it looks like a style choice and is not: tools/checks/run.mjs reads
-   * the first 1600 characters after `onWaveClear = ` and requires the rung
-   * signal to be inside that window — the callback is where the Spire is judged
-   * complete, and a check that had to search the whole file for it would pass
-   * on a signal fired from anywhere at all. Anything this callback grows from
-   * here belongs out here for the same reason.
+   * A METHOD, not four lines inside `onWaveClear`. This used to say it was
+   * forced: tools/checks/run.mjs read "the first 1600 characters after
+   * `onWaveClear = `" and required the rung signal to be inside that window.
+   * The check now reads the callback to its real end, so the budget is gone —
+   * what remains true is the narrower claim, that the rung signal must be
+   * inside the wave-clear callback and not fired from anywhere in the file.
    *
    * The mirror into the run happens HERE rather than at the landing, because a
    * run that ends mid-rung still has to report what it earned: `summary()` is

@@ -28,6 +28,7 @@
 
 import { Player } from '../../src/game/Player.js';
 import { ACTIONS } from '../../src/engine/Bindings.js';
+import { functionBody } from './_source.mjs';
 
 let THREE = null;
 
@@ -151,9 +152,8 @@ export async function run({ check, assert, THREE: T }) {
     const spenders = ['forceLightning', 'forcePush', 'forcePull', 'toggleStasis', 'forceDisassemble'];
     const silent = [];
     for (const name of spenders) {
-      const i = src.indexOf(`  ${name}(`);
-      if (i < 0) { silent.push(`${name} (gone)`); continue; }
-      const body = src.slice(i, i + 1800);
+      if (!src.includes(`  ${name}(`)) { silent.push(`${name} (gone)`); continue; }
+      const body = functionBody(src, `  ${name}(`);
       if (!/_refuse\(/.test(body)) silent.push(name);
     }
     assert(!silent.length,

@@ -17,6 +17,7 @@
 import { DEFAULT_SETTINGS, SKIN_TONES, HAIR_COLORS } from '../../src/ui/Menu.js';
 import { buildJedi } from '../../src/game/Bodies.js';
 import { readFile } from 'node:fs/promises';
+import { functionBody } from './_source.mjs';
 
 /** Every material colour on a built figure, as a sorted hex list. */
 function palette(built) {
@@ -117,9 +118,8 @@ export async function run({ check, assert }) {
     // never rendered a body, so picking one was picking blind. A creator you
     // cannot see is a settings screen.
     const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
-    const i = menu.indexOf('_refreshPreview(rebuild');
-    assert(i > 0, '_refreshPreview is gone');
-    const body = menu.slice(i, i + 2200);
+    assert(menu.includes('_refreshPreview(rebuild'), '_refreshPreview is gone');
+    const body = functionBody(menu, '_refreshPreview(rebuild');
     assert(/buildJedi\(/.test(body), 'the preview builds no figure');
     assert(/skinColor/.test(body) && /hairColor/.test(body) && /robeIndex/.test(body),
       'the preview figure ignores at least one of the three appearance choices');

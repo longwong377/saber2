@@ -11,6 +11,7 @@ import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
 import { keyLabel, walkScale } from '../engine/Bindings.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+import { openState, openMul } from '../game/Combat.js';
 
 const _v = new THREE.Vector3();
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -714,6 +715,7 @@ export class HUD {
       flowFill: root.querySelector('#hud-flow i'),
       combo: root.getElementById('hud-combo'),
       score: root.getElementById('hud-score'),
+      targetOpen: root.getElementById('target-open'),
       center: root.getElementById('hud-center-msg'),
       hitmarks: root.getElementById('hitmarks'),
       killfeed: root.getElementById('killfeed'),
@@ -752,6 +754,9 @@ export class HUD {
     this._buildPowers();
     this._marks = [];
     this.whyTimer = 0;
+    /* The last state+multiplier drawn, so the two strings are only written when
+     * one of them has actually changed. null means the readout is hidden. */
+    this._openKey = null;
     /**
      * The two systems that make the fight audible, driven from the one place
      * that already gets the world, the player and the camera once a frame.
@@ -965,6 +970,52 @@ export class HUD {
     el.reticle.style.opacity = firstPerson ? 1 : 0.9;
     // Shape, size and colour, repainted only when one of the three has moved.
     applyReticle(el.reticle, world.settings);
+
+    /* ── THE TARGET'S STATE, which the blade has always been paid for
+     *
+     * `openness()` pays a cut 3x through a body you are holding, 2x through one
+     * still being yanked and 1.5x through one that is down. The comment on it
+     * says it exists "to make pull→cut read as ONE MOVE instead of two" — and
+     * that cannot happen while the second half is invisible, which it was.
+     *
+     * `openState` returns the shared table row from Combat.js and `openMul`
+     * turns it into what THIS body is worth: a boss takes a quarter of the held
+     * and yanked bonuses, so the row's own `mul` is not the number to print —
+     * quoting it at a boss would overstate by exactly the factor the design
+     * intends. Reading both off Combat.js is what stops this readout drifting
+     * from the arithmetic, the way seven hand-maintained tables in this
+     * codebase have drifted from their generated twins.
+     *
+     * Nothing is allocated per frame: the row is shared, and the two strings
+     * are only written when the state or the multiplier changes.
+     *
+     * A held body wins over everything else, because it is the one you are
+     * unambiguously talking about; otherwise the nearest open body inside the
+     * reach a cut could plausibly follow a pull with.
+     */
+    if (el.targetOpen) {
+      let best = null, bestState = null, bestD = Infinity;
+      for (const e of world.enemies) {
+        const s = openState(e);
+        if (!s) continue;
+        const d = e.gripped ? -1 : e.position.distanceToSquared(player.position);
+        if (d < bestD) { bestD = d; best = e; bestState = s; }
+      }
+      if (bestState && bestD < 100) {
+        const mul = openMul(bestState, best);
+        const key = bestState.key + mul;
+        if (this._openKey !== key) {
+          this._openKey = key;
+          el.targetOpen.firstChild.textContent = bestState.label;
+          el.targetOpen.lastChild.textContent = `${mul}× CUT`;
+          el.targetOpen.style.color = bestState.colour;
+          el.targetOpen.classList.remove('hidden');
+        }
+      } else if (this._openKey !== null) {
+        this._openKey = null;
+        el.targetOpen.classList.add('hidden');
+      }
+    }
 
     /* THE BLADE CURSOR IS A FIRST-PERSON INSTRUMENT AND NOTHING ELSE.
      *

@@ -175,6 +175,57 @@ export async function run({ check, assert }) {
     return `${files.length} suites, no lookup answers a miss with a guess`;
   });
 
+  check('determinism: no check reads a function by guessing how long it is', () => {
+    /**
+     * FOUND BY RUNNING THE WHOLE SUITE ON A TREE WITH NOTHING ELSE MOVING IN IT,
+     * which is the run this file exists to make meaningful. Two checks were red
+     * and both were wrong:
+     *
+     *   ✗ constellation: a communion crosses the wire and lands on the receiver
+     *   ✗ run: a landing carries the run across loadLevel
+     *
+     * `World.spawnPlayer` runs 89 lines and contains every line both checks
+     * demand. They read it as `world.slice(indexOf('  spawnPlayer('), … + 2600)`
+     * and the function is 4262 characters long. The window was a property of
+     * nothing, was correct on the day it was typed, and expired in silence when
+     * somebody added a line — reporting the growth of a function as the absence
+     * of its contents.
+     *
+     * NINETEEN of these were in the suite, across nine files, from 140 to 3600
+     * characters. Two were red; the rest were not safe, only unexpired. And the
+     * other direction is worse: `net.on('peer-left'` is 15 lines and was read
+     * with a 900-character window that ran 180 lines past the end of the
+     * handler, so a check could have passed on a line belonging to a completely
+     * different function — and nobody investigates a green check.
+     *
+     * THE PART THAT MAKES THIS MORE THAN A CHECK BUG. Three comments in
+     * `src/game/World.js` explain that shipped code was moved OUT of the
+     * `onWaveClear` callback to fit the check's window: "the callback had 16
+     * characters of that budget left". A magic number in the harness became a
+     * constraint on the structure of the game. That is the strongest argument
+     * available for why this shape has to be forbidden rather than tidied.
+     *
+     * `tools/checks/_source.mjs` replaces all nineteen: `functionBody` counts
+     * braces to the real end of the function and throws if it cannot find it,
+     * and `lines` takes a neighbourhood in lines — a unit the reader can see —
+     * for the handful of sites that genuinely want one.
+     */
+    const bad = [];
+    for (const [name, text] of files) {
+      const src = strip(text);
+      for (const m of src.matchAll(/\.slice\(\s*(\w+)\s*,\s*(\w+)\s*\+\s*(\d+)\s*\)/g)) {
+        if (m[1] !== m[2]) continue;            // not an offset from a found index
+        if (Number(m[3]) < 100) continue;       // a short fixed field, not a function
+        bad.push(`${name}: ${m[0].trim()}`);
+      }
+    }
+    assert(bad.length === 0,
+      `a check reads source by slicing a fixed number of characters from an index: ${bad.join('; ')} `
+      + '— use functionBody() from _source.mjs, which reads to the real end of the function. A window '
+      + 'is correct only until somebody adds a line, and it fails silently in both directions');
+    return `${files.length} suites, none guesses the length of a function`;
+  });
+
   check('determinism: verify.mjs can still be told to run backwards', async () => {
     /* The switch that found the `mapPeak` fallback on its first run. If it is
      * removed, the only tool for this class goes with it and the next instance

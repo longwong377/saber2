@@ -30,6 +30,7 @@
  */
 import * as THREE from 'three';
 import { LEVEL_ORDER } from '../../src/game/Levels.js';
+import { lines } from './_source.mjs';
 
 export async function run({ check, assert }) {
   const B = await import('../balance.mjs');
@@ -571,9 +572,10 @@ export async function run({ check, assert }) {
     const src = await readFile(new URL('../balance.mjs', import.meta.url), 'utf8');
     assert(/MEMO_MAX/.test(src), 'the memo bound is gone');
     for (const name of ['_engage', '_bolt']) {
-      const i = src.indexOf(`const ${name} = new Map()`);
-      assert(i > 0, `${name} is gone`);
-      const body = src.slice(i, i + 1800);
+      assert(src.includes(`const ${name} = new Map()`), `${name} is gone`);
+      // The declaration and the lookups that follow it — a neighbourhood, not a
+      // function, so it is counted in LINES rather than in characters.
+      const body = lines(src, `const ${name} = new Map()`, 34);
       assert(/MEMO_MAX|memoGet/.test(body),
         `${name} is keyed on a value that moves during a run and has no bound`);
     }

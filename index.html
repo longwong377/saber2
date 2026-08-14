@@ -373,6 +373,13 @@
     <div id="hud-flow" class="flowmeter"><i></i><span>FLOW</span></div>
     <div id="hud-combo" class="combo"></div>
     <div id="hud-score" class="score">0</div>
+    <!-- THE TARGET'S STATE. Combat.openness pays the blade 3x through a body
+         you are holding, 2x through one still being yanked and 1.5x through one
+         that is down, and for a long time nothing said so on screen — the whole
+         point of the bonus is to make pull→cut read as ONE MOVE, which it
+         cannot while the second half is invisible. Combat.js owns the names,
+         the colours and the multipliers; the HUD only draws them. -->
+    <div id="target-open" class="targetopen hidden"><b></b><i></i></div>
     <!--
       EVENT FEED — killstreaks, deflection runs, a boss arriving.
 
