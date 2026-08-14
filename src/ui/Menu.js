@@ -1228,6 +1228,8 @@ export class Menu {
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
+      netLeave: document.getElementById('btn-leave'),
+      restart: document.getElementById('btn-restart'),
       gpu: document.getElementById('gpu-line'),
       build: document.getElementById('build-id'),
     };
@@ -2920,6 +2922,7 @@ export class Menu {
       const code = document.getElementById('join-code').value.trim().toUpperCase();
       if (code) this.hooks.onJoin?.(code);
     });
+    bind('btn-leave', () => this.hooks.onLeave?.());
     this.el.netCode.addEventListener('click', () => {
       const t = this.el.netCode.textContent;
       if (t && t !== '—') { navigator.clipboard?.writeText(t); this.netStatus('code copied', 'ok'); }
@@ -2933,6 +2936,23 @@ export class Menu {
     this.el.netStatus.className = 'netstatus ' + cls;
   }
   netCode(code) { this.el.netCode.textContent = code || '—'; }
+
+  /**
+   * WHAT THE SESSION CONTROLS SAY ABOUT THE SESSION YOU ARE IN.
+   *
+   * Two buttons that were wrong in opposite directions. There was no way to
+   * LEAVE: `quitToMenu()` closes the session, but a player who has connected
+   * and not deployed has no run to quit, so the only exit was to start one and
+   * abandon it. And Restart was offered to a co-op client, where
+   * `World.restartWave()` refuses because only the host owns the wave —
+   * a button that answers "no" is a worse answer than no button.
+   *
+   * @param mode  null when solo, 'host' or 'client' in a session.
+   */
+  netSession(mode) {
+    this.el.netLeave?.classList.toggle('hidden', !mode);
+    this.el.restart?.classList.toggle('hidden', mode === 'client');
+  }
   /**
    * The roster, with the names treated as what they are: text that arrived
    * over the wire from another machine (`conn.metadata?.name`, Net.js:148).

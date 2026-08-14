@@ -13,7 +13,8 @@ import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
-import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, guardQuat } from './Duel.js';
+import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
+  DUEL_PHASES, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
@@ -1447,6 +1448,7 @@ export class Enemy {
       this.facing += d * Math.min(1, dt * 10);
       this.target = ctx.pickTarget(this);
       if (this.target) this.toTarget = _v2.subVectors(this.target.position, this.position).setY(0).normalize().clone();
+      this._applyNetDuel();
       this._syncBody();
       this._pose(dt, ctx);
       return true;
@@ -1456,6 +1458,38 @@ export class Enemy {
     this._move(dt, ctx);
     this._pose(dt, ctx);
     return true;
+  }
+
+  /**
+   * THE BLADE, ON A MACHINE THAT DOES NOT RUN THE BRAIN.
+   *
+   * `DuelBrain.update` runs on the host alone, so a client's duellists held the
+   * guard their constructor gave them and never swung — every acolyte in a
+   * joining player's level stood in one pose for the session. `_poseSaber`
+   * reads exactly four things off the duel: `guardDir`, `phase` (only for
+   * `=== 'strike'`), `spin` and `attack.reach`. Those, plus how far through the
+   * phase it is, are what `packDuel` sends and what this writes.
+   *
+   * IT POSES AND DOES NOT RESOLVE. `_saberStrike` refuses on a netDriven body
+   * — a blade that both animates locally and bills damage locally would hit
+   * twice, and the host already bills sabers over `hit`.
+   */
+  _applyNetDuel() {
+    const d = this.duel, n = this.netDuel;
+    if (!d) return;
+    if (!n) { d.telegraph?.hide(); return; }
+    const [ph, ak, k, gx, gy, gz, spin] = n;
+    d.phase = DUEL_PHASES[ph] || 'guard';
+    d.attackKey = ak >= 0 ? ATTACK_KEYS[ak] : null;
+    d.attack = d.attackKey ? ATTACKS[d.attackKey] : null;
+    d.guardDir.set(gx, gy, gz);
+    if (d.guardDir.lengthSq() > 1e-8) d.guardDir.normalize();
+    d.spin = spin || 0;
+    /* The telegraph, which is the fairness contract of the melee game exactly
+     * as the marksman's laser is of the ranged one. Drawn with the host's own
+     * fill so it reads as a warning that FILLS rather than an arc that blinks. */
+    if (d.phase === 'windup' && d.attack) d._drawTelegraph(k, 0.28 + k * 0.72, 1);
+    else d.telegraph?.hide();
   }
 
   _think(dt, ctx) {
@@ -1893,6 +1927,9 @@ export class Enemy {
    */
   _saberStrike(ctx, target = this.target) {
     const duel = this.duel;
+    // The host owns this hit. A client poses the same swing off the wire (see
+    // _applyNetDuel) and must not also bill it, or a saber lands twice.
+    if (this.netDriven) return false;
     if (!duel || !this.saber || this.saber.ignition < 0.6 || this.lock) return false;
     if (duel.phase !== 'strike') { this._strikePhase = duel.phase; return false; }
     // once per strike, and the phase edge is what defines "once"

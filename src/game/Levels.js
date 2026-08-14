@@ -3812,11 +3812,15 @@ export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood'
  *
  * The dojo needs one more sentence, because deleting it looks riskier than it
  * is. Training is no longer pinned to that room: `World.loadLevel` opens
- * DojoDirector on `L.training || settings.mode === 'training'`, and the
- * director places everything it spawns relative to the PLAYER and reads
- * nothing at all off the level. The eleven lessons now run in whichever
- * theatre the player picked, which is what the comment in World.js already
- * said they should. `Dojo.js` still exports `DOJO_LEVEL`; nothing imports it.
+ * DojoDirector on the MODE alone, and the director places everything it spawns
+ * relative to the PLAYER and reads nothing at all off the level. The eleven
+ * lessons now run in whichever theatre the player picked, which is what the
+ * comment in World.js already said they should. `Dojo.js` still exports
+ * `DOJO_LEVEL`; nothing imports it.
+ *
+ * The `L.training ||` half of that test went with the room — no level in this
+ * file sets the flag any more (`grep -c 'training:'` returns 0), so it was a
+ * branch that could not be taken.
  */
 
 

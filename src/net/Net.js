@@ -16,6 +16,7 @@ import { Rig, BipedAnimator } from '../game/Rig.js';
 import { Saber } from '../game/Saber.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { clamp, lerp, TAU } from '../engine/MathUtil.js';
+import { ATTACK_KEYS, DUEL_PHASES } from '../game/Duel.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
@@ -699,11 +700,22 @@ export function packAvatar(player) {
  *   tg      is a telegraph lit. A marksman's laser is the fairness contract of
  *           the whole ranged game.
  *
- * The MELEE half of the same defect is not closed here: posing a strike needs
- * the duel's guard direction, spin and attack, and both the pose and the brain
- * live in src/game/Enemy.js and src/game/Duel.js. That record field is not sent
- * until something reads it — a field on the wire with no reader is the defect
- * this file has just spent a pass removing.
+ *   dl      THE MELEE HALF, and it is the same defect as `bf`. A client never
+ *           runs `DuelBrain.update`, so on a joining player's screen every
+ *           duellist in the game held one guard and never swung: the blade was
+ *           posed from `duel.guardDir`, `duel.phase`, `duel.spin` and
+ *           `duel.attack.reach`, and all four sat where the constructor left
+ *           them. `_poseSaber` reads exactly those four and nothing else, so
+ *           they are exactly what crosses: the phase as an index, the attack as
+ *           an index into ATTACKS (which carries `reach` AND the arc the
+ *           telegraph draws), how far through that phase it is, the guard
+ *           direction, and the spin. Null for anything with no duel brain, so
+ *           a wave of droids pays nothing for it.
+ *
+ *           The client poses it and does NOT resolve it: `Enemy._saberStrike`
+ *           returns early on a netDriven body, because a blade that both
+ *           animates locally and bills damage locally would hit twice. Sabers
+ *           are billed by the host over `hit`, as they were.
  *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
@@ -718,6 +730,7 @@ export function packSnapshot(world) {
       r2(e.facing), Math.round(e.hp), e.dead ? 1 : 0,
       r2(e.velocity?.x || 0), r2(e.velocity?.z || 0),
       e.aimCharge > 0 ? 1 : 0,
+      packDuel(e.duel),
     ]);
   }
   const fires = world._netFires || [];
@@ -742,3 +755,27 @@ export function packSnapshot(world) {
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
+
+/**
+ * A duellist's blade, as the six numbers `Enemy._poseSaber` actually reads.
+ *
+ * Null for a body with no duel brain, which is most of a wave — the record is
+ * one slot either way and a droid does not pay for a saber it does not carry.
+ */
+function packDuel(d) {
+  if (!d) return null;
+  const ph = DUEL_PHASES.indexOf(d.phase);
+  const len = d.phase === 'windup' ? d._windupLen
+    : d.phase === 'strike' ? d._strikeLen
+      : d.phase === 'recover' ? d._recoverLen : 0;
+  return [
+    ph < 0 ? 0 : ph,
+    d.attackKey ? ATTACK_KEYS.indexOf(d.attackKey) : -1,
+    // How far through the phase, 0 → 1. The telegraph's fill is this number and
+    // so is the strike's guard sweep; a client that does not know it can draw
+    // an arc but cannot draw it FILLING, which is the half that reads as a
+    // warning rather than as decoration.
+    r3(len > 0 ? 1 - Math.max(0, Math.min(1, d.timer / len)) : 0),
+    r3(d.guardDir.x), r3(d.guardDir.y), r3(d.guardDir.z), r3(d.spin || 0),
+  ];
+}

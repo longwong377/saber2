@@ -290,6 +290,99 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: a duellist swings on a joining player\'s screen, and telegraphs it', async () => {
+    /**
+     * THE MELEE HALF OF THE SAME DEFECT. A client's enemies are `netDriven`,
+     * which returns before `_think` — so `DuelBrain.update` never runs there.
+     * `_poseSaber` reads exactly four things off the duel — `guardDir`,
+     * `phase`, `spin` and `attack.reach` — and on a client all four sat where
+     * the constructor left them for the whole session. Every acolyte in a
+     * joining player's level held one guard and never swung; there was no
+     * telegraph, so nothing to read, and no arc, so nothing to chamber.
+     *
+     * Measured on the blade TIP in the enemy's own frame, because that is what
+     * a player is looking at: the guard travels, and the travel is the swing.
+     * A pose that never moves reports a tip excursion of exactly zero.
+     *
+     * AND THE CLIENT POSES WITHOUT RESOLVING. The host bills sabers over
+     * `hit`; a blade that animated locally and also billed locally would land
+     * twice, so `_saberStrike` refuses on a netDriven body. That is asserted
+     * here rather than assumed, because it is the failure this fix could
+     * introduce.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair();
+    for (let i = 0; i < 2; i++) {
+      host.spawnEnemy('acolyte', new THREE.Vector3(Math.cos(i) * 2, 0, 2.4 + i));
+    }
+    host.director.active = true;
+
+    // How far the guard direction wanders, per machine. A duel brain that runs
+    // sweeps it through every attack; one that does not holds it still.
+    const span = (w) => {
+      const seen = w._guardSeen || (w._guardSeen = new Map());
+      for (const e of w.enemies) {
+        if (!e.duel) continue;
+        const r = seen.get(e.id) || { lo: new THREE.Vector3(9, 9, 9), hi: new THREE.Vector3(-9, -9, -9) };
+        r.lo.min(e.duel.guardDir); r.hi.max(e.duel.guardDir);
+        seen.set(e.id, r);
+      }
+    };
+    let cTele = 0, cPhases = new Set(), hPhases = new Set();
+    for (let i = 0; i < 20 * 60; i++) {
+      pump(1 / 60);
+      span(host); span(client);
+      for (const e of client.enemies) {
+        if (!e.duel) continue;
+        cPhases.add(e.duel.phase);
+        if (e.duel.telegraph?.mesh?.visible) cTele++;
+      }
+      for (const e of host.enemies) if (e.duel) hPhases.add(e.duel.phase);
+    }
+    const widest = (w) => {
+      let m = 0;
+      for (const r of (w._guardSeen || new Map()).values()) m = Math.max(m, r.hi.distanceTo(r.lo));
+      return m;
+    };
+    const hSpan = widest(host), cSpan = widest(client);
+    assert(hSpan > 0.5, `the host's own duellists barely moved their guard (${hSpan.toFixed(2)}) — the scene is wrong, not the wire`);
+    assert(cSpan > hSpan * 0.5,
+      `the host swept its guard through ${hSpan.toFixed(2)} and the joining player saw ${cSpan.toFixed(2)} — `
+      + 'every duellist on that screen is holding one pose for the whole session');
+    assert(cPhases.has('windup') && cPhases.has('strike'),
+      `the client only ever saw the phases {${[...cPhases].join(', ')}} — a blade that never enters a `
+      + 'strike is a blade that never swings');
+    assert(cTele > 0,
+      'a duellist wound up an attack and the joining player never saw the arc — the telegraph is the '
+      + 'fairness contract of the melee game exactly as the marksman\'s laser is of the ranged one');
+
+    // …and the client did not ALSO bill it. Driven rather than read: a real
+    // strike phase against a real body, with _saberStrike called directly.
+    let billed = 0;
+    const victim = { position: new THREE.Vector3(0, 0, 0), chest: new THREE.Vector3(0, 1.3, 0),
+      hp: 500, maxHp: 500, alive: true, invuln: 0, radius: 0.34,
+      camera: { addShake() {} }, damage() { billed++; } };
+    for (const e of client.enemies) {
+      if (!e.duel) continue;
+      e.duel.phase = 'strike';
+      e._strikePhase = 'guard';
+      e._struck = false;
+      e.saber.ignition = 1;
+      e.position.set(0, 0, 0.6);
+      victim.position.set(0, 0, 0);
+      e._saberStrike(null, victim);
+    }
+    assert(billed === 0,
+      `a client resolved ${billed} saber hit(s) of its own — the host bills sabers over 'hit', so this `
+      + 'is the same blow landing twice on the joining player');
+
+    const line = `guard travel host ${hSpan.toFixed(2)} → client ${cSpan.toFixed(2)}, phases `
+      + `{${[...cPhases].sort().join(', ')}}, ${cTele} telegraph frames, 0 hits billed locally`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: a replicated enemy runs the gait its body is actually covering', async () => {
     /**
      * `velocity = (netTarget - position) * min(1/dt, 18)` is the remaining

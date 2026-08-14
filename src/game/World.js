@@ -1849,7 +1849,7 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
@@ -1889,6 +1889,17 @@ export class World {
       // from a brain that does not run here.
       if (tg && !e.laser?.visible) e._beginTelegraph(null);
       else if (!tg && e.laser?.visible) e._endTelegraph();
+      /**
+       * THE BLADE, which on a client had never moved.
+       *
+       * `DuelBrain.update` runs on the host alone, so every duellist in a
+       * joining player's level held the guard its constructor gave it and
+       * never swung — `_poseSaber` reads `guardDir`, `phase`, `spin` and
+       * `attack.reach`, and all four sat still for the whole session. Six
+       * numbers off the wire, applied in Enemy's netDriven branch just before
+       * the pose. See packDuel in Net.js.
+       */
+      e.netDuel = dl || null;
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
     this._spawnNetBolts(msg.bf);

@@ -137,6 +137,10 @@
           <div class="or">or</div>
           <input id="join-code" placeholder="SESSION CODE" maxlength="10" spellcheck="false">
           <button id="btn-join" class="secondary">Join</button>
+          <!-- A way OUT. `quitToMenu()` leaves the session, but a player who
+               has connected and not yet deployed had no run to quit, so the
+               only exit from a session was to start one and abandon it. -->
+          <button id="btn-leave" class="ghost hidden">Leave session</button>
         </div>
         <div id="net-status" class="netstatus"></div>
         <div id="net-roster" class="roster"></div>
@@ -436,6 +440,9 @@
     <h2>Meditate</h2>
     <div id="pause-stats" class="pause-stats"></div>
     <button id="btn-resume" class="primary">Resume</button>
+    <!-- Hidden on a co-op client: `World.restartWave()` refuses there and says
+         so, because only the host owns the wave. Offering a button that
+         answers "no" is a worse answer than not offering it. -->
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
     <button id="btn-perfcopy" class="ghost">Copy frame report</button>

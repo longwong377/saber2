@@ -173,6 +173,7 @@ const menu = new Menu(settings, {
   onFeel: () => applyFeelSettings(world, settings),
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),
+  onLeave: () => { leaveSession(); menu.netSession(null); },
 });
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1134,6 +1135,7 @@ async function hostSession() {
     }, localLook());
     menu.netCode(code);
     menu.netStatus('session open — share the code, then Ignite', 'ok');
+    menu.netSession('host');
   } catch (e) {
     menu.netStatus(`could not open a session: ${e.message || e}`, 'err');
   }
@@ -1151,6 +1153,7 @@ function leaveSession() {
   session = null;
   menu.netStatus('you have left the session', '');
   menu.netCode('—');
+  menu.netSession(null);
   return true;
 }
 
@@ -1160,6 +1163,9 @@ async function joinSession(code) {
     await net.join(code, playerName(), localLook());
     menu.netCode(code);
     menu.netStatus('connected — the host starts the run', 'ok');
+    // A client does not own the wave, so the pause card stops offering to
+    // restart it — see Menu.netSession.
+    menu.netSession('client');
   } catch (e) {
     menu.netStatus(`could not join: ${e.message || e}`, 'err');
   }

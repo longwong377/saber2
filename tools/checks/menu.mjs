@@ -484,4 +484,55 @@ export async function run({ check, assert }) {
       return `lose "${DEATH_TITLE}" → crown "You stand above the storm" → lose "${title()}"`;
     } finally { close(); }
   });
+
+  check('menu: a session can be left, and a client is not offered the host\'s button', () => {
+    /**
+     * TWO BUTTONS WRONG IN OPPOSITE DIRECTIONS.
+     *
+     * There was no way to LEAVE a co-op session at all. `Net.close` existed,
+     * was complete, and had zero callers in the repository; `quitToMenu()` now
+     * calls it, but a player who has connected and NOT deployed has no run to
+     * quit — so the only exit from a session was to start a run and abandon
+     * it.
+     *
+     * And Restart was offered to a co-op client, where `World.restartWave()`
+     * refuses because only the host owns the wave. A button that answers "no"
+     * is a worse answer than no button: it reads as a bug in the session
+     * rather than as a rule of it.
+     *
+     * Driven on the real page and the real Menu, both directions, because the
+     * defect in each case is a control whose visibility never changes.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const leave = doc.getElementById('btn-leave');
+      const restart = doc.getElementById('btn-restart');
+      assert(leave, 'index.html has no Leave button, so a connected player still cannot get out');
+      assert(restart, 'the pause card lost its Restart button');
+      const hidden = (el) => el.classList.contains('hidden');
+
+      assert(hidden(leave), 'Leave is offered before there is a session to leave');
+      assert(!hidden(restart), 'Restart is hidden outside co-op, where it works');
+
+      menu.netSession('host');
+      assert(!hidden(leave), 'a host cannot leave their own session');
+      assert(!hidden(restart), 'the host owns the wave and was not offered Restart');
+
+      menu.netSession('client');
+      assert(!hidden(leave), 'a joined client cannot leave');
+      assert(hidden(restart),
+        'a co-op client is still offered Restart, and World.restartWave() refuses it — the button '
+        + 'reads as a broken session rather than as a rule of one');
+
+      menu.netSession(null);
+      assert(hidden(leave) && !hidden(restart), 'leaving did not put the controls back');
+
+      // …and the button is wired to a hook rather than being decoration.
+      let left = 0;
+      menu.hooks.onLeave = () => left++;
+      leave.dispatchEvent({ type: 'click' });
+      assert(left === 1, `the Leave button fired onLeave ${left} times`);
+      return 'solo: leave hidden, restart shown · host: both · client: leave only; onLeave fires';
+    } finally { close(); }
+  });
 }

@@ -186,6 +186,26 @@ export const FORMS = {
 
 export const FORM_KEYS = Object.keys(FORMS);
 
+/**
+ * THE PHASES, in a stable order, so one can be named by index on the wire.
+ *
+ * One table, in the module that owns the phases. It was briefly two — one in
+ * src/net/Net.js and one in src/game/Enemy.js — which is the copied-table
+ * defect this codebase has now been bitten by five times: a HUD price list, a
+ * form's spacing, a wave-boundary rule, a check's regex, and this. Two copies
+ * of an ORDERING are worse than two copies of a number, because they disagree
+ * silently and the symptom is a client drawing the wrong swing.
+ */
+export const DUEL_PHASES = ['guard', 'windup', 'strike', 'recover', 'feint', 'stagger'];
+
+/**
+ * The attacks in a stable order, so one can be named by index on the wire.
+ * `Object.keys` of a literal is insertion order in every engine this ships to,
+ * and a client that resolves the wrong index draws the wrong arc — so if a new
+ * attack is ever added it goes at the END of ATTACKS, not in the middle.
+ */
+export const ATTACK_KEYS = Object.keys(ATTACKS);
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Telegraph — the ghost of the swing that is coming                     */
 /* ══════════════════════════════════════════════════════════════════════ */
