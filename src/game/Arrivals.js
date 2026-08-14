@@ -58,6 +58,20 @@ import { audio } from '../engine/Audio.js';
 import { spawnClear } from './Spawn.js';
 
 const rng = makeRng(20931);
+
+/**
+ * Seeded from the run, exactly as `Waves.seedWaves` is — see WaveDirector's
+ * constructor, which calls this beside the enemy and duel streams.
+ *
+ * `Run.seed` is documented as "the seed EVERYTHING random in this run derives
+ * from", and this was the last stream still outside it: which craft arrives,
+ * where it sets down, which bearing it comes in on and how the squad spills
+ * out of it were all off a module-load constant. So a seeded Descent replayed
+ * its waves and its choreography and then had different things fly in — and
+ * only on the FIRST run after a page load, because the stream is never reset
+ * and every later run inherits wherever the previous one left it.
+ */
+export function seedArrivals(seed) { rng.seed(seed); }
 let _arrivalId = 1;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);

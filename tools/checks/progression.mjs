@@ -516,6 +516,58 @@ export async function run({ check, assert }) {
       'the same seed gave two runs different duel streams — forms, attacks, feints and every '
       + 'wind-up length are off this one');
     assert(e1 !== e3 && d1 !== d3, 'two different seeds gave identical enemy and duel streams');
+
+    /**
+     * …AND HOW THEY ARRIVE. The last stream still outside `Run.seed`: which
+     * craft comes, where it sets down, the bearing it flies in on and how the
+     * squad spills out of it were all off a module-load constant. So a seeded
+     * Descent replayed its waves and its choreography and then had different
+     * things fly in.
+     *
+     * Driven through `_sitePoint`, which is the function that consumes the
+     * stream — a bearing and a radius per call — rather than through a probe
+     * of the rng, because the rng is module-private and a probe of it would
+     * not prove that the DIRECTOR draws from the one being seeded.
+     *
+     * And measured from an ALREADY-USED stream. A module-level generator is
+     * never reset, so each run inherits wherever the last one left it: a fix
+     * that seeded only at page load would pass a test that starts clean and
+     * fail in the second run of a session. The `descend` calls above have
+     * advanced it before this line is reached.
+     */
+    const THREE = await import('three');
+    const { ArrivalDirector, seedArrivals } = await import('../../src/game/Arrivals.js');
+    assert(typeof seedArrivals === 'function',
+      'Arrivals.js exports no seeder, so the arrival stream cannot be put on the run\'s number');
+    const stubWorld = {
+      terrain: { height: () => 0, inBounds: () => true, slopeAt: () => 0, half: 200 },
+      players: [{ position: new THREE.Vector3(0, 0, 0), alive: true }],
+      scene: new THREE.Scene(), level: {}, enemies: [],
+    };
+    /* THROUGH A REAL WaveDirector, not through `seedArrivals` directly.
+     * The first version of this called the seeder itself and passed with the
+     * call site deleted from WaveDirector's constructor — it proved the seeder
+     * worked and nothing about the wiring, which is the whole defect. The
+     * subject is "does building a run put the arrival stream on the run's
+     * number", so a run has to be built. */
+    const sites = (seed) => {
+      seedArrivals(999);                 // move the stream somewhere else first
+      const runWorld = { run: { seed, tier: 0, done: false }, players: [], enemies: [] };
+      new Waves.WaveDirector(runWorld, { mode: 'gauntlet', pool: ['b1', 'trooper'] });
+      const d = new ArrivalDirector(stubWorld);
+      const out = [];
+      for (let i = 0; i < 12; i++) {
+        const v = new THREE.Vector3();
+        d._sitePoint(40, 70, v);
+        out.push(`${v.x.toFixed(3)},${v.z.toFixed(3)}`);
+      }
+      return out.join('|');
+    };
+    const s1 = sites(0xA11CE), s2 = sites(0xA11CE), s3 = sites(0xB0B);
+    assert(s1 === s2,
+      'the same seed put two runs\' landing craft down in different places — the arrival stream is '
+      + 'still on its module-load constant, so a replayed run has different things fly into it');
+    assert(s1 !== s3, 'two different seeds chose identical landing sites');
     return `seed 0xA11CE reproduced ${a.waves.length} waves exactly, and the enemy and duel `
       + `streams with them; 0xB0B differed in all three; ${firsts.length} rungs, `
       + `${new Set(firsts).size} distinct openings`;

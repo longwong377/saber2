@@ -1015,7 +1015,16 @@ export const ROBE_CUTS = [
   },
   {
     id: 'cassock', name: 'Heavy Cassock',
-    blurb: 'The longest cut the order allows, in something that hangs rather than flies. Four deep folds, and it is still moving a second after you have stopped.',
+    /* NOT "the longest cut the order allows", which is what this said while
+     * the garment deploys 173.8 mm SHORTER than the default Temple Robe. The
+     * length below is 0.54 against the robe's 0.70, and the note on it
+     * explains why it is a ceiling rather than a preference: at 740 mm the
+     * same 98 particles sample the cloth every 106 mm, against a shin 98 mm in
+     * radius, and the drape fails. So the cut is short for a real reason and
+     * the copy was describing a garment that was never built. What it IS is
+     * the heaviest — the fold count and the settling time below are the two
+     * things a player can actually see, and both are true. */
+    blurb: 'Heavy enough to hang rather than fly. Four deep folds, and it is still moving a second after you have stopped.',
     skirt: {
       // 540mm, and that is the ceiling rather than a preference. See the note
       // on floor length below: at 740mm the same 98 particles sample the cloth

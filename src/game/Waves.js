@@ -34,7 +34,7 @@ import * as THREE from 'three';
 import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, applyModifier, enemyRng } from './Enemy.js';
 import { duelRng } from './Duel.js';
 import { segmentSegment } from '../physics/Physics.js';
-import { ArrivalDirector } from './Arrivals.js';
+import { ArrivalDirector, seedArrivals } from './Arrivals.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -340,6 +340,14 @@ export class WaveDirector {
        */
       enemyRng.seed((this.seed ^ 0x9e3779b9) + tier * 0x85ebca6b);
       duelRng.seed((this.seed ^ 0xc2b2ae35) + tier * 0x27d4eb2f);
+      /* …and how they ARRIVE. Which craft comes, where it sets down, the
+       * bearing it flies in on and how the squad spills out were the last
+       * stream still on a module-load constant — so a seeded Descent replayed
+       * its waves and its choreography and then had different things fly in.
+       * And only on the first run after a page load, because a module-level
+       * stream is never reset and each later run inherits the last one's
+       * position in it. */
+      seedArrivals((this.seed ^ 0x165667b1) + tier * 0x9e3779b9);
     }
     this.onWaveStart = null;
     this.onWaveClear = null;
