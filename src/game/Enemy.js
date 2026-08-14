@@ -1492,7 +1492,7 @@ export class Enemy {
      *                  before                    after
      *     makashi   1.59 m  1.21–1.75      1.70 m  1.34–1.73    (authored 1.7)
      *     djemSo    1.62 m  1.43–2.05      1.61 m  1.40–2.05    (authored 1.5)
-     *     ataru     1.62 m  1.43–2.05      2.36 m  1.14–3.80    (authored 1.4–3.6)
+     *     ataru     1.62 m  1.43–2.05      1.72 m  1.00–3.79    (authored 1.4–3.6)
      *     soresu    1.61 m  1.41–2.05      1.79 m  1.61–1.93    (authored 1.8)
      *     juyo      1.59 m  1.21–2.05      1.54 m  1.11–2.05    (authored 1.4)
      *
@@ -1525,8 +1525,15 @@ export class Enemy {
     /* How much of the wish points down the line to the target. A mobile form
      * alternates driving in and breaking off on the same timer that changes
      * its line; everything else holds a steady bias and lets the yield term
-     * below do the rest. */
-    const drive = A.melee ? (mob > 1 ? (this.pressIn ? 1.15 : -0.6) : 0.35) : 0.08;
+     * below do the rest.
+     *
+     * It does NOT break off through its own attack. Left free to, Ataru spent
+     * half of every fight at the far edge of its band with a wind-up already
+     * committed, and landed 0 of 8 strikes in six seconds on an unarmed,
+     * motionless player at knife range. A form that backs away mid-swing is
+     * not acrobatic, it is missing. */
+    const committed = this.duel && (this.duel.phase === 'windup' || this.duel.phase === 'strike');
+    const drive = A.melee ? (mob > 1 ? (this.pressIn || committed ? 1.15 : -0.6) : 0.35) : 0.08;
     const side = _v2.set(-this.toTarget.z, 0, this.toTarget.x)
       .multiplyScalar(this.strafeDir * (1 + (mob - 1) * 0.4));
     const wish = _v3.set(0, 0, 0);

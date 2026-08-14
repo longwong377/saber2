@@ -1489,7 +1489,7 @@ export class Player {
      * The rule, the probe that keeps ordinary lips and channel banks walkable,
      * and the numbers are all in Terrain.blockClimb.
      */
-    if (terrain) terrain.blockClimb(this.position, this.velocity);
+    terrain?.blockClimb?.(this.position, this.velocity);
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     const support = this._supportAt(ctx, this.position.x, this.position.z, this.position.y);
     this.supportY = support;

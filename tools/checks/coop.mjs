@@ -191,8 +191,93 @@ export async function run({ check, assert }) {
       'the loop still skips everything without a control, so enemy sabers pass through remote players');
     assert(/p\.control && p\.saber\.ignition/.test(body),
       'the clash is resolved for a remote blade too, which decides their duel for them');
-    assert(/p\.damage\(/.test(body), 'the body hit no longer reaches the player at all');
+    /**
+     * The body hit used to be a second, laxer copy of the blade test inlined
+     * right here, and this check grepped for its `p.damage(` call. It is gone —
+     * see tools/checks/forms.mjs for why it had to go — and the loop delegates
+     * to the one real implementation instead. What matters to CO-OP is not
+     * which function it is but that a player with no `control` is still in the
+     * arc, so the assertion is on the delegation and the behaviour is measured
+     * for real by the next check.
+     */
+    assert(/_saberStrike\(/.test(body),
+      'the enemy blade loop no longer runs a body test for the players this enemy is not targeting, '
+      + 'so in co-op every saber passes through everyone but its own target');
     return 'clash is local-only; the body hit reaches every player, remote or not';
+  });
+
+  check('co-op: an enemy blade cuts a player who has no controller', async () => {
+    /**
+     * THE BUG THIS REPLACES A GREP WITH. The loop opened
+     *
+     *     if (!p.alive || !p.control) continue;
+     *
+     * and a RemoteAvatar has no `control` — so every enemy saber in the game
+     * passed straight through every joining player, in the one mode where
+     * being surrounded is the point. `!p.control` was standing in for "is this
+     * a local Player", and the thing it actually protects is the two
+     * `hitImpulse` calls inside `_applyClash`.
+     *
+     * Driven rather than read: a body with `damage`, a position and no
+     * controller, held inside a real duellist's arc for sixty seconds.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const { Enemy, enemyRng } = await import('../../src/game/Enemy.js');
+    const { duelRng } = await import('../../src/game/Duel.js');
+    await initPhysics();
+    enemyRng.seed(4711);
+    duelRng.seed(8123);
+
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 400 });
+    physics.terrain = terrain;
+    const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+      plasma: { spawn() {} }, smoke: { spawn() {} } };
+    let hits = 0;
+    /* No `control`, no `camera`, no `velocity` — everything a RemoteAvatar
+     * lacks. It must still be cuttable, and the hit must not throw on the
+     * members it does not have. */
+    const avatar = {
+      position: V(0, 0, 0), chest: V(0, 1.3, 0), hp: 5000, maxHp: 5000,
+      alive: true, invuln: 0, radius: 0.34, damage() { hits++; },
+    };
+    const world = {
+      scene: new THREE.Scene(), physics, terrain, statics: [],
+      settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+      players: [avatar], enemies: [], props: [], doors: [], locks: [],
+      particles, bolts: { fire() {}, update() {}, threatsNear: () => [] },
+      time: 0, combatIntensity: 0, groundColor: 0xcfae82,
+      engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+        camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+      onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {}, onHitmark() {},
+      onExplosion() {}, spawnDebrisGroup() {},
+    };
+    const e = new Enemy(world, 'acolyte', V(0, 0, -2));
+    e.position.set(0, 0, -2);
+    world.enemies.push(e);
+    const ctx = { enemies: world.enemies, particles, terrain, physics, bolts: world.bolts,
+      time: 0, pickTarget: () => avatar, camera: world.engine.camera };
+    const dt = 1 / 60;
+    let threw = null;
+    try {
+      for (let i = 0; i < 60 / dt; i++) {
+        ctx.time = world.time += dt;
+        e.update(dt, ctx);
+        physics.step(dt);
+      }
+    } catch (err) { threw = err; }
+    for (const x of world.enemies) x.dispose?.();
+    assert(!threw, `cutting a controller-less avatar threw ${threw && threw.message}`);
+    assert(hits > 0,
+      'a duellist stood in front of a joining player for 60 s and never landed a cut — enemy sabers '
+      + 'pass through remote players again');
+    return `${hits} cuts landed on a body with no controller, camera or velocity`;
   });
 
   check('co-op: drafting a boon does not throw, and every player gets one', async () => {
