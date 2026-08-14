@@ -109,8 +109,25 @@ export class World {
     // and never did.
 
     this.bladeSolver = new BladeContactSolver();
-    this.events = [];
-    this.notifications = [];
+    /**
+     * `this.events = []` AND `this.notifications = []` USED TO BE HERE.
+     *
+     * `grep -rn 'notifications' src/` returned exactly two lines: this
+     * declaration and the push in `notify()`. `.events` returned one: the
+     * declaration. Neither was ever read by anything, neither was aged (`t: 0`
+     * was a field nothing ever advanced), neither was capped, and `unload()`
+     * cleared twelve other collections and not these — so a level change
+     * carried them over too.
+     *
+     * `onNotify` is the real path to the HUD, which caps its own popups at
+     * four. This array was a second, unread source of truth that only grew, and
+     * its volume driver is `Player._refuse()` — one entry for every Force power
+     * refused on cooldown. Measured: 262 objects in 90 s of ordinary play, ~2.9
+     * a second, still 262 after `unload()`, about ten thousand an hour.
+     *
+     * Deleted rather than fixed, because there is no reader to fix it for. If a
+     * feed ever wants a history, it belongs where the HUD already keeps one.
+     */
 
     this._targets = [];
     this._capsCache = [];
@@ -332,7 +349,12 @@ export class World {
      * Composed out here for the same reason `_earnInsight` is: the callback
      * above is the window tools/checks/run.mjs reads the rung signal out of.
      */
-    this.director.onWaveClear = (w) => { this._earnInsight(w); cleared(w); this._reviveDowned(); };
+    /* `this.director.wave` for the LEDGER and `w` for the RUN, and they are not
+     * the same number on a rung: `w` is rung-local, so a Descent earned Insight
+     * as if it were sixteen first waves (18 over the climb instead of 22, and
+     * one set-piece counted instead of three). `cleared(w)` must keep the local
+     * one — World's own `run.wave >= rung.waves` is written against it. */
+    this.director.onWaveClear = (w) => { this._earnInsight(this.director.wave); cleared(w); this._reviveDowned(); };
 
     this.director.onDraft = (boons) => {
       this.onDraftOffer?.(boons);
@@ -642,7 +664,6 @@ export class World {
   report(ev) { if (this.director && this.director.report) this.director.report(ev); }
 
   notify(title, sub) {
-    this.notifications.push({ title, sub, t: 0 });
     this.onNotify?.(title, sub);
   }
 
@@ -2083,7 +2104,48 @@ export class World {
     }
   }
 
-  dispose() { this.unload(); }
+  /**
+   * TEARDOWN ENDS BY ALLOCATING THE THING TEARDOWN EXISTS TO RELEASE.
+   *
+   * `unload()` finishes with `physics.clear()`, and `clear()` is a RESET: its
+   * last three lines free the Rapier world and build a replacement, complete
+   * with broad phase, narrow phase, island manager and pipelines. That is right
+   * for a level change and wrong for a dispose — every `world.dispose()` (the
+   * top of every buildWorld, and quitting to the menu) stranded a whole fresh
+   * physics world that no reference in the program could ever free again.
+   * Measured over 400 create/dispose cycles: +28.2 KB per cycle, against
+   * +8.3 KB with the world freed. WASM linear memory is monotonic — it is never
+   * handed back.
+   *
+   * The Rapier world is per-World (the constructor builds its own), so freeing
+   * it here cannot reach anything else, and `dispose` is terminal: main.js
+   * drops its reference on the next line.
+   */
+  dispose() {
+    this.unload();
+    const p = this.physics;
+    if (!p) return;
+    /**
+     * AND NOTHING MAY BIND INTO IT AFTERWARDS.
+     *
+     * Freeing the world exposed a use-after-teardown the reallocation had been
+     * quietly absorbing: `Player.die()` builds its ragdoll from a DYNAMIC
+     * import, so an Actor can land a tick or two after the world it belongs to
+     * has gone, and `Body._bind` reaches straight into `world.world`. With the
+     * old reset it bound into a fresh world nobody steps — invisible, and part
+     * of what was leaking. Refusing is the honest version of the same outcome:
+     * the body is marked dead and handed back, exactly as `remove` leaves one.
+     *
+     * These are stubbed on an instance that is being thrown away — the Rapier
+     * world is per-World and this is terminal (main.js drops its reference on
+     * the next line), so nothing else can observe them.
+     */
+    p.add = (b) => { if (b) b.dead = true; return b; };
+    p.addJoint = (j) => { if (j) j.broken = true; return j; };
+    p.step = () => {};
+    p.raycast = () => null;
+    if (p.world) { try { p.world.free?.(); } catch {} p.world = null; }
+  }
 }
 
 /**

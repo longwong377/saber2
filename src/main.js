@@ -128,7 +128,7 @@ const menu = new Menu(settings, {
     enemies: world ? world.enemies.length : 0,
     wave: world && world.director ? (world.director.wave ?? '-') : '-',
   }),
-  onRetry: () => { menu.hideDeath(); deploy(); },
+  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy(); },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
   onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
@@ -334,18 +334,54 @@ function startRun() {
   });
 }
 
+/**
+ * IGNITE — and the order of these lines is the whole of a MAJOR failure.
+ *
+ * It used to be: hide the menu, clear the screens, THEN do the work that can
+ * throw. `screens.state` is only set to 'playing' after the build, and
+ * `Screens.pause()` returns false for state 'menu' by construction — so on any
+ * machine where the Rapier WASM never instantiated (blocked by CSP, a failed
+ * vendor fetch, an OOM on the 1.4 MB module), the documented path is: reach the
+ * menu exactly as `initPhysics`'s own comment promises, press Ignite, and watch
+ * the menu vanish into a black screen with a dead Escape key and no way back
+ * but a page reload. `RapierWorld`'s constructor throws by design there, and
+ * `grep -n 'try' src/main.js` found nothing anywhere on this path. The same
+ * void swallowed any throw out of Terrain, a level's dress() or Scenery.
+ *
+ * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
+ * a world to show them, and a failure puts the menu back with the reason on it.
+ */
 function deploy(run = startRun()) {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
   // and mode into the joining player's save.
   saveSettings(settings);
-  menu.hideMenu();
-  screens.clear();
 
   // A rung BORROWS a level; outside the Spire the player's own choice stands —
   // or the host's, in a session.
   const levelKey = run && !run.done ? run.rung.level : sessionOr('level');
-  buildWorld(levelKey, run);
+  try {
+    buildWorld(levelKey, run);
+  } catch (e) {
+    console.error('deploy failed', e);
+    if (world) { try { world.dispose(); } catch {} world = null; }
+    hud.show(false);
+    input.enabled = false;
+    menu.showMenu();
+    screens.set('menu');
+    // Said out loud on the one line of the main menu this file already owns,
+    // because a failure the player cannot see is the same black screen.
+    const el = document.getElementById('menu-record');
+    if (el) el.textContent = `Could not deploy: ${e.message || e}`;
+    return;
+  }
+
+  // Only now is the menu allowed to go: from here on there is a world behind
+  // it, so Escape has somewhere to land.
+  cancelDeathCard();
+  menu.hideMenu();
+  menu.hideDeath();
+  screens.clear();
 
   if (net.enabled && net.connected) {
     world.attachNet(net, net.isHost ? 'host' : 'client');
@@ -652,6 +688,9 @@ function restartWave() {
 }
 
 function quitToMenu() {
+  // Before anything else: a card scheduled 2.6 s ago must not land on the menu.
+  cancelDeathCard();
+  menu.hideDeath();
   screens.clear();
   hud.show(false);
   input.enabled = false;
@@ -663,9 +702,9 @@ function quitToMenu() {
   // re-attached you as a client of the same host. Solo play was unreachable
   // without reloading the tab.
   leaveSession();
-  // An abandoned climb still happened. Recording it is what stops "deepest
+  // An abandoned session still happened. Recording it is what stops "deepest
   // reached" from quietly meaning "deepest you happened to die on".
-  if (world?.run && !world.run.done) { world.run.end(); recordRun(world.run.summary()); }
+  record();
   if (world) { world.dispose(); world = null; }
   showRecord();
   menu.showMenu();
@@ -681,18 +720,82 @@ function showRecord() {
 }
 showRecord();
 
+/**
+ * THE DEATH CARD'S TIMER, WHICH NOBODY OWNED.
+ *
+ * The card lands 2.6 s after death so the collapse can play. That timeout was
+ * scheduled with no handle and no state test — and Screens.escape() invites the
+ * player to ask for the card early ("a corpse cannot be resumed, so Escape asks
+ * for the card again instead"). So: die, press Escape, click Rise again, and
+ * 2.6 seconds into the NEW fight the stale timer fires. `input.exitLock()`
+ * drops the pointer lock, `onLockChange` pauses the live run, and `card()` — a
+ * closure over the DEAD run's stats — un-hides #death over the pause card.
+ * `screens.overlay` was cleared by deploy(), so Screens has no record of it and
+ * `resume()` cannot take it down. The same timer re-raises the card over the
+ * main menu if the player quits instead.
+ *
+ * One handle, cancelled by every transition out of the dead state.
+ */
+let deathTimer = null;
+function cancelDeathCard() {
+  if (deathTimer !== null) { clearTimeout(deathTimer); deathTimer = null; }
+  document.getElementById('btn-retry')?.classList.remove('hidden');
+}
+
+/**
+ * Show a card after a delay, and only if the player is still where they were.
+ * The state test is the belt to the clearTimeout's braces: a timer that has
+ * already been dispatched cannot be cancelled, only refused.
+ */
+function cardAfter(ms, what, show) {
+  cancelDeathCard();
+  deathTimer = setTimeout(screens.guarded(what, () => {
+    deathTimer = null;
+    if (screens.state !== 'dead') return;
+    input.exitLock();
+    show();
+  }), ms);
+}
+
+/**
+ * WHAT A FINISHED SESSION LEAVES BEHIND, whatever mode it was.
+ *
+ * A Run is still the CLIMB's alone — `startRun` builds one only for the
+ * gauntlet, tools/checks/run.mjs pins that, and giving every mode a Run would
+ * silently change what "Abandon" means in all of them. But the RECORD is
+ * everyone's: all three `recordRun` calls used to be gated on `world.run`, so
+ * the shipped default mode left no trace at all and the menu's one line of
+ * history stayed empty however long you played.
+ *
+ * `Progress.recordRun` decides which modes count; training and the sandbox are
+ * refused there rather than here.
+ */
+function record(stats = null) {
+  if (!world) return;
+  if (world.run) {
+    if (world.run.done) return;                 // already recorded at the crown
+    world.run.end();
+    recordRun(world.run.summary());
+    return;
+  }
+  recordRun({
+    ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
+                   kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
+    mode: sessionOr('mode'),
+    boons: [...(world.takenBoons || [])],
+    identity: { order: settings.order, species: settings.species },
+  });
+}
+
 function gameOver(stats) {
   screens.state = 'dead';
   input.enabled = false;
-  // A run that ended is a run that happened. `gameOver` used to reduce it to a
-  // card and throw it away — the only two localStorage keys in the tree were
-  // settings and keybinds, so you could play for an hour and the game would not
-  // know you had ever played. This is a record, not a currency: nothing here
-  // unlocks anything (see Progress.js).
-  if (world?.run && !world.run.done) {
-    world.run.end();
-    recordRun(world.run.summary());
-  }
+  // A session that ended is a session that happened. `gameOver` used to reduce
+  // it to a card and throw it away — the only two localStorage keys in the tree
+  // were settings and keybinds, so you could play for an hour and the game
+  // would not know you had ever played. This is a record, not a currency:
+  // nothing here unlocks anything (see Progress.js).
+  record(stats);
   // Remembered rather than shown and forgotten: 2.6 seconds is a long time for
   // the only exit from a state to be in flight, and if the call throws the
   // player is watching their own corpse with nothing on screen. Escape puts it
@@ -709,7 +812,7 @@ function gameOver(stats) {
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
   screens.overlay = { state: 'dead', show: card };
-  setTimeout(screens.guarded('the death card', () => { input.exitLock(); card(); }), 2600);
+  cardAfter(2600, 'the death card', card);
 }
 
 /**
@@ -737,12 +840,12 @@ function downed() {
     ], 'You have fallen — your allies fight on');
   };
   screens.overlay = { state: 'dead', show: card };
-  setTimeout(screens.guarded('the downed card', () => { input.exitLock(); card(); }), 1400);
+  cardAfter(1400, 'the downed card', card);
 }
 
 /** …and back up, because the party survived the wave. */
 function rose() {
-  document.getElementById('btn-retry')?.classList.remove('hidden');
+  cancelDeathCard();
   menu.hideDeath();
   screens.overlay = null;
   screens.state = 'playing';
@@ -932,8 +1035,8 @@ function wireNet() {
       // A world already stands, in some level that is no longer the session's.
       // Tear it down without leaving the session — quitToMenu would close the
       // connection — and land in the new one.
+      cancelDeathCard();
       menu.hideDeath();
-      document.getElementById('btn-retry')?.classList.remove('hidden');
       screens.clear();
       world.dispose(); world = null;
     }

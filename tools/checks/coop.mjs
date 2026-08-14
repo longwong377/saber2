@@ -178,7 +178,11 @@ export async function run({ check, assert }) {
     const s = await session(['HOST', 'ALPHA']);
     const before = s.host.conns.size;
     assert(before === 1, `the host has ${before} connections, expected 1`);
+    // Stamped rather than assumed: the suite's checks run concurrently, and a
+    // twelve-second simulation in another one is real time this peer would
+    // otherwise have spent silent.
     const now = performance.now() / 1000;
+    for (const c of s.host.conns.values()) c.lastSeen = now;
     assert(s.host.sweep(now) === 0, 'a peer that has just spoken was dropped');
     const dropped = s.host.sweep(now + PEER_TIMEOUT + 1);
     assert(dropped === 1, `a peer silent for ${PEER_TIMEOUT + 1} s was not dropped (${dropped})`);
@@ -593,6 +597,9 @@ export async function run({ check, assert }) {
       `revived ${world.player.position.distanceTo(ally.position).toFixed(1)} m from the ally who held the line`);
 
     // …and a wipe is still a wipe: with nobody standing, nobody gets up.
+    // (the mercy window has to run out first, or the second kill is refused)
+    for (let i = 0; i < 3 * 60; i++) world.update(1 / 60, H.idleInput());
+    assert(world.player.invuln <= 0, 'the mercy window never expired');
     world.player.damage(9999, null, null, 'test');
     await new Promise(r => setTimeout(r, 80));
     ally.alive = false;

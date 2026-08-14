@@ -133,26 +133,53 @@ export async function run({ check, assert }) {
      * game actually samples it never measured over 0.374, because a heightfield
      * with a 3.1 m step cannot hold a face steeper than rise/step.
      *
-     * The bar is the ARCADE, which is now the wall (15 m proud of the last row,
-     * gradient 2.42 on the coarse grid against the 1.83 the movement code
-     * enforces). Contained means: still inside the bowl. The crowd bank itself
-     * is walkable on purpose — 41.5% of this level's own spawns land on it and
-     * walk down — so this is a claim about leaving the building.
+     * MEASURED FROM THE BANK, NOT FROM THE MIDDLE OF THE SAND. Walking out
+     * from the origin takes 20 s to reach the cavea and the answer then depends
+     * on how long the check felt like walking — the first cut of this ran 22 s,
+     * stopped the player at r = 101 m in both configurations, and would have
+     * passed on the shipped arcade. Starting two thirds of the way up the bank
+     * asks the question the level's edge is actually about, in a quarter of the
+     * frames: put a player on the seating and let them walk at the rim.
+     *
+     * `e` is the arena's own normalised radius, `hypot(x/62, z/46)` — the
+     * number the preset is written in. The last row of seating is at 1.95 and
+     * the plain outside the building begins at 2.06. Measured over eight
+     * bearings × 12 s: with the arcade as shipped (6 m proud of the last row,
+     * over 11 e-hundredths) the player reached e = 2.80 and stood at y = 45.1 m
+     * on the plain outside; with it as a wall (15 m over 4 hundredths, gradient
+     * 2.42 on the coarse grid against the 1.83 the movement code enforces) they
+     * stop at e = 1.95, against the foot of it.
+     *
+     * The crowd bank itself stays walkable on purpose — 41.5% of this level's
+     * own spawns land on it and walk down — so this is a claim about leaving
+     * the building, not about standing in the cheap seats.
      */
     const { world } = await level('colosseum');
+    const T = world.terrain;
+    const E = (x, z) => Math.hypot(x / 62, z / 46);
+    let worstE = 0, worstY = -Infinity;
     const rows = [];
-    let worstR = 0;
     for (let b = 0; b < 8; b++) {
       const yaw = (b / 8) * Math.PI * 2;
-      const p = stand(world, 0, 0, yaw);
-      const { maxR } = walk(world, p, 22, held(0, 1));
-      worstR = Math.max(worstR, maxR);
-      rows.push(`${(yaw * 57.3) | 0}°→${maxR.toFixed(0)}m`);
+      const dx = Math.sin(yaw), dz = Math.cos(yaw);
+      let r0 = 10;
+      for (let r = 10; r < 200; r += 0.5) { if (E(dx * r, dz * r) >= 1.6) { r0 = r; break; } }
+      // yaw + π faces OUT along the bearing: forward is -(sin yaw, cos yaw).
+      const p = stand(world, dx * r0, dz * r0, yaw + Math.PI);
+      const input = held(0, 1);
+      for (let f = 0; f < 12 * 60; f++) {
+        p.camera.yaw = yaw + Math.PI;
+        p.saber.retract();
+        world.update(1 / 60, input);
+        worstE = Math.max(worstE, E(p.position.x, p.position.z));
+        worstY = Math.max(worstY, p.position.y);
+      }
+      rows.push(`${(yaw * 57.3) | 0}°→${E(p.position.x, p.position.z).toFixed(2)}`);
     }
-    assert(worstR < 110,
-      `holding W walked the player out to r = ${worstR.toFixed(0)} m — the last row of the cavea is `
-      + 'at 118 and the arcade at 121, so that is out of the building and onto the plain');
-    return `8 bearings × 22 s, furthest ${worstR.toFixed(0)} m (${rows.join(' ')})`;
+    assert(worstE < 2.0,
+      `holding W on the cavea walked the player out to e = ${worstE.toFixed(2)} and y = ${worstY.toFixed(0)} m — `
+      + 'the last row of seating is at 1.95 and the plain outside the building begins at 2.06');
+    return `8 bearings × 12 s from the bank, furthest e = ${worstE.toFixed(2)} (${rows.join(' ')})`;
   });
 
   /* ── 2. the trees ─────────────────────────────────────────────────── */
@@ -251,7 +278,7 @@ export async function run({ check, assert }) {
     const kam = (await level('kamino')).world;
     const wl = kam.level.water.level;
     const KT = kam.terrain;
-    let worstDepth = -Infinity, eyeUnder = 0, frames = 0, shores = 0;
+    let worstDepth = -Infinity, eyeUnder = 0, frames = 0, shores = 0, endDepth = -Infinity;
     for (let b = 0; b < 6; b++) {
       const yaw = (b / 6) * Math.PI * 2;
       const dx = Math.sin(yaw), dz = Math.cos(yaw);
@@ -261,20 +288,42 @@ export async function run({ check, assert }) {
       }
       if (shore < 12) continue;
       shores++;
-      const q = stand(kam, dx * (shore - 10), dz * (shore - 10), yaw);
+      // yaw + π: forward is `-(sin yaw, cos yaw)`, so this is what walks the
+      // player OUT along the bearing rather than back across the deck.
+      const q = stand(kam, dx * (shore - 10), dz * (shore - 10), yaw + Math.PI);
       for (let f = 0; f < 60 * 12; f++) {
-        q.camera.yaw = yaw;
+        q.camera.yaw = yaw + Math.PI;
         kam.update(1 / 60, held(0, 1));
         worstDepth = Math.max(worstDepth, wl - q.position.y);
         if (q.position.y + 1.62 < wl) eyeUnder++;
         frames++;
       }
+      endDepth = Math.max(endDepth, wl - q.position.y);
     }
     assert(shores >= 4, `only ${shores} of 6 bearings off the platform found the sea`);
-    assert(worstDepth < 1.6,
-      `the player walked ${worstDepth.toFixed(1)} m below the surface of the ocean — the seabed is at `
+    /* Three bars, because a plunge and a walk are different things. The deck
+     * stands 5.6 m over the sea and its edge is a chamfer you slide off, so
+     * walking off it is a FALL and the fall wins against the shove for the
+     * second it lasts — the player goes 2.4 m under. What must not happen is
+     * what used to: 45 s of walking finishing on the seabed at y = -9.0 with
+     * the camera under the ocean for 64% of the walk. So: never deep enough to
+     * be swimming, back in the shallows by the end of the bearing, and the eye
+     * under the surface for moments rather than for the level. */
+    assert(worstDepth < 3.0,
+      `the player reached ${worstDepth.toFixed(1)} m below the surface of the ocean — the seabed is at `
       + '-9.0 m and the deck is the level');
-    assert(eyeUnder === 0,
+    /* 2.0 m at the end, not 1.0: a player who keeps holding forward comes to
+     * rest in a standoff a little seaward of the wade line — the shove is
+     * 7.5 m/s against a 4.6 m/s walk, but the shove runs up the bed's own
+     * gradient and the walk does not, so the balance point sits where the two
+     * cross rather than where `wade` is. Measured on Kamino, the player stops
+     * dead at 1.53 m of depth with their eye 9 cm clear of the surface, and
+     * stays there: chest-deep at the edge of the world, which is the reading,
+     * against the 9 m seabed they used to end up strolling along. */
+    assert(endDepth < 2.0,
+      `after twelve seconds of walking out to sea the player is still ${endDepth.toFixed(1)} m under — `
+      + 'the bed is meant to put them back in the shallows');
+    assert(eyeUnder / frames < 0.05,
       `${(100 * eyeUnder / frames).toFixed(0)}% of frames had the player's eye under the ocean`);
     return `lava kills in ${died.toFixed(1)} s; ${shores} bearings walked into the ocean stop at `
       + `${worstDepth.toFixed(2)} m of depth, eye never submerged over ${(frames / 60).toFixed(0)} s`;

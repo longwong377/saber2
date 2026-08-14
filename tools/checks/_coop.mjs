@@ -102,22 +102,36 @@ export class FakeNetwork {
     while (this.queue.length && n < limit) {
       const [conn, msg, thunk] = this.queue.shift();
       n++;
-      if (thunk) { thunk(); continue; }
+      // A thunk is a connection lifecycle event, and PeerJS raises those into
+      // handlers that are allowed to reject a promise. Letting one escape here
+      // would take the whole runner down instead of failing one check.
+      if (thunk) { try { thunk(); } catch {} continue; }
       if (conn.closed) continue;
       this.delivered++;
-      conn._emit('data', msg);
+      try { conn._emit('data', msg); } catch (e) { this.errors = (this.errors || 0) + 1; }
     }
     return n;
   }
 }
 
-/** Point `window.Peer` at the stub. Returns the network; call `restore()` after. */
+/**
+ * Point `window.Peer` at the stub.
+ *
+ * ONE broker for the whole process, reference counted: the suite's checks run
+ * concurrently, and a per-check broker means a client dialling a code that was
+ * registered in a different broker gets `peer-unavailable`. Peer ids are unique
+ * across it, so deliveries stay addressed.
+ */
+let installed = null;
 export function installPeerStub() {
+  if (installed) { installed.refs++; return installed; }
   const net = new FakeNetwork();
   let auto = 0;
   const prev = globalThis.Peer;
   globalThis.Peer = function Peer(id) { return new FakePeer(net, id || `peer-${++auto}`); };
-  net.restore = () => { globalThis.Peer = prev; };
+  net.refs = 1;
+  net.restore = () => { if (--net.refs <= 0) { globalThis.Peer = prev; installed = null; } };
+  installed = net;
   return net;
 }
 

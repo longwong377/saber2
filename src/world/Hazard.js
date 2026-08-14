@@ -72,8 +72,17 @@ export class Hazard {
     this.dps = opts.damage ?? 0;
     /** How deep a body may wade before the water refuses it. */
     this.wade = opts.wade ?? Infinity;
-    /** How hard the bed shoves a body back toward the shallows, in m/s. */
-    this.shove = opts.shove ?? 4.2;
+    /**
+     * How hard the bed shoves a body back toward the shallows, in m/s.
+     *
+     * 7.5 AND NOT 4.2, and the number is set by what it has to beat: a walk is
+     * 4.6 m/s, so a shove under that is a body that walks out to sea slightly
+     * more slowly. Measured on Kamino with a real Player holding forward off
+     * the deck for twelve seconds, at 4.2 they were still 1.5 m under at the
+     * end of it; at 7.5 the net is 2.9 m/s back toward the shallows and they
+     * are out.
+     */
+    this.shove = opts.shove ?? 7.5;
 
     this._t = 0;
     // the prop contract, exactly as RiderPack states it: something for the
