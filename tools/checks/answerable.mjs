@@ -27,7 +27,8 @@
  */
 
 import * as THREE from 'three';
-import { ATTACKS, FORMS, FORM_KEYS, TIER, DuelBrain } from '../../src/game/Duel.js';
+import { ATTACKS, FORMS, FORM_KEYS, TIER, DuelBrain, guardToWorld } from '../../src/game/Duel.js';
+import { World } from '../../src/game/World.js';
 
 /** A DuelBrain with just enough of an owner to answer `chambersWith`. */
 function brainFor(key) {
@@ -119,5 +120,87 @@ export async function run({ check, assert }) {
     const spinners = FORM_KEYS.filter((k) => (FORMS[k].moves || []).includes('spin'));
     assert(spinners.length >= 1, 'no form draws the spin cut any more');
     return `${FORM_KEYS.length} forms, ${n} move slots, all real; spin is drawn by ${spinners.join(', ')}`;
+  });
+
+  check('answerable: a successful chamber does not throw out of the frame loop', () => {
+    /**
+     * THE ONE THE SUITE COULD NOT SEE, and it was total.
+     *
+     * `World._applyClash`'s chamber branch called `duel.interrupt(0.85)` — whose
+     * second line is `this.attack = null` — and then, eleven lines later, read
+     * `duel.attack.label` to name the attack in the deflect feedback. So the
+     * FIRST successful chamber in a run threw `Cannot read properties of null`
+     * straight out of `World.update`.
+     *
+     * It did not hard-freeze the page, which is why it could hide: main.js
+     * re-arms rAF at the TOP of frame(), so the loop kept turning. What it did
+     * was abandon the rest of that frame — bolts, `physics.step`, props, doors,
+     * debris, particles, `terrain.flush`, the director, the net tick, the HUD,
+     * the render, and `input.end()`, which is the call that clears
+     * `mouse.dx/dy` and the one-shot `pressed` set. And `profiler.begin()` ran
+     * with no matching `end()`.
+     *
+     * `tools/checks/duelling.mjs` covers chambering — by RE-IMPLEMENTING this
+     * branch, and its copy has no label dereference in it. That is the whole
+     * lesson: a check that rebuilds the code under test agrees with itself. So
+     * this one calls the SHIPPED `World.prototype._applyClash`, with the same
+     * `onDeflectFeedback` handler main.js installs, and simply requires that it
+     * returns.
+     */
+    const calls = [];
+    const w = Object.create(World.prototype);
+    Object.assign(w, {
+      time: 10, particles: { cutFlare() {}, sparkBurst() {}, slag() {} },
+      engine: { flash() {}, addHeat() {} },
+      addHitstop() {}, notifyFloating() {}, report() {},
+      onDeflectFeedback: (grade, at, why) => calls.push({ grade, why }),
+    });
+
+    const duel = Object.create(DuelBrain.prototype);
+    const key = 'overhead';
+    Object.assign(duel, {
+      e: { facing: 0 }, chamberOpen: true, phase: 'windup',
+      attack: { ...ATTACKS[key] }, chainLeft: 0, telegraph: null,
+      followUp() {},
+    });
+    // `interrupt` writes through the `timer` accessor onto its owner
+    Object.defineProperty(duel, 'timer', { set(v) { this._t = v; }, get() { return this._t; } });
+
+    // A swing driven straight against the declared arc, fast enough to qualify.
+    const travel = guardToWorld(
+      new THREE.Vector3().copy(ATTACKS[key].to).sub(ATTACKS[key].from).normalize(), 0, 0,
+      new THREE.Vector3());
+    const swing = travel.clone().multiplyScalar(-12);
+
+    const at = new THREE.Vector3(0, 1.3, -1);
+    const player = {
+      saber: { strain() {}, pointAt: (t, o) => o.set(0, 1.2, -1.4),
+        baseVelocity: swing.clone(), tipVelocity: swing.clone(),
+        color: { getHex: () => 0x4fc3ff } },
+      camera: { addShake() {} }, control: { hitImpulse() {} },
+      boonMods: {}, score: 0, stamina: 100, riposteTimer: 0, addFlow() {},
+      position: new THREE.Vector3(0, 0, 0), velocity: new THREE.Vector3(),
+      damage() {}, invuln: 0,
+    };
+    const enemy = {
+      duel, saber: { strain() {}, color: { getHex: () => 0xff5a4a } },
+      stun() {}, position: new THREE.Vector3(0, 0, -2), attackDamage: 8,
+    };
+
+    let threw = null;
+    try {
+      w._applyClash(player, enemy, { point: at, power: 0.8, normal: new THREE.Vector3(0, 1, 0) });
+    } catch (e) { threw = e; }
+    assert(!threw,
+      `the shipped chamber branch threw ${threw && threw.message} — every remaining step of that `
+      + 'frame is abandoned, including input.end(), which clears the mouse delta and the one-shot '
+      + 'press set');
+    assert(player.score === 160, `the chamber did not award its score (${player.score})`);
+    assert(duel.attack === null, 'the chamber did not interrupt the attack');
+    assert(calls.length === 1 && /chambered/.test(calls[0].why),
+      `the chamber reported ${JSON.stringify(calls)} to the feedback hook`);
+    assert(/overhead|chambered \w/.test(calls[0].why),
+      `the feedback lost the attack's name: "${calls[0].why}"`);
+    return `the shipped _applyClash chambers, interrupts and reports "${calls[0].why}" without throwing`;
   });
 }

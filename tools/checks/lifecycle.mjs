@@ -222,4 +222,61 @@ export async function run({ check, assert }) {
       return 'an id the host stops sending is released whether or not the client saw it die';
     });
   });
+
+  check('lifecycle: the death sequence is a sequence, not a still frame', async () => {
+    /**
+     * `onPlayerDeath` used to set `running = false`, and `World.update`'s first
+     * line returns on that — so from the frame after the last player died,
+     * NOTHING in the game stepped. Every piece of machinery written for the
+     * most important moment in a run was therefore unreachable in a solo game:
+     * `die()` dynamically imports Ragdoll.js and builds an Actor that was never
+     * stepped, so the corpse stood upright in the pose it died in; the camera
+     * pull-back in `_updateDead` never ran; `saber.retract()` was called and
+     * the blade never retracted. Measured over 180 frames after a kill:
+     * world.time frozen, camera moved 0.000000 m, ignition unchanged to fifteen
+     * decimal places. The card lands 2.6 s later, so every death was a
+     * 2.6-second freeze.
+     *
+     * What must still stop is the DIRECTOR — a wave sent at a corpse — and
+     * that is what `world.over` gates. Both halves are held here.
+     */
+    const engine = stubEngine();
+    const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
+    await world.loadLevel(LEVEL_ORDER[0]);
+    world.spawnPlayer?.();
+    const p = world.player;
+    const input = idleInput();
+    for (let i = 0; i < 30; i++) world.update(1 / 60, input);
+
+    const t0 = world.time, cam0 = engine.camera.position.clone();
+    const pitch0 = p.camera.pitch, ign0 = p.saber.ignition;
+    p.damage(1e9, null, null, 'test');
+    await new Promise((r) => setTimeout(r, 60));      // the dynamic Ragdoll import
+    for (let i = 0; i < 180; i++) world.update(1 / 60, input);
+
+    assert(!p.alive, 'the player survived 1e9 damage');
+    assert(world.over, 'the run did not end');
+    assert(world.time - t0 > 2.5,
+      `the clock advanced ${(world.time - t0).toFixed(3)} s over the 3 s before the death card — `
+      + 'the world is frozen, so nothing written for this moment can run');
+    assert(engine.camera.position.distanceTo(cam0) > 0.5,
+      `the death camera moved ${engine.camera.position.distanceTo(cam0).toFixed(4)} m`);
+    assert(Math.abs(p.camera.pitch - (-0.42)) < 0.05,
+      `the death camera's pitch eased to ${p.camera.pitch.toFixed(3)} and the target is -0.42`);
+    assert(p.saber.ignition < ign0 * 0.2,
+      `the blade is still at ${p.saber.ignition.toFixed(3)} ignition after dying — retract() was `
+      + 'called and never stepped');
+    assert(p.actor, 'no ragdoll was built for the corpse');
+
+    // …and the horde does not keep arriving at a body.
+    const before = world.enemies.length;
+    for (let i = 0; i < 600; i++) world.update(1 / 60, input);
+    assert(world.enemies.length <= before,
+      `the director sent ${world.enemies.length - before} more enemies after the run ended`);
+    const line = `clock +${(world.time - t0).toFixed(1)} s, camera back `
+      + `${engine.camera.position.distanceTo(cam0).toFixed(2)} m to pitch ${p.camera.pitch.toFixed(2)}, `
+      + `blade ${ign0.toFixed(2)}→${p.saber.ignition.toFixed(2)}, director stopped`;
+    world.unload(); world.dispose?.();
+    return line;
+  });
 }

@@ -86,6 +86,8 @@ export class World {
     this.combatIntensity = 0;
     this.paused = false;
     this.running = false;
+    /** The run has ended. Everything still steps; the director does not. */
+    this.over = false;
 
     this.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
     // `this.hpScale = 1` and `this.dmgScale = 1` used to sit here. Enemy reads
@@ -259,6 +261,7 @@ export class World {
       this.director = new DojoDirector(this);
       this.training = true;
       this.running = true;
+      this.over = false;
       return L;
     }
     this.training = false;
@@ -338,6 +341,7 @@ export class World {
     };
 
     this.running = true;
+    this.over = false;
     return L;
   }
 
@@ -471,6 +475,7 @@ export class World {
     this.physics.terrain = null;
     this.bladeSolver.reset();
     this.running = false;
+    this.over = false;
   }
 
   /* ── spawning ────────────────────────────────────────────────────── */
@@ -720,7 +725,9 @@ export class World {
     this.atmosphere?.update(dt, focus);
 
     // 8 — director (the host owns the horde; clients receive it)
-    if (this.netMode !== 'client') this.director.update(dt, ctx);
+    // …but not once the run is over: a director that keeps spawning at a corpse
+    // is the reason `running` used to be switched off here. See onPlayerDeath.
+    if (this.netMode !== 'client' && !this.over) this.director.update(dt, ctx);
     if (this.netMode) this._netTick(rawDt);
     // Solo, the aura still runs — it is what keeps the holder's own half — but
     // nothing is going to consume what it offered outbound, so it is dropped on
@@ -1088,6 +1095,27 @@ export class World {
 
     // ── CHAMBER: swung against the declared arc, inside the window
     if (duel && duel.chamberOpen && bladeSpeed > 5.5 && duel.chambersWith(_v4)) {
+      /**
+       * THE NAME OF THE ATTACK, TAKEN BEFORE IT IS CLEARED.
+       *
+       * `interrupt()` sets `this.attack = null` on its second line, and the
+       * feedback call at the bottom of this branch read `duel.attack.label` —
+       * so the FIRST successful chamber in a run threw
+       * `Cannot read properties of null (reading 'label')` straight out of
+       * World.update. rAF is re-armed at the top of main.js's frame(), so the
+       * page did not hard-freeze; instead every remaining step of that frame
+       * was skipped — bolts, physics.step, props, particles, terrain.flush,
+       * the director, the net tick, the HUD, the render, and input.end() —
+       * and profiler.begin() ran with no matching end(). Measured over 240
+       * directed trials against a makashi acolyte: 9 real chambers, 9 crashes.
+       * A 100% crash rate on the mechanic.
+       *
+       * Nothing in the suite could see it because tools/checks/duelling.mjs
+       * re-implements this branch rather than driving it, and its copy has no
+       * label dereference in it. See tools/checks/answerable.mjs, which now
+       * runs the shipped `_applyClash`.
+       */
+      const chambered = duel.attack?.label ?? 'the attack';
       duel.interrupt(0.85);
       enemy.stun(0.6);
       player.riposteTimer = 0.6 * (player.boonMods.riposteWindow ?? 1);
@@ -1099,7 +1127,7 @@ export class World {
       audio.deflect(clash.point, 3);
       player.score += 160;
       player.chambers = (player.chambers || 0) + 1;
-      this.onDeflectFeedback?.(4, clash.point, `chambered ${duel.attack.label}`);
+      this.onDeflectFeedback?.(4, clash.point, `chambered ${chambered}`);
       return;
     }
 
@@ -1377,7 +1405,29 @@ export class World {
 
   onPlayerDeath(player, source) {
     if (this.players.every(p => !p.alive)) {
-      this.running = false;
+      /**
+       * THE RUN IS OVER. THE WORLD IS NOT.
+       *
+       * This used to set `running = false`, and `update()`'s first line returns
+       * on that — so from the frame after the last player died, nothing in the
+       * game stepped at all. Which means every piece of machinery written for
+       * the most important moment in a run was unreachable in a solo game:
+       * `Player.die()` dynamically imports Ragdoll.js and builds an Actor, and
+       * nothing ever stepped it, so the corpse stood upright in the pose it
+       * died in; `_updateDead` exists solely to pull the camera back to 4.4 m
+       * and ease the pitch to -0.42, and it never ran; `saber.retract()` was
+       * called and the blade never retracted. Measured headless over 180 frames
+       * after a kill: world.time frozen at 0.500, camera moved 0.000000 m, rig
+       * moved 0.000000 m, ignition unchanged to fifteen decimal places, 31
+       * physics bodies with no step. The death card lands 2.6 s later, so every
+       * death in the game was a 2.6-second still frame.
+       *
+       * `over` is the flag the things that must stop read — the director, which
+       * would otherwise keep sending waves at a corpse. Everything else keeps
+       * ticking, which is what makes the death sequence a sequence. `paused` is
+       * still there for when an overlay genuinely owns the screen.
+       */
+      this.over = true;
       this.onGameOver?.({
         wave: this.director.wave,
         score: this.score,
