@@ -577,6 +577,32 @@ export const ground = {
   /** Where the frame is centred — published by `frame` every tick. */
   focus: new THREE.Vector3(),
 
+  /**
+   * THE GROUND'S OWN CLOCK, and it exists because the alternative was two.
+   *
+   * `scar`'s throttle used to read
+   *
+   *     const now = ground.fx ? ground.fx.decals.time : Date.now() / 1000;
+   *
+   * — a decal clock that starts at 0 when `fx` is present, and a WALL clock of
+   * about 1.78e9 when it is not. `_scarAt` is one field and held whichever of
+   * the two was current, so the moment `fx` changed the comparison stopped
+   * meaning anything. Losing `fx` — any level unload — jumps the stamp to
+   * 1.78e9 and refuses every scar for the next second; getting it back makes
+   * `now - _scarAt` about −1.78e9, which is under any threshold, so dragging
+   * the blade through the ground does nothing FOR THE REST OF THE SESSION.
+   *
+   * Found by tools/checks/ground-memory.mjs, which passed alone and failed
+   * under the full run: another suite had scarred on the wall clock a fraction
+   * of a second earlier, and one throttle refused the other's cut. An
+   * order-dependent check failure is usually the check's fault and this time
+   * it was the game's.
+   *
+   * One clock, monotonic, advanced by the per-frame tick this object already
+   * owns — so it survives a level change, which is the case that broke.
+   */
+  clock: 0,
+
   /** Press / cut / scar the ground cover at a point. Safe with nothing there. */
   disturb(x, z, radius, opts) { ground.grass?.disturb(x, z, radius, opts); },
   /** Ring the water surface. Safe with no water in the level. */
@@ -634,14 +660,13 @@ export const ground = {
     if (a.y - ha > reach && b.y - hb > reach) return 0;
     if (a.y - ha < -1.5 && b.y - hb < -1.5) return 0;     // underground: not a cut
     if (Math.hypot(b.x - a.x, b.z - a.z) < (opts.minLen ?? 0.06)) return 0;
-    /* The clock is the DECAL FIELD'S OWN, because the decal ring is the
-     * resource being rationed and it is advanced by the same `particles
-     * .update(dt)` that consumes it — so a paused game does not quietly burn
-     * through it and a hitstop does not either. */
-    const now = ground.fx ? ground.fx.decals.time : Date.now() / 1000;
-    // `??`, not `||`: the decal clock starts at 0 and `0 || -9` is -9, so a
-    // throttle written the obvious way never fires on the first second of a
-    // level — which is exactly the second a player spends dragging the blade.
+    /* `ground.clock` — see the note on it. It used to be the DECAL field's own
+     * clock when `fx` was present and the WALL clock when it was not, which is
+     * two clocks four orders of magnitude apart stamped into one field.
+     * `?? -9`, not `|| -9`: the clock starts at 0 and `0 || -9` is -9, so a
+     * throttle written the obvious way never fires on the first second of a
+     * level — which is exactly the second a player spends dragging the blade. */
+    const now = ground.clock;
     if (opts.throttle !== false && now - (ground._scarAt ?? -9) < 1 / 15) return 0;
     ground._scarAt = now;
     const n = T.scar(a, b, opts);
@@ -660,6 +685,7 @@ export const ground = {
    * this shape — does not exist on the levels the surface memory is for.
    */
   frame(dt, focus) {
+    ground.clock += dt > 0 ? dt : 0;
     if (focus) ground.focus.copy(focus);
     ground.terrain?.tick?.(dt, ground.focus);
   },

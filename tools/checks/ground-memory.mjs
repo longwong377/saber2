@@ -862,4 +862,74 @@ export function run({ check, assert, near }) {
       return `${dragged}/6 frames marked while lit at tip y≈${a.y.toFixed(2)}, 0 while retracted`;
     } finally { ground.scar = real; }
   });
+
+  check('ground: the blade keeps cutting after a level change', () => {
+    /**
+     * `scar`'s throttle read TWO CLOCKS through one field:
+     *
+     *     const now = ground.fx ? ground.fx.decals.time : Date.now() / 1000;
+     *
+     * — a decal clock starting at 0 when a Particles facade is published, and
+     * a wall clock of about 1.78e9 when it is not. `ground._scarAt` held
+     * whichever was current, so the moment `fx` changed the comparison stopped
+     * meaning anything: losing it jumps the stamp to 1.78e9 and refuses every
+     * cut for a second, and getting it back makes `now - _scarAt` about
+     * −1.78e9, which is under any threshold — so dragging the blade through
+     * the ground does nothing FOR THE REST OF THE SESSION.
+     *
+     * Found by accident: the trench check above passed alone and failed under
+     * the full suite, because another suite had scarred on the wall clock a
+     * fraction of a second earlier and one throttle refused the other's cut.
+     * An order-dependent failure is usually the check's fault; this time it
+     * was the game's, and the check was right.
+     *
+     * Driven through the transition rather than asserted about the field: what
+     * matters is that a cut lands on the far side of it.
+     */
+    const t = new Terrain(new THREE.Scene(), 'dunes', 1.0);
+    const P = new Particles(new THREE.Scene(), 1);
+    const prevFx = ground.fx;
+    try {
+      const cut = (x) => {
+        // A fresh line each time, and far enough apart not to overlap.
+        const a = V(x, t.height(x, 3), 3), b = V(x + 2, t.height(x + 2, 3.4), 3.4);
+        const before = t.surface.depthAt(x + 1, 3.2);
+        ground.scar(a, b, { heat: 1 });
+        return t.surface.depthAt(x + 1, 3.2) - before;
+      };
+      // Well past the 1/15 s throttle, so nothing here is testing the throttle.
+      const wait = () => { for (let i = 0; i < 10; i++) ground.frame(0.05, V(0, 0, 0)); };
+
+      ground.fx = P;                       // a level with a particle field
+      wait();
+      const withFx = cut(-14);
+      assert(withFx > 0.02, `a cut with a particle field left ${(withFx * 1000).toFixed(1)} mm`);
+
+      ground.fx = null;                    // …unloaded
+      wait();
+      const without = cut(-4);
+      assert(without > 0.02,
+        `the first cut after a level unload left ${(without * 1000).toFixed(1)} mm — the throttle is `
+        + 'comparing a decal clock against a wall clock');
+
+      ground.fx = new Particles(new THREE.Scene(), 1);   // …and the next level
+      wait();
+      const again = cut(6);
+      assert(again > 0.02,
+        `the first cut of the NEXT level left ${(again * 1000).toFixed(1)} mm — the stamp is 1.78e9 `
+        + 'ahead of the clock now being read, so no cut will ever pass the throttle again');
+
+      // …and the throttle itself still works, or the fix is a deletion.
+      const back = cut(6.05);
+      assert(back <= 0.0001,
+        `two cuts in the same frame both landed (${(back * 1000).toFixed(1)} mm) — the 1/15 s `
+        + 'throttle is what keeps a 144 Hz hook from recycling the whole decal ring five times a second');
+      return `${(withFx * 1000).toFixed(0)} mm with fx, ${(without * 1000).toFixed(0)} mm after an `
+        + `unload, ${(again * 1000).toFixed(0)} mm on the next level; a second cut in the same frame refused`;
+    } finally {
+      ground.fx = prevFx;
+      t.dispose?.();
+      P.dispose?.();
+    }
+  });
 }
