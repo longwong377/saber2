@@ -128,9 +128,19 @@ for (let w = 1; w <= WAVES; w++) {
 const taken = new RankSet();
 const drafts = [];
 for (let w = 1; w <= WAVES; w++) {
-  if (w % DRAFT_EVERY !== 0) continue;
+  /* THE DIRECTOR'S OWN PREDICATE, not a second copy of the rule.
+   *
+   * This read `w % DRAFT_EVERY !== 0`, which is a reimplementation — and the
+   * shipped `isDraftWave` is `wave % DRAFT_EVERY === 0 || this.isBossWave(wave)`.
+   * So this loop emitted no draft on waves 5, 15, 25 and 35, four judges read
+   * that as "half the boss waves pay nothing", and I confirmed it by writing the
+   * SAME wrong arithmetic a second time in a probe. The game was right
+   * throughout. An instrument that restates a rule instead of calling it will
+   * eventually disagree with it, and it did so here in the one direction nobody
+   * checks: it manufactured a defect rather than hiding one. */
+  if (!dir.isDraftWave(w)) continue;
   const attune = isAttuneWave(w);
-  const offered = drawBoons(3, taken, w, { attune });
+  const offered = drawBoons(dir.draftSize(w), taken, w, { attune });
   // Take the first offered card, every time. NOT a model of a player — a fixed
   // rule, so the sequence is reproducible and the offers downstream are the
   // offers a run that always took the left-hand card would see.

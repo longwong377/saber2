@@ -171,6 +171,79 @@ const takeBoon = (p, id) => {
 };
 
 export async function run({ check, assert }) {
+
+  check('pools: a level fights with what it declares, and its repeats are weights', async () => {
+    /**
+     * TWO DEFECTS IN ONE PLACE, both of the shape this codebase keeps finding:
+     * a hand-authored table beside a consumer that ignored it.
+     *
+     * `unlockedAt` opened with a hand-written ladder of seven names. Anything a
+     * level's pool declared that was not on it, and did not carry its own
+     * `unlockAt`, could never enter an ordinary wave — it was reachable only
+     * through `_setPiece`, on a boss wave. That silently killed `beast` on the
+     * Colosseum (a level whose whole premise is exotic creatures), `bodyguard`
+     * on the Warship and `master` on the Temple. Measured through the shipped
+     * method at wave 20: colosseum returned 8 distinct of a 10-entry pool,
+     * warship 4 of 9, temple 6 of 9.
+     *
+     * And a pool's REPEATS did nothing. `_pickType` sums a weight per entry, so
+     * a type listed twice is drawn twice as often — the ladder uses exactly
+     * that trick itself. But the pool was only ever a membership FILTER, so
+     * Mustafar's three `acolyte` entries never reached the array being weighed.
+     * Six of the thirteen levels resolved to the same six archetypes and
+     * produced byte-identical twenty-wave runs.
+     *
+     * Both halves are asserted against the SHIPPED `unlockedAt`, never against
+     * a restatement of it. That matters here more than usual: the instrument
+     * that found this had reimplemented `isDraftWave` instead of calling it,
+     * and manufactured a defect that did not exist.
+     */
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const stub = { enemies: [], players: [], settings: {}, takenBoons: new Set(), scene: null };
+    const dirFor = (k) => new Waves.WaveDirector(stub, { pool: LEVELS[k].pool });
+
+    const unreachable = [], unweighted = [];
+    const sets = new Map();
+    for (const k of LEVEL_ORDER) {
+      const pool = LEVELS[k].pool ?? [];
+      if (!pool.length) continue;
+      const d = dirFor(k);
+      // Deep enough that every derived depth has come due.
+      const got = d.unlockedAt(40);
+
+      // 1. everything the level declares can arrive, unless it says otherwise
+      for (const t of new Set(pool)) {
+        const A = Foe.ARCHETYPES[t];
+        if (!A || A.setPieceOnly) continue;
+        if (!got.includes(t)) unreachable.push(`${k}:${t}`);
+      }
+      // 2. and a repeat is worth more than a single mention
+      for (const t of new Set(pool)) {
+        const inPool = pool.filter((x) => x === t).length;
+        if (inPool < 2 || !got.includes(t)) continue;
+        if (got.filter((x) => x === t).length < 2) unweighted.push(`${k}:${t}x${inPool}`);
+      }
+      sets.set(k, got.slice().sort().join(' '));
+    }
+
+    assert(!unreachable.length,
+      `a level declares a body it can never field in an ordinary wave: ${unreachable.join(', ')} — `
+      + 'reachable only as a boss set-piece, which is not what naming it in the pool means');
+    assert(!unweighted.length,
+      `a pool repeats a body and the composer draws it once: ${unweighted.join(', ')} — `
+      + '_pickType weighs per entry, so a repeat is the level author asking for more of it');
+
+    /* …and the levels are therefore not each other. Compared on the WEIGHTED
+     * list, because six of them genuinely name the same six archetypes and it
+     * is the weighting that makes them different fights. */
+    const byShape = new Map();
+    for (const [k, sig] of sets) byShape.set(sig, [...(byShape.get(sig) ?? []), k]);
+    const clones = [...byShape.values()].filter((g) => g.length > 1);
+    assert(!clones.length,
+      `levels compose identically: ${clones.map((g) => g.join('=')).join('; ')} — `
+      + 'same bodies at the same weights is one level with several skyboxes');
+    return `${sets.size} levels, ${byShape.size} distinct compositions, every pool entry reachable and every repeat weighted`;
+  });
   await initPhysics();
 
   /* ══════════════════════════════════════════════════════════════════ */

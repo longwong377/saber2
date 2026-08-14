@@ -599,26 +599,69 @@ export class WaveDirector {
     if (wave >= 7) list.push('acolyte');
     if (wave >= 12) list.push('walker');
     /**
-     * …AND ANYTHING A LEVEL'S POOL BRINGS THAT THIS LADDER HAS NEVER HEARD OF.
+     * …AND EVERY OTHER POOL MEMBER, AT A DEPTH DERIVED FROM ITS OWN THREAT.
      *
-     * The seven lines above are the roster this director was written against,
-     * and they are a list kept by hand: an archetype registered anywhere else
-     * in the game could be named in a level's pool, pass `pool.includes`, and
-     * still never spawn, because it is not on this list — which is a silent
-     * wrong answer, not an error. An archetype may now declare its own depth
-     * with `unlockAt`, and it enters the fill at that depth on the levels that
-     * name it and nowhere else.
+     * The seven lines above are a hand-written ladder, and this paragraph used
+     * to say that anything else had to declare `unlockAt` or it was a set-piece
+     * — "the safe default". Measured, that default was not safe, it was
+     * silence: `beast` (the Colosseum's headline monster, on a level whose
+     * entire premise is exotic creatures), `bodyguard` (the Warship's only
+     * elite) and `master` (the Jedi Master, on the level about fighting Jedi)
+     * declare no `unlockAt`, so none of them could ever appear in an ordinary
+     * wave. The beast reached the field ONCE in twenty waves and five times in
+     * forty, every one of them through `_setPiece`.
      *
-     * WITHOUT ONE IT IS A SET-PIECE, which is the safe default and is what a
-     * boss wants: `_setPiece` reaches SET_PIECE directly and never consults
-     * this list, so a body with no `unlockAt` can only ever arrive on a boss
-     * wave. That is exactly the property the warship's general depends on.
+     * A level naming a body in its pool means it wants that body. Deriving the
+     * depth from threat keeps the teaching order the ladder was written for —
+     * light things early, heavy things late — without a list somebody has to
+     * remember to update. `heavyLimit` still caps how many big ones land at
+     * once, so this cannot flood a wave; it only makes the pool honest.
+     *
+     * A body that genuinely belongs to a boss and nowhere else says so with
+     * `setPieceOnly`, which is a STATED default rather than an accident of not
+     * being on a list that stopped being maintained.
      */
     for (const t of this.pool) {
       const A = ARCHETYPES[t];
-      if (A && A.unlockAt !== undefined && wave >= A.unlockAt && !list.includes(t)) list.push(t);
+      if (!A || A.setPieceOnly || list.includes(t)) continue;
+      const at = A.unlockAt ?? Math.max(1, Math.min(12, Math.round(A.threat * 0.9)));
+      if (wave >= at) list.push(t);
     }
-    return list.filter(t => this.pool.includes(t));
+    const live = list.filter(t => this.pool.includes(t));
+
+    /**
+     * AND A POOL'S REPEATS ARE WEIGHTS, WHICH THEY HAD NEVER ONCE BEEN.
+     *
+     * `_pickType` sums a weight per ENTRY, so a type listed twice is drawn
+     * twice as often — the ladder above uses exactly that trick, pushing 'b1' a
+     * second time at wave 2. Every level pool in the game is written the same
+     * way and means the same thing: Mustafar lists `acolyte` three times and
+     * `b1` once, which reads unmistakably as "this is the acolyte level". The
+     * Drowned Wood doubles `b1`; Kamino doubles `trooper`.
+     *
+     * None of it did anything. The pool was only ever a membership FILTER —
+     * `list` was built from the ladder and then intersected with the pool — so
+     * the repeats never reached the array `_pickType` weighs. Measured: six of
+     * the thirteen levels resolve to the identical six archetypes and produce
+     * byte-identical twenty-wave runs. Mustafar declares eight pool entries and
+     * Alpine six; deduped they are the same six, so lava, swamp, ocean, meadow,
+     * snowfield and smelter were one fight with six skyboxes.
+     *
+     * Eighth time in this codebase that a hand-authored table sat beside a
+     * consumer that ignored it. Honouring the repeats costs one loop and turns
+     * thirteen pools into thirteen different fights, out of content that
+     * already exists and is already tuned.
+     */
+    const seen = new Set();
+    const out = [];
+    for (const t of this.pool) {
+      if (!live.includes(t)) continue;
+      // The first occurrence carries the ladder's own weighting with it; every
+      // later one is the author asking for more of this body on this level.
+      if (!seen.has(t)) { seen.add(t); out.push(...live.filter(x => x === t)); }
+      else out.push(t);
+    }
+    return out.length ? out : live;
   }
 
   /**
