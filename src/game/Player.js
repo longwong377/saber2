@@ -21,6 +21,7 @@ import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Supp
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale } from './Combat.js';
 import { POWER_COST } from './Powers.js';
+import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -138,8 +139,26 @@ class StasisAnchor {
 /**
  * What can be taken apart. Flesh does not disassemble — an Acolyte or an Acklay
  * has to be cut, which is what the blade is for.
+ *
+ * DERIVED, NOT TYPED. This was
+ *
+ *     const MECHANICAL = /b1|b2|droid|deka|walker|remote|dummy/;
+ *
+ * — a hand-written list of type names, and the roster has fourteen. It did not
+ * match `bodyguard`, so Force Rend silently refused on the IG general: a
+ * 1050 hp droid, the one enemy in the game the power most obviously exists
+ * for, and the refusal was a `continue` with no message. It was the FOURTH
+ * copy of the same classification found in this audit — the Announcer's voice
+ * map, Presence's body map and Enemy's spark test all had their own, all
+ * missing the same three names, all written the same day the roster had eleven
+ * entries in it.
+ *
+ * `bodyOf` answers from the archetype RECORD the enemy is carrying — its
+ * `custom`, its `toughness`, whether it holds a blade — so a body added to
+ * ARCHETYPES tomorrow is classified correctly without anyone remembering this
+ * line exists.
  */
-const MECHANICAL = /b1|b2|droid|deka|walker|remote|dummy/;
+const isMechanical = (e) => bodyOf(e).droid;
 
 /** Bones a droid still needs to be a droid. Never the first thing to come off. */
 const CORE_BONE = /^(hips|spine|chest|body|core|pelvis)$/;
@@ -396,6 +415,8 @@ const COMPEL_SPREAD = 14;
 
 /** FORCE HEAL: what it costs, how long you must stand still, and what it buys. */
 const HEAL_COST = POWER_COST.heal;
+/** Force Rend. Priced in the same table as every other power — see Powers.js. */
+const REND_COST = POWER_COST.rend;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
@@ -2294,6 +2315,23 @@ export class Player {
     return drain <= 0 || this.force >= cost * drain * this.boonMods.forceCost;
   }
 
+  /**
+   * WHAT A POWER ACTUALLY COSTS HERE — the expression `_canSpend` evaluates.
+   *
+   * Eight refusals quoted the LIST price straight out of `POWER_COST`, and the
+   * gate above charges `cost * forceDrain * boonMods.forceCost`. So the refusal
+   * sentence disagreed with the refusal itself: on a default Jedi profile a
+   * power priced at 20 is charged at 15.6 and the message still said 20, and at
+   * Force Drain 2x the sentence reads "20 Force needed, you have 30" — a
+   * refusal that looks like a bug in the arithmetic rather than a rule of the
+   * game. Force lightning had already been fixed to do this by hand; this is
+   * the same expression in one place, so the next power added cannot get it
+   * wrong.
+   */
+  _priceOf(cost) {
+    return Math.round(cost * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost);
+  }
+
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
     this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
@@ -2474,7 +2512,7 @@ export class Player {
   forcePush(ctx) {
     if (this.cooldowns.push > 0) return this._refuse('force push', `recovering — ${this.cooldowns.push.toFixed(1)}s`);
     if (!this._spend(POWER_COST.push)) {
-      return this._refuse('force push', `${POWER_COST.push} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force push', `${this._priceOf(POWER_COST.push)} Force needed, you have ${Math.round(this.force)}`);
     }
     this.cooldowns.push = 0.55;
     this._gesture('push');
@@ -2551,7 +2589,7 @@ export class Player {
   forcePull(ctx) {
     if (this.cooldowns.pull > 0) return this._refuse('force pull', `recovering — ${this.cooldowns.pull.toFixed(1)}s`);
     if (!this._spend(POWER_COST.pull)) {
-      return this._refuse('force pull', `${POWER_COST.pull} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force pull', `${this._priceOf(POWER_COST.pull)} Force needed, you have ${Math.round(this.force)}`);
     }
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
@@ -3080,7 +3118,7 @@ export class Player {
        * Force Drain at 0 — the setting whose own label reads "unlimited Force"
        * — freed six powers and kept charging for this one. */
       if (!this._spend(POWER_COST.throw)) {
-        return this._refuse('saber throw', `${POWER_COST.throw} Force needed, you have ${Math.round(this.force)}`);
+        return this._refuse('saber throw', `${this._priceOf(POWER_COST.throw)} Force needed, you have ${Math.round(this.force)}`);
       }
       this.cooldowns.throw = 0.4;
       this._gesture('cast');
@@ -3178,7 +3216,7 @@ export class Player {
      * on (see _regen) — so the fix is to ask the economy whether the threshold
      * applies at all, which it does not when the drain slider is at 0. */
     if (!this._canSpend(POWER_COST.sense)) {
-      return this._refuse('force sense', `${POWER_COST.sense} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force sense', `${this._priceOf(POWER_COST.sense)} Force needed, you have ${Math.round(this.force)}`);
     }
     this.senseActive = true;
     // A one-shot, not a hold. Sense is a mode you can leave running for a whole
@@ -3246,7 +3284,7 @@ export class Player {
       return this._refuse('force heal', `recovering — ${this.cooldowns.heal.toFixed(1)}s`);
     }
     if (!this._canSpend(HEAL_COST)) {
-      return this._refuse('force heal', `${HEAL_COST} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force heal', `${this._priceOf(HEAL_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
     this.healing = 0;
     this._healFrom = this.hp;
@@ -3290,7 +3328,7 @@ export class Player {
       return this._refuse('force compel', `recovering — ${this.cooldowns.compel.toFixed(1)}s`);
     }
     if (!this._canSpend(COMPEL_COST)) {
-      return this._refuse('force compel', `${COMPEL_COST} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force compel', `${this._priceOf(COMPEL_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
 
     // The unit under the crosshair, by the same cone-and-ray rule the grip
@@ -3466,7 +3504,7 @@ export class Player {
     if (this.stasis.active) { this.releaseStasis(ctx, true, true); return; }
     if (this.cooldowns.stasis > 0) return this._refuse('force stop', `recovering — ${this.cooldowns.stasis.toFixed(1)}s`);
     if (!this._spend(POWER_COST.stasis)) {
-      return this._refuse('force stop', `${POWER_COST.stasis} Force needed, you have ${Math.round(this.force)}`);
+      return this._refuse('force stop', `${this._priceOf(POWER_COST.stasis)} Force needed, you have ${Math.round(this.force)}`);
     }
     const S = this.stasis;
     const P = this.forceScale;
@@ -3697,7 +3735,7 @@ export class Player {
     let best = null, bestDot = 0.93;
     for (const e of ctx.enemies || []) {
       if (e.dead && !e.actor) continue;
-      if (!MECHANICAL.test(e.type)) continue;
+      if (!isMechanical(e)) continue;
       _g1.subVectors(this._enemyPoint(e, _g2), this.chest);
       const d = _g1.length();
       if (d > range || d < 0.5) continue;
@@ -3746,7 +3784,14 @@ export class Player {
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
       .map(x => x.c);
     if (!live.length) return;
-    if (!this._spend(38)) return this._refuse('sundering', `38 Force needed, you have ${Math.round(this.force)}`);
+    /* `rend apart`, not `sundering`: Sundering is the name of an unrelated epic
+     * boon (Waves.js), and a refusal naming the wrong thing sends a player to
+     * look for a card they never took. REND_COST rather than a bare 38 twice
+     * over, so the sentence and the charge cannot drift. */
+    if (!this._spend(REND_COST)) {
+      return this._refuse('rend apart',
+        `${this._priceOf(REND_COST)} Force needed, you have ${Math.round(this.force)}`);
+    }
 
     this.cooldowns.rend = 2.4;
     this._gesture('rend', centre);

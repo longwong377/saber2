@@ -23,7 +23,7 @@
 
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { HUD, POWERS, POWER_COST, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
+import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
   from '../../src/ui/HUD.js';
 import { Player } from '../../src/game/Player.js';
 import { makeDocument } from './_page.mjs';
@@ -569,8 +569,17 @@ export async function run({ check, assert }) {
         assert(Math.abs(half - 0.5) < 1e-6,
           `${key}: ${full / 2}s of a ${full}s cooldown left and the bar reads ${half} — it should read 0.50`);
         assert(done === 0, `${key}: the bar reads ${done} with the power ready`);
-        assert(hud.powerEls[key].root.classList.contains('ready'),
-          `${key}: the slot is not marked ready with no cooldown and full Force`);
+        /* …and READY means affordable AND granted. A boon-gated power with a
+         * clear cooldown and a full bar is still not ready if the player never
+         * drew the card, which is the whole of the Domination defect: the wheel
+         * lit it from the first frame of a first run and pressing it answered
+         * "not attuned". POWER_BOON is the one list of those gates — asserted
+         * against it rather than against a name typed here. */
+        const gated = POWER_BOON[key] && !p.boonMods[POWER_BOON[key]];
+        assert(hud.powerEls[key].root.classList.contains('ready') === !gated,
+          gated
+            ? `${key}: the slot is marked ready for a player who has never been granted it`
+            : `${key}: the slot is not marked ready with no cooldown and full Force`);
         rows.push(`${key} ${full}s`);
       }
       assert(rows.length >= 6, `only ${rows.length} slots carried a cooldown`);
@@ -641,10 +650,15 @@ export async function run({ check, assert }) {
       // Player._spend returns true unconditionally there.
       world.settings.forceDrain = 0;
       p.force = 1;
-      p.boonMods.lightning = true;
+      /* EVERY boon gate, not the one that used to be the only one. Unlimited
+       * Force is an economy setting; a power the player has never been granted
+       * is not an economy question, and leaving compel ungranted here would
+       * make this assertion fail for the right reason and read like the wrong
+       * one. POWER_BOON is the list — driven from it so a third gated power
+       * cannot break this check by existing. */
+      for (const b of Object.values(POWER_BOON)) p.boonMods[b] = true;
       hud.update(1 / 60, world, p, cam);
-      const dim = ['push', 'pull', 'grip', 'throw', 'sense', 'lightning', 'stasis', 'heal', 'compel']
-        .filter((k) => !ready(k));
+      const dim = POWERS.map(([k]) => k).filter((k) => POWER_COST[k] != null).filter((k) => !ready(k));
       assert(!dim.length,
         `with Drain at 0 — the slider labelled "unlimited Force" — the wheel still greys out `
         + `${dim.join(', ')}. Throw, sense and lightning bypassed Player's own economy, so the `

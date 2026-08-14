@@ -852,6 +852,103 @@ export async function run({ check, assert, near }) {
     return `${LEVEL_ORDER.length} levels x ${PITCHES.length} pitches, ${frames} flight frames, none below the surface`;
   });
 
+  check('force: a refusal quotes the price it actually charges, and the wheel gates what Player gates', async () => {
+    /**
+     * THE SENTENCE DISAGREED WITH THE REFUSAL ITSELF.
+     *
+     * Eight refusals quoted the LIST price straight out of `POWER_COST`, and
+     * `_canSpend` charges `cost * forceDrain * boonMods.forceCost`. On a
+     * default Jedi profile, measured through the real refusals:
+     *
+     *     push   says 20, charges 16      sense  says 25, charges 20
+     *     pull   says 16, charges 12      throw  says 14, charges 11
+     *
+     * At Force Drain 2x the sentence reads "20 Force needed, you have 30",
+     * which looks like a bug in the arithmetic rather than a rule of the game.
+     * Lightning had already been fixed to do this by hand; `_priceOf` is that
+     * same expression in one place, so the next power cannot get it wrong.
+     *
+     * AND THE WHEEL'S GATE IS DERIVED FROM PLAYER'S. `POWER_BOON` held
+     * `lightning` alone while `forceCompel` also refuses on
+     * `!this.boonMods.forceCompel`, so the HUD lit Domination as READY for
+     * every player who had never drafted it — from the first frame of a first
+     * run, with the earliest offer measured at wave 12. Asserted against the
+     * gates actually present in Player.js rather than against a copy of the
+     * list, because a copy is what produced the defect.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { POWER_COST, POWER_BOON } = await import('../../src/game/Powers.js');
+    const { readFile } = await import('node:fs/promises');
+
+    const scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.shadow.camera.updateProjectionMatrix();
+    scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+    const engine = { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+      sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+      renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+      profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+      applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+      setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+      setQuality() {}, setResolutionScale() {}, render() {} };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
+    await w.loadLevel('meadow');
+    w.spawnPlayer();
+    const p = w.player;
+    for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
+
+    const refusals = [];
+    const real = Object.getPrototypeOf(p)._refuse;
+    p._refuse = function (name, why) { refusals.push({ name, why }); return real.call(this, name, why); };
+    const ctx = { terrain: w.terrain, particles: w.particles, enemies: w.enemies, physics: w.physics };
+    const charged = (c) => Math.round(c * (w.settings.forceDrain ?? 1) * p.boonMods.forceCost);
+
+    const rows = [];
+    let checked = 0;
+    for (const [key, go] of [
+      ['push', () => p.forcePush(ctx)],
+      ['pull', () => p.forcePull(ctx)],
+      ['throw', () => { p.saber.lit = true; p.throwOrRecall(ctx); }],
+      ['sense', () => p.toggleSense(ctx)],
+    ]) {
+      refusals.length = 0;
+      p.force = 0;
+      p.cooldowns = {};
+      try { go(); } catch { /* some need a target; the price refusal fires first */ }
+      const r = refusals.find((x) => /Force needed/.test(x.why));
+      assert(r, `${key} never produced a price refusal at 0 Force`);
+      const quoted = parseInt(r.why, 10);
+      const want = charged(POWER_COST[key]);
+      assert(quoted === want,
+        `${key} refuses with "${r.why}" while _canSpend charges ${want} — the sentence and the `
+        + 'gate disagree, and at Force Drain 2x it reads "needed 20, you have 30"');
+      checked++;
+      rows.push(`${key} ${quoted}`);
+    }
+    assert(checked === 4, `only ${checked} powers were driven`);
+    w.unload();
+
+    // …and the wheel's gate list is exactly Player's own gates.
+    const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    const gates = [...src.matchAll(/if \(!this\.boonMods\.(\w+)\)/g)].map((m) => m[1]).sort();
+    const held = Object.values(POWER_BOON).sort();
+    assert(gates.length > 0, 'no boon gates found in Player.js — the pattern has moved');
+    assert(JSON.stringify(gates) === JSON.stringify(held),
+      `Player refuses on boonMods {${gates.join(', ')}} and POWER_BOON holds {${held.join(', ')}} — `
+      + 'the HUD lights a power as READY that the player has never been granted');
+    return `charged prices quoted: ${rows.join(', ')}; POWER_BOON {${held.join(', ')}} matches `
+      + `Player's own gates`;
+  });
+
 }
 
 /** The hold range has to span the reach, not a slice of it. */

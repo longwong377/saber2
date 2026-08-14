@@ -122,10 +122,19 @@ export function applyReticle(el, s = {}) {
  * hold-to-grip action and there is a second `grip2` for the one-handed stance.
  * Naming them separately is what stops the next edit guessing.
  */
+/**
+ * The wheel, in order. Each entry is `[power, binding]`.
+ *
+ * REND IS THE TENTH, and it was bound (`KeyN`, `Bindings.js`), costed, and
+ * drawn nowhere: nine slots for ten powers. A player who pressed N got a
+ * refusal quoting a number the wheel never showed them, for a power the wheel
+ * gave no sign existed — and the refusal named "sundering", which is an
+ * unrelated epic boon.
+ */
 export const POWERS = [
   ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
   ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
-  ['heal', 'heal'], ['compel', 'compel'],
+  ['heal', 'heal'], ['compel', 'compel'], ['rend', 'rend'],
 ];
 
 /**
@@ -167,6 +176,8 @@ const POWER_ICONS = {
   heal: '<svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/><circle cx="12" cy="12" r="8.5"/></svg>',
   // Compel turns a muzzle around: an arrow bent back on itself.
   compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
+  // A chassis coming apart: a core with four plates pulling off it.
+  rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
 };
 
 export class HUD {
@@ -374,6 +385,9 @@ export class HUD {
     // off at exactly the moment the power starts.
     this._power('heal', cd.heal, this._afford(player, 'heal'), player.healing != null);
     this._power('compel', cd.compel, this._afford(player, 'compel'));
+    /* Rend, whose slot did not exist until the audit found it bound to KeyN,
+     * priced at 38 and drawn nowhere. 2.4 s, from `forceDisassemble`. */
+    this._power('rend', cd.rend, this._afford(player, 'rend'));
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;
