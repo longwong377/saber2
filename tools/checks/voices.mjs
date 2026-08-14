@@ -618,7 +618,7 @@ export async function run({ check, assert }) {
     assert(last && Math.abs(last.level - 1) < 1e-9,
       `the chosen voice came in at ${last ? last.level : 0}, not full level`);
     assert(a.stats.speechDenied === 0, `${a.stats.speechDenied} audition lines were refused by the cap`);
-    return `five ${PLAYER_VOICES.length}-step drag → ${said.join(' then ')}, `
+    return `a ${PLAYER_VOICES.length}-step drag → ${said.join(' then ')}, `
       + `first faded to ${first.bus.gain.last('tgt')}, chosen at ${last.level}`;
   });
 
