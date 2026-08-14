@@ -4333,7 +4333,29 @@ function ridgeMaterial() {
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${RIDGE_GLSL.body}`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vRidge;')
-      .replace('#include <color_fragment>', 'diffuseColor.rgb = vRidge;');
+      /**
+       * QUANTISED, AND IN THE FRAGMENT SHADER. Rule 3.
+       *
+       * `vRidge` is computed per VERTEX and interpolated, so the ranges were
+       * the one surface in the game that shipped as a smooth gradient: foot to
+       * crest measured a continuous ramp of up to 24.9 display codes, 16-31
+       * distinct 8-bit values on every ring, standing directly against a sky
+       * quantised into six fields. Everything else in the frame — the sky, the
+       * fog, the water, the terrain blends, the albedo of every object — is on
+       * the grid. Nine rings across three level families were not.
+       *
+       * Banding here rather than in the vertex body because a quantised value
+       * interpolated across a triangle is a gradient again: the whole point is
+       * that the step lands on a screen pixel, not on a mesh edge.
+       *
+       * `CEL.fogBands` rather than a number of its own, and that is the same
+       * argument the vertex body already makes about the extinction integral:
+       * a range IS the far end of the aerial perspective, so it must agree
+       * with the ground in front of it or the seam is exactly where the eye is
+       * already looking.
+       */
+      .replace('#include <color_fragment>',
+        `diffuseColor.rgb = saberCelBand( vRidge, ${CEL.fogBands.toFixed(1)} );`);
   };
   return _ridgeMat;
 }

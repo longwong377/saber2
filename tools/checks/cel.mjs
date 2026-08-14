@@ -1998,6 +1998,106 @@ export function run({ check, assert, near }) {
       + `${(sd / mean * 100).toFixed(0)}% (thresholded fBm at the same coverage: ${nblobs} blobs, `
       + `${(nsd / nmean * 100).toFixed(0)}%)`;
   });
+
+  check('cel: the horizon ranges are quantised, like every other surface', async () => {
+    /**
+     * RULE 3, AND THE ONE SURFACE THAT WAS NOT ON THE GRID.
+     *
+     * `ridgeMaterial`'s fragment wrote `diffuseColor.rgb = vRidge` — a value
+     * computed per VERTEX and interpolated — so the far ranges shipped as a
+     * smooth gradient: foot to crest measured a continuous ramp of up to 24.9
+     * display codes and 16-31 distinct 8-bit values on every one of nine
+     * rings, standing directly against a sky quantised into six fields. The
+     * sky, the fog, the water, the terrain blends and the albedo of every
+     * object in the game are all banded. The ranges were not.
+     *
+     * The band goes in the FRAGMENT shader, and that is not interchangeable
+     * with the vertex body: a value quantised per vertex and interpolated
+     * across a triangle is a gradient again. The step has to land on a screen
+     * pixel rather than on a mesh edge.
+     *
+     * `CEL.fogBands` rather than a constant of its own, for the reason the
+     * vertex body already gives about its extinction integral: a range IS the
+     * far end of the aerial perspective, so it has to agree with the ground in
+     * front of it — and that seam is exactly where the eye already is.
+     *
+     * The material is found by what its `onBeforeCompile` DOES rather than by
+     * its flags, because `fog:false, side:DoubleSide` matches other things in
+     * a dressed level and picking the wrong one is how this check would quietly
+     * measure nothing.
+     */
+    const THREE = await import('three');
+    await import('../../src/engine/Engine.js');
+    const { CEL } = await import('../../src/toon/Cel.js');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.shadow.camera.updateProjectionMatrix();
+    scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+    const engine = { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+      sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+      renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+      profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+      applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+      setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+      setQuality() {}, setResolutionScale() {}, render() {} };
+
+    const stub = () => ({ uniforms: {},
+      vertexShader: '#include <common>\n#include <begin_vertex>\n',
+      fragmentShader: '#include <common>\n#include <color_fragment>\n' });
+
+    const rows = [];
+    for (const key of ['drifts', 'alpine', 'arena']) {
+      const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
+      await w.loadLevel(key);
+      let sh = null, scanned = 0;
+      w.scene.traverse((o) => {
+        if (sh || !o.isMesh) return;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m?.onBeforeCompile) continue;
+          scanned++;
+          const t = stub();
+          try { m.onBeforeCompile(t, { getContext: () => ({}) }); } catch { continue; }
+          if (/vRidge/.test(t.fragmentShader)) { sh = t; return; }
+        }
+      });
+      assert(sh, `${key} built no ridge material among ${scanned} compiled materials`);
+      const write = sh.fragmentShader.match(/diffuseColor\.rgb = [^;]+;/)?.[0] ?? '';
+      assert(/saberCelBand\s*\(\s*vRidge/.test(write),
+        `${key}'s ranges write \`${write.trim()}\` — an interpolated vertex colour with no quantiser, `
+        + 'which makes them the only surface in the game shipping a smooth gradient');
+      rows.push(`${key} ok`);
+      w.unload();
+    }
+
+    /* …and the band is worth something: the same near→far ramp the vertex body
+     * produces, through the game's own band function, in display codes. */
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const code = (v) => Math.round(255 * Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2));
+    const band = (c, n) => {
+      const l = lum(c);
+      if (l <= 1e-5) return l;
+      const q = (Math.floor(Math.sqrt(l) * n) + 0.5) / n;
+      return l * ((q * q) / l);
+    };
+    const near = [0.42, 0.46, 0.55], far = [0.68, 0.72, 0.80];
+    const raw = new Set(), out = new Set();
+    for (let i = 0; i < 400; i++) {
+      const f = i / 399;
+      const c = near.map((a, k) => a + (far[k] - a) * f);
+      raw.add(code(lum(c)));
+      out.add(code(band(c, CEL.fogBands)));
+    }
+    assert(raw.size > 20, `the test ramp only spans ${raw.size} codes, so it cannot show a gradient`);
+    assert(out.size <= CEL.fogBands,
+      `banding a ${raw.size}-code ramp at ${CEL.fogBands} bands still left ${out.size} distinct codes`);
+    return `${rows.join(', ')}; a ${raw.size}-code foot→crest ramp bands to ${out.size} codes `
+      + `at CEL.fogBands = ${CEL.fogBands}`;
+  });
 }
 
 /* Sampling stride for the mean-drift check — one in ~40k texels is far more
