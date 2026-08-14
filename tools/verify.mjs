@@ -12,6 +12,62 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 
+/**
+ * THIS FILE MUST BE RUN THROUGH ITS LOADER, AND USED NOT TO SAY SO.
+ *
+ * `npm run verify` is `node --import ./tools/register.mjs tools/verify.mjs`.
+ * The hook maps the bare specifier `three` onto `vendor/three`, which is the
+ * copy the game actually ships and the browser actually loads. Run it as plain
+ * `node tools/verify.mjs` — the obvious thing to type, and what an agent, a CI
+ * job or anyone reading the header comment will type — and Node resolves
+ * `three` out of `node_modules` instead. Both copies then exist in one process:
+ * this file's static graph on one, everything a suite imports on the other.
+ *
+ * IT DOES NOT CRASH. It reports. Measured on a clean tree, running the two ways
+ * back to back:
+ *
+ *   with the loader        1139 passed, 0 failed
+ *   without                1137 passed, 2 failed
+ *
+ * and the two failures are pure fiction. `lifecycle` patches
+ * `THREE.BufferGeometry.prototype.dispose` to count what a corpse frees; the
+ * bodies are built by `Bodies.js`, which this file imports statically, so their
+ * geometries are the OTHER copy's and the patched method is never called. The
+ * check then reports "56 of 56 geometries survived the corpse" — a leak of
+ * every geometry in the game, which would be a serious bug, and is not
+ * happening at all. That cost an afternoon of bisecting for order-dependence
+ * that was never there.
+ *
+ * A tool that answers wrongly when invoked the obvious way is worse than one
+ * that refuses, so this refuses. It is the same rule the checks are held to by
+ * `determinism.mjs`: a missing thing gets an error, never a plausible default.
+ *
+ * THE TEST IS OBJECT IDENTITY, and the first attempt at it was wrong in a way
+ * worth recording. `import.meta.resolve('three')` answers vendor either way:
+ * `dom-shim.mjs` registers the hook itself, and it is this file's first import,
+ * so by the time any of this file's own code runs the hook is installed and
+ * resolution is honest — for everything from that point on. The static graph
+ * was linked BEFORE any of it evaluated, so the bindings are already on the
+ * other copy and no question asked afterwards can see it. Two module namespace
+ * objects are the same object iff they are the same module instance, which is
+ * exactly the question, and it cannot be fooled by when it is asked.
+ */
+{
+  const dynamic = await import('three');
+  if (dynamic !== THREE) {
+    console.error(
+      '\n  verify.mjs was started without its module loader.\n\n'
+      + '  Two copies of three are loaded in this process. This file\'s static imports\n'
+      + '  were bound to node_modules before dom-shim.mjs could install the hook;\n'
+      + `  everything imported after it gets ${import.meta.resolve('three').replace(/^file:\/\/.*\//, '')}.\n`
+      + '  The checks then measure whichever copy they did not mean to, and report the\n'
+      + '  difference as a defect in the game — see the note above for what that cost.\n\n'
+      + '  Run:  npm run verify\n'
+      + '    or: node --import ./tools/register.mjs tools/verify.mjs\n');
+    process.exit(2);
+  }
+}
+
 // The sphere solver is nobody's engine any more — ragdolls were the last
 // thing on it. It survives here only as the reference the Rapier raycast is
 // checked against, and for LAYER and the segment maths the blade still uses.
@@ -3371,28 +3427,47 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
   const { readdir } = await import('node:fs/promises');
   const dir = new URL('./checks/', import.meta.url);
   let files = [];
-  try { files = (await readdir(dir)).filter(f => f.endsWith('.mjs')).sort(); } catch {}
+  /* `_`-prefixed files are shared helpers, not suites — `_page`, `_shared`,
+   * `_source`, `_coop`, `_weave`. They were imported here too and skipped for
+   * having no `run`, which cost nothing but printed five files that run no
+   * checks and made this loop's idea of "a suite" differ from
+   * determinism.mjs's, which has always filtered them. One definition. */
+  try {
+    files = (await readdir(dir)).filter(f => f.endsWith('.mjs') && !f.startsWith('_')).sort();
+  } catch {}
   /**
    * SABER_CHECK_ORDER=reverse RUNS THE SAME SUITES BACKWARDS.
    *
-   * The suite was not deterministic. Three clean runs of this file returned
-   * 1062/8, 1068/2 and 1069/1, and a fourth returned 1070/0 — the same tree,
-   * the same commit, four different answers. Every one of those differences is
-   * a check reading module-scope state that a PREVIOUS suite left behind:
-   * `enemyRng` and `duelRng` (Enemy.js, Duel.js), the wave stream, `ground`'s
-   * terrain/fx/clock/_scarAt (Scenery.js), `wind`, and Engine's once-only
-   * ShaderChunk flags. Alphabetical order is not a design; it is the order
-   * `readdir` happened to give.
+   * WHY IT EXISTS. Several things the game keeps at module scope survive
+   * between suites — `enemyRng` and `duelRng` (Enemy.js, Duel.js), the wave
+   * stream, `wind` and `ground` (Scenery.js), Engine's once-only ShaderChunk
+   * flags. A suite that drives a World advances all of them for every suite
+   * after it, and alphabetical order is not a design; it is the order `readdir`
+   * happened to give. A harness that answers differently each time is worse
+   * than a red one, because the difference looks like whatever you changed
+   * last. Reversing is the cheapest signal that finds it: a check that passes
+   * one way and fails the other is order-dependent by construction, and the
+   * pair of runs names it. It found `mapPeak` measuring its own hard-coded
+   * fallback on its first run.
    *
-   * A harness that answers differently each time is worse than a red one,
-   * because the failure looks like whatever you changed last. It is the
-   * mechanism by which the cone survived several rounds of being fixed, and by
-   * which three tautological checks got through a whole audit pass.
+   * WHERE IT STANDS, measured on a quiet tree with nothing else writing to it
+   * and BOTH RUNS THROUGH THE LOADER (see the guard at the top of this file —
+   * the first attempt at this experiment was run without it and produced two
+   * fictional failures that cost an afternoon):
    *
-   * Reversing is the cheapest signal that finds it: any check that passes one
-   * way and fails the other is order-dependent by construction, and the pair
-   * of runs names it. `tools/checks/determinism.mjs` asserts the property;
-   * this is the switch it drives.
+   *   forward   1139 passed, 0 failed
+   *   reverse   1139 passed, 0 failed
+   *   1099 of the 1139 result lines are identical, character for character
+   *
+   * So the VERDICT is order-independent. What still moves is the 40 remaining
+   * lines, and they are all passing checks whose measured numbers shift with
+   * the phase of a shared stream — `escalation` (5), `props` (4), `presence`
+   * and `co-op` (3 each), then a long tail of one each. They pass both ways
+   * because they have margin, not because they are pinned, and a tightened bar
+   * on any of them could go red on an unrelated change. That is the honest
+   * state of it: the residue is bounded and named rather than eliminated.
+   * `tools/checks/determinism.mjs` holds the hygiene that keeps it from
+   * growing; this is the switch that measures it.
    */
   if (process.env.SABER_CHECK_ORDER === 'reverse') files.reverse();
   /**

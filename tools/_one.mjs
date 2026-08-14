@@ -24,6 +24,30 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 
+/**
+ * SAME GUARD AS verify.mjs, AND FOR THE SAME REASON.
+ *
+ * `dom-shim.mjs` registers the loader that maps `three` onto `vendor/three` —
+ * but it does so while it EVALUATES, and this file's static graph was linked
+ * before that. Started without `--import ./tools/register.mjs`, two copies of
+ * three end up in one process, and a suite measures whichever one it did not
+ * mean to. lifecycle.mjs patches `THREE.BufferGeometry.prototype.dispose` to
+ * count what a corpse frees; against the other copy the patch is never called
+ * and the check reports "56 of 56 geometries survived the corpse" — every
+ * corpse in the game leaking, which is not happening at all.
+ *
+ * Two namespace objects are the same object iff they are the same module
+ * instance, which is exactly the question and cannot be fooled by when it is
+ * asked. This file exists to be reached for WHILE ITERATING, which is precisely
+ * when a fictional failure is most expensive.
+ */
+if ((await import('three')) !== THREE) {
+  console.error('\n  tools/_one.mjs was started without its module loader — two copies of three\n'
+    + '  are loaded and the checks will measure the wrong one.\n\n'
+    + '  Run: node --import ./tools/register.mjs tools/_one.mjs <suite>\n');
+  process.exit(2);
+}
+
 const name = process.argv[2];
 const mod = await import(`./checks/${name.replace(/\.mjs$/, '')}.mjs`);
 let pass = 0, fail = 0;
