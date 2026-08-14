@@ -1201,14 +1201,19 @@ function note(color, mean, mat) {
  * robe looser, and having all of it at one pitch is part of why the layers read
  * as one printed surface rather than as three garments.
  *
- * `o.sheen` swaps in a MeshPhysicalMaterial with a retroreflective sheen lobe.
- * That is what wool and heavy cotton actually do — they go BRIGHTER at grazing
- * angles, where a dielectric GGX lobe goes darker — and it is most of the
- * difference between cloth and painted plastic on a rounded limb. It is not
- * free (physical compiles a heavier fragment shader), so it is asked for by
- * name: the player, who is on screen for the whole game and four hundred
- * millimetres from the camera in first person, gets it; a wave of droids does
- * not.
+ * `o.sheen` USED TO swap in a MeshPhysicalMaterial with a retroreflective
+ * sheen lobe — what wool and heavy cotton actually do, going BRIGHTER at
+ * grazing angles where a dielectric GGX lobe goes darker. It was true, it was
+ * worth paying for, and it has not existed since the frame went cel: rule 8 of
+ * src/toon/REFERENCE.md deletes specular everywhere, and the sheen lobe was
+ * cut out of three's BRDF along with the GGX one. What was left was 38 of the
+ * player's 64 meshes compiling the heavier physical fragment shader to
+ * evaluate a lobe that is not in it.
+ *
+ * `o.normal` and every `normalScale` below are gone for the same kind of
+ * reason: `Textures.materialFrom` binds `normalMap: null` — a perturbed normal
+ * under a two-tone terminator reads as speckle, not as relief — so they were
+ * scaling a map that does not exist.
  *
  * `o.vc` turns on the vertex-colour channel that shadeAO() writes the creases
  * into. mesh() guarantees every geometry handed such a material has one.
@@ -1218,18 +1223,8 @@ function clothMat(color, rough = 0.92, o = {}) {
   const spec = {
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: rough, metalness: 0,
-    normalScale: new THREE.Vector2(o.normal ?? 0.85, o.normal ?? 0.85),
     vertexColors: !!o.vc,
   };
-  if (o.sheen) {
-    spec.sheen = o.sheen;
-    // The sheen tint is the colour of the light scattered off the fibre ends,
-    // not of the cloth: warm and desaturated, or the robe picks up a coloured
-    // rim that reads as a shader bug.
-    spec.sheenColor = new THREE.Color(o.sheenColor ?? 0xd8cdbc);
-    spec.sheenRoughness = o.sheenRough ?? 0.62;
-    return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshPhysicalMaterial(spec));
-  }
   return lit(color, MEAN_ALBEDO.cloth, new THREE.MeshStandardMaterial(spec));
 }
 // `repeat` is additive: at the shipped 1.6 the scuff bake tiles about once per
@@ -1239,7 +1234,7 @@ function armorMat(color, metal = 0.1, rough = 0.42, repeat = 1.6) {
   const maps = armorMaps(repeat);
   return note(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: metal, normalScale: new THREE.Vector2(0.9, 0.9),
+    roughness: rough, metalness: metal,
   }));
 }
 /**
@@ -1253,7 +1248,7 @@ function metalMat(color, rough = 0.38, metal = 0.95, repeat = 2.4) {
   const maps = metalMaps(repeat);
   return lit(color, MEAN_ALBEDO.metal, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: metal, normalScale: new THREE.Vector2(0.8, 0.8),
+    roughness: rough, metalness: metal,
   }));
 }
 /**
@@ -1273,7 +1268,7 @@ function skinMat(color = 0xc79a76, repeat = 3.0, o = {}) {
   const maps = skinMaps(repeat);
   return lit(color, MEAN_ALBEDO.skin, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: 0.95, metalness: 0, normalScale: new THREE.Vector2(0.5, 0.5),
+    roughness: 0.95, metalness: 0,
     vertexColors: !!o.vc,
   }));
 }
@@ -1286,7 +1281,7 @@ function scorchMat() {
   const maps = armorMaps(6.0);
   return note(0x14120f, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: 0.94, metalness: 0.04, normalScale: new THREE.Vector2(1.1, 1.1),
+    roughness: 0.94, metalness: 0.04,
   }));
 }
 
@@ -1318,7 +1313,7 @@ function leatherMat(color, rough = 0.66, o = {}) {
   const maps = armorMaps(o.repeat ?? 4.5);
   return note(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.04, normalScale: new THREE.Vector2(o.normal ?? 0.7, o.normal ?? 0.7),
+    roughness: rough, metalness: 0.04,
     vertexColors: !!o.vc,
   }));
 }
@@ -1327,7 +1322,7 @@ function glassMat(color, rough = 0.14) {
   const maps = metalMaps(3.4);
   return lit(color, MEAN_ALBEDO.metal, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.62, normalScale: new THREE.Vector2(0.22, 0.22),
+    roughness: rough, metalness: 0.62,
   }));
 }
 /**
@@ -1341,7 +1336,7 @@ function chitinMat(color, rough = 0.46) {
   const maps = duracreteMaps(4.2);
   return lit(color, MEAN_ALBEDO.duracrete, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.05, normalScale: new THREE.Vector2(1.0, 1.0),
+    roughness: rough, metalness: 0.05,
   }));
 }
 /**
@@ -1353,7 +1348,7 @@ function boneMat(color, rough = 0.34) {
   const maps = armorMaps(5.0);
   return lit(color, MEAN_ALBEDO.armor, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0.02, normalScale: new THREE.Vector2(0.5, 0.5),
+    roughness: rough, metalness: 0.02,
   }));
 }
 /** Pebbled animal hide — duracrete's aggregate at a tight tiling. */
@@ -1361,7 +1356,7 @@ function hideMat(color, rough = 0.9) {
   const maps = duracreteMaps(5.5);
   return lit(color, MEAN_ALBEDO.duracrete, new THREE.MeshStandardMaterial({
     map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
-    roughness: rough, metalness: 0, normalScale: new THREE.Vector2(0.75, 0.75),
+    roughness: rough, metalness: 0,
   }));
 }
 function emissiveMat(color, intensity = 3) {
@@ -3047,15 +3042,13 @@ export function buildJedi(opts = {}) {
    * knows it.
    */
   const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
-  // sheen: wool goes BRIGHTER at grazing angles. Only the player pays for the
-  // physical shader — see clothMat.
-  const W = { vc: true, sheen: 0.40 };
+  const W = { vc: true };
   const tunic = clothMat(robe.inner, 0.90, { ...W, repeat: 3.6 });
   const outer = clothMat(robe.outer, 0.93, { ...W, repeat: 2.4 });
   const over = clothMat(mix(robe.outer, robe.trim, 0.46), 0.95,
-    { ...W, repeat: 1.6, normal: 1.05, sheen: 0.30 });
+    { ...W, repeat: 1.6 });
   const sleeve = clothMat(mix(robe.outer, robe.inner, 0.44), 0.90, { ...W, repeat: 3.2 });
-  const trim = clothMat(robe.trim, 0.84, { ...W, repeat: 4.6, sheen: 0.24 });
+  const trim = clothMat(robe.trim, 0.84, { ...W, repeat: 4.6 });
   // Was bare: the player's gloves, boots, bracers, belt pouches and obi clasp
   // — everything on the figure that is not cloth or skin — rendered as one
   // flat brown vinyl, and gloves are 20% of the first-person frame. Tighter
@@ -3085,13 +3078,14 @@ export function buildJedi(opts = {}) {
   const base = opts.hairColor ?? 0x2a1d14;
   const hairHex = G.a > 0 ? mix(base, GREY, 0.88 * G.a) : base;
   const browHex = G.a > 0 ? mix(mix(base, GREY, 0.62 * G.a), 0x000000, 0.32) : mix(base, 0x000000, 0.32);
-  const hair = clothMat(hairHex, 0.72,
-    { vc: true, repeat: 8.0, normal: 1.25, sheen: 0.34, sheenColor: 0x6b5540, sheenRough: 0.58 });
+  const hair = clothMat(hairHex, 0.72, { vc: true, repeat: 8.0 });
   hair.side = THREE.DoubleSide;
   // Brows and lashes are two square centimetres of nearly-flat plate facing
-  // the sun, and on the hair material's sheen lobe they rendered BRIGHTER than
-  // the forehead behind them — a pale bar across the face, which is the
-  // opposite of what a brow is for. Matte, and a third darker than the hair.
+  // the sun, and back when the hair material still carried a sheen lobe they
+  // rendered BRIGHTER than the forehead behind them — a pale bar across the
+  // face, which is the opposite of what a brow is for. The lobe is gone with
+  // the rest of the specular (see clothMat); they stay a third darker than the
+  // hair because that is what a brow looks like, not because of a shader.
   // Brows grey too, and later than the hair does — 0.62 against 0.88.
   const brow = clothMat(browHex, 0.86, { vc: true, repeat: 9.0 });
 

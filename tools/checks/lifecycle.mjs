@@ -251,7 +251,18 @@ export async function run({ check, assert }) {
     const t0 = world.time, cam0 = engine.camera.position.clone();
     const pitch0 = p.camera.pitch, ign0 = p.saber.ignition;
     p.damage(1e9, null, null, 'test');
-    await new Promise((r) => setTimeout(r, 60));      // the dynamic Ragdoll import
+    /**
+     * WAIT FOR THE CONDITION, NOT FOR A NUMBER OF MILLISECONDS.
+     *
+     * `Player.damage` builds the corpse behind `await import('./Ragdoll.js')`,
+     * and this used to be a flat `setTimeout(r, 60)`. Sixty milliseconds is
+     * plenty on an idle machine and is not plenty on a loaded one: under the
+     * full suite, with other work in flight, the import had not resolved and
+     * `no ragdoll was built for the corpse` failed a check that passes every
+     * time when run alone. A timing bound that depends on what else is running
+     * is not a measurement of the game.
+     */
+    for (let i = 0; i < 200 && !p.actor; i++) await new Promise((r) => setTimeout(r, 10));
     for (let i = 0; i < 180; i++) world.update(1 / 60, input);
 
     assert(!p.alive, 'the player survived 1e9 damage');

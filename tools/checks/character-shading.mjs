@@ -251,35 +251,44 @@ export function run({ check, assert, near, THREE }) {
       assert(!/sheenSpecularDirect \+=/.test(pars) && !/sheenSpecularIndirect \+=/.test(pars),
         'a sheen lobe is back — then its energy compensation belongs back with it');
 
-      /* WHAT IT WAS WORTH, on the figure it was charged to. */
-      const seen = new Map();
-      let physical = 0, standard = 0, meshes = 0;
+      /**
+       * WHAT IT WAS WORTH, AND ON A MATERIAL THIS CHECK OWNS.
+       *
+       * This used to read the sheen off the PLAYER's own materials — 38 of the
+       * figure's 64 meshes declared it, so the compensation was measurable on
+       * the body it was charged to. `clothMat` no longer builds any of them
+       * (see the check below), which is the better fix and would have made
+       * this one report `only 0 meshes on the player declare sheen`.
+       *
+       * So the arithmetic runs on a material declared HERE. That is stronger,
+       * not weaker: the guarantee is about anything in the game that ever
+       * declares sheen, and it no longer lapses the moment one caller stops.
+       */
+      const probe = new THREE_.MeshPhysicalMaterial({
+        sheen: 0.40, sheenColor: new THREE_.Color(0xd8cdbc), sheenRoughness: 0.62,
+      });
+      // three uploads the uniform as sheenColor × sheen, so max3 is 0.6867 × 0.40
+      const c = probe.sheenColor;
+      const comp = 1 - 0.157 * Math.max(c.r, c.g, c.b) * probe.sheen;
+      assert(comp < 0.99,
+        `the compensation the shipped robe would have paid is ${comp.toFixed(4)}, which is not a `
+        + 'darkening — the twin is not reproducing the defect, so the assertions above prove nothing');
+      probe.dispose();
+
+      // …and nothing in the game declares it any more, so nobody pays even
+      // the uniform upload. Both characters, because the discrepancy that
+      // made this a defect was between them.
+      let playerSheen = 0, npcSheen = 0, meshes = 0;
       unit('jedi').rig.root.traverse((o) => {
         if (!o.isMesh || !o.material) return;
         meshes++;
-        if (o.material.isMeshPhysicalMaterial) physical++; else standard++;
-        const s = o.material.sheen || 0;
-        if (s <= 0) return;
-        const c = o.material.sheenColor;
-        const comp = 1 - 0.157 * Math.max(c.r, c.g, c.b) * s;   // three's own uniform, sheenColor × sheen
-        seen.set(comp, (seen.get(comp) || 0) + 1);
+        if (o.material.sheen > 0) playerSheen++;
       });
-      let worst = 1, n = 0;
-      for (const [comp, count] of seen) { worst = Math.min(worst, comp); n += count; }
-      assert(n >= 20,
-        `only ${n} meshes on the player declare sheen — this check has stopped measuring the case it was written for`);
-      assert(worst < 0.99,
-        `the worst compensation on the player is ${worst.toFixed(4)}, which is not a darkening — `
-        + 'the twin is not reproducing the defect, so the assertions above prove nothing');
-      // an NPC in the same cloth must have been unaffected, which is what made
-      // it a discrepancy between characters rather than a global exposure shift
-      let npcSheen = 0;
       unit('acolyte').rig.root.traverse((o) => { if (o.isMesh && o.material?.sheen > 0) npcSheen++; });
-      const rows = [...seen.entries()].sort((a, b) => a[0] - b[0])
-        .map(([c, k]) => `${k}× ${(100 * c).toFixed(2)}%`);
-      return `${n} of ${meshes} player meshes carried it (${rows.join(', ')}), worst `
-        + `${((1 - worst) * 100).toFixed(1)}% dark; ${physical} physical / ${standard} standard, `
-        + `acolyte ${npcSheen} — all now at 100%`;
+      assert(playerSheen === 0 && npcSheen === 0,
+        `${playerSheen} player and ${npcSheen} NPC meshes still declare sheen`);
+      return `the ${(100 * comp).toFixed(2)}% compensation the robe used to pay is gone from all three `
+        + `shader copies; ${meshes} player meshes and every NPC now declare no sheen at all`;
     })();
   });
 
@@ -403,5 +412,62 @@ export function run({ check, assert, near, THREE }) {
       rows.push(`${name} ${(peak * 1000).toFixed(0)}mm peak / ${(base * 1000).toFixed(0)}mm at the joint`);
     }
     return rows.join('  ');
+  });
+
+  check('shading: the figure builds no material for a lobe that is not in the BRDF', () => {
+    /**
+     * THE OTHER HALF OF THE SHEEN BILL. The check above removes three's sheen
+     * ENERGY COMPENSATION, which is what a declared `sheen` costs once the lobe
+     * is gone. This one removes the reason to declare it: `clothMat`'s
+     * `o.sheen` branch swapped in a MeshPhysicalMaterial, and the player's robe
+     * layers, trim and hair all asked for it by name.
+     *
+     * Measured on a real `buildJedi`: 38 OF THE FIGURE'S 64 MESHES rendered
+     * through MeshPhysicalMaterial — the heavier fragment shader, compiled and
+     * run for a retroreflective lobe that src/toon/REFERENCE.md rule 8 deleted
+     * out of three's BRDF. Nobody else in the game paid it; the identical cloth
+     * on an acolyte is Standard. The comment above `clothMat` still described
+     * the lobe as "most of the difference between cloth and painted plastic",
+     * which was true when it was written and had not been true for some time.
+     *
+     * And `normalScale`, on fifteen of fifteen materials, against a `normalMap`
+     * that `Textures.materialFrom` binds to `null` on every surface in the
+     * foundry — a scale for a map that does not exist. Asserted from the SOURCE
+     * rather than the built material, because three gives every
+     * MeshStandardMaterial a default `normalScale` of (1,1) whether it was
+     * authored or not, so the built object cannot tell you which.
+     */
+    const built = B.buildJedi({});
+    const root = built.rig?.root ?? built.rig?.group;
+    assert(root, 'buildJedi no longer returns a rig with a root');
+    let meshes = 0, physical = 0, sheeny = 0;
+    const seen = new Set();
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      meshes++;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      if (mats.some((m) => m?.isMeshPhysicalMaterial)) physical++;
+      for (const m of mats) {
+        if (!m || seen.has(m.uuid)) continue;
+        seen.add(m.uuid);
+        if (m.sheen) sheeny++;
+      }
+    });
+    assert(meshes > 40, `only ${meshes} meshes on the figure — this is not measuring the player`);
+    assert(physical === 0,
+      `${physical} of the figure's ${meshes} meshes still render through MeshPhysicalMaterial, which `
+      + 'compiles a heavier fragment shader to evaluate lobes the cel BRDF does not have');
+    assert(sheeny === 0, `${sheeny} of the figure's materials still declare sheen`);
+
+    const src = readFileSync(new URL('../../src/game/Bodies.js', import.meta.url), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const [re, why] of [
+      [/normalScale/, 'a normalScale for a normalMap that materialFrom binds to null'],
+      [/\bsheen(Color|Roughness|Rough)?\s*[:=]/, 'a sheen parameter'],
+      [/MeshPhysicalMaterial/, 'a MeshPhysicalMaterial'],
+    ]) {
+      assert(!re.test(code), `src/game/Bodies.js still builds ${why}`);
+    }
+    return `${meshes} meshes, ${seen.size} materials, 0 physical and 0 sheen (was 38 of 64 physical)`;
   });
 }
