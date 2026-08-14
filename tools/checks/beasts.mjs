@@ -373,6 +373,32 @@ export async function run({ check, assert }) {
         `evading by "${mode}" answers every attack every creature in the game has — `
         + 'then the menagerie is one fight wearing five skins');
     }
+    /**
+     * …AND THE FAILURE SETS MUST DIFFER, which is the assertion above with its
+     * loophole closed.
+     *
+     * "Every evasion is beaten by something" is satisfied by ONE undodgeable
+     * attack existing anywhere in the roster — the charge is beaten by nothing
+     * at all, so that assertion passes on the charge alone whatever else the
+     * menagerie does. Proved by reverting: taking the slam's own aim away and
+     * making it an ordinary claw left the check green.
+     *
+     * What actually says "each fought differently" is that the evasions fail on
+     * DIFFERENT things: circling gets caught by the slam and walks away from
+     * the pounce, retreating gets caught by the pounce and walks out of the
+     * slam. Two evasions with identical failure sets are two names for one
+     * habit, and a menagerie where every evasion fails on the same list is a
+     * menagerie with one answer plus one attack nobody can answer.
+     */
+    const moving = EVASIONS.filter((m) => m !== 'stand');
+    for (let i = 0; i < moving.length; i++) {
+      for (let j = i + 1; j < moving.length; j++) {
+        const a = beaten[moving[i]].slice().sort().join(','), b = beaten[moving[j]].slice().sort().join(',');
+        assert(a !== b,
+          `"${moving[i]}" and "${moving[j]}" are caught by exactly the same attacks (${a || 'none'}) — `
+          + 'they are two names for one habit, so the roster asks one question');
+      }
+    }
     /* …and the converse, so this cannot be satisfied by making everything
      * undodgeable: every creature has to have at least one attack that at least
      * one evasion beats. */
