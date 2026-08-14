@@ -229,6 +229,16 @@ export const SPEED_GRADE = {
   closing: 1.6,
   /** A RETURN is aimed, so it needs a tip that was actually going somewhere. */
   return: 7.5,
+  /**
+   * …and it must be met past this fraction of the blade, measured from the
+   * emitter. NAMED, because it was the bare literal `0.42` inside gradeCaught
+   * and `pickReturnTarget`'s default aim cone is ALSO 0.42 — two unrelated
+   * gates in one function wearing the same number. Soresu's card text sold
+   * itself as "deflection is forgiven further along the blade" while the thing
+   * it moves is the aim cone, which is very hard to write by accident unless
+   * the two numbers look identical on the screen. They no longer do.
+   */
+  returnBladeT: 0.42,
   /** The top rung. See above — measured against the blade, not asserted at it. */
   perfect: 9.4,
   /** A PERFECT must also be driving INTO the bolt this hard… */
@@ -350,13 +360,63 @@ const PROGRESS_GRACE = 1.5;
  */
 const OPEN_HELD = 3.0, OPEN_YANK = 2.0, OPEN_DOWN = 1.5;
 
+/**
+ * …AND THE PLAYER WAS NEVER TOLD ANY OF IT.
+ *
+ * Everything above is real, measured and load-bearing: hold a body and it comes
+ * apart in a third of the passes. It is also, on screen, completely invisible.
+ * Nothing draws a state, nothing names a multiplier, and the one sentence the
+ * design rests on — "what makes pull→cut read as ONE MOVE instead of two" —
+ * cannot be read as one move by a player who has no way of knowing the second
+ * half is being paid for. A mechanic nobody can see is the same defect as a
+ * label nothing implements, pointing the other way: the game does something it
+ * never claims.
+ *
+ * So the three states are a TABLE with a name, a colour and a multiplier, and
+ * `openness` is derived from it rather than being a second copy of it. Anything
+ * that wants to say so on screen reads `openState(e)` for the state and
+ * `openMul(state, e)` for what that state is worth ON THIS BODY — bosses take a
+ * quarter of the held and yanked bonuses, and a readout that printed the table
+ * value at a boss would be lying by exactly the factor the design intends.
+ *
+ * Deliberately allocation-free. `openness` is called once per capsule per blade
+ * slice inside BladeContactSolver.solve — thousands of times a second in a
+ * crowd — so `openState` returns the shared table row and never a fresh object.
+ *
+ * The order of this list IS the precedence: held beats yanked beats downed, and
+ * a body that is both held and stunned is billed as held. That was already true
+ * of the if-chain this replaces; it is now true because the list says so.
+ */
+export const OPEN_STATES = [
+  { key: 'held', label: 'HELD', colour: '#8fd8ff',
+    mul: OPEN_HELD, bigShare: 0.25, test: (e) => !!e.gripped,
+    why: 'both feet off the floor and nothing to brace against' },
+  { key: 'yanked', label: 'PULLED', colour: '#a9ffd0',
+    mul: OPEN_YANK, bigShare: 0.25, test: (e) => e.yankT > 0,
+    why: 'dragged off balance — cut now and the pull was one move' },
+  { key: 'downed', label: 'DOWNED', colour: '#ffd88a',
+    mul: OPEN_DOWN, bigShare: 1, test: (e) => !!e.toppled || e.stunTimer > 0,
+    why: 'toppled or stunned, and not turning with the blade' },
+];
+
+/** Which open state a body is in right now, or null. The shared row, not a copy. */
+export function openState(e) {
+  if (!e || e.dead) return null;
+  for (const s of OPEN_STATES) if (s.test(e)) return s;
+  return null;
+}
+
+/** What that state is worth on THIS body — a boss takes a quarter of it. */
+export function openMul(s, e) {
+  if (!s) return 1;
+  return (e?.A?.big || e?.A?.boss) && s.bigShare < 1
+    ? 1 + (s.mul - 1) * s.bigShare
+    : s.mul;
+}
+
 export function openness(e) {
-  if (!e || e.dead) return 1;
-  const big = e.A?.big || e.A?.boss;
-  if (e.gripped) return big ? 1 + (OPEN_HELD - 1) * 0.25 : OPEN_HELD;
-  if (e.yankT > 0) return big ? 1 + (OPEN_YANK - 1) * 0.25 : OPEN_YANK;
-  if (e.toppled || e.stunTimer > 0) return OPEN_DOWN;
-  return 1;
+  const s = openState(e);
+  return s ? openMul(s, e) : 1;
 }
 const PROGRESS_FADE = 0.8;   // e-folds per second after the grace
 
@@ -699,7 +759,7 @@ export function gradeCaught(snap, ctx) {
   const mode = ctx.aimMode || 'reticle';
   const thrown = !!(ctx.caught && snap.caught);
   let target = null;
-  const tipZone = bladeT > 0.42;
+  const tipZone = bladeT > SPEED_GRADE.returnBladeT;
   // A thrown bolt always LOOKS for the victim under the reticle, because that
   // is the promise the window made. What it does not get for free is the RETURN
   // grade: the tip-speed gate is unchanged, so the 1.5x still has to be earned
@@ -823,7 +883,21 @@ export class BladeContactSolver {
     this.touched = new Map();       // …and when that work was last added to
     this.cooldown = new Map();
     this.time = 0;
-    this.activeCuts = [];           // for slag VFX on heavy materials
+    /* `activeCuts` USED TO BE HERE, and it was a lie with a clone in it.
+     *
+     *     this.activeCuts = [];   // for slag VFX on heavy materials
+     *     …
+     *     this.activeCuts.push({ point: hit.point.clone(), progress, cap, target });
+     *
+     * A comment naming a consumer, a per-contact `Vector3.clone()` in the
+     * hottest loop in the game, and — grepped across src/, tools/ and
+     * index.html — NOT ONE READER anywhere in the tree, in any commit since the
+     * file was written. No slag VFX ever read it. It is the same defect as a
+     * label with no mechanic behind it, wearing the other costume: a mechanism
+     * with nothing on the other end, paid for every frame a blade is in a body.
+     *
+     * Anything that wants to know what the blade is working on reads the events
+     * `solve` returns, which every real caller already does. */
   }
 
   /**
@@ -835,7 +909,6 @@ export class BladeContactSolver {
   solve(saber, targets, dt, opts = {}) {
     this.time += dt;
     const events = [];
-    this.activeCuts.length = 0;
     if (saber.ignition < 0.7) return events;
 
     const SLICES = 4;
@@ -927,7 +1000,6 @@ export class BladeContactSolver {
         if (work < need) {
           this.progress.set(key, work);
           saber.strain(clamp(0.25 + tough / 60, 0, 1));
-          this.activeCuts.push({ point: hit.point.clone(), progress: work / need, cap, target });
           // `dWork` and `tough` ride along because a grind has to HURT. It used
           // to be particles and nothing else, so every slash that failed to
           // sever was cosmetic and the player read it as the blade doing

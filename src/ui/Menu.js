@@ -509,27 +509,25 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
  * Idempotent. Returns the number of bodies now walking on demand.
  */
 export function applyGait(world) {
+  /**
+   * THE HANDOVER WAS TAKEN, so this no longer wraps anything.
+   *
+   * `Player._move` multiplies `walkScale(input)` into its own speed now, which
+   * is the same arithmetic in the file that owns the pace. This wrapper was
+   * the version that could be written from the UI side while five files were
+   * being edited in parallel; keeping BOTH gave 0.34 twice — a walk at 0.116x
+   * the ordinary pace, which the spectacle suite caught within the minute.
+   *
+   * The export stays, and stays honest: `applyFeelSettings` calls it, and it
+   * still answers "how many bodies in this world walk on demand" — which is
+   * now every local one, because the gait is in their update rather than
+   * bolted onto it. Deleting the name would be a bigger edit than leaving a
+   * function that tells the truth.
+   */
   if (!world) return 0;
   let n = 0;
   for (const p of world.players || []) {
-    if (!p || p.isRemote || p.isLocal === false || typeof p.update !== 'function' || !p.boonMods) continue;
-    if (!p._gaitGated) {
-      const update = p.update.bind(p);
-      p.update = (dt, ctx) => {
-        const k = walkScale(ctx?.input);
-        if (k === 1 || !p.boonMods) { update(dt, ctx); return; }
-        const was = p.boonMods.moveSpeed;
-        p.boonMods.moveSpeed = was * k;
-        try { update(dt, ctx); } finally {
-          // Undo the FACTOR, not the value, if the number moved underneath us.
-          // A boon taken inside that call (a landing replays a run's cards into
-          // a freshly built player) would otherwise be thrown away by a restore
-          // that writes back what it captured.
-          p.boonMods.moveSpeed = p.boonMods.moveSpeed === was * k ? was : p.boonMods.moveSpeed / k;
-        }
-      };
-      p._gaitGated = true;
-    }
+    if (!p || p.isRemote || p.isLocal === false || typeof p.update !== 'function') continue;
     n++;
   }
   return n;

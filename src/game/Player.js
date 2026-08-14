@@ -18,6 +18,7 @@ import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS } from './Combat.js';
 import { POWER_COST } from './Powers.js';
@@ -1846,7 +1847,14 @@ export class Player {
     this.crouch = damp(this.crouch, crouching ? 1 : 0, 12, dt);
 
     const base = 4.6 * this.boonMods.moveSpeed;
-    let speed = base * (sprinting ? 1.62 : 1) * lerp(1, 0.48, this.crouch);
+    /* THE SLOW WALK, note 22's "slow walk / aura farm". A held key, not a
+     * toggle, and a factor on the base rather than a fifth branch: the four
+     * paces are then walk 1.56 / crouch 2.21 / ordinary 4.60 / sprint 7.45 m/s
+     * — each about half again the one below, and the walk sits safely above
+     * Rig.js's `0.35 * legRef` gait floor so the legs still cycle rather than
+     * skating. Sprint OVERRIDES rather than multiplying: holding both is a
+     * contradiction and the faster answer is the one a player meant. */
+    let speed = base * (this.isLocal ? walkScale(input) : 1) * (sprinting ? 1.62 : 1) * lerp(1, 0.48, this.crouch);
     if (this.staggerTimer > 0) speed *= 0.35;
     if (this.senseActive) speed *= 1.18;
 
@@ -1876,14 +1884,19 @@ export class Player {
         if (this.coyote > 0) {
           this.velocity.y = 7.4 * this.boonMods.jumpPower;
           this.grounded = false; this.coyote = 0;
-          this.jumpHeld = 0.42;
+          /* Note 22's longer force jump. Net upward acceleration while the
+           * Force is being fed in is 20 - 24 = -4 m/s², so a longer window is
+           * a higher leap and a larger bill: the ground leap goes 3.44 m ->
+           * 4.32 m and costs 21 Force instead of 14, which is the trade the
+           * comment below already describes rather than a new one. */
+          this.jumpHeld = 0.62;
           audio.force(this.position, 'jump');
           if (ctx.particles) ctx.particles.sandPuff(this.position.clone(), 0.8, this.position.y, ctx.groundColor);
         } else if (this.airJumps > 0 && this._canSpend(12)) {
           this.airJumps--;
           this._spend(12);
           this.velocity.y = 6.9 * this.boonMods.jumpPower;
-          this.jumpHeld = 0.34;
+          this.jumpHeld = 0.50;   // the air leap, in the same proportion
           audio.force(this.position, 'jump');
           if (ctx.particles) {
             _v5.copy(this.position).setY(this.position.y + 0.4);
@@ -2205,7 +2218,12 @@ export class Player {
     // No direction held means "get me out of here": dash backward, not into it.
     if (this.dashDir.lengthSq() < 0.01) this.dashDir.copy(fwd).negate();
     this.dashDir.normalize();
-    this.dashTimer = 0.17;
+    /* 0.24 rather than 0.17 — note 22 asks for a longer dash in as many words.
+     * At the same 15.5 m/s that is 2.3 m -> 3.4 m of travel, and it makes
+     * `invuln = 0.16` EXACTLY the two thirds of the dash the somersault's own
+     * comment already claims it is. `cooldowns.dash = 0.55` still gates it, so
+     * the rate is unchanged and only the distance moves. */
+    this.dashTimer = 0.24;
     this.stamina -= 18;
     this.cooldowns.dash = 0.55;
     this.invuln = Math.max(this.invuln, 0.16);

@@ -165,7 +165,15 @@ const MODS = {
   },
   sith: {
     /* THE ORDER THAT HAS TO KEEP KILLING.
-     * Twenty-two points of vitality gone and no way to get them back except by
+     * A FIFTH of the vitality gone — twenty points on a hundred, and it is
+     * twenty rather than the twenty-two it was because the blurb beside it says
+     * "a fifth less to lose" and a fifth of a hundred is not twenty-two. Same
+     * reason `cutPower` is described as two fifths harder below rather than
+     * "half again": 1.40 is not 1.5, and the sentence is the thing the player
+     * reads. Neither number is load-bearing anywhere else; the claims sweep
+     * found both by parsing these blurbs and driving a real Player through
+     * applyOrder.
+     * No way to get any of it back except by
      * taking someone apart — `lifesteal` fires on a severed limb and `healOnKill`
      * on a death, both already read in World. Lightning is theirs from the first
      * wave rather than a card they might never be offered. Everything about the
@@ -174,7 +182,7 @@ const MODS = {
      * comes back a sixth slower because nobody taught them to breathe. */
     mul: { cutPower: 1.40, deflectDamage: 1.25, forceCost: 1.12, staminaRegen: 0.85 },
     set: { lightning: true },
-    add: { maxHp: -22, lifesteal: 6, healOnKill: 4 },
+    add: { maxHp: -20, lifesteal: 6, healOnKill: 4 },
     // The draft must not offer a card this order already owns. World.takenBoons
     // is what drawBoons() filters against — see the wiring note at the bottom.
     grants: ['lightning'],
@@ -200,9 +208,14 @@ export const ORDERS = [
     id: 'jedi',
     name: 'Jedi',
     epithet: 'Guardian of the peace',
+    /* "YOU ARE THE WORST CUTTER OF THE THREE" was not true, and this file's own
+     * header says so four hundred lines up: a Grey at rest cuts at 0.80 against
+     * a Jedi's 0.85. The Grey is a LINE, not a point, so "worst of the three"
+     * has no meaning unless it says at which temper — and at the only temper
+     * that matters in a fight, a committed one, the Jedi really is last. */
     blurb: 'A crystal that chose you, and a guard trained to send a bolt back where it came from. '
-      + 'The Force costs you least and you carry the most of it. You are the worst cutter of the three, '
-      + 'and that is the trade.',
+      + 'The Force costs you least and you carry the most of it. When anyone commits, yours is the '
+      + 'softest cut of the three, and that is the trade.',
     doctrine: 'There is no emotion, there is peace.',
     crystals: CRYSTALS.jedi,
     crystalOrigin: 'attuned — the crystal is alive and it picked you',
@@ -226,7 +239,7 @@ export const ORDERS = [
     name: 'Sith',
     epithet: 'The blade that was made to scream',
     blurb: 'A stolen crystal, bled until it turned. Lightning from the first wave, a cut that bites '
-      + 'half again as hard, and a limb taken gives some of your own back — which you will need, '
+      + 'two fifths harder, and a limb taken gives some of your own back — which you will need, '
       + 'because you start with a fifth less to lose and a guard that forgives nothing.',
     doctrine: 'Peace is a lie. There is only passion.',
     crystals: CRYSTALS.sith,

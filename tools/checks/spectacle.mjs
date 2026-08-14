@@ -192,17 +192,28 @@ function hold(input, ...ids) {
 /**
  * Terminal ground speed after `seconds` of holding these actions.
  *
- * The gate is installed through `applyFeelSettings` and NOT by calling
- * `applyGait` directly, because "the gait works" and "the gait is switched on
- * when the game boots" are two claims and only the second one is the feature.
- * applyFeelSettings is the function main.js calls; taking `applyGait(world)`
- * out of it has to turn this red, and calling the installer by hand here would
- * mean it did not.
+ * THE GAIT IS NOT ARMED ANY MORE, IT IS THE BODY'S OWN.
+ *
+ * This used to assert `p._gaitGated` — that `applyFeelSettings` had wrapped
+ * `Player.update` — because the walk was built from the UI side while five
+ * files were being edited in parallel and `Player.js` belonged to another
+ * lane. That handover has been taken: `Player._move` multiplies `walkScale`
+ * into its own speed, which is the same arithmetic in the file that owns the
+ * pace.
+ *
+ * So the arming assertion is retired, and deliberately not replaced with a
+ * negative one. "The gait works" and "the gait is switched on at boot" were
+ * two claims when a wrapper could be missing; with the factor inside `_move`
+ * there is nothing to switch on and the second claim has no content. What is
+ * left is the property, which is what the four paces below measure.
+ *
+ * `applyFeelSettings` is still called here rather than skipped, because every
+ * OTHER feel setting still routes through it and a walker built without it is
+ * not the body the game runs.
  */
 function paceOf(seconds, ...ids) {
   const p = walker();
   applyFeelSettings({ players: [p], hitstop: 0, addHitstop() {}, update() {} }, { ...DEFAULT_SETTINGS });
-  assert0(p._gaitGated, 'applyFeelSettings did not arm the gait gate');
   const input = hold(freshInput(), 'moveF', ...ids);
   const ctx = { input, terrain: null, particles: null };
   const dt = 1 / 60;
@@ -307,12 +318,17 @@ export async function run({ check, assert }) {
      * walking on the frame it landed. The gate undoes the FACTOR instead, which
      * is what this measures.
      */
+    /* …and it cannot throw a boon away, because it no longer borrows one.
+     * The wrapper multiplied `boonMods.moveSpeed` for the length of one update
+     * and put it back, which is a whole class of hazard — a card taken inside
+     * that call was discarded by the restore. `_move` reads the factor and
+     * writes nothing, so the only thing left to assert is that a boon taken
+     * mid-frame survives, which it now does by construction. */
     const gi = hold(freshInput(), 'moveF', 'walk');
     const inside = walker({ update(dt, ctx) { this.boonMods.moveSpeed *= 1.2; this._move(dt, ctx); } });
-    applyGait({ players: [inside] });
     inside.update(1 / 60, { input: gi, terrain: null, particles: null });
     assert(Math.abs(inside.boonMods.moveSpeed - 1.2) < 1e-9,
-      `a boon taken inside the wrapped call came out as ${inside.boonMods.moveSpeed} — the restore threw it away`);
+      `a boon taken during a walked frame came out as ${inside.boonMods.moveSpeed}`);
 
     return `pace: walk ${walk.toFixed(2)}  crouch ${crouch.toFixed(2)}  ordinary ${base.toFixed(2)}  `
       + `sprint ${sprint.toFixed(2)} m/s (walk is ${(walk / base * 100).toFixed(0)}% of ordinary)`;

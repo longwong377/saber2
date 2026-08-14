@@ -131,6 +131,107 @@ export const ATTACKS = {
   smash:      { label: 'guard break', from: D(0, 1.05, -0.2),    to: D(0, -0.7, -0.75), tier: 'unblockable', damage: 1.5, reach: 0.08 },
 };
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  FOOTWORK — the ground a declared attack has to cover                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE ANSWER THAT COST NOTHING, AND BEAT EVERYTHING.
+ *
+ * This whole file is built on one promise, written at the top of it: every
+ * attack is DECLARED, with a wind-up you can read and an answer the colour
+ * names — parry it, chamber it, or get out of the way. That is the contract,
+ * and the player is meant to pay something for each of those three answers: a
+ * parry needs the blade on the line, a chamber needs a swing into the travel
+ * inside a window, and evading needs ground and the stamina to cover it.
+ *
+ * Evading was free, and it was total. Measured, driving a real Player against
+ * a real acolyte through all five forms at two difficulties, 30 s each:
+ *
+ *                            hp/s taken   strikes thrown   stamina spent
+ *     standing still            2.3–16.6      9–38             0
+ *     holding S (walk back)     0.00          0–7              0
+ *
+ * Not reduced. ZERO, in nine of the ten form×difficulty cells, and in the
+ * tenth every strike thrown whiffed. And it cost nothing whatever: `sprint`
+ * is gated on `axis.y > 0.2` in Player._move so it cannot even be spent going
+ * backwards, and walking has no drain at all. The single most valuable thing
+ * a player could do in a duel was hold one key, forever, for free.
+ *
+ * WHY, precisely — and it is not the movement speed. A player walks at 4.6 m/s
+ * and an acolyte runs at 5.0, so a duellist that simply chased would catch one.
+ * It does not chase while it is attacking: `Enemy._move` gives a non-mobile
+ * melee body a forward bias of 0.35 against a lateral term of 1.0, so a
+ * committed duellist circles at about 1.6 m/s of closing and the player opens
+ * the gap at 3 m/s while the arc it declared is still being drawn. Eight of the
+ * ten attacks in ATTACKS carry no gap-closing at all; only `thrust` and `lunge`
+ * had a `lunge` value, which is why those two are the only attacks that ever
+ * landed on a retreating player.
+ *
+ * So the fix is not "make the attacks faster" or "make the tracking tighter" —
+ * both of those take the answer away instead of pricing it. It is FOOTWORK: a
+ * fighter who has committed to a cut steps into it. While an attack is declared
+ * the duellist closes toward its own form's near spacing, and stops dead the
+ * moment it is there.
+ *
+ *   IT IS A CLOSED LOOP, not a per-attack constant. `_closing` is proportional
+ *   to the ground still to cover, so it does not need to know Enemy.js's
+ *   `velocity += toTarget * lungeSpeed * dt * 9` or the rate the locomotion
+ *   damps that back out — it keeps asking until the gap is shut. A copied
+ *   constant on this side of that seam is the defect this codebase keeps
+ *   having; a controller cannot drift out of agreement with the thing it
+ *   watches.
+ *
+ *   THE TARGET COMES FROM `form.spacing[0]`, which is already the authored
+ *   answer to "how close does this form fight" — Enemy._move reads the same
+ *   number as the inner edge of the band it holds. The attack's own `reach`
+ *   extends it, because a thrust really does land from further out. One table,
+ *   read twice, rather than a second number meaning the same thing.
+ *
+ *   AND IT IS CAPPED, which is the half that keeps the attack answerable.
+ *   CLOSE_CAP is a little over what a walk can outrun and far under what a dash
+ *   can: a player who spends the 18 stamina on a dash still leaves the arc
+ *   entirely, a player who sidesteps still makes it miss, and a parry and a
+ *   chamber are untouched. What no longer works is standing off at walking pace
+ *   and letting the wind-up expire — which is exactly the answer that was never
+ *   supposed to be one.
+ *
+ * Measured after, same fixtures: see tools/checks/footwork.mjs, which drives
+ * all four answers — still, walk back, dash back, sidestep — through every form
+ * and holds the ORDER between them rather than any one number.
+ */
+
+/**
+ * How hard the duellist presses per metre of ground still to cover, in the
+ * same units as an attack's authored `lunge`. Chosen so that the loop shuts a
+ * one-metre gap over a wind-up rather than teleporting through it.
+ */
+const CLOSE_GAIN = 3.4;
+
+/**
+ * The ceiling on that press, and the reason a dash is still an answer.
+ *
+ * Enemy.js turns `lungeSpeed` into about 1.1× its value in extra closing speed
+ * once its own locomotion damping has had its say, so this is roughly 5 m/s on
+ * top of the ~1.6 m/s a circling duellist already makes — comfortably past a
+ * 4.6 m/s walk and nowhere near a 15.5 m/s dash. It is deliberately BELOW the
+ * 7.5 authored on `lunge`, so the one attack in the game that is supposed to
+ * cover a room still out-runs ordinary footwork.
+ */
+const CLOSE_CAP = 4.4;
+
+/**
+ * How far past the hilt's wind-up radius the ghost is drawn, in body scales.
+ *
+ * The hands do not sit still through a strike — `Enemy._poseSaber` hangs them
+ * 0.08·S below the guard line and then sweeps the guard from the attack's
+ * `from` to its `to`, so the hilt's distance from the chest moves by up to that
+ * offset AFTER the arc has been drawn. The ghost is a promise about where the
+ * blade will be, so it has to be a BOUND on that sweep rather than a snapshot
+ * of one frame of it. See the measurements in `_drawTelegraph`.
+ */
+const TELE_PAD = 0.07;
+
 /* ── the forms ───────────────────────────────────────────────────────── */
 
 /**
@@ -485,11 +586,67 @@ export class DuelBrain {
     return base / clamp(this.timeScale, 0.2, 3);
   }
 
+  /**
+   * THE BAND THE BODY HOLDS, AND THE BAND THE BRAIN SWINGS IN, IN ONE UNIT.
+   *
+   * `FORMS[*].spacing` is read in two places. `Enemy._move` holds the body
+   * inside `[spacing[0] * scale, spacing[1] * scale]` — scaled, because a big
+   * duellist keeps its reach, and there is a whole note there saying so. The
+   * duel brain then decided whether to attack at all with a bare
+   *
+   *     const inRange = dist < F.spacing[1];
+   *
+   * UNSCALED. So for every melee body in the game whose scale is not exactly 1
+   * — which is every one of them; an acolyte is 1.04 and the elite variants go
+   * higher — the distance the body chooses to stand at is OUTSIDE the distance
+   * its own brain will swing from. Makashi parks at 3.02 m and refuses to
+   * attack past 2.90.
+   *
+   * Standing still it barely shows, because the yield band pulls the duellist
+   * well inside `far` and it attacks from in there. It shows completely against
+   * a retreating player, which is the case this whole footwork note is about:
+   * the duellist chases at 5.0 m/s against a 4.6 m/s walk, gains 0.4 m/s until
+   * it reaches the outer edge of its band, and then stops — parked 4% outside
+   * its own trigger, forever. Measured, 30 s per form: 0 attacks declared, 0
+   * strikes, 0.00 hp/s, in four of the five forms.
+   *
+   * One number, two readers, two different scalings — the sixth instance of
+   * this codebase's oldest defect. It is derived once here now and both call
+   * sites in this file read it.
+   */
+  get reachOut() { return this.form.spacing[1] * (this.e.A?.scale ?? 1); }
+
+  /**
+   * How hard this duellist should be pressing forward right now, in the units
+   * an attack's `lunge` is authored in. See the FOOTWORK note above.
+   *
+   * Zero unless an attack has actually been DECLARED — a duellist at guard
+   * keeps its form's spacing through `Enemy._move`'s band and must not be
+   * shoved into the player's face by this, and a feint that closed ground
+   * would be a free approach rather than a bait.
+   */
+  _closing(dist) {
+    const a = this.attack;
+    if (!a || !(dist > 0)) return 0;
+    if (this.phase !== 'windup' && this.phase !== 'strike') return 0;
+    // The form's own near spacing, scaled by the body exactly as Enemy._move
+    // scales it, plus whatever this particular attack's reach buys.
+    const sc = this.e.A?.scale ?? 1;
+    const gap = dist - (this.form.spacing[0] * sc + (a.reach ?? 0));
+    if (!(gap > 0)) return 0;
+    return clamp(gap * CLOSE_GAIN, 0, CLOSE_CAP);
+  }
+
   update(dt, ctx, dist) {
     const F = this.form;
     const sp = this._speed();
     this.timer -= dt;
-    this.lungeSpeed = damp(this.lungeSpeed, 0, 8, dt);
+    /* The authored lunge still decays exactly as it did — `thrust` and `lunge`
+     * are single explosive steps and must stay that shape — but it can never
+     * fall below what the footwork loop is asking for while there is still
+     * ground between this blade and the body it was declared against. When the
+     * gap is shut the floor is 0 and this line is what it always was. */
+    this.lungeSpeed = Math.max(this._closing(dist), damp(this.lungeSpeed, 0, 8, dt));
     this.spin = this.phase === 'strike' && this.attack?.spin ? this.spin + dt * 26 : 0;
 
     const target = this.e.target;
@@ -511,7 +668,7 @@ export class DuelBrain {
         }
         this.guardTargetDir = this.restDir;
 
-        const inRange = dist < F.spacing[1];
+        const inRange = dist < this.reachOut;
         const want = F.aggression * (playerRecovering ? 1 + F.punishRecovery : 1)
                    * (F.defensive && !playerCommitted ? 0.35 : 1);
         // The decision happens when the pause between attacks runs out — once,
@@ -587,7 +744,7 @@ export class DuelBrain {
           ? _v1.copy(this.attack.to).lerp(this.restDir, 0.45).normalize()
           : this.restDir;
         if (this.timer <= 0) {
-          if (this.chainLeft > 0 && dist < F.spacing[1] + 0.5) {
+          if (this.chainLeft > 0 && dist < this.reachOut + 0.5) {
             this.chainLeft--;
             this._beginAttack(sp, true);
           } else {
@@ -711,13 +868,81 @@ export class DuelBrain {
     this._cued = false;
   }
 
+  /**
+   * THE GHOST WAS DRAWN SHORT OF THE BLADE. EVERY ATTACK. ALWAYS.
+   *
+   * This file's first paragraph is the promise the whole duel rests on: "the
+   * blade traces a ghost of where it is about to go". The radii it traced it at
+   * were `0.34 * S` and `(0.34 + 1.12) * S` — two constants, the same for every
+   * attack in the table, and both of them wrong:
+   *
+   *   THE ATTACK'S OWN `reach` WAS IGNORED. `Enemy._poseSaber` puts the hands
+   *   at `(0.34 + attack.reach) * S`, so a thrust holds its hilt 0.42 further
+   *   out than a slash and a lunge 0.5. The ghost drew both at the slash's
+   *   radius. Those are precisely the two attacks a player answers by BACKING
+   *   OUT OF THE ARC, and the arc they were shown was a half-metre short of the
+   *   blade that was coming.
+   *
+   *   AND THE BLADE'S LENGTH WAS SCALED BY THE BODY, which it is not: an
+   *   enemy's saber is a flat 1.12 m whatever size the wielder is. On a big
+   *   duellist that drew a longer ghost than the blade; on a small one, shorter.
+   *
+   * Measured on a real acolyte, an invulnerable target, and the shipped
+   * Telegraph — outer radius drawn against the furthest the tip actually
+   * reached from the chest during the strike:
+   *
+   *     attack       ghost    blade    ghost was
+   *     slashL       1.518    1.573    0.054 m short
+   *     overhead     1.518    1.627    0.108 m short
+   *     rising       1.518    1.866    0.347 m short
+   *     thrust       1.518    2.058    0.539 m short
+   *     lunge        1.518    2.142    0.624 m short
+   *
+   * Ten attacks out of ten, none of them contained by the shape that claims to
+   * contain them. A telegraph you can stand just outside of and still be cut is
+   * worse than no telegraph, because it teaches the wrong distance — and it is
+   * the distance answer the whole footwork note above is about.
+   *
+   * IT IS READ OFF THE BLADE NOW, not recomputed beside it. `saber.base` is
+   * where the light actually starts this frame and `saber.bladeLength` is how
+   * far it goes, both taken about the SAME chest bone `Enemy._poseSaber` poses
+   * the weapon about — so the ghost cannot drift from the weapon the way a
+   * second copy of `0.34 + 1.12` did, and it picks up `reach` for free because
+   * the pose has already spent it. TELE_PAD is the only term that cannot be
+   * read off anything, and it is there to keep the shape a BOUND rather than an
+   * estimate: the guard sweeps on after the arc is drawn.
+   *
+   * After, same fixture, at all four difficulties — every attack, every tier,
+   * the ghost now CONTAINS the sweep by 0.056 to 0.164 m:
+   *
+   *     attack       ghost    blade    margin
+   *     rising       1.789    1.702    +0.087   (worst case, +0.056 at Knight)
+   *     slashL       1.735    1.606    +0.129
+   *     thrust       2.170    2.054    +0.116
+   *     lunge        2.257    2.141    +0.116
+   *     smash        1.850    1.654    +0.195   (widest, on the guard break)
+   */
   _drawTelegraph(fill, alpha, pulse) {
     const t = this.telegraph;
     if (!t || !this.attack) return;
     const e = this.e;
     const S = e.A.scale;
-    _v3.copy(e.position).setY(e.position.y + 1.34 * S);
-    t.shape(_v3, e.facing, this.attack.from, this.attack.to, 0.34 * S, (0.34 + 1.12) * S);
+    /* THE SAME CHEST THE BLADE IS POSED ABOUT. `Enemy._pose` hands
+     * `_poseSaber` the rig's animated chest bone; this drew its arc about
+     * `position + 1.34 * S` instead, which is a fixed point on a body that
+     * leans, breathes and steps. Two origins for one arc is the same defect as
+     * two copies of a table: they agree when the body is standing still and
+     * nowhere else. Measured on a mid-strike acolyte the two are up to 0.19 m
+     * apart, which is most of the residual the padding below used to have to
+     * cover. */
+    if (!(e.rig && e.rig.worldPos && e.rig.worldPos('chest', _v3))) {
+      _v3.copy(e.position).setY(e.position.y + 1.34 * S);
+    }
+    const blade = e.saber?.bladeLength ?? 1.12;
+    // The emitter, not the hand: the blade starts 0.15 m past the fist and the
+    // ghost's inner edge is supposed to be where the light begins.
+    const start = Math.max(e.saber?.base ? e.saber.base.distanceTo(_v3) : 0, 0.34 * S);
+    t.shape(_v3, e.facing, this.attack.from, this.attack.to, start, start + blade + TELE_PAD * S);
     t.set(TIER[this.attack.tier].colour, fill, alpha * (this.e.lod > 1 ? 0 : 1), pulse);
   }
 

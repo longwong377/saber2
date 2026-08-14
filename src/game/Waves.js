@@ -24,10 +24,16 @@
  *   A LADDER    `isBossWave` is a modulus, not a Set that ended at 30, and the
  *               set-piece is a share of the wave rather than one fixed unit.
  *
- * And the player grows with it: twenty-nine boons drafted every second wave,
- * weighted by rarity that moves with depth, with five masteries gated on
- * already having committed to an axis. `budgetFor`'s one constant is derived
- * from that draft rate, because the two are one decision.
+ * And the player grows with it: forty boons drafted every second wave, weighted
+ * by rarity that moves with depth, with six masteries gated on already having
+ * committed to an axis. `budgetFor`'s one constant is derived from that draft
+ * rate, because the two are one decision.
+ *
+ * (Those two counts said "twenty-nine" and "five" for a long time while the
+ * table grew to forty and six. A count written in prose beside a list is the
+ * same defect as a card that promises what it does not do, and it is the one
+ * this codebase keeps having — so tools/checks/claims.mjs now reads these two
+ * sentences and counts the arrays, and they cannot drift apart again.)
  */
 
 import * as THREE from 'three';
@@ -2138,8 +2144,9 @@ const mastery = (axis) => (taken) => axisCountOf(taken, axis) >= MASTERY_NEEDS;
 
 /**
  * `drawBoons` filtered out everything already taken and nothing could be taken
- * twice. With 34 cards and a draft every DRAFT_EVERY = 2 waves, that means a
- * run exhausts the entire system at about wave 68 — `drawBoons` returns `[]`,
+ * twice. With the 34 cards of the day and a draft every DRAFT_EVERY = 2 waves,
+ * that meant a run exhausted the entire system at about wave 68 — `drawBoons`
+ * returns `[]`,
  * `offerDraft` sees an empty hand and silently resumes, and from there the
  * player's power is frozen while the budget keeps climbing forever. In the mode
  * whose whole promise is endless escalation, the reward half of the loop had a
@@ -2264,7 +2271,19 @@ export const BOONS = [
   {
     id: 'soresu', icon: '🛡', name: 'Soresu', tag: 'Form III',
     rarity: 'common', axes: ['guard'], stack: 3,
-    text: 'A wider guard. Deflection is forgiven further along the blade, and your reserves run deeper.',
+    /* "DEFLECTION IS FORGIVEN FURTHER ALONG THE BLADE" described a different
+     * mechanic from the one this card moves, and the two share a literal, which
+     * is almost certainly how it happened. `gradeCaught` gates a RETURN on
+     * `bladeT > RETURN_ZONE` — where along the blade the bolt landed — and on
+     * `pickReturnTarget(..., ctx.returnCone ?? 0.42)`, which is how far OFF
+     * YOUR SIGHTLINE the game will look for something to send it to. Both
+     * numbers were 0.42. This card moves the second one and nothing anywhere
+     * moves the first, so a rank of Soresu forgave your AIM, never your contact
+     * point. Measured: the cone opens from ±54.5° to ±65.2° at rank 1; the
+     * blade-position gate is identical at every rank of every card in the game.
+     * Combat.RETURN_ZONE now has its own name so the coincidence cannot
+     * mislead the next reader. */
+    text: 'A wider guard. A returned bolt finds its mark further off your sightline, and your reserves run deeper.',
     // The cone GROWS by rank instead of being set to a constant, or rank 2
     // would silently be half a card. Capped, because a return cone wide enough
     // to contain everything on screen is an auto-aim, not a guard.
@@ -2277,7 +2296,17 @@ export const BOONS = [
   {
     id: 'ataru', icon: '🌀', name: 'Ataru', tag: 'Form IV',
     rarity: 'rare', axes: ['force'],
-    text: 'Acrobatic. Every Force power costs little over half, you leap higher, and you may leap a second time in the air.',
+    /* "…AND YOU MAY LEAP A SECOND TIME IN THE AIR" is what this said, and every
+     * player in the game can already do that. `Player._move` grants
+     * `airJumps = boonMods.doubleJump ? 2 : 1` on every landing, and the note
+     * beside it says so out loud — "Everyone gets the second jump — it is a
+     * Force jump, not an upgrade. The boon grants a third." Driven on a real
+     * Player: 1 air jump without the card, 2 with it. So the rare card that
+     * carries this game's whole acrobatic axis was selling, as one of its three
+     * promises, a thing the player had before they drafted anything.
+     *
+     * The card is not changed. The sentence is, to the leap it actually adds. */
+    text: 'Acrobatic. Every Force power costs little over half, you leap higher, and the air gives you one leap more than it gives anyone else.',
     apply(p) { p.boonMods.doubleJump = true; p.boonMods.forceCost *= 0.55; p.boonMods.jumpPower *= 1.18; },
   },
   {
@@ -2363,7 +2392,22 @@ export const BOONS = [
   {
     id: 'meditation', icon: '🧘', name: 'Meditation', tag: 'Discipline',
     rarity: 'common', axes: ['body'], stack: 3,
-    text: 'Stamina returns half again as fast, and Flow bleeds away more slowly.',
+    /* "AND FLOW BLEEDS AWAY MORE SLOWLY" was the second half, and there is no
+     * such mechanic anywhere in the tree. Flow bleeds at a flat `dt * 0.085` in
+     * `Player._regen` and nothing scales it — `flowGain`, which is what this
+     * card actually moves, multiplies what a returned bolt or a kill PAYS IN
+     * (Player.addFlow) and never touches the drain. Driven on a real Player,
+     * flow after 5 s of standing still from full:
+     *
+     *     no card         0.5750
+     *     meditation ×1   0.5750     (flowGain 1.150)
+     *     meditation ×3   0.5750     (flowGain 1.521)
+     *
+     * Identical to four decimal places at three ranks. The card is unchanged
+     * and the sentence now describes the half that is real; making the bleed
+     * itself scale would need a reader in Player._regen, which is handed over
+     * rather than smuggled in here. */
+    text: 'Stamina returns half again as fast, and everything you do earns more Flow.',
     apply(p, s = 1) { p.boonMods.staminaRegen *= grow(1.5, s); p.boonMods.flowGain *= grow(1.15, s); },
   },
   {
@@ -2431,7 +2475,13 @@ export const BOONS = [
      * and the one a player feels immediately, because it changes how often they
      * get to act rather than what happens when they do.
      */
-    text: 'You recover from a swing faster. The blade comes back around a third sooner.',
+    /* "A THIRD SOONER" was arithmetic run in the wrong direction. `attackRate`
+     * is swings per second and SaberController divides by it —
+     * `swingCool = OVERHEAD.cooldown / attackRate` — so a rank-1 1.33 takes the
+     * 0.46 s recovery to 0.346 s, which is 24.8% sooner, not 33%. (Against the
+     * whole 0.78 s swing-plus-recovery cycle it is 14.6%.) A card whose entire
+     * pitch is a number has to state the number it produces. */
+    text: 'You recover from a swing faster. The blade comes back around a quarter sooner.',
     apply(p, s = 1) { p.boonMods.attackRate *= grow(1.33, s); },
   },
   {
@@ -2458,7 +2508,13 @@ export const BOONS = [
   {
     id: 'wellspring', icon: '🔷', name: 'Wellspring', tag: 'Reservoir',
     rarity: 'common', axes: ['force'], stack: 3,
-    text: 'A deeper well, and it fills back up half again as fast.',
+    /* "HALF AGAIN AS FAST" was 1.5 and the card gives 1.6 — a small drift, and
+     * exactly the kind that survives forever because nobody does the division.
+     * Caught by parsing the quantity out of this sentence and driving the card,
+     * which is the only way a claim check is worth anything. The number stays
+     * (tools/checks/escalation.mjs measures a real second of regeneration
+     * against it); the sentence moves to what it actually pays. */
+    text: 'A deeper well, and it fills back up three fifths again as fast.',
     apply(p, s = 1) {
       if (typeof p.maxForce === 'number') { p.maxForce += 45 * s; p.force = p.maxForce; }
       p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * grow(1.6, s);
@@ -2700,15 +2756,22 @@ export const BOONS = [
  * waves and the raw damage a wave puts on an undefended player goes 17.8 ->
  * 230. Nothing that converges can race that.
  *
- * And even with ranks the card pool is finite — 66 ranks across 30 cards, which
- * a draft every second wave exhausts at about wave 134. Better than the 68 it
- * was, still a wall, and past it the reward half of the loop went quiet while
- * the pressure half kept climbing forever.
+ * And even with ranks the card pool is finite — today 91 ranks across 40 cards,
+ * which a draft every second wave exhausts at about wave 182. Better than the
+ * 68 it was, still a wall, and past it the reward half of the loop went quiet
+ * while the pressure half kept climbing forever.
  *
  * So: one choice, on every boss wave, that does NOT diminish and has NO cap.
- * Five axes — the same five the masteries already name, so a run's attunements
- * and its cards pull in the same direction and a build has one identity rather
- * than two.
+ * Five axes, so a run's attunements and its cards pull in the same direction
+ * and a build has one identity rather than two.
+ *
+ * FIVE, AND THE MASTERIES NAME SIX. This sentence used to read "the same five
+ * the masteries already name", which stopped being true when Communion was
+ * added: `bond` has a mastery (The Unifying Force) and no attunement, so a run
+ * built entirely on the bond axis has nothing to spend a set-piece draft on
+ * that is aimed at it. That is a real gap and it is written down rather than
+ * papered over — adding a sixth attunement changes every draft distribution in
+ * the game and is not something to slip in under a claims sweep.
  *
  * WHAT THEY DO NOT DO, corrected here because this comment used to claim it.
  * It read "1.12^20 by wave 100 is 9.6x, which is the same order as the ramp it
@@ -2762,6 +2825,30 @@ export const ATTUNEMENTS = [
     apply(p) {
       p.boonMods.forceCost *= 1 - ATTUNE_STEP * 0.7;
       p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * 1.10;
+      /* "…AND RETURNS SOONER" DID NOTHING WHATEVER ON ITS OWN.
+       *
+       * `Player._regen` regenerates the Force at a flat 7.5/s and does not read
+       * `forceRegen` at all — the only thing in the tree that spends that field
+       * is `wellspringFlow`, and until this line the only thing that installed
+       * that tick was the Wellspring CARD. So half of an attunement that is
+       * offered on every set-piece forever, and whose whole reason to exist is
+       * unbounded growth, was live only for a player who happened to have drawn
+       * a particular common. Measured, force regenerated over 4 s from empty:
+       *
+       *     no cards            30.00% of max
+       *     attune-force ×1     30.00%      (forceRegen 1.10)
+       *     attune-force ×4     30.00%      (forceRegen 1.46)
+       *     wellspring          1.60× the base rate, as its text promises
+       *
+       * Four takes of a permanent uncapped choice, and the number it moved was
+       * read by nothing. The existing balance check missed it because it asks
+       * whether `boonMods` CHANGED, on a stub player with no update loop — a
+       * field moving is not a field being read.
+       *
+       * The tick is installed under Wellspring's own name deliberately: it is a
+       * Map keyed by name, so the two cards share one installation and the
+       * regeneration is added once rather than twice. */
+      boonTick(p, 'wellspring', wellspringFlow);
     },
   },
   {
@@ -2779,6 +2866,18 @@ export const ATTUNEMENTS = [
     apply(p) {
       p.boonMods.lifesteal += 2;
       p.boonMods.ferocity = (p.boonMods.ferocity ?? 0) + 0.03;
+      /* "AND THE TAKING SHARPENS YOU" — the same hole as attune-force, in the
+       * other axis. `ferocity` is read by exactly one function, `juyoEdge`, and
+       * the only thing that installed it was the Juyo card. Measured, cutPower
+       * after five limbs taken:
+       *
+       *     attune-dark alone   1.00 → 1.00     (ferocity 0.03, unread)
+       *     juyo alone          1.00 → 1.48
+       *     juyo + attune-dark  1.00 → 1.60
+       *
+       * Same name as Juyo's own installation, for the same reason as above: one
+       * tick, whichever card or attunement brought it. */
+      boonTick(p, 'juyo', juyoEdge);
     },
   },
 ];

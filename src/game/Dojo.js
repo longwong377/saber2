@@ -114,7 +114,14 @@ export const LESSONS = [
   },
   {
     id: 'return', title: 'Send it back', need: 4,
-    brief: 'Fast tip, contact past the middle of the blade, and something under your reticle. Then the bolt goes home.',
+    /* "PAST THE MIDDLE OF THE BLADE" named a fraction the game does not use.
+     * `gradeCaught` gates a RETURN on `bladeT > SPEED_GRADE.returnBladeT`, which
+     * is 0.42 — the outer FIFTY-EIGHT per cent, not the outer half. A coach line
+     * is a claim like any other and this one was teaching a contact point 8% of
+     * a blade further out than the game asks for, on the lesson whose whole job
+     * is to teach that contact point. It says the direction now and leaves the
+     * number to the gate; tools/checks/claims.mjs holds it to that. */
+    brief: 'Fast tip, contact well out along the blade rather than near the hilt, and something under your reticle. Then the bolt goes home.',
     hint: 'Look at the remote as you meet the bolt.',
     setup: { remotes: 2, fireRate: 1.7, boltSpeed: 34, dummies: 0, spar: false, invincibleRemotes: true },
     check: (ev) => ev.type === 'deflect' && ev.grade >= GRADE.RETURN,
