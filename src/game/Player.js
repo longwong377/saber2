@@ -2187,12 +2187,35 @@ export class Player {
       // SKIRT FIRST: the cape's collider proxy is the skirt's own particles, so
       // stepping the cape first would have it dodging where the skirt was last
       // frame.
+      /**
+       * FIRST PERSON KEEPS ITS ROBE, AND KEEPS IT AS CLOTH.
+       *
+       * This was `setVisible(!firstPerson)`, and the second thing that call
+       * does is bring the RIGID layer back in the cloth's place — see the note
+       * on it in Cloth.js. So the view the game is mostly played in was the
+       * one view that still had the cone in it: four meshes, 904 triangles,
+       * shown only in first person, with the under-robe's hem travelling
+       * 0.0 mm across a jump while the knee travels 1474 mm. The first-person
+       * mesh hide covers neck, head, chest and clavicles, so the legs are
+       * drawn — behind it.
+       *
+       * The robe simply stays on. All 140 of its particles are below the eye
+       * and the nearest sits 0.665 m from the camera against a 0.045 m near
+       * plane, so it cannot clip the view, and one garment set is a fraction
+       * of a millisecond. Looking down at your own moving robe is the correct
+       * answer as well as the cheap one.
+       *
+       * The CAPE is different and stays hidden: it hangs behind the shoulders,
+       * where a first-person camera cannot see it, so simulating it would be
+       * paying for nothing. `false` for `standIn` is the whole point — hidden
+       * means hidden, not swapped for a cylinder.
+       */
       if (this.skirt) {
-        this.skirt.setVisible(!this.camera.firstPerson);
-        if (!this.camera.firstPerson) this.skirt.update(dt, this.skirt.refreshColliders(), _v1);
+        this.skirt.setVisible(true);
+        this.skirt.update(dt, this.skirt.refreshColliders(), _v1);
       }
       this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
-      this.cloak.setVisible(!this.camera.firstPerson);
+      this.cloak.setVisible(!this.camera.firstPerson, false);
     }
   }
 

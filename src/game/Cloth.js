@@ -1651,10 +1651,36 @@ export function attachSkirt(scene, rig, opts = {}) {
   skirt.impulse = (dir, strength, dt) => { _impulse(dir, strength, dt); sash?.impulse(dir, strength, dt); };
 
   skirt.sash = sash;
-  skirt.setVisible = (v) => {
+  /**
+   * @param v        is the simulated garment on?
+   * @param standIn  when it is off, does the rigid layer come back in its
+   *                 place? TRUE for the LOD swap, which is what this call was
+   *                 written for — a character at range needs a skirt of some
+   *                 kind and 616 static triangles are the cheap one.
+   *
+   * FALSE IS FIRST PERSON, AND ITS ABSENCE WAS THE OLDEST BUG ON THE LIST.
+   *
+   * `Player._pose` called `setVisible(!firstPerson)`, so looking through your
+   * own eyes turned the cloth off and, by the line below, turned the rigid
+   * layer ON. The player's report was "a hard cone under the clothes, visible
+   * when jumping, hides the legs" — reported repeatedly, fixed in third person,
+   * and still exactly true in the view where most of the game is spent.
+   * Measured on a real player: four meshes and 904 triangles are shown ONLY in
+   * first person and nothing at all is hidden, and the under-robe's hem
+   * travels 0.0 mm in the pelvis frame across a jump while the knee travels
+   * 1474 mm.
+   *
+   * Two different intents were sharing one flag: "swap to the cheap version"
+   * and "do not draw this at all". The LOD wants the first. A camera inside
+   * the head wants the second — or better, wants the CLOTH, which is what
+   * Player now asks for: all 140 particles sit below the eye and the nearest
+   * is 0.665 m from it, against a 0.045 m near plane, so there is nothing for
+   * a robe to clip into.
+   */
+  skirt.setVisible = (v, standIn = true) => {
     skirt.mesh.visible = v;
     sash?.setVisible(v);
-    for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v;
+    for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v && standIn;
   };
   skirt.setVisible(true);
   const _dispose = skirt.dispose.bind(skirt);

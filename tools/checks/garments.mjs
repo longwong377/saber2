@@ -979,4 +979,113 @@ export function run({ check, assert }) {
     return `${built.robeSkirt.length} garments handed out, deepest dy ${deepest.toFixed(2)} m, `
       + `cloth reaches dy ${clothY.toFixed(2)} m, nothing rigid below the belt`;
   });
+
+  check('garments: the cone is gone from FIRST person too, and the robe there is cloth', async () => {
+    /**
+     * THE OLDEST ITEM ON THE PLAYER'S LIST, AND IT WAS HALF FIXED.
+     *
+     * "A hard cone/cylinder under the clothes, visible when jumping, hides the
+     * legs" — reported repeatedly, missed several times, and finally fixed in
+     * third person by replacing the outer rigid lathes with simulated cloth.
+     *
+     * It was still exactly true in FIRST person, which is where most of the
+     * game is spent. `Player._pose` called `skirt.setVisible(!firstPerson)`,
+     * and the second thing that call does is bring the RIGID layer back in the
+     * cloth's place — that is what it is for, at LOD range. So looking through
+     * your own eyes turned the cloth off and the cone ON. The first-person
+     * mesh hide covers neck, head, chest and clavicles only, so the legs are
+     * still drawn, behind it.
+     *
+     * Measured on a real player on a real level: four meshes and 904 triangles
+     * were shown ONLY in first person and nothing at all was hidden, and the
+     * under-robe's hem travelled 0.0 mm in the pelvis frame across a jump
+     * while the knee travelled 1474 mm.
+     *
+     * Measured as a SET DIFFERENCE of what is actually drawn, walking the rig
+     * and honouring every ancestor's visibility — not by reading a flag, and
+     * not by trusting a name. Two intents were sharing one flag ("swap to the
+     * cheap version" and "do not draw this"), and only the drawn set can tell
+     * them apart.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.shadow.camera.updateProjectionMatrix();
+    scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+    const engine = { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+      sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+      renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+      profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+      applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+      setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+      setQuality() {}, setResolutionScale() {}, render() {} };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
+    await world.loadLevel('meadow');
+    world.spawnPlayer();
+    const p = world.player;
+    for (let i = 0; i < 60; i++) world.update(1 / 60, idle);
+
+    /** Everything actually drawn under the rig, ancestors honoured. */
+    const drawn = () => {
+      const out = new Map();
+      p.rig.root.traverse((o) => {
+        if (!o.isMesh) return;
+        let vis = o.visible, q = o.parent;
+        while (q && vis) { vis = q.visible; q = q.parent; }
+        if (vis) {
+          const g = o.geometry;
+          out.set(o.uuid, (g?.index?.count ?? g?.attributes?.position?.count ?? 0) / 3);
+        }
+      });
+      return out;
+    };
+    const settle = (fp) => {
+      p.camera.firstPerson = fp;
+      for (let i = 0; i < 20; i++) world.update(1 / 60, idle);
+      return drawn();
+    };
+
+    const tp = settle(false);
+    const fp = settle(true);
+    const extra = [...fp].filter(([k]) => !tp.has(k));
+    const tris = extra.reduce((a, [, t]) => a + t, 0);
+    assert(extra.length === 0,
+      `${extra.length} mesh(es) and ${tris.toFixed(0)} triangles are drawn ONLY in first person — `
+      + 'that is the rigid stand-in coming back in the cloth\'s place, which is the cone the '
+      + 'player reported, in the view the game is mostly played in');
+
+    // …and what is there is CLOTH: it has particles, they are below the eye,
+    // and none of them is anywhere near the near plane.
+    const pos = p.skirt?.pos;
+    assert(pos && pos.length >= 3,
+      'the first-person robe has no cloth particles at all');
+    const cam = engine.camera.position;
+    let n = 0, below = 0, nearest = Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      n++;
+      if (pos[i + 1] < cam.y) below++;
+      nearest = Math.min(nearest, Math.hypot(pos[i] - cam.x, pos[i + 1] - cam.y, pos[i + 2] - cam.z));
+    }
+    assert(below === n,
+      `${n - below} of ${n} robe particles are at or above the eye in first person — a robe that `
+      + 'reaches the camera is a different bug wearing this fix');
+    assert(nearest > engine.camera.near * 2,
+      `the nearest robe particle is ${nearest.toFixed(3)} m from a camera whose near plane is `
+      + `${engine.camera.near} — it will clip through the view`);
+
+    const line = `third person ${tp.size} meshes, first person ${fp.size}, 0 extra; `
+      + `${n} cloth particles all below the eye, nearest ${nearest.toFixed(3)} m`;
+    world.unload();
+    return line;
+  });
 }
