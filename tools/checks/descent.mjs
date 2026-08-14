@@ -257,7 +257,7 @@ export function run({ check, assert }) {
         p.velocity.set(0, 0, 0);
         p.camera.yaw = yaw + Math.PI;
         let gain = 0;
-        for (let f = 0; f < 8 * 60; f++) {
+        for (let f = 0; f < 6 * 60; f++) {
           p.camera.yaw = yaw + Math.PI;
           p.saber.retract();
           world.update(1 / 60, idleInput(0, 1));

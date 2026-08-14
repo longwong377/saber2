@@ -53,10 +53,14 @@ const OUTDOOR_LEVELS = LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere?.sky !== 
 const ROWS = 3;
 
 /* ── a world stub the dressing passes are happy with ─────────────────── */
-function stubWorld(terrain) {
+/* `level` on the stub, because dressing passes read it — the cut takes its
+ * water line from `world.level?.water?.level ?? 0.30` and refuses to place
+ * anything loose below it, so a survey without one is measuring a level the
+ * game does not ship. See the same note in sliceable.mjs for what it cost. */
+function stubWorld(terrain, level = null) {
   const scene = new THREE.Scene();
   return {
-    scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+    scene, level, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: { addStaticBox() {}, staticBoxes: [], add() {}, bodies: [], raycast: () => null },
     addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
     addDoor(d) { this.doors.push(d); return d; },
@@ -132,7 +136,7 @@ function fill() {
      * is 92 m across, so the survey is measuring real floor. */
     if (!L || typeof L.dress !== 'function' || L.training) continue;
     const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-    const world = stubWorld(terrain);
+    const world = stubWorld(terrain, L);
     /* GROUND COVER COUNTS, and it is the level's OWN field rather than a
      * restatement of it — built through the real constructor with the real
      * arguments the World passes, BEFORE dress(), in the order World.loadLevel
@@ -414,7 +418,7 @@ export function run({ check, assert, near }) {
     for (const key of OUTDOOR_LEVELS) {
       const L = LEVELS[key];
       const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-      const world = stubWorld(terrain);
+      const world = stubWorld(terrain, L);
       L.dress(world);
       const sun = sunDirection(L.atmosphere).normalize();
       const groundNL = Math.max(0, UP.dot(sun));
@@ -861,6 +865,7 @@ export function run({ check, assert, near }) {
      * bearing of a point on the near range has to move several times as far as
      * the same point on the far one. */
     const terrain = new Terrain(new THREE.Scene(), 'dunes', 0.5);
+    // no level here: this one surveys addHorizon against a bare heightfield
     const world = stubWorld(terrain);
     world.scene.fog = new THREE.FogExp2(0xd8c8a4, 0.0042);
     const before = world.physics.staticBoxes.length;
@@ -965,7 +970,7 @@ export function run({ check, assert, near }) {
       const a = L.atmosphere || {};
       if (a.sky === false || a.horizon === false) continue;
       const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-      const world = stubWorld(terrain);
+      const world = stubWorld(terrain, L);
       world.level = L;
       world.scene.fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
       // The ranges read the sky the DOME baked, so the dome has to exist —
@@ -1121,7 +1126,7 @@ export function run({ check, assert, near }) {
       const a = L.atmosphere || {};
       if (a.sky === false || a.horizon === false) continue;
       const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-      const world = stubWorld(terrain);
+      const world = stubWorld(terrain, L);
       world.level = L;
       world.scene.fog = new THREE.FogExp2(a.fogColor ?? 0xc9b391, a.fogDensity ?? 0.0035);
       const dome = new SkyDome(world.scene);

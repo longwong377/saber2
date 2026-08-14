@@ -115,7 +115,14 @@ import { GrassField } from '../../src/world/Scenery.js';
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 /* ── a world stub the dressing passes are happy with ─────────────────── */
-function stubWorld(terrain) {
+/**
+ * `level` is part of the world a dressing pass reads — several passes take
+ * numbers off it (the cut's water line is `world.level?.water?.level ?? 0.30`,
+ * and it then refuses to place anything loose below that) — so a survey that
+ * leaves it off is surveying a level the game does not ship. sliceable.mjs had
+ * the same hole and it cost the deeps every crate and barrel on its floor.
+ */
+function stubWorld(terrain, level = null) {
   const scene = new THREE.Scene();
   const realAdd = scene.add.bind(scene);
   // Which maker put this here, for the per-prop-type report. A label only:
@@ -125,7 +132,7 @@ function stubWorld(terrain) {
     return realAdd(...objs);
   };
   return {
-    scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+    scene, level, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: { addStaticBox() { return {}; }, removeStaticBox() {}, staticBoxes: [], add() {}, remove() {}, bodies: [], raycast: () => null },
     addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
     addDoor(d) { this.doors.push(d); return d; },
@@ -358,7 +365,7 @@ function seating() {
     const L = LEVELS[key];
     if (!L || typeof L.dress !== 'function') continue;
     const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-    const world = stubWorld(terrain);
+    const world = stubWorld(terrain, L);
     /* The level's OWN cover field, built the way World.loadLevel builds it and
      * BEFORE dress(), because the stone drifts bias themselves away from it —
      * dressing first would survey a layout the game never produces. */

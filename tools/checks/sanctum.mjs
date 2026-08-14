@@ -38,10 +38,18 @@ import { LEVELS } from '../../src/game/Levels.js';
 import { TAU } from '../../src/engine/MathUtil.js';
 
 /** The same world stub every dressing survey in this directory uses. */
-function stubWorld(terrain) {
+/**
+ * `level` belongs on the stub, because dressing passes read it: the cut takes
+ * its water line from `world.level?.water?.level ?? 0.30` and then refuses to
+ * place anything loose below that, so a survey without a level attached is
+ * surveying a level the game does not ship. Measured when sliceable.mjs was
+ * missing it — the deeps lost every crate and barrel on its floor, 4 reachable
+ * objects where the shipped level has 48.
+ */
+function stubWorld(terrain, level = null) {
   const scene = new THREE.Scene();
   return {
-    scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+    scene, level, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: { addStaticBox() {}, staticBoxes: [], add() {}, bodies: [], raycast: () => null },
     addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
     addDoor(d) { this.doors.push(d); return d; },
@@ -72,7 +80,7 @@ function sanctum() {
   if (DRESSED) return DRESSED;
   const L = LEVELS.arena;
   const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-  const world = stubWorld(terrain);
+  const world = stubWorld(terrain, L);
   L.dress(world);
 
   const built = [];

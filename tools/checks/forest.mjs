@@ -40,10 +40,13 @@ import { TAU } from '../../src/engine/MathUtil.js';
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 /** A world stub with the four things a Forest touches. */
-function stubWorld(terrain = null) {
+/* `level` is attached because dressing passes read it — see the note on the
+ * same field in sliceable.mjs, where leaving it off cost the deeps every loose
+ * prop on its floor. */
+function stubWorld(terrain = null, level = null) {
   const scene = new THREE.Scene();
   return {
-    scene, statics: [], props: [], enemies: [], levelLights: [], doors: [],
+    scene, level, statics: [], props: [], enemies: [], levelLights: [], doors: [],
     physics: { staticBoxes: [], addStaticBox(p, e, q, o) { const b = { p, e, q, o }; this.staticBoxes.push(b); return b; } },
     particles: { sparkBurst() {}, sandPuff() {}, slag() {} },
     addProp(p) { this.props.push(p); return p; },
@@ -253,7 +256,7 @@ export function run({ check, assert }) {
      * of the bowl. A wood whose median sight line is 100 m is a park. */
     const L = LEVELS.wood;
     const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-    const world = stubWorld(terrain);
+    const world = stubWorld(terrain, L);
     L.dress(world);
     const f = world.forest;
     assert(f && f.count > 300, `the wood planted ${f ? f.count : 0} trees`);

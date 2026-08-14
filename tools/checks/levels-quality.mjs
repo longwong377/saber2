@@ -275,6 +275,37 @@ export async function run({ check, assert }) {
      * seconds never reaches the sea at all, so a test that starts at the origin
      * would pass on a level made entirely of water. Each bearing walks out to
      * the first ground under the sheet, backs up 10 m, and holds W. */
+    /* AND THE DROIDS BURN TOO, which is not a flourish: the fights on these
+     * levels happen along the edge of the hazard, and a sea that only kills the
+     * player is a sea the player learns to fight beside instead of over. */
+    const e = mus.spawnEnemy('b1', new THREE.Vector3(sea.x, mus.terrain.height(sea.x, sea.z), sea.z));
+    for (let f = 0; f < 60 * 8 && !e.dead; f++) mus.update(1 / 60, held(0, 0));
+    assert(e.dead, 'a droid stood in the lava sea for eight seconds and walked out of it');
+
+    /* THE FOUNDRY'S CANAL, which is the one this game puts a claim about on
+     * screen: `works()` passes note "the melt is not cover" into world.notify.
+     * It was a decal over a 0.75 m channel with 40° banks. */
+    const fou = (await level('foundry')).world;
+    const FT = fou.terrain, fwl = fou.level.water.level;
+    let melt = null;
+    outer2: for (let b = 0; b < 96; b++) {
+      const a = (b / 96) * Math.PI * 2;
+      for (let r = 6; r < 90; r += 1) {
+        const x = Math.cos(a) * r, z = Math.sin(a) * r;
+        if (FT.height(x, z) < fwl - 0.2) { melt = { x, z }; break outer2; }
+      }
+    }
+    assert(melt, 'no melt found on the foundry floor at all');
+    const fp = stand(fou, melt.x, melt.z, 0);
+    let fdied = -1;
+    for (let f = 0; f < 60 * 6 && fdied < 0; f++) {
+      fou.update(1 / 60, held(0, 0));
+      if (!fp.alive) fdied = f / 60;
+    }
+    assert(fdied > 0 && fdied < 4.0,
+      `standing in the melt canal for six seconds left the player ${fp.alive ? 'alive' : 'dead'} at `
+      + `${fp.hp.toFixed(0)} HP — this level's own notify calls it "not cover"`);
+
     const kam = (await level('kamino')).world;
     const wl = kam.level.water.level;
     const KT = kam.terrain;
@@ -325,7 +356,8 @@ export async function run({ check, assert }) {
       + 'the bed is meant to put them back in the shallows');
     assert(eyeUnder / frames < 0.05,
       `${(100 * eyeUnder / frames).toFixed(0)}% of frames had the player's eye under the ocean`);
-    return `lava kills in ${died.toFixed(1)} s; ${shores} bearings walked into the ocean stop at `
+    return `lava kills in ${died.toFixed(1)} s and takes a droid with it, melt in ${fdied.toFixed(1)} s; `
+      + `${shores} bearings walked into the ocean stop at `
       + `${worstDepth.toFixed(2)} m of depth, eye never submerged over ${(frames / 60).toFixed(0)} s`;
   });
 

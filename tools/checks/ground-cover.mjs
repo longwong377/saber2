@@ -107,10 +107,18 @@ const OUTDOOR = [...new Set([
 ])];
 const DEG = 180 / Math.PI;
 
-function stubWorld(terrain) {
+/**
+ * `level` belongs on the stub, because dressing passes read it: the cut takes
+ * its water line from `world.level?.water?.level ?? 0.30` and then refuses to
+ * place anything loose below that, so a survey without a level attached is
+ * surveying a level the game does not ship. Measured when sliceable.mjs was
+ * missing it — the deeps lost every crate and barrel on its floor, 4 reachable
+ * objects where the shipped level has 48.
+ */
+function stubWorld(terrain, level = null) {
   const scene = new THREE.Scene();
   return {
-    scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+    scene, level, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: { addStaticBox() {}, staticBoxes: [], add() {}, bodies: [], raycast: () => null },
     addLight(l) { (this.lights ||= []).push(l); scene.add(l); return l; },
     addDoor(d) { this.doors.push(d); return d; },
@@ -225,7 +233,7 @@ function dressed() {
   for (const key of OUTDOOR) {
     const L = LEVELS[key];
     const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-    const world = stubWorld(terrain);
+    const world = stubWorld(terrain, L);
     // the World builds the cover before it dresses, and the drifts read it
     const grass = L.grass
       ? new GrassField(new THREE.Scene(), terrain, { count: 11000, density: L.grass, radius: 46 })
