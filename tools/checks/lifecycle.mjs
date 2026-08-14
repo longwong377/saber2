@@ -290,4 +290,123 @@ export async function run({ check, assert }) {
     world.unload(); world.dispose?.();
     return line;
   });
+
+  check('lifecycle: a corpse takes its materials with it, and a flying limb does not take the body\'s', async () => {
+    /**
+     * EVERY CORPSE IN THE GAME LEAKED ITS OWN MATERIALS, and the reason is
+     * worth writing down because it is invisible from either file alone.
+     *
+     * `Rig.dispose()` frees geometry AND material, walking `rig.root`. Building
+     * an `Actor` REPARENTS every one of the body's meshes out of `rig.root`
+     * and into the actor's own holders — measured here: 0 meshes left under
+     * the root once the ragdoll exists — so by the time `Actor.dispose()`
+     * reaches `this.rig.dispose()` on its last line there is nothing under the
+     * root to free. And the holder loop above it disposed geometry alone.
+     *
+     * Measured on a real acolyte killed through `die()`: 56 of 56 geometries
+     * freed, 0 of 7 materials. Every enemy that has ever died.
+     *
+     * The second half is the trap in the fix. A DetachedPiece hangs the PARENT
+     * BODY's material on the limb it builds (`bone.primary.material`), and a
+     * piece can be culled while the corpse it came off is still lying there —
+     * so freeing materials there would strip the body that is still on screen.
+     * Only the cut face belongs to the piece.
+     */
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const { Enemy, enemyRng } = await import('../../src/game/Enemy.js');
+
+    const freedMat = new Set(), freedGeo = new Set();
+    const matDispose = THREE.Material.prototype.dispose;
+    const geoDispose = THREE.BufferGeometry.prototype.dispose;
+    THREE.Material.prototype.dispose = function () { freedMat.add(this.uuid); return matDispose.call(this); };
+    THREE.BufferGeometry.prototype.dispose = function () { freedGeo.add(this.uuid); return geoDispose.call(this); };
+    try {
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+        size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+        crater() {}, flush() {}, slopeAt: () => 0 };
+      const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 400 });
+      physics.terrain = terrain;
+      const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+        plasma: { spawn() {} }, smoke: { spawn() {} } };
+      const world = {
+        scene: new THREE.Scene(), physics, terrain, statics: [],
+        settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+        players: [], enemies: [], props: [], doors: [], locks: [], particles,
+        bolts: { fire() {}, update() {}, threatsNear: () => [] },
+        time: 0, combatIntensity: 0, groundColor: 0xcfae82,
+        engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+          camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+        report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+        onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {}, onHitmark() {},
+        onExplosion() {}, spawnDebrisGroup() {},
+      };
+      enemyRng.seed(4711);
+      const e = new Enemy(world, 'acolyte', V(0, 0, -3));
+      e.position.set(0, 0, -3);
+      const mats = new Set(), geos = new Set();
+      e.rig.root.traverse((o) => {
+        if (o.geometry) geos.add(o.geometry.uuid);
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m) mats.add(m.uuid);
+      });
+      assert(mats.size >= 4 && geos.size >= 20,
+        `the body only owns ${mats.size} materials and ${geos.size} geometries — this is not a whole figure`);
+
+      e.die(V(0, 1, -3), null, 'cut');
+      for (let i = 0; i < 200 && !e.actor; i++) await new Promise((r) => setTimeout(r, 10));
+      assert(e.actor, 'no ragdoll was built, so the reparenting this measures never happened');
+      let inRig = 0;
+      e.rig.root.traverse((o) => { if (o.isMesh) inRig++; });
+      assert(inRig === 0,
+        `${inRig} meshes are still under rig.root after the actor took them — if that is deliberate, `
+        + 'Rig.dispose covers them and this check is measuring the wrong thing');
+
+      e.dispose();
+      const matLeak = [...mats].filter((u) => !freedMat.has(u));
+      const geoLeak = [...geos].filter((u) => !freedGeo.has(u));
+      assert(!geoLeak.length, `${geoLeak.length} of ${geos.size} geometries survived the corpse`);
+      assert(!matLeak.length,
+        `${matLeak.length} of ${mats.size} materials survived the corpse — the actor reparents every `
+        + 'mesh out of rig.root, so Rig.dispose finds nothing left to free');
+
+      /* …and the other direction: a limb thrown off a body that is still lying
+       * there must not take the body's material with it. */
+      enemyRng.seed(4711);
+      const b = new Enemy(world, 'acolyte', V(0, 0, -5));
+      b.position.set(0, 0, -5);
+      /* Cut the arm off a body that is STILL STANDING. A corpse's bones are
+       * already loose rigid bodies, so `Actor.cut` on a ragdolled actor is a
+       * shorter collider and a broken joint rather than a new mesh — the
+       * DetachedPiece path only exists for a body on its feet, which is
+       * exactly the case where the corpse it came off is still rendering. */
+      assert(b.actor && !b.actor.ragdolled, 'a living acolyte has no un-ragdolled actor to cut');
+      b.takeCut({
+        bone: 'foreR', cutT: 0.5, cap: { vital: 0.05, name: 'foreR' },
+        point: V(0.3, 1.1, -5), impulse: V(3, 2, 0), normal: V(0, 1, 0), speed: 18,
+      }, null);
+      /* A standing body's meshes are under rig.root — the holders only exist
+       * once it ragdolls — so that is where its materials are counted from. */
+      const before = new Set();
+      b.rig.root.traverse((o) => {
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m) before.add(m.uuid);
+      });
+      const pieces = b.actor.pieces;
+      const nPieces = pieces.length;
+      assert(nPieces > 0,
+        'cutting an arm off a standing body produced no DetachedPiece, so the half of this check '
+        + 'that guards the body\'s materials against a culled limb is asserting nothing');
+      assert(before.size > 0, 'the standing body has no materials to protect');
+      for (const p of pieces) p.dispose();
+      const stripped = [...before].filter((u) => freedMat.has(u));
+      assert(!stripped.length,
+        `culling a detached limb freed ${stripped.length} material(s) the body it came off is still `
+        + 'rendering with — a figure on screen would go untextured');
+      b.dispose();
+      return `${mats.size} materials and ${geos.size} geometries all freed with the corpse; `
+        + `culling ${nPieces} detached piece(s) freed none of the body's ${before.size}`;
+    } finally {
+      THREE.Material.prototype.dispose = matDispose;
+      THREE.BufferGeometry.prototype.dispose = geoDispose;
+    }
+  });
 }
