@@ -409,4 +409,126 @@ export async function run({ check, assert }) {
       THREE.BufferGeometry.prototype.dispose = geoDispose;
     }
   });
+
+  check('lifecycle: a ragdoll that arrives late does not land on a living body', async () => {
+    /**
+     * `Player.die()` builds its Actor from a DYNAMIC import, so the ragdoll is
+     * constructed on the microtask queue AFTER the frame that killed you.
+     * `Enemy.js` imports `Ragdoll.js` statically, so the module is always warm
+     * and the promise always resolves exactly one task later — a one-frame
+     * window, on every death, deterministically.
+     *
+     * Two routine things happen inside that window. `World._reviveDowned` runs
+     * on a wave clear and exists precisely to put a downed player back up: die
+     * on the frame the party clears the wave and the call order inside a single
+     * `world.update()` is `Player.die` → `director.onWaveClear` →
+     * `_reviveDowned`. And a level change disposes the world. Both `respawn()`
+     * and `dispose()` guarded on `this.actor`, which is still null while the
+     * import is in flight, so neither could see it coming.
+     *
+     * Measured, before:
+     *   revived in-window   alive, 100 hp, meshes 64 → 0, ragdolled
+     *   disposed in-window  Actor built, 19 live bodies after unload, 22 scene children
+     *
+     * The mesh count is the player-visible half: `Actor` reparents the body
+     * into its own holders, so a living player stands there with nothing drawn
+     * until something rebuilds the rig.
+     *
+     * Three of Audit 3's eight dimensions found this independently.
+     *
+     * All four cases are driven, and the last two matter as much as the first:
+     * an ordinary death must still ragdoll, and a player who dies, revives and
+     * dies again inside the window must get the SECOND ragdoll — a boolean
+     * flag would refuse both.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const stub = () => {
+      const scene = new THREE.Scene();
+      const sun = new THREE.DirectionalLight(0xffffff, 1);
+      sun.shadow.camera.updateProjectionMatrix();
+      scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+      return { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+        sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+        renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+        profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+        applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+        setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+        setQuality() {}, setResolutionScale() {}, render() {} };
+    };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+    const meshes = (p) => { let n = 0; p.rig?.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
+    /* A real task boundary. A synchronous update loop never yields, so the
+     * import can never land mid-frame and every case looks fine. */
+    const settle = () => new Promise((r) => setTimeout(r, 40));
+    const boot = async () => {
+      const w = new World(stub(), { ...DEFAULT_SETTINGS, quality: 'low' });
+      await w.loadLevel('meadow');
+      w.spawnPlayer();
+      for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
+      return w;
+    };
+
+    // 1 — revived inside the window
+    let w = await boot();
+    let p = w.player;
+    const before = meshes(p);
+    assert(before > 20, `the rig only has ${before} meshes, so this measures nothing`);
+    p.damage(1e9, null, null, 'test');
+    p.respawn(p.position.clone());
+    await settle();
+    for (let i = 0; i < 10; i++) w.update(1 / 60, idle);
+    const after = meshes(p);
+    assert(!p.actor?.ragdolled,
+      'a player revived on the frame they died was ragdolled one microtask later, while alive');
+    assert(after === before,
+      `a revived player lost ${before - after} of ${before} meshes to a ragdoll that arrived after `
+      + 'the revive — they are alive, at full health, and nothing is drawn');
+    w.unload();
+
+    // 2 — disposed inside the window
+    w = await boot();
+    p = w.player;
+    p.damage(1e9, null, null, 'test');
+    w.unload();
+    await settle();
+    let live = 0;
+    for (const b of w.physics.bodies || []) if (!b.dead) live++;
+    assert(!p.actor,
+      'an Actor was built into a world that had already been torn down');
+    assert(live === 0, `${live} physics bodies are still live after unload`);
+
+    // 3 — an ordinary death still ragdolls, or the fix is a deletion
+    w = await boot();
+    p = w.player;
+    p.damage(1e9, null, null, 'test');
+    await settle();
+    for (let i = 0; i < 10; i++) w.update(1 / 60, idle);
+    assert(p.actor?.ragdolled, 'an ordinary death no longer produces a ragdoll at all');
+    w.unload();
+
+    // 4 — die, revive, die again: the SECOND ragdoll must land
+    w = await boot();
+    p = w.player;
+    p.damage(1e9, null, null, 'test');
+    p.respawn(p.position.clone());
+    p.invuln = 0;                                  // respawn grants 2.2 s of mercy
+    p.damage(1e9, null, null, 'test');
+    await settle();
+    for (let i = 0; i < 10; i++) w.update(1 / 60, idle);
+    assert(p.actor?.ragdolled,
+      'a player who died, revived and died again inside one window got no ragdoll — the guard is a '
+      + 'flag rather than a generation, and cannot tell this death from the last one');
+    w.unload();
+
+    return `revived in-window keeps ${after}/${before} meshes and is not ragdolled; disposal leaves `
+      + '0 live bodies; an ordinary death and a die-revive-die both still ragdoll';
+  });
 }

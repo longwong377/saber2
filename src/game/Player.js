@@ -913,6 +913,9 @@ export class Player {
     this.invuln = 0;
     this.riposteTimer = 0;
     this.staggerTimer = 0;
+    /* Death bookkeeping the dynamic Ragdoll import reads back — see die(). */
+    this._deathGen = 0;
+    this.disposed = false;
     this.combo = 0;
     this.comboTimer = 0;
     this.score = 0;
@@ -3878,8 +3881,38 @@ export class Player {
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
     audio.ui('bad');
-    // collapse
+    /**
+     * COLLAPSE — AND ONLY IF THIS BODY IS STILL THE ONE THAT DIED.
+     *
+     * The import is DYNAMIC, so the Actor is built on the microtask queue
+     * after the frame that killed you. Enemy.js imports Ragdoll.js statically,
+     * so the module is always warm and the promise always lands exactly one
+     * task later — a window of one frame, every single death.
+     *
+     * Inside that window the game can do three things, and two of them are
+     * routine. `World._reviveDowned` runs on a wave clear, and the whole point
+     * of it is to put a downed player back on their feet — die on the frame
+     * the party clears the wave and the recorded call order inside ONE
+     * `world.update()` is `Player.die` → `director.onWaveClear` →
+     * `_reviveDowned`. Then one microtask later this callback ragdolls a
+     * living body: measured at 100 hp, alive, and 0 of 64 meshes left under
+     * `rig.root`, because `Actor` reparents them into its own holders. The
+     * player stands there invisible until something rebuilds the rig.
+     * `respawn()` and `dispose()` are the other two, and both guard on
+     * `this.actor` — which is still null while the import is in flight, so
+     * neither guard can see it coming.
+     *
+     * Three of Audit 3's eight dimensions found this independently.
+     *
+     * `_deathGen` is the fix and it is the standard one: stamp the generation
+     * at death, capture it, and refuse if anything has moved the world on. Not
+     * a flag, because a flag cannot tell "the same death" from "the next one"
+     * — a player who dies, revives and dies again inside two frames must get
+     * the SECOND ragdoll, not neither.
+     */
+    const gen = (this._deathGen = (this._deathGen | 0) + 1);
     import('./Ragdoll.js').then(({ Actor }) => {
+      if (gen !== this._deathGen || this.alive || !this.rig || this.disposed) return;
       this.actor = new Actor(this.world.scene, this.world.physics, this.rig, {
         mass: 78, layer: LAYER.RAGDOLL, bladeColor: this.saber.color.getHex(),
       });
@@ -3959,6 +3992,12 @@ export class Player {
   }
 
   dispose() {
+    /* Terminal, and the in-flight ragdoll import consults it — see `_deathGen`
+     * in die(). `dispose()` guards on `this.actor`, which is still null while
+     * that import is on the microtask queue, so without this marker a body
+     * disposed on the frame it died builds its Actor into a torn-down world
+     * one task later. */
+    this.disposed = true;
     // Anything the Force is holding has its gravity switched off and its bolt
     // pinned to an anchor. Leaving on a level change would strand both.
     this.releaseGrip();
