@@ -596,9 +596,30 @@ CEL_BAND_GLSL,
      * the outline prepass — see src/toon/Ink.js).
      *
      * COARSER THAN THE SKY BEHIND IT, on purpose: the deck is the subject and
-     * the gradient is the ground it sits on. */
+     * the gradient is the ground it sits on.
+     *
+     * AND THE ALPHA IS QUANTISED TO NODES, NOT TO PLATEAU CENTRES.
+     *
+     * This read saberCelBand1, and the difference is the whole of Cel.js's own
+     * note on the two: saberCelBand1 returns (floor(v*n)+0.5)/n, the CENTRE of
+     * the band, which is right for a LEVEL because taking the centre cannot
+     * darken a field on average. Coverage is not a level. At five bands the
+     * centre of the lowest band is 0.5/5 = 0.100, so a pixel with NO cloud
+     * over it composited a tenth of the deck's colour anyway — 6.4 display
+     * codes of dark over a bright noon sky, 4.7 over a pale dawn — and the
+     * discard below could never fire, because alpha could not get under 0.002.
+     *
+     * saberCelQuant is floor(v*n+0.5)/n, which lands on the nodes: 0 maps to 0
+     * and 1 maps to 1. The clamp stays but is belt-and-braces now rather than
+     * load-bearing; it was there because band1 takes an input of exactly 1.0
+     * to 1.1.
+     *
+     * NO BACKTICKS IN HERE. This whole block is inside a GLSL template
+     * literal, and a backtick closes it — the first draft of this comment
+     * quoted the two function names that way and took four cel checks down
+     * with a JS syntax error. */
     col = saberCelBand(col, ${CLOUD_BANDS.toFixed(1)});
-    alpha = clamp(saberCelBand1(alpha, ${CLOUD_ALPHA_BANDS.toFixed(1)}), 0.0, 1.0);
+    alpha = clamp(saberCelQuant(alpha, ${CLOUD_ALPHA_BANDS.toFixed(1)}), 0.0, 1.0);
     if (alpha < 0.002) discard;
     gl_FragColor = vec4(col, alpha * uOpacity);
   }

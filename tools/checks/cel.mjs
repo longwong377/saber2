@@ -2098,6 +2098,58 @@ export function run({ check, assert, near }) {
     return `${rows.join(', ')}; a ${raw.size}-code foot→crest ramp bands to ${out.size} codes `
       + `at CEL.fogBands = ${CEL.fogBands}`;
   });
+
+  check('cel: the cloud dome puts nothing over a pixel with no cloud on it', async () => {
+    /**
+     * THE TWO QUANTISERS, AND WHY THE DIFFERENCE IS NOT COSMETIC.
+     *
+     * The dome's coverage read `saberCelBand1`, which returns
+     * `(floor(v*n)+0.5)/n` — the CENTRE of the band. Cel.js's own note says
+     * exactly when that is right: for a LEVEL, because taking the centre
+     * cannot darken a field on average. Coverage is not a level. At five bands
+     * the centre of the lowest band is `0.5/5 = 0.100`, so a pixel with NO
+     * cloud over it composited a tenth of the deck's colour anyway, and the
+     * `if (alpha < 0.002) discard` on the next line could never fire.
+     *
+     *     clear-sky pixel, bright noon   205.2 -> 198.8   (6.4 codes of dark)
+     *     clear-sky pixel, pale dawn     156.2 -> 151.5   (4.7 codes)
+     *     after, both                    0.0 codes, and discard can fire
+     *
+     * `saberCelQuant` is `floor(v*n+0.5)/n`, which lands on the NODES: 0 maps
+     * to 0 and 1 maps to 1. Asserted on the property rather than on the
+     * identifier, so a future rewrite that keeps the behaviour still passes.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/engine/SkyDome.js', import.meta.url), 'utf8');
+
+    const m = src.match(/alpha = clamp\((saberCel\w+)\(alpha, [^)]*\)[^;]*;/);
+    assert(m, 'the cloud dome no longer quantises its alpha at all');
+    const bands = parseFloat((src.match(/CLOUD_ALPHA_BANDS = (\d+)/) || [, '5'])[1]);
+    const q = m[1] === 'saberCelBand1'
+      ? (v) => (Math.floor(v * bands) + 0.5) / bands
+      : (v) => Math.floor(v * bands + 0.5) / bands;
+    const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+    const floorA = clamp01(q(0));
+    assert(floorA < 0.002,
+      `a pixel with zero cloud coverage still composites the deck at alpha ${floorA.toFixed(3)} — `
+      + `${m[1]} takes the plateau CENTRE, so the lowest band floors at 0.5/${bands}, and the `
+      + 'discard on the next line can never fire');
+    assert(clamp01(q(1)) > 0.98,
+      `full coverage quantises to ${clamp01(q(1)).toFixed(3)}, so a solid deck is translucent`);
+
+    // …and what that floor was worth, in display codes over a clear sky.
+    const code = (v) => 255 * Math.pow(clamp01(v), 1 / 2.2);
+    const dark = (sky, deck) => code(sky) - code(sky * (1 - floorA) + deck * floorA);
+    const noon = dark(0.62, 0.20), dawn = dark(0.34, 0.12);
+    assert(noon < 0.5 && dawn < 0.5,
+      `the dome darkens a clear-sky pixel by ${noon.toFixed(1)} codes at noon and `
+      + `${dawn.toFixed(1)} at dawn`);
+    assert(src.includes('if (alpha < 0.002) discard;'),
+      'the discard is gone, so the quantiser has nothing to hand a clear pixel to');
+    return `${m[1]} at ${bands} bands: coverage 0 → alpha ${floorA.toFixed(3)}, `
+      + `${noon.toFixed(1)} codes over a clear noon sky, discard reachable`;
+  });
 }
 
 /* Sampling stride for the mean-drift check — one in ~40k texels is far more
