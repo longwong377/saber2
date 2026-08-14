@@ -72,6 +72,93 @@ export function run({ check, assert, near, THREE }) {
     return `${vc}/${total} meshes on vertex-coloured materials, all with a colour attribute`;
   });
 
+  check('shading: no material is still paying for a lobe the BRDF no longer has', () => {
+    /* THE SHEEN LOBE WAS DELETED AND ITS BILL WAS NOT.
+     *
+     * src/toon/Cel.js removes both sheen accumulations from
+     * lights_physical_pars_fragment (rule 8 — a retroreflective cloth rim reads
+     * as satin, which is the opposite of a flat colour field). three pays for
+     * that lobe by taking it out of the diffuse FIRST, in meshphysical_frag:
+     *
+     *     float sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );
+     *     outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect
+     *                   + sheenSpecularIndirect;
+     *
+     * — so with the lobe gone that line is a straight multiply-down of every
+     * material that declares `sheen`, and only of those. The robes on the PLAYER
+     * declare it; the identical cloth on an acolyte does not.
+     *
+     * The number matters and the obvious way to compute it is wrong: three
+     * uploads the uniform as `sheenColor × sheen`
+     * (WebGLMaterials.refreshMaterialSheen), so max3 is 0.6867 × sheen, not
+     * 0.6867. The compensation is therefore 0.957 at sheen 0.40, not 0.892.
+     * It is a 2.6–4.3% darkening, which is at or under the just-noticeable
+     * difference on a single surface — and that is exactly why it needs a check
+     * rather than an eye: it silently decalibrates the authored albedo ladder
+     * `lit()` builds, and it does it to the player and to nobody else.
+     *
+     * Engine.js imported DYNAMICALLY — see the note in tools/checks/materials.mjs.
+     */
+    return (async () => {
+      const THREE_ = (await import('three'));
+      await import('../../src/engine/Engine.js');
+      const { celInstall } = await import('../../src/toon/Cel.js');
+      assert(celInstall && celInstall.missed.length === 0,
+        `the cel install missed ${celInstall ? celInstall.missed.join(', ') : 'everything'}`);
+
+      /* WHERE THE TEXT ACTUALLY LIVES. ShaderChunk.meshphysical_frag,
+       * ShaderLib.standard.fragmentShader and ShaderLib.physical.fragmentShader
+       * are one immutable string in three, and WebGLPrograms compiles from
+       * ShaderLib — so patching only the chunk would report success and change
+       * nothing. All three are asserted, or the next refactor can quietly go
+       * back to patching the copy nobody reads. */
+      const where = [
+        ['ShaderChunk.meshphysical_frag', THREE_.ShaderChunk.meshphysical_frag],
+        ['ShaderLib.standard', THREE_.ShaderLib.standard.fragmentShader],
+        ['ShaderLib.physical', THREE_.ShaderLib.physical.fragmentShader],
+      ];
+      for (const [label, src] of where) {
+        assert(!/sheenEnergyComp/.test(src),
+          `${label} still darkens outgoingLight by the sheen energy compensation, and the lobe it `
+          + 'compensates for was deleted from the BRDF');
+      }
+      // and the lobes really are gone, or the compensation was load-bearing
+      const pars = THREE_.ShaderChunk.lights_physical_pars_fragment;
+      assert(!/sheenSpecularDirect \+=/.test(pars) && !/sheenSpecularIndirect \+=/.test(pars),
+        'a sheen lobe is back — then its energy compensation belongs back with it');
+
+      /* WHAT IT WAS WORTH, on the figure it was charged to. */
+      const seen = new Map();
+      let physical = 0, standard = 0, meshes = 0;
+      unit('jedi').rig.root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        meshes++;
+        if (o.material.isMeshPhysicalMaterial) physical++; else standard++;
+        const s = o.material.sheen || 0;
+        if (s <= 0) return;
+        const c = o.material.sheenColor;
+        const comp = 1 - 0.157 * Math.max(c.r, c.g, c.b) * s;   // three's own uniform, sheenColor × sheen
+        seen.set(comp, (seen.get(comp) || 0) + 1);
+      });
+      let worst = 1, n = 0;
+      for (const [comp, count] of seen) { worst = Math.min(worst, comp); n += count; }
+      assert(n >= 20,
+        `only ${n} meshes on the player declare sheen — this check has stopped measuring the case it was written for`);
+      assert(worst < 0.99,
+        `the worst compensation on the player is ${worst.toFixed(4)}, which is not a darkening — `
+        + 'the twin is not reproducing the defect, so the assertions above prove nothing');
+      // an NPC in the same cloth must have been unaffected, which is what made
+      // it a discrepancy between characters rather than a global exposure shift
+      let npcSheen = 0;
+      unit('acolyte').rig.root.traverse((o) => { if (o.isMesh && o.material?.sheen > 0) npcSheen++; });
+      const rows = [...seen.entries()].sort((a, b) => a[0] - b[0])
+        .map(([c, k]) => `${k}× ${(100 * c).toFixed(2)}%`);
+      return `${n} of ${meshes} player meshes carried it (${rows.join(', ')}), worst `
+        + `${((1 - worst) * 100).toFixed(1)}% dark; ${physical} physical / ${standard} standard, `
+        + `acolyte ${npcSheen} — all now at 100%`;
+    })();
+  });
+
   check('shading: a limb rebuilt by the cut path still has the channel', () => {
     // Ragdoll.js severs a bone by disposing the limb's geometry and calling
     // limbGeo(keepLen, r0, rCut, seg, true) — no options, no colour asked for

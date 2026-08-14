@@ -23,8 +23,10 @@
 
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { HUD, POWERS, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
+import { HUD, POWERS, POWER_COST, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
   from '../../src/ui/HUD.js';
+import { Player } from '../../src/game/Player.js';
+import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
 import { PLAYER_VOICES } from '../../src/engine/Voice.js';
 import { defaultBindings, keyLabel } from '../../src/engine/Bindings.js';
@@ -89,7 +91,50 @@ const stubWorld = (settings) => ({
   director: { wave: 1, remaining: 3, active: true, intermission: 0 },
 });
 
+/**
+ * A HUD ON THE REAL PAGE, with real text nodes and real parents.
+ *
+ * `hudOn` above is a bag of nodes keyed by id, and that is enough for most of
+ * this file — but two of the defects below are about the SHAPE of the markup:
+ * the wave counter reaches for a sibling element, and the frame counter's box
+ * is decided by where the `<pre>` sits in the tree. Both of the fake nodes in
+ * this repo define `get previousSibling() { return null; }`, which is exactly
+ * what hid the LESSON bug for a whole round: the branch that renamed the
+ * counter could never execute under test.
+ *
+ * Synchronous between install and restore — the runner starts the next check
+ * the moment this one suspends, and a globally installed document would follow
+ * it there.
+ */
+function hudOnPage(html) {
+  const doc = makeDocument(html);
+  const restore = doc.install();
+  try {
+    return { hud: new HUD(doc), doc, restore };
+  } catch (e) { restore(); throw e; }
+}
+
+/** A player with the fields the wheel reads, and the real Force economy. */
+function wheelPlayer(world) {
+  const p = player();
+  Object.assign(p, {
+    world,
+    force: 100,
+    boonMods: { forceCost: 1, lightning: true },
+    healing: null,
+    stasis: { bodies: new Set() },
+    cooldowns: { push: 0, pull: 0, throw: 0, grip: 0, sense: 0, lightning: 0, stasis: 0, heal: 0, compel: 0 },
+    // The one function Player uses to decide whether a power can be paid for.
+    // Borrowed rather than reimplemented: a copy of the formula here would be
+    // the same second source of truth this whole check exists to forbid.
+    _canSpend: Player.prototype._canSpend,
+  });
+  return p;
+}
+
 export async function run({ check, assert }) {
+  const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  const PLAYER_SRC = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
 
   /* ────────────────────────────────────────────────────────────────────
    * THE FEED
@@ -443,5 +488,194 @@ export async function run({ check, assert }) {
       + 'ones a player learns by pressing the key and getting nothing');
     bench.restore();
     return `${POWERS.length} slots, every label from the bindings table: ${rows.join(', ')}`;
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE WAVE COUNTER, AND THE POWER WHEEL'S NUMBERS
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('hud: the counter says WAVE again after a Training run', () => {
+    // One Training deploy used to rename it for the rest of the session: the
+    // training branch wrote 'LESSON ' into the text node in front of the number
+    // and the else branch never wrote anything back, against a HUD that is a
+    // module-scope singleton built once from markup that is never rebuilt. Pick
+    // Training, deploy, Abandon, deploy Trial of Waves — 'LESSON 7'.
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      world.director.state = () => ({ need: 4, progress: 1 });
+      world.director.wave = 3;
+      const p = player();
+      const cam = new THREE.PerspectiveCamera();
+      const line = () => doc.getElementById('hud-wave').parentElement.textContent.trim();
+      hud.update(1 / 60, world, p, cam);
+      const before = line();
+      world.training = true;
+      hud.update(1 / 60, world, p, cam);
+      const during = line();
+      world.training = false;
+      hud.update(1 / 60, world, p, cam);
+      const after = line();
+      assert(before === 'WAVE 3', `a fresh HUD reads "${before}"`);
+      assert(during === 'LESSON 3', `a Training run reads "${during}"`);
+      assert(after === 'WAVE 3', `after Training, the counter still reads "${after}" — for the whole session`);
+      // and the word is an element, not a text node found by position
+      assert(doc.getElementById('hud-wave-word'), 'the word has no element of its own again');
+      return `${before} → ${during} → ${after}`;
+    } finally { restore(); }
+  });
+
+  check('hud: every cooldown shutter is the fraction of ITS OWN cooldown', () => {
+    /**
+     * The wheel used to divide by a constant typed into HUD.update, and four of
+     * the nine were wrong: lightning divided by 0.35 against a real 1.5 s,
+     * stasis by 0.8 against 1.4, heal by 8 against 9, compel by 6 against 7.
+     * Since the shutter clamps at 1, Force Lightning read "just used" for 1.15 s
+     * of its 1.5 s wait and then emptied in 0.35 s.
+     *
+     * The cooldowns are read out of Player.js rather than typed here, so this
+     * fails if either side moves — and the assertion is on the BAR, not on a
+     * constant, so it also fails if the HUD goes back to dividing.
+     */
+    const cds = new Map();
+    for (const m of PLAYER_SRC.matchAll(/this\.cooldowns\.(\w+)\s*=\s*([^;]+);/g)) {
+      const nums = [...m[2].matchAll(/[\d.]+/g)].map(Number).filter(n => n > 0);
+      if (!nums.length) continue;
+      cds.set(m[1], Math.max(cds.get(m[1]) ?? 0, ...nums));
+    }
+    assert(cds.size >= 6, `only ${cds.size} cooldowns found in Player.js — this check lost its source`);
+    const { hud, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      const p = wheelPlayer(world);
+      const cam = new THREE.PerspectiveCamera();
+      const shutter = (key) => Number(/scaleY\(([\d.]+)\)/.exec(hud.powerEls[key].cd.style.transform)[1]);
+      const rows = [];
+      for (const [key] of POWERS) {
+        const full = cds.get(key);
+        if (full == null) continue;                 // grip and sense have none
+        p.cooldowns[key] = 0;
+        hud.update(1 / 60, world, p, cam);          // clear any earlier wait
+        p.cooldowns[key] = full;
+        hud.update(1 / 60, world, p, cam);
+        const fired = shutter(key);
+        p.cooldowns[key] = full / 2;
+        hud.update(1 / 60, world, p, cam);
+        const half = shutter(key);
+        p.cooldowns[key] = 0;
+        hud.update(1 / 60, world, p, cam);
+        const done = shutter(key);
+        assert(Math.abs(fired - 1) < 1e-6, `${key}: the bar reads ${fired} the moment it is used`);
+        assert(Math.abs(half - 0.5) < 1e-6,
+          `${key}: ${full / 2}s of a ${full}s cooldown left and the bar reads ${half} — it should read 0.50`);
+        assert(done === 0, `${key}: the bar reads ${done} with the power ready`);
+        assert(hud.powerEls[key].root.classList.contains('ready'),
+          `${key}: the slot is not marked ready with no cooldown and full Force`);
+        rows.push(`${key} ${full}s`);
+      }
+      assert(rows.length >= 6, `only ${rows.length} slots carried a cooldown`);
+      return `${rows.length} cooldowns, each half-spent at half the bar: ${rows.join(', ')}`;
+    } finally { restore(); }
+  });
+
+  check('hud: the wheel prices a power the way the player is charged for it', () => {
+    /**
+     * Two of the nine gates were the wrong number outright — lightning at 14
+     * against a real 30, stasis at 30 against a real 26 — so the wheel said
+     * READY and the key answered "30 FORCE NEEDED, YOU HAVE 20", and dimmed a
+     * power for four Force it did not need. Every number in POWER_COST is
+     * matched against the line of Player.js that spends it; the named pattern
+     * is part of the contract, exactly as SETTING_READERS' substrings are.
+     */
+    const SPENT_AT = {
+      push: /_spend\((\d+)\)\) return this\._refuse\('force push'/,
+      pull: /_spend\((\d+)\)\) return this\._refuse\('force pull'/,
+      grip: /_canSpend\((\d+)\)\) return;/,
+      throw: /if \(!this\.saber\.lit \|\| this\.force < (\d+)/,
+      sense: /if \(this\.force < (\d+)\) return;\s*\n\s*this\.senseActive = true/,
+      lightning: /const cost = (\d+) \* this\.boonMods\.forceCost/,
+      stasis: /_spend\((\d+)\)\) return this\._refuse\('force stop'/,
+      heal: /const HEAL_COST = (\d+)/,
+      compel: /const COMPEL_COST = (\d+)/,
+    };
+    const wrong = [];
+    for (const [key, re] of Object.entries(SPENT_AT)) {
+      const m = PLAYER_SRC.match(re);
+      assert(m, `Player.js no longer spends ${key} in the shape this check knows — re-read it`);
+      const paid = Number(m[1]);
+      const quoted = POWER_COST[key]?.force;
+      if (paid !== quoted) wrong.push(`${key}: wheel says ${quoted}, Player charges ${paid}`);
+    }
+    assert(!wrong.length, wrong.join('; '));
+
+    // …and the gate is the player's own, so the two settings that move the
+    // price move the wheel with them.
+    const { hud, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      const p = wheelPlayer(world);
+      const cam = new THREE.PerspectiveCamera();
+      const ready = (k) => hud.powerEls[k].root.classList.contains('ready');
+      p.force = 27;
+      hud.update(1 / 60, world, p, cam);
+      assert(ready('stasis'), 'stasis costs 26 and the wheel dims it at 27 Force');
+      assert(!ready('heal'), 'heal costs 40 and the wheel offers it at 27 Force');
+      assert(!ready('lightning'), 'lightning costs 30 and the wheel offers it at 27 Force');
+      // Drain 0 is labelled "unlimited Force" on the Options slider, and
+      // Player._spend returns true unconditionally there.
+      world.settings.forceDrain = 0;
+      p.force = 1;
+      hud.update(1 / 60, world, p, cam);
+      assert(ready('push') && ready('heal') && ready('compel'),
+        'with Drain at 0 every power is free, and the wheel still greys them out');
+      // A boon that halves the cost is the other direction.
+      world.settings.forceDrain = 1;
+      p.force = 30;
+      p.boonMods.forceCost = 0.5;
+      hud.update(1 / 60, world, p, cam);
+      assert(ready('heal'), 'a half-price boon does not reach the wheel');
+      // …and lightning is a DRAFTED power: without the boon the key refuses.
+      p.boonMods.forceCost = 1;
+      p.boonMods.lightning = false;
+      p.force = 100;
+      hud.update(1 / 60, world, p, cam);
+      assert(!ready('lightning'), 'the wheel marks Force Lightning ready for a player who never drafted it');
+      return `9 costs matched to Player.js; drain 0, half-price boons and the lightning attunement all land`;
+    } finally { restore(); }
+  });
+
+  check('hud: the frame counter cannot paint over the flow meter', async () => {
+    /**
+     * `#hud-perf` was `position:absolute; top:10; right:12; z-index:6`, under a
+     * comment claiming it was "pinned top-right where nothing else in the HUD
+     * lives" — and `.hud-tr` (flow meter, combo, score, event feed, kill feed)
+     * is at right:34 top:28 with a 168px meter, so anything wider than 22px
+     * lands in that band. HUD.perf writes four fixed-format lines of about 20
+     * monospace glyphs at 11px, so the box is ~160px wide by construction.
+     *
+     * The fix is structural, so the check is structural: in the flow of the
+     * column it cannot overlap whatever the box turns out to measure. If it
+     * ever goes back to being positioned, the geometry has to be argued again —
+     * and this fails until it is.
+     */
+    const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+    const rule = css.match(/#hud-perf\s*\{([^}]*)\}/);
+    assert(rule, '#hud-perf has no rule');
+    const pos = (rule[1].match(/position:\s*(\w+)/) || [])[1];
+    assert(pos !== 'absolute' && pos !== 'fixed',
+      `#hud-perf is ${pos} again — a positioned box over .hud-tr has to prove it misses the meter`);
+    assert(!/z-index/.test(rule[1]), '#hud-perf still lifts itself over the column it sits in');
+    // and it is IN that column, so it displaces rather than covers
+    const { doc, restore } = hudOnPage(INDEX);
+    try {
+      const perf = doc.getElementById('hud-perf');
+      assert(perf, '#hud-perf is gone');
+      assert(perf.parentElement?.classList.contains('hud-tr'),
+        `#hud-perf hangs off <${perf.parentElement?.localName} class="${perf.parentElement?.className}"> instead of the column it overlapped`);
+      const column = perf.parentElement.children;
+      assert(column[0] === perf, 'the readout is not the first block in the column, so it pushes half of it');
+      assert(perf.classList.contains('hidden'), 'the frame counter starts visible');
+      return `#hud-perf: ${pos}, first child of .hud-tr, ${column.length - 1} blocks below it`;
+    } finally { restore(); }
   });
 }

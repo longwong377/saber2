@@ -1479,6 +1479,17 @@ export class Player {
     }
 
     // ── the ground, whatever it happens to be made of
+    /**
+     * A face steeper than the walk limit is a WALL, and it is resolved here,
+     * before the support query below can raise the body onto it. The slide at
+     * the bottom of this method is 12.5 m/s² at its strongest against a walk
+     * that pulls 89, so it was never a boundary: holding W walked the player up
+     * the 74° shell of every interior in the game and out over its roof
+     * (measured: intake y = 46 m at r = 107 m, deeps y = 44.8, alpine y = 55.7).
+     * The rule, the probe that keeps ordinary lips and channel banks walkable,
+     * and the numbers are all in Terrain.blockClimb.
+     */
+    if (terrain) terrain.blockClimb(this.position, this.velocity);
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     const support = this._supportAt(ctx, this.position.x, this.position.z, this.position.y);
     this.supportY = support;
@@ -2841,7 +2852,7 @@ export class Player {
       _v2.normalize();
       const speed = 30 * Math.sqrt(P) * lerp(1.2, 0.5, clamp(m / cap, 0, 1));
       e.applyKnockback(_v2.clone().multiplyScalar(speed), 8 + 14 * P, this);
-      e.stun(0.9);
+      e.stun(0.9, _v2, 1.3);      // `_v2` is the direction it was hurled
       this._hurlVfx(ctx, e.position, _v2, 0.5, speed);
       this.gripEnemy = null;
     }
@@ -3126,7 +3137,7 @@ export class Player {
       if (d > 16) continue;
       if (_v2.normalize().dot(this.aimDir) < 0.8) continue;
       e.damage(46, e.position, this, 'lightning');
-      e.stun(1.4);
+      e.stun(1.4, _v2, 1.4);      // `_v2` is the normalised line from the hand
       if (ctx.particles) {
         for (let i = 0; i < 12; i++) {
           _v3.copy(origin).lerp(e.position, i / 12);
@@ -3708,7 +3719,7 @@ export class Player {
     }
     if (!cut) return;
 
-    if (!e.dead) e.stun(1.6);
+    if (!e.dead) e.stun(1.6, this.aimDir, 1.4);
     this.score += 40 * cut;
     this.addFlow(0.08 * cut);
     audio.force(this.chest, 'pull');

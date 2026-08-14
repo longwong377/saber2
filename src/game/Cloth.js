@@ -374,6 +374,71 @@ export class Cloak {
       color: opts.color ?? 0x5a4530, roughness: 0.94, metalness: 0,
       side: THREE.DoubleSide,
     });
+    /*
+     * A ZERO-THICKNESS SHEET MUST NOT WRITE ITS OWN SHADOW-MAP DEPTH ON THE
+     * SIDE THE NORMAL BIAS PUSHES AWAY FROM THE SUN.
+     *
+     * three picks the shadow pass's cull mode from `shadowSide[material.side]`
+     * (WebGLShadowMap.getDepthMaterial), and that table maps FrontSide→BackSide
+     * — the front-face-cull trick that makes a CLOSED mesh write its FAR
+     * surface, metres behind the surface being shaded, so nothing can
+     * self-shadow. DoubleSide maps to DoubleSide. Every garment here is
+     * DoubleSide, because a cloak has to be visible from inside; so the depth
+     * pass rasterises the very same sheet at the very same depth the lighting
+     * pass then tests against. There is no far surface. It is textbook
+     * self-shadow acne, and a hard cel step (CEL.shadowStep 0.5, shadowEdge
+     * 0.045 — see src/toon/Cel.js) turns soft acne into a solid black blotch
+     * with a dithered rim instead of into a faint stripe.
+     *
+     * The sign is what makes it catastrophic rather than merely noisy.
+     * three offsets the shadow LOOKUP along the geometry normal by the light's
+     * `normalBias` (shadowmap_vertex, `worldPosition + shadowWorldNormal *
+     * shadowNormalBias`) — and it uses the raw geometry normal, NOT the
+     * gl_FrontFacing-flipped one the fragment is shaded with. On the half of
+     * the cloth whose geometry normal points AWAY from the sun that 2 cm
+     * offset moves the sample DEEPER, straight into the sheet's own depth.
+     * Measured with a JS twin of Engine.saberSoftShadow against the shipped
+     * cascade-0 rig (radius 0.19 × shadowDist, near 1, far 4.2 × radius,
+     * normalBias 0.02, bias -0.00015), as the fraction of pixels the cel step
+     * calls "in cast shadow" on a sheet with nothing above it:
+     *
+     *   dot(N,sun)   -1.0   -0.9   -0.6   -0.2    +0.2   +0.6
+     *   low         100%   100%    68%    54%     48%     3%
+     *   medium      100%    98%    56%    51%     45%     0%
+     *   high        100%    59%    38%    45%     38%     0%
+     *
+     * — i.e. every anti-sun-facing scrap of every cloak, skirt, sash and lek in
+     * the game is between a quarter and ALL shadowed by itself, and the deeper
+     * it faces away the more solid the blotch. Against CEL.shadowBand that is a
+     * 3.33:1 darkening on a surface the frame has already decided is lit, which
+     * is the "hard-edged solid black region on the hip with a stippled fringe"
+     * an audit measured on the player at 3 m in full daylight.
+     *
+     * FrontSide, not BackSide. The obvious guess is BackSide — it is what works
+     * for a closed mesh — and on a sheet it is exactly wrong: it keeps the
+     * anti-sun faces (the 100% column above, unchanged) and culls the sun-facing
+     * ones, which are the faces the light can actually see, so the garment stops
+     * casting a shadow at all. With FrontSide the anti-sun half writes nothing,
+     * so it cannot shadow itself (0% at every negative column above), while the
+     * sun-facing half — the silhouette the light sees, which is the whole of the
+     * cast shadow — still rasterises. Same reasoning and same value as
+     * Terrain._buildMesh, which is the game's other single-sheet caster.
+     *
+     * What this does NOT fix, stated because the number is in the table: the
+     * sun-facing half still speckles at grazing incidence (38% at dot 0.2 on
+     * high) because one 2.23 cm texel of a sheet at 78° to the sun spans 10.9 cm
+     * of depth against 2.2 cm of combined bias. That is slope-scale acne, it is
+     * the same budget the terrain runs on and accepts, and it lands on the band
+     * that is at the tone terminator anyway. It needs a per-material depth bias
+     * three does not have; it is not a reason to keep writing the other half.
+     *
+     * Only set when the caller has not chosen, and only for the DoubleSide case
+     * this reasoning is about — for a closed solid FrontSide and DoubleSide
+     * write the same near hull, so this is never worse than what it replaces.
+     */
+    if (this.mat.shadowSide === null && this.mat.side === THREE.DoubleSide) {
+      this.mat.shadowSide = THREE.FrontSide;
+    }
     this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;

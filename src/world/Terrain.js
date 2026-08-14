@@ -35,6 +35,18 @@ import { ground } from './Scenery.js';
 
 const fract = (v) => v - Math.floor(v);
 
+/**
+ * THE WALK LIMIT, in the units the rest of the game already uses for slope:
+ * `1 - n.y`, which is 0 on the flat and 1 on a vertical face. 0.52 is the
+ * number Player's downhill slide has always been written against — see
+ * `Terrain.blockClimb` for what it costs that the slide was the ONLY thing
+ * that number did. As a gradient, rise over run, 0.52 is 1.83.
+ */
+export const WALK_SLOPE = 0.52;
+const CLIMB_GRADIENT = Math.sqrt(1 / ((1 - WALK_SLOPE) ** 2) - 1);
+/** How far up the face a wall has to keep climbing to count as one. */
+const CLIMB_PROBE = 3.0;
+
 /* ── landform shaping helpers ─────────────────────────────────────────── */
 
 /**
@@ -3450,6 +3462,73 @@ export class Terrain {
     const h = this.height(v.x, v.z) + offset;
     if (v.y < h) v.y = h;
     return h;
+  }
+
+  /**
+   * A FACE TOO STEEP TO WALK UP IS A WALL, and this is the only thing in the
+   * game that says so.
+   *
+   * WHAT WAS WRONG. Every level in the game was open at the top. The whole of
+   * the anti-climb term was Player's downhill nudge — `(slope - 0.52) * 26`,
+   * which tops out at 12.5 m/s² against a vertical face — while the walk pulls
+   * `damp(v, 4.6 m/s, 19.3)`, i.e. 89 m/s² from rest. Steady state on a 90°
+   * wall is still 4.6 − 12.5/19.3 = 3.9 m/s UPHILL, so the slide could never
+   * stop anybody. Measured, holding W for 25 s from the origin on eight
+   * bearings with nothing else pressed: on the intake — a room whose roof is at
+   * y = 16.5 — four bearings ended standing at y = 31 to 46 m, out over that
+   * roof at r = 99 to 108 m, having walked terrain of measured slope 0.727
+   * (74°); the deeps reached y = 44.8 at r = 114; the colosseum y = 45.1; the
+   * alpine y = 55.7 at r = 288. The square position clamp at `terrain.half - 6`
+   * is 154 m away and never came into it.
+   *
+   * WHAT THIS DOES. It resolves a body that has walked INTO a steep face the
+   * same way the collision code resolves a body that has walked into a box:
+   * push it back out along the horizontal gradient and kill the velocity going
+   * into the face. It is not a slowdown and not a friction term — nothing is
+   * negotiable about it, which is what "boundary" has to mean.
+   *
+   * THE THREE-METRE PROBE is what keeps this from breaking ordinary walking.
+   * Point slope alone is far too eager: a heightfield is full of half-metre
+   * lips, boulders' skirts, strata edges and channel banks that are locally
+   * over 61° and that the player has always been able to step over, and
+   * blocking those would be a worse defect than the one being fixed. So the
+   * face must SUSTAIN its steepness: the ground is only a wall if it is still
+   * climbing at more than the walk limit 3 m further up the gradient. A 0.4 m
+   * lip averages 0.13 over that span and passes; the intake shell averages 3.5
+   * and does not.
+   *
+   * The units: everywhere else in this codebase "slope" means `1 - n.y`, and
+   * the walk limit is the 0.52 Player's slide already used. As a gradient
+   * (rise over run) that is √(1/(1-0.52)² - 1) = 1.83.
+   *
+   * `maxPen` is the other guard. Only a body that has just walked into the face
+   * this frame is pushed out — at a walk that is 0.08 m of ground per frame, at
+   * a 30 m/s fall 0.5 m. Anything deeper than 1.2 m inside the ground is
+   * something else entirely (a deck built into a hillside, a spawn dropped in
+   * the wrong place) and teleporting it sideways would be the bug.
+   *
+   * Returns true if the move was refused.
+   */
+  blockClimb(pos, vel = null, feetY = pos.y, maxPen = 1.2) {
+    const gh = this.height(pos.x, pos.z);
+    const pen = gh - feetY;
+    if (pen <= 0.02 || pen > maxPen) return false;
+    const e = this.step;
+    const gx = (this.height(pos.x + e, pos.z) - this.height(pos.x - e, pos.z)) / (2 * e);
+    const gz = (this.height(pos.x, pos.z + e) - this.height(pos.x, pos.z - e)) / (2 * e);
+    const g = Math.hypot(gx, gz);
+    if (g < CLIMB_GRADIENT) return false;
+    const ux = gx / g, uz = gz / g;                       // uphill, in plan
+    const ahead = this.height(pos.x + ux * CLIMB_PROBE, pos.z + uz * CLIMB_PROBE);
+    if ((ahead - gh) / CLIMB_PROBE < CLIMB_GRADIENT) return false;   // a step, not a wall
+    const back = Math.min(pen / g, 0.6);
+    pos.x -= ux * back;
+    pos.z -= uz * back;
+    if (vel) {
+      const into = vel.x * ux + vel.z * uz;
+      if (into > 0) { vel.x -= into * ux; vel.z -= into * uz; }
+    }
+    return true;
   }
 
   inBounds(x, z, margin = 4) {

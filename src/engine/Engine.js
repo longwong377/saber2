@@ -1162,7 +1162,31 @@ const CompositeShader = {
     uHeat:       { value: [] },     // vec4 x,y,radius,strength (screen space)
     uHeatCount:  { value: 0 },
     uRadial:     { value: 0 },      // radial blur amount
-    uSharpen:    { value: 0.12 },
+    /* ZERO, FOR EXACTLY THE REASON uGrain AND uAberration ARE ZERO — and this
+     * one was missed when they were, which is worse than either of them.
+     *
+     * The pass order (see _buildComposite's chain) is bloom → OutputPass →
+     * OutlinePass → this shader with renderToScreen. So the frame this unsharp
+     * mask sharpens is the frame with the INK ALREADY DRAWN INTO IT: every
+     * outline the pass in src/toon/Ink.js draws, and every boundary between two
+     * posterised bands, arrives here as a step edge and leaves with a bright rim
+     * along it. That is the single most recognisable "this went through a
+     * sharpen filter" artefact there is, and it is being applied to the drawn
+     * lines that are supposed to be the least photographic thing in the frame.
+     *
+     * Re-derived from the four taps below at the shipped 0.12: a field pixel
+     * beside a one-pixel line gains 0.03·(field − line) and the line pixel loses
+     * 0.06·(field − line). On the arena's measured pair (field 0.600, ink 0.223)
+     * that is +2.9/255 on both sides of every line and −5.8/255 down the line
+     * itself; over a bright field at 0.90 the halo reaches +5.2/255. Small per
+     * pixel and continuous along every line in the frame, on precisely the flat
+     * colour fields the note above argues make such artefacts MORE visible.
+     *
+     * It was also unreachable: nothing in src or tools ever wrote this uniform,
+     * on any quality tier or setting, so 0.12 was the only value it ever had.
+     * Kept as a uniform rather than deleted because the branch costs nothing at
+     * zero and tools/skyshot.mjs reports it. */
+    uSharpen:    { value: 0 },
     uFlash:      { value: 0 },
     uBlack:      { value: 0.018 },  // where black actually is
     uCurve:      { value: 0.32 },   // filmic S, applied in display space
@@ -1240,13 +1264,17 @@ const CompositeShader = {
         col.b = sampleScene(uv - centred * ca).b;
       }
 
-      // — unsharp mask for micro contrast
+      // — unsharp mask for micro contrast. uSharpen is 0; see the uniform.
+      // The four taps go through sampleScene() rather than straight at
+      // tDiffuse, because reading tDiffuse directly six lines above is the bug
+      // the chromatic-aberration note describes — it discarded the radial blur
+      // and broke Force Sense — and the same fault was sitting here unfixed.
       if(uSharpen > 0.001){
         vec2 tx = 1.0 / uResolution;
-        vec3 blur = texture2D(tDiffuse, uv + vec2(tx.x,0.0)).rgb
-                  + texture2D(tDiffuse, uv - vec2(tx.x,0.0)).rgb
-                  + texture2D(tDiffuse, uv + vec2(0.0,tx.y)).rgb
-                  + texture2D(tDiffuse, uv - vec2(0.0,tx.y)).rgb;
+        vec3 blur = sampleScene(uv + vec2(tx.x,0.0))
+                  + sampleScene(uv - vec2(tx.x,0.0))
+                  + sampleScene(uv + vec2(0.0,tx.y))
+                  + sampleScene(uv - vec2(0.0,tx.y));
         col += (col - blur * 0.25) * uSharpen;
       }
 

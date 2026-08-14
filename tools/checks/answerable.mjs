@@ -27,8 +27,11 @@
  */
 
 import * as THREE from 'three';
-import { ATTACKS, FORMS, FORM_KEYS, TIER, DuelBrain, guardToWorld } from '../../src/game/Duel.js';
+import { ATTACKS, FORMS, FORM_KEYS, TIER, DuelBrain, guardToWorld, duelRng } from '../../src/game/Duel.js';
 import { World } from '../../src/game/World.js';
+import { initPhysics } from '../../src/physics/Rapier.js';
+import { RapierWorld } from '../../src/physics/RapierWorld.js';
+import { Enemy, enemyRng, applyModifier } from '../../src/game/Enemy.js';
 
 /** A DuelBrain with just enough of an owner to answer `chambersWith`. */
 function brainFor(key) {
@@ -56,7 +59,91 @@ function chamberable(key, n = 4000) {
   return hits / n;
 }
 
+
+/* ── the dual-wielder's second blade ─────────────────────────────────── */
+
+const flatGround = () => ({
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+  size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+  crater() {}, flush() {}, slopeAt: () => 0,
+});
+
+/**
+ * A dual-wielding acolyte against one target for `seconds`, counting each
+ * blade's hits separately. `answer` picks what the player does about the second
+ * blade: nothing, hold their own blade on it, or stand outside its reach.
+ */
+function dualist({ answer = 'none', seconds = 45 } = {}) {
+  enemyRng.seed(4711);
+  duelRng.seed(8123);
+  const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 400 });
+  const terrain = flatGround();
+  physics.terrain = terrain;
+  let main = 0, off = 0, mainDmg = 0, offDmg = 0, swings = 0;
+  let inOff = false;
+  const at = answer === 'range' ? 4.6 : 0;
+  const target = {
+    position: new THREE.Vector3(0, 0, at), velocity: new THREE.Vector3(),
+    chest: new THREE.Vector3(0, 1.3, at),
+    hp: 5000, alive: true, invuln: 0, crouch: 0, radius: 0.34,
+    camera: { addShake() {} },
+    damage(d) { if (inOff) { off++; offDmg += d; } else { main++; mainDmg += d; } },
+  };
+  const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+    plasma: { spawn() {} }, smoke: { spawn() {} } };
+  const w = {
+    scene: new THREE.Scene(), physics, terrain, statics: [],
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+    players: [target], enemies: [], props: [], doors: [], locks: [],
+    particles, bolts: { fire() {}, update() {}, threatsNear: () => [] },
+    time: 0, combatIntensity: 0, groundColor: 0xcfae82,
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+    onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {}, onHitmark() {},
+    onExplosion() {}, spawnDebrisGroup() {},
+  };
+  const e = new Enemy(w, 'acolyte', new THREE.Vector3(0, 0, -3));
+  applyModifier(e, 'dualist');
+  e.position.set(0, 0, -3);
+  w.enemies.push(e);
+  const ctx = { enemies: w.enemies, particles, terrain, physics, bolts: w.bolts,
+    time: 0, pickTarget: () => target, camera: w.engine.camera };
+  const raw = Object.getPrototypeOf(e)._offhandStrike;
+  e._offhandStrike = function (dt, c) {
+    const was = this._offSwung;
+    inOff = true; raw.call(this, dt, c); inOff = false;
+    if (!was && this._offSwung) swings++;
+  };
+  const dt = 1 / 60;
+  for (let i = 0; i < seconds / dt; i++) {
+    ctx.time = w.time += dt;
+    /* THE PARRY, as the code that matters sees it: `bladesTouching(t.saber,
+     * this.offSaber)`. A stub saber whose segment lies on the off blade's is
+     * exactly the state a player holding their guard against it is in, and it
+     * is what the main blade already stands down for. */
+    if (answer === 'parry' && e.offSaber) {
+      target.saber = { base: e.offSaber.base.clone(), tip: e.offSaber.tip.clone(),
+        prevBase: e.offSaber.prevBase.clone(), prevTip: e.offSaber.prevTip.clone(),
+        radius: e.offSaber.radius ?? 0.05, on: true, ignition: 1, length: e.offSaber.length ?? 1.1 };
+    }
+    if (answer === 'range') {
+      // hold the line, out of the second blade's reach
+      const away = new THREE.Vector3().subVectors(target.position, e.position).setY(0);
+      const d = away.length();
+      if (d < 4.6) target.position.addScaledVector(away.divideScalar(d || 1), (4.6 - d));
+    }
+    e.update(dt, ctx);
+    target.chest.copy(target.position).setY(1.3);
+    target.hp = 5000;
+    physics.step(dt);
+  }
+  for (const x of w.enemies) x.dispose?.();
+  return { main, off, mainDmg, offDmg, swings };
+}
+
 export async function run({ check, assert }) {
+  await initPhysics();
   check('answerable: every attack the game says to chamber, a swing can chamber', () => {
     /**
      * `TIER[tier].chamberable` is what opens the window and prints the prompt,
@@ -202,5 +289,45 @@ export async function run({ check, assert }) {
     assert(/overhead|chambered \w/.test(calls[0].why),
       `the feedback lost the attack's name: "${calls[0].why}"`);
     return `the shipped _applyClash chambers, interrupts and reports "${calls[0].why}" without throwing`;
+  });
+
+  check("answerable: the dual-wielder's second blade can be answered", () => {
+    /**
+     * THE BUG. `_offhandStrike` was one line — `if (this.offHand.distanceTo(
+     * t.chest) > reach) return;` at 2.10 m for an acolyte — with no arc, no
+     * facing, and no stand-down when the player's own blade was on it. The main
+     * blade twenty lines away sweeps its real geometry in eight sub-steps and
+     * stands down at `bladesTouching`. Measured over 45-second fights: 18
+     * main-blade hits from 164 strike phases (11%), and 148 off-hand hits out
+     * of 148 windows — a 100% connect rate — for 2628 hp against the answerable
+     * blade's 577.
+     *
+     * The header over that function claims "the telegraph you already read
+     * still tells you when to move, and the answer to a dual-wielder is to be
+     * gone by the second beat". Both halves of that are asserted here as
+     * things a player can actually do, and both were false.
+     */
+    const plain = dualist({ answer: 'none' });
+    assert(plain.swings > 8, `the dualist swung its off blade only ${plain.swings} times in 45 s`);
+    assert(plain.off > 0,
+      'the second blade never lands at all on a target standing still and doing nothing about it — '
+      + 'that is a deletion, not a fix');
+    assert(plain.offDmg < plain.mainDmg * 2.5,
+      `the second blade did ${(plain.offDmg / plain.mainDmg).toFixed(1)}x the damage of the blade the `
+      + 'player can parry — the half of the elite with no answer must not be the half that kills you');
+
+    const parried = dualist({ answer: 'parry' });
+    assert(parried.off === 0,
+      `holding a blade against the second blade still ate ${parried.off} hits — steel on steel stands `
+      + 'the MAIN blade down and did nothing to this one');
+
+    const backed = dualist({ answer: 'range' });
+    assert(backed.off === 0,
+      `standing outside the second blade's reach still ate ${backed.off} hits — "be gone by the second `
+      + 'beat" is what the code says the answer is');
+
+    return `off blade: ${plain.off} hits / ${plain.swings} swings unanswered `
+      + `(${(plain.offDmg / plain.mainDmg).toFixed(2)}x the main blade's damage), `
+      + `${parried.off} when parried, ${backed.off} at range`;
   });
 }

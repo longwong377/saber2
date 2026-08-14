@@ -32,7 +32,7 @@
  */
 
 import { audio as defaultAudio } from '../engine/Audio.js';
-import { PLAYER_VOICES, ENEMY_VOICES, voiceAt } from '../engine/Voice.js';
+import { ENEMY_VOICES, voiceAt } from '../engine/Voice.js';
 import { clamp } from '../engine/MathUtil.js';
 
 /** Seconds between quips (kill, streak, boss, low health) whatever happens. */
@@ -74,6 +74,19 @@ export const RETURNS = [
   { at: 16, title: 'A WALL OF LIGHT', sub: 'sixteen' },
 ];
 
+/**
+ * The chamber ladder — meeting a declared arc INSIDE its window, which is the
+ * hardest thing the duel offers and the only counter that was going by without
+ * a word. Shorter rungs than the others: a chamber is rarer than a deflection
+ * by an order of magnitude, so three of them in one exchange is already the
+ * thing worth saying out loud.
+ */
+export const CHAMBERS = [
+  { at: 2, title: 'CHAMBERED ×2', sub: 'two arcs met on the way in' },
+  { at: 3, title: 'READING THE BLADE', sub: 'three' },
+  { at: 5, title: 'NOTHING GETS THROUGH', sub: 'five, unbroken' },
+];
+
 const rung = (ladder, n) => {
   let hit = null;
   for (const r of ladder) if (n >= r.at) hit = r;
@@ -87,7 +100,7 @@ export class Announcer {
   }
 
   reset() {
-    this.prev = { kills: 0, deflects: 0, perfects: 0, hp: 1, alive: true, grounded: true, velY: 0, tip: 0 };
+    this.prev = { kills: 0, deflects: 0, perfects: 0, chambers: 0, hp: 1, alive: true, grounded: true, velY: 0, tip: 0 };
     this.started = false;
     this.quipT = 0;
     this.effortT = 0;
@@ -97,6 +110,8 @@ export class Announcer {
     this.streakT = 0;
     this.returns = 0;
     this.returnT = 0;
+    this.chamberRun = 0;
+    this.chamberT = 0;
     this.lowSaid = false;
     this.deaths = [];
     this.panicFor = 0;
@@ -121,6 +136,7 @@ export class Announcer {
     this.quipT -= dt; this.effortT -= dt; this.enemyT -= dt;
     if (this.streakT > 0 && (this.streakT -= dt) <= 0) this.streak = 0;
     if (this.returnT > 0 && (this.returnT -= dt) <= 0) this.returns = 0;
+    if (this.chamberT > 0 && (this.chamberT -= dt) <= 0) this.chamberRun = 0;
 
     // A new level (or the first frame ever) is a baseline, not a hundred
     // events: `kills` going from 12 to 0 must not read as anything at all.
@@ -133,11 +149,12 @@ export class Announcer {
   _baseline(world, player) {
     this.started = true;
     this._level = world;
-    this.streak = 0; this.returns = 0; this.deaths.length = 0;
+    this.streak = 0; this.returns = 0; this.chamberRun = 0; this.deaths.length = 0;
     this.lowSaid = false;
     const p = player || {};
     this.prev = {
       kills: p.kills ?? 0, deflects: p.deflects ?? 0, perfects: p.perfects ?? 0,
+      chambers: p.chambers ?? 0,
       hp: this._hpFrac(p), alive: p.alive !== false, grounded: p.grounded !== false,
       velY: p.velocity?.y ?? 0, tip: p.saber?.tipSpeed ?? 0,
     };
@@ -215,6 +232,32 @@ export class Announcer {
     const perfects = player.perfects ?? 0;
     if (perfects > P.perfects) this._popup(hud, settings, 'PERFECT RETURN', 'sent back through them', 'perfect');
     P.perfects = perfects;
+
+    /**
+     * CHAMBERS — the highest-skill act in the game, and it had no reader.
+     *
+     * `World._applyClash` has kept `player.chambers` since chambering shipped
+     * and nothing anywhere read the number: not the HUD, not the run summary,
+     * not this file, which announces kills, deflections and perfect returns.
+     * Meeting a declared arc inside its window is harder than any of those and
+     * was the only one of them that went by in silence after the first frame's
+     * floating label.
+     *
+     * Counted rather than pulsed so a run of them builds, the way returns do —
+     * `rung` is the same ladder, and chambering three in an exchange is a
+     * different thing from chambering three across a level.
+     */
+    const chambers = player.chambers ?? 0;
+    if (chambers > P.chambers) {
+      this.chamberRun = this.chamberT > 0 ? this.chamberRun + (chambers - P.chambers) : (chambers - P.chambers);
+      this.chamberT = STREAK_WINDOW * 1.6;
+      const c = rung(CHAMBERS, this.chamberRun);
+      if (c) {
+        this._popup(hud, settings, c.title, c.sub, 'perfect');
+        this._say(spec, 'streak', at, 0.95, spk);
+      }
+    }
+    P.chambers = chambers;
 
     /* being hit, and being nearly finished */
     const hp = this._hpFrac(player);
@@ -401,5 +444,12 @@ export class Announcer {
   }
 }
 
-/** The names the options screen prints. One list, one owner. */
-export const VOICE_NAMES = PLAYER_VOICES.map(v => v.name);
+/*
+ * There was an `export const VOICE_NAMES = PLAYER_VOICES.map(v => v.name)` here,
+ * under the docstring "The names the options screen prints. One list, one
+ * owner". It was imported by nothing. The options screen prints
+ * `voiceAt(v).name` straight off the table (src/ui/Menu.js), which IS one list
+ * with one owner — src/engine/Voice.js — so the export was a second copy of the
+ * answer that only claimed to be the source of it. A name table that drifts is
+ * worse than no name table.
+ */

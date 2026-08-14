@@ -127,6 +127,42 @@ export const POWERS = [
   ['heal', 'heal'], ['compel', 'compel'],
 ];
 
+/**
+ * WHAT EACH SLOT COSTS, AND HOW ITS PRICE IS CHECKED.
+ *
+ * `force` is the number Player spends. `gate` says which of Player's three
+ * ways of asking applies, because they are not the same and the difference is
+ * visible on screen:
+ *
+ *   'spend'    — goes through Player._spend/_canSpend, so `forceDrain` (the
+ *                Options slider whose 0 is labelled "unlimited Force") and the
+ *                `forceCost` boons both apply. Six of the nine.
+ *   'boonCost' — the boon multiplier applies, the drain does not. Lightning
+ *                only (Player.js:3109 `const cost = 30 * boonMods.forceCost`).
+ *   'raw'      — a bare `this.force < N`, so neither applies. Throw
+ *                (Player.js:3034) and Sense (Player.js:3094).
+ *
+ * Every number here is a copy of one in src/game/Player.js, which is a thing
+ * this file has already been burned by: the previous copies had lightning at 14
+ * against a real 30 and stasis at 30 against a real 26. So they are held to the
+ * original by tools/checks/hud-events.mjs, which greps the assignment out of
+ * Player.js and fails if the two disagree — the same shape as SETTING_READERS.
+ * The right end state is a table exported from Player and imported here; that
+ * is a change to a file this lane does not own, and it is written down in the
+ * handover.
+ */
+export const POWER_COST = {
+  push:      { force: 20, gate: 'spend' },
+  pull:      { force: 16, gate: 'spend' },
+  grip:      { force: 10, gate: 'spend' },
+  throw:     { force: 14, gate: 'raw' },
+  sense:     { force: 25, gate: 'raw' },
+  lightning: { force: 30, gate: 'boonCost', boon: 'lightning' },
+  stasis:    { force: 26, gate: 'spend' },
+  heal:      { force: 40, gate: 'spend' },
+  compel:    { force: 34, gate: 'spend' },
+};
+
 /** A key label is drawn into innerHTML; three characters can break it. */
 const escKey = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -152,6 +188,10 @@ export class HUD {
       hud: root.getElementById('hud'),
       perf: root.getElementById('hud-perf'),
       wave: root.getElementById('hud-wave'),
+      // The word in front of the number. It is an element rather than the bare
+      // text node the HUD used to reach for by position — see the wave block
+      // in update() for the session-long 'LESSON' that cost.
+      waveWord: root.getElementById('hud-wave-word'),
       level: root.getElementById('hud-level'),
       diff: root.getElementById('hud-diff'),
       remaining: root.getElementById('hud-remaining'),
@@ -290,10 +330,31 @@ export class HUD {
     } else el.combo.classList.remove('on');
     el.score.textContent = Math.floor(world.score + player.score).toLocaleString();
 
-    // ── wave, or lesson if we are in the dojo
+    /* ── wave, or lesson in Training ──────────────────────────────────
+     *
+     * THE WORD IS WRITTEN ON EVERY FRAME, IN BOTH DIRECTIONS.
+     *
+     * It used to be written in one: the training branch reached through
+     * `el.wave.previousSibling` into the bare text node in front of the number
+     * and typed 'LESSON ' into it, and the else branch below touched only
+     * `#hud-remaining`. The HUD is a module-scope singleton built once against
+     * markup that is never rebuilt, and Training is an ordinary selectable
+     * mode, so ONE training deploy renamed the counter for the rest of the
+     * session: pick Training, deploy, Abandon, deploy Trial of Waves, and the
+     * top-left reads 'LESSON 7' for that fight and every fight after it, until
+     * the page is reloaded. Measured on the real HUD against the real page:
+     * "WAVE 3" -> "LESSON 3" -> "LESSON 3", where the third should have been
+     * "WAVE 3" again.
+     *
+     * The word has its own element now (index.html, `#hud-wave-word`) rather
+     * than the HUD reaching into an anonymous text node by position — a node
+     * found by `firstChild` is a node any edit to that line can move, and two
+     * check harnesses had already stubbed `previousSibling` to null, which
+     * short-circuited the whole branch and hid this.
+     */
     el.wave.textContent = world.director.wave;
+    if (el.waveWord) el.waveWord.textContent = world.training ? 'LESSON' : 'WAVE';
     if (world.training) {
-      el.wave.previousSibling && (el.wave.parentElement.firstChild.textContent = 'LESSON ');
       const st = world.director.state();
       el.remaining.textContent = st.need === Infinity ? 'free practice' : `${st.progress} of ${st.need}`;
     } else {
@@ -304,17 +365,28 @@ export class HUD {
     }
 
     // ── powers
-    this._power('push', player.cooldowns.push / 0.55, player.force >= 20);
-    this._power('pull', player.cooldowns.pull / 0.6, player.force >= 16);
-    this._power('grip', 0, player.force >= 10, !!(player.gripBody || player.gripEnemy));
-    this._power('throw', player.cooldowns.throw / 0.4, player.force >= 14, player.throwState !== 'held');
-    this._power('sense', 0, player.force >= 25, player.senseActive);
-    // The four that had no readout at all. Each divides by the cooldown its own
-    // power sets, so a full bar is the moment it was used and empty is ready.
-    this._power('lightning', player.cooldowns.lightning / 0.35, player.force >= 14, player.lightningOn);
-    this._power('stasis', player.cooldowns.stasis / 0.8, player.force >= 30, player.stasis?.bodies?.size > 0);
-    this._power('heal', player.cooldowns.heal / 8, player.force >= 40);
-    this._power('compel', player.cooldowns.compel / 6, player.force >= 34);
+    //
+    // Cooldowns go in as SECONDS REMAINING, not as a fraction of a divisor
+    // typed in here — see _power for the measurement that replaced the four
+    // wrong divisors. Affordability goes through _afford, which asks the
+    // player's own economy rather than comparing against a literal.
+    const cd = player.cooldowns;
+    this._power('push', cd.push, this._afford(player, 'push'));
+    this._power('pull', cd.pull, this._afford(player, 'pull'));
+    this._power('grip', 0, this._afford(player, 'grip'), !!(player.gripBody || player.gripEnemy));
+    this._power('throw', cd.throw, this._afford(player, 'throw'), player.throwState !== 'held');
+    this._power('sense', 0, this._afford(player, 'sense'), player.senseActive);
+    // The four that had no readout at all until recently, and had a wrong one
+    // until this edit. `lightning` has no "on" state to show — it is a single
+    // discharge, and the flag the wheel used to read (`player.lightningOn`)
+    // exists nowhere in src/, so that slot's active border could never light.
+    this._power('lightning', cd.lightning, this._afford(player, 'lightning'));
+    this._power('stasis', cd.stasis, this._afford(player, 'stasis'), player.stasis?.bodies?.size > 0);
+    // `healing` is elapsed seconds or null (Player.js:927/3162), so it is `0`
+    // on the first frame of a heal — `!!player.healing` would blink the border
+    // off at exactly the moment the power starts.
+    this._power('heal', cd.heal, this._afford(player, 'heal'), player.healing != null);
+    this._power('compel', cd.compel, this._afford(player, 'compel'));
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;
@@ -448,12 +520,82 @@ export class HUD {
     return node;
   }
 
+  /**
+   * ONE SLOT OF THE WHEEL: A SHUTTER THAT IS MEASURED, AND A GATE THAT ASKS.
+   *
+   * `cd` is SECONDS REMAINING. It used to be a fraction the caller computed by
+   * dividing by a cooldown constant typed into HUD.update, and four of the nine
+   * divisors disagreed with the power they described: lightning divided by 0.35
+   * against a real 1.5 s (Player.js:3118), stasis by 0.8 against 1.4, heal by 8
+   * against 9, compel by 6 against 7. Since `clamp(cd, 0, 1)` pins anything
+   * over 1 to a full shutter, Force Lightning read "just used" for 1.15 s of
+   * its 1.5 s wait and then emptied in the last 0.35 s — the bar said nothing
+   * for three quarters of the countdown it exists to show.
+   *
+   * The fix is not a better table. It is that the HUD does not need to know any
+   * cooldown at all: it watches the number it is given, remembers the highest
+   * value of the current wait, and draws the ratio. That is right for every
+   * power automatically, including heal, whose cooldown is 9 s when it
+   * completes and 3 s when it is interrupted (Player.js:3356) — a constant
+   * divisor cannot be right for both, and a peak is right for both. Change a
+   * cooldown in Player and this follows it in the same frame, with no second
+   * copy of the number anywhere.
+   *
+   * The peak is captured within one frame of the power firing (the wheel runs
+   * after the player's update, so the worst case is a 60th of a second of decay
+   * already applied — 1.6% of a 1 s cooldown) and is cleared the moment the
+   * wait reaches zero, so nothing leaks between uses.
+   */
   _power(key, cd, affordable, active) {
     const p = this.powerEls[key];
     if (!p) return;
-    p.cd.style.transform = `scaleY(${clamp(cd, 0, 1)})`;
-    p.root.classList.toggle('ready', affordable && cd <= 0.01);
+    const peaks = this._cdPeak || (this._cdPeak = {});
+    const left = Math.max(0, num(cd, 0));
+    if (left <= 0) peaks[key] = 0;
+    else if (left > (peaks[key] || 0)) peaks[key] = left;
+    const shutter = peaks[key] > 0 ? left / peaks[key] : 0;
+    p.cd.style.transform = `scaleY(${clamp(shutter, 0, 1)})`;
+    p.root.classList.toggle('ready', !!affordable && left <= 0.01);
     p.root.classList.toggle('active', !!active);
+  }
+
+  /**
+   * CAN THE PLAYER ACTUALLY PAY FOR THIS, IN THE GAME AS CONFIGURED.
+   *
+   * The wheel used to compare `player.force` against a literal per slot, and
+   * two of the nine literals were simply the wrong price — lightning was gated
+   * at 14 against a real 30 (Player.js:3109), so the slot said READY and the
+   * key answered "30 FORCE NEEDED, YOU HAVE 20"; stasis was gated at 30 against
+   * a real 26, so the slot dimmed for four Force it did not need. On top of
+   * that, a raw comparison cannot see either of the two things that move the
+   * price: `forceDrain`, whose own label in index.html reads "unlimited Force"
+   * at 0 — with it there, every power is free and the wheel greyed them all out
+   * anyway — and the `forceCost` boons.
+   *
+   * So the gate asks the player's own economy: `_canSpend` is the single
+   * function Player uses to decide, and it reads drain and the boon multiplier
+   * live. Three powers do NOT go through it in Player and are marked here
+   * accordingly, because the HUD's job is to state the game that exists rather
+   * than the one it would prefer: `throw` (Player.js:3034) and `sense`
+   * (Player.js:3094) compare raw force against a literal and so ignore drain
+   * entirely, and `lightning` (Player.js:3109) applies the boon multiplier by
+   * hand but not the drain. Those three are a real inconsistency in Player's
+   * Force economy and are worth fixing THERE; until they are, this wheel tells
+   * the truth about them. See tools/checks/hud-events.mjs, which pins every
+   * number below to the line of Player.js it came from.
+   */
+  _afford(player, key) {
+    const spec = POWER_COST[key];
+    if (!spec || !player) return true;
+    const mods = player.boonMods?.forceCost ?? 1;
+    // Force Lightning is drafted, not learned: without the boon the key
+    // refuses no matter how much Force is in the bar.
+    if (spec.boon && !player.boonMods?.[spec.boon]) return false;
+    if (spec.gate === 'raw') return player.force >= spec.force;
+    if (spec.gate === 'boonCost') return player.force >= spec.force * mods;
+    return typeof player._canSpend === 'function'
+      ? player._canSpend(spec.force)
+      : player.force >= spec.force * mods;
   }
 
   /** Dojo coaching panel. */
@@ -541,7 +683,10 @@ export class HUD {
     const node = document.createElement('div');
     node.className = 'kf';
     const verb = kind === 'cut' ? 'cut down' : kind === 'bolt' ? 'returned fire on' : 'destroyed';
-    node.innerHTML = `<b>${who}</b> ${verb} ${what}`;
+    // `who` is a player name, which in co-op arrives from another machine
+    // (Net.js reads it off `conn.metadata`). The popup feed and the boon chips
+    // in this file already escape; this line did not.
+    node.innerHTML = `<b>${esc(who)}</b> ${verb} ${esc(what)}`;
     this.el.killfeed.appendChild(node);
     setTimeout(() => node.remove(), 4200);
     while (this.el.killfeed.children.length > 5) this.el.killfeed.firstChild.remove();

@@ -57,6 +57,18 @@ const DROIDS = /^(b1|b2|droideka|walker|remote|dummy)$/;
 const BEASTS = /^(beast)$/;
 const TROOPERS = /^(trooper|sniper)$/;
 
+/**
+ * There was a `voice` key on this too, and it was a second, wrong answer to a
+ * question this module is not asked. It read `enemy.voiceKey || …`, and
+ * `voiceKey` is assigned nowhere in the project, so the fallback was always
+ * taken; the fallback's own `type === 'walker' ? 'walker'` branch was
+ * unreachable because DROIDS already matches 'walker' one line above it, so
+ * bodyOf({type:'walker'}).voice answered 'droid' while Announcer._enemySpec —
+ * the classifier that is actually wired to something — answers with the
+ * walker's own hydraulic groan. Nothing in src/ or tools/ ever read the field.
+ * src/ui/Announcer.js owns what things SAY; this file owns the noise a body
+ * makes, and one classifier is enough.
+ */
 export function bodyOf(enemy) {
   const A = enemy?.A || {};
   const type = String(enemy?.type || '');
@@ -74,8 +86,6 @@ export function bodyOf(enemy) {
     legs: type === 'walker' ? 4 : type === 'beast' ? 4 : type === 'droideka' ? 2 : 2,
     /** A hovering droid has no gait at all. */
     grounded: !(A.float > 0) && type !== 'remote',
-    voice: enemy?.voiceKey || (droid ? 'droid' : BEASTS.test(type) ? 'beast'
-      : TROOPERS.test(type) ? 'trooper' : type === 'walker' ? 'walker' : 'sith'),
   };
 }
 

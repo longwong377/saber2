@@ -80,10 +80,16 @@ const _box = new THREE.Box3(), _box2 = new THREE.Box3();
 /** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
 const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
 const _o4 = new THREE.Vector3(), _o5 = new THREE.Vector3(), _o6 = new THREE.Vector3();
+const _o7 = new THREE.Vector3();
 /** The closest point the blade came to a body this frame — see _saberStrike. */
 const _hit = new THREE.Vector3();
+/* Its own temp, so a stagger direction can be built inside damage() and
+ * takeCut() without stepping on whatever _v1 was holding for the caller. */
+const _stag = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
+/** The pitch axis for a body already yawed to `facing` — see _poseWalker. */
+const RIGHT = new THREE.Vector3(1, 0, 0);
 
 let _enemyId = 1;
 
@@ -1029,10 +1035,39 @@ export class Enemy {
       return false;
     }
     this.hp -= amount;
-    if (this.A.boss) this.recentDamage = (this.recentDamage || 0) + amount;
+    /**
+     * NOT `if (this.A.boss)`. The winded window — "the only safe time to go for
+     * a leg", per the comment that opens it — is a BEAST mechanic, and only the
+     * acklay carries `boss`. The Reek and the Nexu (Levels.js gives both
+     * `custom: 'beast'` with no `boss`) could not accrue a single point of it,
+     * so neither could ever be winded: measured over nine 90-second fights,
+     * `winded` fired 0 times. The gate is on the creature that HAS the window,
+     * which is anything running the beast brain.
+     */
+    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + amount;
     if (this.hp <= 0) { this.die(point, source, kind); return true; }
-    if (amount > this.maxHp * 0.22) this.stun(0.28);
+    // A heavy blow throws the guard AWAY from whoever landed it, and how far
+    // scales with how heavy. Both arguments used to be omitted here, so every
+    // hit in the game beat the blade to the same side by the same amount.
+    if (amount > this.maxHp * 0.22) {
+      this.stun(0.28, this._blowDir(point, source), clamp(amount / (this.maxHp * 0.34), 0.7, 1.4));
+    }
     return false;
+  }
+
+  /**
+   * The world-space line a blow travelled, for `DuelBrain.stagger`.
+   *
+   * Prefers the attacker's own position — that is the line the blade actually
+   * came down — and falls back to the impact point when the blow has no body
+   * behind it (a bolt, a blast, fall damage). Returns null when neither is
+   * known, which is what `stagger` already treats as "no side to this one".
+   */
+  _blowDir(point, source) {
+    const from = source?.position ?? (point && point !== this.position ? point : null);
+    if (!from) return null;
+    _stag.subVectors(this.position, from).setY(0);
+    return _stag.lengthSq() > 1e-6 ? _stag : null;
   }
 
   /** A blade crossed a limb. */
@@ -1055,9 +1090,16 @@ export class Enemy {
     const lethal = vital >= 0.9 || (vital >= 0.7 && this.hp < this.maxHp * 0.55);
     const dmg = lethal ? this.maxHp * 2 : this.maxHp * vital * 1.15;
     this.hp -= dmg;
+    /* …and a CUT winds a beast, which is the whole point of the window. This
+     * path subtracts from `hp` directly rather than going through `damage()`,
+     * so severing a limb — the thing the winded comment says the window exists
+     * for — accrued nothing at all and could never open it. */
+    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + dmg;
     if (this.hp <= 0) this.die(ev.point, source, 'cut');
     else {
-      this.stun(0.4);
+      // The cut carries its own line — `ev.impulse` is the direction the blade
+      // drove through the limb — and losing a piece is worth more than a beat.
+      this.stun(0.4, ev.impulse ?? this._blowDir(ev.point, source), 1.25);
       this._loseLimbBehaviour(bone, ev.point);
     }
   }
@@ -1129,6 +1171,8 @@ export class Enemy {
   topple() {
     if (this.toppled || this.dead) return;
     this.toppled = true;
+    // No direction, deliberately: nothing pushed it over, its own legs went.
+    // `stagger` caps at 2.2 s so this cannot leave a permanent guard behind.
     this.stun(9999);
     if (this.actor && !this.actor.ragdolled) {
       this.actor.goRagdoll(this.velocity.clone(), _v1.set((rng() - .5) * 4, 0, (rng() - .5) * 4));
@@ -1149,8 +1193,8 @@ export class Enemy {
     this.grounded = false;
     if (damage > 0) this.damage(damage, this.position, source, 'force');
     if (!gentle && impulse.length() > 12 && this.actor && !this.A.boss) {
-      // hit hard enough to leave its feet
-      this.stun(1.2);
+      // hit hard enough to leave its feet — and the impulse IS the direction
+      this.stun(1.2, impulse, 1.4);
     }
   }
 
@@ -1429,11 +1473,62 @@ export class Enemy {
     if (A.inert) { this.wish = null; return; }
     if (A.custom === 'remote') { this._remoteBrain(dt, ctx, dist); return; }
 
-    const [near, far] = A.preferred;
-    this.strafeTimer -= dt;
-    if (this.strafeTimer <= 0) { this.strafeTimer = 1.1 + rng() * 2.2; this.strafeDir = rng() < 0.5 ? 1 : -1; }
+    /**
+     * THE FORM OWNS A DUELLIST'S FOOTWORK — WHICH NOTHING EVER READ.
+     *
+     * `FORMS[*].spacing` is authored five different ways — Makashi holds the
+     * tip's range at [1.7, 2.9], Ataru works in and out across [1.4, 3.6],
+     * Soresu sits back at [1.8, 3.0] — and the only reader in the tree was
+     * `dist < F.spacing[1]` in DuelBrain, an "am I close enough to swing"
+     * gate. `spacing[0]` had no reader at all. Every duellist stood in its
+     * ARCHETYPE's `preferred` band instead, which is one band shared by every
+     * acolyte regardless of form, so all five forms fought at one distance
+     * and the tells that describe their distance — "economical, blade-tip
+     * precise", "acrobatic", "waiting for you to swing first" — described
+     * something the feet never did.
+     *
+     * Measured — mean stand-off over a 60 s fight, and the band it worked in:
+     *
+     *                  before                    after
+     *     makashi   1.59 m  1.21–1.75      1.70 m  1.34–1.73    (authored 1.7)
+     *     djemSo    1.62 m  1.43–2.05      1.61 m  1.40–2.05    (authored 1.5)
+     *     ataru     1.62 m  1.43–2.05      2.36 m  1.14–3.80    (authored 1.4–3.6)
+     *     soresu    1.61 m  1.41–2.05      1.79 m  1.61–1.93    (authored 1.8)
+     *     juyo      1.59 m  1.21–2.05      1.54 m  1.11–2.05    (authored 1.4)
+     *
+     * Five forms, one distance, to within 3 cm of each other.
+     *
+     * Scaled by the body, so a big duellist keeps its reach.
+     */
+    const spacing = A.melee ? this.duel?.form?.spacing : null;
+    const sc = A.scale ?? 1;
 
-    const side = _v2.set(-this.toTarget.z, 0, this.toTarget.x).multiplyScalar(this.strafeDir);
+    /* `mobile` is authored on Ataru alone — the acrobatic form — and had no
+     * reader anywhere in the tree either. It changes line about twice as
+     * often, carries more lateral through the blend, and above all does not
+     * HOLD a distance: it presses to the near edge of its band, flurries, and
+     * breaks back out to the far edge. That is what "acrobatic flurries — it
+     * will not stop at one" describes, and it is the only thing that spends
+     * `spacing[1]` as footwork rather than as a range check. The wish is
+     * normalised below, so the lateral term buys circling at the cost of
+     * closing rather than buying speed. */
+    const mob = this.duel?.form?.mobile ? 1.9 : 1;
+    this.strafeTimer -= dt;
+    if (this.strafeTimer <= 0) {
+      this.strafeTimer = (1.1 + rng() * 2.2) / mob;
+      this.strafeDir = rng() < 0.5 ? 1 : -1;
+      this.pressIn = !this.pressIn;
+    }
+
+    const near = spacing ? spacing[0] * sc : A.preferred[0];
+    const far = spacing ? spacing[1] * sc : A.preferred[1];
+    /* How much of the wish points down the line to the target. A mobile form
+     * alternates driving in and breaking off on the same timer that changes
+     * its line; everything else holds a steady bias and lets the yield term
+     * below do the rest. */
+    const drive = A.melee ? (mob > 1 ? (this.pressIn ? 1.15 : -0.6) : 0.35) : 0.08;
+    const side = _v2.set(-this.toTarget.z, 0, this.toTarget.x)
+      .multiplyScalar(this.strafeDir * (1 + (mob - 1) * 0.4));
     const wish = _v3.set(0, 0, 0);
 
     // Giving ground is a BAND, not a threshold. The old form was
@@ -1450,7 +1545,7 @@ export class Enemy {
     const yieldAmt = smoothstep(near, near * 0.55, dist);
     if (dist > far) wish.copy(this.toTarget);
     else {
-      wish.copy(side).addScaledVector(this.toTarget, A.melee ? 0.35 : 0.08);
+      wish.copy(side).addScaledVector(this.toTarget, drive);
       if (yieldAmt > 0) wish.addScaledVector(this.toTarget, -yieldAmt * 1.35);
     }
 
@@ -1688,10 +1783,50 @@ export class Enemy {
 
     const t = this.target;
     if (!t || !t.position) return;
-    const reach = 1.15 * (this.A.scale ?? 1) + 0.9;
-    _v1.copy(t.chest ?? t.position);
-    if (this.offHand.distanceTo(_v1) > reach) return;
     if (t.invuln > 0) return;
+    /**
+     * THE OFF BLADE STANDS DOWN ON STEEL, AND SWINGS AT A CONE.
+     *
+     * This was one line — `if (this.offHand.distanceTo(t.chest) > reach) return;`
+     * at a reach of `1.15 * scale + 0.9`, which is 2.10 m for an acolyte. No
+     * arc, no facing, and no stand-down when the player's own blade is on it.
+     * Against `_saberStrike` fifty lines down, which sweeps the REAL blade
+     * against the player's capsule in eight sub-steps and stands down at
+     * `bladesTouching`. Measured over 45-second fights with the strike phases
+     * counted: 164 strike phases, 18 main-blade hits (11%), and 148 off-hand
+     * hits out of 148 windows — A 100% CONNECT RATE — for 2628 hp against the
+     * answerable blade's 577. Four and a half times the damage, from the half
+     * of the elite with no answer at all.
+     *
+     * A SWEPT TEST WAS TRIED FIRST and it is the wrong shape here, which is
+     * worth recording: the off blade's pose mirrors the guard about the body's
+     * right axis, so its tip travels sideways rather than at the target — the
+     * closest it brought its tip to a body at duelling range was 1.80 m.
+     * Swapping the proximity test for `segmentSegment` therefore took the
+     * off-hand from 148 hits to 0, which is not a fix, it is a deletion.
+     *
+     * So it keeps a distance test and gains the two things it was missing:
+     *
+     *   STEEL ON STEEL STANDS IT DOWN, exactly as the main blade does. The
+     *   header above promises "the answer to a dual-wielder is to be gone by
+     *   the second beat"; parrying the blade you can see is the other half of
+     *   an answer, and it did nothing at all to this one.
+     *
+     *   AND IT IS A CONE IN FRONT, at the off blade's own reach rather than a
+     *   sphere at 2.10 m. Backing out of the second beat is now a thing that
+     *   works — and, unlike the sphere, so is being behind the wielder.
+     */
+    if (t.saber && this.offSaber && bladesTouching(t.saber, this.offSaber)) return;
+    const reach = 1.05 * (this.A.scale ?? 1) + 0.55;
+    _v1.copy(t.chest ?? t.position);
+    _v3.subVectors(_v1, this.offHand).setY(0);
+    const d = _v3.length();
+    if (d > reach) return;
+    // the cone is measured off the BODY, not the hand: an off blade held wide
+    // still swings at whatever the wielder is facing.
+    _v4.set(Math.sin(this.facing), 0, Math.cos(this.facing));
+    if (d > 0.05 && _v3.divideScalar(d).dot(_v4) < Math.cos(1.0)) return;
+    _v1.copy(t.chest ?? t.position);
     t.damage?.(this.attackDamage * 0.55 * duel.damageScale, _v1.clone(), this, 'saber');
     _v2.subVectors(t.position, this.position).setY(0.25).normalize().multiplyScalar(4.5);
     t.velocity?.add(_v2);
@@ -1734,7 +1869,7 @@ export class Enemy {
    * World._resolveBlades, and a hit here interrupts the strike phase, so the
    * older tip test cannot fire a second time on the same swing.
    */
-  _saberStrike(ctx) {
+  _saberStrike(ctx, target = this.target) {
     const duel = this.duel;
     if (!duel || !this.saber || this.saber.ignition < 0.6 || this.lock) return false;
     if (duel.phase !== 'strike') { this._strikePhase = duel.phase; return false; }
@@ -1742,7 +1877,7 @@ export class Enemy {
     if (this._strikePhase !== 'strike') { this._strikePhase = 'strike'; this._struck = false; }
     if (this._struck) return false;
 
-    const t = this.target;
+    const t = target;
     if (!t || !t.position || t.alive === false || !t.damage) return false;
     if (t.invuln > 0) return false;
     // steel on steel wins: leave it to the clash
@@ -1848,16 +1983,67 @@ export class Enemy {
       this.attackTimer = lerp(2.4, 1.15, (phase - 1) / 2) + rng() * 1.1;
       this.stateTime = 0;
       this._swiped = false;
+      // where the claw is aimed — the target's place at the wind-up, not a
+      // direction and not a live read. See hitTarget.
+      this.swingAt = this.target ? this.target.position.clone() : null;
       this.lungeDir = this.toTarget.clone();
       audio.explosion(this.position, this.state === 'charge' ? 0.9 : 0.5);
       if (this.state === 'charge') this.world.notifyFloating?.(this.aimPoint(_v1), 'CHARGE', '#ff6a52');
     }
 
-    const hitTarget = (radius, dmg, lift) => {
+    /**
+     * A CLAW LANDS WHERE IT WAS AIMED.
+     *
+     * This was `t.position.distanceTo(this.position) < radius` — no facing, no
+     * arc, no aim, no limb — at radii of `6.6 * scale * 0.6`, which for the
+     * acklay (scale 2.9) is an 11.48 m ball centred on a creature whose
+     * preferred fighting band is 2.5-5 m. Measured against a real player over
+     * 90-second fights: standing still, 39 of 39 sweeps landed; SPRINTING
+     * DIRECTLY AWAY, 38 of 38; sprinting sideways, 40 of 40. Across three
+     * beasts and three evasions, 348 of 350. There was nothing to dodge,
+     * because there was no shape to be outside of.
+     *
+     * Three shapes were tried before this one, and the two that failed are
+     * worth writing down because each fails in an instructive direction:
+     *
+     *   a forward CONE off the live `this.facing` changes nothing, because
+     *   facing tracks the target every frame — the cone follows you round and
+     *   a sidestep is not a sidestep. 79-100% still landed.
+     *
+     *   a cone off a direction committed at the wind-up over-corrects the other
+     *   way: the animal is still MOVING through its wind-up (a lunge adds
+     *   42 m/s² for half a second), so the ray it committed no longer passes
+     *   through a player who has not moved at all. Standing perfectly still was
+     *   missed 84% of the time, and not moving is the one thing that has to be
+     *   punished.
+     *
+     * What a telegraphed melee attack actually is: the animal AIMS AT A PLACE,
+     * and then the claw arrives there. `swingAt` is the target's position on
+     * the frame the wind-up begins, and the test is the claw's own footprint
+     * about that point. Stand still and it lands on you. Break out of it during
+     * the telegraph — which is what the telegraph is for — and it lands where
+     * you were.
+     *
+     * The footprints below are fractions of `scale` so they are the animal's
+     * own reach rather than a number nobody can place: 1.15 for the sweep
+     * (3.3 m of claw on a 2.9-scale acklay), 0.75 for the lunge, 0.85 for the
+     * charge. The vertical is deliberately not tested — a beast that misses
+     * because the player is on a crate reads as broken.
+     *
+     * AND THE THREE ATTACKS AIM AT DIFFERENT MOMENTS, which is what stops the
+     * whole set having one answer. Sweep and lunge aim at the top of the
+     * wind-up, so footwork during the telegraph beats them. The CHARGE aims
+     * when its drive begins, two thirds of a second later — it is the animal's
+     * answer to a player who is simply running, and a run that beats a claw
+     * should not also beat a charge. Measured: a sustained sprint-strafe takes
+     * 0% of sweeps and lunges and 63% of charges; standing still takes all
+     * three.
+     */
+    const hitTarget = (reach, dmg, lift) => {
       if (this._swiped) return;
       this._swiped = true;
       const t = this.target;
-      if (t && t.position.distanceTo(this.position) < radius) {
+      if (t && this.swingAt && t.position.distanceTo(this.swingAt) < reach) {
         _v1.subVectors(t.position, this.position).setY(lift).normalize().multiplyScalar(16);
         t.damage?.(dmg, this.position, this);
         t.velocity?.add(_v1);
@@ -1869,20 +2055,29 @@ export class Enemy {
 
     if (this.state === 'lunge') {
       if (this.stateTime < 0.5) this.velocity.addScaledVector(this.lungeDir, 42 * dt);
-      else if (this.stateTime < 0.85) hitTarget(5.4 * A.scale * 0.6, this.attackDamage, 0.5);
-      else { this.state = 'approach'; this._swiped = false; }
+      // 1.55 x scale, and a narrow cone: a lunge is a committed line, so the
+      // answer to it is to not be on that line.
+      else if (this.stateTime < 0.85) hitTarget(0.75 * A.scale, this.attackDamage, 0.5);
+      else { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
     } else if (this.state === 'sweep') {
-      // a wide claw arc — step aside rather than back
-      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(6.6 * A.scale * 0.6, this.attackDamage * 0.85, 0.9);
-      else if (this.stateTime >= 1.15) { this.state = 'approach'; this._swiped = false; }
+      // a wide claw arc — step aside rather than back. 1.9 x scale is the leg
+      // span; the cone is 1.25 rad each way, which is most of the front but not
+      // the flanks and never behind.
+      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(1.15 * A.scale, this.attackDamage * 0.85, 0.9);
+      else if (this.stateTime >= 1.15) { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
     } else if (this.state === 'charge') {
-      if (this.stateTime < 0.65) this.wish = null;                    // the wind-up
-      else if (this.stateTime < 1.9) {
+      if (this.stateTime < 0.65) {
+        this.wish = null;                                             // the wind-up
+        // …and the charge re-aims as it launches. See hitTarget: this is the
+        // attack that answers a runner, so it commits last.
+        this.swingAt = this.target ? this.target.position.clone() : null;
+        this.lungeDir = this.toTarget.clone();
+      } else if (this.stateTime < 1.9) {
         this.velocity.addScaledVector(this.lungeDir, 30 * dt);
-        hitTarget(4.6 * A.scale * 0.6, this.attackDamage * 1.3, 0.8);
+        hitTarget(0.85 * A.scale, this.attackDamage * 1.3, 0.8);
         if (rng() < 0.4) this.world.particles?.sandPuff(this.position.clone(), 1.4,
           this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
-      } else { this.state = 'approach'; this._swiped = false; }
+      } else { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
     }
   }
 
@@ -2208,10 +2403,42 @@ export class Enemy {
     guardQuat(this.facing, this.duel.spin, _oq);
     const dir = _o4.copy(this.duel.guardDir).applyQuaternion(_oq).normalize();
 
+    /**
+     * THE SECOND BEAT IS A SWING, not a guard that follows the first one.
+     *
+     * This used to mirror `duel.guardDir` and nothing else, so the off blade
+     * TRACKED the guard for the whole strike and never swept an arc through
+     * anything. That is why `_offhandStrike` was a proximity test: a blade that
+     * does not move cannot be given a swept hit, and the two defects held each
+     * other up — the strike was a distance check because the pose was a guard,
+     * and the pose could stay a guard because nothing swept it.
+     *
+     * Now the back half of the strike drives the off blade along the attack's
+     * OWN arc, mirrored: `from` to `to` over `lag`, which is zero until the
+     * main blade is a third of the way through and one at the end. So the two
+     * blades arrive on two beats, which is what the header above
+     * `_offhandStrike` has always claimed, and the arc is a real sweep that
+     * `segmentSegment` can be run against.
+     */
+    let lag = 0;
+    const atk = this.duel.attack;
+    if (this.duel.phase === 'strike' && atk) {
+      const len = this.duel._strikeLen || 0.2;
+      const u = clamp(1 - this.duel.timer / len, 0, 1);
+      lag = clamp((u - 0.35) / 0.65, 0, 1);
+      if (lag > 0) {
+        _o7.copy(atk.from).lerp(atk.to, lag).applyQuaternion(_oq).normalize();
+        dir.lerp(_o7, lag).normalize();
+      }
+    }
+
     // mirror the guard about the body's own right axis, then drop it a little:
     // a second blade is carried low, ready to come up under the first.
-    const mirrored = dir.addScaledVector(right, -2 * dir.dot(right)).addScaledVector(UP, -0.28).normalize();
-    const reach = 0.32 + (this.duel.attack?.reach ?? 0) * 0.6;
+    const mirrored = dir.addScaledVector(right, -2 * dir.dot(right)).addScaledVector(UP, -0.28 * (1 - lag)).normalize();
+    // …and it DRIVES on the second beat. A blade held at guard reach cannot
+    // touch a body at duelling distance; the extension is what makes the swing
+    // a swing rather than a pose that happens to be nearer.
+    const reach = 0.32 + (atk?.reach ?? 0) * 0.6 + 0.62 * lag;
     const handTarget = _o5.copy(chest).addScaledVector(mirrored, reach * S).addScaledVector(UP, -0.14 * S);
     const guardPoint = _o6.copy(chest).addScaledVector(mirrored, (reach + 0.58) * S);
 
@@ -2232,11 +2459,47 @@ export class Enemy {
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.walkPhase = (this.walkPhase + dt * clamp(speed / (1.1 * S), 0.1, 2.4)) % 1;
 
+    /**
+     * THE BODY READS THE ATTACK, which it did not before.
+     *
+     * This function never looked at `this.state`. It was a walk cycle and a
+     * head track, so a sweep, a lunge and a charge were all the same animal
+     * walking — the only cue any of them had was a sound, and the charge's
+     * floating label. A player cannot answer a wind-up they cannot see, and
+     * the beast is the one enemy whose whole answer is footwork.
+     *
+     * `rear` is the rise-and-drop the attack states drive: the chest lifts and
+     * pitches back through the wind-up, then throws forward through the strike.
+     * It is one number and it moves the hips, so every leg follows it through
+     * the IK below without a second pose path. Timings are the same ones the
+     * hit windows use, so the throw and the claw land together.
+     */
+    let rise = 0, pitch = 0;
+    const st = this.stateTime || 0;
+    if (this.state === 'sweep') {
+      // wind-up to 0.55, claw 0.55-0.95
+      rise = st < 0.55 ? Math.sin((st / 0.55) * Math.PI * 0.5) : Math.max(0, 1 - (st - 0.55) / 0.3);
+      pitch = -0.42 * rise;
+    } else if (this.state === 'lunge') {
+      // the crouch is the tell: it gathers, then drives
+      rise = st < 0.5 ? -Math.sin((st / 0.5) * Math.PI * 0.5) * 0.55 : 0;
+      pitch = 0.30 * -rise;
+    } else if (this.state === 'charge') {
+      rise = st < 0.65 ? Math.sin((st / 0.65) * Math.PI * 0.5) * 0.7 : Math.max(0, 0.7 - (st - 0.65) * 2);
+      pitch = -0.34 * rise;
+    } else if (this.state === 'winded') {
+      // …and being winded reads as being winded: the head drops to the floor.
+      rise = -0.5; pitch = 0.5;
+    }
     const bodyH = (this.A.custom === 'beast' ? 1.5 : 1.6) * S;
     const hips = rig.hipsBone.obj;
     const gh = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
-    hips.position.set(this.position.x, Math.max(this.position.y, gh) + bodyH + Math.sin(this.walkPhase * TAU * 2) * 0.05 * S, this.position.z);
+    hips.position.set(this.position.x,
+      Math.max(this.position.y, gh) + bodyH * (1 + 0.30 * rise) + Math.sin(this.walkPhase * TAU * 2) * 0.05 * S,
+      this.position.z);
     hips.quaternion.setFromAxisAngle(UP, this.facing);
+    if (pitch) hips.quaternion.multiply(_q1.setFromAxisAngle(RIGHT, pitch));
+    this._rear = rise;
     rig.updateMatrices();
 
     if (this.lod > 1) return;

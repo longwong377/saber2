@@ -52,6 +52,7 @@ import {
   CEL, celTone, celShadow, celAlbedo, celBand, celDistance, lambertTone, bandCount,
 } from '../../src/toon/Cel.js';
 import { INK } from '../../src/toon/Ink.js';
+import { Cloak } from '../../src/game/Cloth.js';
 import { rawMaps, MEAN_ALBEDO } from '../../src/engine/Textures.js';
 import { fbm2 } from '../../src/engine/MathUtil.js';
 
@@ -99,6 +100,86 @@ function physicalDirect({ dotNL, dotNV, dotNH, roughness, albedo, metalness }) {
 /** The cel response to the same input. No view direction, no roughness. */
 function celDirect({ dotNL, key, albedo }) {
   return celTone(dotNL, key, 1) * albedo / Math.PI;
+}
+
+/* ── the shadow map, in JS, for a single zero-thickness sheet ───────────
+ *
+ * Enough of three's shadow pipeline to answer one question: does a garment
+ * write depth into the map that its own lighting pass then reads back as an
+ * occluder? Everything here is transcribed from a named line and the check
+ * below pins each constant against Engine.js's source, because none of it can
+ * be read off a device this harness never boots.
+ */
+
+/** three's own table: WebGLShadowMap `shadowSide`, r169. */
+const SHADOW_SIDE_OF = { 0: 1, 1: 0, 2: 2 };   // FrontSide→Back, Back→Front, Double→Double
+
+/** Vogel disc — Engine.js saberDisc(), one for one. */
+function vogel(i, n, phi) {
+  const t = i * 2.39996323 + phi;
+  const r = Math.sqrt((i + 0.5) / n);
+  return [Math.cos(t) * r, Math.sin(t) * r];
+}
+const fract1 = (x) => x - Math.floor(x);
+/** Engine.js's per-pixel rotation: fract(sin(dot(gl_FragCoord.xy, …)) * 43758.5453). */
+function discPhi(px, py) {
+  return fract1(Math.sin(px * 12.9898 + py * 78.233) * 43758.5453) * 6.283185;
+}
+
+/**
+ * Engine.js saberSoftShadow(), transcribed: a 6-tap blocker search with an
+ * early-out, then a 12-tap filter whose radius is the penumbra slope times the
+ * blocker distance, clamped to [1 texel, 14 texels].
+ */
+function softShadow(stored, texelUV, slope, uv, z, phi) {
+  const maxR = 14.0 * texelUV;
+  let sum = 0, n = 0;
+  const d0 = stored(uv);
+  if (d0 < z) { sum = d0; n = 1; }
+  for (let i = 0; i < 6; i++) {
+    const d = stored(uv + vogel(i, 6, phi)[0] * maxR);
+    if (d < z) { sum += d; n += 1; }
+  }
+  if (n < 0.5) return 1;
+  const r = Math.min(maxR, Math.max(texelUV, slope * (z - sum / n)));
+  let shadow = 0;
+  for (let i = 0; i < 12; i++) shadow += stored(uv + vogel(i, 12, phi)[0] * r) >= z ? 1 : 0;
+  return shadow / 12;
+}
+
+/**
+ * What fraction of a flat sheet the cel step calls "in cast shadow" when the
+ * only thing in the shadow map is the sheet itself.
+ *
+ * `nw` is dot(geometry normal, direction to the sun): positive faces the sun.
+ * `side` is the EFFECTIVE shadow-pass cull mode (0 FrontSide, 1 BackSide,
+ * 2 DoubleSide) — the sheet rasterises into the map only if that mode keeps it.
+ *
+ * Ortho shadow depth is linear, so a light-space metre is (far-near) of
+ * normalised depth; a texel of map stores the plane's depth at the texel's
+ * CENTRE, which is where the slope-scale error comes from; and the lighting
+ * pass looks the depth up at worldPosition + N·normalBias (shadowmap_vertex,
+ * with the UNFLIPPED geometry normal) with the light's depth bias added.
+ */
+function selfShadowed(rig, nw, side, samples = 1200) {
+  const writes = side === 2 || (side === 0 ? nw > 0 : nw < 0);
+  const g = Math.sqrt(Math.max(0, 1 - nw * nw)) / Math.abs(nw);   // depth metres per metre of u
+  const w0 = rig.range * 0.5;
+  const depthAt = (u) => (w0 + g * u) / rig.range;
+  const stored = (uv) => {
+    if (!writes) return 1e9;
+    const centre = (Math.floor(uv * rig.map) + 0.5) / rig.map;
+    return depthAt((centre - 0.5) * 2 * rig.d);
+  };
+  let dark = 0;
+  for (let i = 0; i < samples; i++) {
+    const u = ((i / samples) - 0.5) * 40 * rig.texelWorld;
+    const z = depthAt(u) - rig.normalBias * nw / rig.range + rig.bias;
+    const s = softShadow(stored, 1 / rig.map, rig.slope, 0.5 + u / (2 * rig.d), z,
+      discPhi((i % 97) + 0.5, Math.floor(i / 97) + 0.5));
+    if (celShadow(s) < 0.5) dark++;
+  }
+  return dark / samples;
 }
 
 export function run({ check, assert, near }) {
@@ -621,6 +702,109 @@ export function run({ check, assert, near }) {
       + `(${(softIn / N * 100).toFixed(0)}% before), umbra and full sun both exact`;
   });
 
+  check('cel: a garment does not paint a hard black shape onto itself', () => {
+    /* The other end of rule 2, and the one that bit.
+     *
+     * A hard step is only as good as the value it steps. Every garment in the
+     * game is a zero-thickness DoubleSide sheet (src/game/Cloth.js), and three
+     * picks the shadow pass's cull mode from `shadowSide[material.side]`, which
+     * maps DoubleSide to DoubleSide — so the sheet rasterises into the depth map
+     * at exactly the depth its own lighting pass then tests against. Worse, the
+     * lookup is offset along the UNFLIPPED geometry normal by the light's
+     * normalBias, so on the half of the cloth whose normal points AWAY from the
+     * sun that 2 cm offset moves the sample deeper INTO its own depth. The
+     * penumbra step then turns what would have been a faint stripe into a solid
+     * black shape with a dithered rim, on a surface the tone model has already
+     * decided is lit — measured on the player at 3 m in full daylight.
+     *
+     * The fix is FrontSide, not the BackSide that works for closed meshes: on a
+     * sheet BackSide keeps exactly the faces that self-shadow and culls the
+     * faces the light can see, so the garment stops casting at all. Both are
+     * measured below, so neither can be swapped in by accident.
+     */
+    const src = ENGINE_SRC();
+    // The rig the twin above stands for, read off Engine.js rather than copied.
+    const split = /export const CASCADE_SPLIT = \[([-\d., ]+)\]/.exec(src);
+    assert(split, 'CASCADE_SPLIT is no longer a literal array in Engine.js');
+    const split0 = parseFloat(split[1].split(',')[0]);
+    const nb = /L\.shadow\.normalBias = ([\d.]+) \* \(1 \+ i \* [\d.]+\);/.exec(src);
+    const db = /L\.shadow\.bias = (-?[\d.]+);/.exec(src);
+    const fitFar = /cam\.near = 1; cam\.far = d \* ([\d.]+);/.exec(src);
+    assert(nb && db && fitFar, 'the cascade rig no longer sets bias, normalBias and cam.far where the twin reads them');
+    const tiers = {};
+    for (const t of ['low', 'medium', 'high', 'ultra']) {
+      const m = new RegExp(`${t}:\\s*\\{[^}]*?shadow:\\s*(\\d+)[^}]*?shadowDist:\\s*(\\d+)`).exec(src);
+      assert(m, `QUALITY.${t} no longer declares shadow and shadowDist`);
+      const map = +m[1], d = +m[2] * split0, far = d * parseFloat(fitFar[1]);
+      // tan(source) × (far−near) / 2d — fitShadows' own penumbra slope, in clear
+      // air at the levels' default turbidity 6: 0.53° disc + 0.4 × 1.6° aureole.
+      const range = far - 1;
+      tiers[t] = {
+        map, d, range, texelWorld: (2 * d) / map,
+        normalBias: parseFloat(nb[1]), bias: parseFloat(db[1]),
+        slope: Math.tan((0.53 + 1.6 * 0.4) * Math.PI / 180) * range / (2 * d),
+      };
+    }
+
+    // What the game actually builds. Both shapes Cloth.js makes: the sheet a
+    // cape and a skirt panel are, and the closed tube a sash end and a lek are.
+    const scene = new THREE.Scene();
+    const built = [
+      ['cape sheet', new Cloak(scene, { width: 0.36, length: 0.86, cols: 9, rows: 11 })],
+      ['sash tube', new Cloak(scene, { closed: true, cols: 8, rows: 6 })],
+      ['robe clone', new Cloak(scene, {
+        material: new THREE.MeshStandardMaterial({ side: THREE.DoubleSide }), cols: 7, rows: 9 })],
+    ];
+    const sides = [];
+    for (const [label, c] of built) {
+      assert(c.mesh.castShadow, `the ${label} stopped casting a shadow`);
+      const eff = c.mat.shadowSide !== null ? c.mat.shadowSide : SHADOW_SIDE_OF[c.mat.side];
+      sides.push([label, eff, c.mat.side]);
+    }
+
+    /* THE MEASUREMENT. Anti-sun faces must contribute nothing to the map, and
+     * the sun-facing half must still be in it — a garment that casts no shadow
+     * is the other way to make this number zero and it is not the fix. */
+    const dark = [];
+    for (const [label, eff, side] of sides) {
+      assert(side === THREE.DoubleSide, `the ${label} is no longer DoubleSide — this check is measuring the wrong thing`);
+      for (const [t, rig] of Object.entries(tiers)) {
+        for (const nw of [-1, -0.9, -0.6, -0.2]) {
+          const f = selfShadowed(rig, nw, eff);
+          assert(f < 1e-9,
+            `${label} at ${t}: ${(f * 100).toFixed(0)}% of a sheet facing ${nw} away from the sun `
+            + 'shadows ITSELF — the depth pass is rasterising the same surface the lighting pass tests');
+          dark.push(f);
+        }
+        // and it still casts: something has to be in the map on the lit side
+        const casts = selfShadowed(rig, 0.9, eff === 0 ? 2 : eff) >= 0;
+        assert(casts && (eff === 0 || eff === 2),
+          `${label}: shadowSide ${eff} culls the faces the sun can see, so it casts no shadow at all`);
+      }
+    }
+
+    /* THE BOUND BITES. The same twin on three's default for a DoubleSide
+     * material — which is what shipped — has to fail every assertion above. */
+    const before = [];
+    for (const [t, rig] of Object.entries(tiers)) {
+      for (const nw of [-1, -0.9, -0.6, -0.2]) before.push([t, nw, selfShadowed(rig, nw, 2)]);
+    }
+    const worst = Math.max(...before.map((r) => r[2]));
+    assert(worst > 0.9,
+      `the DoubleSide control only self-shadows ${(worst * 100).toFixed(0)}% at its worst — `
+      + 'the twin is not reproducing the defect, so the assertions above prove nothing');
+    const mean = before.reduce((a, r) => a + r[2], 0) / before.length;
+    assert(mean > 0.4, `the DoubleSide control averages only ${(mean * 100).toFixed(0)}%`);
+    // …and the darkening it buys, in tone: a lit fragment lands on shadowBand.
+    const key = Math.sin(30 * Math.PI / 180);
+    const ratio = celTone(1, key, 1, 1) / celTone(1, key, 1, 0);
+    near(ratio, 1 / CEL.shadowBand, 1e-9, 'the cast-shadow darkening is not the authored band');
+
+    return `${sides.length} garment shapes, shadowSide FrontSide, 0% self-shadow at every tier `
+      + `(DoubleSide control: ${(mean * 100).toFixed(0)}% mean, ${(worst * 100).toFixed(0)}% worst, `
+      + `a ${ratio.toFixed(2)}:1 darkening)`;
+  });
+
   /* ══ 5. HUE, NOT HAZE ══════════════════════════════════════════════════ */
 
   check('cel: distance arrives in plates, and every material stands on the same grid', () => {
@@ -919,6 +1103,80 @@ export function run({ check, assert, near }) {
       'the line colour is no longer derived per level from the ground it is drawn over');
     return `5 exclusions live, far plane discarded, default ink #${c.toString(16).padStart(6, '0')} `
       + `(warm by ${Math.max(...rgb) - Math.min(...rgb)}/255), per-level ink derived in applyAtmosphere`;
+  });
+
+  check('ink: nothing in the composite haloes the lines it is drawn over', () => {
+    /* THE ARGUMENT IS ALREADY WRITTEN, in Engine.js over uGrain: "there is no
+     * grain in a painting, and a drawn line does not fringe red on one side and
+     * cyan on the other… they argue it at pixel level where flat colour fields
+     * make them MORE visible than they were over a noisy PBR image".
+     *
+     * Grain and chromatic aberration were zeroed on that page. The UNSHARP MASK
+     * three lines below them was not, and it is the worst of the three here,
+     * because it is the only one whose output is a function of the ink itself.
+     * The composite runs LAST — bloom → OutputPass → OutlinePass → composite —
+     * so every line src/toon/Ink.js draws is in the buffer this filter reads,
+     * and an unsharp mask over a step edge is a bright rim on both sides of it
+     * by construction.
+     *
+     * Measured on the four-tap kernel the shader actually runs, over a single
+     * dark line on a flat field: the assertion is on the halo in 8-bit display
+     * units, not on the uniform, so a version that "turns it down" instead of
+     * off still has to answer for what it leaves behind. */
+    const src = ENGINE_SRC();
+    const uni = (name) => {
+      const m = new RegExp(`${name}:\\s*\\{\\s*value:\\s*([-\\d.]+)\\s*\\}`).exec(src);
+      assert(m, `${name} is no longer a scalar uniform in the composite`);
+      return parseFloat(m[1]);
+    };
+    /* the shader's own kernel: blur = the four axis neighbours,
+     * col += (col − blur·0.25)·uSharpen */
+    const halo = (amount, field, line) => {
+      const row = (x) => (x === 0 ? line : field);            // a 1 px line at x = 0
+      const at = (x) => {
+        const blur = row(x - 1) + row(x + 1) + row(x) + row(x);  // ±x, and ±y on the same row
+        return row(x) + (row(x) - blur * 0.25) * amount;
+      };
+      return { onLine: at(0) - line, beside: at(1) - field };
+    };
+    const rows = [];
+    let worst = 0;
+    for (const [f, l, label] of [[0.600, 0.223, 'arena field over ink'],
+      [0.900, 0.223, 'bright field over ink'],
+      [0.600, 0.480, 'a posterised band boundary']]) {
+      const h = halo(0.12, f, l);   // 0.12 is what shipped
+      worst = Math.max(worst, Math.abs(h.beside) * 255, Math.abs(h.onLine) * 255);
+      rows.push(`${label} ${(h.beside * 255).toFixed(1)}/255 beside, ${(h.onLine * 255).toFixed(1)}/255 on it`);
+    }
+    assert(worst > 2.5,
+      `the shipped 0.12 only moves ${worst.toFixed(1)}/255 at its worst — the twin is not `
+      + 'reproducing the artefact, so the assertion below proves nothing');
+    // …and at the value that ships now, the same kernel must do nothing at all.
+    const sharpen = uni('uSharpen');
+    for (const [f, l] of [[0.600, 0.223], [0.900, 0.223], [0.600, 0.480]]) {
+      const h = halo(sharpen, f, l);
+      assert(Math.abs(h.beside) * 255 < 0.5 && Math.abs(h.onLine) * 255 < 0.5,
+        `the composite still rims a drawn line by ${(h.beside * 255).toFixed(1)}/255 at uSharpen ${sharpen} `
+        + '— an unsharp mask running after the outline pass haloes every line in the frame');
+    }
+    // the two it was meant to have been zeroed alongside, so none can drift back
+    for (const n of ['uGrain', 'uAberration']) {
+      assert(uni(n) === 0, `${n} is back — that is a camera artefact over a drawn frame`);
+    }
+    /* THE PASS ORDER IS THE REASON. If the composite ever moves ahead of the
+     * outline pass this check is measuring something else, so pin it. */
+    const chain = src.slice(src.indexOf('this.composer.addPass'));
+    const order = ['UnrealBloom', 'OutputPass', 'OutlinePass', 'this.composite'].map((p) => chain.indexOf(p));
+    assert(order.every((i) => i >= 0) && order.every((v, i) => i === 0 || v > order[i - 1]),
+      'the composite no longer runs last after the outline pass — re-derive this check against the new order');
+    /* …and the taps read through sampleScene(), which is the fault the
+     * aberration block six lines above carries a comment about. */
+    const block = src.slice(src.indexOf('unsharp mask'), src.indexOf('unsharp mask') + 700);
+    assert(!/texture2D\(\s*tDiffuse/.test(block),
+      'the unsharp taps read tDiffuse directly again — the same bug that blurred only the green '
+      + 'channel under Force Sense');
+    return `uSharpen ${sharpen}, uGrain 0, uAberration 0; at the shipped 0.12 the same kernel gives `
+      + rows.join(' · ');
   });
 
   check('ink: the line stops where sight does, on every level\'s own air', () => {

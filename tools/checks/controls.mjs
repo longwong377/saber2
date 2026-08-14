@@ -1323,8 +1323,22 @@ export async function run({ check, assert }) {
       'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut',
       // a swatch row under the crystals, same shape as colorIndex's
       'lightningColor'];
+    /**
+     * The settings that are TYPED — a text box rather than a slider, a
+     * checkbox or a row of cards. One so far: the co-op name, which is the
+     * only setting in the game whose value is a word the player invents.
+     * Held to the same standard as the rest — the id has to be in the markup
+     * and the menu has to write the key by name — so this is a third shape of
+     * control, not a third way to be excused from having one.
+     */
+    const TYPED = { playerName: 'opt-name' };
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (TYPED[key]) {
+        assert(html.includes(`id="${TYPED[key]}"`), `#${TYPED[key]} is in no markup, so ${key} has no field`);
+        assert(new RegExp(`this\\.s\\.${key}\\s*=`).test(menu), `nothing in the menu writes ${key}`);
+        continue;
+      }
       if (bound.has(key)) {
         assert(html.includes(`id="${bound.get(key)}"`) || menu.includes(`id="${bound.get(key)}"`),
           `${key} is bound to #${bound.get(key)}, which is in no markup — _slider returns silently`);
@@ -1349,7 +1363,7 @@ export async function run({ check, assert }) {
       assert(html.includes(`id="${id}"`), `#${id} is not on the options screen`);
     }
     return `${Object.keys(DEFAULT_SETTINGS).length} settings: ${bound.size} on sliders/checkboxes, `
-      + `${PICKED.length} on pickers, 0 with no control`;
+      + `${PICKED.length} on pickers, ${Object.keys(TYPED).length} typed, 0 with no control`;
   });
 
   check('controls: the two fidelity sliders multiply the tier and bite mid-run', async () => {

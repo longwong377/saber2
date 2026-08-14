@@ -31,25 +31,40 @@ const chk = (v) => {
   return v;
 };
 
+/**
+ * Every call is kept, because a param under a scheduled ramp does not report
+ * where it is going: `.value` is where it was when the ramp was set. The score
+ * and the ambience bed are BOTH nothing but scheduled ramps, so a check that
+ * read `.value` on them would measure the level a level loaded at and call it
+ * the level a fight reached. `last()` is what was commanded, in order.
+ */
 class Param {
-  constructor(v = 0) { this._v = v; }
+  constructor(v = 0) { this._v = v; this.calls = []; }
   get value() { return this._v; }
-  set value(v) { this._v = chk(v); }
-  setValueAtTime(v, t) { chk(v); chk(t); return this; }
-  linearRampToValueAtTime(v, t) { chk(v); chk(t); return this; }
+  set value(v) { this._v = chk(v); this.calls.push(['value', v, 0]); }
+  setValueAtTime(v, t) { chk(v); chk(t); this.calls.push(['set', v, t]); return this; }
+  linearRampToValueAtTime(v, t) { chk(v); chk(t); this.calls.push(['lin', v, t]); return this; }
   exponentialRampToValueAtTime(v, t) {
     chk(v); chk(t);
     // The real node throws here, and this file used to reach it with a zero.
     if (v === 0) throw new RangeError('exponentialRampToValueAtTime: target must not be 0');
+    this.calls.push(['exp', v, t]);
     return this;
   }
-  setTargetAtTime(v, t, tc) { chk(v); chk(t); chk(tc); return this; }
-  cancelScheduledValues(t) { chk(t); return this; }
+  setTargetAtTime(v, t, tc) { chk(v); chk(t); chk(tc); this.calls.push(['tgt', v, t]); return this; }
+  cancelScheduledValues(t) { chk(t); this.calls.push(['cancel', 0, t]); return this; }
+  /** The last value this param was COMMANDED to move to, of a kind or any. */
+  last(kind) {
+    for (let i = this.calls.length - 1; i >= 0; i--) if (!kind || this.calls[i][0] === kind) return this.calls[i][1];
+    return null;
+  }
+  /** How many times it was told to move at all. A ramp per frame arrives nowhere. */
+  moves() { return this.calls.filter(c => c[0] !== 'cancel' && c[0] !== 'value').length; }
 }
 
 class Node {
   constructor(ctx, kind) { this.ctx = ctx; this.kind = kind; this.outs = new Set(); }
-  connect(d) { this.outs.add(d); this.ctx.connects++; return d; }
+  connect(d) { this.outs.add(d); this.ctx.connects++; this.ctx.edges.push([this, d]); return d; }
   disconnect(d) {
     this.ctx.disconnected.push(this);
     if (d) this.outs.delete(d); else this.outs.clear();
@@ -77,6 +92,7 @@ class FakeCtx {
     this.currentTime = 0;
     this.state = 'running';
     this.connects = 0;
+    this.edges = [];          // [from, to] — the graph as it was actually wired
     this.disconnected = [];
     this.running = [];        // sources with a scheduled stop, awaiting `ended`
     this.panners = 0;
@@ -127,6 +143,8 @@ class FakeCtx {
     return { numberOfChannels: channels, length, sampleRate: rate,
       duration: length / rate, getChannelData: (i) => data[i] };
   }
+  /** The score is the one sound in the game that is not built from these. */
+  createMediaElementSource(el) { const n = new Node(this, 'media'); n.mediaElement = el; return n; }
   /** Move the audio clock and fire `ended` for everything that has finished. */
   advance(dt) {
     this.currentTime += dt;
@@ -147,8 +165,15 @@ class FakeCtx {
   suspend() { this.state = 'suspended'; return Promise.resolve(); }
 }
 
-/** A fully initialised engine on a fake context. */
-function engine() {
+/**
+ * A fully initialised engine on a fake context.
+ *
+ * Exported because tools/checks/music.mjs drives the same engine — the score is
+ * the one sound in the game that arrives as a file, and it still has to be
+ * measured on the same graph as everything else rather than against a second
+ * fake that could drift away from this one.
+ */
+export function engine() {
   const prevAC = globalThis.AudioContext;
   let made = null;
   globalThis.AudioContext = function () { made = new FakeCtx(); return made; };
@@ -355,13 +380,129 @@ export async function run({ check, assert }) {
     return `10 hums, 0 pool voices, ${ctx.disconnected.length - d0} nodes released on dispose`;
   });
 
-  check('audio: the score pulses without touching the one-shot pool', () => {
+  /**
+   * THE SCORE, and what this check used to be.
+   *
+   * It asserted two things: that the pool was untouched, and that `intensity`
+   * had smoothed above 0.9. Neither of those is a sound. `intensity` is
+   * smoothed BEFORE the `< 0.12` early return, and the pulse takes no voices by
+   * design, so — measured, not argued — deleting the entire pulse block and
+   * leaving the smoothing line alone kept both assertions green: 0 oscillators,
+   * 0 pool voices, intensity 0.998, PASS. The one test of the game's musical
+   * reaction to combat could not tell the feature from its total absence.
+   *
+   * So it counts SOURCES ARRIVING ON THE MUSIC BUS, over ten seconds, at three
+   * drive levels, against the tempo the code claims (bpm = 74 + 46 × I), and
+   * reads back the envelope and the sweep those sources were given.
+   */
+  check('audio: the fight is audible in the score, at the tempo it claims', () => {
+    const run = (drive) => {
+      const { a, ctx } = engine();
+      const e0 = ctx.edges.length;
+      for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, drive); ctx.advance(1 / 60); }
+      const fresh = ctx.edges.slice(e0);
+      // One pulse is [oscillator → gain] and [gain → musicBus]. Walk it from
+      // the bus back, so what is counted is what the mix would actually receive.
+      const gains = fresh.filter(([, d]) => d === a.musicBus).map(([g]) => g);
+      const oscs = gains.map(g => (fresh.find(([, d]) => d === g) || [])[0]).filter(Boolean);
+      ctx.advance(2);
+      return { a, ctx, pulses: gains.length, gains, oscs };
+    };
+
+    // The smoothing is a 1/0.6 s lag, so ten seconds at drive I average
+    // I × 0.834 of it: the expected count is ∫bpm/60 dt over that.
+    const expected = (drive) => (74 + 46 * drive * 0.834) * 10 / 60;
+
+    const hot = run(1), mid = run(0.4), cold = run(0);
+    for (const [name, r, drive] of [['full', hot, 1], ['0.4', mid, 0.4]]) {
+      const want = expected(drive);
+      assert(r.pulses > 0, `${name} drive put NOTHING on the music bus — the score does not answer the fight`);
+      assert(Math.abs(r.pulses - want) <= want * 0.15,
+        `${name} drive gave ${r.pulses} pulses in 10 s, and bpm = 74 + 46 × I says ${want.toFixed(1)}`);
+    }
+    assert(hot.pulses > mid.pulses + 2,
+      `a full fight (${hot.pulses}) is no faster than a quarter of one (${mid.pulses})`);
+    assert(cold.pulses === 0, `${cold.pulses} pulses played with nothing happening at all`);
+
+    // and each one is the envelope and the sweep the source says it is
+    const peak = Math.max(...hot.gains.map(g => g.gain.last('lin') ?? 0));
+    assert(peak > 0.10 && peak <= 0.1401,
+      `the loudest pulse was commanded to ${peak.toFixed(4)}, not the stated 0.14 × intensity`);
+    assert(hot.oscs.length === hot.pulses,
+      `${hot.oscs.length} of ${hot.pulses} pulses had a source at all`);
+    const swept = hot.oscs.filter(o => o.frequency?.last('exp') !== null);
+    assert(swept.length === hot.pulses,
+      `${swept.length} of ${hot.pulses} pulses actually swept — a sub that does not move is a hum`);
+    const from = swept[0].frequency.last('set'), to = swept[0].frequency.last('exp');
+    assert(from > to, `the pulse sweeps ${from} → ${to} Hz, which is upwards`);
+    assert(hot.a.voices === 0, `the score took ${hot.a.voices} voices from the one-shot pool`);
+    return `${hot.pulses}/${mid.pulses}/${cold.pulses} pulses in 10 s at I=1/0.4/0, `
+      + `${from.toFixed(0)}→${to.toFixed(0)} Hz, peak ${peak.toFixed(3)}, pool untouched`;
+  });
+
+  /**
+   * THE ROOM, which is the half of it the player can actually hear.
+   *
+   * src/engine/Audio.js says of the drone bed, three lines above where it is
+   * built, "a slow-breathing minor cluster that swells with the fight". It was
+   * written in exactly one place in the project — setAmbience, from level data,
+   * at load — and measured over ten seconds at full combat intensity it
+   * received ZERO automations: a nine-enemy fight and an empty level were the
+   * same room.
+   */
+  check('audio: the room swells with the fight, and settles after it', () => {
     const { a, ctx } = engine();
-    const v0 = a.voices;
-    for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, 1); ctx.advance(1 / 60); }
-    ctx.advance(2);
-    assert(a.voices === v0, `the score took ${a.voices - v0} voices from the one-shot pool`);
-    assert(a.intensity > 0.9, `intensity only reached ${a.intensity.toFixed(2)} at full drive`);
-    return `10 s at full intensity, pool untouched`;
+    a.setAmbience({ wind: 0.20, windFreq: 190, drone: 0.26 });   // mustafar's bed
+    const base = a.droneGain.gain.last('tgt');
+    assert(Math.abs(base - 0.26) < 1e-9, `the level's own drone arrived as ${base}`);
+    const moves0 = a.droneGain.gain.moves();
+
+    for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    const hot = a.droneGain.gain.last('tgt');
+    assert(hot > base + 0.06,
+      `ten seconds of a full fight moved the drone from ${base} to ${hot} — the bed does not answer combat`);
+    // …and the fight is not weather: the wind bed must not have moved with it.
+    assert(Math.abs(a.windGain.gain.last('tgt') - 0.20) < 1e-9,
+      `the wind rose with the fight (${a.windGain.gain.last('tgt')}) — that is a storm, not a battle`);
+
+    for (let f = 0; f < 1800; f++) { a.updateScore(1 / 60, 0, 0); ctx.advance(1 / 60); }
+    const cold = a.droneGain.gain.last('tgt');
+    assert(Math.abs(cold - base) < 0.01,
+      `thirty seconds after the fight the drone is still at ${cold.toFixed(3)}, not back to ${base}`);
+
+    // A ramp scheduled every frame is a ramp that never arrives anywhere: 2400
+    // frames of this must cost tens of automations, not thousands.
+    const moves = a.droneGain.gain.moves() - moves0;
+    assert(moves > 2 && moves < 80, `${moves} drone automations over 2400 frames`);
+    return `drone ${base} → ${hot.toFixed(3)} under a full fight → ${cold.toFixed(3)} after it, `
+      + `in ${moves} automations`;
+  });
+
+  /**
+   * THE WEATHER. Eight of the thirteen levels ship a squall — kamino peaks at
+   * 1.0 for 44 s of every 88 — and src/world/Scenery.js drives fog density, sun
+   * intensity, hemi fill and a 2.4× particle wind off `weather.intensity` every
+   * frame. The audio wind was written once, at level load. A white-out crossed
+   * the level in silence.
+   */
+  check('audio: a squall is heard as well as seen', () => {
+    const { a, ctx } = engine();
+    a.setAmbience({ wind: 0.42, windFreq: 520, drone: 0.18 });   // kamino's bed
+    const w0 = a.windGain.gain.last('tgt'), f0 = a.windFilter.frequency.last('tgt');
+
+    for (let f = 0; f < 900; f++) { a.updateScore(1 / 60, 0, 1); ctx.advance(1 / 60); }
+    const w1 = a.windGain.gain.last('tgt'), f1 = a.windFilter.frequency.last('tgt');
+    assert(w1 > w0 * 1.5, `a full squall took the wind from ${w0} to ${w1} — under +3.5 dB, it is not weather`);
+    assert(f1 > f0 * 1.3, `the wind's band stayed at ${f1.toFixed(0)} Hz — a gale is brighter than a breeze`);
+    // and a storm is not a fight
+    assert(Math.abs(a.droneGain.gain.last('tgt') - 0.18) < 1e-9,
+      `the drone rose with the weather (${a.droneGain.gain.last('tgt')})`);
+
+    for (let f = 0; f < 900; f++) { a.updateScore(1 / 60, 0, 0); ctx.advance(1 / 60); }
+    assert(Math.abs(a.windGain.gain.last('tgt') - w0) < 0.006,
+      `the squall blew out and the wind stayed at ${a.windGain.gain.last('tgt')}`);
+    assert(Math.abs(a.windFilter.frequency.last('tgt') - f0) < 7,
+      `the wind's band never came back down: ${a.windFilter.frequency.last('tgt').toFixed(0)} Hz`);
+    return `wind ${w0} → ${w1.toFixed(3)} and ${f0} → ${f1.toFixed(0)} Hz at peak squall, both back after`;
   });
 }

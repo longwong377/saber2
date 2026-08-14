@@ -124,6 +124,34 @@ h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:upperca
 .sw.sel{border-color:#fff;transform:scale(1.14)}
 .sw.sel::after{content:'';position:absolute;inset:-5px;border:1px solid rgba(255,255,255,.55);border-radius:12px}
 
+/* ── KEYBOARD FOCUS ───────────────────────────────────────────────────
+   Every picker in this menu is a div — level cards, difficulties, modes, the
+   fidelity tiers, the schemes, the eleven creator rows, the draft cards, the
+   key chips — and until Menu._activate they carried a click listener and
+   nothing else: 120 controls, none of them reachable by keyboard, on a page
+   whose only two focus rules in 590 lines were the join-code box and a
+   constellation star. A ring is the other half of that fix; a control you can
+   focus and cannot SEE focused is not operable either.
+
+   Warm rather than accent-blue on purpose: blue is what `.sel` already means
+   here, and "which one is selected" and "which one am I about to activate" have
+   to be two different answers. Measured against the ground these sit on
+   (--panel over the menu's radial, ≈#080c14) #ffb64a is 11.2:1, well past the
+   3:1 WCAG asks of a non-text indicator; :focus-visible rather than :focus so a
+   mouse click never paints one. */
+.card:focus-visible,.diff:focus-visible,.sw:focus-visible,.dc:focus-visible,
+.tab:focus-visible,.primary:focus-visible,.secondary:focus-visible,.ghost:focus-visible,
+.bindrow .keys b:focus-visible,.slider input:focus-visible,.check input:focus-visible,
+.netname input:focus-visible,#join-code:focus-visible{
+  outline:2px solid var(--accent-warm);outline-offset:2px;border-radius:9px}
+#med-sky .star:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
+
+/* The Theatre column when the mode owns the theatre — see Menu._syncTheatre.
+   Inert rather than hidden: the places are still worth looking at, they are
+   simply not this mode's to choose. */
+.cards.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
+.cards.inert .card{cursor:default}
+
 /* sliders & checks */
 .slider{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--dim);margin:11px 0}
 .slider input{flex:1;-webkit-appearance:none;appearance:none;height:2px;background:rgba(255,255,255,.15);border-radius:2px;outline:none}
@@ -147,6 +175,10 @@ h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:upperca
 .ret-preview .ret-tick{stroke-width:2.2;fill:none;stroke-linecap:round}
 .check{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--dim);margin:10px 0;cursor:pointer}
 .check input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+/* A checkbox the fidelity tier has overruled. It keeps the player's own answer
+   and stops pretending it is in charge of it — see Menu._syncBloomBox. */
+.check.overruled{opacity:.55}
+.check input:disabled{cursor:not-allowed}
 
 /* buttons */
 button{font-family:inherit}
@@ -173,6 +205,14 @@ button{font-family:inherit}
 #join-code{width:100%;padding:13px 16px;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:9px;
   color:var(--ink);font:var(--mono);font-size:16px;letter-spacing:.34em;text-align:center;text-transform:uppercase;outline:none}
 #join-code:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(87,201,255,.13)}
+/* The name every other player sees. Same box as the session code, quieter type:
+   it is a word, not a code to be read out over voice chat. */
+.netname{display:flex;flex-direction:column;gap:7px;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--dimmer)}
+.netname input{width:100%;padding:11px 14px;background:rgba(0,0,0,.45);border:1px solid var(--line);
+  border-radius:9px;color:var(--ink);font:var(--ui);font-size:14px;letter-spacing:.06em;
+  text-transform:none;outline:none}
+.netname input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(87,201,255,.13)}
 .netstatus{margin-top:18px;font:var(--mono);letter-spacing:.1em;color:var(--dim);min-height:18px}
 .netstatus.ok{color:var(--good)}.netstatus.err{color:var(--danger)}
 .roster{margin-top:16px;display:flex;flex-direction:column;gap:6px}
@@ -377,6 +417,10 @@ button{font-family:inherit}
 .dc.att{border-color:rgba(255,186,102,.42);background:linear-gradient(170deg,rgba(255,176,84,.09),var(--panel) 62%)}
 .dc.att:hover{border-color:var(--accent-warm);box-shadow:0 22px 50px -22px rgba(255,176,84,.7)}
 .dc.att em{color:rgba(255,196,126,.9)}
+/* The number that takes this card. Printed because a shortcut nobody is told
+   about is not a shortcut, and the draft stops the world until it is answered. */
+.dc .dck{margin-left:8px;min-width:18px;padding:1px 5px;font-size:9px;letter-spacing:.08em;
+  border-bottom-width:2px;color:var(--dim)}
 .pause-stats,.death-stats{display:grid;grid-template-columns:1fr 1fr;gap:9px 18px;margin:22px 0;
   font:var(--mono);font-size:11px;letter-spacing:.1em}
 .pause-stats div,.death-stats div{display:flex;justify-content:space-between;color:var(--dim);
@@ -464,14 +508,25 @@ button{font-family:inherit}
   box-shadow:0 0 18px rgba(255,180,80,.9);animation:pulseLow .5s ease-in-out infinite}
 
 
-/* The frame counter. Monospace and tabular so the digits do not dance, and
-   pinned top-right where nothing else in the HUD lives. Deliberately plain:
-   it is an instrument, not part of the game's look. */
+/* THE FRAME COUNTER, AND THE THING IT USED TO PAINT OVER.
+   Monospace and tabular so the digits do not dance. It used to be
+   `position:absolute; top:10px; right:12px; z-index:6` under a comment saying
+   it was "pinned top-right where nothing else in the HUD lives" — and .hud-tr,
+   which carries the flow meter, the combo counter, the score, the event feed
+   and the kill feed, is at right:34px top:28px with a 168 px meter. Anything
+   wider than 22 px lands in that band, and this box is ~160 px by construction:
+   four fixed-format lines of ~20 monospace glyphs at 11px (HUD.perf). The
+   z-index put it on top, so the instrument a player turns on to diagnose
+   stutter covered the meter that tells them whether they are in Flow.
+   It is now the first block INSIDE .hud-tr, in normal flow: it pushes the
+   column down while it is shown, takes no space while it is hidden, and cannot
+   overlap by construction rather than by arithmetic. `text-align:left` because
+   the column is right-aligned and a monospace table must not be. */
 #hud-perf {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  margin: 0;
+  position: static;
+  display: inline-block;
+  text-align: left;
+  margin: 0 0 10px;
   padding: 6px 9px;
   font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -481,7 +536,6 @@ button{font-family:inherit}
   border-radius: 4px;
   white-space: pre;
   pointer-events: none;
-  z-index: 6;
 }
 
 /* The forge is now a character creator and does not fit a screen; the preview
@@ -582,7 +636,18 @@ button{font-family:inherit}
   border:1.5px solid rgba(120,200,255,.35);overflow:hidden}
 .commune-ring i{position:absolute;left:0;bottom:0;width:100%;height:0%;
   background:linear-gradient(0deg,var(--accent),rgba(120,215,255,.6));box-shadow:0 0 10px var(--accent)}
-.commune-entry{position:fixed;left:22px;bottom:20px;z-index:41}
+/* THE WAY INTO THE CONSTELLATION FROM THE TEMPLE.
+   `width:auto` is load-bearing: .primary/.secondary/.ghost are `display:block;
+   width:100%` because they are laid out in a column inside a panel, and for a
+   position:fixed box the containing block is the VIEWPORT — so this button was
+   100vw wide, running from x=22 to x=22+100vw and hanging 22 px off the right
+   edge, with its label centred 22 px right of screen centre instead of sitting
+   at the left margin this rule intends. At z-index 41 over the menu's 40 it was
+   also a live click target across the whole width of the screen, lighting up on
+   hover and clipping the bottom of the sticky Ignite button on any viewport
+   under about 800 px tall. */
+.commune-entry{position:fixed;left:22px;bottom:20px;z-index:41;
+  display:inline-block;width:auto;padding:10px 16px;margin-top:0}
 /* A star this player has carried in an earlier run — the record, drawn on the
    chart. Fainter than "can be lit", because it buys nothing: see Progress.js. */
 #med-sky .star.known .disc{stroke:rgba(190,170,120,.42)}

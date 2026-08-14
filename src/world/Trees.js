@@ -85,6 +85,23 @@ const G = 9.81;
 /** How far past horizontal a trunk swings before it is called down. */
 const REST = Math.PI * 0.5;
 
+/**
+ * A STANDING TRUNK IS SOLID, AND THAT COSTS SOMETHING — see `_syncColliders`.
+ *
+ * `RING_PLAYER` and `RING_ENEMY` are how far from a body a trunk is carried as
+ * a collider. `COLLIDER_H` caps the box: nothing in this game stands above
+ * 9 m without leaving the ground, a double Force jump tops out at 6.2, and a
+ * shorter box keeps `box.radius` — which every near-list in the engine tests
+ * against — down where it belongs instead of at half a 27 m tree.
+ */
+const RING_PLAYER = 18;
+const RING_ENEMY = 7;
+const COLLIDER_H = 9;
+/** Grid cell for the standing-tree index, in metres. */
+const CELL = 12;
+/** How often the ring is rebuilt. At a 4.6 m/s walk that is 1.2 m of travel. */
+const SYNC = 0.25;
+
 let _id = 1;
 
 export class Forest {
@@ -120,6 +137,12 @@ export class Forest {
     this.active = [];
     /** Colliders laid down for trunks that have come to rest. */
     this.logs = [];
+    /** Standing trunks that currently have a collider: index → static box. */
+    this.live = new Map();
+    /** Standing trunks by grid cell, so the ring is a lookup and not a scan. */
+    this._cells = new Map();
+    this._want = new Set();
+    this._sync = 0;
 
     /* The duck-typed prop's body. This rides in `world.props` exactly as
      * `DestructionProxy` does, which is how it gets a per-frame `update`, a
@@ -163,6 +186,12 @@ export class Forest {
        * the trunk geometry is a straight rod and past about 6° a straight rod
        * standing at an angle reads as broken rather than as grown. */
       this.data[k + F.LEAN] = t.lean ?? 0;
+      // …and into the cell index, so the collider ring below is a lookup over
+      // a dozen cells rather than a scan of eighteen hundred trees.
+      const key = this._cellKey(t.x, t.z);
+      let cell = this._cells.get(key);
+      if (!cell) this._cells.set(key, cell = []);
+      cell.push(i);
     }
 
     const M = opts.materials || {};
@@ -244,6 +273,108 @@ export class Forest {
     this.hinge(i, out);
     this.axis(i, AXIS);
     return out.addScaledVector(AXIS, len);
+  }
+
+  /* ── the colliders under the standing trees ────────────────────────── */
+
+  /**
+   * A STANDING TREE IS SOLID. It was not, and that is the defect this block
+   * exists for: `plant()` wrote three InstancedMeshes and a Float32Array and
+   * never touched physics, so on the one level built entirely out of trees all
+   * 1,800 trunks were holograms — the player and every droid walked straight
+   * through them — and the ONLY `addStaticBox` in this file was the one in
+   * `_land()`, which gives a trunk a collider after you have cut it down.
+   * Felling turned passable ground into an obstacle, which is backwards.
+   * Measured before the fix: driving the real Player at the level's largest
+   * trunk (r = 0.63 m, h = 25.9 m) from 5 m out, closest approach to the trunk
+   * axis 0.01 m and the player finished 21.8 m past it.
+   *
+   * WHY IT IS A RING AND NOT 1,800 BOXES. Every near-list in the engine walks
+   * `physics.staticBoxes` LINEARLY, once per body per frame — Player._gatherNear,
+   * Enemy's push-out, and `supportHeight` for both — so the array is a per-frame
+   * O(bodies × boxes) cost. Measured on the wood with a real World, a real
+   * player and a 12-strong wave: 76 boxes (the level as shipped) 3.18 ms/frame,
+   * +300 trees 4.00, +900 7.19, +1,800 14.09. A collider per trunk costs 10.9
+   * ms a frame, i.e. two thirds of a 60 Hz budget, to make solid the 1,770
+   * trees nobody is anywhere near.
+   *
+   * So the trunks near a BODY are solid and the rest are not: 18 m around each
+   * player, 7 m around each living enemy, rebuilt four times a second off a
+   * 12 m cell index. On the shipped wood that is 25-60 live boxes — under
+   * 0.4 ms — and the sight line in this level is 25 m, so a trunk that is not
+   * carrying a collider is one no fight is happening at.
+   */
+  _cellKey(x, z) {
+    return (Math.floor(x / CELL) + 4096) * 8192 + (Math.floor(z / CELL) + 4096);
+  }
+
+  /** Standing trees within `r` of (x, z), into `out`. */
+  _gatherRing(x, z, r, out) {
+    const D = this.data;
+    const i0 = Math.floor((x - r) / CELL), i1 = Math.floor((x + r) / CELL);
+    const j0 = Math.floor((z - r) / CELL), j1 = Math.floor((z + r) / CELL);
+    const r2 = r * r;
+    for (let ci = i0; ci <= i1; ci++) {
+      for (let cj = j0; cj <= j1; cj++) {
+        const cell = this._cells.get((ci + 4096) * 8192 + (cj + 4096));
+        if (!cell) continue;
+        for (const i of cell) {
+          const k = i * F.N;
+          if (D[k + F.STATE] !== STANDING) continue;
+          const dx = D[k + F.X] - x, dz = D[k + F.Z] - z;
+          if (dx * dx + dz * dz <= r2) out.add(i);
+        }
+      }
+    }
+  }
+
+  /** The box a standing trunk presents: square on the butt radius, capped. */
+  _standBox(i) {
+    const D = this.data, k = i * F.N;
+    const phys = this.world.physics;
+    if (!phys || !phys.addStaticBox) return null;
+    const hh = Math.min(D[k + F.H], COLLIDER_H) * 0.5;
+    /* 0.82 of the butt radius, not 1.0: the drawn trunk is a six-sided lathe
+     * tapering to 0.52 r at the top, and a square whose half-width is the butt
+     * radius circumscribes it by 41% at the corners — which is the difference
+     * between a trunk you brush past and one you catch on nothing. */
+    const w = Math.max(0.12, D[k + F.R] * 0.82);
+    return phys.addStaticBox(
+      new THREE.Vector3(D[k + F.X], D[k + F.Y] + hh, D[k + F.Z]),
+      new THREE.Vector3(w, hh, w), undefined,
+      { friction: 0.9, userData: { tree: i, forest: this } });
+  }
+
+  /** Bring the live set into line with where the bodies are. */
+  _syncColliders() {
+    const phys = this.world.physics;
+    if (!phys || !this.data) return;
+    const want = this._want;
+    want.clear();
+    for (const p of (this.world.players || [])) {
+      if (p && p.alive !== false) this._gatherRing(p.position.x, p.position.z, RING_PLAYER, want);
+    }
+    for (const e of (this.world.enemies || [])) {
+      if (e && !e.dead) this._gatherRing(e.position.x, e.position.z, RING_ENEMY, want);
+    }
+    for (const [i, box] of this.live) {
+      if (want.has(i)) continue;
+      phys.removeStaticBox(box);
+      this.live.delete(i);
+    }
+    for (const i of want) {
+      if (this.live.has(i)) continue;
+      const box = this._standBox(i);
+      if (box) this.live.set(i, box);
+    }
+  }
+
+  /** Take a trunk's standing collider away — it is about to move. */
+  _dropCollider(i) {
+    const box = this.live.get(i);
+    if (!box) return;
+    this.world.physics?.removeStaticBox?.(box);
+    this.live.delete(i);
   }
 
   _writeTrunk(i) {
@@ -375,6 +506,11 @@ export class Forest {
     D[k + F.ANG] = 0.02;
     D[k + F.VEL] = 0;
     D[k + F.AGE] = 0;
+    // The standing box goes NOW, not when the trunk lands: a tree in the air
+    // is a moving object, and leaving the upright collider where the trunk used
+    // to be would fence off the ground the player just cleared. `_land()` lays
+    // the log collider down along the fallen trunk in its place.
+    this._dropCollider(i);
     this.active.push(i);
     this.stats.felled++;
     if (chain > 0) {
@@ -409,6 +545,10 @@ export class Forest {
     this.time += dt;
     const focus = this.world.player?.position;
     if (focus) this.body.position.copy(focus);
+    // The collider ring first, and outside the early-out below: a wood with
+    // nothing falling in it is the case where standing trees have to be solid.
+    this._sync -= dt;
+    if (this._sync <= 0) { this._sync = SYNC; this._syncColliders(); }
     if (!this.active.length) return;
 
     const D = this.data;
@@ -537,6 +677,12 @@ export class Forest {
   destroy() {
     if (this.dead) return;
     this.dead = true;
+    // The ring's boxes are the forest's, not the level's: a forest destroyed
+    // mid-level has to take them with it, or they fence off ground with no
+    // trees on it. (`World.unload` clears the whole array either way.)
+    for (const box of this.live.values()) this.world.physics?.removeStaticBox?.(box);
+    this.live.clear();
+    this._cells.clear();
     for (const m of [this.trunkMesh, this.crownMesh, this.stumpMesh]) {
       if (!m) continue;
       this.world.scene.remove(m);

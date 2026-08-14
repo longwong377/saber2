@@ -190,8 +190,25 @@ export class SkillTree {
         c.textContent = String(v.cost);
         g.appendChild(c);
       }
-      g.addEventListener('click', () => { audio.ui('hover'); this._select(v.id); });
+      /* A STAR ALREADY CLAIMED TO BE A BUTTON. NOW IT BEHAVES LIKE ONE.
+       *
+       * `tabindex: '0', role: 'button'` above (and the `#med-sky .star:focus`
+       * rule in styles.css) make every star focusable and announce it to a
+       * screen reader as a button — and the only listeners were `click` and
+       * `dblclick`, so Enter and Space did nothing at all. That is worse than
+       * an unreachable control: it is the interface promising a keyboard path
+       * it never built, and it was the ONE place in the whole front end that
+       * had bothered to set tabindex. Enter selects, exactly as a click does;
+       * Enter on the star already selected buys it, which is the keyboard's
+       * version of the double-click. */
+      const select = () => { audio.ui('hover'); this._select(v.id); };
+      g.addEventListener('click', select);
       g.addEventListener('dblclick', () => this._buy(v.id));
+      g.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar' && e.code !== 'Space') return;
+        e.preventDefault();
+        if (this.selected === v.id) this._buy(v.id); else select();
+      });
       stars.appendChild(g);
       this._nodes.set(v.id, g);
     }

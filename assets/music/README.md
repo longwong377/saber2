@@ -11,8 +11,18 @@ around it:
 
 1. **Split it.** Export the track as `theme.mp3` and `theme2.mp3`, each under
    25 MB (roughly 22 minutes each at 128 kbps). Both upload through the web UI
-   fine, and the player will chain them seamlessly and loop back to the first.
-   This keeps full quality.
+   fine. This keeps full quality, and costs **one line**: the loader plays a
+   LIST, so add the second name to `TRACKS` in `src/main.js` —
+
+   ```js
+   const TRACKS = ['theme.mp3', 'theme2.mp3'].map(…);
+   ```
+
+   `playMusic` then hands the element the next url when the current one ends
+   and wraps back to the first, and steps over any name that is not actually
+   there. Without that line only `theme.mp3` plays, and it loops — which is
+   what this page used to promise happened by itself, and did not: `theme2`
+   appeared exactly once in the whole repository, in this sentence.
 
 2. **Push it from a terminal**, which has no size limit under 100 MB:
 
@@ -31,7 +41,10 @@ is audibly rough on music. Splitting is the better trade.
 - It streams through an `<audio>` element rather than being decoded into
   WebAudio. Decoding 45 minutes would expand to roughly 950 MB of float32 in
   memory and kill the tab; streaming costs nothing.
-- Volume and mute come from the existing **Music** slider in Options.
+- Volume and mute come from the existing **Music** slider in Options — and at
+  **0 the file is never fetched at all**. Whatever goes here is a download every
+  player pays for on their first load, so "off" has to mean off rather than
+  28 MB of silence; moving the slider off zero is what starts the stream.
 - Whatever goes here is permanent in git history, so be happy with the mix
   before pushing — replacing it later leaves both copies in the repository
   forever.

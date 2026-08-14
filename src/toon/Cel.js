@@ -470,19 +470,68 @@ vec3 saberCelAmbient( const in vec3 c ) {
 }
 
 /**
- * Albedo as a flat graphic colour field.
+ * Albedo as a flat graphic colour field — IN TWO HALVES, AND WHICH HALF RUNS
+ * WHERE IS THE WHOLE OF WHY THIS IS NOT ONE FUNCTION ANY MORE.
+ *
+ * The posteriser exists to collapse a PHOTOGRAPHIC MAP into flat fields (rule
+ * 6). It was applied to the finished surface colour instead — map × authored
+ * tint — and a quantiser applied to a product quantises the tint as well, which
+ * is a different and much worse operator: a tint is not a photograph, it is the
+ * palette, and the palette is the one thing in the frame that was chosen by
+ * hand.
+ *
+ * What that cost, measured per texel through the real cloth bake at 40k
+ * samples, on the five-layer robe ladder Bodies.js builds by hand (the numbers
+ * are mean rendered luminance, and the authored order is trim < over < outer <
+ * sleeve < tunic on every palette):
+ *
+ *   Night    tunic .0781  outer .0100  over .0100  sleeve .0100  trim .0100
+ *   Ash      tunic .4032  outer .0900  over .0900  sleeve .2334  trim .0100
+ *
+ * — Night's five authored layers land on TWO values, four of them on the same
+ * one, and the order comes out outer < over < sleeve < trim < tunic: the trim,
+ * authored as the darkest thing on the figure, renders identical to the
+ * over-robe and BRIGHTER than the outer. Ash loses one layer the same way. The
+ * cause is the bottom plateau: bands are cut on sqrt(luminance), so band 0
+ * spans 0 → 0.04 linear, which is everything below sRGB 55 — every dark garment
+ * in the game, in one bucket. Widening the ladder cannot fix that and neither
+ * can more bands; the layers are 1.3–1.5× apart and any global grid coarse
+ * enough to give flat fields has bands wider than that down there.
+ *
+ * So the two halves are applied in the two places they belong:
+ *
+ *   saberCelMapValue  quantises the MAP TEXEL, in map_fragment, before the
+ *                     tint multiplies it. Plateaus survive a constant multiply,
+ *                     so a textured surface still comes out as a handful of
+ *                     flat fields — measured, 3 rather than the 1 a dark robe
+ *                     collapsed to — and the tint rides through untouched.
+ *   saberCelChroma    lifts chroma about luminance on the finished colour,
+ *                     where it always ran. It is not a quantiser, so it cannot
+ *                     collapse anything, and it is what stops a posterised
+ *                     texture reading as a greyed-out photograph.
+ *
+ * Same operator, same constants, same calibration: the drift lit() sees is
+ * the drift of the MAP alone and comes out identical to four places on all
+ * seven bakes (cloth +4.5%, sand −1.0%, duracrete −15.0%, …). All five layers
+ * come back, in the authored order, on all six palettes.
  *
  * Value is quantised on a sqrt grid — perceptually even steps, so the plateaus
  * are the same visual width in the shadows as in the highlights — and the
  * plateau CENTRE is taken rather than the nearest edge, so a map whose whole
- * histogram sits inside one band comes out as one colour. Chroma is lifted
- * about the same luminance, which is what stops a posterised photographic
- * texture reading as a greyed-out photograph.
+ * histogram sits inside one band comes out as one colour.
  */
-vec3 saberCelAlbedo( const in vec3 c ) {
+vec3 saberCelMapValue( const in vec3 c ) {
+  return max( saberCelBand( c, ${CEL.albedoBands.toFixed(1)} ), vec3( 0.0 ) );
+}
+vec3 saberCelChroma( const in vec3 c ) {
   float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-  vec3 lifted = mix( vec3( l ), c, ${CEL.chroma.toFixed(4)} );
-  return max( saberCelBand( lifted, ${CEL.albedoBands.toFixed(1)} ), vec3( 0.0 ) );
+  return max( mix( vec3( l ), c, ${CEL.chroma.toFixed(4)} ), vec3( 0.0 ) );
+}
+/* Both at once, on a colour that never was a map times a tint — the grass
+ * builds its albedo procedurally per blade (Scenery.js) and wants the whole
+ * operator in one call. */
+vec3 saberCelAlbedo( const in vec3 c ) {
+  return saberCelChroma( saberCelMapValue( c ) );
 }
 
 /** Distance as flat plates rather than as a continuous veil. */
@@ -522,6 +571,31 @@ export function installCelShading(THREE_) {
     const src = C[chunk];
     if (src.indexOf(from) < 0) { missed.push(label); return; }
     C[chunk] = src.replace(from, to);
+  };
+
+  /**
+   * The same, for a whole PROGRAM rather than a chunk — and it needs its own
+   * function because `ShaderChunk.meshphysical_frag`,
+   * `ShaderLib.physical.fragmentShader` and `ShaderLib.standard.fragmentShader`
+   * are the SAME STRING OBJECT in three, and strings are immutable: assigning a
+   * patched copy to the chunk leaves both ShaderLib entries pointing at the
+   * original, and ShaderLib is the one WebGLPrograms compiles from. Verified in
+   * process — `ShaderChunk.meshphysical_frag === ShaderLib.physical.fragmentShader`
+   * is true on r169, so a `sub()` here would have reported success and changed
+   * nothing the GPU sees.
+   */
+  const subProgram = (from, to, label) => {
+    subs++;
+    const targets = [];
+    if (C.meshphysical_frag?.indexOf(from) >= 0) targets.push(['chunk', null]);
+    for (const k of ['standard', 'physical']) {
+      if (THREE_.ShaderLib[k]?.fragmentShader.indexOf(from) >= 0) targets.push(['lib', k]);
+    }
+    if (!targets.length) { missed.push(label); return; }
+    for (const [kind, k] of targets) {
+      if (kind === 'chunk') C.meshphysical_frag = C.meshphysical_frag.replace(from, to);
+      else THREE_.ShaderLib[k].fragmentShader = THREE_.ShaderLib[k].fragmentShader.replace(from, to);
+    }
   };
 
   C.common += CEL_COMMON;
@@ -564,6 +638,40 @@ export function installCelShading(THREE_) {
     '',
     'kill indirect sheen');
 
+  /* …AND THE ENERGY THE LOBE WAS BORROWING HAS TO COME BACK WITH IT.
+   *
+   * Deleting the two accumulations above leaves `sheenSpecularDirect` and
+   * `sheenSpecularIndirect` at zero, which is right — but three pays for the
+   * sheen lobe by TAKING IT OUT OF THE DIFFUSE first, in meshphysical_frag:
+   *
+   *     float sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );
+   *     outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect
+   *                   + sheenSpecularIndirect;
+   *
+   * With the lobe gone that is a subtraction with nothing on the other side of
+   * it: a straight darkening of every material that happens to declare `sheen`,
+   * for a term the renderer no longer has. It is not hypothetical and it is not
+   * uniform across the cast — walked on a built figure, 38 of the player
+   * character's 64 meshes are MeshPhysicalMaterial with sheen (0.40 ×20, 0.30
+   * ×10, 0.24 ×6, 0.34 ×2, all on sheenColor 0xd8cdbc), and buildAcolyte has 0.
+   * three uploads the uniform as `sheenColor × sheen`, so max3 is 0.6867 × the
+   * sheen value and the compensation lands at 0.9569 / 0.9677 / 0.9741 / 0.9921
+   * — the player's robe renders 2.6–4.3% darker than the identical cloth on an
+   * NPC beside them, and than the albedo `lit()` was calibrated to deliver.
+   *
+   * Small, and it is the kind of small that never gets found: it is a constant
+   * multiply, it is invisible against any single surface, and it silently
+   * decalibrates the one ladder in the game that was authored by hand. So the
+   * whole block goes, rather than the constant being neutralised — with both
+   * accumulators identically zero the line's only remaining effect IS the
+   * subtraction. Written through subProgram, because this text lives in a
+   * PROGRAM and not in a chunk. */
+  subProgram(
+    '\t#ifdef USE_SHEEN\n\t\tfloat sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );\n'
+    + '\t\toutgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect + sheenSpecularIndirect;\n\t#endif\n',
+    '',
+    'kill sheen energy compensation');
+
   // NO ENVIRONMENT REFLECTION, and no energy compensation for one either — with
   // the specular lobe gone the diffuse is not sharing the surface with
   // anything, so it takes all of it. Removing the `totalScattering` reference
@@ -581,13 +689,29 @@ export function installCelShading(THREE_) {
     '',
     'kill IBL multiscatter');
 
+  // THE MAP IS WHAT GETS POSTERISED, AND IT GETS POSTERISED BEFORE THE TINT.
+  // See saberCelMapValue: quantising map × tint quantises the PALETTE, which
+  // collapsed the player's five-layer robe ladder to two tones on the 'Night'
+  // swatch and inverted its order. This is the only place a sampled albedo
+  // exists on its own, and every fragment shader in three includes <common>
+  // before <map_fragment>, so the function is in scope wherever this lands.
+  // The alpha is multiplied through untouched — an alpha-tested leaf or a
+  // depth material's cutout must not be quantised.
+  sub('map_fragment',
+    '\tdiffuseColor *= sampledDiffuseColor;\n',
+    '\tdiffuseColor.rgb *= saberCelMapValue( sampledDiffuseColor.rgb );\n'
+    + '\tdiffuseColor.a *= sampledDiffuseColor.a;\n',
+    'posterise the map, not the palette');
+
   // METALNESS MUST NOT ZERO THE DIFFUSE — see the header note. This is the one
   // line standing between "no specular" and "every metal object is black".
-  // Posterisation goes on the same line because this is the last place the
-  // surface colour is written before it is lit.
+  // The chroma lift goes on the same line because this is the last place the
+  // surface colour is written before it is lit — and because it is a lift and
+  // not a quantiser, it is the half of the old saberCelAlbedo that is safe to
+  // run on a colour the palette has already been multiplied into.
   sub('lights_physical_fragment',
     'material.diffuseColor = diffuseColor.rgb * ( 1.0 - metalnessFactor );',
-    'material.diffuseColor = saberCelAlbedo( diffuseColor.rgb );',
+    'material.diffuseColor = saberCelChroma( diffuseColor.rgb );',
     'flat albedo, metals keep theirs');
 
   /* ── 2, 4, 5: the light loop ────────────────────────────────────────── */
@@ -726,7 +850,27 @@ export function celShadow(s) {
   return smoothstep(CEL.shadowStep - CEL.shadowEdge, CEL.shadowStep + CEL.shadowEdge, s);
 }
 
-/** saberCelAlbedo(), on a linear RGB triple. */
+/** saberCelMapValue() — the band, on a sampled map texel, before any tint. */
+export function celMapValue(rgb) {
+  return celBand(rgb, CEL.albedoBands).map((c) => Math.max(0, c));
+}
+
+/** saberCelChroma() — the chroma lift, on the finished surface colour. */
+export function celChroma(rgb) {
+  const l = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  return rgb.map((c) => Math.max(0, l + (c - l) * CEL.chroma));
+}
+
+/**
+ * saberCelAlbedo(), on a linear RGB triple — both halves, for the one caller
+ * that wants them together (the grass).
+ *
+ * Written out rather than composed because the identity is worth stating: the
+ * band preserves luminance up to its own quantisation and the chroma lift
+ * preserves it exactly, so band-then-chroma and chroma-then-band are the same
+ * operator to the last bit, which is why splitting them moved nothing that was
+ * not the defect. tools/checks/cel.mjs asserts that both orders agree.
+ */
 export function celAlbedo(rgb) {
   const l = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
   if (l <= 1e-5) return rgb.slice();

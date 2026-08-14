@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { RapierWorld, Body, LAYER, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
-import { GrassField, Water, Atmosphere } from '../world/Scenery.js';
+import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { Player } from './Player.js';
@@ -46,6 +46,8 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
  * damage is what stops a failed pass from being free.
  */
 const GRIND_LETHALITY = 0.55;
+/** Stamina a lost exchange costs, before the attack's tier scales it. */
+const GUARD_COST = 22;
 
 export class World {
   constructor(engine, settings) {
@@ -739,7 +741,12 @@ export class World {
     const alive = this.enemies.filter(e => !e.dead).length;
     const near = this.enemies.filter(e => !e.dead && e.position.distanceToSquared(focus) < 400).length;
     this.combatIntensity = damp(this.combatIntensity, clamp(near / 9 + alive / 26, 0, 1), 1.4, rawDt);
-    audio.updateScore(rawDt, this.combatIntensity);
+    // …and the WEATHER drives the room. Eight levels ship a squall that Scenery
+    // draws — fog, sun, hemi fill and a 2.4× particle wind, all off this one
+    // number — and the audio wind used to sit at whatever setAmbience was
+    // handed at load, so a 44-second kamino white-out crossed the level in
+    // silence. It is the same singleton Scenery reads; see AudioEngine._bed.
+    audio.updateScore(rawDt, this.combatIntensity, weather.intensity);
     audio.updateListener(camera);
 
     this.engine.fitShadows(focus);
@@ -929,25 +936,40 @@ export class World {
           const clash = resolveBladeClash(p.saber, e.saber);
           if (clash) { this._applyClash(p, e, clash); continue; }
         }
-        // enemy blade vs the player's body
-        if (e.duel && e.duel.phase === 'strike' && p.invuln <= 0) {
-          _v1.copy(p.position).setY(p.position.y + 0.4);
-          _v2.copy(p.position).setY(p.position.y + 1.7);
-          const hit = segmentNear(e.saber.prevTip, e.saber.tip, _v1, _v2, 0.44);
-          if (hit) {
-            // attackDamage, NOT damage: damage() is Enemy's METHOD. The number
-            // it deals was renamed out of the way precisely because the two
-            // collided, and this caller was left behind — function * number is
-            // NaN, and Player.damage subtracts it straight into hp.
-            p.damage(e.attackDamage * e.duel.damageScale, hit, e, 'saber');
-            _v3.subVectors(p.position, e.position).setY(0.3).normalize().multiplyScalar(6);
-            p.velocity.add(_v3);
-            this.particles.cutFlare(hit, null, e.saber.color.getHex(), 20);
-            audio.cut(hit, false);
-            e.duel.interrupt(0.45);
-            this.addHitstop(0.05);
-          }
-        }
+        /**
+         * ENEMY BLADE VERSUS A BODY — ONE IMPLEMENTATION, NOT TWO.
+         *
+         * There used to be a second copy of this test inlined right here, and
+         * it disagreed with `Enemy._saberStrike` on every term that matters:
+         *
+         *   • shape   an UNSWEPT segmentNear on the tip alone at r = 0.44,
+         *             against a swept eight-substep segment-segment on the
+         *             whole blade at r = radius + BLADE_BITE. The tip covers
+         *             up to ~0.9 m in a 30 fps frame; this one stepped past
+         *             bodies, and had no notion of the blade's base at all.
+         *   • damage  `attackDamage * damageScale` with NO rally multiplier,
+         *             so a rallied duellist that missed the real test landed
+         *             here for less than it was supposed to deal.
+         *   • crouch  ignored — a fixed 0.4→1.7 capsule, so crouching made a
+         *             player no smaller.
+         *   • steel   no `bladesTouching` stand-down, so a blade being held
+         *             against this one still scored a body hit.
+         *   • after   `interrupt(0.45)` — the exact behaviour DuelBrain.followUp
+         *             was written to replace ("a landed hit is pressure, not a
+         *             full stop"). Landing a cut here bought the duellist half
+         *             a second of quiet, which is the bug that comment names.
+         *
+         * The two never double-hit, because a real hit ends the strike phase —
+         * which is precisely why this went unnoticed. It only ever fired when
+         * the accurate test had already decided the swing MISSED. Every hit it
+         * produced was a false positive with the wrong number attached.
+         *
+         * `_saberStrike` runs itself against `e.target` inside `e.update`; the
+         * call here covers everyone ELSE standing in the arc — which in co-op
+         * is most of the room. Its own once-per-strike guard means a swing
+         * still lands on one body.
+         */
+        if (p !== e.target) e._saberStrike(null, p);
       }
     }
 
@@ -1117,7 +1139,21 @@ export class World {
        */
       const chambered = duel.attack?.label ?? 'the attack';
       duel.interrupt(0.85);
-      enemy.stun(0.6);
+      /**
+       * THE DIRECTION AND THE WEIGHT, WHICH NOTHING EVER SUPPLIED.
+       *
+       * `DuelBrain.stagger(seconds, worldDir, power)` was written to throw the
+       * guard to the side the blade was actually driven and to scale the throw
+       * by how hard — and every one of the eleven callers passed a duration
+       * and nothing else, so `worldDir` was null at every site and `power` was
+       * 1 at every site. The whole directional half of the mechanic was dead
+       * on arrival: a beat from the left and a beat from the right produced
+       * the same opening, on the same side, of the same size.
+       *
+       * `_v4` is the player's blade velocity, already computed above for
+       * `chambersWith` — literally the direction the enemy's blade was driven.
+       */
+      enemy.stun(0.6, _v4, 1.35);
       player.riposteTimer = 0.6 * (player.boonMods.riposteWindow ?? 1);
       player.addFlow(0.34);
       this.addHitstop(0.085);
@@ -1131,10 +1167,28 @@ export class World {
       return;
     }
 
+    /**
+     * THE STAMINA A FAILED GUARD COSTS, WHICH IS WHAT `TIER.guardBreak` IS.
+     *
+     * Three tiers author it — light 0.6, heavy 1.9, unblockable 3.2 — and one
+     * branch read it. `heavy` alone: the two other rows had no reader anywhere
+     * in the game, and verify.mjs asserted only that they were in increasing
+     * order, which a table nobody reads satisfies for free. So putting your
+     * blade in front of an UNBLOCKABLE cost a flat 10 stamina, less than the
+     * 14 a lost light clash cost, and the red arc — the one thing in the game
+     * whose entire meaning is "your blade is not the answer" — was the
+     * cheapest mistake available.
+     *
+     * One rule on all three paths now: `GUARD_COST * tier.guardBreak`, so the
+     * colour you ignored is the size of the hole it leaves. Light lands at
+     * 13.2 against the 14 it was, which is the point — the tier that was
+     * already tuned barely moves, and the two that were lying stop.
+     */
     // ── UNBLOCKABLE: the blade is not the answer
     if (attacking && !tier.parryable && !tier.chamberable) {
       player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(-9), 1.0);
-      player.stamina = Math.max(0, player.stamina - 10);
+      player.stamina = Math.max(0, player.stamina - GUARD_COST * tier.guardBreak);
+      if (player.stamina <= 0) player.staggerTimer = Math.max(player.staggerTimer, 0.6);
       this.notifyFloating(clash.point, 'UNBLOCKABLE', '#ff5a62');
       this.onDeflectFeedback?.(-1, clash.point, 'that one had to be dodged');
       return;
@@ -1143,7 +1197,7 @@ export class World {
     // ── HEAVY parried flat: guard broken
     if (attacking && !tier.parryable) {
       player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(-16), 1.5);
-      player.stamina = Math.max(0, player.stamina - 22 * tier.guardBreak);
+      player.stamina = Math.max(0, player.stamina - GUARD_COST * tier.guardBreak);
       player.staggerTimer = Math.max(player.staggerTimer, 0.38);
       this.addHitstop(0.05);
       this.notifyFloating(clash.point, 'GUARD BROKEN', '#ffa040');
@@ -1167,7 +1221,8 @@ export class World {
     player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(playerWon ? -5 : -13), playerWon ? 0.6 : 1.3);
     if (playerWon) {
       if (duel) duel.interrupt(0.45);
-      enemy.stun(0.18);
+      // A parry is a beat, not an invitation — same direction, less of it.
+      enemy.stun(0.18, _v4, 0.7 + Math.min(0.4, bladeSpeed / 40));
       player.riposteTimer = 0.42 * (player.boonMods.riposteWindow ?? 1);
       player.addFlow(0.12);
       player.score += 45;
@@ -1175,8 +1230,8 @@ export class World {
       this.report({ type: 'parry', enemy });
       this.onDeflectFeedback?.(3, clash.point, 'riposte now');
     } else {
-      player.stamina = Math.max(0, player.stamina - 14);
-      if (player.stamina <= 0) player.staggerTimer = 0.6;
+      player.stamina = Math.max(0, player.stamina - GUARD_COST * tier.guardBreak);
+      if (player.stamina <= 0) player.staggerTimer = Math.max(player.staggerTimer, 0.6);
     }
     this.addHitstop(0.03);
   }

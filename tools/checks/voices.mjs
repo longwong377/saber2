@@ -336,6 +336,10 @@ function recorder() {
     _listenerPos: new THREE.Vector3(),
     calls: [], lines: [], levels: [],
     footfall(pos, o = {}) { this.calls.push({ fn: 'footfall', x: pos.x, z: pos.z, ...o }); },
+    // What a rigged humanoid's own hook plays: the flat reference boot. It is
+    // recorded separately from footfall() so a check can tell the two apart —
+    // the whole question about a body's weight is which of them it got.
+    step(pos, surface, run) { this.calls.push({ fn: 'step', x: pos.x, surface, run, mass: 80 }); },
     servo(pos, effort, size) { this.calls.push({ fn: 'servo', effort, size }); },
     breath(pos, o = {}) { this.calls.push({ fn: 'breath', ...o }); },
     bodyThump(pos, mass) { this.calls.push({ fn: 'thump', mass }); },
@@ -565,6 +569,59 @@ export async function run({ check, assert }) {
     return `${a.stats.spoke} lines spoken, ${a.stats.speechDenied} refused, ${mid} voices live mid-fight, 0 after`;
   });
 
+  /**
+   * THE ONE CONTROL WHOSE ENTIRE PURPOSE IS AUDITIONING.
+   *
+   * The options screen's voice slider is bound to `input`, which fires on every
+   * step of a drag, and its handler opened with `if (audio.speaking > 0)
+   * return;`. A 'streak' line runs 0.35–0.80 s across the five archetypes, and
+   * a drag from The Negotiator to The Sage fires five `input` events inside a
+   * few hundred milliseconds — so the FIRST one played and the other four were
+   * dropped, including the one the player let go on. The name and the blurb
+   * said The Sage; what the player heard was The Mask. There is no
+   * `change`-event re-fire on release to save it.
+   *
+   * audition() is the fix, and this is what it has to do: speak at once on the
+   * first move (a slider CLICK has to answer immediately or it reads as
+   * broken), then say the LAST index once the hand has stopped — and not stack
+   * five lines on top of each other to do it, which is the mud the speech rules
+   * exist to prevent.
+   */
+  check('voices: dragging the voice slider auditions the voice you land on', async () => {
+    const { a } = engine();
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const said = [];
+    const real = a.speak.bind(a);
+    a.speak = (spec, kind, o) => { const d = real(spec, kind, o); if (d > 0) said.push(spec.id); return d; };
+
+    // A drag across the whole table. The five `input` events are delivered in
+    // one go on purpose: a browser hands them to the same thread this handler
+    // runs on, so nothing can fire between them, and it makes the measurement
+    // independent of how long the machine running this check took to schedule
+    // anything.
+    for (let i = 0; i < PLAYER_VOICES.length; i++) a.audition(voiceAt(i), 'streak', { gain: 1, self: true });
+    assert(said.length === 1, `${said.length} lines played DURING the drag — they are on top of each other`);
+    assert(said[0] === PLAYER_VOICES[0].id, `the drag opened with ${said[0]}, not the voice it started on`);
+
+    await sleep(320);                                    // the hand lets go
+    const want = PLAYER_VOICES[PLAYER_VOICES.length - 1].id;
+    assert(said[said.length - 1] === want,
+      `the slider was released on ${want} and what spoke was ${said[said.length - 1]}`);
+    assert(said.length === 2, `a five-step drag said ${said.length} lines (${said.join(', ')})`);
+
+    // the line the drag opened with is out of the way, and the one the player
+    // chose is at full level rather than ducked to SPEECH_STACK under it
+    const first = a._speech.find(e => e.id === said[0]);
+    const last = a._speech.find(e => e.id === want);
+    assert(first && first.bus.gain.last('tgt') <= 0.001,
+      `the first line is still at ${first ? first.bus.gain.last('tgt') : 'gone'} under the chosen one`);
+    assert(last && Math.abs(last.level - 1) < 1e-9,
+      `the chosen voice came in at ${last ? last.level : 0}, not full level`);
+    assert(a.stats.speechDenied === 0, `${a.stats.speechDenied} audition lines were refused by the cap`);
+    return `five ${PLAYER_VOICES.length}-step drag → ${said.join(' then ')}, `
+      + `first faded to ${first.bus.gain.last('tgt')}, chosen at ${last.level}`;
+  });
+
   check('voices: a line nobody can hear is not worth a voice', () => {
     const { a } = engine();
     const v0 = a.voices;
@@ -616,6 +673,60 @@ export async function run({ check, assert }) {
     return rows.map(r => `${r.mass}kg ${r.freq.toFixed(0)}Hz/${r.gain.toFixed(3)}/${(r.dur * 1000).toFixed(0)}ms${r.sub ? `+${r.sub.toFixed(0)}Hz` : ''}`).join('  ');
   });
 
+  /**
+   * "A beast's breath is not a man's slowed down, it is the same shape an
+   * octave and a half lower WITH MORE OF IT." — src/engine/Audio.js, breath().
+   *
+   * It used to be less of it. The level was multiplied by `pitch` along with
+   * the frequency, and Presence passes 0.42 for a beast and 1.15 for a trooper,
+   * so the size of the animal was an inverse volume control: measured against
+   * the shipped hearing floor, an idling 1400 kg acklay was audible for 4.6 m
+   * and an idling 78 kg man in a helmet for 12.3 m. 4.6 m is inside the
+   * acklay's own 2.5–5 m preferred strike range — you could only hear it
+   * breathe once it was already on you.
+   *
+   * The radius is measured, not derived: a distance is audible if breath() at
+   * that distance still takes a voice instead of being culled.
+   */
+  check('presence: the bigger the chest, the further the breath carries', () => {
+    const { a } = engine();
+    const audible = (d, pitch, effort) => {
+      const c0 = a.stats.culled;
+      a.breath(V(d, 0, 0), { out: true, effort, pitch });
+      return a.stats.culled === c0;
+    };
+    const radius = (pitch, effort) => {
+      let lo = 0, hi = 400;
+      if (!audible(lo, pitch, effort)) return 0;
+      for (let i = 0; i < 30; i++) {
+        const mid = (lo + hi) / 2;
+        if (audible(mid, pitch, effort)) lo = mid; else hi = mid;
+      }
+      return lo;
+    };
+    // the three airways Presence._breath actually passes
+    const rows = [];
+    for (const [name, pitch] of [['acklay', 0.42], ['acolyte', 1.0], ['trooper', 1.15]]) {
+      rows.push({ name, pitch, idle: radius(pitch, 0), hard: radius(pitch, 1) });
+    }
+    const [beast, human, trooper] = rows;
+    for (const k of ['idle', 'hard']) {
+      assert(beast[k] > human[k], `at ${k} the 1400 kg acklay carries ${beast[k].toFixed(1)} m `
+        + `and a person carries ${human[k].toFixed(1)} m — the biggest chest is the quietest`);
+      assert(human[k] > trooper[k], `a bare throat (${human[k].toFixed(1)} m) does not out-carry `
+        + `a helmet (${trooper[k].toFixed(1)} m) at ${k}`);
+    }
+    // …and it has to reach past the thing's own reach. An acklay engages at
+    // 2.5–5 m (ARCHETYPES.beast.preferred); a tell you only get inside that is
+    // not a tell.
+    assert(beast.idle > 10, `an idling acklay is audible for ${beast.idle.toFixed(1)} m, `
+      + 'and it kills you from 5');
+    // and a breath is still chatter-priority, not a clash
+    assert(beast.hard < 90, `an acklay's breath carries ${beast.hard.toFixed(0)} m — that is a detonation`);
+    return rows.map(r => `${r.name} ${r.idle.toFixed(1)}/${r.hard.toFixed(1)} m`).join('  ')
+      + '  (idle/full exertion)';
+  });
+
   check('presence: the footstep the game already had did not change', () => {
     // footfall() is where step() now goes, and step() is the sound the pool
     // arithmetic in tools/checks/audio.mjs is written against. At the reference
@@ -636,46 +747,82 @@ export async function run({ check, assert }) {
     return 'sand 1500Hz/0.09/100ms, stone run 2600Hz/0.165/130ms — unchanged at 80 kg';
   });
 
-  check('presence: every body in the room makes a sound, and each kind its own', () => {
+  /**
+   * THE ROSTER THE GAME ACTUALLY BUILDS, which is not the one this used to use.
+   *
+   * The previous version of this check built one of each family "none of them
+   * rigged (so the gait path drives them and nothing depends on a
+   * BipedAnimator)" and reported, in its own summary line, "73 footfalls over 6
+   * masses (52/78/82/210/900/1400 kg)". Three of those six masses cannot happen
+   * in the shipped game. Every humanoid archetype in src/game/Enemy.js — b1 52,
+   * b2 130, trooper 78, sniper 76, acolyte 82, dummy 52, sparring 82 — is built
+   * with a rig, and Enemy._build installs a BipedAnimator whose `onFootstep`
+   * plays `audio.step` (the flat 80 kg boot) and puffs sand. Presence sees the
+   * animator, WRAPS it (Presence._wrap), and marks `st.wrapped`, which is
+   * exactly what turns the gait path off for those bodies — by design, and the
+   * better design: the rig knows the frame a sole lands on, and a gait derived
+   * from position is guessing. So the mass layer reaches only what the rig does
+   * not carry, and the check has to be pointed at that arrangement or it is
+   * certifying a configuration nobody ships.
+   *
+   * Measured against the real Presence, this is what the game produces:
+   *   b1 52 / trooper 78 / sniper 76 / acolyte 82 → the 80 kg boot, no layer
+   *   b2 130                                       → the boot AND its own 130 kg
+   *   droideka 210 / walker 900 / beast 1400       → their own mass, gait path
+   */
+  check('presence: every body in the room makes a sound, on the path the game uses', () => {
     const rec = recorder();
     const p = new Presence(rec);
-    const mk = (type, A, x) => ({
-      type, A, position: V(x, 0, 0), hp: A.hp, maxHp: A.hp, dead: false, lod: 0,
-    });
-    // one of each family, all inside earshot, none of them rigged (so the gait
-    // path drives them and nothing depends on a BipedAnimator)
+    const mk = (type, A, x, rigged) => {
+      const e = { type, A, position: V(x, 0, 0), hp: A.hp, maxHp: A.hp, dead: false, lod: 0 };
+      // exactly what src/game/Enemy.js:741-747 installs on a humanoid
+      if (rigged) e.animator = { onFootstep: (pt) => rec.step(pt, 'sand', false) };
+      return e;
+    };
     const world = {
       settings: { enemyBody: true }, terrain: null,
       enemies: [
-        mk('b1', { mass: 52, scale: 1.02, hp: 28 }, 3),
-        mk('droideka', { mass: 210, scale: 1.5, hp: 170 }, 5),
-        mk('walker', { mass: 900, scale: 2.4, hp: 620, big: true }, 7),
-        mk('beast', { mass: 1400, scale: 2.9, hp: 900, boss: true }, 9),
-        mk('acolyte', { mass: 82, scale: 1.04, hp: 130 }, 4),
-        mk('trooper', { mass: 78, scale: 1, hp: 46 }, 6),
+        mk('b1', { mass: 52, scale: 1.02, hp: 28 }, 3, true),
+        mk('b2', { mass: 130, scale: 1.18, hp: 96 }, 4, true),
+        mk('acolyte', { mass: 82, scale: 1.04, hp: 130 }, 5, true),
+        mk('droideka', { mass: 210, scale: 1.5, hp: 170 }, 6, false),
+        mk('walker', { mass: 900, scale: 2.4, hp: 620, big: true }, 7, false),
+        mk('beast', { mass: 1400, scale: 2.9, hp: 900, boss: true }, 9, false),
       ],
     };
     for (let f = 0; f < 240; f++) {
-      for (const e of world.enemies) e.position.x += 3.4 / 60;   // everything walking
+      for (const e of world.enemies) {
+        e.position.x += 3.4 / 60;                    // everything walking
+        // The rig plants a sole about every 0.42 s at this speed.
+        if (e.animator && f % 25 === 0) e.animator.onFootstep(e.position);
+      }
       p.update(1 / 60, world);
     }
-    const steps = rec.of('footfall');
+    const boots = rec.of('step');
+    const weight = rec.of('footfall');
     const servos = rec.of('servo');
     const breaths = rec.of('breath');
-    assert(steps.length > 0, 'nothing took a step in four seconds of walking');
+    assert(boots.length > 0, 'no rigged body planted a foot in four seconds of walking');
+    assert(weight.length > 0, 'nothing unrigged took a step in four seconds of walking');
     assert(servos.length > 0, 'no droid made a servo sound');
     assert(breaths.length > 0, 'nothing organic breathed');
-    // and the masses that reached the engine are the archetypes' own
-    const masses = [...new Set(steps.map(s => s.mass))].sort((x, y) => x - y);
-    assert(masses.length >= 4, `only ${masses.length} distinct masses walked: ${masses.join(', ')}`);
-    assert(masses.includes(1400) && masses.includes(52),
-      `the acklay and the B1 did not both walk (${masses.join(', ')})`);
+
+    const masses = [...new Set(weight.map(s => s.mass))].sort((x, y) => x - y);
+    // The three the gait path owns, and the one the rig's hook adds under it.
+    for (const m of [130, 210, 900, 1400]) {
+      assert(masses.includes(m), `nothing landed at ${m} kg (${masses.join(', ')} did)`);
+    }
+    // …and NOTHING near the reference weight took a second footfall: a rigged
+    // 78 kg trooper already has a boot, and a mass layer under it is a flam.
+    const doubled = masses.filter(m => m > 60 && m < 95);
+    assert(doubled.length === 0, `${doubled.join('/')} kg landed twice on one foot plant`);
+
     // droids do not breathe and organics do not whine
     assert(!breaths.some(b => b.pitch === undefined), 'a breath arrived with no airway size');
-    const beastBreaths = breaths.filter(b => b.pitch < 0.6);
-    assert(beastBreaths.length > 0, 'the acklay never breathed');
-    return `${steps.length} footfalls over ${masses.length} masses (${masses.join('/')} kg), `
-      + `${servos.length} servos, ${breaths.length} breaths in 4 s`;
+    assert(breaths.some(b => b.pitch < 0.6), 'the acklay never breathed');
+    return `${boots.length} rigged foot plants at 80 kg + ${weight.length} own-mass footfalls `
+      + `over ${masses.length} masses (${masses.join('/')} kg), ${servos.length} servos, `
+      + `${breaths.length} breaths in 4 s`;
   });
 
   check('presence: twenty bodies cost no more than six', () => {

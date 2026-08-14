@@ -97,6 +97,28 @@ const SPEECH_UNDER = 0.32;
 const SFX_DUCK = 0.62;
 /** How long the room stays down after the last syllable, in seconds. */
 const DUCK_TAIL = 0.16;
+/**
+ * How long a dragged control is given to settle before its line is auditioned.
+ * The shortest line in the game is 0.35 s (The Chosen's 'streak'), so a slider
+ * dragged across five archetypes cannot be heard one voice per step whatever
+ * this is; 0.18 s is under the ~0.25 s a hand takes to stop and let go, so the
+ * voice the player LANDS on is the one that speaks. See audition().
+ */
+const AUDITION_GAP = 0.18;
+
+/**
+ * How much the room answers, and to what. See _bed().
+ *
+ * DRONE_SWELL is added to the level's own drone at full combat intensity, and
+ * added rather than multiplied because three levels ship `drone: 0.0`.
+ * STORM_GAIN multiplies the level's own wind at a full squall (+5.1 dB), and
+ * STORM_BRIGHT opens the wind's bandpass with it — kamino's 520 Hz bed reads as
+ * 780 Hz in the teeth of one, which is the difference between more air and
+ * louder air.
+ */
+const DRONE_SWELL = 0.09;
+const STORM_GAIN = 0.8;
+const STORM_BRIGHT = 0.5;
 
 /** Footstep timbre by ground, before the body standing on it is considered. */
 const SURFACES = {
@@ -263,9 +285,21 @@ export class AudioEngine {
     this.volume = num(v, 0.8);
     if (this.master) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
   }
+  /**
+   * The Music slider, and the one place "off" is allowed to mean off.
+   *
+   * This used to write `musicBus.gain` and nothing else, which made Music 0 a
+   * setting that streams and decodes 29,400,953 bytes in order to play them at
+   * zero. Zero is not "silently"; it is "do not send it". So the slider also
+   * owns the element: at zero the stream is paused (or never created — see
+   * playMusic), and the first move off zero starts or resumes it.
+   */
   setMusicVolume(v) {
     this.musicVolume = num(v, 0.45);
     if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
+    if (!this.ready) return;
+    if (this.musicVolume > 0) { if (this._music) this.setMusicPlaying(true); else this._startMusic(); }
+    else if (this._music) this.setMusicPlaying(false);
   }
   /** The speech mixer. Zero is a legitimate answer and means "no voices". */
   setVoiceLevel(v) {
@@ -290,15 +324,56 @@ export class AudioEngine {
    * must all end in "no music" — never in a broken game. The score is the one
    * asset in this project that is not procedural, so it is also the only one
    * that can fail to load at all.
+   *
+   * ── two things this call does NOT do any more ───────────────────────────
+   *
+   * IT DOES NOT FETCH ANYTHING THE PLAYER DID NOT ASK FOR. src/main.js binds
+   * the start to the first pointerdown or keydown anywhere on the page, which
+   * is right — that gesture is what unlocks the context — but it meant the
+   * largest file in the repository by two orders of magnitude (theme.mp3,
+   * 29,400,953 bytes = 28.0 MB) began downloading with `preload='auto'` before
+   * the player had picked a level, a voice or a difficulty, and whatever the
+   * Music slider said. Music 0 wrote `musicBus.gain` and nothing else: the
+   * element still streamed, still decoded, and still cost 28 MB to hear
+   * nothing. So the url is ARMED here and only started while `musicVolume > 0`;
+   * setMusicVolume() is what starts it later, and pauses it again at zero.
+   *
+   * IT TAKES A LIST. assets/music/README.md tells the maintainer replacing the
+   * score to split it as `theme.mp3` + `theme2.mp3` to get under GitHub's
+   * 25 MB web-upload limit, and promised that "the player will chain them
+   * seamlessly and loop back to the first". Nothing chained anything: `theme2`
+   * occurred exactly once in the whole repository, in that sentence, and a
+   * maintainer who followed the project's own first instruction shipped a game
+   * that played half its score and looped it with nothing in the console to say
+   * why. A list is chained on `ended` and wraps to the first; a member that
+   * fails to load is stepped over, so the single-file install pays nothing at
+   * all for the second name.
    */
-  playMusic(url, opts = {}) {
+  playMusic(urls, opts = {}) {
     if (!this.ready || this._music) return null;
     if (typeof Audio === 'undefined' || typeof document === 'undefined') return null;
+    const list = (Array.isArray(urls) ? urls : [urls]).filter(u => typeof u === 'string' && u);
+    if (!list.length) return null;
+    this._musicWanted = { list, opts };
+    if (!(this.musicVolume > 0)) return null;
+    return this._startMusic();
+  }
+
+  /** Build the element for the armed url list and start it. */
+  _startMusic() {
+    if (this._music || !this._musicWanted || !this.ready) return this._music || null;
+    if (typeof Audio === 'undefined' || typeof document === 'undefined') return null;
+    const { list, opts } = this._musicWanted;
     try {
       const el = new Audio();
-      el.src = url;
-      el.loop = opts.loop !== false;
-      el.preload = 'auto';
+      el.src = list[0];
+      // One file loops natively, with no gap for anything to schedule. A list
+      // cannot — the element has to be handed the next url when this one ends —
+      // so `loop` is the single-file case only.
+      el.loop = list.length === 1 && opts.loop !== false;
+      // 'auto' is "pull the whole file now whether or not it is ever heard".
+      // play() drives the fetch on its own, and only as far as it is playing.
+      el.preload = 'metadata';
       el.crossOrigin = 'anonymous';
       // The element's own volume stays at 1: the musicBus is the only place
       // loudness is decided, or the slider and the element would fight and the
@@ -311,8 +386,22 @@ export class AudioEngine {
       gain.gain.value = 0;
       gain.gain.setTargetAtTime(num(opts.gain, 1), this.ctx.currentTime, opts.fade ?? 1.6);
       src.connect(gain); gain.connect(this.musicBus);
-      this._music = { el, src, gain };
+      const m = this._music = { el, src, gain, list, at: 0 };
       const go = () => { try { el.play()?.catch?.(() => {}); } catch {} };
+      if (list.length > 1) {
+        let missing = 0;
+        const advance = (failed) => {
+          // A member that is not there is stepped over exactly once per pass.
+          // Without the counter, a split score whose second half was never
+          // uploaded is an error-load-error loop at network speed.
+          if (failed) { if (++missing >= list.length) return; } else missing = 0;
+          m.at = (m.at + 1) % list.length;
+          try { el.src = list[m.at]; } catch { return; }
+          go();
+        };
+        el.addEventListener('ended', () => advance(false));
+        el.addEventListener('error', () => advance(true));
+      }
       go();
       // An autoplay block is not an error, it is a "not yet" — retry on the
       // first real gesture, which is the same event that unlocks the context.
@@ -329,7 +418,14 @@ export class AudioEngine {
     } catch { this._music = null; return null; }
   }
 
-  /** Silence the score without tearing the stream down, so it can come back. */
+  /**
+   * Silence the score without tearing the stream down, so it can come back.
+   *
+   * This is what Music 0 does. Pausing the element rather than dropping it
+   * keeps the position, the decoder and the connection, so sliding back up
+   * resumes rather than restarting a 49-minute track from the top — and it is
+   * what stops the browser pulling the rest of a 28 MB file nobody is hearing.
+   */
   setMusicPlaying(on) {
     const m = this._music;
     if (!m) return;
@@ -337,13 +433,6 @@ export class AudioEngine {
       if (on) { this.resume(); m.el.play()?.catch?.(() => {}); }
       else m.el.pause();
     } catch {}
-  }
-
-  stopMusic() {
-    const m = this._music;
-    if (!m) return;
-    try { m.el.pause(); m.el.src = ''; m.src.disconnect(); m.gain.disconnect(); } catch {}
-    this._music = null;
   }
 
   _makeNoise(seconds, pink) {
@@ -643,7 +732,10 @@ export class AudioEngine {
 
       bus = this.ctx.createGain();
       // RULE 2, the first half: the second live line sits under the first.
-      const stack = this._speech.length ? SPEECH_STACK : 1;
+      // `level > 0` and not `length`, because audition() silences the line a
+      // slider drag left playing — a line nobody can hear must not be the
+      // reason the one the player chose comes in at 0.55.
+      const stack = this._speech.some(e => e.level > 0) ? SPEECH_STACK : 1;
       const target = level * stack;
       bus.gain.value = target;
       bus.connect(out);
@@ -667,7 +759,8 @@ export class AudioEngine {
         }
       }
 
-      const entry = { bus, level: target, endsAt: stopAt, self: !!opts.self, kind, id: spec.id, ducked: false };
+      const entry = { bus, level: target, endsAt: stopAt, self: !!opts.self, kind, id: spec.id,
+        ducked: false, audition: !!opts.audition };
       this._speech.push(entry);
       this.stats.spoke++;
       this._duckRoom(u.dur);
@@ -747,6 +840,67 @@ export class AudioEngine {
       this.sfxBus.gain.setTargetAtTime(SFX_DUCK, t, 0.04);
       this.sfxBus.gain.setTargetAtTime(1, until, 0.10);
     } catch {}
+  }
+
+  /**
+   * AUDITION a voice for a control the player is DRAGGING.
+   *
+   * The options screen's voice slider is bound to `input`, which fires on every
+   * step of a drag, and its handler refused anything while `speaking > 0`. The
+   * arithmetic of that: a 'streak' line runs 0.35–0.80 s across the five
+   * archetypes (measured — chosen 0.35–0.40, negotiator 0.51–0.58, mask
+   * 0.63–0.72, sage 0.70–0.80), and a drag across the table fires five `input`
+   * events inside a few hundred milliseconds. The FIRST one plays and the other
+   * four are dropped on the floor — including the one the player let go on. The
+   * name and the blurb said The Sage; what the player heard was The Mask. The
+   * one control in the game whose entire purpose is auditioning was the one
+   * that played the wrong item, and there is no `change`-event re-fire on
+   * release to save it.
+   *
+   * So: leading edge plus trailing edge. The first move speaks immediately —
+   * clicking a slider step has to answer at once or it reads as broken — and
+   * every move after it re-arms a AUDITION_GAP timer that speaks whatever the
+   * LAST index was, once the hand has stopped. Anything a previous step left
+   * playing is faded out first rather than left to stack, because the engine's
+   * own rules would otherwise duck the new line to SPEECH_STACK under it or
+   * refuse it outright past MAX_SPEECH.
+   *
+   * @returns true if it spoke on this call, false if it was queued.
+   */
+  audition(spec, kind = 'streak', opts = {}) {
+    if (!this.ready || !spec) return false;
+    this._audWant = { spec, kind, opts };
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (!this._audTimer && now - (this._audAt || -1e9) >= AUDITION_GAP * 1000) {
+      this._auditionNow();
+      return true;
+    }
+    clearTimeout(this._audTimer);
+    this._audTimer = setTimeout(() => {
+      this._audTimer = 0;
+      // Nothing to say if the hand came back to where it started.
+      if (this._audSaid !== this._audWant.spec) this._auditionNow();
+    }, AUDITION_GAP * 1000);
+    // Node holds the process open for a pending timer; a check must not hang.
+    this._audTimer?.unref?.();
+    return false;
+  }
+
+  _auditionNow() {
+    const w = this._audWant;
+    if (!w) return;
+    this._audAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this._audSaid = w.spec;
+    const t = this.ctx.currentTime;
+    for (const e of this._speech) {
+      if (!e.audition) continue;
+      try {
+        e.bus.gain.cancelScheduledValues(t);
+        e.bus.gain.setTargetAtTime(0.0001, t, 0.02);
+      } catch {}
+      e.level = 0;
+    }
+    this.speak(w.spec, w.kind, { ...w.opts, audition: true });
   }
 
   /** Drop anything whose stop time has passed, in case `ended` never came. */
@@ -1006,12 +1160,27 @@ export class AudioEngine {
    *
    * `pitch` scales the airway — a beast's breath is not a man's slowed down,
    * it is the same shape an octave and a half lower with more of it.
+   *
+   * AND "MORE OF IT" HAS TO BE MORE. The level used to be multiplied by `pitch`
+   * along with the frequency, which made the size of the animal an inverse
+   * volume control: at Presence's shipped pitches (beast 0.42, trooper 1.15) a
+   * 1400 kg acklay idling put 0.0109 on the bus and a 78 kg man in a helmet put
+   * 0.0299, so against the 0.004 hearing floor the acklay was audible for 4.6 m
+   * and the trooper for 12.3 m. The one body in the game whose breathing is
+   * supposed to be the tell that something enormous is behind you was the
+   * quietest breather in it, and it only became audible from inside its own
+   * 2.5–5 m strike range. `dur` still divides by `p` — a big airway is slower —
+   * so the trade the old line was half of (peak down, length up) is kept; the
+   * level now goes the OTHER way, by the same reasoning that gives a heavier
+   * footfall more gain in footfall(): 0.6 of it is fixed and 0.4 scales with
+   * 1/p, which measures 16.6 m for the idling acklay against the trooper's
+   * 10.2 m and 51.6 m against 31.6 m at a charge.
    */
   breath(pos, { out = true, effort = 0.3, pitch = 1 } = {}) {
     const e = clamp(num(effort, 0.3), 0, 1);
     const p = clamp(num(pitch, 1), 0.2, 3);
     const f = (out ? 640 : 900) * p;
-    this.noise({ dur: (out ? 0.34 : 0.26) * (1 + e * 0.4) / p, gain: (0.026 + e * 0.055) * p,
+    this.noise({ dur: (out ? 0.34 : 0.26) * (1 + e * 0.4) / p, gain: (0.026 + e * 0.055) * (0.6 + 0.4 / p),
       type: 'bandpass', freq: f, freqEnd: f * (out ? 0.55 : 1.5), q: 0.85, pos, pink: true,
       attack: out ? 0.05 : 0.09, prio: PRIO.chatter });
   }
@@ -1067,6 +1236,12 @@ export class AudioEngine {
     }
     this._pulseTimer = 0;
     this.intensity = 0;
+    // What the level asked for, and what is currently commanded. _bed() moves
+    // the second relative to the first every frame; without the pair it would
+    // have to read the params back, and a param under a scheduled ramp reports
+    // where it WAS when the ramp was set, not where it is going.
+    this._bedWind = 0; this._bedWindFreq = 420; this._bedDrone = 0;
+    this._windAt = 0; this._windFreqAt = 420; this._droneAt = 0;
   }
 
   setAmbience({ wind = 0.1, windFreq = 420, drone = 0.1 } = {}) {
@@ -1074,18 +1249,82 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     // These come out of level data. A throw here is thrown from World's
     // constructor, which would take the whole level down with it.
-    this.windGain.gain.setTargetAtTime(num(wind, 0.1), t, 1.2);
-    this.windFilter.frequency.setTargetAtTime(num(windFreq, 420), t, 1.2);
-    this.droneGain.gain.setTargetAtTime(num(drone, 0.1), t, 2.0);
+    this._bedWind = num(wind, 0.1);
+    this._bedWindFreq = num(windFreq, 420);
+    this._bedDrone = num(drone, 0.1);
+    this._windAt = this._bedWind; this._windFreqAt = this._bedWindFreq; this._droneAt = this._bedDrone;
+    this.windGain.gain.setTargetAtTime(this._bedWind, t, 1.2);
+    this.windFilter.frequency.setTargetAtTime(this._bedWindFreq, t, 1.2);
+    this.droneGain.gain.setTargetAtTime(this._bedDrone, t, 2.0);
   }
 
-  /** Drives the percussive pulse under combat. */
-  updateScore(dt, intensity) {
+  /**
+   * THE ROOM ANSWERS, and this is the half of the score that is actually heard.
+   *
+   * Two promises used to be written here and kept nowhere. The first is three
+   * lines up in _startAmbience — "a slow-breathing minor cluster that swells
+   * with the fight" — and `droneGain` was written in exactly one place in the
+   * project, setAmbience, from level data at load: measured over ten seconds at
+   * full combat intensity it received ZERO automations, so a nine-enemy fight
+   * and an empty level sounded identical. The second is the weather: eight of
+   * the thirteen levels ship a squall (kamino peak 1.0 for 44 s of every 88,
+   * alpine 48 s of every 132), src/world/Scenery.js drives fog, sun, hemi fill
+   * and a 2.4× particle wind off `weather.intensity` every frame, and the audio
+   * wind sat at the constant it was handed at load for the whole run. A
+   * white-out crossed the level in total silence.
+   *
+   * So both move here, from the one call that already runs every frame with the
+   * fight in hand. The drone is ADDITIVE (`base + 0.09 × intensity`) rather
+   * than a multiplier, because three levels ship `drone: 0.0` — meadow's
+   * daylight is a choice — and 0 × anything stays a choice that can never be
+   * answered; +0.09 against beds of 0.03–0.34 is a layer arriving, not the room
+   * getting louder. The wind is MULTIPLICATIVE (`base × (1 + 0.8 × storm)`,
+   * +5.1 dB at a full squall) because a squall is the same air moving harder,
+   * and a level with `wind: 0.03` has nothing for a gale to be made of.
+   *
+   * Both are re-scheduled only when the target has actually MOVED — the drone
+   * by more than 0.004, which is one thirtieth of the swell — because
+   * setTargetAtTime at 60 Hz is a ramp that never arrives anywhere. In a real
+   * fight that is about twenty automations, not twelve hundred.
+   */
+  _bed(storm) {
+    const t = this.ctx.currentTime;
+    const drone = num(this._bedDrone, 0) + DRONE_SWELL * this.intensity;
+    if (Math.abs(drone - this._droneAt) > 0.004) {
+      this._droneAt = drone;
+      this.droneGain.gain.setTargetAtTime(drone, t, 1.4);
+    }
+    const wind = num(this._bedWind, 0) * (1 + STORM_GAIN * storm);
+    if (Math.abs(wind - this._windAt) > 0.004) {
+      this._windAt = wind;
+      this.windGain.gain.setTargetAtTime(wind, t, 0.8);
+    }
+    // …and a gale is brighter than a breeze: the bandpass opens with it, which
+    // is the difference between more wind and louder wind.
+    const freq = num(this._bedWindFreq, 420) * (1 + STORM_BRIGHT * storm);
+    if (Math.abs(freq - this._windFreqAt) > 6) {
+      this._windFreqAt = freq;
+      this.windFilter.frequency.setTargetAtTime(freq, t, 0.8);
+    }
+  }
+
+  /**
+   * Drives the percussive pulse under combat, and the bed under both.
+   *
+   * @param storm 0..1 — `weather.intensity` from src/world/Scenery.js, passed
+   *              by World.update. Zero indoors and on the five levels with no
+   *              weather block, which is why it defaults to it.
+   */
+  updateScore(dt, intensity, storm = 0) {
     // The same reason the one-shots refuse a stopped context: a frozen clock
     // stacks every pulse on one timestamp and none of them can end.
     if (!this.ready || !this._live()) return;
     dt = num(dt, 1 / 60); intensity = num(intensity, 0);
     this.intensity += (intensity - this.intensity) * Math.min(1, dt * 0.6);
+    // BEFORE the early return, and not after it: the bed has to be able to come
+    // back DOWN when the fight ends, and the storm is weather rather than
+    // combat — it blows through a level with nothing alive on it.
+    this._bed(clamp(num(storm, 0), 0, 1));
     if (this.intensity < 0.12) return;
     this._pulseTimer -= dt;
     if (this._pulseTimer <= 0) {

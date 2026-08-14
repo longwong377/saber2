@@ -49,14 +49,32 @@ input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
 
 /**
+ * WHAT THE PLAYER IS CALLED ON EVERY OTHER PLAYER'S SCREEN.
+ *
+ * One seam, because there were three call sites and all three passed
+ * `net.name` back into the function that sets it — so the value could never be
+ * anything but the constructor default and a four-player roster read 'Jedi'
+ * four times. The fallback lives here rather than in the setting so that a
+ * player who clears the field gets 'Jedi' back instead of an empty nameplate.
+ */
+const playerName = () => (settings.playerName || '').trim().slice(0, 18) || 'Jedi';
+/** A name from the wire, on its way into innerHTML. */
+const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+/**
  * Bloom is on when the PLAYER wants it and the TIER allows it.
  *
  * `QUALITY[tier].bloom` is the last column of Engine's table with no reader in
- * src/ — it is `true` on all four tiers today, so this changes nothing on
- * screen, and it means a tier that wants to drop the bloom pass on integrated
- * graphics can, without a second switch appearing somewhere else to fight the
- * checkbox. A column nobody reads is a promise nobody keeps; this is the
- * reader, and tools/checks/controls.mjs fails if any column loses one.
+ * src/. It is FALSE on the Performance tier (Engine.js: `low: { … bloom: false
+ * … }`) and true on the other three, which is the point — a tier that wants to
+ * drop the bloom pass on integrated graphics can, without a second switch
+ * appearing somewhere else to fight the checkbox. The cost of that is a
+ * checkbox which does nothing on one tier, and a control the player operates
+ * and the game ignores is the exact thing SETTING_READERS exists to prevent —
+ * so the Menu disables the box and says why while the tier overrules it (see
+ * Menu._syncBloomBox). This comment used to claim the column was `true` on all
+ * four tiers, which stopped being true the moment the table changed and is how
+ * the dead checkbox went unnoticed.
  */
 function qualityBloom() {
   return !!settings.bloom && (QUALITY[settings.quality] ?? QUALITY.high).bloom;
@@ -239,7 +257,7 @@ function buildWorld(levelKey, run = null) {
   };
 
   world.loadLevel(levelKey, { run });
-  const player = world.spawnPlayer({ name: net.name || 'Jedi', isLocal: true });
+  const player = world.spawnPlayer({ name: playerName(), isLocal: true });
   player.control.sensitivity = settings.sensitivity;
   player.control.followStrength = settings.camFollow;
   player.camera.fovTarget = settings.fov;
@@ -732,8 +750,10 @@ function setScoreboard(open) {
 
   // Only in co-op. Solo, a one-row table of yourself is noise.
   const roster = net.enabled && net.connected ? net.roster : [];
+  // The name is peer-supplied (Net.js reads it off `conn.metadata`), so it is
+  // escaped here the way HUD.popup and the boon chips already escape theirs.
   scoreEl.roster.innerHTML = roster.map(r =>
-    `<div class="p"><i></i><span>${r.name}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}</div>`).join('');
+    `<div class="p"><i></i><span>${escName(r.name)}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}</div>`).join('');
 
   const taken = heldBoons();
   scoreEl.boons.innerHTML = taken.length
@@ -871,7 +891,7 @@ wireNet();
 async function hostSession() {
   menu.netStatus('opening a session…');
   try {
-    const code = await net.host(net.name || 'Jedi', {
+    const code = await net.host(playerName(), {
       level: settings.level, difficulty: settings.difficulty, mode: settings.mode,
     });
     menu.netCode(code);
@@ -884,7 +904,7 @@ async function hostSession() {
 async function joinSession(code) {
   menu.netStatus(`connecting to ${code}…`);
   try {
-    await net.join(code, net.name || 'Jedi');
+    await net.join(code, playerName());
     menu.netCode(code);
     menu.netStatus('connected — the host starts the run', 'ok');
   } catch (e) {
@@ -978,16 +998,24 @@ window.addEventListener('keydown', (e) => {
  *
  * It is a 49-minute stream rather than a decoded buffer — see audio.playMusic —
  * so starting it early costs nothing: the browser fetches only what it is about
- * to play. Under the menu is exactly where it should begin.
+ * to play, and nothing at all while the Music slider is at zero. Under the menu
+ * is exactly where it should begin.
  *
  * Best-effort throughout: if the file is missing or the browser refuses the
  * codec, `playMusic` returns null and the game is simply silent. The one asset
  * in this project that is not generated in code is also the only one that can
  * fail to arrive.
+ *
+ * The list is the whole score, in order. A soundtrack split to get under
+ * GitHub's 25 MB web-upload limit (see assets/music/README.md) adds
+ * 'theme2.mp3' to this array and nothing else: playMusic chains a list on
+ * `ended` and wraps back to the first. It is a list rather than a directory
+ * scan because a static host has no directory listing to scan.
  */
+const TRACKS = ['theme.mp3'].map(f => new URL(`../assets/music/${f}`, import.meta.url).href);
 const startScore = () => {
   audio.init(); audio.resume();
-  audio.playMusic(new URL('../assets/music/theme.mp3', import.meta.url).href, { loop: true });
+  audio.playMusic(TRACKS, { loop: true });
 };
 window.addEventListener('pointerdown', startScore, true);
 window.addEventListener('keydown', startScore, true);

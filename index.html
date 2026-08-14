@@ -55,6 +55,11 @@
     <section class="panel active" data-panel="play">
       <div class="col">
         <h3>Theatre</h3>
+        <!-- Filled by Menu._syncTheatre, and empty in every mode that honours
+             this column. The Descent walks a fixed ladder of rungs and takes
+             its level from the rung, so the thirteen cards below it are inert
+             and say so rather than staying lit and being discarded. -->
+        <p class="hint hidden" id="level-note"></p>
         <div id="level-list" class="cards"></div>
       </div>
       <div class="col narrow">
@@ -121,6 +126,13 @@
         <h3>Play with friends</h3>
         <p class="hint" style="margin-bottom:16px">Peer-to-peer. One player hosts, the rest join with the code. No server, no account.</p>
         <div class="netrow">
+          <!-- The roster, the nameplates and the kill feed all print this. It
+               was `net.name`, whose only value in the entire codebase was the
+               constructor default, so a four-player session read Jedi, Jedi,
+               Jedi, Jedi. Saved with the rest of the settings. -->
+          <label class="netname">Your name
+            <input id="opt-name" placeholder="Jedi" maxlength="18" spellcheck="false" autocomplete="off">
+          </label>
           <button id="btn-host" class="primary">Host a session</button>
           <div class="or">or</div>
           <input id="join-code" placeholder="SESSION CODE" maxlength="10" spellcheck="false">
@@ -170,7 +182,11 @@
         <p class="hint">Both <b>multiply</b> the tier above rather than replacing it, so Performance at 150%
           particles is still thinner than Cinematic at 100%. Particles take effect on the next impact;
           grass on the next deploy, because a field is planted when the level loads.</p>
-        <label class="check"><input type="checkbox" id="opt-bloom" checked> Bloom</label>
+        <!-- The word is an element because Menu._syncBloomBox rewrites it: the
+             Performance tier switches the bloom pass off entirely, and a
+             checkbox the tier has overruled has to say so instead of sitting
+             there ticked and doing nothing. -->
+        <label class="check" id="opt-bloom-row"><input type="checkbox" id="opt-bloom" checked> <span id="opt-bloom-label">Bloom</span></label>
         <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
@@ -243,7 +259,6 @@
 
 <!-- ══════════════════════ HUD ══════════════════════ -->
 <div id="hud" class="hidden">
-  <pre id="hud-perf" class="hidden"></pre>
   <!-- The DEFAULT reticle only. HUD.applyReticle rewrites this from the three
        Options controls (shape, size, colour) on the first frame of a run and
        whenever one of them moves, so what is here is the Ring at Bone — the
@@ -297,11 +312,26 @@
 
   <div class="hud-tl">
     <div class="wave-line"><span id="hud-level">—</span><em id="hud-diff"></em></div>
-    <div class="wave-big">WAVE <b id="hud-wave">1</b></div>
+    <!-- The word is its own element because the HUD rewrites it: Training
+         counts LESSONS, everything else counts WAVES. It used to be a bare
+         text node the HUD found through `previousSibling`/`firstChild`, which
+         is how it came to be written in one direction only — one Training
+         deploy renamed this counter LESSON for the rest of the session. -->
+    <div class="wave-big"><span id="hud-wave-word">WAVE</span> <b id="hud-wave">1</b></div>
     <div id="hud-remaining" class="wave-sub"></div>
   </div>
 
   <div class="hud-tr">
+    <!-- THE FRAME COUNTER LIVES IN THE COLUMN IT USED TO PAINT OVER.
+         It was a position:absolute box at top:10 right:12 with z-index:6,
+         above a .hud-tr whose flow meter starts at right:34 and is 168 px
+         wide — so a readout ~160 px wide by construction (four fixed-format
+         lines of 11 px monospace) landed on the meter and on the top of the
+         combo digits, under a comment claiming it was "pinned top-right where
+         nothing else in the HUD lives". In the flow of this column it cannot
+         overlap anything: it pushes the meter down while it is shown and takes
+         no space at all while it is hidden. -->
+    <pre id="hud-perf" class="hidden"></pre>
     <div id="hud-flow" class="flowmeter"><i></i><span>FLOW</span></div>
     <div id="hud-combo" class="combo"></div>
     <div id="hud-score" class="score">0</div>
@@ -376,7 +406,8 @@
 <div id="boon-draft" class="screen hidden">
   <div class="draft-wrap">
     <h2>Attune</h2>
-    <p class="hint">The Force offers. Choose one.</p>
+    <p class="hint">The Force offers. Choose one — click it, press its number, or walk the row
+      with the arrows and take one with Enter.</p>
     <div id="draft-cards" class="draft-cards"></div>
   </div>
 </div>

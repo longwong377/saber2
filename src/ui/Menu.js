@@ -20,7 +20,14 @@ import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku } from '../game/Cloth.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
+// The Descent's ladder, named on the Deploy panel because the mode picks its
+// own places and the Theatre column has no say in it — see _syncTheatre.
+import { DESCENT } from '../game/Run.js';
 import { DIFFICULTY } from '../game/Combat.js';
+// The Codex and the training panel both quote Focus's numbers. They are read
+// from the system rather than typed, because both of them had been left behind
+// by the round that changed heldScale from 0.35 to 0.18.
+import { FOCUS } from '../game/Focus.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
@@ -103,6 +110,15 @@ export const HAIR_COLORS = [
 
 export const DEFAULT_SETTINGS = {
   level: 'mustafar',
+  /**
+   * WHO YOU ARE ON SOMEBODY ELSE'S SCREEN.
+   *
+   * Empty by default and falls back to 'Jedi' at the seam that uses it, so a
+   * solo player sees exactly what they always saw and a co-op session stops
+   * being four rows of the same word. See _buildButtons for the field and
+   * main.js for the one place the fallback is applied.
+   */
+  playerName: '',
   order: 'jedi',
   difficulty: 'knight',
   mode: 'roguelite',
@@ -278,6 +294,7 @@ export const LIGHTNING_COLORS = [
 
 export const SETTING_READERS = {
   level:           ['main.js', 'settings.level'],
+  playerName:      ['main.js', 'settings.playerName'],
   lightningColor:  ['game/Player.js', 'this.world?.settings?.lightningColor'],
   order:           ['game/World.js', 'applyOrder(p, this.settings.order)'],
   difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
@@ -512,8 +529,15 @@ export const CODEX = [
     text: () => 'One-handed grip. A looser blade, and the free hand is yours.' },
   { keys: ['ignite'], text: () => 'Ignite / retract.' },
   { keys: ['focus'],
-    text: () => '<b>Focus</b> — hold to bend time. The world slows to a third, you barely do. Burns '
-      + 'Force fast, so pick your volleys.' },
+    // The ratio is READ, not typed. This row said "slows to a third" against a
+    // real heldScale of 0.18 — the round that deepened the slow-motion from
+    // 0.35 moved the number in Focus.js and left the only page that teaches the
+    // game quoting the old one, while the Training panel two tabs away printed
+    // the true 0.18. A player calibrating a volley against "a third" is timing
+    // against a game that stopped existing.
+    text: () => `<b>Focus</b> — hold to bend time. The world slows to `
+      + `${(FOCUS.heldScale * 100).toFixed(0)}% of real time, you barely do. Burns `
+      + `${FOCUS.drain} Force a second, so pick your volleys.` },
   { keys: ['push'], text: () => 'Force push.' },
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
@@ -1507,6 +1531,50 @@ export class Menu {
     return c.toDataURL();
   }
 
+  /**
+   * MAKE A PICKER A CONTROL — FOCUSABLE, ACTIVATABLE, ANNOUNCED.
+   *
+   * Every picker in this menu was a bare `<div>` with a `click` listener and
+   * nothing else. Counted on the real Menu built against the real page: 192
+   * click targets across the level cards, difficulties, modes, fidelity tiers,
+   * schemes, deflection models, the eleven creator rows and the key chips, and
+   * ZERO of them reachable by keyboard — the whole front end a player without a
+   * mouse could operate was the five tabs and the Ignite button, both of which
+   * are real `<button>`s and got it for free. The mid-run boon draft was worse
+   * than unreachable: it stops the world, its only exits are clicks on `.dc`
+   * divs, and Escape opens the pause card whose Resume puts the draft straight
+   * back — draft, pause, draft, with Abandon run the only way out of a wave
+   * already won.
+   *
+   * One helper rather than a tag change, for two reasons. The cards contain
+   * block content (`<div class="art">`, `<div class="meta">`), which a `<button>`
+   * may not legally hold; and this codebase has the other failure already on
+   * file — SkillTree.js sets `tabindex="0"` and `role="button"` on every star
+   * and registers only `click` and `dblclick`, so a focused star announces
+   * itself as a button and does nothing when activated. A single function that
+   * always does all three is the only version of this that cannot drift apart.
+   *
+   * Space is prevented explicitly because its default on a focused element is
+   * to scroll the panel out from under the thing the player just chose.
+   */
+  _activate(el, onActivate, label = null) {
+    if (!el) return el;
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    // The swatch rows are the reason this falls back to `title`: a crystal or a
+    // robe is a coloured square with no text in it at all, so without a name
+    // here a screen reader reads nine identical "button"s. Every swatch already
+    // sets `title` for the tooltip; this is the same word.
+    const name = label ?? el.title;
+    if (name) el.setAttribute('aria-label', name);
+    const fire = (e) => { e?.preventDefault?.(); onActivate(e); };
+    el.addEventListener('click', fire);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space') fire(e);
+    });
+    return el;
+  }
+
   _buildLevels() {
     this.el.levels.innerHTML = '';
     for (const key of LEVEL_ORDER) {
@@ -1515,9 +1583,13 @@ export class Menu {
       card.className = 'card' + (this.s.level === key ? ' sel' : '');
       card.innerHTML = `
         <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
-        <div class="tagpill">${L.training ? 'start here' : `${L.pool.length} unit types`}</div>
+        <div class="tagpill">${L.pool.length} unit types</div>
         <div class="meta"><b>${L.name}</b><span>${L.blurb}</span></div>`;
-      card.addEventListener('click', () => {
+      this._activate(card, () => {
+        // Ignored in the modes that choose their own place — see _syncTheatre.
+        // The guard is here as well as on pointer-events because a card the
+        // keyboard can still reach must not write a setting the game discards.
+        if (this._theatreInert) return;
         audio.ui('click');
         this.s.level = key;
         [...this.el.levels.children].forEach(c => c.classList.toggle('sel', c === card));
@@ -1525,6 +1597,44 @@ export class Menu {
       });
       card.addEventListener('mouseenter', () => audio.ui('hover'));
       this.el.levels.appendChild(card);
+    }
+    this._syncTheatre();
+  }
+
+  /**
+   * THE THEATRE COLUMN, WHEN THE MODE HAS ALREADY CHOSEN THE THEATRE.
+   *
+   * The Descent is a ladder of four fixed rungs: main.js takes `run.rung.level`
+   * whenever a Run exists, `startRun()` builds one for exactly this mode, and a
+   * fresh Run is at tier 0 — so the game always begins in The Intake no matter
+   * which of the thirteen cards is lit. And the card WAS lit: `_buildLevels`
+   * left every card live, wrote `settings.level` on click, saved it, and drew
+   * the `.sel` highlight, so the largest, left-most control on the first screen
+   * of the game was highlighted, persisted and thrown away. Worse, the write
+   * stuck: the level the player thought they had picked turned up in the NEXT
+   * run of some other mode, which reads as the picker being randomly broken.
+   *
+   * So the column says what it is. The cards go inert — not focusable, not
+   * clickable, visibly dimmed — and the ladder they are standing in for is
+   * printed above them, in order, from DESCENT itself so it cannot drift from
+   * the rungs the run will actually walk.
+   */
+  _syncTheatre() {
+    const host = this.el.levels;
+    if (!host) return;
+    const inert = this.s.mode === 'gauntlet';
+    this._theatreInert = inert;
+    host.classList.toggle('inert', inert);
+    for (const card of host.children) {
+      card.tabIndex = inert ? -1 : 0;
+      card.setAttribute('aria-disabled', inert ? 'true' : 'false');
+    }
+    const note = document.getElementById('level-note');
+    if (note) {
+      note.textContent = inert
+        ? `The Descent chooses its own places: ${DESCENT.map(r => r.name).join(' → ')}.`
+        : '';
+      note.classList.toggle('hidden', !inert);
     }
   }
 
@@ -1534,7 +1644,7 @@ export class Menu {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.difficulty === key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${D.name}</b><span>${D.blurb}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s.difficulty = key;
         [...this.el.diffs.children].forEach(c => c.classList.toggle('sel', c === d));
@@ -1551,7 +1661,7 @@ export class Menu {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.mode === key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${M.name}</b><span>${M.blurb}</span></div>`;
-      d.addEventListener('click', () => { audio.ui('click'); this.selectMode(key); });
+      this._activate(d, () => { audio.ui('click'); this.selectMode(key); });
       this._modeCards.set(key, d);
       this.el.modes.appendChild(d);
     }
@@ -1564,6 +1674,10 @@ export class Menu {
     if (this._modeCards) {
       for (const [k, card] of this._modeCards) card.classList.toggle('sel', k === key);
     }
+    // The Descent picks its own places; the Theatre column has to say so the
+    // moment the mode changes, not after the player has deployed into a level
+    // they did not choose.
+    this._syncTheatre();
     saveSettings(this.s);
   }
 
@@ -1592,7 +1706,7 @@ export class Menu {
       sw.style.background = `radial-gradient(circle at 35% 30%, #fff, ${hex} 62%)`;
       sw.style.boxShadow = `0 0 16px -2px ${hex}`;
       sw.title = l.name;
-      sw.addEventListener('click', () => {
+      this._activate(sw, () => {
         audio.ui('click');
         this.s.lightningColor = l.hex;
         [...host.children].forEach((x) => x.classList.toggle('sel', x === sw));
@@ -1614,7 +1728,7 @@ export class Menu {
       sw.style.background = `radial-gradient(circle at 35% 30%, #fff, ${hex} 62%)`;
       sw.style.boxShadow = `0 0 16px -2px ${hex}`;
       sw.title = c.name;
-      sw.addEventListener('click', () => {
+      this._activate(sw, () => {
         audio.ui('click');
         this.s.colorIndex = c.index;   // the rack is filtered; position is not the index
         [...this.el.colors.children].forEach(x => x.classList.toggle('sel', x === sw));
@@ -1633,7 +1747,7 @@ export class Menu {
       card.className = 'card small' + (this.s.hiltStyle === h ? ' sel' : '');
       card.innerHTML = `<div class="art" style="background:linear-gradient(160deg,#20262f,#0b0e13)"></div>
                         <div class="meta"><b>${h}</b></div>`;
-      card.addEventListener('click', () => {
+      this._activate(card, () => {
         audio.ui('click');
         this.s.hiltStyle = h;
         [...this.el.hilts.children].forEach(c => c.classList.toggle('sel', c === card));
@@ -1649,7 +1763,7 @@ export class Menu {
       sw.className = 'sw' + (this.s.robeIndex === i ? ' sel' : '');
       sw.style.background = `linear-gradient(135deg, #${r.outer.toString(16).padStart(6, '0')} 50%, #${r.inner.toString(16).padStart(6, '0')} 50%)`;
       sw.title = r.name;
-      sw.addEventListener('click', () => {
+      this._activate(sw, () => {
         audio.ui('click');
         this.s.robeIndex = i;
         [...this.el.robes.children].forEach(x => x.classList.toggle('sel', x === sw));
@@ -1735,6 +1849,27 @@ export class Menu {
     this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview('saber'));
   }
 
+  /**
+   * BIND ONE SLIDER — ONCE PER ELEMENT, HOWEVER OFTEN THE PANEL IS REBUILT.
+   *
+   * This function is called from _buildSaber for the three appearance sliders
+   * (Frame, Length, Core width), and _buildSaber re-runs on every Order pick
+   * and every Species pick. The inputs themselves are static markup in
+   * index.html and are never recreated, so both the `input` listener and the
+   * push into `entry.inputs` used to stack: measured on the real Menu against
+   * the real page, three picks left `opt-build` carrying FOUR 'input'
+   * listeners and `_bound.get('build').inputs.length === 4`, and one drag event
+   * on the Frame slider produced four `_refreshPreview(true)` calls — four full
+   * figure rebuilds, cloth, hair and robe included, per pointer move, against a
+   * single rebuild this file's own note already measures at 73-234 ms.
+   *
+   * The guard is the one `_sheetSlider` has carried twelve lines below for the
+   * same reason, which is why `sheet-muscle` and `sheet-age` stayed at one
+   * listener through the same three rebuilds while these three went to four.
+   * Keyed on the element, so a second CONTROL for the same setting (Length has
+   * one in the forge and one in the training panel) still registers, and its
+   * own listener still only registers once.
+   */
   _slider(id, key, fmt, onChange) {
     const input = document.getElementById(id);
     if (!input) return;
@@ -1743,9 +1878,12 @@ export class Menu {
     // extra handles on the same number.
     if (fmt && !entry.fmt) entry.fmt = fmt;
     if (onChange && !entry.onChange) entry.onChange = onChange;
-    entry.inputs.push(input);
+    if (!entry.inputs.includes(input)) entry.inputs.push(input);
     this._bound.set(key, entry);
-    input.addEventListener('input', () => this._set(key, parseFloat(input.value)));
+    if (!input.dataset.sliderBound) {
+      input.dataset.sliderBound = '1';
+      input.addEventListener('input', () => this._set(key, parseFloat(input.value)));
+    }
     // The first paint runs onChange on purpose — that is what pushes the stored
     // volume into the mixer and the stored resolution into the renderer.
     this._set(key, this.s[key]);
@@ -1764,6 +1902,33 @@ export class Menu {
     }
     saveSettings(this.s);
     if (!silent) entry?.onChange?.(value);
+  }
+
+  /**
+   * THE BLOOM BOX, WHICH THE PERFORMANCE TIER OVERRULES.
+   *
+   * `QUALITY.low.bloom` is false, and main.js's reader ANDs the tier column
+   * with the player's checkbox — so on Performance the box could not change
+   * anything, and it still painted itself ticked because it paints from
+   * `settings.bloom`, which defaults to true. Untick it, tick it, nothing
+   * happens either way, and no card or hint said why. That is the dead-control
+   * shape SETTING_READERS was written to prevent, arriving from the tier side
+   * where a reader check cannot see it.
+   *
+   * Disabled and relabelled rather than hidden: the player's own preference is
+   * still there and comes straight back when they leave the tier — the setting
+   * is untouched, only the control's appearance follows the tier.
+   */
+  _syncBloomBox() {
+    const box = document.getElementById('opt-bloom');
+    if (!box) return;
+    const tier = (QUALITY[this.s.quality] ?? QUALITY.high).bloom !== false;
+    box.disabled = !tier;
+    box.checked = !!this.s.bloom && tier;
+    const label = document.getElementById('opt-bloom-label');
+    if (label) label.textContent = tier ? 'Bloom' : 'Bloom — off on Performance';
+    const row = document.getElementById('opt-bloom-row');
+    if (row) row.classList.toggle('overruled', !tier);
   }
 
   _check(id, key, onChange) {
@@ -1875,7 +2040,7 @@ export class Menu {
       d.className = 'diff' + (this.s[key] === it.id ? ' sel' : '');
       const sub = it.epithet || it.blurb || '';
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${sub}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s[key] = it.id;
         [...host.children].forEach(x => x.classList.toggle('sel', x === d));
@@ -1907,7 +2072,7 @@ export class Menu {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.face[key] === it.id ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${it.blurb || ''}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this._sheet(key, it.id);
         [...host.children].forEach(x => x.classList.toggle('sel', x === d));
@@ -1957,7 +2122,7 @@ export class Menu {
       sw.className = 'sw' + (this.s[key] === (c.index ?? i) ? ' sel' : '');
       sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
       sw.title = c.name;
-      sw.addEventListener('click', () => {
+      this._activate(sw, () => {
         audio.ui('click');
         // `c.index ?? i` — a FILTERED rack (an order's crystals) is a subset, so
         // its array position is not the index the game stores. Skin, hair and
@@ -2149,7 +2314,7 @@ export class Menu {
       <div class="col">
         <h3>The room</h3>
         <p class="hint" style="margin-bottom:14px">Two numbers you own outright. They apply in
-          <b>Sandbox</b> mode in any theatre and in <b>the Dojo</b>, and nowhere else —
+          <b>Sandbox</b> mode in any theatre and in <b>Training</b>, and nowhere else —
           they are practice controls, not a difficulty.</p>
         <label class="slider">Enemies <input type="range" id="opt-sandbox-count"
           min="0" max="${SANDBOX_MAX_ENEMIES}" step="1" value="5"><b></b></label>
@@ -2171,11 +2336,11 @@ export class Menu {
         <h3>Blade</h3>
         <label class="check"><input type="checkbox" id="opt-unlimited-blade"> Unlimited blade length</label>
         <label class="check"><input type="checkbox" id="opt-unlimited-focus"> Unlimited Focus</label>
-        <p class="hint">Focus costs 38 Force a second, which is the trade the whole system exists
+        <p class="hint">Focus costs ${FOCUS.drain} Force a second, which is the trade the whole system exists
           to create — every second inside it is a push you cannot make. Off the leash it costs
           nothing, so you can sit inside a volley for as long as it takes to learn to read one.
-          The world still runs at ${(0.18).toFixed(2)} of real time and you still run at
-          ${(0.85).toFixed(2)} of yours; what goes away is the bill.</p>
+          The world still runs at ${FOCUS.heldScale.toFixed(2)} of real time and you still run at
+          ${FOCUS.playerScale.toFixed(2)} of yours; what goes away is the bill.</p>
         <label class="slider">Length <input type="range" id="opt-train-bladelen"
           min="0.85" max="${BLADE_CAP}" step="0.01" value="1.15"><b></b></label>
         <p class="hint">Off the leash the blade reaches ${BLADE_MAX.toFixed(2)} m instead of
@@ -2187,7 +2352,7 @@ export class Menu {
           it. It used to say it landed on your next Ignite, and it did not land at all — nothing
           read it after the blade was built.</p>
         <p class="hint" style="margin-top:auto">Deploys the theatre picked under <b>Deploy</b>,
-          in Sandbox mode. The Dojo is the quiet one.</p>
+          in Sandbox mode. Nothing arrives until you ask for it.</p>
         <button id="btn-sandbox" class="primary">Enter the sandbox</button>
       </div>`;
     wrap.insertBefore(panel, document.querySelector('.menu-foot'));
@@ -2230,7 +2395,7 @@ export class Menu {
       const d = document.createElement('div');
       d.className = 'diff' + (cfg.type === u.key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${u.name}</b><span>${u.blurb}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s.sandboxType = u.key;
         [...host.children].forEach(c => c.classList.toggle('sel', c === d));
@@ -2298,7 +2463,7 @@ export class Menu {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.deflectAim === key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s.deflectAim = key;
         [...host.children].forEach(c => c.classList.toggle('sel', c === d));
@@ -2319,40 +2484,63 @@ export class Menu {
     this.bindings = this.bindings || loadBindings();
     const hint = document.getElementById('bind-hint');
 
+    /**
+     * GROUPED BEFORE IT IS DRAWN, NOT WHILE IT IS DRAWN.
+     *
+     * This used to emit a heading whenever `a.group` differed from the last row
+     * — which is a heading per RUN of a group, not per group, and ACTIONS is
+     * not sorted by group. `swap` ("Drop / take a saber") was appended to
+     * Bindings.js after the Force block with `group: 'Blade'`, so the list read
+     * MOVEMENT, BLADE (10 rows), FORCE (12 rows), BLADE (1 row), INTERFACE,
+     * TRAINING. `.bindlist` is a 330 px scroller, so the two BLADE headings
+     * were almost never on screen together: a player looking for the drop key
+     * under the first one simply concluded it was not rebindable.
+     *
+     * Building the map first means a group is a group wherever its rows were
+     * declared, and the next row appended to the wrong end of that table lands
+     * under the right heading instead of minting a second one. Order is first
+     * appearance, so the list still reads Movement, Blade, Force, Interface,
+     * Training the way the table intends.
+     */
     const render = () => {
       host.innerHTML = '';
-      let group = null;
+      const grouped = new Map();
       for (const a of ACTIONS) {
-        if (a.group !== group) {
-          group = a.group;
-          const g = document.createElement('div');
-          g.className = 'grp'; g.textContent = group;
-          host.appendChild(g);
+        if (!grouped.has(a.group)) grouped.set(a.group, []);
+        grouped.get(a.group).push(a);
+      }
+      for (const [group, rows] of grouped) {
+        const g = document.createElement('div');
+        g.className = 'grp'; g.textContent = group;
+        host.appendChild(g);
+        for (const a of rows) {
+          const row = document.createElement('div');
+          row.className = 'bindrow';
+          const label = document.createElement('span');
+          label.textContent = a.label;
+          const keys = document.createElement('div');
+          keys.className = 'keys';
+          const bound = this.bindings[a.id] || [];
+          // always offer one empty slot so a second key can be added
+          for (let i = 0; i < Math.min(bound.length + 1, 3); i++) {
+            const b = document.createElement('b');
+            b.textContent = keyLabel(bound[i]);
+            b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
+            // A key chip is a control, so it takes focus and answers Enter and
+            // Space — rebinding the keyboard was itself mouse-only.
+            this._activate(b, () => listen(a, i, b), `rebind ${a.label}`);
+            b.addEventListener('contextmenu', (e) => {
+              e.preventDefault();
+              if (!bound[i] || bound.length < 2) return;   // never leave it unbound
+              audio.ui('click');
+              this.bindings[a.id] = bound.filter((_, j) => j !== i);
+              saveBindings(this.bindings); this.hooks.onBindings?.(this.bindings); render();
+            });
+            keys.appendChild(b);
+          }
+          row.appendChild(label); row.appendChild(keys);
+          host.appendChild(row);
         }
-        const row = document.createElement('div');
-        row.className = 'bindrow';
-        const label = document.createElement('span');
-        label.textContent = a.label;
-        const keys = document.createElement('div');
-        keys.className = 'keys';
-        const bound = this.bindings[a.id] || [];
-        // always offer one empty slot so a second key can be added
-        for (let i = 0; i < Math.min(bound.length + 1, 3); i++) {
-          const b = document.createElement('b');
-          b.textContent = keyLabel(bound[i]);
-          b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
-          b.addEventListener('click', (e) => { e.preventDefault(); listen(a, i, b); });
-          b.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            if (!bound[i] || bound.length < 2) return;   // never leave it unbound
-            audio.ui('click');
-            this.bindings[a.id] = bound.filter((_, j) => j !== i);
-            saveBindings(this.bindings); this.hooks.onBindings?.(this.bindings); render();
-          });
-          keys.appendChild(b);
-        }
-        row.appendChild(label); row.appendChild(keys);
-        host.appendChild(row);
       }
       // Every OTHER surface that prints a key reads the same table, so a
       // rebind lands on all of them in the same frame it lands here.
@@ -2464,7 +2652,7 @@ export class Menu {
       // names keys and therefore has to be repainted on every rebind.
       d.dataset.scheme = s.key;
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${s.name}</b><span></span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s.scheme = s.key;
         [...host.children].forEach(c => c.classList.toggle('sel', c === d));
@@ -2491,16 +2679,23 @@ export class Menu {
       ['ultra', 'Cinematic', 'Everything. Expects a discrete GPU.'],
     ]) {
       const q = QUALITY[key];
+      // The tier states what it REMOVES as well as what it spends: `bloom` is
+      // the one column of QUALITY that the tier can switch off under a control
+      // the player also owns, and the Performance card said nothing about it
+      // while silently overruling the Bloom checkbox.
       const budget = `${Math.round(q.particles * 100)}% particles · ${Math.round(q.grass * 100)}% grass `
-        + `· ${q.viewDist} m view · ${q.shadow}px shadows`;
+        + `· ${q.viewDist} m view · ${q.shadow}px shadows${q.bloom ? '' : ' · no bloom'}`;
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.quality === key ? ' sel' : '');
       d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}<br>${budget}</span></div>`;
-      d.addEventListener('click', () => {
+      this._activate(d, () => {
         audio.ui('click');
         this.s.quality = key;
         [...qhost.children].forEach(c => c.classList.toggle('sel', c === d));
         saveSettings(this.s);
+        // A tier change can take the bloom pass away or give it back, so the
+        // checkbox has to be re-stated in the same frame the tier is picked.
+        this._syncBloomBox();
         this.hooks.onQualityChange?.(key);
       });
       qhost.appendChild(d);
@@ -2541,6 +2736,7 @@ export class Menu {
     // on the next deploy.
     this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
+    this._syncBloomBox();
     this._check('opt-showperf', 'showPerf');
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every
@@ -2670,6 +2866,32 @@ export class Menu {
     });
     bind('btn-retry', () => this.hooks.onRetry?.());
     bind('btn-menu', () => this.hooks.onQuit?.());
+    /**
+     * THE NAME, WHICH FOUR PLAYERS USED TO SHARE.
+     *
+     * `net.name` had exactly one value in the whole codebase: the constructor
+     * default `'Jedi'` (Net.js:56). Its only writers were Net.host and Net.join
+     * and both call sites passed `net.name` straight back to itself, and there
+     * was no field anywhere to type one into — so a four-player session listed
+     * 'Jedi', 'Jedi', 'Jedi', 'Jedi', the status line said 'Jedi joined', every
+     * nameplate over every ally said 'Jedi', and the kill feed said 'Jedi cut
+     * down a B1' whoever had done it. A roster whose whole job is telling
+     * players apart cannot be a constant.
+     *
+     * It is a setting rather than a field on Net so it survives a reload, and
+     * it is capped at 18 characters because it is drawn over a head in the
+     * world and inside a roster row 340 px wide.
+     */
+    const nameField = document.getElementById('opt-name');
+    if (nameField) {
+      nameField.value = this.s.playerName || '';
+      nameField.addEventListener('input', () => {
+        this.s.playerName = String(nameField.value || '').slice(0, 18);
+        if (nameField.value !== this.s.playerName) nameField.value = this.s.playerName;
+        saveSettings(this.s);
+        this.hooks.onName?.(this.s.playerName);
+      });
+    }
     bind('btn-host', () => this.hooks.onHost?.());
     bind('btn-join', () => {
       const code = document.getElementById('join-code').value.trim().toUpperCase();
@@ -2688,35 +2910,76 @@ export class Menu {
     this.el.netStatus.className = 'netstatus ' + cls;
   }
   netCode(code) { this.el.netCode.textContent = code || '—'; }
+  /**
+   * The roster, with the names treated as what they are: text that arrived
+   * over the wire from another machine (`conn.metadata?.name`, Net.js:148).
+   * It used to be interpolated raw into innerHTML — harmless while nothing
+   * could set a name, and a script tag in a roster row the moment one could.
+   * The name goes in as a text node; only the markup around it is markup.
+   */
   netRoster(players) {
     this.el.netRoster.innerHTML = '';
     for (const p of players) {
       const d = document.createElement('div');
       d.className = 'p';
-      d.innerHTML = `<i></i><span>${p.name}</span>${p.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}`;
+      d.innerHTML = `<i></i><span></span>${p.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}`;
+      const span = d.querySelector('span');
+      if (span) span.textContent = p.name || 'Jedi';
       this.el.netRoster.appendChild(d);
     }
   }
 
   /* ── overlays ────────────────────────────────────────────────────── */
 
+  /**
+   * THE MID-RUN DRAFT, WHICH HAD TO BE ANSWERED WITH A MOUSE.
+   *
+   * This is the one modal in the game that STOPS THE WORLD and has no exit but
+   * an answer: Escape opens the pause card, and Resume deliberately puts the
+   * draft straight back (Screens.resume, rule 2 — skipping it would rob the
+   * player of the boon the wave paid for). So with three `.dc` divs carrying
+   * nothing but a click listener, a player without a working mouse mid-run had
+   * exactly one way out of a wave they had already won, and it was Abandon run.
+   *
+   * Three things make it answerable: the cards are real controls (_activate),
+   * the first one is FOCUSED as the draft opens so nobody has to hunt for the
+   * focus ring, and the arrows walk the row while the number keys take a card
+   * outright. The numbers are printed on the cards, because a shortcut nobody
+   * is told about is not a shortcut.
+   */
   showDraft(boons, onPick) {
     this.el.draftCards.innerHTML = '';
-    for (const b of boons) {
+    const cards = [];
+    const take = (b) => {
+      audio.ui('good');
+      this.el.draft.classList.add('hidden');
+      onPick(b);
+    };
+    boons.forEach((b, idx) => {
       const card = document.createElement('div');
       // An attunement is permanent and repeatable and a card is neither, so it
       // reads differently rather than hiding among them.
       card.className = b.attune ? 'dc att' : 'dc';
-      card.innerHTML = `<div class="ic">${b.icon}</div><b>${b.name}</b><span>${b.text}</span><em>${b.tag}</em>`;
+      card.innerHTML = `<div class="ic">${b.icon}</div><b>${b.name}</b><span>${b.text}</span>`
+        + `<em>${b.tag}<kbd class="dck">${idx + 1}</kbd></em>`;
       card.addEventListener('mouseenter', () => audio.ui('hover'));
-      card.addEventListener('click', () => {
-        audio.ui('good');
-        this.el.draft.classList.add('hidden');
-        onPick(b);
+      this._activate(card, () => take(b), `${b.name} — ${b.text}`);
+      card.addEventListener('keydown', (e) => {
+        const i = cards.indexOf(card);
+        const n = Number(e.key);
+        if (n >= 1 && n <= boons.length) { e.preventDefault(); take(boons[n - 1]); return; }
+        const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1
+          : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        cards[(i + step + cards.length) % cards.length]?.focus?.();
       });
+      cards.push(card);
       this.el.draftCards.appendChild(card);
-    }
+    });
     this.el.draft.classList.remove('hidden');
+    // Focus lands on the offer, not on whatever the page was showing before it.
+    cards[0]?.focus?.();
   }
   hideDraft() { this.el.draft.classList.add('hidden'); }
 

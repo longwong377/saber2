@@ -133,6 +133,14 @@ export const ATTACKS = {
 
 /* ── the forms ───────────────────────────────────────────────────────── */
 
+/**
+ * How much of a form's move order survives when nothing is breaking it — see
+ * `_pick`. Not 1: a duellist you can recite is a duellist you never have to
+ * look at. Not 0: that is where this started, and it is why the five forms
+ * were statistically the same fighter wearing different wind-up times.
+ */
+const RHYTHM = 0.72;
+
 export const FORMS = {
   makashi: {
     name: 'Makashi', numeral: 'II',
@@ -140,7 +148,7 @@ export const FORMS = {
     windup: 0.34, strike: 0.13, recover: 0.24, chamberWindow: 0.42,
     aggression: 0.9, spacing: [1.7, 2.9], chain: [1, 2],
     moves: ['thrust', 'riposteCut', 'slashR', 'slashL', 'thrust'],
-    feint: 0.30, punishRecovery: 0.85, saberColour: 4,
+    feint: 0.30, punishRecovery: 0.85,
   },
   djemSo: {
     name: 'Djem So', numeral: 'V',
@@ -148,7 +156,7 @@ export const FORMS = {
     windup: 0.68, strike: 0.19, recover: 0.58, chamberWindow: 0.34,
     aggression: 0.7, spacing: [1.5, 3.2], chain: [1, 1],
     moves: ['overhead', 'cleave', 'smash', 'overhead'],
-    feint: 0.10, punishRecovery: 0.3, saberColour: 4, strength: 1.8,
+    feint: 0.10, punishRecovery: 0.3, strength: 1.8,
   },
   ataru: {
     name: 'Ataru', numeral: 'IV',
@@ -156,7 +164,7 @@ export const FORMS = {
     windup: 0.24, strike: 0.11, recover: 0.17, chamberWindow: 0.5,
     aggression: 1.3, spacing: [1.4, 3.6], chain: [2, 4],
     moves: ['slashR', 'slashL', 'rising', 'spin', 'riposteCut'],
-    feint: 0.22, punishRecovery: 0.6, saberColour: 4, mobile: true,
+    feint: 0.22, punishRecovery: 0.6, mobile: true,
   },
   soresu: {
     name: 'Soresu', numeral: 'III',
@@ -164,7 +172,7 @@ export const FORMS = {
     windup: 0.40, strike: 0.14, recover: 0.26, chamberWindow: 0.45,
     aggression: 0.42, spacing: [1.8, 3.0], chain: [1, 2],
     moves: ['slashR', 'riposteCut', 'thrust'],
-    feint: 0.14, punishRecovery: 1.0, saberColour: 4, defensive: 1.7,
+    feint: 0.14, punishRecovery: 1.0, defensive: 1.7,
   },
   juyo: {
     name: 'Juyo', numeral: 'VII',
@@ -172,7 +180,7 @@ export const FORMS = {
     windup: 0.30, strike: 0.13, recover: 0.22, chamberWindow: 0.36,
     aggression: 1.15, spacing: [1.4, 3.2], chain: [1, 3],
     moves: ['cleave', 'slashL', 'lunge', 'rising', 'overhead', 'spin'],
-    feint: 0.42, punishRecovery: 0.75, saberColour: 4, erratic: 0.55,
+    feint: 0.42, punishRecovery: 0.75, erratic: 0.55,
   },
 };
 
@@ -336,8 +344,25 @@ export class DuelBrain {
   get timer() { return this.e.saberTimer; }
   set timer(v) { this.e.saberTimer = v; }
 
-  /** Force back to a neutral guard — used by parries, staggers and hitstop. */
+  /**
+   * Force back to a neutral guard — used by parries, staggers and hitstop.
+   *
+   * AND IT WILL NOT SHORTEN A STAGGER. `_finish('player')` — winning a blade
+   * lock, the single largest opening the game offers — ran
+   *
+   *     e.stun(1.15);          // → duel.stagger(1.15): phase = 'stagger'
+   *     e.duel?.interrupt(1.0) // → phase = 'recover'
+   *
+   * two lines apart, so the guard it had just thrown wide was put straight
+   * back on line and the reward for overpowering a lock was a duellist
+   * standing at rest. World's chamber and parry paths happen to interrupt
+   * BEFORE they stun and so were unaffected, which is why this never showed
+   * up anywhere but the lock. A stagger is strictly stronger than a recover —
+   * it has already cleared the attack, the chain and the chamber and hidden
+   * the telegraph — so there is never a reason to trade one for the other.
+   */
   interrupt(recoverTime = 0.4) {
+    if (this.staggered) return;
     this.attack = null;
     this.chainLeft = 0;
     this.chamberOpen = false;
@@ -589,12 +614,59 @@ export class DuelBrain {
     }
   }
 
+  /**
+   * WHICH ATTACK COMES NEXT — AND WHETHER YOU CAN LEARN IT.
+   *
+   * What was here:
+   *
+   *     let key = F.moves[Math.floor(rng() * F.moves.length)];
+   *     // Juyo deliberately breaks its own rhythm
+   *     if (F.erratic && rng() < F.erratic * 0.4) key = F.moves[Math.floor(rng() * F.moves.length)];
+   *
+   * — a uniform draw, and then sometimes ANOTHER uniform draw from the same
+   * list. The second line is the identity function: re-rolling a uniform
+   * variable gives back the same distribution, exactly. `erratic` is authored
+   * on one form, Juyo, whose tell reads "erratic — the rhythm is the trap",
+   * and it changed nothing whatsoever: Juyo and Soresu chose their attacks in
+   * statistically indistinguishable ways, and neither had a rhythm to break
+   * because every form drew uniformly and independently every single time.
+   *
+   * A rhythm is a CONDITIONAL distribution — what comes next given what just
+   * came — so it cannot exist in a table of independent draws. A disciplined
+   * form now WALKS its own move list, which is what makes Makashi's
+   * thrust → riposte → slash → slash → thrust something a player can read
+   * three exchanges in, and it is why the lists have repeats in them.
+   * `erratic` is the chance of leaving that walk; and when it leaves it goes
+   * anywhere EXCEPT the move the rhythm just promised, because a break that
+   * might play the expected move is not a break.
+   *
+   * Measured over 20 000 attacks per form — P(next attack is the one this
+   * form's order implies), where the old uniform draw scores exactly 1/len:
+   *
+   *     makashi  73.9%   (was 20.0%)      soresu  72.4%   (was 33.3%)
+   *     djemSo   75.2%   (was 25.0%)      juyo    32.7%   (was 16.7%)
+   *     ataru    72.4%   (was 20.0%)
+   *
+   * Juyo is the only form that will not hold a line, and — this is the part
+   * the tell promises — it is still twice as likely as chance to play the
+   * move you are braced for. It offers a rhythm; it is not made of one.
+   */
   _pick() {
     const F = this.form;
-    let key = F.moves[Math.floor(rng() * F.moves.length)];
-    // Juyo deliberately breaks its own rhythm
-    if (F.erratic && rng() < F.erratic * 0.4) key = F.moves[Math.floor(rng() * F.moves.length)];
-    return key;
+    const moves = F.moves;
+    if (moves.length < 2) return (this._lastKey = moves[0]);
+    // Where the walk stands. `indexOf` rather than a stored index because the
+    // lists repeat deliberately and the first match is as good as any: the
+    // point is that the SEQUENCE is stable, not which copy of `thrust` it is.
+    const i = this._lastKey != null ? moves.indexOf(this._lastKey) : -1;
+    const expected = i >= 0 ? (i + 1) % moves.length : -1;
+    // RHYTHM is what is left of a form's discipline once `erratic` is spent.
+    if (expected >= 0 && rng() < RHYTHM * (1 - clamp(F.erratic ?? 0, 0, 1))) {
+      return (this._lastKey = moves[expected]);
+    }
+    let j = Math.floor(rng() * (moves.length - (expected >= 0 ? 1 : 0)));
+    if (expected >= 0 && j >= expected) j++;
+    return (this._lastKey = moves[j]);
   }
 
   _beginAttack(sp, chained = false) {
@@ -706,7 +778,13 @@ export class BladeLock {
     this.result = winner;
     const p = this.player, e = this.enemy;
     if (winner === 'player') {
-      e.stun(1.15);
+      /* The direction the losing blade was driven, so the guard opens on the
+       * side it actually lost. The tip's own travel, not the line between the
+       * two bodies: a lock is won by driving ACROSS, and two fighters standing
+       * nose to nose have no side between them at all. */
+      if (p.saber?.tipVelocity) _v3.copy(p.saber.tipVelocity); else _v3.set(0, 0, 0);
+      if (_v3.lengthSq() < 1) _v3.subVectors(e.position, p.position);
+      e.stun(1.15, _v3, 1.4);
       e.duel?.interrupt(1.0);
       _v1.subVectors(e.position, p.position).setY(0.35).normalize().multiplyScalar(13);
       e.applyKnockback(_v1, 6, p);
