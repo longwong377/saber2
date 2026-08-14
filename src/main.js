@@ -1365,9 +1365,17 @@ function frame(now) {
 
   input.begin(dt);
 
-  // Held, and only while a run is live: the menus, the draft and the death card
-  // own the screen otherwise, and this would sit on top of all three.
-  setScoreboard(screens.state === 'playing' && !!world && input.act('scoreboard'));
+  /* Held, and only while a run is live: the menus, the draft and the death card
+   * own the screen otherwise, and this would sit on top of all three.
+   *
+   * …AND NOT OVER A PHOTO. The free camera hides the HUD with `hud.show(false)`,
+   * but `#scoreboard` is a top-level `.screen` at z-index 38 and is deliberately
+   * not part of #hud — the same reason `#freecam-bar` is not — so it was outside
+   * everything the free camera turns off. `screens.state` stays 'playing' the
+   * whole time it is up, so holding the scoreboard key in photo mode dropped a
+   * full-screen 72%-opaque panel over the shot the mode exists to take. */
+  setScoreboard(screens.state === 'playing' && !!world && !world.freeCamera
+    && input.act('scoreboard'));
   lessonKeys();
   communeTick(dt);
   setCommuneEntry(screens.state === 'menu' && !tree.open);

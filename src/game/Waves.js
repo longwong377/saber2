@@ -1959,6 +1959,16 @@ export const BOND = {
   hold: 1.2,
   /** The most an ally's ward may take off an incoming blow. */
   wardCap: 0.35,
+  /**
+   * What one step along the bond axis is worth, as `_bondEdge`.
+   *
+   * Named because two cards spend it and they must not drift: Communion pays
+   * one of these per rank, and Attunement of the Bond pays one per take —
+   * which is the whole statement of what an attunement is on this axis, "a
+   * rank of the axis's own card, for ever". Written as a number in each of
+   * them, the two would be the eighth hand-maintained pair in this file.
+   */
+  step: 0.16,
 };
 
 /** Local players other than `p` — a RemoteAvatar has no boonMods and is not one. */
@@ -2693,7 +2703,7 @@ export const BOONS = [
     rarity: 'common', axes: ['bond'], stack: 3,
     text: 'Your presence is felt. Anyone fighting beside you cuts harder and moves faster for it — and alone, half of it stays with you.',
     apply(p, s = 1) {
-      p._bondEdge = (p._bondEdge ?? 0) + 0.16 * s;
+      p._bondEdge = (p._bondEdge ?? 0) + BOND.step * s;
       boonTick(p, 'bond', bondAura);
     },
   },
@@ -2901,6 +2911,51 @@ export const ATTUNEMENTS = [
     // Vitality's ranks into the same runaway the harness already caught once.
     text: 'You endure more of it, and carry it faster. Permanent, and repeatable.',
     apply(p) { p.maxHp += 18; p.hp += 18; p.boonMods.moveSpeed *= 1.04; },
+  },
+  {
+    id: 'attune-bond', icon: '🕯', name: 'Attunement of the Bond', tag: 'Attunement',
+    rarity: 'epic', stack: Infinity, attune: 'bond',
+    /**
+     * THE SIXTH AXIS, WHICH HAD A MASTERY AND NO ATTUNEMENT.
+     *
+     * `drawBoons` returns `ATTUNEMENTS.slice()` at an attunement wave, and the
+     * comment on that line explains why it is all of them rather than a sample:
+     * "a draft that happened not to offer the dark one would be denying a build
+     * by dice". There were five of them and six axes with a mastery — guard,
+     * force, blade, body, bond, dark — so a player who had committed to the
+     * bond axis, taken Communion, Suffusion and the Vow and earned The Unifying
+     * Force, was offered five permanent choices at every boss wave and not one
+     * of them was theirs. Not denied by dice; denied outright, for the whole
+     * life of the mode.
+     *
+     * WHAT IT DOES, and why it is written this way. `_bondEdge` is what the
+     * aura carries and `_bondRange` is how far, both read by `bondAura` — and
+     * `bondAura` has to be installed here, because a player can now reach this
+     * card without ever having held a bond boon.
+     *
+     * ONE STEP IS ONE RANK OF COMMUNION — `BOND.step`, shared with the card
+     * rather than typed again, which is also the plainest statement of what an
+     * attunement is on this axis: the axis's own common card, once more, for
+     * ever.
+     *
+     * The last two lines are the giver's own half, applied at APPLY time rather
+     * than waiting for the first tick. `bondAura` computes exactly this every
+     * frame and `boonFactor` is idempotent per slot, so the tick agrees with it
+     * and does nothing; what it buys is that the card visibly moves the player
+     * the instant it is taken. That matters beyond tidiness — a solo player
+     * with nobody in range would otherwise see a permanent epic choice change
+     * no number they can see, which is the exact shape of the two dead
+     * attunements this suite caught last pass.
+     */
+    text: 'Your communion reaches further and carries more — and half of what you give, you keep.',
+    apply(p) {
+      const edge = p._bondEdge = (p._bondEdge ?? 0) + BOND.step;
+      p._bondRange = (p._bondRange ?? BOND.range) * 1.12;
+      boonTick(p, 'bond', bondAura);
+      const share = p._bondMastery ? 1 : 0.5;
+      boonFactor(p, 'cutPower', 'communion', 1 + edge * share);
+      boonFactor(p, 'moveSpeed', 'communion', 1 + edge * 0.5 * share);
+    },
   },
   {
     id: 'attune-dark', icon: '⚫', name: 'Attunement of the Dark', tag: 'Attunement',

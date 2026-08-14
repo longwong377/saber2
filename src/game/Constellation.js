@@ -166,7 +166,7 @@ export const CONSTELLATIONS = [
     jedi: 'The Pilgrim', sith: 'The Juggernaut', grey: 'The Body',
     creed: { jedi: 'The body is the first thing the Force is given.',
              sith: 'Pain is only information.' } },
-  { axis: 'bond', root: 'communion', 
+  { axis: 'bond', root: 'attune-bond',
     jedi: 'The Unifying Force', sith: 'The Rule of Two', grey: 'Communion',
     creed: { jedi: 'There is no you. There is what stands beside you.',
              sith: 'One to embody the power. One to crave it.' } },
@@ -272,6 +272,12 @@ export const STARS = [
     jedi: 'Mastery — Undying', sith: 'Mastery — The Unkillable' },
 
   /* ── Communion ─────────────────────────────────────────────────────── */
+  /* Rooted on the attunement like the other five, which it could not be until
+   * there WAS one: bond had a mastery and no attunement, so this constellation
+   * was the only one whose heart was a common card capped at three ranks —
+   * exactly on the "never runs out" bar rather than comfortably past it. */
+  { id: 'attune-bond', axis: 'bond', dx: 0, dy: -92, to: ['communion'],
+    jedi: 'Attunement of the Bond', sith: 'Attunement of the Pact' },
   { id: 'communion', axis: 'bond', dx: 0, dy: 0, to: ['suffusion', 'vow'],
     jedi: 'Battle Meditation', sith: 'Dominion' },
   { id: 'suffusion', axis: 'bond', dx: -102, dy: 74, to: ['unity'],
