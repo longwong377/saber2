@@ -132,8 +132,42 @@ export const SANDBOX_MAX_ENEMIES = 40;
 const SANDBOX_RING = [11, 19];
 const SANDBOX_RING_INERT = [4.5, 8];
 
-/** Order matters: the practice dummies first, then the things that hurt. */
+/**
+ * A PREFERENCE ORDER, NOT A GUEST LIST — and it used to be the second thing.
+ *
+ * `sandboxUnits` says of itself, twenty lines down, that it is "built from
+ * ARCHETYPES rather than typed again, so a new droid shows up here the day it
+ * is added instead of the day someone remembers this list exists". It then
+ * filtered ARCHETYPES through this array, which makes this array the membership
+ * test and the sentence false. Nobody remembered the list existed: it was
+ * already missing `bodyguard`, `charger` and `stalker`, and the roster has
+ * since grown from fourteen archetypes to twenty, so NINE OF TWENTY enemies
+ * could not be spawned in the one mode whose entire purpose is spawning an
+ * enemy of your choosing and practising against it.
+ *
+ * This is the seventh time this codebase has been bitten by a hand-maintained
+ * table beside a generated one — a HUD price list, an announcer voice map, this
+ * same list, a level card's unit count, a garment length, a wire record and now
+ * this. The shape of the fix is always the same: the hand-written thing must
+ * stop being the authority. It is a SORT KEY now. Everything authored here
+ * keeps the order it was authored in — the practice dummies first, then the
+ * things that hurt — and anything registered later is appended by its own
+ * threat, so a new body lands in the list on the day it is added and lands in
+ * roughly the right place too.
+ */
 const SANDBOX_ORDER = ['remote', 'dummy', 'sparring', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker', 'beast'];
+
+/**
+ * Every archetype, authored ones first and the rest by threat. Lazy for the
+ * same temporal-dead-zone reason `sandboxUnits` is — see the note there.
+ */
+function sandboxKeys() {
+  return [
+    ...SANDBOX_ORDER.filter((k) => ARCHETYPES[k]),
+    ...Object.keys(ARCHETYPES).filter((k) => !SANDBOX_ORDER.includes(k))
+      .sort((a, b) => (ARCHETYPES[a].threat ?? 0) - (ARCHETYPES[b].threat ?? 0)),
+  ];
+}
 
 /** What the dojo's "mixed" room rotates through — one of each, then repeat. */
 export const DOJO_MIX = ['remote', 'dummy', 'sparring'];
@@ -163,7 +197,7 @@ export function sandboxUnits() {
   if (_units) return _units;
   _units = [
     { key: 'mixed', name: 'Mixed', blurb: 'Whatever this theatre fields, in the proportions it fields it.' },
-    ...SANDBOX_ORDER.filter(k => ARCHETYPES[k]).map(k => ({
+    ...sandboxKeys().map(k => ({
       key: k, name: ARCHETYPES[k].label, blurb: unitBlurb(ARCHETYPES[k]),
     })),
   ];
@@ -878,10 +912,19 @@ export class WaveDirector {
     const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from) && this.pool.includes(s.type))
       .map(s => s.type);
     if (!ladder.length) return out;
-    // ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two
-    // acklays is not an escalation of one acklay, it is the same fight twice at
-    // once; an acklay with a walker behind it is a different problem.
-    const most = wave >= CHAMPION_FROM ? 3 : 2;
+    /* ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two
+     * acklays is not an escalation of one acklay, it is the same fight twice at
+     * once; an acklay with a walker behind it is a different problem.
+     *
+     * …AND THE PARTY MOVES IT, which it did not. `budgetFor` scales by
+     * `partyScale()` and so does `heavyLimit`; this cap was the one number in
+     * the set-piece path that did not, so the extra threat four blades bought
+     * had nowhere to go but the ordinary fill. Measured through the real
+     * composer: one, two and four players all fielded exactly TWO set-piece
+     * bodies at waves 10 and 20, and at four blades 143 of 513 threat went to
+     * the crowd instead of to the thing the wave is named after. A co-op boss
+     * wave was a solo boss wave with more droids around it. */
+    const most = Math.round((wave >= CHAMPION_FROM ? 3 : 2) * this.partyScale());
     // Never less than two of the lightest rung: at wave 5 that is exactly the
     // pair of acolytes the hand-written branch used to push, for exactly the
     // 12 threat it used to subtract.

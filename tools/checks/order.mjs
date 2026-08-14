@@ -671,10 +671,24 @@ export async function run({ check, assert, near }) {
       `fields an order writes that nothing outside Order.js reads: ${unread.join(', ')} — the blurb `
       + 'promises what the code never does');
 
-    // the pools move with their maxima, or a Sith spawns on 100 of 78
+    /* THE POOLS MOVE WITH THEIR MAXIMA, or a Sith spawns on 100 of 78.
+     *
+     * DERIVED FROM THE ORDER'S OWN TABLE. These were the literals `78` and
+     * `125`, and they are exactly the copied-answer-key shape this suite exists
+     * to catch: the Sith's `maxHp` add moved from -22 to -20 so that "you start
+     * with a fifth less to lose" in its own blurb is a fifth, and this check
+     * went red for a change that made the game more honest, quoting a number no
+     * longer in Order.js. The PROPERTY is that the pool follows the maximum and
+     * the maximum is whatever `mods.add` says; both now come from the table. */
     const sith = subject('sith'), jedi = subject('jedi');
-    assert(sith.maxHp === 78 && sith.hp === 78, `a Sith spawns on ${sith.hp} of ${sith.maxHp}`);
-    assert(jedi.maxForce === 125 && jedi.force === 125, `a Jedi spawns on ${jedi.force} of ${jedi.maxForce}`);
+    const stock = subject(null);
+    const wantHp = stock.maxHp + (getOrder('sith').mods.add?.maxHp ?? 0);
+    const wantForce = stock.maxForce + (getOrder('jedi').mods.add?.maxForce ?? 0);
+    stock.saber.dispose();
+    assert(sith.maxHp === wantHp && sith.hp === wantHp,
+      `a Sith spawns on ${sith.hp} of ${sith.maxHp}, and its order table says ${wantHp}`);
+    assert(jedi.maxForce === wantForce && jedi.force === wantForce,
+      `a Jedi spawns on ${jedi.force} of ${jedi.maxForce}, and its order table says ${wantForce}`);
     // once, at spawn: a second order is refused rather than compounded
     let threw = false;
     try { applyOrder(sith, 'jedi'); } catch { threw = true; }

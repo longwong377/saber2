@@ -56,7 +56,8 @@ import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Player } from '../../src/game/Player.js';
 import { Enemy, enemyRng, ARCHETYPES } from '../../src/game/Enemy.js';
-import { BOONS, ATTUNEMENTS, MODES, rankScale, maxRank, WaveDirector, seedWaves } from '../../src/game/Waves.js';
+import { BOONS, ATTUNEMENTS, MODES, rankScale, maxRank, WaveDirector, seedWaves,
+  sandboxUnits } from '../../src/game/Waves.js';
 import { LESSONS } from '../../src/game/Dojo.js';
 import { DESCENT } from '../../src/game/Run.js';
 import { DIFFICULTY, OPEN_STATES, openState, openMul, openness,
@@ -136,6 +137,22 @@ function snap(p) {
   return o;
 }
 const changedKeys = (a, b) => Object.keys({ ...a, ...b }).filter((k) => a[k] !== b[k]);
+
+/**
+ * A real WaveDirector fighting for `n` blades.
+ *
+ * `partyScale` reads `world.level.party` (how much a level lets the party count
+ * move its pressure) and `partySize` counts living players, so both halves have
+ * to be real for the co-op numbers to be real.
+ */
+function partyDirector(n) {
+  const w = gameWorld();
+  w.level = { party: 1 };
+  w.players = new Array(n).fill(0).map(() => ({ alive: true }));
+  seedWaves(99, 0);
+  return new WaveDirector(w, { mode: 'roguelite',
+    pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker', 'beast'] });
+}
 
 /* ── the source side: who reads what ─────────────────────────────────── */
 
@@ -744,6 +761,79 @@ export async function run({ check, assert }) {
 
     return `${rows.join('; ')}; ${Object.keys(MODES).length} modes all named and described; `
       + `the Waves header's ${boonsSaid} boons and ${mastSaid} masteries are what the tables hold`;
+  });
+
+  check('claims: the sandbox offers every enemy the game has, because it says it does', () => {
+    /**
+     * `sandboxUnits` says of itself: "Built from ARCHETYPES rather than typed
+     * again, so a new droid shows up here the day it is added instead of the
+     * day someone remembers this list exists." It then filtered ARCHETYPES
+     * through a hand-typed array, which made the array the membership test and
+     * the sentence false — the seventh hand-maintained-table-beside-a-generated-
+     * one in this codebase, and the second time this exact list has been it.
+     *
+     * Measured before: 11 of 15 archetypes offered, with `jedi`, `sentinel`,
+     * `guardian` and `master` unreachable in the one mode whose entire purpose
+     * is picking an enemy and practising against it. The roster has since grown
+     * again, which is precisely the point: this check asserts the DERIVATION —
+     * every key of ARCHETYPES is offered — and never a count, so it stays true
+     * on the day the twenty-first body is registered.
+     */
+    const offered = sandboxUnits().map((u) => u.key);
+    const keys = Object.keys(ARCHETYPES);
+    const missing = keys.filter((k) => !offered.includes(k));
+    assert(!missing.length,
+      `${missing.length} of ${keys.length} archetypes cannot be spawned in the sandbox: ${missing.join(', ')}`);
+    // …and nothing offered that does not exist, which is the other way to lie
+    const ghosts = offered.filter((k) => k !== 'mixed' && !ARCHETYPES[k]);
+    assert(!ghosts.length, `the sandbox offers bodies that are not archetypes: ${ghosts.join(', ')}`);
+    // …and every row says something true about the unit it names
+    for (const u of sandboxUnits()) {
+      if (u.key === 'mixed') continue;
+      assert(u.name === ARCHETYPES[u.key].label,
+        `the sandbox calls '${u.key}' "${u.name}" and the archetype calls itself "${ARCHETYPES[u.key].label}"`);
+      assert(u.blurb.includes(`${ARCHETYPES[u.key].hp} hp`),
+        `the sandbox row for ${u.key} does not quote its own hp`);
+      assert(u.blurb.includes(`threat ${ARCHETYPES[u.key].threat}`),
+        `the sandbox row for ${u.key} does not quote its own threat`);
+    }
+    return `${keys.length} archetypes, ${offered.length - 1} offered, every name and stat read off ARCHETYPES`;
+  });
+
+  check('claims: everything a boss wave scales with the party scales with the party', () => {
+    /**
+     * A co-op boss wave is supposed to be a bigger set-piece, not a solo
+     * set-piece with more droids around it. Three numbers in `WaveDirector`
+     * carry `partyScale()` — the threat budget, the heavy limit and the number
+     * of set-piece bodies — and the third one did not: it was the flat
+     * `wave >= CHAMPION_FROM ? 3 : 2`, so every extra blade's worth of threat
+     * went to the ordinary fill. Measured through the real composer at waves 10
+     * and 20, one/two/four players: 2, 2, 2 and 3, 3, 3 set-piece bodies, while
+     * the budget went 61 → 245 and 162 → 650.
+     *
+     * Held as a DERIVATION over the three quantities rather than as three
+     * numbers: each must be strictly larger at four blades than at one. A
+     * fourth party-scaled quantity added later is covered the day it is added
+     * only if it is listed here — which is why the list names what it measures
+     * and the failure says which one stopped moving.
+     */
+    const solo = partyDirector(1), full = partyDirector(4);
+    const wave = 20;
+    const quantities = {
+      'threat budget': (d) => d.budgetFor(wave),
+      'heavy limit': (d) => d.heavyLimit(wave),
+      'set-piece bodies': (d) => d._setPiece(wave, d.budgetFor(wave), d.modifiersAt(wave)).length,
+    };
+    const flat = [], rows = [];
+    for (const [name, read] of Object.entries(quantities)) {
+      const one = read(solo), four = read(full);
+      if (!(four > one)) flat.push(`${name} is ${one} at one blade and ${four} at four`);
+      rows.push(`${name} ${one}→${four}`);
+    }
+    assert(!flat.length, `these do not scale with the party: ${flat.join('; ')}`);
+    assert(full.partyScale() > solo.partyScale(),
+      `partyScale itself is flat: ${solo.partyScale()} vs ${full.partyScale()}`);
+    return `wave ${wave}, one blade → four: ${rows.join(', ')}`;
   });
 
   check('claims: the Duel mode blurb is the roster the director composes', () => {
