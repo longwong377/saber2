@@ -601,4 +601,110 @@ export async function run({ check, assert }) {
     WORLDS.clear();
     return `${n} levels booted, driven and torn down`;
   });
+
+  check('nav: an enemy gets to you through a building, and does not press the wall it met', async () => {
+    /**
+     * THERE WAS NO NAVIGATION AT ALL.
+     *
+     * `Enemy._brain`'s `wish` is a direction toward the target with a circling
+     * term and a neighbour-separation term on it, and nothing between it and
+     * the geometry. So an acolyte walked the straight line to the player, met
+     * the first wall on that line, and pressed into it for the rest of the
+     * fight — its only response to a collider being a push-out that resolves
+     * POSITION and never touches velocity or intent.
+     *
+     * And a body that got a shoulder strictly INSIDE a box was not even pushed
+     * out: `_v3` is the chest point clamped into the box, so an interior point
+     * gives a zero separation vector and the loop read `|| d2 < 1e-8) continue`.
+     * The one case that most needs resolving was the one case skipped.
+     *
+     * DETERMINISM MATTERS HERE AND IT IS NOT FREE. World's own rng is seeded
+     * from `Math.random()` at module load, so anything routed through
+     * `pickSpawn` varies run to run — the same code measured 8/12, 9/12 and
+     * 10/12 on three consecutive runs, which is a band wide enough to hide the
+     * defect and wide enough to fake the fix. The bodies are placed on fixed
+     * bearings instead, and a placement that is inside geometry or off the map
+     * is DROPPED rather than nudged, so the denominator is stable too.
+     *
+     * Measured, 16 bearings at 26 m, 40 s, four levels, arrivals within 6 m:
+     *
+     *     before   temple 11/13   warship  8/12   intake 14/14   cut 16/16   49/55
+     *     after    temple 12/13   warship 10/12   intake 14/14   cut 16/16   52/55
+     *
+     * The bar is 90%, under the 95% this holds and well over the 89% it
+     * replaces, because the remaining three are bodies placed in rooms with no
+     * route out and this check must not become an argument about level layout.
+     */
+    const THREE = await import('three');
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { Enemy, enemyRng } = await import('../../src/game/Enemy.js');
+    const { duelRng } = await import('../../src/game/Duel.js');
+    const { spawnClear } = await import('../../src/game/Spawn.js');
+
+    const stubEngine = () => {
+      const scene = new THREE.Scene();
+      const sun = new THREE.DirectionalLight(0xffffff, 1);
+      sun.shadow.camera.updateProjectionMatrix();
+      scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+      return { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+        sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+        renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+        profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+        applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+        setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+        setQuality() {}, setResolutionScale() {}, render() {} };
+    };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    const N = 16, RADIUS = 26, SECONDS = 40;
+    const walk = async (level) => {
+      enemyRng.seed(4711);
+      duelRng.seed(8123);
+      const world = new World(stubEngine(), { ...DEFAULT_SETTINGS, quality: 'low' });
+      await world.loadLevel(level);
+      world.spawnPlayer?.();
+      const p = world.player;
+      const home = p.position.clone();
+      for (const e of world.enemies) e.dispose();
+      world.enemies.length = 0;
+      const made = [];
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        const x = home.x + Math.cos(a) * RADIUS, z = home.z + Math.sin(a) * RADIUS;
+        if (!world.terrain.inBounds(x, z, 3)) continue;
+        const y = world.terrain.height(x, z);
+        if (!spawnClear(world, x, y, z)) continue;
+        const e = new Enemy(world, 'acolyte', new THREE.Vector3(x, y, z));
+        e.position.set(x, y, z);
+        world.enemies.push(e);
+        made.push({ e, best: Infinity });
+      }
+      for (let f = 0; f < SECONDS * 60; f++) {
+        p.position.copy(home);
+        p.hp = p.maxHp;
+        world.update(1 / 60, idle);
+        for (const m of made) m.best = Math.min(m.best, m.e.position.distanceTo(home));
+      }
+      const arrived = made.filter((m) => m.best < 6).length;
+      world.unload();
+      return { arrived, n: made.length };
+    };
+
+    const rows = [];
+    let got = 0, tot = 0;
+    for (const level of ['temple', 'warship', 'intake', 'cut']) {
+      const r = await walk(level);
+      assert(r.n >= 10, `only ${r.n} of ${N} bearings on ${level} were placeable — nothing measured`);
+      got += r.arrived; tot += r.n;
+      rows.push(`${level} ${r.arrived}/${r.n}`);
+    }
+    assert(got / tot >= 0.90,
+      `${got} of ${tot} bodies (${(got / tot * 100).toFixed(0)}%) got within 6 m of a stationary `
+      + `player in ${SECONDS} s — ${rows.join(', ')}. The rest are pressing a wall they walked into.`);
+    return `${got}/${tot} arrive (${(got / tot * 100).toFixed(0)}%): ${rows.join(', ')}`;
+  });
 }

@@ -105,9 +105,20 @@ const REST = Math.PI * 0.5;
  * failed and two of those were still grinding into a trunk 34 m and 18 m out,
  * where the player cannot even see them and the wave cannot clear; with the
  * player's ring alone, 2 of 12, both stalled at 7 m — in arm's reach, in view,
- * and killable. So the wood is solid where the fight is, and the rest of the
- * answer is a wall-avoid term in Enemy's steering, which is not this file's to
- * write. When that lands, this goes back to 5.
+ * and killable. So the wood is solid where the fight is.
+ *
+ * THE WALL-AVOID TERM HAS SINCE LANDED — Enemy's wish is now slid along the
+ * face it was pushed off, with a stuck timer behind it — AND THIS STILL STAYS
+ * AT ZERO. Retested on the same experiment, 16 bodies on fixed bearings at
+ * 26 m: with the ring off, 16 of 16 arrive; with it at 5, 14 of 16, and the
+ * two that do not are pinned at 24.2 m and 18.9 m, which is the same failure
+ * in the same place. Steering that slides along a wall does not solve a
+ * cylinder in open ground — there is no face to follow, and the body that
+ * brushes it is turned by a normal that rotates as it goes. A tree ring for
+ * enemies needs a real obstacle term, not a better contact response, and it
+ * buys nothing a player can see: a droid pinned 24 m away in a wood is out of
+ * sight either way. The number is a measurement, and it has now been taken
+ * twice.
  */
 const RING_PLAYER = 11;
 const RING_ENEMY = 0;

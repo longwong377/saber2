@@ -659,6 +659,21 @@ export class Enemy {
     this.windTimer = 0;
     this.strafeDir = rng() < 0.5 ? 1 : -1;
     this.strafeTimer = rng() * 2;
+    /**
+     * WHAT THE FEET LEARNED LAST FRAME.
+     *
+     * `_wallN` is the outward normal of whatever the body was pushed off, held
+     * for `_wallT` seconds so the wish can be slid along the face instead of
+     * pressed into it; `_stuckT` counts how long the body has WANTED to move
+     * and not moved. Between them they are the whole of this enemy's
+     * navigation, and until they existed there was none at all: an acolyte
+     * walked the straight line to the player and ground against the first wall
+     * on it for the rest of the fight.
+     */
+    this._wallN = new THREE.Vector3();
+    this._wallT = 0;
+    this._stuckT = 0;
+    this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
     this.rallyTimer = 0;
     /** Which modifier this body wears, if any — see MODIFIERS. */
@@ -2132,6 +2147,45 @@ export class Enemy {
     const canMove = this.stunTimer <= 0 && this.knockTimer <= 0 && !this.gripped;
     if (canMove && this.wish) {
       const speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      /**
+       * NAVIGATION, SUCH AS IT IS — AND THERE WAS NONE.
+       *
+       * `wish` is a direction toward the target with a circling term on it and
+       * nothing between it and the geometry. So an acolyte walked the straight
+       * line to the player, met the first wall on it, and pressed into that
+       * wall for the rest of the fight: measured on the temple and the
+       * warship, 3 and 2 of twelve never came within 6 m of a stationary
+       * player in forty seconds, with closest approaches of 12–15 m. On a
+       * level made of rooms that is a quarter of the wave standing in a
+       * corridor.
+       *
+       * Two terms, both cheap, and neither of them a path-finder:
+       *
+       *   SLIDE. `_wallN` is the outward normal of whatever the body was
+       *   pushed off last frame. Removing the component of the wish that
+       *   points into it turns "press the wall" into "walk along the wall",
+       *   which resolves every doorway and every pillar on its own.
+       *
+       *   COMMIT. A slide alone deadlocks in a corner — two faces, each
+       *   removing the other's escape — so `_stuckT` counts how long the body
+       *   has wanted to move and not moved, and past half a second the wish
+       *   swings hard to one side and holds there. Which side is `strafeDir`,
+       *   and it flips at 2.5 s so a body that picked the wrong way round a
+       *   room eventually tries the other.
+       */
+      if (this._wallT > 0 && this._wallN.lengthSq() > 1e-6) {
+        _v6.copy(this._wallN).setY(0);
+        if (_v6.lengthSq() > 1e-6) {
+          _v6.normalize();
+          const into = this.wish.dot(_v6);
+          if (into < 0) this.wish.addScaledVector(_v6, -into);
+        }
+      }
+      if (this._stuckT > 0.5) {
+        _v6.set(-this.wish.z, 0, this.wish.x).multiplyScalar(this.strafeDir || 1);
+        this.wish.addScaledVector(_v6, 1.0);
+      }
+      if (this.wish.lengthSq() > 1e-6) this.wish.normalize();
       _v1.copy(this.wish).multiplyScalar(speed);
       // Nobody backpedals as fast as they run. Only the component pointing AWAY
       // from the target is scaled, so a sidestep keeps its full pace and only
@@ -2148,6 +2202,22 @@ export class Enemy {
       this.velocity.x = damp(this.velocity.x, 0, 6, dt);
       this.velocity.z = damp(this.velocity.z, 0, 6, dt);
     }
+
+    /* The two counters the navigation above runs on. `_wallN` decays rather
+     * than being cleared, so a body brushing a face every few frames keeps a
+     * usable normal; `_stuckT` is measured against the ground actually
+     * covered, because velocity can be healthy while the collision loop puts
+     * the body straight back where it was. */
+    this._wallT -= dt;
+    if (this._wallT <= 0) this._wallN.set(0, 0, 0);
+    if (canMove && this.wish && this.wish.lengthSq() > 0.25) {
+      const moved = Math.hypot(this.position.x - this._prevPos.x, this.position.z - this._prevPos.z);
+      if (moved < this.speed * dt * 0.3) this._stuckT += dt;
+      else this._stuckT = Math.max(0, this._stuckT - dt * 3);
+      // Long enough to have tried one way round the room; try the other.
+      if (this._stuckT > 2.5) { this._stuckT = 0; this.strafeDir = -(this.strafeDir || 1); }
+    } else this._stuckT = 0;
+    this._prevPos.set(this.position.x, this.position.y, this.position.z);
 
     if (this.A.float) {
       // hover: hold a height above the ground with a slow bob
@@ -2202,9 +2272,28 @@ export class Enemy {
       const h = box.halfExtents;
       _v3.set(clamp(_v2.x, -h.x, h.x), clamp(_v2.y, -h.y, h.y), clamp(_v2.z, -h.z, h.z));
       _v4.subVectors(_v2, _v3);
-      const d2 = _v4.lengthSq();
+      let d2 = _v4.lengthSq();
       const r = this.radius;
-      if (d2 > r * r || d2 < 1e-8) continue;
+      if (d2 > r * r) continue;
+      /**
+       * A BODY STRICTLY INSIDE THE BOX WAS NEVER PUSHED OUT.
+       *
+       * `_v3` is the chest point clamped into the box, so when the chest is
+       * inside, `_v3 === _v2` and the separation vector is exactly zero — and
+       * the guard here read `|| d2 < 1e-8) continue`. The one case that most
+       * needs resolving was the one case skipped, so an enemy that got a
+       * shoulder inside a wall stayed inside it for the rest of the fight.
+       * Player._collide has had the answer for as long as it has existed:
+       * leave by the SHALLOWEST face, which is the shortest way out and the
+       * only choice that cannot push a body through the far side.
+       */
+      if (d2 < 1e-8) {
+        const px = h.x - Math.abs(_v2.x), py = h.y - Math.abs(_v2.y), pz = h.z - Math.abs(_v2.z);
+        if (px <= py && px <= pz) _v4.set(Math.sign(_v2.x) || 1, 0, 0);
+        else if (py <= pz) _v4.set(0, Math.sign(_v2.y) || 1, 0);
+        else _v4.set(0, 0, Math.sign(_v2.z) || 1);
+        d2 = 1e-4;
+      }
       const d = Math.sqrt(d2);
       _v4.multiplyScalar(1 / d).applyQuaternion(box.quat);
       // an upward face is floor, and the support query above owns floors
@@ -2213,6 +2302,10 @@ export class Enemy {
       if (_v4.lengthSq() < 1e-6) continue;
       _v4.normalize();
       this.position.addScaledVector(_v4, r - d);
+      // …and remember which way out it was, so next frame's wish can go ALONG
+      // the face rather than back into it. See _wallN in the constructor.
+      this._wallN.add(_v4);
+      this._wallT = 0.3;
     }
 
     // face the target while fighting, face travel otherwise

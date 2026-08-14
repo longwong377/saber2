@@ -55,6 +55,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
+import { spawnClear } from './Spawn.js';
 
 const rng = makeRng(20931);
 let _arrivalId = 1;
@@ -526,6 +527,11 @@ export class ArrivalDirector {
       const x = ax + Math.cos(a) * r, z = az + Math.sin(a) * r;
       if (t && !t.inBounds(x, z, 10)) continue;
       if (t && t.slopeAt && t.slopeAt(x, z) > 0.5) continue;
+      /* …and whatever the LEVEL put on the ground. This tested terrain alone,
+       * exactly as World.pickSpawn used to, so a landing craft could set a
+       * squad down inside a column or under a lava sheet — measured at 11.9%
+       * of temple picks and 94.3% of the deeps'. See Spawn.js. */
+      if (!spawnClear(this.world, x, t ? t.height(x, z) : 0, z)) continue;
       return this._ground(out.set(x, 0, z));
     }
     const a = rng() * TAU;

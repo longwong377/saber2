@@ -51,9 +51,6 @@ let rng = makeRng(20250805);
  */
 
 const _p = new THREE.Vector3();
-/** Scratch for `spawnClear`, which is called from World rather than from a
- *  dressing pass and must not share `_p` with `findSite`. */
-const _sp = new THREE.Vector3(), _sq = new THREE.Vector3();
 
 /** Polar sample with a density exponent: <1 crowds the centre, >1 the rim. */
 export function polar(rmin, rmax, bias = 1, angle = null) {
@@ -100,54 +97,11 @@ export function siteOk(world, x, z, opts = {}) {
   return true;
 }
 
-/**
- * IS THIS SOMEWHERE A BODY CAN ARRIVE?
- *
- * `World.pickSpawn` tested exactly two things — `inBounds(x, z, 10)` and
- * `slopeAt(x, z) > 0.5` — and so did `Arrivals._sitePoint`. Neither of them
- * looked at anything the LEVEL had put on the ground. Measured, 5,400 spawn
- * picks per level from six anchors, each spawn's chest point (y + 1.0) tested
- * against every enabled static box: 11.9% of Temple spawns and 12.7% of arena
- * spawns arrived INSIDE solid masonry — a column, a machine, a tank, the aisle
- * walls — and 8.7% on the warship. Underwater was worse and quieter: 94.3% of
- * spawns on the deeps and 20.3% on the wood landed under the level's own water
- * sheet.
- *
- * Both halves have teeth now that they did not have before. A body embedded in
- * a collider is never pushed out of it — Enemy's push-out skips a chest point
- * that is strictly inside a box (`d2 < 1e-8 → continue`), so it walks out
- * through the wall it was born in — and a body spawned under a hazard sheet is
- * a body spawned in lava.
- *
- * WHAT IT DOES NOT TEST, deliberately: `world._siteTaken`. Those radii are
- * DRESSING exclusion radii — up to 7 m around a boulder cluster — not body
- * radii, and rejecting a 7 m disc round every dressed object would refuse most
- * of a dressed level. The collider list is what "inside something" means.
- */
-export function spawnClear(world, x, y, z, radius = 0.45) {
-  const w = world.level?.water;
-  if (w) {
-    const depth = (w.level ?? 0) - y;
-    // Never in a hazard; never deeper than the shallows anywhere else. The
-    // wood's ankle-deep channels stay usable, which is most of that level.
-    if (depth > 0 && (w.damage > 0 || depth > Math.min(w.wade ?? 0.45, 0.45))) return false;
-  }
-  const boxes = world.physics?.staticBoxes;
-  if (boxes) {
-    _sp.set(x, y + 1.0, z);
-    for (let i = 0; i < boxes.length; i++) {
-      const b = boxes[i];
-      if (b.disabled) continue;
-      const rr = b.radius + radius;
-      if (_sp.distanceToSquared(b.center) > rr * rr) continue;
-      _sq.copy(_sp).sub(b.center).applyQuaternion(b.invQuat);
-      const h = b.halfExtents;
-      if (Math.abs(_sq.x) - h.x < radius && Math.abs(_sq.y) - h.y < radius
-        && Math.abs(_sq.z) - h.z < radius) return false;
-    }
-  }
-  return true;
-}
+/* `spawnClear` lives in ./Spawn.js — a leaf, because Levels imports Arrivals
+ * for ARRIVAL_BY_TERRAIN and Arrivals._sitePoint is the OTHER place in the
+ * game that picks a spot for a body to appear in. Re-exported here so the
+ * callers that already reach for it through Levels keep working. */
+export { spawnClear } from './Spawn.js';
 
 /** Find a site that passes, or give up rather than force a bad one. */
 export function findSite(world, rmin, rmax, opts = {}) {
