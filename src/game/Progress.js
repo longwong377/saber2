@@ -60,8 +60,39 @@ const blank = () => ({
   lit: {},
   /** Stars lit by communion, all-time. A tally of a thing done, same rule. */
   communed: 0,
+  /**
+   * Deepest run in each MODE — the field that says a record is about the game
+   * and not about one ladder. See RECORDED.
+   */
+  byMode: {},
   recent: [],
 });
+
+/**
+ * WHICH MODES A RUN IN IS WORTH REMEMBERING — and the fact that this list has
+ * more than one entry in it is the whole point.
+ *
+ * This file's own header says "you could play for an hour and the game would
+ * not know you had ever played. That is the thing being fixed", and it was
+ * fixed for exactly one mode. `main.js` builds a Run only for the gauntlet, all
+ * three `recordRun` call sites are gated on that Run, and the shipped default
+ * in the menu is `roguelite` — so a player who installs the game, presses
+ * Ignite and plays for an hour still has nothing in `saber.progress.v1`, the
+ * menu's record line still reads "No runs yet", and the star map's history
+ * layer is still empty.
+ *
+ * Half of that fix is here and half of it is at the call sites: this function
+ * could not have recorded a roguelite even if it had been handed one, because
+ * it read `summary.depth` and only a Run has one — measured, a 23-wave
+ * roguelite handed to it verbatim recorded as "deepest 0 waves". It takes
+ * either shape now. The wiring in main.js is the other half.
+ *
+ * TRAINING AND THE SANDBOX ARE NOT IN THE LIST, deliberately: nothing in the
+ * dojo can kill you and the sandbox is a room with a slider, so a "deepest 99
+ * waves" earned by typing 99 into a box is worse than no record. Deciding it
+ * HERE rather than at the call site is what lets the wiring be a blind call.
+ */
+const RECORDED = new Set(['spire', 'descent', 'gauntlet', 'roguelite', 'waves', 'duel']);
 
 function read() {
   try {
@@ -85,24 +116,45 @@ function write(v) {
 
 export function loadProgress() { return read(); }
 
-/** Record one finished run. `summary` is Run.summary(). */
+/**
+ * Record one finished run.
+ *
+ * `summary` is `Run.summary()` — or, for the four fifths of this game that have
+ * no Run, the stats object `World.onGameOver` already hands out, with the mode
+ * and the identity main.js has in its hand at that moment:
+ *
+ *     recordRun({ ...stats, mode: settings.mode, boons: [...world.takenBoons],
+ *                 identity: { order: settings.order, species: settings.species } })
+ *
+ * DEPTH OR WAVE, whichever arrived. A Run counts waves across four rungs and
+ * calls it `depth`; every other mode counts waves in one place and `gameOver`
+ * calls it `wave`. They are the same quantity — how far you got — and reading
+ * only the first is what made a 23-wave roguelite record itself as zero.
+ */
 export function recordRun(summary) {
   if (!summary) return read();
+  // A mode that cannot be lost is not a run. An UNNAMED mode still records, so
+  // a caller holding a bare Run.summary() keeps working.
+  if (summary.mode && !RECORDED.has(summary.mode)) return read();
   const p = read();
+  const depth = Math.max(0, summary.depth ?? summary.wave ?? 0);
   p.runs++;
   p.kills += summary.kills || 0;
   if (summary.won) p.wins++;
-  p.bestDepth = Math.max(p.bestDepth, summary.depth || 0);
+  p.bestDepth = Math.max(p.bestDepth, depth);
   p.bestScore = Math.max(p.bestScore, summary.score || 0);
   p.bestTier = Math.max(p.bestTier, summary.tier || 0);
 
-  const id = summary.identity || {};
+  // `identity` when a Run carried one, the loose pair when the caller is
+  // holding settings rather than a run.
+  const id = summary.identity || { order: summary.order, species: summary.species };
   const deeper = (map, k) => {
     if (!k) return;
-    map[k] = Math.max(map[k] || 0, summary.depth || 0);
+    map[k] = Math.max(map[k] || 0, depth);
   };
   deeper(p.byOrder, id.order);
   deeper(p.bySpecies, id.species);
+  deeper(p.byMode, summary.mode);
 
   if (summary.won) {
     const set = new Set(p.crowned);
@@ -129,7 +181,7 @@ export function recordRun(summary) {
    * about ONE run, and this file keeps totals at the top and runs in `recent`.
    */
   p.recent.unshift({
-    depth: summary.depth || 0, tier: summary.tier || 0, score: summary.score || 0,
+    depth, tier: summary.tier || 0, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
     mode: summary.mode || null, seed: summary.seed ?? null,
     stars: (summary.lit || []).length,
@@ -174,9 +226,12 @@ export function progressLines(p = read()) {
   // emphatically not a gate: every card is in every draft from the first run.
   if (p.crowned?.length) out.push(`${p.crowned.length} boons have reached the bottom with you`);
   const deepest = (map) => Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
-  const orders = deepest(p.byOrder), species = deepest(p.bySpecies);
+  const orders = deepest(p.byOrder), species = deepest(p.bySpecies), modes = deepest(p.byMode);
   if (orders.length) out.push(orders.map(([k, v]) => `${k} ${v}`).join('  ·  '));
   if (species.length) out.push(species.map(([k, v]) => `${k} ${v}`).join('  ·  '));
+  // Which game you have actually been playing. The record was blind to this for
+  // the same reason it was blind to four of the five modes — see RECORDED.
+  if (modes.length) out.push(modes.map(([k, v]) => `${ladderName(k)} ${v}`).join('  ·  '));
   const last = p.recent?.[0];
   if (last) {
     out.push(`last: ${last.depth} wave${last.depth === 1 ? '' : 's'}`

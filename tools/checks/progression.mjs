@@ -91,10 +91,16 @@ async function descend(seed = 0x5EED) {
       ids: hand.map((b) => b.id), first: hand[0]?.rarity,
       attune: hand.every((b) => b.attune),
     });
-    d.onWaveClear = (w) => {
-      run.wave = w;                                   // exactly World.js's line
-      led.earn(d.wave, d.isBossWave(d.wave));         // …with the run's own depth
-    };
+    /**
+     * World.js's own two lines, verbatim, and the second is worth stating.
+     * `_earnInsight` is handed the SAME rung-local `w` World's handler needs
+     * for `run.wave >= rung.waves`, so the ledger counts a Descent's sixteen
+     * waves as 18 Insight against the 22 the closed form gives for sixteen
+     * waves with three set-pieces in them. Fixing that is one word in World.js
+     * (`_earnInsight(this.director.wave)`) and is called out in the handover;
+     * this file models what the tree does, not what it should.
+     */
+    d.onWaveClear = (w) => { run.wave = w; led.earn(w, d.isBossWave(w)); };
     d.start(1);
     for (let i = 0; i < rung.waves; i++) {
       waves.push({
@@ -110,6 +116,25 @@ async function descend(seed = 0x5EED) {
     if (run.wave >= rung.waves) run.ascend();
   }
   return { run, waves, drafts, depthAgree, insight: led.insight };
+}
+
+/** Stars an exhaustive search can light on `purse` Insight at `wave`. */
+function mostStars(purse, wave) {
+  let best = 0, line = [];
+  const step = (led, taken, path) => {
+    if (path.length > best) { best = path.length; line = path.slice(); }
+    for (const s of Tree.STARS) {
+      if (!led.canBuy(s.id, taken, wave)) continue;
+      const cost = led.costOf(s.id, taken);
+      const next = new Tree.Communion({ insight: led.insight, bought: led.bought, earned: led.earned });
+      const held = new Waves.RankSet([...taken]);
+      if (!next.buy(s.id, held, wave)) continue;
+      held.take(s.id);
+      step(next, held, [...path, `${s.id}@${cost}`]);
+    }
+  };
+  step(new Tree.Communion({ insight: purse }), new Waves.RankSet(), []);
+  return { best, line };
 }
 
 export async function run({ check, assert }) {
@@ -281,8 +306,22 @@ export async function run({ check, assert }) {
     // …and the reason it is reachable is the ladder, not a lowered gate.
     assert(Waves.MASTERY_AT > 5,
       'the masteries were made reachable by moving the gate down rather than by climbing to it');
+    /*
+     * …and the sky has to be somewhere a run can actually spend, on the Insight
+     * a real climb really earned. An exhaustive search over all 45 stars with
+     * the ledger's own canBuy/costOf, not a greedy cheapest-first walk, which
+     * is not obviously optimal.
+     */
+    const purse = mostStars(CLIMB.insight, deepest);
+    assert(purse.best >= 1,
+      `${CLIMB.insight} Insight over a whole Descent lights ${purse.best} stars — the constellation `
+      + 'is the only reward channel this mode had, and it is unaffordable');
+    assert(purse.best <= CLIMB.drafts.length,
+      `the tree buys ${purse.best} stars against ${CLIMB.drafts.length} drafted cards — the side `
+      + 'channel has become the main one (the bound tools/checks/constellation.mjs holds)');
     return `${atFive.length} stars locked at wave 5, 0 at wave ${deepest}; masteries still gated at `
-      + `${Waves.MASTERY_AT}`;
+      + `${Waves.MASTERY_AT}; ${CLIMB.insight} Insight lights at most ${purse.best} `
+      + `(${purse.line.join(' ')}) against ${CLIMB.drafts.length} drafts`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -501,6 +540,62 @@ export async function run({ check, assert }) {
         'the record has grown something a run can spend');
       return `${Object.keys(p).length} recorded fields, all read: ${progressLines(p).length} lines, `
         + `deepest ${p.bestDepth} on ${DESCENT[p.bestTier].name}, seed carried`;
+    } finally {
+      if (prev) Object.defineProperty(globalThis, 'localStorage', prev);
+      else delete globalThis.localStorage;
+    }
+  });
+
+  check('progression: the record is about the game, not about one ladder', async () => {
+    // Progress.js opens by saying "you could play for an hour and the game
+    // would not know you had ever played. That is the thing being fixed" — and
+    // it was fixed for one mode. main.js builds a Run only for `gauntlet`, all
+    // three recordRun call sites are gated on that Run, and the menu's default
+    // is `roguelite`. This half is the recorder itself: it read `summary.depth`
+    // and only a Run has one, so a 23-wave roguelite handed to it verbatim
+    // recorded as "deepest 0 waves" — the wiring alone would not have helped.
+    const store = {};
+    const prev = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    globalThis.localStorage = {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+    };
+    try {
+      clearProgress();
+      // EXACTLY the object World packs into onGameOver, plus the two things
+      // main.js is holding at that moment.
+      const stats = { wave: 23, score: 41200, kills: 190, deflects: 88, perfects: 12, limbs: 140 };
+      const p = recordRun({ ...stats, mode: 'roguelite', boons: ['ataru', 'vaapad'],
+        identity: { order: 'jedi', species: 'human' } });
+      assert(p.bestDepth === 23,
+        `a 23-wave roguelite recorded as "deepest ${p.bestDepth} waves" — the recorder reads the `
+        + 'field only a Run has, so the four modes without one cannot be written down');
+      assert(p.byOrder.jedi === 23 && p.bySpecies.human === 23,
+        `it recorded ${p.byOrder.jedi}/${p.bySpecies.human} for what the run was played WITH`);
+      assert(p.byMode?.roguelite === 23, 'the record cannot say which mode a depth was reached in');
+      assert(Object.keys(p.lit).length === 2, 'the sky-you-have-walked history stayed empty');
+      const lines = progressLines(p).join('  ');
+      assert(!lines.includes('No runs yet') && lines.includes('23'),
+        `the menu's record line reads "${lines}" after a 23-wave run`);
+      // …and a Descent still records exactly as it did, on the same store.
+      const climb = new Run({ mode: 'spire', identity: { order: 'sith', species: 'zabrak' } });
+      climb.tier = DESCENT.length - 1; climb.wave = DESCENT[DESCENT.length - 1].waves; climb.won = true;
+      const q = recordRun(climb.summary());
+      assert(q.runs === 2 && q.wins === 1 && q.byMode.spire === climb.depth,
+        `two modes on one record read runs ${q.runs}, wins ${q.wins}, spire ${q.byMode.spire}`);
+      // A room with a slider and a lesson nothing can kill you in are not runs:
+      // "deepest 99 waves" typed into a box is worse than no record at all.
+      for (const mode of ['training', 'sandbox']) {
+        const before = loadProgress().runs;
+        const after = recordRun({ wave: 99, score: 1, kills: 1, mode }).runs;
+        assert(after === before && loadProgress().bestDepth === q.bestDepth,
+          `a ${mode} session was recorded as a run (${before} → ${after})`);
+      }
+      // A bare Run.summary() with no mode at all still records — the callers
+      // that hold one must not have to learn a new shape.
+      assert(recordRun({ depth: 4, kills: 1 }).runs === 3, 'an unnamed run stopped being recorded');
+      return `roguelite 23 waves recorded (deepest ${q.bestDepth}, ${Object.keys(q.byMode).join('+')}); `
+        + 'training and sandbox refused; a bare summary still records';
     } finally {
       if (prev) Object.defineProperty(globalThis, 'localStorage', prev);
       else delete globalThis.localStorage;
