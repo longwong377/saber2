@@ -83,6 +83,66 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 
+/**
+ * A FRAME, OR AN ERROR — never a wait that does not end.
+ *
+ * Three probes below drive the game by spinning on `requestAnimationFrame`:
+ * seventy frames of mouse for the deflection volley, ninety for the perf
+ * sample. `await new Promise(r => requestAnimationFrame(r))` has no bound, and
+ * if the frame loop ever stops — a throw inside `world.update`, a pause nobody
+ * cleared, a lost WebGL context — that promise is simply never called back.
+ *
+ * Measured, because it happened: a run wrote four screenshots, entered the
+ * deflection probe and never came out. Twelve minutes later it was still there,
+ * had produced NO output at all, and the only evidence of where it stopped was
+ * which screenshot was missing. That is the worst failure a smoke test can
+ * have — the tool that exists to tell you the game is alive, hanging, silently,
+ * in a way indistinguishable from being slow.
+ *
+ * Installed on `window` before any navigation so every probe can reach it.
+ */
+await page.addInitScript(() => {
+  window.__frame = (ms = 8000) => new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error(
+      `no animation frame in ${ms} ms — the render loop has stopped`)), ms);
+    requestAnimationFrame(() => { clearTimeout(t); res(); });
+  });
+
+  /**
+   * PLAY FOR A LENGTH OF GAME TIME, not for a number of rendered frames — and
+   * the difference is the whole reason the probes below could not finish.
+   *
+   * They counted frames: 90 for the blade sweep, 70 for the deflection volley.
+   * On a machine with a GPU that is about a second and a half of play at 60 Hz,
+   * which is what they were written against and what they mean.
+   *
+   * There is no GPU in this container. Everything goes through swiftshader on
+   * the CPU, and measured on an EMPTY field — 801 draw calls, 1.6 M triangles
+   * at 1280x720 — one frame takes 4151 ms. So 90 frames is not a second and a
+   * half, it is SIX AND A QUARTER MINUTES, and `main.js` clamps `dt` to 0.1 s,
+   * so those 90 frames also hand the game nine seconds of play rather than one
+   * and a half. The probe was wrong in both directions at once: far too slow to
+   * finish, and testing something other than what it says.
+   *
+   * Frames are the wrong unit for a probe that means "play for a moment".
+   * `world.time` is the right one, and it is correct in both environments: on a
+   * GPU this runs ~90 frames for 1.5 s of play, here it runs ~15 for the same
+   * 1.5 s. `maxFrames` is a backstop so a stalled clock cannot spin for ever.
+   */
+  window.__play = async (gameSeconds, onFrame, maxFrames = 300) => {
+    const w = window.SABER?.world;
+    if (!w) throw new Error('no world to play');
+    const t0 = w.time;
+    let n = 0;
+    while (w.time - t0 < gameSeconds && n < maxFrames) {
+      onFrame?.(n);
+      await window.__frame();
+      n++;
+    }
+    return { frames: n, played: +(w.time - t0).toFixed(2) };
+  };
+});
+
 const errors = [];
 const warnings = [];
 const logs = [];
@@ -95,10 +155,38 @@ page.on('console', (m) => {
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}\n${(e.stack || '').split('\n').slice(0, 6).join('\n')}`));
 page.on('requestfailed', (r) => errors.push(`requestfailed: ${r.url()} — ${r.failure()?.errorText}`));
 
+/**
+ * A STEP THAT CANNOT RUN FOREVER, AND SAYS WHERE IT IS WHILE IT RUNS.
+ *
+ * Two things were wrong and they compounded. The deadline is the first: any
+ * step could hang and the tool would sit there, so `Promise.race` turns a stuck
+ * step into a failed step, which is a result.
+ *
+ * The second is why the hang was invisible. Progress went to `process.stdout`
+ * with no newline, and Node BUFFERS stdout when it is a pipe — so `node
+ * tools/smoke.mjs > out.txt` on a hung run produced a zero-byte file. Not a
+ * truncated trace: nothing at all, for twelve minutes, with no way to tell
+ * which step was stuck. Progress goes to stderr now, for the reason verify.mjs
+ * puts its suite names there — the result table is what stdout is for, and a
+ * trace you cannot see during the run is not a trace.
+ */
+const STEP_MS = parseInt(flag('step-timeout', '90000'), 10);
 const step = async (name, fn) => {
-  process.stdout.write(`▸ ${name} … `);
-  try { const r = await fn(); console.log('ok'); return r; }
-  catch (e) { console.log('FAILED'); errors.push(`step "${name}": ${e.message}`); return null; }
+  process.stderr.write(`▸ ${name} … `);
+  let timer;
+  try {
+    const r = await Promise.race([
+      fn(),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(
+        new Error(`timed out after ${STEP_MS} ms`)), STEP_MS); }),
+    ]);
+    process.stderr.write('ok\n');
+    return r;
+  } catch (e) {
+    process.stderr.write('FAILED\n');
+    errors.push(`step "${name}": ${e.message}`);
+    return null;
+  } finally { clearTimeout(timer); }
 };
 
 await step('load', async () => {
@@ -235,11 +323,12 @@ await step('force a spawn wave and cut something', async () => {
     await new Promise(r => setTimeout(r, 60));
     const before = { hp: e.hp, severed: e.actor?.severedCount ?? 0 };
     // drive the blade physically across the target for a second
-    for (let i = 0; i < 90; i++) {
+    // 1.5 s of blade across the target — the same play the 90-frame loop meant
+    // on a GPU, expressed in the unit that survives not having one.
+    await window.__play(1.5, (i) => {
       window.SABER.input.mouse.dx += 60 * Math.sin(i * 0.4);
       window.SABER.input.mouse.dy += 40 * Math.cos(i * 0.31);
-      await new Promise(r => requestAnimationFrame(r));
-    }
+    });
     return {
       before, hpAfter: e.hp, dead: e.dead,
       severed: e.actor?.severedCount ?? 0,
@@ -266,11 +355,12 @@ await step('bolts and deflection path', async () => {
       if (w.bolts.fire(from, d, { speed: 26, damage: 5, team: 1 })) fired++;
     }
     const hp0 = p.hp;
-    for (let i = 0; i < 70; i++) {
+    // A bolt fired from 7 m at 26 m/s arrives in 0.27 s, so 1.2 s is the whole
+    // volley plus the swing that answers it.
+    await window.__play(1.2, (i) => {
       window.SABER.input.mouse.dx += 55 * Math.sin(i * 0.5);
       window.SABER.input.mouse.dy += 45 * Math.cos(i * 0.37);
-      await new Promise(r => requestAnimationFrame(r));
-    }
+    });
     return { fired, deflects: p.deflects, hpLost: +(hp0 - p.hp).toFixed(1), flow: +p.flow.toFixed(2) };
   });
   console.log('   ', JSON.stringify(res));
@@ -279,16 +369,24 @@ await step('bolts and deflection path', async () => {
 await step('perf sample', async () => {
   const perf = await page.evaluate(async () => {
     const S = window.SABER;
+    /* FRAMES ARE THE RIGHT UNIT HERE — this is the one probe that genuinely
+     * measures what a frame costs, so it cannot be expressed in game time.
+     * What changes is the SAMPLE COUNT: 90 was six minutes in a software
+     * renderer, and the median of 15 is the same answer for a distribution
+     * this tight. The percentile is named p87 rather than p95 because that is
+     * what index 13 of 15 is; the old code took index 85 of 90 and called it
+     * p95, which it also was not. */
+    const N = 15;
     const samples = [];
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < N; i++) {
       const t = performance.now();
-      await new Promise(r => requestAnimationFrame(r));
+      await window.__frame();
       samples.push(performance.now() - t);
     }
     samples.sort((a, b) => a - b);
     return {
-      medianMs: +samples[45].toFixed(2),
-      p95Ms: +samples[85].toFixed(2),
+      medianMs: +samples[Math.floor(N / 2)].toFixed(2),
+      p87Ms: +samples[Math.floor(N * 0.87)].toFixed(2),
       physicsMs: +(S.world.physics.stats.ms).toFixed(2),
       bodies: S.world.physics.stats.bodies,
       // Rapier has no global contact count, and a level at rest should have
