@@ -30,6 +30,9 @@
  */
 
 import * as THREE from 'three';
+import { initPhysics } from '../../src/physics/Rapier.js';
+import { World } from '../../src/game/World.js';
+import { DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
 import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { GrassField } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -48,6 +51,37 @@ function stubWorld(terrain) {
     time: 0, terrain, settings: { quality: 'medium' }, level: null,
   };
 }
+
+/**
+ * The thirty-line engine a real World runs on — the one lifecycle.mjs proved
+ * out. Nothing here needs a GL context.
+ */
+function stubEngine() {
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900);
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.shadow.camera.updateProjectionMatrix();
+  const hemi = new THREE.HemisphereLight(0x88aaff, 0x886644, 1);
+  scene.add(sun, hemi);
+  return {
+    scene, camera, sun, hemi,
+    sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+    renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+    profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+    applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+    setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+    setQuality() {}, setResolutionScale() {}, render() {},
+  };
+}
+
+/** Nothing pressed but the movement axis. */
+const idleInput = (x = 0, y = 0) => ({
+  act: () => false, actHit: () => false, actDown: () => false,
+  moveAxis(o) { if (o) { o.x = x; o.y = y; return o; } return { x, y }; },
+  mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+  delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 },
+  end() {},
+});
 
 let DRESSED = null;
 /** Every interior in the game, dressed once, the way World.loadLevel does. */
@@ -138,16 +172,32 @@ export function run({ check, assert }) {
     return rows.join('; ');
   });
 
-  check('rooms: an interior is walled by ground the player cannot walk up', () => {
-    /* The shell is part of the heightfield, so "wall" is a claim about slope.
-     * 0.55 of (1 − cos θ) is 63°, and it is the number every survey in the
-     * suite already uses to mean "not ground you can stand on" — so this asks
-     * the shell to be, by that shared definition, not ground.
+  check('rooms: an interior is a room because a body cannot get out of it', async () => {
+    /**
+     * THIS CHECK USED TO BE A LIE, AND IT IS WORTH SAYING HOW.
      *
-     * And the room has to be a ROOM: at least 900 walkable samples on the 4 m
-     * grid world-immersion uses, which is about 14,400 m² of floor. Both bars
-     * bind from opposite directions and a shell that is a ramp fails one or
-     * the other. */
+     * It asserted that every one of sixteen bearings out of each room crossed
+     * ground with `slopeAt > 0.55`, "the number every survey in the suite
+     * already uses to mean not ground you can stand on". That number has no
+     * reader anywhere in src/. The movement code's own gate is 0.52 on
+     * `1 - n.y`, and until this pass the only thing it did was add a downhill
+     * nudge of `(slope - 0.52) * 26` — at most 12.5 m/s² against a walk that
+     * pulls `damp(v, 4.6, 19.3)`, i.e. 88.9 m/s² from rest. Steady state on a
+     * VERTICAL face was still 3.95 m/s uphill.
+     *
+     * So the survey passed, reporting shells of 0.64-0.80, while a real player
+     * holding W walked up those shells and out over the roof of every room in
+     * the game: the intake finished at y = 46.0 m at r = 107 m (its roof is at
+     * 16.5), the deeps at 44.8, the warship at 44.8. Measuring a slope proves
+     * a slope. What a boundary needs proved is that a BODY cannot cross it.
+     *
+     * So it is now measured with a real World, a real Player and a real input
+     * device, driven at each room's own shell: find the toe of the wall along
+     * a bearing, stand the player six metres short of it, hold forward for
+     * eight seconds and see what height they gained. The geometric survey
+     * stays, because "is this room big enough to be a room" is a real and
+     * cheap claim — but it is no longer allowed to stand in for the boundary.
+     */
     const rows = [];
     for (const [key, d] of interiors()) {
       const T = d.terrain;
@@ -160,34 +210,77 @@ export function run({ check, assert }) {
           walkable++;
         }
       }
-      /* THE SHELL, asked as the question that matters: walking out along any
-       * bearing, is there a radius you cannot get past? A fraction of steep
-       * samples over a fixed band is the wrong question — each room puts its
-       * wall at its own radius, and a band that misses one room's shell scores
-       * it as open when it is not. This finds the steepest point on each of
-       * sixteen bearings and requires every one of them to be a wall. */
-      let closed = 0;
-      const steepest = [];
-      for (let a = 0; a < 16; a++) {
-        const th = (a / 16) * Math.PI * 2;
-        const c = Math.cos(th), s = Math.sin(th);
-        const k = 1 / Math.max(Math.abs(c), Math.abs(s));
-        let worst = 0;
-        for (let r = 50; r <= 112; r += 1.5) {
-          const x = c * k * r, z = s * k * r;
-          if (!T.inBounds(x, z, 2)) break;
-          worst = Math.max(worst, T.slopeAt(x, z));
-        }
-        steepest.push(worst);
-        if (worst > 0.55) closed++;
-      }
       assert(walkable > 900, `${key}: only ${walkable} walkable samples — that is a corridor, not a hall`);
-      assert(closed === 16,
-        `${key}: ${16 - closed} of 16 bearings have no ground steeper than 63° anywhere between 50 and 112 m — `
-        + 'the room opens onto a ramp the player walks out over');
-      rows.push(`${key} ${walkable} floor / shell ${Math.min(...steepest).toFixed(2)}–${Math.max(...steepest).toFixed(2)}`);
+      rows.push({ key, walkable });
     }
-    return rows.join('; ');
+
+    /* ── and now the part a survey cannot answer ─────────────────────── */
+    await initPhysics();
+    const out = [];
+    for (const { key, walkable } of rows) {
+      const engine = stubEngine();
+      /* `low` on purpose: the terrain grid is coarsest at the bottom tier and a
+       * heightfield cannot hold a face steeper than rise/step, so this is where
+       * a wall is most likely to be a ramp. */
+      const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
+      await world.loadLevel(key);
+      const T = world.terrain;
+      let worst = 0, worstBearing = 0, tested = 0;
+      for (let b = 0; b < 6; b++) {
+        const yaw = (b / 6) * Math.PI * 2;
+        const dx = Math.sin(yaw), dz = Math.cos(yaw);
+        // the toe of the wall: the first radius where the ground climbs at
+        // more than the walk limit over one grid step
+        let toe = -1;
+        const e = T.step;
+        for (let r = 24; r < 130; r += 1) {
+          const x = dx * r, z = dz * r;
+          if (!T.inBounds(x, z, 4)) break;
+          const g = Math.hypot((T.height(x + e, z) - T.height(x - e, z)) / (2 * e),
+            (T.height(x, z + e) - T.height(x, z - e)) / (2 * e));
+          if (g > 1.83) { toe = r; break; }
+        }
+        if (toe < 12) continue;
+        tested++;
+        // where the WALL starts: everything below this is the room's floor and
+        // the ramp at the foot of its shell, both of which are places to stand
+        const yToe = T.height(dx * toe, dz * toe);
+        const sx = dx * (toe - 6), sz = dz * (toe - 6);
+        world.spawnPlayer();
+        const p = world.player;
+        p.position.set(sx, T.height(sx, sz), sz);
+        p.velocity.set(0, 0, 0);
+        p.camera.yaw = yaw;
+        let gain = 0;
+        for (let f = 0; f < 8 * 60; f++) {
+          p.camera.yaw = yaw;
+          p.saber.retract();
+          world.update(1 / 60, idleInput(0, 1));
+          gain = Math.max(gain, p.position.y - yToe);
+        }
+        if (gain > worst) { worst = gain; worstBearing = Math.round(yaw * 57.3); }
+        p.dispose(); world.players.length = 0; world.player = null;
+      }
+      assert(tested >= 4, `${key}: only ${tested} of 6 bearings out of the room reach a wall at all`);
+      /**
+       * MEASURED FROM THE FOOT OF THE WALL, not from where the player started,
+       * because the approach to a shell is itself a slope and standing on it is
+       * fine. `yToe` is the ground at the first point on the bearing whose
+       * gradient passes the walk limit — the last place in the room. Two metres
+       * over that is the allowance for the last stride and for the grid's own
+       * smoothing of the corner; anything more is climbing the wall.
+       *
+       * Before Terrain.blockClimb existed this measured 20-40 m on every room
+       * in the game: the intake ended at y = 46.0 with its roof at 16.5.
+       */
+      assert(worst < 2.0,
+        `${key}: holding W at the shell ended ${worst.toFixed(1)} m above the foot of the wall on `
+        + `bearing ${worstBearing}° — the room opens onto a ramp the player walks out over`);
+      out.push(`${key} ${walkable} floor, ${tested} walls, worst climb ${worst.toFixed(2)} m over the toe`);
+      world.unload();
+      world.dispose?.();
+    }
+    return out.join('; ');
   });
 
   check('rooms: the descent is lit by fittings, and the bottom is lit by you', () => {

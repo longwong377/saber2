@@ -101,6 +101,16 @@ export const DESCENT = [
     weather: { peak: 0.34, period: 116, duration: 28 },
   },
   {
+    /**
+     * `boss: true` IS READ NOW. It sat on this rung with no reader anywhere in
+     * src/ — every other `.boss` in the tree is an archetype flag — while the
+     * set-piece ladder it exists to describe gated the acklay at wave 20 and
+     * the walker at 10 against a descent sixteen waves long. So the bottom of
+     * the only mode with an ending fielded the same two acolytes wave 5 opens
+     * with, on a level whose pool names `beast` and `walker` outright.
+     * `WaveDirector._setPiece` reads it: the rung that calls itself the bottom
+     * fields the whole ladder its level can bring.
+     */
     id: 'deeps', name: 'The Deeps', waves: 5, boss: true,
     level: 'deeps', altitude: -760,
     brief: 'The same cut with the power off. Whatever is down here can see better than you.',
@@ -131,6 +141,19 @@ export const DESCENT = [
 export const SPIRE = DESCENT;
 
 /**
+ * What a run's `mode` is CALLED — the reader that field never had.
+ *
+ * `main.js` constructs every run with `mode: 'spire'`, the ladder's old name,
+ * and nothing in the tree compared the field against anything or showed it to
+ * anybody. A record that keeps a depth of 16 and cannot say what it was 16 of
+ * is a record of a number, so `Progress.progressLines` names the ladder a run
+ * was on — and both spellings of this one resolve to the same place, exactly as
+ * SPIRE and DESCENT do above.
+ */
+const LADDER_NAMES = { spire: 'the Descent', descent: 'the Descent' };
+export function ladderName(mode) { return LADDER_NAMES[mode] || mode || null; }
+
+/**
  * How much of your health a landing gives back.
  *
  * NOT a full heal, and not nothing. A full heal makes the tier you just
@@ -142,8 +165,19 @@ export const LANDING_HEAL = 0.45;
 
 export class Run {
   constructor(opts = {}) {
-    /** The seed EVERYTHING random in this run derives from, so a run is a
-     *  shareable number rather than an unrepeatable accident. */
+    /**
+     * The seed EVERYTHING random in this run derives from, so a run is a
+     * shareable number rather than an unrepeatable accident.
+     *
+     * That sentence was false for the whole life of this field: it was
+     * generated here, carried across every landing, handed to `summary()` and
+     * read by nothing, while `Waves.js` built its stream from a `Math.random()`
+     * drawn once at module load. Two runs on the same seed composed different
+     * waves. `WaveDirector` reads it now (`Waves.seedWaves`), mixing the rung
+     * index in so four rungs are four streams and the descent is still one
+     * number. The enemy and duel streams still are not seeded — see the note
+     * on `seedWaves`.
+     */
     this.seed = opts.seed ?? ((Math.random() * 0x7fffffff) | 0);
     this.mode = opts.mode ?? 'spire';
     this.tier = 0;
@@ -180,12 +214,23 @@ export class Run {
   get rung() { return DESCENT[Math.min(this.tier, DESCENT.length - 1)]; }
   get last() { return this.tier >= DESCENT.length - 1; }
 
-  /** Waves cleared across the whole descent, which is what "depth" means. */
-  get depth() {
-    let n = this.wave;
+  /**
+   * WAVES THE RUN CLIMBED BEFORE THIS RUNG — the depth this rung starts from.
+   *
+   * `wave` is rung-local (World writes it from `onWaveClear`, and asks
+   * `run.wave >= rung.waves` with it), so this is the other half of every
+   * absolute number the run has. `WaveDirector.floor` reads it, which is what
+   * stops the escalation restarting at wave 1 on every landing: the third rung
+   * composes waves 8..11, not 1..4.
+   */
+  get floor() {
+    let n = 0;
     for (let i = 0; i < this.tier && i < DESCENT.length; i++) n += DESCENT[i].waves;
     return n;
   }
+
+  /** Waves cleared across the whole descent, which is what "depth" means. */
+  get depth() { return this.wave + this.floor; }
 
   /**
    * Record one rank of a boon.
@@ -224,10 +269,19 @@ export class Run {
 
   end() { this.done = true; }
 
-  /** What a record wants to remember. Small on purpose — see Progress.js. */
+  /**
+   * What a record wants to remember. Small on purpose — see Progress.js.
+   *
+   * `mode` is here because it was the other half of a dead field: it was
+   * written by `main.js` at construction, compared against nothing anywhere in
+   * src/, and dropped on the floor by the one function that turns a run into
+   * something that outlives it. A record that cannot say which ladder a depth
+   * of 16 was climbed on is a record of a number.
+   */
   summary() {
     return {
-      seed: this.seed, tier: this.tier, depth: this.depth, score: this.score,
+      seed: this.seed, mode: this.mode,
+      tier: this.tier, depth: this.depth, score: this.score,
       kills: this.kills, won: this.won,
       boons: this.boons.map((b) => b.id),
       identity: this.identity,

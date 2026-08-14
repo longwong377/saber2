@@ -883,7 +883,31 @@ export const TERRAIN_PRESETS = {
    * excavation is the wettest floor in the game and it is not bare.
    */
   cavern: {
-    scale: 320, res: 190, waterLevel: 0.30,
+    /**
+     * −1.50, NOT THE 0.30 THIS ROOM SHIPPED WITH, and the old number made The
+     * Cut a swimming pool. The floor here is `bench + rib + sump + floor` and
+     * its median inside the 60 m fighting disc is −1.09 m; against a sheet at
+     * +0.30 that is 92.6% of the floor submerged, 80.2% of it knee-deep, 64.4%
+     * waist-deep, and 44.8% of it deep enough to put the player's 1.62 m eye
+     * UNDER a DoubleSide, depthWrite-off transparent plane — so for half the
+     * level the whole frame was seen through the water shader. Driven with a
+     * real Player on six bearings the render camera was under the sheet on
+     * 58.5% of frames.
+     *
+     * The intent is written three lines down over `sump`: "two long low bays,
+     * so the level has standing water you fight around instead of a puddle in
+     * the middle". At −1.50 that is what it is: 41% of the disc has water on
+     * it, 23% is over the ankle, 6.2% over the waist and 0.2% deep enough to
+     * drown the camera, with the deepest bay 1.67 m. The FLOOR is untouched —
+     * every bench, rib and spoil bank the level was tuned around is where it
+     * was — because the thing that was wrong was the height of the water, not
+     * the shape of the room.
+     *
+     * Levels.js's `deeps.water.level` carries the same −1.50. Two numbers for
+     * one sea is how Mustafar ended up with a coastline 2.5 m wide that was
+     * lava on screen and rock underfoot; they move together or not at all.
+     */
+    scale: 320, res: 190, waterLevel: -1.50,
     // Wet blue-grey stone. The family is the works' own, one step colder and
     // darker, because this is the same rock with the lights off.
     sandColor: 0x414b52, rockColor: 0x2e373e,
@@ -949,7 +973,20 @@ export const TERRAIN_PRESETS = {
    * rather than a circle, because the lobes decide it.
    */
   mustafar: {
-    scale: 460, res: 300, waterLevel: 0.0,
+    /**
+     * 0.55, NOT THE 0.0 THIS PRESET CARRIED, and the difference was a ring of
+     * ground all round the coast that was drawn as lava and treated as dry
+     * rock. Levels.js sets `water: { level: 0.55 }` and that is the sheet World
+     * actually builds; this number is the one `surfaceAt` (footstep sample,
+     * splash particle) and the ground shader's damp band key off. Ray-walking
+     * 64 bearings on the built heightfield, the drawn 0.55 contour came out at
+     * 100.8-145.0 m and this one's 0.00 contour at 104.5-147.3 m: a band 0.3 to
+     * 11.0 m wide, median 2.5, that was molten on screen and gave you a rock
+     * footstep and a dust puff. Every other level in the game agrees between
+     * the two numbers (wood 0/0, kamino 0/0, foundry -1.45/-1.45, deeps
+     * 0.30/0.30) and only this one did not.
+     */
+    scale: 460, res: 300, waterLevel: 0.55,
     /* THE PALETTE IS ONE HUE AND IT IS NOT ORANGE. Rule 5: one family plus one
      * or two saturated accents, and the accent is the SUBJECT. Every warm
      * pixel in this level is lava, lit lava, or ash lit by lava; the rock is a
@@ -1339,8 +1376,34 @@ export const TERRAIN_PRESETS = {
       const seating = strata(bank, 0.72, smoothstep(1.04, 1.10, e) * 0.85, 5.7);
 
       /* THE ARCADE at the top, and it is what stops the bowl from ending in a
-       * line against the sky: a parapet standing 6 m proud of the last row. */
-      const arcade = smoothstep(1.95, 2.06, e) * 6.0;
+       * line against the sky — and what stops the PLAYER, which is the part it
+       * was not doing.
+       *
+       * 15 m proud of the last row, over 2.0 e-hundredths of run, not 6 m over
+       * 11. The first shape was a ramp: measured on the built heightfield, an
+       * unbroken walk from the sand up through the crowd and over the top, and
+       * a real Player holding W for 25 s finished at y = 45.1 m at r = 115 on
+       * six of eight bearings, out on the plain beyond the building. The
+       * podium — 5.2 m over 2 m of run, which the comment above it calls 68°
+       * and "past the number every walkability survey uses" — never measured
+       * over 0.374 on the grid it is actually sampled on, because a heightfield
+       * with a 3.1 m step cannot hold a face steeper than rise/step: EVERY
+       * feature in this bowl is a ramp by the time it reaches the player.
+       *
+       * That is the constraint this number is derived from. `Terrain.blockClimb`
+       * refuses ground whose gradient exceeds 1.83 (the game's 0.52 walk limit),
+       * gradient is read as a central difference over ±step, and the coarsest
+       * tier builds this preset at res 130, step 3.10 m. So a wall here has to
+       * rise more than 1.83 × 2 × 3.10 = 11.3 m to survive the sampling. 15 m
+       * measures 2.42 on that grid, which holds at every tier and leaves the
+       * margin the podium never had.
+       *
+       * It is also the right drawing. A real amphitheatre's outer wall stands
+       * far above its top row — the Colosseum's is 48 m over an arena floor
+       * 25 m below the last course — so this reads as the building it is, and
+       * the bowl keeps its own horizon (`horizon: false` in the level).
+       */
+      const arcade = smoothstep(1.95, 1.99, e) * 15.0;
 
       // the four gates the floor is entered by, cut through the podium as
       // ramps so the mounts can be walked in

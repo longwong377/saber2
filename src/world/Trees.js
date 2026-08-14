@@ -93,9 +93,24 @@ const REST = Math.PI * 0.5;
  * 9 m without leaving the ground, a double Force jump tops out at 6.2, and a
  * shorter box keeps `box.radius` — which every near-list in the engine tests
  * against — down where it belongs instead of at half a 27 m tree.
+ *
+ * RING_ENEMY IS ZERO, AND IT IS A MEASUREMENT RATHER THAN A TASTE. A droid's
+ * whole movement brain is `toTarget` plus a strafe side plus separation from
+ * its neighbours (src/game/Enemy.js) — no obstacle term, no path, no raycast —
+ * and its only response to a collider is a push-out that resolves position
+ * without touching velocity. Walk one head-on into a 1 m trunk and it pins
+ * there for as long as you let it. Measured, 12 acolytes released at 40 m round
+ * a stationary player in this wood, 40 s: with no tree colliders at all 0 of 12
+ * failed to reach 6 m; with a 5 m collider ring round every droid, 4 of 12
+ * failed and two of those were still grinding into a trunk 34 m and 18 m out,
+ * where the player cannot even see them and the wave cannot clear; with the
+ * player's ring alone, 2 of 12, both stalled at 7 m — in arm's reach, in view,
+ * and killable. So the wood is solid where the fight is, and the rest of the
+ * answer is a wall-avoid term in Enemy's steering, which is not this file's to
+ * write. When that lands, this goes back to 5.
  */
-const RING_PLAYER = 18;
-const RING_ENEMY = 7;
+const RING_PLAYER = 11;
+const RING_ENEMY = 0;
 const COLLIDER_H = 9;
 /** Grid cell for the standing-tree index, in metres. */
 const CELL = 12;
@@ -298,11 +313,13 @@ export class Forest {
    * ms a frame, i.e. two thirds of a 60 Hz budget, to make solid the 1,770
    * trees nobody is anywhere near.
    *
-   * So the trunks near a BODY are solid and the rest are not: 18 m around each
-   * player, 7 m around each living enemy, rebuilt four times a second off a
-   * 12 m cell index. On the shipped wood that is 25-60 live boxes — under
-   * 0.4 ms — and the sight line in this level is 25 m, so a trunk that is not
-   * carrying a collider is one no fight is happening at.
+   * So the trunks near a BODY are solid and the rest are not: an 11 m ring
+   * round each player, rebuilt four times a second off a 12 m cell index (a
+   * dash is 15.5 m/s, so 0.25 s of it is 3.9 m — the ring is always ahead of
+   * the body it follows). Measured with the same fight standing in the densest
+   * part of the wood: 65 live boxes at the peak, 3.90 → 4.50 ms/frame, i.e.
+   * 0.6 ms against the 10.9 ms of doing it exhaustively. The sight line here is
+   * 25 m, so what is outside the ring is a trunk nobody is fighting at.
    */
   _cellKey(x, z) {
     return (Math.floor(x / CELL) + 4096) * 8192 + (Math.floor(z / CELL) + 4096);
@@ -354,8 +371,10 @@ export class Forest {
     for (const p of (this.world.players || [])) {
       if (p && p.alive !== false) this._gatherRing(p.position.x, p.position.z, RING_PLAYER, want);
     }
-    for (const e of (this.world.enemies || [])) {
-      if (e && !e.dead) this._gatherRing(e.position.x, e.position.z, RING_ENEMY, want);
+    if (RING_ENEMY > 0) {
+      for (const e of (this.world.enemies || [])) {
+        if (e && !e.dead) this._gatherRing(e.position.x, e.position.z, RING_ENEMY, want);
+      }
     }
     for (const [i, box] of this.live) {
       if (want.has(i)) continue;

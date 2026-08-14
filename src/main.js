@@ -15,7 +15,7 @@ import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
-import { Net, RemoteAvatar } from './net/Net.js';
+import { Net, RemoteAvatar, packLook } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
 import { Run } from './game/Run.js';
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
@@ -58,6 +58,23 @@ input.invertY = settings.invertY;
  * player who clears the field gets 'Jedi' back instead of an empty nameplate.
  */
 const playerName = () => (settings.playerName || '').trim().slice(0, 18) || 'Jedi';
+
+/**
+ * THE HOST'S CHOICES, KEPT OUT OF THE PLAYER'S SAVE FILE.
+ *
+ * Joining a friend's session used to write `settings.level`, `settings.difficulty`
+ * and `settings.mode` straight onto the player's own settings object — which
+ * `deploy()` then persisted to localStorage wholesale. So playing one round in
+ * somebody else's Grandmaster Descent permanently rewrote your saved level,
+ * difficulty and mode, and your next SOLO run silently started in theirs.
+ *
+ * A session is a different scope from a preference. Null outside co-op, so
+ * `sessionOr` is the identity function for a solo player.
+ */
+let session = null;
+const sessionOr = (key) => (session && session[key] !== undefined ? session[key] : settings[key]);
+/** The settings a world is built from: the player's, with the host's overrides. */
+const worldSettings = () => (session ? { ...settings, ...session } : settings);
 /** A name from the wire, on its way into innerHTML. */
 const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
@@ -228,8 +245,10 @@ function buildWorld(levelKey, run = null) {
   audio.init();
   audio.resume();
 
-  world = new World(engine, settings);
-  world.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
+  // The player's settings, with whatever the host of this session decided
+  // laid over them — and never the other way round. See `session` above.
+  world = new World(engine, worldSettings());
+  world.difficulty = DIFFICULTY[sessionOr('difficulty')] || DIFFICULTY.knight;
 
   world.onNotify = (t, s) => hud.message(t, s);
   world.onFloating = (p, text, color) => hud.floating(p, text, color);
@@ -244,6 +263,18 @@ function buildWorld(levelKey, run = null) {
   };
 
   world.onRungClear = (r) => landing(r);
+  /**
+   * YOU ARE DOWN, and your friends are not.
+   *
+   * The card, the pointer release and `input.enabled = false` used to hang off
+   * `onGameOver` alone, which requires every player in the session to be dead —
+   * so the first person to fall in a co-op run got nothing whatsoever and lay
+   * in a corpse with a live camera and a locked pointer until somebody else
+   * died. This is the same exit, for one player, and it says what happens next
+   * rather than offering to restart a run the others are still in.
+   */
+  world.onLocalDown = () => downed();
+  world.onLocalRevive = () => rose();
   /**
    * A wave paid out. Said out loud, and a beat after WAVE CLEAR rather than on
    * top of it — the director notifies first, and a currency that silently
@@ -296,7 +327,7 @@ function buildWorld(levelKey, run = null) {
  * what `Esc → Abandon` means in all of them.
  */
 function startRun() {
-  if (settings.mode !== 'gauntlet') return null;
+  if (sessionOr('mode') !== 'gauntlet') return null;
   return new Run({
     identity: { order: settings.order, species: settings.species },
     mode: 'spire',
@@ -304,12 +335,16 @@ function startRun() {
 }
 
 function deploy(run = startRun()) {
+  // The PLAYER's settings, never the session's. `session` is a separate object
+  // for exactly this line: this used to persist the host's level, difficulty
+  // and mode into the joining player's save.
   saveSettings(settings);
   menu.hideMenu();
   screens.clear();
 
-  // A rung BORROWS a level; outside the Spire the player's own choice stands.
-  const levelKey = run && !run.done ? run.rung.level : settings.level;
+  // A rung BORROWS a level; outside the Spire the player's own choice stands —
+  // or the host's, in a session.
+  const levelKey = run && !run.done ? run.rung.level : sessionOr('level');
   buildWorld(levelKey, run);
 
   if (net.enabled && net.connected) {
@@ -595,13 +630,24 @@ function sandboxRoomLive() {
   return !!world.director?.sandbox;
 }
 
+/**
+ * RESTART THE WAVE — a single-player affordance, on an always-visible button.
+ *
+ * On a co-op CLIENT it was catastrophic and permanent: it disposed every enemy
+ * and emptied `world.enemies` without touching `world._netEnemyIndex`, and
+ * `applySnapshot` only spawns a body for an id that is NOT already in that map.
+ * So every id the host was still sending resolved to a disposed Enemy that
+ * could never be recreated: measured four net-driven enemies before, zero
+ * after, with all four ids still held. The arena stayed empty for the rest of
+ * the host's wave while `hit` messages kept arriving from bodies that no longer
+ * existed on screen — and it started a second, local wave director on a machine
+ * that is supposed to have none.
+ *
+ * The horde is not this machine's to restart. Say so instead of doing it.
+ */
 function restartWave() {
   if (!world) return;
-  for (const e of world.enemies) e.dispose();
-  world.enemies.length = 0;
-  const p = world.player;
-  if (p) { p.hp = p.maxHp; p.force = p.maxForce; p.stamina = p.maxStamina; }
-  world.director.start(Math.max(1, world.director.wave));
+  if (!world.restartWave()) world.notify('THE HOST OWNS THE HORDE', 'the wave cannot be restarted from here');
   resume();
 }
 
@@ -610,6 +656,13 @@ function quitToMenu() {
   hud.show(false);
   input.enabled = false;
   input.exitLock();
+  // AND LEAVE THE SESSION. `Net.close` was complete and had zero callers in the
+  // repository, so quitting to the menu did not leave a co-op game: the
+  // connection stayed up, the other machines kept a frozen body of you in
+  // `world.players` that enemies went on targeting, and the next Ignite
+  // re-attached you as a client of the same host. Solo play was unreachable
+  // without reloading the tab.
+  leaveSession();
   // An abandoned climb still happened. Recording it is what stops "deepest
   // reached" from quietly meaning "deepest you happened to die on".
   if (world?.run && !world.run.done) { world.run.end(); recordRun(world.run.summary()); }
@@ -657,6 +710,45 @@ function gameOver(stats) {
   // watching their own corpse with nothing on screen. Escape asks for it again.
   screens.overlay = { state: 'dead', show: card };
   setTimeout(screens.guarded('the death card', () => { input.exitLock(); card(); }), 2600);
+}
+
+/**
+ * DOWN, WITH THE RUN STILL GOING.
+ *
+ * Everything `gameOver` does about the SESSION — end the run, record it, offer
+ * to redeploy — is wrong here: the run has not ended, and "Rise again" would
+ * tear down a world your friends are still standing in. What is right is
+ * everything it does about the PLAYER: stop reading input, give the pointer
+ * back, and put something on the screen that says what is happening. The
+ * revive is `World._reviveDowned`, at the next wave the party survives.
+ */
+function downed() {
+  if (screens.state === 'dead') return;
+  screens.state = 'dead';
+  input.enabled = false;
+  const card = () => {
+    // The retry button restarts a RUN. There is no run to restart while the
+    // others are still in it — the way back is the next wave they clear.
+    document.getElementById('btn-retry')?.classList.add('hidden');
+    menu.showDeath([
+      ['Wave', world?.director?.wave ?? 1],
+      ['Kills', world?.player?.kills ?? 0],
+      ['Allies standing', (world?.players || []).filter((p) => p.alive).length],
+    ], 'You have fallen — your allies fight on');
+  };
+  screens.overlay = { state: 'dead', show: card };
+  setTimeout(screens.guarded('the downed card', () => { input.exitLock(); card(); }), 1400);
+}
+
+/** …and back up, because the party survived the wave. */
+function rose() {
+  document.getElementById('btn-retry')?.classList.remove('hidden');
+  menu.hideDeath();
+  screens.overlay = null;
+  screens.state = 'playing';
+  input.enabled = true;
+  input.requestLock();
+  hud.show(true);
 }
 
 /**
@@ -752,8 +844,14 @@ function setScoreboard(open) {
   const roster = net.enabled && net.connected ? net.roster : [];
   // The name is peer-supplied (Net.js reads it off `conn.metadata`), so it is
   // escaped here the way HUD.popup and the boon chips already escape theirs.
+  //
+  // …and the connection, which the game measured every two seconds with a ping
+  // and showed to nobody. `Net.latency` had no reader in the entire tree, so a
+  // player whose friend was lagging had no way to know that was what they were
+  // looking at. Shown on the local row, because it is our round trip.
+  const ping = net.latency > 0 ? `<em style="margin-left:auto;color:#8b98ad">${Math.round(net.latency)} ms</em>` : '';
   scoreEl.roster.innerHTML = roster.map(r =>
-    `<div class="p"><i></i><span>${escName(r.name)}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : ''}</div>`).join('');
+    `<div class="p"><i></i><span>${escName(r.name)}</span>${r.host ? '<em style="margin-left:auto;color:#8b98ad">host</em>' : (r.id === net.peer?.id ? ping : '')}</div>`).join('');
 
   const taken = heldBoons();
   scoreEl.boons.innerHTML = taken.length
@@ -809,18 +907,37 @@ function wireNet() {
     }
   });
   net.on('welcome', (hostSettings) => {
+    // Into the SESSION, not into the save file. See `session` at the top.
     if (hostSettings) {
-      settings.level = hostSettings.level;
-      settings.difficulty = hostSettings.difficulty;
-      settings.mode = hostSettings.mode;
+      session = { level: hostSettings.level, difficulty: hostSettings.difficulty, mode: hostSettings.mode };
     }
     menu.netStatus('connected — waiting for the host to deploy', 'ok');
   });
+  /**
+   * THE HOST HAS DEPLOYED — AND WE GO, WHEREVER WE HAPPEN TO BE STANDING.
+   *
+   * This used to act only `if (screens.state === 'menu')`. In a co-op Descent
+   * the host clears rung 1 and re-deploys into the Foundry, broadcasting a
+   * fresh `start` — and every client that was playing, paused, drafting or dead
+   * ignored it and stayed in the Intake, receiving snapshots of bodies at
+   * Foundry coordinates. Enemies spawned inside walls or in mid-air and the run
+   * was unrecoverable. A client's own Run can never ascend either (the rung
+   * signal is host-only, by design), so this message is the ONLY thing that can
+   * take a joining player down the ladder.
+   */
   net.on('start', (msg) => {
-    settings.level = msg.level;
-    settings.difficulty = msg.difficulty;
-    settings.mode = msg.mode;
-    if (screens.state === 'menu') deploy();
+    session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
+    if (net.isHost) return;                       // our own broadcast, coming back
+    if (world) {
+      // A world already stands, in some level that is no longer the session's.
+      // Tear it down without leaving the session — quitToMenu would close the
+      // connection — and land in the new one.
+      menu.hideDeath();
+      document.getElementById('btn-retry')?.classList.remove('hidden');
+      screens.clear();
+      world.dispose(); world = null;
+    }
+    deploy();
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
@@ -869,17 +986,26 @@ function wireNet() {
     }
     p.damage(d, null, null, msg.k || 'bolt');
   });
+  /**
+   * A PACKET FROM A PARTICULAR PERSON.
+   *
+   * `peerId` is `msg.from ?? conn.peer` now (see Net._sender), and that is the
+   * whole of the three-and-four-player bug: on a client every packet in the
+   * session arrives on the one host connection, so the key used to be a
+   * constant. Every remote player collapsed into ONE body fed by all of their
+   * position streams — measured 840 m of travel and a 1200 m/s peak with two
+   * players standing still — wearing whoever the roster's first entry was.
+   *
+   * The appearance comes off the ROSTER, where it crossed the wire with the
+   * player who built it, instead of being invented here from a roster index.
+   */
   net.on('avatar', (peerId, msg) => {
     if (!world) return;
     if (!world.remotes) world.remotes = new Map();
     let r = world.remotes.get(peerId);
     if (!r) {
       const entry = net.roster.find(x => x.id === peerId);
-      r = new RemoteAvatar(world, {
-        id: peerId, name: entry?.name || 'Jedi',
-        colorIndex: (net.roster.findIndex(x => x.id === peerId) + 1) % 8,
-        robeIndex: (net.roster.findIndex(x => x.id === peerId) + 1) % 6,
-      });
+      r = new RemoteAvatar(world, { id: peerId, name: entry?.name || 'Jedi', look: entry?.look || null });
       world.remotes.set(peerId, r);
       world.players.push(r);
     }
@@ -888,12 +1014,15 @@ function wireNet() {
 }
 wireNet();
 
+/** The character sheet this player carries into a session. See Net.LOOK_KEYS. */
+const localLook = () => packLook(settings);
+
 async function hostSession() {
   menu.netStatus('opening a session…');
   try {
     const code = await net.host(playerName(), {
       level: settings.level, difficulty: settings.difficulty, mode: settings.mode,
-    });
+    }, localLook());
     menu.netCode(code);
     menu.netStatus('session open — share the code, then Ignite', 'ok');
   } catch (e) {
@@ -901,10 +1030,25 @@ async function hostSession() {
   }
 }
 
+/**
+ * LEAVE. Idempotent, and safe to call when there is no session.
+ *
+ * `Net.close` existed, was complete, and had zero callers anywhere in the
+ * repository — there was no way out of a co-op game at all.
+ */
+function leaveSession() {
+  if (!net.enabled && !net.connected) return false;
+  net.close();
+  session = null;
+  menu.netStatus('you have left the session', '');
+  menu.netCode('—');
+  return true;
+}
+
 async function joinSession(code) {
   menu.netStatus(`connecting to ${code}…`);
   try {
-    await net.join(code, playerName());
+    await net.join(code, playerName(), localLook());
     menu.netCode(code);
     menu.netStatus('connected — the host starts the run', 'ok');
   } catch (e) {

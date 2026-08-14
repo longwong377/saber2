@@ -50,6 +50,7 @@ import { ORDER_IDS } from '../../src/game/Order.js';
 import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { makeDocument } from './_page.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const src = (p) => new URL('../../src/' + p, import.meta.url);
@@ -1027,5 +1028,53 @@ export async function run({ check, assert }) {
       `${flagged.join(', ')} still carries the training flag — that level cannot be played in any other mode`);
     return `${LESSONS.length} lessons built in "${LEVELS.drifts.name}", a level with no training flag at all, `
       + `around a player at (12, -30): ${rows.slice(0, 4).join(' ')}…`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  The sky, operated                                                 */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('constellation: a star that says it is a button behaves like one', async () => {
+    /**
+     * SkillTree draws every star with `tabindex="0"` and `role="button"`, and
+     * styles.css carries a `#med-sky .star:focus` rule for it — so a star takes
+     * focus and announces itself to a screen reader as a button. It registered
+     * `click` and `dblclick` and nothing else, so Enter and Space did nothing
+     * at all: the ONE place in the whole front end that had bothered to claim a
+     * keyboard affordance was the one place that had not built it.
+     *
+     * Driven through the real SkillTree on the real meditation markup, because
+     * the claim is about the elements it emits. Synchronous once the document
+     * is installed — the runner starts the next check the moment this one
+     * suspends, and a globally installed document would follow it there.
+     */
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const { SkillTree } = await import('../../src/ui/SkillTree.js');
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    try {
+      const bought = [];
+      const tree = new SkillTree(doc, { onBuy: (id) => bought.push(id) });
+      const taken = new Waves.RankSet([]);
+      tree.show({ taken, ledger: new Tree.Communion({ insight: 999 }), wave: 9, order: 'jedi', live: true });
+      const stars = doc.querySelectorAll('#med-sky .star');
+      assert(stars.length > 10, `${stars.length} stars drew`);
+      const deaf = stars.filter(g => g.listenerCount('keydown') === 0);
+      assert(!deaf.length,
+        `${deaf.length}/${stars.length} stars carry tabindex="0" role="button" and no key listener at all`);
+      const focusable = stars.filter(g => g.getAttribute('tabindex') === '0');
+      assert(focusable.length === stars.length, 'a star lost its place in the tab order');
+      // Enter selects, exactly as a click does…
+      const root = stars.find(g => g.classList.contains('root')) || stars[0];
+      root.dispatchEvent({ type: 'keydown', key: 'Enter' });
+      assert(tree.selected, 'Enter on a star selected nothing');
+      // …and Enter on the star already selected is the keyboard's double-click.
+      const before = bought.length;
+      root.dispatchEvent({ type: 'keydown', key: 'Enter' });
+      assert(bought.length === before + 1,
+        'Enter on the selected star did not buy it — the keyboard can look and never spend');
+      assert(bought[0] === tree.selected, `it bought ${bought[0]} with ${tree.selected} selected`);
+      return `${stars.length} stars, all focusable and listening; Enter selects then buys (${bought[0]})`;
+    } finally { restore(); }
   });
 }

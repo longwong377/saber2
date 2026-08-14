@@ -48,11 +48,22 @@ import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 
-/** The world a dressing pass is happy with, recording what it is handed. */
-function stubWorld(terrain) {
+/**
+ * The world a dressing pass is happy with, recording what it is handed.
+ *
+ * `level` IS PART OF THAT, and leaving it off was measuring a level the game
+ * does not ship. Several dressing passes read `world.level` — the cut takes its
+ * water line from it (`world.level?.water?.level ?? 0.30`) and then refuses to
+ * put anything loose below it — so with no level attached the deeps dressed
+ * itself against a fallback water line 1.8 m above its own floor and dropped
+ * every crate and barrel the level places. The survey then reported the four
+ * scraps of trim that were left, which is under its own eight-object floor, so
+ * it skipped the level entirely and called that a pass.
+ */
+function stubWorld(terrain, level = null) {
   const scene = new THREE.Scene();
   return {
-    scene, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
+    scene, level, statics: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
     physics: {
       /* THE SAME RECORD THE REAL ONE BUILDS, minus the Rapier collider — which
        * this survey never needs, because it asks for capsules and never steps.
@@ -160,7 +171,7 @@ function reaches(box, c, p = new THREE.Vector3()) {
 function survey(key) {
   const L = LEVELS[key];
   const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
-  const world = stubWorld(terrain);
+  const world = stubWorld(terrain, L);
   L.dress(world);
   const caps = contacts(world);
   world.scene.updateMatrixWorld(true);

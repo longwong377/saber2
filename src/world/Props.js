@@ -244,19 +244,24 @@ export function propMaterials() {
 
   /**
    * DRESSED stone is not the same surface as a boulder, and the file only had
-   * one rock bake to build both out of.
+   * one rock bake to build both out of. That is still true, and the knob that
+   * used to answer it is GONE rather than retuned.
    *
-   * MEASURED off the baked bytes: the rock normal map carries 14.3° of mean
-   * texel tilt against duracrete's 6.3°, and its albedo is a crack network.
-   * That is right for a boulder and it is what made a 7.5 m colonnade shaft
-   * read as TREE BARK at close range — a column is a stone somebody spent a
-   * winter dressing flat with a claw chisel, and a dressed face has tool marks
-   * and grain, not a fracture pattern. Halving the normal on the two carved
-   * materials puts them at about 6.4° effective, which is the same relief as
-   * the concrete beside them, and leaves boulders (`stone`) and cliffs
-   * (`strata`) at the full 14.3° where it belongs.
+   * What stood here was `MATS[n].normalScale.set(0.45, 0.45)` on sandstone and
+   * stoneDark — measured off the baked bytes, the rock normal carries 14.3° of
+   * mean texel tilt against duracrete's 6.3°, and halving it put a dressed
+   * column at the same relief as the concrete beside it instead of reading as
+   * tree bark. The measurement was right and the line is now inert: under the
+   * cel model `materialFrom` binds `normalMap: null` on every prop material in
+   * the game (src/engine/Textures.js — a detail normal under a two-tone
+   * terminator reads as speckle, not as relief), and three multiplies
+   * `normalScale` into a map that is not there. Verified on the built
+   * materials: sandstone.normalMap and stoneDark.normalMap are both null.
+   *
+   * The difference the measurement is about now has to be carried by the
+   * albedo and the vertex colours, which is where every other surface
+   * distinction in this file lives.
    */
-  for (const n of ['sandstone', 'stoneDark']) MATS[n].normalScale.set(0.45, 0.45);
 
   /**
    * How hard each surface weathers, as a multiplier on WEAR (below).
@@ -1778,13 +1783,48 @@ export function makeConsole(world, pos, opts = {}) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 const KERF_VERT = /* glsl */`
+  precision highp float;
+  #include <common>
+  #include <fog_pars_vertex>
+  #include <shadowmap_pars_vertex>
   varying vec2 vUv; varying vec3 vN; varying vec3 vW;
-  void main(){ vUv = uv; vN = normalize(normalMatrix*normal);
-    vW = (modelMatrix*vec4(position,1.0)).xyz;
-    gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+  void main(){
+    vUv = uv;
+    vN = normalize(normalMatrix * normal);
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vW = worldPosition.xyz;
+    vec3 transformedNormal = vN;
+    #include <shadowmap_vertex>
+    vec4 mvPosition = viewMatrix * worldPosition;
+    #include <fog_vertex>
+    gl_Position = projectionMatrix * mvPosition;
+  }
 `;
+/**
+ * AND IT IS LIT BY THE LEVEL IT IS STANDING IN.
+ *
+ * The first version of this shader was `uBase * (0.72 + 0.4*vN.y)` — no sun, no
+ * shadow, no ambient, no exposure. A door is a two-metre flat plate at eye
+ * height, so that is one of the largest single-colour areas a level can put in
+ * front of the player, and it was the same brightness on the Foundry's black
+ * floor at 2.4 of key as on the arena at 6.6: measured, a 2.59x exposure swing
+ * between the two rooms, on a surface that never changes. It read as a decal.
+ *
+ * It is on the game's own two-tone model now, which is the same one the ground,
+ * the grass and every character use — one lit tone, one shadow tone at the
+ * authored band, the cast shadow carried in as a MASK rather than multiplied
+ * (saberCelCast), and only light 0 shaped, because a second shaped light gives
+ * a flat plate four tones. The hot kerf stays outside all of it: melt is an
+ * emitter, and an emitter is not lit by anything.
+ */
 const KERF_FRAG = /* glsl */`
   precision highp float;
+  #include <common>
+  #include <packing>
+  #include <fog_pars_fragment>
+  #include <lights_pars_begin>
+  #include <shadowmap_pars_fragment>
+  #include <shadowmask_pars_fragment>
   uniform sampler2D uKerf; uniform vec3 uBase; uniform vec3 uHot; uniform float uTime;
   varying vec2 vUv; varying vec3 vN; varying vec3 vW;
   void main(){
@@ -1792,12 +1832,49 @@ const KERF_FRAG = /* glsl */`
     float cut = k.r;              // 1 = fully melted through
     float heat = k.g;             // residual glow
     if(cut > 0.86) discard;       // the hole is a hole
-    vec3 base = uBase * (0.72 + 0.4*vN.y);
+    vec3 N = normalize(vN);
+
+    // the flat half of the light: ambient plus the hemisphere, looked up along
+    // world up like every other lit material in the game (saberCelFlatDir)
+    vec3 irradiance = ambientLightColor;
+    #if NUM_HEMI_LIGHTS > 0
+      #pragma unroll_loop_start
+      for(int i = 0; i < NUM_HEMI_LIGHTS; i++){
+        irradiance += saberCelAmbient(getHemisphereLightIrradiance(hemisphereLights[i], saberCelFlatDir(N)));
+      }
+      #pragma unroll_loop_end
+    #endif
+
+    vec3 direct = vec3(0.0);
+    float shadow = getShadowMask();
+    #if NUM_DIR_LIGHTS > 0
+      #pragma unroll_loop_start
+      for(int i = 0; i < NUM_DIR_LIGHTS; i++){
+        {
+          #if UNROLLED_LOOP_INDEX == 0
+            saberCelShape = 1.0;
+            saberCelCast = shadow;
+          #else
+            saberCelShape = 0.0;
+            saberCelCast = 1.0;
+          #endif
+          vec3 L = inverseTransformDirection(directionalLights[i].direction, viewMatrix);
+          saberCelKey = saberCelLightKey(directionalLights[i].direction);
+          vec3 lc = mix(saberCelAmbient(directionalLights[i].color),
+                        directionalLights[i].color, saberCelShape);
+          direct += lc * saberCelTone(dot(N, L));
+        }
+      }
+      #pragma unroll_loop_end
+    #endif
+
+    vec3 base = saberCelAlbedo(uBase) * (irradiance + direct);
     float rim = smoothstep(0.18, 0.86, cut);
     vec3 glow = mix(vec3(1.4,0.35,0.05), vec3(2.4,1.9,1.2), heat);
     vec3 c = mix(base, glow, clamp(rim*0.9 + heat*0.75, 0.0, 1.0));
     c += glow * heat * 0.6 * (0.85 + 0.15*sin(uTime*23.0 + vW.y*9.0));
     gl_FragColor = vec4(c, 1.0);
+    #include <fog_fragment>
   }
 `;
 
@@ -1822,14 +1899,34 @@ export class BlastDoor {
 
     const geo = new THREE.BoxGeometry(this.width, this.height, this.thickness, 1, 1, 1);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uKerf: { value: this.kerfTex },
-        uBase: { value: new THREE.Color(opts.color ?? 0x6e747e) },
+      // `UniformsLib.lights` and `lights: true` are what make the light rig
+      // reach a ShaderMaterial at all; without them `directionalLights` is not
+      // declared and the shader above does not compile.
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog, {
+        uKerf: { value: null },
+        uBase: { value: new THREE.Color() },
         uHot: { value: new THREE.Color(0xff8020) },
         uTime: { value: 0 },
-      },
+      }]),
       vertexShader: KERF_VERT, fragmentShader: KERF_FRAG, side: THREE.DoubleSide,
+      lights: true, fog: true,
     });
+    // …after the merge, which deep-clones every uniform value it is given.
+    this.mat.uniforms.uKerf.value = this.kerfTex;
+    this.mat.uniforms.uBase.value.set(opts.color ?? 0x6e747e);
+    /**
+     * AND IT GETS AN OUTLINE. Both ink passes hide any material whose fragment
+     * shader contains the word `discard`, on the reasonable grounds that a
+     * material which cuts its own silhouette cannot be drawn into a normal
+     * pre-pass as its geometry. That is right for a leaf card and wrong here:
+     * a blast door's silhouette IS its geometry until the player has burned a
+     * hole through it, and a two-metre unlined plate at eye height in a game
+     * that draws a line round everything reads as a sprite. Both passes cache
+     * the answer on the material, so seeding the cache is the only lever this
+     * side of the boundary; a public opt-in belongs in src/toon/.
+     */
+    this.mat.userData._inkCut = false;
+    this.mat.userData._toonCut = false;
     this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.position.copy(opts.position);
     if (opts.quaternion) this.mesh.quaternion.copy(opts.quaternion);
@@ -3906,11 +4003,46 @@ export function addBrokenWall(world, pos, size, opts = {}) {
     talus(kit, w, t, h, { rng: rr, mat: face, amount: ruin });
   }
 
+  /**
+   * THE COLLIDER, AND THE DOORWAYS IN IT.
+   *
+   * This used to be one unbroken run of boxes across the full length of the
+   * wall, openings and all — so every doorway this maker cuts was a hole you
+   * could see through and could not walk through. The temple's aisles, the
+   * ruins on the meadow and the works' own blast-door recesses were all drawn
+   * with a way through and built without one, and a droid steering straight at
+   * a player on the far side of a 3.6 m doorway ground into the gap for as long
+   * as you let it.
+   *
+   * Only a doorway cuts the run: an opening whose sill is off the floor is a
+   * WINDOW, and a window in a wall is still a wall to anything walking. The
+   * lintel over a doorway keeps no collider, which is the ordinary trade — the
+   * only body that could reach it is one already standing in the opening.
+   */
   const solid = lowest * 0.9;
-  const nc = Math.max(1, Math.round(w / 6));
-  for (let i = 0; i < nc; i++) {
-    const cw = w / nc;
-    kit.collider(-w / 2 + cw * (i + 0.5), solid / 2, 0, cw / 2, solid / 2, t / 2);
+  const gaps = [];
+  for (const o of openings) {
+    const ow = o.w ?? 1.2, oh = o.h ?? 2.2, ox = o.x ?? 0, oy = o.y ?? 0;
+    if (oy > 0.6) continue;                          // a window, not a doorway
+    if (oy + oh > lowest * 0.96) continue;           // the break already ate it
+    gaps.push([ox - ow / 2, ox + ow / 2]);
+  }
+  gaps.sort((a, b) => a[0] - b[0]);
+  const spans = [];
+  let cursor = -w / 2;
+  for (const [g0, g1] of gaps) {
+    if (g0 > cursor) spans.push([cursor, Math.min(g0, w / 2)]);
+    cursor = Math.max(cursor, g1);
+  }
+  if (cursor < w / 2) spans.push([cursor, w / 2]);
+  for (const [s0, s1] of spans) {
+    const len = s1 - s0;
+    if (len < 0.05) continue;
+    const nc = Math.max(1, Math.round(len / 6));
+    const cw = len / nc;
+    for (let i = 0; i < nc; i++) {
+      kit.collider(s0 + cw * (i + 0.5), solid / 2, 0, cw / 2, solid / 2, t / 2);
+    }
   }
   return kitClose(world, kit, pos, opts, 'duracrete');
 }
@@ -4616,12 +4748,24 @@ export function addGantry(world, pos, opts = {}) {
   addRailing(world, new THREE.Vector3(0, H + 0.07, W / 2), { kit, length: L, height: 1.05, posts: bays * 2, yaw: Math.PI / 2 });
   addRailing(world, new THREE.Vector3(0, H + 0.07, -W / 2), { kit, length: L, height: 1.05, posts: bays * 2, yaw: Math.PI / 2 });
 
-  // ladder up the near end
+  /* Ladder up the near end.
+   *
+   * AND IT IS SOLID NOW. `kit.put` bins geometry and emits nothing else, so
+   * every stile and every rung of every ladder in this file — this one, the
+   * scaffold's and the tank's — was something the player and the droids walked
+   * straight through. One box on the ladder's own plane, stopping flush with
+   * the deck so there is no invisible perch above it. It is still not
+   * CLIMBABLE: the support query answers "what is the top of this at (x, z)",
+   * which is a floor question, and a rung is not a floor. What gets you onto a
+   * deck in this game is the Force jump, and the decks are placed inside its
+   * measured 6.18 m — see the gantry heights in Levels.js. A real climb
+   * belongs in Player, next to the vault it would share a button with. */
   const lz = -L / 2 + 0.4;
   for (const sx of [-1, 1]) kit.put(pipeBetween(new THREE.Vector3(sx * 0.26, 0, lz - 0.5), new THREE.Vector3(sx * 0.26, H + 0.9, lz - 0.5), 0.038, 5), steel);
   for (let i = 0; i * 0.3 < H + 0.6; i++) {
     kit.put(pipeBetween(new THREE.Vector3(-0.26, i * 0.3 + 0.25, lz - 0.5), new THREE.Vector3(0.26, i * 0.3 + 0.25, lz - 0.5), 0.022, 4), steel);
   }
+  kit.collider(0, H / 2, lz - 0.5, 0.32, H / 2, 0.08);
   // crane trolley on a rail under the deck, hook swinging on a cable
   const tz = (rr() - 0.5) * L * 0.5;
   kit.slab(steel, 0.34, 0.22, L * 0.94, 0, H - 0.22, 0, { tile: TRIM_TILE, collide: false });
@@ -4909,12 +5053,15 @@ export function addScaffold(world, pos, opts = {}) {
         new THREE.Vector3(x1, l * lift + (up ? lift : 0.1), zs[1]), 0.028, 5), steel);
     }
   }
-  // ladder up the end bay
+  // ladder up the end bay — solid, for the reason the gantry's ladder states.
+  // The lifts themselves are 2 m apart and each one is a collider, so a
+  // scaffold is climbable the way this game climbs: one jump per lift.
   const lx = xs[0] + 0.25;
   for (const dz of [-0.2, 0.2]) kit.put(pipeBetween(new THREE.Vector3(lx, 0, dz), new THREE.Vector3(lx, H + 0.6, dz), 0.028, 5), steel);
   for (let i = 0; i * 0.32 < H + 0.4; i++) {
     kit.put(pipeBetween(new THREE.Vector3(lx, 0.3 + i * 0.32, -0.2), new THREE.Vector3(lx, 0.3 + i * 0.32, 0.2), 0.018, 4), steel);
   }
+  kit.collider(lx, H / 2, 0, 0.08, H / 2, 0.26);
   kit.collider(-W / 2, H / 2, 0, 0.12, H / 2, D / 2);
   kit.collider(W / 2, H / 2, 0, 0.12, H / 2, D / 2);
   return kitClose(world, kit, pos, opts);

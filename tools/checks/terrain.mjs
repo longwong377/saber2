@@ -1294,11 +1294,39 @@ export function run({ check, assert, near }) {
       }
       sweep.push({ deg, ratio: R / S });
     }
-    for (let i = 1; i < sweep.length; i++) {
-      assert(sweep[i].ratio > sweep[i - 1].ratio,
-        `the mirror does not strengthen toward grazing: ${sweep[i - 1].deg}° gives `
-        + `${sweep[i - 1].ratio.toFixed(2)} and ${sweep[i].deg}° gives ${sweep[i].ratio.toFixed(2)}`);
-    }
+    /**
+     * ONE TRANSITION, NOT A SMOOTH CURVE — and the change of form here is the
+     * water surface joining the rest of the drawing, not the claim being
+     * weakened.
+     *
+     * This used to assert `sweep[i].ratio > sweep[i-1].ratio` at every step,
+     * i.e. that the ratio rises continuously all the way to 2°. That is the
+     * right shape for a PBR sheet and it is the wrong shape for this game:
+     * rule 8 of src/toon/REFERENCE.md deletes specular everywhere, and water
+     * and lava were the last surfaces in the game still carrying a
+     * view-dependent lobe — measured by walking the eye round the sheet at 8°
+     * of elevation, luminance swung 6.63× on mustafar, 6.80× on the wood and
+     * 7.20× on kamino, which is a highlight whatever the code calls it. The
+     * Fresnel and the facet term are now quantised to two levels each and the
+     * sun lobes are gone (see WATER_FRAG), so the surface is drawn as two
+     * regions with an edge between them, and a step function cannot be
+     * strictly increasing.
+     *
+     * What survives — and what the three assertions below already pinned — is
+     * the part that was ever about the MATERIAL: steep views scatter, grazing
+     * views mirror, and the changeover sits where Fresnel puts it. The new
+     * assertion adds something the old form did not have: the changeover
+     * happens ONCE. A model that flickered between mirror and body as the eye
+     * came down would satisfy "rises somewhere" and would be a broken drawing.
+     */
+    const on = sweep.map((s) => s.ratio > 1);
+    const firstOn = on.indexOf(true);
+    assert(firstOn > 0 && on.slice(firstOn).every(Boolean) && !on.slice(0, firstOn).some(Boolean),
+      'the mirror comes and goes as the view flattens instead of taking over once: '
+      + sweep.map((s) => `${s.deg}°:${s.ratio.toFixed(2)}`).join(' '));
+    assert(sweep[firstOn].ratio > 3 * (sweep[firstOn - 1].ratio + 0.1),
+      `the changeover is a rounding, not an edge: ${sweep[firstOn - 1].deg}° gives `
+      + `${sweep[firstOn - 1].ratio.toFixed(2)} and ${sweep[firstOn].deg}° gives ${sweep[firstOn].ratio.toFixed(2)}`);
     assert(sweep[0].ratio < 0.25,
       `seen from 60° above, the surface is already ${sweep[0].ratio.toFixed(2)} mirror — water is not a plate of chrome`);
     assert(sweep[sweep.length - 1].ratio > 1.6,

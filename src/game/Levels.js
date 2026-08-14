@@ -31,6 +31,7 @@ import { TOUGHNESS } from './Combat.js';
 import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
 import { attachForest } from '../world/Trees.js';
+import { attachHazard } from '../world/Hazard.js';
 
 let rng = makeRng(20250805);
 
@@ -50,6 +51,9 @@ let rng = makeRng(20250805);
  */
 
 const _p = new THREE.Vector3();
+/** Scratch for `spawnClear`, which is called from World rather than from a
+ *  dressing pass and must not share `_p` with `findSite`. */
+const _sp = new THREE.Vector3(), _sq = new THREE.Vector3();
 
 /** Polar sample with a density exponent: <1 crowds the centre, >1 the rim. */
 export function polar(rmin, rmax, bias = 1, angle = null) {
@@ -93,6 +97,55 @@ export function siteOk(world, x, z, opts = {}) {
     }
   }
   taken.push({ x, z, r: rad });
+  return true;
+}
+
+/**
+ * IS THIS SOMEWHERE A BODY CAN ARRIVE?
+ *
+ * `World.pickSpawn` tested exactly two things — `inBounds(x, z, 10)` and
+ * `slopeAt(x, z) > 0.5` — and so did `Arrivals._sitePoint`. Neither of them
+ * looked at anything the LEVEL had put on the ground. Measured, 5,400 spawn
+ * picks per level from six anchors, each spawn's chest point (y + 1.0) tested
+ * against every enabled static box: 11.9% of Temple spawns and 12.7% of arena
+ * spawns arrived INSIDE solid masonry — a column, a machine, a tank, the aisle
+ * walls — and 8.7% on the warship. Underwater was worse and quieter: 94.3% of
+ * spawns on the deeps and 20.3% on the wood landed under the level's own water
+ * sheet.
+ *
+ * Both halves have teeth now that they did not have before. A body embedded in
+ * a collider is never pushed out of it — Enemy's push-out skips a chest point
+ * that is strictly inside a box (`d2 < 1e-8 → continue`), so it walks out
+ * through the wall it was born in — and a body spawned under a hazard sheet is
+ * a body spawned in lava.
+ *
+ * WHAT IT DOES NOT TEST, deliberately: `world._siteTaken`. Those radii are
+ * DRESSING exclusion radii — up to 7 m around a boulder cluster — not body
+ * radii, and rejecting a 7 m disc round every dressed object would refuse most
+ * of a dressed level. The collider list is what "inside something" means.
+ */
+export function spawnClear(world, x, y, z, radius = 0.45) {
+  const w = world.level?.water;
+  if (w) {
+    const depth = (w.level ?? 0) - y;
+    // Never in a hazard; never deeper than the shallows anywhere else. The
+    // wood's ankle-deep channels stay usable, which is most of that level.
+    if (depth > 0 && (w.damage > 0 || depth > Math.min(w.wade ?? 0.45, 0.45))) return false;
+  }
+  const boxes = world.physics?.staticBoxes;
+  if (boxes) {
+    _sp.set(x, y + 1.0, z);
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (b.disabled) continue;
+      const rr = b.radius + radius;
+      if (_sp.distanceToSquared(b.center) > rr * rr) continue;
+      _sq.copy(_sp).sub(b.center).applyQuaternion(b.invQuat);
+      const h = b.halfExtents;
+      if (Math.abs(_sq.x) - h.x < radius && Math.abs(_sq.y) - h.y < radius
+        && Math.abs(_sq.z) - h.z < radius) return false;
+    }
+  }
   return true;
 }
 
@@ -218,6 +271,20 @@ export function beginDressing(world, seed) {
   world._stoneField = null;
   rng = makeRng(seed ?? 20250805);
   world.terrain?.setMight?.(groundMight(world));
+  /**
+   * AND THE WATER GETS ITS TEETH, HERE, once, for every level that has any.
+   *
+   * `water` was a drawn plane and nothing else — `new Water(...)` in
+   * World.loadLevel was its only reader in the game, so a lava sea, a canal of
+   * molten metal and an ocean were all floors you could stand on at full
+   * health. The hazard reads the SAME block the sheet is drawn from (see
+   * src/world/Hazard.js), which is what stops the danger and the picture from
+   * drifting apart the way `waterLevel` and `water.level` did on Mustafar.
+   * Attached in `beginDressing` rather than in thirteen `dress()` bodies for
+   * the same reason the occupancy grid is reset here: a level that forgot the
+   * line would be a level whose sea is scenery again.
+   */
+  if (world.level?.water) attachHazard(world, world.level.water);
 }
 
 /**
@@ -578,6 +645,33 @@ function works(world, opts = {}) {
           new THREE.Vector3(6.5, 7.4, -1.4),
         ], { kit, count: 2, radius: 0.11, seed: seed + 60 + i, supports: false, valves: false });
       });
+    /**
+     * AND THE BLAST DOOR IS IN THE RECESS.
+     *
+     * This comment block has said "every fourth bay is a blast door recess"
+     * since the room was written, and the arrivals table two thousand lines
+     * down justifies the works' gate arrival with "there are blast doors in
+     * every fourth bay". There were none. `world.doors` was allocated,
+     * disposed, stepped every frame and handed to the blade solver every frame,
+     * and it was empty on all thirteen levels — `BlastDoor` (src/world/Props.js)
+     * is a finished object with a kerf texture, a discard-through hole, a real
+     * collider, capsules for the blade and a breach that drops the slug out,
+     * and nothing in the game had ever built one.
+     *
+     * So the recess gets the door it is a recess for: 4.4 × 5.2, which is the
+     * opening `addBrokenWall` cuts, and the wall's collider now stops at the
+     * jamb rather than running straight through the doorway. Cut through one
+     * and you are in the shell, which is where a blast door in the outer wall
+     * of a foundry goes.
+     */
+    if (i % 4 === 1 && !failed) {
+      const door = new BlastDoor(world, {
+        position: V(x, T.height(x, z) + 2.6, z),
+        quaternion: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw),
+        width: 4.36, height: 5.16, thickness: 0.42, color: 0x5f6670,
+      });
+      world.addDoor ? world.addDoor(door) : world.doors.push(door);
+    }
   }
 
   /* ── THE PLANT, on the surveyed bay grid. Three kinds of cell, drawn per
@@ -626,10 +720,22 @@ function works(world, opts = {}) {
   });
 
   /* ── Gantries down the two long walls, with the aisle between them kept
-   * clear so the fight has a spine. */
+   * clear so the fight has a spine.
+   *
+   * 5.2 AND 4.4 m, NOT THE 6.4 AND 5.4 FIRST WRITTEN, and the number is the
+   * player's own reach. A Force double jump was measured headless with
+   * unlimited Force, sweeping the second jump across every frame of the arc:
+   * 6.18 m above the take-off point, best at frame 40. A deck top sits at
+   * H + 0.16, so a 6.4 m gantry stood 0.38 m over the ceiling of the highest
+   * jump in the game and a 7.2 m one 1.18 m over it — and the only route up
+   * that this game draws is a LADDER, which is geometry with no collider and
+   * nothing to climb it with (see the ladder in `addGantry`). So every deck in
+   * the game was furniture: you could see it, you could never stand on it, and
+   * nothing spawned up there either. At 5.2 the deck is 0.8 m inside the jump,
+   * which is the margin that makes it a place you go rather than a trick. */
   for (const side of [-1, 1]) {
-    addGantry(world, at(side * (R - 16), -18), { length: 30, height: 6.4, yaw: Math.PI / 2, seed: seed + 300 + side, lights: opts.lights !== false });
-    addGantry(world, at(side * (R - 16), 24), { length: 24, height: 5.4, yaw: Math.PI / 2, seed: seed + 310 + side, lights: opts.lights !== false });
+    addGantry(world, at(side * (R - 16), -18), { length: 30, height: 5.2, yaw: Math.PI / 2, seed: seed + 300 + side, lights: opts.lights !== false });
+    addGantry(world, at(side * (R - 16), 24), { length: 24, height: 4.4, yaw: Math.PI / 2, seed: seed + 310 + side, lights: opts.lights !== false });
     addCableRun(world, at(side * (R - 3), -30, 8.2), at(side * (R - 3), 26, 7.2), { seed: seed + 320 + side, sag: 1.5 });
   }
 
@@ -778,9 +884,12 @@ function cut(world, opts = {}) {
   }
 
   /* ── The way the ore left: a conveyor gantry running the length of the cut,
-   * still standing, still empty. */
-  addGantry(world, at(-30, -40), { length: 40, height: 7.2, yaw: 0.3, seed: seed + 500, lights: false });
-  addGantry(world, at(28, 34), { length: 32, height: 6.2, yaw: 2.1, seed: seed + 510, lights: false });
+   * still standing, still empty. 5.2 and 4.4, not 7.2 and 6.2 — a deck the
+   * player cannot reach is scenery, and the measured ceiling of a full double
+   * Force jump is 6.18 m. The note over the works' own gantries has the whole
+   * measurement. */
+  addGantry(world, at(-30, -40), { length: 40, height: 5.2, yaw: 0.3, seed: seed + 500, lights: false });
+  addGantry(world, at(28, 34), { length: 32, height: 4.4, yaw: 2.1, seed: seed + 510, lights: false });
   addPipeRun(world, [at(-52, -10, 5.5), at(-18, -6, 6.2), at(16, 4, 6.0), at(48, 12, 5.2)],
     { count: 3, radius: 0.16, seed: seed + 520 });
 
@@ -798,8 +907,18 @@ function cut(world, opts = {}) {
    * it since. */
   strewGround(world, { seed: seed + 700, radius: 74, spread: 0.34, mat: M.stone,
     landmarks: 1.2, boulders: 1.2, cobble: 1.4 });
-  for (let k = 0; k < 8; k++) {
-    const site = findSite(world, 12, 70, { clearance: 4, maxSlope: 0.32, minHeight: wet + 0.3 });
+  /* WHAT WAS LEFT LYING ON THE FLOOR — and until the water line was fixed,
+   * almost none of it arrived. `minHeight: wet + 0.3` is the right gate (a
+   * crate does not sit in a sump) but it was being asked against a sheet at
+   * +0.30 over a floor whose median is -1.09, so it rejected 92% of the room
+   * and this level shipped with nothing loose on it at all. Measured by
+   * sliceable.mjs once its own survey started attaching `world.level`: 4
+   * reachable crate-sized objects on the whole level, none of them cuttable.
+   * 18, because a working floor that was walked away from has drums and boxes
+   * on it, and because they are the only things down here a blade can take
+   * apart. */
+  for (let k = 0; k < 18; k++) {
+    const site = findSite(world, 12, 70, { clearance: 3.2, maxSlope: 0.32, minHeight: wet + 0.3, tries: 18 });
     if (site) world.addProp(rng() < 0.4 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
   }
   for (let k = 0; k < 5; k++) {
@@ -1801,7 +1920,15 @@ export const LEVELS = {
      * CRUST rather than shallow lava. `sky` is what the surface mirrors, and
      * on this level the sky really is that colour.
      */
-    water: { level: 0.55, shallow: 0xff8a1e, deep: 0x76140a, sky: 0xdc4206, bed: 0x140d10 },
+    /* AND IT BURNS. 52 HP a second, which kills an unarmoured 100 HP jedi in
+     * 1.9 s — long enough that stepping a foot in at the shore and stepping
+     * back out costs a quarter of your health and teaches the lesson, short
+     * enough that walking into the sea is a death and not a swim. Before this
+     * number existed a player could hold forward for 90 s and finish 33 m under
+     * the surface at 100/100, which is what made the whole 69% of this map that
+     * is lava into floor. See src/world/Hazard.js. */
+    water: { level: 0.55, damage: 52, kind: 'lava',
+             shallow: 0xff8a1e, deep: 0x76140a, sky: 0xdc4206, bed: 0x140d10 },
     atmosphere: {
       /* A sky made of smoke: turbidity and mie up, rayleigh down — mie is
        * forward scatter off big particles, which is what ash is, and rayleigh
@@ -2312,7 +2439,15 @@ export const LEVELS = {
      * argument as Mustafar's sea — analytic, so it is the one thing in a very
      * dark room that has its own radiance.
      */
-    water: { level: -1.45, shallow: 0xffc24a, deep: 0x8f2a04, sky: 0xffb04a, bed: 0x1a1010 },
+    /* AND IT IS NOT COVER, which is what this level's own on-screen notify has
+     * always said about it — over a decal. 58 HP a second: the canal is 0.75 m
+     * deep and 4 m across, so crossing it anywhere but the two bridges costs
+     * about 1.4 s and most of your health, and a droid that walks into it (the
+     * bank is 40° and their steering has no opinion about melt) goes down in
+     * it. Hotter than the sea on Mustafar because this is a metre-deep channel
+     * of it and that is a slot you are IN, not a shore you brushed. */
+    water: { level: -1.45, damage: 58, kind: 'melt',
+             shallow: 0xffc24a, deep: 0x8f2a04, sky: 0xffb04a, bed: 0x1a1010 },
     atmosphere: {
       sky: false, bgColor: 0x0f0b0a, fog: true, fogColor: 0x2a1712, fogDensity: 0.0072,
       // The key is a low, dim, warm thing — the glow off the canal reaching the
@@ -2532,7 +2667,10 @@ export const LEVELS = {
         if (site) addHullSection(world, site.pos, { length: 16 + rng() * 9, radius: 3.0, yaw: rng() * TAU, seed: 9350 + k });
       }
       for (const sx of [-1, 1]) {
-        addGantry(world, at(sx * 40, -18), { length: 30, height: 7.0, yaw: 0, seed: 9360 + sx, lights: true });
+        // 5.2, not 7.0: a full double Force jump tops out at a measured 6.18 m
+        // and a deck top sits at H + 0.16, so at 7.0 this was a place nobody
+        // could ever stand. The works' gantry note carries the measurement.
+        addGantry(world, at(sx * 40, -18), { length: 30, height: 5.2, yaw: 0, seed: 9360 + sx, lights: true });
         addCableRun(world, at(sx * 52, -26, 9.0), at(sx * 52, 22, 8.2), { seed: 9370 + sx, sag: 1.6 });
       }
 
@@ -2744,8 +2882,8 @@ export const LEVELS = {
       lift: [0.003, 0.005, 0.012], gain: [1.0, 1.0, 1.01],
       cloudCover: 0.30, cloudLit: 0xfff6e8, cloudDark: 0x98a2b2,
       cloudWindDir: 0.9, cloudWindSpeed: 0.7,
-      /* NO PAINTED RANGES. The bowl's own arcade stands 45 m over the floor at
-       * a radius of 120, which subtends 21° — so a painted curtain at 340 m
+      /* NO PAINTED RANGES. The bowl's own arcade stands 54 m over the floor at
+       * a radius of 120, which subtends 24° — so a painted curtain at 340 m
        * would be entirely behind it, and the parts of the sky that are not
        * behind it are the parts directly overhead. This is the one level whose
        * horizon is a building. */
@@ -2959,10 +3097,22 @@ export const LEVELS = {
    *  stand on — and this level is the place it is put to work. What matters
    *  here is the two numbers that make a forest a forest:
    *
-   *    THE COUNT.   520 trees. A wood is a thing you cannot see through, and
-   *                 what decides that is stems per hectare rather than any
-   *                 amount of fog. At this density the median sight line on
-   *                 the walkable ground is 21 m, against 208 m in the arena.
+   *    THE COUNT.   1,800 trees, and the number is derived where it is set —
+   *                 see the note over `count` in the dressing pass, which is
+   *                 the only place in this file that may state it. A wood is a
+   *                 thing you cannot see through, and what decides that is
+   *                 stems per hectare rather than any amount of fog: measured
+   *                 on the planted stand, the median sight line on the walkable
+   *                 ground is 14 m and the ninetieth percentile 63, against
+   *                 208 m in the arena.
+   *
+   *                 THIS BLOCK SAID 520 AND A 21 m SIGHT LINE, three times, for
+   *                 as long as the level has existed — while two hundred lines
+   *                 below it the pass planted 1,800 and recorded that at 520
+   *                 the median measured 110 m, "which is not a wood, it is a
+   *                 park with trees in it". A maintainer reads the header
+   *                 first, so the header was the one place the level lied
+   *                 about the only number it is designed around, by 3.5×.
    *    THE DENSITY DISTRIBUTION. Not uniform. `drift` places them through a
    *                 cover field, so the wood has thickets you cannot fight in
    *                 and glades you can — and a glade you arrived at is worth
@@ -2970,9 +3120,10 @@ export const LEVELS = {
    *                 felling is for.
    *
    *  AND IT COSTS THREE DRAW CALLS. Trunks, crowns and stumps are three
-   *  InstancedMeshes, and that is true with 520 trees standing and with 520
-   *  lying down. `tools/checks/forest.mjs` measures it, because a felling
-   *  system that spent a draw call per trunk could not be used on a forest.
+   *  InstancedMeshes, and that is true with every tree standing and with every
+   *  one of them lying down. `tools/checks/forest.mjs` measures it, because a
+   *  felling system that spent a draw call per trunk could not be used on a
+   *  forest.
    * ═════════════════════════════════════════════════════════════════════ */
 
   wood: {
@@ -3290,7 +3441,17 @@ export const LEVELS = {
      * water four centimetres deep reads as sky, and the ocean nine metres
      * deep reads as a hole.
      */
-    water: { level: 0.0, shallow: 0x4a6a78, deep: 0x060d14, sky: 0x8fa8c4, bed: 0x1a2028 },
+    /* AND THE SEA IS THE EDGE OF THE LEVEL. `wade` 1.0: you can stand in the
+     * shallows that run over the deck's chamfer, and past a metre of water the
+     * bed pushes you back up its own slope. It is not damage — an ocean that
+     * kills you in two seconds is a lava sea painted blue — and it is not a
+     * swim, because nothing in this game swims. Before it, holding forward for
+     * 45 s from the spawn ended on the seabed at y = -9.0 m with the camera
+     * under the water plane for 64% of the walk, at full health: "there is
+     * nowhere else to go", says the blurb, over a level you could stroll out
+     * of. See src/world/Hazard.js. */
+    water: { level: 0.0, wade: 1.0, kind: 'water',
+             shallow: 0x4a6a78, deep: 0x060d14, sky: 0x8fa8c4, bed: 0x1a2028 },
     atmosphere: {
       /* A storm sky, which the model can nearly do: turbidity and mie up,
        * rayleigh down — mie is forward scatter off big particles, and rain is
@@ -3576,7 +3737,13 @@ export const LEVELS = {
     pool: ['b2', 'droideka', 'acolyte', 'acolyte', 'b1', 'beast', 'walker', 'b2'],
     groundColor: 0x252d31,
     spawnRadius: [24, 46],
-    water: { level: 0.30, shallow: 0x2b4a52, deep: 0x080f16, sky: 0x1c2a34, bed: 0x1e2422 },
+    /* −1.50, and the cavern preset's `waterLevel` says the same thing — see the
+     * long note there for the 92.6%-submerged measurement that moved it. `wade`
+     * 1.0 keeps you out of the two deep bays (the deepest is 1.67 m) without
+     * killing you for standing in water: this is a flooded excavation, not a
+     * hazard, and what it is for is ground you fight AROUND. */
+    water: { level: -1.50, wade: 1.0, kind: 'water',
+             shallow: 0x2b4a52, deep: 0x080f16, sky: 0x1c2a34, bed: 0x1e2422 },
     atmosphere: {
       sky: false, bgColor: 0x05080b, fog: true, fogColor: 0x0a1014, fogDensity: 0.0108,
       /* THE DARKEST ATMOSPHERE IN THE GAME, and the numbers say so rather than

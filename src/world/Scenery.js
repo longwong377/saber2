@@ -26,7 +26,7 @@ import { grassSprite, smokeSprite } from '../engine/Textures.js';
 /* The cel model's own arithmetic, so `grassShade` cannot drift from the shader
  * it stands for. Cel.js imports nothing at all — in particular not Engine.js,
  * which would close the loop this file's own note at line 566 is about. */
-import { celTone, CEL } from '../toon/Cel.js';
+import { celTone, celBand, CEL } from '../toon/Cel.js';
 import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng(70707);
@@ -2909,21 +2909,43 @@ const WATER_FRAG = /* glsl */`
      */
     vec3 R = reflect(-V, N);
     float facet = smoothstep(0.02, 0.34, clamp(R.y, 0.0, 1.0));
+    /*
+     * AND BOTH VIEW TERMS ARE QUANTISED, WHICH IS WHAT MAKES THIS SURFACE PART
+     * OF THE SAME DRAWING AS EVERYTHING ELSE IN THE FRAME.
+     *
+     * Rule 8 of src/toon/REFERENCE.md deletes specular everywhere — the GGX
+     * lobe, the sheen lobe and the environment reflection are cut out of
+     * three's ShaderChunks outright rather than driven to zero — and water and
+     * lava were the last two surfaces in the game still running a
+     * view-dependent lobe of their own. Measured with waterShade() by walking
+     * the eye round the sheet at 8 degrees of elevation, with climb 0 so
+     * dot(bedN,L) cannot move and only the view term can: luminance swung
+     * 6.63x on mustafar, 6.80x on the wood, 7.20x on kamino, 2.91x on the
+     * foundry and 1.58x on the deeps. A surface that changes brightness
+     * sevenfold as you walk round it is a specular highlight, whatever it is
+     * called in the code.
+     *
+     * Two levels of Fresnel and two of facet: the mirror still exists — a
+     * grazing sheet still reads as a mirror and a steep one still reads into
+     * the body — but it arrives as a DRAWN region with an edge, which is what
+     * the rest of the game does with the same information.
+     */
+    fres = saberCelQuant(fres, 2.0);
+    facet = saberCelQuant(facet, 2.0);
     // Blue, and DARK: 40% of the sky's own radiance, because what a level ray
     // finds over a canyon is distance, and distance in shade is not a light
     // source. Keeping the hue is what stopped it reading as paper.
     vec3 mirror = mix(uSky * 0.40, mix(uSky, fogColor, 0.16), facet);
     col = mix(col, mirror, fres * (0.55 + dw * 0.40));
     /*
-     * Sun on water, in two lobes. The shipped shader had only the pinpoint one
-     * at exponent 90, which lights a handful of pixels and reads as nothing;
-     * what says "wet" from a standing eye is the BROAD sheen down the sun's
-     * bearing. Both are gated by the Fresnel, so the sheen lives at grazing
-     * angles where a real one does and never appears looking straight down.
+     * NO SUN LOBE. There were two — a pinpoint at exponent 90 and a broad
+     * sheen at 8, both gated by the Fresnel — and they are gone rather than
+     * dimmed, for the reason the GGX lobe is gone from the physical BRDF: a
+     * term that is not in the shader cannot be brought back by a tuning pass.
+     * What is left says "wet" the way the rest of this game says everything:
+     * with a flat region and an edge.
      */
-    float sd = max(dot(reflect(-L, N), V), 0.0);
-    float spec = pow(sd, 90.0) * 1.9 + pow(sd, 8.0) * 0.34;
-    col += vec3(1.0,0.96,0.88) * spec * fres * (0.35 + dw * 0.65);
+    col = saberCelBand(col, 3.0);
 
     /*
      * The lap belongs at a SHORE, and a shore is where the bed climbs out of
@@ -2983,6 +3005,11 @@ const WATER_FRAG = /* glsl */`
  * a standing player looking down a river; 45 is looking over the side of it),
  * `ny` the surface normal's y — the ripple noise holds it near 0.996.
  */
+/** `saberCelQuant` on a scalar. Local rather than imported: Cel.js publishes
+ *  the GLSL and a CPU twin for the BAND, and this is the other quantiser — the
+ *  one that snaps to the nearest node so 0 stays 0 and 1 stays 1. */
+const celQuant = (v, n) => Math.floor(v * n + 0.5) / n;
+
 export function waterShade(o) {
   const dep = o.depth ?? 1, bedDep = o.bedDepth ?? dep, climb = o.climb ?? 0;
   const V = [Math.cos((o.viewDeg ?? 8) * Math.PI / 180), Math.sin((o.viewDeg ?? 8) * Math.PI / 180), 0];
@@ -3010,16 +3037,13 @@ export function waterShade(o) {
 
   // R.y for a surface that is essentially level is just the view elevation
   const Ry = clamp(2 * dot3(N, V) * N[1] - V[1], 0, 1);
-  const facet = ss(0.02, 0.34, Ry);
+  // the same two quantisers the shader applies, and for the same reason
+  const facet = celQuant(ss(0.02, 0.34, Ry), 2);
+  const fresQ = celQuant(fres, 2);
   const mirror = mix3(o.sky.map((v) => v * 0.40), mix3(o.sky, o.fog, 0.16), facet);
-  const mirrorK = fres * (0.55 + dw * 0.40);
-  col = mix3(col, mirror, mirrorK);
+  const mirrorK = fresQ * (0.55 + dw * 0.40);
+  col = celBand(mix3(col, mirror, mirrorK), 3);
 
-  const Rl = [2 * dot3(N, Ln) * N[0] - Ln[0], 2 * dot3(N, Ln) * N[1] - Ln[1], 2 * dot3(N, Ln) * N[2] - Ln[2]];
-  const sd = Math.max(dot3(Rl, V), 0);
-  const spec = Math.pow(sd, 90) * 1.9 + Math.pow(sd, 8) * 0.34;
-  const sheen = [1.0, 0.96, 0.88].map((v) => v * spec * fres * (0.35 + dw * 0.65));
-  col = col.map((v, i) => v + sheen[i]);
 
   const shore = ss(0.30, 0.03, dep) * ss(0.0, 0.025, dep);
   const lapBand = shore * ss(0.06, 0.30, climb);
@@ -3036,7 +3060,7 @@ export function waterShade(o) {
     col, alpha, fres, mirrorK, foam, wet, climb,
     // what the two halves actually contribute, so "does a grazing surface
     // mirror more than it scatters" is a comparison and not an opinion
-    reflected: lum(mirror) * mirrorK + lum(sheen),
+    reflected: lum(mirror) * mirrorK,
     scattered: lum(diffuse) * (1 - mirrorK) + foam,
   };
 }

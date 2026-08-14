@@ -26,6 +26,10 @@
  * it with, and whether you have ever reached the top.
  */
 
+// The ladder itself, so `bestTier` can be shown as the place it names rather
+// than as an index — and so there is one list of rung names in the tree.
+import { DESCENT, ladderName } from './Run.js';
+
 const KEY = 'saber.progress.v1';
 /** How many runs to keep. A history, not an archive. */
 const KEEP = 40;
@@ -112,9 +116,23 @@ export function recordRun(summary) {
   for (const id of new Set(summary.boons || [])) p.lit[id] = (p.lit[id] || 0) + 1;
   p.communed += (summary.lit || []).length;
 
+  /**
+   * THE SEED AND THE LADDER, which `Run.summary()` has always carried and this
+   * function has always dropped.
+   *
+   * `Run.seed` describes itself as the number that makes a run "a shareable
+   * number rather than an unrepeatable accident" — and it was not written down
+   * anywhere a player could find it after the run ended, which is the only
+   * moment sharing one is worth anything. `mode` was the same: summary carried
+   * it, nothing compared it, so a depth of 16 could not say what it was 16 of.
+   * Both are on the entry rather than at the top level because both are facts
+   * about ONE run, and this file keeps totals at the top and runs in `recent`.
+   */
   p.recent.unshift({
     depth: summary.depth || 0, tier: summary.tier || 0, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
+    mode: summary.mode || null, seed: summary.seed ?? null,
+    stars: (summary.lit || []).length,
     boons: (summary.boons || []).slice(0, 12),
   });
   if (p.recent.length > KEEP) p.recent.length = KEEP;
@@ -122,18 +140,51 @@ export function recordRun(summary) {
   return p;
 }
 
-/** For the menu: a few lines a player can read without a spreadsheet. */
+/**
+ * For the menu: a few lines a player can read without a spreadsheet.
+ *
+ * AND THE ONLY READER THIS FILE HAS, which is why it now touches all of it.
+ * Six of the twelve fields `recordRun` writes had no reader anywhere in the
+ * tree — `bestScore`, `bestTier`, `bySpecies`, `communed`, `crowned` and the
+ * forty-run `recent` history, which stores each run's first twelve boons —
+ * checked by grepping every name across src/ excluding this file. Storage that
+ * nothing displays is not a record, it is a write-only log, and the honest
+ * choice was either to delete the fields or to show them. They are shown: the
+ * header of this file says what is here is "the shape of a history: how deep
+ * you have been, what you did it with, and whether you have ever reached the
+ * top", and every one of them is part of that sentence.
+ *
+ * Still a handful of lines and still nothing that buys anything.
+ */
 export function progressLines(p = read()) {
   if (!p.runs) return ['No runs yet.'];
   const out = [
     `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`,
-    `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`,
+    `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`
+      + (p.bestTier ? ` · ${DESCENT[p.bestTier]?.name || `rung ${p.bestTier + 1}`}` : '')
+      + (p.bestScore ? ` · best ${Math.floor(p.bestScore).toLocaleString()}` : ''),
   ];
   if (p.wins) out.push(`${p.wins} descent${p.wins === 1 ? '' : 's'} of the works`);
   const stars = Object.keys(p.lit || {}).length;
-  if (stars) out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`);
-  const orders = Object.entries(p.byOrder).sort((a, b) => b[1] - a[1]);
+  if (stars || p.communed) {
+    out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`
+      + (p.communed ? `, ${p.communed} lit by communion` : ''));
+  }
+  // What has ever been carried to the crown. A note about what has worked, and
+  // emphatically not a gate: every card is in every draft from the first run.
+  if (p.crowned?.length) out.push(`${p.crowned.length} boons have reached the bottom with you`);
+  const deepest = (map) => Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
+  const orders = deepest(p.byOrder), species = deepest(p.bySpecies);
   if (orders.length) out.push(orders.map(([k, v]) => `${k} ${v}`).join('  ·  '));
+  if (species.length) out.push(species.map(([k, v]) => `${k} ${v}`).join('  ·  '));
+  const last = p.recent?.[0];
+  if (last) {
+    out.push(`last: ${last.depth} wave${last.depth === 1 ? '' : 's'}`
+      + (ladderName(last.mode) ? ` of ${ladderName(last.mode)}` : '')
+      + (last.won ? ', crowned' : '')
+      + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
+      + (last.seed != null ? ` · seed ${last.seed}` : ''));
+  }
   return out;
 }
 

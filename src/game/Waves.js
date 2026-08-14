@@ -38,6 +38,32 @@ import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
 
+/**
+ * Put the wave stream on a stated number.
+ *
+ * `Run.seed` says of itself "the seed EVERYTHING random in this run derives
+ * from, so a run is a shareable number rather than an unrepeatable accident",
+ * and nothing read it: the field was generated, carried across every landing
+ * and handed to `summary()`, while the only construction of a wave stream in
+ * the game was the `Math.random()` above, drawn once at module load. Two runs
+ * on the same seed composed different waves, which makes the stated property
+ * false rather than merely unimplemented.
+ *
+ * PER RUNG, not per run, and that is the whole subtlety: a rung builds a fresh
+ * World and a fresh director, so seeding with the run's number alone would
+ * replay the intake's waves in the foundry, in the cut and in the deeps. The
+ * rung index is mixed in with the golden-ratio constant Knuth's multiplicative
+ * hash uses, so four rungs of one run are four decorrelated streams and the
+ * whole descent is still one number.
+ *
+ * @returns the 32-bit state actually installed, so a caller can record it.
+ */
+export function seedWaves(seed, rung = 0) {
+  const s = (Math.imul((seed | 0) ^ Math.imul(rung | 0, 0x9E3779B9), 0x85EBCA6B) >>> 0) || 1;
+  rng.seed(s);
+  return s;
+}
+
 export const MODES = {
   waves:   { name: 'Trial of Waves', blurb: 'Endless escalation. Survive as long as the Force allows.' },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
@@ -197,6 +223,8 @@ export const BOON_POWER = 1.05;
 export const DRAFT_EVERY = 2;
 /** A set-piece every this many waves — forever, not for the first thirty. */
 export const BOSS_EVERY = 5;
+/** The modes that hand out boons. See `WaveDirector.drafts`. */
+export const DRAFT_MODES = ['roguelite', 'gauntlet'];
 /** How much of a boss wave's budget the set-piece itself is worth. */
 export const BOSS_SHARE = 0.28;
 /** From here on, the set-piece arrives promoted. */
@@ -281,6 +309,17 @@ export class WaveDirector {
     this.mode = opts.mode ?? 'roguelite';
     this.pool = opts.pool || ['b1', 'b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'];
     this.maxAlive = opts.maxAlive ?? 26;
+    /**
+     * THE RUN'S OWN NUMBER, ON THE STREAM THAT COMPOSES ITS WAVES.
+     *
+     * Read here rather than in `start` because a rung is one director for its
+     * whole life, and reseeding at the top of every wave would hand wave 2 the
+     * same draw wave 1 got. `seed` is null on every mode that has no run, and
+     * those keep the module's load-time `Math.random()` seed — one duel is not
+     * meant to play out identically to the last one.
+     */
+    this.seed = (world?.run && !world.run.done) ? world.run.seed ?? null : null;
+    if (this.seed !== null) seedWaves(this.seed, world.run.tier | 0);
     this.onWaveStart = null;
     this.onWaveClear = null;
     this.onDraft = null;
@@ -311,6 +350,38 @@ export class WaveDirector {
   }
 
   get sandbox() { return this.mode === 'sandbox'; }
+
+  /**
+   * WHERE THIS LADDER ALREADY STANDS — the fix for the Descent's sawtooth.
+   *
+   * `main.js` calls `world.director.start(1)` on every deploy, and a landing
+   * re-enters deploy. So the only mode in the game with a run restarted its
+   * wave counter at 1 four times: the composed budgets ran 7,11,15 · 7,11,15,21
+   * · 7,11,15,21 · 7,11,15,21,26, which is a difficulty curve that DROPS 53%
+   * and then 67% and then 67% at the exact three moments the fiction says you
+   * went deeper. Everything the escalation is made of reads the wave number, so
+   * the whole ladder above wave 5 was stranded with it: `unlockedAt` never
+   * reached the droideka (6), the acolyte (7) or the walker (12), `eliteChance`
+   * topped out at 0.066 of its 0.40 ceiling, `heavyBias` at 0.035 of 0.9, and
+   * the bottom of a sixteen-wave descent fielded B1s and B2s.
+   *
+   * `wave` is therefore the wave number OF THE RUN — 1..16 down the Descent,
+   * 1..∞ everywhere else — which is also the number every reader outside this
+   * file already wanted: the HUD banner, the death card's "Wave reached", the
+   * pause card, the depth the constellation gates its stars on, and the number
+   * a co-op host puts on the wire. What is rung-local is `onWaveClear`'s
+   * argument (see the wave-clear block in `update`), because that is the one
+   * consumer — World's `run.wave >= rung.waves` — asking about THIS rung.
+   */
+  get floor() {
+    const run = this.world?.run;
+    if (!run || run.done) return 0;
+    const f = run.floor;
+    return Number.isFinite(f) && f > 0 ? f : 0;
+  }
+
+  /** Waves cleared on the current rung, which is what `run.wave` means. */
+  get rungWave() { return Math.max(0, this.wave - this.floor); }
 
   /**
    * THE RAMP, RE-DERIVED — and the derivation is one line of arithmetic, not a
@@ -377,9 +448,70 @@ export class WaveDirector {
    */
   isBossWave(wave) { return wave > 0 && wave % BOSS_EVERY === 0; }
 
-  /** A draft every other wave; boss waves are the big ones. See BOONS. */
-  isDraftWave(wave) { return wave > 0 && wave % DRAFT_EVERY === 0; }
+  /**
+   * A draft every other wave — AND after every set-piece, which is the half of
+   * this rule that was written down and not implemented.
+   *
+   * The comment on the draft call in `update` says "a set-piece cleared is
+   * worth more than a wave cleared: the boss draft is one card wider AND cannot
+   * be three commons", and `draftSize` returns 4 on a boss wave and the call
+   * passes `floor: 'rare'`. None of it could ever run. Set-pieces land on
+   * multiples of BOSS_EVERY (5) and drafts on multiples of DRAFT_EVERY (2), so
+   * the two coincided only every tenth wave — and every tenth wave is an
+   * ATTUNEMENT draft, which discards `n` and `floor` entirely. Measured over
+   * forty waves: drafts at 2,4,…,40, boss drafts at 10,20,30,40, all four of
+   * them the five attunements, ZERO drafts ever laid out at draftSize 4, and
+   * the set-pieces at 5, 15, 25 and 35 paid nothing at all beyond the ordinary
+   * 5.5 s intermission.
+   *
+   * Clearing a set-piece now always pays a draft. That is +3 drafts in thirty
+   * waves (one card draft at wave 5 and two attunement drafts at 15 and 25),
+   * which is inside every bound `tools/checks/escalation.mjs` holds the cadence
+   * to and leaves DRAFT_EVERY — the constant `budgetFor`'s ramp is derived
+   * from — untouched.
+   */
+  isDraftWave(wave) { return wave > 0 && (wave % DRAFT_EVERY === 0 || this.isBossWave(wave)); }
   draftSize(wave) { return this.isBossWave(wave) ? 4 : 3; }
+
+  /**
+   * Does this mode hand out cards at all?
+   *
+   * It was `this.mode === 'roguelite'`, written when that was the only mode
+   * with boons in it — and THE DESCENT, the one mode in the game that owns a
+   * Run, that carries boons across a landing, that replays them into a freshly
+   * built player and that ends in a crown, is `gauntlet`. It fell on the wrong
+   * side of that equality for its whole life: measured over twenty-four waves a
+   * roguelite drafted twelve times and a gauntlet drafted zero, so the flagship
+   * run mode's entire reward loop was the constellation and nothing else.
+   *
+   * A LIST, so the next mode that wants a run declares itself here rather than
+   * being caught by an `===` somebody has to remember to widen. `waves` and
+   * `duel` are deliberately absent: the Trial of Waves is the undecorated
+   * escalation and a duel is a duel.
+   */
+  get drafts() { return DRAFT_MODES.includes(this.mode); }
+
+  /**
+   * Does clearing the wave now on the field hand the player to a landing?
+   *
+   * A rung's last wave ends in the landing card, and the ladder's last wave
+   * ends in the crown. `main.js` raises both through the same `Screens.take` a
+   * draft goes through, and `take` REPLACES what is on the screen — so a draft
+   * offered on that same frame covers the card that was about to carry the run
+   * down a rung, and at the bottom it covers the crown with a card whose answer
+   * calls `resume()` on a run that is already over. The landing IS that wave's
+   * reward, and the boons cross it anyway.
+   *
+   * Only reachable at all because the Descent drafts now; it is stated here
+   * rather than left to the two rung lengths happening not to line up with
+   * DRAFT_EVERY, which is how a ladder retuned in Run.js strands a player on a
+   * card they cannot spend.
+   */
+  get rungEnds() {
+    const run = this.world?.run;
+    if (!run || run.done) return false;
+    return this.rungWave >= (run.rung?.waves ?? Infinity);
+  }
 
   unlockedAt(wave) {
     const list = ['b1'];
@@ -591,7 +723,17 @@ export class WaveDirector {
       this.intermission = 0;
       return;
     }
-    this.wave = wave;
+    /**
+     * A RUNG IS NOT A NEW LADDER. `main.js` says `start(1)` on every deploy,
+     * including the one a landing re-enters, and it means "the first wave of
+     * this level" — which on the third rung of the Descent is wave 8 of the
+     * run. Clamping to the floor is what makes those two readings the same
+     * number. Everything that legitimately names an absolute wave — the
+     * escalation's own `start(this.wave + 1)`, `restartWave`'s
+     * `start(director.wave)` — is already above the floor and passes through
+     * untouched.
+     */
+    this.wave = Math.max(wave, this.floor + 1);
     this._compose();
     this.active = true;
     this.intermission = 0;
@@ -645,7 +787,16 @@ export class WaveDirector {
     let spend = budget * BOSS_SHARE;
     // The old gates, kept: an acklay at wave 5 is not a set-piece, it is the
     // end of the run. Two acolytes, then a walker, then the acklay.
-    const ladder = SET_PIECE.filter(s => wave >= s.from && this.pool.includes(s.type)).map(s => s.type);
+    //
+    // …EXCEPT ON THE RUNG THAT CALLS ITSELF THE BOSS RUNG, which is the reader
+    // `DESCENT[3].boss` never had. The acklay's rung is written for wave 20 and
+    // the whole Descent is sixteen waves long, so the climax of the only mode
+    // in the game with an ending was the same pair of acolytes wave 5 opens
+    // with — on a level whose pool names `beast` and `walker` explicitly. A
+    // rung that declares itself the bottom fields everything its level brought.
+    const bottom = !!this.world?.run?.rung?.boss && !this.world.run.done;
+    const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from) && this.pool.includes(s.type))
+      .map(s => s.type);
     if (!ladder.length) return out;
     // ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two
     // acklays is not an escalation of one acklay, it is the same fight twice at
@@ -869,19 +1020,30 @@ export class WaveDirector {
 
     if (!this.spawnQueue.length && !this.arrivals.pending && alive === 0) {
       this.active = false;
-      const draft = this.mode === 'roguelite' && this.isDraftWave(this.wave);
+      const draft = this.drafts && this.isDraftWave(this.wave) && !this.rungEnds;
       this.intermission = draft ? 999 : 5.5;
-      if (this.onWaveClear) this.onWaveClear(this.wave);
+      /**
+       * RUNG-LOCAL, and it is the only number in this file that is.
+       *
+       * World's handler answers one question with it — `run.wave >= rung.waves`,
+       * "was that the last wave of THIS rung" — and `Run.depth` adds the rungs
+       * below back on. Handing it the run-wide number would end the foundry
+       * after one wave. Everything else about a cleared wave reads
+       * `director.wave`, which is run-wide.
+       */
+      if (this.onWaveClear) this.onWaveClear(this.rungWave);
       if (draft && this.onDraft) {
         const boss = this.isBossWave(this.wave);
         this.onDraft(drawBoons(this.draftSize(this.wave), this.world.takenBoons, this.wave, {
           // A set-piece cleared is worth more than a wave cleared: the boss
           // draft is one card wider AND cannot be three commons.
           floor: boss ? 'rare' : null,
-          // …and past the first set-piece it is not a card at all. See
+          // …and past the FIRST set-piece it is not a card at all. See
           // ATTUNEMENTS: this is the growth that does not converge, and it is
           // put behind the boss so that it paces with the thing it is racing.
-          attune: boss && this.wave >= BOSS_EVERY,
+          // `drawBoons` owns which boss waves those are (isAttuneWave), so the
+          // co-op relay in main.js cannot draw a different hand from the host's.
+          attune: boss,
         }));
       }
     }
@@ -1237,10 +1399,28 @@ export function axisCountOf(taken, axis) {
   return n;
 }
 
-/** Per-wave boon charges, handed back at the top of every wave. */
+/**
+ * Per-wave boon charges, handed back at the top of every wave.
+ *
+ * TO THE NUMBER OF RANKS HELD, which is the only definition that survives a
+ * card that stacks. `if (secondWind === 0) secondWind = 1` was two bugs in one
+ * line: a player holding both ranks of Second Wind got ONE charge back at the
+ * top of every wave after the first, so the rank they paid for expired after a
+ * single use; and `defaultBoonMods` seeds the key at 0, so the `=== 0` test
+ * fired for every player in the game and handed a charge to people who had
+ * never seen the card. (That second one was inert — the guard that reads the
+ * charge is installed by `apply`, so an unbought charge had no reader — but a
+ * flag that says a player has something they do not is how the next reader
+ * added here becomes a bug nobody wrote.)
+ *
+ * The player's own rank ledger is the source, exactly as `Player.applyBoon`
+ * uses it: a run replayed into a freshly built body arrives at the same ranks,
+ * so it arrives at the same charges.
+ */
 export function refreshWaveBoons(world) {
   for (const p of (world?.players || [])) {
-    if (p?.boonMods && p.boonMods.secondWind === 0) p.boonMods.secondWind = 1;
+    if (!p?.boonMods) continue;
+    p.boonMods.secondWind = rankOf(p.boons, 'secondwind');
   }
 }
 
@@ -1315,21 +1495,50 @@ function encircleGuard(amount) {
   return amount * (1 - Math.min(ENCIRCLE_CAP, per * n));
 }
 
-/** Steadfast — the big hits are the ones that get halved, and none of them move you. */
 const STAGGER_AT = 14;
+/**
+ * Steadfast — the big hits are the ones that get halved, and none of them move
+ * you. `boonMods.steadfast` IS A REDUCTION, not a multiplier — and the guard
+ * used to read it as the second one.
+ *
+ * The card accumulates `min(0.75, steadfast + 0.5·rankScale)` and the cap's own
+ * comment explains itself as "two ranks of 0.5 would be immunity to every heavy
+ * blow", which is only true if the number is the share taken OFF; `Player.
+ * defaultBoonMods` seeds it at 0, which is only sane the same way. The guard
+ * then returned `amount * k`. Measured on a 40-point heavy blow: no card 40.00,
+ * rank I 20.00, rank II 30.00 — rank two of a rare card cost the player a draft
+ * slot (or 9+ Insight on the Guard constellation, where a second rank carries
+ * an extra RANK_STEP) to take FIFTY PERCENT MORE damage from every heavy blow
+ * than rank one, with nothing on screen to say so.
+ *
+ * Read as a reduction the ladder is monotone and the cap does what it says:
+ * 40 → 20.00 → 10.00, and the second rank stops one quarter short of immunity.
+ */
 function steadfastGuard(amount) {
-  const k = this.boonMods.steadfast ?? 1;
+  const cut = this.boonMods.steadfast ?? 0;
+  if (!(cut > 0)) return amount;
   const scale = this.world?.difficulty?.damageTaken ?? 1;
-  return amount * scale > STAGGER_AT ? amount * k : amount;
+  return amount * scale > STAGGER_AT ? amount * (1 - Math.min(cut, 1)) : amount;
 }
 function steadfastStance() { this.staggerTimer = 0; }
 
-/** Second Wind — once a wave, the blow that would end it does not. */
+/**
+ * Second Wind — once a wave, the blow that would end it does not. SPEND ONE
+ * CHARGE, not all of them.
+ *
+ * `= 0` is an assignment where the card needs a decrement, and it made the
+ * second rank of a `stack: 2` rare card a measured no-op: the card's own
+ * comment says "two is the cap because a third makes a wave essentially
+ * unloseable", and two ranks bought exactly what one rank bought. Measured at
+ * 40 hp against 500-point blows — rank I survives 1 of 3, rank II survived 1 of
+ * 3 — because the first save threw the second charge away in the same
+ * instruction that spent the first.
+ */
 function secondWindGuard(amount) {
   if (!(this.boonMods.secondWind > 0)) return amount;
   const scale = this.world?.difficulty?.damageTaken ?? 1;
   if (amount * scale < this.hp) return amount;
-  this.boonMods.secondWind = 0;
+  this.boonMods.secondWind -= 1;
   this._secondWindFired = true;
   return Math.max(0.01, (this.hp - 1) / scale);
 }
@@ -2448,6 +2657,25 @@ export const ATTUNEMENTS = [
   },
 ];
 
+/**
+ * Which set-piece drafts are attunements rather than cards.
+ *
+ * "…and past the first set-piece it is not a card at all" is what the draft
+ * call has always said, and `attune: boss && wave >= BOSS_EVERY` is not that
+ * sentence: a boss wave is a multiple of BOSS_EVERY, so `wave >= BOSS_EVERY` is
+ * implied by `boss` and the condition was the constant `true`. Every boss draft
+ * that could ever be laid out returned these five, and the four-card rare-floor
+ * draft the same call configures two lines above was unreachable code.
+ *
+ * The rule lives HERE, below the pool it selects from, rather than at the two
+ * call sites — the director and the co-op relay in main.js — because those two
+ * hands must be the same hand. The relay passes its own `attune` computed off a
+ * wave number sent over the wire; drawBoons is what makes it agree.
+ */
+export function isAttuneWave(wave) {
+  return wave > BOSS_EVERY && wave % BOSS_EVERY === 0;
+}
+
 /** A card or an attunement, by id — the HUD and the scoreboard want either. */
 export function boonById(id) {
   return BOONS.find((b) => b.id === id) || ATTUNEMENTS.find((a) => a.id === id) || null;
@@ -2495,7 +2723,7 @@ export function drawBoons(n, taken = new Set(), wave = 1, opts = {}) {
   // commitment to an axis, and a draft that happened not to offer the dark one
   // would be denying a build by dice — with a slice of four out of five, the
   // last axis in the array was literally unreachable for a whole run.
-  if (opts.attune) return ATTUNEMENTS.slice();
+  if (opts.attune && isAttuneWave(wave)) return ATTUNEMENTS.slice();
   // A card is in the pool while it has ranks left, not while it is unheld —
   // that one condition is what stops a deep run from draining the whole system
   // and then drafting nothing. See RANK_DIMINISH.

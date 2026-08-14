@@ -1,31 +1,46 @@
 /**
- * The wire. — src/net/Net.js, src/game/World.js
+ * THE WIRE — src/net/Net.js, src/game/World.js, src/main.js.
  *
- * Co-op in this game is real: 417 lines of WebRTC, host-authoritative waves,
- * 18 Hz enemy snapshots, 24 Hz avatars, a 90 ms interpolation buffer, and the
- * full local rig and arm IK running on remote bodies. It had exactly one thing
- * wrong with it, and it was fatal:
+ * THIS FILE USED TO BE NINE REGULAR EXPRESSIONS. It constructed no `Net`, no
+ * `RemoteAvatar` and no `World`, sent no message and asserted no number — every
+ * check was `readFile` + `indexOf` + `RegExp.test` over three source files. It
+ * reported nine green on a build where:
  *
- *   `World.applyClaim` existed to receive "I cut this" from a client.
- *   `Net.toHost` existed to send it.
- *   NOTHING EVER CALLED EITHER. `toHost` had zero callers in the repository.
+ *   · three- and four-player co-op collapsed EVERY remote player into one
+ *     shared body, because the relay's `from` field was written on the wire and
+ *     read by nothing (measured: 840 m of travel and a 1200 m/s peak for two
+ *     players standing still);
+ *   · a joining player's world had no enemy fire at all — 0 bolts over 10 s
+ *     against three enemies standing on them, where the identical scene
+ *     simulated locally fired 33 and killed them — so there was nothing to
+ *     deflect, nothing to parry, and no perfect return available in the mode
+ *     the whole product is about;
+ *   · nobody in co-op ever got a death card, and `Player.respawn` had zero
+ *     callers;
+ *   · everything a client killed with anything except direct blade contact was
+ *     a phantom, and a friend's kills were credited to nobody.
  *
- * Both ends of the wire were built and nothing crossed it. So a joining player
- * could move, be seen and deflect — and every enemy they hit stood back up
- * 55 ms later, when the host's next snapshot hard-wrote `e.hp`. You could join
- * a game; you could not kill anything in it. This is `grip.mjs`'s "written and
- * never read" in its most expensive form, and Net.js had no test coverage of
- * any kind, so nothing said so.
+ * Two of its checks were actively tuned to the stub: one asserted exactly two
+ * claim kinds and called them "the two ways of hurting an enemy" (there are at
+ * least six), and its general rule — "no message type is handled and never
+ * sent" — has no converse, so it structurally cannot catch a field that is sent
+ * and never read, which is precisely what `from`, `ts` and `rem` all were.
  *
- * The receiver also asked for the cut parameter as `msg.t` — the same field
- * `Net._route` switches on — so it would have read the string 'claim' if a
- * message had ever arrived. Two bugs that could only ever be found together.
+ * So the shape of this file is the finding: these DRIVE two real endpoints
+ * against each other. tools/checks/_coop.mjs is a PeerJS stub with the property
+ * that matters (on a client every message arrives on one connection, so
+ * `conn.peer` is a constant) plus the thirty-line stub engine lifecycle.mjs
+ * proved a World boots on.
  *
- * The last check here is the general form and it is the one worth keeping: a
- * message type the receiver handles must have something, somewhere, that sends
- * it.
+ * Every module is reached by `await import` inside a check body. src/engine/
+ * Engine.js rewrites three's ShaderChunks as a module side effect behind
+ * once-only flags, and a STATIC import edge from a check patches the wrong copy
+ * of three and burns the flag for the shader suites. World.js imports Engine.js,
+ * so that rule covers everything here. See tools/checks/materials.mjs.
  */
 import { readFile, readdir } from 'node:fs/promises';
+
+const src = (rel) => readFile(new URL(`../../src/${rel}`, import.meta.url), 'utf8');
 
 /** Every .js under src/, as [relative path, text]. */
 async function sources() {
@@ -44,64 +59,812 @@ async function sources() {
 
 const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
+/** A three-player session over the stub broker: host + two clients, all open. */
+async function session(names = ['HOST', 'ALPHA', 'BRAVO'], looks = []) {
+  const H = await import('./_coop.mjs');
+  const { Net } = await import('../../src/net/Net.js');
+  const fake = H.installPeerStub();
+  const settle = async (n = 8) => { for (let i = 0; i < n; i++) { await new Promise(r => setTimeout(r, 0)); fake.flush(); } };
+  const host = new Net();
+  const code = await (async () => { const p = host.host(names[0], { level: 'arena' }, looks[0] || null); await settle(); return p; })();
+  const clients = [];
+  for (let i = 1; i < names.length; i++) {
+    const c = new Net();
+    const p = c.join(code, names[i], looks[i] || null);
+    await settle();
+    await p;
+    clients.push(c);
+  }
+  await settle();
+  return { host, clients, fake, settle, code, close: () => fake.restore() };
+}
+
+/** The avatar packet Net sends, without needing a Player to build it from. */
+const avatarAt = (x) => ({ t: 'avatar', p: [x, 0, 0], f: 0, h: 100, a: 1,
+  hp0: [x, 1.2, 0], hq: [0, 0, 0, 1], lit: 1 });
+
 export async function run({ check, assert }) {
-  check('co-op: a client that cuts something tells the host', async () => {
-    const world = strip(await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8'));
-    // The claim has to be sent from the blade path, not merely defined: the
-    // whole defect was a helper nobody called.
-    const i = world.indexOf('  _applyBladeEvent(');   // the DEFINITION, not the call above it
-    assert(i > 0, 'the blade event handler is gone');
-    const body = world.slice(i, world.indexOf('  _applyClash(', i));
-    assert(/_claim\(/.test(body),
-      'the blade path no longer claims its hits to the host — a client cannot kill anything');
-    assert(/k: 'cut'/.test(body) && /k: 'dmg'/.test(body),
-      'only one of the two ways of hurting an enemy is claimed; the other is silently local-only');
-    // and the sender has to actually reach the wire
-    assert(/_claim\(msg\)\s*\{[^}]*toHost\(msg\)/.test(world.replace(/\n/g, ' ')),
-      '_claim does not reach Net.toHost');
-    return 'cut and grind both claimed, through toHost';
+  /* ══ identity ═══════════════════════════════════════════════════════════ */
+
+  check('co-op: four players are four bodies, not one body wearing four names', async () => {
+    /**
+     * THE RELAY THREW AWAY WHO SENT THE PACKET.
+     *
+     * On a client every message in the session arrives on the single host
+     * connection, so `conn.peer` is a constant — the host's id. The relay
+     * stamped `from` and NOTHING READ IT (`grep -rn 'msg.from' src/` returned
+     * nothing), so a 3- or 4-player client keyed `world.remotes` on one id and
+     * built exactly ONE RemoteAvatar, fed the interleaved position streams of
+     * every other player. The host was drawn at another client's coordinates
+     * and the other clients were never drawn at all.
+     *
+     * Driven with three real `Net` objects wired the way PeerJS wires them.
+     */
+    const s = await session();
+    const seen = { host: [], a: [], b: [] };
+    s.host.on('avatar', (id, m) => seen.host.push([id, m.p[0]]));
+    s.clients[0].on('avatar', (id, m) => seen.a.push([id, m.p[0]]));
+    s.clients[1].on('avatar', (id, m) => seen.b.push([id, m.p[0]]));
+
+    s.host.broadcast(avatarAt(0));
+    s.clients[0].toHost(avatarAt(10));
+    s.clients[1].toHost(avatarAt(20));
+    s.fake.flush();
+
+    const keysOf = (l) => new Set(l.map(e => e[0]));
+    const hostId = s.host.peer.id, aId = s.clients[0].peer.id, bId = s.clients[1].peer.id;
+    assert(keysOf(seen.host).size === 2,
+      `the host resolved ${keysOf(seen.host).size} senders out of two clients`);
+    assert(seen.a.length === 2, `client A received ${seen.a.length} avatar packets, expected 2`);
+    assert(keysOf(seen.a).size === 2,
+      `client A attributed two players' packets to ${keysOf(seen.a).size} sender(s) — every remote `
+      + 'player collapses into one shared body that teleports between them at the snapshot rate');
+    const byKey = new Map(seen.a);
+    assert(byKey.get(hostId) === 0 && byKey.get(bId) === 20,
+      `client A placed the host at ${byKey.get(hostId)} and BRAVO at ${byKey.get(bId)}; they are at 0 and 20`);
+    const byKeyB = new Map(seen.b);
+    assert(byKeyB.get(hostId) === 0 && byKeyB.get(aId) === 10,
+      'client B does not resolve the host and ALPHA to their own coordinates');
+    s.close();
+    return 'three endpoints, three distinct bodies on every screen, each at its own coordinates';
   });
 
-  check('co-op: the cut parameter is not the message type', async () => {
-    // `Net._route` switches on `msg.t`. A receiver reading the cut fraction
-    // from `msg.t` reads the string 'claim'. Both sides now use `ct`.
-    const world = strip(await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8'));
-    const i = world.indexOf('applyClaim(');
-    assert(i > 0, 'applyClaim is gone');
-    const body = world.slice(i, i + 900);
-    assert(!/cutT:\s*msg\.t\b/.test(body),
-      "applyClaim reads the cut fraction from msg.t, which is the message TYPE — it would be the string 'claim'");
-    assert(/cutT:\s*msg\.ct\b/.test(body), 'applyClaim no longer reads a cut fraction at all');
-    const sent = /ct:\s*ev\.cutT/.test(world);
-    assert(sent, 'the sender does not put the cut fraction in the field the receiver reads');
-    return 'sender writes ct, receiver reads ct, neither collides with the routing field';
+  check('co-op: an ally\'s aura is keyed on the ally, not on whoever relayed it', async () => {
+    // The bond relay had the same hole as the avatar relay: a client-to-client
+    // aura is forwarded by the host, and the receiver keyed it on `conn.peer` —
+    // the host — so two allies' offers overwrote one another in `bondGive`,
+    // which keys a live offer on its source.
+    const s = await session();
+    const got = [];
+    s.clients[1].on('bond', (msg, from) => got.push(from));
+    s.clients[0].toHost({ t: 'bond', to: s.clients[1].peer.id, c: 1.2, s: 1.1, g: 1, h: 0 });
+    s.host.toPeer(s.clients[1].peer.id, { t: 'bond', to: s.clients[1].peer.id, c: 1.3, s: 1, g: 1, h: 0 });
+    s.fake.flush();
+    assert(got.length === 2, `client B received ${got.length} bonds, expected 2`);
+    assert(new Set(got).size === 2,
+      `two allies' auras arrived under ${new Set(got).size} source id — one silently overwrites the other`);
+    assert(got.includes(s.clients[0].peer.id), 'the relayed aura is not attributed to the client that sent it');
+    s.close();
+    return 'a relayed bond keeps its origin; two allies are two sources';
   });
+
+  check('co-op: a player who leaves is removed on every machine, not just the host\'s', async () => {
+    /**
+     * `peer-left` was raised on the host alone, because the host is the only
+     * node that holds `conns`. On every other machine the departed player's
+     * avatar stayed in `world.players`: still alive, still the nearest thing
+     * `pickTarget` could find, a frozen body the horde walked to for the rest
+     * of the run.
+     */
+    const s = await session();
+    const left = [];
+    s.clients[1].on('peer-left', (id) => left.push(id));
+    const aId = s.clients[0].peer.id;
+    s.clients[0].close();
+    s.fake.flush();
+    await s.settle(2);
+    assert(left.length === 1, `client B heard ${left.length} departures when ALPHA left`);
+    assert(left[0] === aId, `client B was told ${left[0]} left; it was ${aId}`);
+    assert(!s.host.roster.some(r => r.id === aId), 'the host still lists the departed player');
+    s.close();
+    return 'a departure reaches the other clients, not only the host';
+  });
+
+  check('co-op: a peer that goes silent is dropped rather than haunting the roster', async () => {
+    // `lastSeen` was written once, at connect, and read by nothing. PeerJS only
+    // raises `close` on a CLEAN teardown, so a lid closing left a ghost in the
+    // roster and a live body in everybody's world forever.
+    const { PEER_TIMEOUT } = await import('../../src/net/Net.js');
+    const s = await session(['HOST', 'ALPHA']);
+    const before = s.host.conns.size;
+    assert(before === 1, `the host has ${before} connections, expected 1`);
+    const now = performance.now() / 1000;
+    assert(s.host.sweep(now) === 0, 'a peer that has just spoken was dropped');
+    const dropped = s.host.sweep(now + PEER_TIMEOUT + 1);
+    assert(dropped === 1, `a peer silent for ${PEER_TIMEOUT + 1} s was not dropped (${dropped})`);
+    assert(s.host.conns.size === 0 && s.host.roster.length === 1,
+      'the silent peer is still in conns or on the roster');
+    s.close();
+    return `silent for ${PEER_TIMEOUT}s → dropped from conns and roster`;
+  });
+
+  check('co-op: the Jedi you built is the Jedi your friends see', async () => {
+    /**
+     * `packAvatar` carries position, facing, hp, alive, hilt pose and lit —
+     * nothing else. `World.spawnPlayer` builds the local player from TWELVE
+     * appearance settings; RemoteAvatar took four, main.js supplied two, and
+     * both of those were invented from a roster index. The unset defaults did
+     * not even match the game's own (hilt 'Guardian' against a DEFAULT_SETTINGS
+     * of 'Graflex'), so an unsent field did not merely lose the choice, it
+     * substituted a different one.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar, packLook } = await import('../../src/net/Net.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const mine = { ...DEFAULT_SETTINGS, colorIndex: 5, hiltStyle: 'Crossguard', bladeLength: 1.42,
+      robeIndex: 4, species: 'smallfolk', skinIndex: 3, hairIndex: 4, build: 0.15 };
+    const look = packLook(mine);
+    for (const k of ['colorIndex', 'hiltStyle', 'bladeLength', 'robeIndex', 'species', 'skinIndex', 'build']) {
+      assert(look[k] === mine[k], `packLook drops ${k}`);
+    }
+
+    const s = await session(['HOST', 'ALPHA'], [null, look]);
+    const entry = s.host.roster.find(r => r.name === 'ALPHA');
+    assert(entry, 'the joining player is not on the host roster');
+    assert(entry.look && entry.look.hiltStyle === 'Crossguard' && entry.look.species === 'smallfolk',
+      'the character sheet did not cross the wire — a partner is a default human in an index-picked robe');
+
+    const { world } = await H.bootWorld({ level: 'arena' });
+    const theirs = new RemoteAvatar(world, { id: 'ALPHA', name: 'ALPHA', look: entry.look });
+    const plain = new RemoteAvatar(world, { id: 'X', name: 'X' });
+    assert(theirs.saber.hiltStyle === 'Crossguard' || theirs.saber.hilt !== plain.saber.hilt,
+      'the remote saber ignores the hilt its owner chose');
+    assert(Math.abs(theirs.saber.bladeLength - 1.42) < 1e-6,
+      `the remote blade is ${theirs.saber.bladeLength} long; its owner built 1.42`);
+    assert(theirs.saber.color.getHex() !== plain.saber.color.getHex(),
+      'the remote blade colour is not the one its owner chose');
+    assert(Math.abs((theirs.rig.scale ?? 1) - (plain.rig.scale ?? 1)) > 1e-6,
+      'a small-folk Jedi arrives at human height — the species never crosses the wire');
+    assert(plain.saber.hiltStyle === undefined || plain.saber.hiltStyle === DEFAULT_SETTINGS.hiltStyle
+      || plain.look.hiltStyle === DEFAULT_SETTINGS.hiltStyle,
+      `an unset hilt falls back to something other than the game's own default (${DEFAULT_SETTINGS.hiltStyle})`);
+    theirs.dispose(); plain.dispose();
+    world.unload(); world.dispose?.();
+    s.close();
+    return `${Object.keys(look).length} appearance fields cross on the roster; the avatar is built from them`;
+  });
+
+  /* ══ the fight a joining player is actually in ══════════════════════════ */
+
+  check('co-op: the horde shoots at a joining player, and they can see it coming', async () => {
+    /**
+     * THE MEASUREMENT THAT MADE THIS THE HEADLINE FINDING. A client's enemies
+     * are `netDriven`, which returns before `_think` — so `_shoot` and
+     * `_beginTelegraph` are both unreachable there, and `packSnapshot` carried
+     * no bolts, no attack state and no telegraph. A joining player stood in a
+     * firefight with nothing on screen and lost health in silent chunks.
+     *
+     * A bolt is an EVENT: it exists for the 55 ms between two packets and is
+     * gone, so no arrangement of position and hp fields can contain one. Both
+     * worlds run for real here and the client's own pool is what is counted.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair();
+    for (let i = 0; i < 3; i++) {
+      host.spawnEnemy(['sniper', 'trooper', 'trooper'][i], new THREE.Vector3(Math.cos(i) * 4, 0, 26 + Math.sin(i) * 3));
+    }
+    host.director.active = true;
+
+    const count = (w, seen) => {
+      let live = 0;
+      for (const b of w.bolts.bolts) if (b.active) { live++; seen.add(b); }
+      return live;
+    };
+    const hSeen = new Set(), cSeen = new Set();
+    let hPeak = 0, cPeak = 0, tel = 0;
+    for (let i = 0; i < 12 * 60; i++) {
+      pump(1 / 60);
+      hPeak = Math.max(hPeak, count(host, hSeen));
+      cPeak = Math.max(cPeak, count(client, cSeen));
+      for (const e of client.enemies) if (e.laser?.visible) tel++;
+    }
+    assert(hSeen.size > 5, `the host only fired ${hSeen.size} bolts — the scene is wrong, not the wire`);
+    assert(cSeen.size > 0,
+      `the host fired ${hSeen.size} bolts and the joining player saw 0 — there is nothing to deflect, `
+      + 'nothing to parry and no perfect return available in the whole session');
+    assert(cSeen.size >= hSeen.size * 0.8,
+      `the client saw ${cSeen.size} of the host's ${hSeen.size} bolts`);
+    assert(tel > 0,
+      'a marksman charged its shot and the joining player never saw the laser — the fairness contract '
+      + 'of the entire ranged game is invisible to them');
+    assert(client.player.hp < 100, 'the replicated bolts do not reach the joining player at all');
+    const line = `host ${hSeen.size} bolts (peak ${hPeak}) → client ${cSeen.size} (peak ${cPeak}), `
+      + `${tel} telegraph frames, client hp ${client.player.hp.toFixed(0)}`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: a replicated enemy runs the gait its body is actually covering', async () => {
+    /**
+     * `velocity = (netTarget - position) * min(1/dt, 18)` is the remaining
+     * TRACKING ERROR, not a velocity, and the body only closes that error at
+     * (1 - e^(-14/60)) * 60 = 12.49/s — so the number handed to the gait solver
+     * was 18/12.49 = 1.4413× the truth, sawtoothing at the packet rate.
+     * Rig.js solves stride frequency and stance span from exactly that number
+     * (`speed = hypot(v.x, v.z)`), so every body in a joining player's level
+     * ran a sprint cadence while translating at a walk: foot-skate on the whole
+     * horde, in a game whose README sells "feet are planted by a gait solver".
+     *
+     * Measured against the ground the body covers, not against a constant.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair();
+    host.spawnEnemy('trooper', new THREE.Vector3(-40, 0, 10));
+    host.director.active = true;
+
+    let n = 0, reported = 0, covered = 0, hostTrue = 0, worst = 0;
+    const prev = new THREE.Vector3();
+    for (let i = 0; i < 14 * 60; i++) {
+      const e = client.enemies[0];
+      if (e) prev.copy(e.position);
+      pump(1 / 60);
+      if (!e || e.dead || i < 180) continue;
+      const moved = e.position.distanceTo(prev) * 60;
+      if (moved < 0.4) continue;                     // standing still proves nothing
+      const v = Math.hypot(e.velocity.x, e.velocity.z);
+      reported += v; covered += moved; n++;
+      hostTrue += Math.hypot(host.enemies[0].velocity.x, host.enemies[0].velocity.z);
+      worst = Math.max(worst, Math.abs(v / moved - 1));
+    }
+    assert(n > 200, `only ${n} moving frames sampled — the enemy never walked`);
+    const ratio = reported / covered;
+    const truth = Math.abs(reported / hostTrue - 1);
+    assert(truth < 0.05,
+      `the client reports ${(reported / n).toFixed(2)} m/s where the host's own body is doing `
+      + `${(hostTrue / n).toFixed(2)} — ${(truth * 100).toFixed(0)}% out`);
+    assert(ratio < 1.15,
+      `the gait solver is handed ${ratio.toFixed(3)}× the speed the body covers ground at — the feet `
+      + 'plant for a stride that long and skate the difference');
+    const line = `reported ${(reported / n).toFixed(2)} m/s vs host truth ${(hostTrue / n).toFixed(2)} `
+      + `and ground covered ${(covered / n).toFixed(2)}; ratio ${ratio.toFixed(3)}`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  /* ══ what a client's own machine is allowed to decide ═══════════════════ */
+
+  check('co-op: every way a client hurts an enemy reaches the host, not just the blade', async () => {
+    /**
+     * THE CHECK THIS REPLACES ASSERTED EXACTLY TWO CLAIM KINDS AND CALLED THEM
+     * "the two ways of hurting an enemy". There are at least six: Force
+     * lightning, choke, rend's dismemberment, the grip-shield's bite and a
+     * deflected or returned bolt were all unclaimed, so on a client they were
+     * PHANTOM kills — you threw lightning into a pack and they dropped on your
+     * screen only, while the host kept fighting bodies you had watched die.
+     *
+     * So this drives the real damage calls the real abilities make, by kind,
+     * and requires each to reach the host. A seventh ability is covered the day
+     * it is written, because the seam is the hp the host does not know about
+     * rather than a list of call sites.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    const out = [];
+    world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {},
+      toHost(m) { out.push(m); } }, 'client');
+
+    const snap = (id, hp) => ({ t: 'snapshot', w: 1, act: 1, rem: 1, ic: 0, sc: 0, bf: [],
+      e: [[id, 'trooper', 0, 0, 4, 0, hp, 0, 0, 0, 0, 0]] });
+    const p = world.player;
+    const claims = {};
+    const drive = (name, id, fn) => {
+      world.applySnapshot(snap(id, 100));
+      const e = world._netEnemyIndex.get(id);
+      out.length = 0;
+      fn(e);
+      world._netTick(1);
+      claims[name] = out.filter(m => m.t === 'claim').reduce((a, m) => a + (m.d || 0), 0);
+    };
+
+    // The real call sites, by name: Player.js:3157 (lightning), :3036 (choke),
+    // :2769 (the grip-shield's bite), :3733 (rend), World.js (a deflected bolt).
+    drive('lightning', 11, (e) => e.damage(46, e.position, p, 'lightning'));
+    drive('choke', 12, (e) => e.damage(e.maxHp * 0.4, e.position, p, 'choke'));
+    drive('shield-bite', 13, (e) => e.damage(18, e.position, p, 'bolt'));
+    drive('rend', 14, (e) => {
+      const cap = e.capsules().find(c => /arm|fore/.test(c.name)) || e.capsules()[0];
+      e.takeCut({ bone: cap.name, cutT: 0.14, cap, point: e.position.clone(),
+        impulse: new THREE.Vector3(0, 1, 0), normal: new THREE.Vector3(0, 1, 0), speed: 18 }, p);
+    });
+
+    const silent = Object.entries(claims).filter(([, d]) => !(d > 0)).map(([k]) => k);
+    assert(!silent.length,
+      `${silent.join(', ')} never reached the host — every kill a client makes with ${silent.length > 1 ? 'those' : 'that'} `
+      + 'is a phantom: the enemy stands back up 55 ms later when the next snapshot hard-writes its hp');
+
+    // …and a claim must not be billed twice: the blade path claims explicitly.
+    world.applySnapshot(snap(15, 100));
+    const e = world._netEnemyIndex.get(15);
+    out.length = 0;
+    e.damage(30, e.position, p, 'lightning');
+    world._netTick(1);
+    const first = out.filter(m => m.t === 'claim').reduce((a, m) => a + m.d, 0);
+    out.length = 0;
+    world._netTick(1);
+    const again = out.filter(m => m.t === 'claim').reduce((a, m) => a + m.d, 0);
+    assert(first > 0 && again === 0,
+      `the same ${first} damage was claimed again on the next tick (${again}) — a client bills the host twice`);
+    world.unload(); world.dispose?.();
+    return `claimed: ${Object.entries(claims).map(([k, d]) => `${k} ${d.toFixed(0)}`).join(', ')}; no double billing`;
+  });
+
+  check('co-op: a friend\'s kill is credited to the friend', async () => {
+    /**
+     * `applyClaim` passed `null` as the damage source and `onEnemyKilled`
+     * requires one before it credits anything — so every enemy a joining player
+     * legitimately killed was scored to NOBODY: no kill feed entry, no score,
+     * no combo, and `run.kills` (which sums `p.kills` over `world.players`)
+     * undercounted the party in the run summary for the whole session.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    const e = world.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    const feed = [];
+    world.onKillFeed = (who, what) => feed.push([who, what]);
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    world.players.push(ally); world.remotes.set('PEER', ally);
+
+    world.applyClaim('PEER', { t: 'claim', k: 'dmg', id: e.id, d: 9999, p: [0, 1, 6] });
+    assert(e.dead, 'the claim did not kill the enemy');
+    assert(ally.kills === 1, `the peer that killed it has ${ally.kills} kills`);
+    assert(feed.length === 1 && feed[0][0] === 'ALPHA',
+      `the kill feed says ${JSON.stringify(feed)} — a friend's kill is credited to nobody`);
+    const partyKills = world.players.reduce((a, p) => a + p.kills, 0);
+    assert(partyKills === 1, `the run summary would count ${partyKills} kills for the party`);
+    world.unload(); world.dispose?.();
+    return `kill feed "${feed[0][0]}", avatar.kills 1, party kills 1`;
+  });
+
+  check('co-op: the host does not bill a peer for a bolt that peer resolved itself', async () => {
+    /**
+     * A peer owns its own health — its avatar packet carries `hp` and
+     * `RemoteAvatar.update` overwrites the host's copy 24 times a second — so
+     * the host cannot apply damage to it, only say so. That is what `hit` is.
+     *
+     * But every bolt is replicated now and the peer resolves it against their
+     * own body, with their own boons and their own blade, so billing it from
+     * the host as well would charge them for a bolt they had just sent back.
+     * `hit` keeps everything the peer cannot see: sabers, explosions, the core.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    const sent = [];
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, sweep() {},
+      toPeer(id, m) { sent.push([id, m]); }, toHost() {} }, 'host');
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    const hp0 = ally.hp;
+
+    ally.damage(12, null, null, 'bolt');
+    assert(sent.length === 0, 'the host billed a peer for a bolt the peer is simulating itself');
+    ally.damage(26, null, null, 'saber');
+    assert(sent.length === 1 && sent[0][0] === 'PEER' && sent[0][1].t === 'hit' && sent[0][1].d === 26,
+      `a saber strike did not reach the peer: ${JSON.stringify(sent)}`);
+    assert(ally.hp === hp0,
+      'RemoteAvatar.damage wrote its own hp, which the next avatar packet overwrites 42 ms later');
+
+    // …and a CLIENT must never be able to damage another client.
+    world.netMode = 'client';
+    sent.length = 0;
+    ally.damage(30, null, null, 'saber');
+    assert(sent.length === 0, 'a client damaged another client — the host must be the only authority');
+    ally.dispose();
+    world.unload(); world.dispose?.();
+    return 'bolts resolved by their victim; sabers addressed to one peer; a client cannot hurt a peer';
+  });
+
+  /* ══ the run a joining player is having ════════════════════════════════ */
+
+  check('co-op: a joining player earns Insight, hears the wave, and gets the between-wave heal', async () => {
+    /**
+     * `director.update` is gated off on a client, and EVERYTHING a wave is
+     * worth hangs off callbacks only that method fires: the WAVE N and WAVE
+     * CLEAR announcements, `score += 500 * w`, the 8 hp and 0.35 flow every
+     * player gets for surviving one — and Insight, whose single earning path is
+     * `_earnInsight` installed on `onWaveClear`. So a client earned ZERO
+     * Insight for a whole session: the Constellation was a dead screen, no star
+     * could ever be lit, and they were strictly weaker than the host by 8 hp
+     * per wave for as long as they played.
+     *
+     * The signal is already on the wire as an edge in `w`/`act`.
+     */
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
+    const said = [];
+    world.onNotify = (t) => said.push(t);
+    const snap = (w, act, rem = 0, ic = 0) => ({ t: 'snapshot', e: [], bf: [], w, act, rem, ic, sc: 500 });
+
+    const p = world.player;
+    p.hp = p.maxHp - 30;
+    const hp0 = p.hp, flow0 = p.flow, insight0 = world.communion.insight;
+
+    world.applySnapshot(snap(1, 1, 6));
+    world.applySnapshot(snap(1, 0, 0, 5.5));
+    assert(said.includes('WAVE 1'), `no wave announcement reached the client: ${JSON.stringify(said)}`);
+    assert(said.includes('WAVE CLEAR'), 'the client never hears a wave clear');
+    assert(world.communion.insight > insight0,
+      `the client earned ${world.communion.insight - insight0} Insight over a cleared wave — the whole `
+      + 'Constellation is unreachable for anybody who joins');
+    assert(p.hp === hp0 + 8, `the client healed ${p.hp - hp0} of the 8 hp a survived wave pays`);
+    assert(p.flow > flow0, 'the client got no flow for surviving the wave');
+
+    // …and the HUD's numbers come off the wire rather than off an empty queue.
+    world.applySnapshot(snap(2, 1, 9, 0));
+    assert(world.director.remaining === 9,
+      `the client's wave readout says ${world.director.remaining} where the host says 9 — it cannot see `
+      + 'anything the host has queued or in transit');
+    world.applySnapshot(snap(2, 0, 0, 4.25));
+    assert(Math.abs(world.director.intermission - 4.25) < 1e-6,
+      `the intermission clock reads ${world.director.intermission}; the host's is 4.25, so the HUD `
+      + 'prints "next wave in 0" for the whole intermission');
+    const gained = world.communion.insight - insight0;
+    world.unload(); world.dispose?.();
+    return `insight +${gained.toFixed(0)}, +8 hp, WAVE 1 / WAVE CLEAR heard, remaining 9, intermission 4.25`;
+  });
+
+  check('co-op: a player who dies gets a card, and the party wipe is re-read when an ally falls', async () => {
+    /**
+     * `onGameOver` requires EVERY entry of `world.players` to be dead, and
+     * `world.players` holds RemoteAvatars — so the first player to die in co-op
+     * got nothing at all: pointer still locked, input still enabled, watching
+     * their own ragdoll for the rest of the run. And it could never fire late
+     * either, because `onPlayerDeath` had exactly one caller, `Player.die()`,
+     * so nothing re-evaluated the predicate when the REMOTE body died
+     * afterwards — a RemoteAvatar's death is a field in a packet and raises
+     * nothing.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
+    let over = 0, down = 0;
+    world.onGameOver = () => over++;
+    world.onLocalDown = () => down++;
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    world.players.push(ally); world.remotes.set('PEER', ally);
+
+    world.player.damage(9999, null, null, 'test');
+    await new Promise(r => setTimeout(r, 80));           // the dynamic Ragdoll import
+    for (let i = 0; i < 120; i++) world.update(1 / 60, H.idleInput());
+    assert(!world.player.alive, 'the player survived 9999 damage');
+    assert(down === 1, `the player died with an ally standing and was told ${down} times`);
+    assert(over === 0, 'the run ended while an ally was still standing');
+    assert(!world.over, 'the world stopped its director while an ally was still fighting');
+
+    ally.alive = false;
+    for (let i = 0; i < 30; i++) world.update(1 / 60, H.idleInput());
+    assert(over === 1,
+      'the last ally died and nothing re-read the wipe condition — the dead player never gets a card '
+      + 'at all, on any machine');
+    world.unload(); world.dispose?.();
+    return 'one death → a local card; the ally\'s death → the run ends';
+  });
+
+  check('co-op: a downed player is put back on their feet by a wave the party survives', async () => {
+    /**
+     * `Player.respawn(pos)` was written — forty complete lines — and had ZERO
+     * CALLERS anywhere in src/, tools/ or index.html. There was no downed
+     * state, no revive, no spectate and no rejoin: dying in co-op was the end
+     * of your session while your friends played on.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    ally.position.set(6, 0, 6);
+    world.players.push(ally); world.remotes.set('PEER', ally);
+    let revived = 0;
+    world.onLocalRevive = () => revived++;
+
+    world.player.damage(9999, null, null, 'test');
+    await new Promise(r => setTimeout(r, 80));
+    for (let i = 0; i < 60; i++) world.update(1 / 60, H.idleInput());
+    assert(!world.player.alive, 'the player is not down');
+
+    const snap = (w, act) => ({ t: 'snapshot', e: [], bf: [], w, act, rem: 0, ic: 0, sc: 0 });
+    world.applySnapshot(snap(1, 1));
+    world.applySnapshot(snap(1, 0));
+    assert(world.player.alive,
+      'the party survived a wave with a friend down and nothing brought them back — Player.respawn '
+      + 'is still a method with no callers');
+    assert(revived === 1, `the revive was not announced (${revived})`);
+    assert(world.player.hp === world.player.maxHp, 'the revived player came back hurt');
+    assert(world.player.invuln > 0, 'the revived player came back with no mercy window');
+    assert(world.player.position.distanceTo(ally.position) < 4,
+      `revived ${world.player.position.distanceTo(ally.position).toFixed(1)} m from the ally who held the line`);
+
+    // …and a wipe is still a wipe: with nobody standing, nobody gets up.
+    world.player.damage(9999, null, null, 'test');
+    await new Promise(r => setTimeout(r, 80));
+    ally.alive = false;
+    world.applySnapshot(snap(2, 1));
+    world.applySnapshot(snap(2, 0));
+    assert(!world.player.alive, 'a wave clear revived the whole party after a total wipe');
+    world.unload(); world.dispose?.();
+    return 'down → the party clears a wave → up again beside them, at full health, with invulnerability';
+  });
+
+  check('co-op: restarting the wave cannot empty a client\'s arena', async () => {
+    /**
+     * The pause card's Restart is a single-player debug affordance on an
+     * always-visible button. On a client it disposed every enemy and emptied
+     * `world.enemies` WITHOUT touching `_netEnemyIndex`, and `applySnapshot`
+     * only spawns a body for an id that is not already in that map — so every
+     * id the host was still sending resolved to a disposed Enemy that could
+     * never be recreated. Measured: four net-driven enemies before, zero after,
+     * all four ids still held, for the rest of the host's wave, while `hit`
+     * messages kept arriving from bodies that were no longer on screen.
+     */
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
+    const ids = [1, 2, 3, 4];
+    const snap = () => ({ t: 'snapshot', bf: [], w: 1, act: 1, rem: 4, ic: 0, sc: 0,
+      e: ids.map(i => [i, 'trooper', i * 2, 0, 8, 0, 100, 0, 0, 0, 0, 0]) });
+    world.applySnapshot(snap());
+    for (let i = 0; i < 30; i++) world.update(1 / 60, H.idleInput());
+    const before = world.enemies.length;
+    assert(before === 4, `the scene did not establish (${before} enemies)`);
+
+    const restarted = world.restartWave();
+    assert(restarted === false, 'a client restarted the host\'s wave');
+    for (let i = 0; i < 120; i++) { if (i % 3 === 0) world.applySnapshot(snap()); world.update(1 / 60, H.idleInput()); }
+    assert(world.enemies.filter(e => e.netDriven && !e.dead).length === 4,
+      `${world.enemies.filter(e => e.netDriven && !e.dead).length} of the host's 4 enemies are on the `
+      + 'client\'s screen two seconds after Restart — the arena is empty and can never refill');
+    assert(!world.director.active || world.netMode !== 'client' || world.director.spawnQueue?.length === undefined
+      || !world.director.spawnQueue.length,
+      'a second, local wave director was started on a machine that is supposed to have none');
+    world.unload(); world.dispose?.();
+
+    // A HOST may still restart, and must clear the id map with the list.
+    const { world: h } = await H.bootWorld({ level: 'arena' });
+    h.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    h.spawnEnemy('trooper', new (await import('three')).Vector3(0, 0, 6));
+    h._netEnemyIndex.set(99, h.enemies[0]);
+    assert(h.restartWave() === true, 'the host cannot restart its own wave');
+    assert(h.enemies.length === 0 && h._netEnemyIndex.size === 0,
+      'the host restarted the wave and left ids in the client id map');
+    h.unload(); h.dispose?.();
+    return 'a client declines and keeps the horde; a host restarts and clears both the list and the id map';
+  });
+
+  /* ══ leaving, and what a session is allowed to touch ═══════════════════ */
+
+  check('co-op: there is a way out of a session, and it is wired to quitting', async () => {
+    /**
+     * `Net.close()` was complete and had ZERO CALLERS in the repository.
+     * Quitting to the menu disposed the world and left `enabled`/`connected`
+     * true, so no `close` fired on the other side, the departed player stayed a
+     * live target in everybody else's world, and the next Ignite silently
+     * re-attached them as a client of the same host — solo play was unreachable
+     * without reloading the tab.
+     */
+    const s = await session(['HOST', 'ALPHA']);
+    const c = s.clients[0];
+    let hostSawLeave = 0;
+    s.host.on('peer-left', () => hostSawLeave++);
+    assert(c.enabled && c.connected, 'the joining client is not in a session to begin with');
+    c.close();
+    s.fake.flush();
+    await s.settle(2);
+    assert(!c.enabled && !c.connected, 'close() left the session enabled or connected');
+    assert(!c.hostConn, 'close() left an outbound path to the host open');
+    assert(c.roster.length === 0, 'close() left the roster standing');
+    assert(hostSawLeave === 1, `the host was told ${hostSawLeave} times that the peer left`);
+    s.close();
+
+    // …and something has to CALL it. This was the whole defect.
+    const main = strip(await src('main.js'));
+    assert(/net\.close\(\)/.test(main), 'nothing in main.js ever closes the session');
+    const q = main.slice(main.indexOf('function quitToMenu'), main.indexOf('function quitToMenu') + 900);
+    assert(/leaveSession\(\)|net\.close\(\)/.test(q),
+      'quitting to the menu does not leave the co-op session — the connection stays up and the next '
+      + 'Ignite re-attaches you to the same host');
+    return 'close() tears the endpoint down, the host hears it, and quitToMenu calls it';
+  });
+
+  check('co-op: joining a friend\'s session does not rewrite your saved settings', async () => {
+    /**
+     * `welcome` and `start` wrote `settings.level`, `settings.difficulty` and
+     * `settings.mode` straight onto the player's own settings object, and
+     * `deploy()` persists that object wholesale to localStorage. So one round
+     * in a friend's Grandmaster Descent permanently rewrote your saved level,
+     * difficulty and mode, and your next SOLO run silently started in theirs.
+     *
+     * A session is a different scope from a preference; the read side has to
+     * prefer the session and the write side has to persist the preference.
+     */
+    const main = strip(await src('main.js'));
+    for (const handler of ["net.on('welcome'", "net.on('start'"]) {
+      const i = main.indexOf(handler);
+      assert(i > 0, `${handler} is gone`);
+      const body = main.slice(i, i + 1100);
+      assert(!/settings\.(level|difficulty|mode)\s*=/.test(body),
+        `${handler} writes the host's choice onto the player's own settings, which deploy() persists `
+        + 'to localStorage — their next solo run starts in the host\'s level');
+    }
+    assert(/session\s*=\s*\{/.test(main), 'there is no session scope for the host\'s choices');
+    const d = main.slice(main.indexOf('function deploy('), main.indexOf('function deploy(') + 1200);
+    assert(/saveSettings\(settings\)/.test(d), 'deploy no longer persists the player\'s settings at all');
+    assert(/sessionOr\('level'\)|session\?\.level/.test(d),
+      'deploy ignores the session, so a client would load its own level instead of the host\'s');
+    return 'the host\'s level/difficulty/mode live in a session object; only the player\'s own settings are saved';
+  });
+
+  check('co-op: a client follows the host down a rung instead of standing in the old level', async () => {
+    /**
+     * A client's Run can never ascend — the rung signal is host-only by design
+     * — so the host's `start` broadcast is the ONLY thing that can take a
+     * joining player down the ladder. It was acted on `if (screens.state ===
+     * 'menu')` alone, so a client that was playing, paused, drafting or dead
+     * ignored it and stayed in the Intake receiving snapshots of bodies at
+     * Foundry coordinates: enemies inside walls and in mid-air, and an
+     * unrecoverable run.
+     */
+    const main = strip(await src('main.js'));
+    const i = main.indexOf("net.on('start'");
+    assert(i > 0, 'the start handler is gone');
+    const body = main.slice(i, i + 1200);
+    assert(!/screens\.state === 'menu'\s*\)\s*deploy\(\)/.test(body),
+      'the start message is still only acted on from the menu, so a client that is already playing '
+      + 'never follows the host to the next rung');
+    assert(/deploy\(\)/.test(body), 'the start message no longer deploys anything');
+    assert(/world\.dispose\(\)|world = null/.test(body),
+      'the old level is not torn down before the new one is built');
+    return 'a start from any state redeploys into the level the host is standing in';
+  });
+
+  /* ══ the buffer, and the shape World assumes ═══════════════════════════ */
+
+  check('co-op: the interpolation window follows the connection instead of a constant', async () => {
+    /**
+     * 90 ms, hard-coded, for every connection — while `Net.latency` was
+     * measured every two seconds by a ping World sends and read by NOTHING.
+     * A packet that arrives outside the window is a body that stops dead and
+     * snaps, because `update` clamps to the last sample when the buffer runs
+     * out.
+     */
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    const r = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+
+    let t = 0;
+    for (let i = 0; i < 40; i++) { t += 1 / 24; r.push(avatarAt(i * 0.1), t); }
+    const tight = r.delay;
+    for (let i = 0; i < 40; i++) { t += (i % 7 === 0 ? 0.22 : 1 / 24); r.push(avatarAt(4 + i * 0.1), t); }
+    const loose = r.delay;
+    assert(loose > tight * 1.5,
+      `the window stayed at ${loose.toFixed(3)} s on a connection whose worst gap went from `
+      + `${(1000 / 24).toFixed(0)} ms to 220 ms — it cannot absorb what it cannot measure`);
+    assert(loose >= 0.22, `a 220 ms gap is not covered by a ${(loose * 1000).toFixed(0)} ms window`);
+    assert(loose <= r.maxDelay, 'the window is unbounded, so a bad connection can put a friend anywhere');
+    for (let i = 0; i < 60; i++) { t += 1 / 24; r.push(avatarAt(8 + i * 0.1), t); }
+    assert(r.delay < loose,
+      'the window never comes back down, so one hiccup costs the rest of the session');
+    r.dispose();
+    world.unload(); world.dispose?.();
+    return `window ${(tight * 1000).toFixed(0)} ms on a clean stream → ${(loose * 1000).toFixed(0)} ms `
+      + `through a 220 ms gap → ${(r.delay * 1000).toFixed(0)} ms once it clears`;
+  });
+
+  check('co-op: a RemoteAvatar has the shape World treats it as having', async () => {
+    /**
+     * A RemoteAvatar is pushed into `world.players`, and World's loops treat
+     * everything in that list as a Player. Driven rather than grepped: the
+     * loops are run for real over a world that contains one.
+     *
+     * The first of these was not a missing feature but a CRASH — `_boltHitTest`
+     * read `p.invuln` then `p.boonMods.absorb` with no guard, so every enemy
+     * bolt that reached a friend took the frame loop down with it.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    ally.position.set(2, 0, 8);
+    ally.push({ ...avatarAt(2), p: [2, 0, 8] }, performance.now() / 1000);
+    world.players.push(ally); world.remotes.set('PEER', ally);
+    world.spawnEnemy('trooper', new THREE.Vector3(2, 0, 22));
+    world.spawnEnemy('acolyte', new THREE.Vector3(2.4, 0, 9));
+    world.director.active = true;
+
+    let threw = null;
+    try { for (let i = 0; i < 8 * 60; i++) world.update(1 / 60, H.idleInput()); } catch (e) { threw = e; }
+    assert(!threw, `a world containing a remote player threw after ${threw && threw.message}`);
+    // every field World's loops read off a player, unguarded
+    for (const f of ['invuln', 'boonMods', 'alive', 'position', 'saber', 'kills', 'score', 'combo']) {
+      assert(ally[f] !== undefined, `RemoteAvatar has no ${f}, and World's player loops read it unguarded`);
+    }
+    for (const m of ['damage', 'heal', 'addFlow', 'aimPoint', 'update', 'dispose']) {
+      assert(typeof ally[m] === 'function', `RemoteAvatar has no ${m}()`);
+    }
+    world.unload(); world.dispose?.();
+    return 'eight seconds of a live fight around a remote body, no throw, every read answered';
+  });
+
+  /* ══ the general rules worth keeping ══════════════════════════════════ */
 
   check('co-op: no message type is handled and never sent', async () => {
-    // THE GENERAL FORM. A `case 'x':` in the router with no `t: 'x'` anywhere
-    // is a wire that was built at one end. That is exactly what `claim` was,
-    // and it cost the whole co-op mode.
+    // THE GENERAL FORM, kept from the old suite. A `case 'x':` in the router
+    // with no `t: 'x'` anywhere is a wire built at one end — which is exactly
+    // what `claim` was, and it cost the whole co-op mode.
     const files = await sources();
     const net = strip(files.find(([p]) => p === 'net/Net.js')[1]);
     const handled = [...net.matchAll(/case '([a-z]+)':/g)].map(m => m[1]);
     assert(handled.length > 6, `only ${handled.length} message types found — the parse is wrong`);
     const all = files.map(([, t]) => strip(t)).join('\n');
-    const unsent = [];
-    for (const type of handled) {
-      // 'pong' is answered inline by the router itself, which counts.
-      if (new RegExp(`t:\\s*'${type}'`).test(all)) continue;
-      unsent.push(type);
-    }
-    assert(unsent.length === 0,
-      `handled but never sent by anything: ${unsent.join(', ')} — a wire built at one end`);
+    const unsent = handled.filter((type) => !new RegExp(`t:\\s*'${type}'`).test(all));
+    assert(!unsent.length, `handled but never sent by anything: ${unsent.join(', ')} — a wire built at one end`);
     return `${handled.length} message types, every one of them has a sender`;
+  });
+
+  check('co-op: no field is put on the wire and read by nobody', async () => {
+    /**
+     * THE CONVERSE, which the old suite structurally could not have — and it is
+     * the half that was failing. `from` was stamped on every relayed packet and
+     * read nowhere, which is finding one. `rem` arrived every snapshot and was
+     * written to `director._netRemaining`, which nothing read, which is why a
+     * client's wave HUD was wrong. `ts` was sent and never looked at.
+     * `tickRate`, `_accum` and `peerCount` were state nobody consulted, and
+     * `tickRate = 18` actively contradicted the real cadence.
+     */
+    const files = await sources();
+    const all = files.map(([, t]) => strip(t)).join('\n');
+    const net = strip(files.find(([p]) => p === 'net/Net.js')[1]);
+
+    // Every key packSnapshot and packAvatar put on the wire must have a reader.
+    const packed = [];
+    for (const fn of ['export function packSnapshot', 'export function packAvatar']) {
+      const i = net.indexOf(fn);
+      assert(i > 0, `${fn} is gone`);
+      const body = net.slice(i, net.indexOf('\n}', i));
+      for (const m of body.matchAll(/^\s{4}([a-z]{1,3}[0-9]?):/gm)) packed.push(m[1]);
+    }
+    assert(packed.length > 8, `only ${packed.length} wire fields parsed — the parse is wrong`);
+    const unread = packed.filter((k) => k !== 't'
+      && !new RegExp(`(msg|s|s2|rec|state)\\.${k}\\b`).test(all)
+      && !new RegExp(`\\b${k}\\b\\s*[,\\]}]`).test(all.replace(net.slice(net.indexOf('export function packSnapshot')), '')));
+    assert(!unread.length,
+      `sent every packet and read by nobody: ${unread.join(', ')} — bandwidth for a field that cannot `
+      + 'change anything, and the sign of a wire built at one end');
+
+    // The specific dead state this rule was written over.
+    for (const dead of ['tickRate', 'peerCount']) {
+      assert(!new RegExp(`this\\.${dead}\\s*=|get ${dead}\\(`).test(net),
+        `Net.${dead} is back, and nothing reads it`);
+    }
+    assert(/latency/.test(strip(files.find(([p]) => p === 'main.js')[1])),
+      'the latency the client measures every two seconds is shown to nobody again');
+    return `${packed.length} wire fields, every one of them has a reader`;
   });
 
   check('co-op: signalling is overridable, so a broker outage is not fatal', async () => {
     // The default is the public PeerJS broker, which is somebody else's server.
-    // That is an acceptable default and an unacceptable hard dependency, so the
-    // escape hatch has to be real rather than documented.
-    const net = await readFile(new URL('../../src/net/Net.js', import.meta.url), 'utf8');
+    // An acceptable default and an unacceptable hard dependency.
+    const net = await src('net/Net.js');
     assert(/SABER_SIGNAL/.test(net), 'there is no way to point co-op at a different signalling server');
     const i = net.indexOf('function peerOptions');
     assert(i > 0, 'peerOptions is gone');
@@ -109,80 +872,11 @@ export async function run({ check, assert }) {
     return 'window.SABER_SIGNAL overrides the broker; ICE servers are configured';
   });
 
-  /* ══ the other half of the wire: a joining player could not be hurt ═════ */
-
-  check('co-op: a RemoteAvatar has the shape World treats it as having', async () => {
-    /**
-     * A RemoteAvatar is pushed into `world.players`, and World's loops treat
-     * everything in that list as a Player. Two of them did not survive the
-     * difference, and the first is not a missing feature but a CRASH:
-     *
-     *   `_boltHitTest` reads `p.invuln` then `p.boonMods.absorb` with no guard.
-     *   Neither field existed, so `undefined > 0` was false, the hit test ran,
-     *   and `.absorb` off undefined threw. Every enemy bolt that reached a
-     *   friend took the frame loop with it.
-     *
-     * So the property is not "remotes can be hit", it is "anything in
-     * `world.players` answers what World's loops ask of it".
-     */
-    const { readFile } = await import('node:fs/promises');
-    const net = await readFile(new URL('../../src/net/Net.js', import.meta.url), 'utf8');
-    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
-    const i = net.indexOf('export class RemoteAvatar');
-    assert(i > 0, 'RemoteAvatar is gone');
-    const body = net.slice(i);
-    // Exactly the fields the loops over `this.players` touch without a guard.
-    for (const field of ['invuln', 'boonMods', 'damage(', 'heal(', 'alive', 'position', 'saber']) {
-      assert(new RegExp(`\\b${field.replace('(', '\\(')}`).test(body),
-        `RemoteAvatar has no ${field}, and World's player loops read it unguarded`);
-    }
-    // …and the reader must still be unguarded, or this check is pinning a field
-    // nothing needs.
-    assert(/p\.boonMods\.absorb/.test(world),
-      'the unguarded read is gone — re-point this check at whatever replaced it');
-    return 'RemoteAvatar answers invuln, boonMods, damage, heal and the pose fields';
-  });
-
-  check('co-op: the host can hurt a peer, and does not try to do it locally', async () => {
-    /**
-     * A peer owns its own health: its avatar packet carries `hp` and
-     * `RemoteAvatar.update` overwrites the host's copy 24 times a second, so
-     * anything the host writes there is gone inside 42 ms. The only correct
-     * move is to TELL the peer — the mirror image of `claim`, and it did not
-     * exist.
-     *
-     * Combined with the other half — a client's enemies are `netDriven`, which
-     * returns before `_think`, so they never fire and never strike — a joining
-     * player was simply invulnerable.
-     */
-    const { readFile } = await import('node:fs/promises');
-    const net = await readFile(new URL('../../src/net/Net.js', import.meta.url), 'utf8');
-    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
-    const i = net.indexOf('  damage(amount');
-    assert(i > 0, 'RemoteAvatar has no damage()');
-    const dmg = net.slice(i, i + 700);
-    assert(/toPeer\(/.test(dmg), 'the host does not tell the peer it was hit');
-    assert(!/this\.hp\s*[-=]/.test(dmg),
-      'RemoteAvatar.damage writes its own hp, which the next avatar packet overwrites 42 ms later');
-    assert(/netMode !== 'host'/.test(dmg),
-      'a client can damage another client — the host must be the only authority');
-    // addressed, not broadcast: a broadcast hit wounds everybody
-    assert(/toPeer\(peerId, msg\)|toPeer\(.*\)\s*\{/.test(net), 'Net cannot address a single peer');
-    // and the receiving end must exist and go through the peer's OWN damage
-    assert(/net\.on\('hit'/.test(main), 'nothing on the client listens for a hit');
-    const h = main.slice(main.indexOf("net.on('hit'"), main.indexOf("net.on('hit'") + 700);
-    assert(/p\.damage\(/.test(h), 'the hit does not go through the peer\'s own damage path, so its boons are skipped');
-    return 'host addresses one peer; the peer applies it through its own Player.damage';
-  });
-
   check('co-op: a blade clash is resolved by whoever is holding the blade', async () => {
     // The body hit is host-authoritative because the ENEMY is. The clash is
-    // not: it is a mouse-driven contest — a blade lock is a drag race — and the
-    // stamina, riposte window and stagger it moves live on the other machine.
-    // Resolving it host-side would decide a duel on a player's behalf with none
-    // of their input.
-    const { readFile } = await import('node:fs/promises');
-    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    // not: it is a mouse-driven contest whose stamina, riposte window and
+    // stagger live on the other machine.
+    const world = await src('game/World.js');
     const i = world.indexOf('// enemy blades vs the player');
     assert(i > 0, 'the enemy blade loop is gone');
     const body = world.slice(i, world.indexOf('// blade locks run their own contest', i));
@@ -191,15 +885,6 @@ export async function run({ check, assert }) {
       'the loop still skips everything without a control, so enemy sabers pass through remote players');
     assert(/p\.control && p\.saber\.ignition/.test(body),
       'the clash is resolved for a remote blade too, which decides their duel for them');
-    /**
-     * The body hit used to be a second, laxer copy of the blade test inlined
-     * right here, and this check grepped for its `p.damage(` call. It is gone —
-     * see tools/checks/forms.mjs for why it had to go — and the loop delegates
-     * to the one real implementation instead. What matters to CO-OP is not
-     * which function it is but that a player with no `control` is still in the
-     * arc, so the assertion is on the delegation and the behaviour is measured
-     * for real by the next check.
-     */
     assert(/_saberStrike\(/.test(body),
       'the enemy blade loop no longer runs a body test for the players this enemy is not targeting, '
       + 'so in co-op every saber passes through everyone but its own target');
@@ -208,18 +893,11 @@ export async function run({ check, assert }) {
 
   check('co-op: an enemy blade cuts a player who has no controller', async () => {
     /**
-     * THE BUG THIS REPLACES A GREP WITH. The loop opened
-     *
-     *     if (!p.alive || !p.control) continue;
-     *
-     * and a RemoteAvatar has no `control` — so every enemy saber in the game
-     * passed straight through every joining player, in the one mode where
-     * being surrounded is the point. `!p.control` was standing in for "is this
-     * a local Player", and the thing it actually protects is the two
-     * `hitImpulse` calls inside `_applyClash`.
-     *
-     * Driven rather than read: a body with `damage`, a position and no
-     * controller, held inside a real duellist's arc for sixty seconds.
+     * The loop opened `if (!p.alive || !p.control) continue;` and a RemoteAvatar
+     * has no `control` — so every enemy saber in the game passed straight
+     * through every joining player, in the one mode where being surrounded is
+     * the point. Driven: a body with `damage`, a position and no controller,
+     * held inside a real duellist's arc for sixty seconds.
      */
     const THREE = await import('three');
     const { initPhysics } = await import('../../src/physics/Rapier.js');
@@ -239,9 +917,6 @@ export async function run({ check, assert }) {
     const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
       plasma: { spawn() {} }, smoke: { spawn() {} } };
     let hits = 0;
-    /* No `control`, no `camera`, no `velocity` — everything a RemoteAvatar
-     * lacks. It must still be cuttable, and the hit must not throw on the
-     * members it does not have. */
     const avatar = {
       position: V(0, 0, 0), chest: V(0, 1.3, 0), hp: 5000, maxHp: 5000,
       alive: true, invuln: 0, radius: 0.34, damage() { hits++; },
@@ -280,68 +955,57 @@ export async function run({ check, assert }) {
     return `${hits} cuts landed on a body with no controller, camera or velocity`;
   });
 
-  check('co-op: drafting a boon does not throw, and every player gets one', async () => {
+  check('co-op: drafting a boon does not throw, and every player draws their own hand', async () => {
     /**
-     * TWO BUGS THAT LOOKED LIKE ONE FEATURE.
+     * `World.applyBoon` looped `this.players` and called `applyBoon` on each; a
+     * RemoteAvatar is in that list and has no such method, so drafting a SINGLE
+     * card in co-op threw a TypeError. And a client's director never runs, so
+     * `onDraft` never fired there — a joining player fought every wave the host
+     * did and was never offered a card.
      *
-     *   `World.applyBoon` looped `this.players` and called `applyBoon` on each.
-     *   A RemoteAvatar is in that list and has no such method, so drafting a
-     *   SINGLE CARD in co-op threw a TypeError.
-     *
-     *   And a client's director never runs — main.js only calls `start` when
-     *   `netMode !== 'client'` — so `onDraft` never fired there. A joining
-     *   player fought every wave the host did and was never offered a card, for
-     *   the whole session.
-     *
-     * The fix has to be BOTH: apply locally only, and tell the peers a draft is
-     * open. What is NOT sent is the hand — each machine draws from its own
-     * taken-set, because that is the only set that knows what that player
-     * already holds and what ranks they have left. Sending the host's three
-     * cards would offer a Vitality III to someone who has never taken one.
+     * What is NOT sent is the hand: each machine draws from its own taken-set,
+     * the only set that knows what that player already holds.
      */
-    const { readFile } = await import('node:fs/promises');
-    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
-    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const H = await import('./_coop.mjs');
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const { boonById } = await import('../../src/game/Waves.js');
+    const { world } = await H.bootWorld({ level: 'arena' });
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
+    world.players.push(ally); world.remotes.set('PEER', ally);
+    const boon = boonById('vitality') || { id: 'vitality', name: 'Vitality', tag: 'more life', mods: {} };
+    let threw = null;
+    try { world.applyBoon(boon); } catch (e) { threw = e; }
+    assert(!threw, `drafting a card with a remote player in the world threw ${threw && threw.message}`);
+    assert(world.takenBoons.has(boon.id), 'the boon was not taken');
+    world.unload(); world.dispose?.();
 
-    const i = world.indexOf('  applyBoon(boon)');
-    assert(i > 0, 'World.applyBoon is gone');
-    const body = world.slice(i, i + 700);
-    assert(/typeof p\.applyBoon === 'function'/.test(body),
-      'applyBoon still calls p.applyBoon on every player, and a RemoteAvatar has none — this throws');
-
-    // the moment is broadcast…
-    assert(/t: 'draft'/.test(world), 'the host never tells a peer that a draft is open');
-    // …and the hand is NOT
-    const d = world.slice(world.indexOf('onDraft = '), world.indexOf('onDraft = ') + 1400);
+    const src2 = strip(await src('game/World.js'));
+    const main = strip(await src('main.js'));
+    assert(/t: 'draft'/.test(src2), 'the host never tells a peer that a draft is open');
+    const d = src2.slice(src2.indexOf('onDraft = '), src2.indexOf('onDraft = ') + 1400);
     assert(!/broadcast\([^)]*boons/.test(d),
       'the host broadcasts its own hand, which offers peers ranks they have not earned');
-    // the client draws its own, from its own set
-    assert(/net\.on\('draft'/.test(main), 'nothing on the client opens a draft');
     const h = main.slice(main.indexOf("net.on('draft'"), main.indexOf("net.on('draft'") + 500);
     assert(/drawBoons\(/.test(h) && /world\.takenBoons/.test(h),
       'the client does not draw from its own taken-set');
-    return 'applied locally, the moment broadcast, each peer draws its own hand';
+    return 'applied to local players only, the moment broadcast, each peer draws its own hand';
   });
 
-  check('co-op: a player who leaves stops being a player', async () => {
-    // `peer-left` deleted the avatar from `world.remotes` and left it in
-    // `world.players`, where main.js had ALSO pushed it. So a departed peer
-    // stayed live in every loop over the player list: enemies kept picking it
-    // as a target and walking to a body that no longer updated, and `damage`
-    // kept addressing a closed connection.
-    const { readFile } = await import('node:fs/promises');
-    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+  check('co-op: a departed peer leaves world.players as well as world.remotes', async () => {
+    // It was pushed into both and removed from one, so a departed peer stayed
+    // live in every loop over the player list: enemies kept picking it as a
+    // target and walking to a body that no longer updated.
+    const main = strip(await src('main.js'));
     const i = main.indexOf("net.on('peer-left'");
     assert(i > 0, 'the peer-left handler is gone');
     const body = main.slice(i, i + 900);
     assert(/remotes\.delete/.test(body), 'the avatar is not removed from remotes');
     assert(/players\.splice|players\.indexOf/.test(body),
       'the avatar is left in world.players, where it stays a target forever');
-    // and the pushes must still be paired, or this check is pinning half a rule
     assert(/world\.players\.push\(r\)/.test(main), 'the push this pairs with is gone');
-    // the host leaving must SAY so rather than leaving a silent, unwinnable room
     assert(/net\.on\('closed'/.test(main),
-      'nothing handles the host disappearing — a client is left in a world where nothing arrives and nothing explains why');
+      'nothing handles the host disappearing — a client is left in a world where nothing arrives');
     return 'a departed peer leaves both remotes and players; a vanished host is announced';
   });
 }

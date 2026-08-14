@@ -21,19 +21,22 @@ import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, b
 import { Communion } from './Constellation.js';
 import { applyOrder } from './Order.js';
 import { SPIRE } from './Run.js';
-import { LEVELS, LEVEL_ORDER, groundMight } from './Levels.js';
+import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packSnapshot } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
-import { clamp, lerp, damp, makeRng, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
+/** Wire precision. Centimetres for positions, milli-units for directions. */
+const r2 = (v) => Math.round(v * 100) / 100;
+const r3 = (v) => Math.round(v * 1000) / 1000;
 
 /**
  * How much of a body a full sever is worth, when you take it a share at a time.
@@ -321,7 +324,15 @@ export class World {
      * rung signal inside the callback can end the level.
      */
     const cleared = this.director.onWaveClear;
-    this.director.onWaveClear = (w) => { this._earnInsight(w); cleared(w); };
+    /**
+     * …and a party that survived a wave gets its dead back. `_reviveDowned` is
+     * a no-op solo (there is nobody left standing to revive you) and a no-op
+     * when nobody is down, so this costs an `Array.some` per wave.
+     *
+     * Composed out here for the same reason `_earnInsight` is: the callback
+     * above is the window tools/checks/run.mjs reads the rung signal out of.
+     */
+    this.director.onWaveClear = (w) => { this._earnInsight(w); cleared(w); this._reviveDowned(); };
 
     this.director.onDraft = (boons) => {
       this.onDraftOffer?.(boons);
@@ -484,6 +495,16 @@ export class World {
 
   addProp(p) { this.props.push(p); return p; }
 
+  /**
+   * A door the level has hung. `this.doors` is stepped every frame and fed to
+   * the blade solver every frame — that is where `BlastDoor.burn` is reached
+   * from — but nothing could ever get INTO the array: there was no `addDoor`
+   * on World, so `doors.length` was 0 on all thirteen levels and the finished
+   * blast-door system was dead content. Nine stub worlds in tools/checks
+   * already implemented this method against a World that did not have it.
+   */
+  addDoor(d) { this.doors.push(d); return d; }
+
   spawnEnemy(type, pos) {
     const e = new Enemy(this, type, pos);
     this.enemies.push(e);
@@ -501,10 +522,26 @@ export class World {
       const z = anchor.z + Math.sin(a) * r;
       if (!this.terrain.inBounds(x, z, 10)) continue;
       if (this.terrain.slopeAt(x, z) > 0.5) continue;
-      return new THREE.Vector3(x, this.terrain.height(x, z), z);
+      const y = this.terrain.height(x, z);
+      // …and what the LEVEL put there, which these 24 tries used to ignore
+      // entirely: 11.9% of Temple picks landed inside solid masonry and 94.3%
+      // of the deeps' under its own water. See `spawnClear` in Levels.js.
+      if (!spawnClear(this, x, y, z)) continue;
+      return new THREE.Vector3(x, y, z);
+    }
+    /* The give-up case is a LAST RESORT and it is still the level's own ring,
+     * so it gets the same test: better to arrive at rmin on a clear patch than
+     * to be dropped inside a column because 24 tries were unlucky. */
+    for (let i = 0; i < 12; i++) {
+      const a = rng() * TAU;
+      const x = anchor.x + Math.cos(a) * rmin, z = anchor.z + Math.sin(a) * rmin;
+      const y = this.terrain.height(x, z);
+      if (spawnClear(this, x, y, z)) return new THREE.Vector3(x, y, z);
     }
     const a = rng() * TAU;
-    return new THREE.Vector3(anchor.x + Math.cos(a) * rmin, 0, anchor.z + Math.sin(a) * rmin);
+    return new THREE.Vector3(anchor.x + Math.cos(a) * rmin,
+      this.terrain.height(anchor.x + Math.cos(a) * rmin, anchor.z + Math.sin(a) * rmin),
+      anchor.z + Math.sin(a) * rmin);
   }
 
   pickTarget(enemy) {
@@ -670,7 +707,9 @@ export class World {
       } else p.update(dt, ctx);
     }
 
-    // 2 — enemies
+    // 2 — enemies. On a client the body is placed from the wire FIRST, so the
+    // pose that follows is solved against a velocity that is the host's own.
+    if (this.netMode === 'client') this._stepNetEnemies(dt);
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
@@ -730,7 +769,12 @@ export class World {
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
     if (this.netMode !== 'client' && !this.over) this.director.update(dt, ctx);
-    if (this.netMode) this._netTick(rawDt);
+    if (this.netMode) {
+      // A remote player's death arrives as a field in a packet and raises
+      // nothing, so the wipe condition has to be re-read rather than waited on.
+      this._checkWipe();
+      this._netTick(rawDt);
+    }
     // Solo, the aura still runs — it is what keeps the holder's own half — but
     // nothing is going to consume what it offered outbound, so it is dropped on
     // the frame it was written rather than accumulated into a number that grows
@@ -1435,13 +1479,23 @@ export class World {
   onEnemyKilled(enemy, source, kind) {
     const A = enemy.A;
     this.score += A.score;
-    if (source instanceof Player) {
+    /**
+     * `instanceof Player` OR a peer's avatar.
+     *
+     * A RemoteAvatar is in `world.players`, it carries the counters (`kills`,
+     * `score`, `combo`), its `heal`/`addFlow` are deliberate no-ops because a
+     * peer owns its own health, and it is what `run.kills` sums. Requiring the
+     * class meant a friend's kill was credited to nobody: no feed entry, no
+     * score, and a party's run summary that undercounted every kill they did
+     * not personally land.
+     */
+    if (source instanceof Player || source?.isRemote) {
       source.kills++;
       source.score += A.score;
       source.addFlow(kind === 'cut' ? 0.16 : 0.08);
       source.combo++;
       source.comboTimer = 3.4;
-      if (source.boonMods.healOnKill) source.heal(source.boonMods.healOnKill);
+      if (source.boonMods?.healOnKill) source.heal(source.boonMods.healOnKill);
       this.onKillFeed?.(source.name, A.label, kind);
     }
     if (A.boss || A.big) {
@@ -1458,7 +1512,35 @@ export class World {
     }
   }
 
+  /**
+   * ONE PLAYER DIED. THAT IS NOT THE SAME EVENT AS THE PARTY DYING.
+   *
+   * This method used to be only the second one, and the whole player-facing
+   * death flow — `input.enabled = false`, the pointer release, the card, the
+   * run record — hangs off `onGameOver`, which requires EVERY entry of
+   * `world.players` to be dead. So in co-op the first player to die got nothing
+   * at all: pointer still locked, input still enabled, `screens.state` still
+   * 'playing', watching their own ragdoll for the rest of the run with Escape →
+   * Abandon as the only exit. Measured: local player killed with one live
+   * RemoteAvatar present, then 240 frames — onGameOver fired 0 times.
+   *
+   * And it could never fire late, either: `onPlayerDeath` had exactly one
+   * caller, `Player.die()`, so nothing re-evaluated the predicate when the
+   * REMOTE body died afterwards — a RemoteAvatar's death is `this.alive = s.a
+   * !== 0` in Net.js and raises nothing. That is what `_checkWipe` is for.
+   */
   onPlayerDeath(player, source) {
+    if (player?.isLocal && this.players.some((p) => p.alive)) this.onLocalDown?.(player, source);
+    this._checkWipe();
+  }
+
+  /**
+   * Is the party down? Called on every death and, in co-op, every frame —
+   * because the death that ends the run may be one this machine only ever hears
+   * about as a field in a packet.
+   */
+  _checkWipe() {
+    if (this.over || !this.players.length) return false;
     if (this.players.every(p => !p.alive)) {
       /**
        * THE RUN IS OVER. THE WORLD IS NOT.
@@ -1491,7 +1573,9 @@ export class World {
         perfects: this.players.reduce((a, p) => a + p.perfects, 0),
         limbs: this.players.reduce((a, p) => a + p.limbsRemoved, 0),
       });
+      return true;
     }
+    return false;
   }
 
   /**
@@ -1547,6 +1631,67 @@ export class World {
     this._netAccum = 0;
     this._netEnemyIndex = new Map();
     this._netPack = { packAvatar, packSnapshot };
+    this._netFires = [];
+    this._netWave = { w: this.director?.wave ?? 1, act: 0, started: false };
+    if (mode === 'host') this._recordFires();
+    if (mode === 'client') this._netDirector();
+  }
+
+  /**
+   * EVERY BOLT THE HORDE FIRES, AS AN EVENT.
+   *
+   * A snapshot is a set of STATES, and a shot is not a state: it exists for the
+   * 55 ms between two packets and is gone. That is the whole reason a joining
+   * player saw an empty firefight — there is no arrangement of position and hp
+   * fields that can contain a muzzle flash.
+   *
+   * Recorded at the pool rather than at the shooter because `BoltPool.fire` is
+   * the one seam every shot in the game passes through (`grep -rn '\.fire('
+   * src/` outside Bolts.js returns exactly one line, Enemy._shoot) — so this
+   * cannot miss a caller, and a new kind of shooter is replicated the day it is
+   * written rather than the day somebody remembers to add it here.
+   */
+  _recordFires() {
+    const pool = this.bolts;
+    if (!pool || pool._netRecorder) return;
+    const inner = pool.fire.bind(pool);
+    pool._netRecorder = true;
+    pool.fire = (origin, dir, opts = {}) => {
+      const b = inner(origin, dir, opts);
+      if (b && this._netFires && this.netMode === 'host') {
+        this._netFires.push([
+          opts.owner?.id ?? 0,
+          r2(origin.x), r2(origin.y), r2(origin.z),
+          r3(dir.x), r3(dir.y), r3(dir.z),
+          Math.round(b.speed), Math.round(b.damage * 10) / 10,
+          b.color.getHex(), b.big ? 1 : 0, opts.turned ? 1 : 0,
+        ]);
+      }
+      return b;
+    };
+  }
+
+  /**
+   * THE CLIENT'S DIRECTOR IS A SHELL, so it has to be told what it would know.
+   *
+   * `WaveDirector.update` never runs on a client (see the gate in update()), so
+   * `remaining` — a getter over the spawn queue, the arrivals in transit and
+   * the live local enemies — computes over three empty things and reports the
+   * handful of bodies that happen to be on screen. The HUD prints that number.
+   * The correct one arrives in every snapshot as `rem` and was written to
+   * `director._netRemaining`, where nothing read it.
+   *
+   * Defined on the INSTANCE, over the prototype's getter, because the shell is
+   * a property of this director and not of the class: a host's director must
+   * keep counting its own queue.
+   */
+  _netDirector() {
+    const d = this.director;
+    if (!d || Object.prototype.hasOwnProperty.call(d, 'remaining')) return;
+    Object.defineProperty(d, 'remaining', {
+      configurable: true,
+      get() { return this._netRemaining ?? 0; },
+    });
   }
 
   _netTick(rawDt) {
@@ -1566,12 +1711,59 @@ export class World {
     if (this._netAccum < interval) return;
     this._netAccum = 0;
 
+    // A peer that stopped talking without closing its connection. PeerJS only
+    // raises `close` on a clean teardown, so without this a lid closing left a
+    // ghost in the roster and in every other player's world forever.
+    if (this.netMode === 'host') net.sweep?.();
+    if (this.netMode === 'client') this._reconcileClaims();
+
     if (this.player) {
       const { packAvatar, packSnapshot } = this._netPack;
       net.broadcast(packAvatar(this.player));
       if (this.netMode === 'host') net.broadcast(packSnapshot(this));
     }
     this._bondTick(net);
+  }
+
+  /**
+   * WHAT THIS MACHINE DID TO THE HORDE, WHOEVER DID IT.
+   *
+   * `_claim` had exactly two call sites, both inside the blade-event handler —
+   * a grind and a cut. There are at least six ways a player hurts an enemy:
+   * Force lightning, choke, rend's dismemberment, the grip-shield's bite, and a
+   * deflected or returned bolt are all of them unclaimed, so on a client they
+   * were PHANTOM kills. You threw lightning into a pack and they dropped on
+   * your screen only; the host kept fighting bodies you had watched die and
+   * kept sending you `hit` messages from them. The suite's own check pinned the
+   * two kinds as "the two ways of hurting an enemy" and therefore certified the
+   * stub.
+   *
+   * The fix is not a seventh call site, it is a seam that cannot be forgotten:
+   * the host's hp is authoritative and arrives every snapshot, so any hp this
+   * machine has taken off since then is damage the host has not heard about —
+   * whatever dealt it. A future ability is replicated the day it is written.
+   *
+   * The two explicit claims stay: a CUT carries a bone and an impulse, so the
+   * host can take the same arm off rather than merely subtracting a number.
+   * They call `_claim` with the enemy, which resyncs the baseline so this
+   * cannot bill for them twice.
+   */
+  _reconcileClaims() {
+    const net = this.net;
+    if (!net?.connected || !this._netEnemyIndex) return;
+    for (const [id, e] of this._netEnemyIndex) {
+      const base = e._netHp;
+      if (base === undefined) continue;
+      const lost = base - e.hp;
+      const killed = e.dead && !e._netDead;
+      if (lost < 0.05 && !killed) continue;
+      // A body this machine has killed that the host still has standing is
+      // worth the whole rest of its health, or the host keeps it alive and
+      // shooting at a corpse.
+      const d = killed ? Math.max(lost, base) : lost;
+      this._claim({ t: 'claim', k: 'dmg', id, d: Math.round(d * 10) / 10,
+        p: [r2(e.position.x), r2(e.position.y + 1), r2(e.position.z)] }, e);
+    }
   }
 
   /**
@@ -1625,7 +1817,7 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, at] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
@@ -1634,11 +1826,41 @@ export class World {
         e.netDriven = true;
         this._netEnemyIndex.set(id, e);
       }
-      e.netTarget = (e.netTarget || new THREE.Vector3()).set(x, y, z);
+      /**
+       * `_netPos`, NOT `netTarget` — and that one rename is a bug fix.
+       *
+       * Enemy's netDriven branch derives velocity from its own tracking error:
+       * `velocity = (netTarget - position) * 18` while the body only closes
+       * that error at `1 - e^(-14/60)` per frame, which is 12.49/s. The ratio
+       * is 18/12.49 = 1.4413 exactly, and that number is the gait solver's ONLY
+       * speed input (Rig.js: `speed = hypot(v.x, v.z)` → stride frequency and
+       * stance span). Measured on a trooper walking a true 3.00 m/s at 18 Hz:
+       * reported 4.32 m/s average, sawtoothing ±33% at the packet rate. Every
+       * body in a joining player's level ran a sprint cadence while translating
+       * at a walk — foot-skate on the whole horde.
+       *
+       * Leaving `netTarget` unset makes that branch a no-op and the integration
+       * happens in `_stepNetEnemies` below, where the velocity is the body's
+       * OWN, off the wire.
+       */
+      e._netPos = (e._netPos || new THREE.Vector3()).set(x, y, z);
+      e._netVel = (e._netVel || new THREE.Vector3()).set(vx || 0, 0, vz || 0);
       e.netFacing = f;
       e.hp = hp;
+      // The host's number is the baseline every local claim is measured
+      // against. See _reconcileClaims.
+      e._netHp = hp;
+      e._netDead = !!dead;
+      e.netAttack = at || 0;
+      // The marksman's laser: the fairness contract of the ranged game, and a
+      // client had never seen one. `_pose` already aims it every frame — it
+      // simply never became visible, because `_beginTelegraph` is reached only
+      // from a brain that does not run here.
+      if (tg && !e.laser?.visible) e._beginTelegraph(null);
+      else if (!tg && e.laser?.visible) e._endTelegraph();
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
+    this._spawnNetBolts(msg.bf);
     /**
      * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
      *
@@ -1661,7 +1883,146 @@ export class World {
     this.director.wave = msg.w;
     this.director.active = !!msg.act;
     this.director._netRemaining = msg.rem;
+    this.director.intermission = msg.ic ?? 0;
     this.score = msg.sc;
+    this._netWaveEdge(msg);
+  }
+
+  /**
+   * THE WAVE SIGNAL, FOR A MACHINE WITH NO DIRECTOR.
+   *
+   * `director.update` is gated off on a client, and everything a wave is worth
+   * hangs off the callbacks only that method fires: the WAVE N and WAVE CLEAR
+   * announcements, `score += 500 * w`, the 8 hp and 0.35 flow every player gets
+   * for surviving one — and INSIGHT, whose single earning path is
+   * `_earnInsight` installed on `onWaveClear`. So a joining player earned zero
+   * Insight for a whole session: the Constellation was a dead screen, the
+   * "kneel to connect to the Force" prompt always read 0, no star could ever be
+   * lit, and they were 8 hp and 0.35 flow per wave weaker than the host for as
+   * long as the session lasted.
+   *
+   * The signal is already on the wire — `w` and `act` — as an EDGE rather than
+   * an event. Reading the edge is what makes the client's world a world.
+   */
+  _netWaveEdge(msg) {
+    const st = this._netWave || (this._netWave = { w: msg.w, act: 0, started: false });
+    const act = msg.act ? 1 : 0;
+    if (act && (!st.act || msg.w !== st.w)) {
+      st.started = true;
+      this.director.onWaveStart?.(msg.w, msg.rem ?? 0);
+    } else if (!act && st.act && st.started) {
+      // The same callback the host runs, so a client cannot silently receive a
+      // different wave-clear than everyone else. The rung signal inside it is
+      // gated on `netMode !== 'client'` — the host owns the ladder.
+      this.director.onWaveClear?.(st.w);
+      this._reviveDowned();
+    }
+    st.act = act;
+    st.w = msg.w;
+  }
+
+  /**
+   * REPLICATED BOLTS.
+   *
+   * Fired into the client's own pool, so they are real: they are drawn, they
+   * are heard, they can be deflected by the blade the local player is holding,
+   * they can be caught and thrown back, and a perfect return off one kills the
+   * thing that fired it. That is the game DESIGN.md is about, and none of it
+   * existed for a joining player.
+   *
+   * Owner is looked up by id so the returned bolt can hit the shooter and so
+   * `_boltHitTest`'s friendly-fire rules still apply; an owner the client has
+   * not met yet is null, which every reader already tolerates.
+   */
+  _spawnNetBolts(fires) {
+    if (!fires || !fires.length || !this.bolts) return;
+    for (const f of fires) {
+      const [oid, x, y, z, dx, dy, dz, speed, damage, color, big, turned] = f;
+      const owner = this._netEnemyIndex.get(oid) || null;
+      _v1.set(x, y, z); _v2.set(dx, dy, dz);
+      if (_v2.lengthSq() < 1e-8) continue;
+      this.bolts.fire(_v1, _v2, {
+        speed, damage, color, owner, team: 1, big: !!big, turned: !!turned,
+        length: big ? 2.4 : 1.15, radius: big ? 0.1 : 0.05,
+      });
+      audio.blaster(_v1, !!big);
+      this.particles?.plasma.spawn(_v1, _v3.set(0, 0, 0), {
+        life: 0.07, size: big ? 0.9 : 0.42, drag: 1, gravity: 0, color, alpha: 1 });
+      if (owner) owner.muzzleFlash = 0.06;
+    }
+  }
+
+  /**
+   * The client integrates its own copy of the horde.
+   *
+   * Enemy's netDriven branch only does this when `netTarget` is set, and it is
+   * deliberately not — see the note in applySnapshot. What it did was report a
+   * velocity of 1.44× the truth to the gait solver; what happens here is the
+   * body moves toward the host's position and reports the host's OWN velocity,
+   * so the feet are planted for the ground the body actually covers.
+   */
+  _stepNetEnemies(dt) {
+    for (const e of this._netEnemyIndex.values()) {
+      if (!e._netPos || e.dead) continue;
+      _v5.copy(e.position);
+      dampVec(e.position, e._netPos, 14, dt);
+      // The host's own number when we have it. The fallback is what the body
+      // ACTUALLY did this frame, which is still the truth about the ground it
+      // covered — never the tracking error, which is what reported 1.44×.
+      if (e._netVel) e.velocity.copy(e._netVel);
+      else if (dt > 0) e.velocity.subVectors(e.position, _v5).multiplyScalar(1 / dt);
+    }
+  }
+
+  /**
+   * RESTART THE WAVE — and refuse to, on a machine that does not own the horde.
+   *
+   * Lives here rather than in main.js because the damage is here: emptying
+   * `this.enemies` without `_netEnemyIndex` leaves every id the host is still
+   * sending pointing at a disposed Enemy, and `applySnapshot` only ever spawns
+   * a body for an id that is NOT in that map — so those bodies can never come
+   * back. Measured: four net-driven enemies before, zero after, all four ids
+   * still held, for the rest of the host's wave.
+   *
+   * Returns false when it declined, so the caller can say why.
+   */
+  restartWave() {
+    if (this.netMode === 'client') return false;
+    for (const e of this.enemies) e.dispose();
+    this.enemies.length = 0;
+    this._netEnemyIndex?.clear();
+    for (const p of this.players) {
+      if (!p.isLocal) continue;
+      p.hp = p.maxHp; p.force = p.maxForce; p.stamina = p.maxStamina;
+    }
+    this.director.start(Math.max(1, this.director.wave));
+    return true;
+  }
+
+  /**
+   * A player who went down comes back when the wave is survived.
+   *
+   * `Player.respawn` was written — forty complete lines — and had ZERO CALLERS
+   * anywhere in the tree. So the first player to die in a co-op session got
+   * nothing at all: no card, no spectate, no revive, no rejoin. They lay in a
+   * corpse with a live camera for the rest of the run and the only exit was
+   * Escape → Abandon.
+   *
+   * The wave boundary is the revive because it is the one moment the party has
+   * already earned something together, and it cannot become a way to ignore
+   * death: if NOBODY is standing, the run is over and this never runs.
+   */
+  _reviveDowned() {
+    if (!this.players.some((p) => p.alive)) return;
+    for (const p of this.players) {
+      if (p.alive || typeof p.respawn !== 'function') continue;
+      const anchor = this.players.find((o) => o.alive && o !== p);
+      const at = anchor ? _v1.copy(anchor.position).add(_v2.set(1.4, 0, 1.4)) : null;
+      if (at && this.terrain) at.y = this.terrain.height(at.x, at.z);
+      p.respawn(at ? at.clone() : null);
+      this.notify('YOU RISE AGAIN', 'the wave was survived — your allies held the line');
+      this.onLocalRevive?.(p);
+    }
   }
 
   /** Client → host: "my blade did this." Trusted; this is co-op with friends. */
@@ -1682,14 +2043,31 @@ export class World {
    * and the host's snapshot confirms it a moment later — rather than the client
    * waiting a round trip to find out whether its own sword works.
    */
-  _claim(msg) {
-    if (this.netMode === 'client' && this.net?.connected) this.net.toHost(msg);
+  _claim(msg, enemy = null) {
+    if (this.netMode !== 'client' || !this.net?.connected) return;
+    this.net.toHost(msg);
+    // Billed. `_reconcileClaims` measures unclaimed damage as the gap between
+    // the host's last hp and ours, so a claim that does not move the baseline
+    // is sent twice.
+    if (enemy) { enemy._netHp = enemy.hp; enemy._netDead = enemy.dead; }
   }
 
+  /**
+   * A FRIEND'S KILL, CREDITED TO A FRIEND.
+   *
+   * `null` used to be passed as the source, and `onEnemyKilled` requires a
+   * source before it credits anything — so every enemy a joining player
+   * legitimately killed was scored to nobody: no kill feed entry, no score, no
+   * combo, and `run.kills` (which sums `p.kills` across `world.players`)
+   * undercounted the party for the whole run summary. The peer's own
+   * RemoteAvatar is the right source: it is already in `world.players`, it is
+   * what the run reads, and it is what the kill feed can name.
+   */
   applyClaim(peerId, msg) {
     if (this.netMode !== 'host') return;
     const e = this._netEnemyIndex?.get(msg.id) || this.enemies.find(x => x.id === msg.id);
     if (!e || e.dead) return;
+    const by = this.remotes?.get(peerId) || null;
     if (msg.k === 'cut') {
       const cap = e.capsules().find(c => c.name === msg.b);
       if (!cap) return;
@@ -1699,9 +2077,9 @@ export class World {
         // string 'claim'. Never caught because nothing ever sent one.
         bone: msg.b, cutT: msg.ct, cap, point: new THREE.Vector3(...msg.p),
         impulse: new THREE.Vector3(...msg.v), normal: new THREE.Vector3(0, 1, 0), speed: 20,
-      }, null);
+      }, by);
     } else if (msg.k === 'dmg') {
-      e.damage(msg.d, new THREE.Vector3(...msg.p), null, 'remote');
+      e.damage(msg.d, new THREE.Vector3(...msg.p), by, 'remote');
     }
   }
 
