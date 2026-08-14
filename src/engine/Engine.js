@@ -47,6 +47,58 @@ import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
 
+/**
+ * THE LADDER IS A FILL-RATE LADDER, AND THE TOP THREE ROWS COST THE SAME CPU.
+ *
+ * Read down the columns: `shadow`, `msaa`, `pixelRatio`, `bloom`, `shadowDist`
+ * and `ink` are all fragments and shadow texels. `grass` and `particles` move
+ * how many instances are DRAWN. `viewDist` reaches CPU work through World.js,
+ * which derives the terrain's `detail` from it. The one column that changes how
+ * much simulation runs EVERY frame is `cloth`, and only `low` sets it to 0.
+ *
+ * `grass` is the one qualification, and it is a tail rather than a median: the
+ * field refills a ring's window on the frame the player crosses its cell line,
+ * one frame in ten while sprinting, and that spike scales with the column even
+ * though the steady-state update does not (audit 3, frame-budget#1 — the fix is
+ * a one-ring-per-frame queue in Scenery.js, which belongs to another
+ * workstream). So a player on `low` does get a smaller worst frame out of it;
+ * they do not get a smaller typical one.
+ *
+ * Measured rather than argued: all four tiers built in ONE process, driven in
+ * interleaved rounds so contention lands on all of them equally, temple, 20
+ * acolytes from a fixed seed, 3 rounds of 250 frames, medians of round medians,
+ * `world.update` only (there is no renderer here):
+ *
+ *   enemies in melee (6-15 m)     low 2.41   medium 4.24   high 4.45   ultra 3.84
+ *   enemies spread (4-50 m)       low 2.14   medium 4.80   high 4.57   ultra 5.01
+ *
+ * In the melee case ULTRA measures cheaper than high AND than medium; in the
+ * spread case medium measures more expensive than high. An ordering that is
+ * impossible if the ladder were doing anything is noise, and that is what these
+ * three rows are. `low` is the only real step — 46% and 53% of the simulation
+ * frame — and all of it is cloth: `clothOn` counted live is 0/19 at low and
+ * 18/18, 18/18, 20/20 at medium, high and ultra. 18, 30 and 46 m all mean "on"
+ * once the fight starts, because a fight happens inside 15 m and the enemies
+ * close, so a DISTANCE cut stops differentiating exactly when the frame is
+ * fullest.
+ *
+ * WHAT THIS MEANS FOR A PLAYER WHOSE BOTTLENECK IS THE CPU — the likely case
+ * for a JS game on a laptop: dropping from Cinematic to Fidelity to Balanced
+ * moves nothing they can feel, and the only step that helps them is the one at
+ * the bottom of the menu. That is a real gap and it is not fixed here. The
+ * shape of the fix is a COUNT rather than a distance — `cloth: 0 / 4 / 10 / 20`
+ * nearest characters — which steps at every tier in the scenario that matters;
+ * it needs World.js to rank the characters by camera distance once a frame, and
+ * World.js belongs to another workstream. `grass` and `particles` have the same
+ * flat-in-melee shape and the same fix.
+ *
+ * What the top three rows DO buy is real and is not visible from here: this
+ * machine has no GPU, so the only honest statements are proxies — shadow memory
+ * (12 / 27 / 75 / 108 MB, three cascades of size² × 4 B, listed below), ink
+ * prepass fragments (25% / 36% / 72% / 100% of the frame), pixel ratio
+ * (1.0x / 1.0x / 1.56x / 2.25x fragments) and msaa (0 / 2 / 4 / 4). Never quote
+ * a frame rate for any of it.
+ */
 export const QUALITY = {
   // `shadowDist` is the REACH of the outermost cascade, and `shadow` is the map
   // size of EACH of the three (see CASCADE_SPLIT / cascadeBoxes). It used to be
@@ -84,8 +136,10 @@ export const QUALITY = {
   //   high    0.85   the knee — 1 px lines with no visible stair-stepping
   //   ultra   1.00
   // `cloth` is how far an ENEMY may be and still have simulated garments, in
-  // metres. It is the most expensive thing a character owns and it had no
-  // budget at all: see the note below.
+  // metres — and it is the only column in this table that changes how much
+  // simulation the CPU runs. It had no budget at all before: see the note
+  // below, and the one above the table for what the other columns do and do
+  // not buy.
   //
   // `bloom` is false at low for the first time here. It was `true` on all four
   // rows, which made it a column with a reader that could not change anything —
@@ -107,11 +161,42 @@ export const QUALITY = {
  * only way to reach it was to outrun one. In an ordinary fight it never fired
  * once, and there was no other switch: not a slider, not a tier, nothing.
  *
- * Measured headless on this machine, 20 clothed duellists walking: 6.28 ms of
- * garment solve and 1.26 ms of collider refresh per frame — 7.5 ms of a 16.67
- * ms budget, with no renderer, no physics, no AI, no particles and no bolts in
- * the loop. Per character that is 287 particles, 1466 links and 20 040 sphere
- * tests every frame, four garments deep.
+ * WHAT IT COSTS — AND THE FIGURE THAT USED TO BE HERE WAS FOR A POPULATION THE
+ * GAME CANNOT FIELD.
+ *
+ * This note said "20 clothed duellists walking: 6.28 ms of garment solve and
+ * 1.26 ms of collider refresh per frame — 7.5 ms of a 16.67 ms budget … per
+ * character 287 particles, 1466 links … four garments deep". Every one of
+ * those per-character numbers is the PLAYER's row. `attachSkirt` is reached
+ * only when `built.robeSkirt` is truthy (Enemy.js), and `robeSkirt` is returned
+ * by exactly one builder, `buildJedi` — which is what the Player is built from
+ * and no enemy is. Counted on a live World at `ultra`, where the cut gates
+ * nothing off:
+ *
+ *   the PLAYER      4 garments   287 particles  1466 links  51 colliders
+ *                   cloak 99/496, skirt 140/770, two sash straps 24/100 each
+ *   an ACOLYTE      1 garment     63 particles   300 links  21 colliders
+ *   sparring, bodyguard   the same one cloak
+ *   b1, b2, trooper, sniper, droideka, walker, remote, dummy, beast,
+ *   charger, stalker      nothing at all
+ *
+ * Three of fourteen archetypes wear anything, and each of those wears one cape.
+ * So "20 clothed duellists, four garments deep" is 5740 particles and 29 320
+ * links, and twenty acolytes are 1260 and 6000 — the note was sized for 4.9x
+ * the work the game can actually put on screen, and a tuning decision made from
+ * it is made against a figure five times the real one.
+ *
+ * The ratio is written down here rather than a millisecond count on purpose:
+ * the defect being fixed IS one machine's number written into a comment, and
+ * two runs of this project's own harness on two differently loaded boxes gave
+ * 1.9 ms and 3.3 ms for the same fight. tools/checks/cloth-cost.mjs counts the
+ * population — which is machine-independent — and holds the timing to a band.
+ *
+ * And `low` does not hand back even that much. The PLAYER's cloth is not gated
+ * at all: `Player.update` calls `this.skirt.update(...)` and
+ * `this.cloak.update(...)` with no `clothOn` test, because the player is always
+ * the nearest character to the camera and the one garment set the eye is on.
+ * What the column switches off is the enemy share.
  *
  * 30 m at `high` is not a new number: it is where Enemy already drops 37 of a
  * character's 56 meshes. Cloth now stops where the game had already decided
@@ -119,8 +204,10 @@ export const QUALITY = {
  * were never deleted, only hidden — so the silhouette is unchanged; what goes
  * is the fold motion, at a distance where a fold is under a pixel.
  *
- * 0 at `low` means the rigid robe, always. That tier is the one the menu offers
- * to integrated graphics, and this is the largest single thing it can hand back.
+ * 0 at `low` means the rigid robe, always: the tier the menu offers to
+ * integrated graphics. It is the largest thing the CPU side of the ladder hands
+ * back — which is a smaller claim than the one that used to be here, and the
+ * note over QUALITY explains why.
  */
 
 /* ── aerial perspective ──────────────────────────────────────────────────

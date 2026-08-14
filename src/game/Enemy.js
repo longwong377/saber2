@@ -63,6 +63,64 @@ const BACKPEDAL = 0.5;
 const BLADE_BITE = 0.10;
 
 /**
+ * HOW FAR FROM THE BODY THE SHORT LIST OF STATIC BOXES IS GUARANTEED TO ANSWER.
+ *
+ * `supportHeight` has no spatial index and no reject of its own — it walks
+ * every static box in the level and pays two quaternion rotations per box
+ * before it looks at the distance (src/physics/Support.js:35-42), so a box
+ * 400 m away costs exactly what one underfoot does. The PLAYER never paid
+ * that: `Player._gatherNear` has built a short list once a frame for as long
+ * as it has existed and hands that to the same function, which is why the
+ * doc comment on `supportHeight`'s `boxes` parameter reads "pass a
+ * pre-filtered short list if you have one". The enemies did not have one.
+ *
+ * Measured, headless, temple, 18 acolytes + the player, `high`: 51,061
+ * static-box tests per frame — 212 sweeps of the level's 241-box array, ~11.7
+ * per character, because the gait solver asks about the ground about eleven
+ * times per character per frame (Rig.js `_normalAt` alone is four, plus the
+ * plant, the slope probe and the swing aim). Cost, measured the one way that
+ * changes no RESULT — padding the array with clones of the level's own
+ * records displaced 400 m so only the LENGTH of the loop moves, 4 interleaved
+ * rounds x 120 frames: 241 boxes 6.61 ms, 353 7.03, 477 8.57, 595 8.93, 900
+ * 11.64. Linear, 7.63 us per extra box per frame, which attributes 1.84 ms of
+ * `world.update` to the level's own 241.
+ *
+ * And the array GROWS as the level is fought in: cutting masonry converts a
+ * monolithic structure into per-chunk static colliders, so four minutes of an
+ * ordinary temple fight takes 241 to 377 with the player never cutting
+ * anything deliberately. The cost is linear in that number, so the frame gets
+ * worse the longer the session runs — which is the player's own first bug
+ * report, quoted at src/engine/Profiler.js:7-9.
+ *
+ * The list below is gathered once a frame with one subtraction, one dot and
+ * one compare per box, and the eleven gait queries then sweep the dozen boxes
+ * it holds instead of the level's 241 — a median of 9 across five levels and
+ * fifty-six bodies, 11 to 14 on the temple. Counted on the same fight, the
+ * `boxTopAt` calls per frame go from ~46,700 to 2,646, and the marginal cost
+ * of an extra static box from 7.63 us to 0.27.
+ *
+ * NEAR_REACH is the radius, measured from the point the list was gathered at,
+ * inside which the short list is a provable SUPERSET of what the full array
+ * would have contributed. A box can only raise the floor under (x, z) if its
+ * bounding sphere reaches that column — `boxTopAt` clamps into the box and
+ * rejects anything farther than the body's radius — so gathering at
+ * `|centre - here| <= box.radius + bodyRadius + NEAR_REACH` catches every box
+ * that any query within NEAR_REACH of `here` could possibly have used. A
+ * query outside that disc falls back to the full array, so the optimisation
+ * cannot be WRONG, only occasionally slow: `_groundAt` below carries that
+ * guard, and tools/checks/gait-support.mjs drives every archetype on every
+ * level and asserts zero divergence over ~700k real queries.
+ *
+ * 2.6 m is the reach `Player._gatherNear` has always used. Measured over
+ * 312,706 real gait queries across five levels and thirteen archetypes the
+ * farthest any of them asks from its own body is 2.102 m (a bodyguard's
+ * planted foot mid-stride), median 0.209 — so the fallback is dead code in
+ * practice and there for the day a stride, a scale or a new animator makes it
+ * not be.
+ */
+const NEAR_REACH = 2.6;
+
+/**
  * Slow the part of a desired velocity that points AWAY from `toTarget`, leaving
  * everything across that line alone. Exported because it is a numeric law and
  * numeric laws in this codebase get measured, not eyeballed: a sidestep must
@@ -683,6 +741,20 @@ export class Enemy {
     this.target = null;
     this.lastSeen = 0;
     this.lod = 0;
+    /**
+     * The static boxes near enough to stand on, rebuilt once a frame by
+     * `_gatherNear` — the enemy's half of what `Player._nearBoxes` has always
+     * been. `_nearAt` is where it was gathered and `_nearStale` forces the
+     * first rebuild of each frame, so a box that destruction added or removed
+     * since the last one is picked up. See NEAR_REACH.
+     */
+    this._nearBoxes = [];
+    this._nearAt = new THREE.Vector3();
+    this._nearStale = true;
+    /** Queries the short list could not answer for, so they took the whole
+     *  array. Expected to stay at zero; the gait check reports it, and drives
+     *  the fallback deliberately because nothing else ever reaches it. */
+    this._nearMisses = 0;
 
     this._build();
 
@@ -1396,6 +1468,10 @@ export class Enemy {
   }
 
   update(dt, ctx) {
+    // A new frame: whatever short list of static boxes we hold was built
+    // before destruction had its turn, so the first query of the frame
+    // rebuilds it. See NEAR_REACH.
+    this._nearStale = true;
     this._updateElite(dt, ctx);
     if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
     if (this.dead) {
@@ -2142,6 +2218,68 @@ export class Enemy {
 
   /* ── motion ──────────────────────────────────────────────────────── */
 
+  /**
+   * The short list of static boxes near enough to be standable, rebuilt at
+   * most once a frame and again if the body has since walked out of the disc
+   * it was built for. See the note over NEAR_REACH for what it is worth and
+   * why the radius is what it is.
+   *
+   * The test is deliberately `<=` and deliberately in the XZ plane only: it
+   * has to be a superset of what `boxTopAt` would accept, and that function's
+   * own reject is a horizontal one against the same `box.radius` this reads.
+   */
+  _gatherNear(ctx) {
+    const near = this._nearBoxes;
+    const physics = ctx.physics;
+    if (!physics) { near.length = 0; return near; }
+    const p = this.position;
+    if (!this._nearStale) {
+      const mx = p.x - this._nearAt.x, mz = p.z - this._nearAt.z;
+      // Half a metre of drift since the gather. Correctness does not depend on
+      // this — `_groundAt`'s guard is measured from `_nearAt`, not from here,
+      // so a stale centre only costs coverage — it is here so that the push
+      // and the pose in the same frame do not each pay for a rebuild.
+      if (mx * mx + mz * mz <= 0.25) return near;
+    }
+    this._nearStale = false;
+    this._nearAt.copy(p);
+    near.length = 0;
+    const boxes = physics.staticBoxes;
+    const reach = this.radius + NEAR_REACH;
+    for (let i = 0; i < boxes.length; i++) {
+      const box = boxes[i];
+      if (box.disabled) continue;
+      const dx = box.center.x - p.x, dz = box.center.z - p.z;
+      const rr = box.radius + reach;
+      if (dx * dx + dz * dz <= rr * rr) near.push(box);
+    }
+    return near;
+  }
+
+  /**
+   * What is under (x, z), answered off the short list when the short list can
+   * prove it knows, and off the whole array when it cannot.
+   *
+   * The guard is the whole reason this is safe to do at all. `_nearBoxes`
+   * holds every box whose bounding sphere reaches within `radius + NEAR_REACH`
+   * of `_nearAt`; a column farther than NEAR_REACH from `_nearAt` may be
+   * standing on something the gather never looked at, so it pays for the full
+   * sweep rather than answering wrong. Measured over 312,706 real gait queries
+   * the farthest one ever lands is 2.102 m against a 2.6 m reach, so in
+   * practice the fallback never runs — `_nearMisses` counts it so that stays a
+   * measured fact rather than a hope.
+   */
+  _groundAt(ctx, x, z) {
+    const dx = x - this._nearAt.x, dz = z - this._nearAt.z;
+    let boxes = this._nearBoxes;
+    if (dx * dx + dz * dz > NEAR_REACH * NEAR_REACH) {
+      boxes = ctx.physics?.staticBoxes;
+      this._nearMisses++;
+    }
+    return supportHeight(ctx.terrain, boxes, null,
+      x, z, this.position.y, this.radius, STEP_UP);
+  }
+
   _move(dt, ctx) {
     const terrain = ctx.terrain;
 
@@ -2278,8 +2416,8 @@ export class Enemy {
     // through and stood on the sand underneath, or hopped on the spot the way
     // the player's did. See src/physics/Support.js.
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
-    const support = supportHeight(terrain, ctx.physics?.staticBoxes, null,
-      this.position.x, this.position.z, this.position.y, this.radius, STEP_UP);
+    this._gatherNear(ctx);
+    const support = this._groundAt(ctx, this.position.x, this.position.z);
     this.supportY = support;
     if (this.position.y < support) this.position.y = support;
     if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
@@ -2369,9 +2507,10 @@ export class Enemy {
     if (this.actor?.ragdolled) return;
 
     if (this.animator) {
-      // the feet stand where the body stands — see src/physics/Support.js
-      const groundAt = (x, z) => supportHeight(ctx.terrain, ctx.physics?.staticBoxes, null,
-        x, z, this.position.y, this.radius, STEP_UP);
+      // the feet stand where the body stands — see src/physics/Support.js, and
+      // NEAR_REACH for why this is a short list rather than the whole level
+      this._gatherNear(ctx);
+      const groundAt = (x, z) => this._groundAt(ctx, x, z);
       this.animator.setFacing(this.facing);
       this.animator.update(dt, {
         position: this.position, facing: this.facing, velocity: this.velocity,

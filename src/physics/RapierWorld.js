@@ -815,6 +815,10 @@ export class RapierWorld {
   get terrain() { return this._terrain; }
 
   set terrain(t) {
+    // Same terminal contract as `add` and `addStaticBox`: remember what was
+    // asked for, build nothing. `_buildHeightfield` ends in a `createCollider`
+    // on a world that is null once `dispose()` has run.
+    if (this.dead) { this._terrain = t; return; }
     this._terrain = t;
     this._dropHeightfield();
     if (t) this._buildHeightfield();
@@ -1050,7 +1054,18 @@ export class RapierWorld {
 
   /* ── statics ─────────────────────────────────────────────────────── */
 
+  /**
+   * …and the same terminal contract `add()` has. A dead world has no
+   * `this.world`, so the `createCollider` at the end of this used to throw
+   * `Cannot read properties of null` where `add()` refuses cleanly and
+   * `removeStaticBox`, `step`, `raycast` and `querySphere` all return without
+   * incident. It is not reachable from the shipping game — every caller in
+   * src/ (Props.js, Trees.js, Destruction.js) runs during level dressing on a
+   * live world — but a terminal state that refuses six of its eight entry
+   * points and throws on the other two is not a contract, it is a coincidence.
+   */
   addStaticBox(center, halfExtents, quat = new THREE.Quaternion(), opts = {}) {
+    if (this.dead) return null;
     const R = this.R;
     // The record is exactly the shape the sphere solver's was, because the
     // player's and enemies' own capsule sweeps walk `physics.staticBoxes`
@@ -1244,8 +1259,28 @@ export class RapierWorld {
    *
    * `realloc: false` is the terminal form and belongs only to `dispose()`;
    * everything else wants a world to carry on with.
+   *
+   * AND ONCE IT IS DEAD IT STAYS DEAD, whoever asks. `dispose()` is guarded —
+   * `if (this.dead) return;` — but this was not, so a second teardown walked
+   * straight past that guard and allocated a whole Rapier world here: broad
+   * phase, narrow phase, island manager, every pipeline, inside WASM linear
+   * memory, which is monotonic and never handed back. Nothing could then reach
+   * it, and `dispose()` would decline to free it because `dead` was already
+   * true. Driven: after `World.dispose()` twice, `physics.dead` is true and
+   * `physics.world` is a live `RAPIER.World` with freshly constructed
+   * physicsPipeline, serializationPipeline and debugRenderPipeline; a third
+   * dispose strands another.
+   *
+   * The path that reaches it is `deploy()`'s own recovery in main.js:
+   * `buildWorld` opens with `if (world) { world.dispose(); world = null; }`,
+   * and if that dispose throws, the module-level `world` is still the old one
+   * and the catch block disposes it a second time. One stranded Rapier world
+   * per occurrence — the order of magnitude tools/checks/session.mjs measured
+   * for the earlier always-reallocate form of this same bug was 28.2 KB a
+   * cycle. One line, and the terminal state is actually terminal.
    */
   clear(realloc = true) {
+    if (this.dead) realloc = false;
     for (const b of this.bodies) { b.dead = true; b.rb = null; b.colliders = null; b._world = null; }
     for (const j of this.joints) { j.broken = true; j.joint = null; j._world = null; }
     this.bodies.length = 0;

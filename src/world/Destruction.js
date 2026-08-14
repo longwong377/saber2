@@ -488,6 +488,95 @@ const GRID_JITTER = 0.62;
  * @returns [{ poly, centre, volume, bounds, samples, mat }]
  */
 export function fractureSolid(bounds, samples, opts = {}) {
+  const job = fractureJob(bounds, samples, opts);
+  job.step(NEVER);
+  return job.cells;
+}
+
+/** A deadline that never expires — what the eager callers pass. */
+const NEVER = () => false;
+
+/**
+ * How many iterations of each of the four hot loops run between two looks at
+ * the clock.
+ *
+ * Large enough that the `performance.now()` a look costs is amortised to
+ * nothing — fracturing the temple's worst piece, 10,979 surface samples and
+ * 10,897 triangles, reads the clock a few dozen times in total — and small
+ * enough that the slice is not itself the hitch. Swept on the temple with a
+ * player walking for 3000 frames: at 512/4/512/2 the worst frame the
+ * approach-time path spends is 10.9 ms and at 64/1/64/1 it is 7.7 ms, against
+ * 37-60 ms before any of this. The remaining floor is not the loop granularity
+ * — it is the phase transitions and the geometry build that shares the same
+ * budget — so the coarser numbers are kept and the eager path pays nothing for
+ * them.
+ */
+const SLICE_SAMPLES = 512;
+const SLICE_SITES = 4;
+const SLICE_TRIS = 512;
+const SLICE_CELLS = 2;
+
+/**
+ * THE SAME FRACTURE, HANDED BACK A SLICE AT A TIME.
+ *
+ * Why this is not one function any more. `Destruction._prepare` gives a piece
+ * a whole frame to fracture — `return; // cells are a whole frame's work` — and
+ * a whole frame is not enough. Every structure in the game, timed individually
+ * through its own `prefracture()` on a freshly loaded level: 389 structures,
+ * median 7.5 ms, p90 14.7, max 76 ms, and 27 to 41 of them (7-11%, the count
+ * moves with contention) over a whole 16.7 ms frame — up to 4.6x the frame they
+ * are allotted. In play it is worse: a player walking a 22 m circle on the
+ * temple with the director off and no enemies at all, 3000 frames, had
+ * `prefracture` fire on 57-92 of them with a maximum of 76 ms, 11 frames over
+ * 16.7 ms and 2 over 50. That is a visible hitch about every four seconds of
+ * walking, with nothing on screen to explain it — and it fires on APPROACH,
+ * at `prefractureRange` 30 m, not on contact.
+ *
+ * Meanwhile the half that IS budgeted behaves perfectly: `prepareCell` fires
+ * at a median 0.77 ms against its 1.2 ms budget and a worst case of 3.0. The
+ * budget works. It was simply never applied to the expensive half.
+ *
+ * WHY A JOB OBJECT AND NOT A GENERATOR. A generator is the obvious shape for
+ * this and it was tried first: the whole body converted to `function*` with a
+ * `yield` every few hundred iterations, drained by the eager entry point.
+ * Measured, four interleaved rounds over the temple's 126 structures, one
+ * process each so contention hits both equally: eager 1360/1476/1446/1464 ms
+ * total against 1958/1917/2197/2514 for the generator, and a median piece of
+ * 8.4-9.1 ms against 10.6-12.9. V8 will not optimise these loops inside a
+ * generator body, and paying 35-70% more total work to spread it is a bad
+ * trade. So the loops stay exactly as they were, in plain functions, and only
+ * the state they run over is hoisted into an object.
+ *
+ * The phases below are the ones that cost something, measured over all 389
+ * structures: triangle clip 24%, sample assignment 19.5%, cell shrink 18%,
+ * cell build 13%, void split 5%, grid and chunk construction under 1% between
+ * them (the remaining ~20% is `_surfaceSamples`, which is sliced the same way).
+ * Four of the five are flat index loops whose iterations touch only their own
+ * accumulator, so cutting them at any index is exactly the same arithmetic in
+ * the same order.
+ *
+ * `step(overBudget)` runs until `overBudget()` says stop and returns true when
+ * the whole job is finished; `cells` is only populated then.
+ */
+export function fractureJob(bounds, samples, opts = {}) {
+  const st = fractureSetup(bounds, samples, opts);
+  const phases = [assignSamples, buildCells, clipTriangles, shrinkCells, splitVoidsPhase];
+  const job = {
+    cells: null,
+    step(overBudget) {
+      while (st.phase < phases.length) {
+        if (!phases[st.phase](st, overBudget)) return false;
+        st.phase++;
+        if (st.phase < phases.length && overBudget()) return false;
+      }
+      job.cells = st.out;
+      return true;
+    },
+  };
+  return job;
+}
+
+function fractureSetup(bounds, samples, opts) {
   const target = Math.max(0.35, opts.cell ?? 1.35);
   const maxCells = opts.maxCells ?? 28;
   const rng = makeRng(opts.seed ?? 7);
@@ -541,106 +630,147 @@ export function fractureSolid(bounds, samples, opts = {}) {
       }
     }
   }
-  const at = (i, j, k) => (i < 0 || j < 0 || k < 0 || i >= gx || j >= gy || k >= gz)
-    ? null : sites[(k * gy + j) * gx + i];
-
-  // ── which cell does each surface sample belong to? (nearest site = Voronoi)
   const matOf = opts.matOf;
   const nrm = opts.normals || null;
   const cnt = samples ? samples.length / 3 : 0;
   const siteOf = cnt ? new Int32Array(cnt).fill(-1) : null;
   const lo = [min.x, min.y, min.z], inv = [1 / sx, 1 / sy, 1 / sz];
-  for (let s = 0; s < cnt; s++) {
-    const x = samples[s * 3], y = samples[s * 3 + 1], z = samples[s * 3 + 2];
-    const i0 = clamp(Math.floor((x - lo[0]) * inv[0]), 0, gx - 1);
-    const j0 = clamp(Math.floor((y - lo[1]) * inv[1]), 0, gy - 1);
-    const k0 = clamp(Math.floor((z - lo[2]) * inv[2]), 0, gz - 1);
-    let bestI = -1, bestD = Infinity;
-    const ki = Math.max(0, k0 - 1), ke = Math.min(gz - 1, k0 + 1);
-    const ji = Math.max(0, j0 - 1), je = Math.min(gy - 1, j0 + 1);
-    const ii = Math.max(0, i0 - 1), ie = Math.min(gx - 1, i0 + 1);
-    for (let k = ki; k <= ke; k++) for (let j = ji; j <= je; j++) for (let i = ii; i <= ie; i++) {
-      const o = ((k * gy + j) * gx + i) * 3;
-      const dx = P[o] - x, dy = P[o + 1] - y, dz = P[o + 2] - z;
-      const d = dx * dx + dy * dy + dz * dz;
-      if (d < bestD) { bestD = d; bestI = (k * gy + j) * gx + i; }
-    }
-    if (bestI < 0) continue;
-    const best = sites[bestI];
-    best.n++;
-    siteOf[s] = bestI;
-    (best.list || (best.list = [])).push(s);
-    dopAdd(best.dop || (best.dop = newDop()), x, y, z,
-      nrm ? nrm[s * 3] : 0, nrm ? nrm[s * 3 + 1] : 0, nrm ? nrm[s * 3 + 2] : 0);
-    if (matOf) {
-      const m = matOf(s);
-      (best.mats || (best.mats = new Map())).set(m, (best.mats.get(m) || 0) + 1);
-    }
-  }
-  // A cell that holds none of the piece's surface is empty space — the hole in
-  // an arch, the air above a broken wall's jagged top — and must not become a
-  // block of stone hanging in it.
-  const floor = cnt ? Math.max(1, Math.floor(cnt / (sites.length * 26))) : 0;
-  const kept = [];
-  for (const s of sites) {
-    if (cnt && s.n < floor) continue;
-    let poly = boxPoly(bounds.getCenter(new THREE.Vector3()), size.clone().multiplyScalar(0.5));
-    // furthest point of the cell from its site: a bisector further than that
-    // cannot reach the cell, which is what keeps this to the six or eight
-    // neighbours that matter instead of all twenty-six
-    let far = polyRadius(poly, s.p);
-    const nbrs = [];
-    for (let dk = -1; dk <= 1 && poly; dk++) for (let dj = -1; dj <= 1 && poly; dj++) for (let di = -1; di <= 1 && poly; di++) {
-      if (!di && !dj && !dk) continue;
-      const o = at(s.i + di, s.j + dj, s.k + dk);
-      if (!o) continue;
-      const n = new THREE.Vector3().subVectors(o.p, s.p);
-      const len = n.length();
-      if (len < 1e-5 || len * 0.5 > far) continue;
-      n.multiplyScalar(1 / len);
-      const mid = _v1.addVectors(o.p, s.p).multiplyScalar(0.5);
-      const next = clipPoly(poly, n, -n.dot(mid));
-      // a bisector that actually trimmed the cell is a shared face, which is
-      // the exact Voronoi adjacency — and therefore the support graph
-      if (next !== poly) { poly = next; nbrs.push(o.index); if (poly) far = polyRadius(poly, s.p); }
-    }
-    if (!poly) continue;
-    s.poly = poly;
-    s.keptNbrs = nbrs;
-    s.aabb = polyBounds(poly, new THREE.Box3());
-    kept.push(s);
-  }
+  return {
+    phase: 0, cursor: 0,
+    bounds, samples, size, min, maxCells,
+    gx, gy, gz, sx, sy, sz, sites, P, matOf, nrm, cnt, siteOf, lo, inv,
+    // A cell that holds none of the piece's surface is empty space — the hole
+    // in an arch, the air above a broken wall's jagged top — and must not
+    // become a block of stone hanging in it.
+    floor: cnt ? Math.max(1, Math.floor(cnt / (sites.length * 26))) : 0,
+    kept: [], out: [], voids: null,
+    corners: opts.corners, triAt: opts.triAt,
+    A: new Float64Array(48), B: new Float64Array(48),
+  };
+}
 
-  /* Each triangle's own surface, clipped to the cell, as support — not its
-   * corners.
-   *
-   * The corners were the obvious thing and they are wrong twice over. A corner
-   * across the wall belongs to the neighbour: fed to this cell it pushes the
-   * clip plane out past the wall, where it can never bite, and the cell goes
-   * slack (measured on the column, 1.37 → 1.52 on the volume ratio). Dropped
-   * instead — which is what this did — a triangle that spans two cells supports
-   * NEITHER of them, so the only thing describing the surface across the middle
-   * of a big face is the barycentric lattice, whose step is ~15 cm at this
-   * budget. Measured on the lintel, whose beam is two triangles 6.4 m long: the
-   * cells covered 91.2% of the intact solid, the missing 8.8% a 3 cm skin spread
-   * evenly over every face of every cell, and the 2 cm pad covering none of it.
-   *
-   * What a cell wants is the extreme of (triangle ∩ cell), so that is what it
-   * gets: the triangle clipped to the cell's own bounding box, which is why the
-   * cells are built first and trimmed second. Every vertex of the clipped
-   * polygon lies ON the triangle, so it can never claim material the surface
-   * does not have, and inside the box, so it can never reach across the wall.
-   * Measured, against dropping the corner: column 95.6 → 99.8% covered, lintel
-   * 91.2 → 96.3%, wall 98.5 → 99.6%, and the volume ratio pays 1.25 → 1.33 on
-   * the column, all of it the difference between the cell and its box. It costs
-   * six axis-aligned plane tests on a polygon of three to nine points — 4.4 ms
-   * on the 10274-triangle gate, and nothing at all on a piece that is mostly
-   * bevels, whose triangles are all below the size cut-off.
-   */
-  const corners = opts.corners, triAt = opts.triAt;
-  if (corners && triAt && nrm) {
-    let A = new Float64Array(48), B = new Float64Array(48);
-    for (let t = 0; t < triAt.length; t++) {
+/** Which cell does each surface sample belong to? (nearest site = Voronoi) */
+function assignSamples(st, overBudget) {
+  const { samples, gx, gy, gz, P, sites, matOf, nrm, cnt, siteOf, lo, inv } = st;
+  let s = st.cursor;
+  while (s < cnt) {
+    const end = Math.min(cnt, s + SLICE_SAMPLES);
+    for (; s < end; s++) {
+      const x = samples[s * 3], y = samples[s * 3 + 1], z = samples[s * 3 + 2];
+      const i0 = clamp(Math.floor((x - lo[0]) * inv[0]), 0, gx - 1);
+      const j0 = clamp(Math.floor((y - lo[1]) * inv[1]), 0, gy - 1);
+      const k0 = clamp(Math.floor((z - lo[2]) * inv[2]), 0, gz - 1);
+      let bestI = -1, bestD = Infinity;
+      const ki = Math.max(0, k0 - 1), ke = Math.min(gz - 1, k0 + 1);
+      const ji = Math.max(0, j0 - 1), je = Math.min(gy - 1, j0 + 1);
+      const ii = Math.max(0, i0 - 1), ie = Math.min(gx - 1, i0 + 1);
+      for (let k = ki; k <= ke; k++) for (let j = ji; j <= je; j++) for (let i = ii; i <= ie; i++) {
+        const o = ((k * gy + j) * gx + i) * 3;
+        const dx = P[o] - x, dy = P[o + 1] - y, dz = P[o + 2] - z;
+        const d = dx * dx + dy * dy + dz * dz;
+        if (d < bestD) { bestD = d; bestI = (k * gy + j) * gx + i; }
+      }
+      if (bestI < 0) continue;
+      const best = sites[bestI];
+      best.n++;
+      siteOf[s] = bestI;
+      (best.list || (best.list = [])).push(s);
+      dopAdd(best.dop || (best.dop = newDop()), x, y, z,
+        nrm ? nrm[s * 3] : 0, nrm ? nrm[s * 3 + 1] : 0, nrm ? nrm[s * 3 + 2] : 0);
+      if (matOf) {
+        const m = matOf(s);
+        (best.mats || (best.mats = new Map())).set(m, (best.mats.get(m) || 0) + 1);
+      }
+    }
+    if (s < cnt && overBudget()) { st.cursor = s; return false; }
+  }
+  st.cursor = 0;
+  return true;
+}
+
+/** One convex cell per site that holds any of the piece's surface. */
+function buildCells(st, overBudget) {
+  const { bounds, size, gx, gy, gz, sites, cnt, floor, kept } = st;
+  const at = (i, j, k) => (i < 0 || j < 0 || k < 0 || i >= gx || j >= gy || k >= gz)
+    ? null : sites[(k * gy + j) * gx + i];
+  let si = st.cursor;
+  while (si < sites.length) {
+    const end = Math.min(sites.length, si + SLICE_SITES);
+    for (; si < end; si++) {
+      const s = sites[si];
+      if (cnt && s.n < floor) continue;
+      let poly = boxPoly(bounds.getCenter(new THREE.Vector3()), size.clone().multiplyScalar(0.5));
+      // furthest point of the cell from its site: a bisector further than that
+      // cannot reach the cell, which is what keeps this to the six or eight
+      // neighbours that matter instead of all twenty-six
+      let far = polyRadius(poly, s.p);
+      const nbrs = [];
+      for (let dk = -1; dk <= 1 && poly; dk++) for (let dj = -1; dj <= 1 && poly; dj++) for (let di = -1; di <= 1 && poly; di++) {
+        if (!di && !dj && !dk) continue;
+        const o = at(s.i + di, s.j + dj, s.k + dk);
+        if (!o) continue;
+        const n = new THREE.Vector3().subVectors(o.p, s.p);
+        const len = n.length();
+        if (len < 1e-5 || len * 0.5 > far) continue;
+        n.multiplyScalar(1 / len);
+        const mid = _v1.addVectors(o.p, s.p).multiplyScalar(0.5);
+        const next = clipPoly(poly, n, -n.dot(mid));
+        // a bisector that actually trimmed the cell is a shared face, which is
+        // the exact Voronoi adjacency — and therefore the support graph
+        if (next !== poly) { poly = next; nbrs.push(o.index); if (poly) far = polyRadius(poly, s.p); }
+      }
+      if (!poly) continue;
+      s.poly = poly;
+      s.keptNbrs = nbrs;
+      s.aabb = polyBounds(poly, new THREE.Box3());
+      kept.push(s);
+    }
+    if (si < sites.length && overBudget()) { st.cursor = si; return false; }
+  }
+  st.cursor = 0;
+  return true;
+}
+
+/* Each triangle's own surface, clipped to the cell, as support — not its
+ * corners.
+ *
+ * The corners were the obvious thing and they are wrong twice over. A corner
+ * across the wall belongs to the neighbour: fed to this cell it pushes the
+ * clip plane out past the wall, where it can never bite, and the cell goes
+ * slack (measured on the column, 1.37 → 1.52 on the volume ratio). Dropped
+ * instead — which is what this did — a triangle that spans two cells supports
+ * NEITHER of them, so the only thing describing the surface across the middle
+ * of a big face is the barycentric lattice, whose step is ~15 cm at this
+ * budget. Measured on the lintel, whose beam is two triangles 6.4 m long: the
+ * cells covered 91.2% of the intact solid, the missing 8.8% a 3 cm skin spread
+ * evenly over every face of every cell, and the 2 cm pad covering none of it.
+ *
+ * What a cell wants is the extreme of (triangle ∩ cell), so that is what it
+ * gets: the triangle clipped to the cell's own bounding box, which is why the
+ * cells are built first and trimmed second. Every vertex of the clipped
+ * polygon lies ON the triangle, so it can never claim material the surface
+ * does not have, and inside the box, so it can never reach across the wall.
+ * Measured, against dropping the corner: column 95.6 → 99.8% covered, lintel
+ * 91.2 → 96.3%, wall 98.5 → 99.6%, and the volume ratio pays 1.25 → 1.33 on
+ * the column, all of it the difference between the cell and its box. It costs
+ * six axis-aligned plane tests on a polygon of three to nine points — 4.4 ms
+ * on the 10274-triangle gate, and nothing at all on a piece that is mostly
+ * bevels, whose triangles are all below the size cut-off.
+ *
+ * It is also the single most expensive phase of a fracture — 24% of the 3.3 s
+ * the game's 389 structures cost between them — so it is the one that most
+ * needs to be able to stop in the middle. Every iteration reads one triangle
+ * and adds to one site's support hull, touching nothing another iteration
+ * reads, so cutting it at any index is the same arithmetic in the same order.
+ */
+function clipTriangles(st, overBudget) {
+  const { corners, triAt, nrm, sites, siteOf } = st;
+  if (!corners || !triAt || !nrm) { st.cursor = 0; return true; }
+  let A = st.A, B = st.B;
+  let t = st.cursor;
+  while (t < triAt.length) {
+    const end = Math.min(triAt.length, t + SLICE_TRIS);
+    for (; t < end; t++) {
       const s = triAt[t], si = siteOf[s];
       if (si < 0) continue;
       const site = sites[si];
@@ -658,41 +788,241 @@ export function fractureSolid(bounds, samples, opts = {}) {
       }
       for (let i = 0; i < n; i++) dopAdd(d, A[i * 3], A[i * 3 + 1], A[i * 3 + 2], nx, ny, nz);
     }
+    // A and B are swapped inside the loop and which one ends up in `A` does
+    // NOT have to survive a resumption: both are pure scratch, refilled from
+    // `corners` at the top of every triangle. They live on the job only so the
+    // job owns its own working memory rather than reallocating 96 doubles
+    // every time it is resumed.
+    st.A = A; st.B = B;
+    if (t < triAt.length && overBudget()) { st.cursor = t; return false; }
   }
+  st.cursor = 0;
+  return true;
+}
 
-  const out = [];
-  for (const s of kept) {
-    const nbrs = s.keptNbrs;
-    // Shrink the cell onto the surface it actually holds, so a chunk of arch
-    // is arch-shaped rather than a brick from the bounding box — and so the
-    // fractured piece occupies the space the intact mesh did and not the space
-    // its bounding box did.
-    //
-    // `pad` is 2 cm and not a fraction of the cell, which is what it used to
-    // be. It only has to cover the gap between the outermost support on a face
-    // and the true edge of that face, and the triangle clip above makes that gap
-    // zero for every triangle big enough to matter. Scaled to the cell it was
-    // 16 cm on a stone column and grew a 1.10 m shaft into a 1.42 m one all by
-    // itself. Swept with the clip in place: 0.5 cm leaves the column 99.7%
-    // covered at 1.30× the mesh's volume, 2 cm 99.8% at 1.33×, 8 cm 100% at
-    // 1.53× — and the silhouette 1.11× at two, 1.21× at eight. Two is where the
-    // last of the shrinking has gone and none of the growing has started.
-    let poly = s.poly;
-    if (cnt && s.dop) poly = dopClip(poly, s.dop, 0.02);
-    if (!poly) continue;
-    const volume = polyVolume(poly);
-    if (!(volume > 1e-5)) continue;
-    const centre = polyCentroid(poly);
-    if (!isFinite(centre.x) || !isFinite(centre.y) || !isFinite(centre.z)) continue;
-    let mat = null, bestN = 0;
-    if (s.mats) for (const [m, n] of s.mats) if (n > bestN) { bestN = n; mat = m; }
-    out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat,
-      site: s.index, nbrs, list: s.list });
+/** Shrink each cell onto the surface it actually holds. */
+function shrinkCells(st, overBudget) {
+  const { kept, cnt, out } = st;
+  let ki = st.cursor;
+  while (ki < kept.length) {
+    const end = Math.min(kept.length, ki + SLICE_CELLS);
+    for (; ki < end; ki++) {
+      const s = kept[ki];
+      const nbrs = s.keptNbrs;
+      // Shrink the cell onto the surface it actually holds, so a chunk of arch
+      // is arch-shaped rather than a brick from the bounding box — and so the
+      // fractured piece occupies the space the intact mesh did and not the space
+      // its bounding box did.
+      //
+      // `pad` is 2 cm and not a fraction of the cell, which is what it used to
+      // be. It only has to cover the gap between the outermost support on a face
+      // and the true edge of that face, and the triangle clip above makes that gap
+      // zero for every triangle big enough to matter. Scaled to the cell it was
+      // 16 cm on a stone column and grew a 1.10 m shaft into a 1.42 m one all by
+      // itself. Swept with the clip in place: 0.5 cm leaves the column 99.7%
+      // covered at 1.30× the mesh's volume, 2 cm 99.8% at 1.33×, 8 cm 100% at
+      // 1.53× — and the silhouette 1.11× at two, 1.21× at eight. Two is where the
+      // last of the shrinking has gone and none of the growing has started.
+      let poly = s.poly;
+      if (cnt && s.dop) poly = dopClip(poly, s.dop, 0.02);
+      if (!poly) continue;
+      const volume = polyVolume(poly);
+      if (!(volume > 1e-5)) continue;
+      const centre = polyCentroid(poly);
+      if (!isFinite(centre.x) || !isFinite(centre.y) || !isFinite(centre.z)) continue;
+      let mat = null, bestN = 0;
+      if (s.mats) for (const [m, n] of s.mats) if (n > bestN) { bestN = n; mat = m; }
+      out.push({ poly, centre, volume, bounds: polyBounds(poly), samples: s.n, mat,
+        site: s.index, nbrs, list: s.list });
+    }
+    if (ki < kept.length && overBudget()) { st.cursor = ki; return false; }
   }
+  st.cursor = 0;
+  return true;
+}
 
-  if (nrm && cnt) splitVoids(out, samples, nrm, matOf, sites.length, maxCells);
+/**
+ * Cutting the cells that straddle a hole, one cut per slice.
+ *
+ * 5% of a fracture in the aggregate and a median of 0.27 ms, so it looks at
+ * first like the one phase that could safely run whole — but the tail says
+ * otherwise: p99 2.27 ms and a worst piece at 20.66 ms, over a whole frame by
+ * itself. Two of the game's 390 structures are over 5 ms here. Each turn of the
+ * loop finds the widest void across the cells built so far and splits ONE cell,
+ * so the loop's own boundary is the seam, and everything it carries between
+ * turns — the split counter, the per-cell void cache, the guard — moves onto
+ * the job.
+ */
+function splitVoidsPhase(st, overBudget) {
+  const { out, samples, nrm, matOf, sites, maxCells } = st;
+  if (nrm && st.cnt) {
+    const vs = st.voids || (st.voids = { nextSite: sites.length, seen: new Map(), guard: 0 });
+    while (out.length < maxCells && vs.guard < maxCells) {
+      let pick = null, pickV = null;
+      for (const c of out) {
+        if (!vs.seen.has(c)) vs.seen.set(c, findVoid(c, samples, nrm));
+        const v = vs.seen.get(c);
+        if (v && (!pickV || v.width > pickV.width)) { pick = c; pickV = v; }
+      }
+      if (!pick) break;
+      const halves = splitCell(pick, pickV, samples, nrm, matOf, vs.nextSite);
+      vs.seen.set(pick, null);                    // do not try this one again
+      vs.guard++;
+      if (halves) {
+        vs.nextSite++;
+        out[out.indexOf(pick)] = halves[0];
+        out.push(halves[1]);
+        vs.seen.delete(pick);
+      }
+      if (overBudget()) return false;
+    }
+  }
   for (const c of out) c.list = null;             // the sample lists are scratch
-  return out;
+  return true;
+}
+
+/**
+ * The surface sampling above, a slice at a time — see `fractureJob` for why
+ * the whole of pre-fracture had to learn to stop in the middle.
+ *
+ * It is two passes over the same triangles: the first only measures total area
+ * (which decides the sampling density), the second emits the points. Both are
+ * flat loops over spans and triangle indices, both append to their own
+ * accumulators in order, so a cursor through them is exactly the same work in
+ * exactly the same order. It is ~20% of a fracture in the aggregate and up to
+ * 74% of the worst pieces — the colosseum's pulvinar spends 57 of its 76 ms
+ * here — so it cannot be the one part that runs whole.
+ */
+export function surfaceJob(structure, budget = 1600) {
+  const bins = [];
+  for (const s of structure.spans) {
+    const g = s.mesh.geometry;
+    if (!g || !g.attributes.position) continue;
+    bins.push({
+      pos: g.attributes.position.array,
+      idx: g.index ? g.index.array : null,
+      i0: s.i0, n: s.i1,
+      mat: s.mesh.material,
+    });
+  }
+  const st = { stage: 0, bin: 0, i: 0, area: 0, count: 0, per: 0,
+    pts: null, mats: null, nrm: null, corn: null, triAt: null, nTri: 0 };
+  const job = {
+    result: null,
+    step(overBudget) {
+      if (st.stage === 0) {
+        if (!measureArea(bins, st, overBudget)) return false;
+        if (!st.count) {
+          job.result = { samples: new Float32Array(0), mats: [] };
+          st.stage = 2;
+          return true;
+        }
+        // one extra sample per `per` m² of face, on top of one centroid per triangle
+        st.per = Math.max(1e-6, st.area) / Math.max(1, budget - Math.min(st.count, budget * 0.6));
+        // pre-sized: the corner stream is nine floats a triangle and pushing
+        // them onto a plain array was most of the GC this path produced
+        st.pts = []; st.mats = []; st.nrm = [];
+        st.corn = new Float32Array(st.count * 9);
+        st.triAt = new Int32Array(st.count);
+        st.bin = 0; st.i = -1;
+        st.stage = 1;
+      }
+      if (st.stage === 1) {
+        if (!emitSamples(bins, st, overBudget)) return false;
+        job.result = { samples: new Float32Array(st.pts), mats: st.mats,
+          normals: new Float32Array(st.nrm), corners: st.corn,
+          triAt: st.triAt.subarray(0, st.nTri) };
+        st.stage = 2;
+      }
+      return true;
+    },
+  };
+  return job;
+}
+
+/** Pass one: total triangle area, which sets the sampling density. */
+function measureArea(bins, st, overBudget) {
+  while (st.bin < bins.length) {
+    const b = bins[st.bin];
+    const { pos, idx, n } = b;
+    let i = st.i > 0 ? st.i : b.i0;
+    while (i + 2 < n) {
+      const end = Math.min(n, i + SLICE_TRIS * 3);
+      for (; i + 2 < end; i += 3) {
+        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
+        const ux = pos[b0] - pos[a0], uy = pos[b0 + 1] - pos[a0 + 1], uz = pos[b0 + 2] - pos[a0 + 2];
+        const vx = pos[c0] - pos[a0], vy = pos[c0 + 1] - pos[a0 + 1], vz = pos[c0 + 2] - pos[a0 + 2];
+        const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+        const t = Math.sqrt(cx * cx + cy * cy + cz * cz) * 0.5;
+        if (t > 0) { st.area += t; st.count++; }
+      }
+      if (i + 2 < n && overBudget()) { st.i = i; return false; }
+    }
+    st.bin++; st.i = -1;
+  }
+  st.bin = 0; st.i = -1;
+  return true;
+}
+
+/** Pass two: the points themselves, and the corner stream that supports them. */
+function emitSamples(bins, st, overBudget) {
+  const pts = st.pts, mats = st.mats, nrm = st.nrm, corn = st.corn, triAt = st.triAt;
+  while (st.bin < bins.length) {
+    const b = bins[st.bin];
+    const { pos, idx, n, mat } = b;
+    const per = st.per;
+    let i = st.i > 0 ? st.i : b.i0;
+    while (i + 2 < n) {
+      const end = Math.min(n, i + SLICE_TRIS * 3);
+      for (; i + 2 < end; i += 3) {
+        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
+        const ax = pos[a0], ay = pos[a0 + 1], az = pos[a0 + 2];
+        const bx = pos[b0], by = pos[b0 + 1], bz = pos[b0 + 2];
+        const cx0 = pos[c0], cy0 = pos[c0 + 1], cz0 = pos[c0 + 2];
+        if (!isFinite(ax) || !isFinite(bx) || !isFinite(cx0)) continue;
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx0 - ax, vy = cy0 - ay, vz = cz0 - az;
+        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const t2 = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const t = t2 * 0.5;
+        if (t2 > 1e-12) { nx /= t2; ny /= t2; nz /= t2; } else { nx = 0; ny = 1; nz = 0; }
+        const put = (x, y, z) => { pts.push(x, y, z); nrm.push(nx, ny, nz); mats.push(mat); };
+        // The three corners ride along as SUPPORT for whichever cell the
+        // centroid lands in, not as samples of their own. The lattice below
+        // never reaches a corner — its innermost barycentric is a third of a
+        // step in from every edge — so a cell clipped to its samples alone
+        // stopped short of the true edge of every face it held, and the pad
+        // that covered that was what inflated the piece. Run through the
+        // Voronoi search as ordinary samples they quadrupled the sample count
+        // and took the wall's fracture from 4.4 ms to 21.9; hung off the
+        // centroid they cost three support updates and no search at all.
+        // …and only for a triangle big enough for its corners to matter: below
+        // a 9 cm edge no corner can move a clip plane further than the 3 cm pad
+        // already allows, and skipping those is half the triangles on a wall.
+        const e2 = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz);
+        if (e2 > 0.008) {
+          const o = st.nTri * 9;
+          corn[o] = ax; corn[o + 1] = ay; corn[o + 2] = az;
+          corn[o + 3] = bx; corn[o + 4] = by; corn[o + 5] = bz;
+          corn[o + 6] = cx0; corn[o + 7] = cy0; corn[o + 8] = cz0;
+          triAt[st.nTri++] = pts.length / 3;
+        }
+        put((ax + bx + cx0) / 3, (ay + by + cy0) / 3, (az + bz + cz0) / 3);
+        const k = clamp(Math.round(Math.sqrt(t / per)), 1, 6);
+        if (k < 2) continue;
+        for (let u = 0; u < k; u++) {
+          for (let v = 0; v + u < k; v++) {
+            const bu = (u + 0.333) / k, bv = (v + 0.333) / k, bw = 1 - bu - bv;
+            if (bw <= 0) continue;
+            put(ax * bw + bx * bu + cx0 * bv, ay * bw + by * bu + cy0 * bv, az * bw + bz * bu + cz0 * bv);
+          }
+        }
+      }
+      if (i + 2 < n && overBudget()) { st.i = i; return false; }
+    }
+    st.bin++; st.i = -1;
+  }
+  return true;
 }
 
 /* ── voids ───────────────────────────────────────────────────────────────
@@ -793,26 +1123,6 @@ function splitCell(cell, v, samples, nrm, matOf, newSite) {
 }
 
 /** Split the hollowest cell, over and over, while there is cell budget left. */
-function splitVoids(out, samples, nrm, matOf, siteCount, maxCells) {
-  let nextSite = siteCount;
-  const seen = new Map();          // cell → the void it has, or null if none
-  for (let guard = 0; out.length < maxCells && guard < maxCells; guard++) {
-    let pick = null, pickV = null;
-    for (const c of out) {
-      if (!seen.has(c)) seen.set(c, findVoid(c, samples, nrm));
-      const v = seen.get(c);
-      if (v && (!pickV || v.width > pickV.width)) { pick = c; pickV = v; }
-    }
-    if (!pick) break;
-    const halves = splitCell(pick, pickV, samples, nrm, matOf, nextSite);
-    seen.set(pick, null);                       // do not try this one again
-    if (!halves) continue;
-    nextSite++;
-    out[out.indexOf(pick)] = halves[0];
-    out.push(halves[1]);
-    seen.delete(pick);
-  }
-}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Chunk                                                                 */
@@ -1064,41 +1374,108 @@ export class Structure {
   /**
    * Build the cells. Idempotent, and deliberately NOT done at level build: a
    * level is fifty pieces and most of them are never touched, so this is
-   * amortised one per frame over whatever is near the player.
+   * amortised over whatever is near the player.
+   *
+   * This is the WHOLE job in one call, which is what a piece being hit needs:
+   * `cutBy`, `damageSphere`, `collapse` and the blade's own `_impactScan` all
+   * open with it and cannot proceed without cells. It resumes a job the
+   * manager has already started, so a piece hit halfway through its unhurried
+   * approach-time build pays only for the part that is left.
    */
   prefracture() {
     if (this.chunks || this.state === 'gone') return this.chunks;
-    const t0 = now();
+    while (!this.stepPrefracture(NEVER));
+    return this.chunks;
+  }
 
-    const { samples, mats, normals, corners, triAt } = this._surfaceSamples();
-    const bounds = this.local.clone();
-    if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
-    const cells = fractureSolid(bounds, samples, {
-      cell: this.profile.cell,
-      seed: this.seed * 131 + 7,
-      maxCells: this.manager.maxCellsPerPiece,
-      matOf: (i) => mats[i],
-      normals, corners, triAt,
-    });
-
-    this.chunks = [];
-    for (let i = 0; i < cells.length; i++) this.chunks.push(new Chunk(this, cells[i], i));
-    this._link();
-    // The cells know the real solid; the bounding-box guess the piece was born
-    // with does not. Rescale the piece's health to what it is actually made of,
-    // keeping whatever fraction of it is already gone.
-    if (this.chunks.length) {
-      let v = 0, hp = 0;
-      for (const c of this.chunks) { v += c.volume; hp += c.hp; }
-      const frac = this.hp / Math.max(1e-6, this.maxHp);
-      this.volume = v;
-      this.maxHp = Math.max(1, hp);
-      this.hp = this.maxHp * frac;
+  /**
+   * The same build, a slice at a time.
+   *
+   * `overBudget()` is asked between slices and the job stops the moment it says
+   * so, resuming next call exactly where it left off. Returns true when the
+   * piece is fully fractured.
+   *
+   * Nothing about the piece is observably different until the last slice:
+   * `this.chunks` — the flag every other method in this file reads as "is this
+   * fractured yet" — is assigned once, at the end, after `_link` has run. A
+   * half-built piece is therefore indistinguishable from an untouched one to
+   * every caller, which is what makes it safe to leave one lying between
+   * frames.
+   */
+  stepPrefracture(overBudget) {
+    if (this.chunks) return true;
+    if (this.state === 'gone') { this._pf = null; return true; }
+    let pf = this._pf;
+    if (!pf) {
+      pf = this._pf = { ms: 0, stage: 0, surface: null, src: null, job: null,
+        cells: null, built: null, i: 0 };
     }
-    this.buildMs = now() - t0;
+    const t = now();
+    try {
+      while (pf.stage < 4) {
+        if (pf.stage > 0 && overBudget()) return false;
+        if (pf.stage === 0) {
+          if (!pf.surface) pf.surface = surfaceJob(this);
+          if (!pf.surface.step(overBudget)) return false;
+          pf.src = pf.surface.result;
+          pf.surface = null;
+          pf.stage = 1;
+        } else if (pf.stage === 1) {
+          if (!pf.job) {
+            const bounds = this.local.clone();
+            if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
+            const mats = pf.src.mats;
+            pf.job = fractureJob(bounds, pf.src.samples, {
+              cell: this.profile.cell,
+              seed: this.seed * 131 + 7,
+              maxCells: this.manager.maxCellsPerPiece,
+              matOf: (i) => mats[i],
+              normals: pf.src.normals, corners: pf.src.corners, triAt: pf.src.triAt,
+            });
+          }
+          if (!pf.job.step(overBudget)) return false;
+          pf.cells = pf.job.cells;
+          pf.job = null;
+          pf.built = [];
+          pf.stage = 2;
+        } else if (pf.stage === 2) {
+          // Chunk construction is 0.4% of a fracture, but it allocates a hull
+          // and a bounds per cell and there is no reason for it to be the one
+          // thing that cannot stop.
+          const cells = pf.cells;
+          while (pf.i < cells.length) {
+            pf.built.push(new Chunk(this, cells[pf.i], pf.i));
+            pf.i++;
+            if (pf.i < cells.length && overBudget()) return false;
+          }
+          pf.stage = 3;
+        } else {
+          this.chunks = pf.built;
+          this._link();
+          // The cells know the real solid; the bounding-box guess the piece was
+          // born with does not. Rescale the piece's health to what it is
+          // actually made of, keeping whatever fraction of it is already gone.
+          if (this.chunks.length) {
+            let v = 0, hp = 0;
+            for (const c of this.chunks) { v += c.volume; hp += c.hp; }
+            const frac = this.hp / Math.max(1e-6, this.maxHp);
+            this.volume = v;
+            this.maxHp = Math.max(1, hp);
+            this.hp = this.maxHp * frac;
+          }
+          pf.stage = 4;
+        }
+      }
+    } finally {
+      pf.ms += now() - t;
+    }
+    // The piece's own cost is the sum of every slice it took, not the wall
+    // clock across the frames it was spread over.
+    this.buildMs = pf.ms;
     this.manager.stats.prefractured++;
     this.manager.stats.prefractureMs += this.buildMs;
-    return this.chunks;
+    this._pf = null;
+    return true;
   }
 
   /**
@@ -1113,87 +1490,9 @@ export class Structure {
    * as well as a two-hundred-triangle one, for a bounded number of points.
    */
   _surfaceSamples(budget = 1600) {
-    const bins = [];
-    for (const s of this.spans) {
-      const g = s.mesh.geometry;
-      if (!g || !g.attributes.position) continue;
-      bins.push({
-        pos: g.attributes.position.array,
-        idx: g.index ? g.index.array : null,
-        i0: s.i0, n: s.i1,
-        mat: s.mesh.material,
-      });
-    }
-    let area = 0, count = 0;
-    for (const b of bins) {
-      const { pos, idx, n } = b;
-      for (let i = b.i0; i + 2 < n; i += 3) {
-        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
-        const ux = pos[b0] - pos[a0], uy = pos[b0 + 1] - pos[a0 + 1], uz = pos[b0 + 2] - pos[a0 + 2];
-        const vx = pos[c0] - pos[a0], vy = pos[c0 + 1] - pos[a0 + 1], vz = pos[c0 + 2] - pos[a0 + 2];
-        const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
-        const t = Math.sqrt(cx * cx + cy * cy + cz * cz) * 0.5;
-        if (t > 0) { area += t; count++; }
-      }
-    }
-    if (!count) return { samples: new Float32Array(0), mats: [] };
-    // one extra sample per `per` m² of face, on top of one centroid per triangle
-    const per = Math.max(1e-6, area) / Math.max(1, budget - Math.min(count, budget * 0.6));
-
-    // pre-sized: the corner stream is nine floats a triangle and pushing them
-    // onto a plain array was most of the GC this path produced
-    const pts = [], mats = [], nrm = [];
-    const corn = new Float32Array(count * 9), triAt = new Int32Array(count);
-    let nTri = 0;
-    for (const b of bins) {
-      const { pos, idx, n, mat } = b;
-      for (let i = b.i0; i + 2 < n; i += 3) {
-        const a0 = (idx ? idx[i] : i) * 3, b0 = (idx ? idx[i + 1] : i + 1) * 3, c0 = (idx ? idx[i + 2] : i + 2) * 3;
-        const ax = pos[a0], ay = pos[a0 + 1], az = pos[a0 + 2];
-        const bx = pos[b0], by = pos[b0 + 1], bz = pos[b0 + 2];
-        const cx0 = pos[c0], cy0 = pos[c0 + 1], cz0 = pos[c0 + 2];
-        if (!isFinite(ax) || !isFinite(bx) || !isFinite(cx0)) continue;
-        const ux = bx - ax, uy = by - ay, uz = bz - az;
-        const vx = cx0 - ax, vy = cy0 - ay, vz = cz0 - az;
-        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        const t2 = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        const t = t2 * 0.5;
-        if (t2 > 1e-12) { nx /= t2; ny /= t2; nz /= t2; } else { nx = 0; ny = 1; nz = 0; }
-        const put = (x, y, z) => { pts.push(x, y, z); nrm.push(nx, ny, nz); mats.push(mat); };
-        // The three corners ride along as SUPPORT for whichever cell the
-        // centroid lands in, not as samples of their own. The lattice below
-        // never reaches a corner — its innermost barycentric is a third of a
-        // step in from every edge — so a cell clipped to its samples alone
-        // stopped short of the true edge of every face it held, and the pad
-        // that covered that was what inflated the piece. Run through the
-        // Voronoi search as ordinary samples they quadrupled the sample count
-        // and took the wall's fracture from 4.4 ms to 21.9; hung off the
-        // centroid they cost three support updates and no search at all.
-        // …and only for a triangle big enough for its corners to matter: below
-        // a 9 cm edge no corner can move a clip plane further than the 3 cm pad
-        // already allows, and skipping those is half the triangles on a wall.
-        const e2 = Math.max(ux * ux + uy * uy + uz * uz, vx * vx + vy * vy + vz * vz);
-        if (e2 > 0.008) {
-          const o = nTri * 9;
-          corn[o] = ax; corn[o + 1] = ay; corn[o + 2] = az;
-          corn[o + 3] = bx; corn[o + 4] = by; corn[o + 5] = bz;
-          corn[o + 6] = cx0; corn[o + 7] = cy0; corn[o + 8] = cz0;
-          triAt[nTri++] = pts.length / 3;
-        }
-        put((ax + bx + cx0) / 3, (ay + by + cy0) / 3, (az + bz + cz0) / 3);
-        const k = clamp(Math.round(Math.sqrt(t / per)), 1, 6);
-        if (k < 2) continue;
-        for (let u = 0; u < k; u++) {
-          for (let v = 0; v + u < k; v++) {
-            const bu = (u + 0.333) / k, bv = (v + 0.333) / k, bw = 1 - bu - bv;
-            if (bw <= 0) continue;
-            put(ax * bw + bx * bu + cx0 * bv, ay * bw + by * bu + cy0 * bv, az * bw + bz * bu + cz0 * bv);
-          }
-        }
-      }
-    }
-    return { samples: new Float32Array(pts), mats, normals: new Float32Array(nrm),
-      corners: corn, triAt: triAt.subarray(0, nTri) };
+    const job = surfaceJob(this, budget);
+    while (!job.step(NEVER));
+    return job.result;
   }
 
   /**
@@ -2117,6 +2416,8 @@ export class Destruction {
     this._caps = new Map();
     this._linked = false;
     this._pfCursor = 0;
+    /** The one structure allowed to hold a half-finished fracture. See _prepare. */
+    this._pfActive = null;
 
     this.proxy = new DestructionProxy(this);
     if (world.addProp) world.addProp(this.proxy);
@@ -2483,27 +2784,68 @@ export class Destruction {
    * load for fifty pieces most of which are never touched. So it is done here:
    * nearest first, inside a frame budget, cells for one piece and then its
    * geometry a few cells at a time.
+   *
+   * THE CELLS USED TO BE OUTSIDE THE BUDGET, AND ONE FRAME WAS NOT ENOUGH.
+   *
+   * The line below used to read `s.prefracture(); return; // cells are a whole
+   * frame's work` — a deliberate, documented decision to give the cell build a
+   * whole frame instead of a slice of one. The trouble is that a whole frame
+   * is not enough either. Every structure in the game, timed individually
+   * through its own `prefracture()`: 389 of them, median 7.5 ms, p90 14.7, max
+   * 76, and 27-41 of them over a whole 16.7 ms frame — up to 4.6x the frame
+   * they were being given. In play, with the director off and no enemies at
+   * all, a player simply walking a 22 m circle on the temple for 3000 frames
+   * had this fire on 57-92 of them, 11 frames over 16.7 ms, 2 over 50, and half
+   * a second of stall in fifty seconds of walking. It fires on APPROACH — the
+   * range is 30 m — so the hitch has nothing on screen to explain it.
+   *
+   * Meanwhile the half that WAS budgeted behaved perfectly: `prepareCell` fires
+   * at a median 0.77 ms against the 1.2 ms budget with a worst case of 3.0. The
+   * budget worked. It was simply never applied to the expensive half.
+   *
+   * So both halves are under the same clock now. `stepPrefracture` does as much
+   * of the cell build as fits and leaves the rest for next frame — see the note
+   * over `fractureJob` for how the work is cut and why not with a generator.
    */
   _prepare(focus) {
     const n = this.structures.length;
     if (!n) return;
     const range2 = this.prefractureRange * this.prefractureRange;
     const t0 = now();
+    const budget = this.prepareBudgetMs;
+    const overBudget = () => now() - t0 >= budget;
     let did = false;
-    for (let i = 0; i < n && now() - t0 < this.prepareBudgetMs; i++) {
+    for (let i = 0; i < n && !overBudget(); i++) {
       const s = this.structures[(this._pfCursor + i) % n];
       if (s.state === 'gone' || s.prepared) continue;
       if (s.centre.distanceToSquared(focus) > range2) continue;
       if (!s.chunks) {
-        s.prefracture();
+        /**
+         * ONE HALF-BUILT PIECE AT A TIME, AND NEVER MORE.
+         *
+         * A job that has stopped mid-way is holding its surface sample stream —
+         * up to 26,000 points with their normals and a nine-float corner per
+         * triangle, ~600 KB on the warship's biggest piece. The player walking
+         * away moves the cursor to a different structure and the old one would
+         * sit there holding that for the rest of the session; over a level of
+         * 126 pieces that is tens of megabytes of scratch nobody is going to
+         * ask for again. So exactly one piece is ever mid-build: picking up a
+         * new one throws the previous one's working set away, and it starts
+         * again from the beginning if the player comes back. Losing that work
+         * is the cheap side of the trade — it only happens when the player has
+         * walked out of range of the piece.
+         */
+        if (this._pfActive && this._pfActive !== s) this._pfActive._pf = null;
+        this._pfActive = s;
+        if (s.stepPrefracture(overBudget)) this._pfActive = null;
         this._pfCursor = (this._pfCursor + i) % n;
-        return;                                  // cells are a whole frame's work
+        return;
       }
       for (const c of s.chunks) {
         if (c.geo || c.state === 'gone') continue;
         s.prepareCell(c);
         did = true;
-        if (now() - t0 >= this.prepareBudgetMs) break;
+        if (overBudget()) break;
       }
       this._pfCursor = (this._pfCursor + i) % n;
       if (did) return;

@@ -18,10 +18,16 @@
  * 2. THE CLOTH THAT WOULD NOT SWITCH OFF. Enemy's garments were gated on
  *    `lod > 1`, which is 62 m, while the largest `spawnRadius` in the thirteen
  *    levels is 60 — so an enemy is born inside the cut and walks toward the
- *    player, and the gate fires only if you outrun one. Measured on this
- *    machine, 20 clothed duellists cost 6.28 ms of solve and 1.26 ms of
- *    collider refresh per frame: 7.5 ms of a 16.67 ms budget, with no renderer,
- *    physics, AI, particles or bolts in the loop.
+ *    player, and the gate fires only if you outrun one.
+ *
+ *    The figure that used to be quoted here — "20 clothed duellists cost 6.28
+ *    ms of solve and 1.26 ms of collider refresh per frame: 7.5 ms of a 16.67
+ *    ms budget" — was for a population the game cannot field. Four garments a
+ *    character is the PLAYER's set; three of fourteen archetypes wear anything
+ *    at all and each of those wears one cape, a quarter of it. Twenty acolytes
+ *    measure 1.75-3.3 ms depending on how loaded the box is.
+ *    tools/checks/cloth-cost.mjs counts the population, which is
+ *    machine-independent, and holds the timing to a band.
  *
  * The first check drives the SHIPPED `prepass` body against a recording
  * renderer rather than asserting on source text, so a future edit that reorders
@@ -132,8 +138,9 @@ export async function run({ check, assert }) {
         `${tiers[i]} does not solve cloth further out than ${tiers[i - 1]}`);
     }
     assert(QUALITY.low.cloth === 0,
-      'the tier the menu offers to integrated graphics still solves garments — that is the '
-      + 'largest single thing it can hand back');
+      'the tier the menu offers to integrated graphics still solves garments — the largest thing '
+      + 'the CPU side of this ladder can hand back, and the only column in it that changes how '
+      + 'much simulation runs per frame');
     return `cloth off past ${tiers.map((t) => `${t} ${QUALITY[t].cloth}m`).join(', ')}; `
       + `the farthest spawn in the game is ${worstAt} at ${worst} m`;
   });
