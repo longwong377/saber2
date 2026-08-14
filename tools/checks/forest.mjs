@@ -323,4 +323,107 @@ export function run({ check, assert }) {
     return `${f.count} trees, sight line p50 ${p50.toFixed(0)} m / p90 ${p90.toFixed(0)} m, ` +
       `Clark-Evans ${R.toFixed(2)} (mean neighbour ${mean.toFixed(1)} m)`;
   });
+
+  check('forest: a thrown blade fells the trees it flies through, not the ones by your feet', async () => {
+    /**
+     * `Forest.update` pinned its cut proxy to `world.player.position`, and
+     * `capsules()` culls every trunk outside `reach` of that point — so a disc
+     * thrown 26 m out was offered no tree at all to cut. Measured on the wood,
+     * aimed at a standing trunk 12.2 m away:
+     *
+     *     before   disc passed 1.40 m from its axis, crossed 17 standing
+     *              trunks, felled 4 — every one beside the player, none of
+     *              them the target
+     *     after    felled 19
+     *
+     * Cleaving Throw's card says it "cuts clean through everything it passes".
+     *
+     * A FIRST FIX THAT MEASURED NOTHING is worth recording here, because it
+     * looked obviously right: carrying the COLLIDER ring with the disc as well.
+     * Felled went 4 → 4. Colliders are what a body walks into; cutting goes
+     * through `capsules()`, and moving ~65 static boxes around a blade in
+     * flight bought exactly nothing. It was reverted.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.shadow.camera.updateProjectionMatrix();
+    scene.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+    const engine = { scene, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+      sun, hemi: scene.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+      renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+      profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+      applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+      setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+      setQuality() {}, setResolutionScale() {}, render() {} };
+    const idle = { act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+
+    const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
+    await w.loadLevel('wood');
+    w.spawnPlayer();
+    const p = w.player;
+    for (let i = 0; i < 60; i++) w.update(1 / 60, idle);
+
+    const forest = w.forest;
+    assert(forest?.data, 'the wood has no forest, so this measures nothing');
+    const FN = 15, FX = 0, FZ = 1, FR = 4, FSTATE = 6;
+    const D = forest.data, N = forest.count;
+    const at = (i, f) => D[i * FN + f];
+    const standing = () => { let n = 0; for (let i = 0; i < N; i++) if (at(i, FSTATE) === 0) n++; return n; };
+
+    // A real standing trunk, well outside anything the body could reach.
+    let target = null;
+    for (let i = 0; i < N; i++) {
+      if (at(i, FSTATE) !== 0) continue;
+      const dx = at(i, FX) - p.position.x, dz = at(i, FZ) - p.position.z;
+      const r = Math.hypot(dx, dz);
+      if (r > 12 && r < 22 && (!target || r < target.r)) target = { i, r, dx, dz };
+    }
+    assert(target, 'no standing trunk 12-22 m from the spawn — the scene is wrong, not the fix');
+
+    const before = standing();
+    p.camera.pitch = 0;
+    p.aimDir.set(target.dx, 0, target.dz).normalize();
+    p.force = p.maxForce;
+    p.cooldowns.throw = 0;
+    p.saber.lit = true;
+    p.throwOrRecall({ terrain: w.terrain, particles: w.particles, enemies: w.enemies });
+
+    let closest = Infinity, crossed = 0;
+    const seen = new Set();
+    for (let f = 0; f < 260; f++) {
+      w.update(1 / 60, idle);
+      if (!p.throwState || p.throwState === 'held') break;
+      closest = Math.min(closest,
+        Math.hypot(at(target.i, FX) - p.throwPos.x, at(target.i, FZ) - p.throwPos.z));
+      for (let i = 0; i < N; i++) {
+        if (seen.has(i)) continue;
+        if (Math.hypot(at(i, FX) - p.throwPos.x, at(i, FZ) - p.throwPos.z) < at(i, FR) + 0.4) {
+          seen.add(i); crossed++;
+        }
+      }
+    }
+    const felled = before - standing();
+    w.unload();
+
+    assert(crossed >= 5,
+      `the flight path only crossed ${crossed} trunks — the throw is not going through the wood`);
+    // Half of what it passes through, not all: the disc is a moving point
+    // sampled at 60 Hz and the wood is dense, so demanding every trunk would
+    // be a check on the sampling rate rather than on the focus.
+    assert(felled >= crossed * 0.5,
+      `the disc passed through ${crossed} standing trunks and felled ${felled} — the cut proxy is `
+      + `pinned to the body, ${closest.toFixed(2)} m being the closest it ever came to the trunk it `
+      + 'was aimed at');
+    return `aimed at a trunk ${target.r.toFixed(1)} m out: passed ${closest.toFixed(2)} m from its `
+      + `axis, crossed ${crossed} standing trunks, felled ${felled}`;
+  });
 }

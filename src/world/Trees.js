@@ -573,7 +573,29 @@ export class Forest {
   update(dt) {
     if (!(dt > 0) || !this.data) return;
     this.time += dt;
-    const focus = this.world.player?.position;
+    /**
+     * THE PROXY FOLLOWS THE CUTTING EDGE, AND A THROWN BLADE LEAVES THE BODY.
+     *
+     * This was `this.world.player?.position`, and `capsules()` culls every
+     * trunk outside `reach` of it — so a disc thrown 26 m out was offered no
+     * tree at all to cut. Measured on the wood: aimed at a standing trunk
+     * 12.2 m away, the disc passed within 1.40 m of its axis, crossed 17
+     * standing trunks on the way, and felled 4 — every one of them beside the
+     * player, none of them the target. Cleaving Throw, whose card says it
+     * "cuts clean through everything it passes", reported one cleave.
+     *
+     * While the blade is in the air the player's HAND is empty, so there is
+     * exactly one cutting edge in the world and this is where it is. When the
+     * disc comes home the focus goes back to the body on the same frame the
+     * blade does.
+     *
+     * The collider ring is deliberately NOT moved with it. Colliders are what
+     * a BODY walks into; a disc is cut geometry, and carrying ~65 extra static
+     * boxes around a blade in flight was measured to change nothing at all.
+     */
+    const owner = this.world.player;
+    const flying = owner?.throwState && owner.throwState !== 'held' && owner.throwPos;
+    const focus = flying ? owner.throwPos : owner?.position;
     if (focus) this.body.position.copy(focus);
     // The collider ring first, and outside the early-out below: a wood with
     // nothing falling in it is the case where standing trees have to be solid.
