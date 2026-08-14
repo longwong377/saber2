@@ -22,7 +22,10 @@
  *     the piece that fell off it.
  */
 
+import { readFileSync } from 'node:fs';
 import * as B from '../../src/game/Bodies.js';
+import { rawMaps, MEAN_ALBEDO } from '../../src/engine/Textures.js';
+import { celMapValue, celChroma, celAlbedo } from '../../src/toon/Cel.js';
 
 const BUILD = {
   jedi: (o) => B.buildJedi(o), b1: (o) => B.buildB1(o), b2: (o) => B.buildB2(o),
@@ -48,7 +51,128 @@ function shadeIn(geo, box) {
   return n ? { mean: sum / n, n } : null;
 }
 
+/* ── the albedo path, in JS ─────────────────────────────────────────────
+ *
+ * The cloth bake's texels, once, in linear light. 40k samples off the real
+ * bytes — under the headless shim a canvas readback returns zeros, so this
+ * reads rawMaps the way tools/checks/materials.mjs does rather than going
+ * through getImageData.
+ */
+const toLinear = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const luminance = (c) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+let CLOTH_TEXELS = null;
+function clothTexels() {
+  if (CLOTH_TEXELS) return CLOTH_TEXELS;
+  const m = rawMaps('cloth');
+  const N = m.size * m.size, step = Math.max(1, Math.floor(N / 40000));
+  CLOTH_TEXELS = [];
+  for (let i = 0; i < N; i += step) {
+    CLOTH_TEXELS.push([toLinear(m.albedo[i * 4]), toLinear(m.albedo[i * 4 + 1]), toLinear(m.albedo[i * 4 + 2])]);
+  }
+  return CLOTH_TEXELS;
+}
+/** What a tinted garment's mean luminance comes out as, under either pipeline. */
+function renderedMean(tint, mode) {
+  let s = 0;
+  for (const t of clothTexels()) {
+    s += mode === 'split'
+      // map_fragment quantises the TEXEL, then the tint, then the chroma lift
+      ? luminance(celChroma(celMapValue(t).map((c, k) => c * tint[k])))
+      // what shipped: quantise the finished map × tint
+      : luminance(celAlbedo(t.map((c, k) => c * tint[k])));
+  }
+  return s / clothTexels().length;
+}
+
 export function run({ check, assert, near, THREE }) {
+
+  check('shading: every authored cloth tone on the figure survives to the frame, in order', () => {
+    /* THE LADDER Bodies.js SPENDS A PARAGRAPH BUILDING, AND WHAT THE SHADER
+     * DID TO IT.
+     *
+     * buildJedi derives five garment tones from the two-colour palette the
+     * player picked — over-robe darker than the body, body darker than the
+     * sleeve, trim darker than all of them — because "at any range past three
+     * metres [one colour] reads as a single painted surface". The albedo
+     * posteriser then ran on the FINISHED surface colour, map × tint, and a
+     * quantiser applied to a product quantises the tint as well. Measured per
+     * texel through the real cloth bake, as mean rendered luminance:
+     *
+     *   Night   tunic .0781  outer .0100  over .0100  sleeve .0100  trim .0100
+     *   Ash     tunic .4032  outer .0900  over .0900  sleeve .2334  trim .0100
+     *
+     * Night's five layers landed on TWO values with four of them identical, and
+     * the order came out outer < over < sleeve < trim < tunic — the trim,
+     * authored as the darkest thing on the figure, rendering brighter than the
+     * outer robe. The cause is the bottom plateau: bands are cut on
+     * sqrt(luminance), so band 0 is 0 → 0.04 linear, which is everything below
+     * sRGB 55. Night is selectable in the creator and worn by two Orders.
+     *
+     * The property asserted is stronger than "five tones": EVERY distinct cloth
+     * tone on the figure has to survive, and the rendered ORDER has to be the
+     * authored order. Read off the built materials rather than off a copy of
+     * the palette table, so a sixth layer or a re-derived mix is measured the
+     * day it is added.
+     */
+    /* WHICH TWIN TO RUN IS READ OFF THE SHADER, not chosen. There is no GL
+     * context in this harness, so the measurement below is a JS twin either
+     * way — but if it picked its own operator it would keep passing over a
+     * shader that had gone back to quantising the palette. It picks the twin
+     * the installer's own substitution text says the GPU is running, so a
+     * revert is measured rather than merely noticed. */
+    const src = readFileSync(new URL('../../src/toon/Cel.js', import.meta.url), 'utf8');
+    const onTexel = /sub\('map_fragment',[\s\S]{0,400}?saberCelMapValue\( sampledDiffuseColor\.rgb \)/.test(src);
+    const onSurface = /'material\.diffuseColor = saberCel(\w+)\( diffuseColor\.rgb \);'/.exec(src);
+    assert(onSurface, 'nothing is written to material.diffuseColor any more');
+    const mode = onTexel && onSurface[1] === 'Chroma' ? 'split' : 'flat';
+
+    const rows = [];
+    let worstOld = 0, collapsedOld = 0, palettes = 0, layers = 0;
+    for (let i = 0; i < B.ROBE_COLORS.length; i++) {
+      const u = B.buildJedi({ robeIndex: i });
+      const mats = new Map();
+      u.rig.root.traverse((o) => {
+        const m = o.isMesh && o.material;
+        if (!m || m.userData?.mapMean !== MEAN_ALBEDO.cloth) return;
+        if (!mats.has(m.uuid)) mats.set(m.uuid, m);
+      });
+      assert(mats.size >= 5,
+        `${B.ROBE_COLORS[i].name}: only ${mats.size} distinct cloth tones on the figure — the ladder `
+        + 'is gone from the builder, not from the shader');
+      const list = [...mats.values()].map((m) => ({
+        authored: luminance(m.userData.authored),
+        now: renderedMean(m.color.toArray(), mode),
+        was: renderedMean(m.color.toArray(), 'flat'),
+      }));
+      palettes++; layers = Math.max(layers, list.length);
+      const round = (v) => Math.round(v * 1e4);
+      const distinctNow = new Set(list.map((l) => round(l.now))).size;
+      const distinctWas = new Set(list.map((l) => round(l.was))).size;
+      assert(distinctNow === list.length,
+        `${B.ROBE_COLORS[i].name}: ${list.length} authored cloth tones render as ${distinctNow} — `
+        + 'layers that were given different colours are coming out identical');
+      // …and in the authored order, which is the half a tone count cannot see
+      const byAuthored = [...list].sort((a, b) => a.authored - b.authored);
+      for (let k = 1; k < byAuthored.length; k++) {
+        assert(byAuthored[k].now > byAuthored[k - 1].now,
+          `${B.ROBE_COLORS[i].name}: a layer authored ${(byAuthored[k].authored /
+            byAuthored[k - 1].authored).toFixed(2)}× brighter than the one under it renders `
+          + `${(byAuthored[k].now / byAuthored[k - 1].now).toFixed(2)}× — the ladder has inverted`);
+      }
+      // THE CONTROL: the same figure through the operator that shipped.
+      let inversions = 0;
+      for (let k = 1; k < byAuthored.length; k++) if (byAuthored[k].was <= byAuthored[k - 1].was) inversions++;
+      if (distinctWas < list.length) collapsedOld++;
+      worstOld = Math.max(worstOld, list.length - distinctWas);
+      rows.push(`${B.ROBE_COLORS[i].name} ${distinctNow}/${list.length}`
+        + (distinctWas < list.length ? ` (was ${distinctWas}, ${inversions} inverted)` : ''));
+    }
+    assert(collapsedOld >= 2 && worstOld >= 3,
+      `the shipped operator only collapsed ${collapsedOld} palettes by at most ${worstOld} tones — `
+      + 'the control is not reproducing the defect, so the assertions above prove nothing');
+    return `${palettes} palettes × up to ${layers} cloth tones, all distinct and in order — `
+      + rows.join(' · ');
+  });
 
   check('shading: no material asks for vertex colours a geometry cannot give', () => {
     // The failure mode is not subtle and it is not partial: the mesh goes

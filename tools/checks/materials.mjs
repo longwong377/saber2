@@ -399,9 +399,18 @@ export function run({ check, assert, near }) {
     const C = THREE.ShaderChunk;
     const carries = {
       common: ['saberCelTone', 'saberCelBand', 'saberCelAlbedo', 'saberCelAmbient',
-        'saberCelCast', 'saberCelDistance', 'saberCelKey', 'saberCelShape'],
+        'saberCelCast', 'saberCelDistance', 'saberCelKey', 'saberCelShape',
+        'saberCelMapValue', 'saberCelChroma'],
       lights_physical_pars_fragment: ['saberCelTone', 'saberCelAmbient', 'saberCelShape'],
-      lights_physical_fragment: ['saberCelAlbedo'],
+      /* THE POSTERISER IS IN TWO PLACES AND THAT IS THE POINT. The value
+       * quantiser runs on the sampled MAP TEXEL in map_fragment, before the
+       * authored tint multiplies into it — quantising map × tint quantises the
+       * PALETTE, which collapsed the player's five-layer robe ladder to two
+       * tones on 'Night' and inverted its order. The chroma lift is not a
+       * quantiser and stays on the finished colour. Both halves are asserted
+       * where they belong, so folding them back together fails here. */
+      map_fragment: ['saberCelMapValue'],
+      lights_physical_fragment: ['saberCelChroma'],
       lights_fragment_begin: ['saberCelKey', 'saberCelCast', 'saberCelShadow', 'saberCelFlatDir'],
       shadowmask_pars_fragment: ['saberCelShadow'],
       lights_fragment_maps: ['saberCelAmbient', 'saberCelFlatDir'],

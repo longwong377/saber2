@@ -513,10 +513,18 @@ export function run({ check, assert, near }) {
       'the physical control does not black out a metal, so this check is measuring nothing');
     assert(celNoLobe() > 0.05,
       `a metal under the cel model returns ${celNoLobe().toFixed(4)} — it is still black`);
-    // The mechanism, in the shader: the metalness multiply is gone.
+    /* The mechanism, in the shader: the metalness multiply is gone. Stated
+     * against the SHAPE of the line rather than against one function name —
+     * the posteriser was split in two (saberCelMapValue moved to map_fragment,
+     * saberCelChroma stayed here) and a check pinned to the old name would have
+     * gone red for a change that never touched metalness. What has to hold is
+     * that `metalnessFactor` is nowhere near the diffuse colour. */
     const src = CEL_SRC();
-    assert(/material\.diffuseColor = saberCelAlbedo\( diffuseColor\.rgb \);/.test(src),
-      'the metalness multiply is back on material.diffuseColor — metals will render black');
+    const write = /'material\.diffuseColor = diffuseColor\.rgb \* \( 1\.0 - metalnessFactor \);',\s*\n\s*'material\.diffuseColor = saberCel(\w+)\( diffuseColor\.rgb \);',/
+      .exec(src);
+    assert(write,
+      'the metalness multiply is no longer being substituted out of lights_physical_fragment — '
+      + 'metals will render black');
     assert(withLobe(1) > 0, 'the transcribed physical model is not lighting a metal at all');
     return `metalness 1 · physical-without-lobe 0.000 · cel ${celNoLobe().toFixed(4)} `
       + `(same as metalness 0, which is the point)`;
