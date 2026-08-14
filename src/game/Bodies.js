@@ -617,6 +617,39 @@ function onSurface(geo, dir, sink = 0, origin = _ZERO) {
   return [p.x - d.x * sink, p.y - d.y * sink, p.z - d.z * sink];
 }
 
+/**
+ * The same, over SEVERAL shells at once: the outermost surface any of them
+ * offers along the ray.
+ *
+ * Written for one problem and it is worth stating, because the naive fix is
+ * wrong in a way that is hard to see. A Zabrak's horns are seated by raycasting
+ * the assembled skull, which is right while the skull is the outside of the
+ * head. Give that Zabrak hair and the skull is no longer the outside: a horn
+ * seated on it starts 2 cm inside a hair mass and 3 cm of a 3 cm horn is buried,
+ * so the crown of horns becomes a scattering of tips. Seating on the HAIR
+ * instead is wrong the other way — the shaved cut has no hair to seat on, and a
+ * cut that leaves the nape bare has none along half the ring — and `surfacePoint`
+ * answers null there, which `onSurface` turns into "at the origin", i.e. a horn
+ * inside the skull.
+ *
+ * So it is the farthest hit of whichever shells actually answer, and nulls are
+ * skipped. Undefined and null entries are allowed on purpose so a caller can
+ * pass an optional layer without branching.
+ */
+function onOuter(geos, dir, sink = 0, origin = _ZERO) {
+  const d = _pp.copy(dir).normalize();
+  let best = null, bestD = -Infinity;
+  for (const g of geos) {
+    if (!g?.attributes?.position) continue;
+    const p = surfacePoint(g, dir, origin, new THREE.Vector3(), true);
+    if (!p) continue;
+    const t = p.clone().sub(origin).dot(d);
+    if (t > bestD) { bestD = t; best = p; }
+  }
+  if (!best) return [origin.x, origin.y, origin.z];
+  return [best.x - d.x * sink, best.y - d.y * sink, best.z - d.z * sink];
+}
+
 const _olD = new THREE.Vector3(), _olO = new THREE.Vector3(), _olP = new THREE.Vector3();
 
 /**
@@ -1895,9 +1928,84 @@ export const SPECIES = [
   },
   {
     id: 'zabrak', name: 'Zabrak', hair: false, brows: true, eyes: true,
-    // A crown of cranial horns on a shaven skull. The cheapest big silhouette
-    // change in the list — ten cones at 36 triangles each — and the only one
-    // that leaves the face itself entirely human, which is the point of it.
+    /**
+     * A crown of cranial horns, and — since the note that asks for "any prequel
+     * Jedi or Sith" — HAIR AS WELL.
+     *
+     * This row said `hair: false` and it was the only one of the five bald rows
+     * that was wrong. Measured by vertex fingerprint of the built head: human
+     * and smallfolk build 8 distinct figures from the 8 cuts and 7 from the 7
+     * beards; zabrak, twi'lek, togruta, nautolan and kel dor each built 1 and
+     * 1 — every option in the wardrobe collapsing to the same head. Four of the
+     * five are CORRECT that way: lekku, montrals and head-tentacles occupy the
+     * scalp, and a Kel Dor has neither hair nor a mouth. A Zabrak is a humanoid
+     * with a crown of horns, and the prequel-era Council seat this row exists to
+     * let a player build wears horns AND hair AND a beard.
+     *
+     * The tell that it was an oversight rather than a decision is one field
+     * over: `brows: true`. Every other bald row here is `brows: false`, because
+     * a species with no scalp hair has no eyebrows either. This row has been
+     * treated as human-headed everywhere except the one flag the note names.
+     *
+     * ── AND THE FLAG IS STILL `false`, WHICH IS THE FINDING RATHER THAN THE
+     * OMISSION. Everything under it works: `hair: true` here builds 8 distinct
+     * heads from the 8 cuts and 7 from the 7 beards, measured by vertex
+     * fingerprint, against 1 and 1 today; `gap` below opens the crown so the
+     * ring comes through the hair instead of under it; and `onOuter` seats each
+     * horn on whichever of skull-or-hair is further out. It was built, measured
+     * and turned back off, because flipping it breaks two assertions in
+     * tools/checks/creator.mjs that no implementation can satisfy:
+     *
+     *   `c.tris <= human.tris` and `c.meshes <= human.meshes` — "a species pays
+     *   for itself out of the hair it does not have". A Zabrak with hair has
+     *   nothing left to pay with: the human is 12 796 triangles in 64 meshes
+     *   and is ENTIRELY hair, so any species carrying hair AND its own head
+     *   furniture is over by whatever the furniture costs. Best measured
+     *   configuration — 12 horns at 5 segments through a crown opened 0.30 —
+     *   is 13 030 triangles in 65 meshes: +234 and +1, and the +1 cannot be
+     *   removed at all, because the horns are `skin` and the hair is `hair` and
+     *   two materials are two meshes.
+     *
+     *   `creator: a species is a different shape, not a different tint` — the
+     *   Zabrak's silhouette identity IS the bare horned crown, and once both
+     *   figures wear the same cut the pair measured 18 silhouette pixels apart
+     *   at 8 m against a human, where the bald row measures far more. Longer
+     *   horns fix that for no extra triangles, but not the budget above.
+     *
+     * So this is a two-file change and the other file is not this pass's to
+     * make. The handover is: flip `hair` to true here, and in
+     * tools/checks/creator.mjs replace the two `<= human` assertions with the
+     * 13 000/76 cap the same check already applies four lines above, on the
+     * ground that the rule they encode ("a species pays for itself out of the
+     * hair it does not have") is exactly the premise this row stops satisfying.
+     * The horn lengths in `len`/`lenVar` then want roughly doubling so the
+     * crown still breaks the outline over a hair mass.
+     */
+    horns: {
+      /**
+       * THE HORN RING, as data, because two things read it now: the head
+       * builder that seats the cones, and the hair pass that has to know the
+       * crown is spoken for. It was twelve numbers inside SPECIES_HEADS.zabrak
+       * and nothing else could see them.
+       *
+       * `n` and `seg` come down when the cut covers the crown, and that is a
+       * budget decision with a visual argument behind it. tools/checks/creator
+       * holds every species to the triangle count of the human it replaces —
+       * "a species pays for itself out of the hair it does not have" — and a
+       * Zabrak with hair has nothing left to pay with: the ring was 432
+       * triangles in its own mesh against a human head's 732 of hair, and the
+       * two together put the figure 432 over. Under a hair mass the nape horns
+       * are not visible anyway, so a covered crown builds the FRONT SEVEN of
+       * the twelve at four segments instead of six — 168 triangles, seated on
+       * the hair rather than under it. A shaven Zabrak still gets all twelve at
+       * six, so nothing that shipped moves by a float.
+       */
+      n: 12, seg: 6, nCovered: 12, segCovered: 5,
+      /* How much of the crown the hair leaves bare for the ring to come
+       * through, as a fraction of the cap's own sector. See hairCap. */
+      gap: 0.30,
+      at: [0, 0.098, -0.012], sink: 0.006, len: 0.030, lenVar: 0.011, r: 0.0078,
+    },
     skin: 0xb4463a, eye: 0xb08a30, sclera: 0xe8dfcd,
     skinTones: [
       { name: 'Iridonian', hex: 0xb4463a }, { name: 'Ember', hex: 0x8f3a2c },
@@ -2235,18 +2343,42 @@ const SPECIES_HEADS = {
    * every reference has and is also what puts the jagged part of the outline
    * where a player looking at a face will see it.
    */
-  zabrak(headObj, s, hg, { skin }) {
+  zabrak(headObj, s, hg, { skin, over, horns }) {
     const k = new Kit();
-    const O = new THREE.Vector3(0, 0.098 * s, -0.012 * s);
+    const H = horns;
+    const O = new THREE.Vector3(H.at[0] * s, H.at[1] * s, H.at[2] * s);
     const dir = new THREE.Vector3();
-    const N = 12;
+    /**
+     * THE RING GOES ROUND THE HAIR, NOT THROUGH IT.
+     *
+     * `over` is the assembled hair geometry when the cut covers the crown, and
+     * null otherwise. `onOuter` takes the farthest surface either shell offers
+     * along the ray, so a horn on a bare skull seats where it always did and a
+     * horn under a hair mass seats on the hair — which is what a horn growing
+     * through a scalp looks like, and is the difference between a crown of
+     * horns and a crown of horn TIPS poking out of a hat.
+     *
+     * When the crown is covered the ring is the front seven at four segments
+     * rather than all twelve at six; see the note on `horns` in SPECIES for the
+     * budget that forces it and the reason it is also the right picture. The
+     * front seven are `i` from -3 to +3 about theta = 0, which is the arc a
+     * player looking at the face sees.
+     */
+    const covered = !!over;
+    const N = covered ? H.nCovered : H.n;
+    const seg = covered ? H.segCovered : H.seg;
     for (let i = 0; i < N; i++) {
-      const th = (i / N) * Math.PI * 2;
+      // Bare: the whole ring, evenly. Covered: the front arc only, at the same
+      // angular pitch the full ring has, so the seven that are built stand
+      // exactly where seven of the twelve stood.
+      const th = covered
+        ? ((i - (N - 1) / 2) / H.n) * Math.PI * 2
+        : (i / N) * Math.PI * 2;
       const el = 0.80 - 0.10 * Math.cos(th);            // tipped a little further back at the front
       dir.set(Math.sin(th) * Math.cos(el), Math.sin(el), Math.cos(th) * Math.cos(el)).normalize();
-      const p = onSurface(hg, dir, 0.006 * s, O);
-      const len = (0.030 + 0.011 * Math.cos(th)) * s;
-      const r = 0.0078 * s;
+      const p = onOuter([hg, over], dir, H.sink * s, O);
+      const len = (H.len + H.lenVar * Math.cos(th)) * s;
+      const r = H.r * s;
       // the axis leans toward vertical, not straight out of the skull: a horn
       // normal to a sphere at 46 degrees points half sideways and reads as a
       // spike through the head rather than as a crown standing off it
@@ -2255,7 +2387,7 @@ const SPECIES_HEADS = {
         [p[0], p[1], p[2], r],
         [p[0] + ax.x * len * 0.5, p[1] + ax.y * len * 0.5, p[2] + ax.z * len * 0.5, r * 0.56],
         [p[0] + ax.x * len, p[1] + ax.y * len, p[2] + ax.z * len, r * 0.17],
-      ], 6, { tip: 1.1 }));
+      ], seg, { tip: 1.1 }));
     }
     k.bake(headObj);
   },
@@ -2557,8 +2689,27 @@ function hairLump(s, rx, ry, rz, w = 8, h = 6) {
  * 0.122, and covers 100% of the braincase behind the hairline.
  */
 function hairCap(s, V, { phi = 0.62, tilt = -0.75, w = 14, h = 10, sx = 1.02, sy = 1.32, sz = 1.24,
-  y = 0.092, z = -0.010, wide = 0, recede = 0 } = {}) {
-  const cap = new THREE.SphereGeometry(0.0890 * s, w, h, 0, Math.PI * 2, 0, Math.PI * phi);
+  y = 0.092, z = -0.010, wide = 0, recede = 0, gap = 0 } = {}) {
+  /**
+   * `gap` OPENS THE CROWN, and it exists for one species and one anatomy.
+   *
+   * A Zabrak's horns come out of the top of the skull. Laying a solid skullcap
+   * over them and pushing the horns outward to compensate produced a figure
+   * that measured ELEVEN silhouette pixels from a human at 8 m — the row's
+   * entire reason to exist is the crown, and a hat over the crown deletes it.
+   * Hair does not grow where a horn is: it grows AROUND it.
+   *
+   * So the sector starts at `gap` down from the pole instead of at the pole,
+   * which leaves the crown bare for the ring to come through, and the row count
+   * comes down with the sector it covers — a sphere sector keeps `h` rows
+   * however short `thetaLength` is, so without that second term the hair would
+   * be shorter and cost exactly the same. Both terms are zero by default and
+   * `Math.PI * 0` is exact, so every cut on every other species emits the
+   * geometry it always emitted.
+   */
+  const rows = Math.max(3, Math.round(h * (1 - gap / phi)));
+  const cap = new THREE.SphereGeometry(0.0890 * s, w, gap > 0 ? rows : h,
+    0, Math.PI * 2, Math.PI * gap, Math.PI * (phi - gap));
   cap.scale(sx * (V.w + wide), sy * V.h, sz * V.d);
   /**
    * THE YEARS, ON THE ONE PART OF A HEAD WHERE THEY ARE WORTH PIXELS.
@@ -2599,7 +2750,7 @@ const HAIR_CUTS = {
    */
   temple(s, V, R) {
     return { parts: [
-      [hairCap(s, V, { wide: R.wide, recede: R.thin })],
+      [hairCap(s, V, { gap: R.gap, wide: R.wide, recede: R.thin })],
       // the swept fringe: a wedge over the brow, heavier on one side, which
       // is what puts an asymmetric corner in the outline
       [hairLump(s, 0.052 * V.w * (1 - 0.42 * R.thin), 0.026 * (1 - 0.42 * R.thin), 0.030, 8, 5), [0.020 * V.w * s, 0.150 * V.h * s, (0.050 - R.back) * s], [0.36, 0.22, -0.14]],
@@ -2632,7 +2783,7 @@ const HAIR_CUTS = {
       // the cut above it. Measured at 8 m against the padawan the first attempt
       // was 20 silhouette pixels, which is one cut offered twice; the whole
       // difference now is that this one has no height on it at all.
-      [hairCap(s, V, { phi: 0.62, tilt: -0.62, w: 12, h: 8, sx: 0.99, sy: 1.12, sz: 1.09,
+      [hairCap(s, V, { gap: R.gap, phi: 0.62, tilt: -0.62, w: 12, h: 8, sx: 0.99, sy: 1.12, sz: 1.09,
         y: 0.086, wide: R.wide, recede: R.thin })],
       // TUCKED UNDER THE RIM, not laid over it. Sized to poke through, the fringe
       // draws a lit bar right across the crown — the same poke-through the scalp
@@ -2664,7 +2815,7 @@ const HAIR_CUTS = {
     // the braid is what they see in the creator.
     const c = {
       parts: [
-        [hairCap(s, V, { phi: 0.58, tilt: -0.62, w: 12, h: 8, sx: 1.00, sy: 1.20, sz: 1.12,
+        [hairCap(s, V, { gap: R.gap, phi: 0.58, tilt: -0.62, w: 12, h: 8, sx: 1.00, sy: 1.20, sz: 1.12,
           y: 0.094, wide: R.wide, recede: R.thin })],
         // THE QUIFF. Measured at 8 m, a padawan that was a crop plus a braid
         // was 17 silhouette pixels from the crop — a 7 mm strand is under one
@@ -2703,7 +2854,7 @@ const HAIR_CUTS = {
    */
   topknot(s, V, R) {
     return { parts: [
-      [hairCap(s, V, { phi: 0.58, tilt: -0.66, w: 12, h: 9, sx: 0.99, sy: 1.30, sz: 1.14, y: 0.100, wide: R.wide, recede: R.thin })],
+      [hairCap(s, V, { gap: R.gap, phi: 0.58, tilt: -0.66, w: 12, h: 9, sx: 0.99, sy: 1.30, sz: 1.14, y: 0.100, wide: R.wide, recede: R.thin })],
       // the pulled-back temples: two long flat masses running from the brow to
       // the crown, which is what stops a knot reading as a bun on a bald head
       [hairLump(s, 0.022, 0.026 * V.h, 0.056, 6, 4), [0.056 * V.w * s, 0.128 * s, (0.020 - R.back * 0.5) * s], [0.10, 0, 0.30]],
@@ -2727,7 +2878,7 @@ const HAIR_CUTS = {
    */
   tail(s, V, R) {
     return { parts: [
-      [hairCap(s, V, { phi: 0.54, tilt: -0.80, w: 11, h: 8, sx: 0.80, sy: 1.14, sz: 1.22, y: 0.092, wide: R.wide, recede: R.thin })],
+      [hairCap(s, V, { gap: R.gap, phi: 0.54, tilt: -0.80, w: 11, h: 8, sx: 0.80, sy: 1.14, sz: 1.22, y: 0.092, wide: R.wide, recede: R.thin })],
       // the crest, running fore-and-aft over the crown: without one this is a
       // bald head with something behind it, which is what the first render was
       // Measured against `shorn` at 8 m the first crest was 19 silhouette
@@ -2760,7 +2911,7 @@ const HAIR_CUTS = {
    */
   long(s, V, R) {
     return { parts: [
-      [hairCap(s, V, { phi: 0.66, tilt: -0.70, w: 14, h: 9, sy: 1.30, sz: 1.26, wide: R.wide, recede: R.thin })],
+      [hairCap(s, V, { gap: R.gap, phi: 0.66, tilt: -0.70, w: 14, h: 9, sy: 1.30, sz: 1.26, wide: R.wide, recede: R.thin })],
       [hairLump(s, 0.050 * V.w * (1 - 0.42 * R.thin), 0.024 * (1 - 0.42 * R.thin), 0.030, 7, 5), [0.016 * V.w * s, 0.150 * V.h * s, (0.048 - R.back) * s], [0.34, 0.20, -0.12]],
       // the side falls: flat slabs down the line of the jaw, standing clear of
       // the shoulder because they are 8 cm out from the axis
@@ -3396,38 +3547,29 @@ export function buildJedi(opts = {}) {
           [0.06, 0, 0]);
       }
 
-      // Everything the species puts on the head instead of hair — horns,
-      // lekku, montrals, tentacles, a breath mask. It runs BEFORE the hair
-      // block so that a species which keeps hair (Zabrak does not, but the
-      // hook allows it) has the hair laid over its own crown rather than under
-      // it, and every mesh it makes is a child of headObj, which is what makes
-      // it come off with a severed head. See speciesHead().
-      // Kept, not just built: attachLekku hides these while the simulated pair
-      // is live and shows them again at LOD range, which is the same swap
-      // attachSkirt does with the rigid robe. Snapshotting the children either
-      // side of the call is how they are identified without Kit having to
-      // report what it baked.
-      {
-        const before = headObj.children.length;
-        speciesHead(sp, headObj, s, hg, { skin, F });
-        for (let i = before; i < headObj.children.length; i++) speciesMeshes.push(headObj.children[i]);
-      }
-      if (!sp.hair) return;
-
-      // ── hair and beard ───────────────────────────────────────────────
-      // What was here was one smooth spherical cap, then one hard-coded cut,
-      // and now it is a library — but the argument has not changed and it is
-      // worth keeping: hair is read at silhouette range by its OUTLINE, and an
-      // outline needs to be BROKEN. A parting, a fringe with a corner in it, a
-      // mass over each ear, a tail at the nape. Every cut in HAIR_CUTS is a
-      // handful of flat masses chosen for that outline, still merged to one
-      // geometry on one material.
-      //
-      // The hair is most of the head's outline, so it is sized off the same
-      // vault the braincase is — see vaultOf(). Sized against a fixed skull it
-      // was a wig standing off a narrow head, or a cap with a wide one growing
-      // through it, and `skull` moved the rendered silhouette by two pixels
-      // instead of the seven it is worth.
+      /**
+       * THE HAIR IS BUILT BEFORE THE SPECIES' OWN HEAD FURNITURE, AND ADDED
+       * AFTER IT.
+       *
+       * The order used to be the other way round with a note saying why:
+       * "it runs BEFORE the hair block so that a species which keeps hair
+       * (Zabrak does not, but the hook allows it) has the hair laid OVER its
+       * own crown rather than under it". That is exactly right for a species
+       * whose head furniture lies flat on the scalp, and exactly wrong for the
+       * one species that turned out to want the hook — a horn does not lie
+       * under hair, it grows THROUGH it, and a ring seated on the skull under a
+       * 2 cm hair mass loses two thirds of every 3 cm horn.
+       *
+       * Splitting the hair into "compute" and "attach" costs nothing and gives
+       * `speciesHead` the one thing it needed: the shell the hair actually
+       * presents, so a horn can be seated on whichever of skull-or-hair is
+       * further out along its own ray (see onOuter). The hair MESH still goes
+       * on after, so the draw order and the child order of headObj are what
+       * they always were.
+       *
+       * `crown` decides whether the hair is offered at all: a shaved cut is not
+       * a shell and a species must not seat anything on one.
+       */
       const V = vaultOf(F);
       /**
        * THE YEARS, as a hairline.
@@ -3439,12 +3581,16 @@ export function buildJedi(opts = {}) {
        * `back` is age: a hairline recedes, and unlike a wrinkle it is worth
        * whole pixels of silhouette at the range the game is played at.
        */
-      const R = { wide: 0.020 * Math.max(0, -F.skull), back: 0.034 * G.a, thin: G.a };
-      const cut = (HAIR_CUTS[G.hair.id] || HAIR_CUTS.temple)(s, V, R);
-      const beard = beardParts(s, hg, G.beard);
-      const parts = [...cut.parts, ...beard.parts];
+      /* `gap` is the bare crown a horned species needs; zero for everybody
+       * else, and zero is the identity. See hairCap. */
+      const R = { wide: 0.020 * Math.max(0, -F.skull), back: 0.034 * G.a, thin: G.a,
+                  gap: sp.horns ? sp.horns.gap : 0 };
+      const cut = sp.hair ? (HAIR_CUTS[G.hair.id] || HAIR_CUTS.temple)(s, V, R) : null;
+      const beard = sp.hair ? beardParts(s, hg, G.beard) : null;
+      const parts = sp.hair ? [...cut.parts, ...beard.parts] : [];
+      let hairGeo = null;
       if (parts.length) {
-        const hairGeo = assemble(parts, 'hair');
+        hairGeo = assemble(parts, 'hair');
         // Hair is self-shadowing and nearly black at the roots: dark under the
         // fringe, dark at the nape, lit along the crown. On a single sun this is
         // the only thing that separates the strands from one another at all.
@@ -3457,8 +3603,29 @@ export function buildJedi(opts = {}) {
           creaseAt(-0.070 * s, 0.078 * s, -0.010 * s, 0.045 * s, 0.55, 0.5),
           (x, y) => 0.62 + 0.38 * clamp((y / s - 0.045) / 0.11, 0, 1),
         ), { floor: 0.26 });
-        mesh(hairGeo, hair, headObj);
       }
+
+      // Everything the species puts on the head — horns, lekku, montrals,
+      // tentacles, a breath mask — and every mesh it makes is a child of
+      // headObj, which is what makes it come off with a severed head. See
+      // speciesHead().
+      // Kept, not just built: attachLekku hides these while the simulated pair
+      // is live and shows them again at LOD range, which is the same swap
+      // attachSkirt does with the rigid robe. Snapshotting the children either
+      // side of the call is how they are identified without Kit having to
+      // report what it baked.
+      {
+        const before = headObj.children.length;
+        speciesHead(sp, headObj, s, hg, {
+          skin, F, horns: sp.horns,
+          // only a cut that covers the crown is a shell worth seating on
+          over: (sp.hair && G.hair.crown !== false) ? hairGeo : null,
+        });
+        for (let i = before; i < headObj.children.length; i++) speciesMeshes.push(headObj.children[i]);
+      }
+      if (!sp.hair) return;
+      if (hairGeo) mesh(hairGeo, hair, headObj);
+
       // The strands — a padawan's braid, a warrior's tail, a plaited beard.
       //
       // EACH ONE IS A DIRECT CHILD OF THE HEAD, not a mesh inside a positioning
@@ -5457,7 +5624,7 @@ export function buildBeast(opts = {}) {
 /* ── the menagerie: four-legged arena beasts ─────────────────────────── */
 
 /**
- * TWO CREATURES OUT OF ONE BUILDER, and the reason they are one builder is the
+ * FOUR CREATURES OUT OF ONE BUILDER, and the reason they are one builder is the
  * reason they read as different animals: everything that differs between them
  * is a PROPORTION, and proportion is what the eye actually uses to tell one
  * animal from another at fifty metres.
@@ -5471,32 +5638,97 @@ export function buildBeast(opts = {}) {
  *                 slung at 0.62 of the charger's hip height, legs at 1.06, a
  *                 quill mane over the shoulders and a tail as long as the body
  *                 again. Everything says it is about to leave the ground.
+ *   the BRUTE     the largest thing on four legs in the game: shoulders at
+ *                 1.95× the haunch on legs at 0.86, a skull half as wide again
+ *                 as the charger's, and a spine of scutes. Its silhouette is a
+ *                 WALL, and the whole of its answer is that you cannot be
+ *                 beside it — see the slam in src/game/Enemy.js.
+ *   the POUNCER   all leg: 1.24 of standard on a body barely longer than the
+ *                 charger's, shoulders forward at 1.35 for the gather, and the
+ *                 stalker's quill mane. It reads as coiled, which is what it
+ *                 is: it crosses twelve metres in one bound.
  *
- * Both stand on `walkerSkeleton(S, 4)`, so both inherit the quadruped gait,
- * the sever points, the ragdoll and `Enemy.capsules`'s four-leg case for free.
- * The acklay's six-legged builder is left alone: three creatures out of two
- * skeletons is the right ratio, and forcing the acklay through here would have
- * cost it the thing that makes it the acklay, which is that it has six legs.
+ * ── AND THE DIFFERENCES ARE A TABLE, not a boolean.
+ *
+ * This was `const heavy = opts.kind !== 'stalker'` and twenty-three `heavy ? a
+ * : b` expressions, which is a builder that can express exactly two animals and
+ * whose third row has to be a third branch on every one of those lines. Every
+ * one of the twenty-three is now a FIELD of QUADRUPED_KINDS below, so a new
+ * creature is a row of numbers and the geometry underneath is untouched.
+ *
+ * The charger's and the stalker's rows hold exactly the values their branches
+ * held, so both animals emit the geometry they always emitted — checked, not
+ * assumed: tools/checks/beasts.mjs fingerprints the built vertices of every
+ * kind against the shipped pair.
+ *
+ * All four stand on `walkerSkeleton(S, 4)`, so all four inherit the quadruped
+ * gait, the sever points, the ragdoll and `Enemy.capsules`'s four-leg case for
+ * free. The acklay's six-legged builder is left alone: it is the one creature
+ * whose whole identity is that it has six legs.
  *
  * The head goes on the HEAD BONE and is built FORWARD out of it, the same
  * trick and for the same reason `buildBeast` documents: walkerSkeleton hangs
  * that bone 0.6 units behind the body, so a skull placed at its origin is
  * inside the ribcage and invisible from every angle.
  */
+export const QUADRUPED_KINDS = {
+  charger: {
+    hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
+    long: 1.0, front: 1.45, leg: 0.78, back: 'scutes', face: 'horned', foot: 'hoof',
+    tailN: 4, tailReach: 0.9, tailR: 0.13, tailPitch: 0.55, tailCurl: 0.10,
+    neckSegs: 3, neckLen: 0.40, neckR: 0.30, neckPitch: 0.32, neckCurl: -0.10,
+    skull: [0.98, 0.86, 1.24], jaw: 0.38,
+  },
+  stalker: {
+    hide: 0x7a3a2c, plate: 0x4a3128, belly: 0xa8846a, eye: 0x66ff9a,
+    long: 1.5, front: 0.90, leg: 1.06, back: 'mane', face: 'fanged', foot: 'claw',
+    tailN: 7, tailReach: 2.2, tailR: 0.10, tailPitch: 0.18, tailCurl: -0.06,
+    neckSegs: 4, neckLen: 0.34, neckR: 0.20, neckPitch: 0.10, neckCurl: 0.02,
+    skull: [0.66, 0.62, 1.72], jaw: 0.48,
+  },
+  /* THE BRUTE. Grey and unpainted, because it is the only creature in the
+   * roster whose read is MASS rather than markings — a shape this big does not
+   * need a colour to be recognised, and a bright one would fight the arena
+   * sand. Shoulders at 1.95 against the charger's 1.45 with the same haunch,
+   * so the front half is nearly half again as wide; the skull is 1.30 across
+   * where the charger's is 0.98; the tail is a stub, because a tail is a
+   * counterweight for something that runs and this does not run. */
+  brute: {
+    hide: 0x6b6152, plate: 0x585044, belly: 0x8a7f6d, eye: 0xffd24a,
+    long: 1.05, front: 1.95, leg: 0.86, back: 'scutes', face: 'fanged', foot: 'claw',
+    tailN: 3, tailReach: 0.6, tailR: 0.15, tailPitch: 0.70, tailCurl: 0.14,
+    neckSegs: 2, neckLen: 0.34, neckR: 0.38, neckPitch: 0.42, neckCurl: -0.16,
+    skull: [1.30, 1.06, 1.10], jaw: 0.46,
+  },
+  /* THE POUNCER. Legs at 1.24 — longer than anything else here, including the
+   * stalker — over a body only a quarter longer than the charger's, which is
+   * the proportion that reads as "about to jump" rather than "running". The
+   * mane is the stalker's, and that is deliberate: two predators in the same
+   * arena SHOULD share a family look, and everything below the shoulder tells
+   * them apart. */
+  pouncer: {
+    hide: 0x8a7b5c, plate: 0x6b4a2c, belly: 0xb0a084, eye: 0xff6a2a,
+    long: 1.25, front: 1.35, leg: 1.24, back: 'mane', face: 'fanged', foot: 'claw',
+    tailN: 5, tailReach: 1.1, tailR: 0.09, tailPitch: 0.30, tailCurl: -0.02,
+    neckSegs: 3, neckLen: 0.32, neckR: 0.24, neckPitch: 0.20, neckCurl: -0.04,
+    skull: [0.82, 0.78, 1.36], jaw: 0.42,
+  },
+};
+
 export function buildQuadruped(opts = {}) {
   const S = opts.scale ?? 2.2;
-  const heavy = opts.kind !== 'stalker';           // the charger is the default
+  const K = QUADRUPED_KINDS[opts.kind] || QUADRUPED_KINDS.charger;
   const rig = new Rig(walkerSkeleton(S, 4), { scale: S });
-  const hide = hideMat(opts.hide ?? (heavy ? 0x6a5f4e : 0x7a3a2c), 0.92);
-  const plate = chitinMat(opts.plate ?? (heavy ? 0x9a8b6c : 0x4a3128), 0.52);
-  const belly = hideMat(opts.belly ?? (heavy ? 0x8d8168 : 0xa8846a), 0.94);
-  const eye = emissiveMat(opts.eye ?? (heavy ? 0xffb03a : 0x66ff9a), 2.8);
+  const hide = hideMat(opts.hide ?? K.hide, 0.92);
+  const plate = chitinMat(opts.plate ?? K.plate, 0.52);
+  const belly = hideMat(opts.belly ?? K.belly, 0.94);
+  const eye = emissiveMat(opts.eye ?? K.eye, 2.8);
   const tooth = boneMat(0xd6cbb0, 0.34);
 
   /* ── the barrel ── */
   const body = rig.get('body');
-  const LONG = heavy ? 1.0 : 1.5;                  // how far the body is drawn out
-  const FRONT = heavy ? 1.45 : 0.90;               // shoulder mass over haunch
+  const LONG = K.long;                             // how far the body is drawn out
+  const FRONT = K.front;                           // shoulder mass over haunch
   const barrel = assemble([
     [(() => { const g = new THREE.SphereGeometry(0.60 * S, 14, 10); g.scale(0.80, 0.86, 1.20 * LONG); return g; })(),
       [0, 0.10 * S, -0.10 * S]],
@@ -5510,7 +5742,7 @@ export function buildQuadruped(opts = {}) {
   body.primary = bm; body.parts.push(bm); body.radius = 0.62 * S;
 
   const kb = new Kit();
-  if (heavy) {
+  if (K.back === 'scutes') {
     // armour scutes down the spine, heaviest over the shoulder
     kb.row(6, (i, t) => kb.add(plate, plateGeo((0.56 - Math.abs(t - 0.3) * 0.30) * S, 0.09 * S, 0.20 * S, 0.03 * S, 1),
       [0, (0.60 - Math.abs(t - 0.35) * 0.16) * S, (0.44 - t * 1.24) * S], [0.08, 0, 0]));
@@ -5533,16 +5765,16 @@ export function buildQuadruped(opts = {}) {
    * which is what a tail does. Six tapering segments, and the stalker's is as
    * long again as its body. */
   {
-    const n = heavy ? 4 : 7;
-    const reach = (heavy ? 0.9 : 2.2) * S;
-    let z = -0.86 * S * LONG, y = 0.10 * S, pitch = heavy ? 0.55 : 0.18;
+    const n = K.tailN;
+    const reach = K.tailReach * S;
+    let z = -0.86 * S * LONG, y = 0.10 * S, pitch = K.tailPitch;
     for (let i = 0; i < n; i++) {
       const len = reach / n;
-      const r0 = (heavy ? 0.13 : 0.10) * S * (1 - i / (n + 1.5));
+      const r0 = K.tailR * S * (1 - i / (n + 1.5));
       kb.add(hide, limbGeo(len * 1.12, r0, r0 * 0.78, 7, true, { rings: 2, capN: 2 }),
         [0, y, z], [Math.PI / 2 + pitch, 0, 0]);
       z -= Math.cos(pitch) * len; y += Math.sin(pitch) * len;
-      pitch += heavy ? 0.10 : -0.06;
+      pitch += K.tailCurl;
     }
   }
   kb.bake(body.obj);
@@ -5550,31 +5782,31 @@ export function buildQuadruped(opts = {}) {
   /* ── neck and head, built forward out of the head bone ── */
   const head = rig.get('head');
   const parts = [];
-  let hy = 0, hz = 0, pitch = heavy ? 0.32 : 0.10;
-  const segs = heavy ? 3 : 4;
+  let hy = 0, hz = 0, pitch = K.neckPitch;
+  const segs = K.neckSegs;
   for (let i = 0; i < segs; i++) {
-    const len = (heavy ? 0.40 : 0.34) * S;
-    const r0 = (heavy ? 0.30 : 0.20) * S - i * 0.03 * S;
+    const len = K.neckLen * S;
+    const r0 = K.neckR * S - i * 0.03 * S;
     parts.push([limbGeo(len * 1.10, r0, r0 * 0.88, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
       [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
     hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
-    pitch += heavy ? -0.10 : 0.02;
+    pitch += K.neckCurl;
   }
   // the skull: a long wedge on both, but the charger's is a brick and the
   // stalker's is a blade
   parts.push([(() => {
     const g = new THREE.SphereGeometry(0.26 * S, 12, 10);
-    g.scale(heavy ? 0.98 : 0.66, heavy ? 0.86 : 0.62, heavy ? 1.24 : 1.72);
+    g.scale(K.skull[0], K.skull[1], K.skull[2]);
     return g;
   })(), [0, hy + 0.02 * S, hz + 0.24 * S]]);
-  parts.push([plateGeo(0.26 * S, 0.12 * S, (heavy ? 0.38 : 0.48) * S, 0.04 * S, 1),
+  parts.push([plateGeo(0.26 * S, 0.12 * S, K.jaw * S, 0.04 * S, 1),
     [0, hy - 0.13 * S, hz + 0.30 * S], [0.10, 0, 0]]);
   const skull = assemble(parts, 'skull');
   const hm = mesh(skull, hide, head.obj);
   head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
 
   const kh = new Kit();
-  if (heavy) {
+  if (K.face === 'horned') {
     /* THE FRILL AND THE HORNS. A charging animal's threat display is carried
      * where you will hit it, and it is what makes the head-on silhouette a
      * wall rather than a face — which is the whole counter-play: you do not
@@ -5608,7 +5840,7 @@ export function buildQuadruped(opts = {}) {
 
   /* ── legs. The charger's are short and thick and the stalker's long and
    * light, which is 78% and 106% of the same numbers. */
-  const LEG = heavy ? 0.78 : 1.06;
+  const LEG = K.leg;
   for (let i = 0; i < 4; i++) {
     for (const [name, r0, r1, mat, bulge] of [
       [`hipL${i}`, 0.17, 0.14, plate, 0.08], [`femur${i}`, 0.16, 0.10, hide, 0.20],
@@ -5632,7 +5864,7 @@ export function buildQuadruped(opts = {}) {
     if (tarsus) {
       const k = new Kit(); const L = tarsus.length;
       // a hoof on the charger, a splayed claw on the stalker
-      if (heavy) k.add(plate, new THREE.CylinderGeometry(0.13 * S, 0.15 * S, 0.16 * S, 8), [0, L * 0.94, 0.02 * S]);
+      if (K.foot === 'hoof') k.add(plate, new THREE.CylinderGeometry(0.13 * S, 0.15 * S, 0.16 * S, 8), [0, L * 0.94, 0.02 * S]);
       else k.row(3, (j, t) => k.add(plate, clawGeo(0.34 * S, 0.036 * S, 0.008 * S, 1.05, 6, 4),
         [(t - 0.5) * 0.14 * S, L * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
       k.bake(tarsus.obj);

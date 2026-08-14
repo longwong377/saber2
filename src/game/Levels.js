@@ -2124,20 +2124,45 @@ export const LEVELS = {
    *  "Jedi Temple / Coruscant — the enemies are Jedi; you are clearing the
    *  temple."
    *
-   *  ONE HONEST LIMITATION, stated here rather than hidden in the pool. This
-   *  game has exactly one sabered humanoid archetype, `acolyte`, and no Jedi
-   *  body: Enemy.js and Bodies.js are where a `jedi` would have to live and
-   *  this change may not touch them. So the temple's garrison is acolytes at
-   *  three quarters of the pool with a thin screen of shooters behind them,
-   *  which fights the way a hall full of blades should fight and does not look
-   *  like one. What is needed is written down in the report rather than faked.
+   *  THE LIMITATION THAT USED TO BE WRITTEN HERE IS GONE, and what it said is
+   *  worth keeping because it is the measurement: "this game has exactly one
+   *  sabered humanoid archetype, `acolyte`, and no Jedi body". So the level
+   *  named for the Jedi was garrisoned by their opposites — five of eight pool
+   *  slots were Sith Acolytes, and over waves 1-12 on a seeded director 32 of
+   *  115 spawned bodies were Sith and ZERO were Jedi.
+   *
+   *  THE GARRISON IS NOW THE ORDER, and it is four bodies rather than one
+   *  (src/game/Enemy.js): Knight, Sentinel, Temple Guardian and — as this
+   *  level's set-piece rung — Master. Each declares a DUEL FORM, which no
+   *  archetype in the game did before them: measured, 0 of 14 archetypes
+   *  carried a `form`, so every duellist ever spawned rolled one of five at
+   *  random and the player could not learn any of them. The four here span the
+   *  axis the forms are actually distinct on — what answers them — from
+   *  Makashi at 100% parryable to Djem So at 0%.
+   *
+   *  THE SITH ARE NOT DELETED FROM IT, and that is the fiction rather than a
+   *  compromise: something turned this hall, and one acolyte slot in eight is
+   *  what a temple being cleared looks like from the inside. `sparring` is not
+   *  here for the same reason — a training body in a fight is a lie.
+   *
+   *  WHAT THE SHOOTERS ARE FOR. A hall of nothing but blades is one fight
+   *  repeated: every enemy answers to the same footwork and the same parry, and
+   *  the player never has to change tool. The clone and the marksman are two
+   *  slots of eight and they are the reason the duels happen under fire.
    * ═════════════════════════════════════════════════════════════════════ */
 
   temple: {
     name: 'The Temple Halls',
-    blurb: 'The high halls on Coruscant, and everyone still standing in them has a blade.',
+    blurb: 'The high halls on Coruscant. The order is still holding them, and everyone still standing has a blade.',
     terrain: 'temple',
-    pool: ['acolyte', 'acolyte', 'acolyte', 'sniper', 'acolyte', 'trooper', 'acolyte', 'b2'],
+    /* `master` is in the pool and NOT in the fill, and both halves are
+     * deliberate. `WaveDirector.unlockedAt` only fields an archetype the
+     * hand-written ladder does not name if it declares its own `unlockAt`, and
+     * the Master declares none — so it can only ever reach the field through
+     * `_setPiece`. Being named here is what lets that ladder rung fire at all:
+     * `_setPiece` filters every rung by `pool.includes(type)`, which is why the
+     * warship names its own general. */
+    pool: ['jedi', 'sentinel', 'jedi', 'sniper', 'guardian', 'trooper', 'jedi', 'acolyte', 'master'],
     groundColor: 0x4a4438,
     spawnRadius: [28, 50],
     atmosphere: {
@@ -2756,14 +2781,18 @@ export const LEVELS = {
    *  out of. The lords in it are the same instanced figure at 1.5× scale, seated
    *  under a canopy, and they are the only saturated colour in the bowl.
    *
-   *  THE CREATURES are three archetypes, registered at the bottom of this file
+   *  THE CREATURES are five archetypes, registered at the bottom of this file
    *  beside the warship's general. They are `boss: false` and carry `unlockAt`,
    *  so unlike a set-piece they arrive as the WAVE — which is what "a wave of
    *  creatures" means — and `heavyLimit` bounds how many are on the sand at
    *  once. What makes each a different fight is written out where they are
-   *  declared; the short version is that `_beastBrain` gates its move set on
-   *  the fraction of health remaining, so a 420 hp animal reaches its charge
-   *  phase in seconds and a 1,250 hp one spends the whole fight in its first.
+   *  declared, and it is now two things rather than one: `_beastBrain` gates
+   *  its move set on the fraction of health remaining, so a 420 hp animal
+   *  reaches its charge phase in seconds and a 1,250 hp one spends the whole
+   *  fight in its first — AND the move set itself is the archetype's, so the
+   *  brute's slam and the pouncer's leap need answers that no claw in the game
+   *  needs. Three creatures was three health bars over one move set; five is
+   *  three different verbs.
    *
    *  SCALING WITH PLAYER COUNT is `party` below, and it is the only level in
    *  the game that declares one — see `WaveDirector.partyScale`.
@@ -2777,7 +2806,7 @@ export const LEVELS = {
      * thing that opens the gates and shoots you if the animals fail — and they
      * are thin on purpose: this is not a horde level, it is three or four very
      * large problems at once with a screen of gunfire behind them. */
-    pool: ['charger', 'stalker', 'b1', 'beast', 'charger', 'b2', 'stalker', 'droideka', 'sniper'],
+    pool: ['charger', 'stalker', 'brute', 'b1', 'beast', 'pouncer', 'b2', 'stalker', 'droideka', 'sniper'],
     groundColor: 0xc9a970,
     spawnRadius: [30, 50],
     /**
@@ -3921,6 +3950,32 @@ Object.assign(ARCHETYPES, {
 SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
 
 /**
+ * THE MASTER'S RUNG, and why the temple gets one at all.
+ *
+ * `_setPiece` is the only door a `boss` archetype has — it fires on every fifth
+ * wave and fields two or three bodies off this ladder, filtered by whether the
+ * level's own pool names the type. Before this the temple's ladder was
+ * `acolyte` and nothing else, so the level built for duelling had the LIGHTEST
+ * rung in the game as its climax: measured on the shipped pool, every boss wave
+ * on the temple from 5 to 40 fielded exactly two Sith Acolytes.
+ *
+ * THE POSITION IS FOUND, NOT TYPED. `_setPiece` walks this array in order and
+ * takes one of each rung it can afford, so the array is a descending threat
+ * ladder — and an index literal here would be wrong the first time anybody
+ * unshifts another rung above it (which the line directly above this one does).
+ * The Master costs 12, the same as the walker and one under the bodyguard, so
+ * it belongs immediately before the droideka's 5. Found by name.
+ *
+ * `from: 10` rather than 5, for the reason the walker's rung is 10: at wave 5
+ * the whole set-piece spend is `max(0.28 x 26, 2 x lightest)` = 12, which buys
+ * exactly one Master and nothing behind it — and one duellist alone on a boss
+ * wave is a quieter wave than the one before it. At 10 the spend is 17 and the
+ * ladder has three rungs under it, so the Master arrives with a Guardian or a
+ * pair of Knights and the wave reads as the order closing ranks.
+ */
+SET_PIECE.splice(SET_PIECE.findIndex((s) => s.type === 'droideka'), 0, { type: 'master', from: 10 });
+
+/**
  * THE MENAGERIE, and what makes each of them a different fight.
  *
  * "A wave of unique large creatures each fought differently, some ridden."
@@ -3936,14 +3991,38 @@ SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
  *
  * ── EACH FOUGHT DIFFERENTLY, and here is the mechanism rather than the claim.
  *
- * `Enemy._beastBrain` gates its move set on the fraction of health remaining:
- * phase 1 (over 66%) can only LUNGE, phase 2 (over 33%) adds the SWEEP, and
- * phase 3 adds the CHARGE, with the interval between attacks falling from 2.4 s
- * to 1.15 s across the three. So a creature's health pool is not only how long
- * it takes to kill — it is how much of the fight is spent in each move set, and
- * an animal with a quarter of the health reaches its most dangerous phase in a
- * quarter of the time. Add the hit radii, which scale with `scale`, and the
- * engagement band, which is `preferred`, and three numbers produce three fights:
+ * WHAT THAT USED TO MEAN, AND WHY IT WAS NOT ENOUGH. `Enemy._beastBrain` gates
+ * its move set on the fraction of health remaining: phase 1 (over 66%) can only
+ * LUNGE, phase 2 (over 33%) adds the SWEEP, and phase 3 adds the CHARGE, with
+ * the interval between attacks falling from 2.4 s to 1.15 s across the three.
+ * So a creature's health pool is not only how long it takes to kill — it is how
+ * much of the fight is spent in each move set. That is real, and it is what the
+ * first three creatures are built out of.
+ *
+ * But it is all it was: three animals, ONE move set, and therefore one answer.
+ * Measured over 90-second fights, 0 of 108 sweeps and 0 of 94 lunges land on a
+ * player who breaks sideways through the telegraph, on any of the three — so
+ * whichever creature is on the sand, the verb is the same and a player who has
+ * learned to circle at knife range has learned all three.
+ *
+ * `BEAST_MOVES` (src/game/Enemy.js) makes the move set a property of the
+ * ARCHETYPE, and the two creatures added below are added for their ANSWERS
+ * rather than for their health bars:
+ *
+ *   the BRUTE     the SLAM, whose footprint is centred on the animal's own feet
+ *                 at the moment of impact rather than on a point it remembered.
+ *                 Measured: 100% of slams land on a player circling at knife
+ *                 range — the evasion that takes 0% of every claw in the game —
+ *                 and 0% on one who breaks the ring. Its answer is DISTANCE,
+ *                 and it is the only creature that has that answer.
+ *   the POUNCER   the POUNCE, which commits its landing point 0.55 s into the
+ *                 wind-up and does not arrive until 0.95. Measured: 0% land on
+ *                 a player who breaks late, 95%+ on one who breaks early and
+ *                 has stopped again by the time it comes down. Its answer is
+ *                 TIMING, and it is the exact opposite habit to the brute's.
+ *
+ * Add the hit radii, which scale with `scale`, and the engagement band, which
+ * is `preferred`, and the five read as five animals:
  *
  *   the STALKER   420 hp, 8.6 m/s, scale 1.7, reach [1.8, 3.4]. It is through
  *                 all three phases inside about twelve seconds of contact, so
@@ -3963,16 +4042,31 @@ SET_PIECE.unshift({ type: 'bodyguard', from: 10 });
  *                 the only one of the three that can hit you from outside your
  *                 own reach — and it stays a `boss`, so in the colosseum it
  *                 arrives on the fifth wave as the thing the show builds to.
+ *   the BRUTE     2200 hp, 3.4 m/s, scale 3.4, reach [3, 6]. The slowest thing
+ *                 on the sand and the largest, and neither is what makes it
+ *                 hard: the slam covers 7.0 m of ground centred on the animal,
+ *                 which is wider than the band it fights at, so every metre you
+ *                 spend beside it is a metre you have to give back. It is also
+ *                 the one creature the FOOTWORK habit actively kills you on.
+ *   the POUNCER   560 hp, 7.2 m/s, scale 2.0, reach [2, 3.8]. The thinnest
+ *                 health pool of the five, so it is at phase 3 in seconds — and
+ *                 it opens with the pounce, which is available at phase 1. It
+ *                 crosses twelve metres in four tenths of a second, so backing
+ *                 away is not an answer to it either; the answer is the last
+ *                 tenth of the telegraph.
  *
- * ── SOME RIDDEN. The charger carries a B2 (see src/game/Riders.js): a gunner
- * three metres up, out of the blade's reach, on something that will not stand
- * still. The pairing asks a question neither half asks alone — you cannot
- * answer the gun without answering the animal — and it is PAID FOR: the mount's
- * threat includes the rider's, so a wave with two crewed chargers in it is a
- * wave with six fewer droids, not a wave 30% over budget.
+ * ── SOME RIDDEN, and now two of the five. The charger carries a B2 (see
+ * src/game/Riders.js): a gunner three metres up, out of the blade's reach, on
+ * something that will not stand still. The BRUTE carries a MARKSMAN, and the
+ * pairing is the point of it: the mount's answer is to get out of the ring, and
+ * out of the ring is exactly where a 34-damage aimed shot with a 1.0 s
+ * targeting line wants you to be. Neither half can be answered without making
+ * the other half worse, which is what a set-piece is for.
  *
- * `saddleThreat` reads that price off the archetype table, so the arithmetic
- * cannot drift out of step with the body it is paying for.
+ * And both are PAID FOR: the mount's threat includes the rider's, so a wave
+ * with two crewed chargers in it is a wave with six fewer droids, not a wave
+ * 30% over budget. `saddleThreat` reads that price off the archetype table, so
+ * the arithmetic cannot drift out of step with the body it is paying for.
  */
 Object.assign(ARCHETYPES, {
   charger: {
@@ -3999,8 +4093,54 @@ Object.assign(ARCHETYPES, {
     damage: 26, preferred: [1.8, 3.4], score: 1200, threat: 7,
     big: true, unlockAt: 1,
   },
+  brute: {
+    label: 'Rancor', build: (o) => buildQuadruped({ ...o, kind: 'brute' }),
+    scale: 3.4, hp: 2200,
+    /* 1700 kg for the reason the Reek is 1650, and it is worth repeating rather
+     * than cross-referencing because the next person to type a number here will
+     * want to type 4000: `force.mjs` asserts the highest lift cap clears the
+     * heaviest body in the ARCHETYPES table, and that cap is 1760 kg. A
+     * creature above it would be the one body in the game the Force cannot
+     * move, which reads as a broken power rather than as a heavy animal. */
+    mass: 1700,
+    speed: 3.4, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    /* ITS MOVE SET, WHICH IS THE WHOLE ARCHETYPE. `slam` unlocks at phase 1 —
+     * it is not a reward for hurting the animal, it is the first thing it does
+     * and the thing the player has to learn — and the sweep arrives at 2. There
+     * is no charge on this list: something that weighs 1700 kg and moves at
+     * 3.4 m/s does not run you down, and giving it every attack in the table
+     * would have made it the others with more health, which is the exact defect
+     * the menagerie note above says these exist to fix. */
+    moves: ['slam', 'lunge', 'sweep'],
+    damage: 48, preferred: [3.0, 6.0], score: 3400,
+    big: true, unlockAt: 3,
+    /* A marksman in the howdah, not a B2. `_measurePlatform` gives a `big` body
+     * a real standing surface off its own geometry — 3.6 m up on this one — so
+     * the rider is genuinely out of reach of a blade, and a 1.0 s targeting
+     * line on a body you have just been forced to back away from is the pairing
+     * the menagerie note describes. */
+    saddle: 'sniper', threat: 0,
+  },
+  pouncer: {
+    label: 'Gundark', build: (o) => buildQuadruped({ ...o, kind: 'pouncer' }),
+    scale: 2.0, hp: 560, mass: 520,
+    speed: 7.2, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    /* Pounce at phase 1, because a creature whose signature move only appears
+     * once you have taken two thirds of its health off is a creature most
+     * players never see do it — and this one has the thinnest health pool of
+     * the five. Charge at 3 is the escalation: when it is nearly dead it stops
+     * leaping and simply runs at you. */
+    moves: ['pounce', 'lunge', 'charge'],
+    damage: 30, preferred: [2.0, 3.8], score: 1500, threat: 8,
+    big: true, unlockAt: 1,
+  },
 });
 /* Priced with what it carries. 11 of its own — between the walker's 12 and the
  * droideka's 5, which is where a 1250 hp animal that cannot shoot belongs — and
  * the B2 on its back at whatever a B2 costs. */
 ARCHETYPES.charger.threat = 11 + saddleThreat('charger');
+/* And the same arithmetic for the brute: 15 of its own — over the acklay's 16
+ * would be wrong, because the acklay can reach you from outside your own reach
+ * and this cannot, but under the walker's 12 would be wrong too at 2200 hp —
+ * plus whatever a Marksman costs, read off the table rather than typed. */
+ARCHETYPES.brute.threat = 15 + saddleThreat('brute');

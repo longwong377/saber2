@@ -31,8 +31,8 @@
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
-import { ARCHETYPES } from '../../src/game/Enemy.js';
-import { WaveDirector } from '../../src/game/Waves.js';
+import { ARCHETYPES, BEAST_MOVES, DEFAULT_BEAST_MOVES } from '../../src/game/Enemy.js';
+import { WaveDirector, seedWaves } from '../../src/game/Waves.js';
 import { saddleThreat } from '../../src/game/Riders.js';
 import { TAU } from '../../src/engine/MathUtil.js';
 
@@ -152,11 +152,55 @@ export function run({ check, assert }) {
       `${canopy} canopy panel(s) over them`;
   });
 
-  check('colosseum: the creatures are three different fights, not one skin three times', () => {
+  check('colosseum: the creatures fight with different MOVES, not just different health bars', () => {
+    /**
+     * THE CHECK THAT USED TO LIVE HERE MEASURED THE WRONG THING, and it passed
+     * the whole time the defect was there.
+     *
+     * It compared how long each creature's health takes to burn at a fixed
+     * damage rate, and asserted the longest fight was 2.2x the shortest — which
+     * is true, and which is a statement about HEALTH. `_beastBrain` shipped
+     * with three hard-coded attacks shared by every creature in the game, so
+     * three animals with three health bars were three speeds of one fight: the
+     * verb was "break sideways through the telegraph" for all of them, measured
+     * at 0 of 108 sweeps and 0 of 94 lunges landing on a player who did.
+     *
+     * `BEAST_MOVES` makes the move set a property of the archetype. What is
+     * asserted first now is that the roster USES that: the creatures do not all
+     * name the same attacks, and — the part that actually decides whether two
+     * creatures are two fights — the attacks between them do not all commit
+     * their aim the same way. `aim` is the field the counter-play comes out of
+     * (a remembered point answers to footwork, the animal's own feet answer
+     * only to distance, a late launch answers only to a late break), so a
+     * menagerie with one `aim` in it is a menagerie with one answer.
+     *
+     * The health-shape assertions the old check made are kept below, because
+     * they are true and worth keeping — they are just not sufficient.
+     */
     const kinds = LEVELS.colosseum.pool
       .filter((t, i, a) => a.indexOf(t) === i)
       .filter((t) => ARCHETYPES[t]?.custom === 'beast');
-    assert(kinds.length >= 3, `only ${kinds.length} creature archetypes in the colosseum's pool`);
+    assert(kinds.length >= 5, `only ${kinds.length} creature archetypes in the colosseum's pool`);
+
+    const setOf = (t) => (ARCHETYPES[t].moves || DEFAULT_BEAST_MOVES).filter((k) => BEAST_MOVES[k]);
+    const sets = new Set(kinds.map((t) => setOf(t).slice().sort().join('+')));
+    assert(sets.size >= 3,
+      `${kinds.length} creatures share ${sets.size} move set(s) between them — `
+      + 'that is one animal with different health bars');
+
+    const aims = new Set();
+    for (const t of kinds) for (const k of setOf(t)) aims.add(BEAST_MOVES[k].aim);
+    assert(aims.size >= 3,
+      `every attack in the menagerie commits its aim the same way (${[...aims].join(', ')}) — `
+      + 'so every creature has the same answer and the wave is one fight');
+
+    /* …and at least one creature has to be answered by something no other
+     * creature is answered by. Stated over the ATTACK sets rather than over the
+     * creatures, because two animals may share a claw and still differ. */
+    const owned = kinds.filter((t) => setOf(t).some((k) =>
+      kinds.every((o) => o === t || !setOf(o).includes(k))));
+    assert(owned.length >= 2,
+      `only ${owned.length} creature(s) have an attack that is theirs alone`);
 
     /* HOW LONG EACH ONE SPENDS IN EACH PHASE, which is what `_beastBrain`
      * decides its move set from — over 66% of health it can only lunge, over
@@ -195,7 +239,8 @@ export function run({ check, assert }) {
     const asWave = kinds.filter((t) => early.includes(t));
     assert(asWave.length >= 2,
       `only ${asWave.length} of the creatures can arrive as fill — the rest are set-pieces`);
-    return rows.map((r) => `${r.t} ${r.total.toFixed(0)}s reach ${r.reach} at ${r.speed} m/s`).join(', ');
+    return `${sets.size} move sets over ${kinds.length} creatures, ${aims.size} kinds of aim; `
+      + rows.map((r) => `${r.t} ${r.total.toFixed(0)}s reach ${r.reach} at ${r.speed} m/s`).join(', ');
   });
 
   check('colosseum: a mount pays for what it carries', () => {
@@ -252,5 +297,65 @@ export function run({ check, assert }) {
     assert(scaled.length >= 1, 'no level scales with player count at all');
     return `colosseum wave 10: ${bSolo} → ${bDuo} budget and ${solo.heavyLimit(10)} → ${duo.heavyLimit(10)} ` +
       `heavies for a second blade; ${LEVEL_ORDER.length - scaled.length} other levels unchanged`;
+  });
+
+  check('colosseum: what a second blade buys is a second CREATURE, not more droids', () => {
+    /**
+     * The check above measures the two NUMBERS the scaling moves — the budget
+     * and the heavy limit — and both were already correct. What neither of them
+     * says is whether the extra budget ends up as creatures, and that is the
+     * half of the owner's note that matters: "a wave of unique large creatures
+     * … scales with player count". A wave director that answered a second
+     * player with fourteen more B1s would pass every assertion above.
+     *
+     * So this drives the REAL composer — `_compose`, seeded — and counts the
+     * bodies in the queue that run the beast brain. It is the only check in the
+     * file that looks at what actually gets spawned.
+     *
+     * Measured on the shipped tuning, wave 20: 3 creatures for one blade, 5 for
+     * two, 9 for four. `heavyLimit` is `(1 + floor(wave/10)) * partyScale`, so
+     * the growth is deliberately super-linear in the party — three blades cover
+     * each other, and one very large problem each is the level's whole idea.
+     */
+    const count = (n, wave) => {
+      const players = Array.from({ length: n }, () => ({}));
+      const d = new WaveDirector({ players, level: LEVELS.colosseum },
+        { pool: LEVELS.colosseum.pool });
+      seedWaves(777);
+      d.wave = wave;
+      d._compose();
+      const q = d.spawnQueue.map((s) => String(s).split('|')[0]);
+      return { all: q.length, beasts: q.filter((t) => ARCHETYPES[t]?.custom === 'beast').length };
+    };
+    const rows = [];
+    for (const wave of [10, 20]) {
+      const one = count(1, wave), two = count(2, wave), four = count(4, wave);
+      assert(two.beasts > one.beasts,
+        `wave ${wave} fields ${one.beasts} creatures for one blade and ${two.beasts} for two — `
+        + 'the second player got a bigger crowd of the same droids');
+      assert(four.beasts > two.beasts,
+        `wave ${wave} fields ${two.beasts} creatures for two blades and ${four.beasts} for four`);
+      rows.push(`w${wave}: ${one.beasts}/${two.beasts}/${four.beasts} creatures of ${one.all}/${two.all}/${four.all} bodies`);
+    }
+
+    /* AND NOWHERE ELSE, asked of the queue rather than of the budget: a level
+     * that declares no `party` share has to compose the identical wave, body
+     * for body, however many blades are on it. */
+    const off = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L?.pool || L.party) continue;
+      const q = (n) => {
+        const d = new WaveDirector({ players: Array.from({ length: n }, () => ({})), level: L },
+          { pool: L.pool });
+        seedWaves(4242);
+        d.wave = 12;
+        d._compose();
+        return d.spawnQueue.join(',');
+      };
+      if (q(1) !== q(3)) off.push(key);
+    }
+    assert(!off.length, `co-op silently composed a different wave on ${off.join(', ')}`);
+    return `${rows.join('; ')}; ${LEVEL_ORDER.length - 1} other levels compose identically for 1 and 3 blades`;
   });
 }

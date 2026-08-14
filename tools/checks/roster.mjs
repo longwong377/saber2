@@ -53,6 +53,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { ARCHETYPES } from '../../src/game/Enemy.js';
+import { SET_PIECE, DOJO_MIX } from '../../src/game/Waves.js';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
 
@@ -131,5 +133,63 @@ export function run({ check, assert }) {
       assert(typeof LEVELS[k].terrain === 'string', `${k} names no terrain`);
     }
     return `${LEVEL_ORDER.length} levels, all named and all reachable: ${LEVEL_ORDER.join(', ')}`;
+  });
+
+  check('roster: every archetype the game has is an archetype a player can meet', () => {
+    /**
+     * THE SAME FAILURE, ONE LAYER DOWN — and this file's second check already
+     * has the sentence for it: "a level present in LEVELS but missing from
+     * LEVEL_ORDER is content that shipped and cannot be chosen".
+     *
+     * An enemy archetype has exactly three doors onto a field, and an archetype
+     * that is through none of them is a body somebody built, priced, gave a
+     * silhouette and a duel form to, and that no player will ever see:
+     *
+     *   a LEVEL'S POOL, which is how the fill reaches it (`unlockedAt` filters
+     *     the ladder by `pool.includes`, and an `unlockAt` archetype enters the
+     *     fill only on the levels that name it);
+     *   a SET-PIECE RUNG, which is the only door a `boss` has — and `_setPiece`
+     *     ALSO filters by the pool, so a rung whose type no pool names is a
+     *     rung that can never fire;
+     *   the DOJO, for the three training bodies, which are `training: true` and
+     *     deliberately never in a wave.
+     *
+     * This is not hypothetical. Four Jedi archetypes were added to Enemy.js in
+     * the same pass as the temple's pool, and a Master that had been given a
+     * set-piece rung but NOT a pool slot fired on zero waves — silently,
+     * because `_setPiece` skips a rung it cannot match rather than complaining.
+     * Measured before the pool named it: boss waves 5 through 40 on the temple
+     * fielded two Sith Acolytes each and no Master ever.
+     *
+     * Derived from ARCHETYPES rather than from a list kept here, so the next
+     * body somebody registers is checked the day it is added.
+     */
+    const named = new Set();
+    for (const key of LEVEL_ORDER) for (const t of (LEVELS[key]?.pool || [])) named.add(t);
+    for (const s of SET_PIECE) if (named.has(s.type)) named.add(s.type);
+    for (const t of DOJO_MIX) named.add(t);
+    /* A mount brings its rider whether or not any pool names one, so a saddle
+     * is a door too — read off the archetype rather than hard-coded. */
+    for (const t of Object.keys(ARCHETYPES)) {
+      if (ARCHETYPES[t].saddle && named.has(t)) named.add(ARCHETYPES[t].saddle);
+    }
+    const orphan = Object.keys(ARCHETYPES)
+      .filter((t) => !ARCHETYPES[t].training && !named.has(t));
+    assert(!orphan.length,
+      `${orphan.join(', ')} exist but no level's pool, set-piece rung or saddle names them — `
+      + 'content that shipped and cannot be met');
+
+    /* …and the other direction, which is the levels check's first half: a rung
+     * on the set-piece ladder that no pool can satisfy never fires, and fails
+     * by doing nothing rather than by throwing. */
+    const dead = SET_PIECE.filter((s) =>
+      !LEVEL_ORDER.some((k) => LEVELS[k]?.pool?.includes(s.type)));
+    assert(!dead.length,
+      `${dead.map((s) => s.type).join(', ')} have set-piece rungs no level's pool names, `
+      + 'so the rung can never fire');
+
+    const training = Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].training);
+    return `${Object.keys(ARCHETYPES).length} archetypes: ${named.size} named by a pool, a rung or a `
+      + `saddle, ${training.length} dojo-only (${training.join(', ')}); ${SET_PIECE.length} rungs all live`;
   });
 }

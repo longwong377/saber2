@@ -10,7 +10,8 @@
 import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
-import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo } from './Bodies.js';
+import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
+  buildJedi, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
@@ -152,6 +153,244 @@ const RIGHT = new THREE.Vector3(1, 0, 0);
 
 let _enemyId = 1;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  What a large creature can do                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE MOVE SET, AS DATA — and what each move demands of the player.
+ *
+ * "A wave of unique large creatures each fought differently." What shipped was
+ * three creatures sharing one move set of three attacks, hard-coded as a ladder
+ * of `if`s inside `_beastBrain`, so the ONLY axis two animals could differ on
+ * was how fast they burned through the health that gates the phases. The
+ * colosseum's own check said as much in its pass line: three fights of 5/14/10
+ * seconds, which is one fight at three speeds.
+ *
+ * Every field below is read by `_beastBrain` and by `_poseWalker`, so a move
+ * cannot exist in the brain without a wind-up on the body — which is the defect
+ * this file already has a note about: "a sweep, a lunge and a charge were all
+ * the same animal walking".
+ *
+ *   unlock   the phase (1/2/3 by health) at which the move enters the rotation.
+ *   plant    seconds at the start during which the animal stops walking.
+ *   drive    [from, to, accel] — the window it powers across ground in.
+ *   aim      WHERE the blow lands, and this is the whole of the counter-play:
+ *              'windup'  a point remembered at the top of the wind-up
+ *              'drive'   re-read until the drive begins (`aimUntil`)
+ *              'launch'  re-read until the leap begins, and it lands much later
+ *              'self'    no remembered point at all: the animal's own feet
+ *   hit      [from, to] — the window the blow resolves in, once.
+ *   reach    the footprint radius, in multiples of the creature's `scale`.
+ *   damage   a multiple of `attackDamage`.
+ *   pose     what the body does: `rise` (signed, peak), `up` (seconds to it),
+ *            `fall` (seconds back to rest, 0 = drops instantly), `pitch`
+ *            (multiplier on rise, applied to the chest). See `_poseWalker` —
+ *            the three shipped curves are reproduced by this exactly.
+ *
+ * The two new moves are new ANSWERS rather than new numbers. Measured, over
+ * 90-second fights against a target evading four ways (tools/checks/beasts.mjs):
+ *
+ *              stand   strafe   dodge   retreat
+ *   sweep      100%      0%       0%       0%     footwork, any direction
+ *   lunge      100%      0%       0%       0%     footwork, any direction
+ *   charge     100%    100%     100%     100%     nothing: it commits and hits
+ *   SLAM       100%    100%     100%       0%     ONLY distance
+ *   POUNCE     100%      0%      95%       0%     only a LATE break
+ *
+ * — which is the property the note asks for, stated as a table: a player who
+ * has learned to circle a claw at knife range is caught by every slam, and a
+ * player who has learned to break early on a telegraph is caught by every
+ * pounce. Two creatures on the sand at once cannot be answered with one habit.
+ */
+export const BEAST_MOVES = {
+  lunge: {
+    unlock: 1, aim: 'windup', drive: [0, 0.5, 42], hit: [0.5, 0.85], done: 0.85,
+    reach: 0.75, damage: 1.0, lift: 0.5,
+    // the crouch is the tell: it gathers, then drives
+    pose: { rise: -0.55, up: 0.5, fall: 0, pitch: -0.30 },
+  },
+  sweep: {
+    unlock: 2, aim: 'windup', hit: [0.55, 0.95], done: 1.15,
+    reach: 1.15, damage: 0.85, lift: 0.9,
+    pose: { rise: 1.0, up: 0.55, fall: 0.30, pitch: -0.42 },
+  },
+  charge: {
+    unlock: 3, aim: 'drive', aimUntil: 0.65, plant: 0.65,
+    drive: [0.65, 1.9, 30], dust: true, hit: [0.65, 1.9], done: 1.9,
+    reach: 0.85, damage: 1.3, lift: 0.8, roar: 0.9, call: 'CHARGE',
+    pose: { rise: 0.7, up: 0.65, fall: 0.35, pitch: -0.34 },
+  },
+
+  /**
+   * THE SLAM — both forelimbs into the ground, and the ground answers.
+   *
+   * `aim: 'self'` is the entire design. Every other attack in the file asks
+   * "were you where I swung", which a sidestep answers; this one asks "were you
+   * NEAR ME", which a sidestep does not. The reach is 2.05 of scale — 7.0 m on
+   * a 3.4-scale brute — which is wider than its own engagement band, so the
+   * only way out of it is out. A 0.95 s wind-up is the longest in the file and
+   * it has to be: at a sprint that is about eight metres of ground, and an
+   * escape that is not achievable is not an escape.
+   */
+  slam: {
+    unlock: 2, aim: 'self', plant: 0.95, hit: [0.95, 1.15], done: 1.7,
+    reach: 2.05, damage: 1.15, lift: 1.5, shake: 1.0, roar: 1.1, quake: true,
+    call: 'SLAM', callColor: '#ffb03a',
+    // rears its whole front end up, then throws it down — the biggest travel
+    // any of these put on the chest, because it is the one you have to read
+    // from further away than a claw.
+    pose: { rise: 1.5, up: 0.95, fall: 0.14, pitch: -0.55 },
+  },
+
+  /**
+   * THE POUNCE — twelve metres, off the ground, and it commits at the LAUNCH.
+   *
+   * The charge already answers a runner, but it answers by being unanswerable:
+   * it re-aims and resolves on the same frame, which measured 100% against
+   * every evasion the harness has. The pounce commits its landing point at
+   * 0.55 s and does not arrive until 0.95, so there IS a window — 0.4 s of it —
+   * and it is at the END of the telegraph rather than the beginning. A player
+   * who breaks on the first frame of the wind-up has been standing still again
+   * by the time this lands.
+   */
+  pounce: {
+    unlock: 1, aim: 'launch', aimUntil: 0.55, plant: 0.55,
+    drive: [0.55, 0.95, 58], hit: [0.95, 1.15], done: 1.45,
+    reach: 1.0, damage: 1.25, lift: 1.1, roar: 0.8, call: 'POUNCE', callColor: '#ff9a3a',
+    // coils right down, then extends: the deepest crouch of any of them
+    pose: { rise: -0.9, up: 0.55, fall: 0.30, pitch: -0.42 },
+  },
+};
+
+/** What a creature that does not name its own attacks can do — the shipped three. */
+export const DEFAULT_BEAST_MOVES = ['lunge', 'sweep', 'charge'];
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The Jedi                                                              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A FACE, A SPECIES AND A HAIRCUT, DRAWN PER BODY.
+ *
+ * The level called "the Jedi Temple" was garrisoned by Sith. Not as a
+ * placeholder with a note on it — Levels.js said so in its own header: "this
+ * game has exactly one sabered humanoid archetype, `acolyte`, and no Jedi
+ * body". Measured on the shipped pool: five of the temple's eight pool slots
+ * are `acolyte`, and over waves 1-12 on a seeded director 32 of 115 spawned
+ * bodies are Sith acolytes and ZERO are Jedi, because zero Jedi exist.
+ *
+ * The body is `buildJedi` — the one the PLAYER is built from — and that is the
+ * whole argument for it rather than a recoloured acolyte. The two silhouettes
+ * were authored against each other and the acolyte's own comment says so:
+ * "these two and the Jedi share one skeleton and one standing height, so the
+ * only thing that can separate them at range is mass distribution: the acolyte
+ * is narrow through the chest and the limbs and carries all of its width low,
+ * in a coat that flares to 46 cm at the hem." A Jedi is the other half of that
+ * sentence — square through the shoulders, layered tabards over an under-robe,
+ * a bare face with hair on it, and no hood at all. Recolouring the acolyte
+ * would have produced a Sith in beige.
+ *
+ * AND EVERY ONE OF THEM IS A DIFFERENT PERSON. buildJedi already takes the
+ * whole character sheet the creator screen drives — species, face preset,
+ * frame, muscle, years, cut, beard, robe — so a hall of Jedi costs nothing
+ * extra to make individual, and a hall of identical Jedi would read as one
+ * asset stamped eight times. Everything below is drawn from `enemyRng`, which
+ * means `enemyRng.seed(n)` reproduces the same eight faces: a harness that
+ * measures a garrison gets the same garrison twice.
+ *
+ * WHAT IS DELIBERATELY NOT DRAWN: the robe is `dark`-weighted rather than
+ * uniform, because a temple full of ivory robes against cream stone is a
+ * legibility problem before it is an aesthetic one — the level's own dressing
+ * note calls the hall "cream stone, and a cold city haze". Ash, Umber and
+ * Night are 60% of the draw so a body reads against the wall behind it.
+ */
+const JEDI_ROBES = [1, 2, 4, 0, 5, 3];      // umber, ash, night first; ivory last
+function jediLook(seed = null) {
+  const r = seed || rng;
+  const pick = (a) => a[Math.floor(r() * a.length)];
+  return {
+    species: pick(SPECIES).id,
+    // The robe draw is weighted toward the dark end by the ORDER of the list
+    // above plus a squared roll, which puts 58% of bodies in the first three.
+    robeIndex: JEDI_ROBES[Math.floor(r() * r() * JEDI_ROBES.length)],
+    hair: pick(HAIR_STYLES).id,
+    beard: pick(BEARD_STYLES).id,
+    age: r() * r(),                          // most of an order is not old
+    build: 0.5 + (r() - 0.5) * 0.7,
+    muscle: 0.35 + r() * 0.5,
+    face: { preset: null },
+  };
+}
+
+/**
+ * WHAT MAKES FOUR JEDI FOUR FIGHTS: the forms, which already existed.
+ *
+ * `FORMS` in Duel.js has five entries and they are genuinely distinct — that is
+ * measured, not asserted. Every attack carries a TIER, and the tier is the
+ * whole of the counter-play: `light` is parryable, `heavy` must be chambered or
+ * evaded, `unblockable` must be evaded. Run each form's `moves` list through
+ * `ATTACKS[k].tier`:
+ *
+ *   Makashi  5 light of 5           100% parryable, aggression 0.9,  chain 1-2
+ *   Soresu   3 light of 3           100% parryable, aggression 0.42, chain 1-2
+ *   Ataru    4 light + 1 heavy       80% parryable, aggression 1.3,  chain 2-4
+ *   Juyo     2 light of 6            33% parryable, aggression 1.15, chain 1-3
+ *   Djem So  3 heavy + 1 unblockable  0% parryable, aggression 0.7,  chain 1-1
+ *
+ * And NOTHING IN THE GAME USED THEM ON PURPOSE. `DuelBrain`'s constructor takes
+ * `opts.form` and `Enemy._build` passes `A.form || FORM_KEYS[floor(rng() * 5)]`
+ * — and measured across the whole roster, 0 of 14 archetypes declared a `form`.
+ * Every duellist in every level rolled a die. So the player could not learn
+ * "that is Djem So, it commits hard, punish the recovery", which is the exact
+ * sentence Duel.js's own header says the system exists to make true: the same
+ * body wearing the same robe fought a different way every time it spawned.
+ *
+ * The four Jedi below each DECLARE a form, and the four are chosen to span the
+ * axis that matters — what answers them:
+ *
+ *   SENTINEL   Soresu.  Gives you nothing and waits. `defensive: 1.7` and
+ *              aggression 0.42, so it will not walk onto your blade; every
+ *              opening it gives you it gives you on purpose, and its
+ *              `punishRecovery: 1.0` is the highest in the table. The answer is
+ *              patience — bait a swing, then take the recovery.
+ *   KNIGHT     Ataru.  Flurries of two to four, `mobile: true` (which
+ *              `_moveMelee` reads as a 1.9x circling term), the shortest
+ *              wind-up in the game at 0.24 s. The answer is to hold a parry
+ *              rhythm through a chain instead of trading one for one.
+ *   GUARDIAN   Djem So. 0% parryable. A parry-shaped answer does not exist for
+ *              this one at all — the guard breaks at 1.9-3.2 — and the 0.58 s
+ *              recovery is the longest window the roster offers. The answer is
+ *              footwork and the counter-swing, and it is the temple's teacher
+ *              for both.
+ *   MASTER     Makashi. 100% parryable, and that is not a weakness: `feint`
+ *              0.30 and `punishRecovery` 0.85 mean it is reading YOU, and the
+ *              thrust arrives the moment you overcommit. The answer is to stop
+ *              swinging first.
+ *
+ * Juyo is left to the Sith acolyte, which still draws at random. That is a
+ * statement rather than an omission — the erratic form is the one whose header
+ * says "the rhythm is the trap".
+ *
+ * THE BLADES. Cerulean, Verdant and Amethyst are the three the order is drawn
+ * with, and Gold is the crystal SABER_COLORS itself annotates as "the Temple
+ * Guard yellow" — the only slot on the rack authored for a body that did not
+ * exist until now. Against `acolyte`'s Crimson (index 4, flagged `dark`) the
+ * separation is the point: in a hall where both sides carry a blade, the blade
+ * IS the identification, and a player must never have to read a face to know
+ * which way to swing.
+ */
+const JEDI_BASE = {
+  toughness: TOUGHNESS.flesh, melee: true, saber: true,
+  hipHeight: 0.95, jedi: true,
+  /* NO CAPE. A Jedi takes the outer robe off to fight, which is both the image
+   * the source material is most consistent about and the thing that separates
+   * these four from the hooded, caped acolyte at silhouette range — and it is
+   * what keeps the cloth column sized the way Engine.js says it is. See the
+   * long note at the `A.cape` gate in `_build`. */
+  cape: false,
+};
+
 /* ── archetypes ──────────────────────────────────────────────────────── */
 
 export const ARCHETYPES = {
@@ -189,6 +428,54 @@ export const ARCHETYPES = {
     saberColor: 4, damage: 26, preferred: [1.6, 3.4], score: 700, threat: 6,
     hipHeight: 0.97,
   },
+
+  /* ── the order ──
+   * Four bodies, four declared forms, four blades. See JEDI_BASE above for the
+   * whole argument; the numbers here are the part that has to be balanced.
+   *
+   * PRICED AGAINST THE ACOLYTE, which is the roster's other duellist at 130 hp
+   * and threat 6. A Jedi is not "an acolyte that costs more": each of the four
+   * trades in a different direction, and the direction is the form.
+   *   knight    faster and lighter than an acolyte — Ataru is chain 2-4, so the
+   *             danger is the flurry rather than the body.
+   *   sentinel  half again the health at 0.85 the pace. Soresu attacks at 0.42
+   *             aggression, so a sentinel that could be rushed down would never
+   *             get to be a sentinel; the health IS the form.
+   *   guardian  the heaviest hitter of the four and the slowest, because Djem
+   *             So's 0.58 s recovery is the longest opening in the game and a
+   *             body that could not be punished in it would be a wall.
+   *   master    a set-piece, gated the way the warship's general is. */
+  jedi: {
+    ...JEDI_BASE,
+    label: 'Jedi Knight', build: (o) => buildJedi({ ...o, ...jediLook() }),
+    scale: 1.0, hp: 140, mass: 78, speed: 5.4,
+    saberColor: 1, hilt: 'Graflex', form: 'ataru',
+    damage: 24, preferred: [1.5, 3.4], score: 800, threat: 6, unlockAt: 1,
+  },
+  sentinel: {
+    ...JEDI_BASE,
+    label: 'Jedi Sentinel', build: (o) => buildJedi({ ...o, ...jediLook() }),
+    scale: 1.02, hp: 200, mass: 84, speed: 4.6,
+    saberColor: 0, hilt: 'Sentinel', form: 'soresu',
+    damage: 22, preferred: [1.8, 3.0], score: 950, threat: 7, unlockAt: 1,
+  },
+  guardian: {
+    ...JEDI_BASE,
+    label: 'Temple Guardian', build: (o) => buildJedi({ ...o, ...jediLook() }),
+    scale: 1.05, hp: 250, mass: 92, speed: 4.4,
+    /* Gold — the crystal SABER_COLORS annotates, in the table itself, as "the
+     * Temple Guard yellow". It was added for a body that did not exist. */
+    saberColor: 10, hilt: 'Guardian', form: 'djemSo',
+    damage: 34, preferred: [1.5, 3.2], score: 1300, threat: 9, unlockAt: 4,
+  },
+  master: {
+    ...JEDI_BASE,
+    label: 'Jedi Master', build: (o) => buildJedi({ ...o, ...jediLook() }),
+    scale: 1.03, hp: 460, mass: 86, speed: 5.2,
+    saberColor: 2, hilt: 'Duelist', form: 'makashi',
+    damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
+  },
+
   droideka: {
     label: 'Droideka', build: buildDroideka, scale: 1.5, hp: 170, mass: 210,
     speed: 3.0, toughness: TOUGHNESS.armour, ranged: true, custom: 'droideka',
@@ -871,17 +1158,66 @@ export class Enemy {
       this.formName = this.duel.describe();
       this.saberHand = new THREE.Vector3();
       this.saberQuat = new THREE.Quaternion();
-      this.cloak = attachCloak(this.world.scene, this.rig, {
-        scale: A.scale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
-        color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
-      });
+      /**
+       * THE CAPE IS THE COLOUR OF THE ROBE THAT WAS ACTUALLY BUILT.
+       *
+       * This read `this.type === 'sparring' ? 0x2c3742 : 0x14151a` — a
+       * two-branch list of archetype KEYS, which is the copied-table defect
+       * this file already carries a note about, and it answered BLACK for every
+       * body that was not the sparring partner. That was invisible while the
+       * only caped enemy was an acolyte in a black coat. The Jedi draw a robe
+       * per body out of ROBE_COLORS, so the same line would have put an
+       * acolyte's black cape over a sand robe on 5 of every 6 of them.
+       *
+       * `built.palette.robe` is the ROBE_COLORS ROW the builder chose for THIS
+       * body — buildJedi has returned it all along — so the cape is derived
+       * from the garment under it rather than from a number typed beside a
+       * type name, and a robe added to that table tomorrow is caped correctly
+       * without this line being touched. Anything with no robe row (the
+       * acolyte, whose coat is authored black in Bodies.js) keeps exactly the
+       * colour it had.
+       */
+      const robeHex = built.palette?.robe?.outer;
+      /**
+       * …AND WHETHER THERE IS A CAPE AT ALL IS THE ARCHETYPE'S TO SAY.
+       *
+       * Every sabered body used to get one, which was fine while the sabered
+       * bodies were an acolyte, its sparring twin and the IG droid. It stops
+       * being fine at the temple: Engine.js sizes the whole cloth column on
+       * "every enemy wearing exactly one cape", `tools/checks/cloth-cost.mjs`
+       * holds that to the letter, and four more caped archetypes with a
+       * SIMULATED SKIRT under the cape as well — which `buildJedi` publishes
+       * and `buildAcolyte` does not — would have been two garments a body on a
+       * body type the level fields in double figures.
+       *
+       * It is also the right picture, which is what makes it a decision rather
+       * than a budget dodge. A Jedi takes the outer robe OFF to fight; it is
+       * one of the most consistent images in the source material, and it is
+       * exactly what separates these four from the hooded, caped, black-coated
+       * acolyte at silhouette range. What they wear is the layered tabard set
+       * `buildJedi` builds — which is a lot of cloth-looking geometry, all of
+       * it rigid — over the rigid robe below the belt that every other enemy in
+       * the game also wears.
+       *
+       * Both defaults are ON, so nothing that shipped moves: an archetype has
+       * to ask NOT to have a cape, and has to ask to have its skirt simulated.
+       */
+      if (A.cape !== false) {
+        this.cloak = attachCloak(this.world.scene, this.rig, {
+          scale: A.scale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
+          color: robeHex ?? (this.type === 'sparring' ? 0x2c3742 : 0x14151a),
+        });
+      }
       // The robe below the belt, simulated rather than three lathes welded to
       // the pelvis — see Player._makeCloak. It replaces the rigid meshes, so it
       // costs the character fewer triangles than it saves.
-      if (built.robeSkirt) {
+      if (built.robeSkirt && A.simSkirt && this.cloak) {
         this.skirt = attachSkirt(this.world.scene, this.rig, {
           scale: A.scale, rigid: built.robeSkirt,
-          color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
+          // …and the same for the skirt it replaces: the simulated cloth has to
+          // come out the colour of the rigid panels it is swapped for, or the
+          // body changes colour at LOD range when attachSkirt hands them back.
+          color: robeHex ?? (this.type === 'sparring' ? 0x2c3742 : 0x14151a),
           // The belt's two ends take the BELT's material, not the recoloured
           // robe's — the obi they are tied in is still the built one.
           sashMaterial: built.palette.trim,
@@ -2109,12 +2445,27 @@ export class Enemy {
 
     this.attackTimer -= dt;
     if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
-      const roll = rng();
-      const canSweep = phase >= 2;
-      const canCharge = phase >= 3;
-      this.state = canCharge && roll < 0.34 ? 'charge'
-                 : canSweep && roll < 0.66 ? 'sweep'
-                 : 'lunge';
+      /**
+       * WHICH ATTACK, AND WHY IT IS A LIST RATHER THAN A LADDER OF `if`s.
+       *
+       * This was three hard-coded branches on one roll — `canCharge && roll <
+       * 0.34 ? 'charge' : canSweep && roll < 0.66 ? 'sweep' : 'lunge'` — so
+       * every creature in the game had exactly the same three attacks, and the
+       * only thing that could differ between two animals was how fast it burnt
+       * through the health that gates them. Three creatures, one move set.
+       *
+       * `beastMoves()` is the archetype's own list filtered by the phase, and
+       * the pick is uniform across whatever is unlocked. Measured against the
+       * branch it replaces: at phase 3 the old roll gave 34/32/34 across
+       * lunge/sweep/charge and uniform gives 33/33/33; at phase 2 it gave
+       * 34/66 lunge/sweep and uniform gives 50/50. The phase-2 shift is the
+       * only behavioural change and it is in the harmless direction — the
+       * sweep is the move with the widest footprint, so seeing fewer of them
+       * cannot make the animal easier to read.
+       */
+      const moves = this.beastMoves(phase);
+      this.state = moves[Math.floor(rng() * moves.length)] || 'lunge';
+      const M = BEAST_MOVES[this.state];
       this.attackTimer = lerp(2.4, 1.15, (phase - 1) / 2) + rng() * 1.1;
       this.stateTime = 0;
       this._swiped = false;
@@ -2122,8 +2473,8 @@ export class Enemy {
       // direction and not a live read. See hitTarget.
       this.swingAt = this.target ? this.target.position.clone() : null;
       this.lungeDir = this.toTarget.clone();
-      audio.explosion(this.position, this.state === 'charge' ? 0.9 : 0.5);
-      if (this.state === 'charge') this.world.notifyFloating?.(this.aimPoint(_v1), 'CHARGE', '#ff6a52');
+      audio.explosion(this.position, M.roar ?? 0.5);
+      if (M.call) this.world.notifyFloating?.(this.aimPoint(_v1), M.call, M.callColor ?? '#ff6a52');
     }
 
     /**
@@ -2174,46 +2525,90 @@ export class Enemy {
      * 0% of sweeps and lunges and 63% of charges; standing still takes all
      * three.
      */
-    const hitTarget = (reach, dmg, lift) => {
+    /**
+     * …AND `centre` IS WHAT MAKES TWO CREATURES TWO FIGHTS.
+     *
+     * The three original attacks all resolve about `swingAt` — a point the
+     * animal remembered — so every one of them is answered by the same verb:
+     * be somewhere else by the time the claw arrives. Measured on the shipped
+     * three, that is exactly what the numbers say: 0 of 108 sweeps and 0 of 94
+     * lunges land on a player who breaks sideways, and 100% of all three land
+     * on one who does not move. One answer, three attacks, three animals.
+     *
+     * `aim` is now a property of the MOVE, and the two new values are chosen to
+     * need the opposite verbs:
+     *
+     *   'self'  the footprint is centred on the ANIMAL at the moment of
+     *           impact, not on a remembered point. Sidestepping inside the
+     *           ring does nothing at all — you have to leave it. This is the
+     *           slam, and it is the answer to a player who has learned that
+     *           circling at knife range beats everything, which on the shipped
+     *           roster it does.
+     *   'launch' the point is committed part-way through, as the animal leaves
+     *           the ground, and the landing is a long time after — so footwork
+     *           during the EARLY telegraph is wasted and the break has to be
+     *           late. This is the pounce, and it inverts WHEN rather than
+     *           WHERE.
+     *
+     * 'windup' (sweep, lunge) and 'drive' (charge) are the two the shipped
+     * creatures use and they behave exactly as they did.
+     */
+    const hitTarget = (M) => {
       if (this._swiped) return;
       this._swiped = true;
       const t = this.target;
-      if (t && this.swingAt && t.position.distanceTo(this.swingAt) < reach) {
-        _v1.subVectors(t.position, this.position).setY(lift).normalize().multiplyScalar(16);
-        t.damage?.(dmg, this.position, this);
+      const reach = M.reach * A.scale;
+      // where the blow actually lands. A live read for the moves that do not
+      // remember a point; `swingAt` for the ones that do.
+      const at = M.aim === 'self' ? _v2.copy(this.position) : this.swingAt;
+      if (t && at && t.position.distanceTo(at) < reach) {
+        _v1.subVectors(t.position, this.position).setY(M.lift).normalize().multiplyScalar(16);
+        t.damage?.(this.attackDamage * M.damage, this.position, this);
         t.velocity?.add(_v1);
-        t.camera?.addShake(0.7);
+        t.camera?.addShake(M.shake ?? 0.7);
       }
-      this.world.particles?.sandPuff(this.position.clone().addScaledVector(this.toTarget, 3), 2.4,
+      this.world.particles?.sandPuff(
+        M.aim === 'self' ? this.position.clone()
+                         : this.position.clone().addScaledVector(this.toTarget, 3),
+        M.aim === 'self' ? reach * 0.7 : 2.4,
         this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+      if (M.quake) this.world.engine?.flash?.(0.06);
     };
 
-    if (this.state === 'lunge') {
-      if (this.stateTime < 0.5) this.velocity.addScaledVector(this.lungeDir, 42 * dt);
-      // 1.55 x scale, and a narrow cone: a lunge is a committed line, so the
-      // answer to it is to not be on that line.
-      else if (this.stateTime < 0.85) hitTarget(0.75 * A.scale, this.attackDamage, 0.5);
-      else { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
-    } else if (this.state === 'sweep') {
-      // a wide claw arc — step aside rather than back. 1.9 x scale is the leg
-      // span; the cone is 1.25 rad each way, which is most of the front but not
-      // the flanks and never behind.
-      if (this.stateTime > 0.55 && this.stateTime < 0.95) hitTarget(1.15 * A.scale, this.attackDamage * 0.85, 0.9);
-      else if (this.stateTime >= 1.15) { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
-    } else if (this.state === 'charge') {
-      if (this.stateTime < 0.65) {
-        this.wish = null;                                             // the wind-up
-        // …and the charge re-aims as it launches. See hitTarget: this is the
-        // attack that answers a runner, so it commits last.
+    const M = BEAST_MOVES[this.state];
+    if (M) {
+      const st = this.stateTime;
+      // The plant: a move that commits its feet stands still through its own
+      // wind-up rather than walking into its swing.
+      if (M.plant && st < M.plant) this.wish = null;
+      // The drive, which is what carries a lunge and a charge across ground.
+      if (M.drive && st >= M.drive[0] && st < M.drive[1]) {
+        this.velocity.addScaledVector(this.lungeDir, M.drive[2] * dt);
+        if (M.dust && rng() < 0.4) this.world.particles?.sandPuff(this.position.clone(), 1.4,
+          this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+      }
+      // Re-aim, for the moves that commit late. `aimUntil` is the moment the
+      // point is fixed; before it the animal is still reading the target.
+      if (M.aimUntil !== undefined && st < M.aimUntil) {
         this.swingAt = this.target ? this.target.position.clone() : null;
         this.lungeDir = this.toTarget.clone();
-      } else if (this.stateTime < 1.9) {
-        this.velocity.addScaledVector(this.lungeDir, 30 * dt);
-        hitTarget(0.85 * A.scale, this.attackDamage * 1.3, 0.8);
-        if (rng() < 0.4) this.world.particles?.sandPuff(this.position.clone(), 1.4,
-          this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
-      } else { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
+      }
+      if (st >= M.hit[0] && st < M.hit[1]) hitTarget(M);
+      else if (st >= M.done) { this.state = 'approach'; this._swiped = false; this.swingAt = null; }
     }
+  }
+
+  /**
+   * Which of this creature's attacks the phase has unlocked.
+   *
+   * The list is the ARCHETYPE's, so a creature is defined by what it can do
+   * rather than by how much health it has — see BEAST_MOVES. Anything that does
+   * not declare one gets the three the game shipped with, which is what keeps
+   * the acklay, the reek and the nexu exactly as they were.
+   */
+  beastMoves(phase = this.bossPhase || 1) {
+    const list = this.A.moves || DEFAULT_BEAST_MOVES;
+    return list.filter((k) => BEAST_MOVES[k] && phase >= BEAST_MOVES[k].unlock);
   }
 
   /* ── motion ──────────────────────────────────────────────────────── */
@@ -2752,17 +3147,29 @@ export class Enemy {
      */
     let rise = 0, pitch = 0;
     const st = this.stateTime || 0;
-    if (this.state === 'sweep') {
-      // wind-up to 0.55, claw 0.55-0.95
-      rise = st < 0.55 ? Math.sin((st / 0.55) * Math.PI * 0.5) : Math.max(0, 1 - (st - 0.55) / 0.3);
-      pitch = -0.42 * rise;
-    } else if (this.state === 'lunge') {
-      // the crouch is the tell: it gathers, then drives
-      rise = st < 0.5 ? -Math.sin((st / 0.5) * Math.PI * 0.5) * 0.55 : 0;
-      pitch = 0.30 * -rise;
-    } else if (this.state === 'charge') {
-      rise = st < 0.65 ? Math.sin((st / 0.65) * Math.PI * 0.5) * 0.7 : Math.max(0, 0.7 - (st - 0.65) * 2);
-      pitch = -0.34 * rise;
+    /**
+     * …AND THE CURVE COMES OFF THE SAME TABLE THE ATTACK DOES.
+     *
+     * This was three hand-written curves, one per state, sitting fifty lines
+     * away from the three hand-written hit windows they had to agree with — so
+     * a fourth attack meant a fourth branch here, and a wind-up that silently
+     * disagreed with its own claw was one edit away at all times. `BEAST_MOVES`
+     * carries both, so a move cannot be added to the brain without a body to
+     * read it on.
+     *
+     * The formula reproduces all three shipped curves EXACTLY: a quarter-sine
+     * ramp to the peak over `up`, then a linear fall over `fall` (or straight
+     * to rest when `fall` is 0, which is what the lunge did), with the chest
+     * pitch a fixed multiple of the rise. The charge's old `max(0, 0.7 - (st -
+     * 0.65) * 2)` is 0.7 x max(0, 1 - (st - 0.65) / 0.35), which is this with
+     * fall = 0.35.
+     */
+    const P = BEAST_MOVES[this.state]?.pose;
+    if (P) {
+      rise = st < P.up
+        ? P.rise * Math.sin((st / P.up) * Math.PI * 0.5)
+        : (P.fall > 0 ? P.rise * Math.max(0, 1 - (st - P.up) / P.fall) : 0);
+      pitch = P.pitch * rise;
     } else if (this.state === 'winded') {
       // …and being winded reads as being winded: the head drops to the floor.
       rise = -0.5; pitch = 0.5;
