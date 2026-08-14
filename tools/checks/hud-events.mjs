@@ -136,6 +136,12 @@ function wheelPlayer(world) {
 export async function run({ check, assert }) {
   const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
   const PLAYER_SRC = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+  /* Read here rather than inside a check: `hudOnPage` installs a global
+   * document and the note on it explains that the window between install and
+   * restore must not straddle an await, because the runner starts the next
+   * check the moment this one suspends. A suite-level read costs nothing and
+   * keeps every check that drives a real page synchronous. */
+  const STYLES = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
 
   /* ────────────────────────────────────────────────────────────────────
    * THE FEED
@@ -541,6 +547,23 @@ export async function run({ check, assert }) {
      * repo to drift from its generated twin — and this one would pass while the
      * HUD quoted a multiplier the blade was not being paid.
      */
+    /* WHERE IT SITS, held to the same promise the event feed is: in the score
+     * column, in flow, right-aligned — not a box floated over the game. The
+     * alignment is asserted because `.hud-tr` is `text-align:right` and a FLEX
+     * container's children do not inherit that, so this row is the one element
+     * in the column that has to say so for itself. */
+    const tr = INDEX.slice(INDEX.indexOf('<div class="hud-tr">'), INDEX.indexOf('<div class="hud-bl">'));
+    assert(tr.includes('id="target-open"'),
+      'the open-state readout is not in the top-right HUD block — it is floating on its own');
+    assert(tr.indexOf('id="hud-score"') < tr.indexOf('id="target-open"'),
+      'the readout is above the score rather than under it');
+    const rule = STYLES.slice(STYLES.indexOf('.targetopen{'), STYLES.indexOf('}', STYLES.indexOf('.targetopen{')));
+    assert(rule.length > 10, '.targetopen has no styles at all');
+    assert(!/position\s*:\s*(fixed|absolute)/.test(rule),
+      'the readout is positioned out of the HUD block it lives in — that is a bolted-on overlay');
+    assert(/justify-content\s*:\s*flex-end/.test(rule),
+      'the readout is a flex row that never says to right-align, so it sits left of the column it is in');
+
     const { hud, doc, restore } = hudOnPage(INDEX);
     try {
       const world = stubWorld({ ...DEFAULT_SETTINGS });
