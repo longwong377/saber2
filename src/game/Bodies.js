@@ -2875,7 +2875,61 @@ function beardParts(s, hg, B) {
          * measured at a head yaw of -0.42 rad that is 13 of the beard's 387
          * vertices in the ribcage. A beard lies ON a chest, in front of it.
          */
-        nodes.push([p[0], p[1] - B.fall * f * s, p[2] + 0.190 * f * f * s,
+        /*
+         * …AND THE FORWARD TERM IS A SLOPE, NOT A CONSTANT.
+         *
+         * It was a flat 0.190 m whatever `B.fall` was, so the SHORTER the beard
+         * the more horizontal it came out: 'Short beard — trimmed to the jaw'
+         * drops 16 mm and travelled 190 mm forward, a 4.8° slope off level.
+         * Measured against a bare head, every beard with a fall finished
+         * 174–177 mm proud of the NOSE TIP — a tube leaving the chin and ending
+         * in a lump of hair hanging in open air level with the mouth. Head bbox
+         * depth went 219 mm to 394. It is visible in the creator preview and in
+         * every third-person frame.
+         *
+         * WHAT THE TORSO ACTUALLY REQUIRES, measured rather than assumed.
+         *
+         * Ray-cast a point hanging at each depth under the chin against the
+         * torso soup, at every yaw the glance can reach (±0.85 rad, the clamp
+         * the player is held to), and take the forward offset at which it first
+         * gets out. It is not a straight chord and it is not a constant:
+         *
+         *     drop   16   30   40    55    72    78   100   145 mm
+         *     needs   0    0    0    64   100   102   130   140 mm
+         *
+         * Zero for the first 40 mm — that is the pocket under the jaw, and a
+         * beard hangs in it — then a steep rise as the fall reaches the
+         * trapezius, which is what a turned head swings it into. So the fit is
+         * a ramp that starts at the jaw and saturates at the shoulder, with a
+         * little margin: `(drop − 38 mm) × 3.8`, capped at 145 mm.
+         *
+         * Measured stand-off past the NOSE TIP, before and after — the bug was
+         * that every beard finished 174-177 mm proud of it, a horizontal tube
+         * ending in a lump of hair level with the mouth:
+         *
+         *     goatee 175 → 7    short 176 → 8    full 176 → 62
+         *     plaited 174 → 129    long 177 → 134
+         *
+         * The two long styles are still a long way out and THAT NUMBER CANNOT
+         * BE TUNED AWAY. This is rigid geometry welded to a bone that turns
+         * 49°, so it must be authored for the worst yaw or it intersects the
+         * trapezius at it — the table above is what the torso demands, and
+         * `grooming: nothing a cut or a beard hangs on a head passes through
+         * the body` holds it to exactly that. Pulling a long beard back in
+         * means giving its fall the treatment the lekku got: a chain whose
+         * lower half LAGS the head instead of being welded to it, so it can
+         * hang near the chest at rest and still clear the shoulder on a turn.
+         * Until then, the honest reading is that a beard past ~55 mm of fall
+         * wants Cloth.js, and the short styles — which is what most characters
+         * wear — are now correct.
+         */
+        const drop = B.fall * f;                       // metres below the chin
+        /* Evaluated at the tube's SURFACE, not its axis: the beard is a solid
+         * of radius `B.chin`, so its lowest hair is a chin-radius further down
+         * than the node it hangs from — and it is the hair that intersects. */
+        const reach = drop + B.chin;
+        nodes.push([p[0], p[1] - drop * s,
+          p[2] + Math.min(0.145, Math.max(0, (reach - 0.038) * 3.8)) * s,
           B.chin * (1 + 0.34 * f - 0.72 * f * f * f) * s]);
       }
     }

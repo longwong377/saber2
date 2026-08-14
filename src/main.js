@@ -108,7 +108,7 @@ const menu = new Menu(settings, {
   // Both are live: switch the deflection model or a keybind mid-fight and the
   // very next bolt uses it, which is the only honest way to compare them.
   onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
-  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); },
+  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); hud.setBindings(b); },
   // Force settings are read live off world.settings, so the sliders take effect
   // mid-fight without a reload.
   onForce: () => {
@@ -940,6 +940,9 @@ function refreshCoachKeys() {
   ].map(([key, what]) => `<span><kbd>${key}</kbd> ${what}</span>`).join('');
 }
 refreshCoachKeys();
+// …and the power wheel, which carried five typed key letters before this, two
+// of them wrong on a fresh install. It is on screen for the whole fight.
+hud.setBindings(input.bindings);
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && tree.open) {

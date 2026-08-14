@@ -23,10 +23,11 @@
 
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { HUD, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
+import { HUD, POWERS, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
   from '../../src/ui/HUD.js';
 import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
 import { PLAYER_VOICES } from '../../src/engine/Voice.js';
+import { defaultBindings, keyLabel } from '../../src/engine/Bindings.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -386,5 +387,61 @@ export async function run({ check, assert }) {
     assert(!/position\s*:\s*absolute/.test(kf),
       'the kill feed is absolutely positioned again — it will be drawn through the event feed');
     return 'inside .hud-tr, under the score, above the kill feed, all in one flow, HUD mono';
+  });
+
+  check('hud: the power wheel prints the key that is actually bound', async () => {
+    /**
+     * THE BUG. `_buildPowers` carried five typed letters:
+     *
+     *     [['push','F'],['pull','⇧F'],['grip','G'],['throw','R'],['sense','C']]
+     *
+     * Two were wrong on a fresh install. Pull is bound to KeyR and throw to
+     * KeyH — so the wheel told the player "R" for Throw / recall saber, and
+     * pressing R Force-pulled instead. And none of the five followed a rebind,
+     * ever, because the list was built once from the constructor. The wheel is
+     * on screen for the whole fight.
+     *
+     * This drives the real HUD against the real bindings table rather than
+     * re-deriving the labels, so it fails on any slot whose action id is wrong
+     * as well as on a typed letter.
+     */
+    /* Comments stripped first: the note in `_buildPowers` quotes the old table
+     * verbatim so the next reader can see what was wrong, and a scan that
+     * cannot tell the record of a bug from the bug would make explaining the
+     * fix impossible. Same treatment as the World quality-ladder scan. */
+    const src = (await readFile(new URL('../../src/ui/HUD.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert(!/\[\s*'push'\s*,\s*'F'\s*\]/.test(src),
+      'the power wheel types its key letters again');
+
+    const b = defaultBindings();
+    const bench = hudOn();
+    const hud = bench.hud;
+    hud.setBindings(b);
+    const rows = [];
+    for (const [slot, action] of POWERS) {
+      assert(b[action], `the wheel's ${slot} slot reads action "${action}", which is not in the bindings table`);
+      const el = hud.powerEls[slot];
+      assert(el && el.label, `the wheel has no ${slot} slot`);
+      const want = keyLabel(b[action][0]);
+      assert(el.label.textContent === want,
+        `the wheel prints "${el.label.textContent}" for ${slot} and ${action} is bound to "${want}"`);
+      rows.push(`${slot} ${want}`);
+    }
+
+    // …and it follows a rebind, which is the half a one-shot build cannot do.
+    const moved = { ...b, throw: ['KeyP'] };
+    hud.setBindings(moved);
+    assert(hud.powerEls.throw.label.textContent === keyLabel('KeyP'),
+      'rebinding throw did not repaint the wheel');
+    hud.setBindings(b);
+
+    // every slot with a cooldown in Player.cooldowns should be ON the wheel:
+    // six of them had no readout anywhere before this.
+    assert(POWERS.length >= 9,
+      `the wheel has ${POWERS.length} slots — the powers with real cooldowns and no readout are the `
+      + 'ones a player learns by pressing the key and getting nothing');
+    bench.restore();
+    return `${POWERS.length} slots, every label from the bindings table: ${rows.join(', ')}`;
   });
 }

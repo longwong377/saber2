@@ -28,6 +28,7 @@
  */
 
 import * as THREE from 'three';
+import { initPhysics } from '../../src/physics/Rapier.js';
 import {
   buildJedi, SPECIES, FACE_PRESETS, BODY_TYPES, BUILD_RANGE, tubeGeo, surfacePoint,
 } from '../../src/game/Bodies.js';
@@ -295,7 +296,13 @@ function speciesParts(built) {
   return out;
 }
 
-export function run({ check, assert, near }) {
+export async function run({ check, assert, near }) {
+  /* Rapier, because `a head severed at the neck` drives the real Ragdoll and a
+   * RapierWorld throws without it. It used to rely on some earlier suite having
+   * called this — true in a full run, false when the file runs on its own, so
+   * the check passed or threw depending on what came before it in a directory
+   * listing. Same class as the seeded RNG in held.mjs. */
+  await initPhysics();
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  the contract                                                      */

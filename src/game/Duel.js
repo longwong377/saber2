@@ -94,7 +94,13 @@ export const TIER = {
 
 /* ── the moves ───────────────────────────────────────────────────────── */
 
-const ATTACKS = {
+/**
+ * Exported so a check can drive `chambersWith` against every authored attack
+ * rather than a copy of the table. `spin` shipped with `to === from`, which
+ * made it unchamberable, and nothing could see that because nothing outside
+ * this file could enumerate the attacks.
+ */
+export const ATTACKS = {
   overhead:   { label: 'overhead',   from: D(0.05, 1.0, -0.35),  to: D(0, -0.55, -0.95), tier: 'heavy', damage: 1.35, reach: 0.06 },
   cleave:     { label: 'cleave',     from: D(0.95, 0.75, -0.4),  to: D(-0.8, -0.5, -0.8), tier: 'heavy', damage: 1.3, reach: 0.05 },
   slashR:     { label: 'slash',      from: D(0.95, 0.3, -0.55),  to: D(-0.85, 0.05, -0.6), tier: 'light', damage: 1.0 },
@@ -103,7 +109,25 @@ const ATTACKS = {
   rising:     { label: 'rising cut', from: D(0.35, -0.8, -0.6),  to: D(-0.25, 0.85, -0.6), tier: 'light', damage: 1.05 },
   thrust:     { label: 'thrust',     from: D(0.1, 0.15, -0.95),  to: D(0, 0.05, -1.0), tier: 'light', damage: 1.15, reach: 0.42, lunge: 3.4 },
   lunge:      { label: 'lunge',      from: D(0, 0.2, -0.9),      to: D(0, 0.0, -1.0), tier: 'unblockable', damage: 1.6, reach: 0.5, lunge: 7.5 },
-  spin:       { label: 'spin cut',   from: D(1.0, 0.1, -0.2),    to: D(1.0, 0.1, -0.2), tier: 'heavy', damage: 1.25, spin: true },
+  /* THE SPIN CUT'S `to` USED TO EQUAL ITS `from`, and that made the one heavy
+   * attack in the game impossible to answer. `chambersWith` builds the attack's
+   * travel as `to − from`, which was the zero vector; three's `normalize()`
+   * leaves that at zero, the dot product is 0, and `0 < -0.55` is never true.
+   * Ataru and Juyo both draw it, and it is telegraphed with everything the game
+   * has for "counter this now" — an orange arc, a pulsing fill, a rising
+   * chamber tone — while the counter could not fire at any swing direction.
+   * Sampling 200 000 uniform swing directions against it found zero that
+   * chambered. The player who did exactly what the colour told them fell
+   * through to the guard-break branch and took the hit.
+   *
+   * The body really does rotate through the strike (`spin: true` drives
+   * `DuelBrain.spin` at 26 rad/s, and `guardQuat` carries the blade with it), so
+   * the blade sweeps horizontally across: out to the right, through, and out to
+   * the left. A chamber is a swing INTO that travel, which is now what the dot
+   * product measures. It also gives Telegraph.shape two distinct endpoints to
+   * draw an arc between — with them identical it was drawing a single radial
+   * spoke. */
+  spin:       { label: 'spin cut',   from: D(1.0, 0.1, -0.2),    to: D(-1.0, 0.1, -0.2), tier: 'heavy', damage: 1.25, spin: true },
   smash:      { label: 'guard break', from: D(0, 1.05, -0.2),    to: D(0, -0.7, -0.75), tier: 'unblockable', damage: 1.5, reach: 0.08 },
 };
 

@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
+import { keyLabel } from '../engine/Bindings.js';
 
 const _v = new THREE.Vector3();
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -113,6 +114,22 @@ export function applyReticle(el, s = {}) {
   return sig;
 }
 
+/**
+ * The wheel's slots, in order, each with the ACTION ID it is labelled from.
+ * The two are not always the same word — the wheel calls it `throw` and the
+ * bindings table calls the action `throw` too, but `grip` on the wheel is the
+ * hold-to-grip action and there is a second `grip2` for the one-handed stance.
+ * Naming them separately is what stops the next edit guessing.
+ */
+export const POWERS = [
+  ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
+  ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
+  ['heal', 'heal'], ['compel', 'compel'],
+];
+
+/** A key label is drawn into innerHTML; three characters can break it. */
+const escKey = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 const POWER_ICONS = {
   push:  '<svg viewBox="0 0 24 24"><path d="M4 12h10M14 8l4 4-4 4M18 5v14"/></svg>',
   pull:  '<svg viewBox="0 0 24 24"><path d="M20 12H10M10 8l-4 4 4 4M6 5v14"/></svg>',
@@ -121,6 +138,12 @@ const POWER_ICONS = {
   sense: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>',
   jump:  '<svg viewBox="0 0 24 24"><path d="M12 20V6M8 10l4-4 4 4M5 21h14"/></svg>',
   lightning: '<svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-2 7 8-11h-6z"/></svg>',
+  // Stasis is a held bolt: a ring with the shot stopped inside it.
+  stasis: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 12h6"/><circle cx="12" cy="12" r="1.6"/></svg>',
+  // Heal is the one power that gives rather than takes.
+  heal: '<svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/><circle cx="12" cy="12" r="8.5"/></svg>',
+  // Compel turns a muzzle around: an arrow bent back on itself.
+  compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
 };
 
 export class HUD {
@@ -184,18 +207,48 @@ export class HUD {
     this.popupsOn = true;
   }
 
-  _buildPowers() {
-    const defs = [
-      ['push', 'F'], ['pull', '⇧F'], ['grip', 'G'], ['throw', 'R'], ['sense', 'C'],
-    ];
+  /**
+   * THE POWER WHEEL, LABELLED FROM THE BINDINGS TABLE.
+   *
+   * It used to carry five typed letters: `[['push','F'],['pull','⇧F'],
+   * ['grip','G'],['throw','R'],['sense','C']]`, built once from the
+   * constructor. Two of the five were wrong on a fresh install — pull is bound
+   * to R and throw to H, so the wheel told the player to press R to throw and
+   * pressing R Force-pulled instead — and none of the five followed a rebind,
+   * ever. The wheel is on screen for the whole fight.
+   *
+   * `POWERS` is the list, in wheel order, with the action id each slot reads.
+   * The label comes from `keyLabel(bindings[id][0])`, which is what the Codex
+   * and the coaching panel already do; `setBindings` is called from main.js's
+   * `onBindings` hook, beside the `refreshCoachKeys()` that exists for exactly
+   * this reason.
+   *
+   * Nine slots, not five. The other four — lightning, stasis, heal, compel —
+   * all carry a real cooldown in `Player.cooldowns` and a real Force cost, and
+   * had no readout anywhere; `lightning` even had an icon sitting unused in
+   * POWER_ICONS. A cooldown the player cannot see is a cooldown they learn by
+   * pressing the key and getting nothing.
+   */
+  _buildPowers(bindings = null) {
     this.powerEls = {};
     this.el.powers.innerHTML = '';
-    for (const [key, label] of defs) {
+    for (const [key, action] of POWERS) {
       const d = document.createElement('div');
       d.className = 'pw';
-      d.innerHTML = `${POWER_ICONS[key] || ''}<span>${label}</span><div class="cd"></div>`;
+      const label = bindings ? keyLabel((bindings[action] || [])[0]) : '';
+      d.innerHTML = `${POWER_ICONS[key] || ''}<span>${escKey(label)}</span><div class="cd"></div>`;
       this.el.powers.appendChild(d);
-      this.powerEls[key] = { root: d, cd: d.querySelector('.cd') };
+      this.powerEls[key] = { root: d, cd: d.querySelector('.cd'), label: d.querySelector('span') };
+    }
+    this._bindings = bindings;
+  }
+
+  /** Repaint the wheel's key labels. Called on boot and after any rebind. */
+  setBindings(bindings) {
+    this._bindings = bindings;
+    for (const [key, action] of POWERS) {
+      const p = this.powerEls[key];
+      if (p && p.label) p.label.textContent = keyLabel((bindings[action] || [])[0]);
     }
   }
 
@@ -256,6 +309,12 @@ export class HUD {
     this._power('grip', 0, player.force >= 10, !!(player.gripBody || player.gripEnemy));
     this._power('throw', player.cooldowns.throw / 0.4, player.force >= 14, player.throwState !== 'held');
     this._power('sense', 0, player.force >= 25, player.senseActive);
+    // The four that had no readout at all. Each divides by the cooldown its own
+    // power sets, so a full bar is the moment it was used and empty is ready.
+    this._power('lightning', player.cooldowns.lightning / 0.35, player.force >= 14, player.lightningOn);
+    this._power('stasis', player.cooldowns.stasis / 0.8, player.force >= 30, player.stasis?.bodies?.size > 0);
+    this._power('heal', player.cooldowns.heal / 8, player.force >= 40);
+    this._power('compel', player.cooldowns.compel / 6, player.force >= 34);
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;
