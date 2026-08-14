@@ -1855,7 +1855,24 @@ function sheetOf(opts = {}) {
   const src = (opts.face && typeof opts.face === 'object') ? opts.face : {};
   const pick = (k) => (opts[k] !== undefined ? opts[k] : src[k]);
   const num = (v, d) => (typeof v === 'number' && isFinite(v) ? clamp(v, 0, 1) : d);
-  const hair = HAIR_BY_ID.get(pick('hair')) || HAIR_STYLES[0];
+  /**
+   * THE DEFAULT HAIRSTYLE IS THE SPECIES', not always index 0.
+   *
+   * `HAIR_STYLES[0]` is the Temple crop, and a species whose IDENTITY is a bare
+   * skull cannot have that as its default: the Zabrak's crown of horns is what
+   * tells it apart at eight metres, and `creator: a species is a different
+   * shape, not a different tint` measures exactly that — with hair on both, a
+   * Zabrak and a human are 18 silhouette pixels apart.
+   *
+   * So a species may name its own, and the Zabrak names `shorn`. That is the
+   * whole of what stood between note 56 ("deep enough to build any prequel Jedi
+   * or Sith: hair, beard…") and a Zabrak with hair: the choice was never
+   * between a horned skull and a haired one, it was between which of them is
+   * what you get before you choose. Eeth Koth sits on the Council with horns
+   * AND hair; Agen Kolar sits beside him with horns and none.
+   */
+  const speciesDefault = opts.__speciesHair ? HAIR_BY_ID.get(opts.__speciesHair) : null;
+  const hair = HAIR_BY_ID.get(pick('hair')) || speciesDefault || HAIR_STYLES[0];
   const beard = BEARD_BY_ID.get(pick('beard')) || BEARD_STYLES[0];
   const age = num(pick('age'), 0);
   const muscle = num(pick('muscle'), 0.5);
@@ -1927,7 +1944,13 @@ export const SPECIES = [
     ],
   },
   {
-    id: 'zabrak', name: 'Zabrak', hair: false, brows: true, eyes: true,
+    /* `hair: true` and a `shorn` default — see the note over the hairstyle
+     * pick. The horn crown opens to let the ring through rather than being
+     * hidden by it, so all eight styles build a distinct head (measured 8/8,
+     * against 1/8 while this flag was false) and the figure you get before
+     * choosing anything is still the bare horned skull the silhouette check
+     * defends. */
+    id: 'zabrak', name: 'Zabrak', hair: true, defaultHair: 'shorn', brows: true, eyes: true,
     /**
      * A crown of cranial horns, and — since the note that asks for "any prequel
      * Jedi or Sith" — HAIR AS WELL.
@@ -3145,6 +3168,15 @@ export function buildJedi(opts = {}) {
    * and which is asserted against the previous build rather than assumed.
    */
   const sp = speciesOf(opts.species);
+  /* The species is resolved BEFORE the sheet, so the sheet can fall back to
+   * the species' own default hairstyle rather than to HAIR_STYLES[0] — see the
+   * note over the hairstyle pick. Folded into `opts` rather than passed as a
+   * second argument so the call below stays the one expression the grooming
+   * suite scans for: a source check that names a mechanism goes red for a
+   * rewrite that changes nothing, and this file has been bitten by that. */
+  if (sp.defaultHair && opts.__speciesHair === undefined) {
+    opts = { ...opts, __speciesHair: sp.defaultHair };
+  }
   const G = sheetOf(opts);
   /**
    * A SPECIES MAY BE A DIFFERENT SIZE, and its head a different fraction of it.
@@ -4122,6 +4154,20 @@ export function buildJedi(opts = {}) {
              r: sp.lekku.r * S / (opts.scale ?? 1), len: sp.lekku.len * S / (opts.scale ?? 1),
              taper: sp.lekku.taper }] : null,
            speciesMeshes,
+           /**
+            * WHAT THIS FIGURE WAS ACTUALLY BUILT WITH.
+            *
+            * `sheetOf` resolves a hairstyle, a beard, an age and a muscle from
+            * three possible sources — a top-level option, a face object, or a
+            * species default — and until now nothing outside this function
+            * could ask which of them won. So a caller wanting to know "does
+            * this head have hair on it" had to ask `SPECIES[…].hair`, which is
+            * a different question: it says whether the species MAY, not what
+            * this body has. That distinction did not exist while every species
+            * either always had hair or never could, and the Zabrak is the first
+            * that can wear all eight styles and defaults to none.
+            */
+           sheet: G,
            palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
 }
 

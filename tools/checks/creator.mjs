@@ -614,12 +614,36 @@ export async function run({ check, assert, near }) {
       }
       assert(n > 12, `${sp.id}: only ${n} crown vertices sampled`);
       const mean = sum / n;
-      if (sp.hair === false) {
-        assert(mean > 0.80, `${sp.id} has no hair and its crown is baked at ${mean.toFixed(2)} — that is a skullcap`);
+      /**
+       * WHAT THE FIGURE WAS BUILT WITH, not what the species is allowed.
+       *
+       * This branched on `sp.hair === false`, which was the same question for
+       * as long as every species either always had hair or never could. The
+       * Zabrak broke that: it CAN wear all eight styles — the horn crown opens
+       * to let the ring through — and it DEFAULTS to shaven, because a bare
+       * horned skull is what tells it apart at eight metres and the silhouette
+       * check below defends exactly that.
+       *
+       * So the species flag says nothing about this figure's crown. The
+       * hairstyle it was actually built with does, and that is what the bake
+       * is a function of: a crown under hair is darkened so a poke-through
+       * reads as a dark root, and a crown with nothing over it must not be.
+       */
+      /* BOTH halves: the sheet resolves a hairstyle for every figure, whether
+       * or not the species can wear one — `buildJedi` gates it at build time
+       * with `if (!sp.hair) return`. So a Twi'lek's sheet names the Temple crop
+       * and its head has none. Wearing hair is the species allowing it AND the
+       * chosen style having a crown. */
+      const wearing = sp.hair !== false && (built.sheet?.hair?.crown ?? true);
+      if (!wearing) {
+        assert(mean > 0.80,
+          `${sp.id} is built bare-headed and its crown is baked at ${mean.toFixed(2)} — that is a skullcap`);
       } else {
-        assert(mean < 0.45, `the human crown is baked at ${mean.toFixed(2)}, so a hair poke-through would show as bare bone`);
+        assert(mean < 0.45,
+          `${sp.id} is built under hair and its crown is baked at ${mean.toFixed(2)}, so a poke-through `
+          + 'would show as bare bone');
       }
-      rows.push(`${sp.id} ${mean.toFixed(2)}`);
+      rows.push(`${sp.id} ${mean.toFixed(2)}${wearing ? '' : ' bare'}`);
     }
     return rows.join(' ');
   });
