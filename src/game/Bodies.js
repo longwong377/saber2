@@ -3551,10 +3551,11 @@ export function buildJedi(opts = {}) {
         shadeAO(col.geometry, (x, y) => 0.56 + 0.44 * clamp(y / (0.052 * s), 0, 1), { floor: 0.4 });
       }
       // ── belt ───────────────────────────────────────────────────────────
-      // An obi with a utility belt buckled over it, a clasp, pouches, and two
-      // ends hanging off the knot. The hanging ends are the point: a closed
-      // ring round a waist is a hoop, and every reference for this character
-      // has cloth falling off the front of the belt.
+      // An obi with a utility belt buckled over it, a clasp and pouches. The
+      // two ends hanging off the knot are the point — a closed ring round a
+      // waist is a hoop, and every reference for this character has cloth
+      // falling off the front of the belt — and they are not here: see the note
+      // at the end of this block.
       const obi = mesh(bandGeo(0.126 * KBELT * s, 0.148 * KBELT * s, 0.124 * KBELT * s, 0.144 * KBELT * s, 0.108 * s, 18), trim, hips,
         [0, 0.020 * s, 0], null, [1, 1, DEPTH + 0.06]);
       shadeAO(obi.geometry, (x, y) => 0.66 + 0.34 * Math.sin(clamp(y / (0.108 * s), 0, 1) * Math.PI), { floor: 0.5 });
@@ -3567,15 +3568,18 @@ export function buildJedi(opts = {}) {
         [sx * 0.104 * KBELT * s, 0.036 * s, 0.086 * KBELT * s], [0, sx * 0.35, 0]);
       mesh(plateGeo(0.070 * s, 0.024 * s, 0.026 * s, 0.008 * s), leather, hips,
         [-0.058 * s, 0.028 * s, -0.104 * KBELT * s], [0, 0.10, 0]);
-      // The two ends: flattened straps hanging off the knot, lightly splayed.
-      // limbGeo spans +Y, so they are turned over to hang.
-      for (const [sx, len, lean] of [[1, 0.30, 0.10], [-1, 0.22, -0.07]]) {
-        const g = limbGeo(len * s, 0.030 * s, 0.020 * s, 8, false,
-          { rings: 5, swells: [[0.30, 0.06, 0.4]], section: ovalSection(0.30, 2.6) });
-        shadeAO(g, (x, y) => 0.72 + 0.28 * clamp(y / (len * s), 0, 1), { floor: 0.55 });
-        mesh(g, trim, hips, [sx * 0.052 * s, 0.024 * s, 0.104 * KBELT * s],
-          [Math.PI - 0.14, 0, lean]);
-      }
+      /*
+       * THE TWO ENDS ARE CLOTH, and they are not built here.
+       *
+       * They used to be: two rigid straps off the knot at r = 0.104·KBELT,
+       * turned over to hang. The garment over them starts at 0.145 and reaches
+       * 0.285 by its hem, so measured on the built figure 0 of their 90
+       * vertices were outside the robe and the deepest sat 134mm inside it —
+       * the detail this block's own comment calls "the point" drew nothing, at
+       * any range, on any character. There is no radius that fixes it either,
+       * because the surface they have to clear is simulated and swings 150mm at
+       * a walk. See attachSash() in Cloth.js, which the skirt owns and steps.
+       */
 
       // ── the robe's skirt ───────────────────────────────────────────────
       //

@@ -991,7 +991,8 @@ export function dressPreviewFigure(host, built, cut) {
   if (built.robeSkirt) {
     const smat = (built.palette.over || built.palette.outer).clone();
     smat.side = THREE.DoubleSide;
-    skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut, seed: PREVIEW_SEED.skirt });
+    skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut,
+      seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim });
     if (cloak) cloak.outer = skirt;
   }
   /**

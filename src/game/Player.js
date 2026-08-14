@@ -596,6 +596,26 @@ export class CameraRig {
     this.look = new THREE.Vector3();
     this.shake = 0;
     this.shakeSeed = rng() * 100;
+    /**
+     * The shake's own clock, in GAME seconds.
+     *
+     * It used to read `performance.now()`, which is wrong in three ways and was
+     * only ever noticed as a flaky assertion:
+     *
+     *   · under a hitstop the world runs at 0.06× and the wall clock does not,
+     *     so the camera buzzed at full rate through the one moment the shake
+     *     exists for — the same class of bug as the per-frame damping in
+     *     Cloth.js, and the same fix;
+     *   · it keeps advancing while the game is paused, so unpausing resumed the
+     *     shake at whatever phase real time had wandered to;
+     *   · and it cannot be reproduced. In a headless run the wall clock advances
+     *     by the time the frame took to COMPUTE rather than by 1/60, so the
+     *     47 rad/s term moved 0.005 rad a frame instead of 0.79 and the shake
+     *     was a frozen direction with a decaying magnitude. `controls: unticking
+     *     Camera shake` measured whatever point of the sine the clock happened
+     *     to be at and failed once at 0.238° against a typical 1.0–1.2°.
+     */
+    this.shakeT = 0;
     this.fov = 60;
     this.fovTarget = 60;
     this.roll = 0;
@@ -727,7 +747,8 @@ export class CameraRig {
 
     // shake
     if (this.shake > 0.001) {
-      const t = performance.now() * 0.001 + this.shakeSeed;
+      this.shakeT += dt;
+      const t = this.shakeT + this.shakeSeed;
       const amp = this.shake * (this.firstPerson ? 0.055 : 0.09);
       this.pos.x += Math.sin(t * 47.3) * amp;
       this.pos.y += Math.sin(t * 39.7 + 1.7) * amp;
@@ -1002,6 +1023,9 @@ export class Player {
       smat.side = THREE.DoubleSide;
       this.skirt = attachSkirt(this.world.scene, this.rig, {
         material: smat, rigid: this.built.robeSkirt, cut: this.robeCut,
+        // The belt's own two ends, which hang over this. Same material as the
+        // obi they are tied in, because they are the same band of cloth.
+        sashMaterial: this.palette.trim,
       });
       // The cape used to avoid the skirt via a fixed table of spheres sampled
       // off a standing figure. Now the skirt can move, so the cape follows the

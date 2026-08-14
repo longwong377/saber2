@@ -614,6 +614,41 @@ export class Cloak {
       for (let ci = 0; ci < cols.length; ci++) {
         const s = cols[ci];
         const cx = s.c.x, cy = s.c.y, cz = s.c.z, r = s.r;
+        /*
+         * A BAND, not a ball, when the collider carries an axis.
+         *
+         * A sphere cannot hold cloth on a surface that WIDENS DOWNWARD, and a
+         * robe below a belt is exactly that. Every sphere big enough to keep a
+         * particle off the hem is also a sphere whose centre is below that
+         * particle, so its push has an upward component — and since a verlet
+         * contact is read as a velocity next frame (see the note below), the
+         * upward component is a ratchet. Measured on the sash: at 4.6 m/s the
+         * tip finished level with its own root, and at 7.4 it finished 314mm
+         * ABOVE it, having been walked up the robe one stride at a time.
+         *
+         * `up` + `h` make the collider a cylinder segment instead: the offset
+         * is taken perpendicular to the axis, the push is perpendicular to the
+         * axis, and the band ignores anything outside its own height. Stacked
+         * one per row it is a lathe of the garment, and it has no opinion about
+         * which way is up. Spheres are untouched — a collider with no `up` on
+         * it takes the path it always did.
+         */
+        if (s.up) {
+          const ux = s.up.x, uy = s.up.y, uz = s.up.z, h = s.h ?? 0;
+          for (let i = 0; i < n; i++) {
+            if (this.pinned[i]) continue;
+            const i3 = i * 3;
+            const dx = p[i3] - cx, dy = p[i3 + 1] - cy, dz = p[i3 + 2] - cz;
+            const t = dx * ux + dy * uy + dz * uz;
+            if (t > h || t < -h) continue;
+            const ox = dx - ux * t, oy = dy - uy * t, oz = dz - uz * t;
+            const d2 = ox * ox + oy * oy + oz * oz;
+            if (d2 >= r * r || d2 < 1e-8) continue;
+            const d = Math.sqrt(d2), k = (r - d) / d;
+            p[i3] += ox * k; p[i3 + 1] += oy * k; p[i3 + 2] += oz * k;
+          }
+          continue;
+        }
         // driven by `pinned` rather than by "everything past row 0", which was
         // an assumption about where the anchor is rather than a statement of
         // the rule — that a pinned particle is not the solver's to move
@@ -1514,14 +1549,53 @@ export function attachSkirt(scene, rig, opts = {}) {
    * simulation stops. `rigid` is whatever Bodies.js built.
    */
   const rigid = opts.rigid || [];
+
+  /*
+   * THE SASH, carried by the skirt rather than by the caller.
+   *
+   * The obi's two hanging ends belong to the same garment and to the same
+   * frame: they root on the belt this skirt is pinned to, and the only surface
+   * they can lie on is this skirt's own. Owning them here means the six places
+   * that already drive a skirt — update, carry, impulse, setVisible, dispose,
+   * and the first-person hide — drive them too, without a line at any of them.
+   * `sash: false` turns them off for a garment that has no belt.
+   */
+  const sash = opts.sash === false ? null
+    : attachSash(scene, rig, { scale: S, outer: skirt, material: opts.sashMaterial,
+      color: opts.sashColor, seed: opts.seed, ends: opts.sashEnds,
+      // The cut's OWN profile, not a copy of the default: a cassock is a column
+      // and a duelling tabard stops at the thigh, and a sash clamped to the
+      // wrong silhouette hangs off the garment it is on.
+      petticoat });
+
+  const _update = skirt.update.bind(skirt);
+  skirt.update = (dt, colliders, wind) => {
+    _update(dt, colliders, wind);
+    if (!sash || !skirt.enabled) return;
+    /* The sash lies on the skirt, so it is stepped AFTER it — and it samples
+     * this object's PARTICLES rather than `proxy`, which is the cape's list and
+     * is not this one's to refresh. Poking it here read as the cape sinking
+     * 2.6mm into the coat: the cape's colliders are taken before the skirt
+     * solves, on purpose, and a second refresh handed it a surface half a solve
+     * newer than the one its own step was written against. */
+    sash.update(dt, wind);
+  };
+  const _carry = skirt.carry.bind(skirt);
+  skirt.carry = (quat, pivot) => { _carry(quat, pivot); sash?.carry(quat, pivot); };
+  const _impulse = skirt.impulse.bind(skirt);
+  skirt.impulse = (dir, strength, dt) => { _impulse(dir, strength, dt); sash?.impulse(dir, strength, dt); };
+
+  skirt.sash = sash;
   skirt.setVisible = (v) => {
     skirt.mesh.visible = v;
+    sash?.setVisible(v);
     for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v;
   };
   skirt.setVisible(true);
   const _dispose = skirt.dispose.bind(skirt);
   skirt.dispose = () => {
     for (let i = 0; i < rigid.length; i++) rigid[i].visible = true;
+    sash?.dispose();
     // A cape still holding `outer` on a disposed skirt would collide against
     // the last frame this garment ever ran. Empty means "fall back to the
     // table", which is where the rigid layer is again.
@@ -1529,6 +1603,278 @@ export function attachSkirt(scene, rig, opts = {}) {
     _dispose();
   };
   return skirt;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE SASH — the obi's two hanging ends                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The ends of the belt, as cloth.
+ *
+ * THE BUG. Bodies.js built these as two rigid straps off the belt knot, with
+ * the comment "the hanging ends are the point: a closed ring round a waist is a
+ * hoop, and every reference for this character has cloth falling off the front
+ * of the belt". They were welded to the hips at a radius of 116-147mm and the
+ * garment over them reaches 220mm by the first row and 285 at the hem — so
+ * measured on a built Jedi, 0 of 90 vertices were outside the robe and the
+ * deepest sat 134mm inside it. The ends the comment calls the point rendered
+ * nothing. Not one pixel, at any range, on any character in the game.
+ *
+ * WHY THEY CANNOT SIMPLY BE MOVED OUT. There is no radius that works. Under the
+ * cloth robe the surface they would have to clear swings 150mm at a walk, so a
+ * rigid strap outside it at rest is inside it a third of a second later; and a
+ * strap far enough out to clear the swing is a plank hanging in the air beside
+ * a moving garment, which is the exact defect — "a hem vertex travels 0.000 mm
+ * in the pelvis frame while the cape's travels 217" — that put the robe in this
+ * file in the first place. A strap that lies on cloth has to be cloth.
+ *
+ * SO: two narrow closed tubes on the belt, colliding against the skirt's live
+ * proxy, which is the same surface the cape already rides. They are stepped by
+ * `attachSkirt` after the skirt solves, so the thing they lie on is this
+ * frame's garment rather than last frame's.
+ *
+ * THE RIGID PAIR IS DELETED, not hidden. Every other simulated garment here
+ * keeps a rigid stand-in for LOD range, and each of those has a reason: a
+ * missing skirt is a bare pelvis, a missing lek is a human. `lod > 1` is 62 m,
+ * where a 30 mm strap subtends 0.45 px on a 1080p frame at this FOV — the cape
+ * is switched off there for the same reason, and it does not keep a stand-in
+ * either. Deleting them saves 90 vertices and 128 triangles on every robed
+ * character, which is more than the 80 the simulated pair draws.
+ *
+ * @param opts.outer  the garment they lie on — anything with a `.proxy` array
+ *                    of world spheres. attachSkirt passes itself.
+ * @param opts.ends   [{ at:[x,y,z], w, d, len, lean }] in the hips bone's frame
+ */
+export function attachSash(scene, rig, opts = {}) {
+  const S = opts.scale ?? 1;
+  const hipsB = rig.get('hips');
+  if (!hipsB) return null;
+  const cols = opts.cols ?? 4;
+  const rows = opts.rows ?? 6;
+
+  /**
+   * WHERE THEY HANG, and how far out they start.
+   *
+   * `at` is the knot, 158mm proud of the hips axis — the obi's own outer face
+   * is at 147 and the cloth waistband is pinned at 145, so this is the first
+   * radius that is outside both rather than between them.
+   *
+   * `lean` is the layout's forward push at the tip, and it is not decoration:
+   * reset() lays a closed cloth out straight down from its ring, which for a
+   * strap on a belled skirt means laid out INSIDE the garment and shoved out by
+   * the colliders on frame one — a visible pop the first time a character is
+   * drawn. 0.085 puts the tip where the robe's own surface is at that height,
+   * so the first frame is already the settled one.
+   *
+   * Two different lengths, because a knot ties with a long end and a short one
+   * and two identical straps read as a costume detail nobody looked at.
+   */
+  const ends = opts.ends ?? [
+    { at: [0.052, 0.030, 0.158], w: 0.032, d: 0.009, len: 0.34, lean: 0.085 },
+    { at: [-0.050, 0.026, 0.156], w: 0.026, d: 0.008, len: 0.25, lean: 0.062 },
+  ];
+
+  const mat = opts.material
+    ? (opts.material.side === THREE.DoubleSide ? opts.material
+      : Object.assign(opts.material.clone(), { side: THREE.DoubleSide }))
+    : null;
+
+  const parts = [];
+  for (let k = 0; k < ends.length; k++) {
+    const e = ends[k];
+    const strap = new Cloak(scene, {
+      closed: true,
+      cols, rows,
+      length: e.len * S,
+      /* Parallel-sided. `flare` defaults to 0.85 and a sash that bells out to
+       * 1.85× its own width at the tip is a pennant. */
+      flare: 0,
+      lean: (e.lean ?? 0) * S,
+      material: mat,
+      color: opts.color ?? 0x6b4f30,
+      /* No surplus and no pleat, for the reason the lekku give: on a CLOSED
+       * cloth a shortened across-rest does not buckle into a fold, it shrinks
+       * the ring — and a strap that has pulled its own section in is a string. */
+      fullness: 1, pleat: 0,
+      /* Heavier and stiffer down its length than the robe it lies on. A sash
+       * end is a doubled band of the same cloth as the belt, so it swings as a
+       * unit and arrives; the robe under it ripples and this does not. */
+      stiffness: 0.90, shear: 0.60, bend: 0.12, bendDown: 0.62,
+      bendStretchOnly: true,
+      /*
+       * HEAVIER AND DEAFER TO THE AIR than the robe it lies on.
+       *
+       * 0.30/0.45 against the cape's 1.0/0.7, and damping at the cassock's 0.93
+       * rather than the cape's 0.972: a doubled band of belt cloth swings and
+       * arrives, and it does not catch the wind the way a metre of cape does.
+       * Measured, the tip travels 84-109mm a stride at every speed from a walk
+       * to a sprint and settles dead still when the wearer stops, which is the
+       * pair of things a strap has to do.
+       */
+      damping: 0.93, lift: 0.30, drift: 0.45,
+      gravity: opts.gravity ?? -15,
+      iterations: opts.iterations ?? 4,
+      jitter: 0,
+      seed: opts.seed === undefined ? undefined : opts.seed + k,
+      foldAO: opts.foldAO ?? 0.35,
+      anchorFn: (c, n, out) => {
+        /* A FLAT ring, not a round one. `spread` in reset() scales the anchor
+         * radially about its own centre, so whatever section the ring is cut
+         * in is the section the whole strap keeps — an ellipse 32mm across and
+         * 9mm thick is a band, and a circle of either radius is a rope. */
+        const th = (c / n) * Math.PI * 2;
+        _m.copy(hipsB.obj.matrixWorld);
+        out.set(e.at[0] * S + Math.sin(th) * e.w * S,
+          e.at[1] * S,
+          e.at[2] * S + Math.cos(th) * e.d * S);
+        out.applyMatrix4(_m);
+      },
+    });
+    strap._sharedMat = !!mat;
+    parts.push(strap);
+  }
+
+  /**
+   * WHAT A SASH END CAN HIT: the garment under it, and nothing else.
+   *
+   * NOT `outer.proxy`. That list is what the CAPE rides, and a cape reaches the
+   * skirt at a glance near its hem; a sash lies flat on it for its whole
+   * length, which is a far harder thing to ask of four spheres. Two ways it is
+   * too coarse here, both measured on a walking Jedi:
+   *
+   *   its four rows are 155mm apart over a garment whose folds are 25mm deep,
+   *   and an axis-centred sphere loses radius as sqrt(r² − dy²) away from its
+   *   own height, so the strap sags into the gap between them;
+   *
+   *   and each sphere's radius is the row's widest 3-D offset from its own
+   *   centroid, so a row with any vertical spread in it — every row, once the
+   *   garment is moving — reports a radius it does not have horizontally
+   *   anywhere, and holds the strap off the cloth.
+   *
+   * So the sash builds its own: one BAND per skirt row, radius = the largest
+   * HORIZONTAL radius in that row. Per row closes the gap; horizontal-only
+   * stops the vertical spread inflating it; a band rather than a ball stops the
+   * push having an upward component. Sampled once a frame and shared by both
+   * straps, and only down to the rows the longest of them can reach.
+   *
+   * AND THEN FLOORED AND CAPPED BY THE GARMENT'S REST SILHOUETTE, which is the
+   * part that took three tries. A sampled surface is only as good as the shape
+   * it is sampled from, and at a sprint the robe is not a solid of revolution at
+   * all — it streams to a 725mm radius behind the wearer and 50mm in front, and
+   * both naive readings fail there in opposite directions:
+   *
+   *   a max over the FRONT SECTOR collapses, because the front of the garment
+   *   has left. The bands shrink to the stragglers near the axis, the strap
+   *   falls through the body, and at 7.4 m/s it came out at 153° with a 117mm
+   *   radius;
+   *
+   *   a max over the WHOLE RING explodes, because the streaming tail is in the
+   *   same row as the front. The bands become 725mm cylinders, the strap is
+   *   inflated out to a 400mm radius and pinned there — measured, the tip
+   *   finished 74mm below its own root instead of 300, and stayed there at
+   *   every fabric setting tried, because at that point it is the collider and
+   *   not the cloth deciding where the thing hangs.
+   *
+   * `petticoat` is the garment's own cut profile — the table attachSkirt lays
+   * the cloth out on, so a cassock's column and a duelling tabard's short bell
+   * each clamp to themselves. Taking the ring max and clamping it to
+   * [profile, 1.6 × profile] keeps the live ridge while it is a ridge and falls
+   * back to the cut when the garment stops being a lathe. 1.6 is above the 1.14
+   * the robe reaches swinging at a walk and well under the 2.5 a sprint throws.
+   */
+  const table = opts.petticoat ?? [
+    [0.056, 0.145], [-0.04, 0.220], [-0.15, 0.235], [-0.26, 0.267], [-0.37, 0.292],
+  ];
+  const profileAt = (dy) => {
+    if (dy >= table[0][0]) return table[0][1];
+    for (let i = 1; i < table.length; i++) {
+      if (dy >= table[i][0]) {
+        const t = (table[i - 1][0] - dy) / (table[i - 1][0] - table[i][0]);
+        return table[i - 1][1] + (table[i][1] - table[i - 1][1]) * t;
+      }
+    }
+    return table[table.length - 1][1];
+  };
+  const outer = opts.outer ?? null;
+  const reach = ends.reduce((a, e) => Math.min(a, e.at[1] - e.len), 0);
+  const SWELL = opts.swell ?? 1.6;
+  const surface = [];
+  const _inv = new THREE.Matrix4();
+  const _p = new THREE.Vector3();
+  const _up = new THREE.Vector3();
+  let stamp = -1, frame = 0;
+
+  /** The robe's outer surface, as a stack of bands, once a frame for the pair. */
+  const resample = () => {
+    if (!outer || !outer.initialised || !outer.pos) { surface.length = 0; return false; }
+    hipsB.obj.updateMatrixWorld(false);
+    _inv.copy(hipsB.obj.matrixWorld).invert();
+    _up.set(0, 1, 0).transformDirection(hipsB.obj.matrixWorld);
+    const p = outer.pos, cols = outer.cols, rows = outer.rows;
+    let k = 0, prevY = null;
+    for (let r = 0; r < rows; r++) {
+      let rad = 0, y = 0, seen = 0;
+      for (let c = 0; c < cols; c++) {
+        const i = (r * cols + c) * 3;
+        _p.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(_inv);
+        y += _p.y;
+        rad = Math.max(rad, Math.hypot(_p.x, _p.z));
+      }
+      y /= cols;
+      const cut = profileAt(y / S) * S;
+      rad = Math.min(Math.max(rad, cut), cut * SWELL);
+      // Everything below the strap's own tip is a band nothing will ever
+      // touch, and a collider nothing touches is a test paid for four times a
+      // frame for the life of the character.
+      if (y < reach * S - 0.10 * S) break;
+      const b = surface[k] || (surface[k] = { c: new THREE.Vector3(), r: 0, up: new THREE.Vector3(), h: 0 });
+      b.c.set(0, y, 0).applyMatrix4(hipsB.obj.matrixWorld);
+      b.r = rad;
+      b.up.copy(_up);
+      // Half the row spacing, plus a tenth of it so consecutive bands overlap
+      // rather than leaving a seam of unconstrained height between them.
+      b.h = prevY === null ? 0.055 * S : Math.abs(prevY - y) * 0.55;
+      if (k > 0) surface[k - 1].h = b.h;
+      prevY = y; k++;
+    }
+    surface.length = k;
+    return k > 0;
+  };
+
+  for (const strap of parts) {
+    strap.refreshColliders = () => {
+      const out = strap.colliders;
+      out.length = 0;
+      if (stamp !== frame) { stamp = frame; resample(); }
+      if (surface.length) {
+        for (let i = 0; i < surface.length; i++) out.push(surface[i]);
+      } else if (!hipsB.severed) {
+        hipsB.obj.updateMatrixWorld(false);
+        for (let i = 0; i < table.length; i++) {
+          _v3.set(0, table[i][0] * S, 0).applyMatrix4(hipsB.obj.matrixWorld);
+          out.push({ c: _v3.clone(), r: table[i][1] * S });
+        }
+      }
+      return out;
+    };
+  }
+
+  /** The pair, as one thing to step, carry, kick, hide and dispose. */
+  return {
+    parts,
+    get initialised() { return parts.every((p) => p.initialised); },
+    update(dt, wind) {
+      frame++;                              // one resample of the robe per step
+      for (const p of parts) if (p.enabled) p.update(dt, p.refreshColliders(), wind);
+    },
+    carry(quat, pivot) {
+      for (const p of parts) if (p.enabled && p.initialised) p.carry(quat, pivot);
+    },
+    impulse(dir, strength, dt) { for (const p of parts) p.impulse(dir, strength, dt); },
+    setVisible(v) { for (const p of parts) p.setVisible(v); },
+    dispose() { for (const p of parts) p.dispose(); },
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -90,7 +90,15 @@ const read = async (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8
  * grenade going off every `every` frames. Returns the view direction and the
  * eye position on each frame, which is everything a deviation is measured from.
  */
-function driveRig(settings, { frames = 240, every = 30, kick = 1.5 } = {}) {
+/**
+ * @param opts.seconds  how long to drive, in GAME time
+ * @param opts.dt       the frame length; the schedule below is in seconds, so
+ *                      two runs at different dt cover the same four seconds and
+ *                      are directly comparable. That is not decoration: it is
+ *                      how `the shake runs on the game's clock` is measured.
+ * @param opts.every    seconds between kicks
+ */
+function driveRig(settings, { seconds = 4, dt = 1 / 60, every = 0.5, kick = 1.5 } = {}) {
   const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.15, 400);
   const rig = new CameraRig(cam);
   rig.shakeSeed = 12.5;                 // same phase in every run, so runs compare
@@ -100,16 +108,20 @@ function driveRig(settings, { frames = 240, every = 30, kick = 1.5 } = {}) {
   if (settings) applyFeelSettings(world, settings);
 
   const target = new THREE.Vector3(0, 0, 0);
-  const dirs = [], eyes = [];
+  const dirs = [], eyes = [], ts = [];
   const dir = new THREE.Vector3();
+  const frames = Math.round(seconds / dt);
+  let next = 0;
   for (let i = 0; i < frames; i++) {
-    if (i % every === 0) rig.addShake(kick);
-    target.z -= 3.2 / 60;               // a body walking away at 3.2 m/s
-    rig.update(1 / 60, target, {});
+    const t = i * dt;
+    if (t >= next - 1e-9) { rig.addShake(kick); next += every; }
+    target.z -= 3.2 * dt;               // a body walking away at 3.2 m/s
+    rig.update(dt, target, {});
     dirs.push(dir.set(0, 0, -1).applyQuaternion(cam.quaternion).clone());
     eyes.push(cam.position.clone());
+    ts.push(t);
   }
-  return { rig, dirs, eyes };
+  return { rig, dirs, eyes, ts };
 }
 
 /* ── a world clock with nothing in it but the clock ──────────────────── */
@@ -256,6 +268,54 @@ export async function run({ check, assert }) {
     assert(off.rig.shake === 0, 'addShake got through the gate');
     return `peak view deviation: ON ${aOn.toFixed(2)}° / ${peakShift(on).toFixed(3)} m, `
       + `OFF ${aOff.toFixed(4)}° / ${peakShift(off).toFixed(4)} m`;
+  });
+
+  check('controls: the shake runs on the game clock, not on the wall clock', () => {
+    /**
+     * WHAT THIS CAUGHT, and it was reported as a flaky test rather than as the
+     * bug it is. The shake's phase was `performance.now() * 0.001 + seed`, so:
+     *
+     *   · under a hitstop the world runs at 0.06× and the wall clock does not,
+     *     and the camera buzzed at full rate through the one moment the whole
+     *     effect exists for;
+     *   · a paused game's shake kept advancing behind the pause menu;
+     *   · and in any run where a frame does not take 1/60 of a second — which
+     *     is every headless run and every real frame that is not exactly 60 fps
+     *     — the FREQUENCY was wrong. Headless, the wall clock advanced by the
+     *     time the frame took to compute, so the 47 rad/s term moved 0.005 rad
+     *     a frame instead of 0.79: a frozen direction with a decaying
+     *     magnitude, and the assertion above measured wherever in the sine the
+     *     machine happened to be. It failed once at 0.238° against 1.17.
+     *
+     * So the claim is about FREQUENCY, which is the thing a wall clock gets
+     * wrong and a peak does not necessarily. Two runs over the same four
+     * seconds of game time at 60 and 120 fps have to shake the same number of
+     * times; on the old code the 120 fps run shakes about twice as fast,
+     * because it spends twice as many wall-clock milliseconds getting there.
+     */
+    const cycles = (dt) => {
+      const still = driveRig(null, { dt, kick: 0 });
+      const on = driveRig({ ...DEFAULT_SETTINGS, shake: true }, { dt });
+      let crossings = 0, prev = 0;
+      for (let i = 0; i < on.eyes.length; i++) {
+        const d = on.eyes[i].x - still.eyes[i].x;
+        if (Math.abs(d) < 1e-5) continue;
+        if (prev !== 0 && Math.sign(d) !== prev) crossings++;
+        prev = Math.sign(d);
+      }
+      return crossings / 2;              // a cycle is two crossings
+    };
+    const slow = cycles(1 / 60), fast = cycles(1 / 120);
+    /* 47.3 rad/s is 7.53 Hz, and the run is four seconds — but the shake decays
+     * at 5.5/s between kicks half a second apart, so the tail of each burst
+     * falls under the 1e-5 floor and the count lands a little short of 30. The
+     * bar is that it is a real oscillation at both rates and that the two agree,
+     * not that it hits a number nobody would re-derive. */
+    assert(slow > 12, `the shake completed ${slow} cycles in four seconds — it is not oscillating`);
+    assert(Math.abs(fast - slow) <= Math.max(2, slow * 0.15),
+      `the shake ran ${slow} cycles at 60 fps and ${fast} at 120 — its frequency is tied to the frame `
+      + 'rate, so it is reading a clock the game does not control');
+    return `${slow} cycles at 60 fps, ${fast} at 120, over the same four seconds of game time`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

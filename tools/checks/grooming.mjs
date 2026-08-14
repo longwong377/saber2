@@ -736,7 +736,15 @@ export function run({ check, assert, near }) {
      * OPTIONS — which is the one figure grooming does not change, so that check
      * cannot see the creator's library at all. It still passes untouched, and
      * the first assertion here is what keeps it meaningful: the ungroomed
-     * figure is still exactly 12 924 triangles in 66 meshes.
+     * figure is still exactly 12 796 triangles in 64 meshes.
+     *
+     * It was 12 924 in 66 until the belt's two hanging ends stopped being rigid
+     * geometry. They were 128 triangles in 2 meshes that drew nothing — the
+     * robe below the belt covered every vertex of them — and they are cloth
+     * now. See attachSash() in Cloth.js and tools/checks/sash.mjs. A figure
+     * getting CHEAPER is exactly as much of a reason to re-derive this number
+     * as one getting dearer; the point of pinning it is that it moves for a
+     * reason somebody wrote down.
      *
      * The bound on the reachable set is derived rather than ratcheted, and the
      * derivation is the one the capped check's own comment makes: "each one
@@ -756,8 +764,8 @@ export function run({ check, assert, near }) {
      *     only in a frame time.
      */
     const plain = cost(unit({}).rig.root);
-    assert(plain.tris === 12924 && plain.meshes === 66,
-      `buildJedi() with no sheet is ${plain.tris}/${plain.meshes}, not the 12924/66 every other check measures`);
+    assert(plain.tris === 12796 && plain.meshes === 64,
+      `buildJedi() with no sheet is ${plain.tris}/${plain.meshes}, not the 12796/64 every other check measures`);
     let worst = { tris: 0, meshes: 0, at: '' }, worstM = { meshes: 0, at: '' };
     for (const h of HAIR_STYLES) for (const b of BEARD_STYLES) {
       for (const extra of [{}, { age: 1, muscle: 1 }]) {

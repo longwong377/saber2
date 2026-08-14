@@ -774,6 +774,9 @@ export class Enemy {
         this.skirt = attachSkirt(this.world.scene, this.rig, {
           scale: A.scale, rigid: built.robeSkirt,
           color: this.type === 'sparring' ? 0x2c3742 : 0x14151a,
+          // The belt's two ends take the BELT's material, not the recoloured
+          // robe's — the obi they are tied in is still the built one.
+          sashMaterial: built.palette.trim,
         });
         this.cloak.outer = this.skirt;
       }
