@@ -426,10 +426,22 @@ export async function run({ check, assert }) {
 
   check('menu: the way into the constellation is a button, not a strip', () => {
     // Pure cascade, so it is read off the cascade. `.primary/.secondary/.ghost`
-    // are `display:block; width:100%` because they are laid out in a column; for
-    // a position:fixed box the containing block is the VIEWPORT, so this button
-    // was 100vw wide, hanging 22px off the right edge, a live click target
-    // across the whole screen at z-index 41 over the menu's 40.
+    // are `display:block; width:100%` because they are laid out in a column, so
+    // a bare .ghost fills whatever line it is on: this button was once 100vw
+    // wide, hanging 22px off the right edge, a live click target across the
+    // whole screen at z-index 41 over the menu's 40. `width:auto` is what fixed
+    // that and is the whole of what this check is still for.
+    //
+    // IT NO LONGER ASSERTS `position:fixed`, and the reason is the defect that
+    // followed. Fixed at left:22 bottom:20, the button was positioned against
+    // the VIEWPORT while the #gpu-line it landed on lives inside the centred
+    // `.menu-wrap` — measured overlap in Chromium 1366x768 2482 px², 1280x720
+    // 3084 px², 1152x648 3300 px², with the button painting no background, so
+    // the two strings interleaved and neither was readable. It is now an
+    // in-flow item of the footer's flex row, which is checked properly (as a
+    // structural fact about the two boxes' shared parent) in
+    // tools/checks/front-screen.mjs. Asserting `fixed` here would hold the
+    // collision in place.
     const css = CSS;
     const html = INDEX_HTML;
     const btn = html.match(/<button id="btn-commune"[^>]*class="([^"]*)"/);
@@ -439,13 +451,12 @@ export async function run({ check, assert }) {
     assert(full && /width:\s*100%/.test(full[1]), 'the button base rule changed shape; re-read this check');
     const rule = css.match(/\.commune-entry\{([^}]*)\}/);
     assert(rule, '.commune-entry has no rule at all');
-    assert(/position:\s*fixed/.test(rule[1]), '.commune-entry is no longer fixed; re-read this check');
     assert(classes.some(c => ['primary', 'secondary', 'ghost'].includes(c)) === true,
       'the button no longer takes the full-width base rule; this check can retire');
     assert(/width:\s*auto/.test(rule[1]),
-      'a fixed-position .ghost with no width of its own is 100vw wide — it spans the screen');
+      'a .ghost with no width of its own fills its line — and once filled the whole viewport');
     assert(/display:\s*inline-block/.test(rule[1]), 'it is still a block, so it fills its line');
-    return 'fixed + width:auto + inline-block: the box is its label, not the viewport';
+    return 'width:auto + inline-block: the box is its label, not the line it sits on';
   });
 
   check('menu: the death card does not keep the crown\'s congratulation', () => {

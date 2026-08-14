@@ -28,6 +28,11 @@ import { DIFFICULTY } from '../game/Combat.js';
 // from the system rather than typed, because both of them had been left behind
 // by the round that changed heldScale from 0.35 to 0.18.
 import { FOCUS } from '../game/Focus.js';
+// How many lessons there are, counted rather than typed: the training panel
+// offers to start them and the number in that sentence is the length of the
+// list it starts. MODES.training's own blurb says "the eleven lessons" and it
+// is the same eleven.
+import { LESSONS } from '../game/Dojo.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
 import { audio } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
@@ -90,6 +95,17 @@ export const DEATH_TITLE = 'You are one with the Force';
 
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
+
+/**
+ * How much of a pinned column the "there is more below" fade covers, in px.
+ *
+ * The fade itself is a mask in styles.css (`.col.narrow.pinned.more`); this is
+ * the same number, quoted here because `_revealMode` has to keep the card it
+ * reveals CLEAR of it, and a reveal that lands under the fade is a reveal that
+ * did not happen. tools/checks/front-screen.mjs reads the stylesheet and asserts
+ * the two agree, so the copy cannot drift.
+ */
+export const SCROLL_FADE = 26;
 
 /**
  * WHAT A PLAYER CAN CHOOSE TO BE.
@@ -1252,6 +1268,10 @@ export class Menu {
     this._buildKeyLegends();
     // after _buildSaber, so the forge's own Length slider gets the ceiling too
     this._applyBladeCeiling?.(this.s.unlimitedBlade);
+    // How much of a column is below the fold is a function of the window, so it
+    // is re-answered when the window changes. Registered once, on the object
+    // that lives as long as the page.
+    globalThis.addEventListener?.('resize', () => this._onPanelShown());
     this.el.build.textContent = 'r1.0';
   }
 
@@ -1262,7 +1282,12 @@ export class Menu {
     if (message) this.el.bootMsg.textContent = message;
   }
   hideBoot() { this.el.boot.classList.add('hidden'); }
-  showMenu() { this.el.menu.classList.remove('hidden'); }
+  showMenu() {
+    this.el.menu.classList.remove('hidden');
+    // The panel had no layout while the screen was hidden, so this is the first
+    // frame on which "how much is below the fold" has an answer.
+    this._onPanelShown();
+  }
   hideMenu() { this.el.menu.classList.add('hidden'); }
 
   setGpuLine(text) { this.el.gpu.textContent = text; }
@@ -1279,9 +1304,93 @@ export class Menu {
         panels.forEach(p => p.classList.toggle('active', p.dataset.panel === t.dataset.tab));
         if (t.dataset.tab === 'saber') this._startPreview();
         else this._stopPreview();
+        // A panel that was display:none has no scroll geometry at all, so the
+        // fade and the reveal are computed the moment it becomes the one on
+        // screen and not before.
+        this._onPanelShown();
       });
       t.addEventListener('mouseenter', () => audio.ui('hover'));
     }
+  }
+
+  /**
+   * "THERE IS MORE BELOW", SAID BY THE COLUMN THAT HAS MORE BELOW.
+   *
+   * The Deploy panel's narrow column carries ten cards and two headings — 788 px
+   * of them once the button is out of the flow — into a band measured at 466 px
+   * at 1920x1080 and 368 px at 1280x720. The cap is `.menu-wrap`'s
+   * `height:min(760px,92vh)`, so a bigger monitor does not buy a single pixel:
+   * 2560x1440 measures identically to 1920x1080. Scrolling is therefore not a
+   * failure of this layout, it IS the layout — but arriving at scrollTop 0 with
+   * a list that looks finished is a failure, and that is what shipped: asked in
+   * Chromium what was actually on top of each mode card, three of the six read
+   * 0.000 at every viewport and the shipped default read 0.369 at 1366x768 and
+   * 0.000 at 1280x720, under four difficulty cards that all read 1.000.
+   *
+   * Two things say otherwise now, and neither is a redesign of the panel:
+   *
+   *   THE FADE. `.more`/`.less` on the column fade SCROLL_FADE pixels of the
+   *   scroller at whichever end still has content behind it, and lift at that
+   *   end. Recomputed here rather than in CSS because "is there more" is a
+   *   measurement: it changes with the viewport, with the content, and with
+   *   every scroll.
+   *
+   *   THE REVEAL. `_revealMode` scrolls the least it can to put the selected
+   *   mode fully on screen and clear of the fade. Measured after: the shipped
+   *   default is 1.000 visible and fully hit-testable at 1920x1080, 1600x900,
+   *   1440x900, 1366x768, 1280x720, 1152x648 and 2560x1440, at scroll offsets
+   *   of 6, 6, 6, 59, 103, 170 and 6 px. The movement is itself the second
+   *   signal — a column that shifts under the eye is one the player knows can.
+   *
+   * Both read the live DOM, which tools/checks/_page.mjs cannot compute; the
+   * checks in tools/checks/front-screen.mjs therefore hand these two methods
+   * the geometry Chromium measured and assert on the arithmetic they do with
+   * it, which is the part that can be wrong.
+   */
+  _syncScrollHints() {
+    for (const box of document.querySelectorAll('.col-scroll')) {
+      const col = box.parentElement;
+      if (!col) continue;
+      if (!box._hintBound) {
+        box._hintBound = true;
+        box.addEventListener('scroll', () => this._syncScrollHints(), { passive: true });
+      }
+      // 2 px of slack at each end: a fractional scrollHeight would otherwise
+      // leave the fade painted on a list the player has already run out of.
+      col.classList.toggle('more', box.scrollHeight - box.clientHeight - box.scrollTop > 2);
+      col.classList.toggle('less', box.scrollTop > 2);
+    }
+  }
+
+  /**
+   * Put the chosen mode on screen without moving anything that already is.
+   *
+   * Not `scrollIntoView({block:'nearest'})`, which aligns the card's bottom
+   * edge with the container's bottom edge — and the bottom SCROLL_FADE pixels
+   * of that container are the fade, so the card it just revealed arrived with
+   * its last line half faded out. Measured at 1366x768 on the shipped default:
+   * the second line of Path of the Blade's blurb. So the target band is the
+   * client box minus the fade at whichever end the card is off, and the scroll
+   * is the smallest one that satisfies it.
+   */
+  _revealMode() {
+    const card = this._modeCards?.get(this.s.mode);
+    const box = card?.closest?.('.col-scroll');
+    if (!card || !box) return;
+    const cr = card.getBoundingClientRect?.(), br = box.getBoundingClientRect?.();
+    // A DOM with no layout engine (tools/checks/_page.mjs) answers 0 to every
+    // rect; there is nothing to reveal there and nothing to get wrong.
+    if (!cr || !br || !(br.height > 0)) return;
+    const below = cr.bottom - (br.bottom - SCROLL_FADE);
+    const above = (br.top + SCROLL_FADE) - cr.top;
+    if (below > 0) box.scrollTop += below;
+    else if (above > 0) box.scrollTop -= above;
+  }
+
+  /** Whatever the panel on screen needs measured once it has a box. */
+  _onPanelShown() {
+    this._revealMode();
+    this._syncScrollHints();
   }
 
   /* ── level cards ─────────────────────────────────────────────────── */
@@ -1589,6 +1698,33 @@ export class Menu {
     return el;
   }
 
+  /**
+   * HOW MANY KINDS OF THING A THEATRE FIELDS.
+   *
+   * `pool` is a WEIGHTED BAG, not a roster — src/game/Waves.js:910 says so in
+   * its own words ("Uniform pick from the level's pool, which is already
+   * weighted by repeats") and picks from it uniformly by index, so a repeated
+   * key is a weight and not a second kind of enemy. The card printed
+   * `pool.length` and called it "unit types", which made twelve of the thirteen
+   * cards overstate themselves: measured over LEVEL_ORDER, mustafar 8→6,
+   * temple 8→4, warship 9→5, colosseum 9→7, wood 8→6, kamino 8→6, meadow 7→6,
+   * drifts 8→7, arena 9→8, intake 7→5, foundry 8→6, deeps 8→6, with only alpine
+   * honest and only because its pool happens to have no repeats. 25 phantom
+   * types across the front screen, and the worst card doubled its own roster.
+   *
+   * It matters because that badge is the one hard number on the largest control
+   * of the first screen, so it is what a player compares theatres by — and the
+   * ranking it gave was wrong, not merely inflated: warship, colosseum and arena
+   * all read "9" against true counts of 5, 7 and 8.
+   *
+   * The unique count is the whole roster a level can field, not an
+   * approximation of it: `WaveDirector._setPiece` filters its ladder through
+   * `this.pool.includes(...)`, `_compose` and `_sandboxType` draw from the pool
+   * by index, and champion/elite promotion produces `type|mod` variants of a
+   * body already in the bag rather than a new one.
+   */
+  _poolTypes(L) { return new Set(L.pool).size; }
+
   _buildLevels() {
     this.el.levels.innerHTML = '';
     for (const key of LEVEL_ORDER) {
@@ -1597,7 +1733,7 @@ export class Menu {
       card.className = 'card' + (this.s.level === key ? ' sel' : '');
       card.innerHTML = `
         <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
-        <div class="tagpill">${L.pool.length} unit types</div>
+        <div class="tagpill">${this._poolTypes(L)} unit types</div>
         <div class="meta"><b>${L.name}</b><span>${L.blurb}</span></div>`;
       this._activate(card, () => {
         // Ignored in the modes that choose their own place — see _syncTheatre.
@@ -1829,8 +1965,33 @@ export class Menu {
      * update it and the preset spread happens exactly once.
      */
     this._sheetCardRow('face-list', 'h-face', 'preset', FACE_PRESETS);
-    this._sheetCardRow('hairstyle-list', 'h-hairstyle', 'hair', HAIR_STYLES);
-    this._sheetCardRow('beard-list', 'h-beard', 'beard', BEARD_STYLES);
+    /**
+     * HAIR AND BEARD BELONG TO THE SPECIES, exactly as the skin rack does.
+     *
+     * These two rows were handed HAIR_STYLES and BEARD_STYLES unconditionally,
+     * and src/game/Bodies.js ends the whole hair-and-beard block with a single
+     * `if (!sp.hair) return;` — so on the five species that declare
+     * `hair: false` (Zabrak, Twi'lek, Togruta, Nautolan, Kel Dor) the creator
+     * offered fifteen named cards, each with its own descriptive subtitle, and
+     * every one of them built the same figure. Measured by hashing the built
+     * body once per (species × card): human 8/8 hairstyles and 7/7 beards
+     * distinct, smallfolk the same, and all five hairless species 1/8 and 1/7.
+     * 75 of 105 (species, card) pairs were dead controls.
+     *
+     * The creator already knew how to do this — six lines above, the skin rack
+     * is re-homed per species and the row correctly steps 10 swatches → 8 — so
+     * this is the same rule applied to the row that needed it more. The
+     * condition is the SPECIES RECORD'S OWN `hair` field, read through
+     * `speciesOf`, which is the identical field the builder gates on; a copy of
+     * the list of hairless species would be a fourth place for it to drift.
+     * `_sheetCardRow` already hides its own heading when it is handed nothing,
+     * so a Twi'lek gets no Hair title over an empty box, and the species picker
+     * at :1816 already rebuilds these rows through `_buildForge`, so choosing
+     * Human again brings all fifteen back.
+     */
+    const sp = speciesOf(this.s.species);
+    this._sheetCardRow('hairstyle-list', 'h-hairstyle', 'hair', sp.hair ? HAIR_STYLES : []);
+    this._sheetCardRow('beard-list', 'h-beard', 'beard', sp.hair ? BEARD_STYLES : []);
     this._sheetSlider('sheet-muscle', 'muscle',
       (v) => (v < 0.34 ? 'wiry' : v > 0.66 ? 'powerful' : 'even'));
     // Years, shown as years. A slider labelled 0.62 is a number; a slider
@@ -2346,7 +2507,8 @@ export class Menu {
         <p class="hint" style="margin-bottom:14px">Practise against exactly one kind of droid.</p>
         <div id="opt-sandbox-type" class="difflist"></div>
       </div>
-      <div class="col narrow">
+      <div class="col narrow pinned">
+        <div class="col-scroll">
         <h3>Blade</h3>
         <label class="check"><input type="checkbox" id="opt-unlimited-blade"> Unlimited blade length</label>
         <label class="check"><input type="checkbox" id="opt-unlimited-focus"> Unlimited Focus</label>
@@ -2365,9 +2527,17 @@ export class Menu {
           two above it, it is <b>live</b>: the blade you are holding grows or shortens as you drag
           it. It used to say it landed on your next Ignite, and it did not land at all — nothing
           read it after the blade was built.</p>
-        <p class="hint" style="margin-top:auto">Deploys the theatre picked under <b>Deploy</b>,
-          in Sandbox mode. Nothing arrives until you ask for it.</p>
-        <button id="btn-sandbox" class="primary">Enter the sandbox</button>
+        <h3 style="margin-top:22px">The lessons</h3>
+        <p class="hint">${LESSONS.length} of them, in order, in whatever theatre you have picked
+          under <b>Deploy</b>: meeting a bolt, driving into one, sending it home, the cut, the
+          parry, the chamber, the blade lock. A coach panel calls each one and counts it off, and
+          nothing in the room can kill you.</p>
+        <p class="hint" style="margin-top:auto">The sandbox is the same room without the coach:
+          the theatre picked under <b>Deploy</b>, the three controls on this page, and nothing
+          arrives until you ask for it.</p>
+        </div>
+        <button id="btn-lessons" class="primary">Begin the lessons</button>
+        <button id="btn-sandbox" class="secondary">Enter the sandbox</button>
       </div>`;
     wrap.insertBefore(panel, document.querySelector('.menu-foot'));
 
@@ -2391,6 +2561,34 @@ export class Menu {
 
     this._buildSandboxUnits();
     this._buildUnlimitedBlade();
+
+    /**
+     * THE TAB CALLED TRAINING NOW STARTS TRAINING.
+     *
+     * It had exactly one button and that button deployed SANDBOX. Enumerated in
+     * Chromium: the panel's headings were ['The room', 'Opponent', 'Blade'] and
+     * its buttons were [{id:'btn-sandbox', text:'Enter the sandbox'}] — one, and
+     * not a Training one. Clicking it gave settings.mode 'sandbox', a
+     * WaveDirector, a hidden coach panel still holding index.html's placeholder
+     * '—', and a HUD counting WAVES; `DojoDirector`, the class that owns the
+     * lessons, was never constructed. `grep -n 'selectMode(' src/ui/Menu.js`
+     * returned three lines — the mode card, this button, and the definition —
+     * so the ONLY writer of mode 'training' in the whole product was a card on
+     * the Deploy panel that sits below the fold of a scrollable column.
+     *
+     * So the tab gets the button its name promises, and it is the primary one:
+     * a player being shot to pieces opens this tab looking for the tutorial,
+     * which is exactly why _buildTraining puts the tab second. The sandbox
+     * keeps its own button and its own honest label, one step down the
+     * hierarchy. Both are four lines and both go through `selectMode`, so the
+     * Deploy panel's Mode list is still telling the truth afterwards.
+     */
+    const lessons = document.getElementById('btn-lessons');
+    if (lessons) lessons.addEventListener('click', () => {
+      audio.ui('click');
+      this.selectMode('training');
+      this.hooks.onDeploy?.(this.s);
+    });
 
     const go = document.getElementById('btn-sandbox');
     if (go) go.addEventListener('click', () => {

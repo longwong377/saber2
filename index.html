@@ -62,11 +62,28 @@
         <p class="hint hidden" id="level-note"></p>
         <div id="level-list" class="cards"></div>
       </div>
-      <div class="col narrow">
-        <h3>Trial</h3>
-        <div id="diff-list" class="difflist"></div>
-        <h3 style="margin-top:26px">Mode</h3>
-        <div id="mode-list" class="difflist"></div>
+      <!-- THE LISTS SCROLL; THE BUTTON DOES NOT.
+           Ignite used to be the last child of the scrolling column, held down
+           by `position:sticky`, and its third box-shadow is a 22 px dark
+           gradient that fades whatever is above it — so the Mode list appeared
+           to end where the button began. Measured in Chromium by asking
+           document.elementFromPoint what is on top of a 5x9 grid over every
+           mode card, at the default scroll position: at 1920x1080 Trial of
+           Waves and Path of the Blade read 1.00, Duel 0.11, and The Descent,
+           Sandbox and Training 0.00; at 1366x768 the shipped default (Path of
+           the Blade) was 0.33 and everything below it 0.00; at 1280x720 only
+           Trial of Waves was visible at all, at 0.78. The four
+           difficulty cards directly above read 1.00 at every size, so the list
+           read as complete when it was not. `.menu-wrap` is capped at 760 px
+           tall, so 2560x1440 measured identically to 1920x1080 — no monitor
+           fixed it. See `.col.narrow.pinned` in styles.css. -->
+      <div class="col narrow pinned">
+        <div class="col-scroll">
+          <h3>Trial</h3>
+          <div id="diff-list" class="difflist"></div>
+          <h3 style="margin-top:26px">Mode</h3>
+          <div id="mode-list" class="difflist"></div>
+        </div>
         <button id="btn-deploy" class="primary">Ignite</button>
       </div>
     </section>
@@ -254,7 +271,20 @@
       </div>
     </section>
 
+    <!-- The way into the star map lives HERE, in the footer's own flex row.
+         It used to be a `position:fixed` box at left:22 bottom:20, floating over
+         the whole page while the GPU string it landed on sits inside the
+         centred `.menu-wrap` — two boxes positioned against different things,
+         which is a collision waiting for a viewport. Measured in Chromium
+         against the real page, overlapping area of the two client rects:
+         1920x1080 0 px², 1600x900 0, 1440x900 0, 1366x768 2482, 1280x720 3084,
+         1152x648 3300. The button is `.ghost`, background rgba(0,0,0,0), so
+         nothing was painted over anything — the two strings interleaved and
+         both were unreadable. In a flex row they cannot overlap at any size.
+         Only ever shown on this screen anyway: main.js gates it on
+         `screens.state === 'menu'`. -->
     <footer class="menu-foot">
+      <button id="btn-commune" class="ghost commune-entry hidden">Connect to the Force</button>
       <span id="gpu-line"></span>
       <span class="build">build <b id="build-id">—</b></span>
     </footer>
@@ -518,13 +548,12 @@
   </div>
 </div>
 
-<!-- The kneel, and the way in from the Temple. Both are read in main.js. -->
+<!-- The kneel. The way in from the Temple is the button in the menu footer. -->
 <div id="commune" class="hidden">
   <div class="commune-ring"><i id="commune-fill"></i></div>
   <span>Hold <b id="commune-key">Ctrl</b> to kneel and connect to the Force</span>
   <em id="commune-insight"></em>
 </div>
-<button id="btn-commune" class="ghost commune-entry hidden">Connect to the Force</button>
 
 <script>
   // ES modules are blocked on file:// — without this the page would just sit

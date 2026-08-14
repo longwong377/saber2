@@ -353,6 +353,26 @@ function recorder() {
 
 export async function run({ check, assert }) {
 
+  /**
+   * THE REAL ROSTER, and why it is imported here rather than at the top.
+   *
+   * Dynamically, inside a function body, because src/game reaches Engine.js and
+   * Engine.js rewrites three's ShaderChunks behind once-only flags — a static
+   * edge from a checks file patches the copy of three that came out of
+   * node_modules instead of the one out of vendor/ and burns the flag. See the
+   * note at the head of tools/verify.mjs.
+   *
+   * Levels.js is imported for its SIDE EFFECT: it is where `bodyguard`,
+   * `charger` and `stalker` are registered into ARCHETYPES, and those three are
+   * precisely the ones the classifiers used to miss. A sweep of ARCHETYPES that
+   * has not imported Levels.js is a sweep of eleven, which is the same eleven
+   * the drifted key lists knew about — it would agree with the bug.
+   */
+  const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+  await import('../../src/game/Levels.js');
+  const { TOUGHNESS } = await import('../../src/game/Combat.js');
+  const { PLATE } = await import('../../src/engine/Presence.js');
+
   /* ────────────────────────────────────────────────────────────────────
    * THE ONE THAT MATTERS
    * ──────────────────────────────────────────────────────────────────── */
@@ -779,15 +799,20 @@ export async function run({ check, assert }) {
       if (rigged) e.animator = { onFootstep: (pt) => rec.step(pt, 'sand', false) };
       return e;
     };
+    // The archetype's OWN record under each body, not a hand-written stand-in:
+    // `bodyOf` reads `custom`, `toughness` and `saber` off it to decide motor or
+    // lungs, and a partial record is a body the classifier cannot recognise.
+    // The masses are pinned here because the assertions below name them.
+    const A = (key, over) => ({ ...ARCHETYPES[key], ...over });
     const world = {
       settings: { enemyBody: true }, terrain: null,
       enemies: [
-        mk('b1', { mass: 52, scale: 1.02, hp: 28 }, 3, true),
-        mk('b2', { mass: 130, scale: 1.18, hp: 96 }, 4, true),
-        mk('acolyte', { mass: 82, scale: 1.04, hp: 130 }, 5, true),
-        mk('droideka', { mass: 210, scale: 1.5, hp: 170 }, 6, false),
-        mk('walker', { mass: 900, scale: 2.4, hp: 620, big: true }, 7, false),
-        mk('beast', { mass: 1400, scale: 2.9, hp: 900, boss: true }, 9, false),
+        mk('b1', A('b1', { mass: 52, scale: 1.02, hp: 28 }), 3, true),
+        mk('b2', A('b2', { mass: 130, scale: 1.18, hp: 96 }), 4, true),
+        mk('acolyte', A('acolyte', { mass: 82, scale: 1.04, hp: 130 }), 5, true),
+        mk('droideka', A('droideka', { mass: 210, scale: 1.5, hp: 170 }), 6, false),
+        mk('walker', A('walker', { mass: 900, scale: 2.4, hp: 620, big: true }), 7, false),
+        mk('beast', A('beast', { mass: 1400, scale: 2.9, hp: 900, boss: true }), 9, false),
       ],
     };
     for (let f = 0; f < 240; f++) {
@@ -915,17 +940,68 @@ export async function run({ check, assert }) {
     return 'wrapped once, inner hook always called, weight layer gated';
   });
 
-  check('presence: what a body IS, is read off the archetype', () => {
-    const of = (type, A) => bodyOf({ type, A });
-    assert(of('b1', { mass: 52 }).droid && !of('b1', {}).beast, 'a B1 is not a droid');
-    assert(!of('acolyte', { mass: 82 }).droid, 'an acolyte is a droid');
-    assert(of('beast', { mass: 1400 }).beast, 'an acklay is not a beast');
-    assert(of('trooper', {}).trooper, 'a trooper is not a trooper');
-    assert(of('walker', {}).legs === 4, 'the walker walks on two legs');
-    assert(of('remote', { float: 1.55 }).grounded === false, 'a hovering remote has a gait');
-    assert(of('b1', {}).mass === 80, 'an archetype with no mass did not fall back to a person');
-    assert(of(undefined, undefined).mass === 80, 'bodyOf threw on nothing at all');
-    return 'droid/organic/beast/trooper, legs, float and the 80 kg fallback';
+  /**
+   * THE CLASSIFICATION IS A DERIVATION, NOT A LIST OF NAMES.
+   *
+   * This check used to hand `bodyOf` eight synthetic records keyed by name —
+   * `of('b1', { mass: 52 })` — and it passed while the shipping game got three
+   * of fourteen bodies wrong, because it only ever asked about the eleven the
+   * hard-coded regexes already knew. `DROIDS` was
+   * /^(b1|b2|droideka|walker|remote|dummy)$/ and `BEASTS` was /^(beast)$/;
+   * `bodyguard`, `charger` and `stalker` are registered in src/game/Levels.js,
+   * after those regexes were written, and all three came out as plain
+   * humanoids: the 240 kg IG droid breathed instead of running its servos, and
+   * the Reek and the Nexu breathed at a man's pitch (1.0, not the beast's 0.42)
+   * and took two footfalls a stride instead of four.
+   *
+   * So: sweep the WHOLE table and assert against what each record DECLARES
+   * rather than against a copy of the answer. Every one of these expectations
+   * is computed from `A` — `custom`, `toughness`, `saber` — which is the same
+   * derivation the shipped function performs, restated from the data's side.
+   * A fourteenth archetype added tomorrow is covered without editing this file;
+   * an archetype that declares nothing recognisable fails the last clause.
+   */
+  check('presence: what a body IS, is derived from the archetype record', () => {
+    const keys = Object.keys(ARCHETYPES);
+    assert(keys.length >= 14, `only ${keys.length} archetypes — Levels.js did not register its three`);
+    for (const k of ['bodyguard', 'charger', 'stalker']) {
+      assert(ARCHETYPES[k], `${k} is not in ARCHETYPES; this check has stopped covering the defect`);
+    }
+    const rows = [];
+    for (const key of keys) {
+      const A = ARCHETYPES[key];
+      const b = bodyOf({ type: key, A });
+      const beast = A.custom === 'beast';
+      const walker = A.custom === 'walker';
+      const machine = beast ? false
+        : walker || A.custom === 'droideka' || A.custom === 'remote' || A.toughness >= PLATE;
+      assert(b.beast === beast, `${key}: beast=${b.beast} but custom=${A.custom}`);
+      assert(b.walker === walker, `${key}: walker=${b.walker} but custom=${A.custom}`);
+      assert(b.droid === machine,
+        `${key}: droid=${b.droid} but custom=${A.custom} toughness=${A.toughness}`);
+      assert(b.trooper === (!machine && !beast && !A.saber),
+        `${key}: trooper=${b.trooper} with saber=${!!A.saber}`);
+      assert(b.legs === (walker || beast ? 4 : 2), `${key} walks on ${b.legs} legs`);
+      assert(b.grounded === !(A.float > 0 || A.custom === 'remote'), `${key} gait/float disagree`);
+      assert(b.mass === A.mass && b.scale === A.scale, `${key} lost its own mass or scale`);
+      rows.push(`${key}:${b.beast ? 'beast' : b.walker ? 'walker' : b.droid ? 'droid' : b.trooper ? 'trooper' : 'duellist'}`);
+    }
+    // Nothing may fall through to "a person with a sabre" unless it IS one.
+    for (const key of keys) {
+      const b = bodyOf({ type: key, A: ARCHETYPES[key] });
+      if (!b.droid && !b.beast && !b.trooper) {
+        assert(ARCHETYPES[key].saber === true,
+          `${key} was classified as a duellist and does not carry a blade — it fell through`);
+      }
+    }
+    // The one number this engine-side module states instead of importing.
+    assert(PLATE === TOUGHNESS.droid, `PLATE ${PLATE} has drifted from TOUGHNESS.droid ${TOUGHNESS.droid}`);
+    assert(TOUGHNESS.plastoid < PLATE && PLATE <= TOUGHNESS.armour,
+      'the material table moved under the plate/tissue line');
+    // …and the defaults, which the sweep cannot reach.
+    assert(bodyOf({ type: 'b1', A: {} }).mass === 80, 'an archetype with no mass is not a person');
+    assert(bodyOf(undefined, undefined).mass === 80, 'bodyOf threw on nothing at all');
+    return `${keys.length} archetypes, each classified from its own record — ${rows.join(' ')}`;
   });
 
   /* ────────────────────────────────────────────────────────────────────
@@ -1036,8 +1112,11 @@ export async function run({ check, assert }) {
     const rec = recorder();
     const an = new Announcer(rec);
     const w = mkWorld(), p = mkPlayer(), hud = mkHud();
-    const mk = (type, x) => ({ type, A: { mass: 80, label: type }, position: V(x, 0, 0),
-      dead: false, hp: 10, maxHp: 10, target: null });
+    // The real archetype record under each body — see the note on the sweep
+    // above: what a thing sounds like is read off `custom`/`toughness`/`saber`,
+    // so a stand-in record with only a mass on it is nobody in particular.
+    const mk = (type, x) => ({ type, A: { ...ARCHETYPES[type], mass: 80, label: type },
+      position: V(x, 0, 0), dead: false, hp: 10, maxHp: 10, target: null });
     const squad = [mk('b1', 3), mk('b1', 4), mk('trooper', 5), mk('acolyte', 6), mk('beast', 8)];
     w.enemies.push(...squad);
     an.update(1 / 60, w, p, hud);
@@ -1151,6 +1230,59 @@ export async function run({ check, assert }) {
     // and an out-of-range index is somebody's voice, not a crash
     assert(voiceAt(-1).id && voiceAt(99).id && voiceAt(NaN).id, 'a bad voice index has no voice');
     return heard.join(' → ');
+  });
+
+  /**
+   * EVERY BODY IN THE ROSTER DIES IN ITS OWN THROAT.
+   *
+   * `Announcer._enemySpec` was a second copy of the classification in
+   * src/engine/Presence.js, written from the same eleven key names, and it had
+   * drifted the same way — `bodyguard`, `charger` and `stalker` all fell past
+   * every branch onto ENEMY_VOICES.sith. Measured on the real method over
+   * Object.keys(ARCHETYPES): the Reek and the Nexu died at f0 97 on the
+   * two-syllable HUMAN scream contour, where the one animal the list happened
+   * to name — the Acklay — dies at f0 58 on the beast's, and the IG Bodyguard
+   * Droid screamed with a man's throat instead of powering down at f0 300 with
+   * an inharmonic ring partial. Four of the colosseum's nine pool slots are the
+   * two animals, and the IG droid is SET_PIECE[0] from wave 10, so this was not
+   * a corner of the roster.
+   *
+   * There is one classifier now, so this asserts the MAPPING rather than a
+   * table of names: the voice each archetype gets must be the voice its own
+   * body class implies, and the two files must never disagree again.
+   */
+  check('announcer: every archetype speaks with the voice its body implies', () => {
+    const spec = (key) => Announcer.prototype._enemySpec.call(null, { type: key, A: ARCHETYPES[key] });
+    const nameOf = (s) => Object.keys(ENEMY_VOICES).find(k => ENEMY_VOICES[k] === s) || '?';
+    const rows = [];
+    for (const key of Object.keys(ARCHETYPES)) {
+      const b = bodyOf({ type: key, A: ARCHETYPES[key] });
+      const want = b.walker ? ENEMY_VOICES.walker : b.beast ? ENEMY_VOICES.beast
+        : b.droid ? ENEMY_VOICES.droid : b.trooper ? ENEMY_VOICES.trooper : ENEMY_VOICES.sith;
+      const got = spec(key);
+      assert(got === want,
+        `${key} is a ${nameOf(want)} body and speaks with the ${nameOf(got)} voice`);
+      rows.push(`${key}:${nameOf(got)}`);
+    }
+    // The consequences the player actually hears, stated as the numbers that
+    // were wrong: a machine powers down on the ring, an animal is an octave
+    // under a man, and neither is the acolyte.
+    for (const key of ['b1', 'b2', 'droideka', 'remote', 'dummy', 'bodyguard']) {
+      assert(spec(key).ring > 0, `${key} is a machine and has no ring partial`);
+      assert(spec(key) === ENEMY_VOICES.droid, `${key} does not use the droid voice`);
+    }
+    for (const key of ['beast', 'charger', 'stalker']) {
+      assert(spec(key) === ENEMY_VOICES.beast, `${key} is an animal and does not sound like one`);
+      assert(spec(key).f0 < ENEMY_VOICES.sith.f0 * 0.75,
+        `${key} dies at ${spec(key).f0} Hz, which is a man's pitch`);
+    }
+    // And an archetype nobody has named anywhere is still classified: this is
+    // the property the key lists could not have.
+    const invented = { type: 'nobody-has-heard-of-this',
+      A: { mass: 900, scale: 2, toughness: TOUGHNESS.flesh, custom: 'beast' } };
+    assert(Announcer.prototype._enemySpec.call(null, invented) === ENEMY_VOICES.beast,
+      'a brand-new beast archetype does not get the beast voice');
+    return rows.join(' ');
   });
 
   /* ────────────────────────────────────────────────────────────────────

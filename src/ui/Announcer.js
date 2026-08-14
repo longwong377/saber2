@@ -33,6 +33,7 @@
 
 import { audio as defaultAudio } from '../engine/Audio.js';
 import { ENEMY_VOICES, voiceAt } from '../engine/Voice.js';
+import { bodyOf } from '../engine/Presence.js';
 import { clamp } from '../engine/MathUtil.js';
 
 /** Seconds between quips (kill, streak, boss, low health) whatever happens. */
@@ -358,6 +359,12 @@ export class Announcer {
      * already seen you and is close enough to be worth overhearing, and it goes
      * through the same shared budget as everything else the room says — so it
      * can never speak over a death or an alarm.
+     *
+     * The three names below are NOT the drifted key list that `_enemySpec` used
+     * to carry — this one is deliberately narrower than "every droid". A
+     * training remote and an inert dummy are dojo furniture with nobody to talk
+     * to, a walker is a vehicle, and an IG general muttering B1 banter would be
+     * a worse boss, not a better one. Battle droids chatter; the rest do not.
      */
     this.chatterT -= dt;
     if (this.chatterT <= 0 && this.enemyT <= 0 && ear) {
@@ -390,12 +397,43 @@ export class Announcer {
     }
   }
 
+  /**
+   * WHAT A BODY SOUNDS LIKE WHEN IT IS HURT — derived, not listed.
+   *
+   * This was five branches over hard-coded archetype KEYS:
+   *
+   *     if (/^(b1|b2|droideka|remote|dummy)$/.test(type)) return ENEMY_VOICES.droid;
+   *     if (type === 'walker') return ENEMY_VOICES.walker;
+   *     if (type === 'beast') return ENEMY_VOICES.beast;
+   *     if (/^(trooper|sniper)$/.test(type)) return ENEMY_VOICES.trooper;
+   *     return ENEMY_VOICES.sith;
+   *
+   * — eleven names for a roster of fourteen. `bodyguard`, `charger` and
+   * `stalker` are registered in src/game/Levels.js rather than in Enemy.js,
+   * after this list was written, so all three fell past every branch onto the
+   * Sith acolyte. Measured on the real method over `Object.keys(ARCHETYPES)`:
+   * the Reek and the Nexu died at f0 97 on the two-syllable HUMAN scream, where
+   * the Acklay — the one animal the list happened to name — dies at f0 58 on
+   * the beast's; and the 1050 hp IG Bodyguard Droid, a guaranteed set-piece from
+   * wave 10, screamed with a man's throat where every other droid powers down at
+   * f0 300 with an inharmonic ring partial on the three-syllable 'die' contour.
+   * The same three were wrong in their alarm and panic calls, which come through
+   * here too, and charger + stalker are four of the colosseum's nine pool slots.
+   *
+   * The list is gone. `bodyOf` (src/engine/Presence.js) is the roster's one body
+   * classifier — it reads the archetype record the enemy is carrying rather than
+   * a copy of its name — and this maps its answer onto a voice. Presence.js was
+   * already asking the identical question one layer down and getting the
+   * identical three wrong; now there is one classifier and two readers, so the
+   * next archetype somebody registers is voiced the day it is added instead of
+   * the day someone remembers this function exists.
+   */
   _enemySpec(enemy) {
-    const type = String(enemy?.type || '');
-    if (/^(b1|b2|droideka|remote|dummy)$/.test(type)) return ENEMY_VOICES.droid;
-    if (type === 'walker') return ENEMY_VOICES.walker;
-    if (type === 'beast') return ENEMY_VOICES.beast;
-    if (/^(trooper|sniper)$/.test(type)) return ENEMY_VOICES.trooper;
+    const body = bodyOf(enemy);
+    if (body.walker) return ENEMY_VOICES.walker;
+    if (body.beast) return ENEMY_VOICES.beast;
+    if (body.droid) return ENEMY_VOICES.droid;
+    if (body.trooper) return ENEMY_VOICES.trooper;
     return ENEMY_VOICES.sith;
   }
 

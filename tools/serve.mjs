@@ -21,6 +21,18 @@
  *   `Range: bytes=0-1` returned `HTTP/1.1 200`, `application/octet-stream`, no
  *   Accept-Ranges, no Content-Range, and 29,400,953 bytes of body.
  *
+ *   THE VALIDATOR. `Cache-Control: no-cache` went out on everything, with no
+ *   ETag and no Last-Modified anywhere in the file — and `no-cache` without a
+ *   validator is strictly worse than sending no Cache-Control at all, because
+ *   it forbids the heuristic freshness a browser would otherwise give a static
+ *   file and then offers nothing to revalidate with. Measured in Chromium
+ *   against this server: first load 73 responses, 200x73, 304x0, 7,132,433
+ *   bytes; F5 in the same context, 73 responses, 200x73, 304x0, 7,132,433
+ *   bytes — byte for byte identical, 0 of 72 resources served from cache. The
+ *   browser was never given anything it could ask about. Of the three servers
+ *   index.html suggests when the page is opened from file://, the other two
+ *   both answer conditional requests; this one now does too.
+ *
  * The handler is exported so tools/checks/music.mjs can drive it directly on an
  * ephemeral port rather than assert on the shape of this file.
  */
@@ -58,6 +70,20 @@ export function parseRange(header, size) {
   return { start, end };
 }
 
+/**
+ * What this exact file, right now, is — `"<mtime-ms>-<size>"`, in hex.
+ *
+ * Both halves come off the `statSync` the handler already does, so it costs
+ * nothing: a rebuilt file changes its mtime, an edited one almost always
+ * changes its size too, and either moves the tag. Weak (`W/`) because the two
+ * numbers say the file is the same file, not that it is byte-identical — which
+ * is exactly the guarantee a static dev server can make, and enough for the
+ * only thing anyone does with it here, which is skip a body it already holds.
+ */
+export function etagOf(stat) {
+  return `W/"${Math.round(stat.mtimeMs).toString(16)}-${stat.size.toString(16)}"`;
+}
+
 export function handler(req, res) {
   let p = decodeURIComponent((req.url || '/').split('?')[0]);
   if (p === '/') p = '/index.html';
@@ -67,14 +93,53 @@ export function handler(req, res) {
     res.end('not found');
     return;
   }
-  const size = statSync(file).size;
+  const stat = statSync(file);
+  const size = stat.size;
+  const etag = etagOf(stat);
   const head = {
     'Content-Type': MIME[extname(file)] || 'application/octet-stream',
+    // `no-cache` means REVALIDATE, not "do not store" — so it needs something
+    // to revalidate WITH, and for four years it had neither of the two things
+    // that can play that part. Both go out now, and the 304 below is what makes
+    // them mean anything.
     'Cache-Control': 'no-cache',
+    'ETag': etag,
+    'Last-Modified': new Date(stat.mtimeMs).toUTCString(),
     // Advertised on everything, because a client cannot ask for a range it has
     // not been told it may ask for.
     'Accept-Ranges': 'bytes',
   };
+
+  /*
+   * THE CONDITIONAL, and it is checked before the Range is.
+   *
+   * RFC 9110 §13.2.2: If-None-Match takes precedence over If-Modified-Since,
+   * and a range request whose precondition fails is answered with the 304 and
+   * not with a 206 of a body the client already has. `If-None-Match: *` matches
+   * anything that exists, and a client may send a LIST of tags — so this
+   * compares against every one of them rather than string-equalling the header.
+   * A weak comparison is the right one here (both sides are W/-tagged and the
+   * spec requires the weak comparator for If-None-Match anyway).
+   */
+  const inm = req.headers?.['if-none-match'];
+  const ims = req.headers?.['if-modified-since'];
+  const weak = (t) => String(t).trim().replace(/^W\//, '');
+  const matched = inm
+    ? (inm.trim() === '*' || inm.split(',').some(t => weak(t) === weak(etag)))
+    // Second-resolution, so the file's own sub-second mtime is floored before
+    // the comparison — otherwise a file saved at .400 is "newer" than the
+    // header a browser echoed back from the same response, for ever.
+    : (ims ? Math.floor(stat.mtimeMs / 1000) * 1000 <= Date.parse(ims) : false);
+  if (matched && (req.method === 'GET' || req.method === 'HEAD')) {
+    // A 304 carries no body and no Content-Length of its own.
+    res.writeHead(304, {
+      'Cache-Control': head['Cache-Control'], 'ETag': etag,
+      'Last-Modified': head['Last-Modified'], 'Accept-Ranges': 'bytes',
+    });
+    res.end();
+    return;
+  }
+
   const range = req.headers?.range ? parseRange(req.headers.range, size) : null;
   // A Range header this server cannot satisfy is a 416, not a silent whole
   // file: a media element that gets the whole file back from a range request

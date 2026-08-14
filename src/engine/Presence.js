@@ -46,46 +46,91 @@ export const RANGE = 34;
 export const MAX_BODIES = 6;
 
 /**
- * What KIND of thing this is, from the archetype key alone.
+ * THE MATERIAL LINE, and the one number this module states instead of importing.
  *
- * Deliberately a regex over `type` rather than an import of TOUGHNESS from
- * src/game: this module is engine-side, it is read by a check that must not
- * need a World, and the classification it wants — motor or lungs — is not the
- * same question as how hard the thing is to cut.
+ * `TOUGHNESS.droid` — src/game/Combat.js:267. Everything at or above it is
+ * plate (droid 2.0, armour 4.5, heavy 14, durasteel 42); everything under it is
+ * a body (flesh 0.9, plastoid armour over a person 1.5). This module is
+ * engine-side and nothing in src/engine imports src/game, so the threshold is
+ * WRITTEN here — and then pinned: tools/checks/voices.mjs imports the real
+ * TOUGHNESS table and asserts PLATE === TOUGHNESS.droid and
+ * TOUGHNESS.plastoid < PLATE < TOUGHNESS.armour, so the copy cannot drift in
+ * silence the way the key lists it replaced did.
  */
-const DROIDS = /^(b1|b2|droideka|walker|remote|dummy)$/;
-const BEASTS = /^(beast)$/;
-const TROOPERS = /^(trooper|sniper)$/;
+export const PLATE = 2;
 
 /**
- * There was a `voice` key on this too, and it was a second, wrong answer to a
- * question this module is not asked. It read `enemy.voiceKey || …`, and
- * `voiceKey` is assigned nowhere in the project, so the fallback was always
- * taken; the fallback's own `type === 'walker' ? 'walker'` branch was
- * unreachable because DROIDS already matches 'walker' one line above it, so
- * bodyOf({type:'walker'}).voice answered 'droid' while Announcer._enemySpec —
- * the classifier that is actually wired to something — answers with the
- * walker's own hydraulic groan. Nothing in src/ or tools/ ever read the field.
- * src/ui/Announcer.js owns what things SAY; this file owns the noise a body
- * makes, and one classifier is enough.
+ * WHAT KIND OF THING THIS IS — the roster's ONE body classifier.
+ *
+ * It used to be three regexes over the archetype KEY, and a key list is a copy
+ * of a table that has to be remembered:
+ *
+ *     const DROIDS = /^(b1|b2|droideka|walker|remote|dummy)$/;
+ *     const BEASTS = /^(beast)$/;
+ *
+ * `Object.keys(ARCHETYPES)` is fourteen. Those regexes knew eleven. The three
+ * registered outside src/game/Enemy.js — the IG Bodyguard Droid, the Reek and
+ * the Nexu, all three added in src/game/Levels.js — fell through every branch
+ * and came out as a plain humanoid: measured, `bodyOf` answered droid=0 beast=0
+ * for all three, so the 240 kg IG droid BREATHED instead of running its servos
+ * and the two large animals breathed at a man's pitch (1.0) rather than an
+ * animal's (0.42) and took two footfalls a stride instead of four. The same
+ * three key names were missing from src/ui/Announcer.js's own copy of this
+ * classification, so the Reek also DIED in the acolyte's throat — f0 97 on the
+ * two-syllable human scream — where the Acklay dies at f0 58 on the beast's.
+ *
+ * So it is derived from the archetype RECORD the body is carrying, and there is
+ * now exactly one of it: src/ui/Announcer.js imports this function and picks the
+ * voice off the same flags, instead of keeping a second list of key names that
+ * agrees with this one only until somebody adds a droid.
+ *
+ * The fields it reads are the ones the record already has to declare to be that
+ * kind of thing at all:
+ *
+ *   `custom`   the body class. src/game/Enemy.js switches on it for the beast
+ *              brain, the six-legged pose, the three-legs-down topple and the
+ *              remote's hover — so anything that is a beast MUST carry
+ *              `custom: 'beast'` to be a beast, and beast/charger/stalker all do.
+ *   `toughness` what the thing is MADE OF, which is the same question as
+ *              "motor or lungs" asked from the other side. An earlier note here
+ *              said the two were different questions; they are not — plate
+ *              sings under load and tissue breathes, and both facts come from
+ *              the material. See PLATE above.
+ *   `saber`    among bodies, the duellist and the rank-and-file soldier. A
+ *              robed acolyte carries one, a clone in a bucket does not.
+ *
+ * The one thing that is NOT here any more is a `voice` key. It used to exist,
+ * read `enemy.voiceKey || …` for a field assigned nowhere in the project, and
+ * answered 'droid' for the walker while the Announcer answered with the
+ * walker's own hydraulic groan. That was a second, unread, wrong answer; what
+ * replaced it is a single answer with two readers.
  */
 export function bodyOf(enemy) {
   const A = enemy?.A || {};
-  const type = String(enemy?.type || '');
+  const kind = String(A.custom || '');
   const mass = Number.isFinite(A.mass) ? A.mass : 80;
   const scale = Number.isFinite(A.scale) ? A.scale : 1;
-  const droid = DROIDS.test(type);
+  const toughness = Number.isFinite(A.toughness) ? A.toughness : 0;
+  const beast = kind === 'beast';
+  const walker = kind === 'walker';
+  // A hovering remote is plastoid-shelled and still a machine, so it is named
+  // beside the material rather than measured by it.
+  const droid = !beast && (walker || kind === 'droideka' || kind === 'remote' || toughness >= PLATE);
   return {
     droid,
-    beast: BEASTS.test(type),
+    beast,
+    /** Its own flag rather than a `type === 'walker'` at each reader. */
+    walker,
     // A trooper is a person in a bucket: lungs, but heard through a helmet.
-    trooper: TROOPERS.test(type),
+    // Among bodies, the ones without a blade — the acolyte and the sparring
+    // partner have `saber: true`, the clone and the marksman do not.
+    trooper: !droid && !beast && !A.saber,
     mass,
     scale,
-    /** Legs on the ground. A walker plants four; everything else, two. */
-    legs: type === 'walker' ? 4 : type === 'beast' ? 4 : type === 'droideka' ? 2 : 2,
+    /** Legs on the ground. A walker and every animal plant four; the rest, two. */
+    legs: walker || beast ? 4 : 2,
     /** A hovering droid has no gait at all. */
-    grounded: !(A.float > 0) && type !== 'remote',
+    grounded: !(A.float > 0) && kind !== 'remote',
   };
 }
 

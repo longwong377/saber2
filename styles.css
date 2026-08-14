@@ -82,8 +82,48 @@ b{font-weight:650}
 .col::-webkit-scrollbar{width:6px}
 .col::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:3px}
 .col.narrow{flex:0 0 300px;display:flex;flex-direction:column}
-.col.narrow .primary{position:sticky;bottom:0;margin-top:20px;
-  box-shadow:0 0 26px -6px rgba(87,201,255,.75),inset 0 1px 0 rgba(255,255,255,.25),0 -14px 22px -10px #05070c}
+/* ── a narrow column whose button is PINNED out of the scroll ──────────
+ *
+ * The Ignite button was the last child of a scrolling column, held down with
+ * `position:sticky` and carrying `0 -14px 22px -10px #05070c` — a 22 px dark
+ * gradient above itself. That combination reads as the end of the list: the
+ * cards under the button were not dimmed, they were GONE, and the fade above
+ * it finished the sentence. Three of six modes had zero visible pixels at
+ * every viewport measured (see the note in index.html), and the four
+ * difficulty cards above them were fully visible, so nothing on screen said
+ * the column continued.
+ *
+ * So the column stops scrolling and its BODY scrolls instead. The button is a
+ * flex item under the scroller: it cannot sit on a card at any height, and the
+ * upward shadow goes with it because there is no longer anything behind it to
+ * fade. What is left is the glow, which is what that shadow was for.
+ *
+ * `.more` and `.less` are written by Menu._syncScrollHints, live, off the
+ * scroller's own scrollTop/clientHeight/scrollHeight: 26 px of the column fades
+ * out at whichever end still has content behind it, and lifts the moment the
+ * player reaches that end. A mask rather than an overlay because a mask applies
+ * to the element's own box — it stays where it is while the content moves under
+ * it, needs no colour to match the backdrop behind it, and (measured) does not
+ * take the hit-testing with it, so a card under the fade is still clickable.
+ * The 26 is quoted in Menu.js as SCROLL_FADE, which is what the reveal keeps
+ * the selected card clear of; tools/checks/front-screen.mjs asserts they agree.
+ */
+.col.narrow.pinned{overflow:hidden;padding-right:0}
+.col.narrow.pinned>.col-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.16) transparent}
+.col.narrow.pinned>.col-scroll::-webkit-scrollbar{width:6px}
+.col.narrow.pinned>.col-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:3px}
+.col.narrow.pinned.more>.col-scroll{
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent)}
+.col.narrow.pinned.less>.col-scroll{
+  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 26px);
+  mask-image:linear-gradient(to bottom,transparent,#000 26px)}
+.col.narrow.pinned.less.more>.col-scroll{
+  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 26px,#000 calc(100% - 26px),transparent);
+  mask-image:linear-gradient(to bottom,transparent,#000 26px,#000 calc(100% - 26px),transparent)}
+.col.narrow.pinned>.primary{position:static;flex:none;margin-top:14px;
+  box-shadow:0 0 26px -6px rgba(87,201,255,.75),inset 0 1px 0 rgba(255,255,255,.25)}
 .col.wide{flex:1}
 h2{font-weight:200;font-size:30px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:10px}
 h3{font:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--dimmer);
@@ -232,8 +272,14 @@ button{font-family:inherit}
 .codex-list b{color:var(--ink)}
 .codex-list i{color:var(--accent);font-style:normal}
 
-.menu-foot{display:flex;justify-content:space-between;padding-top:12px;border-top:1px solid var(--line);
+.menu-foot{display:flex;align-items:center;gap:16px;justify-content:space-between;padding-top:10px;
+  border-top:1px solid var(--line);
   font:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase}
+/* The renderer string is the one thing here that can be any length — ANGLE
+   reports the whole adapter — so it is the one that gives way, rather than
+   pushing the build id off the end of the row. */
+#gpu-line{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menu-foot .build{flex:none}
 
 /* ══════════════════ HUD ══════════════════ */
 #hud{position:fixed;inset:0;z-index:20;pointer-events:none;font:var(--ui);
@@ -638,16 +684,31 @@ button{font-family:inherit}
   background:linear-gradient(0deg,var(--accent),rgba(120,215,255,.6));box-shadow:0 0 10px var(--accent)}
 /* THE WAY INTO THE CONSTELLATION FROM THE TEMPLE.
    `width:auto` is load-bearing: .primary/.secondary/.ghost are `display:block;
-   width:100%` because they are laid out in a column inside a panel, and for a
-   position:fixed box the containing block is the VIEWPORT — so this button was
-   100vw wide, running from x=22 to x=22+100vw and hanging 22 px off the right
-   edge, with its label centred 22 px right of screen centre instead of sitting
-   at the left margin this rule intends. At z-index 41 over the menu's 40 it was
-   also a live click target across the whole width of the screen, lighting up on
-   hover and clipping the bottom of the sticky Ignite button on any viewport
-   under about 800 px tall. */
-.commune-entry{position:fixed;left:22px;bottom:20px;z-index:41;
-  display:inline-block;width:auto;padding:10px 16px;margin-top:0}
+   width:100%` because they are laid out in a column inside a panel — a bare
+   .ghost here fills whatever line it is on.
+
+   IT IS NO LONGER `position:fixed`, and that is the second half of the same
+   story. Fixed at left:22 bottom:20 it was positioned against the VIEWPORT
+   while the GPU string it landed on lives inside `.menu-wrap`, which is
+   centred and capped at min(760px,92vh) — two boxes measured from different
+   origins, so whether they collided depended on the window. They did, on every
+   common laptop: overlapping client-rect area, measured in Chromium against
+   the real page, 1366x768 2482 px², 1280x720 3084 px², 1152x648 3300 px², and
+   0 px² only at 1440x900 and above. The button paints no background, so the
+   result was CONNECT TO THE FORCE and the renderer string drawn through each
+   other and neither one readable — the only text collision on the first screen
+   of the game. It is now a flow item in the footer's flex row, where it cannot
+   overlap anything at any size, sized to sit ON that row rather than tower over
+   it. (Before that it was 100vw wide and a live click target across the whole
+   screen; `width:auto` is what fixed that, and it stays.)
+
+   Sized to the footer's own type rather than to a panel button, because the
+   row it now sits in is 26 px tall and every pixel it adds comes off the panel
+   above it: at these numbers the button is 21 px and the footer grows by 5. */
+.commune-entry{display:inline-block;width:auto;flex:none;white-space:nowrap;
+  padding:4px 12px;margin:0;font-size:9.5px;line-height:1.2;letter-spacing:.18em;
+  border-color:var(--line);border-radius:999px}
+.commune-entry:hover{color:var(--ink);border-color:var(--line-hot);background:rgba(255,255,255,.05)}
 /* A star this player has carried in an earlier run — the record, drawn on the
    chart. Fainter than "can be lit", because it buys nothing: see Progress.js. */
 #med-sky .star.known .disc{stroke:rgba(190,170,120,.42)}
