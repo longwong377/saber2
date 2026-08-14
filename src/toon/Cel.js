@@ -190,6 +190,15 @@ export const CEL = {
    * darken by themselves. The ambient occlusion in the baked maps and the
    * terrain's own cavity term still do that, and they do it as an albedo
    * rather than as a light, which is the drawn version of the same cue.
+   *
+   * AND ONE THING THAT WAS NOT NOTICED WHEN THIS WENT TO 1.0: the fixed
+   * direction is world UP, so every lookup is the lookup an up-facing surface
+   * would make, and an up-facing surface sees no ground. That silently zeroed
+   * `hemi.groundColor` — three's hemisphere weight is `0.5·dotNL + 0.5`, and
+   * with the light at its default (0,1,0) dotNL is exactly 1 — and it zeroed
+   * the probe's `_bounce` hemisphere, which sits under the horizon where a
+   * cosine lobe about +Y weights it at nothing. Both are authored per level and
+   * both were unreachable. CEL.bounce is the answer; see saberCelBounce.
    */
   flat: 1.0,
 
@@ -230,6 +239,33 @@ export const CEL = {
    * 1.0 the canyon's blue fill repainted its coral cliffs.
    */
   ambientChroma: 0.55,
+
+  /**
+   * HOW MUCH OF THE FLAT AMBIENT'S COLOUR COMES FROM UNDER THE HORIZON.
+   *
+   * `flat` above evaluates the indirect term along world up, which is what
+   * makes the shadow side of an object one shape rather than a gradient — and
+   * which also means every surface in the game is lit as if it faced straight
+   * up. An up-facing surface sees no ground, so at 0 this term is exactly what
+   * shipped: `hemi.groundColor` (26 authored values in Levels.js) multiplied by
+   * a weight of zero, and the `_bounce` hemisphere baked into the probe at a
+   * cosine weight of ~0. Both were dead.
+   *
+   * 0.35 is the ground's share of the flat ambient's HUE. See saberCelBounce —
+   * the luminance is renormalised back to the sky's, so this cannot move the
+   * exposure meter, the bloom headroom or the lit:shade ratio, and the only
+   * thing it can change is what colour a shadow is. It is deliberately not the
+   * physically-averaged 0.5: measured across the eight outdoor levels, folding
+   * the bounce in by ENERGY as well takes the ambient down 3–15% and pushes the
+   * ratio outside the 1.3–2.2 band on two levels at a share of 0.20, which is
+   * a change to the light budget wearing a colour fix's clothes.
+   *
+   * What it buys, measured on the shipped atmospheres as the flat ambient's
+   * blue/red: kamino 2.55 → 1.50, colosseum 2.39 → 1.66, drifts 1.82 → 1.29,
+   * arena 2.35 → 1.77 — every one of them toward the level's own ground, which
+   * is rule 5 (one hue family) applied to the light instead of to the palette.
+   */
+  bounce: 0.35,
 
   /**
    * DISTANCE IN PLATES (rule 3's other half).
@@ -467,6 +503,31 @@ vec3 saberCelFlatDir( const in vec3 n ) {
  */
 vec3 saberCelAmbient( const in vec3 c ) {
   return mix( vec3( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ), c, ${CEL.ambientChroma.toFixed(4)} );
+}
+
+/**
+ * The ground half of the flat ambient — HUE ONLY. See CEL.bounce.
+ *
+ * sky is the indirect term looked up along the flat axis and ground is the
+ * same lookup along its opposite: for the hemisphere light that is exactly
+ * skyColor and exactly groundColor, and for the probe it is the upper and lower
+ * halves of the bake. They are blended, and then the result is scaled back to
+ * the sky lookup's own luminance, so the answer carries the ground's COLOUR at
+ * the sky's ENERGY. That keeps a term that was authored per level (and read by
+ * nothing) out of the exposure meter's business: a level's brightness is the
+ * meter's question and it already has an answer, and this can only ever change
+ * what colour a shadow is.
+ *
+ * The guard is not decoration. A level may author a black groundColor and an
+ * interior bakes a near-black lower hemisphere; at a blend of 0.35 the mixed
+ * luminance stays well clear of zero, but a level that authored both ends black
+ * would divide by it, and a NaN in the ambient is every surface in the frame.
+ */
+vec3 saberCelBounce( const in vec3 sky, const in vec3 ground ) {
+  vec3 m = mix( sky, ground, ${CEL.bounce.toFixed(4)} );
+  float ls = dot( sky, vec3( 0.2126, 0.7152, 0.0722 ) );
+  float lm = dot( m, vec3( 0.2126, 0.7152, 0.0722 ) );
+  return lm > 1.0e-6 ? m * ( ls / lm ) : sky;
 }
 
 /**
@@ -757,16 +818,54 @@ export function installCelShading(THREE_) {
     'shadow *= receiveShadow ? saberCelShadow( saberCascadeShadow() ) : 1.0;',
     'hard shadow mask');
 
-  // FLAT AMBIENT. The hemisphere light's sky/ground blend and the probe's
-  // directional convolution are the two smooth gradients left on a surface
-  // once the direct term is a step, and they are the same gradient twice.
+  /* FLAT AMBIENT. The hemisphere light's sky/ground blend and the probe's
+   * directional convolution are the two smooth gradients left on a surface
+   * once the direct term is a step, and they are the same gradient twice.
+   *
+   * BOTH ENDS OF THE AXIS ARE READ, and that is the whole of what changed here.
+   * Flattening to world up (CEL.flat = 1) does not merely remove a gradient, it
+   * evaluates every surface in the game AS IF IT FACED STRAIGHT UP, and an
+   * up-facing surface sees no ground at all. Two things followed, both measured
+   * in process rather than argued:
+   *
+   *   · `getHemisphereLightIrradiance` is `mix( groundColor, skyColor, 0.5·dotNL
+   *     + 0.5 )` and the HemisphereLight sits at three's default (0,1,0), which
+   *     Engine never moves — so dotNL is exactly 1, the weight is exactly 1, and
+   *     `hemi.groundColor` returns skyColor with the ground term multiplied by
+   *     zero. Engine.applyAtmosphere writes that value on every level change and
+   *     Levels.js authors it 26 separate times. Not one of them could reach the
+   *     frame.
+   *   · `getIBLIrradiance` at +Y is a cosine lobe about +Y, so the `_bounce`
+   *     hemisphere Engine bakes into the probe — the lower half, tinted from the
+   *     same groundColor, and itself the subject of a written-up fix — lands at
+   *     a weight of ~0. It was baked every level load and read at 0%.
+   *
+   * So the ground half is read explicitly, at the opposite end of the same
+   * fixed axis, and folded in by saberCelBounce — WHICH MOVES HUE ONLY. That is
+   * not timidity, it is the same rule saberCelAmbient states three functions
+   * up: "the LUMINANCE is untouched, so nothing about the exposure or the light
+   * budget moves; this can only ever change a cast." Measured, the alternative:
+   * folding the bounce in by energy as well takes the ambient down 3–15% per
+   * level and pushes the lit:shade ratio from 1.70–2.19 to 1.78–2.27 at a
+   * ground share of only 0.20 — outside the 1.3–2.2 band cel.mjs measures and
+   * defends, on the Colosseum and the arena, before the share is large enough
+   * to be worth having. The energy question is the exposure meter's and it
+   * already has an answer; the COLOUR of what is under a chin is this term's,
+   * and it had none.
+   *
+   * The probe pays one extra fetch of the top mip for it. The lobe that was
+   * deleted for rule 8 was several. */
   sub('lights_fragment_begin',
     'irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );',
-    'irradiance += saberCelAmbient( getHemisphereLightIrradiance( hemisphereLights[ i ], saberCelFlatDir( geometryNormal ) ) );',
+    'irradiance += saberCelAmbient( saberCelBounce('
+    + ' getHemisphereLightIrradiance( hemisphereLights[ i ], saberCelFlatDir( geometryNormal ) ),'
+    + ' getHemisphereLightIrradiance( hemisphereLights[ i ], -saberCelFlatDir( geometryNormal ) ) ) );',
     'flat hemisphere');
   sub('lights_fragment_maps',
     'iblIrradiance += getIBLIrradiance( geometryNormal );',
-    'iblIrradiance += saberCelAmbient( getIBLIrradiance( saberCelFlatDir( geometryNormal ) ) );',
+    'iblIrradiance += saberCelAmbient( saberCelBounce('
+    + ' getIBLIrradiance( saberCelFlatDir( geometryNormal ) ),'
+    + ' getIBLIrradiance( -saberCelFlatDir( geometryNormal ) ) ) );',
     'flat probe');
 
   /* ── distance in plates ─────────────────────────────────────────────── */
@@ -844,6 +943,17 @@ export function celBand(rgb, n) {
 
 /** What three's physical model does with the same input, for the control. */
 export function lambertTone(dotNL) { return saturate(dotNL); }
+
+/**
+ * saberCelBounce(), on two linear RGB triples — the flat ambient's sky lookup
+ * and its ground lookup. Hue moves, luminance does not.
+ */
+export function celBounce(sky, ground) {
+  const L = (c) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+  const m = sky.map((c, i) => c + (ground[i] - c) * CEL.bounce);
+  const ls = L(sky), lm = L(m);
+  return lm > 1e-6 ? m.map((c) => c * (ls / lm)) : sky.slice();
+}
 
 /** saberCelShadow(). */
 export function celShadow(s) {

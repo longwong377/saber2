@@ -21,6 +21,7 @@ import {
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { celBounce, CEL } from '../../src/toon/Cel.js';
 
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const OUTDOOR = LEVEL_ORDER.filter((k) => LEVELS[k].atmosphere.sky !== false);
@@ -222,7 +223,102 @@ export function run({ check, assert, near, THREE: T }) {
       'the bake no longer passes its far plane explicitly, so the pair is a comment again');
     assert(/setScalar\(BOUNCE_RADIUS\)/.test(src),
       'the bounce dome is scaled by a literal again, so nothing connects it to the far plane');
-    return `bounce ${BOUNCE_RADIUS} inside far ${PMREM_FAR}, both passed explicitly`;
+
+    /* …AND IT HAS TO BE SAMPLED, WHICH IS A SEPARATE QUESTION AND WAS THE
+     * ANSWER NOBODY ASKED FOR. Being inside the far plane only means the dome
+     * is IN the bake. The shader's flat ambient looks the probe up along world
+     * up (CEL.flat = 1.0), and `getIBLIrradiance` is a cosine lobe about the
+     * direction it is given — so a hemisphere sitting entirely BELOW the
+     * horizon lands at a weight of about zero. Two checks, one clipping fix and
+     * a paragraph of comment about "the only thing that puts colour under a
+     * chin", and the term was still contributing nothing. The lookup has to
+     * read both ends of the axis or being in the bake buys the same nothing. */
+    const cel = readFileSync(new URL('../../src/toon/Cel.js', import.meta.url), 'utf8');
+    for (const [sym, label] of [['getIBLIrradiance', 'flat probe'],
+      ['getHemisphereLightIrradiance', 'flat hemisphere']]) {
+      // the text of the substitution that installs this lookup, up to its label
+      const end = cel.indexOf(`'${label}'`);
+      assert(end > 0, `installCelShading no longer has a '${label}' substitution`);
+      const body = cel.slice(cel.lastIndexOf('  sub(', end), end);
+      // `from` is three's own line and carries no saberCelFlatDir, so every
+      // occurrence below is one of the lookups this installs.
+      const ends = (body.match(/saberCelFlatDir\( geometryNormal \)/g) || []).length;
+      const down = (body.match(/-saberCelFlatDir\( geometryNormal \)/g) || []).length;
+      assert(ends === 2 && down === 1,
+        `the ${label} reads ${sym} along ${ends} direction(s), ${down} of them downward — at one `
+        + 'end the ground half of the hemisphere light and the lower half of the probe bake are '
+        + 'multiplied by zero');
+      assert(body.includes('saberCelBounce('),
+        `the ${label} no longer folds the ground lookup in through saberCelBounce`);
+    }
+    return `bounce ${BOUNCE_RADIUS} inside far ${PMREM_FAR}, both passed explicitly, `
+      + 'and both flat lookups read +Y and −Y';
+  });
+
+  check('probe: the ground colour every level authors reaches the frame, and costs no light', () => {
+    /* WHAT THE ZERO WEIGHT ACTUALLY COST, counted rather than described.
+     *
+     * `hemi.groundColor` is written by Engine.applyAtmosphere on every level
+     * change and authored in Levels.js once per level. three's hemisphere
+     * weight is `0.5 · dot(normal, light.direction) + 0.5`; Engine builds the
+     * HemisphereLight at three's default position (0,1,0) and never moves it,
+     * and the cel model looks it up along world up — so dotNL is exactly 1, the
+     * weight is exactly 1, and `mix(groundColor, skyColor, 1.0)` is skyColor.
+     * Every one of those authored values multiplied by zero.
+     *
+     * Two properties are asserted and they pull against each other, which is
+     * the point: the ground has to CHANGE the flat ambient (or it is still
+     * dead) and it must not change its LUMINANCE (or it has moved the exposure
+     * meter, the bloom headroom and the lit:shade ratio, which is a lighting
+     * change wearing a colour fix's clothes — measured, folding it in by energy
+     * takes the ambient down 3–15% and pushes two levels outside the 1.3–2.2
+     * band cel.mjs defends, at a ground share of only 0.20).
+     */
+    const rows = [];
+    const grounds = new Set();
+    let worstLum = 0, leastMove = 9, movedWrong = 0, deadUnderOld = 0;
+    for (const key of OUTDOOR) {
+      const a = LEVELS[key].atmosphere;
+      const sky = new THREE.Color(a.skyColor ?? 0xbcd8ff);
+      const ground = new THREE.Color(a.groundColor ?? 0x60482e);
+      grounds.add((a.groundColor ?? 0x60482e).toString(16));
+      const s = [sky.r, sky.g, sky.b], g = [ground.r, ground.g, ground.b];
+      const out = celBounce(s, g);
+      // luminance is untouched, so nothing about the light budget moved
+      const dl = Math.abs(lum({ r: out[0], g: out[1], b: out[2] }) - lum(sky));
+      worstLum = Math.max(worstLum, dl);
+      // …and the hue did move, toward this level's own ground
+      const br = (c) => c[2] / Math.max(c[0], 1e-6);
+      const move = Math.abs(br(out) - br(s)) / Math.max(br(s), 1e-6);
+      leastMove = Math.min(leastMove, move);
+      if (Math.sign(br(out) - br(s)) !== Math.sign(br(g) - br(s)) && Math.abs(br(g) - br(s)) > 1e-3) movedWrong++;
+      /* THE CONTROL, AND IT IS A DISCRIMINATION TEST RATHER THAN AN IDENTITY.
+       * Hand the term a wildly different ground — this level's own sky, which
+       * is the furthest thing from a ground colour the roster contains — and
+       * the answer has to change. Under the single-ended lookup that shipped it
+       * could not: `mix(groundColor, skyColor, 1.0)` is skyColor for every
+       * ground there is, so the two answers were bit-identical and the authored
+       * value was unrecoverable from the frame. */
+      const decoy = celBounce(s, [s[0] * 1.6, s[1] * 1.6, s[2] * 1.6]);
+      const differs = out.some((v, i) => Math.abs(v - decoy[i]) > 1e-6);
+      if (!differs) deadUnderOld++;
+      rows.push(`${key} B/R ${br(s).toFixed(2)}→${br(out).toFixed(2)}`);
+    }
+    assert(worstLum < 1e-9,
+      `the flat ambient's luminance moved by ${worstLum.toExponential(2)} — this term is only `
+      + 'allowed to change a colour, and it has just changed every level\'s exposure');
+    assert(leastMove > 0.02,
+      `the least-moved level's flat ambient shifts by only ${(leastMove * 100).toFixed(1)}% in `
+      + 'blue/red — the ground lookup is not reaching the frame');
+    assert(movedWrong === 0, `${movedWrong} levels move AWAY from their own ground colour`);
+    assert(deadUnderOld === 0,
+      `${deadUnderOld} levels give the same flat ambient for two completely different ground `
+      + 'colours — the ground lookup is being discarded again');
+    assert(grounds.size >= 5,
+      `only ${grounds.size} distinct ground colours across ${OUTDOOR.length} outdoor levels — `
+      + 'the authored term carries no information to recover');
+    return `${OUTDOOR.length} levels, ${grounds.size} distinct authored grounds, luminance moved `
+      + `${worstLum.toExponential(1)} — ` + rows.join(' · ');
   });
 
   check('shade: one authored skylight cannot stand for three different skies', () => {
