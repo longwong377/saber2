@@ -3485,9 +3485,44 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
    * named on stderr as it begins. Stderr rather than stdout because the result
    * table is what stdout is for, and a `| tail -60` must not eat the answer.
    */
+  /**
+   * AND THE SHARED CLOCKS GO BACK BETWEEN SUITES — once here, not eighteen
+   * times out there.
+   *
+   * `_shared.mjs` was written for this and adopted by three suites. Twenty-one
+   * drive a World's frames, so eighteen were still moving `wind.time`,
+   * `enemyRng` and `duelRng` for everything that ran after them, and the
+   * per-suite fix needs a try/finally around every check body that runs frames
+   * — a lot of surgery on working checks, and a rule a new suite has to
+   * remember.
+   *
+   * This loop is the one place that knows where one suite ends and the next
+   * begins, and it already drains before moving on. Restoring here makes every
+   * suite start from the same generator state and the same wind phase whatever
+   * ran before it, which IS order-independence, and a new suite gets it without
+   * knowing this file exists.
+   *
+   * WHAT IT DOES NOT COVER, stated rather than implied: within a single file
+   * the checks still interleave and still share the streams, and `ground`
+   * (Scenery.js — terrain, fx, clock, `_scarAt`) is shared state this does not
+   * touch. The cross-suite half is the half that was costing measured
+   * differences: forward and reverse agreed on the verdict but disagreed on the
+   * numbers in 40 passing checks, led by escalation (5), props (4), presence
+   * and co-op (3 each).
+   */
+  /* BEFORE each suite, against a baseline taken once — not after each suite
+   * against its own snapshot, which was the first cut and was wrong in a way
+   * worth keeping: restoring afterwards leaves the FIRST suite reading whatever
+   * the ~700 checks above this loop left behind, while every other suite starts
+   * from the seed. Reverse the order and a different file is first, so exactly
+   * one suite changes what it sees — the same defect this is here to remove,
+   * surviving in the one place it would be hardest to spot. */
+  const { snapshotShared, restoreShared } = await import(new URL('_shared.mjs', dir).href);
+  const baseline = await snapshotShared();
   for (const f of files) {
     const from = pending.length;
     process.stderr.write(`  … ${f}\n`);
+    restoreShared(baseline);
     try {
       const mod = await import(new URL(f, dir).href);
       if (typeof mod.run === 'function') await mod.run({ check, assert, near, V, Q, THREE, lerpN });
