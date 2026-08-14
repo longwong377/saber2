@@ -3119,11 +3119,27 @@ export class Player {
    * and buys the property that matters: there is no list anywhere built from a
    * different idea of who is fighting whom.
    */
+  /**
+   * Everything this player's powers are allowed to reach.
+   *
+   * THE RULES COME FROM THE WORLD, not from `null`. Both calls passed `null`,
+   * which makes `canHarm` fall back to its own defaults — and its defaults are
+   * co-op's, because that is what every world was until duels existed. So a
+   * duel's rules were consulted by `Player.damage` and by `bladeTargets` and
+   * NOT by push, pull or lightning: a point-blank shove moved a rival at
+   * 0.000 m/s while the same rival could be cut to pieces.
+   *
+   * It read as correct for as long as `world.rules` did not exist, which is
+   * the whole hazard in a default that is also an answer: nothing is wrong
+   * until the real value shows up, and then the call site that ignored it is
+   * the last place anybody looks.
+   */
   _foes(ctx) {
     const out = (this._foeList ||= []);
     out.length = 0;
-    hostileTo(this, ctx.enemies, null, out);
-    hostileTo(this, ctx.players, null, out);
+    const rules = ctx.rules ?? this.world?.rules ?? null;
+    hostileTo(this, ctx.enemies, rules, out);
+    hostileTo(this, ctx.players, rules, out);
     return out;
   }
 

@@ -14,7 +14,7 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { Player } from './Player.js';
+import { Player, bladeTargets, canHarm, hostileTo, pvpRules } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
@@ -60,6 +60,10 @@ export class World {
     this.physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: settings.maxBodies ?? 1100 });
 
     this.players = [];
+    /* WHO MAY HARM WHOM, as one object rather than a test repeated at every
+     * damage path. `pvpRules({})` returns co-op's rules — friendly fire off,
+     * everyone on side 0 — so every existing world is unchanged by this. */
+    this.rules = pvpRules(settings);
     this.enemies = [];
     this.props = [];
     this.doors = [];
@@ -493,12 +497,22 @@ export class World {
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,
       spawn: opts.spawn || this._playerSpawn(),
+      /* WHICH SIDE, and it has to travel with the body. Without it every
+       * player is built on side 0 — so a duel's two fighters are allies, their
+       * blades pass through each other and a point-blank shove moves the rival
+       * at 0.000 m/s. `undefined` here means "the default side", which is
+       * co-op's, so nothing that does not ask for a side changes. */
+      team: opts.team,
     });
 
     // THE ORDER, before any boon. It writes the same `boonMods` a boon card
     // writes, through the same shape, so a card that multiplies cutPower still
     // multiplies whatever the order set — applying it afterwards would have the
     // order overwrite the run instead of starting it.
+    /* A duel's health setting, applied before the order's own modifiers so a
+     * card that scales max hp scales the duel's number rather than the
+     * campaign's. `rules.pvp` is false for every world that is not a duel. */
+    if (this.rules?.pvp && this.rules.health > 0) { p.maxHp = this.rules.health; p.hp = p.maxHp; }
     const rec = applyOrder(p, this.settings.order);
     if (rec) for (const id of rec.grants) this.takenBoons.add(id);
 
@@ -651,7 +665,11 @@ export class World {
 
   pickTarget(enemy) {
     let best = null, bestD = Infinity;
-    for (const p of this.players) {
+    /* `hostileTo` rather than every player: in a duel the horde is on nobody's
+     * side, and in co-op it returns all four unchanged. Filtering here rather
+     * than at the twelve places that read `enemy.target` is the same argument
+     * `bladeTargets` makes — a targeting rule with two copies decides twice. */
+    for (const p of hostileTo(enemy, this.players, this.rules)) {
       if (!p.alive) continue;
       const d = p.position.distanceToSquared(enemy.position);
       if (d < bestD) { bestD = d; best = p; }
@@ -1058,6 +1076,22 @@ export class World {
         if (d.mesh.position.distanceToSquared(bladeMid) > 64) continue;
         targets.push({ id: d.id, capsules: d.capsules(), door: d, dead: false });
       }
+      /**
+       * A DUEL'S BODIES.
+       *
+       * This list was enemies, props and doors — so a player's blade swept
+       * through another player's chest and the solver was never handed anything
+       * to hit. Measured on two real Players in one arena over 180 frames: 0.0
+       * damage and 0 blade-target records that were a player.
+       *
+       * `bladeTargets` IS the rule, and it consults the same gate every damage
+       * path does — so in co-op it returns an empty list and this costs one
+       * call per swinging blade. Never write the loop out here: this file has
+       * twice had to un-duplicate a targeting rule, and the note fifty lines up
+       * about the enemy blade test that existed twice and disagreed with itself
+       * on five terms is why.
+       */
+      for (const t of bladeTargets(p, this.players, this.rules)) targets.push(t);
 
       const events = this.bladeSolver.solve(p.saber, targets, dt, { power: p.boonMods.cutPower });
       for (const ev of events) this._applyBladeEvent(p, ev, dt);
@@ -1206,6 +1240,20 @@ export class World {
           }
           player.addFlow(0.012);
         }
+        /* …and the same share of a sever against a duelling opponent, off the
+         * VICTIM's maxHp so the duel's health setting scales it. Holding a
+         * blade on someone is a pressure tool in a duel exactly as it is
+         * against the horde, and it was the one contact type that produced
+         * nothing at all. */
+        if (t.player && ev.dWork > 0 && ev.need > 0 && t.player.alive) {
+          t.player.damage((ev.dWork / ev.need) * t.player.maxHp * GRIND_LETHALITY,
+            ev.point, player, 'saber');
+          if (this._grindMark <= 0) {
+            this._grindMark = 0.12;
+            this.onHitmark?.(ev.point, t.player.alive ? 'hit' : 'kill', ev.cap?.name);
+          }
+          player.addFlow(0.012);
+        }
         P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
         if (rng() < 0.35) P.sparkBurst(ev.point, null, 3, { speed: 5, embers: false });
       }
@@ -1240,6 +1288,44 @@ export class World {
       this.addHitstop(ev.speed > 20 ? 0.055 : 0.03);
       player.camera?.addShake(clamp(ev.speed / 60, 0.05, 0.3));
       this.onHitmark?.(ev.point, wasAlive && e.dead ? 'kill' : 'cut', ev.bone);
+    } else if (t.player) {
+      /**
+       * A LIMB IS NOT TAKEN OFF A PLAYER — AND A PASS IS ONE HIT.
+       *
+       * `Player` has no `takeCut` and should not grow one: losing an arm
+       * mid-duel is a different feature with a different animation budget. So
+       * a clean pass is a heavy hit scaled by which bone it crossed, off the
+       * VICTIM's own maxHp so the duel's health setting scales it.
+       *
+       * THE THROTTLE IS THE PART THAT MATTERS. The solver reports a cut per
+       * capsule per frame of contact — measured at 215 events over 92 contact
+       * frames across 18 bones for one sweep through a torso. Against an enemy
+       * that is right, because `takeCut` severs a named bone once and the
+       * second event finds it gone. A player has no such bookkeeping, so
+       * billing every event killed a 150 hp rival inside two frames and the
+       * duel was over before the blade had finished travelling. The first
+       * version of this shipped that way and the pvp suite caught it by
+       * failing a LATER step: the rival was already dead when the next power
+       * was tested.
+       *
+       * One hit per attacker per 0.28 s, which is fractionally longer than the
+       * longest authored strike phase, so a single sweep bills once however
+       * many capsules it crosses and a genuine second pass bills again.
+       */
+      const now = this.time;
+      const seen = (t.player._cutAt ||= new Map());
+      if (now - (seen.get(player.id ?? player) ?? -9) < 0.28) return;
+      seen.set(player.id ?? player, now);
+      t.player.damage(t.player.maxHp * 0.34 * lerp(0.6, 1.9, ev.cap?.vital ?? 0.4),
+        ev.point, player, 'saber');
+      player.score += 60;
+      this.addHitstop(0.055);
+      // `?.` — a RemoteAvatar has no camera, and four unguarded calls in this
+      // function were abandoning 295 of 300 host frames.
+      player.camera?.addShake(clamp(ev.speed / 60, 0.05, 0.3));
+      this.onHitmark?.(ev.point, t.player.alive ? 'cut' : 'kill', ev.bone);
+      P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
+      audio.cut(ev.point, false);
     } else if (t.prop) {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
       if (!halves) t.prop.shatter(ev.impulse, ev.point);
@@ -1492,9 +1578,26 @@ export class World {
 
   _boltHitTest(bolt, from, to) {
     // players
-    if (bolt.team !== 0) {
+    {
       for (const p of this.players) {
         if (!p.alive || p.invuln > 0) continue;
+        /**
+         * PER VICTIM, NOT PER BOLT.
+         *
+         * This was `if (bolt.team !== 0)` wrapped around the whole loop — one
+         * number deciding for every player in the room at once. In co-op that
+         * is right by accident, because every player is on team 0 and every
+         * hostile bolt is not. In a duel it is wrong in both directions: a bolt
+         * a duellist deflected back carries their team and so could not reach
+         * the person it was aimed at, and a bolt from the horde could not be
+         * made to spare an ally.
+         *
+         * `bolt.owner` is whoever fired or last deflected it, and `canHarm` is
+         * the same gate `Player.damage` and `bladeTargets` consult. The
+         * fallback synthesises the minimum an owner-less bolt needs so a bolt
+         * fired before this field existed still behaves as it did.
+         */
+        if (!canHarm(bolt.owner ?? { team: bolt.team }, p, this.rules)) continue;
         /**
          * A BODY HELD IN FRONT OF YOU IS A SHIELD.
          *

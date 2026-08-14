@@ -157,7 +157,17 @@ export async function run({ check, assert }) {
       + 'a player\'s blade passes through a player');
     assert(hit.bones.size > 1, `every cut landed on ${[...hit.bones]} — the rig is not being walked`);
 
+    /* …and the sweep really kills, which is the point of it and also why the
+     * next step has to put the body back. `swing` holds a lit blade inside a
+     * torso for four seconds; a rival who survived that would be the defect.
+     * `alive` was the one field this restore forgot, and a dead body is
+     * skipped by `hostileTo`, so every later step measured 0 and blamed the
+     * power it was testing. */
+    assert(!b.alive || b.hp < b.maxHp,
+      'four seconds of blade inside a torso left the rival at full health');
+
     // 2 — force push. Measured at victim velocity 0.000 m/s before this lane.
+    b.alive = true;
     b.velocity.set(0, 0, 0); b.invuln = 0; b.hp = b.maxHp;
     a.force = a.maxForce; a.cooldowns.push = 0;
     a.aimDir.subVectors(b.position, a.chest).normalize();
