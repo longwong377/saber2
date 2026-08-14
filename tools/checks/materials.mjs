@@ -345,6 +345,89 @@ export function run({ check, assert, near }) {
       + `${(saved / 1048576).toFixed(1)} MB of ORM and normal maps no longer uploaded or fetched`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  …AND THE PATCH ACTUALLY LANDED                                    */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('materials: the cel shader is installed in the frame, not only in its own source', async () => {
+    /**
+     * EVERY OTHER CHECK IN THIS FILE READS `src/toon/Cel.js` AS TEXT.
+     *
+     * That is the house pattern and it is the right one for arithmetic — there
+     * is no GL context anywhere in this harness, so a JS twin plus assertions
+     * that pin the GLSL it stands for is the only way to measure a BRDF. But it
+     * has a hole the size of the feature: nothing here ever installed the patch,
+     * so nothing here could tell whether the game runs it.
+     *
+     * Verified before this check existed: running this file's own `run()` in a
+     * process that never imports Engine.js reported 19 passed, 0 failed while
+     * `THREE.ShaderChunk.lights_physical_pars_fragment` still contained
+     * `reflectedLight.directSpecular += irradiance * BRDF_GGX` — a fully
+     * physical frame, every cel assertion green. The player would be looking at
+     * the PBR render they explicitly rejected and the gate would say nothing.
+     *
+     * The failure is live, not theoretical. Each `sub()` matches three's chunk
+     * text exactly, tabs included, and two of the chunks have already been
+     * rewritten by `installAerialPerspective` and `installCascadeShadows` — so
+     * the order of the three installers is load-bearing. Calling
+     * `installCelShading` on stock three drops three of its sixteen
+     * substitutions with nothing but a console warning: measured, `hard cascade
+     * shadow`, `hard shadow mask` and `banded distance`.
+     *
+     * IT LIVES HERE RATHER THAN IN cel.mjs, and that is not tidiness. The
+     * chunk rewrites are once-only flags, and the file that imports Engine
+     * FIRST is the one whose copy of three gets patched (see the note over the
+     * dynamic import above). Putting this in cel.mjs made it the first, and
+     * `aerial`'s four checks and `materials: nothing is bound that nothing
+     * reads` — five assertions that were reading the patched chunks perfectly
+     * well — all began reading an unpatched copy. Six green checks went red
+     * from adding one. This file already owns the pattern; the check belongs
+     * beside the ones it shares a mechanism with.
+     */
+    await import('../../src/engine/Engine.js');
+    const { celInstall } = await import('../../src/toon/Cel.js');
+    assert(celInstall, 'installCelShading never ran, so the frame is stock three');
+    assert(celInstall.count >= 16,
+      `only ${celInstall.count} substitutions were attempted — the model lost a rule`);
+    assert(celInstall.missed.length === 0,
+      `${celInstall.missed.length} of ${celInstall.count} cel substitutions did not match three's `
+      + `chunk text: ${celInstall.missed.join(', ')} — the frame renders part physical`);
+
+    /* …and independently of what `sub()` reports, the chunks have to CARRY the
+     * cel model. `missed` is the installer marking its own homework; this is the
+     * shader the GPU would compile. */
+    const C = THREE.ShaderChunk;
+    const carries = {
+      common: ['saberCelTone', 'saberCelBand', 'saberCelAlbedo', 'saberCelAmbient',
+        'saberCelCast', 'saberCelDistance', 'saberCelKey', 'saberCelShape'],
+      lights_physical_pars_fragment: ['saberCelTone', 'saberCelAmbient', 'saberCelShape'],
+      lights_physical_fragment: ['saberCelAlbedo'],
+      lights_fragment_begin: ['saberCelKey', 'saberCelCast', 'saberCelShadow', 'saberCelFlatDir'],
+      shadowmask_pars_fragment: ['saberCelShadow'],
+      lights_fragment_maps: ['saberCelAmbient', 'saberCelFlatDir'],
+      fog_fragment: ['saberCelDistance'],
+    };
+    for (const [chunk, marks] of Object.entries(carries)) {
+      assert(typeof C[chunk] === 'string', `three has no ${chunk} chunk any more`);
+      for (const m of marks) {
+        assert(C[chunk].includes(m),
+          `${chunk} does not call ${m} — that rule of the cel model is not in the frame`);
+      }
+    }
+    // and the three PBR terms rule 3 deletes are gone from the compiled chunk,
+    // not merely driven to zero somewhere this file can read
+    assert(!/BRDF_GGX\( directLight\.direction/.test(C.lights_physical_pars_fragment),
+      'the direct GGX lobe is back in the shader — roughness matters again');
+    assert(!/radiance \* singleScattering/.test(C.lights_physical_pars_fragment),
+      'the environment reflection is back in the shader');
+    assert(!/material\.diffuseColor = diffuseColor\.rgb \* \( 1\.0 - metalnessFactor \)/
+      .test(C.lights_physical_fragment),
+      'metalness zeroes diffuse again — every hilt and droid plate renders black');
+    const n = Object.values(carries).reduce((a, v) => a + v.length, 0);
+    return `${celInstall.count} substitutions, none missed; ${n} cel calls found across `
+      + `${Object.keys(carries).length} chunks; GGX, IBL and the metalness divide all gone`;
+  });
+
   check('materials: a surface bakes once however many tilings ask for it', () => {
     // Terrain, props and bodies all want the same maps at different repeats.
     // The texture objects differ; the 512²/1024² bake must not.

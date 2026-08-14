@@ -3869,7 +3869,25 @@ export class Player {
     this.stasis.bodies.clear();
     this.hurled.length = 0;
     this.hum.dispose();
-    this.cloak?.dispose();
+    this.cloak?.dispose(); this.cloak = null;
+    /**
+     * THE SKIRT TOO, and it was the only garment this line forgot.
+     *
+     * `die()` twenty lines up disposes both, and Enemy.dispose() disposes both;
+     * this one disposed the cape and left the robe. The robe is not parented to
+     * the rig — `new Cloak` does `scene.add(this.mesh)` — so removing the rig
+     * root does not take it, and it is built `frustumCulled = false` with
+     * `castShadow = true`. Measured across twelve deploys of main.js's own
+     * buildWorld: 36 orphan meshes, exactly three per deploy (the skirt and the
+     * belt's two sash straps), left standing at the PREVIOUS level's
+     * coordinates, drawn every frame and casting into all three cascades.
+     *
+     * The check that covers the sash asserts `skirt.dispose()` removes it and
+     * says "a garment leak per respawn" in its own failure message — and never
+     * asked whether anything calls it. See tools/checks/lifecycle.mjs, which
+     * now cycles a real World rather than reading one as text.
+     */
+    this.skirt?.dispose(); this.skirt = null;
     this.saber.dispose();
     if (this.actor) this.actor.dispose();
     else { this.world.scene.remove(this.rig.root); this.rig.dispose(); }

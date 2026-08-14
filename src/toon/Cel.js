@@ -516,7 +516,9 @@ export function installCelShading(THREE_) {
   _installed = true;
   const C = THREE_.ShaderChunk;
   const missed = [];
+  let subs = 0;
   const sub = (chunk, from, to, label) => {
+    subs++;
     const src = C[chunk];
     if (src.indexOf(from) < 0) { missed.push(label); return; }
     C[chunk] = src.replace(from, to);
@@ -656,8 +658,32 @@ export function installCelShading(THREE_) {
     console.warn('SABER: cel shading could not patch: ' + missed.join(', ')
       + ' — the frame will be part physical.');
   }
-  return { missed };
+  celInstall = { missed, count: subs };
+  return celInstall;
 }
+
+/**
+ * WHAT THE INSTALL ACTUALLY DID, kept where a check can read it.
+ *
+ * The return value above was handed to Engine.js and dropped on the floor, and
+ * `_installed` makes a second call return `false` — so after boot there was no
+ * way to ask whether the patch landed. That mattered more than it looks:
+ * `tools/checks/cel.mjs` asserts its shader claims against THIS FILE'S SOURCE
+ * TEXT, never against `THREE.ShaderChunk`, so all nineteen of its checks pass
+ * in a process where `installCelShading` has never run and the frame is fully
+ * physical. Verified: run cel.mjs without importing Engine and it reports 19
+ * passed, 0 failed with `lights_physical_pars_fragment` still carrying
+ * `reflectedLight.directSpecular += irradiance * BRDF_GGX`.
+ *
+ * The failure this guards is not hypothetical either. Every `sub()` matches
+ * three's chunk text exactly, tabs included, and TWO of the chunks are ones
+ * Engine has already rewritten — so the order of the three installers is
+ * load-bearing. Calling this one on stock three, out of order, drops three of
+ * the sixteen substitutions on the floor with nothing but a console warning:
+ * measured, `hard cascade shadow`, `hard shadow mask` and `banded distance`.
+ * A player would see a part-physical frame; the suite would print all green.
+ */
+export let celInstall = null;
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The same arithmetic, in JS                                            */

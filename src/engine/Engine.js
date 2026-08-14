@@ -83,11 +83,45 @@ export const QUALITY = {
   //   medium  0.60
   //   high    0.85   the knee — 1 px lines with no visible stair-stepping
   //   ultra   1.00
-  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: true,  grass: 0.25, particles: 0.4, shadowDist: 70, viewDist: 380, ink: 0.50 },
-  medium: { shadow: 1536, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 105, viewDist: 520, ink: 0.60 },
-  high:   { shadow: 2560, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 150, viewDist: 700, ink: 0.85 },
-  ultra:  { shadow: 3072, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 180, viewDist: 900, ink: 1.00 },
+  // `cloth` is how far an ENEMY may be and still have simulated garments, in
+  // metres. It is the most expensive thing a character owns and it had no
+  // budget at all: see the note below.
+  //
+  // `bloom` is false at low for the first time here. It was `true` on all four
+  // rows, which made it a column with a reader that could not change anything —
+  // the tier the menu labels "For laptops and integrated graphics" still ran
+  // the five-tap mip pyramid and the composite.
+  low:    { shadow: 1024, msaa: 0, pixelRatio: 1.0,  bloom: false, grass: 0.25, particles: 0.4, shadowDist: 70, viewDist: 380, ink: 0.50, cloth: 0 },
+  medium: { shadow: 1536, msaa: 2, pixelRatio: 1.0,  bloom: true,  grass: 0.55, particles: 0.7, shadowDist: 105, viewDist: 520, ink: 0.60, cloth: 18 },
+  high:   { shadow: 2560, msaa: 4, pixelRatio: 1.25, bloom: true,  grass: 1.0,  particles: 1.0, shadowDist: 150, viewDist: 700, ink: 0.85, cloth: 30 },
+  ultra:  { shadow: 3072, msaa: 4, pixelRatio: 1.5,  bloom: true,  grass: 1.5,  particles: 1.35, shadowDist: 180, viewDist: 900, ink: 1.00, cloth: 46 },
 };
+
+/**
+ * WHY `cloth` IS A COLUMN, and what it was before.
+ *
+ * Enemy's own level-of-detail gate switched the garments off past `lod > 1`,
+ * which is 62 m. The largest `spawnRadius` of the thirteen levels is [36, 60]
+ * (Levels.js) and every enemy is born inside it and then walks TOWARD the
+ * player — so the cut sat above the farthest an enemy is ever placed, and the
+ * only way to reach it was to outrun one. In an ordinary fight it never fired
+ * once, and there was no other switch: not a slider, not a tier, nothing.
+ *
+ * Measured headless on this machine, 20 clothed duellists walking: 6.28 ms of
+ * garment solve and 1.26 ms of collider refresh per frame — 7.5 ms of a 16.67
+ * ms budget, with no renderer, no physics, no AI, no particles and no bolts in
+ * the loop. Per character that is 287 particles, 1466 links and 20 040 sphere
+ * tests every frame, four garments deep.
+ *
+ * 30 m at `high` is not a new number: it is where Enemy already drops 37 of a
+ * character's 56 meshes. Cloth now stops where the game had already decided
+ * detail stops mattering. The rigid lathes come back in the same frame — they
+ * were never deleted, only hidden — so the silhouette is unchanged; what goes
+ * is the fold motion, at a distance where a fold is under a pixel.
+ *
+ * 0 at `low` means the rigid robe, always. That tier is the one the menu offers
+ * to integrated graphics, and this is the largest single thing it can hand back.
+ */
 
 /* ── aerial perspective ──────────────────────────────────────────────────
  *

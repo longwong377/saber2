@@ -549,10 +549,38 @@ export class OutlinePass extends Pass {
     this.scene.fog = null;
     renderer.getClearColor(_prevClear);
     const prevAlpha = renderer.getClearAlpha();
+    /**
+     * THE SHADOW CASCADES ARE NOT THIS PASS'S BUSINESS, and switching them off
+     * here is the single cheapest thing in the renderer.
+     *
+     * `WebGLRenderer.render()` calls `shadowMap.render()` unconditionally —
+     * three r169, three.module.js:29935 — and that call returns early only when
+     * `shadowMap.enabled === false` or `autoUpdate === false && !needsUpdate`
+     * (22294-95). Engine sets `enabled = true` once and never touches
+     * `autoUpdate`, so every `renderer.render()` in a frame re-renders every
+     * cascade. This prepass is a second `render()`, which means the game was
+     * drawing SIX full-scene depth passes where three would do: three cascades
+     * at up to 3072², each re-submitting every shadow-casting mesh in range —
+     * and in a twenty-enemy fight the characters alone are over a thousand.
+     *
+     * The second set was also byte-identical to the first: shadow maps are
+     * rendered from the light's own camera, so the prepass's narrowed `cam`
+     * does not change them. Pure waste.
+     *
+     * And this pass cannot want them anyway: `overrideMaterial` is the normal
+     * material, which reads no shadow map. Restored immediately after, so the
+     * composer's own render still updates them exactly once a frame.
+     */
+    const prevShadowAuto = renderer.shadowMap.autoUpdate;
+    const prevShadowNeeds = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = false;
     renderer.setRenderTarget(this.target);
     renderer.setClearColor(0x000000, 1);
     renderer.clear(true, true, false);
     renderer.render(this.scene, cam);
+    renderer.shadowMap.autoUpdate = prevShadowAuto;
+    renderer.shadowMap.needsUpdate = prevShadowNeeds;
     renderer.setRenderTarget(prevTarget);
     renderer.setClearColor(_prevClear, prevAlpha);
     this.scene.overrideMaterial = prevMat;

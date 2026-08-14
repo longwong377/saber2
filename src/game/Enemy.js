@@ -24,7 +24,21 @@ import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
-const rng = makeRng(4711);
+/**
+ * The file's shared stream, seedable.
+ *
+ * Every enemy built in this process draws its speed, its facing, its first
+ * attack timer, its strafe direction and its duel FORM from here, which is
+ * right for the game — two waves should not play out identically — and is
+ * exactly what makes a measurement of one enemy depend on how many enemies ran
+ * before it. `tools/checks/held.mjs` measured a 1.77x ratio alone and a passing
+ * one inside the full suite, on the same code, purely because the acolyte drew
+ * a different form. A harness that wants the same duellist twice says so with
+ * `enemyRng.seed(n)`; see `duelRng` in Duel.js, which is the same fix for the
+ * same reason.
+ */
+export const enemyRng = makeRng(4711);
+const rng = enemyRng;
 
 /**
  * How fast a body gives ground, as a share of its forward speed. Sprinters
@@ -1351,6 +1365,15 @@ export class Enemy {
     const camDist = ctx.camera.position.distanceTo(this.position);
     const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
+    /**
+     * …and cloth gets its own cut, from the quality tier.
+     *
+     * It used to ride on `lod > 1`, which is 62 m — above the 60 m the farthest
+     * level ever spawns anything at, so in an ordinary fight the most expensive
+     * thing a character owns was never switched off by anything. See the note
+     * over QUALITY.cloth in Engine.js for what it costs.
+     */
+    this.clothOn = camDist < (this.world.clothCut ?? 30);
 
     if (this.netDriven) {
       // a client's copy: the host owns where this thing is, we own how it looks
@@ -2131,8 +2154,20 @@ export class Enemy {
 
     // close duellists get simulated robes; distant ones do not need them
     if (this.cloak) {
-      if (this.lod > 1) { this.cloak.setVisible(false); this.skirt?.setVisible(false); }
-      else {
+      if (!this.clothOn) {
+        this.cloak.setVisible(false); this.skirt?.setVisible(false);
+        this._clothWasOn = false;
+      } else {
+        /* Coming back inside the cut, the garment holds the pose it had when it
+         * left — which was a different place on the map and, after a long chase,
+         * a different facing. Laying it out again under its live anchors costs
+         * one frame's reset and is the difference between a robe settling and a
+         * robe snapping across the body. */
+        if (this._clothWasOn === false) {
+          if (this.skirt?.initialised) this.skirt.reset();
+          if (this.cloak.initialised) this.cloak.reset();
+        }
+        this._clothWasOn = true;
         _v3.copy(this.velocity).multiplyScalar(-0.8).setY(0);
         // skirt first: the cape's proxy is the skirt's own particles
         if (this.skirt) {

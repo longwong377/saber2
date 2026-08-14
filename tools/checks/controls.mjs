@@ -76,6 +76,11 @@ const QUALITY_READERS = {
   // changes under a running composer — and the second one is what the column
   // actually promises, so it is the one named here.
   ink:        ['engine/Engine.js', 'this.outline.scale = q.ink'],
+  // How far an ENEMY may be and still solve its garments, in metres. It rode on
+  // Enemy's own `lod > 1` before, which is 62 m — above the 60 m the farthest
+  // level ever spawns anything at — so the most expensive thing a character
+  // owns had no working switch at all. See the note over QUALITY.cloth.
+  cloth:      ['game/World.js', 'this.clothCut = q.cloth'],
 };
 
 const DEG = 180 / Math.PI;

@@ -195,6 +195,20 @@ export class World {
     // to carry the vertices for it. 380/520/700/900 against high's 700 gives
     // 0.54 / 0.74 / 1.00 / 1.29 — within a vertex row of the hand-written
     // ladder it replaces, and unlike it, it cannot drift away from the tier.
+    /**
+     * HOW FAR AN ENEMY MAY BE AND STILL SOLVE ITS GARMENTS, resolved here.
+     *
+     * Enemy reads `world.clothCut` rather than QUALITY directly, and that is
+     * not indirection for its own sake. Enemy.js is inside verify.mjs's own
+     * STATIC import graph (verify → Waves → Enemy), and a static edge from
+     * there to Engine.js evaluates Engine's module-level ShaderChunk rewrites
+     * against the node_modules copy of three rather than the vendored one,
+     * burning their once-only flags — which turns the four aerial-perspective
+     * checks and two materials checks quietly red. The note at the top of
+     * tools/verify.mjs records the same trap being sprung through Player.js.
+     * World is not in that graph, so the lookup belongs here.
+     */
+    this.clothCut = q.cloth ?? 30;
     const detail = q.viewDist / QUALITY.high.viewDist;
     const particleScale = (this.settings.particleScale ?? 1) * q.particles;
 
@@ -431,6 +445,9 @@ export class World {
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     this.locks.length = 0;
+    // …and the client's id→enemy map, which holds a whole Enemy graph per
+    // entry. Clearing the list it points into is not the same as clearing it.
+    this._netEnemyIndex?.clear();
     for (const p of this.props.slice()) p.destroy();
     this.props.length = 0;
     for (const d of this.doors) d.dispose();
@@ -1517,8 +1534,24 @@ export class World {
       e.hp = hp;
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
+    /**
+     * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
+     *
+     * The delete used to sit inside the `!e.dead` guard, which is exactly the
+     * case that never fires: `packSnapshot` walks `world.enemies`, corpses
+     * included, so the host keeps transmitting a body for the forty seconds it
+     * lingers, and the client sets `e.dead` from that snapshot long before the
+     * id stops arriving. By the time it does, `!e.dead` is false and the entry
+     * is orphaned for the rest of the session — a whole Enemy graph, rig,
+     * bones, Actor, saber and world backreference, per enemy the host ever
+     * spawned. Measured over 240 host spawns: 92.3 MB retained, 394 KB each,
+     * with the scene and the physics world both perfectly clean, so nothing on
+     * screen shows it. Joining a co-op game was the leak.
+     */
     for (const [id, e] of this._netEnemyIndex) {
-      if (!seen.has(id) && !e.dead) { e.die(e.position.clone(), null, 'net'); this._netEnemyIndex.delete(id); }
+      if (seen.has(id)) continue;
+      if (!e.dead) e.die(e.position.clone(), null, 'net');
+      this._netEnemyIndex.delete(id);
     }
     this.director.wave = msg.w;
     this.director.active = !!msg.act;
