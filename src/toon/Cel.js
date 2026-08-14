@@ -261,9 +261,18 @@ export const CEL = {
    * a change to the light budget wearing a colour fix's clothes.
    *
    * What it buys, measured on the shipped atmospheres as the flat ambient's
-   * blue/red: kamino 2.55 → 1.50, colosseum 2.39 → 1.66, drifts 1.82 → 1.29,
-   * arena 2.35 → 1.77 — every one of them toward the level's own ground, which
+   * blue/red: kamino 2.55 → 1.58, colosseum 2.39 → 1.82, drifts 1.82 → 1.47,
+   * arena 2.35 → 1.92 — every one of them toward the level's own ground, which
    * is rule 5 (one hue family) applied to the light instead of to the palette.
+   *
+   * THESE ARE THE NUMBERS THE SUITE PRINTS, and they were not. The comment
+   * shipped with 1.50/1.66/1.29/1.77 — the measurements from a DIFFERENT value
+   * of `bounce`, best-fitting a share of 0.435 against the 0.35 two lines up.
+   * Somebody tuned the constant and left the evidence for the old one, which
+   * is the most expensive kind of stale comment: it reads as corroboration.
+   * `tools/checks/lighting.mjs`'s "the ground colour every level authors
+   * reaches the frame" prints all eight levels on every run, so the live
+   * numbers were four lines away in the terminal the whole time.
    */
   bounce: 0.35,
 

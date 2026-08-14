@@ -2638,6 +2638,33 @@ export class GrassField {
      * The uCenter every ring fades against is the TRUE centre, updated every
      * frame, not the snapped one: a fade that jumps in cell steps is a ring
      * of grass appearing at the horizon every time you cross a line. */
+    /**
+     * THE REFILL IS SYNCHRONOUS, AND A QUEUE WAS TRIED AND REJECTED.
+     *
+     * A ring is rebuilt on the frame its cell index moves, and every ring that
+     * moved is rebuilt on that frame. Walking, two rings cross a line together
+     * often enough to matter: measured over 118 frames of a walk, 153 refills,
+     * and on the frames they landed the cost was a median 2.09 ms and a p90 of
+     * 12.64 ms at `high`. That is a real hitch on the one system whose whole
+     * job is to be scenery nobody thinks about, and it is worth fixing.
+     *
+     * DEFERRING WHOLE FILLS IS NOT THE FIX. Queuing them one per frame was
+     * built and measured, and it breaks an invariant this file's own suite
+     * protects: `cover: a tier holds what its cell says, not what the walk
+     * there said`. With the fill deferred, a ring's contents depend on how
+     * many frames have passed since it last caught up — so the same cell
+     * approached from the east held 1968 instances and from the north 2658,
+     * and `cover: a field is not one colour` went with it at 39 degrees of hue
+     * against an authored 4. Grass that pops differently depending on which
+     * way you walked into a clearing is a worse defect than a 12 ms frame.
+     *
+     * The fix that would work is the one Destruction.prefracture uses: make
+     * the FILL itself resumable, with a cursor through its own loop, so a
+     * ring is always correct for its cell and only the work is spread. That
+     * is a larger job than it looks — `_fillTier` walks a field function, a
+     * species table and a trail buffer — and it is written down here rather
+     * than half-done.
+     */
     for (const ring of this.rings) {
       const ci = Math.floor(center.x / ring.cell), cj = Math.floor(center.z / ring.cell);
       if (ci !== ring.ci || cj !== ring.cj) {
