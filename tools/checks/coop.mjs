@@ -697,8 +697,36 @@ export async function run({ check, assert }) {
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {},
       toHost(m) { out.push(m); } }, 'client');
 
-    const snap = (id, hp) => ({ t: 'snapshot', w: 1, act: 1, rem: 1, ic: 0, sc: 0, bf: [],
-      e: [[id, 'trooper', 0, 0, 4, 0, hp, 0, 0, 0, 0, 0]] });
+    /**
+     * BUILT BY THE SHIPPED PACKER, NOT TYPED OUT.
+     *
+     * This was a hand-written array of twelve slots, and `packSnapshot` emits
+     * thirteen — the modifier key went on the end and nothing here grew with
+     * it, so `md` arrived `undefined` and every drive below silently skipped
+     * the modifier path while looking like it covered it. Positional records
+     * are exactly where a copied table hides: the reader destructures by
+     * position, so a short record is not an error, it is a quiet default.
+     *
+     * A one-enemy world is packed and the fields this check cares about are
+     * overwritten by name against the packer's own ordering, so the record can
+     * never be the wrong length or the wrong shape again.
+     */
+    const { packSnapshot } = await import('../../src/net/Net.js');
+    const shape = (() => {
+      const probe = { enemies: [Object.assign(Object.create(null), {
+        id: 'probe', type: 'trooper', position: new THREE.Vector3(), facing: 0, hp: 100,
+        dead: false, velocity: new THREE.Vector3(), aimCharge: 0, duel: null, mod: 0,
+      })], _netFires: [], director: { wave: 1, active: true, remaining: 1, intermission: 0 }, score: 0 };
+      return packSnapshot(probe).e[0];
+    })();
+    const SLOT = { id: 0, type: 1, z: 4, hp: 6 };
+    const snap = (id, hp) => {
+      const rec = shape.slice();
+      rec[SLOT.id] = id; rec[SLOT.type] = 'trooper'; rec[SLOT.z] = 4; rec[SLOT.hp] = hp;
+      return { t: 'snapshot', w: 1, act: 1, rem: 1, ic: 0, sc: 0, bf: [], e: [rec] };
+    };
+    assert(shape.length >= 12,
+      `packSnapshot emitted ${shape.length} slots per enemy — the probe is not being packed`);
     const p = world.player;
     const claims = {};
     const drive = (name, id, fn) => {
