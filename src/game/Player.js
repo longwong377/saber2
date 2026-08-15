@@ -162,6 +162,27 @@ class StasisAnchor {
 const isMechanical = (e) => bodyOf(e).droid;
 
 /** Bones a droid still needs to be a droid. Never the first thing to come off. */
+/**
+ * THE FOUR HEIGHTS A FIGURE IS MEASURED AT, in metres, on a 1.78 m human.
+ *
+ * They were four literals typed into two expressions in `_updateBlade`, which
+ * is exactly the shape that cannot be scaled by a species: there was no name
+ * to multiply. Everything that reads them multiplies by `player.stature`.
+ *
+ * The crouch pair are not the standing pair times a constant — a crouch takes
+ * more off the eye (0.40 m) than off the chest (0.34 m), because the spine
+ * folds forward as well as down.
+ */
+const CHEST_H = 1.34, CHEST_H_CROUCH = 1.0;
+const EYE_H = 1.62, EYE_H_CROUCH = 1.22;
+/**
+ * What all four of those are heights ON. `frame.stature` is authored in METRES
+ * — the small-folk row says 0.66 and its own comment says "the figure comes
+ * out 3.6 heads tall at 0.72 m" — so the ratio, not the field, is the
+ * multiplier. A species that declares no stature is this tall.
+ */
+const HUMAN_H = 1.78;
+
 const CORE_BONE = /^(hips|spine|chest|body|core|pelvis)$/;
 
 /** Anything it is standing on — see forceDisassemble for why these go last. */
@@ -1404,6 +1425,30 @@ export class Player {
      */
     this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
+    /**
+     * STATURE — how tall this figure actually stands, as a fraction of a human,
+     * and it had NO READER anywhere in src/.
+     *
+     * `SPECIES.smallfolk.frame.stature` has said 0.66 since the row was
+     * written. Everything downstream of it used the constants below instead:
+     * the chest at a flat 1.34 m and the eye at a flat 1.62. On a 0.66 m
+     * figure that puts the guard point — which is where the HILT hangs and
+     * therefore what the two-bone arm IK solves to — a clear 0.6 m above the
+     * top of its own head. Both arms go up because that is where the weapon
+     * is, and the weapon floats because nothing ever asked whether the hands
+     * could reach it. Reported as "the blade floats above them, both their
+     * arms in the air too", which is a precise description of an arm solver
+     * doing its job against a target authored for somebody else.
+     *
+     * It is NOT `rig.scale`. The body scale is 0.40 and the standing height is
+     * 0.66, because the head is authored at 0.74 and the legs at 0.80 of the
+     * body — that is the whole point of the small-folk row, and it is why
+     * these are two numbers rather than one. `rig.scale` is right for the
+     * gait (it measures bones); `stature` is right for anything measured off
+     * the FLOOR.
+     */
+    this.stature = (speciesOf(opts.species)?.frame?.stature ?? HUMAN_H) / HUMAN_H;
+    this.eyeHeight = EYE_H * this.stature;
     this._makeCloak();
 
     // ── saber
@@ -1521,7 +1566,7 @@ export class Player {
     // ── camera
     this.camera = new CameraRig(world.engine.camera);
     this.camera.yaw = Math.PI;
-    this.eyeHeight = 1.62;
+    this.eyeHeight = EYE_H;   // re-derived from the species below, once the rig exists
 
     // ── physics proxy so enemies and props collide with us
     this.body = new Body({
@@ -1555,9 +1600,20 @@ export class Player {
     this.skirt?.dispose(); this.skirt = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
+    /**
+     * `scale` — and Enemy.js has passed it since capes existed.
+     *
+     * Cloth.js reads `opts.scale ?? 1`, so a cape ordered 0.86 m long was 0.86
+     * m long on a 0.66 m figure: a garment longer than the character wearing
+     * it, which is what "the clothes look really oversized and funny" is. The
+     * numbers below are authored against a 1.78 m human and are multiplied
+     * into the figure's own size here rather than restated per species.
+     */
+    const S = this.rig.scale ?? 1;
     this.cloak = attachCloak(this.world.scene, this.rig, {
       // narrow at the collar, flared at the hem, and stopping above the knee so
       // the legs still read — a floor-length sack hides the whole silhouette.
+      scale: S,
       material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0,
       cut: this.robeCut,
     });
@@ -1575,6 +1631,7 @@ export class Player {
       const smat = (this.palette.over || this.palette.outer).clone();
       smat.side = THREE.DoubleSide;
       this.skirt = attachSkirt(this.world.scene, this.rig, {
+        scale: S,
         material: smat, rigid: this.built.robeSkirt, cut: this.robeCut,
         // The belt's own two ends, which hang over this. Same material as the
         // obi they are tied in, because they are the same band of cloth.
@@ -2285,8 +2342,10 @@ export class Player {
     // it 0.20 m ABOVE the player's own eye, so every droid in the level would
     // have been shooting over the head of a player who looked at the sky.
     // They are two points and they are now two fields.
-    this.chest.copy(this.position).setY(this.position.y + lerp(1.34, 1.0, this.crouch));
-    const chestH = lerp(1.34, 1.0, this.crouch), eyeH = lerp(1.62, 1.22, this.crouch);
+    const st = this.stature ?? 1;
+    this.chest.copy(this.position).setY(this.position.y + lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st);
+    const chestH = lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st,
+          eyeH = lerp(EYE_H, EYE_H_CROUCH, this.crouch) * st;
     this.gripAnchor.copy(this.chest);
     if (this.camera.firstPerson) {
       // OFF THE EYE, AND OFF THE SAME EYE THE CAMERA USES.

@@ -502,4 +502,75 @@ export function run({ check, assert, near, THREE: T }) {
     assert(tris < 900, `a hand is ${tris} triangles`);
     return `open ${(f.x * 100).toFixed(1)}×${(f.y * 100).toFixed(1)}cm, curled to ${(c.y * 100).toFixed(1)}cm and ${(c.z * 100).toFixed(1)}cm deep, ${tris} tris`;
   });
+
+  /**
+   * A FIGURE THAT IS NOT 1.78 M TALL IS STILL HOLDING ITS OWN WEAPON.
+   *
+   * Reported as "the blade floats above them, both their arms in the air too",
+   * and that is an arm solver working correctly against a target authored for
+   * somebody else. `Player.chest` was a flat 1.34 m and `eyeHeight` a flat
+   * 1.62 for every species in the game; `SPECIES.smallfolk.frame.stature` has
+   * said 0.66 since the row was written and had no reader anywhere in src/.
+   * On a 0.66 m figure that is a guard point — which is where the hilt hangs —
+   * roughly 0.6 m over the top of its own head.
+   *
+   * The check is deliberately about the RELATION rather than about 1.34: the
+   * chest has to be inside the body it belongs to. `stature` is asserted to be
+   * read at all, because the failure mode here is silence — an unread field
+   * looks exactly like a field that agrees with the default.
+   */
+  check('species: a small figure holds the hilt at its own chest, not a human’s', () => {
+    // `frame.stature` is in METRES — the small-folk row says 0.66 and its own
+    // comment says "3.6 heads tall at 0.72 m". A species that declares none is
+    // a human, and this is how tall a human is.
+    const HUMAN_H = 1.78;
+
+    for (const sp of B.SPECIES) {
+      const st = (sp.frame?.stature ?? HUMAN_H) / HUMAN_H;
+      const built = B.buildJedi({ species: sp.id });
+      const box = new THREE.Box3().setFromObject(built.rig.root);
+      const tall = box.max.y - box.min.y;
+
+      // The declared stature has to be the height the builder actually emits,
+      // or the number the game scales by is fiction. 12% because the figure is
+      // measured in a T-pose with hair and ears on it.
+      const want = HUMAN_H * st;
+      assert(Math.abs(tall - want) / want < 0.12,
+        `${sp.id} declares stature ${st} (${want.toFixed(2)} m) and builds ${tall.toFixed(2)} m`);
+
+      // …and the chest the hilt hangs from has to be inside that figure. Below
+      // the crown of the head, above the hip: a guard point outside this band
+      // is one the arms cannot reach, which is the whole defect.
+      // Measured as a FRACTION of the figure's own height rather than against
+      // its box, because the box is in bind pose with the feet below the root.
+      const chest = (1.34 * st) / tall;
+      assert(chest < 0.95,
+        `${sp.id}: the chest sits at ${(chest * 100).toFixed(0)}% of a ${tall.toFixed(2)} m figure — over its own head`);
+      assert(chest > 0.45,
+        `${sp.id}: the chest sits at ${(chest * 100).toFixed(0)}% of a ${tall.toFixed(2)} m figure — below its own hips`);
+    }
+    return B.SPECIES.map(s => `${s.id} ${(s.frame?.stature ?? HUMAN_H).toFixed(2)}m`).join(' ');
+  });
+
+  /**
+   * …AND ITS CLOTHES ARE ITS OWN SIZE. Cloth.js reads `opts.scale ?? 1`, so a
+   * cape ordered 0.86 m long is 0.86 m long on a 0.66 m figure — a garment
+   * longer than the character in it. Enemy.js passed `scale: A.scale` from the
+   * day capes existed and Player.js did not, which is the same hand-written
+   * twin that had the player's own gait solved at scale 1.
+   */
+  check('species: the cape is cut to the figure, and Player asks for that', async () => {
+    const src = await (await import('node:fs/promises'))
+      .readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    const cloak = src.match(/attachCloak\(this\.world\.scene, this\.rig, \{[^}]*\}/s);
+    assert(cloak, 'Player no longer attaches a cloak the way this check reads it');
+    assert(/\bscale:/.test(cloak[0]),
+      'Player orders a cape without a scale — every species wears a human’s cape');
+    const skirt = src.match(/attachSkirt\(this\.world\.scene, this\.rig, \{[^}]*\}/s);
+    assert(skirt && /\bscale:/.test(skirt[0]),
+      'Player orders a robe skirt without a scale');
+    assert(/this\.stature\s*=/.test(src) && /stature/.test(src.match(/_updateBlade[\s\S]{0,4000}/)?.[0] ?? ''),
+      'nothing multiplies the blade anchor by the figure’s stature');
+    return 'cape, skirt and blade anchor all scale with the figure';
+  });
 }
