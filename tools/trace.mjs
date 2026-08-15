@@ -66,7 +66,7 @@ const SEED = parseInt(flag('seed', '1234'), 10);
 
 const {
   WaveDirector, BOONS, ATTUNEMENTS, drawBoons, isAttuneWave,
-  seedWaves, RankSet, BOSS_EVERY, DRAFT_EVERY,
+  seedWaves, RankSet, maxRank, MASTERY_NEEDS, BOSS_EVERY, DRAFT_EVERY,
 } = await import('../src/game/Waves.js');
 const { ARCHETYPES } = await import('../src/game/Enemy.js');
 const { POWER_COST, POWER_BOON } = await import('../src/game/Powers.js');
@@ -125,6 +125,19 @@ for (let w = 1; w <= WAVES; w++) {
 
 /* ── what the run offers ────────────────────────────────────────────────── */
 
+/**
+ * A card as the trace reports it: what it is, what it costs the pool, and WHICH
+ * AXIS it pulls the build toward. The axis is the field the judges could not
+ * see and asked for by name.
+ */
+const card = (b) => ({
+  id: b.id,
+  rarity: b.rarity ?? null,
+  // Attunements carry a single `attune` axis; boons carry an `axes` array.
+  axes: b.attune ? [b.attune] : (b.axes ?? []),
+  maxRank: maxRank(b),
+});
+
 const taken = new RankSet();
 const drafts = [];
 for (let w = 1; w <= WAVES; w++) {
@@ -149,17 +162,36 @@ for (let w = 1; w <= WAVES; w++) {
   drafts.push({
     wave: w,
     attune,
-    offered: offered.map((b) => `${b.id}${b.rarity ? ':' + b.rarity : ''}`),
-    took: pick?.id ?? null,
+    offered: offered.map(card),
+    took: pick ? card(pick) : null,
   });
+}
+
+/**
+ * WHAT THE RUN IS BECOMING, which the first cut of this file could not say.
+ *
+ * Every judge that read this trace named the same gap independently: the cards
+ * came out as bare `id:rarity` strings, so the single most important question
+ * about progression — does a run form a coherent BUILD, or does it accumulate
+ * eight unrelated things — was unmeasurable from the output. The axes are on
+ * the cards already; nothing was reading them.
+ *
+ * Counted rather than judged, like everything else here. Three cards on an axis
+ * is the game's own `MASTERY_NEEDS`, so a reader can see whether the run ever
+ * came near paying that price without this file having an opinion about it.
+ */
+const axisTally = {};
+for (const d of drafts) {
+  if (!d.took) continue;
+  for (const ax of d.took.axes ?? []) axisTally[ax] = (axisTally[ax] ?? 0) + 1;
+  if (d.took.attune) axisTally[d.took.attune] = (axisTally[d.took.attune] ?? 0) + 1;
 }
 
 /** The earliest wave each card was OFFERED across the drafts above. */
 const firstOffered = {};
 for (const d of drafts) {
   for (const o of d.offered) {
-    const id = o.split(':')[0];
-    if (firstOffered[id] === undefined) firstOffered[id] = d.wave;
+    if (firstOffered[o.id] === undefined) firstOffered[o.id] = d.wave;
   }
 }
 
@@ -202,6 +234,7 @@ const trace = {
   run: waves,
   drafts,
   firstOffered,
+  axisTally,
   powers,
   economy: { insightAfter: insight, starsInSky: stars, constellation },
   levels,
@@ -224,8 +257,12 @@ if (has('json')) {
 
   console.log('\n  DRAFTS');
   for (const d of drafts) {
-    console.log(`  w${pad(d.wave, 4)}${d.attune ? 'ATTUNE  ' : '        '}${d.offered.join('  ')}`);
+    console.log(`  w${pad(d.wave, 4)}${d.attune ? 'ATTUNE  ' : '        '}${d.offered.map((o) => o.id + ':' + o.rarity + '[' + o.axes.join('/') + ']').join('  ')}`);
   }
+
+  console.log('\n  BUILD — cards taken per axis (mastery needs ' + MASTERY_NEEDS + ')');
+  const ax = Object.entries(axisTally).sort((a, b) => b[1] - a[1]);
+  console.log('  ' + (ax.length ? ax.map(([k, n]) => `${k} ${n}`).join('  ') : '(nothing taken)'));
 
   console.log('\n  POWERS');
   for (const p of powers) {
