@@ -176,10 +176,21 @@ const swinging = () => ({
  *
  * Backing off made the field THINNER, not fatter — one body alive at a time on
  * every wave — and killed the blade's only contact, so the kiting run lands
- * zero kills across eight waves. Whatever keeps the queue flowing, giving
- * ground defeats it: the retreat may be outrunning the spawn cadence, or the
- * bodies may be failing to path after a moving target. That is a real question
- * about the game and it is NOT answered here.
+ * zero kills across eight waves.
+ *
+ * THE FIRST EXPLANATION WAS WRONG, and the correction is the useful part. It
+ * looked like retreating was starving the spawn queue: a probe showed the queue
+ * pinned at 10 and draining nothing while the player walked twenty metres. That
+ * probe reused a world that still had eight bodies standing in it from the
+ * previous condition. Driven clean — a fresh World per condition, same seeded
+ * wave — the queue drains 8 of 8 to a peak of 8 alive whether the player
+ * retreats or stands still. Movement does not starve the spawner.
+ *
+ * So the thin field under `--kite` is caused by something in THIS FILE's kite,
+ * not by the game: the likeliest suspect is that `kite()` writes
+ * `p.camera.yaw` every frame, which the stationary run never does. That is
+ * untested. What is established is only the negative — the game is not at
+ * fault — and the positive is left open rather than guessed at.
  *
  * So `--kite` is kept, off by default, as the record of an attempt that failed
  * and the starting point for the next one. Do not read it as the better
