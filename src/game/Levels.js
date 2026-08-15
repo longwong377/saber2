@@ -3940,6 +3940,17 @@ Object.assign(ARCHETYPES, {
      * and the blade lock all work off `saber` alone and need nothing else. */
     saberColor: 5, hilt: 'Sentinel', damage: 34, preferred: [1.8, 3.8],
     score: 3200, threat: 13, boss: true, hipHeight: 1.12,
+    /* THIS DROID ARRIVES AS A SET-PIECE AND NEVER AS FILL, and it now SAYS so.
+     *
+     * It always did — but by omission: `unlockedAt` used to build its list from
+     * a hand-written ladder of seven names, so anything not on it and carrying
+     * no `unlockAt` was invisible to the fill. That is the same silence that
+     * kept `beast` off the Colosseum, whose entire premise is exotic creatures,
+     * and the Jedi Master off the Temple. When the fill was made to honour
+     * every pool entry, this general started arriving in threes on wave 12 and
+     * `tools/checks/warship.mjs` caught it — correctly, and against an intent
+     * nothing in this record had ever stated. Now it is stated. */
+    setPieceOnly: true,
     /* `armorPlus` is read by Enemy._boneToughness and sends the TORSO to
      * durasteel while leaving the limbs alone. On a boss that is the whole of
      * the counter-play: you are not going to cut this in half across the

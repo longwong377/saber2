@@ -171,8 +171,9 @@ export async function run({ check, assert }) {
     assert(rung, 'no Jedi rung on the set-piece ladder');
     assert(L.pool.includes(rung.type),
       `${rung.type} has a rung but the temple's pool does not name it, so the rung can never fire`);
-    assert(ARCHETYPES[rung.type].unlockAt === undefined,
-      `${rung.type} declares an unlockAt, so it can arrive as ordinary fill on any wave`);
+    assert(ARCHETYPES[rung.type].setPieceOnly === true,
+      `${rung.type} does not declare setPieceOnly, so nothing stops the fill buying it — `
+      + 'it used to be kept out by having no `unlockAt`, which was an absence rather than a rule');
 
     const waves = {};
     for (const w of [5, 10, 15, 20, 30]) {

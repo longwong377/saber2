@@ -472,6 +472,9 @@ export const ARCHETYPES = {
     ...JEDI_BASE,
     label: 'Jedi Master', build: (o) => buildJedi({ ...o, ...jediLook() }),
     scale: 1.03, hp: 460, mass: 86, speed: 5.2,
+    /* The Temple's set-piece, and it says so rather than being kept out of the
+     * fill by not appearing on a list. See the note on the IG Bodyguard. */
+    setPieceOnly: true,
     saberColor: 2, hilt: 'Duelist', form: 'makashi',
     damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
   },
