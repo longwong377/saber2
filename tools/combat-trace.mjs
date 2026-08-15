@@ -80,7 +80,8 @@ const has = (n) => args.includes('--' + n);
 
 const WAVES = parseInt(flag('waves', '8'), 10);
 const LEVEL = flag('level', 'colosseum');
-const SECS = parseFloat(flag('cap', '60'));          // seconds of game time per wave
+const SECS = parseFloat(flag('cap', '60'));
+const KITE = has('kite');          // seconds of game time per wave
 
 const { initPhysics } = await import('../src/physics/Rapier.js');
 const { World } = await import('../src/game/World.js');
@@ -137,7 +138,7 @@ const swinging = () => ({
   axis: { x: 0, y: 0 },
   frame: 0,
   act: () => false, actHit: () => false, actDown: () => false,
-  moveAxis(o) { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+  moveAxis(o) { if (o) { o.x = this.axis.x; o.y = this.axis.y; return o; } return { ...this.axis }; },
   mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
   delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 },
   step() {
@@ -147,6 +148,59 @@ const swinging = () => ({
   },
   end() { this.mouse.dx = 0; this.mouse.dy = 0; },
 });
+
+/**
+ * KEEP YOUR DISTANCE, so that the wave lasts long enough to be looked at.
+ *
+ * `--kite` only. Standing still, this player dies in nine seconds and the
+ * field never fills: `peakAlive` came back 3-4 on waves the composer had built
+ * for twenty-plus, so every number about a deep wave was really a number about
+ * a thin one. Backing off is the minimum that fixes that, and it is the one
+ * thing a human does constantly and this harness did not do at all.
+ *
+ * It is DELIBERATELY not tactics. It faces the nearest body so the blade
+ * sweeps toward something, and walks backwards when that body is closer than
+ * `HOLD` metres. There is no dodging, no blocking, no target priority, and
+ * still no power ever pressed — this exists to keep a measurement alive, not
+ * to play well, and the moment it starts choosing it stops being an instrument
+ * and becomes the thing it measures.
+ *
+ * ── AND IT DID NOT WORK. READ THIS BEFORE USING IT. ───────────────────────
+ *
+ * The whole point was to let the field fill. Measured on the Colosseum, eight
+ * waves, against the stationary run:
+ *
+ *                   peakAlive        kills        survived
+ *     stationary     1, 4, 4, 3…     1 on w1      w1 only
+ *     --kite         1 every wave    0 every wave w6 only (timeout)
+ *
+ * Backing off made the field THINNER, not fatter — one body alive at a time on
+ * every wave — and killed the blade's only contact, so the kiting run lands
+ * zero kills across eight waves. Whatever keeps the queue flowing, giving
+ * ground defeats it: the retreat may be outrunning the spawn cadence, or the
+ * bodies may be failing to path after a moving target. That is a real question
+ * about the game and it is NOT answered here.
+ *
+ * So `--kite` is kept, off by default, as the record of an attempt that failed
+ * and the starting point for the next one. Do not read it as the better
+ * instrument. The stationary run remains the honest floor, and the thin-field
+ * caveat at the top of this file still stands unresolved.
+ */
+const HOLD = 7;
+function kite(world, p, input) {
+  let near = null, best = Infinity;
+  for (const e of world.enemies) {
+    if (e.dead || !e.position) continue;
+    const d = e.position.distanceToSquared(p.position);
+    if (d < best) { best = d; near = e; }
+  }
+  if (!near) { input.axis.x = 0; input.axis.y = 0; return; }
+  // Face it: the sweep is relative to where the camera is pointing.
+  p.camera.yaw = Math.atan2(near.position.x - p.position.x, near.position.z - p.position.z) + Math.PI;
+  // …and give ground while it is inside the hold, straight back from the facing.
+  input.axis.x = 0;
+  input.axis.y = Math.sqrt(best) < HOLD ? -1 : 0;
+}
 
 /* ── what the kit could reach, right now ────────────────────────────────── */
 
@@ -199,6 +253,7 @@ for (let w = 1; w <= WAVES; w++) {
   let f = 0;
   for (; f < frames; f++) {
     input.step();
+    if (KITE) kite(world, p, input);
     world.update(1 / 60, input);
     swings++;
     peakAlive = Math.max(peakAlive, world.enemies.filter((e) => !e.dead).length);
@@ -257,7 +312,7 @@ if (has('json')) {
   console.log(JSON.stringify(out, null, 2));
 } else {
   const pad = (s, n) => String(s).padEnd(n);
-  console.log(`\nSABER — combat trace: ${LEVEL}, ${WAVES} waves, swing-only\n`);
+  console.log(`\nSABER — combat trace: ${LEVEL}, ${WAVES} waves, ${KITE ? 'swing + give ground' : 'swing-only, stationary'}\n`);
   console.log('  WAVE  CLEARED  SECS   PEAK  KILLS  DEFL  HP LOST  FORCE MIN');
   for (const r of rows) {
     console.log('  ' + pad(r.wave, 6) + pad(r.died ? 'DIED' : r.timedOut ? 'timeout' : 'yes', 9)
