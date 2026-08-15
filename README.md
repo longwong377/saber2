@@ -5,6 +5,10 @@
 A physics-driven lightsaber game that runs in a browser tab. No install, no
 launcher, no build step — the repository *is* the game.
 
+> **Working on it?** Read [HANDOFF.md](HANDOFF.md) first. It carries the traps —
+> the loader that must be used, the container that rolls the clone back, and the
+> four occasions a harness invented a defect that was not there.
+
 The premise: you do not press a button and watch a deflection animation. The
 blade is a rigid body with mass, inertia and reach, welded to your hand, and
 your mouse is your wrist. Every bolt you turn away, you turned away because your
