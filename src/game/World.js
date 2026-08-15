@@ -20,7 +20,6 @@ import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
 import { Communion } from './Constellation.js';
 import { applyOrder } from './Order.js';
-import { SPIRE } from './Run.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -150,11 +149,7 @@ export class World {
    * other side, so a landing is a transition rather than a restart.
    */
   loadLevel(key, opts = {}) {
-    // Read BEFORE unload: `this.run` lives on the world, and unload is allowed
-    // to clear the world.
-    const run = opts.run || this.run || null;
     this.unload();
-    this.run = run;
     /**
      * DERIVED, so it is rebuilt rather than appended to.
      *
@@ -170,11 +165,13 @@ export class World {
      * which are the only two things it should ever have contained.
      */
     this.takenBoons = new RankSet();
-    // …and the same for the Insight ledger, restored from the run rather than
-    // rebuilt: `bought.length` is the price escalator, so a climb that forgot
-    // it would quietly make every star on the next rung cost first-purchase
-    // prices again.
-    this.communion = new Communion(run ? run.communion : {});
+    // …and the same for the Insight ledger. It used to be restored from the
+    // Run across a landing, because `bought.length` is the price escalator and
+    // a climb that forgot it would make every star on the next rung cost
+    // first-purchase prices again. There are no landings now — the Descent was
+    // the only mode with them — so a level load starts a fresh ledger, which is
+    // what every other mode always did.
+    this.communion = new Communion({});
     // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
     // level stays load-bearing after it is gone. See Levels.js's alias block.
     //
@@ -190,14 +187,6 @@ export class World {
     this.level = L;
     this.levelKey = resolved;
     this.groundColor = L.groundColor;
-    /**
-     * A rung BORROWS a level and changes only its height. `air` is merged over
-     * the level's own atmosphere and `weather` over its own dust block, so the
-     * Spire never needs a level of its own — the climb is told by the air, and
-     * the air is the one thing a level already parameterises fully.
-     */
-    const rung = run && !run.done ? SPIRE[Math.min(run.tier, SPIRE.length - 1)] : null;
-    this.rung = rung;
 
     // ONE VALUE, ONE HOME. This used to be `{low:0.55, medium:0.8, high:1,
     // ultra:1.25}[quality]`, written out here, and Engine's QUALITY.grass
@@ -248,15 +237,12 @@ export class World {
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
-    this.engine.applyAtmosphere(rung ? { ...L.atmosphere, ...rung.air } : L.atmosphere);
+    this.engine.applyAtmosphere(L.atmosphere);
     audio.setAmbience(L.ambience || {});
 
     // The motes, windborne sheets, haze and heat shimmer are particles too, so
     // they ride the particle tier and not the terrain one.
-    this.atmosphere = new Atmosphere(this.scene, rung
-      ? { ...(L.dust || {}), density: particleScale,
-          weather: { ...((L.dust || {}).weather || {}), ...rung.weather } }
-      : { ...(L.dust || {}), density: particleScale });
+    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: particleScale });
     if (L.water) this.water = new Water(this.scene, { ...L.water, size: this.terrain.size + 60 });
     if (L.grass) {
       // The tier scales the BLADE BUDGET (count); the level and the player's
@@ -304,34 +290,6 @@ export class World {
     this.director.onWaveClear = (w) => {
       this.notify('WAVE CLEAR', 'the Force is with you');
       audio.ui('good');
-      if (!this.run || this.run.done) return;
-      this.run.wave = w;
-      this.run.score = this.score;
-      this.run.kills = this.players.reduce((a, p) => a + p.kills, 0);
-      // Health crosses a landing as a FRACTION, so it is snapshotted at the
-      // moment the rung is survived rather than read off a player who is about
-      // to be disposed by the level change.
-      const alive = this.players.filter((p) => p.alive);
-      if (alive.length) {
-        this.run.hpFrac = Math.max(0.05,
-          alive.reduce((a, p) => a + p.hp / Math.max(1, p.maxHp), 0) / alive.length);
-      }
-      /**
-       * THE RUNG IS DONE — the one signal the Spire is made of.
-       *
-       * Fired here rather than inferred in main.js because `rung.waves` and
-       * `run.wave` both live on this side, and a caller that had to reconstruct
-       * "is this the last wave of this tier" from a wave number and a table
-       * would be a second copy of the ladder. The client decides what a landing
-       * LOOKS like; the world decides when one has been earned.
-       *
-       * The host is the only one that may say so: in co-op the peers are told
-       * by the level change that follows, and two clients both deciding to
-       * ascend would run the ladder twice.
-       */
-      if (this.netMode !== 'client' && this.run.wave >= (this.rung?.waves ?? Infinity)) {
-        this.onRungClear?.(this.run);
-      }
     };
     /**
      * INSIGHT hangs off the same signal — composed onto it rather than written
@@ -527,18 +485,8 @@ export class World {
      * everything the run had earned.
      *
      * The boons are re-applied rather than a snapshot of `boonMods` restored,
-     * because a snapshot would drift the first time a boon's effect changed —
-     * and health comes back as a FRACTION, since maxHp is itself a thing boons
-     * move and a raw number would silently undo Vitality at every landing.
+     * because a snapshot would drift the first time a boon's effect changed.
      */
-    if (this.run) {
-      for (const b of this.run.boons) {
-        this.takenBoons.add(b.id);
-        p.applyBoon(b);
-      }
-      p.hp = Math.max(1, Math.round(p.maxHp * this.run.hpFrac));
-      this.score = this.run.score;
-    }
     /**
      * THE OTHER END OF EVERY COMMUNION, installed whether or not this player
      * holds a single bond card.
@@ -1846,14 +1794,11 @@ export class World {
    */
   _earnInsight(wave) {
     const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave));
-    if (this.run && !this.run.done) this.run.communion = this.communion.snapshot();
     this.onInsight?.(gained, this.communion);
   }
 
   applyBoon(boon) {
     this.takenBoons.take(boon.id);
-    this.run?.take(boon);
-    if (this.run) this.run.communion = this.communion.snapshot();
     for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
     // How hard the ground is hit scales with how strong the player has become,
     // and `might` is otherwise fixed at dressing time — so a boon taken mid-run

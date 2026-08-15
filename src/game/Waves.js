@@ -75,13 +75,10 @@ export const MODES = {
   waves:   { name: 'Trial of Waves', blurb: 'Endless escalation. Survive as long as the Force allows.' },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
   duel:    { name: 'Duel', blurb: 'Acolytes only. No blasters, no crowd. Just blades.' },
-  // Was "Fixed ladder of set-pieces, ending in a boss" with ZERO implementation
-  // — it fell through to the generic path and was byte-identical to the mode it
-  // claimed to be an alternative to. It was then the Spire, four outdoor arenas
-  // at four altitudes, and that did not read either: nothing about standing in
-  // a meadow says it is a thousand metres above the gorge you started in. It is
-  // the Descent now; see Run.js for why down works where up did not.
-  gauntlet: { name: 'The Descent', blurb: 'Four rungs into one facility. The only thing that tells you how deep you are is how little light is left — and at the bottom there is none.' },
+  // THE DESCENT IS GONE, and the reason is not that the ladder was broken —
+  // it worked. Three of its four rungs were the three interiors the player
+  // named as the worst rooms in the game, so the mode's whole content was the
+  // content being deleted. A ladder is only as good as the rooms on it.
   sandbox: { name: 'Sandbox', blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.' },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.
@@ -275,7 +272,7 @@ export const HEAVY_CAP = 10;
 /** A set-piece every this many waves — forever, not for the first thirty. */
 export const BOSS_EVERY = 5;
 /** The modes that hand out boons. See `WaveDirector.drafts`. */
-export const DRAFT_MODES = ['roguelite', 'gauntlet'];
+export const DRAFT_MODES = ['roguelite'];
 /** How much of a boss wave's budget the set-piece itself is worth. */
 export const BOSS_SHARE = 0.28;
 /** From here on, the set-piece arrives promoted. */
@@ -645,7 +642,7 @@ export class WaveDirector {
      * `_pickType` sums a weight per ENTRY, so a type listed twice is drawn
      * twice as often — the ladder above uses exactly that trick, pushing 'b1' a
      * second time at wave 2. Every level pool in the game is written the same
-     * way and means the same thing: Mustafar lists `acolyte` three times and
+     * way and means the same thing: the Ember Shelf lists `acolyte` three times and
      * `b1` once, which reads unmistakably as "this is the acolyte level". The
      * Drowned Wood doubles `b1`; Kamino doubles `trooper`.
      *
@@ -653,7 +650,7 @@ export class WaveDirector {
      * `list` was built from the ladder and then intersected with the pool — so
      * the repeats never reached the array `_pickType` weighs. Measured: six of
      * the thirteen levels resolve to the identical six archetypes and produce
-     * byte-identical twenty-wave runs. Mustafar declares eight pool entries and
+     * byte-identical twenty-wave runs. the Ember Shelf declares eight pool entries and
      * Alpine six; deduped they are the same six, so lava, swamp, ocean, meadow,
      * snowfield and smelter were one fight with six skyboxes.
      *

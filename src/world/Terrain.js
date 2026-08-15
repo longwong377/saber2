@@ -904,7 +904,7 @@ export const TERRAIN_PRESETS = {
      * the shape of the room.
      *
      * Levels.js's `deeps.water.level` carries the same −1.50. Two numbers for
-     * one sea is how Mustafar ended up with a coastline 2.5 m wide that was
+     * one sea is how the Ember Shelf ended up with a coastline 2.5 m wide that was
      * lava on screen and rock underfoot; they move together or not at all.
      */
     scale: 320, res: 190, waterLevel: -1.50,
@@ -972,7 +972,7 @@ export const TERRAIN_PRESETS = {
    * where the flow lobes drown — an outline with real bays and headlands
    * rather than a circle, because the lobes decide it.
    */
-  mustafar: {
+  scoria: {
     /**
      * 0.55, NOT THE 0.0 THIS PRESET CARRIED, and the difference was a ring of
      * ground all round the coast that was drawn as lava and treated as dry

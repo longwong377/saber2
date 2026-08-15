@@ -1305,7 +1305,7 @@ export function run({ check, assert, near }) {
      * rule 8 of src/toon/REFERENCE.md deletes specular everywhere, and water
      * and lava were the last surfaces in the game still carrying a
      * view-dependent lobe — measured by walking the eye round the sheet at 8°
-     * of elevation, luminance swung 6.63× on mustafar, 6.80× on the wood and
+     * of elevation, luminance swung 6.63× on scoria, 6.80× on the wood and
      * 7.20× on kamino, which is a highlight whatever the code calls it. The
      * Fresnel and the facet term are now quantised to two levels each and the
      * sun lobes are gone (see WATER_FRAG), so the surface is drawn as two

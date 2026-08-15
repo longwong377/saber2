@@ -452,7 +452,7 @@ export async function run({ check, assert }) {
    */
   check('audio: the room swells with the fight, and settles after it', () => {
     const { a, ctx } = engine();
-    a.setAmbience({ wind: 0.20, windFreq: 190, drone: 0.26 });   // mustafar's bed
+    a.setAmbience({ wind: 0.20, windFreq: 190, drone: 0.26 });   // scoria's bed
     const base = a.droneGain.gain.last('tgt');
     assert(Math.abs(base - 0.26) < 1e-9, `the level's own drone arrived as ${base}`);
     const moves0 = a.droneGain.gain.moves();

@@ -66,7 +66,7 @@
 
 import { snapshotShared, restoreShared } from './_shared.mjs';
 
-const LEVELS_FOR_EQUIV = ['temple', 'warship', 'mustafar', 'meadow'];
+const LEVELS_FOR_EQUIV = ['temple', 'warship', 'scoria', 'meadow'];
 
 /** Every `engine.*` member a World reaches, and nothing else. */
 function stubEngine(THREE) {

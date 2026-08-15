@@ -92,7 +92,7 @@ const blank = () => ({
  * waves" earned by typing 99 into a box is worse than no record. Deciding it
  * HERE rather than at the call site is what lets the wiring be a blind call.
  */
-const RECORDED = new Set(['spire', 'descent', 'gauntlet', 'roguelite', 'waves', 'duel']);
+const RECORDED = new Set(['roguelite', 'waves', 'duel']);
 
 function read() {
   try {

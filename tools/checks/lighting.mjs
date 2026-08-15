@@ -423,7 +423,7 @@ export function run({ check, assert, near, THREE: T }) {
        *
        * That was true of every sky this game had, and it was a PROXY. What the
        * fill stands in for is the dome; the reason it had to be blue is that
-       * every dome in the game was blue. Mustafar's is not: it is a smoke
+       * every dome in the game was blue. the Ember Shelf's is not: it is a smoke
        * ceiling lit from below by a lava sea, its `skyColor` is B/R 0.35, and a
        * blue fill there would be a lamp nobody has switched on — the exact
        * fault the old rule existed to catch, arriving through the letter of it.

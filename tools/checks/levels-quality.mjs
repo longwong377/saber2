@@ -24,7 +24,7 @@
  *                        at zero cost, 100/100 HP.
  *   SPAWNS ARE CLEAR.    11.9% of Temple spawns arrived inside solid masonry.
  *   THE CUT IS A CAVE.   92.6% of its floor was under its own water sheet.
- *   ONE SEA, ONE NUMBER. Mustafar drew its coast at 0.55 and walked it at 0.00.
+ *   ONE SEA, ONE NUMBER. the Ember Shelf drew its coast at 0.55 and walked it at 0.00.
  *   THE DOORS EXIST.     `world.doors` was empty on all thirteen levels.
  *   THE DECKS ARE REACHED. Eight of twelve gantry decks stood above the ceiling
  *                        of the highest jump in the game.
@@ -236,7 +236,7 @@ export async function run({ check, assert }) {
     /**
      * `L.water` had one consumer in the entire game — the shader plane World
      * builds from it — so a lava sea, a canal of molten metal and an ocean were
-     * all floors. Measured: 90 s of holding forward on Mustafar finished 33 m
+     * all floors. Measured: 90 s of holding forward on the Ember Shelf finished 33 m
      * UNDER the surface of the sea at 100/100 HP; 45 s on Kamino finished on
      * the seabed at y = -9.0 with the camera under the ocean for 64% of the
      * walk, also at 100/100. The Foundry puts "the melt is not cover" on screen
@@ -248,7 +248,7 @@ export async function run({ check, assert }) {
      * game swims and an ocean that kills in two seconds is a lava sea painted
      * blue.
      */
-    const mus = (await level('mustafar')).world;
+    const mus = (await level('scoria')).world;
     const T = mus.terrain;
     // find sea: walk out along a bearing until the ground is under the sheet
     const sea = { x: 0, z: 0 };
@@ -465,7 +465,7 @@ export async function run({ check, assert }) {
     /**
      * `Levels.water.level` is what World builds the sheet from;
      * `TERRAIN_PRESETS[...].waterLevel` is what `surfaceAt` (footstep sample,
-     * splash particle) and the ground shader's damp band key off. Mustafar had
+     * splash particle) and the ground shader's damp band key off. the Ember Shelf had
      * 0.55 and 0.00. Ray-walking 64 bearings on the built heightfield, the
      * drawn contour came out at 100.8-145.0 m and the terrain's at
      * 104.5-147.3 m: a ring 0.3 to 11.0 m wide, median 2.5, that was molten on

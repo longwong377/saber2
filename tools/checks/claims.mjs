@@ -59,7 +59,6 @@ import { Enemy, enemyRng, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BOONS, ATTUNEMENTS, MODES, rankScale, maxRank, WaveDirector, seedWaves,
   sandboxUnits } from '../../src/game/Waves.js';
 import { LESSONS } from '../../src/game/Dojo.js';
-import { DESCENT } from '../../src/game/Run.js';
 import { DIFFICULTY, OPEN_STATES, openState, openMul, openness,
   BladeContactSolver, TOUGHNESS, SPEED_GRADE } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
@@ -726,7 +725,6 @@ export async function run({ check, assert }) {
     const rows = [];
     const claims = [
       ['training blurb', MODES.training.blurb, 'lessons', LESSONS.length],
-      ['the Descent blurb', MODES.gauntlet.blurb, 'rungs', DESCENT.length],
       ['the cut lesson', LESSONS.find((l) => l.id === 'cut').hint, 'limbs',
         LESSONS.find((l) => l.id === 'cut').need],
     ];

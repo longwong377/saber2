@@ -54,7 +54,7 @@
  * the star map exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead', 'meditation'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and
@@ -69,7 +69,7 @@ export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead', 'meditatio
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.
  */
-export const OVERLAY_STATES = ['draft', 'landing', 'dead'];
+export const OVERLAY_STATES = ['draft', 'dead'];
 
 export class Screens {
   /**
@@ -229,7 +229,6 @@ export class Screens {
     if (own) { own(); return; }
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
-    else if (name === 'landing') m.hideLanding?.();
     else if (name === 'dead') m.hideDeath?.();
   }
 }

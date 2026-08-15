@@ -518,7 +518,7 @@ export function run({ check, assert, near }) {
      *     float spec = pow(sd, 90.0) * 1.9 + pow(sd, 8.0) * 0.34;
      *     col += vec3(1.0,0.96,0.88) * spec * fres * (0.35 + dw * 0.65);
      *
-     * It is the surface of FIVE levels — mustafar's lava, the foundry's melt,
+     * It is the surface of FIVE levels — scoria's lava, the foundry's melt,
      * the wood, kamino and the deeps — and Scenery.js copies the live engine
      * sun direction into uSunDir every frame, so the lobe tracks the sun in
      * play. Rule 8 is not "less shiny": "there is no specular highlight in any
@@ -531,7 +531,7 @@ export function run({ check, assert, near }) {
      * rotation and the ONLY thing that can move is the view-dependent term.
      * From a standing eye (8° above the surface), linear luminance at 3 m depth:
      *
-     *     mustafar 0.833 vs 0.126 = 6.63×      wood   0.671 vs 0.099 = 6.80×
+     *     scoria 0.833 vs 0.126 = 6.63×      wood   0.671 vs 0.099 = 6.80×
      *     kamino   0.815 vs 0.113 = 7.20×      foundry 0.731 vs 0.251 = 2.91×
      *     deeps    0.025 vs 0.016 = 1.58×
      *
@@ -1584,7 +1584,7 @@ export function run({ check, assert, near }) {
        * physical quantity rather than a number somebody liked. A 14° sun shines
        * through four times the air a 60° one does, so it delivers less of the
        * level's light and its shadows are legitimately cooler and closer to the
-       * ambient's hue — Mustafar sits at 30% and the Colosseum at 51% for
+       * ambient's hue — the Ember Shelf sits at 30% and the Colosseum at 51% for
        * exactly that reason. A constant pretending to be a physical quantity has
        * to fail here; the floor alone would not have noticed.
        *
@@ -1593,7 +1593,7 @@ export function run({ check, assert, near }) {
        * SKY'S OWN BRIGHTNESS is the other half, and it is authored per level.
        * Measured across the eight outdoor levels:
        *
-       *     mustafar 0.259  ambient 0.579   30.1%
+       *     scoria 0.259  ambient 0.579   30.1%
        *     kamino   0.276  ambient 0.547   36.4%
        *     alpine   0.292  ambient 0.767   35.3%   ← the only inversion
        *     wood     0.326  ambient 0.633   37.7%

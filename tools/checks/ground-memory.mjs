@@ -372,7 +372,7 @@ export function run({ check, assert, near }) {
     assert(depth('hangar') < 0.05, 'a poured deck takes a footprint');
     assert(depth('works') < 0.05 && depth('temple') < 0.05,
       'a poured works floor and a flagged temple hall take a footprint');
-    assert(depth('mustafar') > depth('dunes') && depth('mustafar') < depth('drifts'),
+    assert(depth('scoria') > depth('dunes') && depth('scoria') < depth('drifts'),
       'an ash fall lies deeper than a young dune field and shallower than a deep erg');
     assert(depth('cavern') > depth('works') * 4, 'a flooded cut is as firm as the deck above it');
     // and every preset that is not a built floor carries a real layer

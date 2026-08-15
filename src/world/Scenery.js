@@ -2973,7 +2973,7 @@ const WATER_FRAG = /* glsl */`
      * view-dependent lobe of their own. Measured with waterShade() by walking
      * the eye round the sheet at 8 degrees of elevation, with climb 0 so
      * dot(bedN,L) cannot move and only the view term can: luminance swung
-     * 6.63x on mustafar, 6.80x on the wood, 7.20x on kamino, 2.91x on the
+     * 6.63x on scoria, 6.80x on the wood, 7.20x on kamino, 2.91x on the
      * foundry and 1.58x on the deeps. A surface that changes brightness
      * sevenfold as you walk round it is a specular highlight, whatever it is
      * called in the code.

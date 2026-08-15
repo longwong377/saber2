@@ -463,7 +463,7 @@ export async function run({ check, assert }) {
     // Nothing may read the record back INTO a run. The record is written in
     // Progress.js and drawn by the meditation; a third reader would be the
     // moment this became meta-progression.
-    for (const file of ['game/World.js', 'game/Run.js', 'game/Waves.js', 'game/Constellation.js']) {
+    for (const file of ['game/World.js', 'game/Waves.js', 'game/Constellation.js']) {
       const text = await read(file);
       assert(!/loadProgress\s*\(/.test(text),
         `${file} reads the saved record — a run must not start from a save file`);

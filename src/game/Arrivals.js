@@ -174,12 +174,10 @@ export const ARRIVAL_BY_TERRAIN = {
   // also 80–100 m of walking before the body is in the fight, and a wave made
   // mostly of them is a wave you spend watching. Weighted by repetition rather
   // than by a probability table so the whole model is one literal you can read.
-  meadow: ['dropship', 'dropship', 'march'],
   drifts: ['dropship', 'dropship', 'march'],
   alpine: ['dropship', 'dropship', 'march'],
   dunes: ['dropship', 'dropship', 'march'],
   canyon: ['dropship', 'dropship', 'march'],
-  arena: ['gate'],
   hangar: ['gate'],
 };
 

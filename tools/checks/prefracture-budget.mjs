@@ -19,7 +19,7 @@
  *   arena         43      5.58   17.88   29.42       6
  *   colosseum     46      3.78   12.07   30.34       4
  *   kamino        51      3.10   19.61   21.70       7
- *   mustafar       1     76.35   76.35   76.35       1
+ *   scoria       1     76.35   76.35   76.35       1
  *   ALL          389      7.97   17.15   76.35      41 = 11%
  *
  * — up to 4.6x the one frame it was allotted, and it fires on APPROACH, at 30

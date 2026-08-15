@@ -19,7 +19,7 @@
  *
  *     temple      0/51      kamino    32/90     deeps      0/4
  *     foundry    58/74      warship   97/113    intake    83/95
- *     arena      49/51      mustafar  21/23     colosseum  8/10
+ *     arena      49/51      scoria  21/23     colosseum  8/10
  *
  * …AND THE FIRST NUMBER IN THAT TABLE WAS THE SURVEY'S OWN FAULT, which is
  * worth keeping because it is the most instructive thing in this file. The

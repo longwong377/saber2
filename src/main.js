@@ -17,7 +17,6 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
-import { Run } from './game/Run.js';
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
@@ -241,7 +240,7 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-function buildWorld(levelKey, run = null) {
+function buildWorld(levelKey) {
   if (world) { world.dispose(); world = null; }
   audio.init();
   audio.resume();
@@ -269,7 +268,6 @@ function buildWorld(levelKey, run = null) {
     hud.explain(why, colour, grade < 0 ? 2.0 : 1.4);
   };
 
-  world.onRungClear = (r) => landing(r);
   /**
    * YOU ARE DOWN, and your friends are not.
    *
@@ -294,7 +292,7 @@ function buildWorld(levelKey, run = null) {
     }, 1500);
   };
 
-  world.loadLevel(levelKey, { run });
+  world.loadLevel(levelKey);
   const player = world.spawnPlayer({ name: playerName(), isLocal: true });
   player.control.sensitivity = settings.sensitivity;
   player.control.followStrength = settings.camFollow;
@@ -308,7 +306,7 @@ function buildWorld(levelKey, run = null) {
   // `world.level`, not `LEVELS[levelKey]`: loadLevel is allowed to substitute
   // a level for a key it does not know, and the world is the only thing that
   // knows which one it settled on.
-  hud.setLevel(world.rung ? world.rung.name : world.level.name, world.difficulty.name);
+  hud.setLevel(world.level.name, world.difficulty.name);
   hud.setBoons(heldBoons());
 
   if (world.training) {
@@ -318,27 +316,6 @@ function buildWorld(levelKey, run = null) {
   } else hud.showCoach(false);
 
   return world;
-}
-
-/**
- * THE SPIRE, at last connected to something.
- *
- * `gauntlet` has been in the mode list since the menu was written, with a blurb
- * promising "a fixed ladder of set-pieces, ending in a boss", and had ZERO
- * implementation — it fell through to the generic path and was byte-identical
- * to the thing it claimed to be an alternative to. Run.js and Progress.js were
- * written, checked, and had no callers at all. This is the wire.
- *
- * A run is created ONLY for the gauntlet. Every other mode is still a place you
- * fight in rather than a climb, and giving them a Run would silently change
- * what `Esc → Abandon` means in all of them.
- */
-function startRun() {
-  if (sessionOr('mode') !== 'gauntlet') return null;
-  return new Run({
-    identity: { order: settings.order, species: settings.species },
-    mode: 'spire',
-  });
 }
 
 /**
@@ -358,17 +335,16 @@ function startRun() {
  * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
  * a world to show them, and a failure puts the menu back with the reason on it.
  */
-function deploy(run = startRun()) {
+function deploy() {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
   // and mode into the joining player's save.
   saveSettings(settings);
 
-  // A rung BORROWS a level; outside the Spire the player's own choice stands —
-  // or the host's, in a session.
-  const levelKey = run && !run.done ? run.rung.level : sessionOr('level');
+  // The player's own choice stands — or the host's, in a session.
+  const levelKey = sessionOr('level');
   try {
-    buildWorld(levelKey, run);
+    buildWorld(levelKey);
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -406,51 +382,7 @@ function deploy(run = startRun()) {
   input.requestLock();
 
   if (world.netMode !== 'client' && !world.training) world.director.start(1);
-  if (run) world.notify(run.rung.name.toUpperCase(), run.rung.brief);
-  else world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
-}
-
-/**
- * A rung survived.
- *
- * The heal is applied by `Run.ascend` (LANDING_HEAL), so the card can report
- * the health the player will actually START the next rung on rather than the
- * sliver they finished this one with — which is the number that decides whether
- * they want to keep climbing.
- */
-function landing(run) {
-  audio.ui('wave');
-
-  const cleared = run.rung;
-  const more = run.ascend();      // heals, and steps the tier if there is one
-  if (!more) return crowned(run);
-
-  const next = run.rung;
-  const ascend = screens.guarded('going down a rung', () => { screens.overlay = null; deploy(run); });
-  screens.take('landing', () => menu.showLanding({
-    altitude: next.altitude,
-    name: next.name,
-    brief: next.brief,
-    stats: [
-      [`${cleared.name} cleared`, `${cleared.waves} wave${cleared.waves === 1 ? '' : 's'}`],
-      ['Climbed so far', `${run.depth} waves`],
-      ['Vitality', `${Math.round(run.hpFrac * 100)}%`],
-      ['Score', Math.floor(run.score).toLocaleString()],
-    ],
-    onAscend: ascend,
-  }));
-}
-
-/** The crown. The one way this game has ever had of being finished. */
-function crowned(run) {
-  recordRun(run.summary());
-  showRecord();
-  screens.take('dead', () => menu.showDeath([
-    ['Waves climbed', run.depth],
-    ['Score', Math.floor(run.score).toLocaleString()],
-    ['Kills', run.kills],
-    ['Boons held', run.boons.length],
-  ], 'You stand above the storm'));
+  world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
 }
 
 /**
@@ -784,7 +716,7 @@ function cardAfter(ms, what, show) {
  * first thing a new player does after their very first death, on the shipped
  * default mode, wrote the same run to the store twice. Driven in a browser
  * against the real page with both localStorage keys removed so the game chose
- * its own defaults (mustafar / knight / roguelite): kill the player and the
+ * its own defaults (scoria / knight / roguelite): kill the player and the
  * store reads `{runs: 1, recent: 1}`; click "Return to the Temple" on that same
  * card, with no other input, and it reads `{runs: 2, recent: 2}` and the menu
  * prints "2 runs, 0 felled · deepest 1 wave" after one run.
@@ -806,12 +738,6 @@ function record(stats = null) {
   if (!world) return;
   if (world._recorded) return;
   world._recorded = true;
-  if (world.run) {
-    if (world.run.done) return;                 // already recorded at the crown
-    world.run.end();
-    recordRun(world.run.summary());
-    return;
-  }
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
@@ -1110,7 +1036,7 @@ function wireNet() {
       screens.clear();
       world.dispose(); world = null;
     }
-    deploy(null);
+    deploy();
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));

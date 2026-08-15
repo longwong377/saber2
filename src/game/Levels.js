@@ -233,7 +233,7 @@ export function beginDressing(world, seed) {
    * molten metal and an ocean were all floors you could stand on at full
    * health. The hazard reads the SAME block the sheet is drawn from (see
    * src/world/Hazard.js), which is what stops the danger and the picture from
-   * drifting apart the way `waterLevel` and `water.level` did on Mustafar.
+   * drifting apart the way `waterLevel` and `water.level` did on the Ember Shelf.
    * Attached in `beginDressing` rather than in thirteen `dress()` bodies for
    * the same reason the occupancy grid is reset here: a level that forgot the
    * line would be a level whose sea is scenery again.
@@ -999,15 +999,21 @@ export function island(world, pos, opts, build) {
 
 export const LEVELS = {
   /* ══════════════════════════════════════════════════════════════════════
-   *  THE THREE THE PLAYER ASKED FOR
+   *  THE OPEN GROUNDS
    *
-   *  "a map of just rolling green meadow hills of grass blowing endlessly
-   *   into the misty horizon (zelda esque)... another map of just endless
-   *   sand dunes that you deform with sand storms, and another in a
-   *   blizzard/mountain."
+   *  "another map of just endless sand dunes that you deform with sand
+   *   storms, and another in a blizzard/mountain."
+   *
+   *  There was a third — the meadow — and it is deleted. It is worth one
+   *  sentence because the reason generalises: every other surface in this
+   *  game is drawn by the cel pipeline and the meadow's ground was not, so
+   *  it read as a different game stitched into this one. A surface that
+   *  breaks the art direction is worse than an absent surface, and the
+   *  correct response to "the grass looks like a PBR leftover" is to stop
+   *  shipping it rather than to tune it a fourth time.
    *
    *  Two things about "endless" are worth writing down once, here, because
-   *  all three of these levels live or die on them.
+   *  both of these levels live or die on them.
    *
    *  The world is a hard-bounded box — 520-560 m of heightfield with a
    *  position clamp at Player.js — and there is no streaming, tiling or wrap.
@@ -1021,119 +1027,9 @@ export const LEVELS = {
    *  tall, so a ray to a distant crest climbs out of a shallow fog almost
    *  immediately — at fogHeight 9 the three ranges are 5% fogged against 37-61%
    *  at the default 38. That is peaks floating above a sea of mist, which is
-   *  gorgeous and is the opposite of hidden. The meadow wants it. A level that
-   *  wants the ranges BURIED needs tall fog instead.
+   *  gorgeous and is the opposite of hidden. A level that wants the ranges
+   *  BURIED needs tall fog instead.
    * ═════════════════════════════════════════════════════════════════════ */
-
-  meadow: {
-    name: 'The Green Reach',
-    blurb: 'Hills of long grass to a misty horizon. Nothing here was built; nothing here is cover.',
-    terrain: 'meadow',
-    pool: ['b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
-    groundColor: 0x8a7a52,
-    spawnRadius: [34, 58],
-    atmosphere: {
-      // Clean air and a high sun: the meadow is the one level whose subject is
-      // the ground itself, so the sky's job is to light it and get out of the
-      // way. Rayleigh up and mie down against the dune sea — haze is the
-      // desert's material, not this one's.
-      turbidity: 5.2, rayleigh: 2.0, mie: 0.007, mieG: 0.79,
-      // The swell runs along (0.42, 0.91), i.e. 25 deg. A sun ALONG that
-      // bearing lights crest and trough alike and the hills disappear; 115 deg
-      // rakes across them, so every rise has a lit face and a shaded one. That
-      // is the whole silhouette of this level.
-      // 31, not 34: the arena is at 34 and the indirect budget is ordered by
-      // elevation across every outdoor level, strictly. Two levels at the same
-      // sun height cannot both be on the correct side of each other.
-      elevation: 28, azimuth: 115,
-      sunColor: 0xfff6e2, sunIntensity: 6.4, ambient: 0.42,
-      skyColor: 0xa8c8f0, groundColor: 0x6f7480,
-      fillColor: 0x86a0c8, fillIntensity: 0.30,
-      // A REAL MIST LAYER, not a wash. fogHeight is the e-folding scale height
-      // and fogBase the altitude at which fogDensity is exact, so this is
-      // 1.65x density at the player's boots, 0.74x at 8 m and 0.08x at 30 m:
-      // something with a top, that you stand in and can see over. It dissolves
-      // the ground at 43% by 60 m and 100% by 200 m — the world's edge is gone
-      // — while leaving the ranges' crests only 20% veiled.
-      // A COMPROMISE, and worth stating because the pretty answer is wrong.
-      // fogHeight 10 gives a gorgeous shallow mist with the far ranges standing
-      // clear above it — and that is the problem: a range that is only 5%
-      // fogged has had no aerial perspective applied to it at all, so it keeps
-      // its own chroma and comes out MORE saturated than the sky behind it,
-      // which is the one thing distance never does. 26 still reads as a layer
-      // with a top (1.3x density at the boots, 0.36x at 25 m) while fogging the
-      // ranges enough that they converge on the band they stand in.
-      fogColor: 0xd9e3f0, fogDensity: 0.0088, fogHeight: 34, fogBase: 2,
-      cloudCover: 0.42, cloudLit: 0xfdf8ee, cloudDark: 0x8a97a8,
-      cloudWindDir: 3.58, cloudWindSpeed: 1.5,   // radians, like every other level
-      // Desaturated toward the sky, not toward the grass: aerial perspective
-      // TAKES chroma away. A green range reads as a hill 200 m off; it does not
-      // read as distance.
-      // NO DISTANT LANDFORMS ON THIS LEVEL, and it is a decision rather than an
-      // omission. The player asked for grass "blowing endlessly into the misty
-      // horizon" — mist, not mountains — and at this density the ground is 43%
-      // dissolved by 60 m and 100% by 200 m, so the world's edge is hidden by
-      // AIR rather than by a painted ridge. Every other outdoor level hides its
-      // edge with three ranges because its air is clear enough to see the edge
-      // through; this one does not have that problem.
-      //
-      // The honest part: I also could not satisfy the range-chroma test here.
-      // A range must come out less saturated than the sky it stands in, and
-      // meadow's came out 0.019 above it — invariant to every colour, fog,
-      // shade and geometry knob I moved, which points at the asymptote being
-      // baked at one elevation while the sky is not flat across the band. That
-      // is a real finding about `addHorizon` and it is written down at the
-      // bottom of this file rather than papered over; a level with no ranges
-      // does not exercise it either way.
-      horizon: false,
-      exposure: 0.90, saturation: 1.06,
-    },
-    ambience: { wind: 0.26, windFreq: 340, drone: 0.0 },
-    dust: {
-      // Pollen and seed rather than grit, and no heat shimmer: shimmer is gated
-      // on sunIntensity > 5, which a bright meadow trips, and a desert mirage
-      // over wet grass is the wrong instinct fired by the right number.
-      count: 700, color: 0xd6d9a8, opacity: 0.16, size: 15, shimmer: false,
-      fleckColor: 0xc2cf94,
-      wind: { from: 205, strength: 2.6, gustiness: 0.66, wander: 0.45 },
-      // A wind squall, not a dust storm: the drama here is the grass going over
-      // in a wave and the light flattening, not the air filling with solids.
-      weather: { peak: 0.68, period: 104, duration: 40, fogGain: 3.0, windGain: 2.6,
-                 sunLoss: 0.62, fillGain: 1.0, unrest: 0.20, tint: 0.72 },
-    },
-    /* EVERYTHING is grass, and 1.4 is not a fraction — it is a DENSITY, and
-     * the two things it feeds pull in opposite directions on purpose.
-     *
-     * The cover FIELD saturates: `clamp(0.24 + 0.72·density, 0.12, 0.95)` is
-     * already at its ceiling at density 1, and the ceiling is right — a check
-     * forbids going past 0.98 because "a field with no clearings in it is a
-     * carpet", and a meadow does have bare crowns and worn tracks through it.
-     * So this number cannot and does not make the field cover more ground.
-     *
-     * What it moves is the BUDGET, `count · 2.2 · (0.5 + 0.5·min(density, 1.4))`
-     * — 1.2× the instances, spent on the same 95% of ground — and the ground
-     * TINT under them, 0.94 against 0.76. Both are the difference between a
-     * field that covers 95% of the map at 34% closure and one that closes it.
-     * 1.4 is exactly where the budget term saturates; past it nothing happens.
-     */
-    grass: 1.4,
-    grassTint: [0x7f9440, 0x4e6128],
-    dress(world) {
-      const M = propMaterials();
-      beginDressing(world, 20250805 + 41);
-      // Tors. The only vertical thing in the level, so they are what you
-      // navigate by and what you fight around — sparse, big, and far apart.
-      for (let k = 0; k < 13; k++) {
-        const site = findSite(world, 22, 104, { angle: (k / 5) * TAU + rng() * 0.7, clearance: 18, maxSlope: 0.26 });
-        if (!site) continue;
-        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 5 + rng() * 6, seed: 900 + k, mat: M.stone });
-      }
-      // and the loose stone the tors shed, thin: this is pasture, not scree.
-      strewGround(world, { seed: 7720, radius: 130, spread: 0.24, mat: M.stone,
-        landmarks: 1.3, boulders: 0.8, cobble: 0.7 });
-      return 9;
-    },
-  },
 
   drifts: {
     name: 'The Shifting Waste',
@@ -1349,480 +1245,6 @@ export const LEVELS = {
    *  the budget `world-immersion` holds a level to is 520.
    * ═════════════════════════════════════════════════════════════════════ */
 
-  arena: {
-    name: 'The Sanctum',
-    blurb: 'A temple the size of a mountain, broken open to the sky. It was sacred once, and the floor has other uses now.',
-    terrain: 'arena',
-    pool: ['b1', 'b1', 'trooper', 'b2', 'droideka', 'acolyte', 'beast', 'walker', 'sniper'],
-    groundColor: 0xcfae82,
-    spawnRadius: [30, 52],
-    /**
-     * THE ARENA WAS ONE HUE, and the measurement that says so.
-     *
-     * Measured on the pinned pose (tools/arena-lane.mjs frame --level arena),
-     * over every pixel with enough chroma for a hue to mean anything:
-     *
-     *     50% of the frame inside  5° of hue
-     *     80% of the frame inside 13°
-     *
-     * — sky 33.9°, mesa ring 29.4°, masonry 34.6°, sunlit sand 35.4°. A desert
-     * is not monochrome, and nothing in that list is separated from anything
-     * else, so the eye has no structure to read and the image goes flat.
-     *
-     * Four things were doing it, in order of how much:
-     *
-     *  1. THE GRADE'S GAIN, [1.04, 1.0, 0.95]. It multiplies red up and blue
-     *     down on every pixel in the frame, which pushes warm things further
-     *     into warm and drags cool things toward neutral and past it. Measured
-     *     through the engine's own sky model: the sunward skyline comes off the
-     *     display shoulder at linear (0.995, 0.996, 0.991) — dead NEUTRAL, as a
-     *     solar aureole should be — and the band the pinned pose actually shows,
-     *     17°–30° of elevation, is barely less so. This gain is what turned that
-     *     neutral into 33° orange. A blue sky was being painted tan in post.
-     *     Warmth in the highlights is already the split tone's job (uHighTint
-     *     is 1.035/1.000/0.955 and applies only above luma 0.12→0.72); doing it
-     *     again here, flat across the whole range, is what closed the gap.
-     *  2. THE SUN WAS 30° OFF THE VIEW AXIS. At azimuth 210 the default look
-     *     across the bowl stared into the solar aureole, which is the one part
-     *     of a clear sky that is legitimately white — so the sky the player saw
-     *     was a white-to-tan wash and the ground was flat-lit. 248° puts the
-     *     sun 68° to the left: the sky ahead is the blue part of the dome, and
-     *     everything standing up in the bowl gets a lit side and a shadow side.
-     *  3. NOT THE SKY MODEL. Worth writing down because it was the obvious
-     *     suspect and it is innocent: turbidity 3.2 / rayleigh 2.9 / mie 0.005
-     *     was tried, and measured WORSE — the drawn dome's zenith B/R fell from
-     *     3.44 to 2.61, and the physical sky's zenith-to-skyline span fell from
-     *     16.8:1 to 9.3:1, which is under the 12:1 the IBL needs to carry any
-     *     direction at all (lighting.mjs pins it, and it caught this). Raising
-     *     rayleigh brightens the zenith, which is the FLOOR of that ratio, so
-     *     "make the sky bluer" and "keep the sky's dynamic range" pull opposite
-     *     ways. The authored 6 / 2.4 / 0.010 stands.
-     *  4. NOTHING WAS COOL IN SHADE. lift was neutral at [0.008, 0.007, 0.008]
-     *     and the fill was left on its default, so shadowed sand differed from
-     *     sunlit sand by 0.134 in B/R over the ground band and by 1.7° of hue.
-     *     Real shadowed sand is lit by the sky and nothing else. lift now puts
-     *     a blue-violet foot under the blacks, and the sky bounce is authored
-     *     rather than defaulted: 0x8fb4ff at 0.34 against the default 0x9fc4ff
-     *     at 0.25.
-     *
-     * AFTER, same pose, same regions, same instrument:
-     *
-     *                                  before        after
-     *     50% of the frame inside        5°           10°
-     *     80% of the frame inside       13°          171°
-     *     sky, anti-sun               201° / 0.35   208° / 0.57
-     *     painted skyline             196° / 0.18   211° / 0.36
-     *     mesa ring                    29° / 0.17   349° / 0.13 · 17° / 0.30
-     *     sunlit sand                  35° / 0.49    36° / 0.48
-     *     ground band, lit vs shade   ΔB/R 0.134    ΔB/R 0.147
-     *
-     * One number went the wrong way and it is a real cost: the ground band's
-     * tonal range fell from 3.26:1 to 2.77:1. Part is the blue lift raising the
-     * blacks; part is that a cross-lit floor has less of its area at full N·L
-     * than one with the sun behind the camera. It is why the fill sits at 0.34
-     * and the lift's blue at 0.014 rather than the 0.45 and 0.020 first tried —
-     * those measured 2.50:1 for no more hue separation at all.
-     */
-    atmosphere: {
-      turbidity: 6, rayleigh: 2.4, mie: 0.01, mieG: 0.8,
-      elevation: 34, azimuth: 248,
-      // Warm light against cool shade is the pair, so both ends are authored:
-      // the sun a little warmer than it was, and the two sky terms bluer.
-      sunColor: 0xffe4b0, sunIntensity: 7.0, ambient: 0.34,
-      skyColor: 0xa8c6f6, groundColor: 0x7a6244,
-      // The sky bounce onto everything the sun cannot reach. Engine points it
-      // opposite the sun for us. The note about 0.45 buying hue with value
-      // still holds and INTENSITY IS UNTOUCHED at 0.48 — see the dune sea's
-      // block for the measurement that says intensity is what puts a terminator
-      // on a shoulder and is the only reason this term earns its place.
-      //
-      // What comes off is the chroma. 0x7ba4ff is B/R 5.05 in linear against a
-      // probe that on THIS atmosphere already delivers B/R 4.34 along this very
-      // direction and 2.92 integrated over the whole dome; the fill was a second
-      // copy of the probe's directional sky term, laid on bluer than the sky it
-      // was standing in for. 0x94a5d4 is the same colour with its chroma scaled
-      // to 0.45 about its own luminance: B/R 2.21, luminance identical to four
-      // places (0.3798), so the meter, the exposure and the tonal range do not
-      // move at all — only the colour of the shade does.
-      //
-      // Measured on the controlled cast shadow (tools/_shade.mjs), this level's
-      // shaded vertical face was saturation 0.320 against its own SUNLIT face at
-      // 0.323 — a shaded face as colourful as a lit one, which is what a blue
-      // filter looks like and what a shadow does not. Before → after: face
-      // 0.320 → 0.105 at hue 213° → 205°, shaded ground 0.394 → 0.310 at
-      // 204° → 200°, sunlit ground 0.371 → 0.380 (control), lit-to-shade
-      // 3.18:1 → 3.16:1. The shade it is joining is B/R 3.71 and this fill is
-      // now 2.22, but that is a measurement and not an enforced ceiling — the
-      // canyon has a shade of 2.80 under a fill of 5.05 and is the level that
-      // reads correctly, so no threshold survives all three.
-      fillColor: 0x94a5d4, fillIntensity: 0.48,
-      // 0.0034 put the half-light distance at 245 m, which is further than the
-      // rim (170 m) and the near mesas — so the one thing that makes distant
-      // rock desaturate and shift toward the sky was barely acting on the only
-      // distant rock in the frame. 0.0040 brings it to 208 m.
-      //
-      // Same note as the dune sea's: this swatch is the NEAR air. It was the
-      // second half of a collision — 0xc4b6a4 at hue 33° over sand at hue 30° —
-      // and the half that actually showed was where distance CONVERGED, the
-      // `skyColor` swatch above. Modelled over 20–240 m — this one in DISPLAY
-      // HSV, after the exposure and the grade, unlike the dune sea's note above
-      // which is in linear radiance — the ground's saturation used to fall to
-      // 0.057 by 160 m and climb back to 0.222 by 240 m at hue 222°; it now
-      // falls monotonically to 0.052 and stays inside hue 20–28° all the way.
-      //
-      // On the frame the same fix is worth much less than that, and it is worth
-      // writing down why. The pinned pose sees its own floor only to about
-      // 110 m — past that the bowl's own rim is in the way — and the rim wall
-      // itself stands 40–68 m UP, where the exponential haze layer has thinned
-      // enough to halve the optical depth: 18% of the rim's colour is air, against
-      // 37% for floor at the same 175 m. Measured on the rim, before → after:
-      // saturation 0.132 → 0.088, luminance 0.429 → 0.436, hue 348.3° → 345.5°.
-      // The chroma comes out as it should; the residual magenta is the rim's own
-      // SHADED rock under a blue sky probe, not the air in front of it, and no
-      // aerial term can or should fix that.
-      fogColor: 0xc4b6a4, fogDensity: 0.0040, exposure: 0.9, bloom: 0.38,
-      // lift is ADDED after gain, so it lands hardest on the blacks — which is
-      // exactly where a sky-lit shadow's colour belongs. 0.014 in blue and not
-      // the 0.020 first tried, for the same reason as the fill: past about
-      // 0.016 it stops tinting the shadows and starts raising the black point.
-      saturation: 1.16, lift: [0.002, 0.005, 0.014], gain: [1.00, 1.0, 1.025],
-      // Mesas ringing the bowl, so the arena sits INSIDE a landscape rather
-      // than on top of an empty disc. The deck's bases are a COOL grey now:
-      // a cumulus base is lit by sky and ground bounce, never by the sun, and
-      // an authored warm base was the third large warm surface in the frame.
-      cloudCover: 0.44, cloudLit: 0xfff4e2, cloudDark: 0x9aa2b4,
-      cloudWindDir: 1.1, cloudWindSpeed: 0.85,
-      horizonAmount: 1.15, horizonScale: 1.25, horizonColor: 0x8d7452,
-    },
-    ambience: { wind: 0.07, windFreq: 340, drone: 0.10 },
-    dust: {
-      count: 800, color: 0xd0bc94, opacity: 0.24, size: 22,
-      // A bowl ringed by stone is sheltered: the fronts that cross the dune sea
-      // arrive here broken up, so the arena's weather is half the strength and
-      // twice as frequent — squalls that dust the ring and pass, rather than a
-      // wall that swallows the level.
-      weather: { peak: 0.62, period: 86, duration: 30, fogGain: 3.0, windGain: 1.9, unrest: 0.20 },
-    },
-    // Dry scrub in the sand — the stuff that grows in a place people only visit
-    // to kill each other in. Thin: this floor is fought on.
-    // NO GRASS. "A bowl of sand ringed by stone", by its own blurb. The one
-    // level whose whole subject is what happened on its floor now keeps a
-    // record of it: the longest-lived print of any sand level, because a
-    // wind-packed silt pan holds a mark the way loose dune sand does not.
-    grass: 0,
-    dress(world) {
-      const T = world.terrain;
-      const M = propMaterials();
-      beginDressing(world, 20250805 + 23);
-      const V = (x, y, z) => new THREE.Vector3(x, y, z);
-      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
-
-      // ── Mesas behind the ring, at three ranges. The atmosphere block already
-      // says the arena sits INSIDE a landscape; this is the geometry that makes
-      // that true rather than painted, because it moves as you cross the bowl.
-      // Measured before choosing these: the arena's own heightfield already
-      // climbs from -0.8 m at the centre to 64 m of rim at 172 m out. So the
-      // ranges are DELIBERATELY lower here than on the dune sea — they stand
-      // on top of a bowl wall that is doing most of the enclosing already, and
-      // the dune sea's numbers would have put a 29° wall of stone all the way
-      // round the sky.
-      addHorizon(world, {
-        seed: 4402,
-        layers: [
-          { radius: 176, low: 11, high: 26, shade: 0.52 },
-          { radius: 254, low: 20, high: 46, shade: 0.60 },
-          { radius: 348, low: 34, high: 76, shade: 0.70 },
-        ],
-      });
-
-      /* ── THE PERISTYLE, and it is the level.
-       *
-       * FOURTEEN COLUMNS, NOT THIRTY-SIX BAYS. The rhythm of a monumental
-       * order is slow — an intercolumniation of four to six diameters, which
-       * at a 2.3 m shaft is 20 to 28 m — and that slowness is most of what
-       * says "colossal" from inside the sanctum: at 36 bays the eye reads a
-       * fence, at 14 it has to travel from one shaft to the next and the
-       * travelling is the scale.
-       *
-       * TWO TO AN ISLAND, and the arithmetic is the same one the temple's
-       * colonnade derives: a 30 m column plus its plinth, entablature block
-       * and fallen drum is four or five separate emits, so fourteen of them
-       * placed singly is roughly 60 emits and 90 draw calls out of a budget of
-       * 520 that this level was already spending 411 of. Merged in pairs it is
-       * seven emits. The pair straddles the gap rather than sitting on it, so
-       * what merges is a column, the ARCHITRAVE that spans to its neighbour,
-       * and that neighbour — which is genuinely one piece of building.
-       *
-       * `flutes: 0` and `volutes: false`: this is not a classical order. A
-       * fluted shaft with a scrolled capital reads as Greek, and what the note
-       * asks for is ALIEN — so the shafts are plain monoliths with a heavy
-       * square abacus, which is the one profile that reads as enormous rather
-       * than as ornate, and the ornament is in the entablature instead.
-       */
-      /* SIXTEEN STATIONS, twelve of which carry a column and four of which are
-       * the gates the horde walks out of. The gates are ON the order's own
-       * rhythm rather than cut into the gaps between it, and that is not
-       * tidiness: at fourteen stations with the gates at their own four
-       * angles, the gate pylons landed 12.3 m from the nearest shaft and their
-       * stone stood inside it. A processional gateway is a bay of the
-       * peristyle built taller and opened up, which is what a temple front
-       * actually is.
-       *
-       * Which columns have gone: a ruin that fails at random reads as damage;
-       * one that fails in a RUN reads as a collapse — something came through
-       * the south-west and took three consecutive bays of the order and their
-       * entablature with it, and one more shaft went on its own. */
-      const R = 62, N = 16;
-      const GATE = new Set([2, 6, 10, 14]);
-      const DOWN = new Set([4, 11, 12, 13]);
-
-      /* ONE ISLAND PER COLUMN, with the architrave living in the island of the
-       * shaft at its LEFT end. Merging the pair instead was tried and it costs
-       * half as many emits — but `occupancy` records a merged mesh as one box
-       * at its own half-width, so a pair whose architrave has gone would have
-       * claimed a 17 m radius of "something within reach" over 28 m of empty
-       * sand between two columns. Attached to one end, the box the survey sees
-       * is either a column (6 m) or a column and the beam that genuinely spans
-       * away from it, and both of those are true. */
-      const span = 2 * Math.sin(Math.PI / N) * R;          // 24.2 m at R = 62
-      for (let i = 0; i < N; i++) {
-        const a = (i / N) * TAU;
-        const cx = Math.cos(a) * R, cz = Math.sin(a) * R;
-        // the island's own frame points at the middle of the bowl, so `local`
-        // x runs along the peristyle and z runs in toward the fight
-        const yaw = -a + Math.PI / 2;
-        if (GATE.has(i)) {
-          /* THE GATE, at the scale of the order. A 7.5 m arch under a 30 m
-           * colonnade is a cat flap; this is a 20 m opening under a 26 m
-           * entablature, which is a door for the thing the temple was built
-           * around rather than for a person. */
-          /* 17 m of opening under a 22 m entablature — still four times the
-           * arch it replaced, and 30% cheaper than the 20 × 26 first written:
-           * the maker builds pylons, a voussoir ring, chains, a banner and its
-           * own rubble, all of it tessellated to 1.15 m, so a gate's triangle
-           * count goes with its AREA and four of them at 20 × 26 came to 98k.
-           * `debris` and `drift` off because the loop below lays its own. */
-          addRuinedGate(world, at(cx, cz), {
-            span: 17, height: 22, yaw, seed: 4600 + i,
-            mat: M.duracreteWarm, trimMat: M.sandstone, broken: i === 10 ? 0.55 : 0.22,
-            debris: false, drift: false,
-          });
-          addDebrisField(world, at(cx, cz), { radius: 13, seed: 4460 + i, count: 22 });
-          continue;
-        }
-        const gone = DOWN.has(i);
-        // The architrave reaches the NEXT shaft, and only where both ends of it
-        // are still there to carry it — that is the whole reason a collapse
-        // propagates along a colonnade rather than stopping at one bay.
-        const nxt = (i + 1) % N;
-        const carries = !gone && !DOWN.has(nxt) && !GATE.has(nxt);
-        island(world, at(cx, cz), { seed: 4400 + i, yaw, span: carries ? span * 1.05 : 6.5, maker: 'peristyle' },
-          (kit, local) => {
-            addColumn(world, local(0, 0), {
-              kit, height: 30, radius: 2.3, seed: 4410 + i, mat: M.duracreteWarm,
-              // 13 sides on a 4.6 m shaft is 1.1 m of chord — under the width
-              // of the outline pass's own stroke at the range you see it from
-              trimMat: M.sandstone, flutes: 0, volutes: false, seg: 13,
-              // a snapped 30 m shaft still leaves 9-15 m of stump standing,
-              // which is taller than the wall it replaced
-              standing: gone ? 0.30 + rng() * 0.20 : 1,
-            });
-            if (carries) {
-              // the bay runs anticlockwise in world space, which is -x in the
-              // island's frame; the beam is drawn from the shaft to the next
-              kit.slab(M.sandstone, span, 2.6, 4.4, -span / 2, 31.4, 0, { tile: 2.4, seg: 5, collide: false });
-              kit.slab(M.duracreteDark, span, 1.1, 5.2, -span / 2, 33.3, 0, { tile: 2.4, seg: 5, collide: false });
-            }
-          });
-        /* …and what fell off it, banked at the foot where it landed. Every
-         * OTHER station: at all sixteen this was 288 separate broken stones
-         * round a ring the player only ever sees a third of at a time, and it
-         * cost 60k triangles for rubble that reads identically at half the
-         * count. */
-        if (i % 2 === 0) addDebrisField(world, at(cx, cz), { radius: 12, seed: 4460 + i, count: 14 });
-      }
-
-      /* ── NO TEMENOS WALL, and it is a decision rather than an omission.
-       *
-       * A precinct wall standing behind the order was built, measured and
-       * taken out again. What it was for is real — a colonnade seen against
-       * open sky is a row of sticks, and seen against a wall it is a building
-       * with depth — but this level already has the wall: its own heightfield
-       * climbs from −0.8 m at the centre to 27 m of rim at 116 and 64 m at
-       * 172, so every column stands against forty metres of bedded stone
-       * whichever way you look. The wall was a second copy of that, and it was
-       * the most expensive thing on the level: measured by ablation, six
-       * segments of 38 × 13 m came to 66k triangles of 510k, because
-       * `weatherGeo` tessellates every surface to 1.15 m vertices and a wall
-       * is nothing but surface.
-       *
-       * The frame budget is the reason it was measured and the composition is
-       * the reason it stayed out.
-       */
-
-      /* ── THE GUARDIANS. Four hooded colossi facing in over the floor, at 34
-       * and 30 m — taller than the order they stand between, which is what a
-       * cult statue is for. Three of them are wrecked; one is not, and the one
-       * that is not is the thing your eye goes to from anywhere in the bowl.
-       *
-       * Set at r = 46 rather than against the wall: a statue at the rim is
-       * scenery, and a statue you can be driven into the feet of is cover. */
-      /* THREE STANDING AND ONE DOWN, not four and one. A guardian is 13k
-       * triangles and the frame's budget is the reason there is not one on
-       * every quarter — which is also the better composition: three round a
-       * ring reads as what is LEFT of a set, and four reads as a complete
-       * one. */
-      const guardians = [[0.42, 34, true], [0.42 + TAU / 3, 30, true],
-                         [0.42 + TAU * 2 / 3, 34, false]];
-      for (let i = 0; i < guardians.length; i++) {
-        const [a, h, ruined] = guardians[i];
-        const cx = Math.cos(a) * 46, cz = Math.sin(a) * 46;
-        /* `seg: 13`, not the maker's default 20. Every one of these is a
-         * revolve — robe, torso, mantle, cowl — so the segment count multiplies
-         * through four lathes and fourteen fold ridges apiece. At 34 m the
-         * silhouette is what carries and a 13-sided revolve is under a degree
-         * of error on it; measured, the drop is 22k triangles a statue. */
-        addColossus(world, at(cx, cz), { height: h, yaw: -a + Math.PI, seed: 4700 + i, ruined, seg: 13 });
-        addDebrisField(world, at(cx, cz), { radius: 14, seed: 4710 + i, count: 26 });
-        siteOk(world, cx, cz, { clearance: 15, spawnClear: 0 });
-      }
-
-      /* ── THE FIFTH GUARDIAN, down. It fell across the floor and it is the
-       * one piece of architecture the fight is actually inside: a 26 m shaft
-       * of a body lying on its side, the head off it, and the hand it was
-       * holding out. This is the level's landmark, and it is off-centre so the
-       * middle of the bowl stays clear to fight in.
-       *
-       * `standing: 0.13` on a colossal drum is `addColumn`'s stump-and-shaft
-       * case: what you get is a broken base with the shaft lying beside it,
-       * which is exactly the shape of a toppled statue's plinth and torso and
-       * costs one emit rather than a bespoke maker. */
-      addColumn(world, at(-24, 14), {
-        height: 30, radius: 2.6, yaw: 2.1, seed: 4800, standing: 0.13,
-        mat: M.sandstone, flutes: 0, volutes: false,
-      });
-      addColossus(world, at(-31, 22), { height: 22, yaw: 2.1, seed: 4801, ruined: true, seg: 13 });
-      addDebrisField(world, at(-27, 18), { radius: 18, seed: 4802, count: 34 });
-      addScree(world, at(-27, 18), { radius: 22, count: 420, size: 0.72, seed: 4803, mat: M.stone });
-
-      /* ── THE ALTAR, at the focus. Whatever was worshipped here stood on
-       * this, and the reason the place is a killing floor is that somebody
-       * decided it was a good stage. Off the exact centre by 9 m: the middle
-       * of a duelling floor belongs to the duel. */
-      island(world, at(8, -7), { seed: 4900, yaw: 0.6, span: 15, maker: 'altar' },
-        (kit, local) => {
-          addPlinth(world, local(0, 0), { kit, width: 9.5, depth: 9.5, height: 2.2, steps: 3,
-            mat: M.sandstone, bandMat: M.duracreteDark });
-          // the ring that stood on it, broken in half and lying where it fell
-          for (const [dx, dz, ry] of [[-5.5, 3.2, 0.5], [4.8, -4.4, 2.3]]) {
-            kit.slab(M.duracreteWarm, 8.5, 1.5, 1.6, dx, 0.8, dz, { tile: 2.4, seg: 4, ry });
-          }
-          for (let i = 0; i < 4; i++) {
-            const a = i * Math.PI / 2 + 0.4;
-            addColumn(world, local(Math.cos(a) * 6.4, Math.sin(a) * 6.4), {
-              kit, height: 11, radius: 0.9, seed: 4910 + i, mat: M.sandstone,
-              flutes: 0, volutes: false, standing: i === 1 ? 0.34 : i === 3 ? 0.52 : 1,
-            });
-          }
-        });
-
-      // ── Rock spilling in where the bowl wall has come down onto the
-      // precinct, and the debris of a place that has been fought in before.
-      for (let k = 0; k < 4; k++) {
-        const site = findSite(world, 34, 56, { clearance: 9, maxSlope: 0.5 });
-        if (!site) continue;
-        addOutcrop(world, site.pos, { size: 4.5 + rng() * 2.5, seed: 900 + k });
-        addScree(world, site.pos, { radius: 9, count: 90, seed: 910 + k });
-      }
-      for (let k = 0; k < 3; k++) {
-        const site = findSite(world, 16, 44, { clearance: 7 });
-        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 950 + k, count: 16 });
-      }
-
-      // ── Loose, cuttable cover. Stacked, not sprinkled: crates arrive in
-      // stacks because someone stacked them.
-      for (let k = 0; k < 5; k++) {
-        const site = findSite(world, 13, 42, { clearance: 3.5 });
-        if (site) addCrateStack(world, site.pos, { seed: 970 + k, height: 2 + (rng() < 0.4 ? 1 : 0) });
-      }
-      for (let i = 0; i < 12; i++) {
-        const site = findSite(world, 12, 46, { clearance: 2.6 });
-        if (!site) continue;
-        world.addProp(rng() < 0.3
-          ? makeBarrel(world, site.pos)
-          : makeCrate(world, site.pos, 0.75));
-      }
-
-      // ── The sand of the bowl itself. Nothing here takes a collider, because
-      // this is the floor of the fight and a shin-high rock you cannot see past
-      // your own blade is worse than bare ground. Purely what the eye reads.
-      strewGround(world, { seed: 3302, radius: 108, inner: 4, boulders: 0.85 });
-
-      // ── Rubble banked against the foot of the order, where fourteen thirty
-      // metre columns' worth of fallen masonry would actually be. A wall
-      // standing on clean sand is a wall that was put there this morning. Five
-      // arcs of it rather than one per bay: each covers 72° of the
-      // circumference, and five instanced calls buy what fourteen would have
-      // cost in draw calls.
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 5) * TAU + 0.21;
-        addScree(world, at(Math.cos(a) * (R - 4) * 0.62, Math.sin(a) * (R - 4) * 0.62),
-          { radius: R - 2, inner: R * 0.62, count: 430, size: 0.62, seed: 3400 + i,
-            // banked where the bays actually fell in, not evenly round the ring
-            field: stoneField(world) });
-      }
-
-      /* ── FALLEN DRUMS across the floor, and they are the size band this
-       * level's floor is now missing rather than the one it used to miss.
-       *
-       * A 30 m shaft comes down as eight drums 2.3 m across and nearly 4 m
-       * long, each one a boulder somebody quarried. `standing` under about 0.4
-       * is `addColumn`'s stump-with-its-shaft-beside-it case, and at radius 1.9
-       * what it leaves lying in the sand is a cylinder you have to go round —
-       * cover at the scale of the building rather than a kerb.
-       */
-      for (let k = 0; k < 8; k++) {
-        const site = findSite(world, 22, 56, { clearance: 9, maxSlope: 0.4, tries: 20 });
-        if (!site) continue;
-        addColumn(world, site.pos, {
-          height: 13 + rng() * 8, radius: 1.5 + rng() * 0.6,
-          yaw: rng() * TAU, seed: 3500 + k, standing: 0.14 + rng() * 0.20,
-          mat: M.sandstone, flutes: 0, volutes: false,
-        });
-      }
-      for (let k = 0; k < 2; k++) {
-        const site = findSite(world, 24, 52, { clearance: 7, maxSlope: 0.35, tries: 20 });
-        if (site) addPlinth(world, site.pos, { width: 2.6 + rng() * 1.6, height: 1.1 + rng() * 0.7, seed: 3600 + k });
-      }
-
-      // ── And outside the peristyle: the ground the horde walks in over. It
-      // was completely bare, which is what you saw through every broken bay.
-      strewGround(world, { seed: 3303, radius: 165, inner: 68, boulders: 1.1, grit: 0.3 });
-      strewWrecks(world, { count: 4, rmin: 74, rmax: 168, seed: 2640 });
-      // Two groups, not four: `addRock` is a draw call apiece and the instanced
-      // landmark grade inside strewGround already covers this ground. These are
-      // here for SHAPE — a few hand-sized-to-house-sized rocks with real
-      // silhouettes among the instanced ones — not for coverage.
-      for (let g = 0; g < 2; g++) {
-        cluster(world, { rmin: 66, rmax: 165, count: 7, spread: 13, falloff: 0.6,
-          satClearance: 2.2, maxSlope: 0.55, tries: 20 }, (pos, i2, d) => {
-          const sz = lerp(3.0, 0.6, clamp(d / 13, 0, 1)) * (0.7 + rng() * 0.6);
-          addRock(world, pos.clone().setY(pos.y + sz * 0.2),
-            new THREE.Vector3(sz * 1.5, sz * 1.05, sz * 1.3), 3700 + g * 13 + i2);
-        });
-      }
-      for (let k = 0; k < 4; k++) {
-        const site = findSite(world, 74, 168, { clearance: 11, maxSlope: 0.5, tries: 20 });
-        if (site) addBoulderCluster(world, site.pos, { radius: 9, count: 11, size: 1.5, seed: 5600 + k });
-      }
-      for (let k = 0; k < 3; k++) {
-        const site = findSite(world, 86, 170, { clearance: 16, maxSlope: 0.55, tries: 24 });
-        if (site) addOutcrop(world, site.pos, { size: 7 + rng() * 5, seed: 3800 + k });
-      }
-      world.notify('THE SANCTUM', 'it was holy once');
-    },
-  },
-
   /* ══════════════════════════════════════════════════════════════════════
    *  MUSTAFAR
    *
@@ -1852,10 +1274,10 @@ export const LEVELS = {
    *  and a coastline you can be driven onto from three sides.
    * ═════════════════════════════════════════════════════════════════════ */
 
-  mustafar: {
-    name: 'Mustafar',
+  scoria: {
+    name: 'The Ember Shelf',
     blurb: 'A basalt shelf standing out of a lava sea, under an ash fall. Nothing here is neutral ground.',
-    terrain: 'mustafar',
+    terrain: 'scoria',
     // A duelling map wants blades in it. The pool is weighted to the one
     // sabered archetype this game has and thinned of hordes: half of what
     // walks out of the ash is something that will meet your guard.
@@ -1950,7 +1372,7 @@ export const LEVELS = {
        *
        * Everywhere else in this game the brightest thing that is not the sun
        * is the sky, so the fill — placed opposite the key — stands for the
-       * dome and is blue. On Mustafar the brightest thing that is not the sun
+       * dome and is blue. On the Ember Shelf the brightest thing that is not the sun
        * is the SEA, the smoke ceiling is lit from below by it, and a blue fill
        * would be a lamp nobody has switched on. `lighting.mjs` used to require
        * B/R > 1.15 of every outdoor fill; that check now asks the stronger
@@ -1999,7 +1421,7 @@ export const LEVELS = {
       // cover, lit from BELOW, so the lit swatch is the sea's colour and the
       // dark swatch is very dark indeed.
       /* A CEILING, not a deck. 0.96 is the highest coverage in the game by a
-       * long way and it is the level's roof: what is over Mustafar is not
+       * long way and it is the level's roof: what is over the Ember Shelf is not
        * weather, it is the ash the vents are putting up, and the small amount
        * of sky that shows through it is the only blue this level is allowed. */
       cloudCover: 0.96, cloudLit: 0xff8a30, cloudDark: 0x2e1a16,
@@ -2151,201 +1573,6 @@ export const LEVELS = {
    *  slots of eight and they are the reason the duels happen under fire.
    * ═════════════════════════════════════════════════════════════════════ */
 
-  temple: {
-    name: 'The Temple Halls',
-    blurb: 'The high halls on Coruscant. The order is still holding them, and everyone still standing has a blade.',
-    terrain: 'temple',
-    /* `master` is in the pool and NOT in the fill, and both halves are
-     * deliberate. `WaveDirector.unlockedAt` only fields an archetype the
-     * hand-written ladder does not name if it declares its own `unlockAt`, and
-     * the Master declares none — so it can only ever reach the field through
-     * `_setPiece`. Being named here is what lets that ladder rung fire at all:
-     * `_setPiece` filters every rung by `pool.includes(type)`, which is why the
-     * warship names its own general. */
-    pool: ['jedi', 'sentinel', 'jedi', 'sniper', 'guardian', 'trooper', 'jedi', 'acolyte', 'master'],
-    groundColor: 0x4a4438,
-    spawnRadius: [28, 50],
-    atmosphere: {
-      /* AN INTERIOR WITH A SKY OUTSIDE IT. `sky: false` because there is a
-       * roof over this room and the dome would draw straight through it; the
-       * city beyond the colonnade is `bgColor`, and it is the one cool note in
-       * a warm room — which is also the whole composition. Cream stone, and a
-       * cold city haze in the gaps between the columns. */
-      sky: false, bgColor: 0x3f4a5e, fog: true, fogColor: 0x4a4a4e, fogDensity: 0.0072,
-      // A late sun raking the length of the hall through the west colonnade.
-      // 16° is what puts a 40 m stripe of light across a floor; anything
-      // higher and the columns stop casting across it.
-      sunColor: 0xffe2b4, sunIntensity: 5.2, ambient: 0.30,
-      skyColor: 0x9fb4d8, groundColor: 0x4a4438,
-      // The city, standing in for the sky this room cannot see. Cool, and
-      // strong enough to put a terminator on a shoulder in the shade.
-      fillColor: 0x6f86b4, fillIntensity: 0.52,
-      exposure: 1.02, bloom: 0.40, saturation: 1.04,
-      lift: [0.004, 0.006, 0.013], gain: [1.01, 1.0, 1.01],
-      clouds: false, horizon: false,
-    },
-    ambience: { wind: 0.05, windFreq: 220, drone: 0.07 },
-    dust: { count: 700, color: 0xd8cbb0, opacity: 0.20, size: 20 },
-    grass: 0,
-    dress(world) {
-      const T = world.terrain;
-      const M = propMaterials();
-      beginDressing(world, 20250805 + 73);
-      const V = (x, y, z) => new THREE.Vector3(x, y, z);
-      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
-
-      /* The coffered ceiling of the hall, twenty metres up. Without it the
-       * top third of every frame in here is the flat `bgColor` — a hall with
-       * an infinite black ceiling reads as a courtyard at night. It does not
-       * cast: the late sun that rakes the length of this hall comes in almost
-       * horizontally through the colonnade, and a roof that cast would simply
-       * delete it. */
-      roof(world, { height: 20, half: 66, mat: M.duracreteDark, beamCount: 11, thickness: 2.0 });
-
-      /* ── THE COLONNADES. Two of them, down the long axis, and they are the
-       * level. A hall reads as a hall because of the rhythm of its columns and
-       * because the light comes between them — so the spacing is exact (8 m
-       * bays, surveyed, no jitter) and the ruin is not: every seventh column
-       * has come down, and the ones that have taken their lintel with them. */
-      /* Three bays to an island, and the reason is arithmetic rather than
-       * taste: fifteen columns a side plus their entablature is 56 separate
-       * emits and roughly 90 draw calls, against a level budget of 520 that
-       * this room was measured at 504 of. Merged three at a time it is ten
-       * emits and thirty, the colonnade still reads as one continuous run to
-       * the occupancy survey — which it IS — and nothing about the rhythm
-       * moves, because the bay pitch is still exactly 8 m. */
-      const BAY = 8, GROUPS = 5, HALF = 26;
-      for (let g = 0; g < GROUPS; g++) {
-        const z0 = (g - (GROUPS - 1) / 2) * BAY * 3;
-        for (const sx of [-1, 1]) {
-          island(world, at(sx * HALF, z0), { seed: 8100 + g * 3 + sx, span: 26, maker: 'colonnade' },
-            (kit, local) => {
-              for (let b = -1; b <= 1; b++) {
-                const z = b * BAY;
-                const fallen = ((g * 3 + b + 4) * 5 + (sx > 0 ? 2 : 0)) % 11 < 2;
-                addColumn(world, local(0, z), {
-                  kit, height: 11.5, radius: 0.86, seed: 8110 + g * 7 + b * 2 + sx,
-                  mat: M.sandstone, standing: fallen ? 0.28 + rng() * 0.22 : 1,
-                });
-                // the entablature, spanning bay to bay above the shafts
-                if (b < 1 && !fallen) {
-                  kit.slab(M.sandstone, 1.5, 1.1, BAY, 0, 12.2, z + BAY / 2, { tile: 2.4, seg: 3 });
-                }
-              }
-            });
-          // the aisle wall behind the colonnade, with the city showing through
-          addBrokenWall(world, at(sx * (HALF + 9), z0), V(BAY * 3 - 0.6, 9.5, 1.6), {
-            yaw: Math.PI / 2, seed: 8200 + g * 2 + sx, mat: M.duracreteWarm,
-            ruin: g === 2 ? 0.72 : 0.22,
-            openings: [{ x: -6, y: 1.8, w: 3.2, h: 5.4, arched: true },
-                       { x: 6, y: 1.8, w: 3.2, h: 5.4, arched: true }],
-          });
-        }
-      }
-
-      /* ── THE DAIS at the end of the hall, which the heightfield already
-       * raises: the stair is what makes it read as a threshold rather than as
-       * a bump, and it is where the last of a wave backs up to. */
-      addStair(world, at(4, -21), { width: 14, steps: 5, rise: 0.28, run: 0.9, yaw: 0, railing: false, mat: M.sandstone });
-      addRuinedGate(world, at(4, -46), { width: 13, height: 12, seed: 8300 });
-      addColossus(world, at(-9, -40), { height: 15, yaw: 0.5, seed: 8310, ruined: true });
-      addColossus(world, at(17, -40), { height: 15, yaw: -0.5, seed: 8320, ruined: false });
-      addDebrisField(world, at(-9, -40), { radius: 9, seed: 8330, count: 22 });
-
-      /* ── The far end: a broken wall where whatever came through, came
-       * through, and the rubble it made. */
-      addBrokenWall(world, at(0, 52), V(34, 12, 2.2), {
-        yaw: 0, seed: 8400, mat: M.duracreteWarm, ruin: 0.78,
-        openings: [{ x: -8, y: 0, w: 5.5, h: 7.5, arched: true }, { x: 9, y: 0, w: 4.5, h: 6.5, arched: true }],
-      });
-      addScree(world, at(0, 47), { radius: 24, count: 420, size: 0.55, seed: 8410, mat: M.stone });
-
-      /* ── The rest of the precinct. Everything below is here to answer the
-       * one bar an interior with no ground cover has to clear on its objects
-       * alone — a median gap to the nearest thing under 6.5 m over a 132 m
-       * room — and every piece of it is something a temple would have. */
-
-      /* ── THE PRECINCT WALL, right out at the room's edge. Measured before it
-       * was added: 17.1% of the walkable floor had nothing within twelve
-       * metres, and all of it was the outer ring — the nave and its chapels
-       * are dense and everything past |x| = 40 was bare flagging. A hall this
-       * size has an ambulatory round it, so that is what this is. */
-      const PR = 58, arcs = 18;
-      for (let i = 0; i < arcs; i++) {
-        const a = (i / arcs) * TAU;
-        const c = Math.cos(a), s = Math.sin(a);
-        const k = 1 / Math.max(Math.abs(c), Math.abs(s));
-        const x = c * k * PR, z = s * k * PR;
-        const yaw = Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2;
-        const gone = (i * 7 + 1) % 9 < 2;
-        island(world, at(x, z), { seed: 8900 + i, yaw, span: 16, maker: 'ambulatory' },
-          (kit, local) => {
-            addBrokenWall(world, local(0, 0), V(15.0, gone ? 3.6 + rng() * 2 : 8.5, 1.8), {
-              kit, mat: M.duracreteWarm, ruin: gone ? 0.72 : 0.24, seed: 8910 + i,
-              openings: i % 3 === 1 ? [{ x: 0, y: 0, w: 3.6, h: 5.0, arched: true }] : undefined,
-            });
-            // and the ambulatory columns standing in front of it
-            addColumn(world, local(0, -7), {
-              kit, height: 8.5, radius: 0.62, seed: 8940 + i, mat: M.sandstone,
-              standing: gone ? 0.3 + rng() * 0.3 : 1,
-            });
-          });
-      }
-
-      // Side chapels and their plinths, on the surveyed bay grid.
-      bay(world, { nx: 5, nz: 5, pitch: 25, x: 0, z: 4, jitter: 3.6, skip: 0.10,
-        clearance: 7.5, spawnClear: 10, maxSlope: 0.3 }, (pos, i, j, r) => {
-        if (Math.abs(pos.x) < 20 && Math.abs(pos.z) < 20) return;    // keep the nave open
-        if (r < 0.42) {
-          addPlinth(world, pos.clone(), { width: 2.4 + rng() * 1.4, height: 1.2 + rng() * 0.8, seed: 8500 + i * 7 + j });
-        } else if (r < 0.72) {
-          addColumn(world, pos.clone(), {
-            height: 7 + rng() * 3, radius: 0.55, seed: 8520 + i * 7 + j, mat: M.sandstone,
-            standing: rng() < 0.35 ? 0.3 + rng() * 0.3 : 1,
-          });
-        } else {
-          island(world, pos.clone(), { seed: 8540 + i * 7 + j, yaw: rng() * TAU, span: 9, maker: 'shrine' },
-            (kit, local) => {
-              addPlinth(world, local(0, 0), { kit, width: 3.0, height: 1.5, seed: 8560 + i * 7 + j });
-              addColumn(world, local(-2.6, 1.6), { kit, height: 5.4, radius: 0.42, mat: M.sandstone, seed: 8570 + i });
-              addColumn(world, local(2.6, -1.6), { kit, height: 5.4, radius: 0.42, mat: M.sandstone, seed: 8580 + j });
-            });
-        }
-      });
-
-      // Fallen masonry across the floor: the size band between litter and
-      // architecture, and the one an empty room is always missing.
-      for (let k = 0; k < 16; k++) {
-        const site = findSite(world, 14, 74, { clearance: 5.5, maxSlope: 0.4, tries: 22 });
-        if (!site) continue;
-        addColumn(world, site.pos, {
-          height: 6.5 + rng() * 3, radius: 0.5 + rng() * 0.24, yaw: rng() * TAU,
-          seed: 8600 + k, standing: 0.10 + rng() * 0.18, mat: M.sandstone,
-        });
-      }
-      for (let k = 0; k < 10; k++) {
-        const site = findSite(world, 16, 76, { clearance: 7, maxSlope: 0.4, tries: 20 });
-        if (site) addDebrisField(world, site.pos, { radius: 8, seed: 8650 + k, count: 20 });
-      }
-      // and the dust of it, banked where the drifts field says it collected
-      strewGround(world, { seed: 8700, radius: 78, inner: 4, spread: 0.30, mat: M.stone,
-        landmarks: 1.1, boulders: 1.3, cobble: 1.4 });
-
-      // Braziers along the nave. The only lights in the room that are not the
-      // sun coming through the colonnade, and the only saturated thing that is
-      // not a blade.
-      for (let i = -3; i <= 3; i++) {
-        for (const sx of [-1, 1]) {
-          addLamp(world, at(sx * 15, i * 14 + 2), {
-            height: 3.4, seed: 8800 + i * 2 + sx, light: i % 2 === 0,
-            color: 0xffb45a, intensity: 13, distance: 20,
-          });
-        }
-      }
-      world.notify('THE TEMPLE HALLS', 'they will not stand aside');
-    },
-  },
-
   /* ══════════════════════════════════════════════════════════════════════
    *  THE DESCENT — three rooms, four rungs
    *
@@ -2360,62 +1587,17 @@ export const LEVELS = {
    *  rung, by nothing at all.
    * ═════════════════════════════════════════════════════════════════════ */
 
-  intake: {
-    name: 'The Intake',
-    blurb: 'Where the ore came in. The roof is open to the sky, and it is the last sky there is.',
-    terrain: 'works',
-    pool: ['b1', 'b1', 'trooper', 'b2', 'droideka', 'sniper', 'b1'],
-    groundColor: 0x30363f,
-    spawnRadius: [28, 50],
-    atmosphere: {
-      /* 0.0042, NOT 0.0105. Interiors take their fog swatch as authored —
-       * `hazeRadiance` returns early on `sky: false` — so an indoor density
-       * is a straight visibility number, and 0.0105 puts half-light at 66 m in
-       * a room only 132 m across: the first render of this hall was a blue
-       * wash with the far half of its own plant dissolved out of it. A hall
-       * you cannot see the end of is not big, it is empty. */
-      sky: false, bgColor: 0x11161f, fog: true, fogColor: 0x1a222e, fogDensity: 0.0042,
-      // A near-vertical key: this is daylight down a shaft, so it comes almost
-      // straight down and everything in the room stands in its own hard pool
-      // of shadow. 74° is the steepest sun anywhere in the game and it is the
-      // whole reason the room reads as being under something.
-      sunColor: 0xd6e6ff, sunIntensity: 5.6, ambient: 0.78,
-      skyColor: 0x5f7ba8, groundColor: 0x30363f, elevation: 74, azimuth: 36,
-      // What the floor throws back up, plus the working lights: cold, because
-      // everything in this room is cold except the hazard lamps.
-      fillColor: 0x3a4a62, fillIntensity: 0.62,
-      exposure: 1.16, bloom: 0.44, saturation: 0.98,
-      lift: [0.005, 0.007, 0.012], gain: [0.99, 1.0, 1.04],
-      clouds: false, horizon: false,
-    },
-    ambience: { wind: 0.06, windFreq: 210, drone: 0.15 },
-    dust: { count: 620, color: 0xa8b6c8, opacity: 0.20, size: 18 },
-    grass: 0,
-    dress(world) {
-      beginDressing(world, 20250805 + 81);
-      works(world, {
-        seed: 8100, lampColor: 0xffb04a, lampEvery: 3, lights: true,
-        // THE HOLE IN THE ROOF, and it is the level's whole subject: a 60 m
-        // slot with a 74° sun through it lays a hard-edged stripe of daylight
-        // across the floor and leaves the rest of the hall to the lamps.
-        well: 30,
-        crates: 26, stacks: 6, wrecks: 2, banner: 'THE INTAKE',
-        note: 'the way down is at the far end of the floor',
-      });
-    },
-  },
-
   foundry: {
     name: 'The Foundry',
     blurb: 'A canal of melt across the floor, crossed twice. It lights the room and it does not care who is standing in it.',
     terrain: 'foundry',
-    pool: ['b1', 'b2', 'b2', 'droideka', 'trooper', 'acolyte', 'sniper', 'b1'],
+    pool: ['b1', 'b2', 'b2', 'droideka', 'trooper', 'acolyte', 'sniper', 'b1', 'bodyguard'],
     groundColor: 0x3a2a24,
     spawnRadius: [30, 52],
     /**
      * The melt, at −1.45: the canal bed is −2.2, so there is three quarters of
      * a metre of it in the bottom and the banks stand clear. Same shader, same
-     * argument as Mustafar's sea — analytic, so it is the one thing in a very
+     * argument as the Ember Shelf's sea — analytic, so it is the one thing in a very
      * dark room that has its own radiance.
      */
     /* AND IT IS NOT COVER, which is what this level's own on-screen notify has
@@ -2423,7 +1605,7 @@ export const LEVELS = {
      * deep and 4 m across, so crossing it anywhere but the two bridges costs
      * about 1.4 s and most of your health, and a droid that walks into it (the
      * bank is 40° and their steering has no opinion about melt) goes down in
-     * it. Hotter than the sea on Mustafar because this is a metre-deep channel
+     * it. Hotter than the sea on the Ember Shelf because this is a metre-deep channel
      * of it and that is a slot you are IN, not a shore you brushed. */
     water: { level: -1.45, damage: 58, kind: 'melt',
              shallow: 0xffc24a, deep: 0x8f2a04, sky: 0xffb04a, bed: 0x1a1010 },
@@ -2481,286 +1663,6 @@ export const LEVELS = {
    *  decks, because this engine has no floors and the gait solver, the nav and
    *  the spawn picker all assume it does not.
    * ═════════════════════════════════════════════════════════════════════ */
-
-  warship: {
-    name: 'The Invisible Hand',
-    blurb: 'A Separatist flagship with its bridge still lit. Everything aboard is a machine, and all of it is between you and the front.',
-    terrain: 'warship',
-    // Droids only. `unlockedAt` still gates them — b1 from the first wave, b2
-    // at 3, droideka at 6, the walker at 12 — so the opening of this level is
-    // a corridor full of B1s, which is exactly the right opening.
-    pool: ['b1', 'b1', 'b1', 'b2', 'droideka', 'b2', 'b1', 'walker', 'bodyguard'],
-    groundColor: 0x2a3038,
-    spawnRadius: [26, 52],
-    atmosphere: {
-      /* `sky: false`: there is a hull over this. `bgColor` is what shows
-       * through the launch bay mouth and the bridge viewport, and it is the
-       * one cold saturated thing on the level — a battle happening outside,
-       * seen from inside a dark ship. 0.0052 puts half-light at 133 m, which
-       * is most of the length of the spine: you can see the far end of the
-       * ship, and it is a long way off. */
-      sky: false, bgColor: 0x14304e, fog: true, fogColor: 0x16212e, fogDensity: 0.0052,
-      /* The key comes in through the launch bay mouth on the port side, low
-       * and cold: the only daylight aboard is a star. 12° is nearly along the
-       * deck, so everything standing on it throws a long hard-edged shadow
-       * across the plating — rule 2 of the art direction at the scale of a
-       * hangar. */
-      sunColor: 0xbcd4ff, sunIntensity: 5.0, ambient: 0.70,
-      /* THE HEMISPHERE IS WHERE THIS ROOM IS ACTUALLY LIT, and the first render
-       * is what says so: at ambient 0.34 — the figure a level under an open sky
-       * would use — a 12° key through one opening left four fifths of the frame
-       * at nothing, and the ship read as a cave. It is 0.70 for the same reason
-       * the intake's is 0.78: a roofed room's ambient IS its lighting rig, and
-       * the two halves of it are the two things a ship bounces light off —
-       * plated overhead above, and below, a deck lit by hazard strips, which is
-       * why the lower half is authored WARM against a cold key. */
-      /* 0x55606e and not the 0x4a6488 first tried, which is a NAVY: measured
-       * as authored swatches those are 0.32 and 0.14 of chroma, and the first
-       * render came back with the whole deck a saturated blue. What is over
-       * this floor is plated overhead, not sky — there is no Rayleigh
-       * scattering inside a hull — so the upper half of the hemisphere is a
-       * cold grey and the COLD comes from the key. */
-      skyColor: 0x55606e, groundColor: 0x3c3026, elevation: 12, azimuth: 268,
-      /* What the ship's own lighting throws back: the hazard strips, the
-       * console banks and the reactor glow, all of which are WARM on a
-       * Separatist hull. This is the level's second light and it is authored
-       * against the key rather than with it — cold star, warm ship. */
-      fillColor: 0xc06a2e, fillIntensity: 0.62,
-      exposure: 1.22, bloom: 0.46, saturation: 1.04,
-      lift: [0.004, 0.006, 0.013], gain: [1.00, 1.0, 1.03],
-      clouds: false, horizon: false,
-    },
-    ambience: { wind: 0.04, windFreq: 120, drone: 0.32 },
-    dust: { count: 640, color: 0x8fa2ba, opacity: 0.18, size: 18, fleckColor: 0xffa040 },
-    grass: 0,
-    dress(world) {
-      const T = world.terrain;
-      const M = propMaterials();
-      beginDressing(world, 20250805 + 91);
-      const V = (x, y, z) => new THREE.Vector3(x, y, z);
-      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
-
-      /* ── THE OVERHEAD. One panel over the whole ship at 24 m with the ribs
-       * under it. An interior with `sky: false` and no roof has a flat
-       * `bgColor` field filling the top third of every frame, which reads as
-       * night rather than as indoors — see `roof`. No `shadow`, because the
-       * key on this level comes in almost horizontally through the bay mouth
-       * and a roof that cast would simply delete it. */
-      roof(world, { height: 24, half: 96, mat: M.hull, beamCount: 13, thickness: 2.0 });
-
-      /* ── THE FRAMES. A ship is a row of ring frames with plating on them,
-       * and the single strongest cue that you are inside a hull rather than in
-       * a shed is that the ribs are REGULAR and they run all the way to the
-       * vanishing point. Every 13 m down the whole 186 m length, both sides,
-       * merged one frame to an island. */
-      /* TWO MATERIALS TO A FRAME, and that number is the whole design of this
-       * loop. A `Kit` emits one mesh per material, so a frame built out of a
-       * broken-wall maker, a pipe run and a stanchion — which is what this was
-       * — costs ten draw calls apiece, and thirty of them came to 300 against a
-       * level budget of 520 before anything stood on the floor. The plating is
-       * a slab in the frame's own two materials instead, and the conduits and
-       * the hazard lamps are placed sparsely afterwards where they read rather
-       * than at every station where they only cost. Measured: 300 → 62. */
-      for (let i = 0; i < 13; i++) {
-        const z = -90 + i * 15;
-        const beam = 84 * (1 - Math.pow(Math.abs(z) / 116, 3) * 0.34);   // the hull closes fore and aft
-        for (const sx of [-1, 1]) {
-          const x = sx * (beam - 22);
-          if (!siteOk(world, x, z, { clearance: 6, spawnClear: 12 })) continue;
-          const open = i % 3 === 1;                 // a service bay in every third frame
-          island(world, at(x, z), { seed: 9100 + i * 2 + (sx > 0 ? 1 : 0), yaw: sx > 0 ? 0 : Math.PI, span: 13, maker: 'frame' },
-            (kit) => {
-              // the frame itself: a deep web with a flange, standing off the
-              // shell so there is a walkway behind it
-              kit.slab(M.darkSteel, 1.5, 15.0, 11.0, 0, 7.5, 0, { tile: 2.4, seg: 4 });
-              kit.slab(M.darkSteel, 0.6, 1.2, 12.4, -0.9, 14.6, 0, { tile: 2.4, seg: 3, collide: false });
-              // plating between the frames. Where a bay is open it is two
-              // panels with a doorway between them rather than one.
-              if (open) {
-                for (const dz of [-1, 1]) {
-                  kit.slab(M.panel, 1.1, 11.0, 4.4, 1.6, 5.5, dz * 4.0, { tile: 2.4, seg: 3 });
-                }
-                kit.slab(M.panel, 1.1, 5.6, 3.6, 1.6, 8.2, 0, { tile: 2.4, seg: 3, collide: false });
-              } else {
-                kit.slab(M.panel, 1.1, 11.0, 12.4, 1.6, 5.5, 0, { tile: 2.4, seg: 4 });
-              }
-              // the conduit run, in the frame's own steel so it is free
-              kit.slab(M.darkSteel, 0.34, 0.34, 12.4, -0.5, 9.8, 0, { tile: 1.8, seg: 3, collide: false });
-              kit.slab(M.darkSteel, 0.34, 0.34, 12.4, -0.5, 10.4, 0, { tile: 1.8, seg: 3, collide: false });
-            });
-          // the hazard lamp, on every third frame and on one side only: the
-          // ship is lit by what somebody left running, not by a lighting rig
-          if (i % 3 === 0 && sx > 0) {
-            addStanchion(world, at(x - 2.2, z), {
-              height: 6.0, lamp: true, light: true,
-              color: 0xff7a28, intensity: 14, distance: 24, seed: 9180 + i,
-            });
-          }
-        }
-      }
-
-      /* ── THE BAY MOUTH, port side. A 56 m opening in the hull with the
-       * battle outside it: on an interior the `bgColor` behind a hole in a
-       * wall IS the view, and it is the only thing on this level that is not
-       * made of metal. Framed heavily, because a hole in a hull that is not
-       * framed reads as a hole in the geometry. */
-      for (const dz of [-30, 30]) {
-        island(world, at(64, dz), { seed: 9200 + dz, yaw: Math.PI / 2, span: 16, maker: 'baymouth' },
-          (kit) => {
-            kit.slab(M.darkSteel, 12.0, 20.0, 4.0, 0, 10.0, 0, { tile: 2.4, seg: 4 });
-            kit.slab(M.rust, 12.4, 1.4, 4.6, 0, 20.4, 0, { tile: 2.0, seg: 3, collide: false });
-            kit.slab(M.glowAmber, 11.0, 0.4, 0.5, 0, 1.2, 2.3, { tile: 1.6, seg: 2, collide: false });
-          });
-      }
-      // the lintel over the mouth, and the door leaves stowed either side
-      island(world, at(66, 0), { seed: 9210, yaw: Math.PI / 2, span: 20, maker: 'baymouth' },
-        (kit) => {
-          kit.slab(M.hull, 62.0, 5.0, 3.4, 0, 20.5, 0, { tile: 2.4, seg: 8, collide: false });
-          kit.slab(M.panel, 62.0, 1.0, 4.2, 0, 17.6, 0, { tile: 2.4, seg: 8, collide: false });
-        });
-
-      /* ── THE HANGAR FLOOR. Launch cradles down the trench, the gantries that
-       * loaded them, and the wrecks of what did not get out. This is the wide
-       * part of the level and the only part where a walker has room. */
-      for (let k = 0; k < 6; k++) {
-        const x = -46 + k * 19;
-        const z = -4 - Math.sin(x * 0.026) * 3.5 + (k % 2 ? 15 : -15);
-        if (!siteOk(world, x, z, { clearance: 9, spawnClear: 12 })) continue;
-        island(world, at(x, z), { seed: 9300 + k, yaw: rng() * 0.6 - 0.3, span: 14, maker: 'cradle' },
-          (kit, local) => {
-            // the cradle: two arms and the hoist gantry over them
-            for (const sx of [-1, 1]) {
-              kit.slab(M.darkSteel, 1.0, 2.4, 9.0, sx * 3.2, 1.2, 0, { tile: 2.4, seg: 3 });
-              kit.slab(M.rust, 1.4, 0.3, 9.4, sx * 3.2, 2.5, 0, { tile: 1.8, seg: 3, collide: false });
-            }
-            kit.slab(M.grating, 8.0, 0.16, 2.2, 0, 2.6, 3.4, { tile: 2.2, seg: 3, collide: false });
-            addMachine(world, local(-5.4, -4.2), { kit, width: 3.2, height: 2.6, depth: 2.2, seed: 9310 + k,
-              glowMat: M.glowAmber });
-            addTank(world, local(5.2, -4.0), { kit, radius: 1.5, height: 4.0, seed: 9320 + k });
-            addStanchion(world, local(0, -5.0), { kit, height: 8.0, lamp: true, light: k % 2 === 0,
-              color: 0xff7a28, intensity: 16, distance: 26, seed: 9330 + k });
-          });
-      }
-      for (let k = 0; k < 3; k++) {
-        const site = findSite(world, 22, 56, { clearance: 13, spawnClear: 14, maxSlope: 0.3, tries: 22 });
-        if (site) addHullSection(world, site.pos, { length: 16 + rng() * 9, radius: 3.0, yaw: rng() * TAU, seed: 9350 + k });
-      }
-      for (const sx of [-1, 1]) {
-        // 5.2, not 7.0: a full double Force jump tops out at a measured 6.18 m
-        // and a deck top sits at H + 0.16, so at 7.0 this was a place nobody
-        // could ever stand. The works' gantry note carries the measurement.
-        addGantry(world, at(sx * 40, -18), { length: 30, height: 5.2, yaw: 0, seed: 9360 + sx, lights: true });
-        addCableRun(world, at(sx * 52, -26, 9.0), at(sx * 52, 22, 8.2), { seed: 9370 + sx, sag: 1.6 });
-      }
-
-      /* ── THE SPINE, forward of the hangar. A CORRIDOR is a rhythm and
-       * nothing else: ribs at a fixed pitch, the same conduit run at the same
-       * height past every one of them, and a light every other rib. The one
-       * thing that makes it read as a corridor rather than as a hall is that
-       * the ribs come in PAIRS across a narrow gap — 22 m here against the
-       * hangar's 128 — so the two sides are both in frame at once. */
-      for (let i = 0; i < 7; i++) {
-        const z = 40 + i * 8.5;
-        island(world, at(0, z), { seed: 9400 + i, yaw: 0, span: 24, maker: 'rib' },
-          (kit, local) => {
-            for (const sx of [-1, 1]) {
-              kit.slab(M.darkSteel, 1.6, 8.4, 2.6, sx * 11.0, 4.2, 0, { tile: 2.4, seg: 3 });
-              kit.slab(M.panel, 3.0, 6.2, 0.9, sx * 13.4, 3.1, 0, { tile: 2.4, seg: 3 });
-            }
-            // the header across the top, which is what closes a corridor
-            kit.slab(M.darkSteel, 23.6, 1.5, 2.6, 0, 9.1, 0, { tile: 2.4, seg: 5, collide: false });
-            kit.slab(M.rust, 23.6, 0.5, 3.2, 0, 10.1, 0, { tile: 2.0, seg: 5, collide: false });
-            addPipeRun(world, [
-              new THREE.Vector3(-10.2, 6.6, -3.6), new THREE.Vector3(-10.2, 7.0, 3.6),
-            ], { kit, count: 3, radius: 0.13, seed: 9420 + i, supports: false, valves: i % 2 === 0 });
-            addLamp(world, local(9.6, 0), { kit, height: 4.0, seed: 9440 + i, light: i % 2 === 1,
-              color: 0xff8a30, intensity: 12, distance: 18 });
-          });
-      }
-      // the blast-door threshold where the spine meets the hangar
-      island(world, at(0, 34), { seed: 9460, yaw: 0, span: 26, maker: 'threshold' },
-        (kit) => {
-          for (const sx of [-1, 1]) kit.slab(M.hull, 16.0, 12.0, 3.0, sx * 20.0, 6.0, 0, { tile: 2.4, seg: 4 });
-          kit.slab(M.hull, 56.0, 3.4, 3.0, 0, 13.7, 0, { tile: 2.4, seg: 7, collide: false });
-          kit.slab(M.glowRed, 22.0, 0.3, 0.4, 0, 11.6, 1.6, { tile: 1.6, seg: 4, collide: false });
-        });
-      for (let k = 0; k < 9; k++) {
-        // maxSlope 0.10, not 0.3: the bridge ramp is 12° and a crate seated on
-        // a slope stands on one corner — `prop-seating` found exactly one, at
-        // 0.56 m of daylight under it.
-        const site = findSite(world, 44, 88, { clearance: 3.4, spawnClear: 12, maxSlope: 0.10 });
-        if (site) world.addProp(rng() < 0.35 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
-      }
-
-      /* ── THE BRIDGE, aft and five metres up. Two crew pits of consoles, the
-       * command walkway between them, and the viewport. This is the end of the
-       * level: the ramp up to it is the only way in, and the thing that is
-       * waiting up here does not go down it. */
-      addStair(world, at(4, -32), { width: 22, steps: 6, rise: 0.3, run: 1.1, yaw: 0, railing: true, mat: M.darkSteel });
-      for (const sx of [-1, 1]) {
-        island(world, at(sx * 17, -52), { seed: 9500 + sx, yaw: sx > 0 ? 0.3 : -0.3, span: 15, maker: 'crewpit' },
-          (kit, local) => {
-            kit.slab(M.darkSteel, 13.0, 1.0, 8.0, 0, -0.5, 0, { tile: 2.4, seg: 4 });
-            addRailing(world, local(0, 4.2), { kit, length: 12.0, height: 1.1, seed: 9510 + sx });
-            for (let c = 0; c < 3; c++) {
-              addMachine(world, local(-4.4 + c * 4.4, -2.6), {
-                kit, width: 3.0, height: 1.4, depth: 1.8, seed: 9520 + c + sx * 3,
-                glowMat: M.glowCold,
-              });
-            }
-            addStanchion(world, local(-5.8, 3.0), { kit, height: 5.0, lamp: true, light: true,
-              color: 0x9fc8ff, intensity: 12, distance: 18, seed: 9540 + sx });
-          });
-        for (let c = 0; c < 3; c++) {
-          const p = at(sx * (11 + c * 4.0), -58 - (c % 2) * 3.5);
-          if (siteOk(world, p.x, p.z, { clearance: 2.4, spawnClear: 0 })) world.addProp(makeConsole(world, p));
-        }
-      }
-      // the viewport: the ship's own bow, opened. Everything behind it is
-      // `bgColor`, which on this level is the battle.
-      addBrokenWall(world, at(4, -84), V(64, 16, 2.6), {
-        yaw: 0, seed: 9560, mat: M.hull, ruin: 0.44,
-        openings: [{ x: -16, y: 1.4, w: 11, h: 8.5 }, { x: 0, y: 1.4, w: 13, h: 9.5 },
-                   { x: 16, y: 1.4, w: 11, h: 8.5 }],
-      });
-      addDebrisField(world, at(4, -80), { radius: 16, seed: 9570, count: 30 });
-      // the command dais, where the thing at the end of the level stands
-      island(world, at(4, -66), { seed: 9580, yaw: 0, span: 12, maker: 'dais' },
-        (kit, local) => {
-          addPlinth(world, local(0, 0), { kit, width: 8.0, depth: 6.0, height: 0.9, steps: 2,
-            mat: M.darkSteel, bandMat: M.rust });
-          addMachine(world, local(0, -2.2), { kit, width: 4.4, height: 1.6, depth: 1.6, seed: 9590,
-            glowMat: M.glowRed });
-          for (const sx of [-1, 1]) {
-            addStanchion(world, local(sx * 4.2, 1.6), { kit, height: 5.6, lamp: true, light: true,
-              color: 0xff5a20, intensity: 15, distance: 20, seed: 9595 + sx });
-          }
-        });
-
-      /* ── The floor of a ship that has been boarded: cargo that broke loose,
-       * plate that came off the overhead, and the swarf a hangar deck is
-       * always covered in. Instanced — see strewGround. */
-      const field = makeCoverField({ seed: 9600, amount: 0.32, patch: 30, grain: 11, edge: 0.30, extent: 90 });
-      drift(world, {
-        field: (x, z) => field.at(x, z), rmin: 14, rmax: 82, count: 26,
-        clearance: 2.6, spawnClear: 12, maxSlope: 0.10, tries: 14,
-      }, (pos) => {
-        world.addProp(rng() < 0.32 ? makeBarrel(world, pos) : makeCrate(world, pos, 0.85));
-      });
-      for (let k = 0; k < 7; k++) {
-        const site = findSite(world, 18, 84, { clearance: 5, spawnClear: 12, maxSlope: 0.10 });
-        if (site) addCrateStack(world, site.pos, { seed: 9620 + k, tiers: 2 + (rng() < 0.5 ? 1 : 0), columns: 2, yaw: rng() * TAU });
-      }
-      for (let k = 0; k < 8; k++) {
-        const site = findSite(world, 16, 88, { clearance: 6, maxSlope: 0.35 });
-        if (site) addDebrisField(world, site.pos, { radius: 8, seed: 9640 + k, count: 22 });
-      }
-      strewGround(world, { seed: 9660, radius: 92, inner: 3, spread: 0.30, mat: M.stoneDark,
-        landmarks: 0.3, boulders: 0.7, cobble: 1.4 });
-
-      world.notify('THE INVISIBLE HAND', 'the bridge is aft, and so is the general');
-    },
-  },
 
   /* ══════════════════════════════════════════════════════════════════════
    *  THE COLOSSEUM
@@ -3137,14 +2039,14 @@ export const LEVELS = {
        * hundred metres of leaves, and leaves scatter forward off big
        * particles the way ash does. */
       turbidity: 6.5, rayleigh: 2.8, mie: 0.012, mieG: 0.82,
-      /* 19°, and the canopy rather than the sun is what darkens this level — Mustafar's 15° was the previous
+      /* 19°, and the canopy rather than the sun is what darkens this level — the Ember Shelf's 15° was the previous
        * floor. Under a closed canopy the light that reaches the floor arrives
        * almost horizontally through the trunks, and a low sun through 520
        * vertical rods is what puts the bars of light and shadow across a
        * forest floor that make it read as a forest. `lighting.mjs` orders the
        * indirect budget by sun height strictly, and this level genuinely
        * delivers more of its light as sky than any other. */
-      /* 134°, NOT the 84° first written, and the reason is the one Mustafar's
+      /* 134°, NOT the 84° first written, and the reason is the one the Ember Shelf's
        * block already records: the default pose looks down −z, and a sun 96°
        * away from that sits in the darkest quarter of the dome — so the sky
        * the player is looking at comes out DARKER than the near air standing
@@ -3152,10 +2054,10 @@ export const LEVELS = {
        * Measured here at 84°, the ground crossed the skyline's luminance at
        * 160 m and settled back under it by 240; at 134° it never crosses.
        * 134 puts the sun 46° off the view axis, which is the same choice the
-       * dune sea and Mustafar both make and for the same reason. */
+       * dune sea and the Ember Shelf both make and for the same reason. */
       elevation: 19, azimuth: 134,
       /* 2.4 of key and 0.90 of ambient, not 3.6 and 0.78 — the same shape
-       * Mustafar's block derives and for the same reason. Written first at
+       * the Ember Shelf's block derives and for the same reason. Written first at
        * rayleigh 1.7 with a 3.6 key, `atmosphereMeter` hit its exposure clamp
        * at 3.0, and once a level is on the clamp the meter has stopped
        * metering it: five separate checks fell over on that one number
@@ -3171,10 +2073,10 @@ export const LEVELS = {
        * `cloudLight` derives a cloud base's bounce term from exactly this
        * swatch, and at the 0x3a3225 first written the bounce contributed 0.01
        * of the base against a floor of 10% — a canopy lit entirely by itself.
-       * The same mistake Mustafar's block records, one level later. */
+       * The same mistake the Ember Shelf's block records, one level later. */
       groundColor: 0x6a5c3e,
       fillColor: 0x77906a, fillIntensity: 0.58,
-      /* AUTHORED, like Mustafar's and for the same reason: `applyAtmosphere`
+      /* AUTHORED, like the Ember Shelf's and for the same reason: `applyAtmosphere`
        * estimates the forward-scatter weight from the difference between the
        * sunward and side skyline, and on a sky this compressed the two land
        * within a per cent of each other, so the estimate is zero and the glow
@@ -3438,7 +2340,7 @@ export const LEVELS = {
     atmosphere: {
       /* A storm sky, which the model can nearly do: turbidity and mie up,
        * rayleigh down — mie is forward scatter off big particles, and rain is
-       * nothing but big particles. Same shape as Mustafar's ash sky and for
+       * nothing but big particles. Same shape as the Ember Shelf's ash sky and for
        * the same reason, and `rayleigh` is held at 1.9 rather than dropped
        * because below about 1.6 `atmosphereMeter` hits its exposure clamp and
        * the frame stops being exposed by its own light. */
@@ -3448,7 +2350,7 @@ export const LEVELS = {
        * somewhere under a storm, and almost none of it reaches the deck, which
        * is why `ambient` carries this level.
        *
-       * 128°, NOT the 302° first written, and the reason is the one Mustafar's
+       * 128°, NOT the 302° first written, and the reason is the one the Ember Shelf's
        * block already records: the default pose looks down −z, and a sun 122°
        * away from that sits in the darkest quarter of the dome — so the sky the
        * player is looking at comes out DARKER than the near air standing in
@@ -3491,7 +2393,7 @@ export const LEVELS = {
        * at 260 m is entirely gone and the sea runs to the horizon, thin enough
        * that the far side of a 156 m platform still reads. */
       fogColor: 0x0f151c, fogDensity: 0.0112, fogHeight: 42, fogBase: 1,
-      /* AUTHORED, for the reason Mustafar's block gives: `applyAtmosphere`
+      /* AUTHORED, for the reason the Ember Shelf's block gives: `applyAtmosphere`
        * estimates the forward-scatter weight from the gap between the sunward
        * and side skyline, and on a storm sky the two land within a per cent of
        * each other, so the estimate is zero and the glow switches off entirely
@@ -3514,7 +2416,7 @@ export const LEVELS = {
       exposure: 0.74, bloom: 0.46, saturation: 0.98,
       lift: [0.004, 0.009, 0.017], gain: [0.95, 0.99, 1.07],
       /* A CEILING, not a deck. 0.94 is the second highest in the game after
-       * Mustafar's ash: what is over Kamino is not weather passing through,
+       * the Ember Shelf's ash: what is over Kamino is not weather passing through,
        * it is the permanent condition of the planet. */
       cloudCover: 0.94, cloudLit: 0xf2f7ff, cloudDark: 0x282c31,
       cloudWindDir: 4.9, cloudWindSpeed: 3.4,
@@ -3713,120 +2615,42 @@ export const LEVELS = {
     },
   },
 
-  deeps: {
-    name: 'The Cut',
-    blurb: 'The excavation the works was taken out of. Whatever is still lit down here was not left on for you.',
-    terrain: 'cavern',
-    pool: ['b2', 'droideka', 'acolyte', 'acolyte', 'b1', 'beast', 'walker', 'b2'],
-    groundColor: 0x252d31,
-    spawnRadius: [24, 46],
-    /* −1.50, and the cavern preset's `waterLevel` says the same thing — see the
-     * long note there for the 92.6%-submerged measurement that moved it. `wade`
-     * 1.0 keeps you out of the two deep bays (the deepest is 1.67 m) without
-     * killing you for standing in water: this is a flooded excavation, not a
-     * hazard, and what it is for is ground you fight AROUND. */
-    water: { level: -1.50, wade: 1.0, kind: 'water',
-             shallow: 0x2b4a52, deep: 0x080f16, sky: 0x1c2a34, bed: 0x1e2422 },
-    atmosphere: {
-      sky: false, bgColor: 0x05080b, fog: true, fogColor: 0x0a1014, fogDensity: 0.0108,
-      /* THE DARKEST ATMOSPHERE IN THE GAME, and the numbers say so rather than
-       * a comment: 0.9 of key against the intake's 5.6, 0.10 of ambient against
-       * 0.34. What is left is the standing water reflecting whatever the
-       * player is carrying, and the last rung of the descent takes even this
-       * away — see Run.js, where the same level is entered twice and the
-       * second time its key is 0.12. */
-      sunColor: 0x8fb4c8, sunIntensity: 0.9, ambient: 0.10,
-      skyColor: 0x24313a, groundColor: 0x252d31, elevation: 58, azimuth: 210,
-      fillColor: 0x1e3038, fillIntensity: 0.34,
-      // Exposure is where a dark level is actually made: the light is genuinely
-      // gone, so the curve is opened up to keep what is left readable rather
-      // than the key being quietly raised to fake it.
-      exposure: 1.42, bloom: 0.50, saturation: 0.94,
-      lift: [0.004, 0.008, 0.014], gain: [0.97, 1.0, 1.07],
-      clouds: false, horizon: false,
-    },
-    ambience: { wind: 0.03, windFreq: 90, drone: 0.34 },
-    dust: { count: 520, color: 0x5a6a72, opacity: 0.22, size: 20 },
-    /**
-     * MOSS, and it is the reason this level exists on `soil` rather than on a
-     * deck. `ground-memory.mjs` holds one rule about cover — a preset that is
-     * soil, or damp past 0.2, must carry a field, and nothing else may — and a
-     * flooded excavation is the wettest floor in the game. What grows in a
-     * pumped-out cut once the pumps stop is exactly this: a low mat over
-     * everything the water has reached, and nothing at all on the ribs.
-     *
-     * 0.45, NOT 0.85, and the number was measured rather than felt. The cover
-     * field solves to `clamp(0.24 + 0.72·density, 0.12, 0.95)` of the ground,
-     * so at 0.85 it covered 86% of the cut — and `ground-cover.mjs` requires
-     * the stone drifts to land where the cover is NOT, which at 86% they
-     * cannot: there are fourteen points of bare floor on the whole level and
-     * the drifts measured 88% covered against the level's 86%. A mat that
-     * leaves genuine bare rock between its patches is both what a pumped-out
-     * cut looks like and the only version of this the scatter can answer.
-     */
-    /* 0.55, NOT 1.15 — a cave floor is not a meadow.
-     *
-     * `GrassField` derives its cover mask as `0.24 + 0.72 · density`, clamped
-     * at 0.95, so anything past a density of about 0.99 pins the mask at its
-     * ceiling. At 1.15 the Cut's floor measured 100% mossed inside 30 m and
-     * 97% inside 90: a carpet with no rock showing through it, in a cave whose
-     * whole subject is that there is nothing down here but stone and the light
-     * you brought. It also made the scatter survey unanswerable — stone shuns
-     * plants, and with 3% bare ground there was nowhere for a drift to go, so
-     * the drifts sat on ground MORE covered than the level's own average and
-     * `scatter: the drifts land where the cover is not` failed on a property
-     * that could not be expressed.
-     *
-     * 0.42 puts the mask at 0.542 and gives the floor real clearings. The moss
-     * is still the thing you notice — it is the only living colour in the
-     * level — and now it is growing in the damp places rather than everywhere.
-     * 0.55 was tried first and is recorded because it is instructive: it took
-     * the drifts to 59% cover against the level's 67%, which IS the shun
-     * working, and still failed by a quarter of a point — the bar is a
-     * fraction of the bare ground available, so a level with less bare ground
-     * has to separate by less in absolute terms and the two move together. */
-    grass: 0.42,
-    /* The pair is solved rather than picked. `grassPalette` builds a five-stop
-     * species ramp by rotating the authored tints 80% of the way toward straw
-     * (42°), green (92°) and glaucous (156°), and `ground-cover.mjs` requires
-     * real fractions of all three — a field that is one colour is as false as
-     * a field with no clearings.
-     *
-     * TWO attempts failed before this one and both are worth writing down. A
-     * true blue-green — 0x40614e / 0x1d3128, which is what a cave moss wants
-     * to be — sits at hue 145°, and `grassPalette` rotates the withered stop
-     * only 80% of the way toward 42°, so it lands at 63° and 0.0% of the field
-     * came out withered at all. Widening the authored pair to reach down into
-     * the yellows then trips the check's own CONTROL, which requires the pair
-     * itself to span under 12° — the whole point being that the five-stop
-     * species ramp does the spreading, not the author.
-     *
-     * So the pair stays a tight lightness ramp (6.1° apart) at hue 95°, and
-     * what makes it read as a cave is the LIGHT rather than the pigment: on
-     * this level there is essentially none, and on the last rung of the
-     * descent there is none at all. Measured: 86° of species span, 6%
-     * withered / 85% green / 9% blue-green, median inside 1° of the author. */
-    grassTint: [0x516a39, 0x2e4323],
-    dress(world) {
-      beginDressing(world, 20250805 + 87);
-      cut(world, { seed: 8700 });
-    },
-  },
-
 };
 
 /**
- * The order the menu lists them in: the places you choose first, then the four
- * rooms of the descent in the order you meet them.
+ * The order the menu lists them in: the outdoor grounds first, because those
+ * are the ones that read as PLACES, and the one interior last.
+ *
+ * That ordering is not taste. Seven levels replaced thirteen on the finding
+ * that "your outdoor maps look good because they're immersive and have a
+ * feeling of place, whereas your interior maps remind you that this is an AI
+ * game" — a roof plus four walls at the draw budget this engine has is a box,
+ * and a box is the one shape that cannot be anywhere. The survivors are led by
+ * their strongest.
  */
-export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood', 'kamino',
-  'meadow', 'drifts', 'alpine', 'arena', 'intake', 'foundry', 'deeps'];
+export const LEVEL_ORDER = ['scoria', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine', 'foundry'];
 
 /**
  * DELETED LEVELS.
  *
  * The dune sea, the wash, Hangar Bay Nine and the dojo were removed at the
  * player's request, and they are gone — no aliases, no shim.
+ *
+ * SIX MORE FOLLOWED, on the same principle and the same authority: the Green
+ * Reach, the Sanctum, the Temple Halls, the Intake, the Invisible Hand and the
+ * Cut. Each was named, and the reasons sort into three:
+ *
+ *   - the ground broke the art direction (the Green Reach's grass, and the
+ *     same fault is why the Drowned Wood's is being rebuilt rather than kept),
+ *   - the room was a box (the Temple Halls, the Intake, the Cut — and the
+ *     Invisible Hand, which is a box with a window),
+ *   - it was simply weaker than the six around it (the Sanctum).
+ *
+ * Thirteen levels of which six were bad is a worse product than seven that are
+ * not, because a menu is judged by what a player can pick wrong. The Temple
+ * Halls and the Invisible Hand are the two whose SUBJECTS survive the deletion
+ * — a Jedi temple and a flagship are both worth building, from reference, as
+ * new levels rather than as edits to these.
  *
  * There WAS a shim, four non-enumerable getters, because two lines outside this
  * module named `dunes` and the lane that deleted the levels could not edit
@@ -3866,7 +2690,7 @@ export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood'
  * The rule is the one Arrivals.js states and nothing more: an open sky takes a
  * ship, an enclosed room takes a door.
  *
- *   mustafar    open sky over a lava sea. A gunship can fly in — and on a
+ *   scoria    open sky over a lava sea. A gunship can fly in — and on a
  *               duelling map it should, because a march across a basalt shelf
  *               is eighty metres of watching.
  *   works       a hall with a roof on it. There is nothing for a ship to fly
@@ -3877,12 +2701,8 @@ export const LEVEL_ORDER = ['mustafar', 'temple', 'warship', 'colosseum', 'wood'
  *               through their own doorways.
  */
 Object.assign(ARRIVAL_BY_TERRAIN, {
-  mustafar: ['dropship', 'dropship', 'march'],
-  works: ['gate'],
+  scoria: ['dropship', 'dropship', 'march'],
   foundry: ['gate'],
-  cavern: ['gate'],
-  temple: ['gate'],
-  warship: ['gate'],
   colosseum: ['gate'],
   // Open sky over a bog — but a canopy no gunship can come through, and no
   // gate either. Whatever is in this wood walks out of it.
@@ -3893,8 +2713,16 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
 });
 
 /**
- * THE THING AT THE END OF THE WARSHIP, registered here for the same reason the
- * arrivals above are: a level and the set-piece it ends with are one decision,
+ * THE THING AT THE END OF THE FOUNDRY — it was the warship's, and the warship
+ * is deleted. `bodyguard` reached the field through exactly one pool, so
+ * deleting that level would have quietly deleted a 1050-hp set-piece with it:
+ * an archetype no pool names is unreachable, which is the same silence that
+ * kept `beast` out of ordinary waves for so long. The foundry inherits it
+ * because the escalation argument below is about POOL SHAPE — a droid-heavy
+ * ladder with the walker and the droideka on it — and the foundry's is the
+ * closest surviving pool to the one this was tuned against.
+ *
+ * Registered here for the same reason the arrivals above are: a level and the set-piece it ends with are one decision,
  * and this is the module that decides what levels exist.
  *
  * It is deliberately NOT in `WaveDirector.unlockedAt`, which is the list the

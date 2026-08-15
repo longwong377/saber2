@@ -22,7 +22,6 @@ import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
-import { DESCENT } from '../game/Run.js';
 import { DIFFICULTY } from '../game/Combat.js';
 // The Codex and the training panel both quote Focus's numbers. They are read
 // from the system rather than typed, because both of them had been left behind
@@ -136,7 +135,7 @@ export const HAIR_COLORS = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  level: 'mustafar',
+  level: 'scoria',
   /**
    * WHO YOU ARE ON SOMEBODY ELSE'S SCREEN.
    *
@@ -1387,11 +1386,6 @@ export class Menu {
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
-      landing: document.getElementById('landing'),
-      landingAlt: document.getElementById('landing-alt'),
-      landingTitle: document.getElementById('landing-title'),
-      landingBrief: document.getElementById('landing-brief'),
-      landingStats: document.getElementById('landing-stats'),
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
@@ -1553,7 +1547,7 @@ export class Menu {
    * `key === 'hangar'` special cases inside the silhouette loop — and by the
    * time the roster moved it was wrong in both directions at once. Four of its
    * eight entries named levels that had been deleted. The five newest levels
-   * had no entry at all, so Mustafar, the Temple, the Intake, the Foundry and
+   * had no entry at all, so the Ember Shelf, the Temple, the Intake, the Foundry and
    * the Deeps every one of them fell to the same dark default and the same
    * wavy hill: five identical cards, which is a menu telling the player those
    * five places are the same place.
@@ -1573,7 +1567,7 @@ export class Menu {
      * so a canvas taller than the box's aspect has its TOP AND BOTTOM cut off —
      * which is where a landscape keeps its sky and its floor. At 2.86:1 a card
      * has to be wider than 275 px before anything vertical is lost, and the
-     * margins above and below the composition absorb the rest. Mustafar's
+     * margins above and below the composition absorb the rest. the Ember Shelf's
      * fissure and the Foundry's pour were both authored at y=121 and neither
      * was ever on screen. */
     const W = 320, H = 112;
@@ -1626,7 +1620,7 @@ export class Menu {
      * `elevation`, `azimuth`, `cloudCover`, `cloudLit` and `cloudDark` are
      * already authored on every outdoor level — they are what the sky shader
      * runs on — so the card can draw the level's own weather instead of
-     * inventing some. Mustafar is 96% covered in ash lit orange from below;
+     * inventing some. the Ember Shelf is 96% covered in ash lit orange from below;
      * the meadow is 42% covered in white; the White Pass is 66% and grey. That
      * is three completely different skies, and the old card had one empty
      * gradient for all of them.
@@ -1694,7 +1688,7 @@ export class Menu {
       alpine: (x, s) => 6 + Math.max(0, tri(x * 0.0138 + s)) * 30
         + Math.max(0, tri(x * 0.062 + s * 2)) * 7,
       // mesas: flat tops, sheer sides, made by quantising a smooth curve
-      mustafar: (x, s) => Math.round((Math.sin(x * 0.0115 + s) * 20 + Math.sin(x * 0.031) * 7) / 8) * 8,
+      scoria: (x, s) => Math.round((Math.sin(x * 0.0115 + s) * 20 + Math.sin(x * 0.031) * 7) / 8) * 8,
       // low broken ground with one landmark rise
       arena: (x, s) => Math.sin(x * 0.021 + s) * 8 + Math.sin(x * 0.058) * 4
         + Math.max(0, 22 - Math.abs(x - 232) * 0.5),
@@ -1759,10 +1753,10 @@ export class Menu {
       g.stroke();
     });
 
-    /* Mustafar gets its fissure and the Foundry its pour: one hot line each,
+    /* the Ember Shelf gets its fissure and the Foundry its pour: one hot line each,
      * because the thing that identifies both places is that the LIGHT comes
      * off the floor. Everything else here is lit from above. */
-    if (L.terrain === 'mustafar' || L.terrain === 'foundry') {
+    if (L.terrain === 'scoria' || L.terrain === 'foundry') {
       g.fillStyle = css(sun, 0.26);
       g.fillRect(0, 82, W, 12);
       g.fillStyle = css(mix(sun, [255, 255, 255], 0.35), 0.92);
@@ -1857,7 +1851,7 @@ export class Menu {
    * weighted by repeats") and picks from it uniformly by index, so a repeated
    * key is a weight and not a second kind of enemy. The card printed
    * `pool.length` and called it "unit types", which made twelve of the thirteen
-   * cards overstate themselves: measured over LEVEL_ORDER, mustafar 8→6,
+   * cards overstate themselves: measured over LEVEL_ORDER, scoria 8→6,
    * temple 8→4, warship 9→5, colosseum 9→7, wood 8→6, kamino 8→6, meadow 7→6,
    * drifts 8→7, arena 9→8, intake 7→5, foundry 8→6, deeps 8→6, with only alpine
    * honest and only because its pool happens to have no repeats. 25 phantom
@@ -1905,25 +1899,21 @@ export class Menu {
   /**
    * THE THEATRE COLUMN, WHEN THE MODE HAS ALREADY CHOSEN THE THEATRE.
    *
-   * The Descent is a ladder of four fixed rungs: main.js takes `run.rung.level`
-   * whenever a Run exists, `startRun()` builds one for exactly this mode, and a
-   * fresh Run is at tier 0 — so the game always begins in The Intake no matter
-   * which of the thirteen cards is lit. And the card WAS lit: `_buildLevels`
-   * left every card live, wrote `settings.level` on click, saved it, and drew
-   * the `.sel` highlight, so the largest, left-most control on the first screen
-   * of the game was highlighted, persisted and thrown away. Worse, the write
-   * stuck: the level the player thought they had picked turned up in the NEXT
-   * run of some other mode, which reads as the picker being randomly broken.
+   * Nothing does, today — the Descent was the one mode that owned its own
+   * ladder of levels, and it is deleted. This stays because the mechanism is
+   * the answer to a real defect and the next mode that picks its own ground
+   * (Command is one) needs it: a card that is lit, written to settings and
+   * then thrown away reads as the picker being randomly broken, and it stuck
+   * — the level the player thought they picked turned up in the NEXT run of
+   * some other mode.
    *
-   * So the column says what it is. The cards go inert — not focusable, not
-   * clickable, visibly dimmed — and the ladder they are standing in for is
-   * printed above them, in order, from DESCENT itself so it cannot drift from
-   * the rungs the run will actually walk.
+   * `MODES[key].fixedTheatre` is the switch. A mode declares it; this reads it.
+   * That is one authority rather than a mode name repeated in the front end.
    */
   _syncTheatre() {
     const host = this.el.levels;
     if (!host) return;
-    const inert = this.s.mode === 'gauntlet';
+    const inert = !!MODES[this.s.mode]?.fixedTheatre;
     this._theatreInert = inert;
     host.classList.toggle('inert', inert);
     for (const card of host.children) {
@@ -1932,9 +1922,7 @@ export class Menu {
     }
     const note = document.getElementById('level-note');
     if (note) {
-      note.textContent = inert
-        ? `The Descent chooses its own places: ${DESCENT.map(r => r.name).join(' → ')}.`
-        : '';
+      note.textContent = inert ? MODES[this.s.mode].fixedTheatre : '';
       note.classList.toggle('hidden', !inert);
     }
   }
@@ -3482,24 +3470,4 @@ export class Menu {
   }
   hideDeath() { this.el.death.classList.add('hidden'); }
 
-  /**
-   * The landing between rungs of the Spire.
-   *
-   * `next` is the rung about to be climbed INTO, so the altitude and the brief
-   * describe where the player is going rather than where they have been — the
-   * card is a threshold, not a receipt. On the crown there is no next rung and
-   * the caller shows the death card with a different title instead.
-   */
-  showLanding({ altitude, name, brief, stats = [], onAscend }) {
-    this.el.landingAlt.textContent = `${Math.round(altitude).toLocaleString()} m`;
-    this.el.landingTitle.textContent = name;
-    this.el.landingBrief.textContent = brief || '';
-    this.el.landingStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
-    const btn = document.getElementById('btn-ascend');
-    // Replaced rather than added to: this screen is shown once per rung and a
-    // listener per landing would fire the fourth ascent four times.
-    btn.onclick = () => { audio.ui('good'); this.hideLanding(); onAscend?.(); };
-    this.el.landing.classList.remove('hidden');
-  }
-  hideLanding() { this.el.landing.classList.add('hidden'); }
 }

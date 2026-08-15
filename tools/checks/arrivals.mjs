@@ -195,7 +195,7 @@ export async function run({ check, assert }) {
   check('arrivals: something too big for a ship walks in', () => {
     // A spider walker does not fit in a gunship and an acklay does not queue
     // at a door. Both walk, from beyond the ring, on every level.
-    for (const key of ['drifts', 'arena', 'foundry', 'mustafar', 'temple']) {
+    for (const key of ['drifts', 'arena', 'foundry', 'scoria', 'temple']) {
       for (const type of ['walker', 'beast']) {
         const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => 0.5);
         assert(kind === 'march', `${type} arrives by ${kind} on ${key}`);

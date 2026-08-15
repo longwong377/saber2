@@ -1136,7 +1136,7 @@ export async function run({ check, assert }) {
     const stDeployCall = lift(/deploy\((null)?\);\s*\}\);/, "the start handler's deploy call");
 
     const { Run, DESCENT } = await import('../../src/game/Run.js');
-    const settings = { level: 'mustafar', difficulty: 'knight', mode: 'roguelite', order: 'jedi', species: 'human' };
+    const settings = { level: 'scoria', difficulty: 'knight', mode: 'roguelite', order: 'jedi', species: 'human' };
     let session = null;
     // eslint-disable-next-line no-eval
     const sessionOr = eval(`(${stSessionOr.replace('const sessionOr = ', '').replace(/;\s*$/, '')})`);

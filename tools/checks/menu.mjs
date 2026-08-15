@@ -30,9 +30,10 @@ import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS, DEATH_TITLE } from '../../src/ui/Menu.js';
 import { ACTIONS } from '../../src/engine/Bindings.js';
-import { DESCENT } from '../../src/game/Run.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
+import { MODES } from '../../src/game/Waves.js';
+import { LEVEL_ORDER } from '../../src/game/Levels.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -101,7 +102,8 @@ export async function run({ check, assert }) {
       const empty = PICKER_HOSTS.filter(id => kids(doc, id).length === 0);
       assert(!empty.length, `hosts the menu left empty: ${empty.join(', ')}`);
       // The three lists whose length is a fact about the game, not about the DOM
-      assert(kids(doc, 'level-list').length === 13, `${kids(doc, 'level-list').length} theatres`);
+      assert(kids(doc, 'level-list').length === LEVEL_ORDER.length,
+        `${kids(doc, 'level-list').length} theatres against ${LEVEL_ORDER.length} in LEVEL_ORDER`);
       assert(kids(doc, 'opt-quality').length === 4, 'the fidelity tiers are not four');
       assert(doc.getElementById('bind-list').children.length > 30, 'the key table did not render');
       assert(doc.getElementById('codex-grid').children.length > 20, 'the Codex did not render');
@@ -192,9 +194,15 @@ export async function run({ check, assert }) {
     assert(parseFloat(outline[1]) >= 2, `a ${outline[1]}px ring is a hairline`);
     const token = css.match(new RegExp(`${outline[2].trim()}\\s*:\\s*(#[0-9a-fA-F]{3,6})`));
     assert(token, `${outline[2]} is not a colour token in :root`);
-    const bg = hex(css.match(/--bg\s*:\s*(#[0-9a-fA-F]{6})/)[1]);
-    const panel = css.match(/--panel\s*:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
-    const ground = over([+panel[1], +panel[2], +panel[3]], parseFloat(panel[4]), bg);
+    // The panel is OPAQUE now — the interface has no glass in it — so the
+    // ground a ring is painted over is the panel itself rather than the panel
+    // composited over the page. `over()` with an alpha of 1 is that, and it is
+    // kept rather than dropped so this check still measures a composite the
+    // day a translucent surface comes back.
+    const bg = hex(css.match(/--void\s*:\s*(#[0-9a-fA-F]{6})/)[1]);
+    const panel = css.match(/--panel\s*:\s*(#[0-9a-fA-F]{6})/);
+    assert(panel, 'no --panel colour token in :root');
+    const ground = over(hex(panel[1]), 1, bg);
     const ratio = contrast(hex(token[1]), ground);
     assert(ratio >= 3, `the focus ring is ${ratio.toFixed(2)}:1 against the card ground — WCAG asks 3`);
     // …and it must not be the same colour as "this one is selected", or the
@@ -300,36 +308,51 @@ export async function run({ check, assert }) {
   });
 
   check('menu: the Theatre column is honoured, or it says it is not', () => {
-    // The Descent takes its level from the rung: main.js reads `run.rung.level`
-    // whenever a Run exists, a fresh Run is tier 0, and DESCENT[0] is The
-    // Intake. Every one of the thirteen cards used to stay live, write
-    // settings.level, save it and light up — a control that is highlighted,
-    // saved and thrown away, and the write leaked into the NEXT run of another
-    // mode, so the level the player picked turned up somewhere they did not.
-    const { menu, settings, doc, close } = menuOn({ mode: 'gauntlet', level: 'mustafar' });
+    /**
+     * THE MECHANISM OUTLIVED ITS ONE USER, which is why this check now
+     * installs its own.
+     *
+     * The Descent took its level from the rung and every one of the thirteen
+     * cards stayed live, wrote settings.level, saved it and lit up — a control
+     * that is highlighted, saved and thrown away, and the write LEAKED into the
+     * next run of another mode, so the level the player picked turned up
+     * somewhere they did not. The Descent is deleted; the defect it exposed is
+     * not, and the next mode that owns its own ground (Command is one) walks
+     * straight back into it.
+     *
+     * So the switch is a declaration on the mode — `MODES[key].fixedTheatre`,
+     * whose value is the sentence shown beside the dead column — and this check
+     * drives the real front end through a real mode carrying one. Driving it
+     * through a mode name typed into Menu.js is what the old shape did, and it
+     * is exactly the hand-maintained-table-beside-its-twin defect.
+     */
+    MODES.waves.fixedTheatre = 'This trial chooses its own ground: The Ember Shelf → Kamino.';
     try {
-      const list = doc.getElementById('level-list');
-      assert(list.classList.contains('inert'), 'the Theatre column is live in The Descent');
-      const focusable = [...list.children].filter(c => c.tabIndex >= 0);
-      assert(!focusable.length, `${focusable.length} discarded cards are still in the tab order`);
-      const note = doc.getElementById('level-note');
-      assert(note, 'there is no note beside the Theatre column to say the mode owns the choice');
-      assert(!note.classList.contains('hidden') && note.textContent.length > 20,
-        'nothing on screen says the column is not this mode\'s to choose');
-      for (const rung of DESCENT) {
-        assert(note.textContent.includes(rung.name), `the ladder does not name ${rung.name}`);
-      }
-      // and a click on a card cannot write the setting the game will discard
-      list.children[3].dispatchEvent({ type: 'click' });
-      assert(settings.level === 'mustafar', `a discarded card wrote settings.level = ${settings.level}`);
-      // …while every other mode keeps the column exactly as it was
-      menu.selectMode('waves');
-      assert(!list.classList.contains('inert'), 'the column stayed inert outside The Descent');
-      assert(note.classList.contains('hidden'), 'the ladder is still on screen in a mode that has none');
-      list.children[3].dispatchEvent({ type: 'keydown', key: 'Enter' });
-      assert(settings.level !== 'mustafar', 'the column did not come back to life');
-      return `gauntlet → inert, 0 focusable, ladder names ${DESCENT.length} rungs; waves → live and writes`;
-    } finally { close(); }
+      const { menu, settings, doc, close } = menuOn({ mode: 'waves', level: 'scoria' });
+      try {
+        const list = doc.getElementById('level-list');
+        assert(list.classList.contains('inert'), 'the Theatre column is live in a mode that owns the ground');
+        const focusable = [...list.children].filter(c => c.tabIndex >= 0);
+        assert(!focusable.length, `${focusable.length} discarded cards are still in the tab order`);
+        const note = doc.getElementById('level-note');
+        assert(note, 'there is no note beside the Theatre column to say the mode owns the choice');
+        assert(!note.classList.contains('hidden') && note.textContent.length > 20,
+          'nothing on screen says the column is not this mode\'s to choose');
+        assert(note.textContent === MODES.waves.fixedTheatre,
+          'the note is not the mode\'s own sentence — there is a second copy of it somewhere');
+        // and a click on a card cannot write the setting the game will discard
+        list.children[3].dispatchEvent({ type: 'click' });
+        assert(settings.level === 'scoria', `a discarded card wrote settings.level = ${settings.level}`);
+        // …while a mode that does NOT own the ground keeps the column live
+        delete MODES.waves.fixedTheatre;
+        menu.selectMode('waves');
+        assert(!list.classList.contains('inert'), 'the column stayed inert in a mode that does not own it');
+        assert(note.classList.contains('hidden'), 'the note is still on screen in a mode that has none');
+        list.children[3].dispatchEvent({ type: 'keydown', key: 'Enter' });
+        assert(settings.level !== 'scoria', 'the column did not come back to life');
+        return 'fixedTheatre → inert, 0 focusable, note is the mode\'s own string; without it → live and writes';
+      } finally { close(); }
+    } finally { delete MODES.waves.fixedTheatre; }
   });
 
   check('menu: the Bloom checkbox tells the truth about the tier', () => {

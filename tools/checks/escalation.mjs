@@ -237,7 +237,7 @@ export async function run({ check, assert }) {
      * And a pool's REPEATS did nothing. `_pickType` sums a weight per entry, so
      * a type listed twice is drawn twice as often — the ladder uses exactly
      * that trick itself. But the pool was only ever a membership FILTER, so
-     * Mustafar's three `acolyte` entries never reached the array being weighed.
+     * the Ember Shelf's three `acolyte` entries never reached the array being weighed.
      * Six of the thirteen levels resolved to the same six archetypes and
      * produced byte-identical twenty-wave runs.
      *

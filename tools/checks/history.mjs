@@ -8,7 +8,7 @@
  * died and took the only button on the card that is not "Rise again" wrote the
  * same run to `saber.progress.v1` twice. Reproduced in a browser against the
  * real page with both localStorage keys removed so the game chose its own
- * defaults (mustafar / knight / roguelite): the store read `{runs: 1,
+ * defaults (scoria / knight / roguelite): the store read `{runs: 1,
  * recent: 1}` on death and `{runs: 2, recent: 2}` after that one click, and the
  * menu printed "2 runs, 0 felled · deepest 1 wave" after a single run.
  *
