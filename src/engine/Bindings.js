@@ -1,5 +1,5 @@
 /**
- * SABER — key bindings.
+ * BATTLEFRONT BORZ — key bindings.
  *
  * Gameplay asks for ACTIONS, never for key codes. That indirection is what lets
  * every control be rebound without a single `if (input.hit('KeyF'))` surviving

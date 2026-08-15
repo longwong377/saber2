@@ -1,5 +1,5 @@
 /**
- * SABER — the weapon.
+ * BATTLEFRONT BORZ — the weapon.
  *
  * A hilt pose in, a swept blade volume out. Everything downstream — deflection,
  * cutting, the arm IK, the hum — reads from the sweep this produces, so the

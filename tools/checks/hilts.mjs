@@ -1,5 +1,5 @@
 /**
- * SABER — the hilt, which is the object the player looks at most.
+ * BATTLEFRONT BORZ — the hilt, which is the object the player looks at most.
  *
  * Note 62: "more hilt options, in more detail."
  *

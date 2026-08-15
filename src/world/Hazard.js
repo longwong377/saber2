@@ -1,5 +1,5 @@
 /**
- * SABER — the water that is not water.
+ * BATTLEFRONT BORZ — the water that is not water.
  *
  * WHAT WAS WRONG. Nothing in any of the thirteen levels could hurt anybody.
  * `L.water` had exactly one consumer in the whole game — `new Water(...)` in

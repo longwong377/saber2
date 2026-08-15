@@ -1,5 +1,5 @@
 /**
- * SABER — the big creatures, and whether there is anything to dodge.
+ * BATTLEFRONT BORZ — the big creatures, and whether there is anything to dodge.
  *
  * THE FIRST BUG, and it is kept here because it is what these numbers are
  * measured against. `_beastBrain`'s three attacks — sweep, lunge and charge —

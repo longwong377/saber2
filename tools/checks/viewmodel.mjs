@@ -1,5 +1,5 @@
 /**
- * SABER — first person, and the pelvis the eye is bolted to.
+ * BATTLEFRONT BORZ — first person, and the pelvis the eye is bolted to.
  *
  * The player's words were "the 1st person view of the hands/arms is a jumbled
  * mess". Four separate defects were behind it, and every one of them reads

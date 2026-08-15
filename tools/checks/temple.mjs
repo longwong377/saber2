@@ -1,5 +1,5 @@
 /**
- * SABER — the temple, and who is actually in it.
+ * BATTLEFRONT BORZ — the temple, and who is actually in it.
  *
  * "Jedi Temple / Coruscant — the enemies are Jedi, clear the temple."
  *

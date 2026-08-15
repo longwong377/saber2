@@ -1,5 +1,5 @@
 /**
- * SABER — the two places the frame was being charged twice.
+ * BATTLEFRONT BORZ — the two places the frame was being charged twice.
  *
  * Both were found by a hostile audit rather than by anything in this suite, and
  * both share a shape the project has hit repeatedly: a cost that no assertion

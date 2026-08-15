@@ -1,5 +1,5 @@
 /**
- * SABER — spectacle, and how the player presents themselves.
+ * BATTLEFRONT BORZ — spectacle, and how the player presents themselves.
  *
  * Five things arrived at once and every one of them is the kind that reads
  * perfectly well as source while doing nothing:

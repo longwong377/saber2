@@ -1,5 +1,5 @@
 /**
- * SABER — duelling.
+ * BATTLEFRONT BORZ — duelling.
  *
  * V1 gave duellists a swing on a timer. You could parry one, but only by luck,
  * because nothing about the attack was legible before it landed. A skill

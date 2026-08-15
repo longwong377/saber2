@@ -1,5 +1,5 @@
 /**
- * SABER — what every Force power costs.
+ * BATTLEFRONT BORZ — what every Force power costs.
  *
  * A leaf module on purpose: it imports nothing, so both the thing that SPENDS
  * the Force (src/game/Player.js) and the thing that DRAWS the price

@@ -1,5 +1,5 @@
 /**
- * SABER — the cel render model.
+ * BATTLEFRONT BORZ — the cel render model.
  *
  * Read src/toon/REFERENCE.md first. This file is the eight rules in that
  * document turned into arithmetic.

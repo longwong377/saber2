@@ -1,5 +1,5 @@
 /**
- * SABER — renderer, HDR pipeline, post stack.
+ * BATTLEFRONT BORZ — renderer, HDR pipeline, post stack.
  *
  * Scene renders into a multisampled half-float target so the blade and the
  * bolts stay bright above 1.0 and bloom picks them up honestly; ACES filmic

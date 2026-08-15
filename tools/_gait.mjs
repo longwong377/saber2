@@ -1,5 +1,5 @@
 /**
- * SABER — what the swing foot actually does, in the units the complaint was
+ * BATTLEFRONT BORZ — what the swing foot actually does, in the units the complaint was
  * made in.
  *
  *   node --import ./tools/register.mjs tools/_gait.mjs

@@ -1,5 +1,5 @@
 /**
- * SABER — every sentence this game says about itself, against what it does.
+ * BATTLEFRONT BORZ — every sentence this game says about itself, against what it does.
  *
  * The owner's complaint, six times over in different words: "pointed out
  * repeatedly and missed every time", "changes nothing", "never observed; verify

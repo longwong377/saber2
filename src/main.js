@@ -1,5 +1,5 @@
 /**
- * SABER — entry point.
+ * BATTLEFRONT BORZ — entry point.
  *
  * Boot, warm the procedural content, then hand the frame to the World.
  */

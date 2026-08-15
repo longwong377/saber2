@@ -1,5 +1,5 @@
 /**
- * SABER — the answer that cost nothing, and beat everything.
+ * BATTLEFRONT BORZ — the answer that cost nothing, and beat everything.
  *
  * THE DEFECT. Duel.js opens by promising that every attack is DECLARED: a
  * wind-up you can read, an arc drawn in the colour of what answers it, and one

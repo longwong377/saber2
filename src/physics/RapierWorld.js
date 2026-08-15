@@ -1,5 +1,5 @@
 /**
- * SABER — the world, on Rapier.
+ * BATTLEFRONT BORZ — the world, on Rapier.
  *
  * The bespoke solver in Physics.js approximates every collider as a cluster of
  * spheres. That bought one narrowphase routine and — the reason it was chosen —

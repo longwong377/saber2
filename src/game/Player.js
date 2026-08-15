@@ -1,5 +1,5 @@
 /**
- * SABER — the player.
+ * BATTLEFRONT BORZ — the player.
  *
  * A kinematic capsule for movement, a spring-arm camera, and a body whose arms
  * are IK'd to wherever the blade controller put the hilt. The character is not

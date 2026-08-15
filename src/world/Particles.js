@@ -1,5 +1,5 @@
 /**
- * SABER — particles, chips, decals.
+ * BATTLEFRONT BORZ — particles, chips, decals.
  *
  * Three tiers, chosen by what each effect has to be able to do.
  *

@@ -1,5 +1,5 @@
 /**
- * SABER — does a slash do anything?
+ * BATTLEFRONT BORZ — does a slash do anything?
  *
  * The player's report was "the saber does no damage to 90% of the stuff in the
  * arena, you can be right in front of an enemy and slash them and it appears to

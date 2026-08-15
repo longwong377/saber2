@@ -1,5 +1,5 @@
 /**
- * SABER — enemies must not pop into existence.
+ * BATTLEFRONT BORZ — enemies must not pop into existence.
  *
  * The whole of how a body got into the game was two lines in
  * `WaveDirector.update`:

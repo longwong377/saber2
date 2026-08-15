@@ -1,5 +1,5 @@
 /**
- * SABER — input.
+ * BATTLEFRONT BORZ — input.
  *
  * Pointer-locked mouse deltas are the wrist. Everything here exists to hand the
  * blade controller a clean, framerate-independent gesture signal: raw delta,

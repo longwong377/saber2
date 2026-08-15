@@ -1,5 +1,5 @@
 /**
- * SABER — what the fight says about itself.
+ * BATTLEFRONT BORZ — what the fight says about itself.
  *
  * Two complaints, one system. The game was silent about the player's own body
  * — you could swing a metre of plasma through four people, fall six metres onto

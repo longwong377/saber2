@@ -1,5 +1,5 @@
 /**
- * SABER — the Force.
+ * BATTLEFRONT BORZ — the Force.
  *
  * Six complaints, all of them measurable, all of them from the player:
  *

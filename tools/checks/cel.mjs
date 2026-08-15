@@ -1,5 +1,5 @@
 /**
- * SABER — is this actually cel shaded, or is it PBR wearing a ramp?
+ * BATTLEFRONT BORZ — is this actually cel shaded, or is it PBR wearing a ramp?
  *
  * That is the whole question this file exists to answer, because it is the
  * question the player asked twice: first "make it cel shaded like the good

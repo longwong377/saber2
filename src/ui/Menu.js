@@ -1,5 +1,5 @@
 /**
- * SABER — front end.
+ * BATTLEFRONT BORZ — front end.
  *
  * Menus, the saber forge preview, the boon draft, and the settings that are
  * persisted between sessions.

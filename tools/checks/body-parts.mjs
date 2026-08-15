@@ -1,5 +1,5 @@
 /**
- * SABER — the parts of a character that are supposed to MOVE.
+ * BATTLEFRONT BORZ — the parts of a character that are supposed to MOVE.
  *
  * Two of them could not, for the same underlying reason: a parameter existed,
  * read correctly, was smoothed and blended by the code around it, and then

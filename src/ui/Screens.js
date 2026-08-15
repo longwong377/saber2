@@ -1,5 +1,5 @@
 /**
- * SABER — who owns the screen, and how the player gets out.
+ * BATTLEFRONT BORZ — who owns the screen, and how the player gets out.
  *
  * THE BUG THIS FILE EXISTS FOR.
  *

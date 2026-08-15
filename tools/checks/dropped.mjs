@@ -1,5 +1,5 @@
 /**
- * SABER — a hilt on the ground, and whose hilt it is.
+ * BATTLEFRONT BORZ — a hilt on the ground, and whose hilt it is.
  *
  * Note 61: "drop and pick up sabers, including a friend's."
  *

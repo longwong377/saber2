@@ -1,5 +1,5 @@
 /**
- * SABER — the Force constellation: a sky you spend Insight on.
+ * BATTLEFRONT BORZ — the Force constellation: a sky you spend Insight on.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  WHY THIS EXISTS

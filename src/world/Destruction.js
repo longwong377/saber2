@@ -1,5 +1,5 @@
 /**
- * SABER — destructible architecture.
+ * BATTLEFRONT BORZ — destructible architecture.
  *
  * Props could always be cut; the building could not. A wall was a merged mesh
  * and a box collider, which meant the most solid-looking thing on screen was

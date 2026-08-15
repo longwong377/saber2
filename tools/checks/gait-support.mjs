@@ -1,5 +1,5 @@
 /**
- * SABER — what an enemy pays to know what is under its feet.
+ * BATTLEFRONT BORZ — what an enemy pays to know what is under its feet.
  *
  * `supportHeight` (src/physics/Support.js) is the one answer to "what is under
  * you", asked by the player, by every enemy, and by the gait solver on behalf

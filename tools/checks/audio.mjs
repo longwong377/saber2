@@ -1,5 +1,5 @@
 /**
- * SABER — can the game still be heard?
+ * BATTLEFRONT BORZ — can the game still be heard?
  *
  * "The sound is really buggy and totally silent in most situations, comes in
  * and out." Twice now this file has been declared fixed by reading it, and

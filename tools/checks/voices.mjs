@@ -1,5 +1,5 @@
 /**
- * SABER — five voices, or one voice with five labels?
+ * BATTLEFRONT BORZ — five voices, or one voice with five labels?
  *
  * This suite exists because of the single most likely way for the feature it
  * checks to be wrong. A character-voice picker is four lines of menu code, a

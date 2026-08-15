@@ -1,5 +1,5 @@
 /**
- * SABER — props, architecture and the blast door.
+ * BATTLEFRONT BORZ — props, architecture and the blast door.
  *
  * Anything you can see, you can hit; most of it you can cut. Props carry a
  * toughness and a cut budget, so a fruit crate parts instantly, a durasteel

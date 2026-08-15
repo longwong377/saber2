@@ -1,5 +1,5 @@
 /**
- * SABER — reading a function out of a file, without guessing how long it is.
+ * BATTLEFRONT BORZ — reading a function out of a file, without guessing how long it is.
  *
  * THE DEFECT THIS FILE EXISTS FOR, caught by running the whole suite on a tree
  * with nothing else moving in it:

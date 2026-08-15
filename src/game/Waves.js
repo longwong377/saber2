@@ -1,5 +1,5 @@
 /**
- * SABER — wave director and run boons.
+ * BATTLEFRONT BORZ — wave director and run boons.
  *
  * Waves are budgeted, not scripted: the director spends a threat budget on
  * whatever the level allows, so the composition changes every run and the

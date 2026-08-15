@@ -1,5 +1,5 @@
 /**
- * SABER — terrain.
+ * BATTLEFRONT BORZ — terrain.
  *
  * A single large heightfield: one draw call, sampled analytically for physics,
  * and deformable at runtime so a Force landing actually leaves a crater in the

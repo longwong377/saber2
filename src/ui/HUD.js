@@ -1,5 +1,5 @@
 /**
- * SABER — heads-up display.
+ * BATTLEFRONT BORZ — heads-up display.
  *
  * DOM over the canvas: cheap, crisp at any resolution, and it keeps text out
  * of the render target where bloom would eat it.

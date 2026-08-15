@@ -1,5 +1,5 @@
 /**
- * SABER — what a piece of simulated cloth actually costs.
+ * BATTLEFRONT BORZ — what a piece of simulated cloth actually costs.
  *
  * Both the cape and the skirt used to be measured by counting particles, and
  * the skirt was required to hold under the cape's 99. That bound was never a

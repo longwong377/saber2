@@ -1,5 +1,5 @@
 /**
- * SABER — theatres.
+ * BATTLEFRONT BORZ — theatres.
  *
  * Each level is a terrain preset, an atmosphere, and a dressing pass that
  * scatters architecture and props. They are large by design — the horde needs

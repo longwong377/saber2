@@ -1,5 +1,5 @@
 /**
- * SABER — cloth.
+ * BATTLEFRONT BORZ — cloth.
  *
  * A verlet SHEET pinned to the shoulders and a verlet TUBE pinned to the hips.
  * Robes are most of what makes a Jedi read as a Jedi, and a robe that does not

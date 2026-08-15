@@ -1,5 +1,5 @@
 /**
- * SABER — does a retreat look like a person giving ground?
+ * BATTLEFRONT BORZ — does a retreat look like a person giving ground?
  *
  * The report was "the enemies back away really quickly and awkwardly as you
  * approach them — it's almost unnatural even when you approach them at speed."

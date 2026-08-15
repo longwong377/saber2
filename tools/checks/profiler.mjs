@@ -1,5 +1,5 @@
 /**
- * SABER — the instrument that measures the frame has to be right about it.
+ * BATTLEFRONT BORZ — the instrument that measures the frame has to be right about it.
  *
  * The player's first complaint about this game was that it ran badly and got
  * worse the longer they played. That complaint is weeks old and has never been

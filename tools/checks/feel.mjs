@@ -1,5 +1,5 @@
 /**
- * SABER — feel.
+ * BATTLEFRONT BORZ — feel.
  *
  * Five things a combat designer found by playing, every one of which reads
  * perfectly well as source and is wrong as a number:

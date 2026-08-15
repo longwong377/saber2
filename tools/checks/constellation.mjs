@@ -1,5 +1,5 @@
 /**
- * SABER — the constellation: a skill tree that is not a lie.
+ * BATTLEFRONT BORZ — the constellation: a skill tree that is not a lie.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  WHAT THIS SUITE IS DEFENDING AGAINST

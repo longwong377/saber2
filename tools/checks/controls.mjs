@@ -1,5 +1,5 @@
 /**
- * SABER — the controls tell the truth.
+ * BATTLEFRONT BORZ — the controls tell the truth.
  *
  * An audit for "reads correctly, silently wrong" found four of these in the
  * menu and the key table, and every one of them read perfectly well as source:

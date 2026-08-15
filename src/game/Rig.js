@@ -1,5 +1,5 @@
 /**
- * SABER — skeletal rig and procedural animation.
+ * BATTLEFRONT BORZ — skeletal rig and procedural animation.
  *
  * There are no animation clips in this game. Every pose is solved: feet are
  * planted by a gait solver against the actual terrain, arms are IK'd to

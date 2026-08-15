@@ -1,5 +1,5 @@
 /**
- * SABER — trees you can cut down, and trees that come down on each other.
+ * BATTLEFRONT BORZ — trees you can cut down, and trees that come down on each other.
  *
  * "Fellable trees with chain reactions, Valheim-style: cut a trunk, the tree
  *  falls in the direction the cut implies, and a falling tree knocks over what

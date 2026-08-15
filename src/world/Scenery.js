@@ -1,5 +1,5 @@
 /**
- * SABER — wind, ground cover, water and the air itself.
+ * BATTLEFRONT BORZ — wind, ground cover, water and the air itself.
  *
  * Three ideas hold this file together.
  *

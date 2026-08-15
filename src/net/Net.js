@@ -1,5 +1,5 @@
 /**
- * SABER — peer-to-peer co-op.
+ * BATTLEFRONT BORZ — peer-to-peer co-op.
  *
  * One player hosts and simulates the horde; everyone else runs their own blade
  * locally and tells the host what it did. That split is deliberate: enemy

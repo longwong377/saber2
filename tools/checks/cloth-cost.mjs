@@ -1,5 +1,5 @@
 /**
- * SABER — what the `cloth` quality column actually switches off.
+ * BATTLEFRONT BORZ — what the `cloth` quality column actually switches off.
  *
  * The note over `QUALITY.cloth` in src/engine/Engine.js used to read: "Measured
  * headless on this machine, 20 clothed duellists walking: 6.28 ms of garment

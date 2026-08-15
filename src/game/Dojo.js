@@ -1,5 +1,5 @@
 /**
- * SABER — the dojo.
+ * BATTLEFRONT BORZ — the dojo.
  *
  * V1 shipped a control scheme deep enough to have a mastery curve and no way to
  * climb it. You cannot learn to return a bolt in the middle of a wave of forty

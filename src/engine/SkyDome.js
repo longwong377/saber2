@@ -1,5 +1,5 @@
 /**
- * SABER — clouds and the far horizon.
+ * BATTLEFRONT BORZ — clouds and the far horizon.
  *
  * A Preetham sky is a gradient. It is physically reasonable and completely
  * empty, and an empty sky over an empty horizon is most of what makes a scene

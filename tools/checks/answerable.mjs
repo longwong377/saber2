@@ -1,5 +1,5 @@
 /**
- * SABER — an attack the game telegraphs has to be one the player can answer.
+ * BATTLEFRONT BORZ — an attack the game telegraphs has to be one the player can answer.
  *
  * THE BUG. `spin` — the spin cut, drawn by Ataru and by Juyo — shipped with
  * `to` equal to `from`:

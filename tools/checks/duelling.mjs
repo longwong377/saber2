@@ -1,5 +1,5 @@
 /**
- * SABER — enemy sabers, and the 180° that made every duel free.
+ * BATTLEFRONT BORZ — enemy sabers, and the 180° that made every duel free.
  *
  * The player's words: "the enemies with lightsabers just circle and wave their
  * sabers and never hurt me", and "I have never once seen the blades touch".

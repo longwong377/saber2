@@ -1,5 +1,5 @@
 /**
- * SABER — every body in the room makes a sound.
+ * BATTLEFRONT BORZ — every body in the room makes a sound.
  *
  * Before this file the game's enemies were audible only when they SHOT at you.
  * A hundred-and-thirty-kilo B2 walked across sand in total silence; a 1400 kg

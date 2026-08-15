@@ -1,5 +1,5 @@
 /**
- * SABER — what does it look like when it MOVES?
+ * BATTLEFRONT BORZ — what does it look like when it MOVES?
  *
  * Every instrument in tools/ measures a still frame. That is why six rounds of
  * measured improvement produced a game the player called janky: the walk, the

@@ -1,5 +1,5 @@
 /**
- * SABER — the two things the HUD gained, and the promise attached to each.
+ * BATTLEFRONT BORZ — the two things the HUD gained, and the promise attached to each.
  *
  * 1. AN EVENT FEED. A four-kill exchange and a one-kill exchange used to feel
  *    identical, because nothing on screen said which had happened. The promise

@@ -1,5 +1,5 @@
 /**
- * SABER — look at the game.
+ * BATTLEFRONT BORZ — look at the game.
  *
  * `smoke.mjs` proves the page does not throw. This one exists to answer the
  * other kind of question, which no assertion in tools/checks can: does it look

@@ -1,5 +1,5 @@
 /**
- * SABER — blade control.
+ * BATTLEFRONT BORZ — blade control.
  *
  * This is the game. Everything else is scenery.
  *

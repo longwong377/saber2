@@ -1,5 +1,5 @@
 /**
- * SABER — the character creator's preview box.
+ * BATTLEFRONT BORZ — the character creator's preview box.
  *
  * THREE BUGS, ALL REPORTED BY A PLAYER, ALL INVISIBLE TO THIS SUITE.
  *

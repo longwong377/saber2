@@ -1,5 +1,5 @@
 /**
- * SABER — Force compel, and the three places a "mind control" power usually
+ * BATTLEFRONT BORZ — Force compel, and the three places a "mind control" power usually
  * turns out to be an impression of itself.
  *
  * Note 44: "make an enemy fire on itself or its allies."

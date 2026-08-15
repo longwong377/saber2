@@ -1,5 +1,5 @@
 /**
- * SABER — what does the WIELDER see of their own arms?
+ * BATTLEFRONT BORZ — what does the WIELDER see of their own arms?
  *
  * tools/motion.mjs can show first person moving, but not what the arms LOOK
  * like: with the blade lit, its own point light delivers ~10.8 units half a

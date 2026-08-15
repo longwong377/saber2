@@ -1,5 +1,5 @@
 /**
- * SABER — a physics world that is dead stays dead. — src/physics/RapierWorld.js
+ * BATTLEFRONT BORZ — a physics world that is dead stays dead. — src/physics/RapierWorld.js
  *
  * `dispose()` frees the Rapier world and sets `dead`, and the note over it
  * explains why the last thing teardown does must not be an allocation: a

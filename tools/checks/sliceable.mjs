@@ -1,5 +1,5 @@
 /**
- * SABER — if you can walk up to it and it is the size of a crate, the blade has
+ * BATTLEFRONT BORZ — if you can walk up to it and it is the size of a crate, the blade has
  * to be able to touch it.
  *
  * Notes 9 and 57: "some objects ignore the saber entirely but can be stood on",

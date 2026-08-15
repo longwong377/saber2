@@ -1,5 +1,5 @@
 /**
- * SABER — first person, which is mostly a picture of your own hands.
+ * BATTLEFRONT BORZ — first person, which is mostly a picture of your own hands.
  *
  * The player's verdict was "1/10", and the two faults behind it are both things
  * a number can settle, which is why nothing had ever caught them: there was no

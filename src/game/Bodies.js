@@ -1,5 +1,5 @@
 /**
- * SABER — procedural bodies.
+ * BATTLEFRONT BORZ — procedural bodies.
  *
  * Every character is generated in code and hung off a bone hierarchy, one
  * limb-mesh per bone. That is not an aesthetic choice — it is what makes

@@ -1,5 +1,5 @@
 /**
- * SABER — what a fight leaves on a body.
+ * BATTLEFRONT BORZ — what a fight leaves on a body.
  *
  * The player asked to be able to SEE that they are hurt: blood and torn cloth,
  * accumulating as damage is taken, and switchable off. Three decisions settle

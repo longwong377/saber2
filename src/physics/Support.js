@@ -1,5 +1,5 @@
 /**
- * SABER — what is under your feet?
+ * BATTLEFRONT BORZ — what is under your feet?
  *
  * One question, asked by the player, by every enemy, and by the gait solver on
  * behalf of each foot. It used to have two different answers depending on who

@@ -1,5 +1,5 @@
 /**
- * SABER — the meditation: the constellation, drawn.
+ * BATTLEFRONT BORZ — the meditation: the constellation, drawn.
  *
  * THIS FILE DRAWS AND NOTHING ELSE. Every rule about what may be lit, what it
  * costs and what it is called lives in src/game/Constellation.js, which has no

@@ -1,5 +1,5 @@
 /**
- * SABER — the wardrobe.
+ * BATTLEFRONT BORZ — the wardrobe.
  *
  * "Clothes" in the character creator were six colour palettes on one identical
  * garment. The cloth solver has a real parameter set — length, pleat, flare,

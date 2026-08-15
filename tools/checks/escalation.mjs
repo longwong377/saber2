@@ -1,5 +1,5 @@
 /**
- * SABER — escalation: elite modifiers, the boon draft, and the ramp.
+ * BATTLEFRONT BORZ — escalation: elite modifiers, the boon draft, and the ramp.
  *
  * The complaint these exist for is one sentence: "wave 25 is wave 10 with more
  * bodies". Three things were true and all three were measurable.

@@ -1,5 +1,5 @@
 /**
- * SABER — the world.
+ * BATTLEFRONT BORZ — the world.
  *
  * Owns the frame: input, blade solve, contact resolution, physics, spawning,
  * and everything the HUD reads. The update order matters — blades resolve

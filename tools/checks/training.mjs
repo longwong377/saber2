@@ -1,5 +1,5 @@
 /**
- * SABER — can you actually practise anything?
+ * BATTLEFRONT BORZ — can you actually practise anything?
  *
  * The report was "even at the lowest setting there's just way too much blaster
  * fire coming in to practice anything". That is a statement about two numbers

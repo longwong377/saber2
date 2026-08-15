@@ -1,5 +1,5 @@
 /**
- * SABER — the suite has to answer the same question twice.
+ * BATTLEFRONT BORZ — the suite has to answer the same question twice.
  *
  * THE DEFECT THIS FILE EXISTS FOR. `verify.mjs` runs eighty-odd suites one at a
  * time, in one process, in `readdir` order. Several things the game keeps at

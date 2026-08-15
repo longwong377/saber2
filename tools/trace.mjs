@@ -1,5 +1,5 @@
 /**
- * SABER — what a run actually CONTAINS.
+ * BATTLEFRONT BORZ — what a run actually CONTAINS.
  *
  *   node --import ./tools/register.mjs tools/trace.mjs [--waves 20] [--level mustafar]
  *   node --import ./tools/register.mjs tools/trace.mjs --json > trace.json

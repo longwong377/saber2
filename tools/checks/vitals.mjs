@@ -1,5 +1,5 @@
 /**
- * SABER — the player's health is a number, and it must stay one.
+ * BATTLEFRONT BORZ — the player's health is a number, and it must stay one.
  *
  * This suite exists because of one line, World.js:614:
  *

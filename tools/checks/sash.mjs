@@ -1,5 +1,5 @@
 /**
- * SABER — the two ends of the belt.
+ * BATTLEFRONT BORZ — the two ends of the belt.
  *
  * THE BUG. Bodies.js built them, and its own comment said why: "the hanging
  * ends are the point: a closed ring round a waist is a hoop, and every

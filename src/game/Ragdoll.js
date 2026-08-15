@@ -1,5 +1,5 @@
 /**
- * SABER — ragdolls and dismemberment.
+ * BATTLEFRONT BORZ — ragdolls and dismemberment.
  *
  * Cutting is geometric. A limb is a tube of known length, so a blade crossing
  * it at 62 % rebuilds the stub at 0.62·L, builds a new tube for the remaining

@@ -1,5 +1,5 @@
 /**
- * SABER — enemies.
+ * BATTLEFRONT BORZ — enemies.
  *
  * Everything here respects the same rules the player does: real limbs on a
  * real skeleton, real ragdolls, real cuts wherever the blade crossed. A droid

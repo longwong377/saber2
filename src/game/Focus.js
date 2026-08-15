@@ -1,5 +1,5 @@
 /**
- * SABER — Focus.
+ * BATTLEFRONT BORZ — Focus.
  *
  * In the fiction a Jedi is not faster than a blaster bolt; they simply have
  * more time inside the same second than you do. This is the system that lets

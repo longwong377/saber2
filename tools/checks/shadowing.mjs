@@ -1,5 +1,5 @@
 /**
- * SABER — no instance property may shadow a method of its own class.
+ * BATTLEFRONT BORZ — no instance property may shadow a method of its own class.
  *
  * `Enemy` had a damage() method and a constructor that wrote
  * `this.damage = <number>`. The property wins, so `e.damage(...)` threw

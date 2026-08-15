@@ -1,5 +1,5 @@
 /**
- * SABER — the five forms, and the authored data that nothing read.
+ * BATTLEFRONT BORZ — the five forms, and the authored data that nothing read.
  *
  * A duel is supposed to be five different fights. What shipped was one fight
  * with five different wind-up timings, because every term that was meant to

@@ -1,5 +1,5 @@
 /**
- * SABER — catch, then throw.
+ * BATTLEFRONT BORZ — catch, then throw.
  *
  * The design contradiction this suite exists to pin down, in the player's own
  * words: "I don't understand how you're supposed to block and also aim at an

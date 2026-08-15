@@ -1,5 +1,5 @@
 /**
- * SABER — the half of the preparation budget that was never inside it.
+ * BATTLEFRONT BORZ — the half of the preparation budget that was never inside it.
  *
  * `Destruction._prepare` gets a piece ready to break before the player is near
  * enough to break it, `prepareBudgetMs = 1.2` at a time. That budget was only

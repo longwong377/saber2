@@ -1,5 +1,5 @@
 /**
- * SABER — synthesised audio.
+ * BATTLEFRONT BORZ — synthesised audio.
  *
  * Nothing here is a sample. Every sound is built from oscillators and shaped
  * noise at the moment it is needed, which means the saber hum can be a live

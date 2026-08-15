@@ -1,5 +1,5 @@
 /**
- * SABER — voices, as numbers.
+ * BATTLEFRONT BORZ — voices, as numbers.
  *
  * Nothing in this project is a sample and a voice is no exception, so a
  * character's voice is not a folder of takes: it is five numbers — where the

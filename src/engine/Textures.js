@@ -1,5 +1,5 @@
 /**
- * SABER — procedural texture foundry.
+ * BATTLEFRONT BORZ — procedural texture foundry.
  *
  * Every surface in the game is generated here at boot. No image files, nothing
  * to download, and full control over tiling, normal strength and roughness.

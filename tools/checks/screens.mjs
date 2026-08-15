@@ -1,5 +1,5 @@
 /**
- * SABER — you can always get out.
+ * BATTLEFRONT BORZ — you can always get out.
  *
  * THE BUG. `draft` and `landing` stop the world and hand the screen to an
  * overlay, and the only way out of either was a click on that overlay. The

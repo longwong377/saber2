@@ -1,5 +1,5 @@
 /**
- * SABER — the balance instrument.
+ * BATTLEFRONT BORZ — the balance instrument.
  *
  *   node tools/balance.mjs                    everything, default settings
  *   node tools/balance.mjs --runs=60          more seeds per difficulty
@@ -1852,7 +1852,7 @@ async function main() {
   const t0 = Date.now();
 
   console.log('');
-  console.log('  SABER — BALANCE. Every depth below is MODEL-DEPTH under one fixed');
+  console.log('  BATTLEFRONT BORZ — BALANCE. Every depth below is MODEL-DEPTH under one fixed');
   console.log('  model of a player (see the header of tools/balance.mjs). Compare the');
   console.log('  rows to each other; do not read a row as a prediction about a human.');
 

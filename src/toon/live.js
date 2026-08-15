@@ -1,5 +1,5 @@
 /**
- * SABER — the real game, on the meadow, cel-shaded.
+ * BATTLEFRONT BORZ — the real game, on the meadow, cel-shaded.
  *
  * The first experiment (`toon.html`) shaded a hand-built scene and answered a
  * narrow question: what does a ramp do to the lighting. The verdict was "better,
