@@ -262,6 +262,16 @@ export function tuneFireRate(e, fire) {
 export const BOON_POWER = 1.05;
 /** A draft every this many waves. Was 3; see the note above BOONS. */
 export const DRAFT_EVERY = 2;
+
+/**
+ * The ceiling on heavy bodies at once, whatever the budget says.
+ *
+ * A walker is 66 meshes and an acklay is a 2.9-scale rig; this is the one
+ * number between a deep wave and a scene the renderer cannot hold, so it is a
+ * frame-rate limit rather than a difficulty one and it does not scale with
+ * anything.  clamps to it after the party scale.
+ */
+export const HEAVY_CAP = 10;
 /** A set-piece every this many waves — forever, not for the first thirty. */
 export const BOSS_EVERY = 5;
 /** The modes that hand out boons. See `WaveDirector.drafts`. */
@@ -760,7 +770,47 @@ export class WaveDirector {
    * with it. A second blade in the arena does not want a bigger crowd of the
    * same droids, it wants the second creature that the first player cannot
    * also be watching. */
-  heavyLimit(wave) { return Math.max(1, Math.round((1 + Math.floor(wave / 10)) * this.partyScale())); }
+  /**
+   * …AND IT RIDES THE BUDGET, because on wave count alone the elites thin out.
+   *
+   * It was `1 + floor(wave / 10)`, which is linear, against a body count that
+   * is not. Measured on the Colosseum through this director, actual heavies
+   * against this cap:
+   *
+   *     wave   bodies  threat  threat/body   heavy
+   *       5       8      26       3.25        1/1   12.5%
+   *      20      30     126       4.20        3/3   10.0%
+   *      40      76     314       4.13        5/5    6.6%
+   *
+   * Two things fall out of that table. The heavy SHARE halves across the run,
+   * so the late game is proportionally more trash than the early game. And
+   * threat-per-body never moves — 3.0 to 4.3 across every wave measured — so
+   * the whole of the escalation from wave 12 on is body count. Wave 40 is wave
+   * 12 with four times the crowd, which is more of the same input rather than a
+   * new question, and no amount of budget could fix it while the cap on the
+   * interesting bodies grew linearly.
+   *
+   * Off the budget instead, which is the thing that actually grows with depth,
+   * so surplus can buy quality rather than only quantity. The divisor is set so
+   * the early waves are unchanged — wave 5's budget of 26 still gives 1, wave
+   * 10's 61 still gives 2 — and the late game stops thinning: wave 40's 499
+   * gives 9 against the 5 it gave before.
+   *
+   * STILL CAPPED, and the cap is a frame-rate number rather than a taste one: a
+   * walker is 66 meshes, and `_pickType` refuses a heavy the moment `bigLeft`
+   * hits zero, so this is the one line standing between a deep wave and a
+   * scene the renderer cannot hold.
+   */
+  heavyLimit(wave) {
+    /* The cap is on the PER-BLADE term, not on the answer. Clamping the total
+     * made a four-player wave 20 field exactly what a two-player one did — both
+     * hit the ceiling — and `colosseum.mjs` caught it: what a second blade buys
+     * on that level is a second creature, and the growth in the party is
+     * deliberately super-linear. The renderer limit belongs to what one screen
+     * is asked to hold before the party is counted. */
+    const perBlade = Math.min(HEAVY_CAP, 1 + Math.floor(this.budgetFor(wave) / 55));
+    return Math.max(1, Math.round(perBlade * this.partyScale()));
+  }
 
   _pickType(types, wave, bigLeft) {
     const bias = this.heavyBias(wave);

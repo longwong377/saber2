@@ -172,6 +172,54 @@ const takeBoon = (p, id) => {
 
 export async function run({ check, assert }) {
 
+  check('escalation: a deeper wave is a harder wave, not just a bigger one', async () => {
+    /**
+     * WHAT THE OLD CURVE DID, measured on the Colosseum through this director:
+     *
+     *     wave   bodies   threat/body   heavy   share
+     *       5       8        3.25        1/1    12.5%
+     *      20      30        4.20        3/3    10.0%
+     *      40      76        4.13        5/5     6.6%
+     *
+     * Threat-per-body never moves — 3.0 to 4.3 at every wave measured — so the
+     * whole of the escalation past wave 12 was body count. And `heavyLimit` was
+     * `1 + floor(wave / 10)`, linear against a body count that is not, so the
+     * SHARE of interesting bodies halved across a run. Wave 40 was wave 12 with
+     * four times the crowd: more of the same input rather than a new question.
+     *
+     * The property asserted is the one that was false — the heavy share must
+     * not collapse as the run deepens. It is a RATIO rather than a count, so it
+     * survives any retuning of the budget curve, and the bar is deliberately
+     * loose: this is a floor under a collapse, not a pin on a tuning number.
+     */
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    const stub = { enemies: [], players: [], settings: {}, takenBoons: new Set(), scene: null };
+    const d = new Waves.WaveDirector(stub, { pool: LEVELS.colosseum.pool });
+    Waves.seedWaves(99);
+
+    const rows = [];
+    for (const w of [5, 10, 20, 30, 40]) {
+      d.start(w);
+      const q = d.spawnQueue.map((e) => String(e).split('|')[0]);
+      const heavy = q.filter((t) => Waves.isHeavy(t)).length;
+      const threat = q.reduce((a, t) => a + (Foe.ARCHETYPES[t]?.threat ?? 0), 0);
+      rows.push({ w, bodies: q.length, heavy, share: heavy / Math.max(1, q.length),
+        perBody: threat / Math.max(1, q.length) });
+    }
+    const early = rows[0], late = rows[rows.length - 1];
+    assert(late.bodies > early.bodies * 3,
+      `wave ${late.w} fields ${late.bodies} bodies against wave ${early.w}'s ${early.bodies} — `
+      + 'the run is not deepening at all and the rest of this check means nothing');
+    assert(late.share > early.share * 0.75,
+      `the heavy share falls from ${(early.share * 100).toFixed(1)}% at wave ${early.w} to `
+      + `${(late.share * 100).toFixed(1)}% at wave ${late.w} — the deep waves are proportionally `
+      + 'MORE trash than the shallow ones, so depth buys quantity and nothing else');
+    // …and the cap that bounds it is a frame-rate number, not a difficulty one.
+    assert(Waves.HEAVY_CAP > 0, 'the heavy ceiling is gone — a deep wave can ask for any number of walkers');
+    return rows.map((r) => `w${r.w} ${r.bodies}b ${(r.share * 100).toFixed(0)}% heavy `
+      + `${r.perBody.toFixed(1)}/body`).join(' · ');
+  });
+
   check('pools: a level fights with what it declares, and its repeats are weights', async () => {
     /**
      * TWO DEFECTS IN ONE PLACE, both of the shape this codebase keeps finding:
