@@ -18,7 +18,7 @@ import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileT
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
-import { Communion, FACETS } from './LivingForce.js';
+import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
  * What "open" is worth, in Insight. Every facet in the lattice, at its first-
  * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
@@ -2671,7 +2671,17 @@ export class World {
    * read off a corpse as well as off a winner.
    */
   _earnInsight(wave) {
-    const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave));
+    /**
+     * …AT THE RATE THE MODE IS PAID AT, which was one rate for every mode.
+     *
+     * A mode with no draft has the Holocron and nothing else, and 1/wave against
+     * an arithmetic price series bought it four facets in forty waves. See
+     * LivingForce's TRIAL_INSIGHT_PER_WAVE for the derivation; `director.drafts`
+     * is the shipped statement of which modes hand out cards, called here rather
+     * than restated as a mode name.
+     */
+    const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave),
+      insightRate(this.director?.drafts !== false));
     this.onInsight?.(gained, this.communion);
   }
 

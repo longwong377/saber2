@@ -83,7 +83,8 @@
  * the one BOONS already carries: they took no temple's vocabulary.
  */
 
-import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf } from './Waves.js';
+import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf,
+  RAMP_CARDS_EVERY, BOSS_EVERY } from './Waves.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Insight — what a run earns and what a facet costs                     */
@@ -122,10 +123,76 @@ export const COST_STEP = 2;
 /** …and what each rank already held adds, so a repeat is never the cheap play. */
 export const RANK_STEP = 3;
 
+/**
+ * THE RATE FOR A MODE WITH NO DRAFT AT ALL — and it is derived, not chosen.
+ *
+ * The rate above is 1 because the tree has to stay a MINORITY beside the draft;
+ * that is this file's own argument and `living-force.mjs` pins it. The Trial of
+ * Waves has no draft, so there is no minority to stay under — and the mode's
+ * own menu entry says where its build comes from instead: "what you build, you
+ * build in the Holocron", with `Waves.js` adding "the tree is the Trial's whole
+ * progression".
+ *
+ * IT WAS NOT. Driven through `living-force.mjs`'s own run harness with the
+ * draft flag off, twelve seeds, forty waves:
+ *
+ *     roguelite   23.3 of 46 facets held (51%)   5.9 bought   42% overlap
+ *     Trial        4.9 of 46 facets held (11%)   5.0 bought   14% overlap
+ *
+ * and the cause is arithmetic rather than tuning. All six roots are `epic` at 9
+ * against `insightAfter(w) = w + 2·floor(w/5)`, so a Trial player buys their
+ * first facet at wave 7, the second at 15, the third at 25 and the fourth at
+ * 35: **pick one of six currents and walk four steps down it**, in a forty-wave
+ * run, every run.
+ *
+ * ── THE DERIVATION ────────────────────────────────────────────────────────
+ *
+ * `RAMP_CARDS_EVERY` is the fact to size against: the base budget polynomial
+ * was fitted against a player holding w/3 growth events by wave w, and the
+ * Trial is charged that base curve with no multiplier on it. A drafting mode
+ * gets those events from cards. A mode that drafts nothing has to buy them
+ * here, so the rate is the one that affords w/RAMP_CARDS_EVERY facets by wave
+ * w at this file's own price series:
+ *
+ *     n     = W / RAMP_CARDS_EVERY                       facets to afford
+ *     spend = n·COST.common + COST_STEP·n(n−1)/2         the arithmetic series
+ *     per   = spend / (W + (BOSS/PER)·floor(W/BOSS_EVERY))
+ *
+ * evaluated at W = 40, which is the depth every run-shape check in this project
+ * measures at and about as far as a run goes. It comes out at 4, and the
+ * quadratic price series is why it cannot be 1: a constant rate against a
+ * rising price buys facets like √(purse), so tripling the rate does not triple
+ * the build — measured, 5.0 purchases become 12.0 and one current becomes three.
+ *
+ * The boss bonus keeps its RATIO to the per-wave rate rather than being typed
+ * again, so a set-piece is worth the same multiple of a wave in both modes.
+ */
+export const TRIAL_INSIGHT_AT = 40;
+export const TRIAL_INSIGHT_PER_WAVE = (() => {
+  const n = TRIAL_INSIGHT_AT / RAMP_CARDS_EVERY;
+  const spend = n * COST.common + COST_STEP * n * (n - 1) / 2;
+  const perWave = TRIAL_INSIGHT_AT
+    + (INSIGHT_BOSS_BONUS / INSIGHT_PER_WAVE) * Math.floor(TRIAL_INSIGHT_AT / BOSS_EVERY);
+  return Math.max(INSIGHT_PER_WAVE, Math.round(spend / perWave));
+})();
+
+/**
+ * What one wave and one set-piece are worth, in the mode being played.
+ *
+ * `drafts` is `WaveDirector.drafts` — the shipped statement of which modes hand
+ * out cards — called rather than restated, so a mode added to `DRAFT_MODES`
+ * changes both channels at once.
+ */
+export function insightRate(drafts = true) {
+  const per = drafts ? INSIGHT_PER_WAVE : TRIAL_INSIGHT_PER_WAVE;
+  return { per, boss: per * (INSIGHT_BOSS_BONUS / INSIGHT_PER_WAVE) };
+}
+
 /** Insight a run of `waves` waves will have earned, in closed form. */
-export function insightAfter(waves, bossEvery = 5) {
+export function insightAfter(waves, bossEvery = BOSS_EVERY, rate = null) {
   if (!(waves > 0)) return 0;
-  return waves * INSIGHT_PER_WAVE + Math.floor(waves / bossEvery) * INSIGHT_BOSS_BONUS;
+  const r = rate || insightRate(true);
+  return waves * r.per + Math.floor(waves / bossEvery) * r.boss;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -466,9 +533,16 @@ export class Communion {
     this.earned = Math.max(0, o.earned ?? this.insight);
   }
 
-  /** Insight for surviving a wave. Boss waves are worth more; see INSIGHT_*. */
-  earn(wave, boss = false) {
-    const n = INSIGHT_PER_WAVE + (boss ? INSIGHT_BOSS_BONUS : 0);
+  /**
+   * Insight for surviving a wave. Boss waves are worth more; see INSIGHT_*.
+   *
+   * `rate` is `insightRate(director.drafts)` and defaults to the drafting one,
+   * so every existing caller is byte-identical. See TRIAL_INSIGHT_PER_WAVE for
+   * why a mode with no draft is paid differently.
+   */
+  earn(wave, boss = false, rate = null) {
+    const r = rate || insightRate(true);
+    const n = r.per + (boss ? r.boss : 0);
     this.insight += n;
     this.earned += n;
     return n;
