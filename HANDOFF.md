@@ -599,41 +599,66 @@ rho 0.810 → 0.976, pairwise clean, span 1.69x, the 0.90 bound untouched. Two
 stale comments beside their own numbers went with it (kamino claimed "6°, the
 lowest sun in the game" at `elevation: 16`; geonosis said "21°" twice).
 
-**The character creator still holds the saber wrong for a small species, and the
-three-line fix is NOT three lines.** `poseSaberArm` (Menu.js) is a second copy of
-the grip model, authored against a 1.78 m body: measured, the `smallfolk`
-preview holds its saber 4.85 hands clear of its palm with a 5.99-hand hilt —
-note #2's defect, still on the screen where you choose the character.
+**CLOSED: the character creator's grip — and the framing was a THIRD defect, not
+a cost of fixing the first two.** The repair written out here was applied
+verbatim (scale the guard offsets and the elbow pole by `limbScale(rig).arm`,
+pass `rig.scale` to `handPoseOnHilt`, size the hilt with `saber.setGripScale`)
+and it is correct. Measured on `smallfolk`, in its own units, against the human's
+own reading — which is the only kind of bound stature.mjs allows:
 
-The repair is known and was written out precisely: scale the guard offsets and
-the elbow pole by `limbScale(rig).arm`, pass `rig.scale` as the sixth argument to
-`handPoseOnHilt`, and size the hilt with `saber.setGripScale`. **I applied it and
-it regressed `preview` from 11/11 to 10/11**, so it is reverted and it is written
-down here instead.
+    bore (own hands)     4.86 → 0.72      human 0.72
+    hilt (own hands)     5.99 → 2.39      human 2.39
+    reach (own arm)      0.99 → 0.83      human 0.84
 
-Why it fails is the interesting part, and it is not a bug in the fix. Tucking the
-arm correctly makes the small figure *more compact*, and `framePreviewCamera`
-frames the whole CONTENT box — which still contains a full-length 1.15 m blade.
-A 0.66 m body properly holding a human's blade is dwarfed by it, so the figure
-projects at NDC −0.34 against a 0.32 bound. Removing the hilt scaling alone does
-not help (−0.340 vs −0.345): it is the arm.
+The reason it "regressed `preview` 11/11 → 10/11" is worth keeping, because the
+diagnosis above was right about the mechanism and wrong about the CAUSE, and the
+difference is a whole design argument that turned out not to be needed.
 
-`preview.mjs` already reasons about exactly this for a *different* bound — it
-scales `fill` by "the figure's share of its own content, measured rather than
-typed" and says in as many words that a 0.66 m figure "cannot reach 55% of the
-frame without cropping the weapon off". The centring bound never got the same
-treatment. So there are three honest ways forward and they are a DESIGN CALL, not
-a patch:
+Two more things in the creator had never taken the species scale, and both were
+inside the content box the camera frames:
 
-1. Give a small species a proportionally short blade — a shoto, which is what
-   every reference plate of that character actually shows. Touches
-   `bladeLength`, which is a player setting and a combat reach, so it is a
-   gameplay decision and not merely a look.
-2. Frame the preview camera on the FIGURE and let the blade tip crop.
-3. Scale the centring bound by content share, the way `fill` already is.
+- `dressPreviewFigure` passed no `scale` to `attachCloak`/`attachSkirt`, so the
+  creator hung a human's 0.86 m cape on a 0.66 m body. Measured, the hem settled
+  **280 mm below the floor the figure stands on**. That is the third claim of
+  note #2 — "their clothes are oversized" — alive on the character screen after
+  it was fixed in the game, and it is 280 mm of dead air the camera had to
+  include under a 677 mm figure. `Player._makeCloak` and `applyWardrobe` have
+  both passed `rig.scale` for a while; this copy never did.
+- `assemblePreview` pushed the pommel in at a hilt-local `-0.16` with no grip
+  scale, so it claimed 96 mm of metal that does not exist on a 0.40 hilt.
 
-Do not simply relax the 0.32. Whoever takes this should also know
-`SaberController` gained a `reachScale` option for the same family of defect.
+With those two the content box goes from `[-0.28, 1.39]` to `[0, 1.39]` and the
+figure's middle from NDC −0.364 to −0.345 — still over the 0.32. So the design
+call was still real, and it was made:
+
+**The shot's blade allowance is a length in the WIELDER's metres, not in a
+human's.** `BLADE_CAP` already refuses to frame a 4 m blade on a human, and its
+own note says why in the exact words this problem needs — "the creator would
+stop showing you the character in order to show you a strip light". 1.15 m on a
+0.677 m body is 1.70 of its own height against that refusal's 2.37: the same
+imposition, so the same rule, de-humanised by one multiply that is 1 for every
+full-sized species. A small wielder's blade leaves the top of the frame the way
+a 4 m one already does. Figure 39.5% → 62.6% of the frame height, middle −0.345
+→ −0.187 against the human's −0.169.
+
+The two rejected options, and why, since both were on the list above:
+
+1. **A proportionally short blade** overrides a stated intent. `Saber.setGripScale`'s
+   own note says it outright — "the BLADE is untouched; `bladeLength` is a player
+   setting and a combat reach, and a smaller wielder is not carrying a shorter
+   sword" — and framing is not allowed to decide a combat number (§6.2).
+3. **Scaling the centring bound by content share** does not work the way `fill`
+   does, and the arithmetic is the argument. Share enters `fill` as a factor
+   ≤ 1; it enters the centring offset as `(1 − share)`, so the factor would be
+   0.51/0.18 and the 0.32 bound would become 0.90. That is not a relaxation, it
+   is an abolition — the bound would permit the figure almost anywhere in the
+   box, which is the one thing "do not simply relax the 0.32" was protecting
+   against.
+
+`preview` is 12/12; the twelfth is new and is the check that could have seen any
+of this — bore, hilt length and reach in the figure's own units, plus the hem,
+over every species, with the human's reading as the bar. `tools/_previewgrip.mjs`
+prints the whole table in about twenty seconds.
 
 **The Colosseum crowd is ONE MESH.** "I like the colosseum map, just increase
 the detail for the crowd — right now it looks okay in the distance but anytime
@@ -653,6 +678,68 @@ The fix is four or five head/shoulder variants distributed across as many
 InstancedMeshes rather than one, which costs four extra draw calls on a level
 that already spends 224 hand-placed ones. It is not a shader problem and it is
 not a budget problem; it simply has not been built.
+
+### 6.1d CLOSED: the controller — and what a future control has to do now
+
+A pad was a stick you could wave. `Input._codeDown` resolved a binding as a
+wheel pseudo-key, a `Mouse*` button or `keys.has(code)`; there was **no code
+form a pad button could take**, so 0 of 46 actions could be bound to one. It is
+46 of 46 now, and the parts a future round has to know:
+
+- **`Pad*` is a code, in the same namespace as `Mouse*` and `WheelUp`.** Sixteen
+  buttons on the standard mapping plus four LEFT-STICK directions. The pad
+  default is a **third entry on the action's existing key list** and not a
+  parallel table (§2.3), and the six orders are DEALT theirs from
+  `ORDER_PAD_POOL` by `registerOrders`, so a seventh formation is bound the day
+  it is authored. A seventh gets no pad code rather than a wrong one, and
+  `controls.mjs` says so.
+- **Chords exist.** `PadLB+PadA` is one code, joined by `+`. Bindings.js's header
+  has promised "the most specific chord wins" since it was written and nothing
+  implemented it; `Input._masked` does, off an index rebuilt on `setBindings`.
+  **LB and View are pure modifiers and are bound to nothing of their own** — a
+  modifier that also fires something drops that hold for the frame every chord
+  lands on, and the obvious candidates (lateral guard, one-handed grip) are
+  exactly the holds you would be in the middle of when you cast.
+- **The pad has a press edge for the first time.** `getGamepads()` returns a
+  fresh SNAPSHOT every call, so the old `this.padButtons = gp.buttons` had no
+  previous frame to compare against and every pad read was a `down`. Two sets,
+  swapped in `_readPad`.
+- **Analog triggers are buttons at 0.35, with `pressed` also honoured.** `blade`
+  is on RT; a browser that only latches `pressed` at the stop would be a guard
+  the player cannot raise.
+- **The left stick is IN the table and still analog.** `moveAxis` used to do
+  `x += this.padLeft.x` — a second set of movement bindings no table knew about,
+  which is the arrows bug wearing a different device, and the check written for
+  the arrows could not see it because it probes key codes. It is four codes read
+  through `actAxis`, which returns a MAGNITUDE: 0.4 of a stick is 0.400 of pace,
+  and W plus a stick is 1.000 and not 2.
+- **Start is Escape.** Pausing is deliberately not an ACTION so the way out
+  survives a broken binding, which left a pad player with no way out at all.
+  Start lands on the same `screens.escape()`, and only when no modifier is held
+  so its chords stay bindable.
+- **Glyphs follow the device.** Every surface that prints a binding takes a
+  `{ device, family }` that DEFAULTS TO THE KEYBOARD — which is what keeps every
+  other check and all existing markup byte-identical. Button 3 is Y, △ or X
+  depending on the shell, and `padFamily()` tests Xbox FIRST because Chromium
+  calls a DualShock 4 "Wireless Controller" and "Xbox Wireless Controller"
+  contains that phrase word for word.
+- **The front end is walked with the pad by moving DOM FOCUS**, not by a second
+  set of menu handlers: every control already answers Enter and Space, and
+  `menu.mjs` pins that. Reachability asks `offsetParent` rather than restating
+  `.panel{display:none}`, so a browser walks the open tab and the harness — which
+  has no layout — walks all of it.
+
+**Rumble** landed in the seam `Engine.rumble` left for it (`this.rumbleLevel ?? 1`,
+with a note saying "the day a strength slider exists it assigns this").
+`applyFeelSettings` writes it. It is **not** a second gate on `shake` — every
+call site already asks `feelOn('shake')` and `feel.mjs` pins that the pad stays
+quiet with the box off — it scales what survives that.
+
+**The rule for the next control, in one line:** if it is not in `ACTIONS` it
+cannot be rebound, cannot be listed and cannot be seen to collide, and
+`controls.mjs`'s raw-device clause now names the pad's fields as well as the
+mouse's — which is what would have caught `SaberController`'s `padDown(4)`,
+the last two raw reads in the game, if it had.
 
 ### 6.1c CLOSED: the AT-TE lift, and the bodies that died like nothing
 
@@ -760,10 +847,12 @@ judge's say-so.
 |---|---|
 | `tools/_fpgeom.mjs` | where the first-person arms and hilt are **in the frame**, and how much of the hilt is behind the fists — one second, against `fpview.mjs`'s twenty minutes |
 | `tools/_celrank.mjs` | every outdoor level's sun height against its shadow's key share, the rank displacements, and **every neighbouring bound in one table** — `cel`'s span/rho/pairwise, `lighting`'s indirect budget and cast-shadow floor, `sky`'s cloud-top-over-sky, and the exposure clamp. `--set=kamino.sunIntensity=3.4,geonosis.elevation=18` measures a candidate look without editing Levels.js |
+| `tools/_previewgrip.mjs` | every species' creator preview in ONE table: the bore gap and the hilt's length in that figure's own hands, the hand target in its own arm-lengths, the figure's share of the content box, and where it lands in the frame. Twenty seconds, and it is what showed the framing was three defects rather than one |
 
-All take `--import ./tools/register.mjs`; `_fpgeom` and `_celrank` open with
-`dom-shim.mjs` because they reach Textures.js and Engine.js, which bake onto a
-canvas — and `_celrank` imports Engine.js DYNAMICALLY for §2.1.
+All take `--import ./tools/register.mjs`; `_fpgeom`, `_celrank` and
+`_previewgrip` open with `dom-shim.mjs` because they reach Textures.js and
+Engine.js, which bake onto a canvas — and `_celrank` imports Engine.js
+DYNAMICALLY for §2.1.
 
 **Use `_celrank` before touching any level's light.** Six bounds in four suites
 read the same atmosphere block, they are not in the same file, and three of them
