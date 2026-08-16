@@ -297,6 +297,11 @@ export function holdFire(e) {
  * @param opts.speed  a multiplier while walking in — 1.35 by default, because a
  *              body crossing 40 m of empty ground at its combat pace is eleven
  *              seconds of nothing.
+ * @param opts.rest  the speed to restore on arrival. Defaults to the body's own,
+ *              and exists for the one case where that is a lie: a training dummy
+ *              is `speed: 0`, which means "does not move once it is standing
+ *              where it was put" and NOT "cannot walk to its post". It is lent a
+ *              pace for the crossing and handed nothing back.
  * @returns true if the walk actually went on.
  */
 export function walkIn(e, post, opts = {}) {
@@ -305,6 +310,7 @@ export function walkIn(e, post, opts = {}) {
   if (typeof base !== 'function') return false;
   const tol = opts.tolerance ?? 1.6;
   const boost = opts.speed ?? 1.35;
+  const rest = opts.rest ?? e.speed;
   const cruise = e.speed * boost;
   e._walkIn = { post, done: false };
   e._move = function (dt, ctx) {
@@ -314,7 +320,8 @@ export function walkIn(e, post, opts = {}) {
       const d = Math.hypot(dx, dz);
       if (d <= tol) {
         w.done = true;
-        this.speed = cruise / boost;
+        this.speed = rest;
+        this.wish = null;
       } else {
         const inv = 1 / (d || 1);
         if (!this.wish) this.wish = new THREE.Vector3();

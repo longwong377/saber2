@@ -280,15 +280,53 @@ export async function run({ check, assert }) {
     return 'every wave body is requested from the arrival director; the direct call is the fallback only';
   });
 
-  check('arrivals: the sandbox keeps its instant room', () => {
-    // A debug room whose whole point is twenty bodies in three seconds must
-    // not wait for three gunships.
+  check('arrivals: the sandbox arrives from somewhere, and its instant room is a choice', () => {
+    /**
+     * THIS CHECK USED TO ASSERT THE OPPOSITE, and the correction is worth
+     * leaving in rather than quietly rewriting.
+     *
+     * It read `assert(d.arrivals.enabled === false, 'the sandbox is queueing
+     * bodies behind arrivals')`, under the comment "a debug room whose whole
+     * point is twenty bodies in three seconds must not wait for three
+     * gunships" — which is the same defence `WaveDirector`'s own constructor
+     * used to carry, written by the same hand, agreeing with itself.
+     *
+     * Player note #17 is about exactly that room: "even in training mode or in
+     * ANY MODE, the enemies should not materialize in front of you they should
+     * arrive from somewhere not teleport behind you." The sandbox is where a
+     * player spends the longest watching bodies enter the world — it is the mode
+     * you sit in and dial the count up and down — so it was the worst possible
+     * place to keep the one path that pops them into existence at eleven metres.
+     *
+     * The fast path is not deleted. It is `settings.instantSpawn`, and the whole
+     * of the change is which way round the default is. Both halves are asserted
+     * here so neither can drift: the room arrives by default, AND the instant
+     * room still exists for anybody who wants it.
+     */
     const w = fakeWorld('dunes');
     const d = new WaveDirector(w, { mode: 'sandbox', pool: ['b1'] });
-    assert(d.arrivals.enabled === false, 'the sandbox is queueing bodies behind arrivals');
-    assert(d.arrivals.request('b1') === false,
+    assert(d.arrivals.enabled === true,
+      'the sandbox still teleports bodies in front of the player — see note #17');
+    assert(d.arrivals.request('b1') === true,
+      'the sandbox director refused an arrival request, so its bodies have nowhere to come from');
+
+    const fast = fakeWorld('dunes');
+    fast.settings = { instantSpawn: true };
+    const df = new WaveDirector(fast, { mode: 'sandbox', pool: ['b1'] });
+    assert(df.arrivals.enabled === false,
+      'settings.instantSpawn did not reach the arrival director, so the fast path is unreachable');
+    assert(df.arrivals.request('b1') === false,
       'a disabled arrival director accepted a request, so the caller will never spawn directly');
-    return 'sandbox spawns stay direct and immediate';
+
+    /* …and the same setting reaches the WAVE path, which is the half a
+     * sandbox-only test would miss: a player who has asked for instant spawns
+     * has asked for them everywhere, and a mode that half-honoured it would be
+     * two behaviours behind one switch. */
+    const wr = fakeWorld('dunes');
+    wr.settings = { instantSpawn: true };
+    const dr = new WaveDirector(wr, { mode: 'roguelite', pool: ['b1'] });
+    assert(dr.arrivals.enabled === false, 'instantSpawn is honoured in the sandbox and ignored in a wave');
+    return 'default: the sandbox arrives; instantSpawn: direct and immediate, in every mode';
   });
 
   check('arrivals: an arrival leaves nothing behind in the scene', () => {

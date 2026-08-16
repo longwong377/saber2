@@ -293,6 +293,64 @@ export class DojoDirector {
     this.onLesson?.(this.state());
   }
 
+  /**
+   * A LESSON BODY, WHICH WALKS TO ITS POST INSTEAD OF APPEARING ON IT.
+   *
+   * PLAYER NOTE #17, AND IT NAMES THIS ROOM: "even in TRAINING MODE or in any
+   * mode, the enemies should not materialize in front of you they should arrive
+   * from somewhere not teleport behind you."
+   *
+   * `ArrivalDirector` answers that for a wave and it cannot answer it here. A
+   * lesson needs its remote at a taught distance — "stand five and a half metres
+   * from a remote and return one bolt" IS the lesson — and an arrival that puts
+   * the remote wherever the terrain allowed is a different lesson. That is why
+   * this room was exempt, and the exemption was the whole of the defect: it is
+   * the room a new player meets first, so it is the room that teaches them that
+   * things in this game appear out of nothing.
+   *
+   * So the body is spawned OUT PAST THE RING, on the same bearing, and walks in
+   * to the post the lesson chose. The lesson's geometry is byte-identical to
+   * what it was — the body ends exactly where it used to start — and what
+   * changes is that you watch it come. `Waves.walkIn` is the primitive and it
+   * holds the body's fire the whole way, so nothing shoots at you from forty
+   * metres while it is still crossing.
+   *
+   * `settings.instantSpawn` is the same opt-out the wave and sandbox paths take:
+   * one setting, one reader, and the default everywhere is that things arrive
+   * from somewhere.
+   *
+   * @param bearing radians about the anchor; `dist` the lesson's own radius.
+   */
+  _post(type, anchor, bearing, dist) {
+    const w = this.world;
+    const post = new THREE.Vector3(
+      anchor.x + Math.cos(bearing) * dist, 0, anchor.z + Math.sin(bearing) * dist);
+    if (w.terrain) post.y = w.terrain.height(post.x, post.z);
+    if (instantSpawn(w.settings)) return w.spawnEnemy(type, post);
+    /* FROM WHERE. Far enough to be an arrival rather than a hop — 34 m is past
+     * the level's own inner spawn ring on every level in the game — and on the
+     * post's own bearing, so it walks IN along the radius and stops where the
+     * lesson wants it rather than crossing the room diagonally through you.
+     * Clamped into the world, because the dojo runs on every theatre now and
+     * some of them are bounded tighter than others. */
+    const from = new THREE.Vector3(
+      anchor.x + Math.cos(bearing) * 34, 0, anchor.z + Math.sin(bearing) * 34);
+    if (w.terrain?.inBounds && !w.terrain.inBounds(from.x, from.z, 6)) {
+      from.set(anchor.x + Math.cos(bearing) * 16, 0, anchor.z + Math.sin(bearing) * 16);
+    }
+    if (w.terrain) from.y = w.terrain.height(from.x, from.z);
+    const e = w.spawnEnemy(type, from);
+    /* An inert dummy has speed 0 and would never arrive — `walkIn` writes
+     * `wish` and `_move` multiplies it by `this.speed`. It is given a walking
+     * pace for the crossing and put back to nothing on arrival, which is what
+     * the archetype means by `speed: 0`: a target that does not move once it is
+     * standing where it was put. */
+    const rest = e.speed;
+    if (!(e.speed > 0)) e.speed = 3.2;
+    walkIn(e, post, { speed: rest > 0 ? 1.35 : 1.0, tolerance: 1.1, rest });
+    return e;
+  }
+
   /* ── the sandbox room ────────────────────────────────────────────── */
 
   /** Ring radius for a sandbox unit: remotes orbit wide, dummies stand close. */
@@ -314,7 +372,12 @@ export class DojoDirector {
     // untangling. The rings spread that over 8.0 to 9.9 m instead.
     const r = this._sandboxRadius(type) * (1 + 0.06 * (index % 5));
     const a = index * 2.39996 + 0.5;
-    const e = w.spawnEnemy(type, _v2.set(anchor.x + Math.cos(a) * r, 0, anchor.z + Math.sin(a) * r));
+    /* …AND THIS ROOM WALKS IN TOO. Note #17 says "in any mode", and the sandbox
+     * is where a player spends the longest watching bodies enter the world — it
+     * is the room you sit in and dial the count up and down. `_post` is the same
+     * primitive the lessons use and it keeps the golden-angle ring exactly:
+     * the body ends on the same nested ring it used to start on. */
+    const e = this._post(type, anchor, a, r);
     const cfg = sandboxConfig(w.settings);
     // The remotes throw the slow, fat bolts the deflection lessons use — 30 m/s
     // against the 88 m/s a real blaster fires, which is the difference between
