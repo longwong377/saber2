@@ -29,6 +29,22 @@
  * tools/checks/characters.mjs gives for its own: normalising each figure to its
  * own box would call a 2 m nexu and a 7 m rancor identical for being the same
  * shape, and they are not the same shape BECAUSE they are not the same size.
+ *
+ * ── AND IT IS FIVE ARCHETYPES OF THIRTY-ONE. ────────────────────────────
+ *
+ * `tools/_roster.mjs` is this file's method pointed at the whole roster, and
+ * it says the complaint was never about creatures alone: at LOD 1 the nineteen
+ * HUMANOIDS were 103 of 171 pairs over 0.50 flank IoU with two pairs at 1.000,
+ * against 0 of 10 here and 0 of 21 for the machines. Reach for that one for
+ * anything roster-wide; this one stays because it is the only place that
+ * prints a creature's body-plan numbers — L/H, fill, mass height and its move
+ * set — which is what "no two share a BODY PLAN" is actually read against.
+ *
+ * The two do NOT share a frame or a resolution, and that is deliberate rather
+ * than an oversight: 12 m at 128 px is 9.4 cm per pixel, which is right for a
+ * 7 m rancor and would render a 1.78 m trooper 19 pixels tall. Two runs are
+ * only comparable inside one family, which is why _roster.mjs frames each
+ * family separately and asserts nothing across them.
  */
 // The DOM shim FIRST — hideMat reaches Textures.js, which bakes onto a canvas.
 import './dom-shim.mjs';
