@@ -596,6 +596,55 @@ export class ArrivalDirector {
     return e;
   }
 
+  /**
+   * PUT A BODY THAT IS SOMEWHERE IMPOSSIBLE SOMEWHERE POSSIBLE.
+   *
+   * The recovery half of player note #7 — a body inside geometry or outside the
+   * heightfield blocks a wave forever, and `WaveDirector._rescue` is what
+   * notices. This is what it does about it, and it lives here because the answer
+   * is a question this file already answers for every march: WHERE IS A VALID
+   * PLACE TO PUT A BODY. `_sitePoint` tests terrain bounds, slope and the level's
+   * own `spawnClear`, in twenty tries, with the ring as the give-up case.
+   *
+   * At MARCH radius rather than the drop ring, deliberately: that is beyond the
+   * distance anything is spawned at, so the body walks back into the fight from
+   * the edge exactly as a marching arrival does, and the recovery is a thing you
+   * watch rather than a thing that happens. The delivery goes in `this.log`, so
+   * `deliveryIsAnnounced` holds it to the same invariant as every other body
+   * this director has ever put down.
+   *
+   * The BODY IS KEPT, not replaced — see the note at the call site. Its velocity
+   * is zeroed and the two navigation counters are cleared, because a body that
+   * has spent fourteen seconds pressed into a wall is carrying a committed
+   * strafe direction and a saturated `_stuckT` that would send it straight back.
+   *
+   * @returns whether a valid site was found and the body moved to it.
+   */
+  relocate(e) {
+    if (!e || !e.position) return false;
+    const ring = this._ring();
+    const at = this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3());
+    if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return false;
+    e.position.set(at.x, at.y, at.z);
+    e.velocity?.set?.(0, 0, 0);
+    // The two counters `Enemy._move`'s navigation runs on. Left as they were,
+    // the body arrives at its new site already convinced it is stuck.
+    if (e._wallN?.set) e._wallN.set(0, 0, 0);
+    e._wallT = 0;
+    e._stuckT = 0;
+    e._prevPos?.copy?.(e.position);
+    // Re-home the physics capsule too, or the body is drawn at the new site and
+    // collides at the old one — which is the same bug with a longer symptom.
+    e._syncBody?.();
+    const anchor = this._anchor(_v2);
+    this.log.push({
+      kind: 'march', flight: 'rescue', lead: ARRIVAL_LEAD,
+      dist: Math.hypot(at.x - anchor.x, at.z - anchor.z), type: e.type, rescue: true,
+    });
+    if (this.log.length > 200) this.log.shift();
+    return true;
+  }
+
   /** Drop everything — a wave reset, a level change, a run ending. */
   clear() {
     for (const f of this.flights) f.remove();

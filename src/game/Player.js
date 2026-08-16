@@ -500,11 +500,40 @@ const HEAL_FRACTION = 0.45;
  * not to the rig."
  *
  * So: unifying the anchor is blocked on the guard model, and the guard model is
- * the prerequisite rather than the other way round. The offsets below are the
- * shipped ones, unchanged. The sweep is committed so nobody has to derive this
- * twice.
+ * the prerequisite rather than the other way round. The sweep is committed so
+ * nobody has to derive this twice.
+ *
+ * ── RISE 0.26 → 0.32, WHEN FIRST PERSON WENT ONE-HANDED ─────────────────
+ *
+ * The one-handed grip (see GRIP_AT.FP) slides the fist to the bottom of the
+ * shaft, and at rise 0.26 that put NINE of the hilt's thirty-one sample points
+ * off the bottom of the frame — the whole pommel section, and the fist with it
+ * at 30.7 degrees below the view axis against a 26 degree bound. Sweeping rise
+ * against fwd on the same bench tools/checks/first-person.mjs uses:
+ *
+ *     rise   fwd    hilt on screen   behind the fist   handR down   reach ratio
+ *     0.260  0.16      23/31              17%            30.7°        1.276
+ *     0.308  0.16      29/31              34%            24.5°        1.289
+ *     0.316  0.16      30/31              30%            25.3°        1.292
+ *     0.320  0.16      31/31              32%            24.8°        1.293
+ *     0.340  0.16      31/31              39%            20.5°        1.300
+ *     0.320  0.13      30/31              30%            25.7°        1.287
+ *     0.320  0.11      29/31              28%            27.9°        1.276
+ *
+ * Pulling `fwd` IN to pay for the rise does not work and the reason is worth
+ * writing down: the frame is an ANGLE, so bringing the hilt nearer the lens
+ * narrows the frame at the hilt's own depth faster than the lift raises it.
+ * Every row with fwd reduced loses samples. The rise has to be bought.
+ *
+ * WHAT IT COSTS is 1.5 cm of sword: the first/third reach ratio goes 1.276 to
+ * 1.293 against the 1.30 ratchet in tools/checks/first-person.mjs, which is
+ * NOT relaxed. The mechanism is that ratchet's own subject — `armMax` clamps
+ * the hands to 0.78 m from the ANCHOR, so every centimetre the anchor leaves
+ * the chest is a centimetre the tip can reach past third person's. The margin
+ * is now 0.7% and the next person who wants to move this anchor has to unify
+ * it first; that is the whole content of the note above.
  */
-const HILT = { rise: 0.26, fwd: 0.16 };
+const HILT = { rise: 0.32, fwd: 0.16 };
 /** Exported so tools/_anchor.mjs can sweep it. */
 export const HILT_ANCHOR = HILT;
 
@@ -658,12 +687,30 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  * tools/_fpgeom.mjs has the sweep. The second hand is the constraint, so the
  * second hand goes: see `twoHanded` in _updateBody.
  *
- * −0.062 rather than the −0.092 the metal bottoms out at, because the fist is
+ * −0.075 rather than the −0.092 the metal bottoms out at, because the fist is
  * ~90 mm across and a grip point at the very end of the shaft hangs half the
  * hand off it. This puts the whole closed fist on metal with the pommel just
- * clear below it, which is the reference's own framing.
+ * clear below it, which is the reference's own framing. Swept against the
+ * finished anchor (rise 0.32), reading the hilt at a level gaze, looking up
+ * 1.1 rad and looking down 1.2 rad — all three identical, because a viewmodel
+ * holds its place in the frame:
+ *
+ *     grip     behind the fist    handR below the axis
+ *     +0.050         71%                 15.9°       ← the third-person grip
+ *     −0.040         45%                 21.5°
+ *     −0.062         39%                 23.0°
+ *     −0.075         32%                 24.8°       ← shipped
+ *     −0.085         29%                 26.3°       (past the 26° frame bound)
+ *     −0.100         23%                 28.6°
+ *
+ * The two columns pull against each other and this is where they cross. ~39% is
+ * the floor for a fist wholly ON a shaft that is wholly ON screen — a closed
+ * hand is 90 mm across and the sampled shaft is 233 — so anything below that is
+ * the fist hanging past the pommel, and past −0.085 it hangs out of the frame
+ * as well. Note the first row: taking the off hand off the hilt and changing
+ * nothing else is 91% → 71%. Both halves were needed.
  */
-export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.062 };
+export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
 
 
 

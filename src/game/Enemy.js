@@ -244,6 +244,71 @@ export const BEAST_MOVES = {
   },
 
   /**
+   * ── THE FIVE VERBS THE BODY PLANS ADDED ──────────────────────────────
+   *
+   * "They all attack the same way", and the table said so: of the five
+   * creatures, THREE (the acklay, the reek, the nexu) declared no move set at
+   * all and took `DEFAULT_BEAST_MOVES` — the same lunge, sweep and charge —
+   * and the other two shared `lunge` with them. Five animals, three verbs,
+   * one of them on all five.
+   *
+   * Each of the five below is a verb some ANATOMY affords, which is why they
+   * are declared beside the body plan that performs them (CREATURE_PLANS in
+   * src/game/Bodies.js) rather than beside the health bar:
+   *
+   *   GORE     a metre of horn carried in front of the eyes, driven at you in
+   *            a committed run. Like the charge it aims when the drive
+   *            begins, so running does not answer it; unlike the charge it
+   *            drops its head first, which is a tell you can read from behind.
+   *   TOSS     the same horn hooking UNDER you. The only attack in the game
+   *            whose answer to "I am in front of it" is height rather than
+   *            damage: `lift` 2.4 against everything else's 0.5–1.5, so the
+   *            impulse is almost vertical and where you land is your problem.
+   *   RAKE     a cat's forepaw, twice. The shortest wind-up in the file at
+   *            0.32 s against the sweep's 0.55, for two thirds of the damage:
+   *            what makes it dangerous is that it arrives before you have
+   *            finished reading it, and it comes round again fastest.
+   *   STAB     a spindly foreleg driven out from 3.8 m — further than
+   *            anything else can reach and further than the player's own
+   *            blade, which is the acklay's whole problem statement.
+   *   SNATCH   mandibles closing and DRAGGING. `pull` makes the impulse point
+   *            at the animal instead of away from it, and it is the only one
+   *            in the file that does: every other blow in the game solves the
+   *            player's problem by putting distance between you.
+   */
+  gore: {
+    unlock: 1, aim: 'drive', aimUntil: 0.5, plant: 0.5,
+    drive: [0.5, 1.5, 36], dust: true, hit: [0.6, 1.5], done: 1.6,
+    reach: 0.9, damage: 1.35, lift: 1.0, roar: 1.0, call: 'GORE', callColor: '#ff8a3a',
+    // head DOWN and body low through the wind-up, then it runs
+    pose: { rise: -0.70, up: 0.50, fall: 0.45, pitch: -0.72 },
+  },
+  toss: {
+    unlock: 2, aim: 'windup', plant: 0.35, hit: [0.70, 1.00], done: 1.35,
+    reach: 1.00, damage: 0.85, lift: 2.4, shake: 1.1, roar: 0.85,
+    call: 'TOSS', callColor: '#ffd24a',
+    // hooks upward: the longest rise of anything that is not the slam
+    pose: { rise: 1.25, up: 0.70, fall: 0.16, pitch: -0.50 },
+  },
+  rake: {
+    unlock: 1, aim: 'windup', plant: 0.18, hit: [0.32, 0.55], done: 0.75,
+    reach: 0.72, damage: 0.62, lift: 0.35,
+    pose: { rise: 0.60, up: 0.32, fall: 0.12, pitch: -0.90 },
+  },
+  stab: {
+    unlock: 1, aim: 'windup', plant: 0.30, hit: [0.62, 0.85], done: 1.05,
+    reach: 1.30, damage: 1.10, lift: 0.5, roar: 0.7, call: 'STAB', callColor: '#8affc4',
+    pose: { rise: 0.90, up: 0.62, fall: 0.10, pitch: -0.26 },
+  },
+  snatch: {
+    unlock: 2, aim: 'windup', plant: 0.45, hit: [0.68, 0.92], done: 1.20,
+    reach: 0.80, damage: 1.25, lift: 0.25, pull: true, shake: 0.9, roar: 0.8,
+    call: 'SNATCH', callColor: '#ff6a52',
+    // ducks, then throws the head forward — the mirror of the toss
+    pose: { rise: -0.95, up: 0.45, fall: 0.22, pitch: 0.34 },
+  },
+
+  /**
    * THE POUNCE — twelve metres, off the ground, and it commits at the LAUNCH.
    *
    * The charge already answers a runner, but it answers by being unanswerable:
@@ -263,8 +328,35 @@ export const BEAST_MOVES = {
   },
 };
 
-/** What a creature that does not name its own attacks can do — the shipped three. */
+/** What a creature with neither a declared set nor a body plan can do. */
 export const DEFAULT_BEAST_MOVES = ['lunge', 'sweep', 'charge'];
+
+/**
+ * WHICH ATTACKS THIS CREATURE HAS — one function, and everything calls it.
+ *
+ * There are two authorities and they are ordered, not merged:
+ *
+ *   1. the ARCHETYPE. `A.moves` is a level designer saying what this creature
+ *      does; the rancor's slam and the gundark's pounce are argued for in
+ *      src/game/Levels.js and win here.
+ *   2. the BODY PLAN. A creature that declares none gets the verbs its
+ *      ANATOMY affords — `built.moves`, off CREATURE_PLANS in
+ *      src/game/Bodies.js, beside the horns and the mandibles that make them
+ *      possible. That is how the reek, the nexu and the acklay stop sharing
+ *      one move set without their archetypes being touched.
+ *
+ * `DEFAULT_BEAST_MOVES` is the floor under both, and after this pass nothing
+ * in the shipped roster reaches it.
+ *
+ * It is exported because the checks need the same answer the brain gets, and
+ * a check that recomputes `A.moves || DEFAULT` is HANDOFF §2.4's defect:
+ * tools/checks/beasts.mjs and tools/checks/colosseum.mjs both had that line,
+ * and both would have gone on measuring the move set the creatures used to
+ * have. They call this instead.
+ */
+export function beastMoveSet(A, built = null) {
+  return (A && A.moves) || (built && built.moves) || DEFAULT_BEAST_MOVES;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The Jedi                                                              */
@@ -1092,14 +1184,28 @@ export class Enemy {
     }
   }
 
-  /** Collect the meshes that are decoration rather than silhouette. */
+  /**
+   * Collect the meshes that are decoration rather than silhouette.
+   *
+   * …AND `userData.silhouette` IS THE OTHER HALF OF "SPHERE WITH SOME LEGS".
+   *
+   * One primary per bone is right for a droid, whose outline really is its
+   * limb tubes and whose rivets really are noise. It is catastrophic for an
+   * animal: a reek's horns, a nexu's mane, an acklay's crest and every tail in
+   * the game were Kit detail, so past thirty metres the whole menagerie was
+   * its trunk plus its legs and nothing else — which is exactly the sentence
+   * the player used. Bodies.js tags the merged outline pieces (see
+   * `markSilhouette`) and they are kept at every range. It is at most two
+   * extra draw calls per creature, on bodies there are never more than a
+   * handful of, against the thing they are recognised BY.
+   */
   _collectLodParts() {
     if (!this.rig) return;
     const keep = new Set();
     for (const b of this.rig.list) { if (b.primary) keep.add(b.primary); }
     this._lodParts = [];
     this.rig.root.traverse((o) => {
-      if (o.isMesh && !keep.has(o)) this._lodParts.push(o);
+      if (o.isMesh && !keep.has(o) && !o.userData.silhouette) this._lodParts.push(o);
     });
     this._lodShadow = true;
   }
@@ -2565,7 +2671,12 @@ export class Enemy {
       // remember a point; `swingAt` for the ones that do.
       const at = M.aim === 'self' ? _v2.copy(this.position) : this.swingAt;
       if (t && at && t.position.distanceTo(at) < reach) {
-        _v1.subVectors(t.position, this.position).setY(M.lift).normalize().multiplyScalar(16);
+        // `pull` reverses the impulse: the snatch DRAGS you in, which is the
+        // one blow on the field that does not solve your problem for you by
+        // putting distance between the two of you.
+        if (M.pull) _v1.subVectors(this.position, t.position);
+        else _v1.subVectors(t.position, this.position);
+        _v1.setY(M.lift).normalize().multiplyScalar(16);
         t.damage?.(this.attackDamage * M.damage, this.position, this);
         t.velocity?.add(_v1);
         t.camera?.addShake(M.shake ?? 0.7);
@@ -2604,13 +2715,13 @@ export class Enemy {
   /**
    * Which of this creature's attacks the phase has unlocked.
    *
-   * The list is the ARCHETYPE's, so a creature is defined by what it can do
-   * rather than by how much health it has — see BEAST_MOVES. Anything that does
-   * not declare one gets the three the game shipped with, which is what keeps
-   * the acklay, the reek and the nexu exactly as they were.
+   * A creature is defined by what it can DO rather than by how much health it
+   * has — see BEAST_MOVES — and what it can do comes off `beastMoveSet`, which
+   * is the archetype's declaration if it made one and its body plan's
+   * otherwise. Nothing restates that here; this only filters by phase.
    */
   beastMoves(phase = this.bossPhase || 1) {
-    const list = this.A.moves || DEFAULT_BEAST_MOVES;
+    const list = beastMoveSet(this.A, this.built);
     return list.filter((k) => BEAST_MOVES[k] && phase >= BEAST_MOVES[k].unlock);
   }
 
@@ -3126,10 +3237,54 @@ export class Enemy {
     rig.solveIK('armL', 'foreL', this.offHand, poleL);
   }
 
+  /**
+   * THE STANCE THIS BODY ACTUALLY STANDS IN.
+   *
+   * `nLegs` was `this.A.custom === 'beast' ? 6 : 4`, which is HANDOFF §2.4's
+   * defect exactly — a rule restated away from the thing that owns it — and it
+   * had been wrong the whole time: the reek, the nexu, the rancor and the
+   * gundark all declare `custom: 'beast'` and all four have FOUR legs, so the
+   * solver ran a six-leg layout over them. `femur4`/`femur5` came back
+   * undefined and were skipped, which hid the bug, but the row arithmetic did
+   * not: `(row - (nLegs / 2 - 1) / 2)` with nLegs 6 puts the front pair's foot
+   * target at z = 0 and the rear pair's at −0.62·S, so every quadruped in the
+   * game planted both pairs of feet BEHIND its own hips, bunched under the
+   * middle. A sphere with some legs under it.
+   *
+   * Nothing is restated now. The leg count is counted off the rig, and
+   * everything else — where each foot plants, how high the ankle rides, which
+   * way the joint bends, stride, lift, hip height — comes off the `stance` the
+   * builder publishes with the body it built (see CREATURE_PLANS in
+   * src/game/Bodies.js). The fallback below is the shipped walker's own
+   * numbers, unchanged to the digit, because the spider walker is the one body
+   * that reaches this function without a plan.
+   */
+  _stance() {
+    if (this._stanceCache) return this._stanceCache;
+    const S = this.A.scale;
+    const st = this.built?.stance;
+    if (st) return (this._stanceCache = st);
+    let n = 0;
+    while (this.rig?.get(`femur${n}`)) n++;
+    const limbs = [];
+    for (let i = 0; i < n; i++) {
+      const side = i % 2 === 0 ? 1 : -1;
+      const row = Math.floor(i / 2);
+      limbs.push({
+        arm: false, x: side * 1.35 * S, z: (row - (n / 2 - 1) / 2) * 0.62 * S,
+        // 0: the walker's ankle target has always been the floor itself.
+        ankle: 0, toe: 0.30, pole: [side * 1.4 * S, 1.5 * S, 0], hand: null,
+      });
+    }
+    return (this._stanceCache = {
+      hipHeight: 1.6 * S, step: 1.0 * S, lift: 0.42 * S, rear: 0.48 * S, bob: 0.05 * S, limbs,
+    });
+  }
+
   _poseWalker(dt, ctx) {
     const rig = this.rig;
     const S = this.A.scale;
-    const nLegs = this.A.custom === 'beast' ? 6 : 4;
+    const ST = this._stance();
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.walkPhase = (this.walkPhase + dt * clamp(speed / (1.1 * S), 0.1, 2.4)) % 1;
 
@@ -3177,11 +3332,16 @@ export class Enemy {
       // …and being winded reads as being winded: the head drops to the floor.
       rise = -0.5; pitch = 0.5;
     }
-    const bodyH = (this.A.custom === 'beast' ? 1.5 : 1.6) * S;
+    /* The hip height and the rear-up are the ANIMAL's, not a constant times
+     * its scale. A reek stands at 0.88 of scale and a rancor at 1.15, where
+     * both used to stand at 1.5; `rear` is metres of hip travel per unit of
+     * rise, so the low animals still telegraph as far as the tall ones
+     * instead of in proportion to how short they are. */
+    const bodyH = ST.hipHeight;
     const hips = rig.hipsBone.obj;
     const gh = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
     hips.position.set(this.position.x,
-      Math.max(this.position.y, gh) + bodyH * (1 + 0.30 * rise) + Math.sin(this.walkPhase * TAU * 2) * 0.05 * S,
+      Math.max(this.position.y, gh) + bodyH + ST.rear * rise + Math.sin(this.walkPhase * TAU * 2) * ST.bob,
       this.position.z);
     hips.quaternion.setFromAxisAngle(UP, this.facing);
     if (pitch) hips.quaternion.multiply(_q1.setFromAxisAngle(RIGHT, pitch));
@@ -3192,26 +3352,51 @@ export class Enemy {
     const fwd = _v1.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     const right = _v2.set(fwd.z, 0, -fwd.x);
 
-    for (let i = 0; i < nLegs; i++) {
+    for (let i = 0; i < ST.limbs.length; i++) {
       const femur = rig.get(`femur${i}`);
       if (!femur || femur.severed) continue;
-      const side = i % 2 === 0 ? 1 : -1;
-      const row = Math.floor(i / 2);
-      const ph = (this.walkPhase + (i % 2) * 0.5 + row * 0.18) % 1;
+      const L = ST.limbs[i];
+
+      /* AN ARM IS NOT A LEG, and until there were arms nothing here knew the
+       * difference. The rancor's and the gundark's forelimbs are mounted on
+       * the trunk and never touch the ground: they hang at a home point that
+       * swings against the gait, and an attack's `rise` throws them forward
+       * and down — so the wind-up the brain commits to is on the limb that
+       * makes the blow as well as on the chest. */
+      if (L.arm && L.hand) {
+        const swing = Math.sin((this.walkPhase + (i % 2) * 0.5) * TAU) * 0.16 * S;
+        const hand = _v3.copy(this.position)
+          .addScaledVector(right, L.hand[0])
+          .addScaledVector(fwd, L.hand[2] + swing - rise * 0.55 * S)
+          .setY(Math.max(this.position.y, gh) + bodyH + L.hand[1] + rise * 0.42 * S);
+        const pole = _v4.copy(hand).addScaledVector(right, L.pole[0]).addScaledVector(fwd, L.pole[2])
+          .setY(hand.y + L.pole[1]);
+        rig.solveIK(`femur${i}`, `tibia${i}`, hand, pole);
+        if (rig.get(`tarsus${i}`)) {
+          _v5.copy(fwd).multiplyScalar(0.55).setY(-0.8).normalize();
+          rig.aimBoneWorld(`tarsus${i}`, _v5, null);
+        }
+        continue;
+      }
+
+      const ph = (this.walkPhase + (i % 2) * 0.5 + Math.floor(i / 2) * 0.18) % 1;
       const stance = ph < 0.5;
       const t = stance ? 0 : (ph - 0.5) * 2;
 
-      const zOff = (row - (nLegs / 2 - 1) / 2) * 0.62 * S;
       const foot = _v3.copy(this.position)
-        .addScaledVector(right, side * 1.35 * S)
-        .addScaledVector(fwd, zOff + (stance ? -0.3 : lerp(-0.3, 0.7, t)) * S);
-      foot.y = (ctx.terrain ? ctx.terrain.height(foot.x, foot.z) : 0) + (stance ? 0 : Math.sin(t * Math.PI) * 0.42 * S);
+        .addScaledVector(right, L.x)
+        .addScaledVector(fwd, L.z + (stance ? -0.3 * ST.step : lerp(-0.3, 0.7, t) * ST.step));
+      // …plus the ankle offset, so the toe lands on the floor rather than the
+      // ankle landing on it and the whole foot going under. See `stanceOf`.
+      foot.y = (ctx.terrain ? ctx.terrain.height(foot.x, foot.z) : 0)
+        + L.ankle + (stance ? 0 : Math.sin(t * Math.PI) * ST.lift);
 
-      const knee = _v4.copy(foot).addScaledVector(right, side * 1.4 * S).addScaledVector(UP, 1.5 * S);
+      const knee = _v4.copy(foot).addScaledVector(right, L.pole[0]).addScaledVector(fwd, L.pole[2])
+        .setY(foot.y + L.pole[1]);
       rig.solveIK(`femur${i}`, `tibia${i}`, foot, knee);
       const tarsus = rig.get(`tarsus${i}`);
       if (tarsus) {
-        _v5.copy(fwd).multiplyScalar(0.3).setY(-0.95).normalize();
+        _v5.copy(fwd).multiplyScalar(L.toe).setY(-(1 - L.toe)).normalize();
         rig.aimBoneWorld(`tarsus${i}`, _v5, null);
       }
     }

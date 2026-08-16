@@ -33,7 +33,7 @@
 // The DOM shim FIRST — hideMat reaches Textures.js, which bakes onto a canvas.
 import './dom-shim.mjs';
 import * as THREE from 'three';
-import { buildQuadruped, buildBeast, QUADRUPED_KINDS } from '../src/game/Bodies.js';
+import { buildQuadruped, buildBeast, CREATURE_PLANS } from '../src/game/Bodies.js';
 import { ARCHETYPES } from '../src/game/Enemy.js';
 import '../src/game/Levels.js';          // registers the colosseum's creatures
 
@@ -143,5 +143,5 @@ for (const r of rows) {
     + `${r.lh.toFixed(2)}  ${r.fill.toFixed(2)}  ${r.mass.toFixed(2)}   ${mx.toFixed(2)} (${mxWith})`);
 }
 console.log(`\nworst pair overall: ${worstPair} ${worst.toFixed(3)}`);
-console.log(`kinds in the quadruped table: ${Object.keys(QUADRUPED_KINDS).join(', ')}`);
+console.log(`body plans: ${Object.keys(CREATURE_PLANS).join(', ')}`);
 void buildQuadruped; void buildBeast;

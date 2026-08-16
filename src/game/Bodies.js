@@ -5521,402 +5521,715 @@ export function buildWalker(opts = {}) {
   return { rig, cannons, palette: { shell, dark, mark, scorch, eye }, scale: S };
 }
 
-/* ── acklay-style beast (boss) ───────────────────────────────────────── */
+/* ── the menagerie: five creatures, five body plans ──────────────────── */
 
 /**
- * An animal, not a machine, and it has to read that way at forty metres: a
- * heavy ribbed carapace slung between six legs, a long neck carried forward
- * and up, and a narrow head with mandibles.
+ * "ALL YOUR MONSTERS LOOK THE SAME, SPHERE WITH SOME LEGS."
  *
- * The neck is the whole trick. walkerSkeleton hangs the head bone 0.6 units
- * BEHIND the body, which is why the old head was a sphere sitting entirely
- * inside the ribcage — invisible from every angle. The body is pulled back
- * and the neck built forward out of the head bone, so the skull clears the
- * shoulders and the AI's head tracking swings the whole neck with it.
+ * That is not hyperbole and it is not about detail. Past thirty metres
+ * `Enemy._applyLod` hides every mesh that is not a bone's PRIMARY, and the
+ * primaries of the old menagerie were: a trunk made of three scaled
+ * SphereGeometries, a skull made of a fourth, and sixteen identical tapering
+ * tubes. Every horn, frill, quill, scute, tooth and tail segment was Kit
+ * detail and therefore invisible at exactly the range the player was
+ * describing. The sentence is a precise description of the LOD-1 mesh.
+ *
+ * The other half is that all five stood on ONE skeleton. `walkerSkeleton`
+ * fixes the hip sockets at ±0.34 of scale, the femur at 0.62 and the tibia at
+ * 0.74 whatever the animal is, `_poseWalker` planted every foot 1.35 of scale
+ * out and poled every knee UP AND OUT — the insect bend — and the only things
+ * a "kind" could change were colours and a handful of proportion multipliers.
+ * Measured on the shipped five (tools/_creature.mjs): every one of them
+ * carried the centroid of its own silhouette at 0.50–0.54 of its height. Five
+ * animals, one mass distribution. That is the sphere.
+ *
+ * ── WHAT THE REFERENCE ACTUALLY ASKS FOR.
+ *
+ * `assets/reference/maps/colosseum/more arena 1.jpg` is the brief, because it
+ * is the test: three creatures in one frame at about forty metres, where no
+ * detail survives at all. What tells them apart there is
+ *
+ *   LEG COUNT, STANCE HEIGHT, MASS DISTRIBUTION, and the outline.
+ *
+ * The reek is a low dark BLOCK, wider than it is tall, with its head at knee
+ * height. The acklay is a tall splayed TRIPOD of thin lines with a small body
+ * hung in the middle of them and no visible head. The massiffs are squat
+ * commas. `assets/reference/units/creatures/` carries the rest and no two
+ * share a body plan: the rancor is a hunched biped whose arms reach the
+ * ground and whose head is fused into its shoulders, the wampa is an upright
+ * shaggy ape, the nexu is a long low cat with a whip tail twice its own body.
+ *
+ * So a plan below owns four things the old table could not express:
+ *
+ *   ITS SKELETON     `creatureSkeleton` builds the bones from the plan —
+ *                    how many limbs, where each one is mounted, how long each
+ *                    segment is, and whether a limb is a LEG or an ARM. The
+ *                    rancor and the gundark have two of each, the acklay six
+ *                    legs, the reek and the nexu four.
+ *   ITS STANCE       published on the built object and read by `_poseWalker`,
+ *                    so hip height, stride, foot lift and — the one that
+ *                    changes the outline most — the POLE each knee bends
+ *                    toward are the animal's own. A mammal's stifle points
+ *                    forward and its hock back; an acklay's knee stands above
+ *                    its own spine. That was one hard-coded vector for every
+ *                    creature in the game.
+ *   ITS SILHOUETTE   everything that makes the outline — horns, frill, crest,
+ *                    mane, tail, tusks — is merged into ONE extra mesh per
+ *                    bone and tagged `userData.silhouette`, which
+ *                    `_collectLodParts` now keeps. Two extra draw calls, and
+ *                    the animal still has horns at forty metres.
+ *   ITS VERBS        `moves`, read by `Enemy.beastMoveSet`. What an animal
+ *                    can DO is a property of what it is built like: a thing
+ *                    with a metre of horn carried in front of its eyes gores,
+ *                    a thing on six spindly legs stabs from outside your
+ *                    reach, a cat rakes. The archetype may override it (the
+ *                    rancor and the gundark do, in src/game/Levels.js) and
+ *                    then the archetype is the only authority for those two —
+ *                    a second copy here is exactly the defect HANDOFF §2.3
+ *                    is about, so those two plans deliberately carry none.
+ *
+ * ── WHAT DID NOT WORK, so the next person does not spend the afternoon.
+ *
+ *   Making the front legs SHORTER than the back to drop the reek's shoulders.
+ *   Every limb hangs off one `hips` bone at one height, so a short leg does
+ *   not lower the front — the IK clamps it straight and the foot hangs in the
+ *   air. The front end is dropped by pitching the TRUNK nose-down and putting
+ *   the shoulder hump on top of it, which is what the photograph shows
+ *   anyway.
+ *
+ *   Building the trunk from more spheres. A union of ellipsoids fills 0.785
+ *   of its own section however hard it is squashed — the same measurement
+ *   tools/checks/characters.mjs makes about humanoid torsos — so it reads as
+ *   a barrel from any angle. The trunk is ONE lathe now with a superellipse
+ *   section and gaussian swells at the shoulder and the haunch: fewer
+ *   triangles than the three spheres it replaces (392 against 532) and it is
+ *   not a body of revolution.
  */
-export function buildBeast(opts = {}) {
-  const S = opts.scale ?? 2.9;
-  const rig = new Rig(walkerSkeleton(S, 6), { scale: S });
-  // both of these were bare MeshStandardMaterials: an animal rendered in clay
-  const hide = hideMat(0x6d5a4a, 0.9);
-  const chitin = chitinMat(0x8f7a63, 0.55);
-  const belly = hideMat(0xa8907a, 0.92);
-  const eye = emissiveMat(0xffdd44, 2.6);
-  const tooth = boneMat(0xd8cdb4, 0.34);
 
-  /* ── carapace ── */
-  const body = rig.get('body');
-  const carapace = assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.66 * S, 16, 12); g.scale(0.74, 0.86, 1.28); return g; })(),
-      [0, 0.14 * S, -0.20 * S]],
-    // shoulder mass at the front, haunch at the back
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S, 10, 8); g.scale(0.94, 0.92, 0.9); return g; })(),
-      [0, 0.18 * S, 0.42 * S]],
-    [(() => { const g = new THREE.SphereGeometry(0.46 * S, 10, 8); g.scale(0.90, 0.94, 1.0); return g; })(),
-      [0, 0.12 * S, -0.86 * S]],
-  ], 'carapace');
-  const bm = mesh(carapace, chitin, body.obj);
-  body.primary = bm; body.parts.push(bm); body.radius = 0.7 * S;
-
-  const kb = new Kit();
-  // segmented plates over the spine, biggest over the shoulders
-  kb.row(7, (i, t) => {
-    const z = (0.42 - t * 1.30) * S;
-    const w = (0.60 - Math.abs(t - 0.35) * 0.34) * S;
-    kb.add(chitin, plateGeo(w * 0.82, 0.10 * S, 0.20 * S, 0.03 * S, 1), [0, (0.70 - Math.abs(t - 0.4) * 0.26) * S, z], [0.1, 0, 0]);
-    // a dorsal spine on each plate, tallest over the shoulder
-    const h = (0.42 - Math.abs(t - 0.3) * 0.30) * S;
-    kb.add(chitin, clawGeo(h, 0.075 * S, 0.012 * S, -0.5, 6, 3), [0, (0.72 - Math.abs(t - 0.4) * 0.26) * S, z], [0.5 - t * 0.5, 0, 0]);
-  });
-  // ribbed flanks and a soft underbelly
-  kb.pair((sx) => {
-    kb.row(5, (i, t) => kb.add(chitin, plateGeo(0.06 * S, 0.46 * S, 0.16 * S, 0.02 * S, 1),
-      [sx * (0.48 - Math.abs(t - 0.5) * 0.08) * S, 0.06 * S, (0.30 - t * 1.10) * S], [0, 0, sx * 0.24]));
-  });
-  kb.add(belly, (() => { const g = new THREE.SphereGeometry(0.46 * S, 12, 8); g.scale(0.90, 0.44, 1.30); return g; })(),
-    [0, -0.20 * S, -0.24 * S]);
-  kb.bake(body.obj);
-
-  /* ── neck and head ── */
-  const head = rig.get('head');
-  const neckParts = [];
-  // four segments swept up and forward out of the bone's origin
-  let x = 0, y = 0, z = 0, pitch = 0.55;
-  for (let i = 0; i < 4; i++) {
-    const len = (0.42 - i * 0.03) * S;
-    const r0 = (0.30 - i * 0.045) * S, r1 = (0.26 - i * 0.045) * S;
-    neckParts.push([limbGeo(len * 1.08, r0, r1, 10, true, { rings: 3, bulge: 0.06, capN: 2, capY0: 0.3, capY1: 0.3 }),
-      [x, y, z], [pitch, 0, 0]]);
-    x += 0; y += Math.cos(pitch) * len; z += Math.sin(pitch) * len;
-    pitch += 0.30;
-  }
-  // skull at the end of it: a long wedge, jaw underneath, brow over the eyes
-  const hx = 0, hy = y, hz = z;
-  neckParts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 10); g.scale(0.80, 0.72, 1.55); return g; })(),
-    [hx, hy + 0.02 * S, hz + 0.30 * S], [0.32, 0, 0]]);
-  neckParts.push([plateGeo(0.30 * S, 0.14 * S, 0.44 * S, 0.05 * S, 1), [hx, hy - 0.12 * S, hz + 0.36 * S], [0.36, 0, 0]]);
-  neckParts.push([plateGeo(0.36 * S, 0.10 * S, 0.26 * S, 0.03 * S, 1), [hx, hy + 0.16 * S, hz + 0.18 * S], [0.28, 0, 0]]);
-  const skull = assemble(neckParts, 'skull');
-  const hm = mesh(skull, hide, head.obj);
-  head.primary = hm; head.parts.push(hm); head.radius = 0.6 * S;
-
-  const kh = new Kit();
-  kh.pair((sx) => {
-    // eye set under the brow, and the horn above it
-    kh.add(eye, new THREE.SphereGeometry(0.052 * S, 7, 6), [sx * 0.155 * S, hy + 0.14 * S, hz + 0.20 * S]);
-    kh.add(chitin, clawGeo(0.30 * S, 0.050 * S, 0.010 * S, -0.7, 6, 3),
-      [sx * 0.13 * S, hy + 0.20 * S, hz + 0.06 * S], [-0.5, sx * 0.25, 0]);
-    // mandibles sweeping forward and in
-    kh.add(chitin, clawGeo(0.52 * S, 0.070 * S, 0.014 * S, 0.85, 6, 4),
-      [sx * 0.17 * S, hy - 0.13 * S, hz + 0.30 * S], [1.30, -sx * 0.30, 0]);
-    // teeth along the jaw
-    kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.115 * S, hy - 0.20 * S, hz + (0.22 + t * 0.34) * S], [0.5, 0, 0]));
-    // the upper row hangs from the palate, below the skull's own shell — at
-    // hy - 0.05 every one of these was inside the head
-    kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.09 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.115 * S, hy - 0.09 * S, hz + (0.24 + t * 0.32) * S], [2.55, 0, 0]));
-    // neck plates
-    kh.row(3, (i, t) => kh.add(chitin, plateGeo(0.10 * S, 0.26 * S, 0.10 * S, 0.03 * S, 1),
-      [sx * 0.24 * S, (0.18 + t * 0.52) * S, (0.10 + t * 0.34) * S], [0.6, 0, sx * 0.3]));
-  });
-  kh.bake(head.obj);
-
-  /* ── legs ── */
-  for (let i = 0; i < 6; i++) {
-    for (const [name, r0, r1, mat, bulge] of [[`hipL${i}`, 0.13, 0.105, chitin, 0.08], [`femur${i}`, 0.12, 0.075, hide, 0.16],
-                                              [`tibia${i}`, 0.078, 0.045, chitin, 0.12], [`tarsus${i}`, 0.048, 0.018, chitin, 0.05]]) {
-      const b = rig.get(name);
-      if (!b) continue;
-      const m = mesh(limbGeo(b.length, r0 * S, r1 * S, 8, true, { rings: 4, bulge, bulgeAt: 0.26, capN: 3 }), mat, b.obj);
-      m.userData.limb = { r0: r0 * S, r1: r1 * S, seg: 8 };
-      b.parts.push(m); b.primary = m; b.radius = r0 * S;
-    }
-    const hip = rig.get(`hipL${i}`);
-    if (hip) {
-      const k = new Kit();
-      k.add(chitin, new THREE.SphereGeometry(0.140 * S, 8, 6), [0, hip.length, 0]);
-      k.bake(hip.obj);
-    }
-    const femur = rig.get(`femur${i}`);
-    if (femur) {
-      const k = new Kit();
-      const L = femur.length;
-      // a chitin plate over the outside of the thigh, and the knee spur
-      k.add(chitin, limbPlate(femur, L * 0.10, L * 0.70, 2.6, { thick: 0.022 * S, seg: 7, gap: 0.008 * S }), [0, L * 0.10, 0]);
-      k.add(chitin, clawGeo(0.30 * S, 0.055 * S, 0.012 * S, -0.55, 5, 3), [0, L * 0.96, 0], [-0.9, 0, 0]);
-      k.bake(femur.obj);
-    }
-    const tibia = rig.get(`tibia${i}`);
-    if (tibia) {
-      const k = new Kit();
-      const L = tibia.length;
-      k.add(chitin, limbPlate(tibia, L * 0.08, L * 0.62, 2.4, { thick: 0.018 * S, seg: 7, gap: 0.006 * S }), [0, L * 0.08, 0]);
-      k.bake(tibia.obj);
-    }
-    const tarsus = rig.get(`tarsus${i}`);
-    if (tarsus) {
-      const k = new Kit();
-      const L = tarsus.length;
-      // the hooked claw it actually walks on
-      k.add(chitin, clawGeo(0.46 * S, 0.046 * S, 0.010 * S, 1.15, 6, 4), [0, L * 0.92, 0], [0.1, 0, 0]);
-      k.add(chitin, clawGeo(0.16 * S, 0.030 * S, 0.008 * S, 0.7, 5, 3), [0, L * 0.88, 0], [-1.5, 0, 0]);
-      k.bake(tarsus.obj);
+/**
+ * The bones, from the plan. Same NAMES as `walkerSkeleton` — `hips`, `body`,
+ * `head`, and `hipL{i}`/`femur{i}`/`tibia{i}`/`tarsus{i}` per limb — because
+ * those names are load-bearing all the way down: Ragdoll's joint table is
+ * keyed on the prefixes, `Enemy.capsules` walks the bone list, `Actor.cut`
+ * reparents subtrees, and `_poseWalker` solves `femur{i}`→`tibia{i}`. What
+ * changes is every NUMBER, which is the part that was shared and should never
+ * have been.
+ *
+ * An ARM is parented to `body` rather than to `hips`, so it rides the trunk's
+ * pitch the way a real shoulder does; a LEG hangs off the hips.
+ */
+function creatureSkeleton(S, P) {
+  const s = S;
+  const out = [
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0] },
+    { name: 'body', parent: 'hips', offset: [0, P.trunk[0] * s, P.trunk[1] * s], length: P.trunk[2] * s, rest: [0, 1, 0] },
+    { name: 'head', parent: 'body', offset: [0, P.headAt[0] * s, P.headAt[1] * s], length: 0.4 * s, rest: [0, 1, 0] },
+  ];
+  let i = 0;
+  for (const L of P.limbs) {
+    for (const side of [1, -1]) {
+      const arm = L.role === 'arm';
+      const socket = 0.10 * s;
+      out.push({ name: `hipL${i}`, parent: arm ? 'body' : 'hips',
+        offset: [L.x * s * side, L.y * s, L.z * s], length: socket,
+        rest: [side, arm ? -0.35 : 0.2, 0] });
+      out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, socket, 0],
+        length: L.femur * s, rest: [side * 0.35, arm ? -0.9 : L.knee, L.knee > 0 ? 0 : 0.3] });
+      out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, L.femur * s, 0],
+        length: L.tibia * s, rest: [side * 0.1, -1, 0] });
+      out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, L.tibia * s, 0],
+        length: L.tarsus * s, rest: arm ? [0, -0.9, 0.3] : [0, -0.4, 0.6] });
+      i++;
     }
   }
-  return { rig, palette: { hide, chitin, belly, eye }, scale: S };
+  return out;
 }
 
-/* ── the menagerie: four-legged arena beasts ─────────────────────────── */
-
 /**
- * FOUR CREATURES OUT OF ONE BUILDER, and the reason they are one builder is the
- * reason they read as different animals: everything that differs between them
- * is a PROPORTION, and proportion is what the eye actually uses to tell one
- * animal from another at fifty metres.
+ * THE FIVE PLANS.
  *
- *   the CHARGER   short, deep and front-heavy: shoulder mass at 1.45× the
- *                 haunch, legs at 0.78 of standard length, and a horn boss and
- *                 frill carried out in front of the eyes. Everything about the
- *                 silhouette says the weight is at the head end and it is
- *                 coming at you.
- *   the STALKER   long, low and back-heavy: the body stretched to 1.5× and
- *                 slung at 0.62 of the charger's hip height, legs at 1.06, a
- *                 quill mane over the shoulders and a tail as long as the body
- *                 again. Everything says it is about to leave the ground.
- *   the BRUTE     the largest thing on four legs in the game: shoulders at
- *                 1.95× the haunch on legs at 0.86, a skull half as wide again
- *                 as the charger's, and a spine of scutes. Its silhouette is a
- *                 WALL, and the whole of its answer is that you cannot be
- *                 beside it — see the slam in src/game/Enemy.js.
- *   the POUNCER   all leg: 1.24 of standard on a body barely longer than the
- *                 charger's, shoulders forward at 1.35 for the gather, and the
- *                 stalker's quill mane. It reads as coiled, which is what it
- *                 is: it crosses twelve metres in one bound.
+ * Fields, and every one of them was a shared constant before:
  *
- * ── AND THE DIFFERENCES ARE A TABLE, not a boolean.
- *
- * This was `const heavy = opts.kind !== 'stalker'` and twenty-three `heavy ? a
- * : b` expressions, which is a builder that can express exactly two animals and
- * whose third row has to be a third branch on every one of those lines. Every
- * one of the twenty-three is now a FIELD of QUADRUPED_KINDS below, so a new
- * creature is a row of numbers and the geometry underneath is untouched.
- *
- * The charger's and the stalker's rows hold exactly the values their branches
- * held, so both animals emit the geometry they always emitted — checked, not
- * assumed: tools/checks/beasts.mjs fingerprints the built vertices of every
- * kind against the shipped pair.
- *
- * All four stand on `walkerSkeleton(S, 4)`, so all four inherit the quadruped
- * gait, the sever points, the ragdoll and `Enemy.capsules`'s four-leg case for
- * free. The acklay's six-legged builder is left alone: it is the one creature
- * whose whole identity is that it has six legs.
- *
- * The head goes on the HEAD BONE and is built FORWARD out of it, the same
- * trick and for the same reason `buildBeast` documents: walkerSkeleton hangs
- * that bone 0.6 units behind the body, so a skull placed at its origin is
- * inside the ribcage and invisible from every angle.
+ *   hip      hip-bone height above the ground, ×scale. THE first read: the
+ *            reek stands at 0.88 and the acklay at 1.62, where both used to
+ *            stand at 1.5–1.6.
+ *   trunk    [y, z, length] of the body bone off the hips, ×scale.
+ *   pitch    trunk pitch, radians. 0 is a level quadruped spine along +Z;
+ *            1.02 stands the rancor up on its hind legs.
+ *   girth    trunk radius ×scale, and `swells` the two masses on it as
+ *            [where along it, how much, how wide] — limbGeo's own gaussians.
+ *   limbs    the pairs, each expanded left and right. `role` is 'leg' or
+ *            'arm'; `knee` is the femur's rest pitch (+ is the insect knee
+ *            that stands above the back, − the mammal stifle below it);
+ *            `pole` is where the joint bends toward, ×scale, in the animal's
+ *            own frame — the single number that most changes the outline.
+ *   step/lift stride length and foot clearance, ×scale.
+ *   rear     metres of hip travel per unit of an attack's `rise`, ×scale.
+ *   moves    the verbs its anatomy affords. See the header.
  */
-export const QUADRUPED_KINDS = {
+export const CREATURE_PLANS = {
+  /**
+   * THE REEK — `assets/reference/units/creatures/Reek.jpeg`.
+   *
+   * Everything about it is at ground level. The photograph is a wall of
+   * shoulder with a head hanging off the FRONT of it at the height of its own
+   * knees, three horns and a bony frill carried in front of the eyes, and
+   * legs so short the belly is barely a metre off the sand. It reads at forty
+   * metres as a dark block wider than it is tall (`more arena 1.jpg`), which
+   * is why the hip is 0.88 where the old shared value was 1.6: at 2.4 scale
+   * that is 2.11 m at the hip instead of 3.84, and 3.84 m is a giraffe.
+   */
   charger: {
     hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
-    long: 1.0, front: 1.45, leg: 0.78, back: 'scutes', face: 'horned', foot: 'hoof',
-    tailN: 4, tailReach: 0.9, tailR: 0.13, tailPitch: 0.55, tailCurl: 0.10,
-    neckSegs: 3, neckLen: 0.40, neckR: 0.30, neckPitch: 0.32, neckCurl: -0.10,
-    skull: [0.98, 0.86, 1.24], jaw: 0.38,
+    hip: 0.88, trunk: [0.16, -0.22, 1.42], pitch: -0.13, girth: 0.47,
+    swells: [[0.74, 0.52, 0.24], [0.24, 0.24, 0.30]],
+    section: { n0: 2.8, n1: 3.4, back: 0.02, keel: 0.05, waist: 0.06 },
+    headAt: [0.24, 1.30], neck: [2, 0.22, 0.30, -0.42, -0.12], head: 'horned',
+    back: 'scutes', tail: [3, 0.44, 0.13, 0.5, 0.2],
+    limbs: [
+      // fore: thick, poled FORWARD so the elbow leads — a bull's column leg
+      { role: 'leg', x: 0.40, y: 0.06, z: 0.74, plant: 0.62, femur: 0.48, tibia: 0.52, tarsus: 0.15,
+        knee: 0.30, girth: 1.16, pole: [0.30, 0.55, 1.30], foot: 'hoof' },
+      // hind: the hock points back, which is the other half of a mammal's leg
+      { role: 'leg', x: 0.42, y: 0.04, z: -0.60, plant: 0.64, femur: 0.48, tibia: 0.52, tarsus: 0.15,
+        knee: 0.30, girth: 1.0, pole: [0.30, 0.55, -1.30], foot: 'hoof' },
+    ],
+    step: 0.80, lift: 0.28, rear: 0.34,
+    /* Its verbs, and both of the new ones come off the head. A metre of horn
+     * carried in front of the eyes is not a claw: it GORES, which is a
+     * committed run that aims when the drive begins, and it TOSSES, which is
+     * the same horn hooking under you — the biggest upward impulse in the
+     * game and the only attack that answers "I am standing in front of it"
+     * with height rather than with damage. */
+    moves: ['gore', 'toss', 'charge'],
   },
+
+  /**
+   * THE NEXU — `assets/reference/units/creatures/Nexu more.webp`.
+   *
+   * Long, low and horizontal: a body twice the length of the reek's at two
+   * thirds of its height, a quilled mane raked back off the shoulders, and a
+   * tail as long again as the animal that whips out behind it. Four eyes in
+   * two pairs, and a mouth that is wider than the skull it is in. The tail is
+   * 2.9 of scale — nearly five metres on a 1.7 body — because at range the
+   * tail IS the read: a low animal with a horizontal line trailing off it
+   * cannot be mistaken for anything else on the sand.
+   */
   stalker: {
     hide: 0x7a3a2c, plate: 0x4a3128, belly: 0xa8846a, eye: 0x66ff9a,
-    long: 1.5, front: 0.90, leg: 1.06, back: 'mane', face: 'fanged', foot: 'claw',
-    tailN: 7, tailReach: 2.2, tailR: 0.10, tailPitch: 0.18, tailCurl: -0.06,
-    neckSegs: 4, neckLen: 0.34, neckR: 0.20, neckPitch: 0.10, neckCurl: 0.02,
-    skull: [0.66, 0.62, 1.72], jaw: 0.48,
+    hip: 0.86, trunk: [0.12, -0.60, 1.72], pitch: 0.05, girth: 0.33,
+    swells: [[0.78, 0.34, 0.22], [0.26, 0.26, 0.28]],
+    section: { n0: 2.4, n1: 2.8, back: 0.04, keel: 0.02, waist: 0.10 },
+    headAt: [0.20, 1.18], neck: [3, 0.24, 0.20, 0.06, 0.02], head: 'fanged',
+    back: 'mane', tail: [7, 2.90, 0.085, 0.10, -0.05],
+    limbs: [
+      { role: 'leg', x: 0.26, y: 0.04, z: 0.86, plant: 0.34, femur: 0.50, tibia: 0.54, tarsus: 0.16,
+        knee: 0.35, girth: 0.92, pole: [0.22, 0.50, 1.15], foot: 'claw' },
+      { role: 'leg', x: 0.28, y: 0.02, z: -0.74, plant: 0.36, femur: 0.52, tibia: 0.56, tarsus: 0.16,
+        knee: 0.40, girth: 0.96, pole: [0.22, 0.60, -1.20], foot: 'claw' },
+    ],
+    step: 1.20, lift: 0.44, rear: 0.42,
+    /* A cat does not swing a claw once. The RAKE is the shortest attack in the
+     * game — 0.32 s to the hit against the sweep's 0.55 — and it is worth two
+     * thirds of the damage, so what makes it dangerous is that it arrives
+     * before you have finished reading it. */
+    moves: ['rake', 'pounce', 'charge'],
   },
-  /* THE BRUTE. Grey and unpainted, because it is the only creature in the
-   * roster whose read is MASS rather than markings — a shape this big does not
-   * need a colour to be recognised, and a bright one would fight the arena
-   * sand. Shoulders at 1.95 against the charger's 1.45 with the same haunch,
-   * so the front half is nearly half again as wide; the skull is 1.30 across
-   * where the charger's is 0.98; the tail is a stub, because a tail is a
-   * counterweight for something that runs and this does not run. */
+
+  /**
+   * THE RANCOR — `assets/reference/units/creatures/Rancor.png` and
+   * `Rancor  more.jpg`.
+   *
+   * A BIPED, which is the whole point of rebuilding it: it was a four-legged
+   * animal with the biggest numbers in the table, so the largest thing on the
+   * sand had the same outline as the smallest. The reference is not ambiguous
+   * — two massive hind legs, two arms long enough to put the knuckles on the
+   * ground, a head with no neck at all fused straight into the shoulders, and
+   * a tail. It stands 1.15 of scale at the hip and pitches its trunk up 1.02
+   * radians, so at 3.4 scale the crown is near six metres: a tower, against
+   * the reek's block.
+   *
+   * `moves` is deliberately absent — src/game/Levels.js declares the slam and
+   * argues for it there, and a copy here would be the twin HANDOFF §2.3 is
+   * about.
+   */
   brute: {
     hide: 0x6b6152, plate: 0x585044, belly: 0x8a7f6d, eye: 0xffd24a,
-    long: 1.05, front: 1.95, leg: 0.86, back: 'scutes', face: 'fanged', foot: 'claw',
-    tailN: 3, tailReach: 0.6, tailR: 0.15, tailPitch: 0.70, tailCurl: 0.14,
-    neckSegs: 2, neckLen: 0.34, neckR: 0.38, neckPitch: 0.42, neckCurl: -0.16,
-    skull: [1.30, 1.06, 1.10], jaw: 0.46,
+    hip: 1.15, trunk: [0.10, -0.10, 1.24], pitch: 1.02, girth: 0.54,
+    swells: [[0.80, 0.44, 0.26], [0.30, 0.20, 0.34]],
+    section: { n0: 2.6, n1: 3.2, back: 0.03, keel: 0.06, waist: 0.04 },
+    headAt: [1.06, 0.46], neck: [1, 0.16, 0.34, 0.30, 0], head: 'tusked',
+    back: 'ridge', tail: [5, 1.30, 0.16, 0.90, 0.16],
+    limbs: [
+      /* The hind legs, and they are plantigrade: the reference stands flat on
+       * a broad foot rather than up on a hock, so the pole is FORWARD and low
+       * and the tarsus is long enough to be a sole. */
+      { role: 'leg', x: 0.34, y: 0.02, z: -0.10, plant: 0.46, femur: 0.62, tibia: 0.64, tarsus: 0.26,
+        knee: 0.20, girth: 1.30, pole: [0.34, 0.60, 1.20], foot: 'paw' },
+      /* The arms. Parented to `body`, mounted 0.66 up the trunk and 0.30
+       * forward of it, and 1.40 of scale of reach between shoulder and claw —
+       * long enough that the knuckles touch the sand when it hunches, which
+       * is the pose every photograph of one is in. */
+      { role: 'arm', x: 0.46, y: 0.66, z: 0.30, femur: 0.66, tibia: 0.68, tarsus: 0.30,
+        knee: -0.9, girth: 1.05, pole: [1.30, -0.20, -0.90], foot: 'talon',
+        hand: [0.62, -0.42, 0.72] },
+    ],
+    step: 0.72, lift: 0.34, rear: 0.30,
   },
-  /* THE POUNCER. Legs at 1.24 — longer than anything else here, including the
-   * stalker — over a body only a quarter longer than the charger's, which is
-   * the proportion that reads as "about to jump" rather than "running". The
-   * mane is the stalker's, and that is deliberate: two predators in the same
-   * arena SHOULD share a family look, and everything below the shoulder tells
-   * them apart. */
+
+  /**
+   * THE GUNDARK — built off `assets/reference/units/creatures/wampa.jpg` and
+   * `Wampas preyed on tauntauns.webp`, which are the reference set's other
+   * upright body and a completely different one from the rancor's.
+   *
+   * Where the rancor is a hunched tower with its head thrown forward, this is
+   * a barrel standing straight up with the head sunk BETWEEN the shoulders,
+   * arms held high and forward rather than hanging, two horns curving
+   * sideways out of the skull, and a coat of shaggy fringes that breaks the
+   * outline into a fur silhouette instead of a smooth one. Two thirds the
+   * rancor's height and half again the reek's, so the three read as three
+   * sizes as well as three shapes.
+   */
   pouncer: {
     hide: 0x8a7b5c, plate: 0x6b4a2c, belly: 0xb0a084, eye: 0xff6a2a,
-    long: 1.25, front: 1.35, leg: 1.24, back: 'mane', face: 'fanged', foot: 'claw',
-    tailN: 5, tailReach: 1.1, tailR: 0.09, tailPitch: 0.30, tailCurl: -0.02,
-    neckSegs: 3, neckLen: 0.32, neckR: 0.24, neckPitch: 0.20, neckCurl: -0.04,
-    skull: [0.82, 0.78, 1.36], jaw: 0.42,
+    hip: 0.92, trunk: [0.08, -0.04, 1.00], pitch: 1.32, girth: 0.46,
+    swells: [[0.76, 0.40, 0.30], [0.28, 0.18, 0.30]],
+    section: { n0: 2.4, n1: 3.0, back: 0.02, keel: 0.04, waist: 0.08 },
+    headAt: [0.94, 0.20], neck: [1, 0.14, 0.30, 0.10, 0], head: 'horned-ape',
+    back: 'shag', tail: [0, 0, 0, 0, 0],
+    limbs: [
+      { role: 'leg', x: 0.30, y: 0.02, z: 0.02, plant: 0.42, femur: 0.50, tibia: 0.52, tarsus: 0.20,
+        knee: 0.30, girth: 1.20, pole: [0.36, 0.70, 1.10], foot: 'paw' },
+      { role: 'arm', x: 0.44, y: 0.58, z: 0.16, femur: 0.54, tibia: 0.58, tarsus: 0.22,
+        knee: -0.9, girth: 1.00, pole: [1.30, 0.10, -1.00], foot: 'talon',
+        // held UP and forward — the wampa's reaching pose, not the rancor's hang
+        hand: [0.60, 0.20, 0.72] },
+    ],
+    step: 0.66, lift: 0.42, rear: 0.44,
+  },
+
+  /**
+   * THE ACKLAY — `assets/reference/units/creatures/Acklay more.webp` and
+   * `maps/colosseum/fighting monster in arena.jpg`.
+   *
+   * SIX legs, and the body is the small part. In the photograph the trunk is
+   * a shell about a metre across hung in the middle of legs three times its
+   * length, splayed so wide that the animal's footprint is more than twice
+   * its own body, with the knees standing above the back and the legs coming
+   * to POINTS in the sand — there is no foot on the end of an acklay's leg.
+   * The head hangs forward and DOWN off the front of the shell on a short
+   * neck, under a flat crest that sweeps back over the shoulders.
+   *
+   * The old one had this backwards: a 1.9 m carapace on legs planted 1.35 of
+   * scale out, at the same hip height as everything else, with the neck
+   * sweeping UP. Here the girth is 0.50 against legs of 2.05, the feet plant
+   * at 1.90 of scale — the widest stance in the game by half again — and the
+   * hip stands at 1.62. It is the tripod from `more arena 1.jpg`.
+   */
+  acklay: {
+    hide: 0x6d5a4a, plate: 0x8f7a63, belly: 0xa8907a, eye: 0xffdd44,
+    hip: 1.62, trunk: [0.14, -0.30, 1.06], pitch: 0.06, girth: 0.50,
+    swells: [[0.72, 0.30, 0.26], [0.28, 0.24, 0.30]],
+    section: { n0: 3.0, n1: 3.6, back: 0.04, keel: 0.08, waist: 0.05 },
+    headAt: [0.06, 0.86], neck: [3, 0.30, 0.22, -0.30, -0.10], head: 'mandibles',
+    back: 'ridge', tail: [0, 0, 0, 0, 0],
+    limbs: [
+      { role: 'leg', x: 0.50, y: 0.10, z: 0.78, plant: 1.62, femur: 1.10, tibia: 1.20, tarsus: 0.52,
+        knee: 0.95, girth: 0.62, pole: [1.40, 3.10, 0.50], foot: 'spike' },
+      { role: 'leg', x: 0.54, y: 0.06, z: 0.02, plant: 1.92, femur: 1.14, tibia: 1.24, tarsus: 0.52,
+        knee: 0.95, girth: 0.66, pole: [1.50, 3.20, 0], foot: 'spike' },
+      { role: 'leg', x: 0.50, y: 0.02, z: -0.72, plant: 1.62, femur: 1.10, tibia: 1.20, tarsus: 0.52,
+        knee: 0.95, girth: 0.62, pole: [1.40, 3.10, -0.50], foot: 'spike' },
+    ],
+    step: 1.40, lift: 0.52, rear: 0.26,
+    /* The REACH problem, stated as two moves. The STAB is a foreleg driven
+     * out from 3.8 m — further than anything else in the game can hit from,
+     * and further than the player's own blade — and the SNATCH is the
+     * mandibles closing and DRAGGING you in, which is the only attack on the
+     * field whose impulse points at the animal instead of away from it. */
+    moves: ['stab', 'snatch', 'sweep'],
   },
 };
 
-export function buildQuadruped(opts = {}) {
-  const S = opts.scale ?? 2.2;
-  const K = QUADRUPED_KINDS[opts.kind] || QUADRUPED_KINDS.charger;
-  const rig = new Rig(walkerSkeleton(S, 4), { scale: S });
-  const hide = hideMat(opts.hide ?? K.hide, 0.92);
-  const plate = chitinMat(opts.plate ?? K.plate, 0.52);
-  const belly = hideMat(opts.belly ?? K.belly, 0.94);
-  const eye = emissiveMat(opts.eye ?? K.eye, 2.8);
-  const tooth = boneMat(0xd6cbb0, 0.34);
+/**
+ * Where each foot plants, how the joint bends, and how high the ankle rides —
+ * derived from the plan rather than typed a second time, because
+ * `_poseWalker` needs exactly the numbers `creatureSkeleton` built from.
+ *
+ * `ankle` is the one that was silently wrong for years. `solveIK` puts the
+ * TIBIA's tip on the target and the tarsus hangs on past it, so planting the
+ * target on the ground buries the whole foot: on a 2.4-scale walker that is
+ * 0.72 m of leg below the sand. The ankle rides a fraction of the tarsus
+ * above the floor instead — nearly all of it for a leg that comes down on a
+ * point or a hoof, a third for a plantigrade sole that lies flat.
+ */
+const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, talon: 0.30 };
 
-  /* ── the barrel ── */
-  const body = rig.get('body');
-  const LONG = K.long;                             // how far the body is drawn out
-  const FRONT = K.front;                           // shoulder mass over haunch
-  const barrel = assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.60 * S, 14, 10); g.scale(0.80, 0.86, 1.20 * LONG); return g; })(),
-      [0, 0.10 * S, -0.10 * S]],
-    // shoulders forward, haunches back — the two masses a quadruped reads as
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S * FRONT, 10, 8); g.scale(0.94, 0.96, 0.92); return g; })(),
-      [0, 0.16 * S, 0.36 * S * LONG]],
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S * (2.35 - FRONT), 10, 8); g.scale(0.92, 0.94, 0.96); return g; })(),
-      [0, 0.12 * S, -0.62 * S * LONG]],
-  ], 'barrel');
-  const bm = mesh(barrel, hide, body.obj);
-  body.primary = bm; body.parts.push(bm); body.radius = 0.62 * S;
-
-  const kb = new Kit();
-  if (K.back === 'scutes') {
-    // armour scutes down the spine, heaviest over the shoulder
-    kb.row(6, (i, t) => kb.add(plate, plateGeo((0.56 - Math.abs(t - 0.3) * 0.30) * S, 0.09 * S, 0.20 * S, 0.03 * S, 1),
-      [0, (0.60 - Math.abs(t - 0.35) * 0.16) * S, (0.44 - t * 1.24) * S], [0.08, 0, 0]));
-  } else {
-    /* THE MANE, and it is the stalker's whole read at range. Quills raked back
-     * off the shoulders in three rows: a low animal with a smooth back is a
-     * dog, and a low animal with a crest is a predator. */
-    kb.row(3, (i, t) => kb.pair((sx) => kb.add(plate, clawGeo((0.62 - t * 0.16) * S, 0.045 * S, 0.008 * S, -0.35, 6, 3),
-      [sx * (0.06 + t * 0.14) * S, 0.54 * S, (0.44 - t * 0.42) * S], [-0.85, sx * (0.1 + t * 0.3), sx * (0.2 + t * 0.5)])));
-  }
-  // ribbed flanks and a soft belly — the one place on either animal a blade
-  // meets flesh rather than plate
-  kb.pair((sx) => kb.row(4, (i, t) => kb.add(plate, plateGeo(0.05 * S, 0.40 * S, 0.15 * S, 0.02 * S, 1),
-    [sx * 0.46 * S, 0.02 * S, (0.30 - t * 1.00 * LONG) * S], [0, 0, sx * 0.2])));
-  kb.add(belly, (() => { const g = new THREE.SphereGeometry(0.44 * S, 12, 8); g.scale(0.88, 0.40, 1.24 * LONG); return g; })(),
-    [0, -0.24 * S, -0.14 * S]);
-
-  /* THE TAIL, on the body bone rather than a bone of its own: the skeleton has
-   * no tail chain, and a tail welded to the hips would swing with the hips,
-   * which is what a tail does. Six tapering segments, and the stalker's is as
-   * long again as its body. */
-  {
-    const n = K.tailN;
-    const reach = K.tailReach * S;
-    let z = -0.86 * S * LONG, y = 0.10 * S, pitch = K.tailPitch;
-    for (let i = 0; i < n; i++) {
-      const len = reach / n;
-      const r0 = K.tailR * S * (1 - i / (n + 1.5));
-      kb.add(hide, limbGeo(len * 1.12, r0, r0 * 0.78, 7, true, { rings: 2, capN: 2 }),
-        [0, y, z], [Math.PI / 2 + pitch, 0, 0]);
-      z -= Math.cos(pitch) * len; y += Math.sin(pitch) * len;
-      pitch += K.tailCurl;
+function stanceOf(S, P) {
+  const limbs = [];
+  for (const L of P.limbs) {
+    for (const side of [1, -1]) {
+      limbs.push({
+        arm: L.role === 'arm',
+        x: (L.plant ?? L.x) * S * side,
+        z: L.z * S,
+        ankle: (ANKLE_UP[L.foot] ?? 0.5) * L.tarsus * S,
+        pole: [L.pole[0] * S * side, L.pole[1] * S, L.pole[2] * S],
+        hand: L.hand ? [L.hand[0] * S * side, L.hand[1] * S, L.hand[2] * S] : null,
+        // a plantigrade sole lies along the ground; a hoof or a point drops
+        toe: L.foot === 'paw' || L.foot === 'talon' ? 0.75 : 0.30,
+      });
     }
   }
-  kb.bake(body.obj);
+  return {
+    hipHeight: P.hip * S, step: P.step * S, lift: P.lift * S,
+    rear: P.rear * S, bob: 0.05 * S, limbs,
+  };
+}
 
-  /* ── neck and head, built forward out of the head bone ── */
+/**
+ * One creature. `kind` names a row of CREATURE_PLANS.
+ *
+ * The name survives because src/game/Levels.js calls it for four of the five
+ * and that file belongs to another job this session; it is the menagerie
+ * builder, and two of the five it builds stand on two legs.
+ */
+export function buildQuadruped(opts = {}) {
+  const kind = opts.kind || 'charger';
+  const P = CREATURE_PLANS[kind] || CREATURE_PLANS.charger;
+  const S = opts.scale ?? 2.2;
+  const rig = new Rig(creatureSkeleton(S, P), { scale: S });
+  const hide = hideMat(opts.hide ?? P.hide, 0.92);
+  const plate = chitinMat(opts.plate ?? P.plate, 0.52);
+  const belly = hideMat(opts.belly ?? P.belly, 0.94);
+  const eye = emissiveMat(opts.eye ?? P.eye, 2.8);
+  const tooth = boneMat(0xd6cbb0, 0.34);
+
+  /* ── the trunk ──
+   * ONE lathe, laid along the animal's spine and reshaped by a superellipse
+   * section, with the shoulder and haunch masses as gaussian swells on the
+   * profile. See the header for why this is not three spheres. */
+  const body = rig.get('body');
+  const L = P.trunk[2] * S, R = P.girth * S;
+  const spine = limbGeo(L, R * 0.86, R * 0.72, 14, true, {
+    rings: 7, capN: 3, capY0: 0.72, capY1: 0.62, swells: P.swells,
+    section: bodySection(P.section),
+  });
+  // +Y along the spine: rotate.x = π/2 lays it along +Z, and the plan's pitch
+  // lifts the front of it — 1.02 rad stands the rancor up.
+  const trunkRot = [Math.PI / 2 - P.pitch, 0, 0];
+  const trunkParts = [[spine, [0, 0, 0], trunkRot]];
+  /* The dorsal structure goes in the PRIMARY for the plated animals and only
+   * for them: `Enemy._measurePlatform` measures a rideable deck as the
+   * highest vertex inside the middle 60% of the hull, and asserts (in
+   * tools/checks/standing.mjs) that it is not above the primary's own box —
+   * so on a body that carries a rider the ridge has to be part of the hull it
+   * is measured against, not a second mesh standing over it. */
+  if (P.back === 'ridge') {
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const y = Math.cos(P.pitch) * (0.12 + t * 0.02) * S + Math.sin(P.pitch) * (t - 0.1) * L;
+      const z = Math.cos(P.pitch) * (t - 0.1) * L - Math.sin(P.pitch) * 0.12 * S;
+      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S;
+      trunkParts.push([clawGeo(h, 0.075 * S, 0.012 * S, -0.45, 5, 3), [0, y, z], [0.55 - t * 0.9 - P.pitch, 0, 0]]);
+    }
+  }
+  const bm = mesh(assemble(trunkParts, 'trunk'), hide, body.obj);
+  body.primary = bm; body.parts.push(bm); body.radius = R;
+
+  /* ── the outline that hangs off the trunk ──
+   * One merged mesh, tagged so the LOD keeps it: this is the mane, the
+   * scutes, the shag and the tail, and every one of them is what the animal
+   * is recognised by at forty metres. */
+  const ks = new Kit();
+  const fwd = (t) => [0, Math.sin(P.pitch) * t * L + 0.10 * S, Math.cos(P.pitch) * t * L];
+  if (P.back === 'scutes') {
+    // low bony bosses down the spine, biggest over the shoulder
+    ks.row(6, (i, t) => {
+      const p = fwd(t * 0.92 - 0.02);
+      ks.add(plate, plateGeo((0.52 - Math.abs(t - 0.72) * 0.34) * S, 0.10 * S, 0.20 * S, 0.03 * S, 1),
+        [0, p[1] + 0.32 * S, p[2]], [0.08 - P.pitch, 0, 0]);
+    });
+  } else if (P.back === 'mane') {
+    /* THE MANE, and it is the nexu's whole read at range. Quills raked back
+     * off the shoulders in three rows: a low animal with a smooth back is a
+     * dog, a low animal with a crest is a predator. */
+    ks.row(4, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.62 + t * 0.30);
+      ks.add(plate, tubeGeo([[0, 0, 0, 0.040 * S], [sx * 0.10 * S, 0.30 * S, -0.16 * S, 0.028 * S],
+        [sx * 0.20 * S, 0.52 * S, -0.44 * S, 0.006 * S]], 5, { capRoot: false }),
+      [sx * (0.05 + t * 0.10) * S, p[1] + 0.22 * S, p[2]]);
+    }));
+  } else if (P.back === 'shag') {
+    /* THE COAT. A wampa's outline is not skin, it is fur breaking the
+     * edge — so the shag is authored as tapered clumps standing off the
+     * flanks and the shoulders rather than as a texture, which is the one
+     * thing that survives being a silhouette. */
+    ks.row(4, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.10 + t * 0.80);
+      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 5, 2),
+        [sx * (0.30 + t * 0.10) * S, p[1] + 0.10 * S, p[2] - 0.06 * S], [1.9, 0, sx * (0.9 - t * 0.4)]);
+    }));
+    ks.row(3, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.74 + t * 0.20);
+      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 5, 2),
+        [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
+    }));
+  }
+  /* THE TAIL, on the body bone because the skeleton has no tail chain, swept
+   * as ONE tube rather than as a chain of capped limbs — six capped segments
+   * bury five pairs of end caps inside themselves, which is 60% of the
+   * triangles on geometry nobody can see (see tubeGeo). */
+  if (P.tail[0] > 0) {
+    const [n, reach, r0, pitch0, curl] = P.tail;
+    const nodes = [];
+    let y = 0.06 * S, z = -0.06 * S, a = pitch0;
+    const seg = (reach * S) / n;
+    for (let i = 0; i <= n; i++) {
+      nodes.push([0, y, z, r0 * S * (1 - i / (n + 1.2))]);
+      z -= Math.cos(a) * seg; y += Math.sin(a) * seg; a += curl;
+    }
+    ks.add(hide, tubeGeo(nodes, 7), [0, 0, 0]);
+  }
+  // ribbed flanks and a soft belly — the one place a blade meets flesh
+  ks.pair((sx) => ks.row(4, (i, t) => {
+    const p = fwd(0.12 + t * 0.66);
+    ks.add(plate, plateGeo(0.05 * S, 0.34 * S, 0.15 * S, 0.02 * S, 1),
+      [sx * R * 0.92, p[1] - 0.04 * S, p[2]], [0, 0, sx * 0.2]);
+  }));
+  {
+    const p = fwd(0.44);
+    ks.add(belly, limbGeo(L * 0.70, R * 0.52, R * 0.42, 10, true, { rings: 3, capN: 2 }),
+      [0, p[1] - R * 0.60, p[2] - L * 0.32], trunkRot);
+  }
+  markSilhouette(ks.bake(body.obj));
+
+  /* ── the head ── */
   const head = rig.get('head');
-  const parts = [];
-  let hy = 0, hz = 0, pitch = K.neckPitch;
-  const segs = K.neckSegs;
-  for (let i = 0; i < segs; i++) {
-    const len = K.neckLen * S;
-    const r0 = K.neckR * S - i * 0.03 * S;
-    parts.push([limbGeo(len * 1.10, r0, r0 * 0.88, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
-      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
-    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
-    pitch += K.neckCurl;
-  }
-  // the skull: a long wedge on both, but the charger's is a brick and the
-  // stalker's is a blade
-  parts.push([(() => {
-    const g = new THREE.SphereGeometry(0.26 * S, 12, 10);
-    g.scale(K.skull[0], K.skull[1], K.skull[2]);
-    return g;
-  })(), [0, hy + 0.02 * S, hz + 0.24 * S]]);
-  parts.push([plateGeo(0.26 * S, 0.12 * S, K.jaw * S, 0.04 * S, 1),
-    [0, hy - 0.13 * S, hz + 0.30 * S], [0.10, 0, 0]]);
-  const skull = assemble(parts, 'skull');
-  const hm = mesh(skull, hide, head.obj);
-  head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth });
 
-  const kh = new Kit();
-  if (K.face === 'horned') {
-    /* THE FRILL AND THE HORNS. A charging animal's threat display is carried
-     * where you will hit it, and it is what makes the head-on silhouette a
-     * wall rather than a face — which is the whole counter-play: you do not
-     * meet this from the front. */
-    kh.add(plate, plateGeo(1.00 * S, 0.62 * S, 0.10 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.10 * S], [-0.30, 0, 0]);
-    kh.pair((sx) => {
-      kh.add(plate, clawGeo(0.66 * S, 0.085 * S, 0.016 * S, 0.55, 7, 4),
-        [sx * 0.21 * S, hy + 0.12 * S, hz + 0.28 * S], [1.05, sx * 0.42, 0]);
-      kh.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 6), [sx * 0.17 * S, hy + 0.10 * S, hz + 0.22 * S]);
-    });
-    // a nose horn on the centre line, which is the thing that actually hits you
-    kh.add(plate, clawGeo(0.46 * S, 0.090 * S, 0.014 * S, -0.30, 7, 4), [0, hy + 0.06 * S, hz + 0.44 * S], [0.55, 0, 0]);
-  } else {
-    /* FOUR EYES, in two pairs. It is one line of geometry and it is the single
-     * most alien thing about this animal — a face with the wrong number of
-     * eyes on it reads as wrong from further away than any amount of horn. */
-    kh.pair((sx) => {
-      kh.add(eye, new THREE.SphereGeometry(0.040 * S, 7, 6), [sx * 0.12 * S, hy + 0.09 * S, hz + 0.24 * S]);
-      kh.add(eye, new THREE.SphereGeometry(0.028 * S, 6, 5), [sx * 0.15 * S, hy + 0.02 * S, hz + 0.14 * S]);
-      // the fangs, and the whiskers of quill either side of the jaw
-      kh.add(tooth, clawGeo(0.30 * S, 0.032 * S, 0.005 * S, 0.5, 5, 3),
-        [sx * 0.09 * S, hy - 0.14 * S, hz + 0.40 * S], [0.9, 0, 0]);
-      kh.add(plate, clawGeo(0.44 * S, 0.026 * S, 0.005 * S, -0.4, 5, 3),
-        [sx * 0.15 * S, hy + 0.02 * S, hz + 0.10 * S], [-0.6, sx * 0.9, 0]);
-    });
-  }
-  // the jaw teeth, on both
-  kh.pair((sx) => kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
-    [sx * 0.10 * S, hy - 0.18 * S, hz + (0.18 + t * 0.28) * S], [0.5, 0, 0])));
-  kh.bake(head.obj);
-
-  /* ── legs. The charger's are short and thick and the stalker's long and
-   * light, which is 78% and 106% of the same numbers. */
-  const LEG = K.leg;
-  for (let i = 0; i < 4; i++) {
+  /* ── the limbs ── */
+  for (let i = 0; i < P.limbs.length * 2; i++) {
+    const L2 = P.limbs[Math.floor(i / 2)];
+    const g = L2.girth;
+    const arm = L2.role === 'arm';
     for (const [name, r0, r1, mat, bulge] of [
-      [`hipL${i}`, 0.17, 0.14, plate, 0.08], [`femur${i}`, 0.16, 0.10, hide, 0.20],
-      [`tibia${i}`, 0.105, 0.058, hide, 0.14], [`tarsus${i}`, 0.060, 0.030, plate, 0.05]]) {
+      [`hipL${i}`, 0.15, 0.13, plate, 0.06], [`femur${i}`, 0.15, 0.096, hide, 0.20],
+      [`tibia${i}`, 0.10, 0.055, hide, 0.14], [`tarsus${i}`, 0.058, 0.026, plate, 0.05]]) {
       const b = rig.get(name);
       if (!b) continue;
-      const rr0 = r0 * S * LEG, rr1 = r1 * S * LEG;
+      const rr0 = r0 * S * g, rr1 = r1 * S * g;
       const m = mesh(limbGeo(b.length, rr0, rr1, 8, true, { rings: 4, bulge, bulgeAt: 0.26, capN: 3 }), mat, b.obj);
       m.userData.limb = { r0: rr0, r1: rr1, seg: 8 };
       b.parts.push(m); b.primary = m; b.radius = rr0;
     }
-    const hip = rig.get(`hipL${i}`);
-    if (hip) { const k = new Kit(); k.add(plate, new THREE.SphereGeometry(0.16 * S * LEG, 8, 6), [0, hip.length, 0]); k.bake(hip.obj); }
     const femur = rig.get(`femur${i}`);
     if (femur) {
-      const k = new Kit(); const L = femur.length;
-      k.add(plate, limbPlate(femur, L * 0.10, L * 0.66, 2.5, { thick: 0.024 * S, seg: 7, gap: 0.008 * S }), [0, L * 0.10, 0]);
+      const k = new Kit(); const len = femur.length;
+      k.add(plate, limbPlate(femur, len * 0.10, len * 0.66, arm ? 2.0 : 2.5,
+        { thick: 0.024 * S * g, seg: 6, gap: 0.008 * S }), [0, len * 0.10, 0]);
       k.bake(femur.obj);
     }
     const tarsus = rig.get(`tarsus${i}`);
     if (tarsus) {
-      const k = new Kit(); const L = tarsus.length;
-      // a hoof on the charger, a splayed claw on the stalker
-      if (K.foot === 'hoof') k.add(plate, new THREE.CylinderGeometry(0.13 * S, 0.15 * S, 0.16 * S, 8), [0, L * 0.94, 0.02 * S]);
-      else k.row(3, (j, t) => k.add(plate, clawGeo(0.34 * S, 0.036 * S, 0.008 * S, 1.05, 6, 4),
-        [(t - 0.5) * 0.14 * S, L * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
-      k.bake(tarsus.obj);
+      const k = new Kit(); const len = tarsus.length;
+      buildFootFor(k, L2.foot, plate, tooth, S * g, len);
+      markSilhouette(k.bake(tarsus.obj));
     }
   }
-  return { rig, palette: { hide, chitin: plate, belly, eye }, scale: S };
+  return {
+    rig, kind, plan: P, stance: stanceOf(S, P), moves: P.moves || null,
+    palette: { hide, chitin: plate, belly, eye }, scale: S,
+  };
+}
+
+/** The acklay keeps its own entry point — its archetype is declared in Enemy.js. */
+export function buildBeast(opts = {}) {
+  return buildQuadruped({ scale: 2.9, ...opts, kind: 'acklay' });
+}
+
+/**
+ * Tag a bone's merged extras as SILHOUETTE, which is what makes any of this
+ * visible at the range the complaint was about.
+ *
+ * `Enemy._collectLodParts` keeps one mesh per bone — the primary — and hides
+ * everything else past thirty metres, which is correct for rivets and panel
+ * lines and catastrophic for horns. A creature's outline pieces are merged
+ * per material by the Kit anyway, so keeping them costs at most two extra
+ * draw calls on a body there are never more than a handful of.
+ */
+function markSilhouette(meshes) {
+  for (const m of meshes) m.userData.silhouette = true;
+  return meshes;
+}
+
+/** What the end of a limb is: a hoof, a paw, a claw, a talon, or a point. */
+function buildFootFor(k, kind, plate, tooth, S, len) {
+  if (kind === 'spike') return;              // an acklay's leg ends in the leg
+  if (kind === 'hoof') {
+    k.add(plate, new THREE.CylinderGeometry(0.12 * S, 0.15 * S, 0.15 * S, 8), [0, len * 0.94, 0.02 * S]);
+    k.add(plate, plateGeo(0.22 * S, 0.10 * S, 0.26 * S, 0.04 * S, 1), [0, len * 0.98, 0.06 * S]);
+    return;
+  }
+  if (kind === 'paw') {
+    // a broad flat sole with short toes — plantigrade, so it reads as standing
+    k.add(plate, plateGeo(0.34 * S, 0.10 * S, 0.52 * S, 0.06 * S, 1), [0, len * 0.96, 0.14 * S]);
+    k.row(3, (j, t) => k.add(tooth, clawGeo(0.16 * S, 0.035 * S, 0.008 * S, 0.6, 5, 2),
+      [(t - 0.5) * 0.24 * S, len * 0.94, 0.36 * S], [1.2, (t - 0.5) * 0.5, 0]));
+    return;
+  }
+  if (kind === 'talon') {
+    // four long fingers with hooks — the rancor's hand, which reaches the sand
+    k.row(4, (j, t) => k.add(plate, clawGeo(0.46 * S, 0.045 * S, 0.010 * S, 1.35, 5, 3),
+      [(t - 0.5) * 0.26 * S, len * 0.86, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
+    return;
+  }
+  k.row(3, (j, t) => k.add(plate, clawGeo(0.32 * S, 0.036 * S, 0.008 * S, 1.05, 6, 3),
+    [(t - 0.5) * 0.14 * S, len * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
+}
+
+/**
+ * THE HEADS, and they are the second half of the forty-metre read.
+ *
+ * Each is a neck swept forward out of the head BONE (walkerSkeleton hangs
+ * that bone behind the body, so a skull placed at its origin is inside the
+ * ribcage and invisible from every angle — the original note is worth
+ * keeping) plus a skull, and then the pieces that make the outline: they go
+ * into a single merged mesh per material and are tagged `silhouette`, so a
+ * reek still has horns and an acklay still has a crest at the range the
+ * player was complaining about.
+ */
+function buildCreatureHead(rig, P, S, M) {
+  const head = rig.get('head');
+  const [segs, nLen, nR, nPitch, nCurl] = P.neck;
+  const parts = [];
+  let hy = 0, hz = 0, pitch = nPitch;
+  for (let i = 0; i < segs; i++) {
+    const len = nLen * S;
+    const r0 = nR * S - i * 0.024 * S;
+    parts.push([limbGeo(len * 1.12, r0, r0 * 0.9, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
+      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
+    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
+    pitch += nCurl;
+  }
+  const k = new Kit();
+  const K = P.head;
+
+  if (K === 'horned') {
+    /* THE REEK. The skull is a wide low wedge and everything that matters is
+     * carried in FRONT of the eyes: a frill across the brow, two cheek horns
+     * curving down and forward, and the nasal horn that is the thing which
+     * actually hits you. Head-on it is a wall rather than a face, which is
+     * the whole counter-play — you do not meet this one from the front. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 9); g.scale(1.02, 0.80, 1.16); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.22 * S]]);
+    parts.push([plateGeo(0.30 * S, 0.13 * S, 0.42 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.32 * S], [0.08, 0, 0]]);
+    k.add(M.plate, plateGeo(0.92 * S, 0.58 * S, 0.11 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.02 * S], [-0.34, 0, 0]);
+    k.add(M.plate, tubeGeo([[0, hy + 0.06 * S, hz + 0.40 * S, 0.095 * S],
+      [0, hy + 0.30 * S, hz + 0.60 * S, 0.055 * S], [0, hy + 0.52 * S, hz + 0.74 * S, 0.012 * S]], 7));
+    k.pair((sx) => {
+      k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
+        [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
+        [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
+      k.add(M.eye, new THREE.SphereGeometry(0.046 * S, 7, 6), [sx * 0.18 * S, hy + 0.10 * S, hz + 0.20 * S]);
+    });
+  } else if (K === 'fanged') {
+    /* THE NEXU. FOUR EYES in two pairs — one line of geometry and the single
+     * most alien thing about the animal, because a face with the wrong number
+     * of eyes on it reads as wrong from further away than any amount of horn
+     * — over a mouth that is wider than the skull, with the fangs standing
+     * OUTSIDE the lip line the way the reference photograph has them. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.94, 0.68, 1.30); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.20 * S]]);
+    parts.push([plateGeo(0.44 * S, 0.14 * S, 0.40 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.28 * S], [0.14, 0, 0]]);
+    k.pair((sx) => {
+      k.add(M.eye, new THREE.SphereGeometry(0.042 * S, 7, 6), [sx * 0.11 * S, hy + 0.10 * S, hz + 0.26 * S]);
+      k.add(M.eye, new THREE.SphereGeometry(0.030 * S, 6, 5), [sx * 0.16 * S, hy + 0.03 * S, hz + 0.16 * S]);
+      k.row(4, (i, t) => {
+        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.030 * S, 0.005 * S, 0.35, 4, 2),
+          [sx * (0.10 + t * 0.09) * S, hy - 0.10 * S, hz + (0.40 - t * 0.16) * S], [0.9 + t * 0.5, 0, 0]);
+        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.026 * S, 0.005 * S, 0.35, 4, 2),
+          [sx * (0.10 + t * 0.09) * S, hy - 0.02 * S, hz + (0.40 - t * 0.16) * S], [2.35 - t * 0.4, 0, 0]);
+      });
+      // the quill whiskers either side of the jaw
+      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.020 * S],
+        [sx * 0.40 * S, hy + 0.12 * S, hz - 0.10 * S, 0.004 * S]], 5, { capRoot: false }));
+    });
+  } else if (K === 'tusked') {
+    /* THE RANCOR. No neck: the skull is a wedge sitting straight on the
+     * shoulders, and the read is the MOUTH — a jaw as wide as the head with
+     * tusks standing up out of the lower jaw past the upper lip, which is the
+     * thing every photograph of one is showing. Two small deep-set eyes above
+     * a brow shelf, and lumps of bone over the crown. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(0.86, 0.86, 1.20); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.16 * S]]);
+    parts.push([plateGeo(0.52 * S, 0.20 * S, 0.52 * S, 0.06 * S, 1), [0, hy - 0.20 * S, hz + 0.26 * S], [0.16, 0, 0]]);
+    parts.push([plateGeo(0.46 * S, 0.16 * S, 0.30 * S, 0.05 * S, 1), [0, hy + 0.26 * S, hz + 0.02 * S], [-0.24, 0, 0]]);
+    k.pair((sx) => {
+      // the tusks: up out of the lower jaw, past the lip
+      k.add(M.tooth, tubeGeo([[sx * 0.20 * S, hy - 0.24 * S, hz + 0.42 * S, 0.055 * S],
+        [sx * 0.23 * S, hy - 0.02 * S, hz + 0.46 * S, 0.036 * S],
+        [sx * 0.24 * S, hy + 0.18 * S, hz + 0.42 * S, 0.008 * S]], 6));
+      k.add(M.tooth, tubeGeo([[sx * 0.11 * S, hy - 0.26 * S, hz + 0.46 * S, 0.040 * S],
+        [sx * 0.12 * S, hy - 0.08 * S, hz + 0.50 * S, 0.024 * S],
+        [sx * 0.12 * S, hy + 0.06 * S, hz + 0.48 * S, 0.006 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.040 * S, 6, 5), [sx * 0.16 * S, hy + 0.14 * S, hz + 0.30 * S]);
+      k.add(M.plate, clawGeo(0.26 * S, 0.070 * S, 0.014 * S, -0.5, 5, 2),
+        [sx * 0.20 * S, hy + 0.32 * S, hz - 0.06 * S], [-0.7, 0, sx * 0.4]);
+      k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.11 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
+        [sx * (0.08 + t * 0.10) * S, hy - 0.12 * S, hz + (0.30 + t * 0.14) * S], [2.5, 0, 0]));
+    });
+  } else if (K === 'horned-ape') {
+    /* THE GUNDARK. A wide flat FACE rather than a muzzle — the wampa's read
+     * is that it looks at you from the front — with the horns curving out
+     * SIDEWAYS off the temples rather than forward, an underbite of fangs,
+     * and a fur ruff round the jaw that carries the head's outline into the
+     * shoulders. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.30 * S, 12, 9); g.scale(1.10, 0.94, 0.86); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.10 * S]]);
+    parts.push([plateGeo(0.40 * S, 0.20 * S, 0.26 * S, 0.05 * S, 1), [0, hy - 0.18 * S, hz + 0.20 * S], [0.20, 0, 0]]);
+    k.pair((sx) => {
+      k.add(M.plate, tubeGeo([[sx * 0.26 * S, hy + 0.18 * S, hz - 0.02 * S, 0.060 * S],
+        [sx * 0.46 * S, hy + 0.20 * S, hz + 0.10 * S, 0.040 * S],
+        [sx * 0.56 * S, hy + 0.06 * S, hz + 0.22 * S, 0.008 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.038 * S, 6, 5), [sx * 0.13 * S, hy + 0.08 * S, hz + 0.24 * S]);
+      k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.14 * S, 0.026 * S, 0.005 * S, 0.3, 4, 2),
+        [sx * (0.07 + t * 0.08) * S, hy - 0.18 * S, hz + 0.26 * S], [0.4 + t * 0.3, 0, 0]));
+      // the ruff — fur clumps round the jaw, which is where the wampa's
+      // outline stops being a head and starts being a coat
+      k.row(3, (i, t) => k.add(M.hide, clawGeo(0.28 * S, 0.085 * S, 0.015 * S, 0.5, 5, 2),
+        [sx * (0.20 + t * 0.08) * S, hy - (0.06 + t * 0.10) * S, hz - 0.02 * S], [1.6 + t * 0.4, 0, sx * (1.1 - t * 0.3)]));
+    });
+  } else {
+    /* THE ACKLAY. A long toothed jaw hung under a flat CREST that sweeps back
+     * over the shoulders — in the reference the crest is the biggest single
+     * shape on the animal and the old build had none of it. Mandibles sweep
+     * forward and in from the corners of the jaw. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(0.78, 0.72, 1.52); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.30 * S], [0.28, 0, 0]]);
+    parts.push([plateGeo(0.28 * S, 0.13 * S, 0.44 * S, 0.05 * S, 1), [0, hy - 0.13 * S, hz + 0.36 * S], [0.32, 0, 0]]);
+    // the crest: two swept plates rather than one, so it has a ridge down it
+    k.pair((sx) => {
+      k.add(M.plate, plateGeo(0.40 * S, 0.06 * S, 0.86 * S, 0.04 * S, 2),
+        [sx * 0.19 * S, hy + 0.30 * S, hz - 0.22 * S], [-0.62, sx * 0.10, sx * 0.22]);
+      k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.10 * S, hz + 0.14 * S, 0.055 * S],
+        [sx * 0.30 * S, hy - 0.12 * S, hz + 0.44 * S, 0.034 * S],
+        [sx * 0.20 * S, hy - 0.20 * S, hz + 0.70 * S, 0.008 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.048 * S, 7, 6), [sx * 0.14 * S, hy + 0.12 * S, hz + 0.22 * S]);
+      k.row(4, (i, t) => {
+        k.add(M.tooth, clawGeo(0.10 * S, 0.021 * S, 0.004 * S, 0.3, 4, 2),
+          [sx * 0.11 * S, hy - 0.20 * S, hz + (0.24 + t * 0.34) * S], [0.5, 0, 0]);
+        k.add(M.tooth, clawGeo(0.09 * S, 0.019 * S, 0.004 * S, 0.3, 4, 2),
+          [sx * 0.11 * S, hy - 0.09 * S, hz + (0.26 + t * 0.32) * S], [2.55, 0, 0]);
+      });
+    });
+  }
+
+  const skull = assemble(parts, 'skull');
+  const hm = mesh(skull, M.hide, head.obj);
+  head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
+  markSilhouette(k.bake(head.obj));
 }
 
 /* ── bodyguard droid (boss) ──────────────────────────────────────────── */

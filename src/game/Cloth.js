@@ -1260,7 +1260,7 @@ function withCut(opts, part) {
  *      mantle     0.46 × 0.42  9 × 6      54       48 cm²
  *      cloak      0.36 × 0.86  9 × 11     99       39 cm²   ← what ships
  *      travel     0.40 × 1.06  9 × 11     99       48 cm²
- *      court      0.52 × 1.26  9 × 11     99       75 cm²
+ *      court      0.52 × 1.12  9 × 11     99       67 cm²
  *
  * so the three added cuts are all COARSER than the shipped cape and two of
  * them are the same particle count. The mantle is the only one that is
@@ -1270,9 +1270,14 @@ export const CAPE_CUTS = [
   {
     id: 'cloak', name: 'Jedi Cloak',
     blurb: 'The order\'s own: off the shoulders, past the hips, flared enough to catch a turn.',
-    // Empty on purpose — this is the garment Player._makeCloak builds, and it
-    // has to stay the thing every other cape is measured against. See withCape:
-    // an entry with no `cape` block leaves the caller's own numbers alone.
+    // THE FIVE NUMBERS ARE PLAYER._MAKECLOAK'S. They are stated here and not
+    // left blank because the wardrobe seam and the creator's preview pass a
+    // CUT and nothing else — a caller that had to know the shipped dimensions
+    // in order to ask for the shipped cape is a second copy of them at every
+    // call site. There is exactly one other copy, in Player.js, and
+    // tools/checks/preview.mjs reads it out of that file and compares it with
+    // the cape this builds, so the two cannot drift apart in silence.
+    cape: { width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0 },
   },
   {
     id: 'none', name: 'No cape',
@@ -1299,7 +1304,7 @@ export const CAPE_CUTS = [
     blurb: 'Floor-length and wide at the collar. Too much cloth to be practical, which is the point of it.',
     // The widest and longest thing anyone wears, and the lightest fabric on
     // it: this is the cape that streams. flare 1.25 against the cloak's 1.0.
-    cape: { width: 0.52, length: 1.26, cols: 9, rows: 11, flare: 1.25,
+    cape: { width: 0.52, length: 1.12, cols: 9, rows: 11, flare: 1.25,
             damping: 0.980, lift: 1.35, drift: 0.85, bendDown: 0.42, fullness: 0.82 },
   },
 ];
@@ -1330,10 +1335,10 @@ export const TABARD_CUTS = [
     hideRigid: true },
   { id: 'long', name: 'Long Tabard',
     blurb: 'One broad panel from the shoulders past the knee, loose below the belt so it swings.',
-    hideRigid: true, panels: ['front'], length: 0.74, width: 0.24 },
+    hideRigid: true, panels: ['front'], length: 0.86, width: 0.24, rows: 8 },
   { id: 'double', name: 'Doubled Tabard',
     blurb: 'Long panels front AND back, the way a Council master wears it. The heaviest cut here.',
-    hideRigid: true, panels: ['front', 'back'], length: 0.74, width: 0.24 },
+    hideRigid: true, panels: ['front', 'back'], length: 0.86, width: 0.24, rows: 8 },
   { id: 'short', name: 'Duelling Tabard',
     blurb: 'A single panel that stops at the obi. Nothing of it can be caught by a knee.',
     hideRigid: true, panels: ['front'], length: 0.40, width: 0.26, rows: 5 },

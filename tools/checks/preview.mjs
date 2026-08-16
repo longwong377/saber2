@@ -476,7 +476,13 @@ export async function run({ check, assert }) {
     assert(/assemblePreview\(p\.pivot, p\.figure, p\.saber, this\.s\)/
       .test(functionBody(menu, '_refreshPreview(rebuild')),
       'the preview no longer assembles the figure from the live settings');
-    assert(/dressPreviewFigure\(host, built, s\.robeCut\)/.test(menu),
+    // The cut is still the third argument and still comes off the live
+    // settings; what follows it now is the rest of the wardrobe — the cape,
+    // the over-panels and the belt, which are the other pieces the same
+    // function attaches. The comma is deliberate: it pins the cut's POSITION
+    // without pinning the arity, so a piece added to the wardrobe does not
+    // read as the cut coming unwired.
+    assert(/dressPreviewFigure\(host, built, s\.robeCut[,)]/.test(menu),
       'the assembled figure is not dressed in the chosen cut');
     // and behaviourally: an unknown id must not throw in a menu
     const odd = dressPreviewFigure(new THREE.Group(), buildJedi({ scale: 1 }), 'no-such-cut');

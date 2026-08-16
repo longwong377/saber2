@@ -17,7 +17,9 @@ import { BipedAnimator } from '../game/Rig.js';
 // have finished evaluating, whichever of the two the browser reaches first.
 import { handPoseOnHilt, GRIP_AT } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
-import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku } from '../game/Cloth.js';
+import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
+         CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
+         garmentTone } from '../game/Cloth.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
@@ -174,6 +176,28 @@ export const DEFAULT_SETTINGS = {
   face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5 },
   robeCut: 'temple',
   robeIndex: 1,
+  /**
+   * THE REST OF THE CLOTHES, and it is ONE object for the reason `face` is.
+   *
+   * The report: "you can only change the lower robe, like you can't change all
+   * the clothes. I want to be able to change all the clothes and also be able
+   * to choose from different capes or even go capeless." Exactly right —
+   * `robeCut` above cuts the SKIRT and `robeIndex` picks one palette for the
+   * whole figure, and every other layer on the body was the same on every
+   * character in the game.
+   *
+   * Nine keys rather than nine settings, because they are one choice made on
+   * one screen, and because nine top-level keys would each want a line in this
+   * blob, a reader declaration, and a row in three checks. `face` made the same
+   * trade for the same reason and the note over it is the precedent.
+   *
+   * The shape, the defaults and the normaliser all live in game/Cloth.js
+   * (WARDROBE / wardrobeOf), beside the garments they describe — this file
+   * stores the answer and does not own the vocabulary. `wardrobeOf` is applied
+   * on load exactly as `characterSheet` is, so a blob written by an older build
+   * or a corrupt one cannot leave a character with no cape at all.
+   */
+  wardrobe: { ...WARDROBE },
   skinIndex: 2,
   hairIndex: 1,
   /**
@@ -367,6 +391,16 @@ export const SETTING_READERS = {
   face:            ['game/World.js', 'face: this.settings.face'],
   robeCut:         ['game/World.js', 'robeCut: this.settings.robeCut'],
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
+  /**
+   * The rest of the clothes, read HERE rather than in World.spawnPlayer — and
+   * that is a statement about ownership, not a workaround. `buildJedi` takes
+   * one palette index and no garment list, and the cape, the over-panels and
+   * the belt's ends are all attached AFTER a body is built, by
+   * `attachCloak`/`attachSkirt`. `applyWardrobe` is the seam that does it, it
+   * runs on every `applyFeelSettings`, and it is what makes a piece picked on
+   * the pause card land on the body without a redeploy.
+   */
+  wardrobe:        ['ui/Menu.js', 'wardrobeOf(s.wardrobe)'],
   skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
   hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
   build:           ['game/World.js', 'build: this.settings.build'],
@@ -482,9 +516,126 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // applyInjury() for why the funnel and not the frame.
   applyInjury(world, s);
   applyLekku(world);
+  applyWardrobe(world, s);
   applyGait(world);
   tapFrame(world);
   return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
+ * Throw a garment away, MATERIALS AND ALL.
+ *
+ * `Cloak.dispose` deliberately leaves a material it was HANDED alone, because
+ * in the game the wearer owns it — and every material in a garment set here is
+ * a per-figure CLONE that nothing else will ever free (Player clones the robe
+ * palette for its cape and its skirt, attachSash clones again for the straps,
+ * and the panels take a clone of the over-cloth). A wardrobe change that only
+ * called dispose() would leak one clone per garment per change, which is a
+ * texture-bearing material every time somebody tries a different cape on.
+ * Collected by identity because the pair of sash straps share one.
+ */
+function disposeGarment(g) {
+  if (!g) return 0;
+  const mats = new Set();
+  const walk = (c) => {
+    if (!c || typeof c !== 'object') return;
+    if (c.mat && c._sharedMat) mats.add(c.mat);
+    for (const k of ['sash', 'tabard']) if (c[k]) walk(c[k]);
+    for (const arr of ['parts', 'panels']) if (Array.isArray(c[arr])) c[arr].forEach(walk);
+  };
+  walk(g);
+  g.dispose?.();
+  for (const m of mats) m.dispose?.();
+  return mats.size;
+}
+
+/**
+ * DRESS EVERY LOCAL BODY IN WHAT THE PLAYER CHOSE, on the same seam.
+ *
+ * The wardrobe is nine choices and `Player._makeCloak` takes none of them: it
+ * builds one cape at one size with one tabard under it, and src/game/Player.js
+ * and src/game/Bodies.js both belong to other lanes this round. So the pieces
+ * are put on from out here, exactly as the head-tails are — and for the same
+ * three reasons, which are worth restating because they are what make this a
+ * seam rather than a hack:
+ *
+ *   the garment has to be stepped on the GAME's clock, inside the frame the
+ *   chest it hangs from was posed in, which `attachCloak`'s own contract with
+ *   Player.update already guarantees for anything held in `p.cloak`;
+ *
+ *   it has to be disposed with the body, which is what `p.die()` already does
+ *   to whatever is in those two fields;
+ *
+ *   and it has to survive a rebuild, which is what the signature below is for.
+ *
+ * WHAT IT REBUILDS AND WHAT IT DOES NOT. Colour is a material write and costs
+ * nothing, so tones are pushed on every call. A cut is geometry, so the two
+ * garments are torn down and rebuilt only when the choice actually changed —
+ * `applyFeelSettings` runs on every checkbox tick on the pause card, and
+ * rebuilding 287 particles of cloth because somebody turned film grain off
+ * would be a stutter with no cause a player could see.
+ *
+ * THE NUMBERS THIS PASSES ARE NOT TYPED HERE. The cape's dimensions come from
+ * CAPE_CUTS (whose `cloak` entry is Player._makeCloak's own five numbers, held
+ * to them by tools/checks/preview.mjs), the skirt's from the robe cut, and the
+ * materials from the palette the builder made. The one thing this states is
+ * which pieces to build.
+ *
+ * Idempotent. Returns how many bodies were dressed.
+ */
+export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
+  if (!world || !world.scene) return 0;
+  const w = wardrobeOf(s.wardrobe);
+  const key = JSON.stringify([w.cape, w.tabard, w.sash, s.robeCut]);
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || p.isRemote || p.isLocal === false || !p.built || !p.rig || !p.palette) continue;
+    /*
+     * A BODY THAT HAS JUST BEEN BUILT IS ALREADY WEARING THE DEFAULT.
+     *
+     * `Player._makeCloak` builds the shipped cape, the shipped belt and the
+     * chosen robe cut, so seeding the signature with those means a player who
+     * has never opened these rows pays NOTHING here — no dispose, no rebuild,
+     * no reallocation — and the figure in the world is the one the builder
+     * made, particle for particle. Without the seed every deploy would tear
+     * down 287 particles of cloth and build the same 287 again.
+     */
+    if (p._wardrobeKey === undefined) {
+      p._wardrobeKey = JSON.stringify([WARDROBE.cape, WARDROBE.tabard, WARDROBE.sash, p.robeCut ?? s.robeCut]);
+    }
+    if (p._wardrobeKey !== key) {
+      p._wardrobeKey = key;
+      const S = p.rig.scale ?? 1;
+      const cut = p.robeCut ?? s.robeCut;
+      /*
+       * The skirt first, because the cape collides against the skirt's own
+       * particles and a cape built against a skirt that is about to be
+       * replaced would spend its first frame hanging through the robe.
+       */
+      if (p.built.robeSkirt) {
+        disposeGarment(p.skirt);
+        const smat = (p.palette.over || p.palette.outer).clone();
+        smat.side = THREE.DoubleSide;
+        p.skirt = attachSkirt(world.scene, p.rig, {
+          scale: S, material: smat, rigid: p.built.robeSkirt, cut,
+          sashMaterial: p.palette.trim, sash: w.sash,
+        });
+      }
+      disposeGarment(p.cloak);
+      const cmat = p.palette.outer.clone();
+      cmat.side = THREE.DoubleSide;
+      const tmat = (p.palette.over || p.palette.outer).clone();
+      tmat.side = THREE.DoubleSide;
+      p.cloak = attachCloak(world.scene, p.rig, {
+        scale: S, material: cmat, cut, cape: w.cape,
+        tabard: w.tabard, tabardMaterial: tmat,
+      });
+      if (p.cloak) p.cloak.outer = p.skirt || null;
+    }
+    tintWardrobe(p.built, w, { skirt: p.skirt, cape: p.cloak });
+    n++;
+  }
+  return n;
 }
 
 /**
@@ -942,6 +1093,11 @@ export function loadSettings() {
     // version-bumped, because a bump does not help: drainLegacy spreads the old
     // key over the new default too, so the string arrives either way.
     s.face = characterSheet(s.face);
+    // …and the same treatment for the clothes, for the same reason: a blob
+    // written before a piece existed is missing keys, and a cut id that has
+    // been renamed since must fall back to the shipped garment rather than
+    // leaving a character with no cape at all. See wardrobeOf in Cloth.js.
+    s.wardrobe = wardrobeOf(s.wardrobe);
     return s;
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
@@ -1228,13 +1384,35 @@ export function poseSaberArm(rig, saber, out = {}) {
  * lathe handed over so `attachSkirt` can hide it. tools/checks/preview.mjs
  * reads those constants back out of Player.js so this cannot drift from it in
  * silence.
+ *
+ * Those five numbers are no longer TYPED here — they are CAPE_CUTS.cloak's,
+ * which is the same five and is the row the wardrobe's default names. That is
+ * what stops "Jedi Cloak" and "the cape the game builds" being two garments
+ * that merely happen to agree, and the check above still measures the preview
+ * against Player.js rather than against the table.
  */
-export function dressPreviewFigure(host, built, cut) {
+export function dressPreviewFigure(host, built, cut, wardrobe) {
   const rig = built.rig;
+  /*
+   * THE WARDROBE, and why it is the fourth argument rather than read off `s`.
+   *
+   * Everything else in here is Player._makeCloak's, to the number. The pieces
+   * are the same: `cape`, `tabard` and `sash` are cut ids that reach the same
+   * two functions the game reaches, and the dimensions of the shipped cape now
+   * come out of CAPE_CUTS.cloak rather than being typed here — which is what
+   * lets the four other capes exist at all, since `withCape` only fills in
+   * fields the caller left alone.
+   *
+   * Left out (a check, an older caller) it is the shipped set, so a preview
+   * asked for nothing but a cut is exactly the preview that shipped.
+   */
+  const w = wardrobeOf(wardrobe);
   const mat = built.palette.outer.clone();
   mat.side = THREE.DoubleSide;
+  const tmat = (built.palette.over || built.palette.outer).clone();
+  tmat.side = THREE.DoubleSide;
   const cloak = attachCloak(host, rig, {
-    material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0, cut,
+    material: mat, cut, cape: w.cape, tabard: w.tabard, tabardMaterial: tmat,
     seed: PREVIEW_SEED.cloak,
   });
   let skirt = null;
@@ -1242,9 +1420,13 @@ export function dressPreviewFigure(host, built, cut) {
     const smat = (built.palette.over || built.palette.outer).clone();
     smat.side = THREE.DoubleSide;
     skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut,
-      seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim });
+      seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim, sash: w.sash });
     if (cloak) cloak.outer = skirt;
   }
+  // The tones, on the figure and on the garments at once — the skirt's cloth
+  // and the cape's are clones the builder never sees, so a palette-only tint
+  // would leave the two largest surfaces on the character unchanged.
+  tintWardrobe(built, w, { skirt, cape: cloak });
   /**
    * THE HEAD-TAILS, if this species has any.
    *
@@ -1312,7 +1494,7 @@ export function assemblePreview(host, built, saber, s = {}) {
   if (host && rig.root.parent !== host) host.add(rig.root);
   standPreviewFigure(rig);
   poseSaberArm(rig, saber);
-  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut);
+  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut, s.wardrobe);
   const pts = [];
   clothPoints(cloak, pts);
   clothPoints(skirt, pts);
@@ -2140,6 +2322,11 @@ export class Menu {
         this.s.robeIndex = i;
         [...this.el.robes.children].forEach(x => x.classList.toggle('sel', x === sw));
         saveSettings(this.s);
+        // The whole panel, not just this row: every "as the robe" swatch below
+        // is painted with the tone this palette derives, so a robe picked here
+        // moves nine other swatches. Repainting them is what makes "leave this
+        // piece alone" a thing a player can SEE rather than infer.
+        this._buildSaber();
         this._refreshPreview(true);
       });
       this.el.robes.appendChild(sw);
@@ -2238,6 +2425,32 @@ export class Menu {
     this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
     this._swatchRow('skin-list', 'skinIndex', this._skinRack(), () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
+
+    /*
+     * ── THE REST OF THE CLOTHES ────────────────────────────────────────────
+     *
+     * "You can only change the lower robe… I want to be able to change all the
+     * clothes and also be able to choose from different capes or even go
+     * capeless." Six rows of tone and three of cut, all of them writing into
+     * `this.s.wardrobe` through `_wear`, which is the one place that object is
+     * rebuilt and saved — the same shape `_sheet` has for the character sheet
+     * and for the same reason.
+     *
+     * Each tone row's FIRST swatch is "as the robe", painted with the tone the
+     * builder would actually derive from the robe palette in the row above. It
+     * is not a grey placeholder: a player has to be able to see what leaving a
+     * piece alone gets them, and that answer changes every time the robe
+     * colour does — which is why these rows are rebuilt with the panel.
+     */
+    this._wardrobeCards('cape-list', 'h-cape', 'cape', CAPE_CUTS);
+    this._wardrobeTones('cape-tone-list', 'capeTone', 'outer');
+    this._wardrobeCards('tabard-list', 'h-tabard', 'tabard', TABARD_CUTS);
+    this._wardrobeTones('tabard-tone-list', 'tabardTone', 'over');
+    this._wardrobeTones('tunic-tone-list', 'tunicTone', 'inner');
+    this._wardrobeCards('sash-list', 'h-sash', 'sash', SASH_CUTS);
+    this._wardrobeTones('sash-tone-list', 'sashTone', 'trim');
+    this._wardrobeTones('boot-tone-list', 'bootTone', 'leather');
+    this._wardrobeTones('glove-tone-list', 'gloveTone', 'leather');
 
     this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
       () => this._refreshPreview(true));
@@ -2565,6 +2778,89 @@ export class Menu {
     for (const e of (this._sheetInputs || new Map()).values()) e.paint(this.s.face[e.key]);
     saveSettings(this.s);
     this._refreshPreview(true);
+  }
+
+  /**
+   * Write one piece of the wardrobe, rebuild it, save it, and re-dress.
+   *
+   * The ONE place `this.s.wardrobe` is written — `_sheet`'s shape, and the
+   * reason is the same: nine controls each doing their own spread is nine
+   * chances to drop a key, and `wardrobeOf` has to run on the way through or a
+   * control could store an id the garment layer will not recognise.
+   *
+   * `onWardrobe` is live: the seam re-dresses whatever is standing in the
+   * world, so a cape chosen from the pause card lands on the body without a
+   * redeploy — which is the whole reason the wardrobe is applied from a seam
+   * rather than at spawn.
+   */
+  _wear(key, value) {
+    this.s.wardrobe = wardrobeOf({ ...this.s.wardrobe, [key]: value });
+    saveSettings(this.s);
+    this.hooks.onFeel?.(this.s);
+    this._refreshPreview(true);
+  }
+
+  /** A card row bound to a key of the wardrobe rather than to a setting. */
+  _wardrobeCards(hostId, headId, key, list) {
+    const host = document.getElementById(hostId), head = headId && document.getElementById(headId);
+    if (!host) return;
+    host.innerHTML = '';
+    const w = wardrobeOf(this.s.wardrobe);
+    for (const it of list) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (w[key] === it.id ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${it.blurb || ''}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._wear(key, it.id);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === d));
+      });
+      host.appendChild(d);
+    }
+    if (head) head.style.display = list.length ? '' : 'none';
+  }
+
+  /**
+   * A row of garment tones, with "as the robe" first.
+   *
+   * `from` names which tone of the chosen ROBE_COLORS palette this piece is
+   * derived from, so the leading swatch shows the real answer rather than a
+   * grey square: `over` is the mix the builder makes for the over-cloth,
+   * `leather` is the one tone on the figure that is not derived from the robe
+   * at all. Those derivations are Bodies.js's; the two that are a MIX are
+   * restated here, which is a copy — the alternative was exporting three more
+   * constants from a file this workstream may not edit this round, and the
+   * cost of being wrong is one swatch that is slightly the wrong brown.
+   */
+  _wardrobeTones(hostId, key, from) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const R = ROBE_COLORS[this.s.robeIndex ?? 0] || ROBE_COLORS[0];
+    const mix = (a, b, t) => {
+      const c = (x, s) => (x >> s) & 255;
+      const l = (x, y) => Math.round(x + (y - x) * t);
+      return (l(c(a, 16), c(b, 16)) << 16) | (l(c(a, 8), c(b, 8)) << 8) | l(c(a, 0), c(b, 0));
+    };
+    const derived = from === 'inner' ? R.inner
+      : from === 'trim' ? R.trim
+        : from === 'over' ? mix(R.outer, R.trim, 0.46)
+          : from === 'leather' ? 0x53412f : R.outer;
+    const rack = [{ name: 'As the robe', hex: derived, index: -1 },
+      ...GARMENT_TONES.map((t, i) => ({ ...t, index: i }))];
+    const w = wardrobeOf(this.s.wardrobe);
+    host.innerHTML = '';
+    for (const c of rack) {
+      const sw = document.createElement('div');
+      sw.className = 'sw' + (w[key] === c.index ? ' sel' : '') + (c.index < 0 ? ' as-robe' : '');
+      sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
+      sw.title = c.name;
+      this._activate(sw, () => {
+        audio.ui('click');
+        this._wear(key, c.index);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === sw));
+      }, c.name);
+      host.appendChild(sw);
+    }
   }
 
   /** One row of colour swatches bound to an index setting. */
@@ -3007,9 +3303,35 @@ export class Menu {
    * Key bindings. Clicking a key listens for the next keypress or mouse button
    * and takes it, warning if it is already spoken for. Escape cancels.
    */
+  /**
+   * THE KEY TABLE — and it is drawn wherever there is a host for it.
+   *
+   * "You should be able to change your key bindings mid game not just in the
+   * main menu." The list was one `#bind-list` in the Options panel, which
+   * behind a run means Abandon Run, rebind, deploy again — and a binding is
+   * exactly the thing you discover is wrong in the first thirty seconds of a
+   * fight.
+   *
+   * The fix is NOT a second copy of this method on the pause card. Everything
+   * that makes the list correct is in here — the group map that stopped
+   * headings rendering twice, the capture-phase listener that hears a mouse
+   * button and a wheel notch, the resolver that settles every clash rather
+   * than the first, the "never leave an action unbound" rule on right-click,
+   * and the repaint of every other surface that prints a key. A second copy
+   * would be a second place for all nine of those to go stale. So `render()`
+   * paints every host in HOSTS that exists on the page, and the pause card is
+   * just another host.
+   *
+   * Both lists stay live at once: they read `this.bindings`, one object, so a
+   * key rebound on the pause card is already rebound in Options when the run
+   * ends. `_listening` is the one piece of state that must be global to the
+   * pair — two chips waiting for the same keystroke is two rebinds from one
+   * press — and it always was.
+   */
   _buildBindings() {
-    const host = document.getElementById('bind-list');
-    if (!host) return;
+    const HOSTS = ['bind-list', 'pause-bind-list'];
+    const hosts = HOSTS.map(id => document.getElementById(id)).filter(Boolean);
+    if (!hosts.length) return;
     this.bindings = this.bindings || loadBindings();
     const hint = document.getElementById('bind-hint');
 
@@ -3032,12 +3354,13 @@ export class Menu {
      * Training the way the table intends.
      */
     const render = () => {
-      host.innerHTML = '';
       const grouped = new Map();
       for (const a of ACTIONS) {
         if (!grouped.has(a.group)) grouped.set(a.group, []);
         grouped.get(a.group).push(a);
       }
+      for (const host of hosts) {
+      host.innerHTML = '';
       for (const [group, rows] of grouped) {
         const g = document.createElement('div');
         g.className = 'grp'; g.textContent = group;
@@ -3070,6 +3393,7 @@ export class Menu {
           row.appendChild(label); row.appendChild(keys);
           host.appendChild(row);
         }
+      }
       }
       // Every OTHER surface that prints a key reads the same table, so a
       // rebind lands on all of them in the same frame it lands here.

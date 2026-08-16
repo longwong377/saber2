@@ -1342,7 +1342,12 @@ export async function run({ check, assert }) {
       'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade', 'holocron',
       'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut',
       // a swatch row under the crystals, same shape as colorIndex's
-      'lightningColor'];
+      'lightningColor',
+      // The rest of the clothes — nine cut and tone rows writing into one
+      // object, the way `face` is one object, and written by `_wear`.
+      'wardrobe',
+      // Synthesised / spoken / both, on a card row of its own.
+      'speechMode'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the
@@ -1370,7 +1375,7 @@ export async function run({ check, assert }) {
       // guarantee through a shared helper, so the vocabulary widens and the
       // property does not: a setting still cannot reach this list without a
       // control that writes it BY NAME.
-      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'|_cardRow\\('[a-z-]+', '[a-z-]+', '${key}'`);
+      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'|_cardRow\\('[a-z-]+', '[a-z-]+', '${key}'|_pick\\('${key}'`);
       if (!re.test(menu)) ghost.push(key);
     }
     assert(!orphans.length,

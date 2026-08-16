@@ -100,6 +100,36 @@ export const MODES = {
    * one thing the lessons never read.)
    */
   training: { name: 'Training', blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.' },
+  /**
+   * COMMAND — the one mode where you are not alone.
+   *
+   * Player note #21: "a mode or setting where you command and lead your own
+   * troops … a Sith leading droids or a Jedi leading clone troopers." The whole
+   * of it lives in src/game/Command.js; what belongs HERE is the two things the
+   * front end reads off a mode, and one of them is load-bearing.
+   *
+   * `fixedTheatre` IS THE LOAD-BEARING ONE. This mode owns its ground — there is
+   * one Geonosis and the campaign is a crossing of it — and the Theatre column
+   * in the menu is therefore not the player's to choose. The Descent was the
+   * last mode with that property and it did not declare it: all thirteen level
+   * cards stayed live, wrote `settings.level`, saved it, and the write LEAKED
+   * into the next run of another mode, so the level the player picked turned up
+   * somewhere they did not. `Menu._syncTheatre` reads this field and greys the
+   * column with this exact sentence beside it; `tools/checks/menu.mjs` drives
+   * the real front end through a mode carrying one, and its own note names
+   * Command as the mode that would otherwise walk straight back into it.
+   *
+   * The DIRECTOR is not named here. `World.loadLevel` picks `CommandDirector`
+   * off the mode string, and Command.js imports this file — so a reference in
+   * the other direction would close a cycle through Enemy.js, Dojo.js and
+   * Player.js, all of which already import Waves.js. See the header of
+   * Command.js for the full trace.
+   */
+  command: {
+    name: 'Command',
+    blurb: 'Lead an army across Geonosis. Your troops have names, they earn rank, and when they die they are gone.',
+    fixedTheatre: 'Command is fought on Geonosis: five areas, one crossing, and the ground does not change.',
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -201,6 +231,18 @@ export function sandboxUnits() {
   return _units;
 }
 
+/**
+ * DOES THIS PLAYER WANT BODIES TO SIMPLY APPEAR?
+ *
+ * The one reader of the one setting, so "should this spawn be announced" has a
+ * single answer in the whole tree rather than a `settings.instantSpawn` test at
+ * each of the three places that spawn something. Defaults FALSE — see the note
+ * on `arrivals.enabled` in the director's constructor.
+ */
+export function instantSpawn(settings) {
+  return !!(settings && settings.instantSpawn);
+}
+
 /** Read the practice knobs off a settings blob, clamped and defaulted. */
 export function sandboxConfig(settings) {
   const s = settings || {};
@@ -228,6 +270,72 @@ export function holdFire(e) {
   if (!(e.attackTimer > 0.5)) e.attackTimer = 0.5;
   if (e.aimCharge > 0) { e.aimCharge = 0; e._endTelegraph?.(); }
 }
+
+/**
+ * ARRIVE ON FOOT, THEN TAKE UP A POSITION — note #17's other half.
+ *
+ * "even in training mode or in any mode, the enemies should not materialize in
+ * front of you they should arrive from somewhere not teleport behind you."
+ *
+ * `ArrivalDirector` answers that for a WAVE: a body is bought, a ship or a gate
+ * or a long walk brings it, and `deliveryIsAnnounced` is the property. It cannot
+ * answer it for the DOJO, because a lesson needs its remote at a taught distance
+ * — "stand six metres from a remote and return one bolt" is the lesson, and an
+ * arrival that puts the remote wherever the terrain allowed is a different one.
+ *
+ * So the body is spawned OUT PAST THE RING and walks to the post the lesson
+ * chose. The lesson's geometry is exactly what it was; what changes is that you
+ * watch the thing come to you.
+ *
+ * The seam is `_move`, which is the one frame-accurate gap between "the brain
+ * decided where to walk" and "the body walked there" — the same seam
+ * `Command.installCommand` steers a formation through, and it is here rather
+ * than there because Dojo.js imports this file and importing Command.js would
+ * close a cycle through Enemy.js. See the header of Command.js.
+ *
+ * @param post  a Vector3-shaped destination
+ * @param opts.speed  a multiplier while walking in — 1.35 by default, because a
+ *              body crossing 40 m of empty ground at its combat pace is eleven
+ *              seconds of nothing.
+ * @returns true if the walk actually went on.
+ */
+export function walkIn(e, post, opts = {}) {
+  if (!e || !post || e._walkIn) return false;
+  const base = e._move;
+  if (typeof base !== 'function') return false;
+  const tol = opts.tolerance ?? 1.6;
+  const boost = opts.speed ?? 1.35;
+  const cruise = e.speed * boost;
+  e._walkIn = { post, done: false };
+  e._move = function (dt, ctx) {
+    const w = this._walkIn;
+    if (w && !w.done) {
+      const dx = w.post.x - this.position.x, dz = w.post.z - this.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d <= tol) {
+        w.done = true;
+        this.speed = cruise / boost;
+      } else {
+        const inv = 1 / (d || 1);
+        if (!this.wish) this.wish = new THREE.Vector3();
+        this.wish.set(dx * inv, 0, dz * inv);
+        // `toTarget` too, or `limitBackpedal` scales the walk-in down to 40%
+        // whenever the lesson post happens to sit behind the body's target.
+        if (!this.toTarget) this.toTarget = new THREE.Vector3();
+        this.toTarget.set(dx * inv, 0, dz * inv);
+        this.speed = cruise;
+        // Nothing fires on the way in. A remote that opens up at forty metres
+        // while it is still crossing is not the lesson either.
+        holdFire(this);
+      }
+    }
+    return base.call(this, dt, ctx);
+  };
+  return true;
+}
+
+/** Has this body finished walking in? True for anything that never had to. */
+export function arrived(e) { return !e?._walkIn || e._walkIn.done; }
 
 /**
  * Slow an enemy down without silencing it.
@@ -281,6 +389,109 @@ export const CHAMPION_FROM = 15;
 export const BODY_MAX = 42;
 export const BODY_KNEE = 18;
 export const BODY_CREEP = 1.6;
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The liveness watchdog                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE WORST BUG ON THE PLAYER'S LIST — note #7, and it ends runs.
+ *
+ * "a lot of times I was not able to finish a wave because the enemy would not be
+ * on the map, like the radar would say I'm right on them but idk maybe they're
+ * inside the map but it would keep you from progressing."
+ *
+ * `update` ends a wave on `!spawnQueue.length && !arrivals.pending && alive ===
+ * 0`, so ONE body that cannot be reached and cannot reach you is a run that
+ * never advances again. There is no way out of it from inside the game: the
+ * contact is on the radar, the wave will not clear, and the only exit is
+ * Abandon.
+ *
+ * ── WHY THE EXISTING HANDLING DOES NOT COVER IT ─────────────────────────
+ *
+ * `Enemy._move` already has real stuck handling — `_wallN` slides the wish
+ * along a face, `_stuckT` commits hard to one side past half a second, and the
+ * commit flips at 2.5 s so a body that went the wrong way round a room
+ * eventually tries the other. That is LOCAL and it is correct: it resolves a
+ * body pressing a doorway, which is what it was written for.
+ *
+ * It cannot resolve a body that is INSIDE geometry (no face to slide along, no
+ * direction that is not into something), one that has fallen THROUGH the world
+ * (nothing to walk on, and `_stuckT` never even accumulates because the body is
+ * moving — downward), or one outside the heightfield entirely. Those are the
+ * three states this report describes, and each of them is an INVALID state
+ * rather than a difficult one: there is no legitimate reading of the game in
+ * which a live body is 2 m under the terrain.
+ *
+ * ── WHY IT LIVES IN THE DIRECTOR ────────────────────────────────────────
+ *
+ * Because the property is the DIRECTOR'S: "a wave that has been paid for must be
+ * clearable". An enemy cannot know that its own immobility is blocking a wave —
+ * it does not know there is a wave — and the thing that ends waves is the only
+ * thing that can be answerable for them ending. It is also the level at which
+ * the fix is available: the director owns `arrivals`, which already knows how to
+ * put a body somewhere legitimate and is watchable while it does.
+ *
+ * ── THE LADDER, AND WHY IT IS A LADDER ──────────────────────────────────
+ *
+ *   RESCUE first, and only then RETIRE. Deleting the body is the easy fix and it
+ *   is the wrong first move: it silently removes something the player paid
+ *   attention to, and if the cause is a level's geometry it will do it every
+ *   wave, forever, invisibly. A rescue puts the body back on ground the level
+ *   itself says is valid and lets the fight happen.
+ *
+ *   NOTHING IS SILENT. Every intervention lands in `this.rescues`, which the
+ *   checks read and `tools/trace.mjs` can print. A watchdog that fires without
+ *   saying so is a watchdog that hides the defect it exists to survive.
+ *
+ * The two clocks: a body gets STALL_RESCUE of making no progress and taking no
+ * damage before it is moved, and STALL_RETIRE before it is removed. They are
+ * long — a real fight has plenty of thirty-second standoffs at a sniper's 42 m
+ * preferred range, and a watchdog that teleports a marksman who is doing its job
+ * correctly is worse than the bug. An INVALID position skips both clocks, since
+ * there is no length of time for which being underground is fine.
+ */
+/** Seconds of no progress and no damage before a body is put back. */
+export const STALL_RESCUE = 14;
+/** …and before it is removed so the wave can end. */
+export const STALL_RETIRE = 26;
+/** Closing this much on the nearest player counts as progress. */
+export const STALL_PROGRESS = 1.5;
+/** How many times one body may be rescued before it is simply retired. */
+export const STALL_RESCUES = 2;
+
+/**
+ * IS THIS BODY SOMEWHERE THE GAME CAN LEGITIMATELY PUT IT?
+ *
+ * Three tests, and each one is an assertion rather than a heuristic:
+ *
+ *   under the ground   the terrain is a heightfield and every body in this game
+ *                      stands on it. 2 m of tolerance for a ragdoll settling
+ *                      into a slope, a floating archetype's own `float`, and
+ *                      the fact that `height()` is bilinear over a 1.5 m grid.
+ *   outside the field  `inBounds` is the level's own answer. A body outside it
+ *                      is outside the world; nothing can reach it and it can
+ *                      reach nothing.
+ *   not a number       a NaN position propagates silently into every distance
+ *                      test in the game and makes all of them false, which is
+ *                      indistinguishable from "far away" everywhere except here.
+ *
+ * Exported because it is the property, and a property that only exists inside a
+ * check is a property the game does not have — the same argument
+ * `Arrivals.deliveryIsAnnounced` makes.
+ */
+export function positionIsValid(world, e) {
+  const p = e?.position;
+  if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return false;
+  const t = world?.terrain;
+  if (!t) return true;
+  if (typeof t.inBounds === 'function' && !t.inBounds(p.x, p.z, 0)) return false;
+  if (typeof t.height === 'function') {
+    const float = e.A?.float ?? 0;
+    if (p.y < t.height(p.x, p.z) - 2.0 - float) return false;
+  }
+  return true;
+}
 
 /**
  * The set-piece ladder, and the depth each rung needs.
@@ -430,7 +641,29 @@ export class WaveDirector {
       if (e && mod) applyModifier(e, mod);
       return e;
     }, ARCHETYPES);
-    this.arrivals.enabled = !this.sandbox;
+    /**
+     * …AND THE SANDBOX ARRIVES TOO, WHICH IT DID NOT.
+     *
+     * This line was `this.arrivals.enabled = !this.sandbox`, and the comment
+     * above the direct path defended it: "it is a debug room whose whole purpose
+     * is putting twenty bodies in front of you in three seconds". Player note
+     * #17 disagrees, and names the room: "even in training mode or in ANY MODE,
+     * the enemies should not materialize in front of you they should arrive from
+     * somewhere not teleport behind you."
+     *
+     * They are right and the defence was wrong in its own terms. The sandbox is
+     * where a player spends the longest looking at how bodies enter the world —
+     * it is the mode you sit in and dial the count up and down — so it is the
+     * worst possible place for the one path that pops them into existence at
+     * eleven metres.
+     *
+     * THE FAST PATH IS KEPT AND IS NOW A CHOICE. `settings.instantSpawn` turns
+     * it back on for anybody who really is using the room to put twenty bodies
+     * down in three seconds, which is a legitimate thing to want. It is opt-in
+     * rather than the default, which is the whole of the change: the default
+     * behaviour of the game is that things arrive from somewhere.
+     */
+    this.arrivals.enabled = !instantSpawn(world?.settings);
   }
 
   get sandbox() { return this.mode === 'sandbox'; }
@@ -1141,6 +1374,11 @@ export class WaveDirector {
    */
   _sandboxUpdate(dt, ctx) {
     const cfg = sandboxConfig(this.world.settings);
+    // The ships have to fly. `update` returns here before it reaches the
+    // arrivals step, so without this the sandbox's own arrivals would be queued
+    // and never delivered — the room would simply stop producing bodies, which
+    // is a worse failure than the teleport it replaced.
+    this.arrivals.update(dt, ctx);
 
     // Fire rate rides the difficulty's own divisor. Cloned, never mutated in
     // place: DIFFICULTY entries are shared module constants and scaling one
@@ -1161,6 +1399,16 @@ export class WaveDirector {
     const alive = [];
     for (const e of this.world.enemies) if (!e.dead) alive.push(e);
     if (cfg.fire <= 0) for (const e of alive) holdFire(e);
+    /* A body that arrived by ship missed the `_fireApplied` edge above — that
+     * only fires when the SLIDER moves — so it would come off the ramp at the
+     * archetype's own cadence in a room dialled to a tenth of it. Tuned once,
+     * on arrival, marked so it is not re-tuned every frame. */
+    for (const e of alive) {
+      if (e._sbFire === cfg.fire) continue;
+      e._sbFire = cfg.fire;
+      tuneFireRate(e, cfg.fire);
+      if (cfg.fire <= 0) holdFire(e);
+    }
 
     // Decide what STAYS, which is the only formulation that handles both ways
     // the room can be wrong at once: too many bodies, and bodies of a kind you
@@ -1185,11 +1433,22 @@ export class WaveDirector {
     // Floored: a full room runs this every frame and an unclamped countdown
     // would be at -3600 after an hour, which is a spawn that never waits again.
     this.spawnTimer = Math.max(this.spawnTimer - dt, -1);
-    if (keep.size < cfg.count && this.spawnTimer <= 0) {
+    /* Bodies already on a ship or walking in count against the population, or
+     * the room asks for twenty more the whole time the first twenty are inbound
+     * and lands forty. The wave path has counted `arrivals.pending` for exactly
+     * this reason since arrivals shipped; the sandbox path never had to. */
+    const inbound = this.arrivals.enabled ? this.arrivals.pending : 0;
+    if (keep.size + inbound < cfg.count && this.spawnTimer <= 0) {
       const type = this._sandboxType(cfg);
-      const e = ctx.spawnEnemy(type, this._sandboxSpawn(ctx, type));
-      tuneFireRate(e, cfg.fire);
-      if (cfg.fire <= 0) holdFire(e);
+      /* THE DEFAULT IS AN ARRIVAL — note #17. `request` returns false when
+       * arrivals are off (`settings.instantSpawn`), and then the old direct
+       * path runs exactly as it always did, because a room must never fail to
+       * produce the body the slider asked for. */
+      if (!this.arrivals.request(type, null)) {
+        const e = ctx.spawnEnemy(type, this._sandboxSpawn(ctx, type));
+        tuneFireRate(e, cfg.fire);
+        if (cfg.fire <= 0) holdFire(e);
+      }
       this.totalSpawned++;
       // Fast enough that dialling 0 → 20 fills the room in three seconds,
       // slow enough that twenty bodies do not all build their rigs on one frame.
@@ -1197,11 +1456,133 @@ export class WaveDirector {
     }
   }
 
+  /**
+   * ONE FRAME OF THE WATCHDOG. See the note above STALL_RESCUE.
+   *
+   * Per body it keeps four numbers — the closest it has ever been to a player,
+   * the health it had last frame, how long it has been getting neither closer
+   * nor hurt, and how many times it has already been rescued. `best` is a
+   * high-water mark rather than a per-frame delta, so a body that oscillates
+   * around a pillar (which a real one does, constantly) does not read as
+   * progress and a body that is genuinely orbiting at its preferred range does:
+   * a marksman holding 42 m has already got its `best` down to 42 and is not
+   * accumulating.
+   *
+   * Keyed on the enemy object in a WeakMap, so a body that is disposed by any of
+   * the other five paths that dispose bodies takes its record with it. A Map
+   * keyed on id was the first shape and it leaks one small object per body for
+   * the life of the level — 3 000 of them over a forty-wave run.
+   */
+  _watchdog(dt, ctx) {
+    const list = ctx.enemies;
+    if (!list || !list.length) return;
+    const players = this.world?.players;
+    const w = this._watch || (this._watch = new WeakMap());
+    // The wave is otherwise finished: nothing queued, nothing in the air. This
+    // is the state note #7 describes, and it is the state in which a stalled
+    // body is not merely annoying but terminal.
+    const blocking = !this.spawnQueue.length && !this.arrivals.pending;
+
+    for (const e of list) {
+      if (!e || e.dead) continue;
+      let r = w.get(e);
+      if (!r) { r = { best: Infinity, hp: e.hp, t: 0, n: 0 }; w.set(e, r); }
+
+      /* INVALID beats every clock. There is no number of seconds for which
+       * being under the terrain or outside the heightfield is acceptable, and
+       * `_stuckT` cannot see either — a body falling through the world is
+       * moving, so the local handling reads it as healthy right up until it is
+       * at y = -400 and the wave has stopped. */
+      if (!positionIsValid(this.world, e)) {
+        this._rescue(e, r, ctx, 'invalid position');
+        continue;
+      }
+
+      let d = Infinity;
+      for (const p of players || []) {
+        if (!p || p.alive === false) continue;
+        const dd = p.position.distanceToSquared(e.position);
+        if (dd < d) d = dd;
+      }
+      d = Math.sqrt(d);
+      const closed = d < r.best - STALL_PROGRESS;
+      const hurt = e.hp !== r.hp;
+      if (closed) r.best = d;
+      r.hp = e.hp;
+      if (closed || hurt) { r.t = 0; continue; }
+
+      // Only accumulate while the body is the reason the wave has not ended.
+      // A stalled body in the middle of a live wave is a body the player has not
+      // got to yet, and moving it would be the watchdog playing the game.
+      if (!blocking) continue;
+      r.t += dt;
+      if (r.t > STALL_RETIRE || (r.t > STALL_RESCUE && r.n >= STALL_RESCUES)) {
+        this._retire(e, r, 'unreachable');
+      } else if (r.t > STALL_RESCUE) {
+        this._rescue(e, r, ctx, 'no progress');
+      }
+    }
+  }
+
+  /**
+   * PUT A BODY BACK SOMEWHERE THE LEVEL SAYS IS VALID.
+   *
+   * Through `arrivals.relocate`, which reuses the site picker every march
+   * already uses — terrain bounds, slope and `spawnClear` — and drops the body
+   * at MARCH radius, beyond the ring anything is spawned at. So the recovery
+   * looks exactly like a march: the body walks back into the fight from the
+   * edge, which is the one arrival note #17 approves of, and it lands in the
+   * arrival log so `deliveryIsAnnounced` covers it like any other delivery.
+   *
+   * The IDENTITY IS KEPT. A fresh spawn would be simpler and is wrong in the one
+   * mode where it matters most: a body in Command carries a name, a rank and a
+   * campaign's worth of experience, and replacing it would kill a trooper the
+   * player has been protecting in order to fix a bug they never saw.
+   */
+  _rescue(e, r, ctx, why) {
+    const from = e.position.clone ? e.position.clone() : { ...e.position };
+    const ok = this.arrivals.relocate(e);
+    r.n++;
+    r.t = 0;
+    r.best = Infinity;
+    (this.rescues || (this.rescues = [])).push({
+      what: 'rescue', ok, why, type: e.type, wave: this.wave,
+      from: [from.x, from.y, from.z], to: [e.position.x, e.position.y, e.position.z],
+    });
+    if (!ok) this._retire(e, r, `${why} (nowhere to put it)`);
+    return ok;
+  }
+
+  /**
+   * REMOVE A BODY SO THE WAVE CAN END. The last resort, and it is logged.
+   *
+   * `dead = true` rather than splicing it out of `world.enemies`: everything
+   * that counts a wave down counts live bodies, the corpse budget and the blade
+   * solver both key off the same flag, and a body removed from the array while
+   * something else holds a reference to it is the shape of half the lifecycle
+   * bugs this repository has fixed. It is disposed by the same path every other
+   * dead body is.
+   */
+  _retire(e, r, why) {
+    if (e.dead) return false;
+    e.dead = true;
+    e.dying = 0;
+    r.t = 0;
+    (this.rescues || (this.rescues = [])).push({ what: 'retire', why, type: e.type, wave: this.wave });
+    // Said out loud. A watchdog that fires silently hides the defect it exists
+    // to survive, and this one fires on a level's geometry being wrong.
+    this.world?.notify?.('CONTACT LOST', `an unreachable ${e.A?.label ?? e.type} was withdrawn`);
+    return true;
+  }
+
   update(dt, ctx) {
     if (this.sandbox) { this._sandboxUpdate(dt, ctx); return; }
     // Ships and gates keep flying through an intermission and a draft: a run
     // that pauses does not leave a gunship frozen in the sky.
     this.arrivals.update(dt, ctx);
+    // …and the wave is watched whether or not it is active, because the state
+    // note #7 describes is precisely "the queue is empty and one body remains".
+    this._watchdog(dt, ctx);
     if (!this.active) {
       if (this.intermission > 0) {
         this.intermission -= dt;

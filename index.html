@@ -121,6 +121,30 @@
         <div id="cut-list" class="cards small"></div>
         <h3 style="margin-top:22px">Robe colour</h3>
         <div id="robe-list" class="swatches"></div>
+        <p class="hint">The palette every layer below is derived from. Each piece can then be dyed on
+          its own — the first swatch in every row is <b>as the robe</b>, which is what it was.</p>
+        <!-- THE WARDROBE. Nine rows, all built by Menu._buildSaber out of the
+             tables in src/game/Cloth.js, because a list of cape cuts typed
+             into this markup is a second copy of CAPE_CUTS waiting to disagree
+             with it. They write into `settings.wardrobe` and are applied to a
+             live body by applyWardrobe, so a piece picked here — or from the
+             pause card — lands without a redeploy. -->
+        <h3 id="h-cape" style="margin-top:22px">Cape</h3>
+        <div id="cape-list" class="cards small"></div>
+        <div id="cape-tone-list" class="swatches tone"></div>
+        <h3 id="h-tabard" style="margin-top:22px">Over-robe</h3>
+        <div id="tabard-list" class="cards small"></div>
+        <div id="tabard-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Tunic</h3>
+        <p class="hint">The collar, the crossed V at the chest and the cuffs under the sleeves.</p>
+        <div id="tunic-tone-list" class="swatches tone"></div>
+        <h3 id="h-sash" style="margin-top:22px">Belt &amp; sash</h3>
+        <div id="sash-list" class="cards small"></div>
+        <div id="sash-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Boots</h3>
+        <div id="boot-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Gloves &amp; bracers</h3>
+        <div id="glove-tone-list" class="swatches tone"></div>
         <h3 style="margin-top:22px">Crystal</h3>
         <div id="color-list" class="swatches"></div>
         <h3 style="margin-top:22px">Force lightning</h3>
