@@ -1484,6 +1484,49 @@ export class WaveDirector {
   }
 
   /**
+   * DOES THIS BODY KEEP THE WAVE OPEN? — the one statement of the rule, and it
+   * now has three callers that used to have three copies of it.
+   *
+   * `ctx.enemies` is `world.enemies`, and Command puts YOUR OWN TROOPS in that
+   * same array: an ally is an `Enemy` with a different `team`. So "how many
+   * enemies are left" is not "how many bodies are left", and every place that
+   * confused the two was wrong in a different way:
+   *
+   *   `update`      cleared a wave the instant your army died and never while
+   *                 it lived — fixed once, in place, with this arithmetic
+   *                 written out inline;
+   *   `remaining`   is what the HUD prints as "N remaining" and what the co-op
+   *                 host puts on the wire, and it counted every trooper you own
+   *                 — so a Command wave of six droids read as sixteen, and it
+   *                 never reached zero while you had an army;
+   *   `_watchdog`   accumulated its stall clock against your own troops, which
+   *                 is the whole of the "take cover is destroyed by the
+   *                 watchdog" defect. A body that cannot keep the wave open
+   *                 cannot be the reason it has not ended, so there is nothing
+   *                 for the watchdog to be protecting the run from. Driven: ten
+   *                 troopers ordered to hold ground 83 m from a moving
+   *                 commander were rescued or retired 19 times in 88 s, because
+   *                 the clock measures distance to a PLAYER and an ordered body
+   *                 is standing exactly where it was told to stand.
+   *
+   * `?? 1` for the team, because a stub body in a check has none and the horde
+   * is team 1 everywhere else in the tree.
+   */
+  blocksWaveEnd(e) {
+    return !!e && !e.dead && (e.team ?? 1) !== (this.world?.partyTeam ?? 0);
+  }
+
+  /**
+   * NOTHING LEFT TO PUT ON THE FIELD — the bodies standing are the whole wave.
+   *
+   * The watchdog's warrant (a stalled body is only terminal once it is the last
+   * thing between the player and the next wave) and Command's endgame leash
+   * release both ask this same question, and they used to ask it with two
+   * copies of the same conjunction.
+   */
+  get delivered() { return !this.spawnQueue.length && !this.arrivals.pending; }
+
+  /**
    * ONE FRAME OF THE WATCHDOG. See the note above STALL_RESCUE.
    *
    * Per body it keeps four numbers — the closest it has ever been to a player,
@@ -1508,7 +1551,7 @@ export class WaveDirector {
     // The wave is otherwise finished: nothing queued, nothing in the air. This
     // is the state note #7 describes, and it is the state in which a stalled
     // body is not merely annoying but terminal.
-    const blocking = !this.spawnQueue.length && !this.arrivals.pending;
+    const blocking = this.delivered;
 
     for (const e of list) {
       if (!e || e.dead) continue;
@@ -1575,7 +1618,14 @@ export class WaveDirector {
       // Only accumulate while the body is the reason the wave has not ended.
       // A stalled body in the middle of a live wave is a body the player has not
       // got to yet, and moving it would be the watchdog playing the game.
-      if (!blocking) continue;
+      //
+      // …AND ONLY IF IT COULD BE THAT REASON AT ALL. `blocksWaveEnd` is the
+      // same rule the wave-end count is made of, called rather than restated:
+      // one of your own troops never holds a wave open, so a trooper standing
+      // where its ORDER put it — which for `cover` is a spot the commander has
+      // since walked 80 m away from — has nothing to be rescued from. It was
+      // being teleported out of its own firing position instead.
+      if (!blocking || !this.blocksWaveEnd(e)) continue;
       // …and only while it cannot fight from where it is standing. See `reach`.
       if (d <= reach) { r.t = 0; continue; }
       r.t += dt;
@@ -1623,14 +1673,37 @@ export class WaveDirector {
    * that counts a wave down counts live bodies, the corpse budget and the blade
    * solver both key off the same flag, and a body removed from the array while
    * something else holds a reference to it is the shape of half the lifecycle
-   * bugs this repository has fixed. It is disposed by the same path every other
-   * dead body is.
+   * bugs this repository has fixed.
+   *
+   * AND IT HAS TO SAY SO OUT LOUD, WHICH IT DID NOT.
+   *
+   * "It is disposed by the same path every other dead body is" was the sentence
+   * that used to end this note, and it was false: every other dead body reaches
+   * `World.onEnemyKilled`, which is described in World.js as "the one place a
+   * death is visible centrally" and is where the two things that care about one
+   * are hung — `corpses.take`, the note-#15 budget that is the only thing in the
+   * tree that ever removes a ragdoll, and `command.onDeath`, the note-#21
+   * roster. Setting the flag and telling nobody meant a retired body's meshes
+   * and joints were never freed, and — measured over 66 minutes of driven
+   * Command play, in which permadeath fired ZERO times — a retired TROOPER was
+   * not a casualty at all: its roster record stayed `alive` with a dead body
+   * hanging off it, and `deploy()` skips a record whose body is dead, so the
+   * next area silently built it a new one. The watchdog was a free respawn.
+   *
+   * `source` is null and the kind is `retire`, so nothing is credited with a
+   * kill: `onEnemyKilled` only pays a killer it can identify. The wave's SCORE
+   * is paid, which is the one thing this change buys that is not obviously
+   * right — a body the level failed to make reachable is worth its points to
+   * nobody. It is left that way deliberately rather than special-cased, because
+   * the alternative is a second definition of what a death is, and retirement is
+   * rare (the last resort of two clocks) where a leaked ragdoll is forever.
    */
   _retire(e, r, why) {
     if (e.dead) return false;
     e.dead = true;
     e.dying = 0;
     r.t = 0;
+    this.world?.onEnemyKilled?.(e, null, 'retire');
     (this.rescues || (this.rescues = [])).push({ what: 'retire', why, type: e.type, wave: this.wave });
     // Said out loud. A watchdog that fires silently hides the defect it exists
     // to survive, and this one fires on a level's geometry being wrong.
@@ -1668,11 +1741,10 @@ export class WaveDirector {
      * hostiles on the field, and closed 0.1 s after a probe killed all ten
      * clones.
      *
-     * `this.team` is the director's own side. Anything sharing it is not what
-     * the player is here to kill.
+     * `blocksWaveEnd` is that rule, stated once for the three callers that
+     * need it — this line, `remaining`, and the watchdog.
      */
-    const party = this.world?.partyTeam ?? 0;
-    const alive = ctx.enemies.filter(e => !e.dead && (e.team ?? 1) !== party).length;
+    const alive = ctx.enemies.reduce((n, e) => n + (this.blocksWaveEnd(e) ? 1 : 0), 0);
     // Bodies already on their way count against the cap. Without this the
     // director would keep calling for more the whole time a ship was inbound
     // and land six at once.
@@ -1735,8 +1807,15 @@ export class WaveDirector {
     // `arrivals.pending` is bodies bought and paid for that are still in a ship
     // or behind a door. Leaving it out told the HUD "0 remaining" while a
     // gunship was on final approach, and ended the wave under it.
+    //
+    // …and `blocksWaveEnd` rather than `!e.dead`, for the reason on that method:
+    // this is the number the HUD prints and the number the co-op host puts on
+    // the wire, and in Command it counted the player's own army. A wave of six
+    // droids read as sixteen remaining and could not reach zero while a single
+    // trooper of yours was alive — the readout said the fight was not over when
+    // it was.
     return this.spawnQueue.length + this.arrivals.pending
-      + this.world.enemies.filter(e => !e.dead).length;
+      + this.world.enemies.reduce((n, e) => n + (this.blocksWaveEnd(e) ? 1 : 0), 0);
   }
 
   resumeAfterDraft() {
