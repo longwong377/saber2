@@ -20,7 +20,8 @@
  */
 
 import * as THREE from 'three';
-import { AudioEngine, PRIO } from '../../src/engine/Audio.js';
+import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
+import { SCORE_STATES, CHORDS, ROOT, hz } from '../../src/engine/Score.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -399,63 +400,377 @@ export async function run({ check, assert }) {
   });
 
   /**
-   * THE SCORE, and what this check used to be.
+   * THE SCORE, and what this check used to be — TWICE.
    *
-   * It asserted two things: that the pool was untouched, and that `intensity`
-   * had smoothed above 0.9. Neither of those is a sound. `intensity` is
-   * smoothed BEFORE the `< 0.12` early return, and the pulse takes no voices by
-   * design, so — measured, not argued — deleting the entire pulse block and
-   * leaving the smoothing line alone kept both assertions green: 0 oscillators,
-   * 0 pool voices, intensity 0.998, PASS. The one test of the game's musical
-   * reaction to combat could not tell the feature from its total absence.
+   * Round one asserted that the voice pool was untouched and that `intensity`
+   * had smoothed above 0.9. Neither of those is a sound: `intensity` is
+   * smoothed before the pulse block and the pulse takes no voices by design, so
+   * — measured — deleting the whole pulse and leaving the smoothing line kept
+   * both assertions green. The one test of the game's musical reaction to
+   * combat could not tell the feature from its total absence.
    *
-   * So it counts SOURCES ARRIVING ON THE MUSIC BUS, over ten seconds, at three
-   * drive levels, against the tempo the code claims (bpm = 74 + 46 × I), and
-   * reads back the envelope and the sweep those sources were given.
+   * Round two fixed that by counting sources arriving on the music bus against
+   * `bpm = 74 + 46 × I`. It was a real measurement of a real thing, and the
+   * thing is gone: that pulse was the entire adaptive layer, one sine sweeping
+   * 74 → 38 Hz, and it has been replaced by src/engine/Score.js.
+   *
+   * So this measures the replacement, and it reads the TABLE for what to
+   * expect rather than restating any of it (HANDOFF §2.4): the bar length comes
+   * out of `SCORE_STATES[state].bpm` and the number of events per bar out of
+   * that state's own ostinato and drum grids. Retune a state and this check
+   * measures the new tuning; delete a state's rhythm and it fails.
    */
-  check('audio: the fight is audible in the score, at the tempo it claims', () => {
-    const run = (drive) => {
+  check('audio: the score is a different piece of music in each state', () => {
+    /** Drive an engine into `state` and count what one bar actually builds. */
+    const play = (state, drive, secs) => {
       const { a, ctx } = engine();
-      const e0 = ctx.edges.length;
-      for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, drive); ctx.advance(1 / 60); }
+      a.setMusicState({ state });                      // the seam, explicitly
+      const step = () => { a.updateScore(1 / 60, drive, 0); ctx.advance(1 / 60); };
+      for (let f = 0; f < 180; f++) step();             // let the grid take hold
+      const e0 = ctx.edges.length, b0 = a.score.stats.bars, n0 = a.score.stats.notes;
+      for (let f = 0; f < Math.round(secs * 60); f++) step();
       const fresh = ctx.edges.slice(e0);
-      // One pulse is [oscillator → gain] and [gain → musicBus]. Walk it from
-      // the bus back, so what is counted is what the mix would actually receive.
-      const gains = fresh.filter(([, d]) => d === a.musicBus).map(([g]) => g);
-      const oscs = gains.map(g => (fresh.find(([, d]) => d === g) || [])[0]).filter(Boolean);
-      ctx.advance(2);
-      return { a, ctx, pulses: gains.length, gains, oscs };
+      const into = (g) => fresh.filter(([, d]) => d === g).length;
+      return { a, ctx, bars: a.score.stats.bars - b0, notes: a.score.stats.notes - n0,
+        ost: into(a.score.layers.ost), perc: into(a.score.layers.perc),
+        gain: Object.fromEntries(Object.entries(a.score.layers)
+          .map(([k, g]) => [k, g.gain.last('tgt') ?? g.gain.value])) };
     };
 
-    // The smoothing is a 1/0.6 s lag, so ten seconds at drive I average
-    // I × 0.834 of it: the expected count is ∫bpm/60 dt over that.
-    const expected = (drive) => (74 + 46 * drive * 0.834) * 10 / 60;
-
-    const hot = run(1), mid = run(0.4), cold = run(0);
-    for (const [name, r, drive] of [['full', hot, 1], ['0.4', mid, 0.4]]) {
-      const want = expected(drive);
-      assert(r.pulses > 0, `${name} drive put NOTHING on the music bus — the score does not answer the fight`);
-      assert(Math.abs(r.pulses - want) <= want * 0.15,
-        `${name} drive gave ${r.pulses} pulses in 10 s, and bpm = 74 + 46 × I says ${want.toFixed(1)}`);
+    const SECS = 24;
+    const rows = [];
+    for (const state of ['explore', 'combat', 'boss', 'victory']) {
+      const cfg = SCORE_STATES[state];
+      const bar = 4 * 60 / cfg.bpm;
+      const r = play(state, state === 'explore' ? 0 : 1, SECS);
+      // The bar clock is the table's, within one bar of rounding at each end.
+      const want = SECS / bar;
+      assert(Math.abs(r.bars - want) <= 1.2,
+        `${state} played ${r.bars} bars in ${SECS} s and ${cfg.bpm} bpm in 4/4 says ${want.toFixed(1)}`);
+      // …and each bar built exactly what that state's own grid asks for.
+      const perBar = cfg.ost.filter(Boolean).length
+        + cfg.taiko.filter(x => x > 0).length + cfg.rattle.filter(x => x > 0).length;
+      assert(Math.abs(r.notes / Math.max(1, r.bars) - perBar) < 0.35,
+        `${state} averaged ${(r.notes / r.bars).toFixed(2)} notes a bar; its grid has ${perBar}`);
+      rows.push({ state, cfg, ...r, bar, perBar });
     }
-    assert(hot.pulses > mid.pulses + 2,
-      `a full fight (${hot.pulses}) is no faster than a quarter of one (${mid.pulses})`);
-    assert(cold.pulses === 0, `${cold.pulses} pulses played with nothing happening at all`);
+    const by = Object.fromEntries(rows.map(r => [r.state, r]));
 
-    // and each one is the envelope and the sweep the source says it is
-    const peak = Math.max(...hot.gains.map(g => g.gain.last('lin') ?? 0));
-    assert(peak > 0.10 && peak <= 0.1401,
-      `the loudest pulse was commanded to ${peak.toFixed(4)}, not the stated 0.14 × intensity`);
-    assert(hot.oscs.length === hot.pulses,
-      `${hot.oscs.length} of ${hot.pulses} pulses had a source at all`);
-    const swept = hot.oscs.filter(o => o.frequency?.last('exp') !== null);
-    assert(swept.length === hot.pulses,
-      `${swept.length} of ${hot.pulses} pulses actually swept — a sub that does not move is a hum`);
-    const from = swept[0].frequency.last('set'), to = swept[0].frequency.last('exp');
-    assert(from > to, `the pulse sweeps ${from} → ${to} Hz, which is upwards`);
-    assert(hot.a.voices === 0, `the score took ${hot.a.voices} voices from the one-shot pool`);
-    return `${hot.pulses}/${mid.pulses}/${cold.pulses} pulses in 10 s at I=1/0.4/0, `
-      + `${from.toFixed(0)}→${to.toFixed(0)} Hz, peak ${peak.toFixed(3)}, pool untouched`;
+    /* THE FOUR ARE NOT ONE CUE PLAYED LOUDER. */
+    assert(by.explore.notes === 0,
+      `${by.explore.notes} rhythm-section notes played between waves — explore has no drums`);
+    assert(by.combat.notes > 20, `a wave built ${by.combat.notes} notes in ${SECS} s`);
+    assert(by.boss.bars > by.combat.bars,
+      `a boss (${by.boss.bars} bars) is no faster than a wave (${by.combat.bars})`);
+    assert(by.boss.perc / by.boss.bars > by.combat.perc / by.combat.bars,
+      `a boss is not louder in the kit than a wave: ${(by.boss.perc / by.boss.bars).toFixed(1)} `
+      + `vs ${(by.combat.perc / by.combat.bars).toFixed(1)} drum sources a bar`);
+    assert(by.victory.ost === 0 && by.combat.ost > 0,
+      'victory plays the combat ostinato — the win sounds like the fight it ended');
+    assert(by.boss.gain.air > by.combat.gain.air * 2,
+      `the high line is not a boss's: ${by.boss.gain.air} vs ${by.combat.gain.air}`);
+
+    /* …and none of it costs a one-shot voice. That was true of the old pulse
+     * and it has to stay true: the score must never be refused because the room
+     * is busy, and a footstep must never be refused because the score is. */
+    for (const r of rows) {
+      assert(r.a.voices === 0, `${r.state} took ${r.a.voices} voices from the one-shot pool`);
+      assert(r.a.stats.denied === 0, `${r.state} caused ${r.a.stats.denied} refusals`);
+    }
+    return rows.map(r => `${r.state} ${r.cfg.bpm}bpm ${r.bars}bars `
+      + `${(r.notes / Math.max(1, r.bars)).toFixed(1)}/bar`).join(', ')
+      + `; pool untouched`;
+  });
+
+  /**
+   * IT IS ONE PIECE OF MUSIC AND NOT FIVE, and that is measured as a KEY.
+   *
+   * The room has been in A since Audio.js was written — the ambience drone is
+   * [55, 82.4, 110, 164.8, 220] Hz and `victory()` resolves on A major — so a
+   * generated score in anything else would be a second piece of music playing
+   * through the same speaker. This walks every chord in the table and every
+   * state's progression and asserts they all belong to one root, and that the
+   * modes differ in the way the table says they do.
+   */
+  check('audio: every state of the score is in the same key', () => {
+    const semis = new Set();
+    for (const [k, c] of Object.entries(CHORDS)) {
+      const all = [c.bass, ...c.tones];
+      for (const s of all) {
+        assert(Number.isInteger(s), `${k} has a non-integer degree ${s}`);
+        semis.add(((s % 12) + 12) % 12);
+      }
+      // Everything sits where an oscillator bank can be brass rather than a
+      // synthesiser: the bass between 38 and 90 Hz, the voicing above it.
+      const f = hz(c.bass);
+      assert(f > 36 && f < 95, `${k}'s bass is ${f.toFixed(1)} Hz — outside the low-brass register`);
+      assert(c.tones.every(t => t > c.bass), `${k} voices a tone under its own bass`);
+    }
+    // A is the root of the room and of this table.
+    assert(hz(0) === ROOT && ROOT === 55, `the root moved to ${ROOT} Hz`);
+
+    /* The modes are DIFFERENT, and specifically: only victory has a major
+     * third, and only the phrygian states have the flat second. Both are read
+     * off the progressions rather than off the mode NAME, because the name is a
+     * label and the chords are the music. */
+    const pcs = (state) => {
+      const out = new Set();
+      for (const name of SCORE_STATES[state].prog) {
+        const c = CHORDS[name];
+        assert(c, `${state} names a chord '${name}' that does not exist`);
+        for (const s of [c.bass, ...c.tones]) out.add(((s % 12) + 12) % 12);
+      }
+      return out;
+    };
+    const explore = pcs('explore'), combat = pcs('combat'), boss = pcs('boss'), vic = pcs('victory');
+    assert(!explore.has(1) && combat.has(1),
+      'the flat second is not what separates a wave from the lull before it');
+    assert(boss.has(6), 'the boss progression has no tritone from the pedal');
+    assert(!combat.has(6), 'an ordinary wave already has the tritone, so a boss has nothing left');
+    assert(vic.has(4), 'victory has no major third — it is the only state that is allowed one');
+    for (const [n, s] of [['explore', explore], ['combat', combat], ['boss', boss]]) {
+      assert(!s.has(4), `${n} has a major third in it`);
+    }
+    return `root A${ROOT} Hz; ${Object.keys(CHORDS).length} chords over `
+      + `${semis.size} pitch classes; bII in combat+boss, bV in boss, major third only in victory`;
+  });
+
+  /**
+   * THE FIVE MOMENTS, AND THEY HAVE TO BE FIVE DIFFERENT SOUNDS.
+   *
+   * A wave arriving was `ui('wave')` — a 180 → 90 Hz sine, one oscillator. A
+   * wave cleared and a death have real sounds and are not touched here. A boss
+   * entrance and a WON CAMPAIGN — the one completable thing in this game — had
+   * nothing at all.
+   *
+   * Each is fired on a fresh engine from the call the GAME makes (not from
+   * `stinger()` directly), and what it built is counted: how many notes, on
+   * which layers, over how long, and how far it pushed the music down.
+   */
+  check('audio: a wave, a boss, a victory and a death are four different sounds', () => {
+    const fire = (name, act) => {
+      const { a, ctx } = engine();
+      for (let f = 0; f < 240; f++) { a.updateScore(1 / 60, 0.6, 0); ctx.advance(1 / 60); }
+      const e0 = ctx.edges.length, n0 = a.score.stats.notes, v0 = a.stats.alloc;
+      const t0 = ctx.currentTime;
+      act(a);
+      const fresh = ctx.edges.slice(e0);
+      const oscs = fresh.map(([f2]) => f2).filter(n => n.kind === 'osc');
+      // When the last thing this gesture scheduled is due, relative to now.
+      const span = Math.max(0, ...ctx.running.filter(s => s._stopAt > t0).map(s => s._stopAt - t0));
+      const out = { a, ctx, notes: a.score.stats.notes - n0, want: a.score._want,
+        duck: a.musicDuckLevel(), span, oscs,
+        pitches: oscs.map(o => o.frequency.last('set') ?? o.frequency.value).filter(Boolean) };
+      // `victory()` and `death()` schedule part of themselves through `_at`,
+      // which is a silent oscillator on the AUDIO clock — nothing it defers has
+      // happened yet at this instant, so a voice count taken here would measure
+      // half of each. Let the clock run past the last of them first.
+      for (let i = 0; i < 40; i++) ctx.advance(0.05);
+      out.spent = a.stats.alloc - v0;
+      return out;
+    };
+    const spec = { id: 'probe', f0: 130, cadence: 1 };
+    const wave = fire('wave', a => a.ui('wave'));
+    const clear = fire('clear', a => a.victory());
+    const boss = fire('boss', a => a.speak(spec, 'boss', { self: true }));
+    const dead = fire('death', a => a.death());
+    const won = fire('won', a => a.runWon(true));
+
+    for (const [n, r] of [['wave', wave], ['clear', clear], ['boss', boss],
+      ['death', dead], ['victory', won]]) {
+      assert(r.notes > 0, `${n} built no music at all`);
+      assert(r.duck < 1, `${n} did not make room for itself — the bed plays over the top of it`);
+      assert(r.span > 0.25, `${n} is ${r.span.toFixed(2)} s long, which is a blip`);
+    }
+
+    /* THEY ARE NOT THE SAME GESTURE. Four different states, four different
+     * lengths, and the two that must never be confused — a wave cleared and a
+     * campaign won — are told apart by size. */
+    assert(wave.want === 'combat', `a wave arriving put the score in '${wave.want}'`);
+    assert(boss.want === 'boss', `a boss put the score in '${boss.want}'`);
+    assert(dead.want === 'death', `dying put the score in '${dead.want}'`);
+    assert(won.want === 'victory', `winning the campaign put the score in '${won.want}'`);
+    assert(clear.want === 'explore', `a wave cleared left the score in '${clear.want}'`);
+    assert(won.notes > clear.notes,
+      `winning a campaign (${won.notes} notes) is smaller than clearing one wave (${clear.notes})`);
+    assert(won.span > 2.5 && dead.span > 2.5,
+      `victory ${won.span.toFixed(1)} s / death ${dead.span.toFixed(1)} s — neither reaches the card`);
+
+    /* A death FALLS and a victory RISES, read off the notes themselves. */
+    const lows = (r) => r.pitches.filter(p => p < 400).sort((x, y) => x - y);
+    assert(Math.min(...lows(dead)) < hz(0) * 0.85,
+      `nothing in the death cue goes under the tonic (lowest ${Math.min(...lows(dead)).toFixed(1)} Hz)`);
+    assert(Math.max(...lows(won)) > hz(0) * 1.4,
+      `nothing in the victory cue rises above the tonic (highest ${Math.max(...lows(won)).toFixed(1)} Hz)`);
+
+    /* …and the two beats that were menu beeps keep the sounds they were given.
+     * `ui('bad')` and `ui('good')` must not have crept back in. */
+    assert(dead.spent >= 6, `death() spent ${dead.spent} voices — it is four layers plus two heartbeats`);
+    assert(clear.spent >= 6, `victory() spent ${clear.spent} voices — it is a four-note triad plus a swell`);
+    assert(wave.spent >= 1, `a wave arriving spent ${wave.spent} voices — the sine under it is gone`);
+    return `wave ${wave.notes}n/${wave.span.toFixed(1)}s→combat, clear ${clear.notes}n→explore, `
+      + `boss ${boss.notes}n/${boss.span.toFixed(1)}s→boss, death ${dead.notes}n/${dead.span.toFixed(1)}s→death, `
+      + `victory ${won.notes}n/${won.span.toFixed(1)}s→victory; ducks `
+      + [wave, clear, boss, dead, won].map(r => r.duck.toFixed(2)).join('/');
+  });
+
+  /**
+   * NOTHING DUCKED ANYTHING, EVER.
+   *
+   * Before this, the score played at constant gain over every clash, every
+   * detonation and every voice line in the game — the one thing an audit named
+   * outright. `duckMusic` existed and had exactly one caller (death), and it
+   * wrote `musicBus.gain`, which is the param the Music slider owns: a duck
+   * scheduled a return to the volume AS IT WAS when the duck began, so a slider
+   * moved inside that window was silently undone a second later.
+   *
+   * The measurement that matters is not "does a duck happen" — it is what
+   * happens when SIX do. A clash storm has to be one hole in the music and not
+   * six, and the score has to come all the way back afterwards.
+   */
+  check('audio: the music gets out of the way, and only once per exchange', () => {
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    for (let f = 0; f < 180; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    assert(a.musicDuckLevel() === 1, 'the score is already ducked with nothing happening');
+
+    // The slider is NOT the duck. Both have to be readable and separate.
+    const slider = a.musicBus.gain.last('tgt') ?? a.musicBus.gain.value;
+    const m0 = a.musicBus.gain.moves();
+
+    a.clash(near, 1);
+    const one = a.musicDuckLevel();
+    assert(one < 0.8, `one clash took the music to ${one.toFixed(2)} — that is not room`);
+
+    // Six more inside a tenth of a second: an exchange, not six exchanges.
+    const d0 = a.musicDuck.gain.moves();
+    for (let i = 0; i < 6; i++) { a.clash(near, 1); ctx.advance(1 / 120); }
+    const perExchange = a.musicDuck.gain.moves() - d0;
+    assert(perExchange <= 2,
+      `six more clashes inside 0.05 s cost ${perExchange} further duck automations — `
+      + 'the score would pump between the hits of one exchange');
+
+    // A whole second of them still costs a bounded number.
+    const d1 = a.musicDuck.gain.moves();
+    for (let i = 0; i < 60; i++) { a.clash(near, 1); ctx.advance(1 / 60); }
+    const perSecond = a.musicDuck.gain.moves() - d1;
+    assert(perSecond > 0 && perSecond <= 44,
+      `${perSecond} duck automations for 60 clashes in one second`);
+
+    assert(a.musicBus.gain.moves() === m0,
+      'ducking wrote the Music slider — a slider moved during a duck would be undone');
+    assert((a.musicBus.gain.last('tgt') ?? a.musicBus.gain.value) === slider,
+      'the player\'s music level moved because something clashed');
+
+    // …and it comes back. All the way back.
+    ctx.advance(6);
+    a.updateScore(1 / 60, 0, 0);
+    assert(a.musicDuckLevel() === 1,
+      `six seconds after the last clash the music is still held at ${a.musicDuckLevel()}`);
+
+    /* A VOICE LINE, and for as long as the line lasts rather than a constant.
+     * A grunt and a death cry are the same rule and different lengths. */
+    const spec = { id: 'probe', f0: 130, cadence: 1 };
+    const held = (kind, opts) => {
+      const { a: b, ctx: c } = engine();
+      for (let f = 0; f < 120; f++) { b.updateScore(1 / 60, 1, 0); c.advance(1 / 60); }
+      const dur = b.speak(spec, kind, opts);
+      let held2 = 0;
+      while (b.musicDuckLevel() < 1 && held2 < 8) { c.advance(0.05); held2 += 0.05; }
+      return { dur, held: held2, level: b._musicDuckAt };
+    };
+    const grunt = held('effort', { self: true });
+    const cry = held('die', { self: true });
+    const room = held('scream', { pos: V(3, 0, 0) });
+    const chatter = held('chatter', { pos: V(3, 0, 0) });
+    assert(grunt.held > 0 && cry.held > grunt.held,
+      `a death cry (${cry.held.toFixed(2)} s) does not hold the music longer than a grunt `
+      + `(${grunt.held.toFixed(2)} s)`);
+    assert(room.held > 0 && room.level > cry.level,
+      `a body screaming across the field leans on the score as hard as the player does `
+      + `(${room.level} vs ${cry.level})`);
+    assert(chatter.held === 0, 'idle droid banter stops the music');
+    return `1 clash → ${one.toFixed(2)}; 7 in 0.05 s → ${perExchange} automations, `
+      + `60 in 1 s → ${perSecond}; slider untouched, back to 1.00 after; `
+      + `grunt ${grunt.held.toFixed(2)} s @${grunt.level} / cry ${cry.held.toFixed(2)} s / `
+      + `room ${room.held.toFixed(2)} s @${room.level} / chatter none`;
+  });
+
+  /**
+   * THE BAR CLOCK IS THE AUDIO CLOCK, and it has to be.
+   *
+   * Every musical timer in this project's history that used the WALL clock has
+   * been wrong (see `death()`'s second heartbeat, and `victory()`'s arpeggio).
+   * A score is worse: the frame clock does not run on the menu, does not run
+   * during the 2.6 s death card, and — HANDOFF §2.6 — one frame on this box can
+   * take four seconds. So the score wakes itself with a silent oscillator per
+   * bar, and this is what proves it: drive the audio clock with NO frame loop
+   * at all and count the bars.
+   */
+  check('audio: the score keeps time with nothing calling it', () => {
+    const { a, ctx } = engine();
+    a.setMusicState({ state: 'combat' });
+    const b0 = a.score.stats.bars;
+    // Not one updateScore. Only the audio clock moves.
+    for (let i = 0; i < 600; i++) ctx.advance(0.05);      // 30 s
+    const bars = a.score.stats.bars - b0;
+    const want = 30 / (4 * 60 / SCORE_STATES.combat.bpm);
+    assert(Math.abs(bars - want) <= 1.5,
+      `${bars} bars in 30 s of audio clock with no frame loop; ${SCORE_STATES.combat.bpm} bpm says `
+      + `${want.toFixed(1)}. The score is being driven by the renderer.`);
+
+    /* AND A STOPPED CONTEXT IS NOT FED BARS. A suspended context freezes
+     * currentTime, so everything scheduled while it is down lands on one
+     * timestamp and arrives as a single chord when it comes back — the same
+     * failure `_live()` exists to stop for one-shots. */
+    const { a: b, ctx: c } = engine();
+    b.setMusicState({ state: 'combat' });
+    c.allowResume = false; c.state = 'suspended';
+    const bb = b.score.stats.bars, t = c.currentTime;
+    for (let f = 0; f < 600; f++) b.updateScore(1 / 60, 1, 0);
+    assert(c.currentTime === t, 'the fake clock moved; this is not measuring what it thinks');
+    assert(b.score.stats.bars === bb,
+      `${b.score.stats.bars - bb} bars were scheduled onto a frozen clock — they all land at once`);
+    c.allowResume = true; c.state = 'running';
+    for (let f = 0; f < 300; f++) { b.updateScore(1 / 60, 1, 0); c.advance(1 / 60); }
+    assert(b.score.stats.bars > bb, 'the score never came back after the context did');
+    return `${bars} bars in 30 s with no frame loop (${SCORE_STATES.combat.bpm} bpm wants `
+      + `${want.toFixed(1)}); 0 scheduled while suspended, ${b.score.stats.bars - bb} after resume`;
+  });
+
+  /**
+   * THE SCORE COSTS FRAMES OR IT DOES NOT.
+   *
+   * Audio runs on the main thread here. The one-shot pool grants sixty voices a
+   * second in an ordinary fight and that is the budget this has to be small
+   * against — a score that built as much per second as the sound effects would
+   * be a second sound engine. It also has to give every node back: eleven
+   * oscillators run for the session by design, and everything else is
+   * transient.
+   */
+  check('audio: the score is cheap, and gives every node it takes back', () => {
+    const { a, ctx } = engine();
+    a.setMusicState({ state: 'boss' });                   // the densest state
+    for (let f = 0; f < 120; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    const e0 = ctx.edges.length, d0 = ctx.disconnected.length;
+    for (let f = 0; f < 3600; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    const perSec = (ctx.edges.length - e0) / 60;
+    assert(perSec < 40, `${perSec.toFixed(1)} connections a second under a boss`);
+    assert(perSec > 4, `${perSec.toFixed(1)} connections a second — the densest state is not playing`);
+
+    ctx.advance(8);
+    const freed = ctx.disconnected.length - d0;
+    const built = ctx.edges.length - e0;
+    // Every transient voice releases its filter and its envelope; the sources
+    // themselves are collected once stopped, exactly as _freeOnEnd does it.
+    assert(freed > built * 0.3,
+      `${built} connections in a minute and only ${freed} disconnects — nodes are accumulating`);
+    assert(a.voices === 0 && a.stats.alloc === a.stats.freed,
+      `the score moved the one-shot pool: ${a.stats.alloc} allocated, ${a.stats.freed} freed`);
+    assert(ctx.running.length < 40,
+      `${ctx.running.length} sources still scheduled 8 s after the last bar`);
+    return `${perSec.toFixed(1)} connections/s under a boss for 60 s, ${freed} released, `
+      + `${ctx.running.length} in flight after; one-shot pool untouched`;
   });
 
   /**

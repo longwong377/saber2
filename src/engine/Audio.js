@@ -387,6 +387,8 @@ export class AudioEngine {
      * should be. The streamed theme is still there, one row down the slider.
      */
     this.musicIndex = 0;
+    /** The live <audio> stream, or null. Never left undefined — see playMusic. */
+    this._music = null;
     /** The id of a track whose files would not load. Read by the options screen. */
     this.musicMissing = null;
     /**
@@ -725,7 +727,9 @@ export class AudioEngine {
     // ever fetched — a profile on the generated score (which is the default)
     // must not pull 28 MB in order to play none of it.
     this._applyTrack();
-    return this._music;
+    // `|| null` and not the field: `_music` is undefined until something builds
+    // one, and a caller testing `=== null` for "nothing was started" is right to.
+    return this._music || null;
   }
 
   /**
