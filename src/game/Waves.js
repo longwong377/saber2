@@ -1494,9 +1494,43 @@ export class WaveDirector {
        * moving, so the local handling reads it as healthy right up until it is
        * at y = -400 and the wave has stopped. */
       if (!positionIsValid(this.world, e)) {
-        this._rescue(e, r, ctx, 'invalid position');
+        /* …AND THE RESCUE CAN FAIL, WHICH THE FIRST DRAFT OF THIS DID NOT
+         * ALLOW FOR. `tools/checks/command.mjs` caught it end to end: the site
+         * picker gives up onto the ring when twenty tries all miss, and on a
+         * world whose bounds are tighter than `ring × MARCH_RADIUS` that
+         * give-up point is ITSELF outside the heightfield. So the body was
+         * moved from one impossible place to another, this branch `continue`d
+         * without touching either clock, and the wave still never ended — the
+         * watchdog looping forever on the exact bug it exists to survive. The
+         * rescue COUNT is the bound, and past it the body is withdrawn. */
+        if (r.n >= STALL_RESCUES) this._retire(e, r, 'invalid position, unrescuable');
+        else this._rescue(e, r, ctx, 'invalid position');
         continue;
       }
+
+      /**
+       * A BODY THAT CAN FIGHT IS NOT STUCK, however still it is standing.
+       *
+       * The other direction, and it is the one that matters more: a watchdog
+       * that teleports a marksman doing its job correctly is worse than the bug
+       * it fixes. Measured on the shipped roster, a sniper's `preferred` band is
+       * [22, 42] m — it is SUPPOSED to hold station, it will never close, and
+       * nothing will hurt it while it is doing so. Under the clocks alone it
+       * accumulated the full retire time and was withdrawn mid-fight, which
+       * `tools/checks/command.mjs` caught on the first run.
+       *
+       * The discriminator is the archetype's OWN engagement band, which is the
+       * only honest statement of "can this body reach the fight from here": a
+       * marksman at 38 m is where it wants to be, an acolyte at 38 m (preferred
+       * [1.6, 3.4]) has manifestly failed to arrive. Read off `preferred` rather
+       * than a constant, so a body added tomorrow is judged by its own reach.
+       *
+       * The margin is generous — 1.5× the far edge plus 6 m — because the cost
+       * of being wrong in this direction is a body removed from a live fight and
+       * the cost of being wrong in the other is a body removed thirty seconds
+       * later than it might have been.
+       */
+      const reach = (e.A?.preferred?.[1] ?? 12) * 1.5 + 6;
 
       let d = Infinity;
       for (const p of players || []) {
@@ -1515,6 +1549,8 @@ export class WaveDirector {
       // A stalled body in the middle of a live wave is a body the player has not
       // got to yet, and moving it would be the watchdog playing the game.
       if (!blocking) continue;
+      // …and only while it cannot fight from where it is standing. See `reach`.
+      if (d <= reach) { r.t = 0; continue; }
       r.t += dt;
       if (r.t > STALL_RETIRE || (r.t > STALL_RESCUE && r.n >= STALL_RESCUES)) {
         this._retire(e, r, 'unreachable');

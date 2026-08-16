@@ -17,6 +17,7 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
+import { FORMATIONS, FORMATION_IDS } from './game/Command.js';
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
@@ -335,6 +336,40 @@ function buildWorld(levelKey) {
     world.director.start();
     hud.setCoach(world.director.state());
   } else hud.showCoach(false);
+
+  /**
+   * THE ARMY'S THREE WIRES — and two of the three ends do not exist yet.
+   *
+   * `CommandDirector` publishes everything the front end needs and reaches for
+   * nothing: a roster summary when a name is promoted or lost, a muster offer
+   * between areas, and the formation whenever an order is given. What is
+   * missing is a HUD that draws a casualty list and a Screen that sells
+   * reinforcements — both live in files this lane does not own, and both are
+   * specified in the handover at the foot of src/game/Command.js.
+   *
+   * SO EVERY CALL IS OPTIONAL AND THE MODE IS PLAYABLE WITHOUT THEM. `?.` on
+   * the HUD side, and on the muster side the director simply does not install a
+   * handler — which makes it muster for the player itself and press on, rather
+   * than stopping a campaign on a screen that has not been built. The day
+   * either arrives it is one line here and nothing in Command.js changes.
+   *
+   * The roster still reaches the player meanwhile: every promotion and every
+   * death goes through `world.notify` and lands on the HUD's message feed with
+   * the name, the rank and how many are still standing.
+   */
+  if (world.command) {
+    const d = world.command;
+    d.onRoster = (summary) => hud.setRoster?.(summary);
+    if (typeof screens.muster === 'function') {
+      d.onMuster = (offer) => screens.muster(offer, {
+        recruit: (type) => d.recruit(type),
+        done: () => d.closeMuster(),
+      });
+    }
+    d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
+    d.onRoster(d.roster.summary());
+    hud.setLevel(`${world.level.name} — ${d.area.name}`, world.difficulty.name);
+  }
 
   return world;
 }
@@ -1214,6 +1249,43 @@ function lessonKeys() {
 }
 
 /**
+ * GIVING AN ORDER — player note #30, read once a frame beside the lessons.
+ *
+ * "you can order your troops into different formations, circle around you,
+ * behind you, in front idk you know better than me."
+ *
+ * `FORMATIONS` carries the key each order wants, so this loop is derived from
+ * the same table the director steers off and there is no second list of six
+ * keys anywhere. That is deliberate and it is the difference between this and
+ * the raw `e.code === 'KeyN'` listener the note above records: one table, one
+ * reader, and a formation added tomorrow is bound the day it is authored.
+ *
+ * READ AS RAW CODES AND NOT THROUGH `input.act`, WHICH IS A KNOWN GAP. Every
+ * other verb in this game is an entry in `ACTIONS` (src/engine/Bindings.js), so
+ * it appears on the controls card, it is rebindable, and `findConflict` can see
+ * it — and that file is owned by another lane right now. Six rows under a
+ * "Command" group is the whole change and it is written down in the handover at
+ * the foot of src/game/Command.js. Until it lands these six are raw keys, which
+ * means they are NOT rebindable and DO NOT show on the controls card; they are
+ * also on Digit6-Digit0 and Minus, which `findConflict` reports as free.
+ *
+ * Guarded on `world.command` so the keys are inert in every other mode, rather
+ * than being six more things that can happen while you are duelling.
+ */
+function orderKeys() {
+  if (screens.state !== 'playing') return;
+  const cmd = world?.command;
+  if (!cmd) return;
+  for (const id of FORMATION_IDS) {
+    const F = FORMATIONS[id];
+    if (!F.key || !input.hit(F.key)) continue;
+    if (!cmd.order(id)) continue;
+    hud.message(F.name.toUpperCase(), F.blurb);
+    break;                       // one order a frame; two at once is neither
+  }
+}
+
+/**
  * The coach panel's key legend, from the bindings rather than from the markup.
  *
  * index.html shipped `N next / B back / R etry with Y` baked in, which was
@@ -1324,6 +1396,7 @@ function frame(now) {
   setScoreboard(screens.state === 'playing' && !!world && !world.freeCamera
     && input.act('scoreboard'));
   lessonKeys();
+  orderKeys();
   communeTick(dt);
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 

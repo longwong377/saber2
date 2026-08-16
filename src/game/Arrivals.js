@@ -625,6 +625,17 @@ export class ArrivalDirector {
     const ring = this._ring();
     const at = this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3());
     if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return false;
+    /* AND THE GIVE-UP CASE HAS TO BE CHECKED, which is the whole reason this
+     * returns a boolean at all. `_sitePoint` falls back to the ring itself when
+     * twenty tries all miss — a last resort that is right for a MARCH, where
+     * the worst case is an awkward walk. It is not right here: on a world whose
+     * bounds are tighter than `ring × MARCH_RADIUS` that fallback point is
+     * outside the heightfield, so a rescue would move a body from one
+     * impossible place to another and the caller would believe it had worked.
+     * Measured end to end in tools/checks/command.mjs, where the wave then
+     * never cleared. */
+    const t = this.world.terrain;
+    if (t?.inBounds && !t.inBounds(at.x, at.z, 0)) return false;
     e.position.set(at.x, at.y, at.z);
     e.velocity?.set?.(0, 0, 0);
     // The two counters `Enemy._move`'s navigation runs on. Left as they were,

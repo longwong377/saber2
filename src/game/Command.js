@@ -283,6 +283,36 @@ export const COMMAND_UNITS = {
  * The two rosters are paired rung for rung by threat (1/2/3/4/6/7 both sides),
  * which is what makes the mirror match fair and is asserted in the checks.
  */
+/**
+ * WHAT ONE BODY COSTS AT THE MUSTER — DERIVED FROM ITS THREAT, NOT TYPED.
+ *
+ * The first draft of `tiers` carried a hand-written `cost` beside every rung,
+ * and `tools/checks/command.mjs` caught it on the first run: the Republic's
+ * threat-2 line trooper and the Confederacy's threat-1 B1 were both priced at
+ * 3, which makes a clone 1.5 points of threat per point spent and a B1 exactly
+ * 1. Over a five-area campaign that is not a rounding difference, it is one army
+ * being 50% better value than the other — and nothing on screen prints a threat
+ * number, so no player could ever have seen it.
+ *
+ * That is the hand-maintained-table-beside-its-generated-twin defect for the
+ * ninth time in this repository, in its purest form: a price beside the thing
+ * that decides what the price should be. `A.threat` is the game's own single
+ * currency for "how much fight is this" — the wave director spends a budget in
+ * it — so the muster spends the same currency at a fixed exchange rate.
+ *
+ * 1 + 1.8 × threat: the +1 is a per-BODY charge, so two cheap bodies cost more
+ * than one twice as good, which is what stops a campaign from being twenty-four
+ * B1s. At the extremes: a B1 is 3, a MagnaGuard is 14, and both ladders total
+ * 51 — asserted, not hoped.
+ */
+export function musterCost(type) {
+  const t = ARCHETYPES[type]?.threat ?? 0;
+  return 1 + Math.round(t * 1.8);
+}
+
+/** A rung, priced. The `at` is the area from which it can be bought at all. */
+const rung = (type, at) => ({ type, at, get cost() { return musterCost(type); } });
+
 export const ARMIES = {
   republic: {
     id: 'republic',
@@ -301,12 +331,8 @@ export const ARMIES = {
      * (`markColor`). One field name each, so RANKS can stay one table. */
     paint: 'accent',
     tiers: [
-      { type: 'trooper', cost: 3, at: 1 },
-      { type: 'heavy',   cost: 5, at: 1 },
-      { type: 'sniper',  cost: 5, at: 2 },
-      { type: 'jet',     cost: 7, at: 2 },
-      { type: 'arc',     cost: 11, at: 3 },
-      { type: 'officer', cost: 13, at: 3 },
+      rung('trooper', 1), rung('heavy', 1), rung('sniper', 2),
+      rung('jet', 2), rung('arc', 3), rung('officer', 3),
     ],
   },
   separatist: {
@@ -319,12 +345,8 @@ export const ARMIES = {
     plate: 0xb9a077,
     paint: 'markColor',
     tiers: [
-      { type: 'b1',       cost: 3, at: 1 },
-      { type: 'b2',       cost: 5, at: 1 },
-      { type: 'rocket',   cost: 5, at: 2 },
-      { type: 'droideka', cost: 7, at: 2 },
-      { type: 'bx',       cost: 11, at: 3 },
-      { type: 'magna',    cost: 13, at: 3 },
+      rung('b1', 1), rung('b2', 1), rung('rocket', 2),
+      rung('droideka', 2), rung('bx', 3), rung('magna', 3),
     ],
   },
 };
@@ -586,27 +608,27 @@ export const AREAS = [
   {
     id: 'landing', name: 'The Landing Zone',
     brief: 'The gunships put you down in the open. Form up before the first line reaches you.',
-    waves: 3, budget: 0.75, heavy: 0.0, muster: 8, tier: 1,
+    waves: 3, budget: 0.75, heavy: 0.0, muster: 11, tier: 1,
   },
   {
     id: 'plain', name: 'The Open Plain',
     brief: 'Two kilometres of flat ochre and nothing to hide behind. They can see you the whole way.',
-    waves: 4, budget: 0.95, heavy: 0.15, muster: 10, tier: 2,
+    waves: 4, budget: 0.95, heavy: 0.15, muster: 14, tier: 2,
   },
   {
     id: 'hailfire', name: 'The Hailfire Line',
     brief: 'Armour on the ridge. Your line will not survive standing in the open here.',
-    waves: 4, budget: 1.10, heavy: 0.35, muster: 12, tier: 2,
+    waves: 4, budget: 1.10, heavy: 0.35, muster: 17, tier: 2,
   },
   {
     id: 'spires', name: 'The Spire Approach',
     brief: 'Under the spires, in the smoke. Their elite are waiting where the sightlines close.',
-    waves: 5, budget: 1.25, heavy: 0.30, muster: 14, tier: 3,
+    waves: 5, budget: 1.25, heavy: 0.30, muster: 20, tier: 3,
   },
   {
     id: 'foundry', name: 'The Core Ship',
     brief: 'The last ground before the ship. Everything they have left is between you and it.',
-    waves: 5, budget: 1.45, heavy: 0.45, muster: 16, tier: 3,
+    waves: 5, budget: 1.45, heavy: 0.45, muster: 23, tier: 3,
   },
 ];
 
