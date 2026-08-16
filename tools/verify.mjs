@@ -107,6 +107,7 @@ import { Particles, ParticlePool, ChipField, DecalField } from '../src/world/Par
 import { clamp } from '../src/engine/MathUtil.js';
 
 let pass = 0, fail = 0;
+const t0 = Date.now();
 const results = [];
 const pending = [];
 function check(name, fn) {
@@ -130,6 +131,50 @@ function check(name, fn) {
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 function near(a, b, tol, msg) { if (Math.abs(a - b) > tol) throw new Error(`${msg}: ${a} vs ${b} (±${tol})`); }
+
+/**
+ * EVERY SUITE REPORTS AS IT FINISHES, AND THAT IS THE WHOLE POINT.
+ *
+ * This file used to print one line per suite as it STARTED (`  … name.mjs`) and
+ * hold every result to the summary table at the bottom. So a run that stalled
+ * on suite 42 threw away the evidence from the 41 that had already passed: what
+ * you got for forty minutes of CPU was a list of filenames. Several 50-minute
+ * runs in one session produced no gate number at all for that reason, and every
+ * agent working on the project ended up driving `_one.mjs` by hand instead —
+ * which is why the per-suite evidence was good while the aggregate was missing.
+ *
+ * A gate that only speaks when it finishes cannot report on a run that does not,
+ * and "does not finish" is the failure mode this project actually has. So each
+ * suite's tally goes out the moment it settles, every failure is printed in full
+ * where it happened rather than 3000 lines later, and a running total rides
+ * along so a killed run still has a number attached to it. The summary table at
+ * the bottom is unchanged and still the canonical artefact; this is the same
+ * information, emitted early enough to survive.
+ *
+ * STDERR, for the same reason the `… name` line was on stderr: stdout carries
+ * the result table and `| tail -60` must not eat the answer. Both streams go to
+ * a terminal by default, so a person watching sees it interleaved and a script
+ * capturing stdout sees exactly what it saw before.
+ *
+ * RSS RIDES ALONG because HANDOFF §2.7 asks for exactly this reading and it
+ * costs nothing: a monotonic climb across unrelated suites is a leak, a spike
+ * confined to two suites is a peak, and the two want opposite fixes. `_memtrace.mjs`
+ * was written to answer that question by re-implementing this runner and could
+ * not (a second copy of a runner is the defect this project keeps removing —
+ * §2.4); one field on this line answers it from the runner that actually runs.
+ */
+function report(label, from, began) {
+  const slice = results.slice(from);
+  const bad = slice.filter(r => r[0] === '✗');
+  for (const [, name, detail] of bad) process.stderr.write(`      \x1b[31m✗ ${name}\x1b[0m  ${detail}\n`);
+  const secs = (Date.now() - began) / 1000;
+  const rss = process.memoryUsage().rss / 1048576;
+  const colour = bad.length ? '\x1b[31m' : '\x1b[32m';
+  process.stderr.write(`  ${colour}${bad.length ? '✗' : '✓'}\x1b[0m ${label.padEnd(26)}`
+    + ` ${String(slice.length - bad.length).padStart(4)}/${String(slice.length).padEnd(4)}`
+    + ` \x1b[2m${secs.toFixed(1).padStart(6)}s   rss ${rss.toFixed(0).padStart(4)} MB`
+    + `   running ${pass}/${pass + fail}\x1b[0m\n`);
+}
 
 /* ── a blade we can drive by hand ────────────────────────────────────── */
 
@@ -3518,9 +3563,23 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
    * one suite changes what it sees — the same defect this is here to remove,
    * surviving in the one place it would be hardest to spot. */
   const { snapshotShared, restoreShared } = await import(new URL('_shared.mjs', dir).href);
+  /* THE CORE BLOCK IS DRAINED HERE, and it is the one block that was exempt from
+   * the rule the note above states. Every suite's async checks are awaited
+   * before the next suite starts; this file's own ~700 were not awaited until
+   * after the last suite, so they ran concurrently with all eighty of them — the
+   * very thing that paragraph says was fixed. Two consequences, both real:
+   * `report('core')` could not have told the truth about checks still in flight,
+   * and `snapshotShared()` below was taking the baseline WHILE core's async
+   * checks were still advancing `enemyRng`, `duelRng` and `wind.time`, so the
+   * baseline every suite restores to depended on how far they had got. Draining
+   * first makes the baseline a quiescent reading and costs nothing else. */
+  await Promise.all(pending);
   const baseline = await snapshotShared();
+  report('core (verify.mjs)', 0, t0);
   for (const f of files) {
     const from = pending.length;
+    const mark = results.length;
+    const began = Date.now();
     process.stderr.write(`  … ${f}\n`);
     restoreShared(baseline);
     try {
@@ -3532,6 +3591,7 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
     }
     // These never reject: check() attaches both handlers before pushing.
     await Promise.all(pending.slice(from));
+    report(f, mark, began);
   }
 }
 
