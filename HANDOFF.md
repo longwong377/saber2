@@ -257,7 +257,15 @@ The player asked for these to wait, and the folders are `assets/reference/`:
 - **The Drowned Wood's ground** — the last surface still drawn outside the cel
   pipeline, and the reason the meadow was deleted rather than tuned.
 - **The big creatures, and Mandalorians** — "all your monsters look the same,
-  sphere with some legs".
+  sphere with some legs, like you really need to make the big enemies more
+  dangerous and more interesting and menacing, they all attack the same way."
+  The arena references already in
+  (`colosseum/more arena.jpg`, `fighting monster in arena.jpg`) are the brief
+  for the first half: three creatures share one frame and no two share a
+  BODY PLAN — a bulky horned quadruped, a tall spindly six-legged insectoid, a
+  low pouncing cat. Not three skins on one skeleton, which is what
+  `buildQuadruped` gives today. The second half — "they all attack the same
+  way" — is `Enemy.js`'s move sets, and is a separate job from the meshes.
 
 ### 6.1b Diagnosed, scoped, not yet built
 
