@@ -2246,7 +2246,7 @@ export class Enemy {
    * NINE toe-severs to kill an animal that has four; the acklay and the reek
    * need 24 against six and four, the nexu 26, the gundark 11, the walker 20
    * and the AT-TE 36. **No body on the roster can now be killed by taking its
-   * extremities off, and six of them could.**
+   * extremities off, and eight of them could.**
    *
    * That is why the first version of the hide guard bought nothing. It turned
    * the pass at the neck and the model simply went round it to a leg — which is
