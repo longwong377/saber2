@@ -226,7 +226,21 @@ function duel(formKey, seconds, opts = {}) {
   return s;
 }
 
-/** One posed frame of a real duellist, so its blade can be measured in place. */
+/**
+ * One posed frame of a real duellist, so its blade can be measured in place.
+ *
+ * THE KIT IS TAKEN OUT, and it has to be. Three of the checks below pose a
+ * blade at fixed WORLD coordinates either side of a player they assume is
+ * standing on the origin — which is what makes "the whole edge cuts, not only
+ * the tip" a test of the edge rather than of where anybody happens to be. Once
+ * an acolyte could actually cast (it never could until `tools/checks/powers.mjs`
+ * existed), 60 warm-up frames were long enough for it to open with a shove, and
+ * the player was 3.96 m from a blade laid through where they used to be. The
+ * check failed, correctly, on a fixture that had stopped measuring its subject.
+ *
+ * `duel()` above deliberately keeps the kit — that one measures a whole fight.
+ * What a duellist does with the Force belongs to `powers.mjs`.
+ */
 function posedDuellist(formKey = 'djemSo', range = 1.8, frames = 90) {
   const w = gameWorld();
   const p = new Player(w, { isLocal: true });
@@ -235,6 +249,7 @@ function posedDuellist(formKey = 'djemSo', range = 1.8, frames = 90) {
   w.players.push(p);
   const e = new Enemy(w, 'acolyte', V(0, 0, range));
   e.duel.formKey = formKey; e.duel.form = FORMS[formKey];
+  e.powers = null;
   w.enemies.push(e);
   const ctx = {
     input: stubInput(), terrain: w.terrain, physics: w.physics, particles: null,
