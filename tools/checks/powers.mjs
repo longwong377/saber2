@@ -22,9 +22,9 @@
  *   · `pressed` required `hpFrac < 0.72`, so a duellist at full health could
  *     never OPEN with a shove — and `pressed` is the only situation a stand-up
  *     fight ever satisfies.
- *   · `pull` banded [6.5, 20] and `lightning` [4.5, 18] against a MEASURED
- *     stand-off of p50 1.5–2.0 m, p90 3.1 m. The bands describe a fight that
- *     does not happen.
+ *   · `pull` banded [6.5, 20] and `lightning` [4.5, 18] against a stand-off
+ *     this file measures at p50 1.6 m, p90 1.7 m. The bands describe a fight
+ *     that does not happen.
  *   · a blade lock — 29–41% of a long duel — returned out of `_meleeBrain`
  *     before `_forceBrain` was reached at all.
  *
