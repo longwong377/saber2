@@ -238,7 +238,15 @@ The player asked for these to wait, and the folders are `assets/reference/`:
 
 - **Geonosis** — the Command mode (lead named troops with permadeath and
   promotion, squads, formations, mechs, jet troopers) is built on it.
-- **The Coruscant Jedi Temple** — as a level, ending in the younglings.
+- **The Coruscant Jedi Temple** — as a level, ending in the younglings. The
+  references are in and they answer the BOX problem outright, which is the
+  lesson worth carrying to every interior: in
+  `coruscant-temple/temple 1.jpg` the sense of place is made entirely of
+  DEPTH — arcade behind arcade behind arcade, columns running up out of frame,
+  light raking in from windows too high to see — and not by a ceiling and four
+  walls. Every interior this project has shipped read as a cube because the eye
+  could find the far wall. The fix is not more detail on the walls; it is
+  putting three more colonnades between the player and them.
 - **The real Mustafar** — the current one is renamed *The Ember Shelf*; its
   molten sea is still a lava sea and the player wants it changed to something
   that is not Mustafar's.
