@@ -906,6 +906,22 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
  * deep pool scales an incoming SHOVE by, so it sets how far the enemy's push
  * carries a braced player, which is what `PUSH_SPEED` is sized against.
  *
+ * ── WHAT A DEEP POOL BUYS DEFENSIVELY, MEASURED: NOTHING PAST 19.64.
+ *
+ * The `min` saturates. For a 50 hp blow the first term is `50 × 0.55` = 27.50
+ * and the second is `pool × 1.4`, so every pool at or above **19.64** blunts
+ * exactly 27.50 and spends exactly 19.64 — measured at 25, 50, 100 and 150 and
+ * identical at all four. A 460 hp Master carrying 150 of pool and a 200 hp
+ * Sentinel carrying 40 therefore defend the same, and the archetype `force:`
+ * numbers are a SPENDING budget and nothing else.
+ *
+ * That is recorded rather than changed, and deliberately. Making depth defend —
+ * scaling `RESIST_CAP` by the fraction of pool the blow costs — is a balance
+ * decision, it is symmetric (the player is the other caller), and `1 -
+ * RESIST_CAP` is what `PUSH_SPEED` was sized against, so it would move how far
+ * every shove in the game carries a braced body. It wants its own pass with its
+ * own measurements on both sides of the contest, not a line changed in passing.
+ *
  * @param pool    the defender's Force, whatever it is called on that class
  * @param beaten  is the guard already broken — stunned, staggered, gripped
  * @returns `{ blunt, spend }`: hp taken off the blow, and pool it cost.
@@ -1170,8 +1186,23 @@ export const ENEMY_POWERS = {
     hold: 2.4, drain: 9, dps: 7,
     label: 'CHOKE', color: '#ff6a6a', sound: 'grip',
   },
+  /**
+   * BANDED AT 2.8 AND NOT 4.5, for the reason the pull is banded at 3.2.
+   *
+   * 4.5 m is further than any duellist on the roster stands (the widest band is
+   * the bodyguard's 3.8) and further than its own shove throws — a braced
+   * player lands at 3.86 m — so the two-beat this power exists for could not
+   * complete: shove, then burn. Measured over five real 45-second duels, one
+   * per Force archetype: 22 casts, 20 push, 2 pull, and lightning fired ZERO
+   * times on any body that has it, including the Sith whose signature it is.
+   *
+   * 2.8 is inside where the shove lands and outside where a blade fights, so
+   * the beam is reachable exactly in the gap the push opens and not while the
+   * two of them are nose to nose. The `ranged` situation is the other half of
+   * the same fix — see `_forceBrain`.
+   */
   lightning: {
-    cost: POWER_COST.lightning, cd: 8.5, band: [4.5, 18], want: 'ranged',
+    cost: POWER_COST.lightning, cd: 8.5, band: [2.8, 18], want: 'ranged',
     hold: 1.6, drain: 6, dps: 22,
     label: 'LIGHTNING', color: '#c8e8ff', sound: 'lightning',
   },
@@ -3568,8 +3599,33 @@ export class Enemy {
       pressed: dist < this.A.preferred[1] + 0.8,
       // opening the distance: `closing` is positive when they move away from it
       fleeing: closing > 1.6 || dist > this.A.preferred[1] + 3.5,
-      ranged: dist > this.A.preferred[1] + 2.0,
-      cornered: hpFrac < 0.34 && dist < 6,
+      /**
+       * OUTSIDE THE RANGE THIS BODY FIGHTS AT — and it used to be two metres
+       * outside it, which is a place the fight never went.
+       *
+       * `+ 2.0` is 5.4 m on a Master. Measured stand-off in a real 1v1 duel:
+       * ~1.6 m. And the shove that is supposed to CREATE the opening — the
+       * first beat of the only two-beat this roster has — lands a braced player
+       * at 3.86 m, still under the floor. So the situation was unreachable in
+       * both of the ways it could be reached, and the consequence was measured
+       * across five archetypes over 45 s each: 22 casts, 20 of them `push`, 2
+       * `pull`, and ZERO lightning — the Sith acolyte's signature power, the
+       * thing that is supposed to separate fighting him from fighting a Jedi.
+       * A five-power roster that plays as one power.
+       *
+       * `preferred[1]` is the far edge of the band this body swings from, so
+       * "you are outside my reach" is now literally what this says, and the
+       * shove clears it by half a metre. `lightning`'s own band floor comes
+       * down to meet it — see ENEMY_POWERS.
+       */
+      ranged: dist > this.A.preferred[1],
+      /* Half health, not a third. `unleash` is the only one in the roster and
+       * it fired zero times in the same measurement: a duel that reaches 34% of
+       * a Master's 460 hp is a duel that is nearly over, so the one power the
+       * boss has that nothing else does was authored into the last few seconds
+       * of a fight most players end before it. Half is a beat you can lose to
+       * and come back from. */
+      cornered: hpFrac < 0.5 && dist < 6,
     };
 
     for (const key of this.powers) {
