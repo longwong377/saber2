@@ -129,6 +129,26 @@ export const MODES = {
     name: 'Command',
     blurb: 'Lead an army across Geonosis. Your troops have names, they earn rank, and when they die they are gone.',
     fixedTheatre: 'Command is fought on Geonosis: five areas, one crossing, and the ground does not change.',
+    /**
+     * THE GROUND, AS A FIELD SOMETHING CAN READ.
+     *
+     * `fixedTheatre` above is PROSE. The menu greys the Theatre column and
+     * prints that sentence, and for the whole life of this mode nothing on the
+     * load side read it — `deploy()` took the player's last-picked level and
+     * `World.loadLevel` honoured it. `DEFAULT_SETTINGS.level` is `'scoria'`, so
+     * the default path (fresh profile → Command → Ignite) **deployed the army
+     * onto the Ember Shelf while the menu said Geonosis**, and the HUD printed
+     * "The Ember Shelf — The Landing Zone".
+     *
+     * It was not only wrong scenery. `CommandDirector` is constructed with the
+     * loaded level's own pool, so the Geonosis roster — all seven Command units
+     * and all four machines — was replaced by scoria's twelve Jedi and droids.
+     * The mode's entire reason to exist was unreachable by any normal route.
+     *
+     * A mode that owns its ground now SAYS SO in a field, and `deploy()` reads
+     * it. Prose is for the player; this is for the code.
+     */
+    level: 'geonosis',
   },
 };
 

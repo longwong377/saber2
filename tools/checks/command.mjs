@@ -99,7 +99,7 @@ export function run({ check, assert }) {
   /*  The mode and its ground                                           */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('command: the mode owns its ground, and says so where the menu reads it', () => {
+  check('command: the mode owns its ground, and says so where the menu reads it', async () => {
     const M = Waves.MODES.command;
     assert(M, 'there is no `command` mode');
     assert(typeof M.name === 'string' && M.name.length, 'the mode has no name');
@@ -114,7 +114,37 @@ export function run({ check, assert }) {
     assert(LEVELS.geonosis && LEVEL_ORDER.includes('geonosis'),
       'the mode owns a ground the roster does not have');
     assert(TERRAIN_PRESETS.geonosis, 'geonosis names a terrain preset that does not exist');
-    return `${M.name} → ${LEVELS.geonosis.name}, theatre fixed`;
+
+    /**
+     * …AND THE MODE ACTUALLY LANDS THERE, which is the half every assertion
+     * above this line was incapable of seeing.
+     *
+     * This check used to end here and return "Command → Geonosis, theatre
+     * fixed" — a CONCLUSION IT HAD NOT MEASURED, and which was false. What it
+     * verified was that a mode existed, that its name was a string, that a
+     * sentence was longer than twenty characters, and that a level was present
+     * in a table. Meanwhile `deploy()` read the player's last-picked level and
+     * `DEFAULT_SETTINGS.level` is `'scoria'`, so the default path put the army
+     * on the Ember Shelf — with scoria's pool, so none of the seven Command
+     * units or four machines could even spawn.
+     *
+     * A green check printed the opposite of the truth for the entire life of
+     * the feature. So the rule is now CALLED rather than restated (HANDOFF
+     * §2.4): build a real World the way the game builds it, ask for a
+     * deliberately wrong level, and read back where it actually stood up.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'kamino',                       // deliberately NOT geonosis
+      settings: { mode: 'command', level: 'kamino' },
+    });
+    assert(world.levelKey === 'geonosis',
+      `Command deployed onto '${world.levelKey}' after being asked for 'kamino'. `
+      + 'The mode declares fixedTheatre and MODES.command.level; if nothing on the load '
+      + 'side reads them, the menu greys the Theatre column and then lies about the ground.');
+    const got = world.levelKey;
+    world.unload();
+    return `${M.name} → ${LEVELS.geonosis.name}; asked for kamino, stood up on ${got}`;
   });
 
   check('command: geonosis is FLAT where you fight and has something to see everywhere', () => {

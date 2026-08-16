@@ -16,7 +16,7 @@ import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
-import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
+import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { FORMATIONS, FORMATION_IDS } from './game/Command.js';
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
 import { keyLabel } from './engine/Bindings.js';
@@ -397,8 +397,13 @@ function deploy() {
   // and mode into the joining player's save.
   saveSettings(settings);
 
-  // The player's own choice stands — or the host's, in a session.
-  const levelKey = sessionOr('level');
+  /* The player's own choice stands — or the host's, in a session — UNLESS the
+   * mode owns its ground. `MODES.command` declares `level: 'geonosis'`, which
+   * is the machine-readable half of the `fixedTheatre` sentence the menu prints
+   * while greying the Theatre column. Without this line the menu said Geonosis
+   * and the army deployed onto whatever was last picked, which for a fresh
+   * profile is the Ember Shelf. */
+  const levelKey = MODES[settings.mode]?.level ?? sessionOr('level');
   try {
     buildWorld(levelKey);
   } catch (e) {

@@ -17,7 +17,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { Player, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
-import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById } from './Waves.js';
+import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
 import { Communion, STARS } from './Constellation.js';
 /**
  * What "open" is worth, in Insight. Every facet in the sky, at its first-
@@ -232,6 +232,23 @@ export class World {
     // name — indexed LEVELS with a key that is not in it and threw. A saved
     // profile pointing at a deleted level took the game down on the frame after
     // it had already recovered.
+    /**
+     * A MODE THAT OWNS ITS GROUND OVERRULES THE REQUEST, and this belongs here
+     * rather than in `deploy()`.
+     *
+     * `MODES.command` declares `level: 'geonosis'` — the machine-readable half
+     * of the `fixedTheatre` sentence the menu prints while greying the Theatre
+     * column. My first fix read that field in `main.js:deploy()`, which fixes
+     * the game and nothing else: `bootWorld`, the checks, the net layer and
+     * every future caller reach `loadLevel` directly and would each have needed
+     * their own copy of the rule. That is HANDOFF §2.4 — the rule lives with
+     * the thing it governs, and is CALLED, not restated.
+     *
+     * Putting it here is also what makes the check honest: it can ask for
+     * `kamino` through the ordinary door and observe geonosis come back.
+     */
+    const owned = MODES[this.settings?.mode]?.level;
+    if (owned && LEVELS[owned]) key = owned;
     const resolved = LEVELS[key] ? key : LEVEL_ORDER[0];
     const L = LEVELS[resolved];
     this.level = L;
