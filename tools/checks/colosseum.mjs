@@ -78,14 +78,37 @@ function dressed() {
 }
 
 export function run({ check, assert }) {
-  check('colosseum: thirty thousand people, in two draw calls', () => {
+  check('colosseum: thirty thousand people, in six draw calls', () => {
     const { crowds, meshes, world } = dressed();
     assert(crowds.length >= 2,
       `${crowds.length} crowd mesh(es) — the house and the box are separate crowds`);
     const heads = crowds.reduce((n, c) => n + c.count, 0);
     assert(heads > 2500, `only ${heads} spectators — that is a village meeting, not a full house`);
-    assert(crowds.length <= 3,
-      `${crowds.length} draw calls of crowd; the whole point of instancing it is that it is one`);
+    /**
+     * SEVEN, NOT THREE, AND THE BOUND IS RE-DERIVED RATHER THAN RELAXED.
+     *
+     * It was 3 while the house was one figure instanced three thousand times.
+     * Note #16: "I like the colosseum map just increase the detail for the
+     * crowd — right now it looks okay in the distance but anytime you're near
+     * the edge you see how crude they are, make them either alien species or
+     * mixes of aliens." An InstancedMesh draws ONE geometry, so five species is
+     * five meshes and no shader trick avoids it.
+     *
+     * The bound the old number was protecting is the real one and it is
+     * unchanged: a crowd may not cost a draw call per spectator. Measured on
+     * the dressed level, the house is 3,046 spectators and the box 16, and they
+     * arrive in 6 meshes — 510 figures per call. The ceiling is set at 7 rather
+     * than 6 so the lords' box keeps the room to grow a second variant, and at
+     * 7 the worst case this permits is still 437 figures per call. What it
+     * forbids is exactly what it always forbade: somebody reaching for a
+     * per-spectator mesh.
+     */
+    assert(crowds.length <= 7,
+      `${crowds.length} draw calls of crowd; five head variants is five meshes and the box is one `
+      + 'more — past that somebody is drawing spectators individually');
+    assert(heads / crowds.length > 300,
+      `${(heads / crowds.length).toFixed(0)} spectators per draw call — the whole point of `
+      + 'instancing a crowd is that a mesh carries hundreds of them');
 
     /* 360°, and asked of the seats rather than of the loop that made them. Two
      * hundred and forty bearings round the middle of the arena: every one of

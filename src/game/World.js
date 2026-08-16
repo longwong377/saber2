@@ -304,6 +304,11 @@ export class World {
         count: Math.round(11000 * q.grass),
         density: (this.settings.grassScale ?? 1) * L.grass,
         tintA: L.grassTint?.[0], tintB: L.grassTint?.[1], radius: 46,
+        /* WHAT KIND OF COVER, and the default is grass because it always was.
+         * See COVER_KINDS in Scenery.js: the Drowned Wood asks for `swamp`,
+         * whose cards are matted litter and root arches rather than blades,
+         * because the reference for that level has no grass in it at all. */
+        kind: L.grassKind,
       });
     }
 
