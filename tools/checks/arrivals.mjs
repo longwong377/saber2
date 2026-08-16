@@ -217,15 +217,60 @@ export async function run({ check, assert }) {
   });
 
   check('arrivals: something too big for a ship walks in', () => {
-    // A spider walker does not fit in a gunship and an acklay does not queue
-    // at a door. Both walk, from beyond the ring, on every level.
-    for (const key of ['drifts', 'arena', 'foundry', 'scoria', 'temple']) {
-      for (const type of ['walker', 'beast']) {
-        const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => 0.5);
+    /*
+     * THIS CHECK COULD NOT FAIL, and one of the five levels it named does not
+     * exist.
+     *
+     * `arrivalKindFor` opens with `if (walksIn(A)) return 'march';`, and
+     * `walksIn` is `A.big || A.boss`. The walker is `big` and the acklay is
+     * `boss`, so the function returned before the level was ever read — the
+     * loop over five level keys contributed nothing, and it would have passed
+     * against `null`, against `{}`, and as it did against
+     * `LEVELS['arena'] === undefined`, since `arena` was deleted with the
+     * Sanctum. The `|| ['march']` on the line after would have swallowed the
+     * dead key even if the branch HAD been reached. Its summary line claimed
+     * "on every level type", which is the one thing it did not test.
+     *
+     * So it now asserts both halves, and the levels are enumerated rather than
+     * typed (§2.3), which is also what stops a deleted key getting in again:
+     *
+     *   a body that walks in walks in EVERYWHERE — the property as written;
+     *   a body that does NOT walk in arrives some other way SOMEWHERE, which
+     *   is what makes the first half a fact about `walksIn` rather than a
+     *   restatement of the early return.
+     */
+    const walkers = Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].big || ARCHETYPES[t].boss);
+    const carried = Object.keys(ARCHETYPES).filter((t) => !ARCHETYPES[t].big && !ARCHETYPES[t].boss);
+    assert(walkers.length >= 2, `only ${walkers.length} bodies are too big for a ship`);
+    assert(carried.length >= 2, `only ${carried.length} bodies can be carried`);
+
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      assert(L, `LEVEL_ORDER names '${key}' and LEVELS has no such level`);
+      for (const type of walkers) {
+        const kind = arrivalKindFor(L, ARCHETYPES[type], () => 0.5);
         assert(kind === 'march', `${type} arrives by ${kind} on ${key}`);
       }
     }
-    return 'walker and acklay march in on every level type';
+
+    // The other half: over every level and every carried body, at least one
+    // arrival is NOT a march. Without this the check above is satisfied by an
+    // `arrivalKindFor` that returns 'march' unconditionally.
+    const other = new Set();
+    for (const key of LEVEL_ORDER) {
+      for (const type of carried) {
+        for (const roll of [0.1, 0.5, 0.9]) {
+          const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => roll);
+          if (kind !== 'march') other.add(kind);
+        }
+      }
+    }
+    assert(other.size > 0,
+      'every body on every level arrives by marching — `arrivalKindFor` is answering before it reads '
+      + 'the level, which is exactly what made the previous version of this check unfailable');
+
+    return `${walkers.length} bodies march in on all ${LEVEL_ORDER.length} levels; `
+      + `${carried.length} carried bodies also arrive by ${[...other].sort().join('/')}`;
   });
 
   check('arrivals: a squad rides in together instead of one ship each', () => {

@@ -65,8 +65,41 @@
  */
 
 import { snapshotShared, restoreShared } from './_shared.mjs';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 
-const LEVELS_FOR_EQUIV = ['temple', 'warship', 'scoria', 'meadow'];
+/*
+ * FOUR LEVEL NAMES, AND TWO OF THEM WERE DELETED IN THE ROSTER CULL.
+ *
+ * This list read `['temple', 'warship', 'scoria', 'meadow']`. `LEVELS.warship`
+ * and `LEVELS.meadow` are both `undefined`, and `World.loadLevel` substitutes
+ * `LEVEL_ORDER[0]` for a key it does not know — correctly, because a saved
+ * profile pointing at a deleted level must still boot. Reproduced:
+ *
+ *   loadLevel('warship')  ->  levelKey='scoria'  name='The Ember Shelf'
+ *   loadLevel('meadow')   ->  levelKey='scoria'  name='The Ember Shelf'
+ *
+ * `fight()` spawns two of every archetype — 62 bodies — into each, so this file
+ * built four Worlds where it meant four levels and got the Ember Shelf THREE
+ * TIMES plus the Temple, then printed `${level} ${boxes} boxes/${queries}
+ * queries` and labelled scoria's numbers "warship" and "meadow". That is the
+ * defect HANDOFF §2.7 names, still live in a file §2.7 never audited, and it is
+ * also two extra full Worlds in a run whose RSS §2.7b measured climbing to
+ * 1.8 GB.
+ *
+ * Derived from `LEVEL_ORDER` now rather than typed, and asserted besides — the
+ * assertion is the half that matters, because a list picked out of the roster
+ * cannot go stale but a list picked BY HAND from it can. `roster.mjs` cannot
+ * catch either: it knows five syntactic forms and a bare array of strings is
+ * none of them, which its own note predicts.
+ */
+const LEVELS_FOR_EQUIV = ['temple', 'scoria', LEVEL_ORDER[3] ?? LEVEL_ORDER[1]]
+  .filter((k, i, a) => a.indexOf(k) === i);
+for (const k of LEVELS_FOR_EQUIV) {
+  if (!LEVELS[k]) {
+    throw new Error(`gait-support asks for the level '${k}', which no longer exists — loadLevel would `
+      + `silently substitute ${LEVEL_ORDER[0]} and this file would measure it under the wrong name`);
+  }
+}
 
 /** Every `engine.*` member a World reaches, and nothing else. */
 function stubEngine(THREE) {
