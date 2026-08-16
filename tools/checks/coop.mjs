@@ -862,10 +862,10 @@ export async function run({ check, assert }) {
      *               `player.gripEnemy` TRUE the whole time on the guest's own
      *               machine — the hold was real state with no physics under it
      *
-     * So for everybody who was not the host, push, pull, throw, grip, the lift,
-     * the ragdoll and stasis-on-enemies were damage over a distance and nothing
-     * else. `tools/checks/force.mjs` is 26/26 on all of it because it only ever
-     * builds a single-player world.
+     * So for everybody who was not the host, the Force was a number applied at
+     * a distance. `tools/checks/force.mjs` is 26/26 on all of it because it only
+     * ever builds a single-player world — which is the defect in one sentence,
+     * and the reason this one takes its numbers on two machines or not at all.
      *
      * FOUR POWERS, TWO MACHINES, ONE PAIR. Every one of them is driven through
      * the shipped `Player` method a key press reaches, against a body the host
