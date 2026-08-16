@@ -1319,7 +1319,7 @@ export async function run({ check, assert }) {
      * a setting cannot join this list without a control writing it.
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
-      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade',
+      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade', 'holocron',
       'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut',
       // a swatch row under the crystals, same shape as colorIndex's
       'lightningColor'];

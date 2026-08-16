@@ -187,6 +187,12 @@
         <label class="slider">Power <input type="range" id="opt-forcepower" min="0.25" max="4" step="0.05" value="1"><b></b></label>
         <label class="slider">Drain <input type="range" id="opt-forcedrain" min="0" max="2" step="0.05" value="1"><b></b></label>
         <p class="hint">Drain at 0 is unlimited Force. Power scales reach, lift and impulse together.</p>
+        <h3 style="margin-top:22px">The Holocron</h3>
+        <div id="opt-holocron" class="difflist"></div>
+        <p class="hint">Earned is the game: Insight is a run currency, you kneel to spend it, and nothing
+          carries over. The other two are for looking at what is in here — a whole run can end without
+          ever meeting Force lightning or Compel, and a power nobody can reach is a power nobody can tell
+          you is broken.</p>
       </div>
       <div class="col">
         <h3>Key bindings</h3>
@@ -275,7 +281,7 @@
       </div>
     </section>
 
-    <!-- The way into the star map lives HERE, in the footer's own flex row.
+    <!-- The way into the Holocron lives HERE, in the footer's own flex row.
          It used to be a `position:fixed` box at left:22 bottom:20, floating over
          the whole page while the GPU string it landed on sits inside the
          centred `.menu-wrap` — two boxes positioned against different things,
@@ -288,7 +294,7 @@
          Only ever shown on this screen anyway: main.js gates it on
          `screens.state === 'menu'`. -->
     <footer class="menu-foot">
-      <button id="btn-commune" class="ghost commune-entry hidden">Connect to the Force</button>
+      <button id="btn-commune" class="ghost commune-entry hidden">Open the Holocron</button>
       <span id="gpu-line"></span>
       <span class="build">build <b id="build-id">—</b></span>
     </footer>
@@ -553,14 +559,25 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
-     THE MEDITATION — the Force constellation.
+     THE MEDITATION — the Holocron.
+
+     IT WAS A CONSTELLATION, and it was renamed because the player asked what
+     stars had to do with any of it: "you're becoming more and more attuned to
+     the force or good/evil side — wtf does that have to do with stars and
+     constellations". That is a fair question and the honest answer is that the
+     picture came first (a node graph reads as a star chart) and the fiction was
+     bent to fit it. A holocron is the same picture with the right fiction under
+     it — a crystal lattice you attune to and that teaches you — so the drawing
+     did not change and every word around it did. Groups are TEACHINGS, nodes
+     are FACETS, and the currency is still Insight, which was always right.
 
      Raised mid-run by kneeling (hold Crouch, still, with nothing near you) and
      between runs from the Temple. The world behind it is STOPPED and still
-     drawn: the overlay is translucent on purpose, because the whole reason
-     this is reached by kneeling rather than by a menu key is that it happens
-     in the place you were standing. src/ui/SkillTree.js draws it;
-     src/game/Constellation.js decides everything it is allowed to say.
+     drawn, and there is no blur over it: the whole reason this is reached by
+     kneeling rather than by a menu key is that it happens in the place you were
+     standing, and your own Jedi is knelt in the middle of it.
+     src/ui/SkillTree.js draws it; src/game/Constellation.js decides everything
+     it is allowed to say.
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="meditation" class="screen hidden">
   <div class="med-wrap">
@@ -572,7 +589,7 @@
       <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
     </header>
     <div class="med-body">
-      <svg id="med-sky" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Force constellation"></svg>
+      <svg id="med-sky" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
         <button id="btn-med-buy" class="primary" disabled>Commune</button>

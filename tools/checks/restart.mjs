@@ -41,7 +41,16 @@ async function arena(seed) {
   const { seedWaves } = await import('../../src/game/Waves.js');
   enemyRng.seed(seed);
   seedWaves(seed, 0);
-  const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
+  /* A DROPSHIP LEVEL, and it has to be one: this check watches `arrivals`
+   * still have flights in the air at the moment of the restart, and a level
+   * whose arrival is `gate` delivers without staging any. It used to be the
+   * Sanctum, which flew them in; the Sanctum is deleted and the colosseum —
+   * the obvious substitution — is a gate level, so it saw nothing inbound and
+   * said so rather than passing quietly. That is the check working. Kamino
+   * rather than the Ember Shelf because the Shelf is a DUELLING map with a
+   * pool thinned of hordes — it composed one contact on wave 1 against the
+   * seven this check's arithmetic is calibrated on. */
+  const { world } = await H.bootWorld({ level: 'kamino', settings: { mode: 'roguelite', difficulty: 'knight' } });
   return { world, input: H.idleInput() };
 }
 

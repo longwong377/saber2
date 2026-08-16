@@ -17,8 +17,17 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { Player, bladeTargets, canHarm, hostileTo, pvpRules } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
-import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
-import { Communion } from './Constellation.js';
+import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById } from './Waves.js';
+import { Communion, STARS } from './Constellation.js';
+/**
+ * What "open" is worth, in Insight. Every facet in the sky, at its first-
+ * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
+ * facet already bought, so the last one costs a great deal more than the
+ * first. 600 clears the whole chart with room over; it is deliberately a
+ * number rather than a computed sum, because the point is "you will not run
+ * out" and a computed sum would be exactly enough and therefore tense.
+ */
+const HOLOCRON_PURSE = 600;
 import { applyOrder } from './Order.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
 import { BladeLock } from './Duel.js';
@@ -477,6 +486,40 @@ export class World {
     if (this.rules?.pvp && this.rules.health > 0) { p.maxHp = this.rules.health; p.hp = p.maxHp; }
     const rec = applyOrder(p, this.settings.order);
     if (rec) for (const id of rec.grants) this.takenBoons.add(id);
+
+    /**
+     * AND THEN THE HOLOCRON, if the player has asked for it to be open.
+     *
+     * `settings.holocron` has three values and the default, 'earned', does
+     * nothing here — Insight is a run currency, you kneel to spend it, and
+     * that is the game. The other two exist because of a real report: "I can't
+     * actually test out anything… I haven't even been able to force lightning
+     * or force compel yet." Both are gated on `boonMods.lightning` /
+     * `boonMods.compel`, which arrive only as a boon, which arrives only from
+     * a draft or a facet bought at roughly 1.4 Insight a wave. A player can
+     * finish a run without ever meeting half the kit.
+     *
+     *   'open'  a full purse. Everything is REACHABLE and the shape of the
+     *           choice survives — you still kneel, you still pick, prices
+     *           still escalate.
+     *   'all'   every facet already lit. No choice at all: the workshop
+     *           setting, for looking at a power rather than earning it.
+     *
+     * Applied through `applyBoon`-equivalent paths rather than by poking
+     * `boonMods`, so a facet cannot behave differently when it is granted than
+     * when it is bought — which is the whole reason the star table carries an
+     * id into BOONS instead of carrying an effect of its own.
+     */
+    if (this.settings.holocron === 'open') {
+      this.communion.insight = Math.max(this.communion.insight, HOLOCRON_PURSE);
+    } else if (this.settings.holocron === 'all') {
+      for (const star of STARS) {
+        const boon = boonById(star.id);
+        if (!boon) continue;
+        this.takenBoons.take?.(boon.id) ?? this.takenBoons.add(boon.id);
+        if (typeof p.applyBoon === 'function') p.applyBoon(boon);
+      }
+    }
 
     /**
      * AND THEN THE RUN, which is what makes a landing a transition rather than

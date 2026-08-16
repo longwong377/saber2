@@ -119,7 +119,7 @@ export class SkillTree {
     this._nodes.clear();
     // The heading says which of the two this is: a communion you can spend in,
     // or the chart you read between runs.
-    if (this.el.title) this.el.title.textContent = live ? 'Connect to the Force' : 'The constellation';
+    if (this.el.title) this.el.title.textContent = live ? 'Commune with the Holocron' : 'The Holocron';
 
     /* the field of far stars — atmosphere, and the reason it reads as a sky */
     const rnd = seeded(0x5ABE7);
@@ -133,7 +133,7 @@ export class SkillTree {
     }
     sky.appendChild(field);
 
-    /* the constellation names, behind their stars */
+    /* the teachings' names, behind their facets */
     // At the TOP OF THE ZONE, not near the group's own centre: a constellation
     // fills its zone, so anything drawn at the middle of it lands on a star.
     const labels = svg('g', { class: 'med-cnames' });
@@ -162,7 +162,7 @@ export class SkillTree {
     }
     sky.appendChild(lines);
 
-    /* and the stars themselves */
+    /* and the facets themselves */
     const stars = svg('g', { class: 'med-stars' });
     for (const v of this.view) {
       const g = svg('g', {
@@ -218,13 +218,13 @@ export class SkillTree {
     if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
     if (this.el.sub) {
       this.el.sub.textContent = live
-        ? (this.ctx.subtitle || 'Insight is earned by surviving. Light a star joined to one you already hold.')
+        ? (this.ctx.subtitle || 'Insight is earned by surviving. Wake a facet joined to one you already hold.')
         : 'Between runs the sky is a chart: nothing here is bought, and nothing is carried into the next run.';
     }
     if (this.el.hint) {
       const n = ledger?.bought?.length ?? 0;
       this.el.hint.textContent = n
-        ? `${n} star${n === 1 ? '' : 's'} lit by communion this run · each one makes the next cost ${COST_STEP} more`
+        ? `${n} facet${n === 1 ? '' : 's'} woken this run · each one makes the next cost ${COST_STEP} more`
         : 'Escape returns you to the fight.';
     }
     this._drawShape();
@@ -258,7 +258,7 @@ export class SkillTree {
     if (!id) {
       const axis = CONSTELLATIONS[0].axis;
       host.innerHTML = `<h3>The sky</h3><p class="med-text">${creedOf(axis, order)}</p>`
-        + '<p class="med-text">Pick a star to read it.</p>';
+        + '<p class="med-text">Pick a facet to read it.</p>';
       if (this.el.buy) { this.el.buy.disabled = true; this.el.buy.textContent = 'Commune'; }
       return;
     }
@@ -269,7 +269,7 @@ export class SkillTree {
     host.innerHTML = `
       <h3>${v.icon} ${v.name}</h3>
       ${canon}
-      <div class="med-tags"><em>${v.tag}</em><em>${v.rarityLabel}</em>${v.root ? '<em>heart of the constellation</em>' : ''}${v.mastery ? '<em>mastery</em>' : ''}</div>
+      <div class="med-tags"><em>${v.tag}</em><em>${v.rarityLabel}</em>${v.root ? '<em>heart of the teaching</em>' : ''}${v.mastery ? '<em>mastery</em>' : ''}</div>
       <p class="med-text">${v.text}</p>
       <p class="med-state">${this._stateLine(v, live)}</p>
       ${seen ? `<p class="med-canon">carried in ${seen} run${seen === 1 ? '' : 's'} before this one</p>` : ''}`;

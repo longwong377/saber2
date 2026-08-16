@@ -1048,4 +1048,66 @@ export async function run({ check, assert }) {
       return `${stars.length} stars, all focusable and listening; Enter selects then buys (${bought[0]})`;
     } finally { restore(); }
   });
+
+  /**
+   * THE HOLOCRON CAN BE OPENED, because a kit nobody can reach is a kit
+   * nobody can tell you is broken.
+   *
+   * Reported: "I can't actually test out anything in the Holocron to even
+   * know if it works… I haven't even been able to force lightning or force
+   * compel yet." Both are gated on `boonMods.lightning` / `boonMods.compel`,
+   * which arrive only as a boon, which arrives only from a draft or a facet
+   * bought at roughly 1.4 Insight a wave — so a whole run can end without the
+   * player meeting half of what is built.
+   *
+   * Three settings, and the check is that they are three DIFFERENT games:
+   * 'earned' is untouched (the default has to stay bit-identical or this is a
+   * balance change wearing a debug hat), 'open' pays but does not choose, and
+   * 'all' chooses. `all` is asserted to actually light the two powers by name,
+   * because those two are the report.
+   */
+  check('holocron: it can be opened, and opening it is not the same as filling the purse', async () => {
+    const H = await import('./_coop.mjs');
+    const boot = async (holocron) => {
+      const { world } = await H.bootWorld({
+        level: 'colosseum',
+        settings: { mode: 'roguelite', difficulty: 'knight', holocron },
+      });
+      const p = world.player;
+      const out = {
+        insight: world.communion.insight,
+        lightning: !!p.boonMods.lightning,
+        compel: !!p.boonMods.compel,
+        held: world.takenBoons.size ?? 0,
+      };
+      world.unload();
+      return out;
+    };
+
+    const earned = await boot('earned');
+    const open = await boot('open');
+    const all = await boot('all');
+
+    // The default is the game, and it must not have moved.
+    assert(earned.insight === 0, `'earned' starts with ${earned.insight} Insight, not 0`);
+    assert(!earned.lightning && !earned.compel,
+      "'earned' hands out a power at spawn — the default is supposed to be untouched");
+
+    // 'open' PAYS. It must not also choose: the kneel, the pick and the price
+    // escalator are the shape of the feature and survive it.
+    assert(open.insight > 100, `'open' opened with ${open.insight} Insight`);
+    assert(!open.lightning && !open.compel,
+      "'open' lit facets by itself — it is meant to make them affordable, not to take them");
+    assert(open.held === earned.held,
+      `'open' arrived holding ${open.held} boons against 'earned''s ${earned.held}`);
+
+    // 'all' CHOOSES, and the two powers in the report are the two asserted.
+    assert(all.lightning, "'all' did not light Force lightning — the reported power is still unreachable");
+    assert(all.compel, "'all' did not light Compel — the reported power is still unreachable");
+    assert(all.held > earned.held + 10,
+      `'all' arrived holding only ${all.held} boons — the sky is ${Tree.STARS.length} facets wide`);
+
+    return `earned ${earned.insight}i/${earned.held} · open ${open.insight}i/${open.held} · `
+      + `all ${all.held} of ${Tree.STARS.length} facets, lightning+compel lit`;
+  });
 }

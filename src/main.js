@@ -288,7 +288,7 @@ function buildWorld(levelKey) {
   world.onInsight = (n, ledger) => {
     communePrompt.insight = Math.floor(ledger.insight);
     setTimeout(() => {
-      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to connect to the Force`);
+      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to open the Holocron`);
     }, 1500);
   };
 
@@ -542,7 +542,7 @@ function communeContext(live) {
     order: settings.order || null,
     history: history ? new Map(history) : null,
     subtitle: live
-      ? 'Insight is earned by surviving. A star may be lit if you already hold one joined to it.'
+      ? 'Insight is earned by surviving. A facet wakes only if you already hold one joined to it.'
       : undefined,
   };
 }
@@ -899,8 +899,8 @@ function setScoreboard(open) {
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
     ['Insight', Math.floor(world.communion?.insight ?? 0)],
-    ['Constellation', axis ? constellationName(axis, settings.order) : '—'],
-    ['Stars lit', shape.reduce((n, r) => n + r.lit, 0)],
+    ['Teaching', axis ? constellationName(axis, settings.order) : '—'],
+    ['Facets lit', shape.reduce((n, r) => n + r.lit, 0)],
   ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 
   // Only in co-op. Solo, a one-row table of yourself is noise.

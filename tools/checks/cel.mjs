@@ -2051,7 +2051,10 @@ export function run({ check, assert, near }) {
       fragmentShader: '#include <common>\n#include <color_fragment>\n' });
 
     const rows = [];
-    for (const key of ['drifts', 'alpine', 'arena']) {
+    /* The two levels that PAINT ranges — `addHorizon` is called from exactly
+     * two dress() bodies, and a level with no ridge material has no ridge to
+     * quantise. It was three when the meadow existed. */
+    for (const key of ['drifts', 'alpine']) {
       const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
       await w.loadLevel(key);
       let sh = null, scanned = 0;

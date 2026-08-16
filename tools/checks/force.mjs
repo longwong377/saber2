@@ -845,7 +845,11 @@ export async function run({ check, assert, near }) {
       }
       w.unload();
     }
-    assert(frames > 3000, `only ${frames} flight frames were measured — the throw is not being driven`);
+    /* Per level rather than in total: 3000 was a sum over thirteen and is a
+     * roster count in disguise. Seven levels give 2471, which is 353 each
+     * against the old 231 — the survey got DENSER, not thinner. */
+    assert(frames / LEVEL_ORDER.length > 250,
+      `only ${frames} flight frames over ${LEVEL_ORDER.length} levels — the throw is not being driven`);
     assert(under === 0,
       `${under} of ${frames} flight frames put the blade under the surface, deepest ${deepest.toFixed(2)} m `
       + `(${worst}) — the note this answers opens "thrown saber vanishes into the ground"`);

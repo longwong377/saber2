@@ -223,6 +223,29 @@ export const DEFAULT_SETTINGS = {
   deflectAim: 'reticle',
   forcePower: 1,
   forceDrain: 1,
+  /**
+   * HOW MUCH OF THE HOLOCRON IS ALREADY OPEN when a run begins.
+   *
+   * 'earned' is the game: Insight is a run currency, you kneel to spend it,
+   * and nothing carries over. That is load-bearing design and it stays the
+   * default.
+   *
+   * The other two exist because of a real report — "I can't actually test out
+   * anything in the Holocron to even know if it works… I haven't even been
+   * able to force lightning or force compel yet." Both of those powers are
+   * gated behind `boonMods.lightning` / `boonMods.compel`, which arrive only
+   * as a boon, which arrives only from a draft or a facet you paid Insight
+   * for, at roughly 1.4 Insight a wave. A player can finish a run without
+   * ever seeing half the kit, and a kit nobody can reach is a kit nobody can
+   * tell you is broken.
+   *
+   *   'open'  a full purse at the start of every run. Everything is
+   *           reachable and the SHAPE of the choice is intact — you still
+   *           kneel, you still pick, prices still escalate.
+   *   'all'   every facet already lit. No choice at all: this is the
+   *           workshop setting, for looking at a power rather than earning it.
+   */
+  holocron: 'earned',
   quality: 'high',
   resolutionScale: 1,
   bloom: true,
@@ -363,6 +386,7 @@ export const SETTING_READERS = {
   deflectAim:      ['game/World.js', 'this.settings.deflectAim'],
   forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
   forceDrain:      ['game/Player.js', 'this.world.settings?.forceDrain'],
+  holocron:        ['game/World.js', "settings.holocron"],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
   bloom:           ['main.js', '!!settings.bloom &&'],
@@ -2826,6 +2850,42 @@ export class Menu {
   }
 
   /**
+   * HOW MUCH OF THE HOLOCRON IS OPEN. See DEFAULT_SETTINGS.holocron for why
+   * the last two exist; the short version is that a power nobody can reach is
+   * a power nobody can tell you is broken.
+   *
+   * Live-switchable like every other picker in this column, but it only bites
+   * on the next deploy — the grant happens in `World.spawnPlayer`, which is a
+   * thing that has already happened by the time a run is under way. The blurb
+   * says so rather than the setting silently doing nothing.
+   */
+  _buildHolocronModes() {
+    const host = document.getElementById('opt-holocron');
+    if (!host) return;
+    const modes = [
+      ['earned', 'Earned',
+       'The game. Insight is a run currency, you kneel to spend it, and nothing carries over.'],
+      ['open', 'Open',
+       'A full purse at every deploy. You still kneel, still choose, and prices still climb — you simply never run short.'],
+      ['all', 'Everything lit',
+       'Every facet already yours before the first wave. No choice at all: this is for looking at a power, not earning it.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.holocron === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this.s.holocron = key;
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        saveSettings(this.s);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /**
    * Key bindings. Clicking a key listens for the next keypress or mouse button
    * and takes it, warning if it is already spoken for. Escape cancels.
    */
@@ -2993,6 +3053,7 @@ export class Menu {
 
   _buildOptions() {
     this._buildDeflectModes();
+    this._buildHolocronModes();
     this._buildBindings();
     const host = document.getElementById('opt-scheme');
     host.innerHTML = '';
