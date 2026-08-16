@@ -1073,8 +1073,27 @@ export async function run({ check, assert }) {
     // The key is READ from the bindings table, never typed into the prompt: a
     // label baked into markup is wrong the moment anybody rebinds crouch.
     assert(/input\.act\('crouch'\)/.test(main), 'the kneel is not read through the bindings table');
-    assert(/keyLabel\(\(input\.bindings\.crouch/.test(main),
+    /**
+     * THE LABEL COMES FROM THE BINDINGS — asserted through the seam rather than
+     * by its spelling.
+     *
+     * This pinned the literal expression `keyLabel((input.bindings.crouch…`,
+     * which was the shipped form until gamepad support arrived and hoisted it
+     * into `liveKey(id)` — one helper that resolves the code for the ACTIVE
+     * DEVICE and prints a pad glyph when a pad is holding it. That is strictly
+     * better than what the regex demanded, and the regex failed it: the check
+     * was restating an implementation instead of calling the rule (§2.4), and
+     * it punished the refactor that improved the thing it was guarding.
+     *
+     * So it now follows the seam in two steps — the prompt's label is assigned
+     * from `liveKey`, and `liveKey` reads `input.bindings`. A literal typed into
+     * the prompt still fails, which is the property that matters, and the next
+     * person to improve the helper is not punished for it.
+     */
+    assert(/communePrompt\.key\.textContent\s*=\s*liveKey\(/.test(main),
       'the prompt types a key name instead of reading the live binding');
+    assert(/const liveKey[^\n]*input\.bindings/.test(main),
+      'liveKey no longer reads the bindings table, so the prompt is showing a guess');
     assert(/screens\.take\('meditation'/.test(main), 'the meditation is raised without Screens — it will not be remembered');
     assert(/screens\.card\('meditation'/.test(main), 'the meditation card is never registered with Screens');
     // Both doors: mid-run by kneeling, and from the Temple between runs.
