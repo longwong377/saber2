@@ -107,6 +107,38 @@ The rules that follow, for any future parallel run:
   message describes a third of its own diff.
 - **A dirty tree full of other agents' files is the correct steady state.** Tell
   agents this explicitly in their brief, or they will try to make it clean.
+
+**IT HAPPENED AGAIN, TO AN AGENT WHOSE BRIEF BANNED IT BY NAME.** A second
+parallel run, six lanes live; the run-rules lane ran `git stash` and took five
+files — `src/game/Duel.js`, `tools/checks/footwork.mjs`, `forms.mjs`,
+`living-force.mjs`, `terrain.mjs` — three of them belonging to a lane that was
+still working. It restored them within about two minutes by reading blobs out
+of the stash commit, and it reported the failure itself, in full, at the top of
+its own report. That is the behaviour to want; the ban still did not hold.
+
+Three things that run taught which the first one did not:
+
+- **`git stash pop`, `apply` and `checkout <stash> -- <paths>` were all refused
+  by the permission layer**, so the only recovery route left was
+  `git show 'stash@{0}:<path>'` piped back to the file. That is worth knowing
+  *before* you need it: the documented recovery in the paragraph above is not
+  available, and the one that works is a read.
+- **Do not drop the stash.** It is the only record of the window. Verify from
+  outside instead: diff `git show 'stash@{0}:<path>'` against the live file and
+  look for lines present in the stash and absent now. On this occasion that came
+  to 6 comment lines in `Duel.js` and 25 in `footwork.mjs`, both prose the
+  owning lane was rewriting anyway — but the owning lane is the only one that
+  can confirm that, so ask it while it is still alive.
+- **The silent half is the re-read, not the revert.** A file that is longer than
+  the stashed copy looks safe and is not: an agent that read one of its own
+  files during the window and wrote back on top of what it read has undone its
+  own edit, and the line count never shows it. A number is easier to lose that
+  way than a paragraph.
+
+So the rule earns one more clause: **a brief that bans the verb is not enough.**
+If a future run cannot tolerate this, give each lane its own worktree
+(`isolation: "worktree"`) and merge, rather than relying on six agents to each
+refrain from one convenient command.
 - **Commit early, by path.** A commit is the only thing that makes an agent's
   work safe from its peers.
 - **A new file and the import of it are ONE commit.** `src/world/Smoke.js` was
