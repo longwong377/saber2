@@ -3716,11 +3716,12 @@ export class World {
    *
    * `_claim` sent `cut` and `dmg` and nothing else, so there was no impulse on
    * this wire at all. Measured on a real host/client pair, the host body taken
-   * off its brain so nothing else could move it: a guest's point-blank push
-   * moved it 0.000 m on the guest's screen and 0.000 m on the host's, while the
-   * damage crossed and the hp came off. Push, pull, throw, the grip's lift, the
-   * ragdoll and stasis-on-enemies were all damage with no physics for everybody
-   * who was not the host.
+   * off its brain so nothing else could move it: push, pull and throw each
+   * moved it 0.000 m on the guest's screen and 0.000 m on the host's, and the
+   * grip lifted it 0.000 m on both while `player.gripEnemy` was true the whole
+   * time on the guest's own machine — a hold that was real state with no physics
+   * under it. The DAMAGE crossed throughout and the hp came off. For everybody
+   * who was not the host, the Force was a number applied at a distance.
    *
    * WRAPPED AT THE DOOR, NOT ADDED AT THE CALL SITES, and that is the same
    * argument `_recordFires` makes about `BoltPool.fire` and `_reconcileClaims`
