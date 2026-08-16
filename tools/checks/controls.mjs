@@ -666,9 +666,29 @@ export async function run({ check, assert }) {
     // _buildBindings.finish()'s own logic, which is: ask the resolver, then
     // write the key. Both victims are given a spare so that "could not settle"
     // is never the reason either version leaves a duplicate behind.
+    /* THE SPARES ARE FOUND, NOT TYPED. They were 'KeyU' and 'KeyI', and the
+     * day an action took KeyU this fixture started manufacturing a clash of
+     * its own — the check failed reporting "Mouse2 still answers to
+     * thrust+unleash", which is a defect in the test data and not in the
+     * resolver. Two keys that nothing in `defaultBindings()` claims, picked
+     * off the real table, cannot go stale that way. */
+    const spares = () => {
+      const b = defaultBindings();
+      const used = new Set(Object.values(b).flat());
+      const free = [];
+      for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        if (!used.has(`Key${c}`)) free.push(`Key${c}`);
+        if (free.length === 2) break;
+      }
+      assert(free.length === 2,
+        'the bindings table has no two unbound letters left — this fixture needs spares to give up');
+      return free;
+    };
+
     const doubled = () => {
       const b = defaultBindings();
-      b.thrust = ['Mouse2', 'KeyU']; b.hurl = ['Mouse2', 'KeyI'];
+      const [s1, s2] = spares();
+      b.thrust = ['Mouse2', s1]; b.hurl = ['Mouse2', s2];
       return b;
     };
 

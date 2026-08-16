@@ -953,6 +953,116 @@ export async function run({ check, assert, near }) {
       + `Player's own gates`;
   });
 
+  /**
+   * UNLEASH — the 360-degree "get off me", and every clause of the request is
+   * a bound below.
+   *
+   * "one force power that is a 360 degree 'get off me' type of ability, costs
+   * a lot of force but you like yell really loud and raise both your arms out
+   * and push everything around you off (like in a scenario where you're being
+   * overwhelmed)."
+   *
+   * The clause that is easy to get wrong and impossible to SEE is the first. A
+   * power built by copying `forcePush` inherits its cone, and a cone tested
+   * with the enemies in front of you passes every assertion while being
+   * exactly the wrong shape — you would only find it by being surrounded, in a
+   * fight, at the moment it mattered. So the ring here is seeded all the way
+   * round on purpose and the bound is a COMPARISON: what is behind the player
+   * must travel about as far as what is in front.
+   */
+  check('unleash: it throws what is behind you as hard as what is in front', async () => {
+    const H = await import('./_coop.mjs');
+    const { POWER_COST } = await import('../../src/game/Powers.js');
+    const { world } = await H.bootWorld({
+      /* NOT `sandbox`. That mode holds the field at `sandboxCount`, which
+       * defaults to five, so a ring of eight is quietly culled to five and the
+       * three that vanish read as three bodies the power failed to move —
+       * measured, and it cost an hour and a wrong hypothesis about vector
+       * aliasing in `_shockwave`. */
+      level: 'colosseum', settings: { mode: 'waves', difficulty: 'knight' },
+    });
+    const p = world.player;
+    const y = world.terrain.height(0, 0);
+    p.position.set(0, y, 0);
+    p.aimDir.set(0, 0, -1);
+    p.maxForce = 200; p.force = 200;
+    p.cooldowns.unleash = 0;
+
+    const ring = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      /* `spawnEnemy(type, pos)` — the position is an ARGUMENT, not something
+       * to set afterwards: Enemy's constructor builds its body and its physics
+       * proxy from it, so a body spawned at the default and moved later has
+       * its collider somewhere else. */
+      const at = new THREE.Vector3(Math.sin(a) * 6, y, Math.cos(a) * 6);
+      const e = world.spawnEnemy?.('b1', at);
+      if (!e || !e.position) continue;
+      ring.push({ e, a });
+    }
+    assert(ring.length >= 6, `only ${ring.length} of 8 bodies could be seeded`);
+    const before = ring.map(({ e }) => e.position.clone());
+
+    const ctx = { enemies: world.enemies, physics: world.physics, particles: world.particles,
+      terrain: world.terrain, groundColor: world.groundColor, input: H.idleInput() };
+    /* COST IS READ BEFORE THE WORLD IS STEPPED. Force regenerates, so a
+     * reading taken after the thirty frames the bodies need to fly reports the
+     * spend minus half a second of regen — measured, 37 against a real 52,
+     * which would have looked like the price table being wrong. */
+    const purse = p.force;
+    p.forceUnleash(ctx);
+    const cost = purse - p.force;
+    /* PEAK OUTWARD, not final. A B1 walks about 4 m/s and the AI starts
+     * closing again the instant it is upright, so half a second after the cast
+     * the FINAL distance is knockback minus walk-back — measured, one body read
+     * 0.25 m of net travel having been thrown several metres. What the power
+     * did is the furthest it put them, so that is what is sampled. */
+    const peak = before.map((b) => b.length());
+    for (let i = 0; i < 30; i++) {
+      world.update(1 / 60, H.idleInput());
+      ring.forEach(({ e }, k) => { peak[k] = Math.max(peak[k], e.position.length()); });
+    }
+
+    /* 1. it costs a lot — and more than anything else on the table, which is
+     *    the difference between "expensive" and "the panic button". */
+    assert(cost > 40, `unleash cost ${cost.toFixed(0)} Force`);
+    const dearest = Math.max(...Object.entries(POWER_COST)
+      .filter(([k]) => k !== 'unleash').map(([, v]) => v));
+    assert(POWER_COST.unleash > dearest,
+      `unleash is ${POWER_COST.unleash} against a dearest-other of ${dearest}`);
+
+    /* 2. EVERYTHING went outward, front and back alike. */
+    const moved = ring.map(({ e, a }, i) => ({
+      d: peak[i] - before[i].length(),
+      out: peak[i] - before[i].length(),
+      facing: -Math.cos(a),                 // +1 dead ahead, -1 dead behind
+    }));
+    const front = moved.filter((m) => m.facing > 0.3);
+    const back = moved.filter((m) => m.facing < -0.3);
+    assert(front.length && back.length, 'the ring did not straddle the player');
+    assert(moved.every((m) => m.out > 0.5),
+      `something was not pushed outward (least ${Math.min(...moved.map((m) => m.out)).toFixed(2)} m)`);
+    const mean = (xs) => xs.reduce((n, m) => n + m.d, 0) / xs.length;
+    const fm = mean(front), bm = mean(back);
+    assert(bm > fm * 0.6,
+      `in front ${fm.toFixed(2)} m, BEHIND ${bm.toFixed(2)} m — that is a cone wearing a circle's name`);
+
+    /* 3. it staggers, because the room it buys is the point and not the damage. */
+    const stunned = ring.filter(({ e }) => (e.stunT ?? e.stunTimer ?? 0) > 0 || e.staggered).length;
+    assert(stunned >= Math.floor(ring.length * 0.6),
+      `only ${stunned} of ${ring.length} were staggered — knockback alone buys no room`);
+
+    /* 4. and it cannot be leaned on. */
+    assert(p.cooldowns.unleash > 4, `cooldown is ${p.cooldowns.unleash}s`);
+    const again = p.force;
+    p.forceUnleash(ctx);
+    assert(p.force === again, 'a second cast on cooldown still charged the player');
+
+    world.unload();
+    return `${cost.toFixed(0)} Force · ${ring.length} bodies: front ${fm.toFixed(2)} m, `
+      + `behind ${bm.toFixed(2)} m · ${stunned} staggered · ${p.cooldowns.unleash}s cooldown`;
+  });
+
 }
 
 /** The hold range has to span the reach, not a slice of it. */

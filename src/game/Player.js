@@ -326,6 +326,21 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
 const HEAT_NEAR = 0.55;
 
 /**
+ * UNLEASH, as four numbers, each argued against `forcePush`'s in the method
+ * that spends them. Named here rather than typed into the call so the HUD's
+ * price list and tools/checks can read the same values the power uses.
+ */
+const UNLEASH = { radius: 11, impulse: 34, damage: 30, stun: 1.6 };
+
+/**
+ * `_shockwave`'s own direction vector, and it may not be one of the shared
+ * `_v*` scratches. See the note over that method: `applyKnockback` re-enters
+ * code that borrows them, so a shared vector is clobbered part way through the
+ * loop and every body after that point is thrown in the wrong direction.
+ */
+const _shockDir = new THREE.Vector3();
+
+/**
  * How far in front of the chest a held body still counts as cover, and how much
  * of the bolt it takes on the player's behalf.
  *
@@ -1558,7 +1573,7 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0 };
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0 };
     this.boons = new RankSet();
     this.boonMods = defaultBoonMods();
     this.airJumps = 0;
@@ -1814,6 +1829,7 @@ export class Player {
     if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
+    if (input.actHit('unleash')) this.forceUnleash(ctx);
     if (input.actHit('swap')) this.swapSaber(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
@@ -2238,15 +2254,47 @@ export class Player {
     if (impactSpeed > 26) this.damage(clamp((impactSpeed - 26) * 2.6, 0, 45), null, null, 'fall');
   }
 
+  /**
+   * A RADIAL SHOVE — and the local vector on the first line is a bug fix, not
+   * a style choice.
+   *
+   * This used the module scratch `_v1` for the direction and handed it
+   * straight to `applyKnockback`. That call does `velocity.add(impulse)` and
+   * then `this.damage(...)`, and damage re-enters a great deal of code — hit
+   * reactions, the score, the announcer, anything watching a kill — some of
+   * which reaches back into Player.js and takes `_v1` for its own use. So the
+   * direction was being clobbered PART WAY THROUGH THE LOOP: every body after
+   * whichever one first triggered a re-entrant path got whatever was left in
+   * the scratch.
+   *
+   * HONESTY ABOUT WHAT THIS FIXED: nothing observed, yet. I wrote it while
+   * chasing a ring of eight B1s in which five flew 7.7 m and three moved 0.25,
+   * and I was sure this was the cause. It was not — the three were culled by
+   * `sandboxCount: 5`, which is a default of the mode the probe booted, and
+   * the change made no difference to that measurement at all. The hypothesis
+   * is recorded as refuted rather than deleted, because the next person to see
+   * an asymmetric shockwave will form it too.
+   *
+   * The change STAYS on its own merits: handing a shared module scratch to a
+   * callee that re-enters this file is a hazard whether or not it has bitten,
+   * and `Enemy.unstable`'s own call at line ~1798 has always passed
+   * `_v2.clone()` for exactly this reason. It costs one vector.
+   *
+   * A dedicated vector rather than `.clone()` per body: this loop runs over
+   * every enemy in the radius, and a clone per body is an allocation per body
+   * in the one function whose whole job is to be called when the field is
+   * full.
+   */
   _shockwave(ctx, radius, force, damage) {
     const enemies = ctx.enemies || [];
+    const dir = _shockDir;
     for (const e of enemies) {
       if (e.dead) continue;
       const d = e.position.distanceTo(this.position);
       if (d > radius) continue;
       const k = 1 - d / radius;
-      _v1.subVectors(e.position, this.position).setY(0.6).normalize();
-      e.applyKnockback(_v1.multiplyScalar(force * k), damage * k, this);
+      dir.subVectors(e.position, this.position).setY(0.6).normalize();
+      e.applyKnockback(dir.multiplyScalar(force * k), damage * k, this);
     }
     if (ctx.physics) {
       for (const b of ctx.physics.bodies) {
@@ -3987,6 +4035,103 @@ export class Player {
         }
       }
     }
+  }
+
+  /**
+   * UNLEASH — the 360-degree "get off me".
+   *
+   * Asked for in these words: "one force power that is a 360 degree 'get off
+   * me' type of ability, costs a lot of force but you like yell really loud
+   * and raise both your arms out and push everything around you off (like in a
+   * scenario where you're being overwhelmed)". Every clause of that is a
+   * requirement and each is answered below.
+   *
+   * WHY IT IS NOT `boonMods.repulse`. That already existed and is a different
+   * thing wearing a similar name: a passive that fires when you LAND from a
+   * height, which you cannot use while standing in a ring of eleven droids —
+   * the exact situation this is for. The passive stays; it is a landing, this
+   * is a decision.
+   *
+   * 360 AND NOT A CONE. `forcePush` cones off `aimDir` and that is right for
+   * it. This one deliberately does not read `aimDir` at all: being surrounded
+   * means there is no direction to face, and a power that asked you to pick
+   * one would be answering a different question.
+   *
+   * THE NUMBERS, and each is against `forcePush`'s so the comparison is the
+   * argument. Push reaches 9 m in a cone at impulse 26; this reaches 11 m in a
+   * full circle at 34 and lands 30 damage at the centre. So it is stronger
+   * than push in every term — it costs 52 Force against push's 20 (the most
+   * expensive power in the game, past heal) and holds a 9-second cooldown,
+   * which is long enough that it cannot be a rotation and short enough that it
+   * is there for the second time a wave collapses on you.
+   *
+   * THE STAGGER IS THE POINT, more than the damage. Everything it reaches is
+   * stunned for 1.6 s on top of the knockback — that is what buys the room the
+   * player pressed it for. A version that only threw bodies would have them
+   * back inside your guard by the time you had turned round.
+   */
+  forceUnleash(ctx) {
+    if (this.cooldowns.unleash > 0) {
+      return this._refuse('unleash', `recovering — ${this.cooldowns.unleash.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.unleash)) {
+      const cost = POWER_COST.unleash * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
+      return this._refuse('unleash', `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this.cooldowns.unleash = 9;
+
+    /* BOTH ARMS OUT. `unleash` is already in GESTURES — it was written for
+     * this shape and had no caller — and `_gesture` with no `at` is the
+     * two-handed version, because `_gesturePose` mirrors when nothing is being
+     * pointed at. That is why this passes no target: a target would turn it
+     * back into a one-armed shove. */
+    this._gesture('unleash');
+
+    /* THE YELL. Routed through the Announcer rather than straight at
+     * `audio.speak` so it takes the quip budget with it — otherwise the kill
+     * lines from everything this just threw land on top of the shout that
+     * threw them. `force: true` because this one is never suppressed: the
+     * player pressed a button and has to hear that it happened. */
+    this.world.hud?.announcer?.say(this.world.settings, 'streak', this.chest);
+    audio.force(this.chest, 'push');
+    audio.explosion(this.position, 0.7);
+    this.camera.addShake(0.62);
+    /* The cloak and skirt take it OUTWARD in every direction, which they can
+     * do because `impulse` is a direction and a magnitude and nothing here
+     * has a facing: straight up, so the cloth blows off the body rather than
+     * behind it. */
+    this.cloak?.impulse(_v5.set(0, 1, 0), 4.2);
+    this.skirt?.impulse(_v5.set(0, 1, 0), 4.2);
+
+    this._shockwave(ctx, UNLEASH.radius, UNLEASH.impulse, UNLEASH.damage);
+    /* …and the stagger, which `_shockwave` does not do — it knocks back and
+     * damages. Applied here rather than inside it because the landing
+     * shockwave and the repulse boon share that function and neither should
+     * start stunning. */
+    for (const e of this._foes(ctx)) {
+      if (e.dead) continue;
+      const d = e.position.distanceTo(this.position);
+      if (d > UNLEASH.radius) continue;
+      _v2.subVectors(e.position, this.position).setY(0.4).normalize();
+      e.stun?.(UNLEASH.stun * (1 - 0.4 * d / UNLEASH.radius), _v2, 1.2);
+    }
+    /**
+     * BOLTS ARE NOT TOUCHED, and that is a decision rather than an omission.
+     *
+     * I wrote `ctx.bolts?.scatter?.(…)` here first, on the reasoning that
+     * being overwhelmed includes being shot at. BoltPool has no `scatter` —
+     * its surface is fire/hold/release/update/threatsNear/clear — so the
+     * optional chaining would have made that line a silent no-op that LOOKED
+     * like a feature, which is this project's signature defect (see
+     * HANDOFF 2.3: a missing thing answered with a plausible default).
+     *
+     * And on reflection it should not do it anyway. `release` and the deflect
+     * grades are how a bolt is turned in this game, and every one of them is
+     * something the player did with the blade. A power that also wiped the
+     * air of incoming fire would be answering the one question the whole game
+     * is about. This throws BODIES; the blade is still yours to move.
+     */
+    this.world.engine.setRadial?.(1.0);
   }
 
   /**

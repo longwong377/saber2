@@ -746,6 +746,10 @@ export const CODEX = [
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'],
     text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },
+  { keys: ['unleash'],
+    text: () => 'Unleash — a full circle of Force, thrown outward with both arms. It staggers '
+      + 'everything within eleven metres and costs more than any other power. For when there is '
+      + 'no direction left to face.' },
   { keys: ['compel'],
     text: () => 'Force compel, once <b>Domination</b> is drafted. The unit you are looking at '
       + 'turns on its own — or, alone, on itself.' },

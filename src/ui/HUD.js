@@ -136,6 +136,11 @@ export const POWERS = [
   ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
   ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
   ['heal', 'heal'], ['compel', 'compel'], ['rend', 'rend'],
+  /* Unleash — the 360° repulse. This LIST is what builds the slots; `_power`
+   * only repaints one that already exists, so adding a price and a `_power`
+   * call without a row here draws nothing and prices eleven against ten
+   * slots. hud-events counts exactly that, which is how it was caught. */
+  ['unleash', 'unleash'],
 ];
 
 /**
@@ -179,6 +184,11 @@ const POWER_ICONS = {
   compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
   // A chassis coming apart: a core with four plates pulling off it.
   rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
+  /* A ring with arrows leaving it in every direction: the icon has to say
+     "outward, all of it" at 21 px, which is the one thing that separates this
+     from push in the row. */
+  unleash: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/>'
+    + '<path d="M12 7.5V3M12 16.5V21M7.5 12H3M16.5 12H21M8.8 8.8L5.6 5.6M15.2 8.8l3.2-3.2M8.8 15.2l-3.2 3.2M15.2 15.2l3.2 3.2"/></svg>',
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -961,6 +971,12 @@ export class HUD {
     /* Rend, whose slot did not exist until the audit found it bound to KeyN,
      * priced at 38 and drawn nowhere. 2.4 s, from `forceDisassemble`. */
     this._power('rend', cd.rend, this._afford(player, 'rend'));
+    /* Unleash — the 360° repulse. Its slot exists for the same reason rend's
+     * had to be added: a power that is bound, priced and castable and drawn
+     * nowhere is a power the player has to be told about out of band, and
+     * hud-events counts the wheel against POWER_COST so a new price without a
+     * new slot fails rather than shipping quiet. */
+    this._power('unleash', cd.unleash, this._afford(player, 'unleash'));
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;

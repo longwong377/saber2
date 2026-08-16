@@ -116,6 +116,13 @@ export const ACTIONS = [
   { id: 'throw',      group: 'Force',    label: 'Throw / recall saber', keys: ['KeyH'] },
   { id: 'sense',      group: 'Force',    label: 'Force sense',       keys: ['KeyC'] },
   { id: 'lightning',  group: 'Force',    label: 'Force lightning',   keys: ['KeyZ'] },
+  /* KeyU, and the choice was made by ASKING rather than by guessing: KeyT is
+   * `focus`, and the letters this table has not already spoken for are
+   * I, J, K, L, O and U. U is the nearest of those to WASD, which matters for
+   * a power whose entire use case is "I am surrounded and I have half a
+   * second". A key typed here without checking is how two actions end up
+   * sharing one — see the note on `hurl` above, which is that bug's scar. */
+  { id: 'unleash',    group: 'Force',    label: 'Unleash (360° repulse)', keys: ['KeyU'] },
   // Stasis and rend were read straight off KeyB and KeyN inside Player, past
   // this table, so they had the same disease: no menu row, no rebind, and no
   // way for findConflict to warn that something else wanted the key. Their
