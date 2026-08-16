@@ -432,7 +432,13 @@ export class Announcer {
        * at cadence 1.9 is exactly the panicked chirp the source material has.
        */
       const sp = e.velocity ? e.velocity.length() : 0;
-      if (!e.dead && sp - (st.speed || 0) > FLUNG_SPEED) {
+      /* `st.speed !== undefined` is the first-frame guard and it is load-bearing
+       * rather than defensive: a body delivered by a dropship is put down with
+       * the ship's own velocity on it, so its FIRST reading is already 20 m/s
+       * and a bare `sp - (st.speed || 0)` would have every arrival scream on the
+       * frame it landed. The gain is only meaningful once there is a previous
+       * frame to gain over. */
+      if (!e.dead && st.speed !== undefined && sp - st.speed > FLUNG_SPEED) {
         const spec = this._enemySpec(e);
         this._battleLine(spec, spec.ring ? 'alarm' : 'flung', e.position, on);
       }

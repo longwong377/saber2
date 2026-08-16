@@ -14,7 +14,7 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { Player, bladeTargets, canHarm, hostileTo, pvpRules } from './Player.js';
+import { Player, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById } from './Waves.js';
@@ -74,6 +74,17 @@ export class World {
      * damage path. `pvpRules({})` returns co-op's rules — friendly fire off,
      * everyone on side 0 — so every existing world is unchanged by this. */
     this.rules = pvpRules(settings);
+    /**
+     * THE NUMBER THAT MEANS "ON THE PLAYER'S SIDE".
+     *
+     * `TEAM.PARTY` is 0 and every comparison in this game already spells it as
+     * the literal. This field exists for one caller: `CommandDirector.deploy`
+     * enlists an `Enemy` onto the party's team, and a mode file writing a bare
+     * `0` there would be a second place that decides what a side IS — which is
+     * exactly what `sideTeam`'s own note in Player.js forbids ("nobody can hand
+     * out a player side of 1 and post half a duel to the horde's ledger").
+     */
+    this.partyTeam = TEAM.PARTY;
     this.enemies = [];
     this.props = [];
     this.doors = [];
