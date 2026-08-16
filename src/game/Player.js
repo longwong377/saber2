@@ -747,7 +747,7 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  * tools/_fpgeom.mjs has the sweep. The second hand is the constraint, so the
  * second hand goes: see `twoHanded` in _updateBody.
  *
- * −0.075 rather than the −0.092 the metal bottoms out at, because the fist is
+ * −0.062 rather than the −0.092 the metal bottoms out at, because the fist is
  * ~90 mm across and a grip point at the very end of the shaft hangs half the
  * hand off it. This puts the whole closed fist on metal with the pommel just
  * clear below it, which is the reference's own framing. Swept against the
@@ -759,7 +759,7 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  *     +0.050         71%                 15.9°       ← the third-person grip
  *     −0.040         45%                 21.5°
  *     −0.062         39%                 23.0°
- *     −0.075         32%                 24.8°       ← shipped
+ *     −0.075         32%                 24.8°       ← the Graflex, derived
  *     −0.085         29%                 26.3°       (past the 26° frame bound)
  *     −0.100         23%                 28.6°
  *
@@ -769,8 +769,59 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  * the fist hanging past the pommel, and past −0.085 it hangs out of the frame
  * as well. Note the first row: taking the off hand off the hilt and changing
  * nothing else is 91% → 71%. Both halves were needed.
+ *
+ * THIS TABLE IS THE GRAFLEX'S, and that is the whole of the correction below:
+ * it was read as the game's. −0.075 is what `hiltFloor + FIST_CLEAR` now comes
+ * to on a hilt whose metal bottoms out at −85 mm, so the row still stands — it
+ * is derived per weapon rather than typed once, and the nine other hilts get
+ * their own. See `fpGripOn`.
  */
 export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
+
+/**
+ * …AND THE FIRST-PERSON GRIP IS THE HILT'S, NOT THE GAME'S.
+ *
+ * `GRIP_AT.FP` was one constant applied to ten hilts that do not agree about
+ * where their metal stops: the Graflex bottoms out at −85 mm and the Shoto at
+ * −54, because a pommel, a control box and a belt hook reach past whatever
+ * `len` says. So there is no single number, and it is provable rather than a
+ * matter of taste. Two checks bound it from opposite sides:
+ *
+ *   `hilts: the hands still close on the grip`   needs the point inside EVERY
+ *       hilt's own extent with a margin → fp > −0.042, set by the Shoto.
+ *   `first person: the hilt is ON SCREEN`        needs at most 35% of the hilt
+ *       behind the fist → fp ≲ −0.070, set by the table above.
+ *
+ * −0.042 > fp > −0.070 is an empty interval. −0.075 shipped and hung the fist
+ * off the Graflex's pommel; −0.062 was tried here and moved the same failure to
+ * the Shoto while breaking the occlusion bound as well. Neither is a fix,
+ * because a constant cannot be one — which is what §6.0's title has said all
+ * along: the first-person grip is OVER-CONSTRAINED.
+ *
+ * AND IT IS STILL OVER-CONSTRAINED PER HILT, BY ABOUT TWO MILLIMETRES. On the
+ * Graflex the derived point is −0.072, which is 11 of the occlusion check's 31
+ * samples behind the glove — 35.5% against a `pct < 35` bound. Dropping it the
+ * ~2 mm that would clear one more sample puts the fist back inside `hilts`'s
+ * own 12 mm margin, so the two checks now disagree by one sample point rather
+ * than by a design. Worth saying plainly: `pct < 35` on a 31-point grid can
+ * only ever be satisfied at 10/31 = 32.3%, so the "35%" in that check's message
+ * is not a number its measurement can produce, and the real bound is 32.3%.
+ * Neither constant is touched here. Which of them gives is a question about how
+ * the weapon should look in frame, and that belongs to whoever owns §6.0 — not
+ * to the change that noticed they cannot both hold.
+ *
+ * `Saber.hiltFloor` is measured off the built meshes once per hilt, so each
+ * weapon can be held at the bottom of ITS OWN grip. 13 mm of clearance is the
+ * check's own margin (12 mm) plus a millimetre, because a hand exactly on a
+ * bound is a hand the next hilt tips over it. `GRIP_AT.FP` stays as the answer
+ * for a saber whose hilt has not been measured — a preview, a fixture, a
+ * dropped weapon rebuilt from the wire — and is no longer what the game holds.
+ */
+export const FIST_CLEAR = 0.013;
+export function fpGripOn(saber) {
+  const lo = saber?.hiltFloor;
+  return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
+}
 
 
 
@@ -3482,7 +3533,8 @@ export class Player {
        * fists where the spec says they are — on the grip section — at any size,
        * and it is 1 for every full-sized wielder in the game. */
       const gs = this.saber.gripScale ?? 1;
-      const gripR = this.saber.root.localToWorld(_v2.set(0, (fp ? GRIP_AT.FP : GRIP_AT.R) * gs, 0));
+      const gripR = this.saber.root.localToWorld(
+        _v2.set(0, (fp ? fpGripOn(this.saber) : GRIP_AT.R) * gs, 0));
       const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L * gs, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.

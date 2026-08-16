@@ -130,6 +130,34 @@ export const SABER_COLORS = [
  * they stay inside ±15 mm of it, because a hilt that emits 4 cm further out is
  * a longer sword wearing a hilt's name.
  */
+/**
+ * WHERE THE METAL STOPS, off the geometry rather than off the spec.
+ *
+ * A hilt's own extent is what says whether a hand closes on it, and the ten
+ * hilts do not agree about it: the Graflex bottoms out 85 mm below the origin
+ * and the Shoto 54 mm, because a pommel, a control box and a belt hook all
+ * reach past whatever `len` says. So this is measured from the built meshes and
+ * not computed from `HILT_SPECS` — a second derivation off the spec would be a
+ * hand-maintained twin of the geometry, and the geometry is what the player
+ * sees a fist against.
+ *
+ * Once per build, on ten hilts, in the constructor. Never per frame.
+ */
+function hiltFloor(group) {
+  group.updateMatrixWorld(true);
+  let lo = Infinity;
+  const v = new THREE.Vector3();
+  group.traverse((o) => {
+    const pos = o.isMesh && o.geometry?.attributes?.position;
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      if (v.y < lo) lo = v.y;
+    }
+  });
+  return Number.isFinite(lo) ? lo : -0.09;
+}
+
 export const HILT_SPECS = {
   /* ── the five that shipped, now actually different from each other ──── */
   Graflex: {
@@ -973,6 +1001,10 @@ export class Saber {
     this.hiltMetals = built.metals;
     this.hiltSpec = built.spec;
     this.hilt = built.group;
+    // BEFORE the group is parented and before the grip scale is applied, so the
+    // number comes out in the same space `GRIP_AT` is written in — the caller
+    // multiplies by `gs` exactly as it does for the third-person grip.
+    this.hiltFloor = hiltFloor(built.group);
     this.root.add(built.group);
     this._emitter0 = built.emitter;
     this.setGripScale(this.gripScale ?? 1);

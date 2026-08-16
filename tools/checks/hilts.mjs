@@ -26,7 +26,7 @@
 import * as THREE from 'three';
 import { Saber, HILT_STYLES, HILT_SPECS } from '../../src/game/Saber.js';
 import { ORDERS } from '../../src/game/Order.js';
-import { GRIP_AT } from '../../src/game/Player.js';
+import { GRIP_AT, fpGripOn, FIST_CLEAR } from '../../src/game/Player.js';
 
 /**
  * A hilt's shape, as numbers: how many parts it is made of, how long it is,
@@ -62,7 +62,7 @@ function shape(style) {
     const k = Math.min(N - 1, Math.max(0, Math.floor(((v.y - lo) / span) * N)));
     prof[k] = Math.max(prof[k], Math.hypot(v.x, v.z));
   }
-  const out = { parts, lo, hi, len: span, prof, emitter: s.emitterY };
+  const out = { parts, lo, hi, len: span, prof, emitter: s.emitterY, floor: s.hiltFloor, fp: fpGripOn(s) };
   s.dispose();
   return out;
 }
@@ -135,17 +135,38 @@ export async function run({ check, assert }) {
     for (const h of HILT_STYLES) {
       const sh = shape(h);
       const spec = HILT_SPECS[h];
-      for (const [side, y] of Object.entries(GRIP_AT)) {
+      /* THE TWO-HANDED GRIP IS A CONSTANT AND IS CHECKED AS ONE. `FP` is not,
+       * and asserting a constant against ten hilts is what proved it could not
+       * be: `hilts` wants the point inside the SHORTEST hilt (fp > -0.042, the
+       * Shoto) and `first person` wants at most 35% of the hilt behind the
+       * fist (fp <= -0.070, the Graflex), and that interval is empty. So the
+       * first-person point is derived per weapon now, and what is asserted is
+       * the DERIVED value — a stronger statement than the constant ever made,
+       * because it has to hold for each hilt separately rather than for one
+       * number that happened to suit the default. */
+      for (const side of ['R', 'L']) {
+        const y = GRIP_AT[side];
         assert(y < sh.hi - 0.012 && y > sh.lo + 0.012,
           `${h}: the ${side} hand grips at ${(y * 1000).toFixed(0)} mm, and the hilt runs `
           + `${(sh.lo * 1000).toFixed(0)}–${(sh.hi * 1000).toFixed(0)} mm`);
       }
+      assert(sh.fp < sh.hi - 0.012 && sh.fp > sh.lo + 0.012,
+        `${h}: the FP hand grips at ${(sh.fp * 1000).toFixed(0)} mm, and the hilt runs `
+        + `${(sh.lo * 1000).toFixed(0)}-${(sh.hi * 1000).toFixed(0)} mm`);
+      /* And the measurement the game holds must be the one an independent walk
+       * of the same meshes finds. A `hiltFloor` that drifted from the geometry
+       * would put every fist in the game a few millimetres into the air with
+       * nothing to say so. */
+      assert(Math.abs(sh.floor - sh.lo) < 1e-6,
+        `${h}: Saber.hiltFloor says ${(sh.floor * 1000).toFixed(1)} mm and the meshes say `
+        + `${(sh.lo * 1000).toFixed(1)} mm`);
       // and the emitter may not wander, because it is part of the reach
       assert(Math.abs(spec.emitter - 0.155) <= 0.015,
         `${h} emits at ${(spec.emitter * 1000).toFixed(0)} mm against the standard 155 — that is a longer sword wearing a hilt's name`);
       rows.push(`${h} ${(sh.lo * 1000) | 0}…${(sh.hi * 1000) | 0}mm`);
     }
-    return `hands at R${(GRIP_AT.R * 1000).toFixed(0)}/L${(GRIP_AT.L * 1000).toFixed(0)} mm: ` + rows.join(', ');
+    return `hands at R${(GRIP_AT.R * 1000).toFixed(0)}/L${(GRIP_AT.L * 1000).toFixed(0)} mm, `
+      + `FP at each hilt's own floor +${(FIST_CLEAR * 1000).toFixed(0)}: ` + rows.join(', ');
   });
 
   check('hilts: every order builds some, nobody builds them all, and all are reachable', () => {
