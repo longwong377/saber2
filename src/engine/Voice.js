@@ -141,6 +141,42 @@ export const ENEMY_VOICES = {
     f0: 44, wave: 'square', formants: [170, 520], q: [6, 4.5], mix: 0.9,
     rasp: 0.35, raspFreq: 700, cadence: 0.62, bend: 0.05, ring: 1.62, gain: 1.05,
   },
+  /**
+   * THE OFFICER — the one voice on this list that has to carry over a battle.
+   *
+   * Command mode fields a Clone Commander and a MagnaGuard whose whole job is to
+   * make the line around them better, and both of them SHOUT: the rally aura is
+   * already drawn as a ring on the ground, and a ring with nothing audible in it
+   * is half a tell. A commander is not a louder trooper — a voice that carries
+   * across noise is a voice with its formants FORWARD and its rasp up, not one
+   * with its gain up, which is why F2 goes to 3600 against the trooper's 2900
+   * and the rasp to 0.42 against 0.30. Measured by `voices.mjs` against every
+   * other spec: it has to be its own point in pitch/centroid/length, and the
+   * pitch alone (112 against the trooper's 128) would not have been enough.
+   */
+  officer: {
+    id: 'officer', name: 'Clone Commander',
+    f0: 112, wave: 'sawtooth', formants: [820, 3600], q: [6, 4], mix: 1.0,
+    rasp: 0.42, raspFreq: 3800, cadence: 1.12, bend: 0.14, gain: 1.0,
+  },
+  /**
+   * THE COMMANDO DROID — a droid throat, but not a B1's.
+   *
+   * The `droid` spec is a B1: f0 300, cadence 1.9, a huge 2.71 ring partial, and
+   * the whole character of it is that it sounds SILLY, which is correct for a B1
+   * and is exactly wrong for a BX or a MagnaGuard. Those are the CIS bodies that
+   * are meant to frighten you. So: an octave and a half down at 118, a slower
+   * cadence, a much lower ring (1.41 rather than 2.71, so the inharmonic partial
+   * sits close to the fundamental and reads as a resonating shell rather than as
+   * a bell), and the formants low and narrow. Still unmistakably a machine —
+   * nothing with a throat can make an inharmonic partial at all — and it is the
+   * machine you take seriously.
+   */
+  commando: {
+    id: 'commando', name: 'Commando droid',
+    f0: 118, wave: 'square', formants: [420, 1150], q: [9, 7], mix: 0.7,
+    rasp: 0.18, raspFreq: 2100, cadence: 0.86, bend: 0.06, ring: 1.41, gain: 0.92,
+  },
 };
 
 /** Every spec in the project, player and enemy, in one list for measuring. */
@@ -184,6 +220,53 @@ export const LINES = {
   panic:  { gain: 0.90, syll: [[1.24, 0.28, 1.0], [1.34, 0.26, 0.9], [1.12, 0.44, 0.8]] },
   scream: { gain: 1.00, syll: [[1.30, 0.70, 1.0], [1.05, 0.95, 0.6]] },
   chatter:{ gain: 0.55, syll: [[1.00, 0.26, 0.9], [0.90, 0.30, 0.7]] },
+
+  /* ── the battle, and it is the whole of player note #21's last sentence ──
+   *
+   * "I want to hear their screams and cheers, in general make the game more
+   * audible as far as voices — I want to hear the enemies scream as they get
+   * force thrown or killed or cheer when someone dies you know what I mean?"
+   *
+   * Three contours, and the reason they are three rather than reuses is that
+   * each one is a DIFFERENT SHAPE and the shape is what carries the meaning. A
+   * contour is not a word: what a listener reads off it is the direction, the
+   * length and where the emphasis sits, and those three things read the same
+   * whoever is speaking, which is the whole design of this file.
+   */
+
+  /**
+   * FLUNG. Not `scream` — that is a death, and a death FALLS.
+   *
+   * A body that has just been picked up by something invisible does the
+   * opposite: one syllable, the longest in the table at 1.35, starting above the
+   * larynx and climbing the whole way. Nothing else here rises for more than a
+   * third of a second, so this is the only contour in the game a listener could
+   * not mistake for something ending. It is also the loudest (1.05), because
+   * this fires at the moment the body is furthest away it will ever be.
+   */
+  flung:  { gain: 1.05, syll: [[1.22, 1.35, 1.0]] },
+
+  /**
+   * A CHEER, which is a THIRD thing and not a happy scream.
+   *
+   * Four syllables, short, level, all on one pitch, with the last one held. That
+   * is what a group shouting together sounds like — a crowd cannot glide, so a
+   * cheer is rhythmic where every other line here is melodic. The rhythm is the
+   * tell: 0.20/0.20/0.20 then 0.62 is three beats and a held note, and it is
+   * unmistakable at any pitch, through any throat, at any distance.
+   */
+  cheer:  { gain: 0.92, syll: [[1.06, 0.20, 0.85], [1.06, 0.20, 0.9], [1.06, 0.20, 0.95], [1.14, 0.62, 1.0]] },
+
+  /**
+   * AN ORDER GIVEN. Short, hard, and it lands DOWN.
+   *
+   * Two syllables, the first clipped to 0.22 and the second falling and held —
+   * the contour of a two-word command. It is the officer's line and it is what
+   * the player hears when they change formation, so it has to be legible under
+   * a firefight: the fall is what distinguishes it from `alarm`, which is the
+   * other short two-syllable line in the table and which rises.
+   */
+  order:  { gain: 0.95, syll: [[1.16, 0.22, 1.0], [0.86, 0.58, 0.9]] },
 };
 
 export const LINE_KINDS = Object.keys(LINES);
@@ -205,7 +288,19 @@ export const LINE_KINDS = Object.keys(LINES);
  * syllables the player dies on (see Announcer._enemyLine, which picks 'die' for
  * anything with a `ring` partial and 'scream' for anything with a throat).
  */
-export const ENEMY_LINES = ['alarm', 'panic', 'scream', 'chatter'];
+/**
+ * `flung`, `cheer` and `order` join this list, and each for its own reason.
+ *
+ * `flung` is a body reacting to being thrown by the Force, which is a thing that
+ * happens TO somebody else — the player is the one doing the throwing. `cheer`
+ * is a line the army around you says about a kill; a wheel slot that made the
+ * player cheer their own kill would be a different and much worse emote. `order`
+ * is the reply to a command, said by the troops, not by the commander — the
+ * commander's own voice is already on the wheel through `streak` and `boss`.
+ *
+ * (`die` remains on both sides and therefore in neither list — see below.)
+ */
+export const ENEMY_LINES = ['alarm', 'panic', 'scream', 'chatter', 'flung', 'cheer', 'order'];
 export const PLAYER_LINES = LINE_KINDS.filter(k => !ENEMY_LINES.includes(k));
 
 /** Seconds one syllable of length 1.0 lasts at cadence 1. */

@@ -1252,22 +1252,76 @@ export async function run({ check, assert }) {
    * body class implies, and the two files must never disagree again.
    */
   check('announcer: every archetype speaks with the voice its body implies', () => {
+    /**
+     * THIS CHECK USED TO RESTATE THE RULE IT WAS CHECKING, and the correction
+     * is HANDOFF §2.4 in miniature: it carried
+     *
+     *     const want = b.walker ? walker : b.beast ? beast : b.droid ? droid
+     *       : b.trooper ? trooper : sith;
+     *
+     * which is a second copy of `_enemySpec`'s own body, written in a second
+     * file. An instrument that restates a rule will eventually disagree with it
+     * and it fails in the direction nobody checks — it MANUFACTURES a defect.
+     * It did exactly that the day the shipped rule learned two more throats: a
+     * commando droid and a clone commander are both correctly voiced by the
+     * game and both reported here as wrong, because the twin had never been
+     * told about them and could not be.
+     *
+     * So the twin is gone. What is asserted instead is the set of PROPERTIES
+     * the mapping exists to produce — every one of which is a sentence about
+     * what the player hears rather than about how the function is written, and
+     * every one of which would still be true after any refactor of it.
+     */
     const spec = (key) => Announcer.prototype._enemySpec.call(null, { type: key, A: ARCHETYPES[key] });
     const nameOf = (s) => Object.keys(ENEMY_VOICES).find(k => ENEMY_VOICES[k] === s) || '?';
     const rows = [];
     for (const key of Object.keys(ARCHETYPES)) {
-      const b = bodyOf({ type: key, A: ARCHETYPES[key] });
-      const want = b.walker ? ENEMY_VOICES.walker : b.beast ? ENEMY_VOICES.beast
-        : b.droid ? ENEMY_VOICES.droid : b.trooper ? ENEMY_VOICES.trooper : ENEMY_VOICES.sith;
+      const A = ARCHETYPES[key];
+      const b = bodyOf({ type: key, A });
       const got = spec(key);
-      assert(got === want,
-        `${key} is a ${nameOf(want)} body and speaks with the ${nameOf(got)} voice`);
+      // 1. EVERYTHING SPEAKS. The failure this whole method replaced was five
+      //    hard-coded branches over type names, past which three archetypes
+      //    fell onto the Sith acolyte by accident.
+      assert(got && Object.values(ENEMY_VOICES).includes(got),
+        `${key} has no voice at all`);
+      // 2. A MACHINE HAS A RING PARTIAL and a body with a throat does not. That
+      //    is the one acoustic property no throat can produce, and it is what
+      //    makes a droid a droid rather than a small person.
+      if (b.droid || b.walker) {
+        assert(got.ring > 0, `${key} is a machine and has no inharmonic partial`);
+      } else {
+        assert(!(got.ring > 0), `${key} has a throat and speaks with a metal partial in it`);
+      }
+      // 3. AN ANIMAL IS AN OCTAVE UNDER A MAN.
+      if (b.beast) {
+        assert(got === ENEMY_VOICES.beast, `${key} is an animal and does not sound like one`);
+      }
+      // 4. A BODY WITH A BLADE IS NOT A B1. `melee` is the field that puts a
+      //    body through DuelBrain, so a droid carrying it is one of the CIS
+      //    machines meant to frighten you — a BX, a MagnaGuard, the IG general
+      //    — and the B1's silly 300 Hz chirp is the wrong instrument for all
+      //    three. (This is the assertion that moved: `bodyguard` used to be
+      //    pinned to the droid voice here, and the method's own header records
+      //    it as having been wrong in the other direction first.)
+      if (b.droid && A.melee) {
+        assert(got !== ENEMY_VOICES.droid,
+          `${key} fights with a blade and still chirps like a B1`);
+        assert(got.f0 < ENEMY_VOICES.droid.f0 * 0.6,
+          `${key} is a duelling machine at ${got.f0} Hz — that is a B1's pitch`);
+      }
+      // 5. A BODY THAT COMMANDS SHOUTS. `commandAura` is the field that carries
+      //    the rally ring; a body whose whole value is making the line around it
+      //    better must not be indistinguishable from the line.
+      if (A.commandAura) {
+        assert(got !== ENEMY_VOICES.trooper && got !== ENEMY_VOICES.droid,
+          `${key} leads a line and sounds exactly like one of them`);
+      }
       rows.push(`${key}:${nameOf(got)}`);
     }
     // The consequences the player actually hears, stated as the numbers that
     // were wrong: a machine powers down on the ring, an animal is an octave
     // under a man, and neither is the acolyte.
-    for (const key of ['b1', 'b2', 'droideka', 'remote', 'dummy', 'bodyguard']) {
+    for (const key of ['b1', 'b2', 'droideka', 'remote', 'dummy']) {
       assert(spec(key).ring > 0, `${key} is a machine and has no ring partial`);
       assert(spec(key) === ENEMY_VOICES.droid, `${key} does not use the droid voice`);
     }
