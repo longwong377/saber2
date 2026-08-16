@@ -2151,7 +2151,17 @@ export class CommandDirector extends WaveDirector {
      * the mode — the roster, the ranks, permadeath, the formations, the leash,
      * the muster — is untouched.
      */
-    if (this.versus) { this.active = true; this.deployAll(); return; }
+    if (this.versus) {
+      /* `wave` is on the wire (packSnapshot) and on the HUD, so it is written
+       * even though nothing composes one: a meeting is one engagement and it
+       * says so rather than leaving the field at whatever the constructor put
+       * there for a joining player to print. */
+      this.wave = wave;
+      this.active = true;
+      this.spawnQueue.length = 0;
+      this.deployAll();
+      return;
+    }
     super.start(wave);
     if (this.roster.living.some((t) => !t.body || t.body.dead)) this.deploy();
   }
