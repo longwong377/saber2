@@ -26,7 +26,7 @@
   <div class="boot-inner">
     <div class="logo"><span class="logo-blade"></span><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
     <div class="boot-bar"><i id="boot-fill"></i></div>
-    <div id="boot-msg" class="boot-msg">forging blade…</div>
+    <div id="boot-msg" class="boot-msg" data-i18n="boot.forging">forging blade…</div>
   </div>
 </div>
 
@@ -36,8 +36,8 @@
   <div class="menu-wrap">
     <header class="menu-head">
       <div class="logo small"><span class="logo-blade"></span><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
-      <p class="tagline">Clone Wars · Front Line</p>
-      <p class="byline">made by Valdrian</p>
+      <p class="tagline" data-i18n="menu.tagline">Clone Wars · Front Line</p>
+      <p class="byline" data-i18n="menu.byline">made by Valdrian</p>
       <!-- Filled by main.js from Progress.js. A HISTORY, not a currency:
            nothing here unlocks anything, and it is empty until you have played
            once so a first run is never greeted by a row of zeroes. -->
@@ -45,16 +45,16 @@
     </header>
 
     <nav class="menu-tabs">
-      <button class="tab active" data-tab="play">Deploy</button>
-      <button class="tab" data-tab="saber">Jedi</button>
-      <button class="tab" data-tab="coop">Co-op</button>
-      <button class="tab" data-tab="opts">Options</button>
-      <button class="tab" data-tab="train">Codex</button>
+      <button class="tab active" data-tab="play" data-i18n="menu.tab.play">Deploy</button>
+      <button class="tab" data-tab="saber" data-i18n="menu.tab.saber">Jedi</button>
+      <button class="tab" data-tab="coop" data-i18n="menu.tab.coop">Co-op</button>
+      <button class="tab" data-tab="opts" data-i18n="menu.tab.opts">Options</button>
+      <button class="tab" data-tab="train" data-i18n="menu.tab.train">Codex</button>
     </nav>
 
     <section class="panel active" data-panel="play">
       <div class="col">
-        <h3>Theatre</h3>
+        <h3 data-i18n="menu.theatre">Theatre</h3>
         <!-- Filled by Menu._syncTheatre, and empty in every mode that honours
              this column. The Descent walks a fixed ladder of rungs and takes
              its level from the rung, so the thirteen cards below it are inert
@@ -79,17 +79,17 @@
            fixed it. See `.col.narrow.pinned` in styles.css. -->
       <div class="col narrow pinned">
         <div class="col-scroll">
-          <h3>Trial</h3>
+          <h3 data-i18n="menu.trial">Trial</h3>
           <div id="diff-list" class="difflist"></div>
           <!-- The gap between the two lists is a CLASS and not an inline style
                because a short viewport has to be able to close it: at 1280x720
                this scroller is 362 px over 819 px of content, and an inline
                margin cannot be overridden by the media query that claws some
                of that back. See `.col.narrow.pinned` in styles.css. -->
-          <h3 class="stacked">Mode</h3>
+          <h3 class="stacked" data-i18n="menu.mode">Mode</h3>
           <div id="mode-list" class="difflist"></div>
         </div>
-        <button id="btn-deploy" class="primary">Ignite</button>
+        <button id="btn-deploy" class="primary" data-i18n="menu.ignite">Ignite</button>
       </div>
     </section>
 
@@ -99,34 +99,34 @@
            nothing hides its own heading, so a half-built feature is invisible
            rather than an empty box with a title over it. -->
       <div class="col scroll">
-        <h3 id="h-order">Order</h3>
+        <h3 id="h-order" data-i18n="forge.order">Order</h3>
         <div id="order-list" class="cards small"></div>
-        <h3 id="h-species" style="margin-top:22px">Species</h3>
+        <h3 id="h-species" style="margin-top:22px" data-i18n="forge.species">Species</h3>
         <div id="species-list" class="cards small"></div>
-        <h3 id="h-face" style="margin-top:22px">Face</h3>
+        <h3 id="h-face" style="margin-top:22px" data-i18n="forge.face">Face</h3>
         <div id="face-list" class="cards small"></div>
-        <h3 id="h-build" style="margin-top:22px">Build</h3>
-        <label class="slider" id="build-row">Frame <input type="range" id="opt-build" min="0" max="1" step="0.01" value="0.5"><b></b></label>
+        <h3 id="h-build" style="margin-top:22px" data-i18n="forge.build">Build</h3>
+        <label class="slider" id="build-row"><span data-i18n="forge.frame">Frame</span> <input type="range" id="opt-build" min="0" max="1" step="0.01" value="0.5"><b></b></label>
         <!-- Muscle and years are NOT keys of DEFAULT_SETTINGS: they live in the
              character sheet, which is the `face` object, because that object is
              the only appearance argument the World → Player → buildJedi path
              carries. Hence `sheet-` ids rather than `opt-` ones — the checks
              that hold `opt-*` to a setting name would be lying about these. -->
-        <label class="slider" id="muscle-row">Muscle <input type="range" id="sheet-muscle" min="0" max="1" step="0.01" value="0.5"><b></b></label>
-        <label class="slider" id="age-row">Years <input type="range" id="sheet-age" min="0" max="1" step="0.01" value="0"><b></b></label>
-        <h3 id="h-hairstyle" style="margin-top:22px">Hair</h3>
+        <label class="slider" id="muscle-row"><span data-i18n="forge.muscle">Muscle</span> <input type="range" id="sheet-muscle" min="0" max="1" step="0.01" value="0.5"><b></b></label>
+        <label class="slider" id="age-row"><span data-i18n="forge.years">Years</span> <input type="range" id="sheet-age" min="0" max="1" step="0.01" value="0"><b></b></label>
+        <h3 id="h-hairstyle" style="margin-top:22px" data-i18n="forge.hair">Hair</h3>
         <div id="hairstyle-list" class="cards small"></div>
-        <h3 id="h-beard" style="margin-top:22px">Beard</h3>
+        <h3 id="h-beard" style="margin-top:22px" data-i18n="forge.beard">Beard</h3>
         <div id="beard-list" class="cards small"></div>
-        <h3 style="margin-top:22px">Skin</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.skin">Skin</h3>
         <div id="skin-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Hair colour</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.hairColour">Hair colour</h3>
         <div id="hair-list" class="swatches"></div>
-        <h3 id="h-cut" style="margin-top:22px">Robe cut</h3>
+        <h3 id="h-cut" style="margin-top:22px" data-i18n="forge.robeCut">Robe cut</h3>
         <div id="cut-list" class="cards small"></div>
-        <h3 style="margin-top:22px">Robe colour</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.robeColour">Robe colour</h3>
         <div id="robe-list" class="swatches"></div>
-        <p class="hint">The palette every layer below is derived from. Each piece can then be dyed on
+        <p class="hint" data-i18n-html="forge.paletteHint">The palette every layer below is derived from. Each piece can then be dyed on
           its own — the first swatch in every row is <b>as the robe</b>, which is what it was.</p>
         <!-- THE WARDROBE. Nine rows, all built by Menu._buildSaber out of the
              tables in src/game/Cloth.js, because a list of cape cuts typed
@@ -134,132 +134,132 @@
              with it. They write into `settings.wardrobe` and are applied to a
              live body by applyWardrobe, so a piece picked here — or from the
              pause card — lands without a redeploy. -->
-        <h3 id="h-cape" style="margin-top:22px">Cape</h3>
+        <h3 id="h-cape" style="margin-top:22px" data-i18n="forge.cape">Cape</h3>
         <div id="cape-list" class="cards small"></div>
         <div id="cape-tone-list" class="swatches tone"></div>
-        <h3 id="h-tabard" style="margin-top:22px">Over-robe</h3>
+        <h3 id="h-tabard" style="margin-top:22px" data-i18n="forge.tabard">Over-robe</h3>
         <div id="tabard-list" class="cards small"></div>
         <div id="tabard-tone-list" class="swatches tone"></div>
-        <h3 style="margin-top:22px">Tunic</h3>
-        <p class="hint">The collar, the crossed V at the chest and the cuffs under the sleeves.</p>
+        <h3 style="margin-top:22px" data-i18n="forge.tunic">Tunic</h3>
+        <p class="hint" data-i18n="forge.tunicHint">The collar, the crossed V at the chest and the cuffs under the sleeves.</p>
         <div id="tunic-tone-list" class="swatches tone"></div>
-        <h3 id="h-sash" style="margin-top:22px">Belt &amp; sash</h3>
+        <h3 id="h-sash" style="margin-top:22px" data-i18n="forge.sash">Belt &amp; sash</h3>
         <div id="sash-list" class="cards small"></div>
         <div id="sash-tone-list" class="swatches tone"></div>
-        <h3 style="margin-top:22px">Boots</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.boots">Boots</h3>
         <div id="boot-tone-list" class="swatches tone"></div>
-        <h3 style="margin-top:22px">Gloves &amp; bracers</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.gloves">Gloves &amp; bracers</h3>
         <div id="glove-tone-list" class="swatches tone"></div>
-        <h3 style="margin-top:22px">Crystal</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.crystal">Crystal</h3>
         <div id="color-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Force lightning</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.lightning">Force lightning</h3>
         <div id="lightning-list" class="swatches"></div>
-        <h3 style="margin-top:22px">Hilt</h3>
+        <h3 style="margin-top:22px" data-i18n="forge.hilt">Hilt</h3>
         <div id="hilt-list" class="cards small"></div>
-        <h3 style="margin-top:22px">Blade</h3>
-        <label class="slider">Length <input type="range" id="opt-bladelen" min="0.85" max="1.45" step="0.01" value="1.15"><b></b></label>
-        <label class="slider">Core width <input type="range" id="opt-bladewidth" min="0.45" max="1.6" step="0.01" value="1"><b></b></label>
+        <h3 style="margin-top:22px" data-i18n="forge.blade">Blade</h3>
+        <label class="slider"><span data-i18n="forge.length">Length</span> <input type="range" id="opt-bladelen" min="0.85" max="1.45" step="0.01" value="1.15"><b></b></label>
+        <label class="slider"><span data-i18n="forge.coreWidth">Core width</span> <input type="range" id="opt-bladewidth" min="0.45" max="1.6" step="0.01" value="1"><b></b></label>
       </div>
       <div class="col narrow">
-        <h3>Preview</h3>
+        <h3 data-i18n="forge.preview">Preview</h3>
         <div id="saber-preview" class="preview"></div>
         <div id="preview-shots" class="shots"></div>
-        <p class="hint">Drag to turn, wheel to move in. The Jedi you build is the Jedi you carry.</p>
+        <p class="hint" data-i18n="forge.previewHint">Drag to turn, wheel to move in. The Jedi you build is the Jedi you carry.</p>
       </div>
     </section>
 
     <section class="panel" data-panel="coop">
       <div class="col">
-        <h3>Play with friends</h3>
-        <p class="hint" style="margin-bottom:16px">Peer-to-peer. One player hosts, the rest join with the code. No server, no account.</p>
+        <h3 data-i18n="coop.title">Play with friends</h3>
+        <p class="hint" style="margin-bottom:16px" data-i18n="coop.blurb">Peer-to-peer. One player hosts, the rest join with the code. No server, no account.</p>
         <div class="netrow">
           <!-- The roster, the nameplates and the kill feed all print this. It
                was `net.name`, whose only value in the entire codebase was the
                constructor default, so a four-player session read Jedi, Jedi,
                Jedi, Jedi. Saved with the rest of the settings. -->
-          <label class="netname">Your name
-            <input id="opt-name" placeholder="Jedi" maxlength="18" spellcheck="false" autocomplete="off">
+          <label class="netname"><span data-i18n="coop.yourName">Your name</span>
+            <input id="opt-name" data-i18n-attr="placeholder:coop.namePlaceholder" placeholder="Jedi" maxlength="18" spellcheck="false" autocomplete="off">
           </label>
-          <button id="btn-host" class="primary">Host a session</button>
-          <div class="or">or</div>
-          <input id="join-code" placeholder="SESSION CODE" maxlength="10" spellcheck="false">
-          <button id="btn-join" class="secondary">Join</button>
+          <button id="btn-host" class="primary" data-i18n="coop.host">Host a session</button>
+          <div class="or" data-i18n="coop.or">or</div>
+          <input id="join-code" data-i18n-attr="placeholder:coop.codePlaceholder" placeholder="SESSION CODE" maxlength="10" spellcheck="false">
+          <button id="btn-join" class="secondary" data-i18n="coop.join">Join</button>
           <!-- A way OUT. `quitToMenu()` leaves the session, but a player who
                has connected and not yet deployed had no run to quit, so the
                only exit from a session was to start one and abandon it. -->
-          <button id="btn-leave" class="ghost hidden">Leave session</button>
+          <button id="btn-leave" class="ghost hidden" data-i18n="coop.leave">Leave session</button>
         </div>
         <div id="net-status" class="netstatus"></div>
         <div id="net-roster" class="roster"></div>
       </div>
       <div class="col narrow">
-        <h3>Session</h3>
+        <h3 data-i18n="coop.session">Session</h3>
         <div id="net-code" class="codebox">—</div>
-        <p class="hint">Share this code. Up to 4 Jedi.</p>
+        <p class="hint" data-i18n="coop.shareHint">Share this code. Up to 4 Jedi.</p>
       </div>
     </section>
 
     <section class="panel" data-panel="opts">
       <div class="col">
-        <h3>Control</h3>
+        <h3 data-i18n="opts.control">Control</h3>
         <div id="opt-scheme" class="difflist"></div>
-        <label class="slider">Blade sensitivity <input type="range" id="opt-sens" min="0.3" max="3" step="0.05" value="1"><b></b></label>
-        <label class="slider">Camera follow <input type="range" id="opt-camfollow" min="0" max="1.6" step="0.02" value="0"><b></b></label>
-        <label class="slider">Field of view <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
-        <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
-        <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
-        <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
-        <p class="hint">Held, the blade stays where your last flick left it instead of easing back to the
+        <label class="slider"><span data-i18n="opts.sens">Blade sensitivity</span> <input type="range" id="opt-sens" min="0.3" max="3" step="0.05" value="1"><b></b></label>
+        <label class="slider"><span data-i18n="opts.camFollow">Camera follow</span> <input type="range" id="opt-camfollow" min="0" max="1.6" step="0.02" value="0"><b></b></label>
+        <label class="slider"><span data-i18n="opts.fov">Field of view</span> <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
+        <label class="check"><input type="checkbox" id="opt-invert"> <span data-i18n="opts.invertY">Invert blade Y</span></label>
+        <label class="check"><input type="checkbox" id="opt-firstperson"> <span data-i18n="opts.firstPerson">Start in first person</span></label>
+        <label class="check"><input type="checkbox" id="opt-bladehold"> <span data-i18n="opts.bladeHold">Blade holds position</span></label>
+        <p class="hint" data-i18n="opts.bladeHoldHint">Held, the blade stays where your last flick left it instead of easing back to the
           ready guard. The controller has always been able to do this and nothing could ask it to.</p>
-        <h3 style="margin-top:22px">Deflection aiming</h3>
+        <h3 style="margin-top:22px" data-i18n="opts.deflectAim">Deflection aiming</h3>
         <div id="opt-deflect" class="difflist"></div>
-        <h3 style="margin-top:22px">The Force</h3>
-        <label class="slider">Power <input type="range" id="opt-forcepower" min="0.25" max="4" step="0.05" value="1"><b></b></label>
-        <label class="slider">Drain <input type="range" id="opt-forcedrain" min="0" max="2" step="0.05" value="1"><b></b></label>
-        <p class="hint">Drain at 0 is unlimited Force. Power scales reach, lift and impulse together.</p>
-        <h3 style="margin-top:22px">The Holocron</h3>
+        <h3 style="margin-top:22px" data-i18n="opts.force">The Force</h3>
+        <label class="slider"><span data-i18n="opts.forcePower">Power</span> <input type="range" id="opt-forcepower" min="0.25" max="4" step="0.05" value="1"><b></b></label>
+        <label class="slider"><span data-i18n="opts.forceDrain">Drain</span> <input type="range" id="opt-forcedrain" min="0" max="2" step="0.05" value="1"><b></b></label>
+        <p class="hint" data-i18n="opts.forceHint">Drain at 0 is unlimited Force. Power scales reach, lift and impulse together.</p>
+        <h3 style="margin-top:22px" data-i18n="opts.holocron">The Holocron</h3>
         <div id="opt-holocron" class="difflist"></div>
-        <p class="hint">Earned is the game: Insight is a run currency, you kneel to spend it, and nothing
+        <p class="hint" data-i18n="opts.holocronHint">Earned is the game: Insight is a run currency, you kneel to spend it, and nothing
           carries over. The other two are for looking at what is in here — a whole run can end without
           ever meeting Force lightning or Compel, and a power nobody can reach is a power nobody can tell
           you is broken.</p>
         <!-- YOUR ARMY. Both of these had a reader in game/Command.js and no
              control anywhere, which is how they escaped both dead-control
              checks: those iterate DEFAULT_SETTINGS, and neither key was in it. -->
-        <h3 style="margin-top:22px">Your army</h3>
-        <label class="slider">Team damage <input type="range" id="opt-teamdamage" min="0" max="1" step="0.05" value="0.35"><b></b></label>
-        <p class="hint">How much of <b>your own</b> damage reaches your own troops. The physics is never
+        <h3 style="margin-top:22px" data-i18n="opts.army">Your army</h3>
+        <label class="slider"><span data-i18n="opts.teamDamage">Team damage</span> <input type="range" id="opt-teamdamage" min="0" max="1" step="0.05" value="0.35"><b></b></label>
+        <p class="hint" data-i18n-html="opts.teamDamageHint">How much of <b>your own</b> damage reaches your own troops. The physics is never
           scaled — a push throws your sergeant exactly as far as it throws a B1, a grip lifts him, and
           the blade goes through him whatever this says. What this scales is the damage that lands.
           At 0 you can ragdoll the whole line into the air and lose nobody; at 100% a careless sweep
           costs you a name off the roster.</p>
-        <label class="check"><input type="checkbox" id="opt-command-versus"> Meet another commander</label>
-        <p class="hint">Needs a <b>session</b>, and it changes what Command is. Instead of your army
+        <label class="check"><input type="checkbox" id="opt-command-versus"> <span data-i18n="opts.commandVersus">Meet another commander</span></label>
+        <p class="hint" data-i18n-html="opts.commandVersusHint">Needs a <b>session</b>, and it changes what Command is. Instead of your army
           against a composed horde across five areas, it is <b>one battle against another player's
           army</b> — two rosters, two armies, deployed a hundred and twenty metres apart on the plain
           and walking toward each other. Two Jedi do not both get the Republic; whoever joined first
           keeps the army their order names and the other takes the opposing one. Permadeath is the
           same, which is the point: the field belongs to whichever side still has somebody standing,
           and every name you lose taking it is gone.</p>
-        <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
+        <h3 id="h-standing-order" style="margin-top:22px" data-i18n="opts.standingOrder">Standing order</h3>
         <div id="command-list" class="difflist"></div>
-        <p class="hint">The formation your squads form up in at the start of every area. You can change
+        <p class="hint" data-i18n-html="opts.standingOrderHint">The formation your squads form up in at the start of every area. You can change
           it mid-fight with the order keys — they are ordinary rebindable controls, listed under
           <b>Key bindings</b> and printed on the controls page.</p>
       </div>
       <div class="col">
-        <h3>Key bindings</h3>
-        <p class="hint" style="margin-bottom:12px">Click a key to rebind. Mouse buttons work too. <b id="bind-hint"></b></p>
+        <h3 data-i18n="opts.bindings">Key bindings</h3>
+        <p class="hint" style="margin-bottom:12px"><span data-i18n="opts.bindHint">Click a key to rebind. Mouse buttons work too.</span> <b id="bind-hint"></b></p>
         <div id="bind-list" class="bindlist"></div>
-        <button id="btn-bind-reset" class="secondary" style="margin-top:14px">Reset to defaults</button>
+        <button id="btn-bind-reset" class="secondary" style="margin-top:14px" data-i18n="opts.bindReset">Reset to defaults</button>
       </div>
       <div class="col">
-        <h3>Fidelity</h3>
+        <h3 data-i18n="opts.fidelity">Fidelity</h3>
         <div id="opt-quality" class="difflist"></div>
-        <label class="slider">Resolution <input type="range" id="opt-scale" min="0.5" max="1.35" step="0.05" value="1"><b></b></label>
-        <label class="slider">Grass <input type="range" id="opt-grass" min="0" max="1.5" step="0.05" value="1"><b></b></label>
-        <label class="slider">Particles <input type="range" id="opt-particles" min="0.4" max="1.5" step="0.05" value="1"><b></b></label>
-        <p class="hint">Both <b>multiply</b> the tier above rather than replacing it, so Performance at 150%
+        <label class="slider"><span data-i18n="opts.resolution">Resolution</span> <input type="range" id="opt-scale" min="0.5" max="1.35" step="0.05" value="1"><b></b></label>
+        <label class="slider"><span data-i18n="opts.grass">Grass</span> <input type="range" id="opt-grass" min="0" max="1.5" step="0.05" value="1"><b></b></label>
+        <label class="slider"><span data-i18n="opts.particles">Particles</span> <input type="range" id="opt-particles" min="0.4" max="1.5" step="0.05" value="1"><b></b></label>
+        <p class="hint" data-i18n-html="opts.fidelityHint">Both <b>multiply</b> the tier above rather than replacing it, so Performance at 150%
           particles is still thinner than Cinematic at 100%. Particles take effect on the next impact;
           grass on the next deploy, because a field is planted when the level loads.</p>
         <!-- The word is an element because Menu._syncBloomBox rewrites it: the
@@ -272,83 +272,83 @@
              gate on every gunship, door and drop pod in the game, and
              RapierWorld's body cap was `settings.maxBodies ?? 1100` against a
              key nothing anywhere wrote. -->
-        <label class="slider">Wreckage kept <input type="range" id="opt-maxbodies" min="300" max="2400" step="100" value="1100"><b></b></label>
-        <p class="hint">Severed limbs, cut props and shattered walls all share this budget; past it the
+        <label class="slider"><span data-i18n="opts.maxBodies">Wreckage kept</span> <input type="range" id="opt-maxbodies" min="300" max="2400" step="100" value="1100"><b></b></label>
+        <p class="hint" data-i18n="opts.maxBodiesHint">Severed limbs, cut props and shattered walls all share this budget; past it the
           oldest piece is culled. It is the number that decides whether a long fight leaves a
           battlefield behind it or a clean floor.</p>
-        <label class="check"><input type="checkbox" id="opt-instant-spawn"> Instant arrivals</label>
-        <p class="hint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
+        <label class="check"><input type="checkbox" id="opt-instant-spawn"> <span data-i18n="opts.instantSpawn">Instant arrivals</span></label>
+        <p class="hint" data-i18n="opts.instantSpawnHint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
           On, they simply appear — cheaper, and the honest choice on a machine that cannot afford the
           craft.</p>
-        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter &amp; adapter</label>
-        <p class="hint">Frame time, 1% low and draw calls in the corner of the HUD — and the graphics
+        <label class="check"><input type="checkbox" id="opt-showperf"> <span data-i18n="opts.showPerf">Frame counter &amp; adapter</span></label>
+        <p class="hint" data-i18n="opts.showPerfHint">Frame time, 1% low and draw calls in the corner of the HUD — and the graphics
           adapter and build id in the footer of this screen. Off by default because they are
           instruments: a title screen that opens with a driver string is a bug report.</p>
-        <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
-        <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
-        <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
-        <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
-        <label class="check"><input type="checkbox" id="opt-letterbox" checked> Letterbox bars</label>
-        <label class="check"><input type="checkbox" id="opt-deathdrain" checked> Colour drains when you fall</label>
-        <p class="hint">Both are separate from Camera shake on purpose: with motion feedback off they are
+        <label class="check"><input type="checkbox" id="opt-grain" checked> <span data-i18n="opts.grain">Film grain</span></label>
+        <label class="check"><input type="checkbox" id="opt-injury" checked> <span data-i18n="opts.injury">Injuries show on the body</span></label>
+        <label class="check"><input type="checkbox" id="opt-shake" checked> <span data-i18n="opts.shake">Camera shake</span></label>
+        <label class="check"><input type="checkbox" id="opt-slowmo" checked> <span data-i18n="opts.slowmo">Cinematic slow-motion</span></label>
+        <label class="check"><input type="checkbox" id="opt-letterbox" checked> <span data-i18n="opts.letterbox">Letterbox bars</span></label>
+        <label class="check"><input type="checkbox" id="opt-deathdrain" checked> <span data-i18n="opts.deathDrain">Colour drains when you fall</span></label>
+        <p class="hint" data-i18n="opts.barsHint">Both are separate from Camera shake on purpose: with motion feedback off they are
           the only thing on screen that tells you a boss has arrived, or that you died.</p>
-        <label class="slider">Controller rumble <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
-        <p class="hint">A kill, a blow taken and a deflection each drive the pad. A slider rather than a
+        <label class="slider"><span data-i18n="opts.rumble">Controller rumble</span> <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
+        <p class="hint" data-i18n="opts.rumbleHint">A kill, a blow taken and a deflection each drive the pad. A slider rather than a
           box because rumble is the one piece of feedback here with a physical strength — 0 is silent
           and 1 is what the game was tuned to give. Camera shake off silences the pad as well; this
           scales what survives it.</p>
-        <h3 style="margin-top:22px">Audio</h3>
-        <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
-        <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+        <h3 style="margin-top:22px" data-i18n="opts.audio">Audio</h3>
+        <label class="slider"><span data-i18n="opts.volume">Master</span> <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
+        <label class="slider"><span data-i18n="opts.music">Music</span> <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
         <!-- The `max` is written by Menu._buildOptions from MUSIC_TRACKS.length,
              not typed here: a number in this attribute is a second copy of how
              many tracks there are, and the first thing it does when a score is
              added is leave the new one unreachable. -->
-        <label class="slider wide">Soundtrack <input type="range" id="opt-music-track" min="0" max="1" step="1" value="0"><b></b></label>
+        <label class="slider wide"><span data-i18n="opts.soundtrack">Soundtrack</span> <input type="range" id="opt-music-track" min="0" max="1" step="1" value="0"><b></b></label>
         <p class="hint" id="music-blurb"></p>
-        <label class="slider">Voices <input type="range" id="opt-voicelevel" min="0" max="1.2" step="0.02" value="0.9"><b></b></label>
+        <label class="slider"><span data-i18n="opts.voices">Voices</span> <input type="range" id="opt-voicelevel" min="0" max="1.2" step="0.02" value="0.9"><b></b></label>
         <!-- SYNTHESISED / SPOKEN / BOTH. Built by Menu._buildSpeechModes,
              which disables the two spoken rows outright on a browser with no
              speechSynthesis rather than offering a control that does nothing. -->
-        <h3 style="margin-top:22px">Voice lines</h3>
+        <h3 style="margin-top:22px" data-i18n="opts.voiceLines">Voice lines</h3>
         <div id="opt-speech" class="difflist"></div>
-        <p class="hint">Nothing here is a recording either way: <b>Spoken</b> is your browser's own
+        <p class="hint" data-i18n-html="opts.speechHint">Nothing here is a recording either way: <b>Spoken</b> is your browser's own
           speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
           no download on a game that ships no audio but the score.</p>
-        <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
-        <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
-        <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
-        <p class="hint">Nothing here is a recording. Every voice is built from an oscillator, two formant
+        <label class="check"><input type="checkbox" id="opt-voicelines" checked> <span data-i18n="opts.ownVoice">Your own voice</span></label>
+        <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> <span data-i18n="opts.enemyVoices">Enemy voices</span></label>
+        <label class="check"><input type="checkbox" id="opt-enemybody" checked> <span data-i18n="opts.enemyBody">Enemy footfall, servos &amp; breath</span></label>
+        <p class="hint" data-i18n="opts.voiceHint">Nothing here is a recording. Every voice is built from an oscillator, two formant
           filters and a breath of noise at the moment it is needed — which is why they can be told apart
           by measuring them, and why turning the last box off is worth a few frames on a slow machine.</p>
       </div>
 
       <div class="col">
-        <h3>Your voice</h3>
-        <label class="slider wide">Character <input type="range" id="opt-voice" min="0" max="4" step="1" value="0"><b></b></label>
+        <h3 data-i18n="opts.yourVoice">Your voice</h3>
+        <label class="slider wide"><span data-i18n="opts.voiceCharacter">Character</span> <input type="range" id="opt-voice" min="0" max="4" step="1" value="0"><b></b></label>
         <p class="hint" id="voice-blurb"></p>
-        <button id="btn-voice-test" class="secondary" style="margin-top:2px">Hear it</button>
-        <p class="hint" style="margin-top:12px">Your Jedi grunts with the effort of a real swing, takes a hard
+        <button id="btn-voice-test" class="secondary" style="margin-top:2px" data-i18n="opts.voiceTest">Hear it</button>
+        <p class="hint" style="margin-top:12px" data-i18n="opts.yourVoiceHint">Your Jedi grunts with the effort of a real swing, takes a hard
           landing badly, and has something to say about a kill, a run of deflections, a boss walking in and
           being nearly dead. Five larynxes, five throats, five tempos.</p>
 
-        <h3 style="margin-top:24px">Reticle</h3>
-        <label class="slider wide">Shape <input type="range" id="opt-ret-shape" min="0" max="6" step="1" value="0"><b></b></label>
-        <label class="slider">Size <input type="range" id="opt-ret-size" min="0.5" max="2.2" step="0.05" value="1"><b></b></label>
-        <label class="slider wide">Colour <input type="range" id="opt-ret-color" min="0" max="7" step="1" value="0"><b></b></label>
+        <h3 style="margin-top:24px" data-i18n="opts.reticle">Reticle</h3>
+        <label class="slider wide"><span data-i18n="opts.reticleShape">Shape</span> <input type="range" id="opt-ret-shape" min="0" max="6" step="1" value="0"><b></b></label>
+        <label class="slider"><span data-i18n="opts.reticleSize">Size</span> <input type="range" id="opt-ret-size" min="0.5" max="2.2" step="0.05" value="1"><b></b></label>
+        <label class="slider wide"><span data-i18n="opts.reticleColour">Colour</span> <input type="range" id="opt-ret-color" min="0" max="7" step="1" value="0"><b></b></label>
         <div class="ret-preview"><svg id="ret-demo" viewBox="0 0 100 100" aria-hidden="true"></svg></div>
-        <p class="hint">It still turns red when something is close enough to kill you — a colour that could
+        <p class="hint" data-i18n="opts.reticleHint">It still turns red when something is close enough to kill you — a colour that could
           hide that would be a customisation which removes information.</p>
 
-        <h3 style="margin-top:24px">Interface</h3>
-        <label class="check"><input type="checkbox" id="opt-popups" checked> Event popups</label>
-        <p class="hint">Killstreaks, deflection runs and a boss arriving, in the score column of the HUD.</p>
-        <label class="check"><input type="checkbox" id="opt-minimap" checked> Minimap</label>
-        <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
+        <h3 style="margin-top:24px" data-i18n="opts.interface">Interface</h3>
+        <label class="check"><input type="checkbox" id="opt-popups" checked> <span data-i18n="opts.popups">Event popups</span></label>
+        <p class="hint" data-i18n="opts.popupsHint">Killstreaks, deflection runs and a boss arriving, in the score column of the HUD.</p>
+        <label class="check"><input type="checkbox" id="opt-minimap" checked> <span data-i18n="opts.minimap">Minimap</span></label>
+        <p class="hint" data-i18n-html="opts.minimapHint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
           anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
           all rather than being drawn invisible.</p>
-        <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
-        <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
+        <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> <span data-i18n="opts.minimapSense">Read the map with the Force</span></label>
+        <p class="hint" data-i18n-html="opts.minimapSenseHint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
           lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what
           the power costs and not a Force more. Off, it is simply always there — which is what it was, and
           is the answer if managing a power mid-fight is not something you want to do.</p>
@@ -357,7 +357,7 @@
 
     <section class="panel" data-panel="train">
       <div class="col wide codex">
-        <h3>The blade is yours to move</h3>
+        <h3 data-i18n="codex.title">The blade is yours to move</h3>
         <!-- Filled by Menu._buildKeyLegends from the CODEX table and the LIVE
              bindings, and repainted on every rebind. It used to be seventeen
              rows with the keys typed into them, and the round that moved Hurl
@@ -366,14 +366,14 @@
              told a player on a fresh profile to press the key that thrusts.
              A key name that is typed cannot follow a rebind, so none are. -->
         <div class="codex-grid" id="codex-grid"></div>
-        <p class="hint" style="margin-top:14px">Every one of these can be rebound under <b>Options</b>, and this
+        <p class="hint" style="margin-top:14px" data-i18n-html="codex.rebindHint">Every one of these can be rebound under <b>Options</b>, and this
           page is printed from those bindings — rebind a key and this is what it says.</p>
-        <h3 style="margin-top:26px">The four things that make a master</h3>
+        <h3 style="margin-top:26px" data-i18n="codex.masterTitle">The four things that make a master</h3>
         <ol class="codex-list">
-          <li><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>
-          <li><b>Chamber.</b> When a duelist swings, whip your blade <i>against</i> the direction of their arc. Their attack dies and yours is already free.</li>
-          <li><b>Drag and accelerate.</b> Your blade has mass. Slow the mouse mid-arc and the strike lands late, past their parry. Snap it and you arrive early.</li>
-          <li><b>Cut with the tip.</b> The end of the blade travels many times faster than the emitter. That is where limbs come off.</li>
+          <li data-i18n-html="codex.master1"><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>
+          <li data-i18n-html="codex.master2"><b>Chamber.</b> When a duelist swings, whip your blade <i>against</i> the direction of their arc. Their attack dies and yours is already free.</li>
+          <li data-i18n-html="codex.master3"><b>Drag and accelerate.</b> Your blade has mass. Slow the mouse mid-arc and the strike lands late, past their parry. Snap it and you arrive early.</li>
+          <li data-i18n-html="codex.master4"><b>Cut with the tip.</b> The end of the blade travels many times faster than the emitter. That is where limbs come off.</li>
         </ol>
       </div>
     </section>
@@ -391,7 +391,7 @@
          Only ever shown on this screen anyway: main.js gates it on
          `screens.state === 'menu'`. -->
     <footer class="menu-foot">
-      <button id="btn-commune" class="ghost commune-entry hidden">Open the Holocron</button>
+      <button id="btn-commune" class="ghost commune-entry hidden" data-i18n="menu.openHolocron">Open the Holocron</button>
       <!-- THE ADAPTER STRING AND THE BUILD ID ARE DIAGNOSTICS, and they were
            the last two things on the title screen. A player's first sight of
            this game was a wordmark and then
@@ -402,7 +402,7 @@
            is what follows it. Nothing is deleted: the one machine that needs
            the adapter name is the one whose owner has gone looking for it. -->
       <span id="gpu-line" class="hidden"></span>
-      <span id="build-line" class="build hidden">build <b id="build-id">—</b></span>
+      <span id="build-line" class="build hidden"><span data-i18n="menu.build">build</span> <b id="build-id">—</b></span>
     </footer>
   </div>
 </div>
@@ -482,7 +482,7 @@
          overlap anything: it pushes the meter down while it is shown and takes
          no space at all while it is hidden. -->
     <pre id="hud-perf" class="hidden"></pre>
-    <div id="hud-flow" class="flowmeter"><i></i><span>FLOW</span></div>
+    <div id="hud-flow" class="flowmeter"><i></i><span data-i18n="hud.flow">FLOW</span></div>
     <div id="hud-combo" class="combo"></div>
     <div id="hud-score" class="score">0</div>
     <!-- THE TARGET'S STATE. Combat.openness pays the blade 3x through a body
@@ -562,15 +562,15 @@
     -->
     <div class="bars">
       <div class="barline">
-        <div class="bar-cap"><label>Vitality</label><b id="bar-hp-num">100</b></div>
+        <div class="bar-cap"><label data-i18n="hud.vitality">Vitality</label><b id="bar-hp-num">100</b></div>
         <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u></div>
       </div>
       <div class="barline">
-        <div class="bar-cap"><label>Force</label><b id="bar-force-num">100</b></div>
+        <div class="bar-cap"><label data-i18n="hud.force">Force</label><b id="bar-force-num">100</b></div>
         <div class="bar fc"><i id="bar-force"></i></div>
       </div>
       <div class="barline">
-        <div class="bar-cap"><label>Stamina</label><b id="bar-stam-num">100</b></div>
+        <div class="bar-cap"><label data-i18n="hud.stamina">Stamina</label><b id="bar-stam-num">100</b></div>
         <div class="bar st"><i id="bar-stam"></i></div>
       </div>
     </div>
@@ -631,7 +631,7 @@
 
   <div id="lockmeter" class="lockmeter hidden">
     <div class="lock-track"><i id="lock-fill"></i><u></u></div>
-    <span>BLADE LOCK — DRIVE THE MOUSE</span>
+    <span data-i18n="hud.bladeLock">BLADE LOCK — DRIVE THE MOUSE</span>
   </div>
 
   <div id="deflect-why" class="deflectwhy"></div>
@@ -654,7 +654,7 @@
   reason there is none anywhere else on this page.
 -->
 <div id="freecam-bar" class="hidden">
-  <span>FREE CAMERA — the game is stopped</span>
+  <span data-i18n="hud.freecam">FREE CAMERA — the game is stopped</span>
   <em id="freecam-key">—</em>
 </div>
 
@@ -669,7 +669,7 @@
      confused a player in the first place. -->
 <div id="boon-draft" class="screen hidden">
   <div class="draft-wrap">
-    <h2 id="draft-title">The Force Offers</h2>
+    <h2 id="draft-title" data-i18n="draft.title">The Force Offers</h2>
     <p class="hint" id="draft-why"></p>
     <div id="draft-cards" class="draft-cards"></div>
     <p class="hint draft-keys" id="draft-keys"></p>
@@ -692,25 +692,25 @@
 <div id="muster" class="screen hidden">
   <div class="muster-wrap">
     <p class="muster-held" id="muster-held">—</p>
-    <h2 id="muster-title">The Muster</h2>
+    <h2 id="muster-title" data-i18n="muster.title">The Muster</h2>
     <p class="hint" id="muster-brief"></p>
     <div class="muster-body">
       <div class="muster-shop">
-        <h3>Reinforcements</h3>
+        <h3 data-i18n="muster.reinforcements">Reinforcements</h3>
         <div id="muster-units" class="muster-units"></div>
         <p class="hint muster-refused" id="muster-refused"></p>
       </div>
       <div class="muster-roll">
-        <h3 id="muster-roll-head">The roll</h3>
+        <h3 id="muster-roll-head" data-i18n="muster.roll">The roll</h3>
         <div id="muster-list" class="rp-list muster-list"></div>
       </div>
     </div>
     <div class="muster-foot">
       <div class="muster-tally">
-        <div><span>Points</span><b id="muster-points">0</b></div>
-        <div><span>Standing</span><b id="muster-strength">0</b></div>
+        <div><span data-i18n="muster.points">Points</span><b id="muster-points">0</b></div>
+        <div><span data-i18n="muster.standing">Standing</span><b id="muster-strength">0</b></div>
       </div>
-      <button id="btn-muster-done" class="primary">Advance</button>
+      <button id="btn-muster-done" class="primary" data-i18n="muster.advance">Advance</button>
     </div>
   </div>
 </div>
@@ -724,38 +724,38 @@
 <div id="scoreboard" class="screen hidden" style="z-index:38;background:rgba(4,7,12,.72);
      backdrop-filter:blur(5px) saturate(.9);-webkit-backdrop-filter:blur(5px) saturate(.9);animation:none">
   <div class="pause-wrap">
-    <h2>Standing</h2>
+    <h2 data-i18n="score.title">Standing</h2>
     <div id="score-stats" class="pause-stats"></div>
     <div id="score-roster" class="roster"></div>
     <div id="score-boons" class="boons" style="justify-content:center;max-width:none"></div>
     <!-- filled from the live binding, not typed: an overlay whose whole subject
          is a rebindable key must not print a key the player may have changed -->
-    <div class="pause-hints"><span>hold <kbd id="score-key">Tab</kbd></span></div>
+    <div class="pause-hints"><span id="score-hold">hold <kbd id="score-key">Tab</kbd></span></div>
   </div>
 </div>
 
 <div id="pause" class="screen hidden">
   <div class="pause-wrap">
-    <h2>Meditate</h2>
+    <h2 data-i18n="pause.title">Meditate</h2>
     <div id="pause-stats" class="pause-stats"></div>
-    <button id="btn-resume" class="primary">Resume</button>
+    <button id="btn-resume" class="primary" data-i18n="pause.resume">Resume</button>
     <!-- Hidden on a co-op client: `World.restartWave()` refuses there and says
          so, because only the host owns the wave. Offering a button that
          answers "no" is a worse answer than not offering it. -->
-    <button id="btn-restart" class="secondary">Restart wave</button>
-    <button id="btn-quit" class="ghost">Abandon run</button>
-    <button id="btn-perfcopy" class="ghost">Copy frame report</button>
+    <button id="btn-restart" class="secondary" data-i18n="pause.restart">Restart wave</button>
+    <button id="btn-quit" class="ghost" data-i18n="pause.quit">Abandon run</button>
+    <button id="btn-perfcopy" class="ghost" data-i18n="pause.perfCopy">Copy frame report</button>
     <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
          Menu._buildBindings, which paints every host it finds rather than
          keeping a second copy of the table for this card: same rows, same
          rebind listener, same conflict resolver, same live `bindings` object,
          so a key changed here is changed in Options too. Folded away by
          default — see the note in _buildBindings. -->
-    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box">Key bindings</button>
+    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box" data-i18n="pause.bindings">Key bindings</button>
     <div id="pause-bind-box" class="pause-binds hidden">
-      <p class="hint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
+      <p class="hint" data-i18n="pause.bindHint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
       <div id="pause-bind-list" class="bindlist"></div>
-      <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
+      <button id="btn-pause-bind-reset" class="secondary" data-i18n="pause.bindReset">Reset to defaults</button>
     </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
@@ -767,17 +767,17 @@
 
 <div id="death" class="screen hidden">
   <div class="death-wrap">
-    <h2 id="death-title">You are one with the Force</h2>
+    <h2 id="death-title" data-i18n="death.title">You are one with the Force</h2>
     <div id="death-stats" class="death-stats"></div>
-    <button id="btn-retry" class="primary">Rise again</button>
-    <button id="btn-menu" class="ghost">Return to the Temple</button>
+    <button id="btn-retry" class="primary" data-i18n="death.retry">Rise again</button>
+    <button id="btn-menu" class="ghost" data-i18n="death.menu">Return to the Temple</button>
   </div>
 </div>
 
 <div id="unsupported" class="screen hidden">
   <div class="boot-inner">
-    <h2>WebGL2 unavailable</h2>
-    <p class="hint">This browser or machine cannot run the renderer. Try a recent Chrome, Edge, or Firefox with hardware acceleration enabled.</p>
+    <h2 data-i18n="unsupported.title">WebGL2 unavailable</h2>
+    <p class="hint" data-i18n="unsupported.blurb">This browser or machine cannot run the renderer. Try a recent Chrome, Edge, or Firefox with hardware acceleration enabled.</p>
   </div>
 </div>
 
@@ -806,22 +806,22 @@
   <div class="med-wrap">
     <header class="med-head">
       <div>
-        <h2 id="med-title">Connect to the Force</h2>
+        <h2 id="med-title" data-i18n="holo.title">Connect to the Force</h2>
         <p class="hint" id="med-sub"></p>
       </div>
-      <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
+      <div class="med-insight"><b id="med-insight">0</b><span data-i18n="holo.insight">Insight</span></div>
     </header>
     <div class="med-body">
-      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
+      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" data-i18n-attr="aria-label:holo.fieldLabel" aria-label="the Holocron"></svg>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
-        <button id="btn-med-buy" class="primary" disabled>Commune</button>
+        <button id="btn-med-buy" class="primary" disabled data-i18n="holo.commune">Commune</button>
         <div id="med-shape" class="med-shape"></div>
       </aside>
     </div>
     <footer class="med-foot">
       <span class="hint" id="med-hint"></span>
-      <button id="btn-med-close" class="secondary">Return</button>
+      <button id="btn-med-close" class="secondary" data-i18n="holo.return">Return</button>
     </footer>
   </div>
 </div>
@@ -829,7 +829,7 @@
 <!-- The kneel. The way in from the Temple is the button in the menu footer. -->
 <div id="commune" class="hidden">
   <div class="commune-ring"><i id="commune-fill"></i></div>
-  <span>Hold <b id="commune-key">Ctrl</b> to kneel and connect to the Force</span>
+  <span id="commune-line">Hold <b id="commune-key">Ctrl</b> to kneel and connect to the Force</span>
   <em id="commune-insight"></em>
 </div>
 
