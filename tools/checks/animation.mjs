@@ -574,4 +574,130 @@ export function run({ check, assert, near, THREE: T }) {
     }
     return rows.join(', ');
   });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  An attack is a body, not an elbow — player note 23               */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('attack: the overhead and the stab move the whole body, not just the arm', async () => {
+    /**
+     * "I want the arm movement for the overhead attack to be more pronounced,
+     * right now it feels kind of weak like it's only a small movement that
+     * happens at the elbows rather than a whole body overhead down attack. Same
+     * for the stab — it's like a small wrist movement and the blade only goes a
+     * little further out. Imagine how graceful and cool a fencing stab looks."
+     *
+     * WHAT WAS THERE, measured on the real Player with the real controller,
+     * third person, over the whole attack — spine and shoulder are the total
+     * range the joint turns through, `joint` is how far the shoulder itself
+     * travelled:
+     *
+     *                  hand      tip     spine   shoulder   joint
+     *      overhead    22 cm    113 cm    1.0°     0.0°      9 mm
+     *      stab        32 cm     57 cm    1.6°     0.0°     22 mm
+     *
+     * Nine millimetres is what an IDLE body breathes, and zero degrees of
+     * clavicle is exactly zero: nothing in the game wrote one. The 113 cm of tip
+     * on the overhead is the blade's own length acting as a lever on a wrist,
+     * which is precisely what "only a small movement at the elbows" means and
+     * why the tip number looked respectable while the attack did not.
+     *
+     * The bounds below are the floor of what reads as a body doing it: fifteen
+     * degrees of trunk, ten of shoulder girdle, eight centimetres of shoulder
+     * travel, and a hand that goes half again as far as it used to. They are
+     * not the shipped numbers — those are roughly double each — so this is a
+     * property, not a snapshot, and re-tuning the drive does not break it while
+     * deleting it does.
+     *
+     * FIRST PERSON IS DELIBERATELY EXCLUDED from the shoulder half. There the
+     * clavicles are the viewmodel's weld to the camera (Player._anchorViewArms)
+     * and moving them would put the swim back; first person gets the body
+     * through the anchor instead, and `tools/checks/viewmodel.mjs` owns that.
+     */
+    const { Player } = await import('../../src/game/Player.js');
+    const stubWorld = () => ({
+      scene: new THREE.Scene(),
+      settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+      terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
+        half: 200, crater() {}, surfaceAt: () => 'sand' },
+      particles: null, bolts: null, time: 0, combatIntensity: 0,
+      physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
+      engine: { addHeat() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+      report() {},
+    });
+
+    const drive = (action) => {
+      const world = stubWorld();
+      const p = new Player(world, { isLocal: true });
+      p.position.set(0, 0, 0); p.velocity.set(0, 0, 0);
+      p.saber.ignite(); p.saber.ignition = 1;
+      const hit = new Set();
+      const input = {
+        keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null,
+        moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+        act: () => false, actHit: (id) => hit.has(id),
+      };
+      const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
+        camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
+      for (let i = 0; i < 120; i++) { ctx.time = world.time = i / 60; p.update(1 / 60, ctx); }
+
+      // Everything relative to the BODY, so this measures the attack and not
+      // the player drifting.
+      const rel = (b) => p.rig.worldPos(b, V3()).sub(p.position);
+      const shoulder = () => p.rig.tipPos('clavR', V3()).sub(p.position);
+      if (action) hit.add(action);
+      const hand = [], joint = [], spine = [], clav = [];
+      for (let i = 0; i < 70; i++) {
+        ctx.time = world.time = (120 + i) / 60;
+        p.update(1 / 60, ctx);
+        hit.clear();
+        hand.push(rel('handR')); joint.push(shoulder());
+        spine.push(p.rig.get('spine').obj.quaternion.clone());
+        clav.push(p.rig.get('clavR').obj.quaternion.clone());
+      }
+      const spread = (a, f) => {
+        let m = 0;
+        for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) m = Math.max(m, f(a[i], a[j]));
+        return m;
+      };
+      const dist = (x, y) => x.distanceTo(y);
+      const ang = (x, y) => x.angleTo(y) * D;
+      return {
+        hand: spread(hand, dist), joint: spread(joint, dist),
+        spine: spread(spine, ang), clav: spread(clav, ang),
+      };
+    };
+
+    // The reference arm: the same seventy frames with nothing pressed, so
+    // "moving" is measured against a body that is merely standing there rather
+    // than against zero.
+    const idle = drive(null);
+    assert(idle.hand < 0.03 && idle.spine < 1 && idle.joint < 0.03,
+      `a standing player is already moving ${(idle.hand * 100).toFixed(0)} cm of hand and ${idle.spine.toFixed(1)}° `
+      + 'of spine — this bench cannot tell an attack from an idle');
+
+    const rows = [];
+    for (const [name, action, wasHand, wasSpine] of [
+      ['overhead', 'attackOver', 0.22, 1.0],
+      ['stab', 'attackStab', 0.32, 1.6],
+    ]) {
+      const r = drive(action);
+      assert(r.spine > 15,
+        `${name}: the spine turns ${r.spine.toFixed(1)}° through the attack, against the ${wasSpine}° it had `
+        + 'when the complaint was made — this is still an elbow');
+      assert(r.clav > 10,
+        `${name}: the shoulder girdle turns ${r.clav.toFixed(1)}° — it used to be 0.0°, and a shoulder is most `
+        + 'of what reads as commitment');
+      assert(r.joint > 0.08,
+        `${name}: the shoulder JOINT travels ${(r.joint * 1000).toFixed(0)} mm, against the 9 mm an idle body `
+        + 'breathes — the girdle is turning in place');
+      assert(r.hand > wasHand * 1.4,
+        `${name}: the hand travels ${(r.hand * 100).toFixed(0)} cm against the ${(wasHand * 100).toFixed(0)} cm `
+        + 'it travelled before the body was put behind it');
+      rows.push(`${name} hand ${(wasHand * 100).toFixed(0)}→${(r.hand * 100).toFixed(0)} cm, `
+        + `spine ${wasSpine}→${r.spine.toFixed(0)}°, shoulder 0→${r.clav.toFixed(0)}° / ${(r.joint * 1000).toFixed(0)} mm`);
+    }
+    return rows.join('; ');
+  });
 }
