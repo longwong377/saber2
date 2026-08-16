@@ -5456,6 +5456,15 @@ export class Player {
      */
     this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, s) => this._footstep(p, s);
+    /* A NEW BODY IS A NEW SET OF SCALES. Same species today, so these are the
+     * same four numbers — but they are read off the rig, and the rig on the
+     * line above is a different object from the one the constructor measured.
+     * A field derived from a thing that has just been rebuilt and not rederived
+     * beside it is the exact shape this file keeps finding bugs in. */
+    this.limbs = limbScale(this.rig);
+    this.eyeHeight = EYE_H * this.limbs.stand;
+    this.saber.setGripScale?.(this.limbs.torso);
+    this.control.reachScale = this.limbs.arm;
     this._makeCloak();
     this._applyViewMode();
     /* YOU COME BACK ARMED. `saberDown` survives a respawn otherwise, and the

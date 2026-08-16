@@ -470,7 +470,13 @@ export async function run({ check, assert }) {
     const settle = () => new Promise((r) => setTimeout(r, 40));
     const boot = async () => {
       const w = new World(stub(), { ...DEFAULT_SETTINGS, quality: 'low' });
-      await w.loadLevel('meadow');
+      /* ANY level — this suite is about build/teardown, not about a place. It
+       * said `'meadow'`, which the roster cull deleted, and `loadLevel`
+       * substitutes `LEVEL_ORDER[0]` for a key it does not know
+       * (src/game/World.js:236) — so it has been running here all along while
+       * appearing to name somewhere else. Asking for the first level outright
+       * is the same world, honestly stated, and cannot dangle again. */
+      await w.loadLevel(LEVEL_ORDER[0]);
       w.spawnPlayer();
       for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
       return w;

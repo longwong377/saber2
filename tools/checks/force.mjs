@@ -911,7 +911,10 @@ export async function run({ check, assert, near }) {
       delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
 
     const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
-    await w.loadLevel('meadow');
+    /* ANY level — see the note in lifecycle.mjs. `'meadow'` was culled and
+     * `loadLevel` has been quietly substituting `LEVEL_ORDER[0]` ever since. */
+    const { LEVEL_ORDER: ORDER } = await import('../../src/game/Levels.js');
+    await w.loadLevel(ORDER[0]);
     w.spawnPlayer();
     const p = w.player;
     for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
