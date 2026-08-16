@@ -115,8 +115,39 @@ function measure(type) {
   let covered = 0, inProxy = 0;
   const yMid = (hullBox.min.y + hullBox.max.y) * 0.5;
   const s = new THREE.Vector3(), ab = new THREE.Vector3(), ap = new THREE.Vector3();
-  // the movement proxy Enemy gives every `big` body, copied from Enemy.js:1296
-  const proxyR = 1.1, proxyHalf = 0.9, proxyY = 1.4;
+  /**
+   * THE PROXY THE BODY REALLY GETS — asked for, not copied.
+   *
+   * This read `const proxyR = 1.1, proxyHalf = 0.9, proxyY = 1.4;` under a
+   * comment saying "copied from Enemy.js:1296". That is the defect this project
+   * keeps rediscovering (HANDOFF 2.3), and here it hid the fix it existed to
+   * measure: `Enemy` now prefers `built.proxy` — the sphere chain a builder
+   * generates off its own hull — and this instrument went on reporting the
+   * capsule's 0% for the AT-TE afterwards, because it was never looking at the
+   * game. An instrument with a copy of the constant cannot see the constant
+   * change.
+   *
+   * So the sample now asks whichever collider the body would actually be given.
+   */
+  const P = built?.proxy;
+  const inProxyAt = (z, y) => {
+    if (P?.spheres?.length) {
+      /* A sphere is `{c:{x,y,z}, r}`. Reading it as flat `sp.y`/`sp.z` silently
+       * yields undefined → 0, which put every sphere on the centreline and
+       * reported a figure that was neither the old capsule's nor the new
+       * chain's. The test is 3D against the sampled point, because the chain is
+       * laid out across the hull's WIDTH as well as its length and a 2D test
+       * would credit cover that is not over the line being sampled. */
+      for (const sp of P.spheres) {
+        const c = sp.c ?? sp;
+        const sr = sp.r ?? sp.radius ?? P.radius ?? 1;
+        if (Math.hypot(0 - (c.x ?? 0), y - ((c.y ?? 0) + (P.y ?? 0)), z - (c.z ?? 0)) <= sr) return true;
+      }
+      return false;
+    }
+    const dy = Math.max(0, Math.abs(y - 1.4) - 0.9);
+    return Math.hypot(z, dy) <= 1.1;
+  };
   for (let i = 0; i < zs; i++) {
     const z = hullBox.min.z + (i + 0.5) / zs * H.l;
     s.set(0, yMid, z);
@@ -126,8 +157,7 @@ function measure(type) {
       const t = Math.max(0, Math.min(1, ap.subVectors(s, c.p0).dot(ab) / len2));
       if (ap.copy(c.p0).addScaledVector(ab, t).distanceTo(s) <= c.r) { covered++; break; }
     }
-    const dy = Math.max(0, Math.abs(yMid - proxyY) - proxyHalf);
-    if (Math.hypot(z, dy) <= proxyR) inProxy++;
+    if (inProxyAt(z, yMid)) inProxy++;
   }
 
   const cycle = A.fireRate + A.burst * (A.burstGap ?? 0.12) + (A.telegraph ?? 0);

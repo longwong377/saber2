@@ -1292,12 +1292,31 @@ export class Enemy {
 
     this._build();
 
-    // movement proxy so bodies and players collide with a living enemy
-    const r = A.big ? 1.1 : 0.36;
+    /**
+     * Movement proxy so bodies and players collide with a living enemy.
+     *
+     * ONE SHAPE FOR EVERY HEAVY WAS THE DEFECT. `capsule(0.9, 1.1)` for
+     * anything `big` is right for a droideka and wrong for a thirteen-metre
+     * walker: measured by tools/_vehicle.mjs, a player met **0% of an AT-TE's
+     * hull** and 27% of an AAT's, because the proxy is a 2.2 m column at the
+     * centre while the AT-TE's hull starts 2.3 m up and runs 6.4 m fore and aft
+     * of it. You walked through the machine.
+     *
+     * That is player note #8 in its own words — "the majority of objects are
+     * still not physical, like you just fall through them" — so a builder may
+     * now publish `built.proxy`, a sphere chain GENERATED off the hull it just
+     * built rather than typed into the archetype table beside it (HANDOFF 2.3:
+     * a hand-written collider next to a procedural hull drifts silently the
+     * first time somebody moves a plate). `Body` already accepts an arbitrary
+     * sphere list and the contact solver already walks it, so nothing below
+     * changes. Bodies that publish nothing keep the capsule exactly as before.
+     */
+    const P = this.built?.proxy;
+    const r = P?.radius ?? (A.big ? 1.1 : 0.36);
     this.radius = r;
     this.body = new Body({
-      position: this.position.clone().setY(this.position.y + (A.big ? 1.4 : 0.9)),
-      spheres: capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
+      position: this.position.clone().setY(this.position.y + (P?.y ?? (A.big ? 1.4 : 0.9))),
+      spheres: P?.spheres ?? capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
       shape: capsule(A.big ? 0.9 : 0.55, r),
       mass: A.mass, kinematic: true, layer: LAYER.ENEMY,
       mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
@@ -3786,7 +3805,21 @@ export class Enemy {
     const headBone = rig.get('head');
     if (this.target && headBone && !headBone.severed) {
       _v3.subVectors(this.target.chest ?? this.target.position, rig.worldPos('head', _v4));
-      const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing - Math.PI;
+      /**
+       * `atan2(x, z) - facing` IS the local bearing. The `- Math.PI` that used
+       * to close this line put it half a turn out, and the symptom was hidden
+       * by the clamp two lines down rather than by anything looking wrong:
+       * wrapped into range, a target dead ahead asked for ±π, the ±0.7 clamp
+       * saturated, and the turret sat 40° off — flipping sign as the target
+       * crossed the centreline. Measured on the shipped Spider Walker with
+       * tools/_vehicle.mjs: 43.8° of error, which is the clamp, not the aim.
+       *
+       * It never affected damage — `_shoot` aims from the target, not the
+       * muzzle — so nothing that measured hits could see it. It is a five-metre
+       * gun barrel pointing somewhere the machine is not shooting, and it went
+       * unnoticed until an AT-TE gave it a barrel long enough to read at range.
+       */
+      const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing;
       headBone.obj.quaternion.copy(headBone.restQuat).multiply(
         _q1.setFromEuler(new THREE.Euler(clamp(Math.atan2(_v3.y, Math.hypot(_v3.x, _v3.z)), -0.5, 0.5),
           clamp(((localYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI, -0.7, 0.7), 0, 'YXZ')));
