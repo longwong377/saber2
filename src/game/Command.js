@@ -939,7 +939,7 @@ export function enlistBody(e, trooper, opts = {}) {
   /* …and the rank goes ON THE BODY at deploy, not only at the moment of
    * promotion. A campaign rebuilds every body at every area boundary, so a
    * sergeant who was painted in area 2 would walk into area 3 as a stranger if
-   * this only fired inside `_promote`. */
+   * this only fired inside `_promoteTrooper`. */
   if (R.color != null && opts.director) {
     e.rankColor = R.color;
     opts.director.repaint(e, R.color);
@@ -1444,7 +1444,7 @@ export class CommandDirector extends WaveDirector {
     if (!t) return;
     t.kills++;
     const promoted = t.award(1);
-    if (promoted) this._promote(t, source);
+    if (promoted) this._promoteTrooper(t, source);
   }
 
   /**
@@ -1460,7 +1460,7 @@ export class CommandDirector extends WaveDirector {
    * rig — so a body that changes shape in Bodies.js still promotes correctly and
    * the promotion does not have to know what a shoulder bell is.
    */
-  _promote(t, e) {
+  _promoteTrooper(t, e) {
     const R = t.rankRec;
     this.log.push({ t: 'promote', name: t.name, rank: R.short, area: this.areaNumber, wave: this.wave });
     if (e && !e.dead) {
@@ -1646,7 +1646,7 @@ export class CommandDirector extends WaveDirector {
     // wave cleared earned something even if it never fired.
     for (const t of this.roster.living) {
       const p = t.award(1);
-      if (p) this._promote(t, t.body);
+      if (p) this._promoteTrooper(t, t.body);
     }
     if (this.areaWaves >= this.area.waves) this._areaClear();
     return fresh;
@@ -1663,7 +1663,7 @@ export class CommandDirector extends WaveDirector {
     for (const t of this.roster.living) {
       t.areas++;
       const p = t.award(2);
-      if (p) this._promote(t, t.body);
+      if (p) this._promoteTrooper(t, t.body);
     }
     this.roster.points += this.area.muster;
     this.log.push({ t: 'area', area: this.areaNumber, name: this.area.name,

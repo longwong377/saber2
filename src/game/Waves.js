@@ -1655,7 +1655,24 @@ export class WaveDirector {
     }
 
     this.spawnTimer -= dt;
-    const alive = ctx.enemies.filter(e => !e.dead).length;
+    /**
+     * ONLY THE HORDE COUNTS, and this is why Command mode could not finish a
+     * wave.
+     *
+     * `ctx.enemies` is `world.enemies`, and Command puts YOUR OWN TROOPS in
+     * that same array — an ally is an `Enemy` with a different `team`, which is
+     * the design decision that makes allies real. The consequence nobody
+     * traced: this line counted them, so a wave stayed open while your army was
+     * alive and cleared the instant the last of your own troopers died.
+     * Measured on a driven run: wave 1 sat open for six seconds with zero
+     * hostiles on the field, and closed 0.1 s after a probe killed all ten
+     * clones.
+     *
+     * `this.team` is the director's own side. Anything sharing it is not what
+     * the player is here to kill.
+     */
+    const party = this.world?.partyTeam ?? 0;
+    const alive = ctx.enemies.filter(e => !e.dead && (e.team ?? 1) !== party).length;
     // Bodies already on their way count against the cap. Without this the
     // director would keep calling for more the whole time a ship was inbound
     // and land six at once.
