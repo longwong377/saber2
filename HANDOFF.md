@@ -255,7 +255,15 @@ The player asked for these to wait, and the folders are `assets/reference/`:
   connected decks. I built the colony and rolled it back on instruction; the
   work is in the reflog if it is wanted.
 - **The Drowned Wood's ground** — the last surface still drawn outside the cel
-  pipeline, and the reason the meadow was deleted rather than tuned.
+  pipeline, and the reason the meadow was deleted rather than tuned. The
+  references are in and they change the JOB: `drowned-wood/dagobah.jpeg` has
+  **no grass in it at all.** A swamp floor is standing water, buttress roots,
+  matted litter and fallen branches — the "ground cover" is ROOTS, not blades.
+  So the fix is not a better grass shader, which is what the last three
+  attempts were; it is a different ground-cover kind. That also explains why
+  the level reads as two games stitched together: a grass field is the one
+  surface a bog cannot have, so no amount of tuning it was ever going to sit
+  in the frame. `makeCoverField` already takes a kind; this wants a new one.
 - **The big creatures, and Mandalorians** — "all your monsters look the same,
   sphere with some legs, like you really need to make the big enemies more
   dangerous and more interesting and menacing, they all attack the same way."
