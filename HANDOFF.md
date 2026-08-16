@@ -185,13 +185,23 @@ frames.
   is a CPU-bound suite. The story fit every fact I had and I wrote it into this
   file as a finding. That is the trap: *a slow suite on a loaded box explains any
   hang you meet, and it will always fit the evidence.*
-- **Wrong diagnosis 2 (an agent's): the deleted level.** `cloth-cost.mjs` stood
-  its subjects on `loadLevel('temple')`, and `temple` was deleted in the roster
-  cull — a genuinely alarming thing to find, and it looks causal. It is not.
-  `World.loadLevel` resolves `LEVELS[key] ? key : LEVEL_ORDER[0]`
-  (src/game/World.js:236): an unknown key **silently substitutes the first
-  level**, deliberately, with a comment explaining it as a safety net. It cannot
-  hang. I very nearly committed this correction on the agent's word.
+- **Diagnosis 2 (an agent's): the deleted level.** `cloth-cost.mjs` stood its
+  subjects on `loadLevel('temple')`, deleted in the roster cull. I rejected this
+  because `World.loadLevel` resolves `LEVELS[key] ? key : LEVEL_ORDER[0]`
+  (src/game/World.js:236) — an unknown key **silently substitutes the first
+  level**, deliberately and with a comment calling it a safety net — so it
+  cannot hang. **That rejection was too strong, and a second agent found the
+  mechanism I had missed.** In `levels-quality`, `level('deeps')` fell back to
+  the first surviving level and the suite then **cached that substitute under a
+  second key**, so one dead name bought an extra simultaneous World — a ninth,
+  in the suite §2.7 already names as holding the most alive at once. That is
+  what took it from slow to not finishing.
+
+  So a dangling level key does not hang a suite *directly*; it inflates the
+  world count, and world count is what kills these runs. Both of us were partly
+  right and neither account was complete. `roster.mjs` could not have caught it:
+  `level('deeps')` is none of the five syntactic forms it scans for, exactly as
+  its own note predicts.
 
 **The cause was contention after all — and the process table is how you prove
 it, not the story's plausibility.** Measured on this box while the fleet ran:
@@ -218,9 +228,8 @@ The lesson is not "contention is usually it"; the lesson is that `ps` and
 shell out to `_one.mjs` while agents are working, you are adding to the number
 above. Check it first.
 
-What the second wrong diagnosis *did* uncover is a real defect of its own, and
-the reason to keep the fix: after the cull, four checks were measuring a level
-they did not name. `cloth-cost` asked for `temple`, `garments`, `lifecycle` and
+The second diagnosis also uncovered a defect worth fixing on its own account:
+after the cull, four checks were measuring a level they did not name. `cloth-cost` asked for `temple`, `garments`, `lifecycle` and
 `force` ask for `meadow`, and all four silently got `scoria`. A check that
 believes it is testing one place while testing another is HANDOFF 2.4's problem
 wearing a different coat — the fallback is right for a player with a stale save
