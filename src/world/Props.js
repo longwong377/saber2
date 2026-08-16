@@ -4137,6 +4137,28 @@ export function addRailing(world, pos, opts = {}) {
     const b = new THREE.Vector3(L / 2 * cp, L / 2 * sp + yy, 0);
     kit.put(pipeBetween(a, b, yy === h ? 0.042 : 0.028, 6), mat);
   }
+  /**
+   * AND YOU CANNOT WALK THROUGH IT, which until now you could.
+   *
+   * This maker had NO COLLIDER AT ALL — neither the posts (`Kit.post` only
+   * builds one when the caller passes `collide`, and this never did) nor the
+   * rails (`kit.put` never builds one). Kamino's own dressing pass calls the
+   * ring of rail round its deck "the level's most important prop because it is
+   * the only thing between the fight and a nine-metre drop into the sea", and
+   * it was a picture: 28 rail segments you and every enemy walked straight
+   * through into the water. That is player note #8 exactly — "the majority of
+   * objects are still not physical, like you just fall through them" — and
+   * `tools/checks/physicality.mjs` is the rule it became.
+   *
+   * ONE box for the whole run rather than one per post, because a rail is a
+   * barrier and not a row of bollards: 0.09 m of thickness (the top rail is
+   * 0.084 through) by the run's own length, standing from the ground to the
+   * top rail, pitched with the run so a ramped rail is a ramped box. Sixteen
+   * boxes on Kamino instead of a hundred and twelve.
+   */
+  if (opts.collide !== false) {
+    kit.collider(0, h * 0.5, 0, L * 0.5, h * 0.5 + Math.abs(sp) * L * 0.5, 0.09);
+  }
   return kitClose(world, kit, pos, opts);
 }
 

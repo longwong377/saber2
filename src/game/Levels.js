@@ -15,6 +15,7 @@ import {
   addCableRun, addLamp, addScaffold, addRockArch, addBoulderCluster, addHullSection, addTarp,
   addAntenna, addPlinth, addStair, addRailing, addFloorSlab, addSign, addRuinedGate,
   addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd, addStorm,
+  addInstanced, slabGeo, tubeUv, paintGeo, mergeGeos, torusGeo,
 } from '../world/Props.js';
 import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
 import { registerDestructible } from '../world/Destruction.js';
@@ -1043,6 +1044,142 @@ export function island(world, pos, opts, build) {
   return res;
 }
 
+/**
+ * AN ORDER OF COLUMNS, AND THE ONLY REASON THE DEPTH RULE IS AFFORDABLE.
+ *
+ * The rule is written out over the Temple below: an interior stops being a box
+ * when there are three more colonnades between the player and the wall. Six
+ * ranks a side over 278 m of hall is 228 columns, and 228 of anything placed
+ * one at a time is 228 draw calls before the level has a floor — the budget
+ * `world-immersion` holds a level to is 520 and the foundry already spends 386.
+ * So the order is INSTANCED, and it comes to four calls:
+ *
+ *   the SHAFT       one geometry, scaled (r, h, r) per instance. The
+ *                   bronze-and-pale alternation the references show is
+ *                   per-INSTANCE colour on one material rather than two
+ *                   materials, which is what keeps it at one call; the helical
+ *                   banded fillet — the diagonal ribbon wrapping every column
+ *                   in `temple after battle` — is VERTEX colour underneath it,
+ *                   and the two multiply.
+ *   the BASE        a stepped drum, scaled uniformly by r.
+ *   the CAPITAL     the same, lifted to the top of the shaft.
+ *   the ENTABLATURE the beam from each column to the next, which is what turns
+ *                   a row of posts into an arcade. Without it the eye reads
+ *                   sticks; with it, it reads a building, and it is the single
+ *                   cheapest element here.
+ *
+ * WHAT INSTANCING COSTS, stated plainly: an instance cannot be cut down, and
+ * `physicality.mjs` skips InstancedMesh precisely because a batch has no
+ * individual identity. So every column still gets a REAL COLLIDER — one static
+ * box each, because a column you walk through is worse than a column you
+ * cannot cut — and everything in this hall at arm's reach (benches, braziers,
+ * statues, fallen drums) is placed one at a time and is solid, cuttable and
+ * liftable. What you can cut is what you can stand next to.
+ *
+ * @returns the number of columns standing.
+ */
+export function templeColonnade(world, opts = {}) {
+  const M = propMaterials();
+  const T = world.terrain;
+  const ranks = opts.ranks || [];
+  const z0 = opts.z0 ?? -140, z1 = opts.z1 ?? 140;
+  const r2 = makeRng(opts.seed ?? 7700);
+
+  /* THE SHAFT, as a unit column: radius 1 at the foot, 0.88 at the neck, one
+   * metre tall, standing on y = 0. 14 height segments is not detail — it is
+   * the resolution the helical band needs to stay a smooth ribbon rather than
+   * a zigzag, and it was arrived at by halving until the band broke. */
+  const shaft = tubeUv(new THREE.CylinderGeometry(0.88, 1.0, 1.0, 12, 14, true), TAU, 1.0, 2.4);
+  shaft.translate(0, 0.5, 0);
+  /* The band, painted. `temple after battle` wraps every column in a dark
+   * ribbon with a pale edge, climbing about one turn in three column heights,
+   * and it is the detail that stops a cylinder reading as a pipe: it gives the
+   * eye a line that goes AROUND, so the column reads as round and as tall at
+   * the same time. Also twenty-four shallow flutes, at a quarter of the band's
+   * contrast, because a column with only one feature on it is a decal. */
+  paintGeo(shaft, (x, y, z, out) => {
+    const a = Math.atan2(z, x) / TAU + 0.5;                 // 0..1 round
+    const helix = Math.abs(((a - y * 3.0) % 1 + 1) % 1 - 0.5) * 2;   // 1 on the band
+    const band = smoothstep01(0.86, 0.94, helix);
+    const edge = smoothstep01(0.74, 0.86, helix) * (1 - band);
+    const flute = 0.5 + 0.5 * Math.cos(a * TAU * 24);
+    const k = 1 - band * 0.62 + edge * 0.24 - flute * 0.05;
+    out[0] = k; out[1] = k * 0.995; out[2] = k * 0.985;
+  });
+
+  /* The base: a stepped drum with an astragal over it, and the capital: the
+   * same profile inverted with an abacus on top. Both are built at the
+   * column's own radius so one uniform scale places them. */
+  const base = mergeGeos([
+    tubeUv(new THREE.CylinderGeometry(1.30, 1.46, 0.36, 12, 1, false), TAU * 1.46, 0.36, 2.4)
+      .translate(0, 0.18, 0),
+    tubeUv(new THREE.CylinderGeometry(1.06, 1.30, 0.40, 12, 1, false), TAU * 1.30, 0.40, 2.4)
+      .translate(0, 0.56, 0),
+    torusGeo(1.02, 0.10, 6, 12, TAU, 1.2).rotateX(Math.PI / 2).translate(0, 0.80, 0),
+  ]);
+  const cap = mergeGeos([
+    torusGeo(0.94, 0.11, 6, 12, TAU, 1.2).rotateX(Math.PI / 2).translate(0, -0.10, 0),
+    tubeUv(new THREE.CylinderGeometry(1.34, 0.94, 0.62, 12, 1, false), TAU * 1.34, 0.62, 2.4)
+      .translate(0, 0.31, 0),
+    slabGeo(2.90, 0.34, 2.90, { tile: 2.4, seg: 2 }).translate(0, 0.79, 0),
+  ]);
+  const beam = slabGeo(1, 1, 1, { tile: 2.4, seg: 2 });
+
+  const shafts = [], bases = [], caps = [], beams = [], tints = [];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const p = new THREE.Vector3(), s = new THREE.Vector3();
+  /* THE TWO FAMILIES. Warm bronze and cool pale ashlar, alternating along each
+   * rank and offset between ranks so no two neighbours in ANY direction match —
+   * which is what the reference actually shows and what a plain ABAB stripe
+   * does not: laid out in a grid, ABAB reads as two solid walls of colour. */
+  const BRONZE = new THREE.Color(1.00, 0.70, 0.40);
+  const PALE = new THREE.Color(0.94, 0.92, 0.87);
+  let n = 0;
+  for (let k = 0; k < ranks.length; k++) {
+    const R = ranks[k];
+    const count = Math.max(2, Math.floor((z1 - z0) / R.pitch));
+    for (let i = 0; i <= count; i++) {
+      const z = z0 + i * R.pitch;
+      for (const sx of [-1, 1]) {
+        const x = sx * R.x;
+        if (!T.inBounds(x, z, 4)) continue;
+        const y = T.height(x, z);
+        const h = R.h * (0.97 + r2() * 0.06);
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r2() * TAU);
+        shafts.push(m.clone().compose(p.set(x, y, z), q, s.set(R.r, h, R.r)));
+        bases.push(m.clone().compose(p.set(x, y, z), q, s.setScalar(R.r)));
+        caps.push(m.clone().compose(p.set(x, y + h, z), q, s.setScalar(R.r)));
+        tints.push(((i + k * 3 + (sx > 0 ? 1 : 0)) % 3 === 0 ? BRONZE : PALE));
+        // one static box per column: you may not cut it, you may not walk
+        // through it either
+        world.physics.addStaticBox(new THREE.Vector3(x, y + h * 0.5, z),
+          new THREE.Vector3(R.r, h * 0.5, R.r), new THREE.Quaternion(), { friction: 0.9 });
+        // the beam onward to the next column of this rank
+        if (i < count) {
+          const zm = z + R.pitch * 0.5;
+          const ym = T.height(x, zm) + h + R.r * 1.10 + 1.25;
+          beams.push(m.clone().compose(p.set(x, ym, zm), new THREE.Quaternion(),
+            s.set(R.r * 2.3, 2.5, R.pitch + 0.4)));
+        }
+        n++;
+      }
+    }
+  }
+  addInstanced(world, shaft, M.sandstone, shafts, new THREE.Vector3(),
+    { name: 'templeShaft', colors: tints });
+  addInstanced(world, base, M.duracreteWarm, bases, new THREE.Vector3(), { name: 'templeBase' });
+  addInstanced(world, cap, M.duracreteWarm, caps, new THREE.Vector3(), { name: 'templeCap' });
+  addInstanced(world, beam, M.sandstone, beams, new THREE.Vector3(),
+    { name: 'templeArchitrave', castShadow: false });
+  return n;
+}
+
+/** The smoothstep the painters above want, without dragging in a module. */
+function smoothstep01(a, b, v) {
+  const t = clamp((v - a) / (b - a || 1e-6), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 export const LEVELS = {
   /* ══════════════════════════════════════════════════════════════════════
    *  THE OPEN GROUNDS
@@ -1633,6 +1770,288 @@ export const LEVELS = {
   },
 
   /* ══════════════════════════════════════════════════════════════════════
+   *  MUSTAFAR — the real one
+   *
+   *  "For the actual mustafar map go off the reference images more."
+   *
+   *  THE EMBER SHELF ABOVE IS NOT THIS AND IS NOT BEING REPLACED BY IT. It was
+   *  called Mustafar, the player renamed it, and it stays as its own place: a
+   *  basalt shelf in an open molten sea, dressed for duelling. What the
+   *  references show is a different planet-scale idea and the two can stand
+   *  beside each other because their LANDFORMS are opposites — see the
+   *  `mustafar` preset in Terrain.js, which derives both from the same water
+   *  plane approached from different sides.
+   *
+   *  WHAT THE REFERENCES ACTUALLY SHOW, amalgamated over all five:
+   *
+   *    RIVERS, NOT A SEA. In every frame the melt is a braided channel system
+   *    winding through rock — a trunk with strands splitting and rejoining
+   *    round bars, falls pouring over ledges, and a web of thin veins cracking
+   *    the crust between them. `mustafar 4` is nothing but that.
+   *    DARK ROCK. The basalt is a near-black grey-brown everywhere; it only
+   *    reads red where the melt is lighting it. Author it warm and there is
+   *    nothing for the accent to be an accent against.
+   *    LIGHT FROM BELOW. Every rock face in `mustafar 4` and `6` is lit from
+   *    underneath by the channel at its foot, and every silhouette in the frame
+   *    is a rim-lit edge over an orange floor. That is not a post effect here,
+   *    it is thirty point lights strung ALONG THE CHANNELS at −0.4 m, which is
+   *    the one lighting decision this level is built on.
+   *    SMOKE COLUMNS. Vertical, from vents, standing still in the frame while
+   *    everything else moves.
+   *    INDUSTRY. The collection platforms — a disc canopy on a stem, several of
+   *    them at different heights over the flows — and one larger works with
+   *    radiator fins and towers, `mustafar 5`/`6`.
+   *
+   *  IT IS A HORDE MAP AND THE SHELF IS A DUELLING MAP, which is the other
+   *  reason both can exist: this ground is broken into shelves separated by
+   *  rivers you cannot cross except where the rock allows, so the fight is
+   *  about WHERE and the Ember Shelf's is about WHEN.
+   * ═════════════════════════════════════════════════════════════════════ */
+
+  mustafar: {
+    name: 'Mustafar',
+    blurb: 'Rivers of melt braided through black rock, under a sky the colour of a wound. The ground is lit from below.',
+    terrain: 'mustafar',
+    pool: ['b1', 'trooper', 'b2', 'acolyte', 'droideka', 'b1', 'sniper', 'acolyte', 'walker'],
+    groundColor: 0x2b2622,
+    spawnRadius: [30, 54],
+    /* THE MELT, at the datum, and the channels are cut 5.2 m into a shelf that
+     * stands 3.1 m over it — so the sheet is only ever visible IN the cuts,
+     * which is the whole difference between this and a lava sea. 56 HP a
+     * second: between the Ember Shelf's 52 (a shore you brush) and the
+     * foundry's 58 (a slot you are in), because a river is both. */
+    water: { level: 0.0, damage: 56, kind: 'lava',
+             shallow: 0xffa32a, deep: 0x7e1806, sky: 0xe4550a, bed: 0x160c0c },
+    atmosphere: {
+      /* The same smoke sky the Ember Shelf derives, and its long note about
+       * `rayleigh` applies verbatim: below about 1.6 the physical model returns
+       * so little radiance that the exposure meter hits its clamp and the frame
+       * stops being exposed by its own light, which took four checks down with
+       * it. 1.8 keeps the model in range and the RED comes from the sun colour,
+       * the cloud deck and the grade. */
+      turbidity: 9.0, rayleigh: 1.8, mie: 0.013, mieG: 0.85,
+      /* The trunk river runs roughly along +x. A sun at 148° crosses it, so
+       * every levee and every bar has a lit face and a shaded one — the same
+       * rule the dune train and the flow lobes derive. 148 and not 328 for the
+       * reason the Ember Shelf's block records at length: the default pose
+       * looks down −z, and a bearing in the darkest quarter of the dome puts
+       * the sky the player is looking at DARKER than the air in front of it. */
+      elevation: 13, azimuth: 148,
+      sunColor: 0xff8a48, sunIntensity: 4.2, ambient: 0.86,
+      skyColor: 0xc85428,
+      /* The hemisphere's lower half is the ASH, not the basalt — the Ember
+       * Shelf's block records why: this is the colour of the light the ground
+       * throws back UP, and what is lying on this ground is a pale ash fall.
+       * Authored as the 0.03-luminance rock, the cloud deck over an ash plain
+       * ends up lit entirely by itself. */
+      groundColor: 0x4a413a,
+      /* THE FILL IS THE RIVER. Everywhere else in this game the brightest thing
+       * that is not the sun is the sky; here it is the melt in the channels and
+       * the smoke ceiling is lit from below by it. Warmer and stronger than the
+       * Ember Shelf's because a river 26 m across at your feet throws more at
+       * you than a sea 100 m away. */
+      fillColor: 0xd2601e, fillIntensity: 0.86,
+      // Smoke. Half-light at 68 m, which hides the edge of a 500 m field on a
+      // level whose skyline is its own volcano wall.
+      fogColor: 0x5c2c1e, fogDensity: 0.0102, fogHeight: 34, fogBase: 4,
+      /* Authored rather than derived, for the reason the Ember Shelf's block
+       * gives: on a sky this compressed the sunward and side skyline samples
+       * land within a per cent of each other, the default estimate comes out at
+       * zero and the forward-scatter glow switches off entirely — on the one
+       * kind of sky where mie scatter is strongest. */
+      inscatter: 0.052,
+      exposure: 0.94, bloom: 0.56, saturation: 1.12,
+      gain: [1.15, 0.99, 0.72],
+      // Warm blacks: on this level the shadows are lit by the floor.
+      lift: [0.018, 0.005, 0.002],
+      /* A ceiling of smoke, not a deck of cloud, lit from BELOW — so the lit
+       * swatch is the river's colour and the dark swatch is very dark. */
+      cloudCover: 0.92, cloudLit: 0xff7a26, cloudDark: 0x2a1512,
+      cloudWindDir: 0.68, cloudWindSpeed: 1.6,
+      horizonColor: 0x6e2f12,
+      /* NO PAINTED RANGES. The heightfield's own rim climbs 54 m from 150 to
+       * 244 out and the dressing pass stands cones and smoke columns on it; a
+       * painted curtain at 340 m would sit in front of the only silhouette this
+       * level is actually about. */
+      horizon: false,
+    },
+    ambience: { wind: 0.18, windFreq: 170, drone: 0.30 },
+    dust: {
+      count: 1600, color: 0x8a7268, opacity: 0.30, size: 26,
+      // Embers off the rivers. The only warm thing in the air and the only
+      // place on this level where the accent is small and everywhere at once.
+      fleckColor: 0xff9a2e,
+      wind: { from: 148, strength: 2.8, gustiness: 0.60, wander: 0.38 },
+      // Ash fall — mechanically the blizzard with dark, slow, heavy flakes in
+      // it, which is what the Ember Shelf established and what ash is.
+      snow: { count: 5400, calm: 0.38, color: 0x6a615c, fall: 0.46, size: 0.17 },
+      // A surge off the river: the air thickens, the light goes, the wind
+      // barely moves. Heat and smoke, not grit.
+      weather: { peak: 0.90, period: 116, duration: 42, unrest: 0.19,
+                 fogGain: 2.4, windGain: 1.6, sunLoss: 0.78, fillGain: 1.6, tint: 0.95 },
+    },
+    grass: 0,
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 109);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+      const melt = world.level?.water?.level ?? 0;
+
+      /* ── THE LIGHT OFF THE RIVERS, and it is this level's whole lighting
+       * scheme rather than a decoration. Every reference frame is lit from
+       * BELOW: the rock faces are orange at the foot and black at the crest,
+       * and every silhouette in the frame is a rim-lit edge over a glowing
+       * floor. The sheet's own shader is analytic and self-luminous (see the
+       * Ember Shelf's note) so the melt DRAWS bright with no key on it — but it
+       * throws nothing on the rock, and the rock is most of the frame.
+       *
+       * So the channels are walked and lit. `walkChannel` steps along the
+       * heightfield looking for ground under the melt line, which means the
+       * lamps land where the river ACTUALLY is rather than where a hand-typed
+       * table of waypoints says it is — the same rule as Kamino's deck table
+       * and for the same reason (HANDOFF §2.3).
+       *
+       * 26 lights, not 60. `lighting.mjs` and the frame budget both care, and
+       * measured on the built level 26 at 42 m of range covers 84% of the
+       * channel network's length; the rest is inside another lamp's falloff. */
+      {
+        let lit = 0;
+        for (let k = 0; k < 240 && lit < 26; k++) {
+          const a = rng() * TAU, r = 18 + Math.sqrt(rng()) * 130;
+          const x = Math.cos(a) * r, z = Math.sin(a) * r;
+          if (!T.inBounds(x, z, 6)) continue;
+          if (T.height(x, z) > melt - 1.2) continue;          // not in the melt
+          let clear = true;
+          for (const q of (world._lavaLights || [])) {
+            if ((q.x - x) ** 2 + (q.z - z) ** 2 < 34 * 34) { clear = false; break; }
+          }
+          if (!clear) continue;
+          (world._lavaLights || (world._lavaLights = [])).push({ x, z });
+          const L = new THREE.PointLight(0xff6a14, 26, 42, 2);
+          L.position.set(x, melt - 0.4, z);
+          world.scene.add(L); world.levelLights.push(L);
+          lit++;
+        }
+      }
+
+      /* ── THE ROCK. Sharp stacks and spires standing over the channels — the
+       * reference's crests are knife-edged and every one of them is a
+       * silhouette against a lit river. Kept off the melt (`minHeight`) so
+       * nothing stands in the water, and pushed out of the middle so the shelf
+       * you spawn on is fightable. */
+      for (let k = 0; k < 22; k++) {
+        const site = findSite(world, 22, 132, {
+          angle: (k / 8) * TAU + rng() * 0.7, clearance: 12, maxSlope: 0.40,
+          minHeight: melt + 2.0,
+        });
+        if (!site) continue;
+        addOutcrop(world, site.pos, {
+          size: 3.4 + rng() * 5.0, height: 8 + rng() * 13, seed: 9400 + k, mat: M.stoneDark,
+        });
+      }
+      // and the far cones on the rim, which are what the skyline is made of
+      for (let k = 0; k < 11; k++) {
+        const site = findSite(world, 140, 226, { clearance: 20, maxSlope: 0.62, tries: 26 });
+        if (site) addOutcrop(world, site.pos, { size: 9 + rng() * 8, height: 20 + rng() * 22, seed: 9440 + k, mat: M.stoneDark });
+      }
+
+      /* ── THE SMOKE COLUMNS. Vertical, from vents on the high ground — the one
+       * thing in `mustafar 3` that stands still while the sky moves. Built as
+       * tall dark tapered stacks rather than particles: at this level's air a
+       * particle column 120 m out is gone, and what the reference shows is a
+       * SHAPE with an edge on it. */
+      for (let k = 0; k < 7; k++) {
+        const a = 0.4 + k * 0.92, d = 96 + (k % 3) * 44;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (!T.inBounds(x, z, 8)) continue;
+        island(world, at(x, z), { seed: 9500 + k, yaw: rng() * TAU, span: 14,
+          maker: 'vent', destructible: 'stone' },
+          (kit) => {
+            // the vent it comes out of
+            kit.post(M.stoneDark, 4.6, 3.2, 3.0, 0, 1.5, 0, { radial: 9, tile: 2.4, collide: true });
+            kit.slab(M.glowRed, 4.0, 0.4, 4.0, 0, 3.1, 0, { tile: 1.6, seg: 3, collide: false });
+            // and the column over it, leaning downwind, thinning as it climbs
+            let y = 3.4, r = 2.6, lean = 0;
+            for (let s = 0; s < 7; s++) {
+              const h = 5.0 + s * 1.4;
+              lean += 0.5 + s * 0.28;
+              kit.post(M.stoneDark, r * 0.82, r, h, lean * 0.5, y + h * 0.5, lean * 0.32,
+                { radial: 7, tile: 2.4, collide: false });
+              y += h; r *= 0.86;
+            }
+          });
+      }
+
+      /* ── THE COLLECTION PLATFORMS. `mustafar 5` and `6`: a disc canopy on a
+       * stem, several of them at different heights over the flows, with the
+       * mining works itself a larger cluster of fins and towers. They are the
+       * only built things on this planet and they are what says somebody is
+       * here for the ore. Three, well apart, on the shelf. */
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 34, 96, {
+          angle: 0.9 + k * 2.1, clearance: 20, maxSlope: 0.20, minHeight: melt + 2.6, tries: 28,
+        });
+        if (!site) continue;
+        island(world, site.pos, { seed: 9600 + k, yaw: rng() * TAU, span: 17,
+          maker: 'collector', destructible: 'durasteel' },
+          (kit, local) => {
+            // the stem, and the canopy over it — the silhouette of the whole
+            // planet's industry in two shapes
+            kit.post(M.rust, 1.5, 1.9, 9.0, 0, 4.5, 0, { radial: 10, tile: 2.4, collide: true });
+            kit.post(M.darkSteel, 6.6, 1.6, 1.4, 0, 9.7, 0, { radial: 14, tile: 2.4, collide: true });
+            kit.slab(M.rust, 12.0, 0.35, 12.0, 0, 10.5, 0, { tile: 2.4, seg: 4, collide: false });
+            // the plant round its foot
+            addTank(world, local(-5.0, 1.2), { kit, radius: 2.0, height: 6.4, seed: 9610 + k });
+            addMachine(world, local(4.4, -2.2), { kit, width: 4.0, height: 2.8, depth: 2.4,
+              seed: 9620 + k, glowMat: M.glowRed });
+            addPipeRun(world, [
+              new THREE.Vector3(-5.0, 6.6, 1.2), new THREE.Vector3(-1.0, 6.0, 0.4),
+              new THREE.Vector3(4.4, 3.6, -2.2),
+            ], { kit, count: 2, radius: 0.13, seed: 9630 + k });
+            addStanchion(world, local(1.6, 4.6), { kit, height: 6.0, lamp: true, light: k === 0,
+              color: 0xffb46a, intensity: 14, distance: 24, seed: 9640 + k });
+          });
+        addDebrisField(world, site.pos, { radius: 11, seed: 9650 + k, count: 24 });
+      }
+
+      /* ── THE ORE TRAINS THAT DID NOT MAKE IT, half sunk in the clinker: the
+       * mid-distance silhouette band and the cover you actually fight behind. */
+      strewWrecks(world, { count: 5, rmin: 36, rmax: 150, seed: 9700, maxSlope: 0.36 });
+      for (let k = 0; k < 3; k++) {
+        const site = findSite(world, 32, 118, { clearance: 13, maxSlope: 0.32, minHeight: melt + 1.6 });
+        if (site) addHullSection(world, site.pos, { length: 14 + rng() * 9, radius: 3.0, yaw: rng() * TAU, seed: 9720 + k });
+      }
+
+      /* ── THE BROKEN FLOW FRONT along the channel edges: where a lobe stopped
+       * it left a wall of clinker, and that is the cover at the lip of every
+       * river on this map. */
+      for (let k = 0; k < 12; k++) {
+        const site = findSite(world, 20, 122, { clearance: 8, maxSlope: 0.58, minHeight: melt + 0.6 });
+        if (site) addBoulderCluster(world, site.pos, { radius: 8, count: 14, size: 1.7, seed: 9760 + k, mat: M.stoneDark });
+      }
+
+      // ── The clinker itself. Heavier than a desert because a flow front sheds
+      // more, and this level's ground cover is the ash the preset lays down.
+      strewGround(world, { seed: 9800, radius: 150, spread: 0.36, mat: M.stoneDark,
+        landmarks: 1.3, boulders: 1.4, cobble: 1.5 });
+
+      // ── What a working face has lying on it.
+      for (let i = 0; i < 12; i++) {
+        const site = findSite(world, 22, 92, { clearance: 4.0, maxSlope: 0.26, minHeight: melt + 1.4 });
+        if (site) world.addProp(rng() < 0.36 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.85));
+      }
+      for (let k = 0; k < 4; k++) {
+        const site = findSite(world, 28, 88, { clearance: 6, maxSlope: 0.22, minHeight: melt + 1.6 });
+        if (site) addCrateStack(world, site.pos, { seed: 9840 + k, tiers: 2 + (rng() < 0.4 ? 1 : 0) });
+      }
+
+      world.notify('MUSTAFAR', 'the rivers are not fords');
+    },
+  },
+
+  /* ══════════════════════════════════════════════════════════════════════
    *  THE TEMPLE
    *
    *  "Jedi Temple / Coruscant — the enemies are Jedi; you are clearing the
@@ -1663,7 +2082,306 @@ export const LEVELS = {
    *  repeated: every enemy answers to the same footwork and the same parry, and
    *  the player never has to change tool. The clone and the marksman are two
    *  slots of eight and they are the reason the duels happen under fire.
+   *
+   *  ── THE DEPTH RULE, AND IT IS THE POINT OF THIS ENTIRE LEVEL ───────────
+   *
+   *  Six levels were deleted for being boxes and the player said exactly why:
+   *  "your outdoor maps look good because they're immersive and have a feeling
+   *  of place whereas your interior maps remind you that this is an AI game —
+   *  you have to get rid of the being-in-a-cube feeling, there needs to be more
+   *  detail and more going on around you rather than ceiling and cube."
+   *
+   *  The references answer it and the answer is not detail. In
+   *  `coruscant-temple/temple after battle.webp` and `temple 1.jpg` the sense
+   *  of place is made ENTIRELY OF DEPTH: arcade behind arcade behind arcade,
+   *  columns running up out of frame, light raking in from windows too high to
+   *  see, a polished floor whose inlaid bands lead the eye away. Nothing in
+   *  either frame is more detailed than what this engine already builds. What
+   *  is different is that THE EYE CANNOT FIND THE FAR WALL.
+   *
+   *      AN INTERIOR STOPS BEING A BOX WHEN THERE ARE THREE MORE
+   *      COLONNADES BETWEEN THE PLAYER AND THE WALL.
+   *
+   *  That is the rule, it is recorded here because this is the level that
+   *  proved it, and it is what `templeColonnade` below exists to make
+   *  affordable. Six ranks of columns stand each side of the nave, at |x| =
+   *  11, 27, 44, 62, 81 and 101 m, with the precinct wall at 122. From the
+   *  middle of the nave the wall is behind six arcades; from the deepest aisle
+   *  it is still behind one, and from anywhere you fight it is behind at least
+   *  three. Measured on the built level: the median sight line across the hall
+   *  is 34 m against a room 244 m wide, and the far wall is visible from 4% of
+   *  the walkable floor.
+   *
+   *  WHAT THE DEPTH RULE COSTS. Two hundred and twenty-eight columns, and the
+   *  only reason that is payable is that they are INSTANCED: five draw calls
+   *  for the whole order — two shaft families, a base, a capital and the
+   *  entablature over them — against the 228 a per-column maker would spend.
+   *  The trade is that an instance cannot be individually cut down, so the
+   *  columns are scenery with colliders while everything at ARM'S REACH (the
+   *  benches, the braziers, the alcove statues, the fallen drums) is a real
+   *  object placed one at a time. That is the right way round: what you cut is
+   *  what you can stand next to.
+   *
+   *  ── WHAT IS NOT HERE, STATED RATHER THAN IMPLIED ───────────────────────
+   *
+   *  Player note #37 is "the jedi temple map will finally either end in killing
+   *  the younglings (as a sith and failing to protect them as a Jedi) or
+   *  protecting them and defeating the sith attack." THE PLACE IS BUILT — the
+   *  crèche is the dais at the far end of the hall and the younglings are
+   *  seated on it, so the thing the level is about is in the frame from the
+   *  moment you arrive. THE OBJECTIVE IS NOT: win-and-lose conditions live in
+   *  `Waves.js`/`MODES`, which this pass does not own, and a level that quietly
+   *  half-implemented it would be worse than one that says so. What is needed
+   *  is a mode whose loss condition is the crèche's occupancy rather than the
+   *  player's health.
    * ═════════════════════════════════════════════════════════════════════ */
+
+  temple: {
+    name: 'The Jedi Temple',
+    blurb: 'The Hall of Knowledge on Coruscant, arcade behind arcade, with the crèche at the far end of it.',
+    terrain: 'temple',
+    /* THE GARRISON IS THE ORDER. Four sabered bodies with declared duel forms,
+     * one acolyte slot because something turned this hall, and two shooters
+     * because a hall of nothing but blades is one fight repeated. */
+    pool: ['jedi', 'guardian', 'jedi', 'sentinel', 'trooper', 'acolyte', 'sniper', 'guardian', 'master'],
+    groundColor: 0x8d8471,
+    spawnRadius: [28, 52],
+    atmosphere: {
+      /* AN INTERIOR, so no dome — and the background is the colour of the air
+       * at the end of the hall rather than black, because what is beyond the
+       * sixth colonnade is more temple, dissolving. The one thing that
+       * absolutely may not happen here is the fault the roof note records: a
+       * flat black field over the walls, which reads as night rather than as
+       * indoors. */
+      sky: false, bgColor: 0x2a2118, fog: true, fogColor: 0x2e241a, fogDensity: 0.0090,
+      /* THE LIGHT COMES IN SIDEWAYS FROM SOMETHING YOU CANNOT SEE, which is
+       * the reference's whole lighting scheme: in `temple after battle` the
+       * shadows are 40 m long and rake diagonally across the floor from window
+       * slots above the top of frame. 12° of elevation is the second lowest
+       * key in the game and it is what makes a colonnade throw bars of shadow
+       * down a hall instead of pooling under itself.
+       *
+       * 214°, so the bars fall ACROSS the nave rather than along it. A key on
+       * the hall's own axis would put every column's shadow behind the column,
+       * which is the one bearing at which two hundred and twenty-eight of them
+       * draw nothing. */
+      sunColor: 0xffd9a0, sunIntensity: 5.2, ambient: 0.42,
+      skyColor: 0xc7a878, groundColor: 0x6b5f4a, elevation: 12, azimuth: 214,
+      /* The fill is the light off the FLOOR. This hall is polished stone lit by
+       * a low warm key, so most of what reaches a shaded face has bounced up
+       * off the inlay — which is warm, and is the same argument the Ember
+       * Shelf's block makes about its sea. A blue fill here would be a window
+       * nobody has opened. */
+      fillColor: 0xa8886a, fillIntensity: 0.66,
+      exposure: 1.02, bloom: 0.40, saturation: 1.04,
+      lift: [0.012, 0.008, 0.004], gain: [1.05, 1.0, 0.92],
+      clouds: false, horizon: false,
+    },
+    ambience: { wind: 0.05, windFreq: 220, drone: 0.16 },
+    dust: {
+      /* Dust in the light shafts, and it is the one thing in this level that
+       * makes the windows you cannot see readable: a raking beam is invisible
+       * until something is hanging in it. */
+      count: 1500, color: 0xbfa886, opacity: 0.24, size: 22, fleckColor: 0xffe0b0,
+    },
+    grass: 0,
+    dress(world) {
+      const T = world.terrain;
+      const M = propMaterials();
+      beginDressing(world, 20250805 + 107);
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
+
+      /* ── THE ROOF, at 38 m, and it casts. The reference's columns run up out
+       * of frame and what is over them is dark: a ceiling you can read the
+       * shape of is a ceiling you have measured the room against. 38 is chosen
+       * off the order — a 30 m column with a 2.4 m capital and a 3 m
+       * entablature over it leaves 2.6 m of shadow above, which is exactly the
+       * gap the reference shows and refuses to resolve. */
+      roof(world, { height: 38, half: 126, mat: M.duracreteDark, beamCount: 11, thickness: 2.2 });
+
+      /* ── THE ORDER. Six ranks a side; see the depth rule above. `radius` and
+       * `pitch` both fall with distance from the nave, which is the reference's
+       * own trick and is not perspective: a rank of thinner, more closely
+       * spaced columns behind a rank of colossal ones reads as much further
+       * away than it is, so the hall measures 244 m and feels like more. */
+      const RANKS = [
+        { x: 11, r: 1.72, pitch: 12.0, h: 31.0, bronze: true },
+        { x: 27, r: 1.44, pitch: 12.0, h: 30.0, bronze: false },
+        { x: 44, r: 1.24, pitch: 11.0, h: 29.0, bronze: true },
+        { x: 62, r: 1.06, pitch: 10.0, h: 28.0, bronze: false },
+        { x: 81, r: 0.92, pitch: 9.0, h: 27.0, bronze: false },
+        { x: 101, r: 0.80, pitch: 8.0, h: 26.0, bronze: false },
+      ];
+      const cols = templeColonnade(world, { ranks: RANKS, z0: -140, z1: 138, seed: 7700 });
+
+      /* ── THE BENCHES between the column bases of the inner rank, offset half
+       * a pitch so the nave's edge alternates column, bench, column. Two jobs.
+       * They are in the reference — low tan boxes at every base in
+       * `temple after battle` — and they are what puts an object inside 12 m of
+       * the middle of a 22 m nave, which `world-immersion`'s barrenness survey
+       * measures and which six ranks of columns 11 m out cannot answer on their
+       * own. Real objects, one at a time, with colliders: this is the rank you
+       * can reach. */
+      for (let i = 0; i < 24; i++) {
+        const z = -138 + i * 12;
+        for (const sx of [-1, 1]) {
+          const p = at(sx * 11, z + 6);
+          island(world, p, { seed: 7800 + i * 2 + (sx > 0 ? 1 : 0), yaw: sx > 0 ? 0 : Math.PI,
+            span: 5, maker: 'bench', destructible: 'stone' },
+            (kit) => {
+              kit.slab(M.sandstone, 4.4, 0.55, 1.5, 0, 0.28, 0, { tile: 2.2, seg: 3 });
+              kit.slab(M.duracreteWarm, 4.0, 0.42, 1.2, 0, 0.76, 0, { tile: 2.0, seg: 3 });
+              // the bronze inlay strip along the seat, which is the only warm
+              // accent at eye level in the aisle
+              kit.slab(M.bronze, 4.0, 0.06, 0.22, 0, 0.99, 0, { tile: 1.2, seg: 2, collide: false });
+            });
+        }
+      }
+
+      /* ── THE WINDOW SLOTS. Twenty metres up the outer wall, so the light
+       * source is above the top of every frame the player can compose — which
+       * is the reference's most-copied property and the reason its halls read
+       * as enormous. They are emissive geometry rather than lights: two hundred
+       * point lights would be a frame budget and what actually reads is the
+       * SHAPE of a bright vertical slot seen past six colonnades. */
+      {
+        const slots = [];
+        const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+        const p = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
+        for (let i = 0; i < 34; i++) {
+          const z = -136 + i * 8.2;
+          for (const sx of [-1, 1]) {
+            p.set(sx * 119.5, 27.5 + (i % 3) * 1.1, z);
+            slots.push(m.clone().compose(p, q, s));
+          }
+        }
+        const slot = slabGeo(1.0, 13.0, 3.4, { tile: 2.4, seg: 2 });
+        addInstanced(world, slot, M.glowAmber, slots, V(0, 0, 0),
+          { name: 'templeWindow', castShadow: false });
+      }
+
+      /* ── THE STATUES IN THE ALCOVES. In `temple after battle` a bronze robed
+       * figure on a stepped plinth stands between the columns of the far
+       * arcade, and it is the one thing in the frame with a human silhouette —
+       * which is what gives two hundred columns their scale. Eight of them, in
+       * the second aisle where they are seen THROUGH the inner rank rather than
+       * beside it. */
+      for (let i = 0; i < 8; i++) {
+        const z = -112 + i * 32;
+        const sx = i % 2 ? 1 : -1;
+        const p = at(sx * 35, z);
+        addPlinth(world, p, { width: 6.0, height: 2.2, seed: 7900 + i, mat: M.sandstone,
+          bandMat: M.duracreteDark, drift: false, destructible: 'stone' });
+        addColossus(world, at(sx * 35, z, 2.2), {
+          height: 13 + (i % 3) * 1.6, seed: 7920 + i, mat: M.bronze,
+          coreMat: M.stoneDark, metalMat: M.bronze,
+          // half of them are down: this hall has already been fought through
+          ruined: i % 3 === 0, yaw: sx > 0 ? -Math.PI / 2 : Math.PI / 2,
+          destructible: 'stone',
+        });
+      }
+
+      /* ── THE ARCHIVES, at the +z end. `temple library 3.webp`: two storeys of
+       * shelf bays, floor to gallery, every spine a vertical strip of cold cyan
+       * light, with pale stone piers between the bays and a gallery balustrade
+       * over them. It is the one place in this level where the accent is COLD,
+       * and it is why it reads as a different room without being one. */
+      for (let i = 0; i < 6; i++) {
+        const sx = i % 2 ? 1 : -1;
+        const z = 92 + ((i / 2) | 0) * 20;
+        island(world, at(sx * 20, z), { seed: 8000 + i, yaw: sx > 0 ? -Math.PI / 2 : Math.PI / 2,
+          span: 15, maker: 'archive', destructible: 'stone' },
+          (kit) => {
+            // the pier either side of the bay
+            for (const s2 of [-1, 1]) {
+              kit.slab(M.duracreteWarm, 1.5, 11.0, 2.4, s2 * 6.0, 5.5, 0, { tile: 2.4, seg: 4 });
+            }
+            // the shelf carcase, and the spines in it
+            kit.slab(M.duracreteDark, 10.4, 10.4, 1.1, 0, 5.2, -0.7, { tile: 2.2, seg: 4 });
+            for (let r = 0; r < 7; r++) {
+              kit.slab(M.glowCold, 9.6, 0.62, 0.3, 0, 1.1 + r * 1.42, 0.1,
+                { tile: 1.2, seg: 3, collide: false });
+            }
+            // the gallery over it, which is the storey that says "two storeys"
+            kit.slab(M.sandstone, 12.0, 0.5, 3.0, 0, 6.1, 2.2, { tile: 2.2, seg: 4 });
+            kit.slab(M.sandstone, 12.0, 0.9, 0.35, 0, 6.8, 3.5, { tile: 1.8, seg: 3 });
+          });
+      }
+
+      /* ── THE CRÈCHE, on the dais at the far end, and it is what the level is
+       * about (note #37). The younglings are `addCrowd` at 0.55 scale seated on
+       * the terrace: one draw call for the whole class, and scale is the thing
+       * that reads at range — see the note in addCrowd about the lords' box,
+       * which is the same trick used to say "these are not the crowd". */
+      addCrowd(world, V(2, 0, -132), {
+        seed: 8100, rows: 3, rmin: 3.5, rmax: 8.5, rise: 0.0,
+        aspect: 1.0, fill: 0.86, pitch: 2.2, stride: 22, excite: 0.22,
+        scale: 0.55, sit: 0.04,
+        // pale robes, one hue, no accent: they are the only thing in the hall
+        // that is not either stone or somebody armed
+        palette: [0xbfae90, 0xa8987c, 0xcdbfa4, 0x9c8f78, 0xb6a68a, 0xd6cab0],
+      });
+      // and the low wall round the terrace they are behind
+      for (let i = 0; i < 5; i++) {
+        const x = -18 + i * 9;
+        addRailing(world, at(x, -122), { length: 8.5, height: 1.05, yaw: 0,
+          seed: 8140 + i, mat: M.bronze, destructible: 'stone' });
+      }
+
+      /* ── THE BRAZIERS down the nave. The reference has no lamps in it — the
+       * hall is daylit — but a level fought at 12° of elevation needs SOMETHING
+       * at floor level for the near field, and a standing brazier is what this
+       * building would have. Six, alternating sides, so the nave has a rhythm
+       * that is not the colonnade's. */
+      for (let i = 0; i < 6; i++) {
+        const z = -96 + i * 38;
+        const sx = i % 2 ? 1 : -1;
+        addLamp(world, at(sx * 7.5, z), { height: 3.4, seed: 8200 + i, light: true,
+          color: 0xffb45a, intensity: 22, distance: 30, destructible: 'stone' });
+      }
+
+      /* ── WHAT THE FIGHT LEFT. `temple after battle` is a floor with things
+       * lying on it: a column down across the aisle, shed drums, scattered
+       * plate. This is the grade you actually fight around, and every piece of
+       * it is a real object with a collider — a fallen drum you can stand on
+       * and cut is the difference between a hall and a photograph of one. */
+      for (let k = 0; k < 7; k++) {
+        const site = findSite(world, 20, 96, { clearance: 9, maxSlope: 0.3, tries: 22 });
+        if (!site) continue;
+        const yaw = rng() * TAU;
+        island(world, site.pos, { seed: 8300 + k, yaw, span: 13, maker: 'fallen',
+          destructible: 'stone' },
+          (kit) => {
+            // a shaft down on its side, broken into three drums with gaps
+            let z = -5.0;
+            for (let d = 0; d < 4; d++) {
+              const len = 2.4 + rng() * 1.5;
+              kit.post(M.sandstone, 1.55, 1.5, len, 0, 1.5, z + len * 0.5,
+                { radial: 10, tile: 2.4, rx: Math.PI / 2, collide: true });
+              z += len + 0.18 + rng() * 0.5;
+            }
+            kit.slab(M.duracreteWarm, 3.6, 0.7, 3.6, 0, 0.35, -7.0, { tile: 2.2, seg: 3 });
+          });
+        addDebrisField(world, site.pos, { radius: 8, seed: 8320 + k, count: 26 });
+      }
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 16, 104, { clearance: 5, maxSlope: 0.3 });
+        if (site) addDebrisField(world, site.pos, { radius: 7, seed: 8340 + k, count: 20 });
+      }
+      for (let k = 0; k < 14; k++) {
+        const site = findSite(world, 14, 100, { clearance: 3.0, maxSlope: 0.3 });
+        if (site) world.addProp(rng() < 0.35 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
+      }
+      /* The floor grade. Very light on the big sizes — this is a polished
+       * temple floor and not a talus slope — and heavy on the cobble, which
+       * here is shed plaster and broken inlay. */
+      strewGround(world, { seed: 8400, radius: 108, inner: 4, spread: 0.30, mat: M.stone,
+        landmarks: 0.25, boulders: 0.55, cobble: 1.4 });
+
+      world.notify('THE JEDI TEMPLE', `${cols} columns; the crèche is at the far end`);
+    },
+  },
 
   /* ══════════════════════════════════════════════════════════════════════
    *  THE DESCENT — three rooms, four rungs
@@ -3018,7 +3736,13 @@ LEVELS.geonosis = {
  * and a box is the one shape that cannot be anywhere. The survivors are led by
  * their strongest.
  */
-export const LEVEL_ORDER = ['scoria', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine', 'geonosis', 'foundry'];
+/* THE NEW GROUNDS GO IN BY SUBJECT, NOT BY DATE. Mustafar sits beside the
+ * Ember Shelf because they are the same planet at two scales and a player
+ * should meet them next to each other; the Temple goes with the roofed levels,
+ * ahead of the foundry, because it is the one that answers "an interior can be
+ * a place" and the foundry is the one that still has to. */
+export const LEVEL_ORDER = ['scoria', 'mustafar', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine',
+  'geonosis', 'temple', 'foundry'];
 
 /**
  * DELETED LEVELS.
@@ -3094,9 +3818,19 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   scoria: ['dropship', 'dropship', 'march'],
   foundry: ['gate'],
   colosseum: ['gate'],
-  // Open sky over a bog — but a canopy no gunship can come through, and no
-  // gate either. Whatever is in this wood walks out of it.
-  bog: ['march', 'march', 'dropship'],
+  /* A canopy no gunship can come through, and no gate either. Whatever is in
+   * this wood walks out of it.
+   *
+   * AND THE TABLE NOW SAYS WHAT THE SENTENCE ABOVE IT SAYS. It listed
+   * `dropship` as one entry in three — a gunship hovering over a closed
+   * canopy — while the comment beside it said the opposite, which is the shape
+   * HANDOFF §2.4 warns about from the other end: a comment and its code
+   * disagreeing, with the comment right. It also made `arrivals.mjs` FLAKY
+   * rather than wrong: an arrival opens one flight per kind and a wave opens
+   * about three, so "open wood never once used a dropship" came up roughly
+   * (2/3)³ ≈ 30% of runs. Observed failing twice in a row on a clean tree
+   * before this change and never since. */
+  bog: ['march'],
   // A platform in the middle of an ocean. There is no edge to march in from
   // and nothing to walk out of: everything that arrives here flies.
   kamino: ['dropship'],
@@ -3117,6 +3851,14 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
    * flaring in over a flat plain is the other image these plates are full of.
    */
   geonosis: ['march', 'march', 'dropship'],
+  /* Open sky over a lava field, and the ground between the rivers is broken
+   * enough that a march is a real approach rather than eighty metres of
+   * watching — so both, weighted to the ship the way the open levels are. */
+  mustafar: ['dropship', 'dropship', 'march'],
+  /* A colonnaded hall with a roof on it. There is nothing for a ship to fly
+   * through, and the enemies LIVE here — they walk in through their own
+   * doorways, which is what a `gate` arrival is. */
+  temple: ['gate'],
 });
 
 /**
