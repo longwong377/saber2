@@ -2462,7 +2462,7 @@ export class CommandDirector extends WaveDirector {
    * WHAT THE CAMPAIGN LOOKS LIKE FROM OUTSIDE — the HUD's readout and the run
    * summary's, derived so the two cannot disagree.
    */
-  readout() {
+  readout(cmdr = null) {
     /**
      * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM, AND INVENTS NOTHING.
      *
@@ -2475,7 +2475,11 @@ export class CommandDirector extends WaveDirector {
      * See `netShell` and `applyNet` below for why a client holds nothing.
      */
     if (this._netShell && this._netReadout) return this._netReadout;
-    const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* A named commander, or mine. Two armies on one field are two readouts,
+     * and the host sends each machine the one describing ITS army — see
+     * World._armyTick. */
+    const c = cmdr || this.commander;
+    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     return {
       /**
        * THE ROLL FIRST, AND THE MODE'S OWN FIELDS OVER THE TOP OF IT.
@@ -2496,11 +2500,11 @@ export class CommandDirector extends WaveDirector {
        * caller that wants the key off THIS object does not have to reach for
        * the other one.
        */
-      ...this.roster.summary(),
-      army: this.army.name,
-      armyId: this.army.id,
-      foe: this.foe.name,
-      foeId: this.foe.id,
+      ...c.roster.summary(),
+      army: c.army.name,
+      armyId: c.army.id,
+      foe: c.foe.name,
+      foeId: c.foe.id,
       area: this.areaNumber,
       areas: AREAS.length,
       areaName: this.area.name,
@@ -2513,7 +2517,7 @@ export class CommandDirector extends WaveDirector {
        * caller deriving a number this object already had everything for, and it
        * is unanswerable on a machine whose roster is a wire record rather than a
        * list of Troopers. Derived here, once, from the same roll. */
-      squads: this.roster.squads().length,
+      squads: c.roster.squads().length,
       mustering: this.mustering,
       /** The advance is behind you. The HUD's cue that this is a finished run. */
       done: this.done,
@@ -2654,6 +2658,15 @@ export const FORM_TOLERANCE = 2.2;
  *   · A TEAM DAMAGE slider writing `settings.teamDamage`, 0..1, default 0.35.
  *     `commandConfig` is the reader and is the only thing allowed to interpret
  *     it.
+ *   · A MEETING SWITCH writing `settings.commandVersus`, a boolean, default
+ *     false — the whole of "two sides command two different armies and meet".
+ *     `commandConfig` reads it and is the only thing allowed to interpret it,
+ *     exactly as it is for the two above. It belongs beside the session code
+ *     rather than in the mode list: a meeting needs two people, and a host who
+ *     turns it on alone should be told so rather than deployed onto an empty
+ *     plain. `World.beginVersus` is what the button ultimately reaches, and it
+ *     is idempotent — the second commander is given an army the moment their
+ *     body arrives.
  *
  * src/ui/Screens.js
  *   · A VICTORY CARD. `readout().done` is raised the moment the last area is

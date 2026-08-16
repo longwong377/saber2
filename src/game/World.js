@@ -2754,11 +2754,37 @@ export class World {
     if (!d) return;
     if (this.time - (this._armyAt ?? -ARMY_INTERVAL) < ARMY_INTERVAL) return;
     this._armyAt = this.time;
-    const r = d.readout();
-    const s = JSON.stringify(r);
-    if (s === this._armyLast) return;
-    this._armyLast = s;
-    net.broadcast({ t: 'army', r });
+    /**
+     * ADDRESSED IN A MEETING, BROADCAST IN A CAMPAIGN — and the difference is
+     * not an optimisation, it is the difference between a joining commander
+     * seeing their own army and seeing somebody else's.
+     *
+     * In co-op there is one army and everybody in the session is leading it, so
+     * one readout is the truth on every screen. In a meeting each commander has
+     * a roster, a rank ladder and a casualty list of their OWN, and a broadcast
+     * of the host's would put the Republic's dead down the side of the
+     * Confederacy's screen. `readout(c)` takes the commander for exactly this.
+     *
+     * Keyed per peer for the change test as well, or a two-army session would
+     * compare the Confederacy's payload against the Republic's and resend both
+     * every half second forever.
+     */
+    if (!d.versus || d.commanders.length < 2) {
+      const s = JSON.stringify(d.readout());
+      if (s === this._armyLast) return;
+      this._armyLast = s;
+      net.broadcast({ t: 'army', r: JSON.parse(s) });
+      return;
+    }
+    const sent = (this._armyPer ||= new Map());
+    for (const c of d.commanders) {
+      const id = c.player?.id;
+      if (!id || c.player === this.player) continue;
+      const s = JSON.stringify(d.readout(c));
+      if (sent.get(id) === s) continue;
+      sent.set(id, s);
+      net.toPeer(id, { t: 'army', r: JSON.parse(s) });
+    }
   }
 
   /* ── two commanders ─────────────────────────────────────────────────── */

@@ -132,10 +132,31 @@ async function commandPair(opts = {}) {
  */
 async function joinAsCommander(host, opts = {}) {
   const { RemoteAvatar } = await import('../../src/net/Net.js');
+  const { canHarm } = await import('../../src/game/Player.js');
   const r = new RemoteAvatar(host, { id: opts.id || 'PEER', name: opts.name || 'RIVAL',
     look: null, team: opts.team });
   (host.remotes || (host.remotes = new Map())).set(r.id, r);
   host.players.push(r);
+  /**
+   * THE PEER'S OWN MACHINE, STOOD IN FOR — and without it the rival is immortal
+   * and its side can never be eliminated.
+   *
+   * `RemoteAvatar.damage` deliberately does not touch `hp`, and its own note
+   * explains why: the peer runs its own Player, its own boons and its own
+   * Second Wind, so the only correct thing the host can do is TELL them, over
+   * `hit`, and let their machine decide what the number becomes — it arrives
+   * back in the next avatar packet. In a check there is no second machine
+   * running that Player. This is that missing half and only that: the gate is
+   * still `canHarm`, called rather than restated, so a hit that must not land
+   * still does not.
+   */
+  r.damage = function (amount, point, source, kind) {
+    if (!(amount > 0) || !this.alive) return false;
+    if (!canHarm(source, this, host.rules)) return false;
+    this.hp -= amount;
+    if (this.hp <= 0) { this.hp = 0; this.alive = false; }
+    return !this.alive;
+  };
   return r;
 }
 
@@ -562,6 +583,40 @@ export function run({ check, assert }) {
     assert(w === null || cs.some((c) => c.side === w), `side ${w} took the field and is nobody's`);
     return `${before.join(' v ')} → ${after.join(' v ')} standing, closed to ${closest.toFixed(1)} m, `
       + `${engaged} target picks across the line; side ${w} took the field, won=${ended[0].won}`;
+  });
+
+  check('command/versus: a joining commander is sent their OWN army, not the host\'s', async () => {
+    /**
+     * THE ROSTER MESSAGE IS BROADCAST IN A CAMPAIGN AND ADDRESSED IN A MEETING,
+     * and the difference is not an optimisation.
+     *
+     * In co-op there is one army and everybody is leading it, so one readout is
+     * the truth on every screen — which is what the `army` message was, and
+     * correctly. In a meeting each commander has a roster, a rank ladder and a
+     * casualty list of their OWN, and a broadcast of the host's puts the
+     * Republic's dead down the side of the Confederacy's screen: a joining
+     * commander watching a panel of ten names that are not theirs take
+     * casualties they did not suffer, in an army they are not leading.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const { host, client, pump } = await commandPair({ host: { commandVersus: true }, start: false });
+    await joinAsCommander(host, { team: SIDES[1] });
+    const cs = host.beginVersus();
+    pump(3);
+
+    const hostSide = host.command.readout();
+    const seen = client.command.readout();
+    assert(seen.roll.length > 0, 'the joining commander was sent no army at all');
+    assert(seen.armyId === cs[1].army.id,
+      `the joining commander is shown ${seen.armyId}, and they are leading ${cs[1].army.id}`);
+    assert(seen.armyId !== hostSide.armyId,
+      `both machines are showing ${seen.armyId} — the host's army was broadcast to its opponent`);
+    const hn = new Set(hostSide.roll.map((t) => t.name));
+    const overlap = seen.roll.filter((t) => hn.has(t.name));
+    assert(!overlap.length,
+      `${overlap.length} names appear on both commanders' rolls (${overlap.slice(0, 3).map((t) => t.name).join(', ')})`);
+    return `${seen.armyId} (${seen.roll.length} names) to the joining commander, `
+      + `${hostSide.armyId} (${hostSide.roll.length}) to the host, no name on both`;
   });
 
   check('command/versus: the joining commander is told which side they are on and where it stands', async () => {
