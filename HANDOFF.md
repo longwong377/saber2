@@ -137,19 +137,30 @@ burning no CPU. **Both suites pass on their own** — `coop` 29/29,
 completed normally (1066, 1088, 1097 passing).
 
 So the last *completed* number is trustworthy and the hang is in the harness,
-not the game. What I did **not** establish, and the next person should:
+not the game.
 
-- whether it is pre-existing or something this session introduced;
-- whether it is the container (many hours of world boots, Chromium instances
-  left over from `fpview.mjs` and `shot.mjs` — `pkill -f chromium` is worth
-  doing before a full run);
-- or whether it is the reference-counted PeerJS broker in
-  `tools/checks/_coop.mjs`, which is the one piece of genuinely shared,
-  concurrent, cross-suite state in the tree.
+**THE DISCRIMINATOR WAS RUN.** `SABER_CHECK_ORDER=reverse` hung on
+`levels-quality.mjs` **again** — the same suite, from the opposite end of the
+run, after ~55 other suites had passed through first. Two of the three
+observed hangs are that suite and the third is `coop.mjs`. **It is not
+ordering.**
 
-The cheap discriminator is `SABER_CHECK_ORDER=reverse` on a fresh container: if
-it hangs on a *different* suite, it is ordering/state; if it hangs on the same
-one, it is that suite.
+What the two share is the thing to look at: they are the two suites that boot
+the most Worlds. `levels-quality.mjs` calls `await level(...)` **twelve times**
+against **three** `unload()` calls, and a World is a terrain heightfield, a
+Rapier world, several instanced fields and a texture set. Nine un-torn-down
+worlds in one suite is fine on its own — it passes alone in 74 s — and is a
+plausible last straw at the end of a run that has already built a hundred.
+
+So the next step is not a bisect, it is a memory/handle reading: run
+`--expose-gc` with `process.memoryUsage()` logged per suite and watch whether
+RSS climbs monotonically across the run. If it does, `levels-quality.mjs`
+tearing down what it builds is the cheap fix, and `lifecycle.mjs` already owns
+the vocabulary for saying so.
+
+Two things that are NOT the cause, ruled out rather than assumed: suite order
+(above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
+reverse run; it hung anyway).
 
 ### 2.8 Bash has a 10-minute cap
 
