@@ -107,10 +107,8 @@ const stubInput = () => ({
  *
  *   'stand'    a statue with a sweeping blade. The worst case for the enemy and
  *              the one the audit drove: no `fleeing`, no `ranged`, ever.
- *   'give'     backs away steadily — the habit `pull` and `choke` are authored
- *              to answer.
- *   'orbit'    strafes at duelling range, which is what a player who is winning
- *              actually does.
+ *   'give'     backs away steadily — the habit `pull`, `choke` and `lightning`
+ *              are all authored to answer.
  */
 function fight(type, seconds, opts = {}) {
   /* Seeded per subject for the reason duelling.mjs spells out at length: both
@@ -165,7 +163,7 @@ function fight(type, seconds, opts = {}) {
   };
 
   const dt = 1 / 60, N = Math.round(seconds * 60);
-  const back = new THREE.Vector3(), side = new THREE.Vector3();
+  const back = new THREE.Vector3();
   for (let i = 0; i < N; i++) {
     ctx.time = w.time = i * dt;
     // A sweeping blade: the mouse IS the sword in this game, so a moving mouse
@@ -181,11 +179,6 @@ function fight(type, seconds, opts = {}) {
       back.subVectors(p.position, e.position).setY(0).normalize().multiplyScalar(3.2 * dt);
       p.position.add(back);
       p.velocity.x = back.x / dt; p.velocity.z = back.z / dt;
-    } else if (opts.behaviour === 'orbit') {
-      side.subVectors(p.position, e.position).setY(0).normalize();
-      side.set(-side.z, 0, side.x).multiplyScalar(3.4 * dt);
-      p.position.add(side);
-      p.velocity.x = side.x / dt; p.velocity.z = side.z / dt;
     }
 
     if (e.lock) s.lockFrames++;
@@ -558,6 +551,27 @@ export async function run({ check, assert }) {
     return `${rows.length} earned openings, ${rows.length} killing passes`;
   });
 
+  check('powers: a regenerating guard still cannot outlast the body', () => {
+    /* The guard wins a turned pass back every 6 s, so an attacker slower than
+     * that could in principle never spend it down — which would be the wall the
+     * note is NOT asking for. It cannot stall, and the reason is worth pinning:
+     * a turned pass is paid for out of maximum health and health does not come
+     * back, so `1 / TURNED_CUT` passes is a hard ceiling on any body however
+     * deep its guard or however long you take. Driven at eight seconds between
+     * passes, which is slower than the refresh. */
+    const { e, ctx } = bench('master');
+    let passes = 0, t = 0;
+    while (!e.dead && passes < 12) {
+      for (let i = 0; i < 60 * 8; i++) { e.update(1 / 60, ctx); t += 1 / 60; }
+      cutOnce(e, torsoCap(e));
+      passes++;
+    }
+    assert(e.dead,
+      `a Master survived ${passes} torso passes spread over ${t.toFixed(0)} s — its guard comes `
+      + 'back faster than the blade can spend it');
+    return `${passes} passes at one every 8 s — slower than the ${'6'} s refresh — and it still dies`;
+  });
+
   check('powers: a duellist that loses an arm still loses the arm', () => {
     // The guard must not become a blanket immunity. A limb comes off, and the
     // FIRST arm still disarms once the guard has been spent. An acolyte rather
@@ -673,16 +687,36 @@ export async function run({ check, assert }) {
   });
 
   check('powers: the kit answers the habit it is authored for', () => {
-    // `pull` and `choke` are authored to answer a player who backs off, so the
-    // measurement that matters for them is a player who backs off. If giving
-    // ground does not change what the kit reaches, the situations are decoration.
-    const stand = fight('guardian', 20, { behaviour: 'stand' });
-    const give = fight('guardian', 20, { behaviour: 'give' });
-    assert(give.casts.length > 0,
-      `a Temple Guardian holding [${ARCHETYPES.guardian.powers.join(', ')}] cast nothing at a player `
-      + `who spent 20 s walking away from it (stand-off p50 ${give.p50.toFixed(1)} m)`);
-    return `guardian: ${stand.casts.length} cast(s) standing, ${give.casts.length} giving ground `
-      + `(p50 ${stand.p50.toFixed(1)} → ${give.p50.toFixed(1)} m)`;
+    /* `pull`, `choke` and `lightning` are all authored to answer a player who
+     * will not stay inside a blade's reach, so the measurement that matters for
+     * them is a player who backs off. If giving ground does not change what the
+     * kit reaches, the four situations in `_forceBrain` are decoration.
+     *
+     * The coverage bar is every verb on the table except `unleash`, and the
+     * exception is honest rather than convenient: unleash needs `hpFrac < 0.34`,
+     * and the player in this fixture is a statue whose blade is never resolved
+     * against a body — nothing here can take a Master below a third. `standUp`
+     * is what proves it is not simply "wait at range and everything fires".
+     */
+    const reached = new Set();
+    const rows = [];
+    for (const r of standUp()) for (const k of Object.keys(r.byKey)) reached.add(k);
+    for (const t of ['acolyte', 'guardian', 'master']) {
+      const give = fight(t, 20, { behaviour: 'give' });
+      for (const k of Object.keys(give.byKey)) reached.add(k);
+      rows.push(`${t} ${Object.keys(give.byKey).join('+') || 'none'} at p50 ${give.p50.toFixed(1)} m`);
+      if (t === 'guardian') {
+        assert(give.casts.length > 0,
+          `a Temple Guardian holding [${ARCHETYPES.guardian.powers.join(', ')}] cast nothing at a `
+          + `player who spent 20 s walking away from it (p50 ${give.p50.toFixed(1)} m)`);
+      }
+    }
+    const want = Object.keys(ENEMY_POWERS).filter(k => k !== 'unleash');
+    const never = want.filter(k => !reached.has(k));
+    assert(never.length === 0,
+      `${never.join(', ')} never fired once across five archetypes and two behaviours — `
+      + `${never.length > 1 ? 'those verbs are' : 'that verb is'} in the table and not in the game`);
+    return `${[...reached].sort().join(', ')} all reached; giving ground: ${rows.join(', ')}`;
   });
 
   check('powers: nothing in the kit is priced off a second copy of the table', () => {
