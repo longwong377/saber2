@@ -99,6 +99,56 @@ export function strata(h, step, strength, seed = 0) {
  * tools/checks/terrain.mjs pins the agreement; it found two presets whose
  * rockAt disagreed with their own material by 0.17 and 0.43 of slope.
  */
+/**
+ * KAMINO'S COLONY, AND THE ONE AUTHORITY FOR WHERE IT STANDS.
+ *
+ * "It should be a series of tall connected platforms rising out of the sea, not
+ * one giant platform." It was one 156 × 128 m superellipse deck.
+ *
+ * THIS TABLE IS EXPORTED BECAUSE TWO FILES NEED IT AND ONLY ONE MAY OWN IT.
+ * The heightfield below builds the decks from it, and `Levels.kamino.dress()`
+ * walks the same rows to put a rail and a lamp on every rim. The signature
+ * defect of this project is a hand-maintained table beside its generated twin
+ * (HANDOFF §2.3 — eight instances found so far, and every one of them was a
+ * list typed into two files); a rail ring that agreed with the deck it is
+ * standing on only because somebody kept two copies of seven numbers in step
+ * would have been the ninth. `Levels.js` imports this.
+ *
+ * THE LAYOUT is a hub with six satellites on a 72 m hexagon, which is the
+ * reference's own arrangement (`kamino/wide shot of kamino.webp`,
+ * `kamino outside.webp`): decks that nearly touch, with narrow channels of open
+ * sea between them and causeways bridging the channels. The gaps are 8-16 m,
+ * so the ocean is in every sightline from anywhere on the colony — which is the
+ * other half of the note ("the ocean should be more present") — while the
+ * fightable area stays comparable to the slab it replaces: 17.4 k m² of deck
+ * against the old superellipse's 19.2 k.
+ *
+ * THE HEIGHTS SPAN 3.4 m TO 13.0 m and that is the point of the word "tall".
+ * A colony all at one level is a slab with slots cut in it. Adjacent decks
+ * differ by 1.6-3.6 m, so a causeway is a ramp you can see the far end of, and
+ * standing on deck 2 you look DOWN onto deck 6 across sixteen metres of sea.
+ *
+ * `y` is the deck top above the sea (which is the datum). `r` is the rim
+ * radius. `link` names the decks a causeway runs to, given once — the builder
+ * reads each pair in one direction only.
+ */
+export const KAMINO_DECKS = [
+  { x: 0, z: 0, r: 36, y: 6.2, link: [1, 2, 3, 4, 5, 6] },
+  { x: 72, z: 0, r: 28, y: 9.4, link: [2, 6] },
+  { x: 36, z: 62, r: 28, y: 13.0, link: [3] },
+  { x: -36, z: 62, r: 26, y: 4.6, link: [4] },
+  { x: -72, z: 0, r: 28, y: 11.2, link: [5] },
+  { x: -36, z: -62, r: 26, y: 7.8, link: [6] },
+  { x: 36, z: -62, r: 28, y: 3.4, link: [] },
+];
+
+/** Every causeway, as a resolved pair of decks. Derived, never typed. */
+export const KAMINO_SPANS = KAMINO_DECKS.flatMap((a, i) =>
+  a.link.map((j) => ({ a: i, b: j })));
+
+/** Half-width of a causeway deck, in metres. A rail either side of it. */
+export const KAMINO_SPAN_HALF = 5.0;
+
 export const TERRAIN_PRESETS = {
   dunes: {
     scale: 560, res: 340, waterLevel: -999,
@@ -1109,9 +1159,33 @@ export const TERRAIN_PRESETS = {
    * least relief of anything here on purpose: everything vertical on this
    * level is masonry the dressing pass places, and a heightfield with an
    * opinion underneath it would fight the plinths standing on it.
+   *
+   * ── THE HALL GOT FOUR TIMES BIGGER, AND THAT IS THE WHOLE FIX ────────────
+   *
+   * This preset shipped at 300 m of field with its precinct wall at 64-82 m,
+   * i.e. a room 128 m across. Six levels were deleted for being boxes, and the
+   * player named exactly why: "your interior maps remind you that this is an
+   * AI game — you have to get rid of the being-in-a-cube feeling". The
+   * references answer it and the answer is not detail, it is DEPTH: in
+   * `coruscant-temple/temple after battle.webp` and `temple 1.jpg` the sense of
+   * place is arcade behind arcade behind arcade, and THE EYE NEVER FINDS THE
+   * FAR WALL.
+   *
+   * A wall at 64 m is a wall you find on the second glance. The dressing pass
+   * stands six colonnades between the nave and this one — at |x| = 11, 27, 44,
+   * 62, 81 and 101 — so the shell has to be beyond the last of them with room
+   * to spare, and it is at 122. The cost of that is a 470 m heightfield, which
+   * is the same size as the Ember Shelf's and one metre finer per cell than the
+   * dune sea's, so it is a size this engine already carries six times over.
+   *
+   * The floor's own contribution to depth is the BANDS. In the reference the
+   * polished floor is laid in long linear strips running away from the eye,
+   * with a shallow inlaid channel between them; they are the strongest depth
+   * cue in the frame after the columns because they are the only thing in it
+   * with a vanishing point. So they are cut here, in the ground, along z.
    */
   temple: {
-    scale: 300, res: 172, waterLevel: -999, flat: true,
+    scale: 470, res: 250, waterLevel: -999, flat: true,
     /* Warm pale stone and one cool shadow band — the cream ashlar of the
      * reference frames, not the grey of a deck. The accent this level is
      * authored around is the BLADES, so the ground is held light and low in
@@ -1136,23 +1210,171 @@ export const TERRAIN_PRESETS = {
     texScale: [0.44, 0.27, 0.32],
     detail: [1.5, 28],
     height(x, z) {
-      const d = Math.max(Math.abs(x), Math.abs(z));
-      // The precinct wall. Nearer than the works' because a temple hall is a
-      // room and not a shed, and 68 m of floor is already an enormous room.
-      const shell = smoothstep(64, 82, d) * 40;
+      /* THE PRECINCT WALL, at 122 m and not 64. See the note above: the last
+       * colonnade the dressing pass stands is at |x| = 101, so a shell nearer
+       * than that would be a wall with columns in front of it instead of six
+       * arcades with a wall somewhere behind them. 44 m over 16 m of run is
+       * 70°, past the 61° every solver in this game calls walkable, so the
+       * hall is bounded by its own masonry rather than by an invisible box. */
+      const d = Math.max(Math.abs(x) / 122, Math.abs(z) / 158);
+      const shell = smoothstep(0.90, 1.0, d) * 44;
       // The flagging, on a 2.4 m course. Half a centimetre of relief: enough
       // for the ink pass to find the joints and for a raking light to catch
       // them, and far too little to trip anybody.
       const fx = Math.abs(fract(x / 2.4) - 0.5), fz = Math.abs(fract(z / 2.4) - 0.5);
       const joint = -smoothstep(0.40, 0.5, Math.max(fx, fz)) * 0.05;
-      // The dais. Three steps up at the far end of the hall, which is where
-      // the thing you came to kill is standing.
-      const dais = smoothstep(30, 26, Math.hypot(x - 4, (z + 34) * 1.35)) * 1.35;
+      /* THE BANDS. Long inlaid strips running the length of the hall — 4.6 m
+       * wide, 3 cm proud, ONLY grooved across x so the channel between them is
+       * unbroken from one end of the room to the other. That is the difference
+       * between a tiled floor and the reference's: a floor whose joints run
+       * both ways has no direction, and a floor with a continuous line down it
+       * has a vanishing point. Faded out past the last colonnade so the aisles
+       * read as flagging and the nave as polished inlay. */
+      const bx = Math.abs(fract(x / 4.6) - 0.5);
+      const band = -smoothstep(0.41, 0.5, bx) * 0.03 * smoothstep(112, 88, Math.abs(x));
+      /* THE DAIS at the crèche end, where the younglings are. Three courses,
+       * 1.6 m over 5 m of tread — 18°, which the nav and the gait solver both
+       * walk, because the fight has to be able to follow you up it. */
+      const dais = smoothstep(-118, -123, z) * 1.6;
       // and the crack the level's own history put across it
       const rift = -Math.max(0, 0.55 - Math.abs(z - 8 + Math.sin(x * 0.031) * 9) * 0.09) * 0.9;
-      return shell + joint + dais + rift + fbm2(x * 0.075, z * 0.075, 2) * 0.03;
+      return shell + joint + band + dais + rift + fbm2(x * 0.075, z * 0.075, 2) * 0.03;
     },
     rockAt() { return 1; },
+  },
+
+  /**
+   * MUSTAFAR — braided rivers of lava through dark broken rock.
+   *
+   * "For the actual mustafar map go off the reference images more."
+   *
+   * THE ONE THING EVERY REFERENCE AGREES ON IS THAT THERE IS NO LAVA SEA.
+   * Across `mustafar 2/3/4/5/6` the melt is a RIVER SYSTEM: a trunk channel
+   * winding through a valley, strands that split off it and rejoin, falls
+   * pouring over ledges, and a web of thin veins cracking the crust between
+   * them. The Ember Shelf (preset `scoria`, kept, renamed at the player's
+   * request) is the other thing — a shelf standing out of an open sea — and
+   * the two are built from opposite sides of the same water plane:
+   *
+   *   scoria     the ground is an ISLAND. The sheet is everywhere the
+   *              heightfield falls below it, which is most of the field.
+   *   mustafar   the ground is a PLATEAU with channels CUT INTO IT. The sheet
+   *              is at the datum and the shelf stands 3-26 m over it, so the
+   *              only lava you can see is what is in the cuts — which is
+   *              exactly the picture, and which is why the rivers have banks,
+   *              islands and braid bars in them instead of a coastline.
+   *
+   * THE ROCK IS NOT RED. In every reference the basalt is a near-black
+   * grey-brown and it only LOOKS red where the melt is throwing light on it.
+   * The palette is authored at that near-black; the red arrives from the sheet
+   * (analytic, self-luminous — see the Ember Shelf's note), from the point
+   * lights the dressing pass strings along the channels, and from the level's
+   * own sky. Author the rock warm to "help" and the accent has nothing to be
+   * an accent against, which is rule 5 and is the mistake `scoria`'s own
+   * comment records making from the other direction.
+   */
+  mustafar: {
+    scale: 500, res: 300, waterLevel: 0.0,
+    /* Near-black basalt, barely warm. `scoria` records the whole experiment
+     * that fixes this swatch: authored COLD (hue 232-250°) a two-tone cel ramp
+     * with a low sun bands straight to lavender, because the shaded band is
+     * most of the ground and there are no midtones to hide a cast in. So this
+     * is the same solution — a warm NEAR-NEUTRAL at 22° and 0.11 of
+     * saturation, dark enough to sit under the accent and on the warm side of
+     * neutral where the firelight can find it. */
+    sandColor: 0x2b2622, rockColor: 0x3a3029,
+    maps: 'rock',
+    gritColor: 0x241f1c, rockColor2: 0x2e2622,
+    /* The dust is the ash on the flow tops; the crust is the oxidised skin on
+     * a lobe that has cooled. The crust is the one genuinely chromatic band
+     * here and it is deliberately the minority material. */
+    dustColor: 0x4a413a, crustColor: 0x6b4433,
+    // 0.09 is 24° and 0.30 is 46°: ash lies on the benches, bare basalt on
+    // every ridge face and every channel wall.
+    slopeBands: [0.09, 0.30, 0.028, 0.10],
+    stoneSlope: 0.14,
+    crust: 0.52, strataH: 2.4, cliffs: true,
+    // Down the trunk valley, so the ash streaks the way the draught off the
+    // river lays it.
+    wind: [0.78, 0.62],
+    macro: [126, 0.62, 0.48, 1.12],
+    rockUpland: [0.10, 5, 24],
+    lagColor: 0x2b2c30, sheetColor: 0x5a4c42,
+    // Ash, like the Ember Shelf's and for the same reason: dry, fed from the
+    // sky continuously, a print filled back in inside a minute.
+    loose: { depth: 0.22, refill: 58, tilt: 0.90, tint: 0.42, soot: 1.0 },
+    mantle: [0.08, 0.66],
+    packedColor: 0x1b1a1c,
+    ripple: 0.66,
+    detail: [0.95, 30],
+    height(x, z) {
+      /* ── THE RIVER SYSTEM ──────────────────────────────────────────────
+       *
+       * A braided river is not a sine wave and it is not a noise field. It is
+       * ONE meandering centre line that a high-frequency ridged term keeps
+       * splitting into strands and letting rejoin, and the thing that makes it
+       * read as water rather than as a canyon is that the strands share a
+       * floor: the bars between them stand a metre or two proud of the melt,
+       * so the channel is wide and the sheet inside it is broken up.
+       *
+       * The trunk wanders along x. Three harmonics, deliberately incommensurate,
+       * plus a slow warp — a river with one wavelength reads as a road. */
+      const trunk = Math.sin(x * 0.0097) * 38 + Math.sin(x * 0.0042 + 1.9) * 21
+        + fbm2(x * 0.0058, 4.1, 3) * 16;
+      /* THE BRAID. `ridged2` is near 1 along its crest lines, so subtracting a
+       * threshold and scaling gives a set of curved BARS wandering across the
+       * channel; adding them to the distance-from-centre-line splits the river
+       * into strands wherever a bar crosses it. This is the term that makes it
+       * braided rather than a canal. */
+      const bar = Math.max(0, ridged2(x * 0.0182 + 3.3, z * 0.0094 - 6.1, 3) - 0.38) * 30;
+      const d1 = Math.abs(z - trunk) + bar;
+      // A tributary joining from the far side, so the system has a confluence
+      // in it rather than one line across the map.
+      const trib = Math.sin(x * 0.0151 - 2.4) * 26 + 96;
+      const d2 = Math.abs(z - trunk * 0.4 - trib) + bar * 0.7;
+      // and a third strand on the near side, thinner, so the middle of the
+      // field is fought across a river and not beside one
+      const d3 = Math.abs(z - trunk * 0.7 + 78) + bar * 0.55;
+      const river = Math.min(d1, Math.min(d2, d3));
+
+      /* THE BANK. 0 in the channel, 1 on the shelf, over 24 m — which at 5.2 m
+       * of cut is a 12° ramp out of the melt and NOT a wall. That is the whole
+       * reason the number is 24 and not 8: a channel you can be pushed into
+       * and cannot climb out of is a death pit, and this level's melt already
+       * does 56 HP a second. */
+      const bank = smoothstep(7, 31, river);
+      const cut = -(1 - bank) * 5.2;
+
+      /* ── THE ROCK ──────────────────────────────────────────────────────
+       *
+       * Ridges and spires, both gated on `bank` so nothing stands up out of
+       * the river. `ridged2` again for the ridges, because what the reference
+       * shows is SHARP: knife-edge crests with the flanks falling straight
+       * into the channels, not the rounded swell an fbm gives. */
+      const ridge = Math.max(0, ridged2(x * 0.0051 + 8.8, z * 0.0051 - 2.2, 4)) * 24 * bank;
+      // and the spatter cones and stacks on top of them
+      const spire = Math.pow(Math.max(0, ridged2(x * 0.0148 + 7.3, z * 0.0148 - 3.1, 3) - 0.30), 1.6)
+        * 34 * bank;
+
+      /* The regional fall: the whole field drains toward +x, which is what
+       * puts the falls on one side of the map and the pools on the other. */
+      const fall = -x * 0.030;
+
+      /* The rim. 90 m out the ground climbs into the volcano wall so the level
+       * does not end in a cliff of sky — and so the smoke columns and the
+       * distant cones the dressing pass stands have somewhere to stand. */
+      const d = Math.hypot(x * 1.04, z * 0.94);
+      const rim = smoothstep(150, 244, d) * 54;
+
+      const raw = 3.1 + cut + ridge + spire + fall + rim;
+      /* Quantised into flow courses near the melt, exactly as the Ember Shelf
+       * quantises its sea cliffs: a channel wall reads as stacked cooled flows
+       * rather than as a smooth bank, and the strength falls off with height so
+       * the upland stays a landform instead of a wedding cake. */
+      return strata(raw, 1.8, smoothstep(11.0, 1.2, raw) * 0.50, 5.3)
+        + fbm2(x * 0.058, z * 0.058, 3) * 0.24;
+    },
+    rockAt(x, z, slope) { return clamp(slope * 4.4 - 0.40, 0, 1); },
   },
 
   /**
@@ -1524,14 +1746,34 @@ export const TERRAIN_PRESETS = {
    * cannot: the puddles are geometry the level already had, and what makes them
    * puddles is that the DECK is 4 cm lower there.
    *
-   * ── THE PLATFORM ─────────────────────────────────────────────────────────
+   * ── THE COLONY ───────────────────────────────────────────────────────────
    *
-   * A rounded-rectangular deck 156 × 128 m standing 5.6 m out of the sea, with
-   * a raised outer kerb so you can be driven to an edge you can see, and a
-   * chamfer past it so the drop reads as a drop rather than as a hole. Outside
-   * that there is nothing at all for 240 m, which is the point: `waterLevel` is
-   * 0 and the heightfield falls to −9, so the sea runs to the edge of the world
-   * and the level's own `Water` mesh runs a long way past it.
+   * SEVEN DECKS ON LEGS, NOT ONE SLAB — see `KAMINO_DECKS` above, which is the
+   * one place the layout is written down and is imported by the level's own
+   * dressing pass. Each deck is a disc with a raised outer kerb so an edge you
+   * can be driven to is an edge you can see coming, and a chamfer past it so
+   * the drop reads as a drop; the causeways between them are ramped over
+   * 8 m of overrun at each end so a 5 m step between decks arrives as a 12-20°
+   * walkway rather than as a wall.
+   *
+   * ── THERE IS NO SEABED YOU CAN STAND ON, AND THAT IS A MEASUREMENT ───────
+   *
+   * The slab version sat on a flat pan at −9 m. That is fine under one deck
+   * whose footprint fills the survey disc and wrong the moment the deck becomes
+   * a colony: `world-immersion` walks the walkable r = 90 m disc on a 4 m grid,
+   * excludes anything steeper than 0.55 (61°) as "not ground you can stand on",
+   * and asks the rest for an object within 12 m. With 8-16 m channels of open
+   * ocean threading the colony, a flat pan would have donated ~11 k m² of
+   * seabed to that survey as walkable ground with nothing on it for forty
+   * metres — a level failing a barrenness test on the floor of an ocean.
+   *
+   * So the bed FALLS AWAY from every skirt toe at a gradient of 2.15, which is
+   * 65°, and it keeps falling for 36 m before it bottoms out at −89. Inside the
+   * colony no point is more than about 20 m from a deck, so every square metre
+   * of water in the survey disc is on a face past the threshold and the survey
+   * measures the decks — which is the ground the player can actually stand on,
+   * and is what the check is for. It is also what the reference shows: the
+   * platforms stand on legs over open ocean and there is no bottom in frame.
    */
   kamino: {
     scale: 460, res: 280, waterLevel: 0.0,
@@ -1575,17 +1817,47 @@ export const TERRAIN_PRESETS = {
     texScale: [0.42, 0.26, 0.34],
     detail: [1.5, 26],
     height(x, z) {
-      /* The deck, as a rounded rectangle: a superellipse of order 6, which is
-       * square enough to read as built and round enough that the kerb does not
-       * have four corners you can be trapped in. */
-      const e = Math.pow(Math.pow(Math.abs(x) / 78, 6) + Math.pow(Math.abs(z) / 64, 6), 1 / 6);
-      const deck = smoothstep(1.02, 0.98, e) * 5.6;
-      // the kerb: a 0.9 m lip round the rim, so an edge you can be driven to
-      // is an edge you can see coming
-      const kerb = smoothstep(0.90, 0.965, e) * smoothstep(1.01, 0.98, e) * 0.9;
-      // and the chamfer below it, 5.6 m over 6 m of run — 43°, which is a face
-      // you slide off rather than a wall you stand against
-      const skirt = -smoothstep(1.02, 1.10, e) * 3.4;
+      /* THE DECKS AND THE CAUSEWAYS, as one profile.
+       *
+       * `edge` is the signed distance INSIDE the nearest built rim, in metres —
+       * positive on a deck, negative over open water. `edgeY` is the level of
+       * whichever rim that was, so the fall off the side starts from the right
+       * height whether it is deck 6 at 3.4 m or deck 2 at 13.0. `top` is the
+       * highest built surface here, and it is a MAX over the colony because a
+       * causeway overlaps the decks it lands on — max is what makes a landing a
+       * landing rather than a notch cut in the rim. */
+      let top = -1e9, edge = -1e9, edgeY = 0;
+      const rim = (inside, y) => {
+        if (inside > edge) { edge = inside; edgeY = y; }
+        if (inside <= -0.6) return;
+        // the kerb: a 0.9 m lip in the outer 3.2 m, so an edge you can be
+        // driven to is an edge you can see coming
+        const k = smoothstep(3.2, 0.9, inside) * smoothstep(-0.4, 0.6, inside) * 0.9;
+        const s = y * smoothstep(-0.4, 0.9, inside) + k;
+        if (s > top) top = s;
+      };
+      for (let i = 0; i < KAMINO_DECKS.length; i++) {
+        const D = KAMINO_DECKS[i];
+        rim(D.r - Math.hypot(x - D.x, z - D.z), D.y);
+      }
+      /* A ramp from deck A's level to deck B's, blended over the channel PLUS
+       * 8 m of overrun into each deck — which is what turns the steepest link
+       * in the colony (deck 0 at 6.2 m to deck 2 at 13.0 m over a 7.7 m
+       * channel) from a 41° face into a 16° walkway. `KAMINO_SPAN_HALF` is 5 m
+       * either side of the centre line, so a causeway is a 10 m road: wide
+       * enough for a fight and narrow enough that being on it is being out
+       * over the sea. */
+      for (let i = 0; i < KAMINO_SPANS.length; i++) {
+        const A = KAMINO_DECKS[KAMINO_SPANS[i].a], B = KAMINO_DECKS[KAMINO_SPANS[i].b];
+        const dx = B.x - A.x, dz = B.z - A.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const ux = dx / len, uz = dz / len;
+        const s = (x - A.x) * ux + (z - A.z) * uz;              // along the span
+        const t = Math.abs(-(x - A.x) * uz + (z - A.z) * ux);   // across it
+        const s0 = A.r - 8, s1 = len - B.r + 8;
+        if (s < s0 || s > s1) continue;
+        rim(KAMINO_SPAN_HALF - t, lerp(A.y, B.y, clamp((s - s0) / Math.max(1, s1 - s0), 0, 1)));
+      }
 
       /* THE PANS. Drainage falls on a 13 m module, cut 0.14 m deep — which is
        * 4 cm BELOW the sea, so `Water` lies in them. The falls are diagonal
@@ -1600,11 +1872,21 @@ export const TERRAIN_PRESETS = {
       const px = Math.abs(fract(x / 6.5) - 0.5), pz = Math.abs(fract(z / 6.5) - 0.5);
       const seam = -smoothstep(0.40, 0.5, Math.max(px, pz)) * 0.05;
 
-      // and the sea. −9 m, so nothing standing on it is ever half submerged.
-      const sea = -9;
-      const onDeck = smoothstep(1.10, 1.0, e);
-      return lerp(sea, deck + kerb + skirt + pan * onDeck + seam * onDeck, onDeck)
-        + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
+      if (edge > -0.6) {
+        const onDeck = clamp(edge / 3.0, 0, 1);
+        return top + (pan + seam) * onDeck + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
+      }
+
+      /* THE SEA, and it has no bottom you can stand on — see the note above.
+       * The fall off a rim is 2.6 of gradient, i.e. 69°, past the 61° every
+       * solver in this game calls the limit of standable ground, and it holds
+       * that all the way to the abyssal pan at −78. Inside the survey disc no
+       * point is more than about 18 m of open water from a rim, so the pan is
+       * never reached there and every square metre of water the survey walks is
+       * on a face it correctly refuses. */
+      const out = -edge;
+      return Math.max(-78, edgeY - 0.4 - out * 2.6)
+        + fbm2(x * 0.05, z * 0.05, 2) * 0.30;
     },
     rockAt() { return 1; },
   },
