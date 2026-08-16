@@ -2066,7 +2066,23 @@ export const LEVELS = {
        * zero and the forward-scatter glow switches off entirely — on the one
        * kind of sky where mie scatter is strongest. */
       inscatter: 0.034,
-      exposure: 0.94, bloom: 0.56, saturation: 1.12,
+      /**
+       * BLOOM 0.42, DOWN FROM 0.56 — the roster's highest, and it was buying
+       * nothing.
+       *
+       * A lava planet invites a hot bloom and this had the hottest on the
+       * roster. `saber-bloom` measured what it actually bought: at 0.56 the
+       * pass runs at 0.403 effective, and **past 0.30 the blown-white run
+       * along the blade has already flattened onto the bloom-off floor**. Every
+       * point above that is cost with no image change — on the level that also
+       * carries 26 point lights along its channels.
+       *
+       * It is also the wrong direction for player note #40, "there is too much
+       * bloom on the lightsaber in first person". 0.42 sits between the temple's
+       * 0.40 and scoria's 0.50, which is where a level lit from below belongs
+       * relative to the other two that are.
+       */
+      exposure: 0.94, bloom: 0.42, saturation: 1.12,
       gain: [1.15, 0.99, 0.72],
       // Warm blacks: on this level the shadows are lit by the floor.
       lift: [0.018, 0.005, 0.002],

@@ -3440,6 +3440,21 @@ export class Terrain {
       case 'deck': return [duracreteMaps(2), metalMaps(2)];
       case 'soil': return [soilMaps(1), rockMaps(2)];
       case 'snow': return [snowMaps(1), rockMaps(2)];
+      /**
+       * ROCK ALL THE WAY DOWN — Mustafar, and it was falling through to SAND.
+       *
+       * `maps: 'rock'` was authored for the basalt shelf and no case ever
+       * matched it, so the `default` handed a lava plain the dune sea's sand
+       * carrier as its base map. The declaration and the switch were a
+       * hand-maintained pair that had quietly come apart (HANDOFF §2.3) — and
+       * because the fallthrough produced a perfectly valid material, nothing
+       * looked broken; it just looked like the wrong planet up close.
+       *
+       * Both maps are rock because that is what the landform is: the base is
+       * the flow top and the second is the same stone at the other variant, so
+       * the preset's two rock colours are still what separate them.
+       */
+      case 'rock': return [rockMaps(1), rockMaps(2)];
       default: return [sandMaps(1), rockMaps(2)];
     }
   }
@@ -3456,7 +3471,14 @@ export class Terrain {
    */
   _mapMeans() {
     const m3 = (n) => { const v = MEAN_ALBEDO[n]; return (v[0] + v[1] + v[2]) / 3; };
-    const pair = { deck: ['duracrete', 'metal'], soil: ['soil', 'rock'], snow: ['snow', 'rock'] };
+    /* `rock` is here for the same reason it is in `_mapSet`, and it is the
+     * generated twin of that switch: a set that binds two maps and a mean that
+     * names two materials have to agree, or the far field collapses onto a
+     * colour the near field never had. */
+    const pair = {
+      deck: ['duracrete', 'metal'], soil: ['soil', 'rock'],
+      snow: ['snow', 'rock'], rock: ['rock', 'rock'],
+    };
     const [b, r] = pair[this.preset.maps] || ['sand', 'rock'];
     return new THREE.Vector2(m3(b), m3(r));
   }

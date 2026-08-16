@@ -145,7 +145,7 @@ export async function run({ check, assert }) {
       const rows = [];
       const felt = {};
       for (const lethal of [false, true]) {
-        const { world, engine } = await bootWorld({ level: 'arena' });
+        const { world, engine } = await bootWorld({ level: 'colosseum' });
         // The stub engine carries the members World reached for when it was
         // written. The three new ones come off the SHIPPED prototype rather
         // than being re-declared here — the same rule `_coop.stubEngine`
@@ -313,7 +313,7 @@ export async function run({ check, assert }) {
     const { audio } = await import('../../src/engine/Audio.js');
     const snap = await snapshotShared();
     try {
-      const { world, engine } = await bootWorld({ level: 'arena' });
+      const { world, engine } = await bootWorld({ level: 'colosseum' });
       let drain = 0, bars = 0;
       engine.setDrain = (v) => { drain = v; };
       engine.setBars = (v) => { bars = v; };
@@ -377,7 +377,7 @@ export async function run({ check, assert }) {
     const { ARCHETYPES } = await import('../../src/game/Enemy.js');
     const snap = await snapshotShared();
     try {
-      const { world, engine } = await bootWorld({ level: 'arena' });
+      const { world, engine } = await bootWorld({ level: 'colosseum' });
       let bars = 0;
       engine.setBars = (v) => { bars = v; };
       engine.punch = Engine.prototype.punch; engine._punch = 0;
@@ -426,7 +426,7 @@ export async function run({ check, assert }) {
     const { applyFeelSettings, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
     const snap = await snapshotShared();
     try {
-      const { world, engine } = await bootWorld({ level: 'arena' });
+      const { world, engine } = await bootWorld({ level: 'colosseum' });
       engine._punch = 0;
       engine.punch = Engine.prototype.punch;
       applyFeelSettings(world, { ...DEFAULT_SETTINGS, shake: false, slowmo: false });
