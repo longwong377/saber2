@@ -1025,18 +1025,36 @@ export function run({ check, assert, near }) {
     const inj = new Injury(built.rig, { seed: 11 });
     const base = cost(built.rig.root);
     const steps = [];
-    for (let i = 0; i < 12; i++) {
+    /**
+     * ENOUGH HITS TO REACH THE CAP, DERIVED FROM THE CAP.
+     *
+     * This loop was `i < 12`, chosen when `Injury.max` was 6 — twelve hits
+     * comfortably overran it. Player note #42 ("haven't been able to notice the
+     * player model looking injured or bloody the more damaged they get") moved
+     * the cap to 14, and twelve hits then left twelve wounds against a cap of
+     * fourteen: the check failed while reporting a body that was working
+     * exactly as intended.
+     *
+     * That is the signature defect this project keeps re-finding (HANDOFF 2.3):
+     * a literal sitting beside the value it is supposed to track. The count is
+     * now `max + 4`, so the cap is overrun by construction whatever the cap
+     * becomes, and the next person to retune the budget does not have to know
+     * this line exists.
+     */
+    const hits = inj.max + 4;
+    for (let i = 0; i < hits; i++) {
       inj.hit(null, 0.25);
       steps.push(cost(built.rig.root).tris - base.tris);
     }
     assert(steps[0] > 0 && steps[2] > steps[0], `the marks are not accumulating: ${steps.slice(0, 4).join(', ')}`);
-    assert(inj.wounds.length === inj.max, `twelve hits left ${inj.wounds.length} wounds against a cap of ${inj.max}`);
+    assert(inj.wounds.length === inj.max,
+      `${hits} hits left ${inj.wounds.length} wounds against a cap of ${inj.max}`);
     const capped = cost(built.rig.root);
     assert(capped.meshes - base.meshes <= inj.maxBones * 2,
       `a fully wounded body carries ${capped.meshes - base.meshes} extra meshes against a cap of ${inj.maxBones * 2}`);
     assert(capped.tris - base.tris < 400,
       `a fully wounded body is ${capped.tris - base.tris} extra triangles — a mark is meant to be nine of them`);
-    assert(inj.level === 1, `six wounds of six is level ${inj.level}`);
+    assert(inj.level === 1, `${inj.wounds.length} wounds of ${inj.max} is level ${inj.level}`);
     inj.clear();
     const clean = cost(built.rig.root);
     assert(clean.tris === base.tris && clean.meshes === base.meshes,
