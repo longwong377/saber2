@@ -1888,9 +1888,15 @@ export class CommandDirector extends WaveDirector {
   update(dt, ctx) {
     if (this._ffT > 0) this._ffT -= dt;
     this._trackLeader(dt);
+    /* THE ADVANCE IS OVER AND THIS DIRECTOR IS INERT. `world.over` already stops
+     * World from calling this at all, and that is the load-bearing guard — this
+     * one is for every other caller: `update` sets `intermission = 5.5` AFTER
+     * `payWave` returns, so a director that was not told it had finished would
+     * start wave 22 five and a half seconds after the campaign ended. */
+    if (this.done) return;
+    this._updateClosing(ctx);
     if (this.mustering) { this.arrivals.update(dt, ctx); this._troops(dt, ctx); return; }
     super.update(dt, ctx);
-    this._updateClosing(ctx);
     this._troops(dt, ctx);
   }
 
@@ -2151,7 +2157,10 @@ export const FORM_TOLERANCE = 2.2;
  *     above the fallen, the rank colour as a chip (RANKS[i].color), and the
  *     dead struck through — the casualty list is the point.
  *   · A FORMATION INDICATOR. `readout().formationName`, and the six ids are in
- *     `FORMATIONS`.
+ *     `FORMATIONS`. NOTE THE UNITS: `FORMATIONS[*].leash` is a MULTIPLE of the
+ *     body's own reach now, not metres — printing it raw gives "1.2". The metres
+ *     for a given body are `director.leashFor(F, body)`.
+ *   · `readout()` also carries `done`, raised the moment the advance is over.
  *   · Hook: `world.director.onRoster = (summary) => hud.setRoster(summary)`.
  *
  * src/ui/Menu.js
