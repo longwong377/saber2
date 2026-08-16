@@ -3830,6 +3830,14 @@ LEVELS.geonosis = {
  * should meet them next to each other; the Temple goes with the roofed levels,
  * ahead of the foundry, because it is the one that answers "an interior can be
  * a place" and the foundry is the one that still has to. */
+/* THE FIRST ENTRY IS ALSO THE FALLBACK, which is not obvious from here and
+ * cost a round to find out. `World.loadLevel` resolves an unknown key to
+ * `LEVELS[LEVEL_ORDER[0]]`, and four checks still name levels that were deleted
+ * — `deeps`, `warship`, `intake`, `cut`, `arena` — so those silently measure
+ * whatever stands first here, five times over. Putting Mustafar first therefore
+ * "broke" the Cut's standing-water test and the nav walk without touching
+ * either: they were measuring Mustafar's lava rivers. The Ember Shelf keeps the
+ * slot it has always had. */
 export const LEVEL_ORDER = ['scoria', 'mustafar', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine',
   'geonosis', 'temple', 'foundry'];
 

@@ -1887,16 +1887,38 @@ export const TERRAIN_PRESETS = {
         return top + (pan + seam) * onDeck + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
       }
 
-      /* THE SEA, and it has no bottom you can stand on — see the note above.
-       * The fall off a rim is 2.6 of gradient, i.e. 69°, past the 61° every
-       * solver in this game calls the limit of standable ground, and it holds
-       * that all the way to the abyssal pan at −78. Inside the survey disc no
-       * point is more than about 18 m of open water from a rim, so the pan is
-       * never reached there and every square metre of water the survey walks is
-       * on a face it correctly refuses. */
+      /* ── OFF THE RIM: THE SHAFT, THE SHELF, AND THEN NOTHING ────────────
+       *
+       * Three metres of near-vertical face, ten metres of submerged shelf at
+       * −1.25, and past that a 69° bed to the abyssal pan at −78. Every one of
+       * the three numbers is load-bearing and two of them were measured.
+       *
+       * THE SHAFT is what the reference shows — each dome stands on legs and
+       * its flared underside meets the water as a rim, not as a beach — and it
+       * is what keeps the fall SHORT. `levels-quality`'s wade test walks the
+       * player off the deck and holds them to 3.0 m of depth; with an unbroken
+       * 69° bed running straight down from a 13 m deck they reached 6.8 m,
+       * because there was nothing to land on until the water was six metres
+       * deep. The shaft puts the bottom of the fall at −1.25 whatever height
+       * the deck is, so a plunge off the tallest deck in the colony is the same
+       * plunge as off the shortest.
+       *
+       * THE SHELF IS TEN METRES WIDE because that is what a 4.6 m/s walk off a
+       * 7 m kerb needs: 1.2 s of fall carries you 5.5 m out, and a shelf that
+       * ends before that is a shelf you walk straight over. It sits 1.25 m
+       * under the sheet, which is a quarter of a metre past `wade`, so the bed
+       * shoves you shoreward the moment you are on it — the check's own note
+       * calls the intended reading "chest-deep at the edge of the world", and
+       * this is where you end up standing.
+       *
+       * PAST THE SHELF there is no bottom you can stand on: 2.6 of gradient,
+       * i.e. 69°, past the 61° every solver in this game calls the limit of
+       * standable ground, held all the way down. See the note at the head of
+       * this preset for why that matters to the barrenness survey. */
       const out = -edge;
-      return Math.max(-78, edgeY - 0.4 - out * 2.6)
-        + fbm2(x * 0.05, z * 0.05, 2) * 0.30;
+      const shaft = edgeY - 0.4 - smoothstep(0.6, 3.0, out) * (edgeY - 0.85);
+      const bed = -1.25 - Math.max(0, out - 10.0) * 2.6;
+      return Math.max(-78, Math.min(shaft, bed)) + fbm2(x * 0.05, z * 0.05, 2) * 0.22;
     },
     rockAt() { return 1; },
   },
