@@ -2661,8 +2661,13 @@ export class World {
     if (!pool || pool._netRecorder) return;
     const inner = pool.fire.bind(pool);
     pool._netRecorder = true;
-    pool.fire = (origin, dir, opts = {}) => {
-      const b = inner(origin, dir, opts);
+    /* Variadic past the three it reads, for the reason `installTeamDamage` is:
+     * a wrapper that names the whole argument list has taken a position on a
+     * signature it does not own, and it goes silently wrong the day that list
+     * grows — which is exactly how a fifth parameter on `Enemy.damage` came to
+     * be dropped by four different wrappers in this tree. */
+    pool.fire = (origin, dir, opts = {}, ...rest) => {
+      const b = inner(origin, dir, opts, ...rest);
       if (b && this._netFires && this.netMode === 'host') {
         this._netFires.push([
           opts.owner?.id ?? 0,

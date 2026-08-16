@@ -1216,11 +1216,14 @@ export function installCommand(e) {
   const base = e._move;
   if (typeof base !== 'function') return false;
   e._cmdMove = true;
-  e._move = function (dt, ctx) {
+  /* Variadic for the reason `installTeamDamage` below is: `dt` is the only
+   * argument this wrapper has an opinion about, and a wrapper that names the
+   * rest of the list has taken a position on a signature it does not own. */
+  e._move = function (dt, ...rest) {
     const d = this.commandOf;
     const was = this.speed;
     if (d && !this.dead && !this.gripped && !this.toppled) d.steer(this, dt);
-    try { return base.call(this, dt, ctx); }
+    try { return base.call(this, dt, ...rest); }
     finally { this.speed = was; }
   };
   return true;
@@ -1229,16 +1232,32 @@ export function installCommand(e) {
 /**
  * TEAM DAMAGE, AND THE SCREAM.
  *
- * `Enemy.damage(amount, point, source, kind)` is the one door every injury goes
- * through — blade, bolt, explosion, fall, lightning — so wrapping it on the
- * instance catches all of them and cannot miss the fifth one somebody adds
- * later. That is the whole reason it is here and not spread across the four call
- * sites that hurt things.
+ * `Enemy.damage` is the one door every injury goes through — blade, bolt,
+ * explosion, fall, lightning — so wrapping it on the instance catches all of
+ * them and cannot miss the fifth one somebody adds later. That is the whole
+ * reason it is here and not spread across the four call sites that hurt things.
  *
  * ONLY THE PLAYER'S OWN HITS ARE SCALED. A B1 shooting your sergeant does full
  * damage — obviously — and so does a Force push that throws him into a rock,
  * because the fall is nobody's fault. What is scaled is a hit whose `source` is
  * on your own side, which is exactly the hit the note is about.
+ *
+ * VARIADIC, AND THAT IS THE LOAD-BEARING PART OF THE WRAPPER.
+ *
+ * It used to name four parameters and forward four, and this note used to say
+ * so out loud — `Enemy.damage(amount, point, source, kind)` — which is the tell:
+ * a wrapper that restates a signature has taken a position on an argument list
+ * it has no opinion about, and it goes silently wrong the day that list grows.
+ * It did. `damage` gained a fifth, `preResisted`, when the enemy's Force
+ * resistance shipped: the flag that says this blow has already paid at the
+ * other door. Dropping it charges the body's Force pool TWICE for one blow.
+ *
+ * Four wrappers in this tree had the same shape and two of them were live game
+ * code (`Waves.js boonGuard`, in front of the player the moment any card is
+ * drafted; `Injury.js armInjury`, always). The fifth was in an INSTRUMENT, and
+ * it manufactured a finding that looked entirely real. So the amount is the
+ * only argument this function has an opinion on, and everything after it is
+ * forwarded untouched and uncounted.
  *
  * @returns whether the wrapper went on.
  */
@@ -1248,7 +1267,11 @@ export function installTeamDamage(e, scale) {
   if (typeof base !== 'function') return false;
   e._cmdDamage = true;
   e.teamDamage = clamp(scale, 0, 1);
-  e.damage = function (amount, point, source, kind) {
+  e.damage = function (amount, ...rest) {
+    // `rest[1]` is `source`, by position, because that is the one argument this
+    // wrapper reads. Named out of the list rather than declared, so the list
+    // itself stays the callee's business.
+    const source = rest[1];
     let amt = amount;
     // `team` on the source, not `instanceof Player`: a co-op partner's blade and
     // a peer's avatar are as much your side as you are, and a bolt carries its
@@ -1260,7 +1283,7 @@ export function installTeamDamage(e, scale) {
       if (d && amt > 0) d.onFriendlyHit(this, amt, source);
       if (this.teamDamage <= 0) return false;
     }
-    return base.call(this, amt, point, source, kind);
+    return base.call(this, amt, ...rest);
   };
   return true;
 }
