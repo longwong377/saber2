@@ -1083,6 +1083,26 @@ export const PREVIEW_SEED = { cloak: 4242, skirt: 991, lekku: 7311 };
 export const PREVIEW_VIEW = { fov: 34, azimuth: 0.4232, elevation: 0.1418, margin: 0.06 };
 
 /**
+ * How far in the preview can be walked, and the three shots it can be sent to.
+ *
+ * 5x is the point at which a human head fills the box; past it the near plane
+ * starts clipping the shoulder the camera is looking over, and there is
+ * nothing behind a procedural face worth seeing at that range.
+ *
+ * `focus` is in units of the figure's own half-height, so FACE lands on a face
+ * whatever species is in the box and whatever build slider says — a fixed
+ * metre offset would frame a human's chin and Yoda's species' knees. HILT is
+ * negative because the weapon hangs BELOW the middle of a standing figure:
+ * GRIPS.two.offset puts the hands about 20 cm under the chest.
+ */
+export const PREVIEW_ZOOM_MAX = 5;
+export const PREVIEW_SHOTS = [
+  { id: 'full',  label: 'Full',  zoom: 1,    focus: 0 },
+  { id: 'face',  label: 'Face',  zoom: 3.4,  focus: 0.72 },
+  { id: 'blade', label: 'Blade', zoom: 2.6,  focus: -0.18 },
+];
+
+/**
  * HOW A HAND HOLDS A HILT — the game's own statement of it, not a copy.
  *
  * `handPoseOnHilt` and `GRIP_AT` come out of Player.js, which is where the fist
@@ -1331,8 +1351,30 @@ const _RING = 16;
  * The content is expected to be centred on the origin — see the pivot in
  * _startPreview.
  */
+/**
+ * ZOOM AND FOCUS, added on the report "you should be able to zoom into the
+ * preview image to better see the customizations, or even zoom on the saber,
+ * it's too far away".
+ *
+ * Both default to the identity — `zoom: 1` and `focus: 0` — and `d / 1` and
+ * `y + 0` are exact, so a caller that passes neither gets the camera this
+ * function has always produced. tools/checks/preview.mjs measures the fit at
+ * 24 bearings and does not pass either.
+ *
+ * The zoom divides the SOLVED distance rather than fighting the solver: the
+ * fit is still computed against the whole figure, and then the camera walks in
+ * along the same axis. That way zooming never changes what "framed" means, and
+ * zooming back out lands exactly where it started rather than somewhere the
+ * iteration happened to converge.
+ *
+ * `focus` slides the look-at up the figure in units of its own half-height, so
+ * +1 is the crown and -1 the feet whatever species is in the box — a fixed
+ * metre offset would put a human's face and Yoda's species' face in different
+ * places, which is the same defect that had the blade floating over its head.
+ */
 export function framePreviewCamera(camera, content, opts = {}) {
-  const { pitch = 0, aspect = camera.aspect, margin = PREVIEW_VIEW.margin } = opts;
+  const { pitch = 0, aspect = camera.aspect, margin = PREVIEW_VIEW.margin,
+    zoom = 1, focus = 0 } = opts;
   camera.aspect = aspect || 1;
   camera.fov = PREVIEW_VIEW.fov;
   const half = Math.max(1e-3, (content.y1 - content.y0) / 2);
@@ -1354,11 +1396,14 @@ export function framePreviewCamera(camera, content, opts = {}) {
   // lands. The two are never separated: an earlier draft scaled the distance
   // one last time after the final measurement and returned a number the camera
   // was not actually at.
+  // The point the camera orbits and looks at. `half` is the figure's own
+  // half-height, so this is species-independent by construction.
+  const fy = focus * half;
   const at = (d) => {
-    camera.position.copy(dir).multiplyScalar(d);
+    camera.position.copy(dir).multiplyScalar(d).setY(camera.position.y + fy);
     camera.near = Math.max(0.02, d * 0.02);
     camera.far = d * 3 + 8;
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(0, fy, 0);
     camera.updateMatrixWorld(true);
     camera.updateProjectionMatrix();
     let worst = 0;
@@ -1374,10 +1419,20 @@ export function framePreviewCamera(camera, content, opts = {}) {
     const worst = at(d);
     // ndc ≈ k/d for a point near the axis, so this is Newton's method with the
     // derivative known: it converges in three or four passes from anywhere.
-    if (Math.abs(worst - want) < 0.002) return { distance: d, fill: worst };
+    if (Math.abs(worst - want) < 0.002) return { distance: at2(d, zoom), fill: worst, zoom };
     d = clamp40(d * worst / want);
   }
-  return { distance: d, fill: at(d) };
+  return { distance: at2(d, zoom), fill: at(d), zoom };
+
+  /* Walk in along the solved axis. Separated from `at` so the ITERATION never
+   * sees the zoom — an earlier draft folded it into the fit and the solver
+   * then converged on "the figure fills the frame at 3x", which is not a zoom,
+   * it is a smaller figure. */
+  function at2(dist, z) {
+    const d2 = clamp40(dist / Math.max(0.25, z));
+    at(d2);
+    return d2;
+  }
 }
 
 export class Menu {
@@ -2315,8 +2370,11 @@ export class Menu {
     group.add(pivot);
 
     this.preview = { renderer, scene, camera, group, pivot, running: true, drag: false,
-      yaw: 0.4, pitch: 0.1, t: 0, content: null, cloth: [], w: 0, h: 0 };
+      yaw: 0.4, pitch: 0.1, t: 0, content: null, cloth: [], w: 0, h: 0,
+      // 1 frames the whole figure, which is where this has always been.
+      zoom: 1, focus: 0, shot: 'full' };
     this._refreshPreview(true);
+    this._buildShotBar();
 
     let lastX = 0, lastY = 0;
     host.addEventListener('pointerdown', (e) => { this.preview.drag = true; lastX = e.clientX; lastY = e.clientY; host.setPointerCapture(e.pointerId); });
@@ -2327,6 +2385,25 @@ export class Menu {
       this.preview.pitch = Math.max(-1.1, Math.min(1.1, this.preview.pitch + (e.clientY - lastY) * 0.008));
       lastX = e.clientX; lastY = e.clientY;
     });
+    /**
+     * THE WHEEL ZOOMS. `passive: false` and a preventDefault, because the
+     * forge column scrolls and a wheel over the preview would otherwise scroll
+     * the list behind it while zooming — two things at once, which reads as
+     * neither working.
+     *
+     * Multiplicative rather than additive so a notch is the same proportion of
+     * the view at every zoom; that is what makes it feel like a lens instead of
+     * a slider.
+     */
+    host.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const p = this.preview;
+      if (!p) return;
+      p.zoom = Math.max(1, Math.min(PREVIEW_ZOOM_MAX, p.zoom * (e.deltaY > 0 ? 0.88 : 1.136)));
+      // Zooming by hand leaves the named shots behind — the buttons say where
+      // the camera IS, and after a wheel it is nowhere any of them named.
+      if (p.shot !== 'free') { p.shot = 'free'; this._syncShotButtons(); }
+    }, { passive: false });
 
     const loop = () => {
       if (!this.preview) return;
@@ -2352,6 +2429,42 @@ export class Menu {
   }
 
   _stopPreview() { if (this.preview) this.preview.running = false; }
+
+  /**
+   * The three named shots under the preview, plus what the wheel does.
+   *
+   * Built here rather than typed into index.html for the reason every list in
+   * this front end is: PREVIEW_SHOTS is the authority for how many there are
+   * and what each is called, and a row of buttons in the markup is a second
+   * copy of that list waiting to disagree with it.
+   */
+  _buildShotBar() {
+    const host = document.getElementById('preview-shots');
+    if (!host) return;
+    host.innerHTML = '';
+    this._shotButtons = new Map();
+    for (const shot of PREVIEW_SHOTS) {
+      const b = document.createElement('button');
+      b.className = 'shot';
+      b.textContent = shot.label;
+      this._activate(b, () => {
+        audio.ui('click');
+        const p = this.preview;
+        if (!p) return;
+        p.zoom = shot.zoom; p.focus = shot.focus; p.shot = shot.id;
+        this._syncShotButtons();
+      });
+      this._shotButtons.set(shot.id, b);
+      host.appendChild(b);
+    }
+    this._syncShotButtons();
+  }
+
+  _syncShotButtons() {
+    if (!this._shotButtons) return;
+    const at = this.preview?.shot ?? 'full';
+    for (const [id, b] of this._shotButtons) b.classList.toggle('sel', id === at);
+  }
 
   /** The skin tones of the chosen species, falling back to the shared row. */
   _skinRack() { return skinRackFor(this.s.species); }
@@ -2479,7 +2592,8 @@ export class Menu {
     if (!p || !p.content) return;
     const host = this.el.preview;
     const w = host?.clientWidth || p.w || 300, h = host?.clientHeight || p.h || 260;
-    framePreviewCamera(p.camera, p.content, { pitch: p.pitch, aspect: w / h });
+    framePreviewCamera(p.camera, p.content,
+      { pitch: p.pitch, aspect: w / h, zoom: p.zoom, focus: p.focus });
   }
 
   _refreshPreview(rebuild = false) {

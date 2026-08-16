@@ -424,6 +424,19 @@ button{font-family:inherit}
     linear-gradient(var(--accent),var(--accent)) 100% 100%/2px 14px no-repeat;
   opacity:.5}
 
+/* The three named shots under the preview. Small, inked, and one of them is
+   always lit unless the wheel has been used — "free" is a real state and the
+   row says so by lighting none of them. */
+.shots{display:flex;gap:7px;margin-top:10px}
+.shots .shot{flex:1;padding:7px 4px 8px;font:var(--mono);font-size:9.5px;font-weight:800;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--dim);cursor:pointer;
+  background:var(--panel);border:2px solid var(--stroke);clip-path:var(--cut-sm);
+  transition:.12s;box-shadow:var(--stamp)}
+.shots .shot:hover{background:var(--panel-2);color:var(--ink);transform:translate(-1px,-1px)}
+.shots .shot.sel{background:var(--accent);color:var(--stroke);transform:translate(-2px,-2px);
+  box-shadow:var(--stamp-lg)}
+.shots .shot:focus-visible{outline:3px solid var(--accent-warm);outline-offset:3px}
+
 /* co-op */
 .netrow{display:flex;flex-direction:column;gap:11px;max-width:340px}
 .netrow .primary,.netrow .secondary{margin-top:0}

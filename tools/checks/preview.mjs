@@ -58,6 +58,7 @@ import { functionBody } from './_source.mjs';
 import {
   assemblePreview, dressPreviewFigure, standPreviewFigure, framePreviewCamera, previewContent,
   skinRackFor, HAIR_COLORS, PREVIEW_VIEW, PREVIEW_SETTLE, PREVIEW_SEED,
+  PREVIEW_ZOOM_MAX, PREVIEW_SHOTS,
   BLADE_CAP,
   DEFAULT_SETTINGS,
 } from '../../src/ui/Menu.js';
@@ -619,5 +620,63 @@ export async function run({ check, assert }) {
     assert(diffs.every(d => d === 0),
       `two builds of the same character differ by ${diffs.join('/')} pixels — the preview is not reproducible`);
     return `two builds, four bearings, ${area(a[0])} px of figure, 0 pixels of difference`;
+  });
+
+  /**
+   * THE PREVIEW CAN BE WALKED INTO. Reported as "you should be able to zoom
+   * into the preview image to better see the customizations, or even zoom on
+   * the saber, it's too far away".
+   *
+   * Two properties, and the second is the one that is easy to get wrong. The
+   * first is that zoom moves the camera closer. The second is that it moves it
+   * closer along the SAME axis to the SAME framing — an earlier draft folded
+   * the zoom into the fit iteration, and the solver then dutifully converged on
+   * "the figure fills the frame at 3x", which is not a zoom, it is a smaller
+   * figure. So `fill` must be unchanged by zoom while `distance` falls.
+   *
+   * And `focus` is in units of the figure's own HALF-HEIGHT, not metres:
+   * a fixed offset frames a human's chin and Yoda's species' knees. That is
+   * checked by framing the face shot on both and asserting the camera's height
+   * lands the same fraction up each figure.
+   */
+  check('preview: the camera can be walked in, and walking in does not re-frame', () => {
+    const content = { y0: 0, y1: 1.78, radius: 0.55 };
+    const cam = new THREE.PerspectiveCamera(34, 1.15, 0.05, 40);
+
+    const base = framePreviewCamera(cam, content, { aspect: 1.15 });
+    const basePos = cam.position.clone();
+    assert(base.zoom === 1, `the default is zoom ${base.zoom}, not 1`);
+
+    let prev = base.distance;
+    for (const z of [1.5, 2.6, 3.4, PREVIEW_ZOOM_MAX]) {
+      const got = framePreviewCamera(cam, content, { aspect: 1.15, zoom: z });
+      assert(got.distance < prev, `zoom ${z} did not move the camera in (${got.distance} vs ${prev})`);
+      // the same framing, from closer: the fit is solved before the walk-in
+      assert(Math.abs(got.fill - base.fill) < 0.01,
+        `zoom ${z} re-framed the shot (fill ${got.fill.toFixed(3)} vs ${base.fill.toFixed(3)}) — `
+        + 'the zoom is inside the fit iteration, which makes it a smaller figure rather than a closer camera');
+      // …and along the same axis
+      const bearing = cam.position.clone().normalize().dot(basePos.clone().normalize());
+      assert(bearing > 0.999, `zoom ${z} swung the camera off its own axis (dot ${bearing.toFixed(4)})`);
+      prev = got.distance;
+    }
+    assert(base.distance / prev > 3, `${PREVIEW_ZOOM_MAX}x only bought ${(base.distance / prev).toFixed(2)}x`);
+
+    // The named shots, and FOCUS being proportional rather than absolute.
+    const face = PREVIEW_SHOTS.find(s => s.id === 'face');
+    assert(face, 'there is no face shot');
+    const heights = [];
+    for (const h of [1.78, 0.66]) {                       // a human, and Yoda's species
+      framePreviewCamera(cam, { y0: 0, y1: h, radius: 0.55 * (h / 1.78) },
+        { aspect: 1.15, zoom: face.zoom, focus: face.focus });
+      heights.push(cam.position.y / h);                   // as a fraction of the figure
+    }
+    assert(Math.abs(heights[0] - heights[1]) < 0.02,
+      `the face shot sits at ${(heights[0] * 100).toFixed(0)}% of a human and `
+      + `${(heights[1] * 100).toFixed(0)}% of a 0.66 m figure — the focus is in metres, not in figures`);
+
+    return `${PREVIEW_ZOOM_MAX}x max, ${(base.distance / prev).toFixed(1)}x closer, fill held at `
+      + `${base.fill.toFixed(3)}; ${PREVIEW_SHOTS.length} shots, face at `
+      + `${(heights[0] * 100).toFixed(0)}% of the figure on both`;
   });
 }

@@ -2618,9 +2618,23 @@ export const LEVELS = {
         const site = findSite(world, 22, 70, { clearance: 7, maxSlope: 0.3 });
         if (site) addDebrisField(world, site.pos, { radius: 7, seed: 9240 + k, count: 16 });
       }
-      /* Salt, grit and shed plate over the deck: the grade a floor reads as
-       * ground while you are standing on it, and the only INSTANCED thing on
-       * the level — which is why it runs heavy rather than thin.
+      /* SALT AND GRIT ONLY — NO ROCKS. Reported twice: "why would there be
+       * rocks on the platforms of kamino?" and "there shouldnt be rocks on the
+       * kamino platforms". There is no defence for them: `boulders` and
+       * `landmarks` place STONE, and stone does not wash up two hundred metres
+       * above a seabed onto a poured deck. Both are 0.
+       *
+       * `cobble` stays and is not the same thing — it is the fine grade that
+       * makes a floor read as ground while you are standing on it, and on this
+       * level it is salt and shed plate rather than pebbles. Turned UP from
+       * 2.4 to 3.1 to carry what the two stone terms were carrying.
+       *
+       * The PLATFORM ITSELF — one slab against the series of tall connected
+       * decks it should be — is a redesign rather than a fix, and is waiting on
+       * reference images at the player's instruction. Only the rocks are gone.
+       *
+       * It is also the only INSTANCED thing on the level, which is why it runs
+       * heavy rather than thin.
        *
        * `world-immersion` holds every outdoor level to five objects per draw
        * call, and it is right to: the rail, the lamps and the city are 224
@@ -2630,7 +2644,7 @@ export const LEVELS = {
        * than as poured — which is also the correct drawing for a platform that
        * has spent forty years in an ocean. */
       strewGround(world, { seed: 9260, radius: 76, inner: 3, spread: 0.30, mat: M.stoneDark,
-        landmarks: 0.2, boulders: 1.0, cobble: 2.4 });
+        landmarks: 0, boulders: 0, cobble: 3.1 });
 
       world.notify('KAMINO', 'the rail is not everywhere');
     },
