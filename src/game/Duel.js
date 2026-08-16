@@ -1017,6 +1017,18 @@ export class BladeLock {
     else if (this.pressure <= -1 || this.time > 4.5) this._finish('enemy');
   }
 
+  /**
+   * SHOVED APART — a Force power big enough to move a body ends the bind.
+   *
+   * `Enemy._meleeBrain` runs a duellist's kit through a lock now (it used to
+   * return before `_forceBrain` and switch the Force off for the 29–41% of a
+   * long duel that is spent locked), and the one verb that means anything with
+   * two blades crossed is "get off me". This exists so `_castPower` does not
+   * have to reach into a private method to say so — and so that a shove ends
+   * the bind rather than trying to knock back a body the lock is pinning.
+   */
+  forceBreak(winner = 'enemy') { this._finish(winner); }
+
   _finish(winner) {
     if (this.done) return;
     this.done = true;

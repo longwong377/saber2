@@ -147,6 +147,10 @@ const _hit = new THREE.Vector3();
 /* Its own temp, so a stagger direction can be built inside damage() and
  * takeCut() without stepping on whatever _v1 was holding for the caller. */
 const _stag = new THREE.Vector3();
+/** `applyKnockback` scales the caller's impulse when the body resists it, and
+ *  the caller's vector is usually somebody else's scratch — so it copies into
+ *  its own rather than writing through a Player's `_v2`. */
+const _res = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 /** The pitch axis for a body already yawed to `facing` — see _poseWalker. */
@@ -584,9 +588,22 @@ export const ARCHETYPES = {
     saberColor: 10, hilt: 'Guardian', form: 'djemSo',
     damage: 34, preferred: [1.5, 3.2], score: 1300, threat: 9, unlockAt: 4,
     /* Djem So hits hardest and recovers slowest, which is an opening you take
-     * by backing off. The pull is the answer to that habit and it is the whole
-     * kit: it drags you back into the 34-damage swing you just stepped out of. */
-    force: 48, powers: ['pull'],
+     * by backing off. The pull is the answer to that habit and it is the
+     * SIGNATURE: it drags you back into the 34-damage swing you just stepped
+     * out of.
+     *
+     * IT WAS ALSO, FOR A WHOLE SESSION, THE ENTIRE KIT — AND A ONE-VERB KIT
+     * WHOSE VERB ANSWERS A HABIT THE PLAYER MAY NEVER SHOW IS NOT A KIT.
+     * Driven for 25 s against a player who stood and fought, a Temple Guardian
+     * cast NOTHING: `pull` wants `fleeing`, and in a stand-up fight at a
+     * measured p50 of 1.6 m nobody is fleeing, ever. `pressed` is the only
+     * situation a stand-up fight satisfies at all, so a body with no `pressed`
+     * verb is a body with no Force, which is exactly the complaint. The shove
+     * is the one that fits the form rather than a second favour: Djem So's
+     * 0.58 s recovery is the longest opening in the game, and a body that
+     * cannot clear its own guard during it is a free hit every cycle. 48 of
+     * pool is two of them, or a shove and the pull that follows it. */
+    force: 48, powers: ['pull', 'push'],
   },
   master: {
     ...JEDI_BASE,
@@ -721,13 +738,117 @@ export const FORCE_REGEN = 3.0;
  * `_sustain`, where a per-frame bill was losing 55 of every 60 payments. */
 const SUSTAIN_TICK = 0.20;
 
+/**
+ * ── ANSWERING A POWER WITH A POWER ─────────────────────────────────────
+ *
+ * Driven before this existed: 50 damage of kind `force`, `lightning`, `blaster`
+ * and `saber` all delivered **identically** into a Jedi Master, and a player's
+ * lightning moved its Force pool **150 → 150**. It spent nothing defending
+ * itself because no code path could. Two Force users pushing at each other both
+ * landed in full. The pool was a spending account with no defensive side at
+ * all, so "the enemies that use the force" could only ever mean "the enemies
+ * that fire powers at you", never "the enemies you have a Force fight with".
+ *
+ * `resistForce` is the way in. A body that holds a pool spends it to blunt an
+ * incoming power, and the three numbers below are the whole balance:
+ *
+ *   RESIST_PER_FORCE  what a point of pool buys, in hp of blunting. Above 1 so
+ *                     that defending is CHEAPER than casting — a duel of pools
+ *                     that the defender always loses is not a duel.
+ *   RESIST_CAP        the most of one blow a full pool may ever take off. Not
+ *                     1.0, deliberately: a power that can be refused outright
+ *                     teaches the player to stop using powers, which is the
+ *                     opposite of the note this whole file answers.
+ *   RESIST_BEATEN     what is left of that while the guard is already beaten —
+ *                     stunned, staggered, gripped, toppled. This is the reason
+ *                     to break their guard BEFORE you spend 30 on lightning,
+ *                     and it is the same rule `_turnCut` uses for the blade.
+ */
+const RESIST_PER_FORCE = 1.4;
+const RESIST_CAP = 0.55;
+const RESIST_BEATEN = 0.35;
+/** The kinds that are the Force, and are therefore answerable by it. */
+const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
+/**
+ * A shove's speed, priced in the same currency as its damage, so ONE call to
+ * `resistForce` answers a whole blow rather than billing its two halves
+ * separately out of the same pool.
+ */
+const IMPULSE_AS_HP = 1.2;
+
+/**
+ * ── HOW HARD YOU HAVE TO HIT TO BREAK A CAST ───────────────────────────
+ *
+ * Anything that beats the guard (`stun`, a grip, a real shove) breaks a cast
+ * outright. A plain blow has to be worth flinching at, or a single stray bolt
+ * cancels every power the roster has and the telegraph becomes a joke in the
+ * other direction. `max(8, 5% of maxHp)` puts a lightsaber (24–34) through a
+ * Jedi's concentration and a blaster bolt (9–13) through nobody's but a
+ * B1-tier body's, which is the right shape: the blade is the answer.
+ */
+const CAST_FLINCH_FLOOR = 8;
+const CAST_FLINCH_FRAC = 0.05;
+
+/**
+ * ── THE GUARD, AND WHY "THEY DIE TOO EASILY" IS NOT A HEALTH NUMBER ────
+ *
+ * `takeCut` makes any capsule with `vital >= 0.9` — head 0.95, neck, chest,
+ * spine and hips all 1.0 — instantly lethal at `maxHp * 2`, and the FIRST arm
+ * lost sets `disarmed` on anything holding a blade. So a 460 hp Jedi Master and
+ * a 130 hp Sith acolyte died to exactly the same single torso pass, and raising
+ * anybody's health could never have changed that by one frame. Measured
+ * time-to-kill with a blade sweeping: acolyte 3.1 s, knight 4.5 s.
+ *
+ * The fix is not more hp and it is not invulnerability. It is a GUARD: a
+ * duellist turns a fight-ending cut aside while its guard is up, and the counter
+ * -play is the duel game this file already has. Every one of the openings the
+ * player earns — a parry, a chamber, a won blade lock, a Force shove, a heavy
+ * blow, a topple, a grip, a severed arm — sets `stunTimer`, `duel.staggered`,
+ * `toppled`, `gripped` or `disarmed`, and every one of them makes the killing
+ * pass land immediately (`_guardOpen`). So the answer to "how do I kill a Jedi"
+ * stops being "swing at its chest" and becomes "beat its guard, then swing at
+ * its chest", which is the fight the rest of Duel.js was built for.
+ *
+ * It is DERIVED and not authored — HANDOFF 2.3, no hand-maintained table beside
+ * its generated twin. 90 hp per turned pass is two thirds of the lightest
+ * duellist on the roster (acolyte 130, knight 140), so the count rises with
+ * health without anybody having to keep a second column in step:
+ *
+ *     acolyte 2 · knight 2 · sentinel 3 · guardian 3 · master 6 · bodyguard 12
+ *
+ * …and the last two never spend all of it, because a turned pass is NOT free.
+ * It costs `TURNED_CUT` of maximum health and leaves the body staggered, so the
+ * real ceiling is `1 / TURNED_CUT` passes however deep the guard is — five for
+ * everything. Health and guard multiply up to that ceiling and no further,
+ * which is what stops this from being the wall the note is not asking for.
+ *
+ * Training bodies are excluded: the dojo's sparring partner exists to be hit.
+ */
+const GUARD_PER_HP = 1 / 90;
+const TURNED_CUT = 0.24;
+/** Seconds to win one turned pass back, and only while the guard is not beaten. */
+const GUARD_REFRESH = 6.0;
+
 export const ENEMY_POWERS = {
   push: {
     cost: POWER_COST.push, cd: 6.5, band: [0, 7.5], want: 'pressed',
     label: 'FORCE PUSH', color: '#8ad8ff', sound: 'push',
   },
+  /**
+   * BANDED AT 3.2 AND NOT 6.5, because 6.5 was outside the fight.
+   *
+   * A pull is authored to answer "backing off to heal or to wait out a
+   * recovery" — the moment the gap OPENS — and it banded from 6.5 m, which is
+   * more than twice the widest duelling band on the roster. Measured stand-off
+   * over 25 s fights against a real player: p50 1.6 m, p90 1.7 m. So the power
+   * could only ever fire at somebody who had already fully disengaged, by
+   * which point "drags you back into the swing you just stepped out of" is not
+   * what it does. 3.2 is the far edge of the widest melee band (`bodyguard`
+   * 3.8, `master` 3.4) plus nothing: it is the first metre at which the target
+   * is genuinely OUT rather than merely circling.
+   */
   pull: {
-    cost: POWER_COST.pull, cd: 5.4, band: [6.5, 20], want: 'fleeing',
+    cost: POWER_COST.pull, cd: 5.4, band: [3.2, 20], want: 'fleeing',
     label: 'FORCE PULL', color: '#8affc4', sound: 'pull',
   },
   /* Held rather than fired: `hold` is the seconds it may run for and it is
@@ -1251,6 +1372,13 @@ export class Enemy {
     this._castKey = null;
     this.casting = null;
     this.castLeft = 0;
+    this._sustainDebt = 0;
+    /** Fight-ending cuts this body can still turn aside. See the note on
+     *  GUARD_PER_HP and `_turnCut`; 0 for anything that is not a duellist. */
+    this.guardMax = (A.saber && !A.training && !A.inert)
+      ? Math.max(1, Math.ceil(A.hp * GUARD_PER_HP)) : 0;
+    this.guard = this.guardMax;
+    this.guardT = GUARD_REFRESH;
     this.stateTime = 0;
     this.bossPhase = 1;
     this.recentDamage = 0;
@@ -1765,7 +1893,7 @@ export class Enemy {
    * Nothing failed loudly: the exception surfaced as a console error behind a
    * requestAnimationFrame that had already been scheduled.
    */
-  damage(amount, point, source, kind) {
+  damage(amount, point, source, kind, preResisted = false) {
     if (this.dead) return false;
     if (this.invincible) return false;
     if (this.shieldUp && kind !== 'melee') {
@@ -1778,6 +1906,24 @@ export class Enemy {
       if (mat) mat.uniforms.uPower.value = 1.4;
       if (this.shieldHp <= 0) this.dropShield();
       return false;
+    }
+    /**
+     * THE FORCE ANSWERS THE FORCE — one call, at the sink, so a blow is blunted
+     * exactly once however it was thrown. `preResisted` is set by
+     * `applyKnockback`, which has already answered the whole blow (shove and
+     * damage together) so that the two halves do not bill the pool twice.
+     *
+     * `incoming` is deliberately the PRE-resist figure for the two tests below
+     * it: what breaks a body's concentration and what throws its guard aside is
+     * the blow that arrived, not what was left of it after it paid to survive.
+     */
+    const incoming = amount;
+    if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
+    // A power lands, a power answers it, and the answer costs the caster the
+    // cast it was in the middle of. Chip damage does not — see CAST_FLINCH_FLOOR.
+    if (this._castTimer > 0 || this.casting) {
+      const flinch = Math.max(CAST_FLINCH_FLOOR, this.maxHp * CAST_FLINCH_FRAC);
+      if (incoming >= flinch || FORCE_KINDS.test(kind ?? '')) this.breakCast();
     }
     this.hp -= amount;
     /**
@@ -1822,6 +1968,9 @@ export class Enemy {
     const vital = ev.cap.vital ?? 0.4;
 
     if (ev.cap.shield) { this.dropShield(); return; }
+    // BEFORE anything is severed: a turned cut is a cut that did not land, and
+    // a body that "turned" a pass while losing the limb would be nonsense.
+    if (this._turnCut(ev, bone, vital, source)) return;
 
     if (this.actor) {
       const impulse = _v1.copy(ev.impulse).multiplyScalar(0.35);
@@ -1847,6 +1996,57 @@ export class Enemy {
       this.stun(0.4, ev.impulse ?? this._blowDir(ev.point, source), 1.25);
       this._loseLimbBehaviour(bone, ev.point);
     }
+  }
+
+  /**
+   * Would this pass END the fight? Two ways, and the second is the one nobody
+   * counts: `takeCut`'s own lethality gate, and the fact that
+   * `_loseLimbBehaviour` disarms a blade-user on the FIRST arm it loses. One
+   * arm is a kill in every way that matters to a duel.
+   */
+  _fightEnding(bone, vital) {
+    if (vital >= 0.9) return true;
+    if (vital >= 0.7 && this.hp < this.maxHp * 0.55) return true;
+    if (this.A.saber && !this.disarmed && /arm|fore|hand/.test(bone)) return true;
+    return false;
+  }
+
+  /**
+   * THE GUARD TURNS A KILLING PASS ASIDE — see the note on GUARD_PER_HP for the
+   * whole argument and the measurements it comes from.
+   *
+   * Three gates, and each is here so that this is a duel rather than a wall:
+   *
+   *   · only a FIGHT-ENDING pass is turned. A duellist still bleeds from every
+   *     ordinary cut at exactly the rate it always did, and still loses legs.
+   *   · only while the guard is UP. Everything the player earns — a parry, a
+   *     chamber, a won blade lock, a Force shove, a heavy blow, a topple, a
+   *     grip, a severed arm — opens it, and the killing pass lands at once.
+   *   · it is NOT free. A turned pass costs a quarter of maximum health and
+   *     leaves the body staggered, so the ceiling on how long any of this can
+   *     last is `1 / TURNED_CUT` passes no matter how deep the guard is.
+   *
+   * The stagger is the important part of the feel: the answer to a turned cut
+   * is to keep swinging, because you just beat the guard you failed to get
+   * through.
+   */
+  _turnCut(ev, bone, vital, source) {
+    if (this.guard <= 0 || this.dead) return false;
+    if (this._guardOpen()) return false;
+    if (!this._fightEnding(bone, vital)) return false;
+
+    this.guard--;
+    this.guardT = GUARD_REFRESH;
+    this.hp -= this.maxHp * TURNED_CUT;
+    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
+    if (this.hp <= 0) { this.die(ev.point, source, 'cut'); return true; }
+
+    // It reads as what it is: steel stopping steel, and a guard thrown wide.
+    this.stun(0.42, ev.impulse ?? this._blowDir(ev.point, source), 1.15);
+    audio.clash(ev.point ?? this.position, 0.6);
+    this.world.particles?.sparkBurst?.(ev.point ?? this.position, null, 16, { speed: 9 });
+    this.world.notifyFloating?.(this.aimPoint(_v1), 'TURNED', '#cfe4ff');
+    return true;
   }
 
   /** @param point where the blade crossed, so a dropped hilt starts there. */
@@ -1933,23 +2133,49 @@ export class Enemy {
 
   applyKnockback(impulse, damage, source, gentle) {
     if (this.dead) {
-      if (this.actor?.ragdolled) {
+      // `impulse` is legitimately null — `_sustain` bills damage with no shove
+      // behind it — and this line dereferenced it, so a held power that outlived
+      // its victim threw inside world.update(). Latent, but reachable.
+      if (this.actor?.ragdolled && impulse) {
         for (const b of this.actor.bodies.values()) b.applyImpulse(_v1.copy(impulse).multiplyScalar(b.mass * 0.4), b.position);
       }
       return;
     }
-    this.velocity.add(impulse);
+    /**
+     * PUSHING INTO A PUSH IS A CONTEST. Measured before this existed: two Force
+     * users shoving at each other both landed in full, and a Master with 150 of
+     * pool was moved exactly as far as one with none.
+     *
+     * The blow is weighed ONCE — the shove priced alongside the damage, see
+     * IMPULSE_AS_HP — and the fraction the pool buys back is applied to both,
+     * so a body cannot be billed twice for one blow and cannot blunt the harm
+     * while taking the whole ride. `preResisted` carries that decision down
+     * into `damage()`.
+     */
+    let dmg = damage || 0;
+    const weight = dmg + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
+    const blunt = this.resistForce(weight, 'force', source);
+    if (blunt > 0) {
+      const k = Math.max(0, 1 - blunt / weight);
+      dmg *= k;
+      if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
+    }
+    if (impulse) this.velocity.add(impulse);
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;
-    if (damage > 0) this.damage(damage, this.position, source, 'force');
-    if (!gentle && impulse.length() > 12 && this.actor && !this.A.boss) {
+    // A real shove beats a guard, so it beats whatever that guard was holding
+    // together. `stun` below only fires past 12 m/s and never on a boss, which
+    // is why this cannot be left to it.
+    if (!gentle) this.breakCast();
+    if (dmg > 0) this.damage(dmg, this.position, source, 'force', true);
+    if (!gentle && impulse && impulse.length() > 12 && this.actor && !this.A.boss) {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
     }
     // "I want to hear the enemies scream as they get force thrown" — the throw
     // is the impulse, so the trigger belongs exactly here rather than in
     // whichever power happened to produce it.
-    if (!gentle && impulse.length() > 10) this.cry('scream', 0.9);
+    if (!gentle && impulse && impulse.length() > 10) this.cry('scream', 0.9);
   }
 
   /**
@@ -1999,6 +2225,11 @@ export class Enemy {
    */
   stun(t, fromDir = null, power = 1) {
     this.stunTimer = Math.max(this.stunTimer, t);
+    // …AND IT BREAKS WHATEVER THE BODY WAS REACHING FOR. Every caller of this
+    // method has already decided the guard lost, and a guard that lost cannot
+    // be holding a power together. See `breakCast` for what used to happen
+    // instead, which was that the wind-up FROZE and arrived afterwards.
+    this.breakCast();
     if (this.duel && !this.dead) this.duel.stagger(t, fromDir, power);
   }
 
@@ -2209,6 +2440,14 @@ export class Enemy {
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
+    /* A guard is won back by COMPOSING yourself, so the clock does not run while
+     * the body is stunned, staggered, toppled, gripped or locked. That is what
+     * makes pressure worth keeping up: a player who backs off to heal is handing
+     * the duellist its guard back, and one who stays on it is not. */
+    if (this.guard < this.guardMax && !this._guardOpen()) {
+      this.guardT -= dt;
+      if (this.guardT <= 0) { this.guard++; this.guardT = GUARD_REFRESH; }
+    }
     if (this.compelled) {
       this.compelled.t -= dt;
       // It ends when the clock runs out, when the victim dies (there is nothing
@@ -2307,6 +2546,10 @@ export class Enemy {
       // held off the ground by something it cannot see. `cry` is gapped, so
       // holding one up for six seconds is one cry rather than 360.
       this.cry('scream', 2.5);
+      // A body off its feet is not casting. This return is ABOVE `_meleeBrain`,
+      // so the identical test inside `_forceBrain` was never reachable and a
+      // grip froze a wind-up rather than breaking it — see `breakCast`.
+      this.breakCast();
       this.wish = null;
       return;
     }
@@ -2597,7 +2840,27 @@ export class Enemy {
 
   _meleeBrain(dt, ctx, dist) {
     if (!this.saber) { this._beastBrain(dt, ctx, dist); return; }
-    if (this.lock) { this.wish = null; return; }   // a blade lock pins both fighters
+    if (this.lock) {
+      /**
+       * A BLADE LOCK PINS THE FEET AND THE BLADE. IT DOES NOT SWITCH OFF THE
+       * FORCE — AND IT USED TO.
+       *
+       * This was one line — `this.wish = null; return;` — placed above the call
+       * to `_forceBrain`, so the whole kit was disabled for the duration of
+       * every bind. Measured share of a 25 s duel spent locked: Sentinel 41%,
+       * Master 29%. Which means the archetypes that survive long enough to USE
+       * a kit were exactly the ones whose kit was off for a third to a half of
+       * the fight, and it was off during the one moment a shove means the most:
+       * two blades crossed, nose to nose, nothing else either of you can do.
+       * Every film this game is made of answers that moment with a hand.
+       *
+       * The feet stay pinned — the lock owns those — and `_castPower` resolves
+       * the bind when the shove lands.
+       */
+      this.wish = null;
+      if (this.powers) this._forceBrain(dt, ctx, dist);
+      return;
+    }
     if (this.trainingSpeed) this.duel.timeScale = this.trainingSpeed;
     // The leader's aura reaches the duel brain as tempo, which is what the form
     // actually spends: shorter guards, shorter recoveries, the same attacks.
@@ -2688,8 +2951,26 @@ export class Enemy {
       ? t.velocity.x * this.toTarget.x + t.velocity.z * this.toTarget.z : 0;
     const hpFrac = this.hp / this.maxHp;
     const situation = {
-      // a blade inside the band it wants to fight at, and it is behind on health
-      pressed: dist < this.A.preferred[1] + 0.8 && hpFrac < 0.72,
+      /**
+       * A BLADE INSIDE THE BAND IT WANTS TO FIGHT AT. That used to read
+       * `&& hpFrac < 0.72`, and that clause is why the whole feature was
+       * invisible: a duellist at full health could never OPEN with a shove, and
+       * `pressed` is the ONLY one of these four that a stand-up fight ever
+       * satisfies. Driven 25 s each, 1v1, against a real player with a sweeping
+       * blade, every archetype on the roster cast nothing at all and every pool
+       * finished on its maximum — acolyte 62/62, knight 44/44, sentinel 40/40,
+       * guardian 48/48, master 150/150. A Sentinel, whose entire kit is this
+       * one verb, cast zero powers across 75 s and three behaviours.
+       *
+       * So the shove goes back to being what its own header calls it, "get off
+       * me", and the thing that stops it being a tic is what was always meant
+       * to: a 6.5 s cooldown and a pool that regenerates slower than it spends
+       * (FORCE_REGEN 3.0/s against a 20 price). It is also the first beat of
+       * the only two-beat this roster has — see `_castPower`, where the push is
+       * sized to buy the distance that `ranged` (and therefore lightning, and
+       * therefore the pull) needs to become reachable at all.
+       */
+      pressed: dist < this.A.preferred[1] + 0.8,
       // opening the distance: `closing` is positive when they move away from it
       fleeing: closing > 1.6 || dist > this.A.preferred[1] + 3.5,
       ranged: dist > this.A.preferred[1] + 2.0,
@@ -2702,6 +2983,22 @@ export class Enemy {
       if (dist < P.band[0] || dist > P.band[1]) continue;
       if (!situation[P.want]) continue;
       if (!this._hasLineOfSight(ctx)) continue;
+      /**
+       * THE PRICE IS PAID WHEN THE BODY COMMITS, NOT WHEN THE BLOW ARRIVES.
+       *
+       * Both halves used to be charged inside `_castPower`, at the far end of
+       * the 0.45 s wind-up, so a wind-up that never landed cost the caster
+       * nothing at all: no pool, no cooldown, and it could be started again on
+       * the very next frame. Once casts became breakable (see `breakCast`) that
+       * would have made every telegraph a free bluff and every interrupt
+       * worthless — the player would learn to ignore the tell, which is the
+       * exact failure the telegraph exists to prevent.
+       *
+       * Charging here makes an interrupt worth reaching for and it makes the
+       * pool move on the screen at the moment the player can see why.
+       */
+      this.force -= P.cost;
+      this.powerCd[key] = P.cd;
       this._castKey = key;
       this._castTimer = 0.45;
       this.world.notifyFloating?.(this.aimPoint(_v1), P.label, P.color);
@@ -2710,24 +3007,110 @@ export class Enemy {
     }
   }
 
+  /**
+   * BREAK A CAST — the thing nothing in the game could do.
+   *
+   * `_forceBrain` checks `_castTimer` before every situational test and returns,
+   * and `_think` returns EARLIER still on `stunTimer > 0 || this.gripped` — so
+   * being stunned or gripped mid-wind-up never reached the two interrupt clauses
+   * inside `_forceBrain` at all. They were unreachable dead code, and what a
+   * stun actually did was FREEZE the wind-up: the timer stopped, the body stood
+   * there, and the cast arrived the moment it could think again. Driven against
+   * a mid-wind-up Jedi Master with five different counters — a parry-strength
+   * stun, a push, a grip, lightning and unleash — the cast arrived five times
+   * out of five.
+   *
+   * The same freeze applied one layer down. `_sustain` already refuses to keep
+   * a held power running while `stunTimer > 0 || this.gripped`, and `_think`
+   * returned before it could: a choke survived a stagger with its full duration
+   * intact and resumed afterwards.
+   *
+   * So there is one verb for it, it is called from the places that BEAT a guard
+   * rather than from the brain that would like to keep casting, and the price
+   * is already spent by the time it runs.
+   *
+   * @returns the key of whatever was broken, or null.
+   */
+  breakCast() {
+    let broke = null;
+    if (this._castTimer > 0) { broke = this._castKey; this._castTimer = 0; this._castKey = null; }
+    if (this.casting) { broke = broke ?? this.casting; this._endSustain(); }
+    return broke;
+  }
+
+  /** A held power stops. Separate from `breakCast` because a hold that simply
+   *  runs out of seconds has arrears to settle and a broken one does not. */
+  _endSustain() {
+    this.casting = null;
+    this.castLeft = 0;
+    /* AND THE ARREARS GO WITH IT. `_sustainDebt` is per-body state that nothing
+     * cleared when a cast ended, so a hold that stopped part-way through a tick
+     * handed its unpaid remainder to whatever power ran next — including one
+     * with a completely different `dps`. Small, silent, and the sort of thing
+     * that makes a later measurement of a different power inexplicable. */
+    this._sustainDebt = 0;
+  }
+
+  /**
+   * SPEND THE POOL TO BLUNT AN INCOMING POWER — the defensive half of the Force,
+   * which did not exist. See the note on RESIST_PER_FORCE for the argument and
+   * the measurements.
+   *
+   * Consulted by the SINK and by nothing else: `damage()` and `applyKnockback`
+   * are the two doors every power in the game comes through, so one call each
+   * means a blow is answered exactly once however it was thrown. A body with no
+   * pool returns 0 and pays nothing for the feature existing.
+   *
+   * @returns hp of the blow taken off, having already spent the pool for it.
+   */
+  resistForce(amount, kind, source) {
+    if (!(amount > 0) || this.dead) return 0;
+    if (!this.powers || !(this.force > 0)) return 0;
+    if (!FORCE_KINDS.test(kind ?? '')) return 0;
+    // …and never against itself: a body's own held power bills through the same
+    // door, and a caster paying twice for one cast is not a contest.
+    if (source === this) return 0;
+    const composure = this._guardOpen() ? RESIST_BEATEN : 1;
+    const blunt = Math.min(amount * RESIST_CAP * composure, this.force * RESIST_PER_FORCE);
+    this.force = Math.max(0, this.force - blunt / RESIST_PER_FORCE);
+    return blunt;
+  }
+
+  /**
+   * Is this body's guard already beaten? One predicate, two readers — the blade
+   * (`_turnCut`) and the Force (`resistForce`) — so "the opening you earned" is
+   * one rule rather than two that drift.
+   */
+  _guardOpen() {
+    return this.dead || this.toppled || this.gripped || this.disarmed
+      || this.stunTimer > 0 || !!this.duel?.staggered || !!this.lock;
+  }
+
   /** The cast lands. Everything that hits goes through `applyKnockback`. */
   _castPower(key, ctx, dist) {
     const P = ENEMY_POWERS[key];
     const t = this.target;
     this._castKey = null;
+    // The price and the cooldown were taken when the body committed — see the
+    // note in `_forceBrain`. Nothing is charged here, and a cast that reaches
+    // this line has already been paid for.
     if (!P || !t || !t.alive) return;
-    if (this.force < P.cost) return;
-    this.force -= P.cost;
-    this.powerCd[key] = P.cd;
     audio.force(this.position, P.sound);
     this.world.engine?.setRadial?.(0.22);
 
-    if (P.hold) { this.casting = key; this.castLeft = P.hold; return; }
+    if (P.hold) { this.casting = key; this.castLeft = P.hold; this._sustainDebt = 0; return; }
 
     const dir = _v1.subVectors(t.position, this.position).setY(0);
     const d = dir.length() || 1;
     dir.multiplyScalar(1 / d);
     if (key === 'push' || key === 'unleash') {
+      /* A SHOVE ENDS A BIND. `_meleeBrain` runs the kit through a blade lock
+       * now (see the note there), and the one verb that means anything with two
+       * blades crossed is "get off me" — so it does that, rather than shoving a
+       * body the lock is holding in place. The lock resolves the enemy's way,
+       * which is what winning a shove IS; it has already cost the pool and the
+       * cooldown, and the player's answer is the same one the lock always had. */
+      if (this.lock) this.lock.forceBreak?.('enemy');
       /* The 360 is the 360: `unleash` takes everything inside its band whatever
        * side of the body it is on, which is the property that makes it the
        * answer to being surrounded rather than a bigger push. Reach and
@@ -2766,7 +3149,30 @@ export class Enemy {
     const pay = P.drain * dt;
     const lost = !t || !t.alive || dist > P.band[1] + 2 || this.duel.staggered
       || this.stunTimer > 0 || this.gripped;
-    if (this.castLeft <= 0 || this.force < pay || lost) { this.casting = null; return; }
+    if (this.castLeft <= 0 || this.force < pay || lost) {
+      /**
+       * AND THE LAST TICK IS PAID, WHICH IT WAS NOT.
+       *
+       * The audit reported lightning delivering 45.88 hp against an authored
+       * 35.2 (130%) and asked whether the tick overpays. **It does not, and the
+       * 130% does not reproduce.** Driven against a real Player whose own
+       * `update` is running — the part the earlier probe was missing, so
+       * `invuln` never decayed and every tick after the first was refused —
+       * lightning delivers 28.36 hp against an authored 29.92 at Knight's
+       * `damageTaken` of 0.85. That is 94.8%, an UNDER-pay, and the missing
+       * 5.2% is exactly the arrears standing in `_sustainDebt` when `castLeft`
+       * ran out mid-tick and the hold returned without settling them.
+       *
+       * A hold that runs its course pays what it accrued. One that is BROKEN —
+       * staggered, gripped, out of range — does not, because that is the whole
+       * point of breaking it.
+       */
+      if (!lost && this._sustainDebt > 0 && t?.alive) {
+        t.applyKnockback?.(null, this._sustainDebt, this, true);
+      }
+      this._endSustain();
+      return;
+    }
     this.force -= pay;
 
     /**
