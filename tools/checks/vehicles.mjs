@@ -822,6 +822,12 @@ export async function run({ check, assert }) {
      * every geometry it has. A hundred-mesh gunship would be three hundred draw
      * calls of scenery. */
     assert(meshes <= 24, `${meshes} meshes — three of these is ${meshes * 3} draw calls of arrival`);
+    /* …and the size it PUBLISHES is the size it is. Arrivals sizes its landing
+     * wash and its flare off these, so a literal that had drifted from the
+     * geometry would put the dust cone somewhere the ship is not. */
+    assert(Math.abs(g.userData.span - span) < 0.01 && Math.abs(g.userData.length - len) < 0.01,
+      `it publishes ${g.userData.span?.toFixed(1)} × ${g.userData.length?.toFixed(1)} and measures `
+      + `${span.toFixed(1)} × ${len.toFixed(1)}`);
     return `${span.toFixed(1)} m span, ${len.toFixed(1)} m long, ${meshes} meshes, ${Math.round(tris)} triangles`;
   });
 

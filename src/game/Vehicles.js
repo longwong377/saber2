@@ -1284,8 +1284,10 @@ export function buildHailfire(opts = {}) {
  *   · the returned object is a `THREE.Group` at the ship's centre of mass;
  *   · the NOSE POINTS AT −Z, which is the direction the existing hull cone
  *     points and the direction `_updateDropship` flies;
- *   · it is 8.4 m long and 10.4 m across, against the box's 7.6 by 10.0, so
- *     nothing about the ranges the flight path was tuned at moves;
+ *   · it measures 7.4 m long and 10.9 m across, against the box's 7.6 by 10.0,
+ *     so nothing about the ranges the flight path was tuned at moves — and it
+ *     publishes those as `userData.span/length/height`, off its own bounding
+ *     box rather than as literals, so they cannot drift from the ship;
  *   · `group.userData.engines` is the pair of Object3Ds the engine glow should
  *     be parented to, and `group.userData.lamp` the landing light, so the two
  *     meshes Arrivals already animates have somewhere to go.
@@ -1424,9 +1426,18 @@ export function buildGunship(opts = {}) {
 
   g.userData.engines = engines;
   g.userData.lamp = lamp;
-  g.userData.length = 8.4 * S;
-  g.userData.span = 10.4 * S;
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  /* MEASURED, not typed. These two were literals — 8.4 and 10.4 — beside a ship
+   * that actually measures 7.4 and 10.9, which is HANDOFF §2.3's defect in
+   * miniature: a number kept by hand next to the thing it describes, wrong the
+   * first time a plate moved and wrong silently. Arrivals sizes its flare and
+   * its landing wash off them. */
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g), bs = new THREE.Vector3();
+  bb.getSize(bs);
+  g.userData.span = bs.x;
+  g.userData.length = bs.z;
+  g.userData.height = bs.y;
   if (S === 1) _gunTemplate = g;
   return g;
 }
