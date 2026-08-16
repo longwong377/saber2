@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
-import { SaberController } from './SaberController.js';
+import { SaberController, THRUST_STANDING_SPEED } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
@@ -631,6 +631,33 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
 const _hp1 = new THREE.Vector3(), _hp2 = new THREE.Vector3();
 const _hp3 = new THREE.Vector3(), _hp4 = new THREE.Vector3();
 const _hpM = new THREE.Matrix4();
+
+/**
+ * HOW MUCH BODY GOES INTO AN ATTACK — player note 23. See `_attackDrive` for
+ * what each of these buys and for the before/after measurement.
+ *
+ * Radians, and every one of them is applied ON TOP of whatever the blade and
+ * the Force were already doing to the spine, never instead of it.
+ *
+ * `SPINE_OVER` is the big one: multiplied by the overhead's own arc, which runs
+ * +0.95 chambered to −1.08 through the cut, it spends 0.32 rad arching back and
+ * 0.37 folding forward — 38 degrees of trunk across the swing, against the 1.0
+ * degree the swing used to have. It is set from what a body can actually do:
+ * thoracolumbar extension is about 25 degrees and flexion about 60, so this
+ * sits inside both with the arch as the tighter half.
+ *
+ * `CLAV_*` drive the shoulder girdle. The clavicle's rest direction is sideways
+ * (`Rig.humanoidSkeleton` gives clavR rest [-1, 0.18, 0]), so X elevates and
+ * depresses the shoulder and Y protracts it — which is why the overhead uses
+ * the first and the lunge uses both. 0.30 rad of elevation carries the shoulder
+ * JOINT about 19 cm through the swing, measured, against the 9 mm an idle body
+ * breathes.
+ */
+const SPINE_OVER = 0.34, SPINE_LUNGE = 0.26, SPINE_LUNGE_TWIST = 0.22;
+const CLAV_OVER = 0.30, CLAV_LUNGE = 0.16, CLAV_YAW = 0.34;
+/** Sword side first. The off shoulder answers at a fraction — one torso. */
+const CLAV_DRIVE = [['clavR', 1], ['clavL', -0.45]];
+const _eulA = new THREE.Euler();
 
 /**
  * The last degree of freedom, and it is the hand's own rest pose.
@@ -1658,6 +1685,14 @@ export class Player {
     /** The arm gesture currently reading out whatever the Force is doing. */
     this.gesture = { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false };
     /**
+     * How much of the BODY is currently in the attack — see `_attackDrive`.
+     * `over` is the overhead's own arc, `lunge` the stab's envelope, and `shift`
+     * the world-space offset both of them put on the anchor the blade is solved
+     * from. Held here rather than recomputed by each reader, because
+     * `_updateBlade` and `_updateBody` both need it and they must not disagree.
+     */
+    this.attack = { over: 0, lunge: 0, shift: new THREE.Vector3() };
+    /**
      * Force stop. `held` is what is frozen right now, `firing` is what has been
      * let go and is leaving in a ripple, and `bodies` is the membership test so
      * the per-frame capture sweep is not quadratic.
@@ -1899,6 +1934,12 @@ export class Player {
         this.stamina = Math.max(0, this.stamina - 6);
         audio.swing(16, this.saber.base);
       },
+      /* WHETHER THE FEET ARE UNDER THE LUNGE, from the body's OWN velocity.
+       * The controller can otherwise only infer it from how fast the anchor it
+       * is handed is travelling, and `_attackDrive` now moves that anchor on
+       * purpose — see the note at the read in SaberController. The threshold is
+       * imported rather than repeated. */
+      moving: Math.hypot(this.velocity.x, this.velocity.z) > THRUST_STANDING_SPEED,
     });
     this.camera.addYaw(camDelta.yaw);
     this.camera.addPitch(camDelta.pitch);
@@ -2564,6 +2605,12 @@ export class Player {
     this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
     this.camera.aimDirection(this.aimDir);
 
+    /* THE BODY GOES WITH THE ATTACK — and it moves the anchor the blade is
+     * SOLVED from, so the extra travel is real travel and not a decoration
+     * layered over a blade that is somewhere else. See _attackDrive. */
+    this._attackDrive(dt);
+    this.gripAnchor.add(this.attack.shift);
+
     // The tier's scale on the parry window. Set unconditionally, unlike assist:
     // Grandmaster has assist 0 and still declares the tightest window in the
     // table, so hanging this off the assist branch would leave the one tier
@@ -2652,6 +2699,99 @@ export class Player {
         }
       }
     }
+  }
+
+  /**
+   * THE WHOLE BODY BEHIND AN ATTACK — player note 23.
+   *
+   * "I want the arm movement for the overhead attack to be more pronounced,
+   * right now it feels kind of weak like it's only a small movement that happens
+   * at the elbows rather than a whole body overhead down attack. Same for the
+   * stab — it's like a small wrist movement and the blade only goes a little
+   * further out. Imagine how graceful and cool a fencing stab looks, I want to
+   * see more of the body involved, more effective and cooler."
+   *
+   * HE IS DESCRIBING THE MEASUREMENT. Driven on the real Player and read at the
+   * bones over the whole attack, third person, before this existed — hand and
+   * tip are travel relative to the body, spine and shoulder are the total range
+   * across the attack, and the last column is how far the shoulder JOINT moved:
+   *
+   *                 hand      tip      spine   shoulder   joint
+   *     overhead    22 cm    113 cm     1.0°     0.0°      9 mm   <- 9 mm is idle breathing
+   *     stab        32 cm     57 cm     1.6°     0.0°     22 mm
+   *
+   * A degree of spine and nothing at all at the shoulder. The 113 cm of tip is
+   * the blade's own length acting as a lever on a wrist — which is exactly what
+   * "only a small movement that happens at the elbows" means, and it is why the
+   * tip number looked respectable while the attack did not.
+   *
+   * WHY THE FIX IS NOT IN SaberController. The controller owns the GUARD — where
+   * the blade points, on a sphere about the anchor it is handed. Its overhead
+   * already sweeps 2.03 of the 2.05 units that sphere HAS (`_swY` clamps at
+   * GY_MIN/GY_MAX), so there is no more arc to give: raising OVERHEAD.rise/drop
+   * buys nothing, because the clamp eats it. What is missing is not a bigger
+   * arc, it is that the sphere's CENTRE never moved. A body swinging an axe
+   * drops its chest and drives its shoulder through the cut; a body lunging
+   * takes its whole trunk forward. That is this function, and it is Player's
+   * because it is the body's.
+   *
+   * It publishes ONE thing — `attack.shift`, a world-space offset added to
+   * `gripAnchor` — plus the two scalars `_updateBody` poses the spine and the
+   * clavicles from. Everything downstream (the guard, the hands, the blade, the
+   * volume a deflection is graded in) follows the anchor, so the body's
+   * contribution cannot disagree with the weapon's.
+   *
+   * AFTER, same instrument, same run:
+   *
+   *                 hand      tip      spine   shoulder   joint
+   *     overhead    33 cm    118 cm    37.9°    33.3°    187 mm
+   *     stab        45 cm     73 cm    22.1°    21.5°    181 mm
+   *
+   * and the hand's peak speed 2.0 -> 5.9 m/s on the overhead, 2.8 -> 5.7 on the
+   * stab, which is the part that reads as commitment rather than as reach.
+   *
+   * THE MAGNITUDES, and what each buys:
+   *
+   *   OVERHEAD, driven by `control.swingArc` (+0.95 wind -> -1.08 cut):
+   *     · 0.13 m of anchor rise on the wind and fall through the cut — a real
+   *       chambering, and the single biggest term;
+   *     · 0.075 m back then forward, so the cut TRAVELS rather than pivots;
+   *     · 0.34 rad of spine, arched on the wind and folded through the cut.
+   *   STAB, driven by `control.thrust` (0 -> 1 -> 0 over 0.40 s):
+   *     · 0.22 m of trunk along the AIM — the lunge itself. Along the aim and
+   *       not the guard, because the legs and the trunk go where the fencer
+   *       faces while the point goes where the guard is;
+   *     · 0.26 rad of forward lean and 0.22 of twist onto the sword side.
+   *
+   * A STANDING stab gets the whole of it and a moving one 60%, following
+   * THRUST_REACH.standing's own reasoning: with the feet already carrying you
+   * forward the trunk has less left to give, and doubling up reads as a stumble.
+   */
+  _attackDrive(dt) {
+    const a = this.attack;
+    const c = this.control;
+    // The two envelopes, straight off the controller. Neither is recomputed
+    // here — see SaberController.swingArc for why that matters.
+    const arc = c.swingArc || 0;
+    const thrust = c.thrust || 0;
+    // A moving lunge is already half-made by the legs. `thrustStanding` is
+    // latched at the press by the controller, so this cannot flicker if the
+    // player starts walking halfway through the stab.
+    const lunge = thrust * lerp(0.6, 1, c.thrustStanding ?? 0);
+
+    a.over = arc;
+    a.lunge = lunge;
+
+    const up = _v3.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
+    const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
+    a.shift.set(0, 0, 0)
+      .addScaledVector(up, arc * 0.13)
+      .addScaledVector(fwd, -arc * 0.075)
+      .addScaledVector(fwd, lunge * 0.22)
+      // A lunge drops a little as it goes out — a fencer's line is not level,
+      // and without this the stab reads as the arm being extruded forwards.
+      .addScaledVector(up, -lunge * 0.045);
+    return a;
   }
 
   /**
@@ -2853,6 +2993,7 @@ export class Player {
     // solved hands straight off the hilt — measured up to 18cm at the clamp
     // limits, on exactly the fast swings where this layer is most active.
     const spine = rig.get('spine');
+    const A = this.attack;
     if (spine) {
       const w = this.control.angVel;
       let twist = clamp(-w.y * 0.026, -0.32, 0.32);
@@ -2862,8 +3003,63 @@ export class Player {
       // keeps the swing's weight and gains the push's.
       const g = GESTURES[this.gesture.kind];
       if (g) { lean += g.lean * this.gesture.env; twist += g.twist * this.gesture.env; }
+      /**
+       * AND SO DOES AN ATTACK — note 23, and this is the half of it a camera
+       * can see. Added the same way a gesture is, so a stab thrown out of a
+       * swing keeps both.
+       *
+       * The overhead's arc is NEGATED: `swingArc` is positive when the blade is
+       * chambered above the head, and a chambered body is arched BACK, so the
+       * spine's forward lean runs opposite to it. Through the cut the arc goes
+       * to −1.08 and the same term folds the trunk 21 degrees forward over the
+       * blade. Measured across the whole swing: 1.0 degrees of spine before
+       * this, 37.9 after.
+       */
+      lean += -A.over * SPINE_OVER + A.lunge * SPINE_LUNGE;
+      twist += A.lunge * SPINE_LUNGE_TWIST;
       spine.obj.quaternion.copy(spine.restQuat)
-        .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
+        .multiply(_q1.setFromEuler(_eulA.set(lean, twist, 0, 'XYZ')));
+    }
+    /**
+     * THE SHOULDER, which had exactly zero degrees in it.
+     *
+     * A shoulder is most of what reads as commitment: an overhead chambers by
+     * lifting the whole girdle and lands by driving it down and through, and a
+     * fencing lunge is very largely scapular protraction — the sword shoulder
+     * travelling forward is what makes the arm look long. Measured before this,
+     * over the entire attack: 0.0 degrees of clavicle on both, and 9 mm of
+     * shoulder-JOINT travel on the overhead against the 9 mm an idle body
+     * breathes. After: 33.3 degrees and 187 mm.
+     *
+     * THIRD PERSON ONLY, and that is not laziness. In first person the
+     * clavicles are the viewmodel's own weld — `_anchorViewArms` pins them to a
+     * fixed point in the aim frame every frame precisely so the arms cannot
+     * swim against the view, and it runs after this. Driving them there would
+     * fight that solve and put the swim back; first person gets the body
+     * through `attack.shift` on the anchor instead, which is what actually
+     * moves in the frame you are looking down. Measured: the first-person
+     * shoulder joint still travels 8 mm through an attack, i.e. the weld holds.
+     *
+     * The off shoulder counter-rotates at a fraction, because a torso is one
+     * piece: the girdle turns about the spine rather than one end of it moving
+     * on its own.
+     *
+     * Written EVERY third-person frame rather than only while an attack runs. A
+     * conditional here leaves the girdle frozen at whatever the last frame of
+     * the swing happened to be, because nothing else in the game writes a
+     * clavicle — the skeleton gives them a rest direction and the animator
+     * swings `armR`/`armL` below them. At zero drive `setFromEuler(0,0,0)` is
+     * exactly the identity and `q.multiply(identity)` returns `q` bit for bit,
+     * so an idle third-person figure is the same figure it was.
+     */
+    if (!this.camera.firstPerson) {
+      const drive = A.over * CLAV_OVER + A.lunge * CLAV_LUNGE;
+      for (const [name, side] of CLAV_DRIVE) {
+        const b = rig.get(name);
+        if (!b) continue;
+        b.obj.quaternion.copy(b.restQuat)
+          .multiply(_q1.setFromEuler(_eulA.set(drive * side, A.lunge * CLAV_YAW * side, 0, 'XYZ')));
+      }
     }
     rig.updateMatrices();
 

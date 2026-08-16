@@ -69,6 +69,17 @@ const THRUST = { rise: 0.07, hold: 0.13, fall: 0.20 };
 const THRUST_REACH = { hand: 0.34, guard: 0.40, standing: 1.55 };
 
 /**
+ * The speed above which a lunge counts as having feet behind it, m/s. A quarter
+ * of walking pace — genuinely planted, not merely slow.
+ *
+ * Exported because `Player` answers the same question from its own velocity
+ * (see `ctx.moving` at the press) and two files deciding "is this body moving"
+ * with two hand-written numbers is how they come to disagree. One constant,
+ * both readers.
+ */
+export const THRUST_STANDING_SPEED = 1.2;
+
+/**
  * FLOURISH — an idle twirl. Purely cosmetic: it drives roll and traces the
  * guard round a small circle, and it touches nothing that grades a contact.
  * 0.62 s is two full wrist rotations at a speed a hand can actually make.
@@ -488,6 +499,22 @@ export class SaberController {
     this.locked = false;
   }
 
+  /**
+   * WHERE THE OVERHEAD IS IN ITS OWN ARC, in guard units: +0.95 at the top of
+   * the wind-up, −1.08 at the bottom of the cut, 0 when nothing is swinging.
+   *
+   * Published because `Player._attackDrive` puts the SPINE and the SHOULDERS
+   * behind the swing and has to be in phase with it, and the alternative is
+   * Player recomputing the three phases from `swingT` against `OVERHEAD` — a
+   * second copy of the envelope in another file, which is the exact shape
+   * HANDOFF §2.4 is about. This is the arc itself, AFTER the clamp, so a swing
+   * out of a guard already near its travel limit drives the body by exactly as
+   * much as it drives the blade rather than by what it asked for.
+   *
+   * A getter over `_swY` rather than a second field: one value, one owner.
+   */
+  get swingArc() { return this._swY; }
+
   reset(chest, aimQuat) {
     this.gx = this.readyX; this.gy = this.readyY; this.roll = 0;
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
@@ -886,10 +913,15 @@ export class SaberController {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so
       // it gets more of them. The controller works this out from how fast the
-      // chest anchor it is handed each frame is actually travelling — 1.2 m/s
-      // is a quarter of walking pace, i.e. genuinely planted. Callers may say so
-      // explicitly with ctx.moving, but none has to.
-      this.thrustStanding = (ctx.moving ?? this.carrierSpeed > 1.2) ? 0 : 1;
+      // chest anchor it is handed each frame is actually travelling — a quarter
+      // of walking pace, i.e. genuinely planted. Callers may say so explicitly
+      // with ctx.moving, and Player now does: `_attackDrive` puts the trunk
+      // behind an attack by MOVING THE ANCHOR, which this inference reads as the
+      // body walking. Measured, a standing overhead drives the anchor at up to
+      // 2.6 m/s, so a stab pressed shortly after one would have been graded a
+      // moving lunge and given 40% less reach for standing still. The fallback
+      // stays for every other caller and is unchanged.
+      this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
       this.thrustCooldown = 0.42;
       if (ctx.onThrust) ctx.onThrust();
     }
