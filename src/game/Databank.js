@@ -266,8 +266,9 @@ export const DATABANK = {
       + 'Jedi, a Dark Jedi taken young, or a duellist who was never in the Order at '
       + 'all — given a red blade and sent to do the work the Rule of Two leaves '
       + 'over. The crystal is red because it was bled: broken to its wielder\'s will '
-      + 'rather than grown to it. Take one from a body, heal it, and it comes back '
-      + 'white. It fences Makashi, which is what Dooku taught, and it has lightning '
+      + 'rather than grown to it. A bled crystal that is later healed comes back '
+      + 'white, which is the crystal a Grey carries and the only end to this that is '
+      + 'not a body on a floor. It fences Makashi, which is what Dooku taught, and it has lightning '
       + 'and the choke and will spend both before it goes back to fencing.',
   },
 
@@ -280,7 +281,7 @@ export const DATABANK = {
       + 'ordinary rate and trained from the tank. Phase I plastoid over a black body '
       + 'glove, a DC-15 fired in disciplined three-round bursts, and — this is what '
       + 'separates a clone from a droid — grenades, cover, and the judgement to use '
-      + 'both. Forty-six points of health. He is issued a number, CT and four '
+      + 'both. He is issued a number, CT and four '
       + 'digits, and he does not get a name until the men beside him give him one.',
   },
   heavy: {
