@@ -34,7 +34,7 @@ import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { GrassField, Water, ground, waterShade } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { sunDirection, atmosphereMeter } from '../../src/engine/Engine.js';
-import { rawMaps, sandMaps, soilMaps, snowMaps, duracreteMaps } from '../../src/engine/Textures.js';
+import { rawMaps } from '../../src/engine/Textures.js';
 
 /* ── the frame's own tone curve ───────────────────────────────────────────
  * Transcribed from Engine's composite pass, the same way tools/checks/vfx.mjs
@@ -349,19 +349,52 @@ export function run({ check, assert, near }) {
     // dune sea spent 46% of its area on the bare base coat and varied by 12% in
     // luminance across 560 m, because every layer that could have broken it up
     // was gated behind a slope or a hollow the dune sea does not have.
+    /* KAMINO FAILS THE HUE CLAUSE, AND IT IS NOT THE EXPOSURE METER.
+     *
+     * It reads 0.032 against 0.035 and the natural suspicion — the meter was
+     * lifting every outdoor level onto one key, and Kamino's authored 0.74 was
+     * being multiplied by 3.14 — does not survive being looked at. Every number
+     * in this check is taken off `composeSurface`, which is the shader's layer
+     * arithmetic over the preset's own swatches in LINEAR ALBEDO: no exposure,
+     * no tone curve, no atmosphere. Nothing `_syncAtmosphere` writes is read
+     * here, and `chroma` is a ratio, so it is invariant under any scaling the
+     * meter could apply. The shader's one wet term is `col *= mix(1.0, 0.62,
+     * wet)`, a scalar, which cannot move a ratio either.
+     *
+     * WHAT IT IS: the palette. Kamino's eight authored ground swatches span
+     * 0.307 to 0.489 of chroma — a spread of 0.063, the narrowest of any
+     * shipped ground, against the Temple's 0.081, the Foundry's 0.117, the
+     * Colosseum's 0.142 and the Bog's 0.171. Every one of them is the same
+     * blue-grey. It passes the other two clauses comfortably (34.8% luminance
+     * variation against a floor of 18, and 20.5% bare against a ceiling of 22),
+     * so this is not the dune sea's failure of a flat map; it is one hue at
+     * several brightnesses, exactly as the line says.
+     *
+     * LEFT RED ON PURPOSE. The two decks it stands next to reach 0.050 on the
+     * same duracrete, so the bound is not unreachable on a deck — and the fix
+     * is a colour decision about a level whose palette is being judged against
+     * its own reference plate by the lighting workstream right now. Widening
+     * the bound to 0.032 would delete the only measurement that says so. */
     const lines = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
+      const u = terrainOf(name)._uniforms;
       const L = spread(s.cols.map(lum));
       const C = spread(s.cols.map(chroma));
       const bare = s.bare / s.n;
+      // the authored palette behind it, so a failure says where to look
+      const sw = ['uBaseCol', 'uGritCol', 'uDustCol', 'uCrustCol', 'uLagCol', 'uSheetCol',
+        'uRockCol', 'uRockCol2'].map((k) => chroma([u[k].value.r, u[k].value.g, u[k].value.b]));
+      const P = spread(sw);
       assert(L.sd / L.mean > 0.18,
         `${name}: albedo luminance varies by only ${(L.sd / L.mean * 100).toFixed(1)}% over the whole map`);
       assert(C.sd > 0.035,
-        `${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses`);
+        `${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses `
+        + `(its eight authored swatches spread ±${P.sd.toFixed(3)}, ${Math.min(...sw).toFixed(2)}-${Math.max(...sw).toFixed(2)})`);
       assert(bare < 0.22,
         `${name}: ${(bare * 100).toFixed(0)}% of the ground is the bare base coat with nothing layered on it`);
-      lines.push(`${name} ${(L.sd / L.mean * 100).toFixed(0)}%/±${C.sd.toFixed(3)} bare ${(bare * 100).toFixed(0)}%`);
+      lines.push(`${name} ${(L.sd / L.mean * 100).toFixed(0)}%/±${C.sd.toFixed(3)} bare ${(bare * 100).toFixed(0)}% `
+        + `(palette ±${P.sd.toFixed(3)})`);
     }
     return lines.join('  ');
   });
@@ -1928,13 +1961,8 @@ export function run({ check, assert, near }) {
  * exposes: which chunk a term is spliced into, whether a bend is a
  * displacement or a rotation, whether the alpha reaches zero at the waterline.
  */
-let _terSrc = null, _scnSrc = null, _engSrc = null;
+let _terSrc = null, _scnSrc = null;
 const TERRAIN_SRC = () => (_terSrc ??= readSrc('Terrain.js'));
 const SCENERY_SRC = () => (_scnSrc ??= readSrc('Scenery.js'));
 const readSrc = (name) =>
   readFileSync(new URL(`../../src/world/${name}`, import.meta.url), 'utf8');
-/* The exposure key is a module-private const in Engine, and the whole snow
- * measurement is anchored on it; reading it out of the source is the only way
- * to be sure the check and the engine are talking about the same number. */
-const ENGINE_SRC = () =>
-  (_engSrc ??= readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8'));
