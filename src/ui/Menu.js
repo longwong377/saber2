@@ -41,7 +41,8 @@ import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
 // the options screen borrows both rather than keeping a second copy that could
 // fall out of step with what is actually on screen.
-import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES } from './HUD.js';
+import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
+         rosterHtml } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
          WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS } from '../engine/Bindings.js';
@@ -4157,6 +4158,127 @@ export class Menu {
     cards[0]?.focus?.();
   }
   hideDraft() { this.el.draft.classList.add('hidden'); }
+
+  /**
+   * THE MUSTER — the screen that did not exist, and what its absence cost.
+   *
+   * `CommandDirector._areaClear` publishes an offer between every pair of
+   * areas: your reinforcement points, the units this far into the advance will
+   * sell you, what each costs, how many you already field, and the whole roll.
+   * There was no screen, so main.js's `typeof screens.muster === 'function'`
+   * found nothing, `onMuster` was never installed, and the director took the
+   * documented fallback — `autoMuster()`, which replaces losses with the
+   * cheapest body it can and then spends everything left on the heaviest thing
+   * on the shelf. Correct behaviour for a mode with no UI, and it means the
+   * player's army was rebuilt for them four times a campaign, by a heuristic,
+   * with nothing on screen. Permadeath whose replacement budget you never see
+   * is permadeath with the decision taken out of it.
+   *
+   * WHAT IS ON IT AND WHY IT IS TWO COLUMNS. The shelf on the left and the roll
+   * on the right, in one glance, because the question at a muster is never
+   * "what exists" — `musterOffer`'s own comment says so — it is "should this be
+   * my third heavy or my first ARC", and that question cannot be asked without
+   * the casualty list beside the price list.
+   *
+   * NOTHING HERE DECIDES ANYTHING. Every purchase goes through
+   * `director.recruit`, which guards against every refusal case itself and puts
+   * a reason on `director.refused`; this screen prints that reason and redraws
+   * from a fresh `musterOffer()`. A screen that decremented its own copy of the
+   * points would disagree with the director the first time it was refused, and
+   * a muster whose numbers lie is worse than no muster.
+   *
+   * @param {object} offer `CommandDirector.musterOffer()`, verbatim.
+   * @param {{recruit:(type:string)=>object, done:()=>void}} io  `recruit`
+   *        returns `{ offer, refused }` — the director's new state and its
+   *        reason for refusing, if it did.
+   */
+  showMuster(offer, io = {}) {
+    const el = {
+      root: document.getElementById('muster'),
+      held: document.getElementById('muster-held'),
+      title: document.getElementById('muster-title'),
+      brief: document.getElementById('muster-brief'),
+      units: document.getElementById('muster-units'),
+      refused: document.getElementById('muster-refused'),
+      rollHead: document.getElementById('muster-roll-head'),
+      list: document.getElementById('muster-list'),
+      points: document.getElementById('muster-points'),
+      strength: document.getElementById('muster-strength'),
+      done: document.getElementById('btn-muster-done'),
+    };
+    if (!el.root) return;
+    this._musterEl = el;
+    /* The LIVE handlers, on the instance rather than in the listener's
+     * closure. The Advance button is bound once — binding it per muster would
+     * stack five listeners over a campaign and close the screen five times —
+     * and a listener that closed over the FIRST offer's `io` would, on area
+     * four, call area one's director callback. Same class of bug as the four
+     * duplicate listeners this file already carries a note about. */
+    this._musterIo = io;
+
+    const draw = (o) => {
+      if (!o) return;
+      this._muster = o;
+      // The area just HELD, and the one being walked into. Both are the
+      // director's own strings — the brief that names the ground is what makes
+      // the next four minutes legible, and it is already written.
+      if (el.held) el.held.textContent = `${o.areaName} — held`;
+      if (el.title) el.title.textContent = o.next ? o.next.name : 'The advance is over';
+      if (el.brief) el.brief.textContent = o.next ? o.next.brief : '';
+      if (el.points) el.points.textContent = String(o.points | 0);
+      if (el.strength) el.strength.textContent = `${o.strength | 0}/${o.max | 0}`;
+      if (el.rollHead) {
+        const lost = (o.roster?.roll || []).filter(t => !t.alive).length;
+        el.rollHead.textContent = lost ? `The roll — ${lost} lost` : 'The roll';
+      }
+      if (el.list) el.list.innerHTML = rosterHtml(o.roster);
+
+      if (el.units) {
+        el.units.innerHTML = '';
+        for (const u of o.units || []) {
+          const card = document.createElement('div');
+          // Priced out rather than removed: what you cannot afford is the shape
+          // of the decision, and a shelf that empties itself says nothing about
+          // what you are saving up for.
+          card.className = u.afford ? 'mu' : 'mu poor';
+          card.innerHTML = `<b>${escKey(u.label)}</b>`
+            + `<span class="cost">${u.cost} points · threat ${u.threat}</span>`
+            + `<span class="have">You field ${u.have}</span>`;
+          if (u.afford) {
+            card.addEventListener('mouseenter', () => audio.ui('hover'));
+            this._activate(card, () => buy(u.type), `${u.label} — ${u.cost} points`);
+          }
+          el.units.appendChild(card);
+        }
+      }
+    };
+
+    const buy = (type) => {
+      const res = this._musterIo?.recruit?.(type);
+      if (el.refused) el.refused.textContent = res?.refused || '';
+      audio.ui(res?.refused ? 'bad' : 'click');
+      draw(res?.offer || this._muster);
+    };
+
+    if (el.refused) el.refused.textContent = '';
+    draw(offer);
+
+    if (el.done && !el.done.dataset.musterBound) {
+      el.done.dataset.musterBound = '1';
+      // The card hides itself BEFORE the callback, exactly as the draft does,
+      // which is the reason Screens.guarded exists — a throw inside `done`
+      // lands the player on the pause card instead of on a frozen field.
+      this._activate(el.done, () => {
+        audio.ui('good');
+        this.hideMuster();
+        this._musterIo?.done?.();
+      });
+    }
+    el.root.classList.remove('hidden');
+    el.done?.focus?.();
+  }
+
+  hideMuster() { document.getElementById('muster')?.classList.add('hidden'); }
 
   /**
    * The two sandbox numbers, repeated where you can actually reach them.

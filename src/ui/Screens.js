@@ -57,7 +57,7 @@
  * the star map exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and
@@ -72,7 +72,7 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation'];
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.
  */
-export const OVERLAY_STATES = ['draft', 'dead'];
+export const OVERLAY_STATES = ['draft', 'dead', 'muster'];
 
 export class Screens {
   /**
@@ -135,7 +135,7 @@ export class Screens {
    */
   clear() {
     const m = this.io.menu;
-    m.hidePause?.(); m.hideDraft?.(); m.hideDeath?.();
+    m.hidePause?.(); m.hideDraft?.(); m.hideMuster?.(); m.hideDeath?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
   }
@@ -156,6 +156,40 @@ export class Screens {
     this.io.input.enabled = false;
     this.io.input.exitLock?.();
     show();
+  }
+
+  /**
+   * THE MUSTER, raised the same way the draft is.
+   *
+   * This method is the thing `main.js` has been testing for since the Command
+   * mode was written — `if (typeof screens.muster === 'function')` — and never
+   * finding, which is why `CommandDirector` fell through to `autoMuster()` and
+   * spent the player's reinforcement points for them between every area with
+   * nothing on the screen.
+   *
+   * It is a method here rather than eight lines in main.js for the reason this
+   * whole module exists: an overlay that stops the world and owns the screen is
+   * a state you can be stranded in, and every guarantee against that lives in
+   * `take` — remembered as it is raised, restored by resume, escapable, and its
+   * buttons wrapped so a throw lands on the pause card instead of on a frozen
+   * field with nothing to click. A muster raised any other way would have none
+   * of those, and it is the one overlay in the game a player can sit on for a
+   * minute deciding.
+   *
+   * `io.recruit` and `io.done` are the director's, wrapped in `guarded` here so
+   * the caller cannot forget to.
+   *
+   * @param {object} offer `CommandDirector.musterOffer()`
+   * @param {{recruit:(t:string)=>object, done:()=>void}} io
+   */
+  muster(offer, io = {}) {
+    const menu = this.io.menu;
+    if (typeof menu.showMuster !== 'function') return false;
+    this.take('muster', () => menu.showMuster(offer, {
+      recruit: this.guarded('recruiting', (type) => io.recruit?.(type)),
+      done: this.guarded('closing the muster', () => io.done?.()),
+    }));
+    return true;
   }
 
   /**
@@ -245,6 +279,7 @@ export class Screens {
     if (own) { own(); return; }
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
+    else if (name === 'muster') m.hideMuster?.();
     else if (name === 'dead') m.hideDeath?.();
   }
 }

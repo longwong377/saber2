@@ -339,37 +339,67 @@ function buildWorld(levelKey) {
   } else hud.showCoach(false);
 
   /**
-   * THE ARMY'S THREE WIRES — and two of the three ends do not exist yet.
+   * THE ARMY'S THREE WIRES — all three ends exist now, and none of them did.
    *
    * `CommandDirector` publishes everything the front end needs and reaches for
    * nothing: a roster summary when a name is promoted or lost, a muster offer
-   * between areas, and the formation whenever an order is given. What is
-   * missing is a HUD that draws a casualty list and a Screen that sells
-   * reinforcements — both live in files this lane does not own, and both are
-   * specified in the handover at the foot of src/game/Command.js.
+   * between areas, and the formation whenever an order is given. All three
+   * calls were here and ALL THREE WENT NOWHERE. `hud.setRoster?.()` and
+   * `hud.setOrder?.()` named methods that did not exist, so the optional-call
+   * operator swallowed them silently on every promotion and every casualty for
+   * the whole life of the mode; and `typeof screens.muster === 'function'` was
+   * false, so `onMuster` was never installed and the director took its
+   * documented fallback — `autoMuster()`, spending the player's reinforcement
+   * points for them, between every area, with nothing on the screen.
    *
-   * SO EVERY CALL IS OPTIONAL AND THE MODE IS PLAYABLE WITHOUT THEM. `?.` on
-   * the HUD side, and on the muster side the director simply does not install a
-   * handler — which makes it muster for the player itself and press on, rather
-   * than stopping a campaign on a screen that has not been built. The day
-   * either arrives it is one line here and nothing in Command.js changes.
-   *
-   * The roster still reaches the player meanwhile: every promotion and every
-   * death goes through `world.notify` and lands on the HUD's message feed with
-   * the name, the rank and how many are still standing.
+   * The `?.` stay. They are not decoration: this is the one place three
+   * subsystems in three files meet, and a front end that cannot draw a roster
+   * must still not be able to stop a campaign. What has changed is that they
+   * now find something.
    */
   if (world.command) {
     const d = world.command;
     d.onRoster = (summary) => hud.setRoster?.(summary);
     if (typeof screens.muster === 'function') {
       d.onMuster = (offer) => screens.muster(offer, {
-        recruit: (type) => d.recruit(type),
-        done: () => d.closeMuster(),
+        /* Buy, then re-read. The director guards every refusal case itself and
+         * puts the reason on `refused`, so the screen asks for the new offer
+         * rather than adjusting a copy of the numbers — a screen keeping its
+         * own points would disagree with the director the first time it was
+         * told no, and a muster whose totals lie is worse than no muster. */
+        recruit: (type) => {
+          d.recruit(type);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
+        done: () => {
+          /* The overlay is forgotten FIRST, exactly as the draft's pick does:
+           * `resume()` would otherwise put the muster the player has just
+           * finished straight back on the screen. */
+          screens.overlay = null;
+          screens.state = 'paused';
+          d.closeMuster();
+          hud.setRoster?.(d.roster.summary());
+          resume();
+        },
       });
     }
     d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
     d.onRoster(d.roster.summary());
+    /* The formation you START in, which nothing announced. `order()` fires
+     * `onOrder` and the opening formation is never ordered — it is configured
+     * (settings.commandFormation, through commandConfig) — so without this the
+     * indicator would read '—' until the player pressed a key, which is exactly
+     * the question it exists to answer. `readout()` is the authority for both
+     * the id and the name. */
+    const r = d.readout();
+    hud.setOrder?.(r.formation, r.formationName, d.roster.squads().length);
     hud.setLevel(`${world.level.name} — ${d.area.name}`, world.difficulty.name);
+  } else {
+    // Every other mode. The panel is one flow with the bars, so leaving it up
+    // in a Trial of Waves would push a stale army list into the corner of a
+    // run that has no army — and `hidden` is the only thing that takes its
+    // height back out of the column.
+    hud.setRoster?.(null);
   }
 
   return world;

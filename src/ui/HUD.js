@@ -9,7 +9,18 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
-import { keyLabel, walkScale } from '../engine/Bindings.js';
+import { keyLabel, walkScale, ORDER_ACTIONS } from '../engine/Bindings.js';
+/**
+ * The two lookup tables the roster panel draws WITH, never a copy of them.
+ *
+ * `roster.summary()` publishes a rank by its short code ('SGT') and an army by
+ * its id ('republic'), and a panel that wants the insignia colour or the army's
+ * proper name has to ask the table those came out of. Typing `SGT → #2f6fbe`
+ * here would be the eighth hand-maintained twin in this codebase (HANDOFF
+ * §2.3), and the first repaint of an insignia would make the HUD disagree with
+ * the model wearing it.
+ */
+import { RANKS, ARMIES } from '../game/Command.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -857,7 +868,20 @@ export class HUD {
       // part of the HUD it belongs to.
       freecam: root.getElementById('freecam-bar'),
       freecamKey: root.getElementById('freecam-key'),
+      // ── the army (Command mode only; hidden everywhere else)
+      roster: root.getElementById('roster'),
+      rpArmy: root.getElementById('rp-army'),
+      rpStrength: root.getElementById('rp-strength'),
+      rpOrderName: root.getElementById('rp-order-name'),
+      rpOrderSub: root.getElementById('rp-order-sub'),
+      rpOrders: root.getElementById('rp-orders'),
+      rpList: root.getElementById('rp-list'),
+      rpFoot: root.getElementById('rp-foot'),
     };
+    /** Which formation is current, so a rebind can re-light the right chip. */
+    this._order = null;
+    /** The last roll drawn, as a signature — the panel is not rebuilt per frame. */
+    this._rosterKey = null;
     this.hpGhostValue = 1;
     this.centerTimer = 0;
     this._buildPowers();
@@ -955,6 +979,11 @@ export class HUD {
       this.el.mapKey.innerHTML = `<b>${escKey(keyLabel((bindings.sense || [])[0]))}</b> `
         + `sense · ${Math.round(POWER_COST.sense)} Force`;
     }
+    // The order keycaps, on the same call and for the same reason. They were
+    // raw key codes read past the table until this round; now that they are
+    // rebindable, printing one from memory is exactly the bug the wheel above
+    // was built to stop.
+    this._buildOrderKeys(bindings);
   }
 
   /**
@@ -972,6 +1001,122 @@ export class HUD {
     if (node._last === n) return;
     node._last = n;
     node.textContent = String(n);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  THE ARMY                                                              */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE ROSTER PANEL — note #21, finally on the screen. See `rosterHtml`.
+   *
+   * "you can see who lived or who died, maybe one particular one lasts longer
+   * than the others and you protect him."
+   *
+   * Everything that makes that sentence true has been built for a while and
+   * none of it was visible. A trooper is a record that outlives its body; it
+   * carries a designation, a nickname EARNED by surviving to Sergeant, a rank
+   * with a painted insignia on the real mesh, kills, areas survived, and a
+   * death that is permanent. `CommandDirector` published the lot through
+   * `onRoster` and main.js called `hud.setRoster?.(summary)` — into a method
+   * that did not exist. The optional-call operator meant it failed silently,
+   * every promotion and every casualty, for the whole life of the mode.
+   *
+   * WHAT IT DRAWS, and why in this order. The living, best first — rank, then
+   * kills — so the two or three names you have been protecting are at the top
+   * of the column where you can watch them; then the fallen, struck through,
+   * with the area they died in. That asymmetry IS the mechanic: a column of
+   * numbers with three names in it is the game telling you who you managed to
+   * keep alive.
+   *
+   * `summary` is `CommandRoster.summary()` exactly as shipped — nothing here
+   * asks for a field the director does not already publish. Pass `null` to put
+   * the panel away, which is what every non-Command mode does.
+   */
+  setRoster(summary) {
+    const host = this.el.roster;
+    if (!host) return;
+    if (!summary || !Array.isArray(summary.roll)) {
+      host.classList.add('hidden');
+      this._rosterKey = null;
+      return;
+    }
+    host.classList.remove('hidden');
+    const army = ARMIES[summary.army];
+    if (this.el.rpArmy) this.el.rpArmy.textContent = army ? army.name : String(summary.army ?? '');
+
+    // A signature, so a summary that has not changed costs no innerHTML write.
+    // onRoster fires on every promotion and every death; the panel is cheap but
+    // it is not free, and a rebuild throws away the arrival animation.
+    const key = `${summary.army}|${summary.points}|`
+      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}`).join(',');
+    if (key === this._rosterKey) return;
+    this._rosterKey = key;
+
+    const { living, fallen } = rosterSides(summary);
+    if (this.el.rpStrength) this.el.rpStrength.textContent = `${living.length}/${summary.roll.length}`;
+    if (this.el.rpList) this.el.rpList.innerHTML = rosterHtml(summary);
+    if (this.el.rpFoot) {
+      // Reinforcement points belong here and not only on the muster screen: it
+      // is what a casualty COSTS, and the price is worth knowing while the
+      // decision that produces one is still being made.
+      this.el.rpFoot.innerHTML = `<span>${living.length} standing</span>`
+        + `<span>${fallen.length} lost</span><b>${summary.points | 0} rp</b>`;
+    }
+  }
+
+  /**
+   * WHICH FORMATION YOU ARE IN — the other thing nothing on screen ever said.
+   *
+   * Six order keys change how twenty-four bodies behave and the only feedback
+   * was a message that faded in two seconds, so the answer to "am I still in
+   * cover?" was to press a key and watch. The name is held on screen; the six
+   * keycaps under it are built from the live bindings by `setBindings`, and the
+   * one you are in is lit.
+   *
+   * Signature is the director's: `onOrder(F, squads)` → `setOrder(F.id, F.name,
+   * squads)`, which is exactly what main.js was already calling into thin air.
+   */
+  setOrder(id, name, squads) {
+    this._order = id || null;
+    if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
+    if (this.el.rpOrderSub) {
+      const n = squads | 0;
+      this.el.rpOrderSub.textContent = n ? `${n} squad${n === 1 ? '' : 's'}` : '';
+    }
+    this._lightOrder();
+  }
+
+  /** Light the chip for the current formation, and only that one. */
+  _lightOrder() {
+    const host = this.el.rpOrders;
+    if (!host || !host.children) return;
+    for (const c of host.children) {
+      c.classList?.toggle('on', !!this._order && c.dataset?.order === this._order);
+    }
+  }
+
+  /**
+   * The six order keycaps, from the bindings table.
+   *
+   * Rebuilt on every rebind for the same reason the power wheel is: these are
+   * ordinary rebindable actions now (see the seam in Bindings.js), so a typed
+   * key here would be a lie the first time somebody moved one. Empty when no
+   * orders are registered, which is every build that never loads Command.
+   */
+  _buildOrderKeys(bindings) {
+    const host = this.el.rpOrders;
+    if (!host) return;
+    host.innerHTML = '';
+    for (const o of ORDER_ACTIONS) {
+      const chip = document.createElement('i');
+      chip.className = 'rp-key';
+      chip.dataset.order = o.id;
+      chip.title = `${o.name} — ${o.blurb}`;
+      chip.textContent = keyLabel((bindings?.[o.action] || [])[0]);
+      host.appendChild(chip);
+    }
+    this._lightOrder();
   }
 
   show(on) { this.el.hud.classList.toggle('hidden', !on); }
@@ -1563,6 +1708,71 @@ const _screen = new THREE.Vector2();
 
 /** Titles come from archetype labels, which are data. Data goes in as text. */
 const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE ROLL, drawn once and read twice                                    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The roll split and ordered, from `CommandRoster.summary()`.
+ *
+ * The living come first and the BEST of them first — rank, then kills, then
+ * experience — because the panel's whole job is to put the two or three names
+ * you have been protecting where you can watch them. The fallen come after,
+ * most recent first, because a casualty list is read backwards from the last
+ * thing that happened.
+ *
+ * `rank` arrives as a short code ('SGT'), so the ordering is the RANKS table's
+ * own index and not an alphabetical accident: 'SGT' sorts before 'TRP' either
+ * way, and 'CMD' before 'VET' does not.
+ */
+export function rosterSides(summary) {
+  const roll = summary?.roll || [];
+  const rung = (short) => RANKS.findIndex(r => r.short === short);
+  return {
+    living: roll.filter(t => t.alive)
+      .sort((a, b) => (rung(b.rank) - rung(a.rank)) || (b.kills - a.kills) || (b.xp - a.xp)),
+    fallen: roll.filter(t => !t.alive)
+      .sort((a, b) => (b.diedIn ?? 0) - (a.diedIn ?? 0)),
+  };
+}
+
+/**
+ * One name, as a row.
+ *
+ * The insignia chip is the RANK'S OWN COLOUR, looked up in `RANKS` rather than
+ * typed here — those five colours are painted onto the real meshes when a
+ * trooper is promoted, and a second table of them in the HUD would drift from
+ * the army the player is looking at. A Trooper has `color: null` in that table
+ * on purpose (a fresh clone is unmarked), so the chip falls back to the panel's
+ * own line rather than inventing a colour nobody wears.
+ */
+export function trooperRow(t) {
+  const rec = RANKS.find(r => r.short === t.rank);
+  const chip = rec && rec.color != null
+    ? `#${(rec.color >>> 0).toString(16).padStart(6, '0')}` : '';
+  const right = t.alive ? String(t.kills | 0) : `A${t.diedIn ?? '?'}`;
+  return `<div class="rp-row${t.alive ? '' : ' gone'}" title="${esc(t.rankTitle)} · ${esc(t.unit)}">`
+    + `<i${chip ? ` style="background:${chip}"` : ''}></i>`
+    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}</span><em>${esc(right)}</em></div>`;
+}
+
+/**
+ * THE WHOLE ROLL AS MARKUP — living above fallen, the dead struck through.
+ *
+ * Exported because it is drawn in two places: the HUD's own column during a
+ * fight, and the muster screen between areas, where there is room for all of
+ * it. Two renderers would be two answers to "what does a casualty list look
+ * like", and the one that is wrong is always the one you are not looking at.
+ * Pure and DOM-free so a check can assert what a player would read.
+ */
+export function rosterHtml(summary) {
+  const { living, fallen } = rosterSides(summary);
+  return '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>'
+    + living.map(trooperRow).join('')
+    + (fallen.length ? `<div class="rp-div">Fallen — ${fallen.length}</div>` : '')
+    + fallen.map(trooperRow).join('');
+}
 
 /** Detach a node whether it is a real one or a test double. */
 function drop(node, host) {

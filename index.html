@@ -455,6 +455,34 @@
 
   <div class="hud-bl">
     <!--
+      YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
+
+      Command mode gives every trooper a designation, a nickname earned by
+      surviving, a rank with a painted insignia and a permanent death — and
+      until now the only trace of any of it on screen was a two-line message
+      when somebody was promoted or died. `CommandDirector.readout()` has
+      published the whole roll the entire time and nothing read it: main.js
+      called `hud.setRoster?.(summary)` into a method that did not exist.
+
+      IN THE FLOW OF .hud-bl, ABOVE THE BARS, not a fifth absolutely-positioned
+      box. That is the rule this HUD was rebuilt on after the event feed and the
+      kill feed were found drawn through one another: boxes in a column cannot
+      overlap at any viewport, boxes pinned to the same corner eventually do.
+      Every element in here is filled by HUD.setRoster / HUD.setOrder; there is
+      no name, rank or key typed in this markup.
+    -->
+    <div id="roster" class="rp hidden" aria-hidden="true">
+      <div class="rp-head"><span id="rp-army">—</span><b id="rp-strength"></b></div>
+      <!-- The formation you are actually in. Nothing said this before, so the
+           six order keys changed the battle and the screen was silent. -->
+      <div class="rp-order"><i></i><span id="rp-order-name">—</span><em id="rp-order-sub"></em></div>
+      <!-- One chip per order, keys read from the live bindings by
+           HUD.setBindings — these are rebindable now, so they cannot be typed. -->
+      <div id="rp-orders" class="rp-keys"></div>
+      <div id="rp-list" class="rp-list"></div>
+      <div id="rp-foot" class="rp-foot"></div>
+    </div>
+    <!--
       THE THREE LABELS THAT HAD NEVER BEEN ON SCREEN.
 
       They were `<label>` children of `.bar`, and `.bar` is `height:13px;
@@ -583,6 +611,45 @@
     <p class="hint" id="draft-why"></p>
     <div id="draft-cards" class="draft-cards"></div>
     <p class="hint draft-keys" id="draft-keys"></p>
+  </div>
+</div>
+
+<!-- ══ THE MUSTER ══
+     Between two areas of the Geonosis advance you are handed reinforcement
+     points and a shelf of units to spend them on. `CommandDirector.musterOffer()`
+     has returned exactly this shape since the mode was written, and there was
+     no screen: `main.js` tested `typeof screens.muster === 'function'`, found
+     nothing, and the director fell through to `autoMuster()` — which spent
+     your points for you, between every area, and showed you nothing at all.
+     Permadeath with an invisible replacement budget is permadeath with the
+     decision taken out of it.
+
+     Every string in here is written by Menu.showMuster from the offer. The
+     roll is the same summary the HUD panel draws, at full length, living above
+     fallen with the dead struck through — the casualty list is the point. -->
+<div id="muster" class="screen hidden">
+  <div class="muster-wrap">
+    <p class="muster-held" id="muster-held">—</p>
+    <h2 id="muster-title">The Muster</h2>
+    <p class="hint" id="muster-brief"></p>
+    <div class="muster-body">
+      <div class="muster-shop">
+        <h3>Reinforcements</h3>
+        <div id="muster-units" class="muster-units"></div>
+        <p class="hint muster-refused" id="muster-refused"></p>
+      </div>
+      <div class="muster-roll">
+        <h3 id="muster-roll-head">The roll</h3>
+        <div id="muster-list" class="rp-list muster-list"></div>
+      </div>
+    </div>
+    <div class="muster-foot">
+      <div class="muster-tally">
+        <div><span>Points</span><b id="muster-points">0</b></div>
+        <div><span>Standing</span><b id="muster-strength">0</b></div>
+      </div>
+      <button id="btn-muster-done" class="primary">Advance</button>
+    </div>
   </div>
 </div>
 
