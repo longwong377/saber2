@@ -62,6 +62,20 @@
         <p class="hint hidden" id="level-note"></p>
         <div id="level-list" class="cards"></div>
       </div>
+      <!-- THE RULES THE RUN IS FOUGHT UNDER — Waves.CONDITIONS, chosen instead
+           of dealt. Filled by Menu._buildRules; a rule the chosen theatre
+           cannot field is greyed with its reason on the card, the same way the
+           Theatre column greys when the mode owns the theatre. Empty markup for
+           the same reason every other list here is empty: CONDITIONS is the
+           table, and a second copy of it typed into this file is exactly the
+           defect this project keeps removing. -->
+      <div class="col narrow rules">
+        <h3>Run rules</h3>
+        <p class="hint" id="rule-note">Optional. Every one of them changes the question rather than the
+          number, they are in force from the first wave, and none of them makes the run cheaper.</p>
+        <div id="rule-list" class="difflist"></div>
+        <p class="hint" id="rule-seed"></p>
+      </div>
       <!-- THE LISTS SCROLL; THE BUTTON DOES NOT.
            Ignite used to be the last child of the scrolling column, held down
            by `position:sticky`, and its third box-shadow is a 22 px dark

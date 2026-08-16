@@ -421,6 +421,32 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .cards.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
 .cards.inert .card{cursor:default}
 
+/* ── RUN RULES ─────────────────────────────────────────────────────────
+   The Deploy panel's third column. Narrower than the Mode column because a
+   rule is one line and a mode is a paragraph, and it scrolls on its own so
+   seven rules never push Ignite off the screen — which is the defect the
+   pinned column was built to fix and would be reintroduced by hanging another
+   list off it. */
+.col.narrow.rules{flex:0 0 254px}
+@media (max-width:1180px){ .col.narrow.rules{flex:0 0 210px} }
+.col.narrow.rules .hint{font-size:11px;line-height:1.5;margin-bottom:12px}
+#rule-seed{margin-top:14px;font:var(--mono);font-size:10px;letter-spacing:.1em}
+/* A rule is picked, not ranked, so its mark is a TICK cut out of the block
+   rather than the mode list's lit dot. Same block, same ink, different verb. */
+.diff.rule .dot{position:relative}
+.diff.rule.sel .dot::after{content:"";position:absolute;left:50%;top:44%;width:3px;height:7px;
+  border:2px solid var(--stroke);border-top:0;border-left:0;
+  transform:translate(-50%,-50%) rotate(42deg)}
+.diff.rule .txt b{font-size:11.5px}
+.diff.rule .txt span{font-size:10px}
+/* Vetoed by the theatre, or shut out by a rule already picked. Dimmed and
+   inert exactly as the Theatre column is, and the card keeps its own reason
+   in place of its tell — a control that is off and does not say why reads as
+   broken, which is the whole argument in Menu._syncTheatre. */
+.diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
+  box-shadow:none;transform:none}
+.diff.rule.barred .txt span{color:var(--dimmer)}
+
 /* sliders & checks ────────────────────────────────────────────────────
    The track is a socket cut into the panel and the thumb is a block in it.
    A 2 px hairline with a glowing circle on it is the stock HTML range restyle;

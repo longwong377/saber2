@@ -263,6 +263,31 @@ async function buildWorld(levelKey, onProgress = null) {
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
   world = new World(engine, worldSettings());
+  /**
+   * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
+   *
+   * `WaveDirector` picks this up in its constructor — which `loadLevel` runs a
+   * few stages below — and puts the wave stream, the enemy stream, the duel
+   * stream and the arrivals on it. Assigned here rather than inside World
+   * because a seed is a fact about a SESSION, and this is the one place that
+   * knows whether the session is the player's own or a host's.
+   *
+   * It used to be `world.run.seed`, and `Run.js` went with the Descent: for
+   * every mode in the shipped game `WaveDirector.seed` was null, `seedWaves`
+   * was called by nothing, and the whole "a run is a shareable number rather
+   * than an unrepeatable accident" apparatus — the record's `seed` column, the
+   * `· seed N` line in the menu — was unreachable. It is a number a player can
+   * read off the record and type back in now, which is what makes a rule set
+   * worth telling somebody about: beat THIS seed under NO GUNS.
+   *
+   * A stated seed is honoured; otherwise one is drawn, so two runs still differ
+   * by default. In a session the host's number wins, exactly as the level and
+   * the difficulty do — a co-op run has to be ONE run.
+   */
+  const asked = sessionOr('seed');
+  world.runSeed = Number.isFinite(Number(asked)) && asked !== null && asked !== ''
+    ? (Number(asked) | 0) >>> 0
+    : (Math.random() * 0xffffffff) >>> 0;
   // The player's own difficulty — and then the host's over the top of it, if
   // this is their session. Two statements rather than one `sessionOr`, because
   // `settings.difficulty` is the named reader Menu.SETTING_READERS points at
@@ -894,6 +919,21 @@ function record(stats = null) {
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
     identity: { order: settings.order, species: settings.species },
+    /**
+     * …AND WHAT THE RUN WAS ACTUALLY FOUGHT UNDER.
+     *
+     * Both off the DIRECTOR rather than off `settings`, because the director is
+     * what honoured them: `legalRuleSet` has already dropped anything the
+     * theatre vetoed, so a record that read the settings would claim a run was
+     * fought under THE HEAVY GUARD on a level that stations nothing enormous.
+     *
+     * `seed` has been carried by `Progress.recent[]` and printed by
+     * `progressLines` since both were written and has been null on every run
+     * ever recorded — the field it came from was deleted with the Descent. It
+     * is the number above.
+     */
+    seed: world.runSeed ?? null,
+    rules: world.director?.rules ? [...world.director.rules] : [],
   });
 }
 

@@ -44,53 +44,19 @@ function clearWave(d) {
   if (!d.active) { d.intermission = 1e-3; d.update(2e-3, CTX); }   // -> start(wave+1)
 }
 
-/**
- * A whole Descent, exactly as main.js plays one: a fresh World and a fresh
- * director per rung, `start(1)` on every deploy including the landing
- * re-entries, `run.wave` written from `onWaveClear`, and `run.ascend()` when
- * the rung has asked for as many waves as it declares.
+/*
+ * `descend()` LIVED HERE AND COULD NOT HAVE RUN.
+ *
+ * A ninety-line harness that played a whole Descent rung by rung, referring to
+ * `Run` and `DESCENT` — two identifiers this file has not imported since the
+ * mode was deleted, so calling it would have thrown `ReferenceError` on its
+ * first line. Nothing called it. This file's own header says a harness for a
+ * mode that does not exist is not a check but a fixture; it survived the cull
+ * that wrote that sentence, and it is the same shape as `offenceReport`'s dead
+ * `BUILDERS` (HANDOFF §6.1c) — code that reads as a supported path and is not
+ * one. `stubWorld` keeps its `run` parameter: it is the smallest world a
+ * director reads, and a caller that has a run is entitled to pass it.
  */
-async function descend(seed = 0x5EED) {
-  const { LEVELS } = await import('../../src/game/Levels.js');
-  const run = new Run({ mode: 'spire', seed, identity: { order: 'jedi', species: 'human' } });
-  const led = new Tree.Communion();
-  const waves = [], drafts = [], depthAgree = [];
-  for (let guard = 0; guard < DESCENT.length && !run.done; guard++) {
-    const rung = run.rung;
-    const pool = LEVELS[rung.level].pool;
-    const world = stubWorld(pool, run);
-    const d = new Waves.WaveDirector(world, { mode: 'gauntlet', pool });
-    d.onDraft = (hand) => drafts.push({
-      wave: d.wave, n: hand.length, boss: d.isBossWave(d.wave),
-      ids: hand.map((b) => b.id), first: hand[0]?.rarity,
-      attune: hand.every((b) => b.attune),
-    });
-    /**
-     * World.js's own two lines, verbatim, and the second is worth stating.
-     * `_earnInsight` is handed the SAME rung-local `w` World's handler needs
-     * for `run.wave >= rung.waves`, so the ledger counts a Descent's sixteen
-     * waves as 18 Insight against the 22 the closed form gives for sixteen
-     * waves with three set-pieces in them. Fixing that is one word in World.js
-     * (`_earnInsight(this.director.wave)`) and is called out in the handover;
-     * this file models what the tree does, not what it should.
-     */
-    d.onWaveClear = (w) => { run.wave = w; led.earn(w, d.isBossWave(w)); };
-    d.start(1);
-    for (let i = 0; i < rung.waves; i++) {
-      waves.push({
-        rung: rung.id, tier: run.tier, local: i + 1, wave: d.wave,
-        budget: d.budgetFor(d.wave), boss: d.isBossWave(d.wave),
-        elite: d.eliteChance(d.wave), heavy: d.heavyBias(d.wave), cap: d.bodyCap(d.wave),
-        types: d.spawnQueue.map(Waves.spawnType),
-        queue: d.spawnQueue.slice(),
-      });
-      clearWave(d);
-      depthAgree.push({ wave: waves[waves.length - 1].wave, depth: run.depth });
-    }
-    if (run.wave >= rung.waves) run.ascend();
-  }
-  return { run, waves, drafts, depthAgree, insight: led.insight };
-}
 
 /** Facets an exhaustive search can wake on `purse` Insight at `wave`. */
 function mostFacets(purse, wave) {
@@ -180,12 +146,6 @@ export async function run({ check, assert }) {
     p.world = { enemies: [], players: [p], difficulty: null, notify() {}, engine: { flash() {} } };
     return p;
   }
-  /** Exactly Player.applyBoon: the rank comes from the body, not from the card. */
-  function grant(p, id) {
-    const b = Waves.boonById(id);
-    return b.apply(p, Waves.rankScale(p.boons.take(id))), b;
-  }
-
   /** Exactly Player.applyBoon: the rank comes from the body, not from the card. */
   function grant(p, id) {
     const b = Waves.boonById(id);

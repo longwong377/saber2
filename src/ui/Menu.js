@@ -35,7 +35,8 @@ import { FOCUS } from '../game/Focus.js';
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig,
-         DRAFT_EVERY, BOSS_EVERY } from '../game/Waves.js';
+         DRAFT_EVERY, BOSS_EVERY,
+         CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
 import { audio, MUSIC_TRACKS, trackAt, SPOKEN_LINES, wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
@@ -193,6 +194,37 @@ export const DEFAULT_SETTINGS = {
   order: 'jedi',
   difficulty: 'knight',
   mode: 'roguelite',
+  /**
+   * THE RULES THE RUN IS FOUGHT UNDER — `Waves.CONDITIONS` keys, chosen on the
+   * Deploy panel and in force from wave 1. Empty by default, so a player who
+   * never opens the column plays exactly the game they always played.
+   *
+   * A LIST OF KEYS, not a set of booleans, because the ORDER is the player's:
+   * `legalRuleSet` walks it and drops what the theatre vetoes or an earlier
+   * pick excludes, so which of two mutually exclusive rules survives is the one
+   * that was picked first rather than whichever comes first in the table.
+   *
+   * Not a meta-progression and not an unlock: every rule is available in the
+   * first run, none of them makes the player stronger, and none is charged
+   * against the wave's budget (see `WaveDirector.conditionCost`).
+   */
+  rules: [],
+  /**
+   * THE RUN'S OWN NUMBER, or null to draw a fresh one on every Ignite.
+   *
+   * `WaveDirector.seed` and `seedWaves` have described themselves for a long
+   * time as what makes a run "a shareable number rather than an unrepeatable
+   * accident", and the field they read — `world.run.seed` — has not existed
+   * since `Run.js` was deleted with the Descent. So the seed was null in every
+   * mode, `Progress.recent[].seed` was always null, and the `· seed N` clause
+   * in `progressLines` was unreachable code.
+   *
+   * Null rather than a number by default: two runs of the same seed compose the
+   * same waves, and a game whose default is to replay yesterday's run is not
+   * what an endless mode is for. Set it and the run is repeatable — which is
+   * what makes a rule set worth telling somebody about.
+   */
+  seed: null,
   colorIndex: 0,
   // 0x9fd8ff is what the Force has always come out at, so a player who never
   // touches the row keeps exactly the lightning they had. See LIGHTNING_COLORS.
@@ -567,6 +599,8 @@ export const SETTING_READERS = {
   order:           ['game/World.js', 'applyOrder(p, this.settings.order)'],
   difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
   mode:            ['game/World.js', 'this.settings.mode'],
+  rules:           ['game/Waves.js', 'world?.settings?.rules'],
+  seed:            ['main.js', 'settings.seed'],
   colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
   hiltStyle:       ['game/World.js', 'hiltStyle: this.settings.hiltStyle'],
   species:         ['game/World.js', 'species: this.settings.species'],
@@ -2019,6 +2053,8 @@ export class Menu {
       levels: document.getElementById('level-list'),
       diffs: document.getElementById('diff-list'),
       modes: document.getElementById('mode-list'),
+      rules: document.getElementById('rule-list'),
+      ruleSeed: document.getElementById('rule-seed'),
       colors: document.getElementById('color-list'),
       lightning: document.getElementById('lightning-list'),
       hilts: document.getElementById('hilt-list'),
@@ -2050,6 +2086,9 @@ export class Menu {
     this._buildLevels();
     this._buildDifficulty();
     this._buildModes();
+    // After the modes, because a rule's legality reads the theatre AND the mode
+    // and `_syncRules` normalises `settings.rules` against both on the way in.
+    this._buildRules();
     this._buildSaber();
     this._buildOptions();
     this._buildButtons();
@@ -2560,6 +2599,11 @@ export class Menu {
         audio.ui('click');
         this.s.level = key;
         [...this.el.levels.children].forEach(c => c.classList.toggle('sel', c === card));
+        // A theatre vetoes rules, so the column beside this one has to answer
+        // the moment the card is clicked — and the store has to be normalised
+        // with it, or a rule the Ember Shelf cannot field survives in settings
+        // and turns back up the next time a level that CAN field it is picked.
+        this._syncRules();
         saveSettings(this.s);
       });
       card.addEventListener('mouseenter', () => audio.ui('hover'));
@@ -2596,6 +2640,102 @@ export class Menu {
     if (note) {
       note.textContent = inert ? MODES[this.s.mode].fixedTheatre : '';
       note.classList.toggle('hidden', !inert);
+    }
+  }
+
+  /**
+   * THE RULES A RUN IS FOUGHT UNDER — the Deploy panel's third column.
+   *
+   * `Waves.CONDITIONS` is the table and this reads it; a list of seven rules
+   * typed into index.html would be the ninth instance of the defect this
+   * project keeps removing. Every card's title, its one line and its veto
+   * reason come off the record, so a condition added to that table appears here
+   * on the day it is authored.
+   *
+   * WHY THE LEGALITY QUESTION GOES THROUGH A DIRECTOR. A rule is vetoed by
+   * `CONDITIONS[k].needs(types, d)`, which reads the level's pool through
+   * `unlockedAt` and, for A HEAD TO CUT OFF, the modifier ladder off the
+   * director itself. Restating any of that here is HANDOFF §2.4 exactly — the
+   * menu would eventually offer a rule the composer refuses, or grey one it
+   * would have honoured. So the panel builds the same object the run will,
+   * asks it the same two questions (`ruleVeto`, `legalRuleSet`), and shows the
+   * answer. It is a table-only director with a stub world; it never spawns
+   * anything.
+   */
+  _ruleDirector() {
+    const pool = LEVELS[this.s.level]?.pool ?? LEVELS[LEVEL_ORDER[0]].pool;
+    return new WaveDirector({ enemies: [], players: [], settings: {}, takenBoons: new Set() },
+      { mode: this.s.mode, pool, rules: [] });
+  }
+
+  _buildRules() {
+    const host = this.el.rules;
+    if (!host) return;
+    host.innerHTML = '';
+    this._ruleCards = new Map();
+    for (const key of CONDITION_KEYS) {
+      const C = CONDITIONS[key];
+      const d = document.createElement('div');
+      d.className = 'diff rule';
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${C.label}</b><span></span></div>`;
+      this._activate(d, () => {
+        if (d.classList.contains('barred')) return;
+        audio.ui('click');
+        const held = new Set(this.s.rules || []);
+        if (held.has(key)) held.delete(key); else held.add(key);
+        // Through the director, so what is stored is what the run will honour:
+        // the order the player picked in, minus anything the theatre vetoes,
+        // minus anything an earlier pick excludes, capped at CONDITION_MAX.
+        const wanted = CONDITION_KEYS.filter((k) => held.has(k));
+        this.s.rules = this._ruleDirector().legalRuleSet(wanted);
+        saveSettings(this.s);
+        this._syncRules();
+      });
+      d.addEventListener('mouseenter', () => audio.ui('hover'));
+      this._ruleCards.set(key, d);
+      host.appendChild(d);
+    }
+    this._syncRules();
+  }
+
+  /**
+   * Light what is chosen, bar what cannot be chosen, and SAY WHY.
+   *
+   * The same argument `_syncTheatre` makes: a control that is dead and silent
+   * reads as the picker being broken, and it sticks — a player who cannot pick
+   * THE HEAVY GUARD on the Ember Shelf will conclude the rule does not work
+   * rather than that the level stations nothing enormous. So a barred card
+   * keeps its place and swaps its tell for the reason.
+   */
+  _syncRules() {
+    if (!this._ruleCards) return;
+    const d = this._ruleDirector();
+    this.s.rules = d.legalRuleSet(this.s.rules || []);
+    const held = new Set(this.s.rules);
+    d.rules = this.s.rules;
+    for (const [key, card] of this._ruleCards) {
+      const C = CONDITIONS[key];
+      const on = held.has(key);
+      // Three ways a rule can be unavailable, and each names itself.
+      const veto = d.ruleVeto(key);
+      const clash = !on && [...held].find((h) => CONDITIONS[h]?.excludes?.includes(key)
+        || C.excludes?.includes(h));
+      const full = !on && held.size >= CONDITION_MAX;
+      const why = veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
+        : clash ? `cannot be held with ${CONDITIONS[clash].label}`
+        : full ? `${CONDITION_MAX} rules is the most a wave can carry`
+        : null;
+      card.classList.toggle('sel', on);
+      card.classList.toggle('barred', !!why);
+      card.tabIndex = why ? -1 : 0;
+      card.setAttribute('aria-disabled', why ? 'true' : 'false');
+      card.setAttribute('aria-pressed', on ? 'true' : 'false');
+      card.querySelector('.txt span').textContent = why || C.tell;
+    }
+    if (this.el.ruleSeed) {
+      this.el.ruleSeed.textContent = held.size
+        ? `${held.size} of ${CONDITION_MAX} · no rule is charged against the wave's budget`
+        : '';
     }
   }
 
@@ -2639,6 +2779,8 @@ export class Menu {
     // moment the mode changes, not after the player has deployed into a level
     // they did not choose.
     this._syncTheatre();
+    // A mode can pick its own theatre, and the theatre is what vetoes a rule.
+    this._syncRules();
     saveSettings(this.s);
   }
 

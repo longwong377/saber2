@@ -34,8 +34,17 @@
  * than as "gauntlet"; the Descent is deleted and MODES is where a mode's
  * display name has always lived for everything else. One authority.
  */
-import { MODES } from './Waves.js';
+import { MODES, CONDITIONS } from './Waves.js';
 const ladderName = (mode) => MODES[mode]?.name || mode || null;
+/**
+ * What a stored rule key reads as on screen — `CONDITIONS[k].label`, which is
+ * the same string the wave's own banner shouts when the condition lands. One
+ * authority: a second table of seven names in this file is the defect the
+ * codebase keeps removing, and it would go stale the first time a card was
+ * re-worded.
+ */
+const ruleName = (key) => String(key || '').split('+')
+  .map((k) => CONDITIONS[k]?.label || k).join(' + ');
 
 const KEY = 'saber.progress.v1';
 /** How many runs to keep. A history, not an archive. */
@@ -43,7 +52,7 @@ const KEEP = 40;
 
 const blank = () => ({
   runs: 0, wins: 0, kills: 0,
-  bestDepth: 0, bestScore: 0, bestTier: 0,
+  bestDepth: 0, bestScore: 0,
   /** Deepest run achieved with each order/species, so the record says what you
    *  have actually done rather than only how far you got once. */
   byOrder: {}, bySpecies: {},
@@ -72,6 +81,23 @@ const blank = () => ({
    * and not about one ladder. See RECORDED.
    */
   byMode: {},
+  /**
+   * Deepest run under each set of RUN RULES, in the same shape as `byMode`.
+   *
+   * Keyed on the rules the run was actually fought under, sorted and joined, so
+   * "NO GUNS + ONE BEARING" and "ONE BEARING + NO GUNS" are one record rather
+   * than two. The empty set is not stored — that is `byMode`.
+   *
+   * THIS IS NOT THE THING THIS FILE'S HEADER FORBIDS, and the distinction is
+   * the whole reason the header is written the way it is. What is refused above
+   * is a currency, an unlock, and cross-run POWER. A rule set carries none of
+   * those: every rule is available in the first run, choosing one makes the
+   * player no stronger — it makes the run harder and is not even charged
+   * against the wave's budget — and nothing here is read back into a run. What
+   * is kept is exactly what the header says is kept: "how deep you have been,
+   * what you did it with". Under what terms is what you did it with.
+   */
+  byRule: {},
   recent: [],
 });
 
@@ -177,7 +203,19 @@ export function recordRun(summary) {
   if (summary.won) p.wins++;
   p.bestDepth = Math.max(p.bestDepth, depth);
   p.bestScore = Math.max(p.bestScore, summary.score || 0);
-  p.bestTier = Math.max(p.bestTier, summary.tier || 0);
+  /**
+   * `bestTier` IS GONE, and it is the second field in this file to have been
+   * written on every run and read by nothing.
+   *
+   * It was the Descent's rung index. The Descent is deleted, `Run.js` with it,
+   * and `summary.tier` was passed by nothing in `src/` — `World.onGameOver`
+   * does not carry a tier — so the field was pinned at 0 for every player who
+   * has ever run this game, and `grep -rn bestTier src/` found the write and no
+   * reader. Storage that nothing displays is not a record, it is a write-only
+   * log; this file's own note about `progressLines` says the honest choice is
+   * to delete the field or show it, and there is nothing left to show. A record
+   * written before this reads through `blank()`'s spread and simply drops it.
+   */
 
   // `identity` when a Run carried one, the loose pair when the caller is
   // holding settings rather than a run.
@@ -189,6 +227,9 @@ export function recordRun(summary) {
   deeper(p.byOrder, id.order);
   deeper(p.bySpecies, id.species);
   deeper(p.byMode, summary.mode);
+  // Sorted, so the key is the SET and not the order it was picked in.
+  const rules = [...new Set(summary.rules || [])].sort();
+  deeper(p.byRule, rules.join('+'));
 
   if (summary.won) {
     const set = new Set(p.crowned);
@@ -215,9 +256,10 @@ export function recordRun(summary) {
    * about ONE run, and this file keeps totals at the top and runs in `recent`.
    */
   p.recent.unshift({
-    depth, tier: summary.tier || 0, score: summary.score || 0,
+    depth, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
     mode: summary.mode || null, seed: summary.seed ?? null,
+    rules,
     facets: (summary.woken || []).length,
     boons: (summary.boons || []).slice(0, 12),
   });
@@ -276,11 +318,26 @@ export function progressLines(p = read()) {
   // Which game you have actually been playing. The record was blind to this for
   // the same reason it was blind to four of the five modes — see RECORDED.
   if (modes.length) out.push(modes.map(([k, v]) => `${ladderName(k)} ${v}`).join('  ·  '));
+  /**
+   * …AND UNDER WHAT TERMS, which is the line a rule set is chosen FOR.
+   *
+   * "Deepest run under NO GUNS" is the only thing that makes picking a rule
+   * worth anything after the run ends: it turns a handicap into a number to
+   * beat, and it is the whole of what run rules add to replayability that a
+   * harder wave does not. Deepest first, and capped at three lines — this is a
+   * record a player reads without a spreadsheet, and 46 rule sets per theatre
+   * is a spreadsheet.
+   */
+  const rules = deepest(p.byRule).filter(([k]) => k);
+  for (const [k, v] of rules.slice(0, 3)) {
+    out.push(`under ${ruleName(k)} — ${v} wave${v === 1 ? '' : 's'}`);
+  }
   const last = p.recent?.[0];
   if (last) {
     out.push(`last: ${last.depth} wave${last.depth === 1 ? '' : 's'}`
       + (ladderName(last.mode) ? ` of ${ladderName(last.mode)}` : '')
       + (last.won ? ', crowned' : '')
+      + (last.rules?.length ? ` · under ${ruleName(last.rules.join('+'))}` : '')
       + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));
   }
