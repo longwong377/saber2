@@ -145,15 +145,46 @@ export async function stubEngine() {
   sun.shadow.camera.updateProjectionMatrix();
   const hemi = new THREE.HemisphereLight(0x88aaff, 0x886644, 1);
   scene.add(sun, hemi);
-  return {
+  /**
+   * THE LIGHT POOL IS BORROWED, NOT REBUILT.
+   *
+   * Every lit blade now asks `engine.lightUp()` for illumination instead of
+   * carrying its own point lights (Saber.js, player note #15). A stub with no
+   * `lightUp` sends every blade down the fallback path and adds two lights per
+   * sabre to the scene — so a headless harness would measure the behaviour the
+   * fix removed and report it as current.
+   *
+   * The pool SIZE and the RANKING come off the shipped Engine rather than being
+   * written out again here. A second copy of the ranking beside the real one is
+   * the signature defect of this codebase (HANDOFF §2.3/§2.4) and it fails in
+   * the direction nobody checks: the instrument disagrees with the game and
+   * manufactures a defect. The import is dynamic and inside a function body for
+   * the reason `bootWorld` gives below — Engine.js rewrites three's ShaderChunks
+   * behind once-only flags.
+   */
+  const { Engine, LIGHT_POOL_SIZE } = await import('../../src/engine/Engine.js');
+  const stub = {
     scene, camera, sun, hemi,
     sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
     renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
     profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
     applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
     setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
-    setQuality() {}, setResolutionScale() {}, render() {},
+    setQuality() {}, setResolutionScale() {},
+    lightPool: [], _lightReq: [], _lightsWanted: 0, _lightsLit: 0,
+    lightUp: Engine.prototype.lightUp,
+    _syncLights: Engine.prototype._syncLights,
+    // The real Engine resolves the frame's requests at the top of render(). A
+    // census taken without one would see a pool that had never been driven.
+    render() { this._syncLights(); },
   };
+  for (let i = 0; i < LIGHT_POOL_SIZE; i++) {
+    const L = new THREE.PointLight(0xffffff, 0, 7, 1);
+    L.castShadow = false;
+    scene.add(L);
+    stub.lightPool.push(L);
+  }
+  return stub;
 }
 
 /** An input device with nothing pressed. Shape taken from src/engine/Input.js. */

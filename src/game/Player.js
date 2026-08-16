@@ -1504,6 +1504,22 @@ export class Player {
       bladeLength: opts.bladeLength ?? 1.15,
       coreWidth: opts.coreWidth ?? 1,
       hiltStyle: opts.hiltStyle ?? 'Graflex',
+      /**
+       * THE FIRST BLADE IN THE SCENE PUBLISHES THE LIGHT POOL for every blade
+       * built after it — see `resolveLightSink`. This is that blade: nothing in
+       * a level is constructed before the player, and the alternative is a new
+       * constructor argument in Enemy.js, Net.js and World.js, none of which
+       * this pass owns.
+       */
+      engine: world.engine,
+      /**
+       * …and YOUR blade never loses a slot. Priority is the first term of the
+       * pool's ranking, so a local player standing in a crowd of thirty keeps
+       * both of their own lights whatever else is on the field. A remote
+       * player's blade ranks on brightness and distance like anyone else's,
+       * because from here it IS anyone else's.
+       */
+      lightPriority: opts.isLocal ? 1 : 0,
     });
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,

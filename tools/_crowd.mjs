@@ -49,9 +49,17 @@ const census = (label) => {
   return { lights, meshes, tris, mats: mats.size, bodies };
 };
 
+/* AND THE FRAME IS RESOLVED, NOT JUST SIMULATED.
+ *
+ * A blade no longer OWNS a point light; it asks `Engine.lightUp` for one every
+ * frame and the engine's fixed pool of eight ranks the requests when it renders
+ * (Saber.js, Engine.lightUp). `world.update` posts the requests, `engine.render`
+ * is what turns the winners into lights — so a census taken after update alone
+ * would read a pool that had never been driven and report 2 lights whatever was
+ * on the field. That would be a flattering number and a false one. */
 const step = (frames) => {
   const t0 = process.hrtime.bigint();
-  for (let i = 0; i < frames; i++) world.update(1 / 60, idleInput());
+  for (let i = 0; i < frames; i++) { world.update(1 / 60, idleInput()); world.engine.render(1 / 60); }
   return Number(process.hrtime.bigint() - t0) / 1e6 / frames;
 };
 

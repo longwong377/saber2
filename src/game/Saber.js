@@ -635,6 +635,38 @@ const TRAIL_FRAG = /* glsl */`
 
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * THE ENGINE EVERY BLADE IN THE PLAYING SCENE SENDS ITS LIGHT TO.
+ *
+ * A registry rather than a constructor argument, and the reason is where the
+ * Sabers are built: `Enemy.js` (twice), `Net.js`, `Menu.js`, `toon/scene.js`
+ * and a dozen checks all call `new Saber(scene, …)`, and thirty ENEMY blades
+ * are what note #15 is about — the player's own two lights were never the
+ * problem. Threading a parameter to all of them means editing four files that
+ * other work is live in.
+ *
+ * So the first Saber that is TOLD about an engine publishes it, and every blade
+ * built into that engine's scene afterwards finds it. `Player` is that first
+ * Saber in every real game: `World.spawnPlayer` runs before any wave.
+ *
+ * `resolveLightSink` is the guard, and its test is the SCENE and not the
+ * registry: a blade only uses the pool if the object it was parented into
+ * belongs to that engine's scene graph. The character creator's preview runs
+ * its own renderer over its own scene while a game engine is alive, and a
+ * request posted from there would light nothing and cost a slot.
+ */
+let LIGHT_SINK = null;
+
+/** @returns the engine this saber should ask for light, or null for its own. */
+export function resolveLightSink(engine, scene) {
+  if (engine && typeof engine.lightUp === 'function') LIGHT_SINK = engine;
+  const sink = LIGHT_SINK;
+  if (!sink || !sink.scene) return null;
+  let top = scene;
+  while (top && top.parent) top = top.parent;
+  return top === sink.scene ? sink : null;
+}
+
 export class Saber {
   constructor(scene, opts = {}) {
     this.scene = scene;
@@ -720,12 +752,49 @@ export class Saber {
     // Two lights, not more, on purpose: every enemy in a wave carries one of
     // these, and NUM_POINT_LIGHTS is a per-fragment unrolled loop in every lit
     // material in the game.
+    //
+    // THAT COMMENT SAW HALF OF NOTE #15 AND CAPPED THE WRONG THING. It capped
+    // the lights PER BLADE at two and nothing capped the number of BLADES:
+    // measured with tools/_crowd.mjs, an empty colosseum carries 2 dynamic
+    // point lights and thirty acolytes carry 64. The second cost is the one the
+    // player calls a freeze rather than lag — three.js bakes NUM_POINT_LIGHTS
+    // into the shader SOURCE, so a blade igniting or a wielder dying moves the
+    // count and recompiles every lit material in the scene.
+    //
+    // These two are now REQUESTS rather than lights: they carry the position,
+    // the colour (see `_applyColour` and FLOOR_CHANNEL), the 5.4/2.4 candela
+    // tuning and the 1/r decay that the whole near/far balance is built on, and
+    // once a frame `_updateVisuals` offers them to `Engine.lightUp`. The engine
+    // holds a FIXED pool of eight that is never added to or removed from the
+    // scene, so the count cannot change and the recompile cannot happen.
+    //
+    // They are still PointLights and not plain records, because everything that
+    // grades this blade's light — tools/checks/saber-light.mjs, vfx.mjs — reads
+    // `decay`, `distance`, `castShadow` and `color` off them, and a second
+    // description of a light beside the light is the defect this project keeps
+    // removing.
     this.light = new THREE.PointLight(0xffffff, 0, 7, 1);
     this.light.castShadow = false;
-    scene.add(this.light);
     this.tipLight = new THREE.PointLight(0xffffff, 0, 4.5, 1);
     this.tipLight.castShadow = false;
-    scene.add(this.tipLight);
+    /**
+     * …AND THEY GO IN THE SCENE WHEN THERE IS NO POOL TO ASK.
+     *
+     * The character-creator preview (Menu.js) builds its Saber into `p.pivot`
+     * inside its OWN scene with its own renderer, and so does `toon/scene.js`
+     * and every headless check that news up a Saber against a bare
+     * `THREE.Scene`. None of those has an Engine, none of them has more than one
+     * blade, and a preview whose sabre stopped lighting anything would be a
+     * regression bought for nothing. So the fallback is exactly the old
+     * behaviour, and the test is IDENTITY OF THE SCENE — not merely "an engine
+     * was registered", because the menu preview runs while a game's engine is
+     * alive and its blade must not post requests into a pool that renders a
+     * different scene.
+     */
+    this.engine = resolveLightSink(opts.engine, scene);
+    /** Whose blade never loses a pool slot. See Engine.lightUp's ranking. */
+    this.lightPriority = opts.lightPriority ?? 0;
+    if (!this.engine) { scene.add(this.light); scene.add(this.tipLight); }
 
     this._applyColour();
   }
@@ -1618,6 +1687,17 @@ export class Saber {
       this.tipLight.position.copy(_v1);
       this.tipLight.intensity = 2.4 * this.ignition * (1 + this.contactStrain * 0.9) * flick * this.punch;
       this.tipLight.distance = 3.8 + len * 2.2;
+      /* ASK, rather than BE, a light. Once a frame, both samples, with the
+       * numbers above unchanged — the pool ranks the frame's requests and the
+       * eight best drive real point lights. A blade that loses a slot still
+       * lights the shot through its own emissive geometry and the bloom, which
+       * is 88% of the visible effect (measured — see PROFILE). Unlit blades ask
+       * for nothing, so `retract()` costs a slot the same frame it takes the
+       * blade out. */
+      this.engine?.lightUp(this.light.position, this.light.color,
+        this.light.intensity, this.light.distance, this.lightPriority);
+      this.engine?.lightUp(this.tipLight.position, this.tipLight.color,
+        this.tipLight.intensity, this.tipLight.distance, this.lightPriority);
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;

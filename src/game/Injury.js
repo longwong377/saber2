@@ -52,14 +52,38 @@ const _UP = new THREE.Vector3(0, 1, 0);
  * a chest is a freckle.
  */
 const SITES = [
-  { bone: 'chest', r: 0.055, w: 3 },
-  { bone: 'spine', r: 0.050, w: 2 },
-  { bone: 'hips', r: 0.045, w: 1 },
-  { bone: 'armL', r: 0.030, w: 1 }, { bone: 'armR', r: 0.030, w: 1 },
-  { bone: 'foreL', r: 0.026, w: 1 }, { bone: 'foreR', r: 0.026, w: 1 },
-  { bone: 'thighL', r: 0.040, w: 1 }, { bone: 'thighR', r: 0.040, w: 1 },
-  { bone: 'shinL', r: 0.032, w: 1 }, { bone: 'shinR', r: 0.032, w: 1 },
-  { bone: 'head', r: 0.028, w: 1 },
+  /**
+   * THE RADII WERE TOO SMALL TO SEE, and that was the whole of player note
+   * #42: "haven't been able to notice the player model looking injured or
+   * bloody the more damaged they get."
+   *
+   * The system was not broken. tools/_hurt.mjs drives a real Player down its
+   * health bar through the real damage funnel and counts what reaches the
+   * screen: at 63 of 100 hp there were three marks and thirty-six triangles of
+   * them, and they covered **0.00% of the body's projected silhouette** — nil
+   * of 343 rays through a third-person camera at the game's own 3.05 m boom.
+   *
+   * The arithmetic says why, and it is not subtle. A chest mark at r = 0.055
+   * is an 11 cm patch on a 1.78 m figure. At 3.05 m through a 60° lens the
+   * frame is 3.5 m tall, so that mark is 3% of frame height and the arm marks
+   * are 1.5% — a coin on a person, at a distance where the whole person is
+   * half the screen. Three coins is not "looking injured", it is a texture
+   * detail nobody will ever be at the right distance to read.
+   *
+   * So they are 2.4x, which puts a chest wound at 26 cm — a hand-sized tear
+   * rather than a spot — and the limbs in proportion. That is the size a wound
+   * has to be to read as one at the range you see your own body from, and it
+   * is the range that decides it: this figure is only ever looked at from the
+   * third-person boom or the character screen.
+   */
+  { bone: 'chest', r: 0.132, w: 3 },
+  { bone: 'spine', r: 0.120, w: 2 },
+  { bone: 'hips', r: 0.108, w: 1 },
+  { bone: 'armL', r: 0.072, w: 1 }, { bone: 'armR', r: 0.072, w: 1 },
+  { bone: 'foreL', r: 0.062, w: 1 }, { bone: 'foreR', r: 0.062, w: 1 },
+  { bone: 'thighL', r: 0.096, w: 1 }, { bone: 'thighR', r: 0.096, w: 1 },
+  { bone: 'shinL', r: 0.077, w: 1 }, { bone: 'shinR', r: 0.077, w: 1 },
+  { bone: 'head', r: 0.058, w: 1 },
 ];
 
 /**
@@ -150,8 +174,33 @@ export class Injury {
   constructor(rig, opts = {}) {
     this.rig = rig;
     this.scale = opts.scale ?? 1;
-    this.max = opts.max ?? 6;
-    this.maxBones = opts.maxBones ?? 4;
+    /**
+     * FOURTEEN, not six — and it is free.
+     *
+     * Marks on one bone MERGE into that bone's single mesh (see `_rebuild`),
+     * so the draw-call budget is `maxBones`, not `max`. Six wounds was
+     * therefore a taste number wearing a budget's clothes: it cost the same
+     * as fourteen and gave a player who had lost two thirds of their health
+     * three small marks. Fourteen marks at nine triangles is 126 triangles on
+     * a 12 796-triangle figure — a hundredth of one body — and it is the
+     * difference between "there is a mark on me" and "I am covered in it",
+     * which is what note #42 asked for.
+     *
+     * `maxBones` IS the real budget, and it was under-spent. characters.mjs
+     * caps a body at 76 meshes; the Jedi measures 64 today (`characters: no
+     * archetype has quietly doubled in cost` prints it), and the header's
+     * "66, up to 69 with a plaited beard and a padawan braid" is the worst
+     * case. 69 + 7 = 76 exactly, so seven wounded bones is what the budget
+     * actually affords and four was leaving three on the table.
+     *
+     * It is worth the three, because four bones is what made the marks
+     * PLATEAU: measured over a twenty-hit fight, coverage of the body's
+     * silhouette climbed to 2.0% and then stopped, because every further
+     * wound landed on a bone that was already carrying marks. The eye reads
+     * "hurt in four places" however many times you are hit after that.
+     */
+    this.max = opts.max ?? 14;
+    this.maxBones = opts.maxBones ?? 7;
     this.rand = rng(opts.seed ?? 0x51ab27);
     /** Every wound taken, oldest first: { bone, dir, y, r, torn }. */
     this.wounds = [];
