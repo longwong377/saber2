@@ -251,6 +251,27 @@ The player asked for these to wait, and the folders are `assets/reference/`:
 - **The big creatures, and Mandalorians** — "all your monsters look the same,
   sphere with some legs".
 
+### 6.1b Diagnosed, scoped, not yet built
+
+**The Colosseum crowd is ONE MESH.** "I like the colosseum map, just increase
+the detail for the crowd — right now it looks okay in the distance but anytime
+you're near the edge you see how crude they are, make them either alien species
+or mixes of aliens."
+
+`addCrowd` (Props.js) builds exactly one figure — an extruded wedge body, a
+6×5-segment sphere head, three plates — and instances it three thousand times.
+Variation today is scale, garment colour and phase only, so at the rail every
+spectator is the same silhouette with the same head. The reference the player
+uploaded (`assets/reference/maps/colosseum/detailed arena view.webp`) shows what
+the near tier should be: individual alien profiles — domed crests swept back,
+horns, antennae, hooded bulk — reading as SHAPES against the sky, while the far
+tiers stay a speckled texture.
+
+The fix is four or five head/shoulder variants distributed across as many
+InstancedMeshes rather than one, which costs four extra draw calls on a level
+that already spends 224 hand-placed ones. It is not a shader problem and it is
+not a budget problem; it simply has not been built.
+
 ### 6.2 Older design calls — the user's, not yours
 
 Both confirmed exactly as the judges described; both defended by written
