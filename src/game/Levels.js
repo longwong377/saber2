@@ -2973,6 +2973,27 @@ export const LEVELS = {
      * a closed canopy has LESS undergrowth under it than a clearing, because
      * the light is gone. The fern is in the glades, which is where it is. */
     grass: 1.15,
+    /**
+     * AND IT IS NOT GRASS. This is the level the note is about — "the grass and
+     * ground look like absolute fucking garbage… just get rid of it entirely
+     * and redo it" — and the reference is what settles what "redo it" means:
+     * `drowned-wood/dagobah.jpeg` has NO GRASS IN IT AT ALL. Standing water,
+     * matted litter, fallen deadwood, and the rootlets off every buttress.
+     *
+     * `kind: 'swamp'` is that, and the machinery is in Scenery.js's
+     * `COVER_KINDS` with the whole argument written over it. Three previous
+     * passes at this were grass tunings and each one was doomed for the same
+     * reason: a field of upright blades is the one surface a bog cannot have,
+     * so no amount of making it browner or sparser was ever going to sit in the
+     * frame. What changed is the SHAPE of the cover, not its colour.
+     *
+     * The density is UNTOUCHED at 1.15 and that is deliberate. The complaint
+     * was never that there was too little of it — "it's sparse, you can see the
+     * ground" is the opposite complaint — and `world-immersion` measures this
+     * level at 96% of its walkable ground covered, which is right for a floor
+     * that should be continuous mat.
+     */
+    grassKind: 'swamp',
     // Fern and moss: a tight lightness pair at hue 96°, so `grassPalette`'s
     // five-stop species ramp does the spreading rather than the author.
     /* THE PAIR IS A LIGHTNESS RAMP AND ITS SPREAD IS PAID FOR AT BOTH ENDS.
@@ -2984,7 +3005,29 @@ export const LEVELS = {
      * scale. Measured, [0x4e6a2e, 0x2c421c] came out 1.04x and the deeps' own
      * pair 1.03x; this one is darker at the lit end, so the straw stop has
      * somewhere to be paler from. */
-    grassTint: [0x7f9440, 0x4e6128],
+    /* AND THE TINT WENT WITH THE KIND. It was [0x7f9440, 0x4e6128] — two
+     * greens, chosen when this was a fern field. Soaked leaf litter is not
+     * green: it is umber going to olive where the moss has taken it, which is
+     * what every square metre of `dagobah.jpeg` and `dagobah more.webp` is. The
+     * pair still has to be a LIGHTNESS ramp with the lit end darker than the
+     * two-stop ramp it replaces — `ground-cover.mjs` holds the median blade
+     * against that, because brightening cover is the cheapest way to make it
+     * read better in a plate and is a thumb on the scale — and at
+     * [0x6e7638, 0x393b1d] it is: 22% darker than the pair it replaces at the
+     * lit end and 28% at the shaded one.
+     *
+     * IT IS STILL AT HUE 71°, NOT THE 54° FIRST WRITTEN, and that is a
+     * measurement rather than a retreat toward green. `grassPalette` builds the
+     * five-stop species ramp by ROTATING the authored pair toward straw, green
+     * and glaucous, so how far the field can spread depends on where the pair
+     * starts: authored at 54° — a true umber — the near rung came out spanning
+     * 31° of hue against the 35° `ground-cover.mjs` requires, and at 66° it was
+     * 33°, because the straw stop had nowhere to rotate to. 71° is olive rather
+     * than green, which is what wet litter with moss taken hold in it actually
+     * is, and it leaves the ramp room at both ends. The COLOUR of this level's
+     * cover therefore moved much less than the SHAPE of it did, which is the
+     * finding: what was wrong with the drowned wood's floor was never its hue. */
+    grassTint: [0x6f7d33, 0x3a4020],
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();

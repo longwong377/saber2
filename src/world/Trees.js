@@ -420,17 +420,39 @@ export class Forest {
     this.trunkMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
+  /**
+   * THE CANOPY, AND WHY IT MOVED UP THE TRUNK.
+   *
+   * "The trunk extends further out than the canopy, it looks weird." It did,
+   * and it was one number: the crown sat at 0.78 of the trunk's length with a
+   * half-height of 0.62 × spread, so on the median tree (13 m, r 0.42) the
+   * canopy's top reached 10.1 + 2.2 = 12.3 m and the trunk went on to 13.0 —
+   * three quarters of a metre of bare pole sticking out of the top of the
+   * foliage, on every tree in the wood, which is precisely what a tree does not
+   * do.
+   *
+   * 0.88 and 0.76. The crown's centre is 0.88 of the way up and its half-height
+   * is 0.76 of its spread, so the same tree now closes at 11.4 + 3.0 = 14.4 m
+   * against a 13.0 m trunk: the shaft is INSIDE the canopy by a metre and a
+   * half, at every size in the distribution, which is what was asked for. The
+   * spread went up with it — 9.4 × the butt radius rather than 8.5 — because a
+   * canopy that is taller and no wider is a bush.
+   *
+   * A FELLED tree keeps the tighter, lower figure: a crown that has hit the
+   * ground is crushed, and the difference is the cheapest way to tell a
+   * standing tree from a lying one at range.
+   */
   _writeCrown(i) {
     const k = i * F.N;
     const h = this.data[k + F.H], r = this.data[k + F.R];
     const len = Math.max(0.2, h - this.data[k + F.CUT]);
+    const down = this.data[k + F.STATE] === DOWN;
     this.hinge(i, _p);
     this.axis(i, AXIS);
-    // the canopy sits at 0.78 of the surviving trunk and rides it over
-    _p.addScaledVector(AXIS, len * 0.78);
+    _p.addScaledVector(AXIS, len * (down ? 0.80 : 0.88));
     _q.setFromUnitVectors(UP, AXIS);
-    const spread = r * (this.data[k + F.STATE] === DOWN ? 7.0 : 8.5);
-    _s.set(spread, spread * 0.62, spread);
+    const spread = r * (down ? 7.6 : 9.4);
+    _s.set(spread, spread * (down ? 0.58 : 0.76), spread);
     this.crownMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
@@ -448,14 +470,34 @@ export class Forest {
       if (D[k + F.STATE] !== STANDING) continue;
       const dx = D[k + F.X] - near.x, dz = D[k + F.Z] - near.z;
       if (dx * dx + dz * dz > r2) continue;
-      /* THE CAPSULE STOPS AT 3.2 m, and that is the mechanic rather than an
-       * optimisation. A blade can only reach the bottom of a tree, so that is
-       * the only part of it that may be offered as a target — a capsule up the
-       * whole trunk would let a player standing on a rock cut a tree through
-       * its canopy, and would put the CUT HEIGHT, which decides how tall the
-       * stump is, wherever the blade happened to be. */
+      /* THE CAPSULE IS THE WHOLE TRUNK NOW, and the note that used to stand
+       * here defended the opposite:
+       *
+       *   "THE CAPSULE STOPS AT 3.2 m, and that is the mechanic rather than an
+       *    optimisation. A blade can only reach the bottom of a tree… a capsule
+       *    up the whole trunk would let a player standing on a rock cut a tree
+       *    through its canopy, and would put the CUT HEIGHT, which decides how
+       *    tall the stump is, wherever the blade happened to be."
+       *
+       * It is kept because it names the two consequences correctly and then
+       * calls them faults. THE PLAYER CALLED THEM THE FEATURE: "the trees can't
+       * be cut anywhere, only at the bottom, so that needs to be fixed — needs
+       * to be sliceable anywhere." A blade that stops mattering above chest
+       * height on the one object in the game built to be cut is exactly the
+       * "it's like it's not there" complaint, and a player who jumps, or stands
+       * on a log, or Force-leaps into a canopy and swings has every right to
+       * take the top off a tree.
+       *
+       * So the capsule runs the full standing length and the cut height goes
+       * wherever the blade put it — see the clamp in `fell`, which now allows
+       * 92% of the height instead of 60%. A high cut leaves a tall spar as its
+       * "stump" (`stumpMesh` is drawn from the ground to the cut) and drops the
+       * crown and whatever trunk was over it, which is what lopping a tree
+       * does. Nothing about the cost changed: this list is already culled to
+       * trunks within `reach` of the blade, and a capsule is two points.
+       */
       const y0 = D[k + F.Y] + 0.15;
-      const y1 = D[k + F.Y] + Math.min(3.2, D[k + F.H] * 0.6);
+      const y1 = D[k + F.Y] + Math.max(0.5, D[k + F.H] - 0.2);
       out.push({
         name: 't' + i, tree: i, forest: this,
         p0: new THREE.Vector3(D[k + F.X], y0, D[k + F.Z]),
@@ -523,7 +565,15 @@ export class Forest {
     const D = this.data;
     if (D[k + F.STATE] !== STANDING) return false;
     const h = D[k + F.H];
-    D[k + F.CUT] = clamp(cutH, 0.25, Math.max(0.3, h * 0.6));
+    /* 0.92 OF THE HEIGHT, not 0.6 — the other half of "sliceable anywhere".
+     * The cap is not zero-cost: what stands after a cut is `stumpMesh` scaled
+     * to the cut height, and what falls is scaled to `h − cut`, so a cut at
+     * 0.99 h would drop a 20 cm disc and leave the whole tree standing, which
+     * reads as a failed swing rather than as a cut. At 0.92 the shortest thing
+     * this can fell off a 7.5 m sapling is 60 cm, which still visibly goes
+     * over. Below, the floor stays at 0.25 m: a cut at the very ground has no
+     * hinge to pivot on. */
+    D[k + F.CUT] = clamp(cutH, 0.25, Math.max(0.3, h * 0.92));
     const m = Math.hypot(dx, dz) || 1;
     D[k + F.DX] = dx / m;
     D[k + F.DZ] = dz / m;
@@ -757,21 +807,43 @@ export class Forest {
  * fan nobody sees. This is a ring-by-ring lathe with a flat cap at the top —
  * the top cap IS seen, because it is the cut face — and none at the bottom.
  */
-function taperedGeo(h, r0, top, sides = 7, rings = 3) {
+/**
+ * A tapered trunk, standing on its own origin, with a BUTTRESS FLARE at the
+ * foot.
+ *
+ * THE FLARE IS THE REFERENCE'S SIGNATURE and it is what a straight rod does not
+ * have. In `drowned-wood/dagobah.jpeg` and every Kashyyyk frame the trunks do
+ * not meet the ground, they SPREAD into it — a skirt a third again as wide as
+ * the shaft in the bottom eighth of the tree, which is what a shallow-rooted
+ * tree in saturated ground grows. It is also the cheapest possible fix for
+ * "the trees look like poles": one extra ring of vertices, `sides` more
+ * triangles a tree, no extra draw call and no extra instance.
+ *
+ * `t` is remapped rather than the ring count raised, so the flare costs one
+ * ring and the shaft keeps the rings it had.
+ */
+function taperedGeo(h, r0, top, sides = 7, rings = 3, flare = 1.42) {
   const pos = [], nrm = [], uv = [], idx = [];
-  for (let ry = 0; ry <= rings; ry++) {
-    const t = ry / rings;
-    const y = t * h, r = lerp(r0, r0 * top, t);
+  for (let ry = 0; ry <= rings + 1; ry++) {
+    /* ring 0 is the flared foot at y = 0; ring 1 is where the shaft proper
+     * starts, an eighth of the way up; the rest are the shaft's own. */
+    const t = ry === 0 ? 0 : (ry - 1) / rings * 0.875 + 0.125;
+    const y = t * h;
+    const r = ry === 0 ? r0 * flare : lerp(r0, r0 * top, (t - 0.125) / 0.875);
     for (let s = 0; s <= sides; s++) {
       const a = (s / sides) * TAU;
+      /* The flare is LOBED rather than conical: a buttress root is three or
+       * four fins, not a skirt, and the difference is what the ink pass draws
+       * at the foot of every trunk in the wood. */
+      const fin = ry === 0 ? 1 + Math.cos(a * 3 + s * 0.0) * 0.22 : 1;
       const cx = Math.cos(a), cz = Math.sin(a);
-      pos.push(cx * r, y, cz * r);
+      pos.push(cx * r * fin, y, cz * r * fin);
       nrm.push(cx, 0.18, cz);
       uv.push(s / sides * 2.4, t * 2.2);
     }
   }
   const row = sides + 1;
-  for (let ry = 0; ry < rings; ry++) {
+  for (let ry = 0; ry < rings + 1; ry++) {
     for (let s = 0; s < sides; s++) {
       const a = ry * row + s, b = a + 1, c = a + row, d = c + 1;
       idx.push(a, c, b, b, c, d);

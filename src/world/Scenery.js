@@ -22,7 +22,7 @@
  */
 
 import * as THREE from 'three';
-import { grassSprite, smokeSprite } from '../engine/Textures.js';
+import { grassSprite, litterSprite, smokeSprite } from '../engine/Textures.js';
 /* The cel model's own arithmetic, so `grassShade` cannot drift from the shader
  * it stands for. Cel.js imports nothing at all — in particular not Engine.js,
  * which would close the loop this file's own note at line 566 is about. */
@@ -1850,6 +1850,16 @@ export function makeCoverField(opts = {}) {
  *
  * Radii are quoted at the reference `radius` of 46 m and scale with it.
  */
+/**
+ * THE COVER KINDS. One row per kind, applied as multipliers over the tier table
+ * below so a kind cannot fork the ladder — see the long note in the GrassField
+ * constructor for why the Drowned Wood needed one and why a fourth grass tuning
+ * pass could not have worked.
+ */
+const COVER_KINDS = {
+  swamp: { width: 1.55, height: 0.52, wave: 0.14, bend: 1.70 },
+};
+
 const GRASS_TIERS = [
   /* Real blade geometry, eight to a clump. The only tier the player ever sees
    * as separate plants, so it is deliberately SMALL and DENSE — and it keeps
@@ -1975,6 +1985,52 @@ export class GrassField {
      * blade is a point on that ramp. See grassPalette. */
     this.palette = grassPalette(this.tintA, this.tintB);
 
+    /**
+     * WHAT KIND OF COVER THIS IS, and it is the fix three grass passes could
+     * not be.
+     *
+     * "I like the drowned wood map but the grass and ground look like absolute
+     *  fucking garbage and need to be redone from the ground up, it's sparse,
+     *  you can see the ground, it looks pbr, just get rid of it entirely and
+     *  redo it."
+     *
+     * The reference settles what "redo it" means: `drowned-wood/dagobah.jpeg`
+     * has NO GRASS IN IT AT ALL — a swamp floor is standing water, matted
+     * litter, fallen deadwood and the rootlets off every buttress. So the fix
+     * is not a better grass shader, which is what the last three attempts were;
+     * it is a different KIND, and the machinery for one was already here: the
+     * tier table is data, the card map is a parameter, and every rung reads its
+     * width, height, bend and sway off the table.
+     *
+     * `swamp` changes four things and nothing else:
+     *
+     *   THE SPRITE      `litterSprite` instead of `grassSprite`. Every mark in
+     *                   it is horizontal or arched — mats, root arches that
+     *                   touch the ground at both ends, fallen twigs — and none
+     *                   is an upright blade.
+     *   THE PROPORTION  0.52× the height and 1.55× the width, on every rung. A
+     *                   grass card is a tuft; a litter card is a MAT, and the
+     *                   difference between the two is entirely aspect ratio.
+     *   THE SWAY        0.14× the wave. Litter and roots do not move in wind,
+     *                   and a bog floor rippling like a wheat field was half of
+     *                   what made the old one read as a lawn in a swamp.
+     *   THE ARCH        1.7× the bend, so the near rung's real geometry leaves
+     *                   the ground and comes back over instead of standing up.
+     *
+     * WHAT IT DOES NOT CHANGE, deliberately: the field, the budget, the tier
+     * radii and the whole shading path, so every measurement `ground-cover.mjs`
+     * makes about clustering, hue spread, tuft coherence and the wind's GLSL
+     * twin still applies to it unmodified.
+     */
+    this.kind = opts.kind || 'grass';
+    const K = COVER_KINDS[this.kind] || null;
+    this.tiers = K ? GRASS_TIERS.map((T) => ({
+      ...T,
+      width: T.width * K.width,
+      base: T.base * K.height, varies: T.varies * K.height,
+      wave: T.wave * K.wave, bend: T.bend * K.bend,
+    })) : GRASS_TIERS;
+
     const half = terrain && terrain.half ? terrain.half : 280;
     const seed = opts.seed ?? (terrain && terrain.presetKey ? hashString(terrain.presetKey) : 1337);
     this.species = makeSpeciesField(seed);
@@ -2040,7 +2096,7 @@ export class GrassField {
      * ratio between the rungs is fixed by the table and only the overall
      * thickness moves with the budget. */
     const k = this.radius / 46;
-    const tiers = GRASS_TIERS.map((T) => {
+    const tiers = this.tiers.map((T) => {
       const rIn = T.rIn * k, rOut = T.rOut * k, cell = T.cell * k;
       const oR = rOut + cell, iR = Math.max(0, rIn - cell);
       const hold = Math.min(1, this.coverFrac
@@ -2061,7 +2117,7 @@ export class GrassField {
 
     this.nearRadius = tiers[0].rOut;      // where real blades stop
     this.reach = tiers[tiers.length - 1].rOut;
-    this._cardMap = repeating(grassSprite(96));
+    this._cardMap = repeating(this.kind === 'swamp' ? litterSprite(96) : grassSprite(96));
 
     this.rings = tiers.map((t) => this._buildRing({
       count: t.cap, card: t.T.card,
