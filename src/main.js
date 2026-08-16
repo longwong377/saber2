@@ -114,7 +114,7 @@ let fpsSmooth = 60;
 /* ══════════════════════════════════════════════════════════════════════ */
 
 const menu = new Menu(settings, {
-  onDeploy: () => deploy(),
+  onDeploy: () => { deploy().catch((e) => console.error('deploy failed', e)); },
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
@@ -129,7 +129,7 @@ const menu = new Menu(settings, {
     enemies: world ? world.enemies.length : 0,
     wave: world && world.director ? (world.director.wave ?? '-') : '-',
   }),
-  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy(); },
+  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy().catch((e) => console.error('deploy failed', e)); },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
   onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
@@ -242,7 +242,7 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-function buildWorld(levelKey) {
+async function buildWorld(levelKey, onProgress = null) {
   if (world) { world.dispose(); world = null; }
   audio.init();
   audio.resume();
@@ -315,7 +315,25 @@ function buildWorld(levelKey) {
     }, 1500);
   };
 
-  world.loadLevel(levelKey);
+  /**
+   * ASYNC, SO THE TAB DOES NOT SIMPLY STOP.
+   *
+   * This was `world.loadLevel(levelKey)` — one synchronous statement that built
+   * a terrain heightfield, a Rapier world, every instanced field, the level's
+   * textures and up to 224 hand-placed props on the main thread. Measured:
+   * 352-1090 ms warm and 3821 ms on a cold first build, with no progress bar,
+   * no spinner and no yield. The only feedback a player got was that the page
+   * stopped responding and then the menu was gone.
+   *
+   * The boot sequence has done this properly all along — eleven named steps,
+   * each awaiting a frame behind a progress bar — and deploy() never used it.
+   * `loadLevelAsync` yields between seven named stages; `unload()` is its own,
+   * because it is 2408 ms of a 3706 ms rebuild and hiding it would leave the
+   * longest single pause unaccounted for.
+   *
+   * `loadLevel` stays synchronous for `toon/live.js` and the check suites.
+   */
+  await world.loadLevelAsync(levelKey, {}, onProgress);
   const player = world.spawnPlayer({ name: playerName(), isLocal: true });
   player.control.sensitivity = settings.sensitivity;
   player.control.followStrength = settings.camFollow;
@@ -431,7 +449,7 @@ function buildWorld(levelKey) {
  * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
  * a world to show them, and a failure puts the menu back with the reason on it.
  */
-function deploy() {
+async function deploy() {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
   // and mode into the joining player's save.
@@ -445,7 +463,11 @@ function deploy() {
    * profile is the Ember Shelf. */
   const levelKey = MODES[settings.mode]?.level ?? sessionOr('level');
   try {
-    buildWorld(levelKey);
+    /* AWAITED, so the build yields between its stages instead of freezing the
+     * tab. The progress callback is the same shape the boot sequence's bar
+     * already takes; `screens.loading` renders it if it exists, and a build
+     * that finishes before the first paint simply never shows one. */
+    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label));
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
