@@ -39,9 +39,11 @@ import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packSnapshot } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
-import { audio } from '../engine/Audio.js';
+import { audio, PRIO } from '../engine/Audio.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
+/** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
+const num = (v, d) => (Number.isFinite(v) ? v : d);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
@@ -900,6 +902,175 @@ export class World {
   setTimeScale(s) { this.targetTimeScale = s; }
   addHitstop(t) { this.hitstop = Math.max(this.hitstop, t); }
 
+  /**
+   * IS THIS CLASS OF FEEDBACK TURNED ON?
+   *
+   * `applyFeelSettings` (ui/Menu.js) hangs the player's answer on
+   * `world._feelSettings` and wraps the two funnels that existed when it was
+   * written — `addShake` and `addHitstop`. Everything added since needs the
+   * same gate and must not need a second copy of the lookup, so it is one
+   * predicate and every new effect asks it.
+   *
+   * The mapping is the honest one rather than the literal one: `shake` means
+   * "kinetic feedback the game applies without being asked", which is the
+   * screen punch and the pad as much as the camera, and `slowmo` means "the
+   * game bending time at me", which is hitstop and kill-time. A world nobody
+   * has spoken to answers yes, which is what keeps every check and every
+   * headless harness measuring the shipped behaviour.
+   */
+  feelOn(kind) {
+    const s = this._feelSettings;
+    return !s || s[kind] !== false;
+  }
+
+  /**
+   * KILL-TIME — the world holding its breath, and the reason it is not hitstop.
+   *
+   * Hitstop is a freeze: `update` runs the whole world at 0.06× for 30–120 ms
+   * and it exists to make a blow land in the hands. This is the other half of
+   * the same sentence — the world *continuing*, at a third of its speed, for
+   * long enough to watch a body fall. It rides `targetTimeScale`, which damps
+   * at 9 rather than snapping, so the entry and the exit are both ramps.
+   *
+   * `setTimeScale` had exactly two callers in the whole project before this,
+   * both of them `Player.toggleSense`. A held power owns the scale for as long
+   * as it is held, so this must never be able to take it back: `_killTime`
+   * carries the value it wrote, and the release only restores 1 if nothing else
+   * has moved the target in the meantime.
+   */
+  killTime(scale, seconds) {
+    if (!this.feelOn('slowmo')) return false;
+    const s = clamp(num(scale, 0.4), 0.05, 1);
+    const d = clamp(num(seconds, 0.2), 0.02, 2);
+    const k = this._killTime;
+    // A dip may only ever slow the world FURTHER than whatever is already
+    // commanded. Force Sense at 0.42 is a power the player is paying for, and a
+    // kill landing inside it must not speed the world back up.
+    const now = this.targetTimeScale;
+    if (!k && s >= now) return false;
+    // Deeper or longer wins; shallower and shorter may not cut one short.
+    if (k && s >= k.scale && d <= k.left) return false;
+    // `restore` is what was commanded BEFORE any dip — captured once, so a
+    // second kill inside the first does not record the first dip as the state
+    // to go back to.
+    this._killTime = { scale: Math.min(s, k ? k.scale : s), left: Math.max(d, k ? k.left : d),
+      restore: k ? k.restore : now };
+    this.setTimeScale(this._killTime.scale);
+    return true;
+  }
+
+  _updateKillTime(rawDt) {
+    const k = this._killTime;
+    if (!k) return;
+    k.left -= rawDt;
+    if (k.left > 0) return;
+    this._killTime = null;
+    // Only hand the scale back if it is still OURS. Force Sense toggled during
+    // a dip owns the clock from that moment, and the dip expiring underneath it
+    // must not cancel a power the player is holding.
+    if (Math.abs(this.targetTimeScale - k.scale) < 1e-6) this.setTimeScale(k.restore);
+  }
+
+  /**
+   * WHAT A KILL FEELS LIKE — the one place, because a kill has one place.
+   *
+   * `_applyBladeEvent` knew it had killed (`wasAlive && e.dead`) and spent the
+   * answer on choosing the string 'kill' over 'cut' for the hitmarker: the
+   * hitstop, the shake, the particles and the sound were byte-identical whether
+   * the blow took an arm or ended a life. And it could only ever have covered
+   * blade kills — a body dropped by lightning, a detonation, a fall or a
+   * trooper's rifle raised nothing at all.
+   *
+   * `Enemy.die` calls `onEnemyKilled` before it does anything else, for every
+   * death by every cause, so this is the only site that sees all of them.
+   *
+   * WEIGHT IS DERIVED FROM THE BODY, not typed per archetype. `A.mass` spans
+   * 3 kg (a training remote) to 1400 kg (an acklay) across the roster, and
+   * `Math.pow(m/78, 0.32)` maps that onto 0.35…1.85 — a curve rather than a
+   * table, so the seven Command units and the four machines added last session
+   * are already weighed and the next one will be too. HANDOFF §2.3 is a section
+   * about exactly the table this is not.
+   *
+   * EVERY LINE OF IT IS GATED. A player who has turned the two feel toggles off
+   * gets the score, the feed and the notification and nothing that moves the
+   * camera, the clock or the pad.
+   */
+  _killFelt(enemy, source, kind) {
+    const A = enemy.A || {};
+    const w = clamp(Math.pow(clamp(num(A.mass, 78), 2, 2000) / 78, 0.32), 0.3, 2);
+    // A boss is not a heavy trooper. `big`/`boss` add a step the mass curve
+    // cannot, because a Jedi Master weighs 78 kg and ending one is an event.
+    const rank = A.boss ? 1 : (A.big ? 0.55 : 0);
+    const heft = clamp(w * (1 + rank), 0.3, 3);
+    const at = enemy.position;
+    /**
+     * WHOSE KILL, and it decides everything but the sound.
+     *
+     * A body makes its noise whoever felled it — that is physics, and in
+     * Command it is the difference between an army fighting around you and a
+     * silent diorama. The CLOCK and the FRAME are not physics: hitstop and
+     * kill-time are global, so a friend's kill on the far side of a co-op field
+     * freezing your world would be the worst possible reading of "wire it to
+     * the player's senses". Only what this machine's player did moves them.
+     */
+    const mine = source?.isLocal === true;
+
+    /* ── THE BODY'S OWN SOUND. Enemy.die ends on `audio.thud(pos, 1)` — the
+     * same 110 Hz for a 3 kg remote and a 1400 kg acklay — and the announcer's
+     * death cry goes through a shared once-per-ENEMY_GAP budget, so most of the
+     * bodies in a wave fell in silence. `bodyThump` already scales all three of
+     * its terms off mass and exists for precisely this; the low sweep over it is
+     * the sound of the thing STOPPING, which is what a kill has and a wound
+     * does not. */
+    if (at) {
+      audio.bodyThump(at, clamp(num(A.mass, 78) * 2.2, 60, 2400));
+      audio.tone({ freq: 210 / heft, freqEnd: 46 / heft, dur: 0.28 + heft * 0.16,
+        gain: 0.10 + heft * 0.06, type: 'triangle', pos: at, prio: PRIO.combat });
+      audio.noise({ dur: 0.26 + heft * 0.1, gain: 0.09 + heft * 0.05, type: 'lowpass',
+        freq: 1500, freqEnd: 190, q: 0.7, pos: at, pink: true, prio: PRIO.combat });
+    }
+
+    /* ── THE FRAME. A wound already flashes; a kill squeezes. The punch is the
+     * only new screen effect and it is short by construction (see Engine's
+     * damp rate) so twenty of them across a wave read as twenty impacts rather
+     * than as a filter. */
+    if (mine && this.feelOn('shake')) {
+      this.engine?.punch?.(clamp(0.20 + heft * 0.22, 0.2, 0.85));
+      source.camera?.addShake?.(clamp(0.10 + heft * 0.18, 0.1, 0.6));
+      this.engine?.rumble?.(clamp(0.28 + heft * 0.30, 0.2, 1),
+        clamp(0.14 + heft * 0.12, 0.1, 0.6), Math.round(60 + heft * 90));
+    }
+    // A boss going down lights the room whoever landed the blow.
+    if (rank > 0) this.engine?.flash?.(0.06 + rank * 0.09);
+
+    /* ── THE CLOCK. Not on every kill — a dip that fires twenty times a wave is
+     * a frame-rate problem, not a moment. It is reserved for the two kills that
+     * are punctuation: anything big or boss, and the body that empties the
+     * side it was fighting for. */
+    if (mine) {
+      const lastOne = !this.enemies?.some(e => e !== enemy && !e.dead && e.team === enemy.team);
+      if (rank > 0) {
+        this.addHitstop(0.10 + rank * 0.06);
+        this.killTime(rank >= 1 ? 0.32 : 0.45, 0.55 + rank * 0.35);
+      } else {
+        // An ordinary kill still lands harder in the hands than a wound: the
+        // cut that wounded gave 0.03–0.055 and this is on top of it, by
+        // Math.max inside addHitstop.
+        this.addHitstop(0.055 + heft * 0.03);
+        if (lastOne) this.killTime(0.36, 0.6);
+      }
+    }
+
+    /* ── THE FIELD. Something visibly leaves the body: a burst at the chest in
+     * the killer's own blade colour where there is one, so the kill is drawn in
+     * the same ink as the blow that caused it. */
+    if (at && this.particles) {
+      const col = kind === 'cut' && source?.saber ? source.saber.color.getHex() : 0xffb060;
+      this.particles.sparkBurst(_v3.copy(at).setY(at.y + 0.9), null,
+        Math.round(10 + heft * 12), { speed: 5 + heft * 4, color: col });
+    }
+  }
+
   /** Anything a lesson might be watching for. Free outside the dojo. */
   report(ev) { if (this.director && this.director.report) this.director.report(ev); }
 
@@ -938,6 +1109,10 @@ export class World {
       if (spent && !free) P.force = Math.max(0, P.force - spent);
     } else this.focus.reset();
 
+    // On the RAW clock, and it has to be: a kill-time dip that measured itself
+    // in dilated seconds would take 1/0.32 as long as it asked for, and a dip
+    // deep enough to be worth having would never end.
+    this._updateKillTime(rawDt);
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
     dt *= this.timeScale * this.focus.scale;
     dt = Math.min(dt, 1 / 24);
@@ -1922,6 +2097,11 @@ export class World {
      */
     this.corpses?.take(enemy);
     this.command?.onDeath(enemy, source);
+    /* BEFORE the casualty return below, and deliberately so: one of your own
+     * troopers falling is not a reward, but it is still a body hitting the
+     * ground three metres away and it has to make the sound and move the frame.
+     * `_killFelt` reads the BODY, not the scoreboard. */
+    this._killFelt(enemy, source, kind);
     /* A trooper of yours is not worth score, is not a kill, and does not feed
      * the combo — it is a casualty. Everything below this line is the reward for
      * killing something on the other side, and it must not pay out for losing

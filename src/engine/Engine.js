@@ -47,6 +47,9 @@ import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
 import { clamp, damp } from './MathUtil.js';
 
+/** Finite-or-default. Game maths produces NaN; a uniform holding one is a black frame. */
+const num = (v, d) => (Number.isFinite(v) ? v : d);
+
 /**
  * THE LADDER IS A FILL-RATE LADDER, AND THE TOP THREE ROWS COST THE SAME CPU.
  *
@@ -1277,6 +1280,36 @@ const CompositeShader = {
      * zero and tools/skyshot.mjs reports it. */
     uSharpen:    { value: 0 },
     uFlash:      { value: 0 },
+    /**
+     * A PUNCH IN THE FRAME, and it is NOT uFlash.
+     *
+     * uFlash adds white everywhere, which is a detonation. What a kill wants is
+     * the other thing a camera does when something lands: the edges close in
+     * and the middle gets harder for about a sixth of a second. So this drives
+     * the vignette up and the contrast with it, centred — the frame squeezes
+     * around what you just did rather than washing out.
+     *
+     * Kept separate from uVignette rather than added into it because the
+     * vignette is COMPOSITION (see the note on it) and this is an EVENT: the
+     * composition must be able to stay at 0.10 while an event rides on top, and
+     * a check reading uVignette must still measure the composition.
+     */
+    uPunch:      { value: 0 },
+    /**
+     * DRAIN THE COLOUR OUT, over seconds rather than frames. Death, and only
+     * death: the run is over and the world stops being a place you can act on.
+     * 1.0 is fully grey. Kept off the Sense grade, which is a COOL desaturation
+     * that silvers the highlights — an ability reads as an ability, and a death
+     * has to read as an ending.
+     */
+    uDrain:      { value: 0 },
+    /**
+     * LETTERBOX. `x` is the bar height as a fraction of the frame, 0 for none.
+     * It is here rather than in the DOM because the DOM overlay is Agent B's
+     * file and because a bar drawn in the composite is inside the grade — it
+     * cannot disagree with the frame's own black point.
+     */
+    uBars:       { value: 0 },
     uBlack:      { value: 0.018 },  // where black actually is
     uCurve:      { value: 0.32 },   // filmic S, applied in display space
     uShadowTint: { value: new THREE.Vector3(0.955, 0.985, 1.070) },
@@ -1292,6 +1325,7 @@ const CompositeShader = {
     uniform vec2 uResolution;
     uniform float uTime, uGrain, uVignette, uAberration, uSaturation, uContrast;
     uniform float uSense, uHurt, uRadial, uSharpen, uFlash;
+    uniform float uPunch, uDrain, uBars;
     uniform float uBlack, uCurve;
     uniform vec3 uLift, uGain, uShadowTint, uHighTint;
     uniform vec4 uHeat[6];
@@ -1438,10 +1472,36 @@ const CompositeShader = {
       }
       col += uFlash;
 
-      // — vignette
+      // — THE COLOUR GOING OUT OF IT. Before the vignette, so a drained frame
+      //   still darkens at its edges rather than going flat grey to the corner.
+      if(uDrain > 0.001){
+        float dl = dot(col, vec3(0.2126,0.7152,0.0722));
+        // Not a straight mix to luma: a drained frame also loses its highlights,
+        // which is what stops it reading as a black-and-white photograph and
+        // starts it reading as consciousness leaving.
+        col = mix(col, vec3(dl) * mix(1.0, 0.72, uDrain), uDrain);
+      }
+
+      // — vignette. The composition (uVignette) and the EVENT (uPunch) are one
+      //   operator here and two numbers everywhere else, so a kill can squeeze
+      //   the frame without moving the level's own grade.
       vec2 vc = centred * vec2(uResolution.x / uResolution.y, 1.0);
-      float vig = 1.0 - uVignette * smoothstep(0.16, 0.86, dot(vc, vc) * 1.6);
+      float r2v = dot(vc, vc) * 1.6;
+      float vig = 1.0 - (uVignette + uPunch * 0.55) * smoothstep(0.16, 0.86, r2v);
       col *= vig;
+      // …and the middle gets harder for the same sixth of a second. Pivoted on
+      // 0.36 rather than 0.5 so the punch bites in the mid-tones the fight
+      // actually lives in and cannot blow the sky.
+      if(uPunch > 0.001){
+        col = mix(col, (col - 0.36) * (1.0 + uPunch * 0.30) + 0.36,
+                  1.0 - smoothstep(0.0, 0.9, r2v));
+      }
+
+      // — letterbox, drawn inside the grade so the bars are the frame's own black
+      if(uBars > 0.0005){
+        float edge = min(vUv.y, 1.0 - vUv.y);
+        col *= smoothstep(uBars - 0.004, uBars + 0.004, edge);
+      }
 
       // — grain, gently animated, scaled by darkness so highlights stay clean
       float g = hash(gl_FragCoord.xy + fract(uTime)*vec2(311.0,271.0)) - 0.5;
@@ -1524,6 +1584,21 @@ export class Engine {
     this._hurt = 0;
     this._sense = 0;
     this._radial = 0;
+    /* The event punch decays on its own; the drain and the bars are held at a
+     * target until something lets go of them, because a death is a state and
+     * not an impulse. */
+    this._punch = 0;
+    this._drain = 0; this._drainTarget = 0;
+    this._bars = 0; this._barsTarget = 0;
+    /** Wall-clock ms the pad is busy until — see rumble(). */
+    this._rumbleUntil = 0;
+    /**
+     * How hard the pad is allowed to be driven, 0..1. One number rather than a
+     * boolean so the same seam serves "off" and "less", and it is a MULTIPLIER
+     * on every call — a caller never has to know the setting. Written by the
+     * feel funnel; 1 until something says otherwise.
+     */
+    this.rumbleLevel = 1;
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
@@ -2138,6 +2213,66 @@ export class Engine {
   setRadial(v) { this._radialTarget = v; }
 
   /**
+   * The frame squeezing around something that just landed. 0..1, decays.
+   *
+   * `Math.max` for the same reason flash() and hurt() use it: two kills on one
+   * frame are one punch at the strength of the bigger, not a doubled one.
+   */
+  punch(v) { this._punch = Math.max(this._punch, Math.min(1, num(v, 0))); }
+  /** Hold the colour out of the frame, 0..1. A state — nothing decays it. */
+  setDrain(v) { this._drainTarget = clamp(num(v, 0), 0, 1); }
+  /** Letterbox bar height as a fraction of the frame. A state, like the drain. */
+  setBars(v) { this._barsTarget = clamp(num(v, 0), 0, 0.2); }
+
+  /**
+   * RUMBLE, and it is here rather than in the input layer on purpose.
+   *
+   * Bindings own which pad the player is holding; this owns what the GAME does
+   * to it, and the events worth feeling — a kill, a death, a detonation — are
+   * raised in exactly the same breath as flash() and punch(). Putting it beside
+   * them means one call site says the whole sentence.
+   *
+   * Everything about it is best-effort. Two vendor spellings of the same
+   * feature exist (`vibrationActuator` on Chromium, `hapticActuators[]` on
+   * Firefox), neither is present on a keyboard-only player, and `playEffect`
+   * rejects on a pad that has gone away mid-frame — so every path ends in "no
+   * rumble" and never in a thrown frame.
+   *
+   * A SHORTER EFFECT DOES NOT INTERRUPT A LONGER ONE. `playEffect` replaces
+   * whatever is playing, so a wave of kills at 60 ms each would cut the 400 ms
+   * of a boss going down back to 60. The wall-clock deadline is what stops it.
+   *
+   * @param strong 0..1 the low-frequency (heavy) motor
+   * @param weak   0..1 the high-frequency (buzz) motor
+   * @param ms     duration in milliseconds
+   */
+  rumble(strong = 0.4, weak = 0.2, ms = 90) {
+    if (this.rumbleLevel <= 0) return false;
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    if (!nav || typeof nav.getGamepads !== 'function') return false;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const dur = clamp(num(ms, 90), 20, 1200);
+    if (now < this._rumbleUntil) return false;
+    const g = clamp(num(this.rumbleLevel, 1), 0, 1);
+    const s = clamp(num(strong, 0) * g, 0, 1), w = clamp(num(weak, 0) * g, 0, 1);
+    let sent = false;
+    let pads = null;
+    try { pads = nav.getGamepads(); } catch { return false; }
+    for (const p of pads || []) {
+      if (!p || !p.connected) continue;
+      const act = p.vibrationActuator || (p.hapticActuators && p.hapticActuators[0]);
+      if (!act || typeof act.playEffect !== 'function') continue;
+      try {
+        act.playEffect('dual-rumble', { startDelay: 0, duration: dur,
+          strongMagnitude: s, weakMagnitude: w })?.catch?.(() => {});
+        sent = true;
+      } catch {}
+    }
+    if (sent) this._rumbleUntil = now + dur;
+    return sent;
+  }
+
+  /**
    * THE LIGHT POOL — a FIXED number of point lights, whoever asks.
    *
    * Player note #15, and it is two complaints in one sentence: "any situation
@@ -2223,8 +2358,18 @@ export class Engine {
     this._hurt = damp(this._hurt, 0, 4.2, dt);
     this._sense = damp(this._sense, this._senseTarget || 0, 7, dt);
     this._radial = damp(this._radial, this._radialTarget || 0, 8, dt);
+    // The punch is FAST — 6.4 puts a 0.5 punch under a tenth of its peak in
+    // 0.36 s — because an event you can still see when the next one lands is a
+    // filter and not an event. The drain and the bars are slow on purpose: they
+    // are the two seconds after a death and they should be felt arriving.
+    this._punch = damp(this._punch, 0, 6.4, dt);
+    this._drain = damp(this._drain, this._drainTarget || 0, 1.9, dt);
+    this._bars = damp(this._bars, this._barsTarget || 0, 3.4, dt);
     u.uFlash.value = this._flash;
     u.uHurt.value = this._hurt;
+    u.uPunch.value = this._punch;
+    u.uDrain.value = this._drain;
+    u.uBars.value = this._bars;
     u.uSense.value = this._sense;
     // Focus reuses the Sense grade's cool desaturation at a fraction of its
     // strength, so the two read as the same family of ability.

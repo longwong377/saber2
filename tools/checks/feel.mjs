@@ -85,7 +85,137 @@ function drive({ speed = 0, flickAt = -1, frames = 200 } = {}) {
   return worst;
 }
 
+/**
+ * WHAT A BLOW ACTUALLY DID TO THE SENSES, counted rather than described.
+ *
+ * Every feedback channel the game has runs through a handful of named funnels —
+ * `world.addHitstop`, `rig.addShake`, `engine.punch/flash/rumble`,
+ * `world.setTimeScale`, `audio.tone/noise/bodyThump`. Recording them and
+ * replaying the SAME blow twice, once against a body that survives it and once
+ * against a body that does not, is the only way to answer the audit's actual
+ * charge: that the two were byte-identical.
+ *
+ * Nothing here re-implements a rule. The world is the shipped `World`, the
+ * death is the shipped `Enemy.die`, and the tape is a set of wrappers over the
+ * real methods that call straight through.
+ *
+ * The tape is ARMED, the blow is struck, and the tape is torn off again — with
+ * no `await` between the three, which is what makes it safe.
+ *
+ * `audio` is a module singleton shared by every World in the process and the
+ * checks in one file interleave at their awaits (see _shared.mjs). The first
+ * version of this left its wrappers installed across an await and measured the
+ * OTHER condition's sounds into the first condition's counter: 14 against 7,
+ * with the kill — the louder of the two — reading as the quieter. That is
+ * HANDOFF §2.5 exactly, and it flattered the null hypothesis rather than the
+ * one under test, which is the only reason it was believed for a minute.
+ */
+function tape(world, engine, audio) {
+  const t = { hitstop: 0, shake: 0, punch: 0, flash: 0, rumble: 0, sounds: 0,
+    scale: [], particles: 0 };
+  const undo = [];
+  const wrap = (o, k, note) => {
+    if (!o) return;
+    const f = o[k];
+    undo.push(() => { o[k] = f; });
+    o[k] = (...a) => { note(...a); return f?.apply(o, a); };
+  };
+  wrap(world, 'addHitstop', (v) => { t.hitstop = Math.max(t.hitstop, v || 0); });
+  wrap(world, 'setTimeScale', (v) => { t.scale.push(v); });
+  wrap(engine, 'punch', (v) => { t.punch = Math.max(t.punch, v || 0); });
+  wrap(engine, 'flash', (v) => { t.flash = Math.max(t.flash, v || 0); });
+  wrap(engine, 'rumble', (s) => { t.rumble = Math.max(t.rumble, s || 0); });
+  for (const k of ['tone', 'noise', 'bodyThump', 'thud', 'explosion']) wrap(audio, k, () => { t.sounds++; });
+  for (const k of ['sparkBurst', 'cutFlare', 'explosion']) wrap(world.particles, k, () => { t.particles++; });
+  wrap(world.player?.camera, 'addShake', (v) => { t.shake = Math.max(t.shake, v || 0); });
+  t.stop = () => { for (let i = undo.length - 1; i >= 0; i--) undo[i](); undo.length = 0; };
+  return t;
+}
+
 export async function run({ check, assert }) {
+  /* ── 0. a kill is an event ──────────────────────────────────────────── */
+
+  check('feel: killing something does not feel like wounding it', async () => {
+    const { bootWorld } = await import('./_coop.mjs');
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const { audio } = await import('../../src/engine/Audio.js');
+    const snap = await snapshotShared();
+    try {
+      const rows = [];
+      const felt = {};
+      for (const lethal of [false, true]) {
+        const { world, engine } = await bootWorld({ level: 'arena' });
+        // The stub engine carries the members World reached for when it was
+        // written. The three new ones come off the SHIPPED prototype rather
+        // than being re-declared here — the same rule `_coop.stubEngine`
+        // already applies to `lightUp`, and for the same reason: a second copy
+        // of a rule beside the real one is HANDOFF §2.4.
+        engine._punch = 0; engine.rumbleLevel = 1;
+        engine.punch = Engine.prototype.punch;
+        engine.setDrain = Engine.prototype.setDrain;
+        engine.setBars = Engine.prototype.setBars;
+        const e = world.spawnEnemy('b1', new THREE.Vector3(3, 0, -3));
+        assert(e, 'no b1 spawned');
+        // The SAME blow both times. The only difference is how much health was
+        // left in front of it, which is exactly the difference the audit says
+        // the game cannot see. Arm, strike, disarm — no await between them.
+        e.hp = lethal ? 1 : 1e6;
+        const t = tape(world, engine, audio);
+        e.damage(40, e.position.clone(), world.player, 'saber');
+        t.stop();
+        felt[lethal ? 'kill' : 'wound'] = t;
+        rows.push(`${lethal ? 'kill ' : 'wound'} hitstop ${t.hitstop.toFixed(3)}s shake ${t.shake.toFixed(2)}`
+          + ` punch ${t.punch.toFixed(2)} sounds ${t.sounds} scale [${t.scale.join(',') || '—'}]`);
+        world.unload?.();
+      }
+      const k = felt.kill, w = felt.wound;
+      assert(k.hitstop > w.hitstop,
+        `hitstop identical: wound ${w.hitstop}, kill ${k.hitstop}`);
+      assert(k.punch > 0 && w.punch === 0,
+        `the frame answers a kill the same as a wound: wound punch ${w.punch}, kill ${k.punch}`);
+      assert(k.sounds > w.sounds,
+        `the dying body made no sound of its own: wound ${w.sounds} sounds, kill ${k.sounds}`);
+      assert(k.shake > w.shake, `shake identical: ${w.shake} vs ${k.shake}`);
+      // …and the last body on the field bends the clock, which `setTimeScale`
+      // had two callers for before this and both of them were Force Sense.
+      assert(k.scale.length > 0 && k.scale[0] < 1,
+        `the last enemy dying did not move the world clock (${k.scale.join(',') || 'no calls'})`);
+      return rows.join('; ');
+    } finally { restoreShared(snap); }
+  });
+
+  check('feel: the two feel toggles reach every new channel', async () => {
+    const { bootWorld } = await import('./_coop.mjs');
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const { audio } = await import('../../src/engine/Audio.js');
+    const { applyFeelSettings, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const snap = await snapshotShared();
+    try {
+      const { world, engine } = await bootWorld({ level: 'arena' });
+      engine._punch = 0; engine.rumbleLevel = 1;
+      engine.punch = Engine.prototype.punch;
+      applyFeelSettings(world, { ...DEFAULT_SETTINGS, shake: false, slowmo: false });
+      const e = world.spawnEnemy('b1', new THREE.Vector3(3, 0, -3));
+      e.hp = 1;
+      const t = tape(world, engine, audio);
+      e.damage(40, e.position.clone(), world.player, 'saber');
+      t.stop();
+      assert(t.punch === 0, `the screen punched with shake off (${t.punch})`);
+      assert(t.rumble === 0, `the pad ran with shake off (${t.rumble})`);
+      assert(world.hitstop === 0, `hitstop ran with slowmo off (${world.hitstop})`);
+      assert(world.targetTimeScale === 1,
+        `kill-time ran with slowmo off (targetTimeScale ${world.targetTimeScale})`);
+      // The body still makes its noise: a toggle called "camera shake" must not
+      // be able to silence the world.
+      assert(t.sounds > 0, 'the toggles took the death sound with them');
+      const out = `shake off → punch 0, pad 0; slowmo off → hitstop 0, scale 1; ${t.sounds} sounds still played`;
+      world.unload?.();
+      return out;
+    } finally { restoreShared(snap); }
+  });
+
   /* ── 1. one owner for the ready guard ───────────────────────────────── */
 
   check('feel: readyX/readyY are assigned in exactly one file', async () => {
