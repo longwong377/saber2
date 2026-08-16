@@ -815,7 +815,7 @@ export function forceResistance(pool, amount, kind, beaten) {
  * `resistForce` answers a whole blow rather than billing its two halves
  * separately out of the same pool.
  */
-const IMPULSE_AS_HP = 1.2;
+export const IMPULSE_AS_HP = 1.2;
 
 /**
  * ── HOW HARD YOU HAVE TO HIT TO BREAK A CAST ───────────────────────────

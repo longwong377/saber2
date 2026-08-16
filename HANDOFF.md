@@ -506,6 +506,44 @@ The player asked for these to wait, and the folders are `assets/reference/`:
   `buildQuadruped` gives today. The second half — "they all attack the same
   way" — is `Enemy.js`'s move sets, and is a separate job from the meshes.
 
+### 6.1a The player half of the Force contest — BUILT, MEASURED, REVERTED
+
+The enemy half shipped: a body spends its Force pool to blunt an incoming power,
+and beating its guard first is worth doing. The player half is four lines and
+`forceResistance` is exported from `Enemy.js` for exactly this. I wrote it, it
+worked, and I took it out again — read this before writing it a second time.
+
+Measured with it in, on a real player taking 50 damage:
+
+    full pool   force / lightning   19.1 hp   pool 100 → 80.4
+    full pool   saber / blaster     42.5 hp   pool untouched
+    empty pool  everything          42.5 hp
+
+That is exactly right and it mirrors the enemy side. It also turned `powers`
+from 21/21 to 17/21, and **the four failures are the feature working**, not a
+bug in it:
+
+- *"a shove buys the range the next beat of the kit needs"* — the enemy's shove
+  had just been tuned UP (17.0/6.5 → 20.4/7.8) so it peaks at 5.4 m, which is
+  the range its own lightning opens at. That tuning was measured against a
+  player who could not resist. My resist damps the impulse, the peak fell 5.00
+  → 3.28 m, and the two-beat combo it was built for stopped existing.
+- *"a held power delivers exactly what it is authored to"* — lightning fell to
+  19% of authored. The check is right about the old world and asks the wrong
+  question in the new one: an enemy power CANNOT deliver its authored damage to
+  a defended player, by design. It needs to name the target's pool state.
+- Two more of the same shape.
+
+**So this is not a patch, it is a balance pass**, and it needs, in order: the
+four lines; then the enemy shove re-tuned against a resisting player so the
+two-beat survives; then `powers`' authored-delivery checks re-stated to specify
+the pool they measure against. Doing only the first — which is the tempting
+part, because it is the part that is written down — leaves the roster's only
+two-beat combo dead and four checks red.
+
+I reverted rather than edit those checks to fit my own change, which is the rule
+this file exists to keep.
+
 ### 6.1b Diagnosed, scoped, not yet built
 
 **`cel: a shadow is READABLE` has a SECOND clause nobody had reached.** The
