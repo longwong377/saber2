@@ -63,10 +63,11 @@ for (const key of keys) {
     const halfSpan = Math.min(1.2, Math.max(size.x, size.y, size.z) * 0.5);
     if (hasCollider(c, halfSpan)) return;
     badTotal++; lb++;
-    let root = o, chain = [];
-    while (root.parent && root.parent !== world.scene) { root = root.parent; }
-    for (let a = o; a && a !== world.scene; a = a.parent) chain.unshift(a.name || a.type);
-    const tag = `${key}/ROOT=${root.name || root.type} :: ${chain.slice(0, 3).join('>')}`;
+    let depth = 0;
+    for (let a = o; a && a !== world.scene; a = a.parent) depth++;
+    const rig = depth > 1;             // a body/hilt hangs off a Group; a prop does not
+    const dim = `${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`;
+    const tag = rig ? `${key}/CHARACTER-RIG` : `${key}/${o.userData?.__maker || o.name || 'level'} ${dim}`;
     tally.set(tag, (tally.get(tag) || 0) + 1);
   });
   console.log(`${key.padEnd(11)} ${String(lb).padStart(4)} intangible of ${String(lr).padStart(4)} reachable`);

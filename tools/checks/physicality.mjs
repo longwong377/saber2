@@ -221,9 +221,29 @@ export async function run({ check, assert }) {
      * not one.
      *
      *     0.65   this check written; 63.6% measured
+     *     0.57   the levels pass: 55.9% over nine levels (1753 reachable, 980
+     *            intangible), against 64.2% over seven the day before it. Two
+     *            new levels built solid, `addRailing` given the collider it
+     *            never had — the ring round Kamino's deck is the level's own
+     *            "only thing between the fight and a nine-metre drop into the
+     *            sea" and you walked through all 28 bays of it — and Kamino's
+     *            approach lights, the Temple's 228 columns and the foundry's
+     *            three depth ranks all given a static box each where an
+     *            InstancedMesh gets none from the kit path.
+     *
+     * ONE FINDING FOR WHOEVER TAKES THIS FURTHER, because it decides where the
+     * next 900 are: MOST OF WHAT IS LEFT IS NOT A LEVEL PROP. Grouping the
+     * failures by scene-graph depth (`tools/_physprobe.mjs`), 80 of the ~110
+     * per level hang off a character rig — the player's own thighs, spine and
+     * hilt rings, which are 0.1 m lathe and torus pieces that can never carry a
+     * static box and are not what "you just fall through them" is about. On the
+     * two new levels the LEVEL's own share is 27 of 356 and 30 of 568. A pass
+     * that excludes the rigs would measure the player's complaint far more
+     * directly, and would report a much smaller number honestly rather than a
+     * large one that is mostly the player's own knees.
      */
     const share = bad.length / Math.max(1, reachable);
-    assert(share < 0.65,
+    assert(share < 0.57,
       `${bad.length} of ${reachable} reachable objects (${(share * 100).toFixed(1)}%) have no collider — `
       + 'you walk through them. The rule is that anything you can touch is physical:\n    '
       + bad.slice(0, 14).join('\n    '));
