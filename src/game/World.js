@@ -971,17 +971,6 @@ export class World {
     return true;
   }
 
-  _updateKillTime(rawDt) {
-    const k = this._killTime;
-    if (!k) return;
-    k.left -= rawDt;
-    if (k.left > 0) return;
-    this._killTime = null;
-    // Only hand the scale back if it is still OURS. Force Sense toggled during
-    // a dip owns the clock from that moment, and the dip expiring underneath it
-    // must not cancel a power the player is holding.
-    if (Math.abs(this.targetTimeScale - k.scale) < 1e-6) this.setTimeScale(k.restore);
-  }
 
   /**
    * WHAT A KILL FEELS LIKE — the one place, because a kill has one place.
@@ -1121,10 +1110,25 @@ export class World {
       if (spent && !free) P.force = Math.max(0, P.force - spent);
     } else this.focus.reset();
 
-    // On the RAW clock, and it has to be: a kill-time dip that measured itself
-    // in dilated seconds would take 1/0.32 as long as it asked for, and a dip
-    // deep enough to be worth having would never end.
-    this._updateKillTime(rawDt);
+    /**
+     * KILL-TIME EXPIRING, on the RAW clock and inline.
+     *
+     * Raw because a dip that measured itself in dilated seconds would run for
+     * 1/0.32 as long as it asked for, and a dip deep enough to be worth having
+     * would never end. Inline rather than a method because several checks drive
+     * `World.prototype.update` against a hand-built stub world that lists the
+     * methods it borrows — a new call out of the frame loop breaks every one of
+     * them with `is not a function`, and six lines is not worth that.
+     *
+     * The scale only goes back if it is still OURS: Force Sense pressed during
+     * a dip owns the clock from that moment, and the dip expiring underneath it
+     * must not cancel a power the player is holding.
+     */
+    const kt = this._killTime;
+    if (kt && (kt.left -= rawDt) <= 0) {
+      this._killTime = null;
+      if (Math.abs(this.targetTimeScale - kt.scale) < 1e-6) this.setTimeScale(kt.restore);
+    }
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
     dt *= this.timeScale * this.focus.scale;
     dt = Math.min(dt, 1 / 24);
