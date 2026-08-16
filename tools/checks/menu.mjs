@@ -179,6 +179,98 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
+  check('menu: the front end can be walked and pressed with a controller', () => {
+    /**
+     * THE HALF OF "PLAYABLE ON A PAD" A BINDINGS TABLE CANNOT ANSWER.
+     *
+     * Every action in the game reaches a pad button now, and a player who
+     * cannot press Deploy still cannot play: the front screen is DOM, a pad
+     * raises no DOM events, and there is no Tab key on a controller. So the pad
+     * moves the FOCUS and presses the focused thing, riding the activation
+     * model the check above pins rather than growing a second one.
+     *
+     * Driven through `padNav`/`padConfirm` against a real Menu on a real parse
+     * of index.html, and asserted on what actually happened to the settings —
+     * not on whether a method exists.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      // index.html ships every `.screen` hidden and main.js raises the front
+      // one after the boot; the walk is over what is ON SCREEN, so the check
+      // has to put it there the same way rather than reaching past the rule.
+      menu.showMenu();
+      const host = menu._padHost();
+      assert(host && host.id === 'menu',
+        `with the front screen up the pad walks #${host?.id || 'nothing'}`);
+      const list = menu._padFocusable(host);
+      assert(list.length > 20, `only ${list.length} controls are reachable from a pad`);
+
+      // The first press lands on the FIRST control, not the second — "press
+      // down to start reading a list" is what a controller means by that.
+      doc.activeElement = null;
+      menu.padNav('down');
+      assert(doc.activeElement === list[0],
+        'the first press of down did not land on the first control');
+      menu.padNav('down');
+      assert(doc.activeElement === list[1], 'down twice did not reach the second control');
+      menu.padNav('up');
+      assert(doc.activeElement === list[0], 'up did not go back');
+      // …and it wraps rather than dead-ending, which is the one thing a linear
+      // walk must not do: a pad has no scrollbar to tell you where the end is.
+      menu.padNav('up');
+      assert(doc.activeElement === list[list.length - 1], 'up from the first control dead-ends');
+
+      // CONFIRM REALLY PICKS. A theatre card, chosen because it writes a
+      // setting and lights up, so "it fired" is a fact about the game and not
+      // about a listener count.
+      const cards = doc.getElementById('level-list').children;
+      const card = cards.find(c => !c.classList.contains('sel'));
+      const before = settings.level;
+      card.focus();
+      menu.padConfirm();
+      assert(settings.level !== before,
+        `A on a focused theatre card left settings.level at ${settings.level}`);
+      assert(card.classList.contains('sel'), 'the card the pad picked is not the lit one');
+
+      /**
+       * A CONTROL THAT IS NOT ON SCREEN IS NOT REACHABLE, and the walk asks the
+       * layout engine rather than restating the rule.
+       *
+       * The front end's tabs are `.panel{display:none}` / `.panel.active
+       * {display:flex}` in styles.css, so "is this panel showing" has exactly
+       * one authority and it is CSS. `_padFocusable` consults `offsetParent`,
+       * which is that authority answering; this harness has no layout engine,
+       * which is why the count above is every panel at once and a real browser
+       * walks only the tab the player is looking at.
+       *
+       * Both halves of the exclusion are driven here: the layout answer, and
+       * the `.hidden` class, which is what every OVERLAY in this front end
+       * uses and which a DOM with no layout can still be held to.
+       */
+      const probe = list[3];
+      Object.defineProperty(probe, 'offsetParent', { value: null, configurable: true });
+      assert(!menu._padFocusable(host).includes(probe),
+        'a control the layout engine says is not displayed is still on the pad walk');
+      delete probe.offsetParent;
+      const buried = list[4];
+      buried.parentElement.classList.add('hidden');
+      assert(!menu._padFocusable(host).includes(buried),
+        'a control inside a hidden box is still on the pad walk');
+      buried.parentElement.classList.remove('hidden');
+
+      // …and the topmost card wins. A draft over the menu must take the walk
+      // with it, or the pad presses a button underneath the thing on screen.
+      const draft = doc.getElementById('boon-draft');
+      draft.classList.remove('hidden');
+      assert(menu._padHost() === draft,
+        'a draft is on screen and the pad is still walking the menu underneath it');
+      draft.classList.add('hidden');
+      return `${list.length} controls reachable with no layout engine (a browser walks the open `
+        + `tab only), walk wraps both ways, A wrote settings.level ${before} → ${settings.level}, `
+        + 'undisplayed and hidden controls excluded, draft takes the walk';
+    } finally { close(); }
+  });
+
   check('menu: the focus ring is visible on the ground the pickers sit on', () => {
     // Keyboard reach with no visible focus is not operability. This is measured
     // rather than eyeballed: WCAG 1.4.11 asks 3:1 of a non-text indicator, and

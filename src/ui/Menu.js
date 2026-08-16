@@ -3928,6 +3928,91 @@ export class Menu {
   /** A pad button, for whichever binding chip is listening. See _buildBindings. */
   padCode(code) { if (this._padCapture) this._padCapture(code); }
 
+  /**
+   * Is a binding chip waiting for a button right now?
+   *
+   * Asked by main.js before it lets a pad press walk the menu: while a chip is
+   * listening, A means "bind A to this action" and NOT "press the thing under
+   * the focus ring", and doing both would rebind an action and activate
+   * whatever the ring happened to be on in the same press.
+   */
+  isListeningForBind() { return !!this._padCapture; }
+
+  /**
+   * ── WALKING THE FRONT END WITH A CONTROLLER ────────────────────────────
+   *
+   * The other half of "playable on a pad", and the half no bindings table can
+   * answer: a player who cannot press Deploy cannot play whatever the pad does
+   * in a fight. It is deliberately NOT a second set of menu handlers — every
+   * control here already takes focus and answers Enter and Space, because
+   * `_activate` gives it `tabIndex`, `role` and a keydown, and menu.mjs pins
+   * that every control a mouse can reach a keyboard can reach. So a pad needs
+   * to move the focus and press the thing, and nothing else.
+   *
+   * DOCUMENT ORDER, and up/left is simply the other way. A spatial solver over
+   * this DOM — level cards in a grid, swatch rows, forty bind rows in a
+   * scroller — is a great deal of geometry to get subtly wrong, and the linear
+   * walk is the same order Tab already takes: whatever a keyboard player has
+   * learned, the pad agrees with.
+   */
+  _padHost() {
+    // Topmost first. A draft is over the pause card is over the menu, and a
+    // pad must never move focus into the screen underneath the one on top.
+    for (const id of ['boon-draft', 'muster', 'death', 'pause', 'meditation', 'menu']) {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains('hidden')) return el;
+    }
+    return null;
+  }
+
+  _padFocusable(host) {
+    if (!host || !host.querySelectorAll) return [];
+    const all = [...host.querySelectorAll(
+      'button, [tabindex], input, select, textarea, a[href]')];
+    return all.filter((el) => {
+      if (el.disabled || el.tabIndex < 0) return false;
+      // `offsetParent` is null for anything display:none, and every panel in
+      // this front end is hidden that way — so a control on a tab the player
+      // is not looking at cannot be focused from a pad. The check harness's
+      // DOM double has no layout, so an element with no `offsetParent`
+      // PROPERTY at all is treated as visible rather than as hidden.
+      if ('offsetParent' in el && el.offsetParent === null
+        && el.getAttribute?.('aria-hidden') !== 'false') return false;
+      for (let p = el; p; p = p.parentElement) {
+        if (p.classList?.contains('hidden')) return false;
+      }
+      return true;
+    });
+  }
+
+  /** Move the focus one control. `dir` is up/down/left/right. */
+  padNav(dir) {
+    const host = this._padHost();
+    const list = this._padFocusable(host);
+    if (!list.length) return false;
+    const back = dir === 'up' || dir === 'left';
+    const at = list.indexOf(document.activeElement);
+    // Nothing focused yet — the first press lands on the first control rather
+    // than on the second, which is what "press down to start reading a list"
+    // means to anybody who has held a controller.
+    const next = at < 0 ? (back ? list.length - 1 : 0)
+      : (at + (back ? -1 : 1) + list.length) % list.length;
+    list[next].focus?.();
+    list[next].scrollIntoView?.({ block: 'nearest' });
+    audio.ui('hover');
+    return true;
+  }
+
+  /** Press the focused control. */
+  padConfirm() {
+    const host = this._padHost();
+    const list = this._padFocusable(host);
+    const el = list.includes(document.activeElement) ? document.activeElement : null;
+    if (!el) return this.padNav('down');
+    el.click?.();
+    return true;
+  }
+
   /** Which track is really playing, and why it may not be the chosen one. */
   _syncTrackBlurb() {
     const el = document.getElementById('music-blurb');

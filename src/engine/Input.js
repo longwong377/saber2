@@ -34,6 +34,17 @@ const deadzone = (v) => (Math.abs(v) < DEAD ? 0 : (v - Math.sign(v) * DEAD) / (1
  */
 const TRIGGER = 0.35;
 
+/**
+ * The four directions a menu is walked in, from the D-pad OR the left stick,
+ * and the confirm/cancel pair. Declared as codes rather than indices so the
+ * one place a pad button is named by position stays PAD in Bindings.js.
+ */
+const UI_NAV = [
+  ['up', 'PadUp', 'PadLUp'], ['down', 'PadDown', 'PadLDown'],
+  ['left', 'PadLeft', 'PadLLeft'], ['right', 'PadRight', 'PadLRight'],
+];
+const UI_REPEAT_FIRST = 0.42, UI_REPEAT = 0.13;
+
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -72,6 +83,9 @@ export class Input {
     this.onPadCode = null;
     /** Fired when Start is pressed with no modifier held — see _readPad. */
     this.onMenu = null;
+    /** Menu navigation intents from the pad — see _padUi. */
+    this.onNav = null; this.onConfirm = null; this.onBack = null;
+    this._navDir = null; this._navWait = 0;
     this.padDownSet = new Set();
     this.padPressedSet = new Set();
     this.padAxis = { 0: 0, 1: 0, 2: 0, 3: 0 };
@@ -284,6 +298,7 @@ export class Input {
     }
     if (any) this._useDevice('pad');
 
+    this._padUi(dt);
     // The rebinder hears a pad the way it hears a key. A press with a modifier
     // already held is reported AS the chord, so binding "LB + A" is holding LB
     // and pressing A — which is also how you would fire it.
@@ -298,6 +313,48 @@ export class Input {
     // ACTIONS and there is nothing to rebind. A modifier held turns it into an
     // ordinary chord instead — see PAD_MODIFIERS.
     if (this.padPressedSet.has('PadStart') && !this._anyModifier()) this.onMenu?.();
+    // A and B, as the menu's press and its way back. Raised as intents beside
+    // the four directions and, like them, acted on only where the state machine
+    // is: in a fight A jumps and nothing here is listening.
+    if (!this._anyModifier()) {
+      if (this.padPressedSet.has('PadA')) this.onConfirm?.();
+      if (this.padPressedSet.has('PadB')) this.onBack?.();
+    }
+  }
+
+  /**
+   * MOVING AROUND A MENU WITH A PAD, which is the other half of "playable on a
+   * controller" and the half a bindings table cannot answer.
+   *
+   * Every control on the front screen already takes focus and answers Enter and
+   * Space — `Menu._activate` sees to that, and a check pins it — so a pad needs
+   * to do exactly two things: move the focus and press the thing. It does NOT
+   * need a second set of menu handlers, and building one would be a second
+   * copy of the front end's whole activation model.
+   *
+   * These are raised as INTENTS and never acted on here: this layer knows about
+   * a device and nothing about screens, so whether a D-pad press moves a menu
+   * or throws an overhead attack is main.js's call, made against `screens.state`
+   * where every other rule about what is on top of the game already lives.
+   *
+   * REPEAT, because a menu is a list and a list is walked. 0.42 s before the
+   * first repeat and 0.13 s between them — long enough that a deliberate single
+   * press is single, short enough that holding down is how you cross a roster.
+   * The stick repeats on the same clock as the D-pad, so a player who never
+   * finds the D-pad is not stuck pushing once per item.
+   */
+  _padUi(dt) {
+    if (!this.onNav && !this.onConfirm && !this.onBack) return;
+    const held = UI_NAV.find(([, ...codes]) => codes.some(c => this.padDownSet.has(c)));
+    if (!held) { this._navDir = null; this._navWait = 0; return; }
+    const dir = held[0];
+    if (dir !== this._navDir) {
+      this._navDir = dir; this._navWait = UI_REPEAT_FIRST;
+      this.onNav?.(dir);
+    } else {
+      this._navWait -= dt;
+      if (this._navWait <= 0) { this._navWait = UI_REPEAT; this.onNav?.(dir); }
+    }
   }
 
   _anyModifier() {

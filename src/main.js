@@ -1419,6 +1419,22 @@ input.onMenu = () => {
 input.onPadCode = (code) => menu.padCode?.(code);
 
 /**
+ * THE FRONT END, WALKED WITH A PAD — and the policy is here rather than in
+ * Input, because "is a menu on top of the game" is this file's question and
+ * `screens.state` is where every other answer to it already lives.
+ *
+ * In a fight these do nothing: A is Force jump, B is dash and the D-pad is the
+ * attack rose, and none of that may also be moving a focus ring. Off a fight
+ * they are the whole reason a controller player can start a run at all — a pad
+ * that could fight and not press Deploy is not a pad you can play with.
+ */
+const inMenu = () => screens.state !== 'playing' && !menu.isListeningForBind?.();
+input.onNav = (dir) => { if (inMenu()) menu.padNav(dir); };
+input.onConfirm = () => { if (inMenu()) menu.padConfirm(); };
+// B is the way back, and it is the same rule Escape is: never a dead key.
+input.onBack = () => { if (inMenu()) screens.escape(); };
+
+/**
  * The dojo's lesson navigation, read as ACTIONS once a frame.
  *
  * It used to be a raw `e.code === 'KeyN'` listener sitting right here, beside
