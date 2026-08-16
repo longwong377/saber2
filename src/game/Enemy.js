@@ -2027,7 +2027,16 @@ export class Enemy {
     return _stag.lengthSq() > 1e-6 ? _stag : null;
   }
 
-  /** A blade crossed a limb. */
+  /**
+   * A blade crossed a limb.
+   *
+   * @returns `'turned'` when the guard stopped it and nothing came off, so a
+   * caller can tell a parry from a sever. `World._applyBladeEvent` does not read
+   * it yet and should: it credits `limbsRemoved++`, a combo, 60 score and an
+   * `onHitmark(…, 'cut')` for every call, which now includes the passes a
+   * duellist turned aside. That is one `if` in World.js and it is not this
+   * workstream's file.
+   */
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
     const bone = ev.bone;
@@ -2036,7 +2045,7 @@ export class Enemy {
     if (ev.cap.shield) { this.dropShield(); return; }
     // BEFORE anything is severed: a turned cut is a cut that did not land, and
     // a body that "turned" a pass while losing the limb would be nonsense.
-    if (this._turnCut(ev, bone, vital, source)) return;
+    if (this._turnCut(ev, bone, vital, source)) return 'turned';
 
     if (this.actor) {
       const impulse = _v1.copy(ev.impulse).multiplyScalar(0.35);
