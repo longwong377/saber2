@@ -24,12 +24,16 @@
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE,
-  Minimap, MINIMAP } from '../../src/ui/HUD.js';
+  Minimap, MINIMAP, hostilesLeft } from '../../src/ui/HUD.js';
 import { Player } from '../../src/game/Player.js';
 import { makeDocument } from './_page.mjs';
-import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
+import { DEFAULT_SETTINGS, SETTING_READERS, Menu } from '../../src/ui/Menu.js';
 import { PLAYER_VOICES } from '../../src/engine/Voice.js';
-import { defaultBindings, keyLabel } from '../../src/engine/Bindings.js';
+import { defaultBindings, keyLabel, ORDER_ACTIONS } from '../../src/engine/Bindings.js';
+// The two tables the roster panel draws WITH. Imported here for the same
+// reason the HUD imports them: a rank colour or an army name typed into a
+// check is a third copy of a table that already has two readers.
+import { RANKS, ARMIES } from '../../src/game/Command.js';
 import { OPEN_STATES, openState, openMul } from '../../src/game/Combat.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -909,5 +913,305 @@ export async function run({ check, assert }) {
       assert(perf.classList.contains('hidden'), 'the frame counter starts visible');
       return `#hud-perf: ${pos}, first child of .hud-tr, ${column.length - 1} blocks below it`;
     } finally { restore(); }
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE THREE LABELS THAT HAD NEVER BEEN DRAWN
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('hud: the three bar captions are outside the box that clips them', () => {
+    /**
+     * VITALITY, FORCE and STAMINA were `<label>` children of `.bar`, and `.bar`
+     * is `height:13px; overflow:hidden` while `.bar label` sat at `bottom:16px`
+     * — three pixels above the box that clips them. In the DOM, styled, and
+     * never once on a screen. What was left was three coloured rectangles told
+     * apart by HUE ALONE, which is also the one channel a colour-blind player
+     * does not have.
+     *
+     * Checked STRUCTURALLY rather than as a rectangle, because there is no
+     * layout engine here and because the structure is the actual fix: a caption
+     * inside a clipping box can only ever be clipped, whatever the numbers are.
+     * Both halves are asserted — the caption is out, AND the socket still clips,
+     * so "fixed" cannot mean "deleted the overflow and let the glow bleed".
+     */
+    const { doc, restore } = hudOnPage(INDEX);
+    try {
+      const bars = doc.querySelectorAll('.bar');
+      assert(bars.length >= 3, `${bars.length} bars in the HUD, expected three`);
+      const inside = [];
+      for (const b of bars) {
+        for (const l of b.querySelectorAll('label')) inside.push(l.textContent.trim());
+      }
+      assert(!inside.length,
+        `${inside.length} caption(s) are still inside a .bar: ${inside.join(', ')} — `
+        + '.bar is overflow:hidden, so they cannot be drawn');
+      const caps = [...doc.querySelectorAll('.bar-cap label')].map(l => l.textContent.trim().toUpperCase());
+      for (const want of ['VITALITY', 'FORCE', 'STAMINA']) {
+        assert(caps.includes(want), `no caption reads ${want} — captions found: ${caps.join(', ') || 'none'}`);
+      }
+      // Each caption is a sibling of the bar it names, in one wrapper, so it
+      // cannot drift onto the wrong one.
+      for (const line of doc.querySelectorAll('.barline')) {
+        assert(line.querySelector('.bar-cap') && line.querySelector('.bar'),
+          'a .barline has a caption with no bar or a bar with no caption');
+      }
+      const barRule = (STYLES.match(/\n\.bar\{([^}]*)\}/) || [])[1] || '';
+      assert(/overflow:\s*hidden/.test(barRule),
+        '.bar no longer clips — the fills are inset:0 with a glow, and the socket is what stops it');
+      // and the caption really is fed: HUD._num writes the reading beside it.
+      const { hud, root, restore: undo } = hudOn();
+      try {
+        const p = player();
+        p.hp = 61.4;
+        hud.update(1 / 60, stubWorld({ ...DEFAULT_SETTINGS }), p, new THREE.PerspectiveCamera());
+        assert(root.getElementById('bar-hp-num').textContent === '61',
+          `the vitality reading says "${root.getElementById('bar-hp-num').textContent}" for 61.4 hp`);
+      } finally { undo(); }
+      return `${caps.join(' / ')} — all out of the clipped socket, socket still clips`;
+    } finally { restore(); }
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE ARMY
+   * ──────────────────────────────────────────────────────────────────── */
+
+  /** A roll shaped exactly like CommandRoster.summary(). */
+  const roll = () => ({
+    army: 'republic', strength: 3, fallen: 2, points: 14,
+    roll: [
+      { id: 't1', name: 'CT-2093', unit: 'Clone Trooper', rank: 'TRP', rankTitle: 'Trooper', xp: 1, kills: 0, areas: 0, alive: true, diedIn: null },
+      { id: 't2', name: 'CT-4471 "Ladder"', unit: 'Clone Trooper', rank: 'SGT', rankTitle: 'Sergeant', xp: 12, kills: 7, areas: 2, alive: true, diedIn: null },
+      { id: 't3', name: 'CT-1500 "Ringo"', unit: 'ARC Trooper', rank: 'VET', rankTitle: 'Veteran', xp: 5, kills: 3, areas: 1, alive: true, diedIn: null },
+      { id: 't4', name: 'CT-8812', unit: 'Clone Trooper', rank: 'TRP', rankTitle: 'Trooper', xp: 0, kills: 0, areas: 0, alive: false, diedIn: 1 },
+      { id: 't5', name: 'CT-6600', unit: 'Heavy Trooper', rank: 'VET', rankTitle: 'Veteran', xp: 4, kills: 2, areas: 1, alive: false, diedIn: 3 },
+    ],
+  });
+
+  check('hud: the roster panel draws the real roll, living above fallen', () => {
+    /**
+     * main.js called `hud.setRoster?.(summary)` into a method that DID NOT
+     * EXIST, so the optional-call operator swallowed it on every promotion and
+     * every casualty for the whole life of Command mode. Everything the note
+     * asked for — "you can see who lived or who died, maybe one particular one
+     * lasts longer than the others and you protect him" — was built and none of
+     * it reached a screen.
+     */
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      assert(typeof hud.setRoster === 'function', 'HUD.setRoster does not exist — the call in main.js is a no-op again');
+      const panel = doc.getElementById('roster');
+      assert(panel, '#roster is not in the markup');
+      assert(panel.classList.contains('hidden'), 'the roster panel is up before any army exists');
+
+      hud.setRoster(roll());
+      assert(!panel.classList.contains('hidden'), 'setRoster did not raise the panel');
+      const rows = doc.querySelectorAll('#rp-list .rp-row');
+      const named = rows.filter(r => !r.classList.contains('rp-cols'));
+      assert(named.length === 5, `${named.length} names on the roll, expected 5`);
+
+      // The living, best first — the two or three you have been protecting are
+      // the point of the column and belong where you can watch them.
+      const order = named.map(r => r.querySelector('span').textContent);
+      assert(order[0].includes('Ladder'),
+        `the top of the roll is "${order[0]}" — the sergeant with seven kills should lead it`);
+      const deadAt = named.findIndex(r => r.classList.contains('gone'));
+      assert(deadAt === 3, `the first casualty is row ${deadAt}, so the dead are not below the living`);
+      assert(named.slice(3).every(r => r.classList.contains('gone')),
+        'a living trooper is filed under the fallen');
+      // A casualty says where it happened, not how many it killed.
+      assert(named[3].querySelector('em').textContent === 'A3',
+        `the most recent casualty reports "${named[3].querySelector('em').textContent}", not the area it fell in`);
+
+      // The insignia is the RANK'S OWN COLOUR from Command.js, never a copy.
+      const sgt = named[0].querySelector('i').getAttribute('style') || '';
+      const want = `#${(RANKS.find(r => r.short === 'SGT').color >>> 0).toString(16).padStart(6, '0')}`;
+      assert(sgt.includes(want), `the sergeant's chip is "${sgt}", and RANKS says ${want}`);
+      assert(!(named.find(r => r.querySelector('b').textContent === 'TRP').querySelector('i').getAttribute('style')),
+        'a plain Trooper is wearing an insignia colour — RANKS gives that rung null on purpose');
+
+      // The army's proper name, out of ARMIES rather than the raw id.
+      assert(doc.getElementById('rp-army').textContent === ARMIES.republic.name,
+        `the panel is headed "${doc.getElementById('rp-army').textContent}", not ${ARMIES.republic.name}`);
+      assert(doc.getElementById('rp-strength').textContent === '3/5',
+        `strength reads "${doc.getElementById('rp-strength').textContent}", expected 3/5`);
+      assert(doc.getElementById('rp-foot').textContent.includes('14'),
+        'the reinforcement points are not on the panel');
+
+      // …and it goes away again, or a Trial of Waves keeps an army it has not got.
+      hud.setRoster(null);
+      assert(panel.classList.contains('hidden'), 'setRoster(null) left the panel up');
+      return `5 names: ${order.join(', ')} — 3 standing, 2 struck through`;
+    } finally { restore(); }
+  });
+
+  check('hud: the formation indicator names the order and prints its live key', () => {
+    /**
+     * `hud.setOrder?.(F.id, F.name, squads)` was the other call into nothing.
+     * Six order keys change how twenty-four bodies behave and the only feedback
+     * was a message that faded in two seconds.
+     *
+     * The keycaps are driven by `setBindings`, so this also pins the half that
+     * a typed key would fail: the orders became rebindable actions this round,
+     * and a chip printed from memory is the exact bug the power wheel was
+     * rebuilt to stop.
+     */
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      assert(typeof hud.setOrder === 'function', 'HUD.setOrder does not exist — main.js calls it into thin air');
+      assert(ORDER_ACTIONS.length, 'no orders are registered, so the indicator has nothing to draw');
+      const b = defaultBindings();
+      hud.setBindings(b);
+      const chips = doc.querySelectorAll('#rp-orders .rp-key');
+      assert(chips.length === ORDER_ACTIONS.length,
+        `${chips.length} keycaps for ${ORDER_ACTIONS.length} orders`);
+      for (let i = 0; i < chips.length; i++) {
+        const want = keyLabel(b[ORDER_ACTIONS[i].action][0]);
+        assert(chips[i].textContent === want,
+          `the ${ORDER_ACTIONS[i].id} cap reads "${chips[i].textContent}" and it is bound to "${want}"`);
+      }
+
+      const F = ORDER_ACTIONS[0];
+      hud.setOrder(F.id, F.name, 3);
+      assert(doc.getElementById('rp-order-name').textContent === F.name,
+        `the indicator says "${doc.getElementById('rp-order-name').textContent}", not ${F.name}`);
+      assert(doc.getElementById('rp-order-sub').textContent === '3 squads',
+        `the squad count reads "${doc.getElementById('rp-order-sub').textContent}"`);
+      const lit = doc.querySelectorAll('#rp-orders .rp-key').filter(c => c.classList.contains('on'));
+      assert(lit.length === 1 && lit[0].dataset.order === F.id,
+        `${lit.length} caps are lit — exactly one order is current at a time`);
+
+      // A rebind repaints the caps AND keeps the right one lit.
+      const moved = { ...b, [F.action]: ['F13'] };
+      hud.setBindings(moved);
+      const after = doc.querySelectorAll('#rp-orders .rp-key');
+      assert(after[0].textContent === keyLabel('F13'), 'rebinding an order did not repaint its cap');
+      assert(after[0].classList.contains('on'), 'a rebind put out the light on the current order');
+      return `${chips.length} caps: ${ORDER_ACTIONS.map(o => `${o.name} ${keyLabel(b[o.action][0])}`).join(', ')}`;
+    } finally { restore(); }
+  });
+
+  check('hud: the wave counter counts the enemy, not your own army', () => {
+    /**
+     * `director.remaining` is `spawnQueue + arrivals.pending + every live body
+     * in world.enemies` — and in Command mode `world.enemies` HOLDS YOUR OWN
+     * TROOPS, because an ally is an Enemy with a different team. So the corner
+     * of the screen said "10 remaining" with nothing hostile on the field.
+     *
+     * The getter lives in a file this lane does not own, so the repair is
+     * confined to the mode where it is wrong: this asserts BOTH halves of that
+     * — Command counts hostiles, and every other mode is left reading the
+     * shipped getter untouched, so nothing that is right today can be made
+     * wrong here.
+     */
+    const bodies = (n, team) => Array.from({ length: n }, () => ({ dead: false, team }));
+    const world = (extra) => ({
+      partyTeam: 0,
+      enemies: [...bodies(10, 0), ...bodies(3, 1), { dead: true, team: 1 }],
+      director: { remaining: 99, spawnQueue: [1, 2], arrivals: { pending: 1 } },
+      ...extra,
+    });
+    const asCommand = world({ command: {} });
+    assert(hostilesLeft(asCommand) === 6,
+      `with ten allies, three hostiles, two queued and one inbound the HUD says `
+      + `${hostilesLeft(asCommand)} — it should say 6`);
+    // The ten allies really were the difference, and a dead hostile is not one.
+    assert(asCommand.director.remaining === 99 && hostilesLeft(asCommand) !== 99,
+      'the Command path is reading the getter it exists to work around');
+    assert(hostilesLeft(world({})) === 99,
+      'a mode with no army stopped reading director.remaining — that path must not change');
+    assert(hostilesLeft(null) === 0 && hostilesLeft({}) === 0, 'a world with no director throws or lies');
+    return 'command: 3 alive + 2 queued + 1 inbound = 6 with 10 allies on the field; every other mode: the getter, unchanged';
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE MUSTER
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('hud: the muster sells what the director offers, and spends the director\'s points', () => {
+    /**
+     * There was no muster screen at all, so `main.js`'s `typeof screens.muster
+     * === 'function'` was false, `onMuster` was never installed, and the
+     * director took its documented fallback — `autoMuster()`, which spent the
+     * player's reinforcement points for them between every area and showed them
+     * nothing. Permadeath whose replacement budget you never see is permadeath
+     * with the decision taken out of it.
+     *
+     * Driven through the REAL Menu on the REAL markup, with a director double
+     * that refuses the way the real one refuses.
+     */
+    const offer = (points) => ({
+      area: 2, areaName: 'The Open Plain',
+      brief: 'Two kilometres of flat ochre.',
+      next: { id: 'hailfire', name: 'The Hailfire Line', brief: 'Armour on the ridge.' },
+      points, strength: 3, max: 24, roster: roll(),
+      units: [
+        { type: 'trooper', cost: 3, label: 'Clone Trooper', threat: 4, have: 2, afford: points >= 3 },
+        { type: 'heavy', cost: 9, label: 'Heavy Trooper', threat: 11, have: 0, afford: points >= 9 },
+        { type: 'arc', cost: 20, label: 'ARC Trooper', threat: 18, have: 0, afford: points >= 20 },
+      ],
+    });
+    const doc = makeDocument(INDEX);
+    const undo = doc.install();
+    let menu;
+    try { menu = new Menu({ ...DEFAULT_SETTINGS }); } catch (e) { undo(); throw e; }
+    try {
+      assert(typeof menu.showMuster === 'function', 'Menu.showMuster does not exist');
+      let points = 14, bought = [], closed = 0;
+      menu.showMuster(offer(points), {
+        recruit: (type) => {
+          const u = offer(points).units.find(x => x.type === type);
+          if (u.cost > points) return { offer: offer(points), refused: `${u.cost} points needed, you have ${points}` };
+          points -= u.cost; bought.push(type);
+          return { offer: offer(points), refused: null };
+        },
+        done: () => { closed++; },
+      });
+      const card = doc.getElementById('muster');
+      assert(!card.classList.contains('hidden'), 'the muster never came up');
+      assert(doc.getElementById('muster-held').textContent.includes('The Open Plain'),
+        'the screen does not say which area was just held');
+      assert(doc.getElementById('muster-title').textContent === 'The Hailfire Line',
+        `the screen is titled "${doc.getElementById('muster-title').textContent}", not the area being walked into`);
+      assert(doc.getElementById('muster-points').textContent === '14', 'the points are not the offer\'s');
+      // The whole roll, at full length — the same renderer the HUD panel uses.
+      assert(doc.querySelectorAll('#muster-list .rp-row.gone').length === 2,
+        'the casualty list is not on the muster screen');
+
+      const cards = doc.querySelectorAll('#muster-units .mu');
+      assert(cards.length === 3, `${cards.length} units on the shelf, the offer has 3`);
+      assert(cards[2].classList.contains('poor'),
+        'the ARC costs 20 against 14 points and is not marked unaffordable');
+      assert(!cards[1].classList.contains('poor'), 'the Heavy costs 9 against 14 points and is greyed out');
+      assert(/20/.test(cards[2].textContent) && /threat 18/.test(cards[2].textContent),
+        'a unit card does not state what it costs and what it is worth');
+
+      // Buying goes through the director and the screen RE-READS it, rather
+      // than adjusting its own copy of the numbers — the heavy is affordable at
+      // 14 and is not at the 5 that buying it leaves.
+      cards[1].click();
+      assert(bought.join() === 'heavy', `clicking the Heavy bought ${bought.join() || 'nothing'}`);
+      assert(doc.getElementById('muster-points').textContent === '5',
+        `after a 9-point purchase the screen says ${doc.getElementById('muster-points').textContent}`);
+      assert(doc.querySelectorAll('#muster-units .mu')[1].classList.contains('poor'),
+        'the shelf was not redrawn against the new points');
+
+      // A refusal is the director's sentence, printed, not a silent no-op.
+      points = 1;
+      menu.showMuster(offer(points), {
+        recruit: () => ({ offer: offer(1), refused: '3 points needed, you have 1' }),
+        done: () => { closed++; },
+      });
+      doc.querySelectorAll('#muster-units .mu')[0].click();   // still clickable? it is not affordable
+      const said = doc.getElementById('muster-refused').textContent;
+      assert(said === '' || said.includes('points needed'),
+        `an unaffordable card produced "${said}" instead of nothing or the director's reason`);
+
+      // Advance closes it, once, and calls THIS muster's handler — not the
+      // first one's, which is what a listener closing over the first `io` does.
+      doc.getElementById('btn-muster-done').click();
+      assert(closed === 1, `Advance fired ${closed} times`);
+      assert(card.classList.contains('hidden'), 'the card is still on screen after Advance');
+      return `3 units offered, heavy bought for 9, 14 → 5 points, shelf redrawn, roll shows 2 casualties, Advance closes once`;
+    } finally { undo(); }
   });
 }
