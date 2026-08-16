@@ -41,6 +41,7 @@
 
 import * as THREE from 'three';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
+import { makeSoft } from './SoftDepth.js';
 
 /**
  * The one material, shared by every column on every level.
@@ -65,6 +66,14 @@ function smokeMaterial() {
     toneMapped: true,
     fog: true,
   });
+  /* AND IT IS SOFT WHERE IT MEETS THE GROUND. A 60 m tube standing on a
+   * heightfield intersects it in a closed curve, and with `depthWrite: false`
+   * that curve is drawn as a hard edge across the base of every column — the
+   * one part of a column the player can walk up to. `makeSoft` fades the last
+   * 1.6 m of overlap against the ink prepass's depth; see SoftDepth.js. 1.6
+   * rather than the puff's default because these are the biggest volumes in
+   * the game and a fade shorter than the tube is wide reads as a bevel. */
+  makeSoft(_mat, 1.6);
   return _mat;
 }
 

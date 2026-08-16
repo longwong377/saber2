@@ -24,6 +24,7 @@ import * as THREE from 'three';
 import { sparkSprite, smokeSprite, radialSprite, scorchSprite } from '../engine/Textures.js';
 import { makeRng, clamp, TAU } from '../engine/MathUtil.js';
 import { WIND_GLSL, windUniforms, syncWind, ground, wind } from './Scenery.js';
+import { SOFT_GLSL, softUniforms } from './SoftDepth.js';
 
 const rng = makeRng(2718);
 
@@ -53,6 +54,7 @@ const VERT = /* glsl */`
   varying vec4 vColor;
   varying float vLife;
   varying vec3 vSun;        // the key light in the billboard's own frame
+  varying float vSoftViewZ; // distance down the view axis, for the soft fade
 
   void main(){
     float t = uTime - aExtra.z;
@@ -63,6 +65,7 @@ const VERT = /* glsl */`
       vColor = vec4(0.0);
       vUv = uv;
       vSun = vec3(0.0, 0.0, 1.0);
+      vSoftViewZ = 0.0;
       #ifdef USE_FOG
         vFogDepth = 0.0;
       #endif
@@ -151,6 +154,9 @@ const VERT = /* glsl */`
 
     vec4 mv = modelViewMatrix * vec4(pos + offset, 1.0);
     vec4 mvPosition = mv;
+    // Positive metres down the view axis — what SoftDepth.softFade compares
+    // against the opaque depth the ink prepass left behind.
+    vSoftViewZ = -mv.z;
     #include <fog_vertex>
     gl_Position = projectionMatrix * mv;
     vUv = uv;
@@ -172,10 +178,19 @@ const FRAG = /* glsl */`
   varying vec4 vColor;
   varying float vLife;
   varying vec3 vSun;
+  varying float vSoftViewZ;
+${SOFT_GLSL}
   void main(){
     vec4 tex = texture2D(uMap, vUv);
     vec3 c = mix(vColor.rgb, uColorEnd, vLife * uColorShift);
-    float a = tex.a * vColor.a;
+    /* SOFT PARTICLES. Every sprite in this file is a depthWrite:false billboard,
+     * so where one crossed the ground, a wall or a body it ended on a perfectly
+     * straight line that moved with the camera — the single loudest tell that a
+     * puff of smoke is a picture of smoke, and worse over flat cel-shaded colour
+     * than it would be over a noisy photographic frame. See SoftDepth.js: the
+     * depth is the ink prepass's, which is already opaque-only and already
+     * finished by the time this draws. */
+    float a = tex.a * vColor.a * softFade(vSoftViewZ);
     if(a < 0.004) discard;
 
     /* Smoke and dust are the only things in the frame with volume and no
@@ -242,7 +257,17 @@ export class ParticlePool {
     for (let i = 0; i < this.max; i++) this.aParams.array[i * 4] = -1;
 
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]);
-    Object.assign(uniforms, windUniforms(), {
+    /**
+     * HOW MANY METRES OF OVERLAP THE FADE COVERS, per pool.
+     *
+     * A puff of smoke is a stand-in for a volume a metre and a half across and
+     * wants that much softening; a 2 cm spark wants almost none, because a
+     * spark that dimmed as it neared a wall would read as going out early
+     * rather than as being soft. So the default is derived from the pool's own
+     * particle size instead of typed per pool — `size` here is the caller's
+     * nominal sprite radius, and every pool in this file already states one.
+     */
+    Object.assign(uniforms, windUniforms(), softUniforms(opts.soft ?? (opts.lit ? 1.5 : 0.12)), {
       uTime: { value: 0 },
       uMap: { value: opts.map },
       uStretch: { value: opts.stretch ?? 0 },
@@ -855,23 +880,29 @@ export class Particles {
     this.sparks = new ParticlePool(scene, { max: s(4200), map: spark, additive: true,
       stretch: 0.17, stretchMax: 14, thin: 0.9,
       colorEnd: 0xff3000, colorShift: 0.95, fadeIn: 0.015, renderOrder: 12,
-      bounce: 5.5, windK: 0.05 });
+      bounce: 5.5, windK: 0.05, soft: 0.05 });
     this.embers = new ParticlePool(scene, { max: s(1400), map: soft, additive: true,
       colorEnd: 0x882200, colorShift: 1.0, grow: -0.4, renderOrder: 12,
-      windK: 0.95, curl: 0.5 });
+      windK: 0.95, curl: 0.5, soft: 0.14 });
     this.plasma = new ParticlePool(scene, { max: s(1800), map: soft, additive: true, grow: 1.6,
-      colorShift: 0.6, renderOrder: 12 });
+      colorShift: 0.6, renderOrder: 12, soft: 0.45 });
     this.smoke = new ParticlePool(scene, { max: s(1600), map: smoke, additive: false, grow: 2.6,
       spin: 1, colorEnd: 0x2a2a2e, colorShift: 0.8, fadeIn: 0.12, renderOrder: 9,
-      windK: 1.0, curl: 0.55, lit: true, wrap: 0.55 });
+      windK: 1.0, curl: 0.55, lit: true, wrap: 0.55, soft: 1.6 });
     this.dust = new ParticlePool(scene, { max: s(5200), map: smoke, additive: false, grow: 2.0,
       spin: 0.6, colorEnd: 0xa08050, colorShift: 0.35, fadeIn: 0.08, renderOrder: 8,
-      windK: 0.7, curl: 0.35, lit: true, wrap: 0.7 });
+      windK: 0.7, curl: 0.35, lit: true, wrap: 0.7, soft: 1.3 });
     this.grit = new ParticlePool(scene, { max: s(3600), map: soft, additive: false, grow: -0.2,
-      renderOrder: 8, bounce: 4.0, windK: 0.12, lit: true, wrap: 0.35 });
+      renderOrder: 8, bounce: 4.0, windK: 0.12, lit: true, wrap: 0.35, soft: 0.1 });
     this.water = new ParticlePool(scene, { max: s(2000), map: soft, additive: false, grow: 0.4,
       colorEnd: 0x9fd8ff, colorShift: 0.5, renderOrder: 9, bounce: 3.2, windK: 0.1,
-      lit: true, wrap: 0.3 });
+      lit: true, wrap: 0.3, soft: 0.3 });
+    /* `soft` above is METRES OF OVERLAP FADED where a sprite meets solid
+     * geometry — see SoftDepth.js. It is stated per pool and not derived from
+     * one number because the seven pools stand in for seven different volumes:
+     * 1.6 m of smoke is a puff dissolving into the ground it is rolling over,
+     * and 5 cm on a spark is the most that can be taken off a 2 cm streak
+     * before it reads as going out early instead of as touching something. */
     this.pools = [this.sparks, this.embers, this.plasma, this.smoke, this.dust, this.grit, this.water];
 
     this.chips = new ChipField(scene, { max: Math.max(48, Math.floor(260 * scale)) });

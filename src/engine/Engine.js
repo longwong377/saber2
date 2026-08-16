@@ -45,6 +45,7 @@ import { installCelShading, CEL, CEL_BAND_GLSL } from '../toon/Cel.js';
 import { OutlinePass } from '../toon/Ink.js';
 import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
+import { setSceneDepth } from '../world/SoftDepth.js';
 import { clamp, damp } from './MathUtil.js';
 
 /** Finite-or-default. Game maths produces NaN; a uniform holding one is a black frame. */
@@ -2394,6 +2395,27 @@ export class Engine {
     // Inside the profiler bracket because it is part of the frame's GPU cost
     // and a pass that does not show up in the profile is a pass nobody tunes.
     this.outline.prepass(this.renderer);
+    /**
+     * …AND PUBLISH ITS DEPTH, which is the whole of what soft particles cost.
+     *
+     * The prepass has just rasterised the scene with every transparent,
+     * additive and alpha-tested material hidden (`cutsItsOwnSilhouette`), into
+     * a target with a 24-bit DepthTexture on it. That is opaque-only depth,
+     * finished, for THIS frame, before the composer draws a single particle —
+     * so the sprites can be faded against it with no second target and no
+     * second pass. `uRange.x/.y` is the near/far pair the prepass actually
+     * used, and it is NOT the camera's: Ink narrows its own far plane to the
+     * ink's reach, and linearising against the camera's frustum instead would
+     * put the fade at the wrong distance by a factor of three on a foggy level.
+     */
+    const r = this.outline.uniforms.uRange.value;
+    // The FRAME's size and not the prepass target's. `gl_FragCoord` in the
+    // particle pass is in the composer's pixel space; the prepass may be at
+    // half of that on the medium tier, and dividing by ITS size would sample
+    // the depth buffer at uv up to 2.0 — the whole frame reading as empty sky
+    // on exactly the tier most likely to need the help.
+    const px = u.uResolution.value;
+    setSceneDepth(this.outline.target?.depthTexture, r.x, r.y, px.x, px.y);
     this.composer.render(dt);
     this.profiler.endDraw();
   }

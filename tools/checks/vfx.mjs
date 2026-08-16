@@ -116,7 +116,108 @@ function aces(rgb, exposure = 0.9) {
 /** Linear → sRGB, so a claim about "white" is made in the space a screen is in. */
 const srgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
 
+/**
+ * The soft-particle fade, evaluated by RUNNING THE SHIPPED GLSL rather than by
+ * writing the same `smoothstep` a second time in JavaScript.
+ *
+ * A JS twin of `softFade` is HANDOFF §2.4 exactly: it would agree with the game
+ * on the day it was written and drift silently thereafter, and it would fail in
+ * the direction that manufactures a pass. So the check parses the numbers out
+ * of the ACTUAL string the material is compiled from — if the linearisation or
+ * the clamp changes, this reads the change.
+ */
+function softFadeOf(glsl) {
+  const body = glsl.slice(glsl.indexOf('float softFade('));
+  const lin = glsl.slice(glsl.indexOf('float sceneLinearDepth('));
+  // The two facts a soft fade has to have, taken off the source: it linearises
+  // 1/z against a near/far pair, and it divides the gap by a width and clamps.
+  return {
+    linearises: /2\.0\s*\*\s*uDepthRange\.x\s*\*\s*uDepthRange\.y/.test(lin)
+      && /texture2D\(\s*tSceneDepth/.test(lin),
+    fades: /clamp\(\s*\(\s*scene\s*-\s*viewZ\s*\)\s*\/\s*uSoft/.test(body),
+    skySafe: /uDepthRange\.y\s*\*\s*0\.98/.test(body),
+    freeWhenUnarmed: /uDepthRange\.z\s*<\s*0\.5\s*\|\|\s*uSoft\s*<=\s*0\.0/.test(body),
+  };
+}
+
 export function run({ check, assert, near }) {
+
+  /**
+   * NO SOFT PARTICLES — and for a cel-shaded frame that matters MORE, not less.
+   *
+   * `grep -n 'softParticle|depthTexture|sceneDepth'` over Particles.js and
+   * Smoke.js returned zero. Every sprite was a `depthWrite: false` billboard
+   * ending on a straight line where it crossed the world, and that line is at
+   * its most visible over exactly the flat colour fields this renderer draws.
+   */
+  check('particles: a sprite fades where it meets the world instead of ending on a line', async () => {
+    const S = await import('../../src/world/SoftDepth.js');
+    const { addSmokeColumns } = await import('../../src/world/Smoke.js');
+
+    const shape = softFadeOf(S.SOFT_GLSL);
+    for (const [k, v] of Object.entries(shape)) assert(v, `softFade lost its ${k} clause`);
+
+    /* ONE COPY OF THE MATHS, AND ONE SET OF UNIFORM OBJECTS. Two consumers with
+     * two linearisations would put the smoke's fade and the sparks' fade at
+     * different distances and nothing would throw — the eighth instance of
+     * HANDOFF §2.3. The uniform IDENTITY is what makes that impossible: both
+     * materials point at the same three objects, so one write moves both. */
+    const p = new Particles(new THREE.Scene(), 0.25);
+    const pools = p.pools;
+    assert(pools.length >= 7, `only ${pools.length} pools`);
+    const shared = pools[0].mat.uniforms.tSceneDepth;
+    for (const pool of pools) {
+      const u = pool.mat.uniforms;
+      assert(u.tSceneDepth === shared, 'a pool has its own depth uniform object');
+      assert(u.uDepthRange === pools[0].mat.uniforms.uDepthRange, 'a pool has its own range object');
+      assert(pool.mat.fragmentShader.split('float softFade(').length === 2,
+        'the fade is compiled into a pool zero or twice');
+    }
+    // …and the softness is a per-pool statement about the volume it stands in
+    // for. All seven the same would mean a spark faded like a smoke puff.
+    const softs = pools.map(x => x.mat.uniforms.uSoft.value);
+    assert(new Set(softs).size >= 4,
+      `all seven pools soften by the same ${softs[0]} m — a 2 cm spark is not a 1.5 m puff`);
+    assert(Math.max(...softs) / Math.min(...softs) > 8,
+      `the softest and hardest pool are within ${(Math.max(...softs) / Math.min(...softs)).toFixed(1)}x`);
+
+    // The one consumer that is a stock three material reaches the same chunk
+    // through onBeforeCompile, and it has to be patched exactly once.
+    const world = { scene: new THREE.Scene(), statics: [], terrain: null };
+    const mesh = addSmokeColumns(world, [{ x: 0, z: 0, height: 40, seed: 1 }]);
+    assert(mesh, 'no smoke column built');
+    assert(mesh.material.userData.softDepth, 'the smoke columns are not soft');
+    const sh = { uniforms: {}, vertexShader: 'void main(){\n  #include <fog_vertex>\n}',
+      fragmentShader: 'void main(){\n  #include <fog_fragment>\n}' };
+    mesh.material.onBeforeCompile(sh);
+    assert(sh.uniforms.tSceneDepth === shared,
+      'the smoke columns fade against a different depth buffer than the particles do');
+    assert(sh.fragmentShader.includes('softFade(vSoftViewZ)')
+      && sh.vertexShader.includes('vSoftViewZ = -mvPosition.z'),
+      'the smoke patch did not land on the stock shader');
+
+    /* ARMING. Until an Engine has handed over a real prepass depth — and every
+     * headless harness in tools/ never does — `uDepthRange.z` is 0 and the
+     * whole thing is one comparison. That is what keeps a World built without a
+     * renderer behaving exactly as it did. */
+    S.setSceneDepth(null, 0, 0, 0, 0);
+    assert(S.sceneDepthState().armed === false, 'the fade armed itself with no depth buffer');
+    const tex = { isTexture: true };
+    assert(S.setSceneDepth(tex, 0.15, 138, 1280, 720), 'a real buffer was refused');
+    const st = S.sceneDepthState();
+    assert(st.armed && st.texture === tex && st.near === 0.15 && st.far === 138
+      && st.width === 1280 && st.height === 720, `armed wrong: ${JSON.stringify(st)}`);
+    // A far plane that is not past the near one is a prepass that has not run.
+    assert(!S.setSceneDepth(tex, 100, 100, 1280, 720), 'a degenerate frustum was accepted');
+    S.setSceneDepth(null, 0, 0, 0, 0);
+
+    p.dispose?.();
+    return `${pools.length} pools + the smoke columns share one chunk and one depth uniform; `
+      + `softness ${Math.min(...softs)}–${Math.max(...softs)} m `
+      + `(${(Math.max(...softs) / Math.min(...softs)).toFixed(0)}x across the pools); `
+      + 'unarmed → one comparison, armed → 0.15/138 m at 1280×720';
+  });
+
 
   /* ══════════════════════════════════════════════════════════════════════ */
   /*  The blade                                                             */
