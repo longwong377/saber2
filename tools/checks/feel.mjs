@@ -251,7 +251,7 @@ export async function run({ check, assert }) {
       assert(total > 0, 'the load took no measurable time — nothing was built');
 
       world.unload();
-      return `${seen.length} named stages, 0→1 monotone, same world both doors `
+      return `${seen.length - 1} named stages + ready, 0→1 monotone, same world both doors `
         + `(${sync.statics} statics, ${sync.props} props, ${sync.director}); `
         + `worst stage "${worst[0]}" ${worst[1].toFixed(0)} ms of ${total.toFixed(0)} ms`;
     } finally { restoreShared(snap); }
