@@ -372,12 +372,21 @@ function buildWorld(levelKey) {
           return { offer: d.musterOffer(), refused: d.refused };
         },
         done: () => {
-          /* The overlay is forgotten FIRST, exactly as the draft's pick does:
-           * `resume()` would otherwise put the muster the player has just
-           * finished straight back on the screen. */
+          /* The overlay is forgotten FIRST — `resume()` would otherwise put the
+           * muster the player has just finished straight back on the screen.
+           *
+           * But the state is moved to 'paused' AFTER `closeMuster`, and that
+           * ordering is deliberate. `closeMuster` deploys the whole roster: it
+           * builds a body per living trooper, and it is the riskiest call in
+           * this file. It runs inside `guarded`, and `guarded`'s recovery is
+           * `pause()` — which returns FALSE without showing anything when the
+           * state is already 'paused'. So saying 'paused' before the throw
+           * would cost the player the one card that can always resume or
+           * abandon. Left at 'muster' it is an ordinary live overlay state and
+           * the pause card arrives. */
           screens.overlay = null;
-          screens.state = 'paused';
           d.closeMuster();
+          screens.state = 'paused';        // so resume() takes the playing branch
           hud.setRoster?.(d.roster.summary());
           resume();
         },
