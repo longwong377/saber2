@@ -768,7 +768,48 @@ const RESIST_PER_FORCE = 1.4;
 const RESIST_CAP = 0.55;
 const RESIST_BEATEN = 0.35;
 /** The kinds that are the Force, and are therefore answerable by it. */
-const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
+export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
+
+/**
+ * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
+ * of this contest can be three lines rather than a second copy of it.
+ *
+ * **THE PLAYER CANNOT YET ANSWER A POWER WITH A POWER, AND THAT IS THE ONE
+ * THING THIS FILE COULD NOT FIX.** `Player.applyKnockback` and `Player.damage`
+ * are the two doors an enemy's push, pull, choke and lightning arrive through,
+ * and both live in `src/game/Player.js`, which this work did not own. So a Sith
+ * shoving into your shove still lands in full, and every enemy power delivers
+ * the same amount whether your bar is empty or brimming. What it takes to close
+ * that is exactly this, and nothing more:
+ *
+ *     // Player.js, beside applyKnockback
+ *     resistForce(amount, kind, source) {
+ *       const r = forceResistance(this.force, amount, kind, this.staggerTimer > 0);
+ *       this.force -= r.spend;
+ *       return r.blunt;
+ *     }
+ *     // Player.damage(amount, point, source, kind, preResisted = false), after
+ *     // the canHarm gate:
+ *     if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
+ *     // Player.applyKnockback, before velocity.add — mirrors Enemy's exactly:
+ *     const weight = damage + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
+ *     const blunt = this.resistForce(weight, 'force', source);
+ *     … scale both by (1 - blunt / weight), then damage(…, true)
+ *
+ * Keeping the arithmetic here rather than writing it twice is the point: this
+ * project has un-duplicated the same kind of table three times (`POWER_COST`,
+ * the HUD price list, the announcer voice map) and the note over `Powers.js`
+ * is about what happens when the two copies drift.
+ *
+ * @param pool    the defender's Force, whatever it is called on that class
+ * @param beaten  is the guard already broken — stunned, staggered, gripped
+ * @returns `{ blunt, spend }`: hp taken off the blow, and pool it cost.
+ */
+export function forceResistance(pool, amount, kind, beaten) {
+  if (!(amount > 0) || !(pool > 0) || !FORCE_KINDS.test(kind ?? '')) return { blunt: 0, spend: 0 };
+  const blunt = Math.min(amount * RESIST_CAP * (beaten ? RESIST_BEATEN : 1), pool * RESIST_PER_FORCE);
+  return { blunt, spend: blunt / RESIST_PER_FORCE };
+}
 /**
  * A shove's speed, priced in the same currency as its damage, so ONE call to
  * `resistForce` answers a whole blow rather than billing its two halves
@@ -3100,16 +3141,13 @@ export class Enemy {
    * @returns hp of the blow taken off, having already spent the pool for it.
    */
   resistForce(amount, kind, source) {
-    if (!(amount > 0) || this.dead) return 0;
-    if (!this.powers || !(this.force > 0)) return 0;
-    if (!FORCE_KINDS.test(kind ?? '')) return 0;
+    if (this.dead || !this.powers) return 0;
     // …and never against itself: a body's own held power bills through the same
     // door, and a caster paying twice for one cast is not a contest.
     if (source === this) return 0;
-    const composure = this._guardOpen() ? RESIST_BEATEN : 1;
-    const blunt = Math.min(amount * RESIST_CAP * composure, this.force * RESIST_PER_FORCE);
-    this.force = Math.max(0, this.force - blunt / RESIST_PER_FORCE);
-    return blunt;
+    const r = forceResistance(this.force, amount, kind, this._guardOpen());
+    this.force = Math.max(0, this.force - r.spend);
+    return r.blunt;
   }
 
   /**
