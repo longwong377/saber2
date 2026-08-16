@@ -63,7 +63,28 @@ function gameWorld() {
 
 /** The director's stub world — no bodies, just the tables. */
 const tableWorld = () => ({ enemies: [], difficulty: null, takenBoons: new Set(), players: [] });
-const FULL_POOL = ['b1', 'b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker', 'beast'];
+
+/**
+ * THE FIXTURE POOL IS A SHIPPED ONE, AND IT WAS NOT.
+ *
+ * This was `['b1','b1','b1','trooper','b2','sniper','droideka','acolyte',
+ * 'walker','beast']` — a hand-written roster that **no level in the game
+ * fields**: nothing shipped declares both `walker` and `beast`, and the three
+ * B1s opened it cheaper than any real pool. So every bound in this file was
+ * calibrated against a level that does not exist, and when the same assertions
+ * were re-run against the real ten, three of them failed — including
+ * `DEFAULT_SETTINGS.level`, the level a new player starts on. HANDOFF §2.3:
+ * a hand-maintained table beside its generated twin, with the sibling check
+ * three entries down already enumerating the real ten.
+ *
+ * `FIELD` names one shipped level and `run()` asserts it exists, exactly as
+ * `cloth-cost.mjs` had to after the roster cull. The Ember Shelf is the one
+ * named because it is `DEFAULT_SETTINGS.level` — the fixture and the game's own
+ * default are now the same fight — and the checks that are about the SHAPE of a
+ * run enumerate `LEVEL_ORDER` instead of trusting any single pool.
+ */
+const FIELD = 'scoria';
+let FULL_POOL = null;
 const director = (opts = {}) => new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: FULL_POOL, ...opts });
 
 /** One update, so the rig is posed exactly as it is in game. */
@@ -172,6 +193,19 @@ const takeBoon = (p, id) => {
 };
 
 export async function run({ check, assert }) {
+  /**
+   * Loaded before the first `check`, because the synchronous ones call
+   * `director()` the moment they are declared. Levels.js is where seventeen of
+   * the thirty-one archetypes are REGISTERED — a probe that skips it sees a
+   * different game (see the note in the stranding check below).
+   */
+  const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+  if (!LEVELS[FIELD]) {
+    throw new Error(`escalation.mjs stands its subjects on "${FIELD}" and no such level exists — `
+      + `World.loadLevel would silently substitute ${LEVEL_ORDER[0]} and every bound in this `
+      + 'file would be measured against a place it does not name (HANDOFF §2.6)');
+  }
+  FULL_POOL = LEVELS[FIELD].pool;
 
   check('escalation: a deeper wave is a harder wave, not just a bigger one', async () => {
     /**
@@ -225,9 +259,29 @@ export async function run({ check, assert }) {
         perBody: threat / Math.max(1, bodies) });
     }
     const early = rows[0], late = rows[rows.length - 1];
-    assert(late.bodies > early.bodies * 3,
-      `wave ${late.w} fields ${late.bodies} bodies against wave ${early.w}'s ${early.bodies} — `
-      + 'the run is not deepening at all and the rest of this check means nothing');
+    /**
+     * THE GUARD IS ON THE WAVE'S WEIGHT, NOT ON ITS LENGTH.
+     *
+     * This asked for three times the BODIES, and it was a proxy for "the run is
+     * deepening at all" written when the count was the only thing depth bought
+     * — which is the defect the rest of this file exists to remove. Once
+     * `bodyCap` began to bind (see BODY_COUNT_SHARE), the Colosseum's wave 40
+     * became eighteen bodies at 11.7 threat each where it had been seventy-six
+     * at 4.1, and the guard failed on a wave that is three times the fight.
+     *
+     * Total threat is what the budget actually promises and it is strictly
+     * stronger: a wave can be longer without being heavier, and it cannot be
+     * heavier without having grown. Per-body threat is asserted beside it so
+     * "heavier" cannot be satisfied by length alone either.
+     */
+    const weight = (r) => r.bodies * r.perBody;
+    assert(weight(late) > weight(early) * 3,
+      `wave ${late.w} weighs ${weight(late).toFixed(0)} threat against wave ${early.w}'s `
+      + `${weight(early).toFixed(0)} — the run is not deepening at all and the rest of this `
+      + 'check means nothing');
+    assert(late.perBody > early.perBody * 1.5,
+      `wave ${late.w} fields ${late.perBody.toFixed(1)} threat per body against wave ${early.w}'s `
+      + `${early.perBody.toFixed(1)} — the wave got longer and not harder`);
     assert(late.share > early.share * 0.75,
       `the heavy share falls from ${(early.share * 100).toFixed(1)}% at wave ${early.w} to `
       + `${(late.share * 100).toFixed(1)}% at wave ${late.w} — the deep waves are proportionally `
@@ -367,33 +421,96 @@ export async function run({ check, assert }) {
   });
 
   check('escalation: depth stops buying bodies and starts buying elites', () => {
-    const d = director();
-    const at = (w) => {
-      let bodies = 0, elite = 0, threat = 0; const n = 40;
-      for (let i = 0; i < n; i++) {
-        d.wave = w; d._compose();
-        bodies += d.spawnQueue.length;
-        elite += d.spawnQueue.filter(isElite).length;
-        threat += d.spawnQueue.reduce((s, e) => s + (Waves.spawnCost ? Waves.spawnCost(e) : (ARCHETYPES[e]?.threat ?? 0)), 0);
-      }
-      return { bodies: bodies / n, share: elite / bodies, mean: threat / bodies };
-    };
-    const w2 = at(2), w15 = at(15), w25 = at(25), w30 = at(30);
-    assert(w2.share === 0, `wave 2 is already ${(w2.share * 100).toFixed(0)}% elite — the first waves must teach the plain bodies`);
-    assert(w15.share > 0.2, `wave 15 is only ${(w15.share * 100).toFixed(0)}% elite`);
-    assert(w25.share > 0.4, `wave 25 is only ${(w25.share * 100).toFixed(0)}% elite — it is still wave 10 with more bodies`);
-    // The headline: the budget grows far faster than the body count, and the
-    // difference is per-body quality. Anything else is "more of the same".
-    const budgetGrowth = d.budgetFor(30) / d.budgetFor(2);
-    const bodyGrowth = w30.bodies / w2.bodies;
-    assert(bodyGrowth * 2.5 < budgetGrowth,
-      `bodies grew ${bodyGrowth.toFixed(1)}× while the budget grew ${budgetGrowth.toFixed(1)}× — `
-      + 'the count is still carrying the escalation');
-    assert(w30.mean > w2.mean * 3.5,
-      `mean threat per body only went ${w2.mean.toFixed(2)} → ${w30.mean.toFixed(2)}`);
-    return `elite share 0% → ${(w15.share * 100).toFixed(0)}% (w15) → ${(w25.share * 100).toFixed(0)}% (w25); `
-      + `budget ×${budgetGrowth.toFixed(0)} but bodies ×${bodyGrowth.toFixed(1)}, `
-      + `threat/body ${w2.mean.toFixed(2)} → ${w30.mean.toFixed(2)}`;
+    /**
+     * ON EVERY LEVEL THE GAME SHIPS, AND IT USED TO BE ON ONE THAT IT DOES NOT.
+     *
+     * This ran against the synthetic pool above (see FIELD) and passed. Re-run
+     * against the real ten it failed on THREE — the Ember Shelf (the level a new
+     * player starts on), the Colosseum and the Jedi Temple — and one of the two
+     * clauses it failed on could not have been satisfied by any tuning at all.
+     *
+     * `w30.mean > w2.mean × 3.5` is a bound on the ratio between the wave a
+     * pool opens with and the wave it converges to, and BOTH ends are the
+     * pool's own prices: the Temple has no B1 in it, so its wave 2 is two Jedi
+     * at 5.2 threat each, and its heaviest body is the Master at 12. The clause
+     * therefore demanded a mean above 18 from a roster whose ceiling is 12. It
+     * was not measuring the escalation; it was measuring how cheap the level's
+     * chaff is, and the fixture pool's three B1s made that number flattering.
+     *
+     * ── WHAT IT IS MEASURED AGAINST NOW ──────────────────────────────────────
+     *
+     * The property in the check's own name, stated where it lives: PAST THE
+     * KNEE. Before `BODY_KNEE` the count IS the escalation and is meant to be
+     * ("up to there a run is learning to handle a crowd"); after it the extra
+     * budget must go on quality. So the two clauses are
+     *
+     *   the count takes a MINORITY of the budget added since the knee, and
+     *   the body cap actually BINDS, which is the mechanism that makes it so,
+     *
+     * both per level, plus the elite-share ladder that was already here. Those
+     * are strictly harder than what they replace and they are not contaminated
+     * by the pool's opening price. Measured on the shipped composer before the
+     * fix, share of the added budget that went on COUNT:
+     *
+     *     foundry 67% · kamino 66% · alpine 70% · colosseum 73% · wood 75%
+     *     drifts 80% · mustafar 85% · geonosis 85% · scoria 96% · temple 108%
+     *
+     * and the cap — the thing meant to stop it — was reached on 0-27% of rolls
+     * at wave 30, because it sat above the length the budget could pay for at
+     * every depth a player reaches. See `BODY_COUNT_SHARE` in Waves.js.
+     */
+    const K = Waves.BODY_KNEE;
+    const rows = [];
+    let worstCount = 0, worstCountAt = '', worstBind = 1, worstBindAt = '';
+    let worstQuality = Infinity, worstQualityAt = '', worst15 = 1, worst25 = 1;
+    for (const key of LEVEL_ORDER) {
+      const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const at = (w, n = 25) => {
+        let bodies = 0, elite = 0, threat = 0, capped = 0;
+        for (let i = 0; i < n; i++) {
+          d.wave = w; d._compose();
+          bodies += d.spawnQueue.length;
+          if (d.spawnQueue.length >= d.shape.cap) capped++;
+          elite += d.spawnQueue.filter(isElite).length;
+          threat += d.spawnQueue.reduce((s, e) => s + Waves.spawnCost(e), 0);
+        }
+        return { bodies: bodies / n, share: elite / bodies, mean: threat / bodies, bind: capped / n };
+      };
+      const w2 = at(2), w15 = at(15), w25 = at(25), knee = at(K), deep = at(40);
+      assert(w2.share === 0,
+        `${key} wave 2 is already ${(w2.share * 100).toFixed(0)}% elite — the first waves must teach the plain bodies`);
+      worst15 = Math.min(worst15, w15.share);
+      worst25 = Math.min(worst25, w25.share);
+
+      /* The extra bodies priced at what a body cost AT THE KNEE — a lower bound
+       * on what the count consumed, because anything the same bodies cost above
+       * that price is quality the upgrade pass bought. */
+      const spentOnCount = (deep.bodies - knee.bodies) * knee.mean
+        / (d.budgetFor(40) - d.budgetFor(K));
+      if (spentOnCount > worstCount) { worstCount = spentOnCount; worstCountAt = key; }
+      const bind = Math.min(at(30, 15).bind, deep.bind);
+      if (bind < worstBind) { worstBind = bind; worstBindAt = key; }
+      const quality = deep.mean / knee.mean;
+      if (quality < worstQuality) { worstQuality = quality; worstQualityAt = key; }
+      rows.push(`${key} ${(spentOnCount * 100).toFixed(0)}%count ×${quality.toFixed(2)}q`);
+    }
+    assert(worst15 > 0.2, `some level's wave 15 is only ${(worst15 * 100).toFixed(0)}% elite`);
+    assert(worst25 > 0.4,
+      `some level's wave 25 is only ${(worst25 * 100).toFixed(0)}% elite — it is still wave 10 with more bodies`);
+    assert(worstCount < 0.5,
+      `on ${worstCountAt}, ${(worstCount * 100).toFixed(0)}% of the budget added since wave ${K} went `
+      + 'on MORE bodies rather than better ones — the count is still carrying the escalation, which is '
+      + 'the whole of "wave 30 is wave 12 with four times the crowd"');
+    assert(worstBind > 0.5,
+      `on ${worstBindAt} the body cap was the binding constraint on only ${(worstBind * 100).toFixed(0)}% `
+      + 'of deep waves — the fill runs out of BUDGET first, so "past the cap the wave stops growing and '
+      + 'starts improving" never happens there and `_upgrade` is handed nothing to spend');
+    assert(worstQuality > 1.4,
+      `on ${worstQualityAt} threat per body only went ×${worstQuality.toFixed(2)} from wave ${K} to 40`);
+    return `${LEVEL_ORDER.length} levels · elite share ≥${(worst15 * 100).toFixed(0)}% (w15) `
+      + `≥${(worst25 * 100).toFixed(0)}% (w25) · worst count share ${(worstCount * 100).toFixed(0)}% `
+      + `(${worstCountAt}) · worst cap bind ${(worstBind * 100).toFixed(0)}% (${worstBindAt}) · `
+      + `worst quality ×${worstQuality.toFixed(2)} (${worstQualityAt})`;
   });
 
   check('escalation: the set-piece ladder never runs out of rungs', () => {
@@ -597,16 +714,30 @@ export async function run({ check, assert }) {
      * blame. Each is driven through the real composer, under that condition
      * alone, and asserted against what the card claims.
      *
-     * Composed at the depth each one unlocks plus ten, on the full pool, so
-     * every condition has something to work with.
+     * Composed at the depth each one unlocks plus ten, ON A THEATRE THAT CAN
+     * ACTUALLY FIELD IT — which the fixture pool used to be assumed to be.
+     * `needs` is the shipped veto and it is asked here rather than restated, so
+     * THE HEAVY GUARD is demonstrated on a level that stations something
+     * enormous instead of failing on one that does not. A condition NO level
+     * can field is dead content and is asserted against separately.
      */
-    const d = director();
     const rows = [];
     for (const key of Waves.CONDITION_KEYS) {
       const C = Waves.CONDITIONS[key];
+      const homes = LEVEL_ORDER.filter((k) => {
+        const t = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[k].pool });
+        return !t.ruleVeto(key);
+      });
+      assert(homes.length,
+        `no level in LEVEL_ORDER can field "${key}" — a condition every theatre vetoes is a `
+        + 'card nobody will ever be shown');
+      const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[homes[0]].pool });
       assert(C.label && C.tell, `condition "${key}" has no label or no tell — nothing tells the player it is on`);
       assert(C.worth > 0, `condition "${key}" is free — a condition nobody pays for is threat off the books`);
       const w = C.since + 10;
+      assert(!C.needs || C.unmet,
+        `condition "${key}" can be vetoed by a theatre and has no \`unmet\` line — `
+        + 'the Deploy panel would grey the rule out and say nothing about why');
       const shape = d._shapeUnder(w, [key]);
       const plain = d._shapeUnder(w, []);
       const seen = new Set();
@@ -624,6 +755,11 @@ export async function run({ check, assert }) {
       bodies /= n;
       const ranged = [...seen].filter((t) => ARCHETYPES[t].ranged);
       const melee = [...seen].filter((t) => !ARCHETYPES[t].ranged);
+      let elite = 0, all = 0;
+      for (let i = 0; i < n; i++) {
+        Waves.seedWaves(500 + i, 0);
+        for (const e of d._composeUnder(w, [key]).queue) { all++; if (isElite(e)) elite++; }
+      }
       switch (key) {
         case 'silence':
           assert(!ranged.length, `NO GUNS fielded ${ranged.join(', ')}, which shoot`);
@@ -646,6 +782,33 @@ export async function run({ check, assert }) {
         case 'hammer':
           assert(shape.bearing, 'ONE BEARING does not set a bearing');
           break;
+        case 'elites': {
+          /**
+           * The one condition that reads `eliteScale`, which was a documented
+           * hook no condition declared and which therefore multiplied by 1
+           * forever. Asserted on the SHAPE (the ceiling it lifts) and on the
+           * FIELD (what the fill actually promoted), because the first without
+           * the second is how a hook gets declared and still does nothing.
+           */
+          assert(shape.chance > plain.chance * 1.5,
+            `NO RANK AND FILE promotes at ${shape.chance.toFixed(2)} against an ordinary `
+            + `${plain.chance.toFixed(2)} — eliteScale is not reaching the shape`);
+          assert(shape.chance >= 1,
+            `NO RANK AND FILE tops out at ${shape.chance.toFixed(2)} of the fill — `
+            + '"every one of them is somebody" has to mean every one');
+          const plainShare = (() => {
+            let e = 0, a = 0;
+            for (let i = 0; i < n; i++) {
+              Waves.seedWaves(500 + i, 0);
+              for (const x of d._composeUnder(w, []).queue) { a++; if (isElite(x)) e++; }
+            }
+            return e / Math.max(1, a);
+          })();
+          assert(elite / Math.max(1, all) > plainShare,
+            `NO RANK AND FILE fielded ${(elite / all * 100).toFixed(0)}% elites against an `
+            + `ordinary wave's ${(plainShare * 100).toFixed(0)}%`);
+          break;
+        }
         case 'vanguard':
           assert(shape.head, 'A HEAD TO CUT OFF marks no head');
           // EXACTLY one, or "the leader" is not something a player can find.
@@ -656,7 +819,7 @@ export async function run({ check, assert }) {
         default:
           throw new Error(`condition "${key}" has no behavioural check — add one`);
       }
-      rows.push(`${key} ${bodies.toFixed(0)}b`);
+      rows.push(`${key} ${bodies.toFixed(0)}b on ${homes[0]} (${homes.length} theatres)`);
     }
     return `${Waves.CONDITION_KEYS.length} conditions, each doing what its card says: ${rows.join(', ')}`;
   });

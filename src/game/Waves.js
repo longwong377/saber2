@@ -2209,7 +2209,26 @@ export class WaveDirector {
     let guard = 0;
     while (budget > 0 && queue.length < shape.cap && guard++ < 400) {
       const bigLeft = shape.heavy - queue.filter(e => isHeavy(spawnType(e))).length;
-      const t = this._pickType(shape.types, w, bigLeft);
+      /**
+       * DRAW FROM WHAT IS STILL AFFORDABLE, not from the whole roster.
+       *
+       * This drew from `shape.types` and broke the moment the draw came back
+       * unaffordable, so a wave stopped composing on the first expensive body
+       * it happened to roll rather than when its budget was gone. It only shows
+       * up where the roster's spread is wide against a small budget, which is
+       * exactly the shallow waves of the levels with the richest pools: measured
+       * on the Ember Shelf, wave 1 stranded 43% and wave 2 36% of their budget,
+       * because a Jedi costs 6 against a wave-1 budget of 7 and one unlucky draw
+       * ended the wave. Nothing caught it because the checks composed on a
+       * fixture pool of B1s.
+       *
+       * The first body is exempt, as it always was: a wave has to have something
+       * in it even when the cheapest thing in the theatre is over budget.
+       */
+      const pickFrom = queue.length
+        ? shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget)
+        : shape.types;
+      const t = this._pickType(pickFrom.length ? pickFrom : shape.types, w, bigLeft);
       if (!t) break;
       let cost = ARCHETYPES[t].threat;
       if (cost > budget && queue.length > 0) break;
