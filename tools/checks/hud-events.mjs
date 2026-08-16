@@ -24,7 +24,7 @@
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE,
-  Minimap, MINIMAP, hostilesLeft } from '../../src/ui/HUD.js';
+  Minimap, MINIMAP, hostilesLeft, rosterHtml } from '../../src/ui/HUD.js';
 import { Player } from '../../src/game/Player.js';
 import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS, Menu } from '../../src/ui/Menu.js';
@@ -33,7 +33,7 @@ import { defaultBindings, keyLabel, ORDER_ACTIONS } from '../../src/engine/Bindi
 // The two tables the roster panel draws WITH. Imported here for the same
 // reason the HUD imports them: a rank colour or an army name typed into a
 // check is a third copy of a table that already has two readers.
-import { RANKS, ARMIES } from '../../src/game/Command.js';
+import { RANKS, ARMIES, CommandRoster } from '../../src/game/Command.js';
 import { OPEN_STATES, openState, openMul } from '../../src/game/Combat.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -1041,6 +1041,64 @@ export async function run({ check, assert }) {
       hud.setRoster(null);
       assert(panel.classList.contains('hidden'), 'setRoster(null) left the panel up');
       return `5 names: ${order.join(', ')} — 3 standing, 2 struck through`;
+    } finally { restore(); }
+  });
+
+  check('hud: the panel is fed by the roster\'s OWN summary, not a shape invented here', () => {
+    /**
+     * The check above drives the panel with a hand-built roll, and a hand-built
+     * roll can only ever agree with the renderer that was written beside it.
+     * This one uses a REAL `CommandRoster`, promoted and killed through its own
+     * API, and asserts the panel draws what actually comes out of it — which is
+     * the only way "the roster panel renders real data" is a claim about the
+     * game rather than about this file.
+     *
+     * It also pins the thing the mode is FOR. A fresh clone is a number; a
+     * nickname is earned on the second rung and never lost. The whole design of
+     * that asymmetry is that a roll full of numbers with three names in it is
+     * the game telling you who you kept alive — so the panel has to print the
+     * earned name, and a number for everyone else.
+     */
+    const roster = new CommandRoster(ARMIES.republic);
+    const men = Array.from({ length: 6 }, () => roster.enlist('trooper', { joined: 1 }));
+    /* RANKS[2] and RANKS[4], not RANKS[1]: a nickname is won on the rung whose
+     * INDEX is 2, which is the third entry — `Trooper.award` says `now >= 2`.
+     * Promoting to Veteran and expecting a name is the mistake this comment
+     * exists to stop the next reader repeating; the table is the authority for
+     * where the gate is, and it is read rather than typed. */
+    const promoted = men[0].award(RANKS[2].xp);
+    assert(promoted, 'awarding a Sergeant\'s worth of experience did not promote anybody');
+    men[1].award(RANKS[4].xp);
+    men[2].kills = 4;
+    roster.fall(men[4], 2);
+    roster.fall(men[5], 3);
+
+    const summary = roster.summary();
+    const html = rosterHtml(summary);
+    const rows = [...html.matchAll(/<div class="rp-row( gone)?"[^>]*><i[^>]*><\/i><b>([A-Z]+)<\/b><span>([^<]*)<\/span><em>([^<]*)<\/em>/g)]
+      .map(m => ({ gone: !!m[1], rank: m[2], name: m[3], right: m[4] }));
+    assert(rows.length === 6, `${rows.length} rows drawn from a roster of 6`);
+    assert(rows[0].rank === RANKS[4].short && rows[1].rank === RANKS[2].short,
+      `the roll leads with ${rows[0].rank} then ${rows[1].rank} — the Commander should be above the Sergeant`);
+    // The two who were promoted carry an earned name; the rest are numbers.
+    const named = rows.filter(r => /"/.test(r.name));
+    assert(named.length === 2,
+      `${named.length} of 6 carry a nickname — exactly the two that were promoted should`);
+    for (const r of rows.filter(r => r.rank === RANKS[0].short)) {
+      assert(!/"/.test(r.name), `a plain Trooper is drawn as ${r.name} — a nickname is EARNED`);
+    }
+    assert(rows.filter(r => r.gone).length === 2, 'the two who fell are not struck through');
+    assert(rows.find(r => r.gone).right === 'A3',
+      `the most recent casualty reports "${rows.find(r => r.gone).right}" for area 3`);
+    // …and the panel takes the real thing without a translation step anywhere.
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      hud.setRoster(summary);
+      assert(doc.getElementById('rp-strength').textContent === '4/6',
+        `the header reads ${doc.getElementById('rp-strength').textContent} for 4 living of 6`);
+      assert(doc.querySelectorAll('#rp-list .rp-row.gone').length === 2,
+        'the real summary lost its casualties on the way to the panel');
+      return `${rows.length} real records: ${rows.map(r => `${r.rank} ${r.name}`).join(', ')}`;
     } finally { restore(); }
   });
 
