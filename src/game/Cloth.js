@@ -1237,7 +1237,37 @@ function withCut(opts, part) {
  * `buildJedi` already hands out. The pieces whose SHAPE is rigid geometry —
  * the tunic's collar and cuffs, the boot shafts, the bracers — can be
  * recoloured from here and cannot be recut from here; that needs geometry in
- * src/game/Bodies.js, and the handoff records exactly what.
+ * src/game/Bodies.js, and this is exactly what:
+ *
+ *   TUNIC CUTS. The tunic is a collar band, a crossed V and two cuffs, and
+ *   they are lathes on the neck, chest and forearm bones. Three cuts would
+ *   cover the references: `crossed` (what ships), `high` — a standing collar
+ *   to the jaw, which is Dooku and half the Council — and `sleeveless`, which
+ *   is Kit Fisto and Aayla Secura and is the one that changes the SILHOUETTE
+ *   rather than the trim. It wants a `tunic` option on buildJedi and the
+ *   sleeve stack made conditional.
+ *
+ *   BOOT CUTS. `boot()` builds one boot and the shaft is a separate lathe on
+ *   the shin. `low` (an ankle boot), `high` (the shipped shaft), `greave` (a
+ *   plated shin) and `bare` are four numbers and one extra plate, and the
+ *   fourth is what a Yoda or a Nautolan wants.
+ *
+ *   GLOVE CUTS. Gloves and bracers are already separate meshes on the hand and
+ *   forearm bones; what is missing is the ABSENCE of them. `bare` (no glove,
+ *   no bracer — Obi-Wan), `bracer` (the shipped pair) and `gauntlet` (a longer
+ *   cuff over the glove — Plo Koon) are a visibility flag and one lathe.
+ *
+ *   AND THE ONE THING THIS FILE CANNOT FAKE AT ALL: a HOOD. Every reference
+ *   with a raised hood — Obi-Wan on Utapau, half the Council in session — has
+ *   a cowl that is part of the cape's collar, and a cape is a sheet pinned at
+ *   nine points across the shoulders. A hood is a second, smaller sheet pinned
+ *   in a RING round the neck, and it needs the head bone and a collision hull
+ *   for the skull; the machinery is all here (`closed`, `profile`, `pinRows`)
+ *   but the anchor belongs to whoever owns the head.
+ *
+ * Until then: every piece below can be RECOLOURED (tintWardrobe), and the
+ * three that are cloth — the cape, the over-panels and the belt's ends — can
+ * be recut here, because this file owns them.
  */
 
 /**
