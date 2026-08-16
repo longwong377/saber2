@@ -3638,6 +3638,18 @@ export class Menu {
   }
 
   _buildOptions() {
+    /* FOUR of these sliders index a TABLE, and the tables can grow. Their
+     * `max` is taken from the table rather than typed into index.html, so
+     * adding a sixth voice, an eighth reticle shape or a second soundtrack
+     * cannot leave the new one unreachable behind a stale attribute.
+     *
+     * Declared at the top of the method rather than beside the voice block it
+     * was written for: the soundtrack slider is built with the rest of the
+     * audio controls, forty lines earlier, and a `const` used above its own
+     * declaration is a TDZ throw that takes the whole front end down — which
+     * is exactly what it did, on every check in tools/checks/menu.mjs at once.
+     */
+    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
     this._buildDeflectModes();
     this._buildHolocronModes();
     this._buildBindings();
@@ -3780,11 +3792,6 @@ export class Menu {
      * this menu is writing — so no hook is needed and none is faked: a toggle
      * here is not a message to the game, it IS the game's answer next frame.
      */
-    /* Three of these sliders index a TABLE, and the tables can grow. Their
-     * `max` is taken from the table rather than typed into index.html, so
-     * adding a sixth voice or an eighth reticle shape cannot leave the new one
-     * unreachable behind a stale attribute. */
-    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
     cap('opt-voice', PLAYER_VOICES.length);
     cap('opt-ret-shape', RETICLE_SHAPES.length);
     cap('opt-ret-color', RETICLE_COLORS.length);
