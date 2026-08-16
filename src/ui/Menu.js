@@ -3915,10 +3915,13 @@ export class Menu {
   setDevice(device, family = 'xbox') {
     if (this.pad && this.pad.device === device && this.pad.family === family) return false;
     this.pad = { device, family };
-    // `_buildBindings` repaints its own list AND calls _buildKeyLegends at the
-    // end of it, so this is one call and not two — the cycle that would be is
-    // why the legends do not reach back the other way.
+    // Both, and in this order. `_buildBindings` repaints the key chips and ends
+    // by calling `_buildKeyLegends` — but it RETURNS EARLY on a page with no
+    // bind list, and the Codex is on a page of its own. A device change is not
+    // a frame, so the one redundant repaint when both hosts exist costs
+    // nothing and is what makes this correct on every page shape.
     this._buildBindings();
+    this._buildKeyLegends();
     return true;
   }
 
