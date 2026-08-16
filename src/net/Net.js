@@ -53,30 +53,30 @@ export const PEER_TIMEOUT = 8;
  * Sent ONCE, on hello/welcome, and carried on the roster — it is identity, not
  * state, so putting it in the 24 Hz avatar packet would pay for it forever.
  *
- * The ten of the twelve that a RemoteAvatar can actually wear, and `order`,
- * which it does not wear at all.
+ * The ten of the twelve that a RemoteAvatar can actually wear. `robeCut` and
+ * `order` are deliberately absent: the first dresses a simulated cloak a remote
+ * body does not have, and the second grants boons rather than describing a
+ * face. Sending them would be two more fields on the wire with no reader.
  *
- * `robeCut` is still deliberately absent: it dresses a simulated cloak a remote
- * body does not have, so it would be a field on the wire with no reader.
+ * `ORDER` WAS PUT ON THIS LIST AND TAKEN OFF AGAIN, and the measurement is
+ * worth keeping so the next reader does not spend the same hour. It looks like
+ * it has a reader now: Command's `assignArmies` derives the ARMY from the
+ * Jedi/Sith choice, and with the field absent `World.beginVersus` reads every
+ * peer as the HOST's own order. So the peer's real choice ought to change which
+ * of two commanders is handed the army they did not want.
  *
- * `ORDER` WAS ABSENT FOR THE SAME STATED REASON AND THE REASON STOPPED BEING
- * TRUE. The note here read "it grants boons rather than describing a face", and
- * that is correct about what an order does to the body — and a meeting made it
- * decide something else entirely. `assignArmies` derives the ARMY from the
- * Jedi/Sith choice, so with the field off the wire `World.beginVersus` had to
- * default every peer to the host's own settings: two Sith met as the Republic
- * against the Confederacy, and the Sith who was handed the Republic was reading
- * an army list they had not chosen. With two armies and two commanders who both
- * want the same one somebody must still be disappointed — that is
- * `assignArmies`' whole job — but knowing the real choice changes WHICH of
- * them, and a Jedi facing a Sith stops being disappointed at all.
- *
- * It is identity for the length of a match exactly as `team` and the sheet are,
- * so it rides the roster with them rather than the 24 Hz packet, and it is one
- * short string.
+ * It does not, and it cannot. `assignArmies` gives the first commander what
+ * they ask for and resolves every conflict after that against what is already
+ * taken — so with TWO armies on the roster the second side gets the one the
+ * first did not take, whatever it asked for. Enumerated over every roster of
+ * two, three and four commanders and both orders apiece: the peer's real order
+ * changes the assignment in **0 of 28**. A field whose reader cannot change an
+ * outcome is bandwidth and a maintenance cost, which is what the check below
+ * this one exists to catch. It becomes worth sending the day there is a third
+ * army — and not before.
  */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'species', 'face', 'order'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
 
 export function packLook(settings = {}) {
   const out = {};

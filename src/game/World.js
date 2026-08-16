@@ -14,7 +14,7 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
+import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
@@ -110,7 +110,7 @@ export function roomOf(level, surface = 'sand') {
 }
 import { applyOrder } from './Order.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
-import { CommandDirector, COMMAND_POWER_RULES, assignArmies } from './Command.js';
+import { ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, assignArmies } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -2844,45 +2844,49 @@ export class World {
     if (!list.length) return null;
 
     /**
-     * TWO SIDES, WHOEVER TURNS UP — and this is what makes a 2v2 a 2v2 rather
-     * than four private wars on one plain.
+     * ONE SIDE PER ARMY, AND THE RULE IS `assignSides`' — CALLED, NOT RESTATED.
      *
      * It used to be `sideTeam(i)`: a side of its own for every commander, up to
      * the four `SIDES` holds. That is right for a free-for-all and it is not
-     * what this mode can field. There are TWO armies on the roster — the
-     * Republic and the Confederacy — so a third side has no units, no colour
-     * and no enemy list, and `formUp` has always laid its anchors out
-     * ALTERNATING down one line, which is a 2v2's geometry and nothing else's.
-     * Driven at four commanders before this: four sides, four armies out of a
-     * list of two, two commanders sharing each end of the field in opposing
-     * colours, and a `DuelMatch` whose `sides` carried the same number twice —
-     * so `update`'s "one side left standing" test found two survivors when one
-     * side had been wiped out, and the battle could not end.
+     * what this mode can field. Driven at four commanders, which had never been
+     * done: four sides against a roster of TWO armies, so the third and fourth
+     * commanders fielded somebody else's units in somebody else's colours; two
+     * commanders sharing each end of `formUp`'s line while opposed to each
+     * other; and a `DuelMatch` whose `sides` carried the same number twice — so
+     * its "one side left standing" filter counted a wiped-out army as two
+     * survivors and the battle could not end at all.
      *
-     * So join order alternates: evens against odds, which is exactly the line
-     * `formUp` was already drawing. Identical for two commanders, which is
-     * every session that has ever run. An odd count is a 2v1 rather than a
-     * refusal — an uneven meeting is a real thing to want, and stranding the
-     * third player is not.
+     * `ARMY_IDS.length` rather than a 2, because that is where the limit comes
+     * from: a side with no army has no units, no paint and no enemy list.
+     * `assignSides` rather than `i % 2`, because it is the same question the
+     * duel already answers and its own note already writes this file's answer
+     * down — "the roster alternates, so a four-player session is 2v2 in roster
+     * order and a three-player one is 2v1 with the host on the larger side".
+     * A second copy of that sentence here is the shape this repository has paid
+     * for six times. The keys are indices because a local Player carries no
+     * peer id and the answer is positional either way.
+     *
+     * Identical for two commanders, which is every session that has run. An odd
+     * count is a 2v1 rather than a refusal: an uneven meeting is a real thing to
+     * want and stranding the third player is not.
      */
-    const sides = list.map((_, i) => sideTeam(i % 2));
+    const seats = assignSides(list.map((_, i) => ({ id: i })), ARMY_IDS.length);
+    const sides = list.map((_, i) => seats.get(i));
     /**
-     * …AND THE ARMY THEY CHOSE, now that it is on the wire.
+     * …AND AN ARMY PER SIDE, so two allies lead one and wear one colour.
      *
-     * `LOOK_KEYS` used to leave `order` off, so a commander this machine could
-     * not ask defaulted to the HOST's settings and two Sith met as the Republic
-     * against the Confederacy. It crosses on the roster now (see Net.js), and
-     * `look` is where a RemoteAvatar keeps the sheet it arrived with — read
-     * from there rather than copied onto a second field, so there is one
-     * authority for what a peer said about itself. The fallback stays for a
-     * peer that sent none.
-     *
-     * `sides` goes in with it: an army belongs to a SIDE, so two allies lead
-     * one army and wear one colour rather than two commanders on the same
-     * anchor in opposing paint.
+     * Every commander is read as the HOST's own order, and that is measured
+     * rather than tolerated. `LOOK_KEYS` leaves `order` off the wire, so a
+     * commander this machine cannot ask has no stated choice — and it turns out
+     * not to matter: `assignArmies` gives the first commander what they ask for
+     * and resolves everything after that against what is already taken, so with
+     * two armies the second side gets whichever one is left whatever it wanted.
+     * Enumerated over every roster of two, three and four commanders and both
+     * orders apiece, the peer's real order changes the assignment in 0 of 28.
+     * The note in Net.js carries the same measurement, because that is where
+     * somebody will next be tempted to add the field.
      */
-    const armies = assignArmies(list.map((p) => p.look?.order || p.order
-      || this.settings?.order || 'jedi'), sides);
+    const armies = assignArmies(list.map((p) => p.order || this.settings?.order || 'jedi'), sides);
     d.formUp(sides, armies, list);
 
     for (let i = 0; i < list.length; i++) {

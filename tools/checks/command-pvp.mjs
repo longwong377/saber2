@@ -83,19 +83,28 @@ async function commandPair(opts = {}) {
   /**
    * THE ROUTING TABLE, AND IT IS THE GAME'S.
    *
-   * Four lines, and every one of them is `main.js`'s own `net.on` line with the
-   * subscription taken off — the same message name reaching the same World
-   * method. `bootPair` in _coop.mjs established the idiom for `snapshot` and
-   * `claim`; Command adds the two that carry an army. Nothing here decodes a
-   * payload or decides anything: a check that re-implemented a handler would be
-   * measuring itself, which is the failure this whole harness was rebuilt out
-   * of.
+   * Every line is `main.js`'s own `net.on` line with the subscription taken off
+   * — the same message name reaching the same World method. `bootPair` in
+   * _coop.mjs established the idiom for `snapshot` and `claim`; Command adds
+   * the three that carry an army. Nothing here decodes a payload or decides
+   * anything: a check that re-implemented a handler would be measuring itself,
+   * which is the failure this whole harness was rebuilt out of.
+   *
+   * `muster` appears on BOTH tables, once, and that is the message rather than
+   * the fixture: it is the one Command type that travels in both directions,
+   * and `World.applyMuster` branches on `netMode` to decide which of the two it
+   * is holding. Routing it to the same method from both ends is what puts that
+   * branch under test — a check that called an offer-reader on the client and
+   * an intent-reader on the host would prove the split it was supposed to
+   * measure by assuming it.
    */
   const toClient = (w, m) => (m.t === 'snapshot' ? w.applySnapshot(m)
     : m.t === 'army' ? w.applyArmy(m)
-      : m.t === 'match' ? w.applyMatch(m) : null);
+      : m.t === 'muster' ? w.applyMuster(m, 'HOST')
+        : m.t === 'match' ? w.applyMatch(m) : null);
   const toHost = (w, m) => (m.t === 'claim' ? w.applyClaim('PEER', m)
-    : m.t === 'order' ? w.applyOrder('PEER', m) : null);
+    : m.t === 'order' ? w.applyOrder('PEER', m)
+      : m.t === 'muster' ? w.applyMuster(m, 'PEER') : null);
 
   const input = idleInput();
   const STEP = 1 / 30;
@@ -133,8 +142,12 @@ async function commandPair(opts = {}) {
 async function joinAsCommander(host, opts = {}) {
   const { RemoteAvatar } = await import('../../src/net/Net.js');
   const { canHarm } = await import('../../src/game/Player.js');
+  /* `look` is the sheet that crossed on the roster, and it is where a peer's
+   * chosen ORDER now lives — see LOOK_KEYS. Passed through rather than always
+   * null so a check can put a Sith on the other end of the field and have the
+   * host find that out the way a real host does. */
   const r = new RemoteAvatar(host, { id: opts.id || 'PEER', name: opts.name || 'RIVAL',
-    look: null, team: opts.team });
+    look: opts.look ?? null, team: opts.team });
   (host.remotes || (host.remotes = new Map())).set(r.id, r);
   host.players.push(r);
   /**
@@ -162,6 +175,35 @@ async function joinAsCommander(host, opts = {}) {
 
 /** Every body on the host that has a name on the roster. */
 const troopsOf = (world) => world.enemies.filter((e) => e.trooper && !e.dead);
+
+/**
+ * THE AREA BOUNDARY, THROUGH THE MODE'S OWN DOOR — and with the host's screen
+ * standing in, because without one the muster does not stay open.
+ *
+ * `payWave` is what the wave loop calls and `_areaClear` is what it reaches;
+ * priming `areaWaves` is the idiom `command.mjs` already uses to get there
+ * without playing three waves in real time. What this adds is the SCREEN: with
+ * no `onMuster` installed the director takes its documented fallback and
+ * musters for the player itself, so the card would be raised and dismissed
+ * inside one call and there would be nothing for a client to be offered. A host
+ * with a UI is the state every real session is in; `main.js` installs exactly
+ * this.
+ *
+ * @returns the offers the host's own screen was raised with.
+ */
+function openMuster(host) {
+  const d = host.command;
+  const raised = [];
+  d.onMuster = (o) => raised.push(o);
+  d.areaWaves = d.area.waves - 1;
+  /* A wave is paid ONCE — `wave > _paid` in Waves.js — so a fixture that opens
+   * a SECOND muster has to ask about a wave the director has not already
+   * settled. Moving `wave` first is what `start` does and keeps the two in the
+   * order the loop leaves them in. */
+  d.wave = (d.wave | 0) + 1;
+  d.payWave(d.wave);
+  return raised;
+}
 
 /** The client's copies of a set of host ids, by id, off the replication index. */
 const mirrorOf = (client, ids) =>
@@ -412,6 +454,179 @@ export function run({ check, assert }) {
     return `${was} → ${want}, given from the joining player's machine, logged once on the host`;
   });
 
+  check('command/net: a joining commander musters for itself', async () => {
+    /**
+     * THE PURSE IS THE OTHER HALF OF THE ROSTER, AND IT HAD NO WIRE.
+     *
+     * `applyNet` has carried `mustering` and `points` to every machine in the
+     * session since the roster crossed — so a joining commander knew perfectly
+     * well that a muster was open and exactly how many reinforcement points
+     * were in the purse, and had no shelf to spend them on and no way to say
+     * what it wanted. `musterOffer()` on a shell computed over an empty roster:
+     * measured before this, on this pair, the joining commander's offer read
+     * 0 points with 0 of 7 rungs affordable while the host's read 11 with 2.
+     * So either the host's player chose that army's reinforcements for both of
+     * them, or — with no screen wired at all — `autoMuster` did.
+     *
+     * Driven end to end on two real Worlds: the muster opens on the host
+     * through `payWave`, the offer crosses, the CLIENT buys, and the assertion
+     * is on the host's roster and the host's purse, which is the pair a client
+     * cannot fake.
+     */
+    const { host, client, pump, seen } = await commandPair({ trim: 3 });
+    pump(2);
+    const d = host.command;
+
+    /* Both screens, standing in for the two machines' UIs. */
+    const cards = [], closes = [];
+    client.command.onMuster = (o) => cards.push(o);
+    client.command.onMusterClose = () => closes.push(1);
+    const hostCards = openMuster(host);
+
+    assert(hostCards.length === 1 && d.mustering,
+      `the muster did not open on the host at all (${hostCards.length} cards, mustering=${d.mustering})`);
+    pump(0.4);
+
+    assert(cards.length === 1,
+      `the joining commander's muster was raised ${cards.length} times, not once`);
+    const offer = client.command.musterOffer();
+    assert(offer, 'the joining commander has no offer to spend, so there is no muster on that machine');
+    const truth = d.musterOffer();
+    assert(offer.points === truth.points && offer.points > 0,
+      `the joining commander is shown ${offer.points} points against the host's ${truth.points}`);
+    /* The SHELF, field for field. `afford` is the one that cannot be derived on
+     * a machine with no purse, and it is the one a screen greys a row on. */
+    const shelf = (o) => o.units.map((u) => `${u.type}:${u.cost}:${u.have}:${u.afford ? 1 : 0}`).join(' ');
+    assert(shelf(offer) === shelf(truth),
+      `the two machines are offering different armies:\n  host ${shelf(truth)}\n  peer ${shelf(offer)}`);
+
+    /* …AND IT BUYS. */
+    const want = offer.units.filter((u) => u.afford).sort((a, b) => b.cost - a.cost)[0];
+    assert(want, `nothing on the shelf is affordable at ${offer.points} points, so nothing was bought`);
+    const before = { points: d.roster.points, strength: d.roster.strength };
+    const local = client.command.recruit(want.type);
+    assert(local === null, 'the joining commander enlisted a trooper of its own, off its own roster');
+    assert(d.roster.strength === before.strength,
+      'the host acted on a purchase before the message carrying it had arrived');
+    pump(0.4);
+
+    assert(d.roster.strength === before.strength + 1,
+      `the host's army went ${before.strength} → ${d.roster.strength} — the purchase never landed`);
+    assert(d.roster.points === before.points - want.cost,
+      `the host's purse went ${before.points} → ${d.roster.points}, and a ${want.type} costs ${want.cost}`);
+    const bought = d.roster.living.filter((t) => t.type === want.type).length;
+    assert(bought === want.have + 1,
+      `${bought} of ${want.type} on the host's roll, ${want.have + 1} expected`);
+    const after = client.command.musterOffer();
+    assert(cards.length === 2, `the screen was re-offered ${cards.length - 1} times after a purchase`);
+    assert(after.points === d.roster.points,
+      `the joining commander still reads ${after.points} points against the host's ${d.roster.points}`);
+    assert(after.units.find((u) => u.type === want.type).have === want.have + 1,
+      'the joining commander cannot see the unit it just bought');
+
+    /* …AND CLOSES IT, which is the half that starts the next area. */
+    client.command.closeMuster();
+    pump(0.6);
+    assert(!d.mustering, 'the host is still mustering after the joining commander was done');
+    assert(!client.command.mustering && client.command.musterOffer() === null,
+      'the joining commander is still holding an offer for a muster that has closed');
+    assert(closes.length === 1, `the joining commander's card came down ${closes.length} times`);
+    assert(troopsOf(host).length >= before.strength + 1,
+      `${troopsOf(host).length} bodies on the field after the muster closed — the army was not deployed`);
+
+    const msgs = seen.toHost.filter((m) => m.t === 'muster').length;
+    return `${offer.points} points and ${offer.units.length} rungs to the joining commander, `
+      + `one ${want.type} at ${want.cost} bought from there (${before.points} → ${d.roster.points}), `
+      + `${msgs} intents on the wire, ${troopsOf(host).length} deployed`;
+  });
+
+  check('command/net: the host holds the purse, and a peer\'s claim about it is worth nothing', async () => {
+    /**
+     * THE HALF THAT IS NOT ABOUT CONVENIENCE.
+     *
+     * A muster that a client can drive is a muster a client can LIE to, and the
+     * shape the lie takes is always the same: a peer that is trusted about what
+     * it can afford is a peer that fields twenty-four ARC troopers on an empty
+     * purse. So the intent on the wire carries the unit and nothing else, and
+     * every one of `recruit`'s five refusals is evaluated on the machine
+     * holding the roster.
+     *
+     * Asserted by FORGING, not by inspecting: the messages below are pushed
+     * onto the same queue the client's own `requestMuster` writes to and are
+     * routed by the same table, so they reach `applyMuster` exactly as a
+     * hostile peer's would. A check that only asserted the honest path would
+     * pass just as green against a host that trusted every field it was sent.
+     */
+    const { host, client, pump, wire } = await commandPair({ trim: 3 });
+    pump(2);
+    const d = host.command;
+    client.command.onMuster = () => {};
+    openMuster(host);
+    pump(0.4);
+
+    const shelf = d.musterOffer().units.slice().sort((a, b) => b.cost - a.cost);
+    const dear = shelf[0];
+    /* An empty purse. The state a campaign reaches on its own every time the
+     * player spends the last of it — reached here directly so the assertion is
+     * about the refusal rather than about how long it took to get poor. */
+    d.roster.points = 0;
+    const s0 = d.roster.strength;
+
+    /* THE CLAIM. Every field a peer might hope the host reads off the message. */
+    wire.up.push({ t: 'muster', u: dear.type, points: 9999, cost: 0, afford: true,
+      strength: 0, o: { points: 9999, units: [] } });
+    pump(0.4);
+    assert(d.roster.strength === s0,
+      `the host fielded a ${dear.type} it could not pay for (${s0} → ${d.roster.strength})`);
+    assert(d.roster.points === 0,
+      `the host's purse went 0 → ${d.roster.points} — a peer wrote the balance`);
+    assert(/points/.test(d.refused || ''),
+      `the host refused with '${d.refused}', which is not a refusal about the purse`);
+    assert(client.command.refused && /points/.test(client.command.refused),
+      `the joining commander was told '${client.command.refused}' — the reason never came back`);
+    assert(client.command.musterOffer()?.points === 0,
+      'the joining commander is still being shown points the host no longer has');
+
+    /* A UNIT THAT IS NOT IN THIS ARMY, and one the advance has not reached. */
+    d.roster.points = 999;
+    wire.up.push({ t: 'muster', u: 'b1' });                 // the other army's
+    wire.up.push({ t: 'muster', u: 'atte' });               // area 4, from area 1
+    wire.up.push({ t: 'muster', u: '__nonsense__' });
+    pump(0.4);
+    assert(d.roster.strength === s0,
+      `${d.roster.strength - s0} bodies joined off a shelf that is not selling them`);
+
+    /* AND WITH NO MUSTER OPEN AT ALL. `mustering` is the flag the whole card
+     * hangs off, and a peer that could spend without it could refill the line
+     * in the middle of a firefight. */
+    d.roster.points = 999;
+    d.closeMuster();
+    pump(0.3);
+    const s1 = d.roster.strength;
+    wire.up.push({ t: 'muster', u: dear.type });
+    wire.up.push({ t: 'muster', done: 1 });
+    pump(0.4);
+    assert(d.roster.strength === s1,
+      `a peer recruited ${d.roster.strength - s1} bodies with no muster open`);
+    assert(d.roster.points === 999, `the purse moved to ${d.roster.points} with no muster open`);
+
+    /* …AND THE FALLBACK DOES NOT SPEND ON A CLIENT EITHER. `main.js` calls
+     * `autoMuster()` whenever the muster card cannot be drawn, and every client
+     * runs that same main.js: without the shell's refusal a joining commander
+     * whose card failed would walk the host's shelf and send one intent per
+     * affordable rung. */
+    d.roster.points = 999;
+    openMuster(host);
+    pump(0.3);
+    const queued = wire.up.length;
+    const gained = client.command.autoMuster();
+    assert(gained === 0, `a shell auto-mustered ${gained} bodies for a player who was shown nothing`);
+    assert(wire.up.length === queued,
+      `${wire.up.length - queued} purchase intents were sent by a fallback nobody was watching`);
+    return `an empty purse refused a ${dear.type} and said why; 3 illegal units and a closed `
+      + `muster bought nothing; the fallback sent ${wire.up.length - queued} intents`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  Phase C — versus: two commanders, two armies, one field           */
   /* ══════════════════════════════════════════════════════════════════ */
@@ -642,6 +857,286 @@ export function run({ check, assert }) {
       `${overlap.length} names appear on both commanders' rolls (${overlap.slice(0, 3).map((t) => t.name).join(', ')})`);
     return `${seen.armyId} (${seen.roll.length} names) to the joining commander, `
       + `${hostSide.armyId} (${hostSide.roll.length}) to the host, no name on both`;
+  });
+
+  check('command/versus: four commanders are two sides, two armies and a battle that can end', async () => {
+    /**
+     * 2v2, DRIVEN — and until it was, every part of it was broken in a way that
+     * looked fine one commander at a time.
+     *
+     * `formUp` has always laid its anchors out alternating down one line and
+     * `assignArmies`' own note said the extras "share, which is correct". Both
+     * of those are statements about a 2v2 and neither had ever been run.
+     * Measured here at four commanders, before the fix:
+     *
+     *   sides          0 / 2 / 3 / 4     — `sideTeam(i)`, a side each
+     *   match.sides    [0, 2, 3, 4]      — four
+     *   armies         separatist / republic / republic / separatist
+     *                                    from orders sith,jedi,jedi,sith
+     *   anchors        i=4 repeats i=2's ground
+     *
+     * Four sides is four private wars: there are TWO armies on the roster, so
+     * the third and fourth commanders were fielding somebody else's units in
+     * somebody else's colours, on the same anchor as the ally they were now
+     * opposed to. And `DuelMatch.update` decides a round by filtering `sides`
+     * for who is still standing — with four of them a 2v2 that has wiped one
+     * side out still counts two survivors, so the battle could not end at all.
+     *
+     * So the sides ALTERNATE by join order, which is the line `formUp` was
+     * already drawing; an army belongs to a SIDE, so allies share one; and the
+     * match is built from the sides actually in play, each named once. Nothing
+     * about two commanders changes, which is every session that has ever run.
+     */
+    const { PAIR_SPACING, VERSUS_SEPARATION } = await import('../../src/game/Command.js');
+    const { host, pump } = await commandPair({ host: { commandVersus: true }, start: false });
+    for (const n of ['B', 'C', 'D']) await joinAsCommander(host, { id: n, name: `RIVAL-${n}` });
+    const cs = host.beginVersus();
+    const d = host.command;
+
+    assert(cs.length === 4, `four players produced ${cs.length} commanders`);
+    const sides = cs.map((c) => c.side);
+    assert(new Set(sides).size === 2,
+      `four commanders were put on ${new Set(sides).size} sides (${sides.join('/')}) — `
+      + 'there are two armies on the roster, so a third side has no units and no colour');
+    assert(sides[0] === sides[2] && sides[1] === sides[3] && sides[0] !== sides[1],
+      `the sides came out ${sides.join('/')} — evens and odds are what formUp's anchors assume`);
+
+    /* ALLIES SHARE AN ARMY. The paint is the only thing on the field that says
+     * whose line is whose, so an ally in the enemy's colours is worse than no
+     * colour at all. */
+    const ids = cs.map((c) => c.army.id);
+    assert(ids[0] === ids[2] && ids[1] === ids[3],
+      `the four armies came out ${ids.join('/')} — two allies are in opposing colours`);
+    assert(ids[0] !== ids[1], `both sides are fielding ${ids[0]}`);
+    for (const c of cs) assert(c.foe.id === (c.army.id === ids[0] ? ids[1] : ids[0]),
+      `${c.army.id} believes its enemy is ${c.foe.id}`);
+
+    /* TWO ENDS OF ONE FIELD, with the allies beside each other rather than in
+     * each other's ranks. */
+    const gap = (a, b) => Math.hypot(a.anchor.x - b.anchor.x, a.anchor.z - b.anchor.z);
+    assert(Math.abs(gap(cs[0], cs[1]) - VERSUS_SEPARATION) < 1,
+      `the two sides formed up ${gap(cs[0], cs[1]).toFixed(1)} m apart, not ${VERSUS_SEPARATION}`);
+    assert(Math.abs(gap(cs[0], cs[2]) - PAIR_SPACING) < 0.5,
+      `two allies are ${gap(cs[0], cs[2]).toFixed(1)} m apart, not ${PAIR_SPACING}`);
+    assert(Math.abs(gap(cs[1], cs[3]) - PAIR_SPACING) < 0.5,
+      `the other pair is ${gap(cs[1], cs[3]).toFixed(1)} m apart`);
+
+    /* FOUR ARMIES ON THE FIELD, each wearing its commander's side. */
+    const bodies = (c) => host.enemies.filter((e) => e.cmdr === c && !e.dead);
+    const counts = cs.map((c) => bodies(c).length);
+    assert(counts.every((n) => n >= 8), `the four armies deployed ${counts.join('/')} bodies`);
+    for (let i = 0; i < 4; i++) {
+      assert(bodies(cs[i]).every((e) => e.team === sides[i]),
+        `an army of ${cs[i].army.id} is standing on a side its commander is not on`);
+    }
+    /* Two rings 20 m apart do not interleave: an allied body is nearer its own
+     * anchor than its ally's, which is what makes an order readable. */
+    const strays = bodies(cs[0]).filter((e) =>
+      e.position.distanceTo(cs[2].anchor) < e.position.distanceTo(cs[0].anchor));
+    assert(!strays.length,
+      `${strays.length} of ${counts[0]} bodies deployed into their ally's ranks`);
+
+    /* THE MATCH IS BUILT FROM THE SIDES IN PLAY, EACH NAMED ONCE — the field
+     * that decides whether this can ever end. */
+    assert(host.match, 'a 2v2 has no match at all');
+    assert(host.match.sides.length === 2,
+      `the match was built with ${host.match.sides.length} sides (${host.match.sides.join('/')}) — `
+      + 'a repeated side counts a wiped-out army as a survivor and the round never closes');
+    assert(new Set(host.match.sides).size === host.match.sides.length, 'the match has a duplicate side');
+
+    /* NOBODY SHOOTS THEIR ALLY. `_hostilesFor` is the list a trooper's target
+     * is picked out of — called rather than restated, because a second idea of
+     * who is opposed to whom is the one thing a 2v2 cannot survive. */
+    const mine = bodies(cs[0])[0];
+    const foes = host._hostilesFor(mine);
+    const allyBodies = new Set(bodies(cs[2]));
+    const foeBodies = new Set(bodies(cs[1]));
+    assert(![...foes].some((e) => allyBodies.has(e)),
+      'a trooper is offered its own ally as a target');
+    assert([...foes].some((e) => foeBodies.has(e)), 'a trooper is offered nothing to fight');
+    assert(!foes.includes(cs[2].player), "a trooper is offered its ally's commander as a target");
+    assert(foes.includes(cs[1].player), 'a trooper is not offered the opposing commander');
+
+    /* …AND IT ENDS. Ordered forward, then decided by wiping one side out
+     * through the same `onEnemyKilled` door the mode's own permadeath uses —
+     * decisive rather than waiting out a 120 m advance, because what is under
+     * test is `DuelMatch`'s census over the sides and not the walk. */
+    for (const c of cs) d.order('charge', c);
+    let picks = 0, allyPicks = 0;
+    for (let i = 0; i < 6; i++) {
+      pump(2);
+      for (const e of host.enemies) {
+        const t = e.target;
+        if (!t || t.team === undefined) continue;
+        if (t.team === e.team) allyPicks++; else picks++;
+      }
+    }
+    assert(allyPicks === 0, `${allyPicks} troopers picked a target on their own side`);
+
+    const doomed = [cs[1], cs[3]];
+    for (const c of doomed) {
+      for (const t of c.roster.living) {
+        const b = t.body;
+        if (!b || b.dead) continue;
+        b.hp = 0;
+        b.die(b.position.clone(), null, 'check');
+      }
+      if (c.player) c.player.alive = false;
+    }
+    for (let i = 0; i < 12 && host.match.phase !== 'match-over'; i++) pump(1);
+    assert(host.match.phase === 'match-over',
+      `one side has nothing standing and the meeting is still in phase '${host.match.phase}' — `
+      + `census ${JSON.stringify(d.census().standing)}`);
+    assert(host.match.winner === sides[0],
+      `side ${host.match.winner} took the field; ${sides[0]} is the one still standing`);
+    return `4 commanders → sides ${sides.join('/')}, armies ${ids.join('/')}, `
+      + `${counts.join('/')} bodies, allies ${gap(cs[0], cs[2]).toFixed(0)} m apart and `
+      + `${gap(cs[0], cs[1]).toFixed(0)} m from the enemy; ${picks} target picks across the line, `
+      + `${allyPicks} within it; side ${host.match.winner} took the field`;
+  });
+
+  check('command/versus: a host who deploys into a meeting alone is told there is nobody there', async () => {
+    /**
+     * THE COST OF THE FIX THAT CAME BEFORE THIS ONE.
+     *
+     * A meeting used to build its `DuelMatch` whatever the roster held, so a
+     * host who turned versus on and pressed Ignite alone was handed the field
+     * three seconds later against nobody. That was fixed by refusing to make a
+     * match with one side in it — correctly — and the price was silence: an
+     * army deployed onto an empty plain, a countdown that never starts, and
+     * nothing anywhere saying why. From the player's chair those two failures
+     * are the same failure.
+     *
+     * Said ONCE per spell of being alone, and said again if the opponent
+     * leaves: `beginVersus` is idempotent and main.js calls it on every roster
+     * change, so an unguarded notify is a banner every time a name moves.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    const notes = [];
+    host.onNotify = (title, sub) => notes.push(`${title} — ${sub}`);
+
+    host.beginVersus();
+    assert(!host.match, 'a meeting against nobody has a match, and it is one this host wins');
+    const alone = notes.filter((n) => /opponent/i.test(n));
+    assert(alone.length === 1,
+      `a host deploying into an empty meeting was told about it ${alone.length} times: `
+      + `${notes.join(' | ') || '(nothing was said at all)'}`);
+    assert(/second commander/i.test(alone[0]),
+      `the notice says '${alone[0]}', which does not say what is missing`);
+
+    /* Idempotent: main.js calls this again on every roster change. */
+    host.beginVersus();
+    host.beginVersus();
+    assert(notes.filter((n) => /opponent/i.test(n)).length === 1,
+      `the notice repeated ${notes.filter((n) => /opponent/i.test(n)).length} times across three calls`);
+
+    /* …and it stops the moment somebody arrives. */
+    await joinAsCommander(host, { team: SIDES[1] });
+    host.beginVersus();
+    assert(host.match && host.match.sides.length === 2, 'the match was not made when the rival arrived');
+    assert(notes.filter((n) => /opponent/i.test(n)).length === 1,
+      'the host is still being told it has no opponent after one arrived');
+    return `'${alone[0]}' said once across three lone calls, and not again once a rival joined`;
+  });
+
+  check('command/versus: a joining commander\'s order re-forms their OWN line', async () => {
+    /**
+     * `applyOrder` CALLED `order(f)`, WHICH DEFAULTS TO `commanders[0]`.
+     *
+     * In co-op that is right and is the whole point — one army, everybody in
+     * the session leading it, so a peer's key and the host's reach the same
+     * line, and the check above asserts exactly that. In a MEETING it is the
+     * defect the mode exists to remove: the joining commander's formation key
+     * re-formed the HOST's army, in the host's colours, and their own line
+     * never moved. Both players then watched an army take a formation neither
+     * of them had ordered for it.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const { FORMATIONS } = await import('../../src/game/Command.js');
+    const { host, pump } = await commandPair({ host: { commandVersus: true }, start: false });
+    await joinAsCommander(host, { team: SIDES[1] });
+    const cs = host.beginVersus();
+    pump(1);
+
+    const was = cs.map((c) => c.formation);
+    /* OFF THE SHIPPED TABLE, not typed. Written as `was === 'wedge' ? … :
+     * 'wedge'` first, and `wedge` is not a formation this game has — the order
+     * was refused for being nonsense and the check read that as a routing
+     * failure, which is a check manufacturing a defect out of its own typo. */
+    const want = Object.keys(FORMATIONS).find((k) => k !== was[1]);
+    assert(want, `FORMATIONS holds only ${Object.keys(FORMATIONS).join('/')}`);
+    assert(was[0] === was[1], `the two commanders opened in ${was.join('/')}`);
+    /* Through the wire, from the peer's machine: the same message `requestOrder`
+     * writes, routed by the same table. */
+    const took = host.applyOrder('PEER', { t: 'order', f: want });
+    assert(took !== false, `the host refused the joining commander's order for ${want} outright`);
+    pump(0.5);
+
+    assert(cs[1].formation === want,
+      `the joining commander ordered ${want} and their line is in ${cs[1].formation}`);
+    assert(cs[0].formation === was[0],
+      `the host's army went ${was[0]} → ${cs[0].formation} on somebody else's order`);
+    /* …and the host's own key still moves the host's own line. */
+    host.command.order(want);
+    assert(cs[0].formation === want, `the host's own order left it in ${cs[0].formation}`);
+    return `peer ordered ${want}: their line ${was[1]} → ${cs[1].formation}, `
+      + `the host's stayed ${was[0]} until its own key`;
+  });
+
+  check('command/versus: putting the peer\'s order on the wire cannot change which army they lead', async () => {
+    /**
+     * A FIELD THAT LOOKS LIKE IT IS MISSING, MEASURED RATHER THAN ADDED.
+     *
+     * `LOOK_KEYS` leaves `order` off the wire — "it grants boons rather than
+     * describing a face" — so `World.beginVersus` reads every commander as the
+     * HOST's own order, and the obvious reading is that a Sith joining a Jedi
+     * is silently recorded as a second Jedi and handed an army list they did
+     * not choose. The field was added on that reasoning and taken off again on
+     * this measurement, which is kept here so the next reader does not spend
+     * the same hour on it.
+     *
+     * `assignArmies` gives the FIRST commander what they ask for and resolves
+     * every conflict after that against what is already taken. With two armies
+     * on the roster there is exactly one left after the first pick, so the
+     * second side gets it whatever it wanted — and every commander after that
+     * shares their side's. So the peer's real order cannot move the answer, and
+     * a wire field whose reader cannot change an outcome is bandwidth plus a
+     * maintenance cost. It becomes worth sending the day there is a third army,
+     * and this check is what will say so: enumerated rather than argued, so it
+     * fails the moment `ARMY_IDS` grows.
+     */
+    const Cmd = await import('../../src/game/Command.js');
+    const { assignSides } = await import('../../src/game/Player.js');
+    const ORDERS = ['jedi', 'sith'];
+    const ids = (a) => a.map((x) => x.id).join('/');
+    let differ = 0, total = 0;
+    for (let n = 2; n <= 4; n++) {
+      const seats = assignSides(Array.from({ length: n }, (_, i) => ({ id: i })), Cmd.ARMY_IDS.length);
+      const sides = Array.from({ length: n }, (_, i) => seats.get(i));
+      const combos = [[]];
+      for (let k = 0; k < n; k++) combos.splice(0, combos.length,
+        ...combos.flatMap((c) => ORDERS.map((o) => [...c, o])));
+      for (const real of combos) {
+        total++;
+        /* What the host actually sees today: every commander read as its own
+         * settings, which is the host's. */
+        const blind = real.map(() => real[0]);
+        if (ids(Cmd.assignArmies(real, sides)) !== ids(Cmd.assignArmies(blind, sides))) differ++;
+      }
+    }
+    assert(total === 28, `${total} rosters enumerated, expected 28`);
+    assert(Cmd.ARMY_IDS.length === 2,
+      `there are ${Cmd.ARMY_IDS.length} armies now — the peer's order is no longer inert, `
+      + `and ${'order'} belongs back on LOOK_KEYS`);
+    assert(differ === 0,
+      `the peer's stated order changes the army in ${differ} of ${total} rosters — it is `
+      + 'no longer a field with no reader and should be on the wire');
+    const { LOOK_KEYS } = await import('../../src/net/Net.js');
+    assert(!LOOK_KEYS.includes('order'),
+      'order is on the wire and, measured, nothing it reaches can act on it differently');
+    return `${differ} of ${total} rosters change with the peer's real order, over `
+      + `${Cmd.ARMY_IDS.length} armies — so it stays off the wire`;
   });
 
   check('command/versus: the joining commander is told which side they are on and where it stands', async () => {
