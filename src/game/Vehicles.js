@@ -414,31 +414,43 @@ function bladePlateGeo(len, w0, w1, thick) {
  */
 function chassisSkeleton(S, P) {
   const out = [
-    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.34 * S, rest: [0, 1, 0] },
-    { name: 'body', parent: 'hips', offset: [0, P.body[0] * S, P.body[1] * S], length: P.body[2] * S, rest: [0, 1, 0] },
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.34 * S, rest: [0, 1, 0], role: 'core' },
+    { name: 'body', parent: 'hips', offset: [0, P.body[0] * S, P.body[1] * S], length: P.body[2] * S, rest: [0, 1, 0], role: 'core' },
   ];
+  /* `hull` AND NOT `core`, WHICH IS THE ONE INTERESTING ROLE ON A MACHINE.
+   * A core cut is fatal wherever it lands, because it is the body. A hull
+   * segment is not the body: an AT-TE with its prow off has lost the command
+   * cab and is still nine metres of walker. So the hull shares one body's worth
+   * of lethality between however many segments there are — half each here —
+   * which makes taking BOTH ends off a kill and taking one off a wound, and
+   * that is the shape a three-segment hull was built for in the first place. */
   if (P.prow) {
-    out.push({ name: 'prow', parent: 'hips', offset: [0, P.prow[0] * S, P.prow[1] * S], length: P.prow[2] * S, rest: [0, 1, 0] });
+    out.push({ name: 'prow', parent: 'hips', offset: [0, P.prow[0] * S, P.prow[1] * S], length: P.prow[2] * S, rest: [0, 1, 0], role: 'hull' });
   }
   if (P.stern) {
-    out.push({ name: 'stern', parent: 'hips', offset: [0, P.stern[0] * S, P.stern[1] * S], length: P.stern[2] * S, rest: [0, 1, 0] });
+    out.push({ name: 'stern', parent: 'hips', offset: [0, P.stern[0] * S, P.stern[1] * S], length: P.stern[2] * S, rest: [0, 1, 0], role: 'hull' });
   }
-  out.push({ name: 'head', parent: 'body', offset: [0, P.head[0] * S, P.head[1] * S], length: P.head[2] * S, rest: P.head[3] || [0, 1, 0] });
+  out.push({ name: 'head', parent: 'body', offset: [0, P.head[0] * S, P.head[1] * S], length: P.head[2] * S, rest: P.head[3] || [0, 1, 0], role: 'head' });
   for (let i = 0; i < (P.legs || 0); i++) {
     const side = i % 2 === 0 ? 1 : -1;
     const row = Math.floor(i / 2);
     const z = P.rows[row] * S;
-    out.push({ name: `femur${i}`, parent: 'hips', offset: [side * P.hipX * S, P.hipY * S, z], length: P.femur * S, rest: [side * P.splay, P.rise, 0] });
-    out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, P.femur * S, 0], length: P.tibia * S, rest: [side * 0.12, -1, 0] });
-    out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, P.tibia * S, 0], length: P.tarsus * S, rest: [0, -0.45, 0.55] });
+    out.push({ name: `femur${i}`, parent: 'hips', offset: [side * P.hipX * S, P.hipY * S, z], length: P.femur * S, rest: [side * P.splay, P.rise, 0], role: 'leg' });
+    out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, P.femur * S, 0], length: P.tibia * S, rest: [side * 0.12, -1, 0], role: 'leg' });
+    out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, P.tibia * S, 0], length: P.tarsus * S, rest: [0, -0.45, 0.55], role: 'leg' });
   }
   for (const w of (P.wheels || [])) {
-    out.push({ name: w.name, parent: 'hips', offset: [w.x * S, w.y * S, w.z * S], length: w.len * S, rest: [w.dir, 0.06, 0] });
+    /* A WHEEL IS A LEG. It carries the machine's weight, there are two of them,
+     * and `severanceOf` divides a leg's worth by however many the body has — so
+     * a hailfire's hoop is priced the way a biped's thigh is and not the way one
+     * of an AT-TE's six is. Nothing else about the role fits: it is not a hull
+     * segment and it is certainly not an arm. */
+    out.push({ name: w.name, parent: 'hips', offset: [w.x * S, w.y * S, w.z * S], length: w.len * S, rest: [w.dir, 0.06, 0], role: 'leg' });
     /* The lower half of the hoop, as a bone that hangs from the hub down to the
      * ground. It exists because that is the part of a five-metre wheel a player
      * standing next to it can actually put a blade through, and `capsules()`
      * only offers the blade bones that carry geometry. */
-    if (w.rim) out.push({ name: w.name.replace('wheel', 'rim'), parent: w.name, offset: [0, w.len * S, 0], length: w.rim * S, rest: [0, -1, 0] });
+    if (w.rim) out.push({ name: w.name.replace('wheel', 'rim'), parent: w.name, offset: [0, w.len * S, 0], length: w.rim * S, rest: [0, -1, 0], role: 'leg' });
   }
   return out;
 }

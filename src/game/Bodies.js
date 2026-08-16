@@ -6220,18 +6220,23 @@ export function buildWalker(opts = {}) {
 function creatureSkeleton(S, P) {
   const s = S;
   const out = [
-    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0] },
-    { name: 'body', parent: 'hips', offset: [0, P.trunk[0] * s, P.trunk[1] * s], length: P.trunk[2] * s, rest: [0, 1, 0] },
-    { name: 'head', parent: 'body', offset: [0, P.headAt[0] * s, P.headAt[1] * s], length: 0.4 * s, rest: [0, 1, 0] },
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'body', parent: 'hips', offset: [0, P.trunk[0] * s, P.trunk[1] * s], length: P.trunk[2] * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'head', parent: 'body', offset: [0, P.headAt[0] * s, P.headAt[1] * s], length: 0.4 * s, rest: [0, 1, 0], role: 'head' },
   ];
   let i = 0;
   for (const L of P.limbs) {
     for (const side of [1, -1]) {
       const arm = L.role === 'arm';
       const socket = 0.10 * s;
+      /* `L.role` IS the bone role — the plan has said 'leg' or 'arm' since the
+       * menagerie was built, and `Rig` and `Enemy.severanceOf` now read the same
+       * word rather than a second table keyed on `hipL2`. Which is why a rancor,
+       * whose two arms hang off `body` and whose two legs hang off `hips`, is
+       * priced as a biped with arms and an acklay as a hexapod, off one loop. */
       out.push({ name: `hipL${i}`, parent: arm ? 'body' : 'hips',
         offset: [L.x * s * side, L.y * s, L.z * s], length: socket,
-        rest: [side, arm ? -0.35 : 0.2, 0] });
+        rest: [side, arm ? -0.35 : 0.2, 0], role: L.role });
       /* THE REST DIRECTIONS ARE THE ANIMAL'S TOO, and they are not cosmetic.
        * `_poseWalker` solves femur→tibia every frame up to 62 m, but past that
        * the solve stops and the body keeps whatever pose it last held — and on
@@ -6240,11 +6245,11 @@ function creatureSkeleton(S, P) {
        * back, tibia straight down) was applied to a bull and a cat, which is
        * the same defect as the shared pole vector one layer down. */
       out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, socket, 0],
-        length: L.femur * s, rest: L.femurRest.map((v, n) => (n === 0 ? v * side : v)) });
+        length: L.femur * s, rest: L.femurRest.map((v, n) => (n === 0 ? v * side : v)), role: L.role });
       out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, L.femur * s, 0],
-        length: L.tibia * s, rest: L.tibiaRest.map((v, n) => (n === 0 ? v * side : v)) });
+        length: L.tibia * s, rest: L.tibiaRest.map((v, n) => (n === 0 ? v * side : v)), role: L.role });
       out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, L.tibia * s, 0],
-        length: L.tarsus * s, rest: arm ? [0, -0.9, 0.3] : [0, -0.4, 0.6] });
+        length: L.tarsus * s, rest: arm ? [0, -0.9, 0.3] : [0, -0.4, 0.6], role: L.role });
       i++;
     }
   }

@@ -1399,15 +1399,16 @@ export function bladeTargets(holder, players, rules = null) {
  * DIFFERS between them is the two callbacks: what each bone is made of, and how
  * much of the body it is.
  *
- * `vital` is deliberately left undefined unless a caller supplies it. Enemy.js
- * keeps a nineteen-row `VITAL` table as a module-private const, and typing a
- * second copy of it here is exactly the drift this codebase has paid for
- * repeatedly — `World._boltHitTest` scales bolt damage by
- * `lerp(0.6, 1.9, vital)`, so two tables that disagreed would make a duel's
+ * `vital` is deliberately left undefined unless a caller supplies it, and the
+ * handover this note used to ask for has landed: there is no `VITAL` table left
+ * to copy. Enemy.js EXPORTS `severanceOf(bone)`, which prices a bone off the
+ * role it declares in its own skeleton, so a caller that wants the game's own
+ * lethality passes `vital: severanceOf` and cannot hold a stale second copy of
+ * anything. That matters because `World._boltHitTest` scales bolt damage by
+ * `lerp(0.6, 1.9, vital)`: two tables that disagreed would make a duel's
  * headshots and a wave's headshots different sizes. Nothing on the player's
- * path reads it yet (the contact solver never does; World's bolt test uses a
- * single 0.36 m capsule for a player, not this), and the one-word handover that
- * exports the real table is in this lane's notes.
+ * path reads it yet — the contact solver never does, and World's bolt test uses
+ * a single 0.36 m capsule for a player rather than this.
  *
  * `severed` and empty bones are skipped for the reason they always were: a rig
  * lists every joint it could have, and an arm already taken off is not standing
@@ -5591,7 +5592,10 @@ export class Player {
       // of the budget: a cut takes the whole subtree, so an elbow already
       // brings the hand with it, and spending the entire default budget on two
       // detached hands is not what "take it apart" looks like.
-      .filter(c => !c.shield && (c.vital ?? 0.4) >= 0.15 && (c.vital ?? 0.4) < 0.7 && !CORE_BONE.test(c.name))
+      /* No `?? 0.4` on the reads: every capsule the game emits is priced by
+       * `Enemy.severance`, which throws rather than defaulting, so a fallback
+       * here would only ever hide the one thing it was there to cover up. */
+      .filter(c => !c.shield && c.vital >= 0.15 && c.vital < 0.7 && !CORE_BONE.test(c.name))
       .filter(c => !e.actor || !e.actor.isSevered(c.name))
       .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))

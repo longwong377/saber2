@@ -521,7 +521,10 @@ export function capsulesFor(entry) {
     for (const c of real) floor = Math.min(floor, c.p0.y - c.r, c.p1.y - c.r);
     out = real.map(c => ({
       name: c.name, r: c.r, len: c.p0.distanceTo(c.p1),
-      toughness: c.toughness, vital: c.vital ?? 0.4, shield: !!c.shield,
+      // No `?? 0.4`: `Enemy.severance` prices every capsule and throws on a
+      // role it has no price for, so a default here would put back exactly the
+      // silence this harness is used to measure the absence of.
+      toughness: c.toughness, vital: c.vital, shield: !!c.shield,
       height: (c.p0.y + c.p1.y) / 2 - (isFinite(floor) ? floor : 0),
     }));
   }
@@ -612,7 +615,7 @@ function _workCapsule(saber, solver, cap, hp, maxHp, speed, power, reach, cadenc
         const d = (ev.dWork / ev.need) * maxHp * GRIND_LETHALITY;
         hp -= d; dealt += d;
       } else if (ev.type === 'cut') {
-        const vital = ev.cap.vital ?? 0.4;
+        const vital = ev.cap.vital;
         const lethal = vital >= 0.9 || (vital >= 0.7 && hp < maxHp * 0.55);
         const d = lethal ? maxHp * 2 : maxHp * vital * 1.15;
         hp -= d; dealt += d; severed = true;

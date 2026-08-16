@@ -2032,27 +2032,37 @@ export class Enemy {
         }
         out.push({
           name: b.name, p0: _v1.clone(), p1: _v2.clone(), r: b.radius * 1.12,
-          toughness: this._boneToughness(b.name), enemy: this, vital: VITAL[b.name] ?? 0.4,
+          toughness: this._boneToughness(b.name), enemy: this, vital: severanceOf(b),
         });
       }
     } else if (this.group && this.A.custom === 'remote') {
       const c = _v1.copy(this.group.position);
       out.push({ name: 'core', p0: c.clone(), p1: c.clone(), r: 0.14 * this.A.scale,
-        toughness: this.A.toughness, enemy: this, vital: 1 });
+        toughness: this.A.toughness, enemy: this, vital: severance('core') });
     } else if (this.group) {
-      // droideka: shield first, then the core
+      /* THE TWO BODIES WITH NO RIG GO THROUGH THE SAME PRICE, and they used to
+       * carry two literals instead. `vital: 1` for the core happened to agree
+       * with it; `vital: 0.2` for a leg did not, and there was nothing to say
+       * which of the two numbers a third body should copy. A droideka has THREE
+       * legs, so `severance` divides a leg's worth by three and prices one at
+       * 0.37 — losing all three kills it, where at 0.2 it could lose all three
+       * and keep two thirds of its health. It is spelt out here because these
+       * capsules are synthesised rather than walked off a rig: there is no bone
+       * to carry the role, so the call site says it. */
       const c = _v1.copy(this.group.position).addScaledVector(UP, 0.62 * this.A.scale);
       if (this.shieldUp) {
         out.push({ name: 'shield', p0: c.clone(), p1: c.clone(),
           r: 1.15 * this.A.scale, toughness: TOUGHNESS.heavy, enemy: this, shield: true });
       }
       out.push({ name: 'core', p0: c.clone(), p1: c.clone().setY(c.y + 0.3 * this.A.scale),
-        r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: 1 });
-      for (const leg of (this.built.legs || [])) {
+        r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: severance('core') });
+      const legs = this.built.legs || [];
+      for (const leg of legs) {
         leg.leg.getWorldPosition(_v2);
         leg.lower.getWorldPosition(_v3);
-        out.push({ name: 'leg' + this.built.legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
-          r: 0.12 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: 0.2 });
+        out.push({ name: 'leg' + legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
+          r: 0.12 * this.A.scale, toughness: this.A.toughness, enemy: this,
+          vital: severance('leg', 1, legs.length) });
       }
     }
     return out;
@@ -2165,7 +2175,16 @@ export class Enemy {
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
     const bone = ev.bone;
-    const vital = ev.cap.vital ?? 0.4;
+    /* NO `?? 0.4` HERE EITHER. Every capsule this game emits is priced by
+     * `severance`, which throws rather than guessing, so a missing `vital` is
+     * a capsule from somewhere that has not been through it — and answering
+     * that with the number that used to hide the whole defect is how it would
+     * come back. A synthetic capsule in a fixture must say what it is worth. */
+    const vital = ev.cap.vital;
+    if (typeof vital !== 'number') {
+      throw new Error(`Enemy.takeCut: capsule '${ev.cap?.name ?? bone}' carries no \`vital\`. `
+        + 'Capsules are priced by `severance` at the point they are built.');
+    }
 
     if (ev.cap.shield) { this.dropShield(); return; }
     // BEFORE anything is severed: a turned cut is a cut that did not land, and
@@ -2212,13 +2231,22 @@ export class Enemy {
    * into it — which is the same defect as "a 460 hp Master dies as fast as a
    * 28 hp B1", one layer down and hiding.
    *
-   * And every bone a quadruped or a machine HAS falls through `VITAL[name] ??
-   * 0.4`, because that table has nineteen humanoid names in it and a Rancor's
-   * are `hipL0`, `femur0`, `tibia0`, `tarsus0`. So a Rancor's TOE is worth 0.4
-   * — 46% of a 2200 hp animal — exactly as much as its hip, and two of them
-   * kill it. Measured before this: brute, charger, acklay, gundark and nexu all
-   * died in 1.28 s through a leg, five bodies spanning 420 to 2200 hp landing
-   * on the identical number.
+   * **AND THE TABLE WAS NINETEEN HUMANOID NAMES OVER A ROSTER OF QUADRUPEDS AND
+   * MACHINES.** Read as `VITAL[name] ?? 0.4`, so a Rancor's `tarsus0` — and 33
+   * other names — came out at 0.4: 46% of a 2200 hp animal, exactly as much as
+   * its hip, three toes to kill it out of the four it has. Measured with the
+   * guard open, brute, charger, acklay, gundark and nexu ALL died in 1.28 s
+   * through a toe, five bodies spanning 420 to 2200 hp on one number.
+   *
+   * That is fixed at the source: see `SEVERANCE`/`severance` at the foot of this
+   * file. A bone declares its ROLE beside its length in the skeleton that
+   * generates it, the price is that role divided by how many of the limb the
+   * body has and scaled by how much of it comes off, and an unpriced role
+   * throws. A Rancor's toe is 0.101 now against its hip's 0.55, so it takes
+   * NINE toe-severs to kill an animal that has four; the acklay and the reek
+   * need 24 against six and four, the nexu 26, the gundark 11, the walker 20
+   * and the AT-TE 36. **No body on the roster can now be killed by taking its
+   * extremities off, and six of them could.**
    *
    * That is why the first version of the hide guard bought nothing. It turned
    * the pass at the neck and the model simply went round it to a leg — which is
@@ -4669,10 +4697,126 @@ export class Enemy {
   }
 }
 
-/** How lethal losing each bone is. */
-const VITAL = {
-  head: 0.95, neck: 1.0, chest: 1.0, spine: 1.0, hips: 1.0, body: 1.0,
-  clavL: 0.5, clavR: 0.5, armL: 0.35, armR: 0.35, foreL: 0.22, foreR: 0.22,
-  handL: 0.1, handR: 0.1, thighL: 0.55, thighR: 0.55, shinL: 0.3, shinR: 0.3,
-  footL: 0.12, footR: 0.12,
+/**
+ * ══ HOW LETHAL LOSING A BONE IS ═══════════════════════════════════════════
+ *
+ * `takeCut` charges `maxHp * vital * 1.15` for a severed limb — a SHARE OF
+ * MAXIMUM HEALTH, not a fixed wound — so how many pieces a body can lose is a
+ * property of these six numbers and NOTHING ELSE. Its health does not enter
+ * into it. That sentence is the whole reason this is derived rather than typed.
+ *
+ * ── WHAT WAS HERE, AND WHAT IT COST ───────────────────────────────────────
+ *
+ * A `VITAL` object of nineteen HUMANOID bone names, read as `VITAL[b.name] ??
+ * 0.4`. The roster is 31 bodies and 54 distinct bone names; 34 of them — every
+ * bone a quadruped, a hexapod, a tank or a hailfire droid has — hit the
+ * default. Measured on the shipped table:
+ *
+ *   a Rancor's TOE       0.400, the same as its hip, 46% of a 2200 hp animal
+ *   three of its four toes killed it, and it has nothing else in blade reach
+ *   acklay, reek, nexu, gundark and rancor ALL died in 1.28 s through a toe
+ *   once the guard was open — five bodies from 420 to 2200 hp, one number
+ *
+ * A hand-written table beside a GENERATED skeleton is HANDOFF §2.3's signature
+ * defect, and a missing entry answered with a plausible default is the close
+ * relative it names in the same paragraph. Both, in one line, for the roster's
+ * whole non-humanoid half.
+ *
+ * ── WHAT IT IS NOW ────────────────────────────────────────────────────────
+ *
+ * The bone says what it IS (`Rig.BONE_ROLES`, declared in the skeleton beside
+ * the bone's own length), and the price is that role against the body's own
+ * shape. Six numbers, and every one of them is a statement about anatomy:
+ *
+ *   core 1.00  cutting the trunk is cutting the body in two.
+ *   neck 1.00  severing the neck IS decapitation.
+ *   head 0.95  under 1.0 only so that `takeCut`'s "already under 55%" clause
+ *              has something to be about; still over the 0.9 that makes a pass
+ *              fight-ending, which is load-bearing in `_fightEnding`.
+ *   hull 1.00  SHARED between the segments: an AT-TE's prow and stern are half
+ *              each, so taking both ends off kills it and taking one wounds it.
+ *   leg  1.10  the whole leg SET is worth 1.10 bodies, so a biped's thigh is
+ *              0.55 — which is the number the old table had, arrived at from
+ *              the other end.
+ *   arm  1.00  likewise: a humanoid's clavicle comes out at 0.50, the old
+ *              table's number, and the rest of the chain follows from the
+ *              bones instead of being typed under it.
+ *
+ * Two divisors turn those into a bone's price and both are read off the rig:
+ *
+ *   ÷ roleOf     how many of that limb the body HAS. This is the part a name
+ *                table can never express — `femur0` on a six-legged acklay and
+ *                `femur0` on a four-legged reek are spelt identically and are
+ *                not the same fraction of an animal. One of six legs is 0.18
+ *                where one of two is 0.55.
+ *   × roleShare  how much of its own limb comes off with it, in bone length.
+ *                A cut at the thigh takes the shin and the foot; a cut at the
+ *                foot takes a foot. So core > proximal > distal > extremity
+ *                holds on every body without anyone maintaining an order.
+ *
+ * Measured against the nineteen numbers it replaces, on the human frame:
+ * thigh 0.55 → 0.55, clav 0.50 → 0.50, shin 0.30 → 0.32, fore 0.22 → 0.23,
+ * arm 0.35 → 0.42, hand 0.10 → 0.06, foot 0.12 → 0.10. It lands on the
+ * considered numbers, which is the argument that the derivation is the right
+ * one; where it differs it differs because the bones say so.
+ *
+ * And a Rancor's toe is 0.101 against its hip's 0.55, so it takes nine toes to
+ * kill an animal that has four.
+ *
+ * ── WHAT THIS DOES NOT REACH, AND IT IS THE BIGGER HALF OF THE TOE ────────
+ *
+ * A sever is not what a pass costs. `World._applyBladeEvent` pays the grind
+ * that LEADS UP to it at `(dWork / need) * maxHp * GRIND_LETHALITY`, and
+ * `need` is the total work the capsule takes — so completing a sever anywhere
+ * on a body has already dealt **0.55 of its maximum health**, the same 0.55
+ * for a toe as for a torso. Measured, one completed pass:
+ *
+ *   Rancor toe   grind 55.0% + sever 11.6% = 66.6% of a 2200 hp animal
+ *   Acklay toe   grind 55.0% + sever  4.2% = 59.2%
+ *   AT-TE toe    grind 55.0% + sever  2.8% = 57.8%
+ *
+ * So TWO completed passes still kill anything, and the second half of that sum
+ * is the only half this file decides. `GRIND_LETHALITY`'s own note argues the
+ * share correctly for a body — "what stops a failed pass from being free" —
+ * and never asks whether a toe is a body. It is the same shape as the defect
+ * above, one module to the side, and it is not fixed: it lives in World.js.
+ */
+const SEVERANCE = {
+  core: { axial: 1.00 },
+  neck: { axial: 1.00 },
+  head: { axial: 0.95 },
+  hull: { budget: 1.00 },
+  leg: { budget: 1.10 },
+  arm: { budget: 1.00 },
 };
+
+/**
+ * The price of losing one bone, and the ONLY way to get one.
+ *
+ * IT THROWS, and that is the feature. The bug this replaces was not the numbers
+ * in a table, it was the `?? 0.4` beneath them: a body plan nobody had thought
+ * about got an answer that looked like an answer, and it looked like one for
+ * the entire life of the project. A role with no price must stop the game on
+ * the first body that carries it, loudly, with the role in the message.
+ *
+ * @param role   one of Rig.BONE_ROLES
+ * @param share  how much of its own limb comes off with it — `bone.roleShare`
+ * @param of     how many of that limb the body has — `bone.roleOf`
+ */
+export function severance(role, share = 1, of = 1) {
+  const S = SEVERANCE[role];
+  if (!S) {
+    throw new Error(`Enemy.severance: bone role ${JSON.stringify(role)} has no price. `
+      + `Priced roles are ${Object.keys(SEVERANCE).join(', ')}. `
+      + 'A role with no price is not 0.4 and is not the average of the others; '
+      + 'the whole point of this function is that it refuses to guess.');
+  }
+  if (S.axial !== undefined) return S.axial;
+  return S.budget * share / Math.max(1, of);
+}
+
+/** The same, for a bone that has been through `Rig._measureLimbs`. */
+export function severanceOf(bone) { return severance(bone.role, bone.roleShare, bone.roleOf); }
+
+/** The roles that have a price, so a check can hold it against BONE_ROLES. */
+export const PRICED_ROLES = Object.keys(SEVERANCE);
