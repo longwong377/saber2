@@ -1251,7 +1251,14 @@ export function templeColonnade(world, opts = {}) {
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r2() * TAU);
         shafts.push(m.clone().compose(p.set(x, y, z), q, s.set(R.r, h, R.r)));
         bases.push(m.clone().compose(p.set(x, y, z), q, s.setScalar(R.r)));
-        caps.push(m.clone().compose(p.set(x, y + h, z), q, s.setScalar(R.r)));
+        /* THE CAPITAL IS SUNK 0.55 OF A RADIUS INTO THE SHAFT TOP, and that is
+         * not a fudge — `prop-seating.mjs` asks whether every assembly is
+         * standing on something, and its test for "carried" is that the
+         * supporter's top reaches the supported thing's MIDDLE. Placed flush on
+         * the shaft's end the capital's middle was 0.54 r above it and 62 of
+         * them read as floating in mid-air. A capital's necking overlapping the
+         * shaft it caps is also what masonry does. */
+        caps.push(m.clone().compose(p.set(x, y + h - R.r * 0.55, z), q, s.setScalar(R.r)));
         tints.push(((i + k * 3 + (sx > 0 ? 1 : 0)) % 3 === 0 ? BRONZE : PALE));
         // one static box per column: you may not cut it, you may not walk
         // through it either
@@ -1259,10 +1266,15 @@ export function templeColonnade(world, opts = {}) {
           new THREE.Vector3(R.r, h * 0.5, R.r), new THREE.Quaternion(), { friction: 0.9 });
         // the beam onward to the next column of this rank
         if (i < count) {
+          /* The architrave rests IN the capitals it spans, for the same reason
+           * the capital is sunk into the shaft: 0.9 m deep and bedded 0.5 m
+           * below the abacus, so its middle is under the thing carrying it and
+           * `prop-seating` can see what is holding it up. A beam floating over
+           * a gap between two columns is what a lintel must never look like. */
           const zm = z + R.pitch * 0.5;
-          const ym = T.height(x, zm) + h + R.r * 1.10 + 1.25;
-          beams.push(m.clone().compose(p.set(x, ym, zm), new THREE.Quaternion(),
-            s.set(R.r * 2.3, 2.5, R.pitch + 0.4)));
+          const capTop = y + h - R.r * 0.55 + R.r * 1.38;
+          beams.push(m.clone().compose(p.set(x, capTop - 1.5, zm), new THREE.Quaternion(),
+            s.set(R.r * 2.3, 2.2, R.pitch + 0.4)));
         }
         n++;
       }
@@ -2392,10 +2404,16 @@ export const LEVELS = {
         const slots = [];
         const m = new THREE.Matrix4(), q = new THREE.Quaternion();
         const p = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
+        /* SET INTO THE WALL, which is TERRAIN here (the precinct shell climbs
+         * 44 m from |x| = 110 to 122), so the slot's foot has to be BELOW the
+         * face it is cut into — a window standing off a wall is a floating
+         * panel, and `prop-seating.mjs` says so. Half of each 13 m slot is
+         * buried; what shows is the 6.5 m above the rock. */
         for (let i = 0; i < 34; i++) {
           const z = -136 + i * 8.2;
           for (const sx of [-1, 1]) {
-            p.set(sx * 119.5, 27.5 + (i % 3) * 1.1, z);
+            const x = sx * 116.5;
+            p.set(x, T.height(x, z) + 5.0 + (i % 3) * 1.1, z);
             slots.push(m.clone().compose(p, q, s));
           }
         }
@@ -3584,10 +3602,16 @@ export const LEVELS = {
         // approach lights, which is the same arithmetic.
         const s = (s0 + s1) * 0.5;
         for (const side of [-1, 1]) {
-          const x = A.x + ux * s - uz * side * (KAMINO_SPAN_HALF - 0.5);
-          const z = A.z + uz * s + ux * side * (KAMINO_SPAN_HALF - 0.5);
+          /* 1.5 m INBOARD OF THE EDGE, not 0.5. The causeway's own profile
+           * starts falling into its kerb at 0.9 m from the rim (see the `rim`
+           * helper in the preset), so a rail set half a metre from the edge
+           * stands on ground that is already dropping and its far post ends up
+           * in the air — `prop-seating.mjs` measured exactly that, 0.73 m and
+           * 0.61 m clear on the two longest spans. */
+          const x = A.x + ux * s - uz * side * (KAMINO_SPAN_HALF - 1.5);
+          const z = A.z + uz * s + ux * side * (KAMINO_SPAN_HALF - 1.5);
           addRailing(world, at(x, z), {
-            length: (s1 - s0) * 0.96, height: 1.15,
+            length: (s1 - s0) * 0.88, height: 1.15,
             yaw: -Math.atan2(uz, ux) + Math.PI / 2,
             /* PITCHED WITH THE CAUSEWAY. The deck it starts on and the deck it
              * ends on differ by up to 5 m, and a level rail on a ramped road is
