@@ -3,9 +3,12 @@
  *
  * THE BUG THIS FILE EXISTS FOR.
  *
- * `draft` and `landing` are states in which the world is stopped and an overlay
- * owns the screen, and the only way out of either was a click on that overlay.
- * Two things had to hold for that to be safe. Neither did.
+ * `draft` was a state in which the world is stopped and an overlay owns the
+ * screen, and the only way out of it was a click on that overlay. Two things
+ * had to hold for that to be safe. Neither did. (It was one of a PAIR: the
+ * other was 'landing', since deleted. Every trace of that state is gone from
+ * this file now except this sentence, which is here so nobody re-derives the
+ * bug from a half-removed name.)
  *
  * The overlay hides itself BEFORE it calls back — Menu.showDraft's card does
  * `this.el.draft.classList.add('hidden'); onPick(b)` — so anything that throws
@@ -116,10 +119,23 @@ export class Screens {
     this.state = name;
   }
 
-  /** Hide everything this class raised, and forget it. */
+  /**
+   * Hide everything this class raised, and forget it.
+   *
+   * `m.hideLanding?.()` used to be in this line and is gone. There has been no
+   * 'landing' state since it was deleted — it is not in LIVE, not in
+   * OVERLAY_STATES, `_hide` has no branch for it, and no Menu in this tree has
+   * ever had a `hideLanding`. So the optional call was a no-op that read like a
+   * fourth overlay, and the comment on `pause()` still names 'landing' as one
+   * of the two states you could be stuck in. That is worse than dead code: the
+   * next person to add a screen copies it, sees `?.()` beside three real
+   * hiders, and assumes an overlay whose card is not one of Menu's is handled
+   * here. It is not — `card(name, hide)` is the seam for that, and it is the
+   * one the muster screen goes up through.
+   */
   clear() {
     const m = this.io.menu;
-    m.hidePause?.(); m.hideDraft?.(); m.hideLanding?.(); m.hideDeath?.();
+    m.hidePause?.(); m.hideDraft?.(); m.hideDeath?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
   }
@@ -157,7 +173,7 @@ export class Screens {
         this.io.onError ? this.io.onError(what, e)
                         : console.error(`${what} failed — falling back to the pause menu:`, e);
         this.overlay = null;
-        // 'draft'/'landing' pause fine; if we were somewhere pause() refuses,
+        // A draft pauses fine; if we were somewhere pause() refuses,
         // say we are playing so the player gets a card they can act on.
         if (this.state === 'dead' || !LIVE.includes(this.state)) this.state = 'playing';
         this.pause();
@@ -170,8 +186,8 @@ export class Screens {
 
   pause() {
     // Every live state EXCEPT 'dead' — see rule 4. Notably including 'draft'
-    // and 'landing', which is the whole fix: those were the two you could be
-    // stuck in.
+    // and every overlay registered through `card()`, which is the whole fix:
+    // an overlay you cannot pause out of is an overlay you are stuck in.
     if (this.state === 'paused' || this.state === 'dead') return false;
     if (!LIVE.includes(this.state) || !this.io.world()) return false;
     if (this.overlay) this._hide(this.overlay.state);

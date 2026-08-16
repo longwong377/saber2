@@ -612,7 +612,22 @@ button{font-family:inherit}
 @keyframes evOut{to{opacity:0;transform:translateX(10px)}}
 
 .hud-bl{position:absolute;left:32px;bottom:28px;animation:riseIn .4s both}
-.bars{display:flex;flex-direction:column;gap:20px}
+.bars{display:flex;flex-direction:column;gap:14px}
+/* THE CAPTION LIVES OUTSIDE THE SOCKET, and that is the whole of the fix.
+   `.bar` clips — it has to, the fills are inset:0 and their glow must stop at
+   the ink — so a caption positioned inside it can only ever be clipped. It was:
+   `bottom:16px` against `height:13px;overflow:hidden` put all three words three
+   pixels outside the box that hides them, which is why VITALITY, FORCE and
+   STAMINA had never appeared on a screen. In a wrapper they cannot be. */
+.barline{display:flex;flex-direction:column;gap:4px;width:max-content}
+.bar-cap{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.24em;text-transform:uppercase}
+.bar-cap label{color:var(--dim)}
+/* The NUMBER, because a bar is a proportion and a proportion is not a reading.
+   Tabular figures so a three-digit value does not shuffle the two-digit one
+   sideways every time you are hit. */
+.bar-cap b{color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.1em}
+.barline:has(.low) .bar-cap label,.barline:has(.low) .bar-cap b{color:var(--danger)}
 .bar{position:relative;width:236px;height:13px;background:var(--void);border:2px solid var(--stroke);
   overflow:hidden}
 .bar i{position:absolute;inset:0;width:100%;transform-origin:left;transition:transform .12s linear}
@@ -621,8 +636,6 @@ button{font-family:inherit}
    same socket instead of as a second bar. */
 .bar u{position:absolute;inset:0;width:100%;transform-origin:left;background:var(--danger);
   transition:transform .5s .25s cubic-bezier(.22,1,.36,1);opacity:.55}
-.bar label{position:absolute;left:0;bottom:16px;font:var(--mono);font-size:9px;font-weight:800;
-  letter-spacing:.24em;color:var(--ink);text-transform:uppercase}
 .bar.hp i{background:var(--accent);box-shadow:0 0 12px rgba(72,216,255,.55)}
 .bar.fc{width:190px}
 .bar.fc i{background:var(--force);box-shadow:0 0 12px rgba(160,125,255,.6)}

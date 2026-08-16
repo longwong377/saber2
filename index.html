@@ -454,10 +454,35 @@
   </div>
 
   <div class="hud-bl">
+    <!--
+      THE THREE LABELS THAT HAD NEVER BEEN ON SCREEN.
+
+      They were `<label>` children of `.bar`, and `.bar` is `height:13px;
+      overflow:hidden` while `.bar label` sat at `bottom:16px` — three pixels
+      ABOVE the box that clips them. So VITALITY, FORCE and STAMINA were in the
+      DOM, were styled, and had never been drawn: the player's health was an
+      unlabelled coloured rectangle told apart from the other two by HUE ALONE,
+      which is also the one channel a colour-blind player does not have.
+
+      The socket still clips — the fills are `inset:0` and the glow has to stop
+      at the ink — so the caption is lifted OUT of it into a wrapper instead of
+      the clipping being removed. `.bar` keeps its classes and stays the direct
+      parent of `<i>`/`<u>`, because HUD.update reaches for
+      `el.hp.parentElement` to flash `.low`.
+    -->
     <div class="bars">
-      <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u><label>VITALITY</label></div>
-      <div class="bar fc"><i id="bar-force"></i><label>FORCE</label></div>
-      <div class="bar st"><i id="bar-stam"></i><label>STAMINA</label></div>
+      <div class="barline">
+        <div class="bar-cap"><label>Vitality</label><b id="bar-hp-num">100</b></div>
+        <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u></div>
+      </div>
+      <div class="barline">
+        <div class="bar-cap"><label>Force</label><b id="bar-force-num">100</b></div>
+        <div class="bar fc"><i id="bar-force"></i></div>
+      </div>
+      <div class="barline">
+        <div class="bar-cap"><label>Stamina</label><b id="bar-stam-num">100</b></div>
+        <div class="bar st"><i id="bar-stam"></i></div>
+      </div>
     </div>
     <div id="boon-strip" class="boons"></div>
   </div>

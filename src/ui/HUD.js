@@ -812,6 +812,13 @@ export class HUD {
       hpGhost: root.getElementById('bar-hp-ghost'),
       force: root.getElementById('bar-force'),
       stam: root.getElementById('bar-stam'),
+      /* The three READINGS beside the three captions. A bar is a proportion,
+       * and a proportion cannot answer "can I take one more hit" — which is
+       * the only question anybody asks of a health bar. Written through
+       * `_num`, so a value that has not moved costs no DOM write. */
+      hpNum: root.getElementById('bar-hp-num'),
+      forceNum: root.getElementById('bar-force-num'),
+      stamNum: root.getElementById('bar-stam-num'),
       flow: root.getElementById('hud-flow'),
       flowFill: root.querySelector('#hud-flow i'),
       combo: root.getElementById('hud-combo'),
@@ -950,6 +957,23 @@ export class HUD {
     }
   }
 
+  /**
+   * One of the three bar readings, written only when the printed value moves.
+   *
+   * A bar's fill is a transform and the compositor eats a repeat of it; a
+   * textContent write is layout, and three of them sixty times a second for a
+   * number that changes twice a fight is the shape of a HUD that costs frames
+   * for nothing. `Math.round` is the comparison because the ROUNDED value is
+   * what the player reads — 61.4 and 61.0 are the same string.
+   */
+  _num(node, v) {
+    if (!node) return;
+    const n = Math.max(0, Math.round(num(v, 0)));
+    if (node._last === n) return;
+    node._last = n;
+    node.textContent = String(n);
+  }
+
   show(on) { this.el.hud.classList.toggle('hidden', !on); }
 
   setLevel(name, difficulty) {
@@ -993,13 +1017,17 @@ export class HUD {
     this.hpGhostValue = Math.max(hp, this.hpGhostValue - dt * 0.35);
     el.hpGhost.style.transform = `scaleX(${clamp(this.hpGhostValue, 0, 1)})`;
     el.hp.parentElement.classList.toggle('low', hp < 0.3);
+    this._num(el.hpNum, player.hp);
     el.force.style.transform = `scaleX(${clamp(player.force / player.maxForce, 0, 1)})`;
+    this._num(el.forceNum, player.force);
     // Focus reads on the Force bar itself — it is Force being spent, and
     // showing it anywhere else would hide the trade the ability is built on.
     const fs = world?.focus;
     if (fs) el.force.parentElement.classList.toggle('focus', fs.held > 0.05);
-    el.stam.style.transform = `scaleX(${clamp(player.stamina / player.maxStamina, 0, 1)})`;
-    el.stam.parentElement.classList.toggle('low', player.stamina / player.maxStamina < 0.25);
+    const stam = player.stamina / player.maxStamina;
+    el.stam.style.transform = `scaleX(${clamp(stam, 0, 1)})`;
+    el.stam.parentElement.classList.toggle('low', stam < 0.25);
+    this._num(el.stamNum, player.stamina);
 
     // ── flow
     el.flowFill.style.width = `${clamp(player.flow, 0, 1) * 100}%`;
