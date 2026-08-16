@@ -1027,9 +1027,9 @@ export function run({ check, assert, near }) {
     for (const n of PRESETS) {
       assert(gain(n) > 0.15, `${n} has no base relief left at all — that is a painted plane`);
     }
-    return `aspect ${rows.join(' ')}; gain dunes ${gain('dunes')} / drifts ${gain('drifts')} / `
-      + `canyon ${gain('canyon')} / meadow ${gain('meadow')}; map coherence sand ${dirn.sand.toFixed(2)} `
-      + `snow ${dirn.snow.toFixed(2)} soil ${dirn.soil.toFixed(2)}`;
+    return `aspect ${rows.join(' ')}; comb gain ${mean(blown).toFixed(2)} blown / ${mean(still).toFixed(2)} still `
+      + `(lowest ${PRESETS.reduce((a, b) => (gain(a) < gain(b) ? a : b))} ${Math.min(...PRESETS.map(gain))}); `
+      + `map coherence ${Object.entries(dirn).map(([m, v]) => `${m} ${v.toFixed(2)}`).join(' ')}`;
   });
 
   check('terrain: rock reads as jointed stone, not as tooled leather', () => {
@@ -1733,7 +1733,7 @@ export function run({ check, assert, near }) {
     return out.join('  ');
   });
 
-  check('terrain: every height function is smooth, and the meadow is the cheapest of them', () => {
+  check('terrain: every height function is smooth, and the poured floors are the cheapest', () => {
     /* height() is the hottest function in this file by a distance. It runs
      * res² times at bake, once per physics heightfield refresh, and once per
      * FOOT PER CHARACTER PER FRAME — so it is not a bake-time cost, it is a
