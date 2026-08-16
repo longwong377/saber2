@@ -2582,6 +2582,31 @@ export class Enemy {
    * It never casts through its own strike — `phase === 'strike'` — so a power
    * cannot arrive on the same frame as a blade and make an exchange
    * unanswerable.
+   *
+   * ── AND NOTHING HERE TOUCHES THE FEET. That is the one regression this
+   * feature caused and both wrong answers are worth recording.
+   *
+   * The first version set `this.wish = null` through a cast — 0.45 s of wind-up
+   * plus up to 2.4 s of held choke on a 9 s cooldown, so a third of the fight
+   * was spent standing still. `tools/checks/footwork.mjs` failed immediately
+   * and it failed on the thing the player actually reported (note #7, "the
+   * enemies are unreachable, the wave won't progress"): a duellist that stops
+   * to cast at somebody walking backwards never closes, and walking backwards
+   * went back to being a shutout — 10.50 hp/s standing still against 0.20
+   * walking away.
+   *
+   * The second version scaled the wish to 0.55 instead of nulling it, which
+   * fixed that and broke a different check for a better reason: `wish` is a
+   * DIRECTION, not a speed. `footwork: the band a duellist holds is inside the
+   * band it swings from` finds the band edge by sweeping in and watching for
+   * `wish.dot(toTarget) > 0.999`, so a wish scaled to 0.55 reads as a body that
+   * has stopped driving straight in at 6 m — outside its own trigger, which is
+   * the copied-spacing defect that check exists for.
+   *
+   * So a cast costs no ground at all. Its commitment is already three things:
+   * the price out of a pool that does not refill fast enough, the cooldown, and
+   * a 0.45 s telegraph with a call over the body. The player casts while moving
+   * too.
    */
   _forceBrain(dt, ctx, dist) {
     const t = this.target;
@@ -2593,7 +2618,6 @@ export class Enemy {
 
     if (this._castTimer > 0) {
       this._castTimer -= dt;
-      this.wish = null;                       // it plants to cast
       if (this._castTimer <= 0) this._castPower(this._castKey, ctx, dist);
       return;
     }
@@ -2684,7 +2708,6 @@ export class Enemy {
       || this.stunTimer > 0 || this.gripped;
     if (this.castLeft <= 0 || this.force < pay || lost) { this.casting = null; return; }
     this.force -= pay;
-    this.wish = null;                          // it holds still to hold you
     t.applyKnockback?.(null, P.dps * dt, this, true);
     if (this.casting === 'choke' && t.velocity) t.velocity.multiplyScalar(0.86);
     if (rng() < 0.35) {
