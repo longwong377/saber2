@@ -699,8 +699,12 @@ function works(world, opts = {}) {
     addInstanced(world, trussGeo, M.rust, trusses, V(0, 0, 0),
       { name: 'worksTruss', castShadow: false });
     for (const b of boxes) {
-      world.physics.addStaticBox(new THREE.Vector3(b.x, b.y + b.h * 0.5, b.z),
-        new THREE.Vector3(0.45, b.h * 0.5, 0.45), new THREE.Quaternion(), { friction: 0.85 });
+      // capped at 9 m for the reason the Temple's columns are — see the note
+      // there: a near-list rejects on `box.radius`, and nothing reachable is
+      // above nine metres
+      const bh = Math.min(9, b.h);
+      world.physics.addStaticBox(new THREE.Vector3(b.x, b.y + bh * 0.5, b.z),
+        new THREE.Vector3(0.45, bh * 0.5, 0.45), new THREE.Quaternion(), { friction: 0.85 });
     }
     /* ── AND THE LIGHT THAT SAYS THERE IS SOMETHING OUT THERE. The one thing
      * the Temple's references have that this room did not is a bright slot in
@@ -1263,10 +1267,27 @@ export function templeColonnade(world, opts = {}) {
          * shaft it caps is also what masonry does. */
         caps.push(m.clone().compose(p.set(x, y + h - R.r * 0.55, z), q, s.setScalar(R.r)));
         tints.push(((i + k * 3 + (sx > 0 ? 1 : 0)) % 3 === 0 ? BRONZE : PALE));
-        // one static box per column: you may not cut it, you may not walk
-        // through it either
-        world.physics.addStaticBox(new THREE.Vector3(x, y + h * 0.5, z),
-          new THREE.Vector3(R.r, h * 0.5, R.r), new THREE.Quaternion(), { friction: 0.9 });
+        /* ONE STATIC BOX PER COLUMN — you may not cut it, and you may not walk
+         * through it either — BUT ONLY NINE METRES OF IT.
+         *
+         * The cap is the same one `Trees.js` puts on a standing trunk and it is
+         * there for the same measured reason: every near-list in this engine
+         * (Player._gatherNear, Enemy's push-out, `supportHeight`, `spawnClear`)
+         * walks `physics.staticBoxes` LINEARLY, once per body per frame, and
+         * rejects on `box.radius`. A 31 m column boxed to its full height has a
+         * radius of 15.6 m, so every one of 228 columns is a near-neighbour of
+         * anything within fifteen metres of it — on the Temple that took the
+         * nav walk in `levels-quality` from seventy seconds to over twenty
+         * minutes at 99% CPU, which is what found it.
+         *
+         * Nothing in this game stands above 9 m without leaving the ground and
+         * a double Force jump tops out at 6.18 m, so the boxed part is the part
+         * anyone can meet; the cap takes the radius to 4.9 m and the test
+         * volume to a tenth. It is a collider, not a silhouette — the column is
+         * still drawn to its full height. */
+        const bh = Math.min(9, h);
+        world.physics.addStaticBox(new THREE.Vector3(x, y + bh * 0.5, z),
+          new THREE.Vector3(R.r, bh * 0.5, R.r), new THREE.Quaternion(), { friction: 0.9 });
         // the beam onward to the next column of this rank
         if (i < count) {
           /* The architrave rests IN the capitals it spans, for the same reason
