@@ -513,7 +513,25 @@ export async function run({ check, assert }) {
      *   the "it is a lottery, not a build" complaint.
      */
     const styles = [{ kind: 'random' }, { kind: 'commit', axis: 'blade' }, { kind: 'commit', axis: 'dark' }];
-    const runOne = (toWave, style, seed) => {
+    /**
+     * `mode` — AND ITS ABSENCE IS WHY THE TRIAL OF WAVES WAS NEVER MEASURED.
+     *
+     * This harness hardcoded `if (w % DRAFT_EVERY === 0 || boss)` with nothing
+     * to turn it off, so every number in the table above and every bar below
+     * described Path of the Blade and only Path of the Blade. Run with the
+     * draft off — which is what `DRAFT_MODES` says the Trial is — the same
+     * twelve seeds reported **4.9 of 46 facets, 11% of the lattice**, against
+     * this check's own floor of 33%. The mode whose menu entry says "what you
+     * build, you build in the Holocron", and whose file says "the tree is the
+     * Trial's whole progression", failed the bar for a build by a factor of
+     * three, and the check passed at 38% because it was measuring the other
+     * mode. HANDOFF §2.3 with a `mode` argument missing instead of a table.
+     *
+     * `drafts` is `WaveDirector.drafts`'s answer, and the Insight rate is
+     * `insightRate(drafts)` — the shipped pair, called rather than restated.
+     */
+    const runOne = (toWave, style, seed, drafts = true) => {
+      const rate = Tree.insightRate(drafts);
       Waves.seedWaves(seed, 0);
       /**
        * The PLAYER's own die, seeded and separate from the wave stream.
@@ -529,11 +547,11 @@ export async function run({ check, assert }) {
       const die = (n) => { st = (Math.imul(st ^ (st >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return st % n; };
       const taken = new Waves.RankSet();
       const led = new Tree.Communion();
-      let drafts = 0, bought = 0;
+      let picked = 0, bought = 0;
       for (let w = 1; w <= toWave; w++) {
         const boss = w % Waves.BOSS_EVERY === 0;
-        led.earn(w, boss);
-        if (w % Waves.DRAFT_EVERY === 0 || boss) {
+        led.earn(w, boss, rate);
+        if (drafts && (w % Waves.DRAFT_EVERY === 0 || boss)) {
           const cards = Waves.drawBoons(boss ? 4 : 3, taken, w,
             { floor: boss ? 'rare' : null, attune: boss });
           if (cards.length) {
@@ -541,7 +559,7 @@ export async function run({ check, assert }) {
               ? (cards.find((c) => (c.axes || []).includes(style.axis)
                   || c.id === `attune-${style.axis}`) || cards[0])
               : cards[die(cards.length)];
-            taken.take(pick.id); drafts++;
+            taken.take(pick.id); picked++;
           }
         }
         for (;;) {
@@ -553,29 +571,44 @@ export async function run({ check, assert }) {
           taken.take(pick.id); bought++;
         }
       }
-      return { drafts, bought, ids: new Set(Tree.FACETS.filter((s) => Waves.rankOf(taken, s.id) > 0).map((s) => s.id)) };
+      const held = Tree.FACETS.filter((s) => Waves.rankOf(taken, s.id) > 0);
+      return { drafts: picked, bought, ids: new Set(held.map((s) => s.id)),
+        axes: new Set(held.map((s) => s.axis)) };
+    };
+
+    const measure = (drafts) => {
+      const out = [];
+      for (const st of styles) {
+        const name = st.kind === 'commit' ? `commit-${st.axis}` : 'random';
+        const runs = [];
+        for (let s = 1; s <= 12; s++) runs.push(runOne(40, st, s * 7, drafts));
+        let j = 0, n = 0;
+        for (let a = 0; a < runs.length; a++) {
+          for (let b = a + 1; b < runs.length; b++) {
+            const A = runs[a].ids, B = runs[b].ids;
+            const inter = [...A].filter((x) => B.has(x)).length;
+            j += inter / (A.size + B.size - inter); n++;
+          }
+        }
+        out.push({
+          name,
+          woken: runs.reduce((a, r) => a + r.ids.size, 0) / runs.length,
+          bought: runs.reduce((a, r) => a + r.bought, 0) / runs.length,
+          axes: runs.reduce((a, r) => a + r.axes.size, 0) / runs.length,
+          overlap: j / n,
+        });
+      }
+      return out;
     };
 
     const rows = [];
+    const path = measure(true);
     let worstShare = 1, worstAt = '', worstOverlap = 0, overlapAt = '';
-    for (const st of styles) {
-      const name = st.kind === 'commit' ? `commit-${st.axis}` : 'random';
-      const runs = [];
-      for (let s = 1; s <= 12; s++) runs.push(runOne(40, st, s * 7));
-      const woken = runs.reduce((a, r) => a + r.ids.size, 0) / runs.length;
-      const bought = runs.reduce((a, r) => a + r.bought, 0) / runs.length;
-      const share = woken / Tree.FACETS.length;
-      if (share < worstShare) { worstShare = share; worstAt = name; }
-      let j = 0, n = 0;
-      for (let a = 0; a < runs.length; a++) {
-        for (let b = a + 1; b < runs.length; b++) {
-          const A = runs[a].ids, B = runs[b].ids;
-          const inter = [...A].filter((x) => B.has(x)).length;
-          j += inter / (A.size + B.size - inter); n++;
-        }
-      }
-      if (j / n > worstOverlap) { worstOverlap = j / n; overlapAt = name; }
-      rows.push(`${name} ${woken.toFixed(1)}/${Tree.FACETS.length} woken (${bought.toFixed(1)} bought)`);
+    for (const r of path) {
+      const share = r.woken / Tree.FACETS.length;
+      if (share < worstShare) { worstShare = share; worstAt = r.name; }
+      if (r.overlap > worstOverlap) { worstOverlap = r.overlap; overlapAt = r.name; }
+      rows.push(`${r.name} ${r.woken.toFixed(1)}/${Tree.FACETS.length} woken (${r.bought.toFixed(1)} bought)`);
     }
     assert(worstShare >= 0.33,
       `a ${worstAt} run reaches wave 40 holding ${(worstShare * 100).toFixed(0)}% of the lattice — `
@@ -587,6 +620,60 @@ export async function run({ check, assert }) {
     assert(worstOverlap <= 0.7,
       `two ${overlapAt} runs hold ${(worstOverlap * 100).toFixed(0)}% of the same facets at wave 40 — `
       + 'the Holocron is not producing different builds, it is producing one build with noise on it');
+
+    /**
+     * ── AND NOW THE MODE THIS CHECK WAS NEVER RUN AGAINST ────────────────────
+     *
+     * The Trial of Waves has no draft, so the bars above cannot simply be
+     * repeated: 33% of the lattice is reached in Path of the Blade mostly
+     * through CARDS, and a mode with one channel where the other has two is not
+     * being asked the same question. What it can be held to is the number its
+     * own budget curve already assumes.
+     *
+     * `RAMP_CARDS_EVERY` is that number: the base polynomial every mode faces
+     * was fitted against a player holding w/3 growth events by wave w, and the
+     * Trial is charged that curve with no multiplier. So the Holocron must hand
+     * a Trial player about w/3 growth events and NOT MORE — under it and the
+     * mode has no build, over it and the tree is outgrowing a ramp fitted for
+     * less, which is the same bound "the tree never outgrows the draft it sits
+     * beside" holds Path of the Blade to.
+     *
+     * Measured before the mode-aware rate: 5.0 purchases, 11% of the lattice,
+     * 1.1 currents, and two runs of the same style byte-identical.
+     */
+    const trial = measure(false);
+    const want = 40 / Waves.RAMP_CARDS_EVERY;
+    for (const r of trial) {
+      assert(r.bought >= want * 0.7,
+        `a Trial run buys ${r.bought.toFixed(1)} facets in forty waves against the ${want.toFixed(1)} `
+        + 'growth events its own budget curve is fitted for — the mode whose whole progression is the '
+        + 'Holocron has almost no progression');
+      assert(r.bought <= want,
+        `a Trial run buys ${r.bought.toFixed(1)} facets against the ${want.toFixed(1)} its budget `
+        + 'curve assumes — the tree has outgrown the ramp it sits beside');
+      rows.push(`TRIAL ${r.name} ${r.woken.toFixed(1)} woken (${r.bought.toFixed(1)} bought, `
+        + `${r.axes.toFixed(1)} currents)`);
+    }
+    /**
+     * …AND IT MUST NOT BE ONE WALK DOWN ONE CURRENT.
+     *
+     * Asserted on the UNDIRECTED style, and the exclusion is not a dodge: a
+     * `commit` player picks the same facet off the same open set every time, so
+     * in a mode with NO DRAW their progression is a pure function of the tree
+     * and two runs are identical BY CONSTRUCTION. That is a true fact about the
+     * Trial and no Insight rate can change it — what makes two Trial runs
+     * differ is the run's RULES and its seed, which `escalation.mjs` pins. What
+     * this can ask, and what was false, is that a player who is not committed
+     * reaches more than one current and does not walk the same four steps every
+     * time: measured 1.1 currents and a 14% overlap over four facets, against
+     * 3.0 currents and 20% over ten now.
+     */
+    const undirected = trial.find((r) => r.name === 'random');
+    assert(undirected.axes >= 2,
+      `an undirected Trial run reaches ${undirected.axes.toFixed(1)} of the ${Tree.AXES.length} `
+      + 'currents by wave 40 — the whole mode is "pick one of six currents and walk down it"');
+    assert(undirected.overlap <= 0.7,
+      `two undirected Trial runs hold ${(undirected.overlap * 100).toFixed(0)}% of the same facets`);
     /**
      * …AND NO FACET MAY BE UNREACHABLE IN PRACTICE, which is the real test of
      * whether a table entry is decoration — and the one the "87% of it is
