@@ -81,7 +81,12 @@
         <div class="col-scroll">
           <h3>Trial</h3>
           <div id="diff-list" class="difflist"></div>
-          <h3 style="margin-top:26px">Mode</h3>
+          <!-- The gap between the two lists is a CLASS and not an inline style
+               because a short viewport has to be able to close it: at 1280x720
+               this scroller is 362 px over 819 px of content, and an inline
+               margin cannot be overridden by the media query that claws some
+               of that back. See `.col.narrow.pinned` in styles.css. -->
+          <h3 class="stacked">Mode</h3>
           <div id="mode-list" class="difflist"></div>
         </div>
         <button id="btn-deploy" class="primary">Ignite</button>

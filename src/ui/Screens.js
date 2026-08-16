@@ -185,11 +185,31 @@ export class Screens {
   muster(offer, io = {}) {
     const menu = this.io.menu;
     if (typeof menu.showMuster !== 'function') return false;
-    this.take('muster', () => menu.showMuster(offer, {
-      recruit: this.guarded('recruiting', (type) => io.recruit?.(type)),
-      done: this.guarded('closing the muster', () => io.done?.()),
-    }));
-    return true;
+    let up = true;
+    this.take('muster', () => {
+      up = menu.showMuster(offer, {
+        recruit: this.guarded('recruiting', (type) => io.recruit?.(type)),
+        done: this.guarded('closing the muster', () => io.done?.()),
+      }) !== false;
+    });
+    if (up) return true;
+    /**
+     * THE CARD DID NOT ARRIVE — and this is the branch that stops that being a
+     * frozen campaign.
+     *
+     * `take` has already stopped the world and put the state in 'muster'.
+     * Without this, a menu whose markup is missing leaves the player paused on
+     * a state whose overlay is not on the screen; Escape still works (rule 1
+     * holds — it pauses, and the pause card can abandon), but the advance can
+     * never continue, because the only thing that calls `closeMuster` is a
+     * button that was never drawn. So the screen is handed straight back and
+     * `false` is returned, which is the caller's signal to muster without one —
+     * exactly what CommandDirector does when no handler is installed at all.
+     */
+    this.overlay = null;
+    this.state = 'paused';
+    this.resume();
+    return false;
   }
 
   /**

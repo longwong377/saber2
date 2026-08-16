@@ -236,21 +236,69 @@ b{font-weight:800}
  * the selected card clear of; tools/checks/front-screen.mjs asserts they agree.
  */
 .col.narrow.pinned{overflow:hidden;padding-right:0}
+/* THE SCROLLBAR IS THE AFFORDANCE, AND IT HAD NO WIDTH.
+ *
+ * Measured in Chromium at 1280x720: this scroller is 362 px tall over 819 px of
+ * content, it opens at scrollTop 102 because _reveal brings the selected mode
+ * card into view — and `sc.offsetWidth - sc.clientWidth` came back **0**. An
+ * overlay scrollbar, over a dark panel, with a thumb at 0.16 alpha of white.
+ * So the TRIAL heading and the first difficulty card were 100% out of frame,
+ * the second was 98% cut, and the only thing on screen saying the list
+ * continued was a 26 px fade the player has no reason to read as one. That is
+ * the whole report, and the numbers are what it looks like.
+ *
+ * `scrollbar-gutter: stable` reserves the track whether or not the platform
+ * would draw one, and the thumb is now the SAME chip as the wide columns' —
+ * panel-hi inside 2 px of ink — instead of a translucent sliver. It is a
+ * physical object in the same language as everything else on the screen, and
+ * it is 8 px of permanent evidence that there is more list than window. */
 .col.narrow.pinned>.col-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;
-  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.16) transparent}
-.col.narrow.pinned>.col-scroll::-webkit-scrollbar{width:6px}
-.col.narrow.pinned>.col-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:3px}
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
+.col.narrow.pinned>.col-scroll::-webkit-scrollbar{width:8px;background:var(--void)}
+.col.narrow.pinned>.col-scroll::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 .col.narrow.pinned.more>.col-scroll{
   -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent);
   mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent)}
-.col.narrow.pinned.less>.col-scroll{
-  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 26px);
-  mask-image:linear-gradient(to bottom,transparent,#000 26px)}
+/* THE TOP FADE IS GONE AND A STICKY HEADING HAS ITS JOB.
+ *
+ * It faded 26 px at the top to say "there is more above". Two things replaced
+ * it and both are better. The scrollbar above is now a real reserved 10 px of
+ * evidence rather than a 0.16-alpha overlay sliver that measured ZERO pixels
+ * wide. And the section heading STAYS: at 1280x720 this column opens at
+ * scrollTop 45 — the least `_revealMode` can scroll to put the chosen mode card
+ * on screen — and TRIAL was 100% off the top, so the list you were looking at
+ * had no name on it. A sticky heading cannot be faded by a mask on its own
+ * scroller, which is the direct reason this rule is `none` and not a shorter
+ * gradient. `.less` still toggles, and is still what `_syncScrollHints` writes;
+ * what it means now is "the heading is standing on content", which is what the
+ * shadow under it says. */
+.col.narrow.pinned.less>.col-scroll{-webkit-mask-image:none;mask-image:none}
 .col.narrow.pinned.less.more>.col-scroll{
-  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 26px,#000 calc(100% - 26px),transparent);
-  mask-image:linear-gradient(to bottom,transparent,#000 26px,#000 calc(100% - 26px),transparent)}
+  -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent)}
+/* #12162b is `.panel`'s own field — the heading has to be opaque against the
+   cards passing under it, and it is the same surface it is drawn on. */
+.col.narrow.pinned>.col-scroll h3{position:sticky;top:0;z-index:2;background:#12162b;
+  padding:5px 0 3px;margin-bottom:8px}
+.col.narrow.pinned.less>.col-scroll h3{box-shadow:0 6px 0 -4px var(--panel-hi)}
 .col.narrow.pinned>.primary{position:static;flex:none;margin-top:14px;
   box-shadow:var(--stamp-lg),0 0 30px -8px var(--accent)}
+h3.stacked{margin-top:26px}
+/* A SHORT SCREEN GETS A TIGHTER COLUMN, because the arithmetic does not work
+   otherwise: ten selectable cards with blurbs and two headings are 819 px of
+   content, and at 1280x720 this box is 362 px tall. It will always scroll —
+   what it must not do is open with the first heading and the first card
+   entirely off the top, which is what it did. Padding, gaps and the space
+   between the two lists come in; nothing is hidden, and no card loses a word of
+   what it says. Measured before and after in Chromium at the six viewports the
+   footer collision was measured at. */
+@media (max-height:800px){
+  h3.stacked{margin-top:14px}
+  .col.narrow.pinned h3{margin-bottom:8px}
+  .col.narrow.pinned .difflist{gap:6px}
+  .col.narrow.pinned .diff{padding:7px 10px;gap:9px}
+  .col.narrow.pinned .diff .txt span{line-height:1.28}
+}
 .col.wide{flex:1}
 h2{font-weight:800;font-size:26px;letter-spacing:.03em;text-transform:uppercase;margin-bottom:10px;
   text-shadow:2px 0 var(--stroke),-2px 0 var(--stroke),0 2px var(--stroke),0 -2px var(--stroke)}

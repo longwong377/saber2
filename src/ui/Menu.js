@@ -4307,7 +4307,11 @@ export class Menu {
       strength: document.getElementById('muster-strength'),
       done: document.getElementById('btn-muster-done'),
     };
-    if (!el.root) return;
+    /* Returns whether the card actually went up. Screens.muster reads it: a
+     * muster that cannot be drawn must not leave a campaign stopped on a state
+     * whose overlay is not on the screen, and the caller's fallback is to
+     * muster without one. */
+    if (!el.root) return false;
     this._musterEl = el;
     /* The LIVE handlers, on the instance rather than in the listener's
      * closure. The Advance button is bound once — binding it per muster would
@@ -4377,6 +4381,7 @@ export class Menu {
     }
     el.root.classList.remove('hidden');
     el.done?.focus?.();
+    return true;
   }
 
   hideMuster() { document.getElementById('muster')?.classList.add('hidden'); }

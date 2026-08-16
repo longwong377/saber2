@@ -381,7 +381,7 @@ function buildWorld(levelKey) {
           hud.setRoster?.(d.roster.summary());
           resume();
         },
-      });
+      }) || fallbackMuster(d);
     }
     d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
     d.onRoster(d.roster.summary());
@@ -1316,6 +1316,25 @@ function lessonKeys() {
  * Guarded on `world.command` so the keys are inert in every other mode, rather
  * than being six more things that can happen while you are duelling.
  */
+/**
+ * THE MUSTER SCREEN DID NOT COME UP, AND THE ADVANCE CARRIES ON ANYWAY.
+ *
+ * `Screens.muster` answers false when the card could not be raised — no markup,
+ * a stripped DOM, a Menu built against a page that does not have it. Installing
+ * `onMuster` at all takes the director OFF its own fallback, so without this
+ * that failure would be a campaign stopped forever on an area boundary with
+ * nothing on screen and no button to press. This is Command.js's own fallback,
+ * called by name from the one place that took it away: spend sensibly, deploy,
+ * press on. It is a floor, not a feature — the screen exists and this should
+ * never run — and it is exactly what the mode did for its whole life before it.
+ */
+function fallbackMuster(d) {
+  console.warn('the muster screen could not be raised — mustering automatically');
+  d.autoMuster();
+  d.closeMuster();
+  hud.setRoster?.(d.roster.summary());
+}
+
 function orderKeys() {
   if (screens.state !== 'playing') return;
   const cmd = world?.command;
