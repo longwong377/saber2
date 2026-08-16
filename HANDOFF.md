@@ -482,6 +482,34 @@ The player asked for these to wait, and the folders are `assets/reference/`:
 
 ### 6.1b Diagnosed, scoped, not yet built
 
+**`cel: a shadow is READABLE` has a SECOND clause nobody had reached.** The
+suite is 23/24 and the one red is a roster-wide invariant, not a level defect.
+
+The check asserts twice. First, pairwise: if one level's sun stands >10% higher
+than another's, more of its shadow must come from the key. `geonosis` failed
+that against `wood` at sunY 1.10075 — over by a whisker — because it claimed
+both the HIGHEST sun on the roster (21°) and the highest ambient (0.52), which
+is a contradiction: a dust-laden sky is a diffuse sky. Fixed by taking the
+elevation to 20°, which is still a late-afternoon sun throwing the long infantry
+shadows the plates are shot in. That is a real fix and it stands.
+
+Doing so revealed the second clause, which had never been evaluated because the
+first assert fired ahead of it every time:
+
+    the key share and the sun's height rank-correlate at only 0.810
+    (Spearman rho over the outdoor levels; the bound is 0.90)
+
+**This is pre-existing and roster-wide.** It says the levels, ranked by sun
+height, must rank the same way by how much of their shadow comes from the key —
+and at ten levels they no longer do. It cannot be fixed by moving one number:
+whoever takes it should print sun height against key share for all ten, find
+which two or three are out of order, and move THOSE, then re-run. Do not lower
+0.90 to meet the measurement; the whole point of the bound is that the roster
+grew and the invariant has to survive the growth.
+
+Two levels were added and one re-solved this session, so the correlation was
+being eroded by legitimate work the entire time and nothing could see it.
+
 **The character creator still holds the saber wrong for a small species, and the
 three-line fix is NOT three lines.** `poseSaberArm` (Menu.js) is a second copy of
 the grip model, authored against a 1.78 m body: measured, the `smallfolk`

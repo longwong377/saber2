@@ -3999,7 +3999,25 @@ LEVELS.geonosis = {
      * dark side to be read by. 21° of elevation is a late-afternoon sun, which
      * is what every plate of this battle is shot in — long shadows off infantry
      * are how you read a crowd on flat ground. */
-    elevation: 21, azimuth: 200,
+    /* 20°, NOT 21°, AND THE REASON IS THE LINE DIRECTLY BELOW THIS ONE.
+     *
+     * `cel: a shadow is READABLE` compares levels pairwise: if one level's sun
+     * stands more than 10% higher than another's, more of its shadow has to
+     * come from the key, or the shadow tone is not tracking the light. At 21°
+     * geonosis failed that against the wood — sunY 1.10075, over the gate by a
+     * whisker — because it had the HIGHEST sun on the roster and, from the note
+     * below, the highest ambient too (0.52). Those two together are a
+     * contradiction: a dust-laden sky is a DIFFUSE sky, and a level cannot
+     * claim both the strongest sun and the weakest key share.
+     *
+     * So the elevation comes down rather than the ambient, because the ambient
+     * is the thing the look is actually built on and the one the plates
+     * support. 20° is still a late-afternoon sun and still throws the long
+     * infantry shadows that let you read a crowd on flat ground; it is simply
+     * no longer claiming to be brighter than a forest at midday. Measured after:
+     * sunY ratio 1.05 against the wood, clear of the 1.10 gate with margin
+     * rather than by a hair. */
+    elevation: 20, azimuth: 200,
     /* A dusty sun is a WEAK sun with a strong sky, and that ratio is the whole
      * look. 5.4 against the dune sea's 7.6, with the ambience carrying more of
      * the load, gives the flat shadowless light the wide shots have — but not
