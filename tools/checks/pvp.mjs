@@ -59,10 +59,15 @@ const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$
  * every bone stacked at the origin, and a check that skipped this would be
  * measuring a pile rather than a person.
  */
-async function twoPlayers({ rules = null, sides = null, gap = 1.1, level = 'arena' } = {}) {
+/* `level` is left UNSET so `bootWorld` supplies the roster-derived default.
+ * It used to read `level = 'arena'` — a level the cull deleted — which
+ * `World.loadLevel` silently substituted, so this suite has been measuring
+ * somewhere it did not name. roster.mjs was blind to it until a seventh form
+ * was added for destructuring defaults; this is the instance that found. */
+async function twoPlayers({ rules = null, sides = null, gap = 1.1, level = undefined } = {}) {
   const H = await import('./_coop.mjs');
   const P = await import('../../src/game/Player.js');
-  const { world } = await H.bootWorld({ level });
+  const { world } = await H.bootWorld(level ? { level } : {});
   if (rules) world.rules = rules;
   const S = sides || [P.SIDES[0], P.SIDES[0]];
   const a = world.player;

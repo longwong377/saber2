@@ -204,7 +204,30 @@ export const idleInput = () => ({
  * static graph resolved and burns the flag for the shader suites. See
  * tools/checks/materials.mjs.
  */
-export async function bootWorld({ level = 'arena', settings = {}, spawn = true } = {}) {
+/**
+ * THE DEFAULT LEVEL, AND WHY IT IS DERIVED RATHER THAN NAMED.
+ *
+ * `bootWorld` and `bootPair` both defaulted to `'arena'` — a level the roster
+ * cull deleted. `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does
+ * not know, deliberately and with a comment, so nothing threw and nothing looked
+ * wrong. What it cost: `coop`'s marksman check stood a sniper behind a rock on
+ * the Ember Shelf believing it was in an arena, measured line of sight on ZERO
+ * of 720 frames, never telegraphed, and reported itself as a wire defect —
+ * *"the joining player never saw the laser"* — for a laser the host never fired.
+ *
+ * The default now derives from the roster, so it cannot name a level that does
+ * not exist. This is behaviour-identical to what every caller was already
+ * getting; it just stops lying about it. A check that needs a PARTICULAR kind of
+ * ground — an arena, a corridor, open sky — must say so explicitly, because that
+ * is a statement about what it measures and not a default anyone should inherit.
+ */
+async function defaultLevel() {
+  const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+  return LEVEL_ORDER[0];
+}
+
+export async function bootWorld({ level = null, settings = {}, spawn = true } = {}) {
+  level = level || await defaultLevel();
   const { World } = await import('../../src/game/World.js');
   const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
   const { initPhysics } = await import('../../src/physics/Rapier.js');
@@ -230,7 +253,8 @@ export async function bootWorld({ level = 'arena', settings = {}, spawn = true }
  * through JSON because a DataConnection serialises, so neither side can be
  * handed the other's live objects.
  */
-export async function bootPair({ level = 'arena', settings = {} } = {}) {
+export async function bootPair({ level = null, settings = {} } = {}) {
+  level = level || await defaultLevel();
   const a = await bootWorld({ level, settings });
   const b = await bootWorld({ level, settings });
   const seen = { toClient: [], toHost: [] };

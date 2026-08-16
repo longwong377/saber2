@@ -128,6 +128,26 @@ const FORMS = [
    * it a class rather than a pair, and a class belongs in this table.
    */
   [/\b(?:load)?[Ll]evel\(\s*'([a-z][a-z0-9_]*)'/g, "level('…') / loadLevel('…')"],
+
+  /**
+   * THE SEVENTH FORM, and this file predicted its own gap.
+   *
+   * The note above says "the list of forms is itself a list kept by hand, and it
+   * will be short of one". It was. `tools/checks/_coop.mjs` wrote the dead level
+   * `arena` as a DESTRUCTURING DEFAULT — `bootWorld({ level = 'arena' })` — which
+   * has no colon and no call, so every pattern above walked straight past it.
+   *
+   * What the blindness cost is the argument for adding it: `bootWorld` and
+   * `bootPair` are how most of this harness stands a world up, so one unseen
+   * default put an unknown number of checks on a level they did not name, and
+   * `coop`'s marksman check spent its life measuring a sniper with no line of
+   * sight and blaming the network for it.
+   *
+   * This form is deliberately narrow — `level` or `levelKey` immediately
+   * followed by `=` and a quoted key — because a wide one would match every
+   * assignment in the tree and the failures would stop being read.
+   */
+  [/\blevel(?:Key)?\s*=\s*'([a-z][a-z0-9_]*)'/g, "level = '…' (default / assignment)"],
 ];
 
 export function run({ check, assert }) {
