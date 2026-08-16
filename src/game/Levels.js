@@ -2369,9 +2369,10 @@ export const LEVELS = {
       /* ── THE ROOF, at 38 m, and it casts. The reference's columns run up out
        * of frame and what is over them is dark: a ceiling you can read the
        * shape of is a ceiling you have measured the room against. 38 is chosen
-       * off the order — a 30 m column with a 2.4 m capital and a 3 m
-       * entablature over it leaves 2.6 m of shadow above, which is exactly the
-       * gap the reference shows and refuses to resolve. */
+       * off the order — the tallest column is 31 m to its neck and its capital
+       * and architrave carry it to about 33.5, so there is four and a half
+       * metres of unlit air above the arcade, which is exactly the gap the
+       * reference shows and refuses to resolve. */
       roof(world, { height: 38, half: 126, mat: M.duracreteDark, beamCount: 11, thickness: 2.2 });
 
       /* ── THE ORDER. Six ranks a side; see the depth rule above. `radius` and
@@ -2379,13 +2380,18 @@ export const LEVELS = {
        * own trick and is not perspective: a rank of thinner, more closely
        * spaced columns behind a rank of colossal ones reads as much further
        * away than it is, so the hall measures 244 m and feels like more. */
+      /* NO `bronze` COLUMN IN THIS TABLE, and its absence is deliberate: which
+       * columns are bronze is decided in `templeColonnade` from the rank and
+       * the position along it, so a field here saying the same thing would be a
+       * hand-written twin of a generated one (HANDOFF 2.3) — and it was, for
+       * one commit, with two of six ranks flagged and the flag never read. */
       const RANKS = [
-        { x: 11, r: 1.72, pitch: 12.0, h: 31.0, bronze: true },
-        { x: 27, r: 1.44, pitch: 12.0, h: 30.0, bronze: false },
-        { x: 44, r: 1.24, pitch: 11.0, h: 29.0, bronze: true },
-        { x: 62, r: 1.06, pitch: 10.0, h: 28.0, bronze: false },
-        { x: 81, r: 0.92, pitch: 9.0, h: 27.0, bronze: false },
-        { x: 101, r: 0.80, pitch: 8.0, h: 26.0, bronze: false },
+        { x: 11, r: 1.72, pitch: 12.0, h: 31.0 },
+        { x: 27, r: 1.44, pitch: 12.0, h: 30.0 },
+        { x: 44, r: 1.24, pitch: 11.0, h: 29.0 },
+        { x: 62, r: 1.06, pitch: 10.0, h: 28.0 },
+        { x: 81, r: 0.92, pitch: 9.0, h: 27.0 },
+        { x: 101, r: 0.80, pitch: 8.0, h: 26.0 },
       ];
       /* THE COUNCIL CHAMBER is a hole in the outer aisles — see below. The
        * colonnade is told about it rather than the room being told to clear
