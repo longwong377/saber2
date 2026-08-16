@@ -654,6 +654,75 @@ InstancedMeshes rather than one, which costs four extra draw calls on a level
 that already spends 224 hand-placed ones. It is not a shader problem and it is
 not a budget problem; it simply has not been built.
 
+### 6.1c CLOSED: the AT-TE lift, and the bodies that died like nothing
+
+**`force` 24/1 → 26/0 — the rule was right and its SUBJECT had expired.** "The
+top of the slider clears the heaviest body" is exactly right about a roster of
+animals; it is not right about one with a 3600 kg six-legged siege walker in it,
+and raising the cap past 3600 would price a 210 kg droideka at nothing on the
+way past. The exclusion is authored where the decision belongs
+(`grippable: false` on the AT-TE and the AAT, Vehicles.js) and the check asks
+the narrowed question, with three guards so the narrowing cannot become a dodge:
+every excluded body must be HEAVIER than the top of the slider, the exclusion
+set must be non-empty, and at least one `big` body must stay liftable. Heaviest
+liftable is the Rancor at 1700 kg against a 1760 kg cap — 60 kg of margin, which
+is real and tight, and the check now prints it.
+
+`Enemy.grippable` was the second field in that method's history to be WRITTEN
+AND NEVER READ: `!A.big && !A.boss`, a size wall the mass cap had overturned and
+nobody deleted, so the field claimed an Acklay could never be lifted while the
+game lifted one at Force Power 4. It carries the archetype's declaration now and
+`Player._grippableBody` reads it. **The refusal is out loud** — dropping the
+AT-TE from the pick would let the aim ray pass through thirteen metres of walker
+and grip whatever stood behind it, so `_forceSeen` keeps it pickable and
+`toggleGrip` names it and names the way in. Which way in is read off the RIG:
+the AAT is a repulsorlift with `legs: 0` and is told to have its armour broken
+instead of its legs cut.
+
+**Unarmed bodies now have a guard, and it is derived.** `guardFor` (Enemy.js) is
+the single authority — hp/90 for a duellist, MASS/300 for everything else — and
+`tools/balance.mjs` imports it rather than keeping a copy. Mass and not
+toughness, because toughness is already spent one layer down as the work-to-cut
+term in BladeContactSolver. Nothing man-sized turns anything; the lightest body
+that does is the 420 kg Nexu. Model time-to-kill: charger 0.64 → 3.83 s, beast
+0.64 → 3.19, brute 1.28 → 3.83, walker 2.56 → 4.47, AT-TE 2.56 → 5.75, and b1,
+trooper, sniper, heavy, jet, arc, officer and rocket all unmoved at 0.64.
+
+**Three things about that are worth carrying forward.**
+
+1. *The first version bought almost nothing and the harness said so.* It turned
+   the pass at the neck and the model went round it to a leg — five bodies from
+   420 to 2200 hp all landing on 1.28 s. The cause is one layer down again:
+   `takeCut` charges `maxHp * vital * 1.15` for a severed limb, a SHARE of
+   maximum health, and every non-humanoid bone falls through `VITAL[name] ??
+   0.4` because that table holds nineteen HUMANOID names. **A Rancor's toe was
+   worth 46% of it, exactly as much as its hip.** That fallback is §2.3's close
+   relative and it is still there for anything that reads `VITAL` directly.
+2. *The openings were all already built and all meant nothing.* `_guardOpen`
+   reads WINDED now — the state `_beastBrain` has entered for a session, whose
+   own comment already called it "the only safe time to go for a leg" and which
+   had nothing to be safe from while every pass landed. Machines keep the legs
+   (`legsLost >= 3` topples, and a topple opens the guard).
+3. *A guard that catches a pass must never pay for one.* `World._applyBladeEvent`
+   already returned early on `'turned'`; `Player.forceDisassemble` did not, so a
+   walker whose plate turned a rend still credited a limb, 40 score, the shake
+   and both sounds. A Force rend is also not a blade pass and is now marked
+   `force: true` so `_turnCut` declines it — the Force's contest is
+   `resistForce`, and billing one act to both is double-charging.
+
+**And the instrument had three defects of its own**, every one flattering the
+player. `offenceReport` threw `ReferenceError: BUILDERS is not defined` and had
+been dead since the builder table was deleted, because `main()` is its only
+caller and no check exercises it. The blade table called `engagementFor` with no
+guard share while every run in the same report passed one. And the travel phase
+compared a `phaseT` counting UP against `e.arm`, a countdown the incoming loop
+decrements every tick, so the player began cutting at HALF the arm time — three
+lines under a comment that states the rule correctly and says it was fixed after
+the identical symptom. The Colosseum's wave-1 opener cost 0.0 hp at all four
+tiers over 24 seeds because of it; it is 7.2 / 11.2 / 13.8 / 17.8 now, and still
+clears 24/24. `balance: a melee opener gets to attack — wave 1 is not free` pins
+the zero out.
+
 ### 6.2 Older design calls — the user's, not yours
 
 Both confirmed exactly as the judges described; both defended by written
