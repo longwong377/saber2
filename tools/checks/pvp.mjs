@@ -348,7 +348,8 @@ export async function run({ check, assert }) {
      */
     const at = player.search(/\n {2}damage\(amount, point, source, kind\b/);
     assert(at > 0, 'Player.damage(amount, point, source, kind…) is not in Player.js under that name');
-    assert(/canHarm\(source, this\)/.test(player.slice(at, at + 1200)),
+    const dmg = player.slice(at);
+    assert(/canHarm\(source, this\)/.test(dmg.slice(0, 1200)),
       'Player.damage no longer opens with the gate, so every source of harm decides for itself again');
     assert(/canHarm\(source, this\)/.test(net),
       'RemoteAvatar.damage does not consult the gate — the one machine that can see both fighters');
