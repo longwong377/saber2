@@ -369,13 +369,14 @@ export async function run({ check, assert }) {
      * attack (the follow-up wind-up is 0.72 of a first):
      *
      *                Knight   Grandmaster   chained, Grandmaster
-     *     djemSo     0.233 s     0.185 s          0.133 s
-     *     soresu     0.181       0.144            0.104
-     *     makashi    0.144       0.114            0.082
-     *     ataru      0.121       0.096            0.069
-     *     juyo       0.109       0.087            0.049
+     *     djemSo     0.216 s     0.172 s          0.124 s
+     *     soresu     0.168       0.134            0.097
+     *     makashi    0.135       0.108            0.077
+     *     ataru      0.112       0.089            0.064
+     *     juyo       0.078       0.062            0.045
      *
-     * Forty-nine milliseconds is three frames at 60 Hz.
+     * Worst of twelve draws of the wind-up jitter, which is the corner a player
+     * actually meets. Forty-five milliseconds is under three frames at 60 Hz.
      *
      * AND THE CUE FIRED AT THE START OF THE WINDOW. `audio.tone` at 2100→2600
      * Hz, on the frame `chamberOpen` went true, for a window shorter than a
@@ -485,7 +486,7 @@ export async function run({ check, assert }) {
      *
      * The residue, stated rather than hidden: a CHAINED attack — the second and
      * later beats of a flurry — runs at 0.72 of a first wind-up, and on the
-     * fast forms that is a whole wind-up of 152–174 ms at Knight and 121–139 ms
+     * fast forms that is a whole wind-up of 159–160 ms at Knight and 126–128 ms
      * at Grandmaster. The window is the whole of it and the whole of it is
      * still under what a human can hold, so those beats cannot be chambered by
      * anybody and no widening inside this file can change that: the window

@@ -988,13 +988,15 @@ export class DuelBrain {
          * as the wall-clock time `chamberOpen` is true:
          *
          *               Knight   Grandmaster   chained, Grandmaster
-         *     djemSo     0.233 s    0.185 s          0.133 s
-         *     soresu     0.181      0.144            0.104
-         *     makashi    0.144      0.114            0.082
-         *     ataru      0.121      0.096            0.069
-         *     juyo       0.109      0.087            0.049   (erratic jitter)
+         *     djemSo     0.216 s    0.172 s          0.124 s
+         *     soresu     0.168      0.134            0.097
+         *     makashi    0.135      0.108            0.077
+         *     ataru      0.112      0.089            0.064
+         *     juyo       0.078      0.062            0.045
          *
-         * Two things are wrong with that and only one of them is the number.
+         * Worst of twelve draws of the wind-up jitter, which is the corner a
+         * player actually meets. Two things are wrong with that and only one of
+         * them is the number.
          *
          * THE CUE FIRED AT THE START OF THE WINDOW. A 2100→2600 Hz tone that
          * begins at the instant the window opens is a cue you cannot react to:
