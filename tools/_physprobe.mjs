@@ -70,7 +70,27 @@ for (const key of keys) {
     const tag = rig ? `${key}/CHARACTER-RIG` : `${key}/${o.userData?.__maker || o.name || 'level'} ${dim}`;
     tally.set(tag, (tally.get(tag) || 0) + 1);
   });
-  console.log(`${key.padEnd(11)} ${String(lb).padStart(4)} intangible of ${String(lr).padStart(4)} reachable`);
+  /* …and what the level costs on the frame while the world is up. Draw calls
+   * and triangles are the two budgets this project actually enforces, and the
+   * only place they were reported together was `world-immersion`'s own line —
+   * which counts meshes and not triangles. */
+  let calls = 0, tris = 0;
+  world.scene.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    calls++;
+    const g = o.geometry;
+    tris += (g.index ? g.index.count : g.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1);
+  });
+  for (const q of world.props) {
+    q.mesh?.traverse?.((o) => {
+      if (!o.isMesh || !o.geometry?.attributes?.position) return;
+      calls++;
+      const g = o.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1);
+    });
+  }
+  console.log(`${key.padEnd(11)} ${String(lb).padStart(4)} intangible of ${String(lr).padStart(4)} reachable`
+    + `   ${String(calls).padStart(4)} calls  ${(tris / 1000).toFixed(0).padStart(6)}k tris`);
   world.unload();
 }
 console.log('\nby maker:');

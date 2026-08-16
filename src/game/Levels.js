@@ -2263,9 +2263,25 @@ export const LEVELS = {
    *  11, 27, 44, 62, 81 and 101 m, with the precinct wall at 122. From the
    *  middle of the nave the wall is behind six arcades; from the deepest aisle
    *  it is still behind one, and from anywhere you fight it is behind at least
-   *  three. Measured on the built level: the median sight line across the hall
-   *  is 34 m against a room 244 m wide, and the far wall is visible from 4% of
-   *  the walkable floor.
+   *  three.
+   *
+   *  AND IT IS MEASURED. `tools/_depthrule.mjs` walks the built level's floor
+   *  on a 6 m grid and casts 32 bearings from every sample against the
+   *  colliders the dressing pass actually laid down — not against the table it
+   *  laid them from, which is the mistake HANDOFF 2.4 is about. Two numbers,
+   *  with the Colosseum as the open-air control:
+   *
+   *                     sight line p50 / p90    bearings that meet NOTHING
+   *      temple             29 m / 76 m                   17.8%
+   *      foundry            33 m / 102 m                  43.1%
+   *      colosseum          55 m / 184 m                  83.1%
+   *
+   *  In a room 244 m wide the eye stops at 29 m half the time, and it finds its
+   *  way out of the room on one bearing in six. That is what the reference
+   *  frames look like from the inside. The foundry is the same rule applied to
+   *  a level that already existed — three ranks rather than six, see `works`
+   *  above — and its 43% is the honest measure of how much further it has left
+   *  to go.
    *
    *  WHAT THE DEPTH RULE COSTS. Two hundred and twenty-eight columns, and the
    *  only reason that is payable is that they are INSTANCED: five draw calls
