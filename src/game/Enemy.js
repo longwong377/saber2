@@ -1206,13 +1206,17 @@ export const ENEMY_POWERS = {
    * per Force archetype: 22 casts, 20 push, 2 pull, and lightning fired ZERO
    * times on any body that has it, including the Sith whose signature it is.
    *
-   * 2.8 is inside where the shove lands and outside where a blade fights, so
-   * the beam is reachable exactly in the gap the push opens and not while the
-   * two of them are nose to nose. The `ranged` situation is the other half of
-   * the same fix — see `_forceBrain`.
+   * 2.4 is inside where the shove lands and outside where a blade fights, and
+   * the gap is smaller than it sounds because THE CASTER WALKS IN BEHIND ITS
+   * OWN SHOVE: measured peak separation over the 1.2 s after a push, with the
+   * duel brain closing at the same time, is 2.89 m on a Temple Guardian and
+   * 3.49 m on a Knight — against a resting stand-off of 1.6 m. So the beam is
+   * reachable exactly in the gap the push opens and not while the two of them
+   * are nose to nose. The `ranged` situation is the other half of the same fix
+   * — see `_forceBrain`.
    */
   lightning: {
-    cost: POWER_COST.lightning, cd: 8.5, band: [2.8, 18], want: 'ranged',
+    cost: POWER_COST.lightning, cd: 8.5, band: [2.4, 18], want: 'ranged',
     hold: 1.6, drain: 6, dps: 22,
     label: 'LIGHTNING', color: '#c8e8ff', sound: 'lightning',
   },
@@ -3623,12 +3627,17 @@ export class Enemy {
        * thing that is supposed to separate fighting him from fighting a Jedi.
        * A five-power roster that plays as one power.
        *
-       * `preferred[1]` is the far edge of the band this body swings from, so
-       * "you are outside my reach" is now literally what this says, and the
-       * shove clears it by half a metre. `lightning`'s own band floor comes
-       * down to meet it — see ENEMY_POWERS.
+       * PAST THE MIDDLE OF THE BAND THIS BODY FIGHTS IN, and that is derived
+       * rather than picked: the shove has to be able to reach it and the
+       * resting stand-off must not. Measured, both halves — a duel sits at
+       * ~1.6 m, and the peak separation in the 1.2 s after a push is 2.89 to
+       * 3.49 m, because the caster is walking in behind its own shove while the
+       * player is still travelling. `preferred` mid-points are 2.35 to 2.55, so
+       * the gap the shove opens clears it and the fight standing still does
+       * not. `lightning`'s own band floor comes down to meet it — see
+       * ENEMY_POWERS.
        */
-      ranged: dist > this.A.preferred[1],
+      ranged: dist > (this.A.preferred[0] + this.A.preferred[1]) * 0.5,
       /* Half health, not a third. `unleash` is the only one in the roster and
        * it fired zero times in the same measurement: a duel that reaches 34% of
        * a Master's 460 hp is a duel that is nearly over, so the one power the
