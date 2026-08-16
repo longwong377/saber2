@@ -79,6 +79,12 @@ import { setDropshipModel } from './Arrivals.js';
  * `Object.assign(ARCHETYPES, …)` inside ARCHETYPES' own temporal dead zone. It
  * was tried; it is a ReferenceError on boot. See `setDropshipModel`. */
 setDropshipModel(buildGunship);
+/* KAMINO'S DECKS ARE THE HEIGHTFIELD'S, not a copy of them. See the table's
+ * own note in Terrain.js: the level's dressing pass walks every rim to place
+ * the rails, the approach lights and the plant, and a second hand-typed copy of
+ * seven positions is exactly the defect HANDOFF §2.3 is about. Terrain.js has
+ * no imports from this file, so the edge is one-way and safe. */
+import { KAMINO_DECKS, KAMINO_SPANS, KAMINO_SPAN_HALF } from '../world/Terrain.js';
 
 let rng = makeRng(20250805);
 
@@ -3285,53 +3291,127 @@ export const LEVELS = {
       addStorm(world, { seed: 8801, period: 7, jitter: 0.75, intensity: 30,
         color: 0xd6e4ff, range: [600, 3200] });
 
-      /* ── THE RAIL round the deck, and it is the level's most important prop
-       * because it is the only thing between the fight and a nine-metre drop
-       * into the sea. Broken in four places, because a rail that is intact all
-       * the way round is a fence and the point of this floor is that you can
-       * be pushed off it. */
-      const RA = 78, RB = 64;
-      for (let i = 0; i < 28; i++) {
-        const a = (i / 28) * TAU;
-        // the deck is a superellipse; walk its rim rather than a circle
-        const c = Math.cos(a), s = Math.sin(a);
-        const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
-        const x = c * k * RA * 0.955, z = s * k * RB * 0.955;
-        if ((i + 2) % 7 < 2) continue;                 // where it has gone
-        /* `destructible` ON EVERY TOP-LEVEL MAKER ON THIS DECK, and it is the
-         * whole of why the rail, the lamps and the plant could be stood on and
-         * not touched. `kitClose` is where destructibility is wired in, and it
-         * only registers a piece when the maker NAMES a profile — `addArch`
-         * does, and `addRailing`, `addLamp`, `addStanchion`, `addMachine`,
-         * `addTank`, `addPlinth`, `addAntenna` and `addCrateStack` do not. So
-         * everything on this platform except its four arches was visual.
-         *
-         * Set here rather than defaulted in the makers, and the reason is the
-         * draw-call budget: a maker COMPOSED into somebody else's kit registers
-         * by lifting its geometry back out of the shared bins as its own part,
-         * which costs a call per material — so a blanket default would put a
-         * separate emit on every stanchion inside every island in the game. A
-         * maker that owns its whole kit, which is every call below, registers
-         * for a bounds computation and nothing else. */
-        addRailing(world, at(x, z), {
-          length: 15, height: 1.15, yaw: -Math.atan2(z * RA / RB, x) + Math.PI / 2,
-          seed: 8900 + i, mat: M.darkSteel, destructible: 'durasteel',
-        });
+      /* ── THE RAIL ROUND EVERY DECK, and it is the level's most important
+       * prop because it is the only thing between the fight and a drop into
+       * the sea — which on this colony is now anything from 3.4 m to 13.0 m
+       * depending on which deck you are standing on. Broken in places, because
+       * a rail that is intact all the way round is a fence and the point of
+       * this floor is that you can be pushed off it.
+       *
+       * THE RIM IS WALKED FROM `KAMINO_DECKS`, WHICH IS THE HEIGHTFIELD'S OWN
+       * TABLE. It used to be a superellipse written out here in three separate
+       * places with the terrain's copy of the same six constants a hundred
+       * lines away in another file — the signature defect of this project
+       * (HANDOFF §2.3), and the one thing a colony of seven decks could not
+       * survive: seven decks is forty-two numbers, and the first edit to any of
+       * them would have left a ring of rail standing over open water. The
+       * import at the top of this file is the fix.
+       *
+       * `destructible` ON EVERY TOP-LEVEL MAKER ON THIS DECK, and it is the
+       * whole of why the rail, the lamps and the plant could be stood on and
+       * not touched. `kitClose` only registers a piece when the maker NAMES a
+       * profile — `addArch` does, and `addRailing`, `addLamp`, `addStanchion`,
+       * `addMachine`, `addTank`, `addPlinth`, `addAntenna` and `addCrateStack`
+       * do not. Set here rather than defaulted in the makers because a maker
+       * COMPOSED into somebody else's kit registers by lifting its geometry
+       * back out of the shared bins, which costs a call per material — so a
+       * blanket default would put a separate emit on every stanchion inside
+       * every island in the game. */
+      /* ── THE APPROACH LIGHTS, and they are INSTANCED, which is a decision the
+       * colony forced. On one deck fourteen `addLamp` calls cost 42 draws and
+       * nobody noticed; on seven decks the same rule wanted forty lamps and
+       * 120 draws, and `world-immersion` holds an outdoor level to five objects
+       * per draw call — measured, that alone took Kamino from 8.3 to 4.6 and
+       * failed it. So the ring is one geometry per material: two draw calls for
+       * every approach light on the level, whatever the colony grows to.
+       *
+       * What is lost is the point light on every second lamp; what replaces it
+       * is one real light per DECK, which is the honest reading anyway — a lamp
+       * every eight metres round a rim is one wash of light and not eight. */
+      const lampSteel = [], lampGlow = [], lampBoxes = [];
+      const _lm = new THREE.Matrix4(), _lq = new THREE.Quaternion(), _lp2 = new THREE.Vector3();
+      const _ls = new THREE.Vector3(1, 1, 1);
+      for (let d = 0; d < KAMINO_DECKS.length; d++) {
+        const D = KAMINO_DECKS[d];
+        // one 22 m bay per 22 m of rim, so a small deck gets fewer bays and not
+        // shorter ones — a rail is a fixed thing and does not scale with its deck
+        const bays = Math.max(6, Math.round(TAU * (D.r - 1.6) / 22));
+        for (let i = 0; i < bays; i++) {
+          const a = (i / bays) * TAU + d * 0.37;
+          if ((i + d) % 7 < 1) continue;                 // where it has gone
+          const rr = D.r - 1.7;
+          const x = D.x + Math.cos(a) * rr, z = D.z + Math.sin(a) * rr;
+          addRailing(world, at(x, z), {
+            length: TAU * rr / bays * 0.92, height: 1.15, yaw: -a,
+            seed: 8900 + d * 40 + i, mat: M.darkSteel, destructible: 'durasteel',
+          });
+        }
+        const lamps = Math.max(6, Math.round(TAU * D.r / 20));
+        for (let i = 0; i < lamps; i++) {
+          const a = (i / lamps) * TAU + 0.11 + d * 0.5;
+          const rr = D.r - 3.6;
+          const x = D.x + Math.cos(a) * rr, z = D.z + Math.sin(a) * rr;
+          _lp2.set(x, T.height(x, z), z);
+          _lq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a);
+          lampSteel.push(_lm.clone().compose(_lp2, _lq, _ls));
+          lampGlow.push(_lm.clone().compose(_lp2, _lq, _ls));
+          lampBoxes.push(_lp2.clone());
+        }
+        // one wash of light per deck rather than one per lamp
+        const L = new THREE.PointLight(0xffa838, 26, 46, 2);
+        L.position.set(D.x + D.r * 0.4, D.y + 2.2, D.z - D.r * 0.4);
+        world.scene.add(L); world.levelLights.push(L);
+      }
+      {
+        /* The pylon of `kamino outside.webp`: a dark stalk with a tall lit slot
+         * in it, on a small disc base. Two materials, so two calls. */
+        const steel = mergeGeos([
+          slabGeo(0.9, 0.16, 0.9, { tile: 1.2, seg: 2 }),
+          slabGeo(0.42, 2.5, 0.42, { tile: 1.2, seg: 3 }).translate(0, 1.33, 0),
+        ]);
+        const glow = mergeGeos([
+          slabGeo(0.16, 1.7, 0.10, { tile: 0.8, seg: 2 }).translate(0, 1.42, 0.22),
+          slabGeo(0.16, 1.7, 0.10, { tile: 0.8, seg: 2 }).translate(0, 1.42, -0.22),
+        ]);
+        addInstanced(world, steel, M.darkSteel, lampSteel, V(0, 0, 0), { name: 'kaminoPylon' });
+        addInstanced(world, glow, M.glowAmber, lampGlow, V(0, 0, 0),
+          { name: 'kaminoPylonGlow', castShadow: false });
+        // …and they are SOLID. A pylon you walk through is exactly player note
+        // #8, and an instanced mesh gets no collider from the kit path.
+        for (const p of lampBoxes) {
+          world.physics.addStaticBox(new THREE.Vector3(p.x, p.y + 1.3, p.z),
+            new THREE.Vector3(0.24, 1.3, 0.24), new THREE.Quaternion(), { friction: 0.85 });
+        }
       }
 
-      /* ── THE APPROACH LIGHTS. The one warm colour on the level, and the only
-       * saturated thing in the frame that is not lightning — rule 5's accent,
-       * on a level whose hue family is one blue-grey from the sea to the
-       * cloud base. Set into the deck at the rim so they light the rail and
-       * the standing water rather than the air. */
-      for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * TAU + 0.11;
-        const c = Math.cos(a), s = Math.sin(a);
-        const k = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
-        addLamp(world, at(c * k * RA * 0.90, s * k * RB * 0.90), {
-          height: 1.5, seed: 8940 + i, light: i % 2 === 0,
-          color: 0xffa838, intensity: 16, distance: 26, destructible: 'durasteel',
-        });
+      /* ── THE CAUSEWAY RAILS. A ten-metre road over open water with a fifteen
+       * metre drop off either side of it is the one place on this level where
+       * a rail is not optional, so these are NOT broken — the gaps are on the
+       * decks, where falling off is a mistake you can see coming. */
+      for (const S of KAMINO_SPANS) {
+        const A = KAMINO_DECKS[S.a], B = KAMINO_DECKS[S.b];
+        const dx = B.x - A.x, dz = B.z - A.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const ux = dx / len, uz = dz / len;
+        const s0 = A.r - 6, s1 = len - B.r + 6;
+        // ONE rail the length of the span, per side. Chopping it into bays is
+        // the same barrier for six times the draw calls — see the note over the
+        // approach lights, which is the same arithmetic.
+        const s = (s0 + s1) * 0.5;
+        for (const side of [-1, 1]) {
+          const x = A.x + ux * s - uz * side * (KAMINO_SPAN_HALF - 0.5);
+          const z = A.z + uz * s + ux * side * (KAMINO_SPAN_HALF - 0.5);
+          addRailing(world, at(x, z), {
+            length: (s1 - s0) * 0.96, height: 1.15,
+            yaw: -Math.atan2(uz, ux) + Math.PI / 2,
+            /* PITCHED WITH THE CAUSEWAY. The deck it starts on and the deck it
+             * ends on differ by up to 5 m, and a level rail on a ramped road is
+             * a rail buried at one end and floating at the other. */
+            pitch: Math.atan2(B.y - A.y, Math.max(1, s1 - s0)),
+            seed: 9300 + S.a * 30 + S.b * 7 + side,
+            mat: M.darkSteel, destructible: 'durasteel',
+          });
+        }
       }
 
       /* ── THE CITY, beyond the rail. Kamino's buildings stand on legs out of
@@ -3361,16 +3441,16 @@ export const LEVELS = {
           });
       }
 
-      /* ── THE PLATFORM'S OWN PLANT, on the deck: the machinery a landing
-       * platform has, kept to the rim so the middle stays clear to fight in.
+      /* ── THE PLATFORM'S OWN PLANT: the machinery a landing deck has, one
+       * bank per deck, kept to the rim so the middle stays clear to fight in.
        * Everything here is one island so a bank of gear is one object. */
-      for (let k = 0; k < 6; k++) {
+      for (let k = 0; k < KAMINO_DECKS.length; k++) {
+        const D = KAMINO_DECKS[k];
         const a = 0.62 + k * 1.05;
-        const c = Math.cos(a), s = Math.sin(a);
-        const kk = 1 / Math.pow(Math.pow(Math.abs(c), 6) + Math.pow(Math.abs(s), 6), 1 / 6);
-        const x = c * kk * RA * 0.72, z = s * kk * RB * 0.72;
+        const rr = D.r * 0.62;
+        const x = D.x + Math.cos(a) * rr, z = D.z + Math.sin(a) * rr;
         if (!siteOk(world, x, z, { clearance: 12, spawnClear: 14 })) continue;
-        island(world, at(x, z), { seed: 9100 + k, yaw: -Math.atan2(z, x), span: 15, maker: 'plant',
+        island(world, at(x, z), { seed: 9100 + k, yaw: -a, span: 15, maker: 'plant',
           destructible: 'durasteel' },
           (kit, local) => {
             addMachine(world, local(-3.2, 0), { kit, width: 4.2, height: 2.8, depth: 2.4,
@@ -3385,12 +3465,20 @@ export const LEVELS = {
           });
       }
 
-      /* ── THE MAST at the centre of the pad, off-axis so the middle stays
-       * clear: a platform needs a thing you can see it from, and this is the
-       * only vertical inside the rail. */
-      addAntenna(world, at(-16, 19), { height: 26, seed: 9200, destructible: 'durasteel' });
-      addPlinth(world, at(-16, 19), { width: 5.0, height: 0.7, seed: 9201, mat: M.darkSteel,
-        destructible: 'durasteel' });
+      /* ── THE SPIRES. In every wide shot of Kamino the thing that says
+       * "colony" rather than "platform" is that two or three of the decks carry
+       * a tall tapered tower and the rest do not — a skyline WITH A RHYTHM.
+       * They stand on the three highest decks, which is also where a tower
+       * would go, and at 26-34 m they are the only thing on this level you can
+       * see over the rain from another deck. */
+      for (const k of [2, 4, 1]) {
+        const D = KAMINO_DECKS[k];
+        const x = D.x + D.r * 0.30, z = D.z - D.r * 0.30;
+        addAntenna(world, at(x, z), { height: 26 + (k % 3) * 4, seed: 9200 + k,
+          destructible: 'durasteel' });
+        addPlinth(world, at(x, z), { width: 5.0, height: 0.7, seed: 9210 + k, mat: M.darkSteel,
+          drift: false, destructible: 'durasteel' });
+      }
 
       /* ── The loose stuff a working pad has. Sparse and near the rim: a
        * landing deck is kept clear, which is what makes it a landing deck. */
@@ -3418,24 +3506,25 @@ export const LEVELS = {
        * level it is salt and shed plate rather than pebbles. Turned UP from
        * 2.4 to 3.1 to carry what the two stone terms were carrying.
        *
-       * The PLATFORM ITSELF — one slab against the series of tall connected
-       * decks it should be — is a redesign rather than a fix, and is waiting on
-       * reference images at the player's instruction. Only the rocks are gone.
+       * THE PLATFORM ITSELF IS NOW SEVEN OF THEM — see `KAMINO_DECKS` in
+       * Terrain.js, which the rims above are walked from. That was the
+       * redesign this note said was waiting on reference images; the images are
+       * in and it is done.
        *
        * It is also the only INSTANCED thing on the level, which is why it runs
        * heavy rather than thin.
        *
        * `world-immersion` holds every outdoor level to five objects per draw
-       * call, and it is right to: the rail, the lamps and the city are 224
-       * hand-placed calls between them, so if the floor is not instanced this
-       * level packs 4.0 and the check catches it. At cobble 2.4 it is 7.6,
-       * and what that buys on the frame is a deck that reads as SALTED rather
-       * than as poured — which is also the correct drawing for a platform that
-       * has spent forty years in an ocean. */
-      strewGround(world, { seed: 9260, radius: 76, inner: 3, spread: 0.30, mat: M.stoneDark,
+       * call, and it is right to: the rails, the lamps and the city are the
+       * bulk of this level's hand-placed calls, so if the floor is not
+       * instanced this level packs 4.0 and the check catches it. What the
+       * cobble buys on the frame is a deck that reads as SALTED rather than as
+       * poured — which is also the correct drawing for a platform that has
+       * spent forty years in an ocean. */
+      strewGround(world, { seed: 9260, radius: 108, inner: 3, spread: 0.30, mat: M.stoneDark,
         landmarks: 0, boulders: 0, cobble: 3.1 });
 
-      world.notify('KAMINO', 'the rail is not everywhere');
+      world.notify('KAMINO', 'the causeways are the only way across');
     },
   },
 

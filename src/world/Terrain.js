@@ -1344,6 +1344,7 @@ export const TERRAIN_PRESETS = {
        * does 56 HP a second. */
       const bank = smoothstep(7, 31, river);
       const cut = -(1 - bank) * 5.2;
+      const d0 = Math.hypot(x, z);
 
       /* ── THE ROCK ──────────────────────────────────────────────────────
        *
@@ -1351,10 +1352,19 @@ export const TERRAIN_PRESETS = {
        * the river. `ridged2` again for the ridges, because what the reference
        * shows is SHARP: knife-edge crests with the flanks falling straight
        * into the channels, not the rounded swell an fbm gives. */
-      const ridge = Math.max(0, ridged2(x * 0.0051 + 8.8, z * 0.0051 - 2.2, 4)) * 24 * bank;
+      /* BOTH ARE HELD OFF THE MIDDLE, and the number came out of a measurement
+       * rather than a taste. `world-immersion` scores an ash level on how much
+       * of the walkable r = 90 m disc is loose material at least ankle deep,
+       * and ash does not lie on anything past about 12° — so relief inside the
+       * fight is relief the ground cover cannot survive. Written without the
+       * bowl the level measured 60% against a bar of 70%; the crests are the
+       * skyline and the skyline is not where you stand. */
+      const bowl = smoothstep(26, 96, d0);
+      const ridge = Math.max(0, ridged2(x * 0.0051 + 8.8, z * 0.0051 - 2.2, 4)) * 24 * bank
+        * (0.30 + 0.70 * bowl);
       // and the spatter cones and stacks on top of them
       const spire = Math.pow(Math.max(0, ridged2(x * 0.0148 + 7.3, z * 0.0148 - 3.1, 3) - 0.30), 1.6)
-        * 34 * bank;
+        * 34 * bank * bowl;
 
       /* The regional fall: the whole field drains toward +x, which is what
        * puts the falls on one side of the map and the pools on the other. */
