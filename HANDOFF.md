@@ -127,7 +127,31 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
-### 2.7 Bash has a 10-minute cap
+### 2.7 A LATE full run can hang on a suite that passes alone
+
+Observed twice at the end of a long session, on two different suites:
+`verify.mjs` stopped making progress on `levels-quality.mjs` once and on
+`coop.mjs` once, sitting there for 20+ minutes with the worker alive and
+burning no CPU. **Both suites pass on their own** — `coop` 29/29,
+`levels-quality` 12/12 in 74 s — and three earlier full runs the same session
+completed normally (1066, 1088, 1097 passing).
+
+So the last *completed* number is trustworthy and the hang is in the harness,
+not the game. What I did **not** establish, and the next person should:
+
+- whether it is pre-existing or something this session introduced;
+- whether it is the container (many hours of world boots, Chromium instances
+  left over from `fpview.mjs` and `shot.mjs` — `pkill -f chromium` is worth
+  doing before a full run);
+- or whether it is the reference-counted PeerJS broker in
+  `tools/checks/_coop.mjs`, which is the one piece of genuinely shared,
+  concurrent, cross-suite state in the tree.
+
+The cheap discriminator is `SABER_CHECK_ORDER=reverse` on a fresh container: if
+it hangs on a *different* suite, it is ordering/state; if it hangs on the same
+one, it is that suite.
+
+### 2.8 Bash has a 10-minute cap
 
 A full `verify` run takes ~12 min. Use `run_in_background: true`. Foreground
 `sleep` is blocked; use an `until` loop in a background command to wait.
