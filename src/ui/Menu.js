@@ -331,6 +331,22 @@ export const DEFAULT_SETTINGS = {
   teamDamage: TEAM_DAMAGE_DEFAULT,
   /** The formation your army starts every area in. See FORMATIONS. */
   commandFormation: DEFAULT_FORMATION,
+  /**
+   * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
+   *
+   * `commandConfig` reads it and nothing else may, exactly as for the two
+   * above. Off by default because a meeting needs two people: it turns Command
+   * from a campaign against a composed horde into one battle against another
+   * player's roster, on two anchors 120 m apart, decided by whose army is left
+   * standing (World.beginVersus).
+   *
+   * Declared here even though no control writes it yet, and that is the whole
+   * point of the guard this key was caught by: a setting that is READ by
+   * shipped code and never DECLARED is invisible to both of the dead-control
+   * checks, because they iterate the keys of this object. Being in it is what
+   * makes "this has no control" a question anybody can ask.
+   */
+  commandVersus: false,
   quality: 'high',
   resolutionScale: 1,
   /**
@@ -551,6 +567,7 @@ export const SETTING_READERS = {
    * free-form number and exactly one function decides what it means. */
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
+  commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
   /* One reader for arrivals, everywhere: the wave path, the sandbox path and
@@ -3880,6 +3897,9 @@ export class Menu {
       v => (v <= 0 ? 'none' : `${Math.round(v * 100)}%`));
     this._slider('opt-maxbodies', 'maxBodies', v => `${Math.round(v)} pieces`);
     this._check('opt-instant-spawn', 'instantSpawn');
+    /* The meeting. Read by `commandConfig` at world build, like the two above,
+     * so the value written here is the one the next deployment gets. */
+    this._check('opt-command-versus', 'commandVersus');
     /* The standing order, as six cards — the formation records ARE the card
      * list (id, name, blurb), so the row cannot fall out of step with the
      * orders on the keyboard or with what the director will actually do. */
