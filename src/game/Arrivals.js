@@ -56,6 +56,7 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear } from './Spawn.js';
+import { buildGunship } from './Vehicles.js';
 
 const rng = makeRng(20931);
 
@@ -247,6 +248,60 @@ class Arrival {
 
   _makeDropship() {
     const g = this.group;
+    /**
+     * IT IS A GUNSHIP NOW, AND IT WAS A BOX BEFORE.
+     *
+     * What stood here was seven primitives — a box, a four-sided cone, two
+     * boxes for wings, two cylinders and two glows — sized honestly against the
+     * range it is seen at (see the note above `G.hull`) and reading, at fifty
+     * metres, as a dart. The reference plates the Command mode was built from
+     * have a LAAT/i in almost every frame of this battle, and the vehicles lane
+     * modelled one: swept-forward wings with wingtip pods and rocket racks,
+     * dorsal cone nacelles, chin ball turrets, gunner bubbles on outriggers and
+     * an open troop bay with clones standing in it.
+     *
+     * NOTHING ABOUT THE FLIGHT PATH MOVES, and that is why this is four lines
+     * rather than a retune. `buildGunship` is written to the box's own contract:
+     * the nose is at −Z (the direction `_updateDropship` flies and the direction
+     * `G.nose` pointed), and it measures 10.9 × 3.7 × 7.4 m against the box's
+     * 10.0 × 1.55 × 7.6 — so every range, lead time and flare this director was
+     * tuned at is unchanged.
+     *
+     * The two animated meshes are PARENTED rather than re-placed: `_fireL`,
+     * `_fireR` and `_lamp` are written every frame by `_updateDropship`, and the
+     * model publishes anchors for exactly them (`userData.engines`,
+     * `userData.lamp`) so the flare and the strobe end up on the real nacelles
+     * and under the real nose instead of at coordinates that used to be right.
+     *
+     * The primitive geometries stay in `G` and are still used by the gate; the
+     * fallback below is not decoration either — a level must never fail to
+     * produce its wave, and a model that throws must not take the arrival with
+     * it.
+     */
+    let ship = null;
+    try { ship = buildGunship(); } catch (e) { ship = null; }
+    if (ship) {
+      g.add(ship);
+      this._model = ship;
+      const anchors = ship.userData?.engines || [];
+      const lampAt = ship.userData?.lamp || null;
+      for (let i = 0; i < 2; i++) {
+        const fire = new THREE.Mesh(G.glow, M.engine);
+        fire.frustumCulled = false;
+        fire.scale.set(0.8, 0.8, 1.5);
+        const host = anchors[i];
+        if (host) host.add(fire);
+        else { fire.position.set((i ? 1 : -1) * 4.5, -0.22, 2.6); g.add(fire); }
+        this[i ? '_fireR' : '_fireL'] = fire;
+      }
+      const lamp = new THREE.Mesh(G.glow, M.lamp);
+      lamp.frustumCulled = false;
+      lamp.scale.setScalar(0.45);
+      if (lampAt) lampAt.add(lamp); else { lamp.position.set(0, -0.7, -3.8); g.add(lamp); }
+      this._lamp = lamp;
+      this._makeWash(g);
+      return this._flightPath();
+    }
     const hull = mesh(G.hull, M.hull, g);
     hull.castShadow = true;
     const nose = mesh(G.nose, M.hull, g); nose.position.z = -4.9;
@@ -268,14 +323,25 @@ class Arrival {
     lamp.scale.setScalar(0.45);
     this._lamp = lamp;
 
-    // the light and the dust it throws at the ground while it hovers
+    this._makeWash(g);
+    this._flightPath();
+  }
+
+  /** The light and the dust the ship throws at the ground while it hovers. */
+  _makeWash(g) {
     this._wash = new THREE.Mesh(G.wash, M.wash.clone());
     this._wash.frustumCulled = false;
     this._wash.renderOrder = 6;
     g.add(this._wash);
+  }
 
-    // the flight path: in from beyond the ring, high and fast, flaring to a
-    // hover over the drop point
+  /**
+   * In from beyond the ring, high and fast, flaring to a hover over the drop
+   * point. Lifted out of `_makeDropship` when the hull became a choice between
+   * a model and the primitives — the PATH is the same for both, and a second
+   * copy of it in the model branch is the shape §2.4 of the handover is about.
+   */
+  _flightPath() {
     const away = _v1.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)).multiplyScalar(-1);
     this.hover = this.at.clone().setY(this.at.y + 5.6);
     this.start = this.at.clone().addScaledVector(away, 88).setY(this.at.y + 38);
