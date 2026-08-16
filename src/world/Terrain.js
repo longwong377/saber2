@@ -1328,7 +1328,22 @@ export const TERRAIN_PRESETS = {
     loose: { depth: 0.22, refill: 58, tilt: 0.90, tint: 0.42, soot: 1.0 },
     mantle: [0.08, 0.66],
     packedColor: 0x1b1a1c,
-    ripple: 0.66,
+    /* `ripAspect: 1.0` BECAUSE THE BASE MAP IS ROCK, and this preset was the
+     * only one in the table taking the default instead of saying so.
+     *
+     * `uRipAspect` stretches the frame the BASE MAP is sampled through, and it
+     * exists to pull the sand map's two ripple trains onto one bearing. The
+     * default is 0.42 — the sand stretch — and every other preset whose base
+     * map is not wind-worked writes 1.0 here with a note saying why ("a deck is
+     * poured, not blown"; "still water, not wind"; "rolled plate, not blown
+     * sand"). Mustafar wrote nothing, so a 0.42 frame was combing a basalt map
+     * that has no train in it at all: measured coherence 0.10, against sand's
+     * 0.79 and snow's 0.65. That is the same defect the meadow was fixed for —
+     * crumb combed into corduroy — on a lava shelf, and it arrived by the same
+     * route the `maps: 'rock'` fallthrough did, a missing declaration answered
+     * with a plausible default. tools/checks/terrain.mjs now derives combed
+     * from the map's own measured coherence, so the next one is loud. */
+    ripple: 0.66, ripAspect: 1.0,
     detail: [0.95, 30],
     height(x, z) {
       /* ── THE RIVER SYSTEM ──────────────────────────────────────────────
@@ -3437,6 +3452,7 @@ export class Terrain {
     // in it: a snowfield's outcrop and a canyon wall are the same stone, and
     // the preset's two rock colours are what make them different rocks.
     switch (this.preset.maps) {
+      case 'sand': return [sandMaps(1), rockMaps(2)];
       case 'deck': return [duracreteMaps(2), metalMaps(2)];
       case 'soil': return [soilMaps(1), rockMaps(2)];
       case 'snow': return [snowMaps(1), rockMaps(2)];
@@ -3455,7 +3471,16 @@ export class Terrain {
        * the preset's two rock colours are still what separate them.
        */
       case 'rock': return [rockMaps(1), rockMaps(2)];
-      default: return [sandMaps(1), rockMaps(2)];
+      /* AND THERE IS NO `default: sand` ANY MORE.
+       *
+       * That fallthrough is the whole reason the paragraph above exists: an
+       * unknown key produced a perfectly valid material, so nothing threw,
+       * nothing logged, and the level simply looked like the wrong planet for
+       * as long as it took a person to notice. `sand` is a case like any other
+       * now, and a key nobody wrote a case for is loud at the moment the
+       * ground is built rather than silent forever. */
+      default: throw new Error(`terrain: preset ground map '${this.preset.maps}' has no case in `
+        + '_mapSet — add one rather than letting it render on sand');
     }
   }
 
@@ -3470,17 +3495,30 @@ export class Terrain {
    * level's authored colour" an identity rather than a near miss.
    */
   _mapMeans() {
-    const m3 = (n) => { const v = MEAN_ALBEDO[n]; return (v[0] + v[1] + v[2]) / 3; };
-    /* `rock` is here for the same reason it is in `_mapSet`, and it is the
-     * generated twin of that switch: a set that binds two maps and a mean that
-     * names two materials have to agree, or the far field collapses onto a
-     * colour the near field never had. */
-    const pair = {
-      deck: ['duracrete', 'metal'], soil: ['soil', 'rock'],
-      snow: ['snow', 'rock'], rock: ['rock', 'rock'],
+    /* ASKED OF THE MAPS `_mapSet` ACTUALLY BOUND, which is the whole point.
+     *
+     * This used to be a second table — `{ deck: ['duracrete','metal'], soil:
+     * […] }` — sitting beside that switch, and its own comment called itself
+     * "the generated twin of that switch". It was: `maps: 'rock'` reached this
+     * table and not the switch, so for one release the far field of Mustafar
+     * collapsed onto basalt's mean while the near field rendered on sand.
+     * A set that binds two maps and a mean that names two materials have to
+     * agree, and the only way to guarantee that is to stop asking twice.
+     *
+     * Every texture carries the name of the bake it came from — see
+     * `toTexture` in Textures.js, where it was put precisely so a consumer
+     * could identify its own subject — so the mean is a lookup on what is
+     * bound, and a map with no calibrated mean is an error rather than a
+     * plausible number. */
+    const mean = (set) => {
+      const n = set.map.userData.saberBake;
+      const v = MEAN_ALBEDO[n];
+      if (!v) throw new Error(`terrain: the '${n}' map has no MEAN_ALBEDO — the far field `
+        + 'would collapse onto a colour the near field never had');
+      return (v[0] + v[1] + v[2]) / 3;
     };
-    const [b, r] = pair[this.preset.maps] || ['sand', 'rock'];
-    return new THREE.Vector2(m3(b), m3(r));
+    const [base, upper] = this._mapSet();
+    return new THREE.Vector2(mean(base), mean(upper));
   }
 
   _buildMesh(scene) {
