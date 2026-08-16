@@ -1018,7 +1018,39 @@ export class Particles {
    * light into the frame, not decals.
    */
   sparkBurst(pos, normal, count = 18, opts = {}) {
-    const n = Math.max(2, Math.round(count * 1.7 * this.scale));
+    /**
+     * A BURST CANNOT BE BIGGER THAN THE POOL IT DRAWS FROM.
+     *
+     * `ParticlePool` is a ring buffer of `max` slots. Ask one burst for more
+     * than that and the surplus overwrites slots this same call wrote a
+     * microsecond earlier: the work is not merely wasteful, it is provably
+     * invisible — no frame can ever show it. So the loop is bounded by the
+     * pool's own capacity, which changes nothing any player can see and removes
+     * an unbounded amount of arithmetic.
+     *
+     * IT IS HERE BECAUSE A CALLER GOT ITS ARGUMENTS OUT OF STEP, and the cost
+     * was not a slow frame, it was a stopped one. `Enemy._sustain` calls this as
+     * `sparkBurst(chest, 2, 0x9fd8ff)` — three arguments against a signature of
+     * four — so `2` lands in `normal` and the COLOUR lands in `count`. That asks
+     * for 10 467 583 sparks, which this line turns into 17.8 million spawns, and
+     * every one of them pays a THREE.Color sRGB→linear conversion.
+     *
+     * Measured, headless, 20 acolytes on the colosseum: frames 1-20 cost 10-15
+     * ms each; from frame 30, when the first enemy holds lightning or choke,
+     * they cost 71-134 SECONDS each. A CPU profile puts 96% of a 439 s run on
+     * `_sustain → sparkBurst → spawn → SRGBToLinear`. That is why the
+     * `cloth-cost` suite ran for over forty minutes at 85% CPU across six
+     * attempts and was never seen to finish, and it is a multi-second freeze in
+     * the shipped game every time an enemy uses a held power.
+     *
+     * THIS BOUND IS NOT THE FIX AND MUST NOT BE MISTAKEN FOR ONE. The call site
+     * is still wrong — it also hands `2` to `normal`, so every spark in those
+     * bursts is spread with a NaN direction — and it belongs to a file this lane
+     * does not own. `cloth-cost.mjs` carries the check that fails while it is
+     * wrong, so bounding the damage here cannot become a way of hiding it.
+     */
+    const n = Math.min(this.sparks.max,
+      Math.max(2, Math.round(count * 1.7 * this.scale)));
     const speed = opts.speed ?? 9;
     const color = opts.color ?? 0xffd9a0;
     const hdr = opts.hdr ?? 3.4;

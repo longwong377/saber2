@@ -194,8 +194,124 @@ export async function run({ check, assert, THREE }) {
         + `(${one.particles} particles / ${one.links} links / ${one.colliders} colliders); the player `
         + `wears ${player.n} (${player.particles} / ${player.links} / ${player.colliders}), `
         + `${ratio.toFixed(2)}x — so 20 duellists are ${20 * one.links} links, not ${20 * player.links}`;
-    } finally { restoreShared(shared); }
+    } finally {
+      restoreShared(shared);
+      /* AND THE CENSUS WORLD COMES DOWN. It is this check's alone, and it used
+       * to stay alive for the whole of the rest of the run — a 31-body `ultra`
+       * World, terrain heightfield, Rapier world, instanced fields and texture
+       * set, 276 MB measured, held behind a promise nothing ever released. Not
+       * a leak in the game and not why this suite was slow (see the note over
+       * `timed`), but it is the peak this file contributes to every suite that
+       * runs after it, and it costs one line to give back. */
+      try { const { world } = await built; world.unload(); world.dispose?.(); } catch { /* the census already failed */ }
+    }
   });
+
+  /**
+   * ONE WORLD, TWO QUESTIONS — and the second one is why this suite could not
+   * finish for an entire session.
+   *
+   * The 400-frame fight below is the most expensive thing this file does, so it
+   * is also the best place in the project to ask a question that only shows up
+   * under a real fight: does any effect ask a particle pool for more than the
+   * pool can hold? It is audited here rather than in a world of its own because
+   * a second 20-body World would double the suite's cost to re-ask a question
+   * this one is already in a position to answer.
+   *
+   * WHAT THE AUDIT FOUND, and it is the whole reason this suite was unrunnable.
+   * `Enemy._sustain` (Enemy.js, the held-power tick) calls
+   *
+   *     sparkBurst(chest, 2, 0x9fd8ff)
+   *
+   * against a signature of `sparkBurst(pos, normal, count, opts)`. Three
+   * arguments into four slots: `2` lands in `normal`, and the COLOUR lands in
+   * `count`. The burst therefore asks for 10 467 583 sparks — 17.8 million
+   * spawns after the recipe's own multiplier — each paying a THREE.Color
+   * sRGB→linear conversion, on 35% of frames, per casting enemy.
+   *
+   * Measured here, 20 acolytes on the colosseum: frames 1-20 cost 10-15 ms;
+   * from frame 30, once the first enemy holds lightning or choke, they cost
+   * 71-134 SECONDS each. A CPU profile puts 96% of a 439-second run on
+   * `_sustain → sparkBurst → spawn → SRGBToLinear`. Six previous attempts at
+   * this suite across two callers each burned 40+ minutes at 85% CPU and were
+   * killed without ever finishing; HANDOFF §2.6 recorded the roster's growth
+   * from 20 to 31 archetypes as the suspect. **That hypothesis is refuted by
+   * measurement**: the whole 31-archetype census world above builds, spawns and
+   * steps in 5.2 seconds. The cost was never the roster.
+   *
+   * IT IS A GAME DEFECT AND NOT A HARNESS ONE — a held enemy power is a
+   * multi-second freeze on a player's machine, and `normal = 2` makes every
+   * spark in the burst spread along a NaN direction as well. `Particles.js`
+   * now bounds a burst by its own pool's capacity, because a ring buffer cannot
+   * show more than it holds and the surplus was provably invisible work. That
+   * bound stops the gate being hostage to one call site; it does NOT correct
+   * the call site, which is why this check exists and stays red until it is
+   * fixed. Bounding the damage must never be able to silence the defect.
+   */
+  const timed = (async () => {
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(4711);
+    const world = new World(stubEngine(THREE), { ...DEFAULT_SETTINGS, quality: 'high' });
+    await world.loadLevel(FIELD);
+    world.spawnPlayer?.();
+    const p = world.player.position;
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2, r = 7 + (i % 5);
+      const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+      world.spawnEnemy('acolyte', new THREE.Vector3(x, world.terrain.height(x, z), z));
+    }
+
+    /* The audit reads the count as REQUESTED, in front of the bound in
+     * Particles.js, so the bound cannot hide the caller from it. The first
+     * offending stack is kept because a number with no call site in it is a
+     * finding nobody can act on. */
+    const P = world.particles;
+    const audit = { worst: 0, calls: 0, over: 0, cap: P.sparks.max, where: null };
+    const rawBurst = P.sparkBurst.bind(P);
+    P.sparkBurst = (pos, normal, count = 18, opts = {}) => {
+      audit.calls++;
+      if (count > audit.worst) audit.worst = count;
+      if (count > audit.cap) {
+        audit.over++;
+        if (!audit.where) {
+          const line = (new Error().stack || '').split('\n')
+            .find((l) => /src[\\/]game|src[\\/]world/.test(l) && !/Particles\.js/.test(l));
+          audit.where = (line || 'unknown caller').trim();
+        }
+      }
+      return rawBurst(pos, normal, count, opts);
+    };
+
+    const input = idleInput();
+    for (let f = 0; f < 90; f++) world.update(1 / 60, input);
+
+    // Wrap the SHIPPED solver on the SHIPPED instances, so what is timed is
+    // what the frame actually runs.
+    let solve = 0, refresh = 0;
+    const patched = [];
+    for (const e of world.enemies) {
+      for (const key of ['cloak', 'skirt']) {
+        const c = e[key];
+        if (!c || !c.update) continue;
+        const u = c.update.bind(c), rc = c.refreshColliders ? c.refreshColliders.bind(c) : null;
+        c.update = (...a) => { const t = performance.now(); const r = u(...a); solve += performance.now() - t; return r; };
+        if (rc) c.refreshColliders = (...a) => { const t = performance.now(); const r = rc(...a); refresh += performance.now() - t; return r; };
+        patched.push(c);
+      }
+    }
+
+    const FRAMES = 400;
+    solve = 0; refresh = 0;
+    for (let f = 0; f < FRAMES; f++) world.update(1 / 60, input);
+    const on = world.enemies.filter((e) => !e.dead && e.clothOn).length;
+    const out = { solveMs: solve / FRAMES, refreshMs: refresh / FRAMES,
+      on, patched: patched.length, FRAMES, audit };
+    world.unload();
+    world.dispose?.();
+    return out;
+  })();
 
   check('cloth: 20 enemies of garments cost about two milliseconds, not seven and a half', async () => {
     /**
@@ -206,49 +322,9 @@ export async function run({ check, assert, THREE }) {
      * would not.
      */
     try {
-      const { World } = await import('../../src/game/World.js');
-      const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-      const { enemyRng } = await import('../../src/game/Enemy.js');
-      enemyRng.seed(4711);
-      const world = new World(stubEngine(THREE), { ...DEFAULT_SETTINGS, quality: 'high' });
-      await world.loadLevel(FIELD);
-      world.spawnPlayer?.();
-      const p = world.player.position;
-      for (let i = 0; i < 20; i++) {
-        const a = (i / 20) * Math.PI * 2, r = 7 + (i % 5);
-        const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
-        world.spawnEnemy('acolyte', new THREE.Vector3(x, world.terrain.height(x, z), z));
-      }
-      const input = idleInput();
-      for (let f = 0; f < 90; f++) world.update(1 / 60, input);
-
-      // Wrap the SHIPPED solver on the SHIPPED instances, so what is timed is
-      // what the frame actually runs.
-      const bodies = [];
-      for (const e of world.enemies) {
-        const g = garments(e);
-        if (g.n) bodies.push(...g.where.map((_, i) => null), e);
-      }
-      let solve = 0, refresh = 0;
-      const patched = [];
-      for (const e of world.enemies) {
-        for (const key of ['cloak', 'skirt']) {
-          const c = e[key];
-          if (!c || !c.update) continue;
-          const u = c.update.bind(c), rc = c.refreshColliders ? c.refreshColliders.bind(c) : null;
-          c.update = (...a) => { const t = performance.now(); const r = u(...a); solve += performance.now() - t; return r; };
-          if (rc) c.refreshColliders = (...a) => { const t = performance.now(); const r = rc(...a); refresh += performance.now() - t; return r; };
-          patched.push(c);
-        }
-      }
-      assert(patched.length >= 10, `only ${patched.length} enemy garments were found to time`);
-
-      const FRAMES = 400;
-      solve = 0; refresh = 0;
-      for (let f = 0; f < FRAMES; f++) world.update(1 / 60, input);
-      const solveMs = solve / FRAMES, refreshMs = refresh / FRAMES;
+      const { solveMs, refreshMs, on, patched, FRAMES } = await timed;
+      assert(patched >= 10, `only ${patched} enemy garments were found to time`);
       const total = solveMs + refreshMs;
-      const on = world.enemies.filter((e) => !e.dead && e.clothOn).length;
       assert(on >= 10, `only ${on} enemies were inside the cloth cut — nothing was measured`);
       assert(total < 6.0,
         `${on} enemies' garments cost ${total.toFixed(2)} ms a frame. Engine.js was sized on 7.5 ms for `
@@ -258,6 +334,28 @@ export async function run({ check, assert, THREE }) {
       return `${on} enemy capes: solve ${solveMs.toFixed(2)} ms + collider refresh ${refreshMs.toFixed(2)} ms `
         + `= ${total.toFixed(2)} ms a frame over ${FRAMES} frames, against the 7.5 ms the column was sized on`;
     } finally { restoreShared(shared); }
+  });
+
+  check('particles: no effect asks a pool for more sparks than the pool can hold', async () => {
+    /* The subject is a COUNT and not a clock, for the same reason the census
+     * above is: a millisecond figure is one machine's, and the defect this
+     * catches is an argument list out of step, which is machine-independent.
+     * A pool holds `max` slots; a single burst asking for more than that
+     * overwrites its own output inside one call, so exceeding it is never a
+     * taste question and never a tuning question — it is always a bug. */
+    const { audit } = await timed;
+    assert(audit.calls > 0,
+      'no burst was requested in 490 frames of a twenty-body fight, so this measured nothing');
+    assert(audit.over === 0,
+      `${audit.over} of ${audit.calls} bursts asked for more sparks than the pool holds — worst `
+      + `${audit.worst.toLocaleString()} against a capacity of ${audit.cap.toLocaleString()}, a factor of `
+      + `${Math.round(audit.worst / audit.cap).toLocaleString()}. That is an argument list out of step, not a `
+      + 'tuning number: 10467583 is 0x9fd8ff and 16738410 is 0xff6a6a, the two colours Enemy._sustain '
+      + 'passes, and sparkBurst\'s third parameter is `count`, not `color`. It also hands 2 to `normal`, '
+      + `so the sparks spread along NaN. First offender: ${audit.where}. `
+      + 'Unbounded this froze a frame for 71-134 seconds and made this suite unrunnable; Particles.js '
+      + 'now bounds the loop by pool capacity, which stops the freeze and does not fix the caller.');
+    return `${audit.calls} bursts, worst ${audit.worst} sparks against a ${audit.cap}-slot pool`;
   });
 
   check('cloth: the player\'s own garments are not what the bottom tier hands back', async () => {
