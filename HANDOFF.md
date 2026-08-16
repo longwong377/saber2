@@ -433,6 +433,42 @@ The player asked for these to wait, and the folders are `assets/reference/`:
 
 ### 6.1b Diagnosed, scoped, not yet built
 
+**The character creator still holds the saber wrong for a small species, and the
+three-line fix is NOT three lines.** `poseSaberArm` (Menu.js) is a second copy of
+the grip model, authored against a 1.78 m body: measured, the `smallfolk`
+preview holds its saber 4.85 hands clear of its palm with a 5.99-hand hilt —
+note #2's defect, still on the screen where you choose the character.
+
+The repair is known and was written out precisely: scale the guard offsets and
+the elbow pole by `limbScale(rig).arm`, pass `rig.scale` as the sixth argument to
+`handPoseOnHilt`, and size the hilt with `saber.setGripScale`. **I applied it and
+it regressed `preview` from 11/11 to 10/11**, so it is reverted and it is written
+down here instead.
+
+Why it fails is the interesting part, and it is not a bug in the fix. Tucking the
+arm correctly makes the small figure *more compact*, and `framePreviewCamera`
+frames the whole CONTENT box — which still contains a full-length 1.15 m blade.
+A 0.66 m body properly holding a human's blade is dwarfed by it, so the figure
+projects at NDC −0.34 against a 0.32 bound. Removing the hilt scaling alone does
+not help (−0.340 vs −0.345): it is the arm.
+
+`preview.mjs` already reasons about exactly this for a *different* bound — it
+scales `fill` by "the figure's share of its own content, measured rather than
+typed" and says in as many words that a 0.66 m figure "cannot reach 55% of the
+frame without cropping the weapon off". The centring bound never got the same
+treatment. So there are three honest ways forward and they are a DESIGN CALL, not
+a patch:
+
+1. Give a small species a proportionally short blade — a shoto, which is what
+   every reference plate of that character actually shows. Touches
+   `bladeLength`, which is a player setting and a combat reach, so it is a
+   gameplay decision and not merely a look.
+2. Frame the preview camera on the FIGURE and let the blade tip crop.
+3. Scale the centring bound by content share, the way `fill` already is.
+
+Do not simply relax the 0.32. Whoever takes this should also know
+`SaberController` gained a `reachScale` option for the same family of defect.
+
 **The Colosseum crowd is ONE MESH.** "I like the colosseum map, just increase
 the detail for the crowd — right now it looks okay in the distance but anytime
 you're near the edge you see how crude they are, make them either alien species
