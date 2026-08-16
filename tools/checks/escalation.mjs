@@ -34,6 +34,7 @@ import * as Waves from '../../src/game/Waves.js';
 import * as Foe from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
 import { TOUGHNESS } from '../../src/game/Combat.js';
+import { TAU } from '../../src/engine/MathUtil.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const { ARCHETYPES } = Foe;
@@ -770,6 +771,136 @@ export async function run({ check, assert }) {
       `60 waves × 12 seeds produced ${comps.size} distinct compositions — it was 15 with one acolyte type`);
     return `${rungs.length} rungs + ${bosses.length} bosses; ${comps.size} distinct compositions over `
       + `${seen.size} archetypes in 60 waves, never more than ${most} at once`;
+  });
+
+  check('conditions: killing the leader ends the wave, and one bearing has a front', () => {
+    /**
+     * DRIVEN, not composed — everything above this point reads a queue, and
+     * these two conditions do their work in `update`. A rout that only exists
+     * in the composer is a banner over a wave that never breaks.
+     *
+     * The world is a stub with the three things the director asks a world for:
+     * somewhere to put a body, a way to make one, and a list to put it in.
+     * `arrivals.enabled = false` so the direct spawn path runs — a gunship
+     * would need a scene, and `request` returning false is exactly the
+     * documented fallback for a level with nothing that could bring anything.
+     */
+    const bodies = [];
+    const stub = {
+      enemies: bodies, players: [{ position: V(0, 0, 0), alive: true }],
+      takenBoons: new Set(), settings: {}, partyTeam: 0, hpScale: 1, dmgScale: 1,
+      scene: new THREE.Group(),
+      notify() {}, onEnemyKilled(e) { e._killed = (e._killed || 0) + 1; },
+      terrain: flatGround(),
+    };
+    stub.player = stub.players[0];
+    const d = new Waves.WaveDirector(stub, { mode: 'roguelite', pool: FULL_POOL });
+    d.arrivals.enabled = false;
+    let spawnAt = 0;
+    const ctx = {
+      enemies: bodies,
+      // A ring of candidate points, walked round so a bearing has something to
+      // reject: `_spawnPoint` re-asks until the heading is inside the arc.
+      pickSpawn: () => { const a = (spawnAt++ * 0.37) * TAU; return V(Math.cos(a) * 40, 0, Math.sin(a) * 40); },
+      // Rich enough for the REAL `applyModifier` to run on it, which is what
+      // makes `e.mod` the game's own answer to "which body is the leader"
+      // rather than a flag this check invented. `install` is the elite's tell
+      // and wants a scene graph; it is fed a group that accepts children and
+      // nothing more, which is all a headless body needs.
+      spawnEnemy: (type, at) => {
+        const A = ARCHETYPES[type];
+        const e = {
+          type, position: at, dead: false, team: 1, mod: null, A,
+          world: stub, hp: A.hp, maxHp: A.hp, speed: A.speed, attackDamage: A.damage,
+          root: new THREE.Group(), group: new THREE.Group(), rig: null,
+          // The tells the elite installers hang on a body. A headless one has
+          // no meshes, so they are the smallest shapes each installer touches;
+          // what this check is about is `e.mod`, which `applyModifier` sets
+          // before any of them runs.
+          add(o) { this.group.add(o); },
+          shieldCentre: (out) => (out ? out.copy(at) : at),
+          dispose() {},
+        };
+        bodies.push(e);
+        return e;
+      },
+    };
+
+    /* ── A HEAD TO CUT OFF ─────────────────────────────────────────────── */
+    /* Searched THROUGH `start`, not through `_compose`: start re-composes, so a
+     * wave found one way is not the wave the other way produces. */
+    const findWave = (key, base) => {
+      for (let w = 13; w < 120; w++) {
+        Waves.seedWaves(base + w, 0);
+        bodies.length = 0;
+        d._paid = 0;
+        d.start(w);
+        if (d.conditions.includes(key)) return w;
+      }
+      return null;
+    };
+    const found = findWave('vanguard', 4000);
+    assert(found, 'no wave between 13 and 120 ever drew A HEAD TO CUT OFF');
+    const queued = d.spawnQueue.length;
+    // Run the wave in until everything is standing.
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    const head = bodies.find((e) => e.mod === 'leader')
+      || bodies.find((e) => Waves.spawnMod(`${e.type}|${e.mod}`) === 'leader');
+    assert(head, `${bodies.length} bodies of ${queued} landed and none of them is the leader`);
+    const before = bodies.filter((e) => !e.dead).length;
+    assert(before > 3, `only ${before} bodies stood in a vanguard wave — nothing to rout`);
+    head.dead = true;
+    /* The frame that notices, and then the sweep — ROUT_PER_FRAME at a time —
+     * and STOP AT THE WAVE END. Running on past it starts the intermission,
+     * and 5.5 s later `start(wave + 1)` composes the next wave into the same
+     * stub: the first draft of this check read four of those as survivors of
+     * the rout. A driven check has to stop where the thing it is driving does. */
+    let frames = 0;
+    while (d.active && frames++ < 400) d.update(1 / 30, ctx);
+    assert(!d.active, 'the wave never ended after the leader fell');
+    const after = bodies.filter((e) => !e.dead).length;
+    assert(after === 0,
+      `${after} of ${before} bodies were still standing after the leader fell — the wave does not break`);
+    assert(!d.spawnQueue.length, 'the rout left bodies queued, so the wave cannot end');
+    // …and nobody is credited with a kill they did not make.
+    assert(bodies.every((e) => (e._killed || 0) <= 1), 'a routed body was killed twice');
+
+    /* ── ONE BEARING ───────────────────────────────────────────────────── */
+    const bw = findWave('hammer', 7000);
+    assert(bw, 'no wave between 13 and 120 ever drew ONE BEARING');
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    assert(bodies.length > 6, `only ${bodies.length} bodies landed under ONE BEARING`);
+    d.active = false;
+    const b = d._bearing();
+    assert(b !== null, 'a ONE BEARING wave has no bearing');
+    let worst = 0;
+    for (const e of bodies) {
+      const off = Math.abs(((Math.atan2(e.position.z, e.position.x) - b + Math.PI * 3) % TAU) - Math.PI);
+      worst = Math.max(worst, off);
+    }
+    // The arc is a half-width either side, and `_spawnPoint` keeps the best of
+    // what it saw rather than failing — so the bound is the arc, not perfection.
+    assert(worst <= Waves.BEARING_ARC / 2 + 1e-6,
+      `a body arrived ${(worst * 180 / Math.PI).toFixed(0)}° off the wave's bearing, against a `
+      + `${(Waves.BEARING_ARC * 90 / Math.PI).toFixed(0)}° half-arc — the field has no front`);
+    // …and an ordinary wave still comes from everywhere, or the check above is
+    // measuring the spawn stub rather than the condition.
+    bodies.length = 0;
+    Waves.seedWaves(11, 0);
+    d._paid = 0;
+    d.start(12);
+    assert(!d.conditions.length, 'the control wave drew a condition');
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    let spread = 0;
+    for (const e of bodies) {
+      const off = Math.abs(((Math.atan2(e.position.z, e.position.x) - b + Math.PI * 3) % TAU) - Math.PI);
+      spread = Math.max(spread, off);
+    }
+    assert(spread > Waves.BEARING_ARC / 2,
+      'an unconditioned wave arrives inside one quarter too, so ONE BEARING changes nothing');
+    return `w${found}: the leader fell and ${before} bodies broke; `
+      + `w${bw}: every body inside ${(worst * 180 / Math.PI).toFixed(0)}° of one bearing `
+      + `against ${(spread * 180 / Math.PI).toFixed(0)}° unconditioned`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
