@@ -2366,7 +2366,26 @@ export class World {
        * with no allies this is one extra call per body per bolt and its answer
        * is always the one the two lines above already gave.
        */
-      if (bolt.owner && !canHarm(bolt.owner, e, this.rules)) continue;
+      /* …EXCEPT A TURNED ONE, WHICH IS THE ABILITY.
+       *
+       * This gate and the `friendly` bypass six lines up disagreed, and the
+       * gate won. `turned` means a unit has been MADE to fire on its own side —
+       * that is the whole of Force compel and the reason the flag exists — so
+       * asking `canHarm` whether a droid may shoot a droid unmakes it: the
+       * shooter and its victim are both team 1, friendly fire is off in every
+       * mode that is not a duel, and the bolt passed straight through the ally
+       * it was aimed at. Measured on the shipped hit test with a real compelled
+       * shooter and a real ally at 6 m: the turned bolt found nothing and the
+       * ally lost 0.0 hp, in the check whose own note says "a fix that let
+       * every enemy bolt hit every enemy would also pass a one-sided test".
+       *
+       * `deflected` is deliberately NOT included. A bolt the player sent back
+       * carries their team, and letting it past this line would put every
+       * deflection into their own troopers — which is the exact defect the gate
+       * was added for. One flag is an explicit override of the side rule; the
+       * other is just a bolt that changed hands.
+       */
+      if (bolt.owner && !bolt.turned && !canHarm(bolt.owner, e, this.rules)) continue;
       const caps = e.capsules();
       for (const c of caps) {
         if (c.shield) {
