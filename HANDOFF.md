@@ -173,6 +173,15 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
+**Or next to your own agents.** With six subagents running, `cloth-cost` — which
+builds a real World and steps 400 physics frames — did not finish in three
+separate attempts (10-25 min each, no output), from two different callers who
+had not spoken to each other. It is not hung and it is not broken; it is a
+CPU-bound suite competing with six Node processes on one box. If a full
+`verify.mjs` appears to stall on `cloth-cost`, look at what else you have
+running before you go looking for a deadlock, and re-run it once the fleet is
+idle.
+
 ### 2.7 A LATE full run can hang on a suite that passes alone
 
 Observed twice at the end of a long session, on two different suites:
