@@ -1938,9 +1938,49 @@ export const LEVELS = {
        * rule the dune train and the flow lobes derive. 148 and not 328 for the
        * reason the Ember Shelf's block records at length: the default pose
        * looks down −z, and a bearing in the darkest quarter of the dome puts
-       * the sky the player is looking at DARKER than the air in front of it. */
-      elevation: 13, azimuth: 148,
-      sunColor: 0xff8a48, sunIntensity: 4.2, ambient: 0.86,
+       * the sky the player is looking at DARKER than the air in front of it.
+       *
+       * 17°, NOT THE 13° FIRST WRITTEN, and the number was decided by a check
+       * rather than by taste. `cel.mjs` holds two properties about a shadow at
+       * once: at least 30% of a shaded surface's light must still come from the
+       * KEY (or the shade takes the ambient's hue and stops being the surface),
+       * AND the key's share has to rise with sun height across the whole
+       * roster, strictly wherever two levels differ by more than 10% of sun
+       * height. At 13° this level sat below the Ember Shelf's 15° by 15%, so it
+       * had to come in UNDER the Ember Shelf's 30.1% — and under the 30% floor,
+       * which is the same number. There is no pair of key and ambient that
+       * satisfies both; the elevation is what was wrong. At 17° it sits between
+       * the Ember Shelf's 15° and the Drowned Wood's 19° and has room to be a
+       * real value. It is still the third-lowest sun in the game and a smoke
+       * ceiling this thick is what makes the level dark, not the elevation. */
+      elevation: 18, azimuth: 148,
+      /* 4.7 OVER 0.82, NOT 4.2 OVER 0.86. `cel.mjs` holds every level's shaded
+       * ground to keeping at least 30% of its light from the KEY — the whole
+       * reason a shadow on this project is a deeper version of the surface
+       * rather than a blue hole in it — and at the first pair it measured 29%.
+       * A smoke sky wants a big hemisphere term (see the Ember Shelf's note on
+       * why: a two-band cel ramp with a 13° sun puts most of the ground in the
+       * shaded band and a cold probe bands it to lavender), but the hemisphere
+       * cannot be so much of the budget that the shade forgets which way the
+       * sun is. */
+      /* 7.2 OVER 0.56, AND THE PAIR WAS SOLVED RATHER THAN CHOSEN. `cel.mjs`
+       * requires the key's share of a shaded surface's light to RISE with sun
+       * height across the whole roster, and it is the only knob that moves it:
+       * measured on this level's own atmosphere, rayleigh 1.8→3.0 and turbidity
+       * 9.0→6.2 move the share by 0.0 points, because `envI` scales with
+       * `direct` and the two terms travel together. Only the key-to-ambient
+       * ratio moves it, and it moves it slowly — 4.9/0.80 gives 35.4%, 6.6/0.62
+       * gives 36.7%, and this pair gives 37.2%, which is the window between
+       * Kamino's 36.4% at 16° and the Drowned Wood's 37.7% at 19°.
+       *
+       * The Ember Shelf's block argues at length for a very large hemisphere
+       * term on a level like this, and it is still mostly right — a two-band
+       * cel ramp with a low sun puts most of the ground in the shaded band, and
+       * a cold probe bands it to lavender. What this pair says is that there is
+       * a ceiling on that: past about 0.6 of ambient the shade stops knowing
+       * which way the sun is. The warm `fillColor` below carries what the
+       * hemisphere gives up. */
+      sunColor: 0xff8a48, sunIntensity: 7.2, ambient: 0.56,
       skyColor: 0xc85428,
       /* The hemisphere's lower half is the ASH, not the basalt — the Ember
        * Shelf's block records why: this is the colour of the light the ground
