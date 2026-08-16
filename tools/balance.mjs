@@ -1187,13 +1187,35 @@ export function boonChannels(boon) {
  *  WAVE COMPOSITION — the real director
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const _stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set() };
+/**
+ * THE LEVEL ITSELF, not only its pool — and the stub is per level, not shared.
+ *
+ * `WaveDirector.sideFor` reads `world.level.armies` to decide whose push a wave
+ * is. One stub world with a pool and no level therefore composed a Geonosis
+ * that mixes Republic and Confederate bodies in one wave, which is the game as
+ * it was before the factions landed and is not the game any more. `tools/trace.mjs`
+ * had the identical defect and it is the instrument the mixing was *found*
+ * with, so it was fixed there first; this is the second call site, and a
+ * harness that restates half a rule disagrees with it eventually (§2.4).
+ *
+ * It was also a single shared object across every level, which is the thing
+ * that made it easy to miss: one `_stubWorld` cannot carry ten levels, so the
+ * only field it could safely hold was none.
+ */
+const _stubs = new Map();
+const stubWorldFor = (L) => {
+  if (!_stubs.has(L)) {
+    _stubs.set(L, { enemies: [], player: null, terrain: null, settings: {},
+      takenBoons: new Set(), scene: null, level: L });
+  }
+  return _stubs.get(L);
+};
 const _pool = new Map();
 function compositionPool(levelKey, wave, mode = 'roguelite') {
   const key = `${levelKey}|${wave}|${mode}`;
   if (_pool.has(key)) return _pool.get(key);
   const L = LEVELS[levelKey] || LEVELS[LEVEL_ORDER[0]];
-  const d = new WaveDirector(_stubWorld, { mode, pool: L.pool });
+  const d = new WaveDirector(stubWorldFor(L), { mode, pool: L.pool });
   const out = [];
   for (let i = 0; i < MODEL.poolPerWave; i++) {
     d.wave = wave;
@@ -1205,7 +1227,7 @@ function compositionPool(levelKey, wave, mode = 'roguelite') {
 }
 
 export function budgetFor(wave) {
-  return new WaveDirector(_stubWorld, {}).budgetFor(wave);
+  return new WaveDirector(stubWorldFor(LEVELS[LEVEL_ORDER[0]]), {}).budgetFor(wave);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1945,7 +1967,8 @@ export function rampReport(cfg) {
     rows.push([w, b, d, prevD === null ? '' : (d - prevD).toFixed(0),
       mean(counts).toFixed(1), mean(elites).toFixed(1), mean(threat).toFixed(1),
       mean(hpSum).toFixed(0), mean(dps).toFixed(1),
-      new WaveDirector(_stubWorld, { pool: (LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]).pool })
+      new WaveDirector(stubWorldFor(LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]),
+        { pool: (LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]).pool })
         .unlockedAt(w).filter((x, i, a) => a.indexOf(x) === i).join(' ')]);
     prevD = d; prev = b;
   }

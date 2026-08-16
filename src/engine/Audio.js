@@ -352,6 +352,24 @@ export class AudioEngine {
   constructor() {
     this.ctx = null;
     this.ready = false;
+    /**
+     * ONE, FROM THE MOMENT THE OBJECT EXISTS — not from the moment the graph is.
+     *
+     * `_timePitch` was assigned 1 where the time-scale filter is built, which
+     * is inside the graph construction and therefore does not run for an engine
+     * that has not started a context. Until then it is `undefined`, and both
+     * one-shot paths guard the multiply with `if (this._timePitch !== 1)` —
+     * which `undefined` passes. So `freq *= undefined` turned a frequency that
+     * `num()` had just sanitised two lines earlier into NaN, and a NaN reaching
+     * an AudioParam throws a TypeError between taking a voice and releasing it.
+     * Forty-four of those and the game is silent for the session, which is the
+     * exact failure `audio: a NaN never leaks the voice pool dry` exists for.
+     *
+     * The saber hum already defended itself — `(eng._timePitch || 1)` — which is
+     * the tell that this had been met before and answered at one call site
+     * rather than at the source.
+     */
+    this._timePitch = 1;
     this.master = null;
     this.volume = 0.8;
     this.musicVolume = 0.45;
