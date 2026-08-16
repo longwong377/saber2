@@ -42,13 +42,14 @@
  *                even ALL of them. EIGHT bodies failed it before this landed.
  *   CHAFF        and nothing under 300 kg was armoured on the way past.
  *
- * Every list of bodies, bones and roles below is ENUMERATED from the game
- * (`ARCHETYPES`, the built rig, `BONE_ROLES`) and never typed here. A check
- * with its own copy of the roster is the defect it is checking for.
+ * Every list of bodies, bones and roles below is ENUMERATED from the game —
+ * `ARCHETYPES`, the built rig, `BONE_ROLES`, `AXIAL_ROLES` — and never typed
+ * here, down to which roles count as the trunk. A check with its own copy of
+ * the roster is the defect it is checking for.
  */
 
 import * as THREE from 'three';
-import { ARCHETYPES, Enemy, guardFor, severance, PRICED_ROLES }
+import { ARCHETYPES, Enemy, guardFor, severance, PRICED_ROLES, AXIAL_ROLES }
   from '../../src/game/Enemy.js';
 import { Rig, BONE_ROLES } from '../../src/game/Rig.js';
 import * as PHYS from '../../src/physics/RapierWorld.js';
@@ -105,7 +106,7 @@ function limbsOf(type) {
   if (!rig) return out;
   for (const b of rig.list) {
     if (b.parent && b.parent.role === b.role) continue;       // not a root
-    if (b.role === 'core' || b.role === 'neck' || b.role === 'head') continue;
+    if (AXIAL_ROLES.includes(b.role)) continue;
     const chain = [];
     for (let c = b; c; c = c.children.find((k) => k.role === c.role)) {
       if (byName.has(c.name)) chain.push(c);
@@ -118,7 +119,7 @@ function limbsOf(type) {
 /** The axial bones of one body that a blade can meet. */
 const axialOf = (type) => body(type).caps.filter((c) => {
   const b = body(type).rig?.get(c.name);
-  return b && (b.role === 'core' || b.role === 'neck' || b.role === 'head');
+  return b && AXIAL_ROLES.includes(b.role);
 });
 
 /**
@@ -288,7 +289,7 @@ export async function run({ check, assert }) {
         + `${lo.toFixed(3)} a ${counts[i - 1]}-legged one pays. Redundancy has to cost something.`);
     }
     return counts.map((n) => `${n} legs → ${byCount.get(n)[0].v.toFixed(3)} `
-      + `(${byCount.get(n).map((x) => x.type).join(',')})`).join(' · ');
+      + `(${[...new Set(byCount.get(n).map((x) => x.type))].join(',')})`).join(' · ');
   });
 
   check('severance: the head, the neck and the trunk stay lethal in one pass', () => {
@@ -297,23 +298,23 @@ export async function run({ check, assert }) {
      * hinge the whole "a lightsaber ends a fight by reaching something vital"
      * design turns on. Flattening the table toward the middle would take it
      * out silently, which is why it is pinned per body rather than per name. */
-    const rows = [];
+    let axial = 0;
     for (const type of RIGGED) {
       const { rig, byName } = body(type);
-      const lethal = [];
+      let lethal = 0;
       for (const b of rig.list) {
         if (!byName.has(b.name)) continue;
-        if (b.role !== 'core' && b.role !== 'neck' && b.role !== 'head') continue;
+        if (!AXIAL_ROLES.includes(b.role)) continue;
         const v = byName.get(b.name).vital;
         assert(v >= 0.9,
           `${type}'s '${b.name}' is axial and priced ${v.toFixed(3)}, under the 0.9 that makes a `
           + 'pass fight-ending. Reaching the trunk or the head has to end it.');
-        lethal.push(b.name);
+        lethal++;
       }
-      assert(lethal.length > 0, `${type} has no lethal bone at all — nothing to aim at`);
-      rows.push(`${type} ${lethal.length}`);
+      assert(lethal > 0, `${type} has no lethal bone at all — nothing to aim at`);
+      axial += lethal;
     }
-    return `every axial bone on ${RIGGED.length} bodies is over 0.9`;
+    return `${axial} axial bones across ${RIGGED.length} bodies, every one over 0.9`;
   });
 
   check('severance: nothing on the roster dies of its extremities — not even all of them', () => {
@@ -390,16 +391,15 @@ export async function run({ check, assert }) {
         try {
           const hp0 = e.hp;
           let severs = 0;
-          /* ONE PASS PER EXTREMITY, and the `done` set is not bookkeeping — it
-           * is the measurement. `Actor.cut` on a LEAF bone shortens it
-           * (`bone.cutT *= t`) rather than marking it severed, because half a
-           * toe is still a toe; so the same stub can be chopped again and
-           * `takeCut` bills the whole bone's price for it every time. That is
-           * a real property worth knowing (a Rancor dies to nine chops of ONE
-           * toe, where it used to die to three) and it is not what this check
-           * is about: "should not die through two toes" is a question about
-           * how many toes there are. */
-          const done = new Set();
+          /* ONE PASS PER EXTREMITY, and iterating the NAMES rather than looping
+           * on `capsules()` is the measurement rather than bookkeeping.
+           * `Actor.cut` on a LEAF bone shortens it (`bone.cutT *= t`) instead of
+           * marking it severed, because half a toe is still a toe — so the same
+           * stub can be chopped again and `takeCut` bills the whole bone's price
+           * for it every time. That is a real property worth knowing (a Rancor
+           * dies to nine chops of ONE toe, where it used to die to three) and it
+           * is not what this check is about: "should not die through two toes"
+           * is a question about how many toes there are. */
           for (const name of ends) {
             if (e.dead) break;
             e.state = 'winded';                         // the opening, not the guard
@@ -407,7 +407,6 @@ export async function run({ check, assert }) {
             if (!cap) continue;                         // already gone with its parent
             e.takeCut({ bone: cap.name, cap, cutT: 0.5,
               point: e.position.clone().setY(1), impulse: new THREE.Vector3(0, 0, -1) }, null);
-            done.add(name);
             severs++;
           }
           const spent = (hp0 - e.hp) / e.maxHp;
@@ -440,9 +439,15 @@ export async function run({ check, assert }) {
         const lethal = body(type).caps.filter((c) => c.vital >= 0.9);
         assert(lethal.length > 0,
           `${type} has nothing over 0.9 left — a body with no lethal bone cannot be ended in a pass`);
+        /* ONE BONE ENDS IT — `cuts` is how many capsules the model had to get
+         * through, and the bound is 1 rather than a number of seconds. A time
+         * bound here would be a measurement written down as a rule: the seconds
+         * move with the blade's cadence and with how thick the body is, neither
+         * of which is what "still comes apart on the first pass" means. */
         const e = B.engagementFor(type, mods, 0);
-        assert(e.tKill <= 3.2,
-          `${type} now takes ${e.tKill.toFixed(2)} s to kill via ${e.via} — the chaff has been armoured`);
+        assert(e.cuts === 1,
+          `${type} now takes ${e.cuts} separate bones to finish via ${e.via} `
+          + `(${e.tKill.toFixed(2)} s) — the chaff has been armoured`);
         rows.push(`${type} ${e.tKill.toFixed(2)}s ${e.via}`);
       }
       assert(rows.length >= 6, `only ${rows.length} light bodies on the roster`);

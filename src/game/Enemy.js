@@ -4820,3 +4820,14 @@ export function severanceOf(bone) { return severance(bone.role, bone.roleShare, 
 
 /** The roles that have a price, so a check can hold it against BONE_ROLES. */
 export const PRICED_ROLES = Object.keys(SEVERANCE);
+/**
+ * …and which of them are AXIAL — priced flat, because reaching the trunk or the
+ * head ends it wherever along them you reach.
+ *
+ * Derived from the table rather than listed beside it, for the reason the whole
+ * of this section exists: `tools/checks/severance.mjs` needs to know which roles
+ * are a limb and which are the body, and a second list spelling `core, neck,
+ * head` would be a hand-maintained twin of a generated thing inside the very
+ * check written to keep that shape out.
+ */
+export const AXIAL_ROLES = PRICED_ROLES.filter((r) => SEVERANCE[r].axial !== undefined);
