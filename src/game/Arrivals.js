@@ -56,7 +56,29 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear } from './Spawn.js';
-import { buildGunship } from './Vehicles.js';
+
+/**
+ * THE SHIP'S MODEL, INJECTED — and the direction of the arrow is the whole
+ * reason this is a setter and not an import.
+ *
+ * `src/game/Vehicles.js` builds the LAAT/i, and it registers its archetypes
+ * with `Object.assign(ARCHETYPES, …)` at module scope. This file is reached
+ * from `Enemy.js → Dojo.js → Waves.js → Arrivals.js`, so a static edge from
+ * here to Vehicles.js closes that cycle and Vehicles' registration runs while
+ * `ARCHETYPES` is still in its temporal dead zone — a `ReferenceError` on boot,
+ * not a warning. That is the identical trap `Waves.js`'s note above
+ * `sandboxUnits` records, sprung from the other end, and it was sprung: the
+ * import went in, the whole suite failed to load, and this is what replaced it.
+ *
+ * So the dependency points the other way. Whoever owns both — `Levels.js`,
+ * which is the module that decides what levels and what bodies exist — hands
+ * the builder in, exactly as it hands in `ARRIVAL_BY_TERRAIN` entries. With
+ * nothing registered the primitives below are used and every range, lead time
+ * and flare this director is tuned at is unchanged, so a tree without
+ * Vehicles.js in it still flies.
+ */
+let _shipModel = null;
+export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? fn : null; }
 
 const rng = makeRng(20931);
 
@@ -279,7 +301,7 @@ class Arrival {
      * it.
      */
     let ship = null;
-    try { ship = buildGunship(); } catch (e) { ship = null; }
+    try { ship = _shipModel ? _shipModel() : null; } catch (e) { ship = null; }
     if (ship) {
       g.add(ship);
       this._model = ship;

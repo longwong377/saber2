@@ -242,6 +242,15 @@ export const COMMAND_UNITS = {
     build: (o) => buildB1({ ...o, color: 0x53565c, markColor: o.markColor ?? 0x2a2d33, eyeColor: 0xd8f0ff }),
     scale: 1.06, hp: 120, mass: 74,
     speed: 5.6, toughness: TOUGHNESS.droid, melee: true, saber: true,
+    /* NO CAPE, and it is not a taste. `Enemy._build` gives every `saber: true`
+     * body an `attachCloak` unless the archetype says otherwise — a rule written
+     * when the only sabered bodies were a hooded acolyte and its sparring twin —
+     * and a BX commando droid is a bare metal skeleton in every reference plate
+     * there is. It is also real per-body cost in exactly the crowds this mode
+     * builds: cloth is the most expensive per-character system in the game, and
+     * `tools/checks/cloth-cost.mjs` sizes the whole column on how many bodies
+     * wear it. It caught these two at 5 of 27 against a budget of 3. */
+    cape: false,
     saberColor: 5, hilt: 'Sentinel', form: 'juyo',
     damage: 23, preferred: [1.6, 3.4], score: 900, threat: 6,
     hipHeight: 0.96, unlockAt: 7,
@@ -260,6 +269,10 @@ export const COMMAND_UNITS = {
   magna: {
     label: 'MagnaGuard', build: buildBodyguard, scale: 1.18, hp: 260, mass: 140,
     speed: 4.8, toughness: TOUGHNESS.armour, melee: true, saber: true,
+    /* No cape — see the note on `bx`. An IG-100's cloak in the source material
+     * is a tabard hanging off the chassis, not a simulated garment, and the
+     * Foundry's IG general already declines one for the same reason. */
+    cape: false,
     saberColor: 5, hilt: 'Sentinel', form: 'djemSo',
     damage: 28, preferred: [1.8, 3.6], score: 1400, threat: 7,
     hipHeight: 1.05, unlockAt: 9, commandAura: 'leader',

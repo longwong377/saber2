@@ -1291,25 +1291,51 @@ export function buildHailfire(opts = {}) {
  *     meshes Arrivals already animates have somewhere to go.
  *
  * Every geometry and material is built ONCE and shared, exactly as Arrivals.js
- * does it, because a wave may put three of these in the sky at once.
+ * does it, because a wave may put three of these in the sky at once — see the
+ * template note below for how, and for the one thing cloning gets wrong.
  */
-let _gunG = null;
-function gunshipParts() {
-  if (_gunG) return _gunG;
-  const M = {
+let _gunM = null;
+function gunshipMaterials() {
+  if (_gunM) return _gunM;
+  return (_gunM = {
     shell: armorMat(0xc9c2ad, 0.08, 0.6, 0.8),
     mark: armorMat(0x7b2f2c, 0.06, 0.62, 1.0),
     dark: metalMat(0x3a3b3e, 0.5, 0.9, 2.0),
     glass: glassMat(0x1b2a30, 0.12),
     belly: armorMat(0x76794a, 0.05, 0.72, 1.4),
-  };
-  _gunG = { M };
-  return _gunG;
+  });
 }
+
+/**
+ * The one built ship, cloned for every arrival after the first.
+ *
+ * `Object3D.clone()` copies the tree and SHARES the geometry and material of
+ * every mesh by reference, which is exactly what is wanted: three ships in the
+ * sky are three transforms over one set of buffers. Without it, an arrival on
+ * every wave would re-merge forty geometries and Arrivals.js's own promise —
+ * "every geometry and every material below is built ONCE, at module scope, and
+ * shared by every arrival that ever runs" — would stop being true the moment
+ * this replaced its box.
+ *
+ * `userData` is copied SHALLOW by clone, so the anchors would still point at
+ * the template's own Object3Ds and every ship in the sky would light its
+ * engines in the same place. They are re-resolved by name below. That is the
+ * whole reason the anchors are named at all.
+ */
+let _gunTemplate = null;
 
 export function buildGunship(opts = {}) {
   const S = opts.scale ?? 1.0;
-  const { M } = gunshipParts();
+  if (S === 1 && _gunTemplate) {
+    const c = _gunTemplate.clone(true);
+    c.userData = {
+      ..._gunTemplate.userData,
+      engines: [c.getObjectByName('engineL'), c.getObjectByName('engineR')],
+      lamp: c.getObjectByName('lamp'),
+    };
+    return c;
+  }
+  const M = gunshipMaterials();
   const g = new THREE.Group();
   g.name = 'gunship';
 
@@ -1386,11 +1412,13 @@ export function buildGunship(opts = {}) {
   kn.bake(g);
   for (const sx of [1, -1]) {
     const e = new THREE.Object3D();
+    e.name = sx > 0 ? 'engineL' : 'engineR';
     e.position.set(sx * 0.62 * S, 0.94 * S, 2.90 * S);
     g.add(e);
     engines.push(e);
   }
   const lamp = new THREE.Object3D();
+  lamp.name = 'lamp';
   lamp.position.set(0, -0.90 * S, -3.10 * S);
   g.add(lamp);
 
@@ -1399,6 +1427,7 @@ export function buildGunship(opts = {}) {
   g.userData.length = 8.4 * S;
   g.userData.span = 10.4 * S;
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  if (S === 1) _gunTemplate = g;
   return g;
 }
 

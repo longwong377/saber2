@@ -161,12 +161,36 @@ export async function run({ check, assert }) {
      * player's request, and naming levels was the weaker form of the question
      * anyway — the property is about whether a level HAS A SKY, which every
      * level states, so every level can be asked. Nine levels are covered here
-     * where three were, and a new one cannot be added without answering it. */
+     * where three were, and a new one cannot be added without answering it.
+     *
+     * ── ONE WAVE WAS NOT A SAMPLE, and it took a level being ADDED to show it.
+     *
+     * `arrivalKindFor` draws from the terrain's own weighted list, and three
+     * levels weight it `['march', 'march', 'dropship']` — a one-in-three draw,
+     * against a wave that delivers about eight bodies of which the heavies march
+     * regardless. So "did this level ever fly a ship" was a coin flip that had
+     * been landing heads. Adding an eighth level to LEVEL_ORDER moved the phase
+     * of the shared arrival stream and the Drowned Wood — untouched, correct,
+     * and passing for a year — started failing.
+     *
+     * That is HANDOFF §6.2's order-independence residue in its purest form: a
+     * check that passes because it has margin rather than because the property
+     * holds. The fix is the one this file's FIRST check already argues for —
+     * take a bigger sample rather than lower the bar, because the property under
+     * test is unchanged and is now actually being tested. Waves are accumulated
+     * until the level has delivered enough bodies for a one-in-three draw to be
+     * a statement instead of a guess: at 24 deliveries, missing a 1/3 kind
+     * entirely is a 1-in-73,000 event.
+     */
     const seen = {}, rows = [];
     for (const key of LEVEL_ORDER) {
       const L = LEVELS[key];
       if (!L || L.training) continue;
-      const r = playWave(key);
+      const log = [];
+      for (let wave = 4; log.length < 24 && wave <= 16; wave += 2) {
+        log.push(...playWave(key, wave).log);
+      }
+      const r = { log };
       const kinds = [...new Set(r.log.map(l => l.kind))].sort();
       seen[key] = kinds;
       const roofed = L.atmosphere.sky === false;

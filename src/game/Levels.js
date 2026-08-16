@@ -69,7 +69,15 @@ import { COMMAND_UNITS } from './Command.js';
  * `SABER_CHECK_ORDER=reverse` would fail. Naming them in a pool is what makes
  * both orders agree.
  */
-import './Vehicles.js';
+import { buildGunship } from './Vehicles.js';
+import { setDropshipModel } from './Arrivals.js';
+
+/* …and the gunship the arrival director flies. Handed IN rather than imported
+ * by Arrivals.js: that file is reached from Enemy.js via Dojo.js and Waves.js,
+ * so an edge from it to Vehicles.js closes a cycle and runs Vehicles'
+ * `Object.assign(ARCHETYPES, …)` inside ARCHETYPES' own temporal dead zone. It
+ * was tried; it is a ReferenceError on boot. See `setDropshipModel`. */
+setDropshipModel(buildGunship);
 
 let rng = makeRng(20250805);
 
