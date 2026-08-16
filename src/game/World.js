@@ -593,15 +593,32 @@ export class World {
     if (this.command?.versus) {
       this.rules = pvpRules({ ...this.settings, pvp: true, duelRounds: 1 });
     }
+    /**
+     * …AND THE SCORE, WHICH IS TOLD FACTS AND NOT A STATE.
+     *
+     * `setMusicState` takes `{active, boss, wave, dead, won}` and DERIVES what
+     * to play, so a mode that never raises a wave — the dojo, the sandbox —
+     * still gets a score out of combat intensity. Handing it `{state: 'boss'}`
+     * instead latches the derivation off, which is one authority replaced by
+     * two. The wave director is the authority for all three of these and it is
+     * the thing raising the callback, so this is where they are known.
+     *
+     * `isBossWave(w)` and NOT the announcer's boss line. The audio lane tried
+     * that and every wave on the Colosseum became a boss wave: the announcer
+     * fires for `A.boss || A.big`, and four archetypes carry `big` at
+     * `unlockAt: 1`.
+     */
     this.director.onWaveStart = (w, n) => {
       this.notify(`WAVE ${w}`, `${n} contacts inbound`);
       audio.ui('wave');
+      audio.setMusicState({ wave: w, active: true, boss: !!this.director.isBossWave?.(w) });
     };
     this.director.onWaveClear = (w) => {
       this.notify('WAVE CLEAR', 'the Force is with you');
       // `audio.ui('good')` was the same 620 → 1240 Hz ping the menu plays when
       // you buy an upgrade. Holding a field is not buying an upgrade.
       audio.victory();
+      audio.setMusicState({ active: false, boss: false });
     };
     /**
      * INSIGHT hangs off the same signal — composed onto it rather than written
@@ -3085,6 +3102,17 @@ export class World {
     const name = d?.commanders.find((c) => c.side === winner)?.army.name ?? null;
     this.notify(winner === mine ? 'THE FIELD IS YOURS' : 'THE FIELD IS LOST',
       name ? `${name} holds Geonosis` : 'neither army holds the field');
+    /**
+     * …AND IT MAKES A SOUND. Until this line a won meeting was silent: the
+     * score's only ending was a death, and this mode is the first thing in the
+     * game that can be WON.
+     *
+     * The argument is answered for THIS machine, exactly as `won` below is —
+     * the same match is a victory on one screen and a defeat on the other, and
+     * `false` deliberately hands the losing commander the death cue rather than
+     * nothing.
+     */
+    audio.runWon?.(winner === mine);
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
     this.onGameOver?.({
       won: winner === mine,

@@ -64,6 +64,11 @@ import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { WaveDirector, holdFire, isHeavy } from './Waves.js';
 import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
+/* The score's ending. `_endCampaign` is one of the two places in this game a run
+ * can be WON rather than survived, and until this import existed the other one
+ * — `World._endMeeting` — was the only one that could say so out loud. Same
+ * direction as MathUtil above: game reaches into engine, never the reverse. */
+import { audio } from '../engine/Audio.js';
 
 /**
  * The stream every roll in this mode comes off.
@@ -2587,6 +2592,12 @@ export class CommandDirector extends WaveDirector {
     // summary, and the fallen are most of what it is worth reading.
     this.recall();
     this.world?.notify?.('THE ADVANCE IS OVER', `${strength} of ${all} walked off Geonosis`);
+    /* …and it makes a sound. The same call `World._endMeeting` makes, for the
+     * same reason: the score's only ending was a death, and a campaign that is
+     * WON is the other one. Always true here — a campaign that reaches this
+     * line has been won by definition, where a meeting has to ask whose screen
+     * it is. */
+    audio.runWon?.(true);
     const w = this.world;
     if (!w) return true;
     w.over = true;
