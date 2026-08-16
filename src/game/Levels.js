@@ -1246,6 +1246,9 @@ export function templeColonnade(world, opts = {}) {
       for (const sx of [-1, 1]) {
         const x = sx * R.x;
         if (!T.inBounds(x, z, 4)) continue;
+        // …and nothing stands inside a room the level has cut out of the aisle
+        if (opts.holes && opts.holes.some((h) =>
+          (x - h.x) ** 2 + (z - h.z) ** 2 < h.r * h.r)) continue;
         const y = T.height(x, z);
         const h = R.h * (0.97 + r2() * 0.06);
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r2() * TAU);
@@ -2272,7 +2275,7 @@ export const LEVELS = {
    *  with the Colosseum as the open-air control:
    *
    *                     sight line p50 / p90    bearings that meet NOTHING
-   *      temple             29 m / 76 m                   17.8%
+   *      temple             28 m / 76 m                   17.7%
    *      foundry            33 m / 102 m                  43.1%
    *      colosseum          55 m / 184 m                  83.1%
    *
@@ -2384,7 +2387,13 @@ export const LEVELS = {
         { x: 81, r: 0.92, pitch: 9.0, h: 27.0, bronze: false },
         { x: 101, r: 0.80, pitch: 8.0, h: 26.0, bronze: false },
       ];
-      const cols = templeColonnade(world, { ranks: RANKS, z0: -140, z1: 138, seed: 7700 });
+      /* THE COUNCIL CHAMBER is a hole in the outer aisles — see below. The
+       * colonnade is told about it rather than the room being told to clear
+       * columns afterwards, because the columns are instanced and there is no
+       * "afterwards" for an instance. */
+      const COUNCIL = { x: -88, z: 6, r: 24 };
+      const cols = templeColonnade(world, { ranks: RANKS, z0: -140, z1: 138, seed: 7700,
+        holes: [COUNCIL] });
 
       /* ── THE BENCHES between the column bases of the inner rank, offset half
        * a pitch so the nave's edge alternates column, bench, column. Two jobs.
@@ -2504,6 +2513,73 @@ export const LEVELS = {
         const x = -18 + i * 9;
         addRailing(world, at(x, -122), { length: 8.5, height: 1.05, yaw: 0,
           seed: 8140 + i, mat: M.bronze, destructible: 'stone' });
+      }
+
+      /* ── THE COUNCIL CHAMBER, and it is here because a hall is not a place if
+       * it is only ever one shape. `view in council chamber with windows
+       * looking out.jpeg` is the one reference frame in the folder that is NOT
+       * an arcade: a circular room whose entire wall is windows, a ring of
+       * chairs on a floor medallion, and Coruscant going on for ever outside.
+       * It is put at the END OF THE OUTER AISLE rather than off the nave, so
+       * getting to it is walking THROUGH four colonnades — which is the depth
+       * rule being used rather than restated. */
+      {
+        const cx = COUNCIL.x, cz = COUNCIL.z, cr = 17;
+        island(world, at(cx, cz), { seed: 8250, yaw: 0, span: 22, maker: 'council',
+          destructible: 'stone' },
+          (kit) => {
+            // the drum: mullion piers all the way round except where you enter
+            for (let i = 0; i < 14; i++) {
+              const a = (i / 14) * TAU + 0.22;
+              if (Math.cos(a) > 0.80) continue;             // the doorway, nave side
+              kit.post(M.duracreteWarm, 0.85, 1.05, 17.0,
+                Math.cos(a) * cr, 8.5, Math.sin(a) * cr,
+                { radial: 8, tile: 2.4, collide: true });
+            }
+            // the sill under them and the cornice over them, which is what
+            // makes a ring of posts read as a wall of windows
+            for (const [y, h, rr] of [[0.6, 1.2, cr + 0.7], [17.4, 1.1, cr + 0.7]]) {
+              for (let i = 0; i < 20; i++) {
+                const a = (i / 20) * TAU + 0.16;
+                if (Math.cos(a) > 0.80) continue;
+                kit.slab(M.sandstone, 2.2, h, 1.5, Math.cos(a) * rr, y, Math.sin(a) * rr,
+                  { tile: 2.2, seg: 3, ry: -a, collide: y < 2 });
+              }
+            }
+            // the ring of seats — twelve, which is what the Council is
+            for (let i = 0; i < 12; i++) {
+              const a = (i / 12) * TAU + 0.1;
+              const rr = cr - 4.4;
+              kit.slab(M.duracreteDark, 1.9, 0.5, 1.7, Math.cos(a) * rr, 0.25, Math.sin(a) * rr,
+                { tile: 1.6, seg: 2, ry: -a });
+              kit.slab(M.sandstone, 1.9, 1.5, 0.45, Math.cos(a) * (rr + 0.8), 1.0,
+                Math.sin(a) * (rr + 0.8), { tile: 1.6, seg: 2, ry: -a });
+            }
+            // and the medallion they sit round
+            kit.slab(M.bronze, 13.0, 0.06, 13.0, 0, 0.05, 0, { tile: 2.4, seg: 5, collide: false });
+          });
+        /* THE CITY OUTSIDE, as flat lit panels between the piers. Emissive
+         * rather than a drawn skyline: this level sets `sky: false`, so there is
+         * no dome to paint a city on — and what the reference actually reads as
+         * from INSIDE the room is a band of warm light with dark mullions
+         * across it, which is exactly rule 7 (the sky is flat, and its shapes
+         * are outlined) applied to a window. */
+        const panes = [];
+        const mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3();
+        const ss = new THREE.Vector3(1, 1, 1);
+        for (let i = 0; i < 14; i++) {
+          const a = (i / 14) * TAU + 0.22 + Math.PI / 14;
+          if (Math.cos(a) > 0.74) continue;
+          pp.set(cx + Math.cos(a) * (cr + 0.2), T.height(cx, cz) + 9.2, cz + Math.sin(a) * (cr + 0.2));
+          qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a);
+          panes.push(mm.clone().compose(pp, qq, ss));
+        }
+        addInstanced(world, slabGeo(0.4, 14.0, 7.2, { tile: 2.4, seg: 3 }), M.glowAmber,
+          panes, V(0, 0, 0), { name: 'councilWindow', castShadow: false });
+        const CL = new THREE.PointLight(0xffc27a, 30, 52, 2);
+        CL.position.set(cx, T.height(cx, cz) + 7.0, cz);
+        world.scene.add(CL); world.levelLights.push(CL);
+        siteOk(world, cx, cz, { clearance: 20, spawnClear: 0 });
       }
 
       /* ── THE BRAZIERS down the nave. The reference has no lamps in it — the
