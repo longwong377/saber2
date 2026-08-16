@@ -145,18 +145,29 @@ run, after ~55 other suites had passed through first. Two of the three
 observed hangs are that suite and the third is `coop.mjs`. **It is not
 ordering.**
 
-What the two share is the thing to look at: they are the two suites that boot
-the most Worlds. `levels-quality.mjs` calls `await level(...)` **twelve times**
-against **three** `unload()` calls, and a World is a terrain heightfield, a
-Rapier world, several instanced fields and a texture set. Nine un-torn-down
-worlds in one suite is fine on its own — it passes alone in 74 s — and is a
-plausible last straw at the end of a run that has already built a hundred.
+What the two share is the thing to look at: they are the two suites that hold
+the most Worlds ALIVE AT ONCE.
 
-So the next step is not a bisect, it is a memory/handle reading: run
-`--expose-gc` with `process.memoryUsage()` logged per suite and watch whether
-RSS climbs monotonically across the run. If it does, `levels-quality.mjs`
-tearing down what it builds is the cheap fix, and `lifecycle.mjs` already owns
-the vocabulary for saying so.
+I first wrote here that `levels-quality.mjs` "calls `await level(...)` twelve
+times against three `unload()` calls" and left it as the lead. **That was
+wrong, and it is worth leaving the correction in** — it is exactly the shape
+§2.4 warns about, an instrument restating a rule and manufacturing a defect
+out of the difference. `level()` is a CACHE keyed on the level name: twelve
+calls resolve to six distinct worlds, and the suite's last check disposes all
+of them and asserts it did (`WORLDS.clear()`, line ~605).
+
+So it does not leak. What it does is hold up to six fully-built Worlds —
+terrain heightfield, Rapier world, instanced fields, texture set each —
+**simultaneously**, deliberately, so it does not rebuild them per check. That
+is a peak, not a leak, and the two want different fixes: a peak is capped by
+evicting the cache between groups, a leak by disposing at the end, which it
+already does.
+
+So the next step is a memory READING and not a bisect, and it should
+distinguish those two: log `process.memoryUsage()` per suite across a full
+run. **Monotonic climb** across unrelated suites means a leak somewhere else
+and these two are merely where it tips over. **A spike confined to these two**
+means the peak is the problem and the cache wants a cap.
 
 Two things that are NOT the cause, ruled out rather than assumed: suite order
 (above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
