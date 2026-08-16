@@ -4487,6 +4487,25 @@ Object.assign(ARCHETYPES, {
      * and the blade lock all work off `saber` alone and need nothing else. */
     saberColor: 5, hilt: 'Sentinel', damage: 34, preferred: [1.8, 3.8],
     score: 3200, threat: 13, boss: true, hipHeight: 1.12,
+    /**
+     * DJEM SO, DECLARED — a boss cannot roll its own fight on spawn.
+     *
+     * This archetype gave `Enemy._build` no `form`, so it took the random
+     * branch: `FORM_KEYS[floor(rng() * 5)]`. A 1050 hp set-piece that fights a
+     * different way every time it is met is a boss with no counter-play to
+     * learn, and the note over the four Jedi in src/game/Enemy.js says exactly
+     * that about the roster it was written for.
+     *
+     * Which form is not a preference either. The MagnaGuard in
+     * src/game/Command.js is the same chassis carrying the same electrostaff at
+     * a quarter of the health, and it already declares `djemSo` — so the two IG
+     * bodies fight alike and the smaller one is the rehearsal. It also suits
+     * the weapon: Djem So is 3 heavy attacks and 1 unblockable, none of them
+     * parryable, which is a two-metre arc staff swung by 240 kg of droid rather
+     * than a fencer's blade. Its 0.58 s recovery is the longest opening in the
+     * game, and with the WINDED window below it is what this fight is made of.
+     */
+    form: 'djemSo',
     /* THIS DROID ARRIVES AS A SET-PIECE AND NEVER AS FILL, and it now SAYS so.
      *
      * It always did — but by omission: `unlockedAt` used to build its list from

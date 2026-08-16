@@ -607,10 +607,36 @@ export const ARCHETYPES = {
     trooperColor: 0x2c3038, accent: 0xff9a20, hipHeight: 0.95,
   },
   acolyte: {
-    label: 'Sith Acolyte', build: buildAcolyte, scale: 1.04, hp: 130, mass: 82,
+    /* DARK ACOLYTE, not "Sith Acolyte". There are two Sith and the game fields
+     * this one twelve at a time; the name for a dark-side duellist who is not
+     * one of the two is the one the source material already uses for Dooku's
+     * students, and it costs a string. */
+    label: 'Dark Acolyte', build: buildAcolyte, scale: 1.04, hp: 130, mass: 82,
     speed: 5.0, toughness: TOUGHNESS.flesh, melee: true, saber: true,
     saberColor: 4, damage: 26, preferred: [1.6, 3.4], score: 700, threat: 6,
     hipHeight: 0.97,
+    /**
+     * MAKASHI, DECLARED — AND IT WAS A DIE ROLL.
+     *
+     * `Enemy._build` falls back to `FORM_KEYS[floor(rng() * 5)]` for a body
+     * that declares no form, and this one declared none: the acolyte is 12 of
+     * 101 pool slots across the ten levels and the only duellist on seven of
+     * them, so the enemy the player meets most fought a different way every
+     * time it spawned. The note over JEDI_BASE names that exact defect as the
+     * reason the four Jedi declare theirs — "the player could not learn 'that
+     * is Djem So, it commits hard, punish the recovery'" — and the fix reached
+     * only the six archetypes written after it.
+     *
+     * Makashi for two reasons that agree. It is the form Dooku taught his
+     * acolytes, which is who these are; and it is the form whose whole content
+     * is the PARRY — 5 light attacks of 5, chain 1-2, `punishRecovery` 0.85 —
+     * so the duellist a player meets on seven levels is the one that teaches
+     * the fundamental of the duelling game rather than the exception to it.
+     * The Master (also Makashi) is a set-piece on one level with 460 hp and
+     * four powers; nobody is going to mistake one for the other, and sharing a
+     * form is sharing a LESSON, which is what forms are for.
+     */
+    form: 'makashi',
     /* THE SITH TAKES WHAT THE JEDI WILL NOT. Lightning and the choke are the
      * two powers `Powers.js` gates behind an attunement for the player and the
      * two the source material is most consistent about being the dark side's;
@@ -730,6 +756,15 @@ export const ARCHETYPES = {
     speed: 3.4, toughness: TOUGHNESS.flesh, melee: true, saber: true,
     saberColor: 1, hilt: 'Guardian', damage: 3, preferred: [1.6, 3.2],
     score: 0, threat: 0, training: true,
+    /* SORESU, because this one is a lesson and a lesson cannot be a die roll.
+     * The dojo partner rolled a random form per spawn like every other
+     * undeclared duellist, so the room built to teach the blade taught a
+     * different blade each visit. Soresu is 3 light attacks of 3 — everything
+     * it throws is parryable — at aggression 0.42, the lowest in the table, so
+     * it waits instead of rushing and every exchange happens when the student
+     * is ready for it. `punishRecovery: 1.0` is the highest, which is the other
+     * half of the lesson: swing wildly at it and it takes the opening. */
+    form: 'soresu',
   },
 
   beast: {
@@ -939,6 +974,38 @@ const GUARD_PER_HP = 1 / 90;
 export const TURNED_CUT = 0.24;
 /** Seconds to win one turned pass back, and only while the guard is not beaten. */
 const GUARD_REFRESH = 6.0;
+
+/**
+ * WINDED — the opening a big body has instead of a stagger, and for two of them
+ * it was BOOKKEEPING WITH NO READER.
+ *
+ * `recentDamage` is written at three sites — `damage()`, `takeCut()` and the
+ * turned pass — behind `A.boss || A.custom === 'beast'`, and it was read at
+ * exactly ONE, inside `_beastBrain`. `master` and `bodyguard` are `boss` and
+ * neither runs the beast brain, so on those two the number accumulated forever
+ * and nothing ever looked at it: **the WINDED opening did not exist for the two
+ * duellist bosses**, while `_guardOpen` — the one predicate the blade and the
+ * Force both read — lists `state === 'winded'` as an opening every body has.
+ *
+ * What that costs is not subtle. The IG Bodyguard has 1050 hp, a durasteel
+ * torso and TWELVE turned passes, so the pass that ends the fight is refused
+ * twelve times unless the guard is beaten first — and the one opening its own
+ * mechanic offered was unreachable. Measured against a player who walks
+ * backwards: 0.00 hp/s in either direction.
+ *
+ * So the rule lives here, once, and every brain that owns a body with the tally
+ * calls `_windTick`. The three numbers are the ones the creatures were already
+ * tuned with — take 14% of your maximum health faster than 12% of it decays per
+ * second and you are open for 2.4 s, once every 7 — because a window that means
+ * one thing on a Rancor and another on a droid general is two mechanics sharing
+ * a name.
+ */
+const WIND_TAKE = 0.14;      // share of max health inside the window that opens it
+const WIND_DECAY = 0.12;     // share of max health the tally sheds per second
+const WIND_OPEN = 2.4;       // seconds the body is open for
+const WIND_GAP = 7;          // seconds before it can be opened again
+/** Does this body keep a `recentDamage` tally at all? One predicate, four readers. */
+const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
 
 /**
  * ── AND THE SAME ARGUMENT FOR EVERYTHING WITHOUT A BLADE ───────────────
@@ -1615,6 +1682,9 @@ export class Enemy {
     this.burstLeft = 0;
     this.burstTimer = 0;
     this.aimCharge = 0;
+    /** Where the aimed shot is going, fixed when the red line goes up and read
+     *  by both the line and the bolt. Null when nothing is being aimed. */
+    this.telegraphAim = null;
     this.state = 'approach';
 
     /* THE OTHER SIDE'S FORCE — see ENEMY_POWERS. `powers` is null for every
@@ -1869,6 +1939,22 @@ export class Enemy {
       this.hum = audio.createHum(this.saber.color.getHex());
       this.hum.ignite();
       this.telegraphArc = new Telegraph(this.world.scene);
+      /**
+       * THE DIE ROLL IS NOW UNREACHABLE FROM THE SHIPPED ROSTER, and it was
+       * reached by the three commonest sabered bodies in the game.
+       *
+       * `A.form || FORM_KEYS[floor(rng() * 5)]` is the line the note over
+       * JEDI_BASE describes as the reason a player "could not learn 'that is
+       * Djem So, it commits hard, punish the recovery'". Six archetypes were
+       * given a declared form when that was written and three were not: the
+       * ACOLYTE (12 of 101 pool slots and the only duellist on seven levels),
+       * the SPARRING PARTNER (the dojo, whose entire job is to be learnable)
+       * and the IG BODYGUARD (a boss). All three declare one now.
+       *
+       * The fallback stays because a level or a mode may spawn a sabered body
+       * that no archetype table owns, and a duellist with no form at all cannot
+       * fight. `tools/checks/duelling.mjs` holds the roster to declaring one.
+       */
       this.duel = new DuelBrain(this, {
         form: A.form || FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)],
         telegraph: this.telegraphArc,
@@ -2214,7 +2300,7 @@ export class Enemy {
      * `winded` fired 0 times. The gate is on the creature that HAS the window,
      * which is anything running the beast brain.
      */
-    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + amount;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + amount;
     if (this.hp <= 0) { this.die(point, source, kind); return true; }
     // A heavy blow throws the guard AWAY from whoever landed it, and how far
     // scales with how heavy. Both arguments used to be omitted here, so every
@@ -2292,7 +2378,7 @@ export class Enemy {
      * path subtracts from `hp` directly rather than going through `damage()`,
      * so severing a limb — the thing the winded comment says the window exists
      * for — accrued nothing at all and could never open it. */
-    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + dmg;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + dmg;
     if (this.hp <= 0) this.die(ev.point, source, 'cut');
     else {
       // The cut carries its own line — `ev.impulse` is the direction the blade
@@ -2407,7 +2493,7 @@ export class Enemy {
     this.guard--;
     this.guardT = GUARD_REFRESH;
     this.hp -= this.maxHp * TURNED_CUT;
-    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
     if (this.hp <= 0) { this.die(ev.point, source, 'cut'); return true; }
 
     /* THE TEMPO COST, AND IT IS NOT THE SAME EVENT FOR EVERY BODY.
@@ -2454,12 +2540,39 @@ export class Enemy {
 
   /** @param point where the blade crossed, so a dropped hilt starts there. */
   _loseLimbBehaviour(bone, point) {
-    // walking on a severed leg does not work
-    if (/thigh|shin|foot|femur|tibia|tarsus/.test(bone)) {
+    /**
+     * WALKING ON A SEVERED LEG DOES NOT WORK — AND THE BIGGEST LEG BONE ON
+     * EVERY MULTI-LEGGED BODY DID NOT COUNT AS ONE.
+     *
+     * This asked `/thigh|shin|foot|femur|tibia|tarsus/.test(bone)`: the leg
+     * vocabulary of a HUMANOID, spelled out, against a roster whose quadrupeds
+     * name their bones `hipL0`, `femur0`, `tibia0`, `tarsus0` and whose
+     * hailfire names them `wheelL` and `rimL`. `hipL#` is on none of those
+     * lists. Severing a bone also takes its whole subtree (Ragdoll.cut) while
+     * reporting only the CUT bone's name, so cutting a Spider Walker at the HIP
+     * removed the entire leg and incremented `legsLost` by ZERO, while cutting
+     * the toe of that same leg counted. Measured across the roster:
+     *
+     *   walker 12 of 16 leg bones counted, 4 × hipL# uncounted (0.275 each,
+     *   the most expensive leg bone it has, against a tarsus at 0.045)
+     *   acklay 18 of 24 · charger 12 of 16 · stalker 12 of 16
+     *   brute 6 of 8 · pouncer 6 of 8 · HAILFIRE 0 of 4
+     *
+     * What a player saw: a Spider Walker losing three of its four legs at the
+     * hip — 588 of its 620 hp — with `legsLost === 0`, still upright and still
+     * moving at full speed, because `_move` reads the same counter. And a
+     * Hailfire had no bone in its body that could ever increment it, so
+     * `topple()` was unreachable for that machine entirely.
+     *
+     * `Rig.js` gave every bone a `role` and `severanceOf` already prices off
+     * it; this was the older reader, and Rig.js's own note names it as "the
+     * next thing to route through `bone.role`". Now it is. A body plan added
+     * tomorrow is counted the day it is authored, in the same place its bones
+     * declare what they are.
+     */
+    if (this.rig?.get(bone)?.role === 'leg') {
       this.legsLost = (this.legsLost || 0) + 1;
-      if (this.legsLost >= (this.A.custom === 'walker' || this.A.custom === 'beast' ? 3 : 1)) {
-        this.topple();
-      }
+      if (this.legsLost >= this._toppleAt()) this.topple();
     }
     // The off hand holds a real weapon, so losing it loses the weapon. Checked
     // before the general arm rule, which only knows about the main one.
@@ -2519,6 +2632,42 @@ export class Enemy {
       this.legsLost = (this.legsLost || 0) + 1;
       if (this.legsLost >= 2) this.topple();
     }
+  }
+
+  /**
+   * How many leg cuts put this body on the ground.
+   *
+   * The authored number is 3 for a walker or a creature and 1 for everything
+   * else, and it is CAPPED BY THE ANATOMY: you cannot ask for more legs than
+   * the body has, and a body standing on its last leg is on the ground whatever
+   * the number says. A leg CHAIN is counted off the rig — a bone with role
+   * 'leg' whose parent is not one — so it is 4 on a Spider Walker, 6 on an
+   * Acklay, 2 on the two bipeds and 2 on a Hailfire.
+   *
+   * THE HAILFIRE IS WHY THIS IS DERIVED. `Rig.js` says outright that its wheels
+   * are legs — "two of them, weight-bearing, and losing one is losing the pair"
+   * — and it carries `custom: 'walker'`, so the flat 3 was a threshold its four
+   * leg bones could never reach: `wheelL` takes `rimL` with it, so there are
+   * exactly two cuts available and three were required. One wheel now puts it
+   * over, which is what a two-wheeled machine does when it loses a wheel.
+   *
+   * The two bipedal creatures move with it, from 3 to 1, and that is the same
+   * sentence: a Rancor has two legs, and a Rancor with one leg is a Rancor on
+   * the sand. Reaching it is not cheap — a severing pass has to beat five
+   * turned passes or catch the animal WINDED first, and it costs
+   * `maxHp × vital × SEVER_LETHALITY` on the way through.
+   */
+  _toppleAt() {
+    if (this._toppleNeed === undefined) {
+      const A = this.A;
+      const authored = A.custom === 'walker' || A.custom === 'beast' ? 3 : 1;
+      let chains = 0;
+      for (const b of (this.rig?.list ?? [])) {
+        if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
+      }
+      this._toppleNeed = chains > 0 ? Math.max(1, Math.min(authored, chains - 1)) : authored;
+    }
+    return this._toppleNeed;
   }
 
   topple() {
@@ -3095,6 +3244,9 @@ export class Enemy {
         this._shoot(ctx);
         this.burstLeft--;
         this.burstTimer = (A.burstGap ?? 0.12) * rally;
+        // The committed ray outlives the burst it was drawn for and nothing
+        // else: once the shot is away the next one aims fresh.
+        if (this.burstLeft <= 0) this.telegraphAim = null;
       }
       return;
     }
@@ -3135,7 +3287,28 @@ export class Enemy {
     }
   }
 
+  /**
+   * THE RED LINE MEANS WHAT IT SAYS, AND IT DID NOT.
+   *
+   * `sniper` (1.0 s), `rocket` (0.9 s), the AT-TE (1.1 s) and the `marksman`
+   * elite (0.9 s) draw a line from the muzzle to the player's chest and hold it
+   * there for most of a second. The modifier's own text calls that the whole of
+   * the counter-play — "a red targeting line on your chest, and most of a
+   * second to leave it" — and leaving it was the one thing that did nothing:
+   * `_pose` re-pointed the line at `target.chest` EVERY FRAME and `_shoot`
+   * computed its aim from `target.chest` at the moment of firing, so the line
+   * followed you and the shot was aimed when it left rather than when the
+   * warning went up. The player who did exactly what the tell told them to do
+   * was hit anyway, which teaches them the telegraph is a lie.
+   *
+   * The point is committed HERE, at the top of the telegraph, and both the line
+   * and the bolt read it. Step off it and the shot goes where you were.
+   */
   _beginTelegraph(ctx) {
+    const t = this.target;
+    if (t) {
+      this.telegraphAim = (this.telegraphAim || new THREE.Vector3()).copy(t.chest ?? t.position);
+    }
     if (!this.laser) {
       const g = new THREE.CylinderGeometry(0.006, 0.006, 1, 4);
       g.translate(0, 0.5, 0);
@@ -3193,7 +3366,11 @@ export class Enemy {
     const target = this.target;
     if (!target) return;
     const from = this._muzzleWorld(_v1).clone();
-    const aimAt = _v2.copy(target.chest ?? target.position);
+    // Down the committed ray if one was drawn — see `_beginTelegraph`. A shot
+    // the player was given a second to leave has to leave from where the line
+    // was, not from where they ended up.
+    const aimed = !!this.telegraphAim;
+    const aimAt = _v2.copy(aimed ? this.telegraphAim : (target.chest ?? target.position));
     /* SHOOTING ITSELF is aimed at the chest like everything else, but the
      * muzzle is already past it — a rifle held at the shoulder has its barrel
      * end a good half metre in FRONT of the ribs — so `aimAt - from` points
@@ -3213,7 +3390,10 @@ export class Enemy {
     // lead the shot, then throw it off by however good this difficulty is
     const speed = 88 * (diff ? diff.boltSpeed : 1) * (A.big ? 1.2 : 1);
     const tof = from.distanceTo(aimAt) / speed;
-    if (target.velocity) aimAt.addScaledVector(target.velocity, tof * acc);
+    /* …and a committed shot does not lead. Leading a fixed point by the
+     * target's CURRENT velocity would put the bolt back on the player and off
+     * the line that was drawn, which is the same defect one layer down. */
+    if (target.velocity && !aimed) aimAt.addScaledVector(target.velocity, tof * acc);
 
     _v3.subVectors(aimAt, from).normalize();
     const spread = (A.spread ?? 0.06) * (2 - acc);
@@ -3262,6 +3442,16 @@ export class Enemy {
        */
       this.wish = null;
       if (this.powers) this._forceBrain(dt, ctx, dist);
+      return;
+    }
+    /* WINDED, for the two duellist bosses — see `_windTick` and WIND_TAKE. The
+     * tally was being written for them and read for nobody, so a boss with
+     * twelve turned passes had no window in which the thirteenth would land.
+     * The blade is out of line for the duration (the stagger the tick opens),
+     * so this only keeps the FEET and the kit still. */
+    if (this._windTick(dt)) {
+      this.wish = null;
+      if (this.duel.staggered) this.duel.update(dt, ctx, dist);
       return;
     }
     if (this.trainingSpeed) this.duel.timeScale = this.trainingSpeed;
@@ -3496,6 +3686,44 @@ export class Enemy {
        * predicate is the one rule both the blade and the Force read, and an
        * opening the blade honours and the Force does not is two rules. */
       || this.state === 'winded';
+  }
+
+  /**
+   * The winded window, for every body that keeps the tally — see WIND_TAKE.
+   *
+   * Called by `_beastBrain` for the creatures and by `_meleeBrain` for the two
+   * duellist bosses, and it is the same rule in both places rather than a
+   * second one that reads similar. Returns true while the body is open, which
+   * is the caller's cue to stop it doing anything.
+   *
+   * WHAT A DUELLIST DOES WITH IT that an animal does not: the guard goes with
+   * it. `duel.stagger` is how every other earned opening in the game is SHOWN —
+   * the blade driven wide and low and held there — so a boss that has been hurt
+   * faster than it can absorb reads exactly like one that has been parried,
+   * from across the room, and `_guardOpen` is true either way. An animal has no
+   * blade to throw and gets the floating call and the roar it always had.
+   */
+  _windTick(dt) {
+    if (!keepsWind(this.A)) return false;
+    this.windTimer = Math.max(0, (this.windTimer || 0) - dt);
+    this.recentDamage = Math.max(0, (this.recentDamage || 0) - dt * this.maxHp * WIND_DECAY);
+    if (this.recentDamage > this.maxHp * WIND_TAKE && this.windTimer <= 0 && this.state !== 'winded') {
+      this.recentDamage = 0;
+      this.state = 'winded';
+      this.stateTime = 0;
+      this.windTimer = WIND_GAP;
+      this.world.notifyFloating?.(this.aimPoint(_v1), 'WINDED', '#ffd88a');
+      audio.explosion(this.position, 0.7);
+      // A body with a blade shows it with the blade. `stagger` clears the
+      // attack, the chain and the chamber and hides the telegraph, so the
+      // window cannot be spent on a swing that was already in flight.
+      this.duel?.stagger(WIND_OPEN, null, 1.4);
+    }
+    if (this.state === 'winded') {
+      if (this.stateTime > WIND_OPEN) { this.state = 'approach'; return false; }
+      return true;
+    }
+    return false;
   }
 
   /** The cast lands. Everything that hits goes through `applyKnockback`. */
@@ -3858,21 +4086,7 @@ export class Enemy {
     }
 
     // being hurt fast enough winds it — the only safe time to go for a leg
-    this.windTimer = Math.max(0, (this.windTimer || 0) - dt);
-    this.recentDamage = Math.max(0, (this.recentDamage || 0) - dt * this.maxHp * 0.12);
-    if (this.recentDamage > this.maxHp * 0.14 && this.windTimer <= 0 && this.state !== 'winded') {
-      this.recentDamage = 0;
-      this.state = 'winded';
-      this.stateTime = 0;
-      this.windTimer = 7;
-      this.world.notifyFloating?.(this.aimPoint(_v1), 'WINDED', '#ffd88a');
-      audio.explosion(this.position, 0.7);
-    }
-    if (this.state === 'winded') {
-      this.wish = null;
-      if (this.stateTime > 2.4) { this.state = 'approach'; }
-      return;
-    }
+    if (this._windTick(dt)) { this.wish = null; return; }
 
     this.attackTimer -= dt;
     if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
@@ -4361,7 +4575,10 @@ export class Enemy {
 
     if (this.laser && this.laser.visible && this.target) {
       const from = this._muzzleWorld(_v1);
-      _v2.subVectors(this.target.chest ?? this.target.position, from);
+      // The COMMITTED point, not a live read of the chest. This line used to
+      // track the player, which made "leave the line" impossible: the line went
+      // with them. See `_beginTelegraph`.
+      _v2.subVectors(this.telegraphAim ?? this.target.chest ?? this.target.position, from);
       const len = _v2.length();
       this.laser.position.copy(from);
       this.laser.quaternion.setFromUnitVectors(_v3.set(0, 0, 1), _v2.normalize());
