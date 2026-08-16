@@ -2978,8 +2978,10 @@ export class Enemy {
    *                  next eight seconds.
    *   SITUATION      `want`. A push fired at nothing is not a threat, it is
    *                  noise, and it teaches the player that the tell means
-   *                  nothing. `pressed` means a blade is inside its guard and
-   *                  the exchange is going against it; `fleeing` means the
+   *                  nothing. `pressed` means a blade is inside the band it
+   *                  wants to fight at — and it used to mean that AND "it is
+   *                  losing on health", which made the whole feature invisible;
+   *                  see the note on the object itself. `fleeing` means the
    *                  target is opening the distance; `ranged` means they have
    *                  already opened it; `cornered` is the boss's last third.
    *   TELEGRAPH      `_castTimer`. The cast is a 0.45 s wind-up with a floating
