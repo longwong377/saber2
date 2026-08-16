@@ -177,7 +177,7 @@ export function run({ check, assert, near }) {
       'the terrain adds raw phase-function inscatter while every other material has it capped');
 
     // the strip has to BE ground.skyBand, not a second derivation of it
-    const a = LEVELS.arena.atmosphere;
+    const a = LEVELS.colosseum.atmosphere;
     const band = bakeBand(a);
     const tex = writeSkyStrip(new THREE.DataTexture(new Uint16Array(SKY_STRIP * 4), SKY_STRIP, 1,
       THREE.RGBAFormat, THREE.HalfFloatType), band);

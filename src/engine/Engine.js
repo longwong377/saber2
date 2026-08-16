@@ -1382,7 +1382,36 @@ const CompositeShader = {
       // the middle, gentle at both ends — so it adds bite without clipping.
       col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);
       col = (col - 0.5) * uContrast + 0.5;
-      col = col * uGain + uLift;
+
+      /**
+       * THE GAIN ROLLS OFF INTO THE HIGHLIGHTS, and the blue lightsaber that
+       * came out YELLOW is why.
+       *
+       * A channel gain is a tint, and a tint applied at full strength to a
+       * pixel that is already at the top of the curve does not tint it — it
+       * REPLACES its hue, because the three channels are all near 1 and their
+       * ratios are whatever the gain says. The Ember Shelf grades
+       * [1.13, 1.00, 0.74], which is correct for a world lit by fire and is
+       * catastrophic for the one object in that world making its own light:
+       * measured in this shader's own arithmetic, a Cerulean blade core came
+       * out 147 degrees off its crystal — blue in, yellow out. Amethyst went
+       * 139 the other way. The coloured lobe around the core, which is dimmer,
+       * only moved 56, which is why the halo stayed blue while the blade in
+       * the middle of it did not.
+       *
+       * Rolling the gain toward neutral as luma approaches white is what film
+       * does and what the saturation term two lines down ALREADY does, on this
+       * same ramp. It was simply the one operator that had no shoulder. After
+       * it, every level's core sits within 26 degrees of its crystal, which is
+       * the ACES shoulder alone and is the same on all seven.
+       *
+       * The ramp is driven by luma BEFORE the gain — the whole point is to
+       * decide how much tint a pixel can take from how bright it already is,
+       * and a luma read afterwards has the tint in it.
+       */
+      float preLuma = dot(col, vec3(0.2126,0.7152,0.0722));
+      float tintable = 1.0 - smoothstep(0.62, 1.0, preLuma);
+      col = col * mix(vec3(1.0), uGain, tintable) + uLift * tintable;
 
       float luma = dot(col, vec3(0.2126,0.7152,0.0722));
       // Split tone. Daylight is two lights — a warm sun and a cold sky — and

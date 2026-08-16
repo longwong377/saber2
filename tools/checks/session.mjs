@@ -129,7 +129,7 @@ export async function run({ check, assert }) {
      * notifications no array on the world may have grown by a thousand.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const sizes = (w) => {
       const out = new Map();
       for (const [k, v] of Object.entries(w)) if (Array.isArray(v)) out.set(k, v.length);
@@ -175,7 +175,7 @@ export async function run({ check, assert }) {
      * freed. WASM linear memory is monotonic; it is never handed back.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     assert(world.physics.world, 'the world has no physics world to begin with');
     world.dispose();
     assert(world.physics.world === null,
@@ -185,7 +185,7 @@ export async function run({ check, assert }) {
 
     // Four full cycles, to show the teardown is repeatable and not merely lucky.
     for (let i = 0; i < 4; i++) {
-      const w = await H.bootWorld({ level: 'arena' });
+      const w = await H.bootWorld({ level: 'colosseum' });
       w.world.dispose();
       assert(w.world.physics.world === null, `cycle ${i + 1} stranded a physics world`);
     }

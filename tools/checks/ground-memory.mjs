@@ -166,123 +166,6 @@ function tableTau(tiers, r0, r1, thickness, coverFrac, lenGain) {
 
 export function run({ check, assert, near }) {
 
-  /* ══ 1. the meadow is grass all the way down ═════════════════════════ */
-
-  check('meadow: the cover closes the ground it is standing on', () => {
-    /* THE MEASUREMENT, and why it is optical depth rather than a tuft count.
-     *
-     * Rendered before this change, on the real level at medium quality with a
-     * camera at eye height pitched 20° down: the cover hid 35.3% of the ground
-     * band and 17.1% of the nearest quarter of the frame. The player's words
-     * for that were "you can see soil between the tufts", and they are right —
-     * five parts soil to one part grass at your own feet.
-     *
-     * τ over the first six metres is what decides that, and the shipped
-     * ladder's τ is computed here from its own rows as a control rather than
-     * quoted. Both halves of the fix show up in it: a new SWARD rung, which is
-     * broad and low where the clump rung is tall and narrow, and a clump rung
-     * that is 1.5× longer — and because τ goes as len², the length alone is
-     * worth 2.2× for no extra instances at all.
-     */
-    const { terrain, grass } = levelField('meadow');
-    const bands = [[0, 6], [6, 12], [12, 24]];
-    const rows = [];
-    for (const [r0, r1] of bands) {
-      const m = opticalDepth(grass, r0, r1);
-      rows.push(`${r0}-${r1}m τ=${m.tau.toFixed(2)} ${(m.closure * 100).toFixed(0)}%`);
-      // The ceiling on the far band is the reach of the near rungs, not a
-      // failure: the clump rung alone carries 12-24 m and is checked on its
-      // own grazing coverage in tools/checks/terrain.mjs.
-      const want = r1 <= 12 ? 0.90 : 0.80;
-      assert(m.closure > want,
-        `${r0}-${r1} m: the cover closes ${(m.closure * 100).toFixed(0)}% of the ground `
-        + `(τ = ${m.tau.toFixed(2)} over ${m.live} instances), wanted ${(want * 100).toFixed(0)}%`);
-    }
-
-    // …and it is denser than the ladder it replaces, measured the same way.
-    const nowTau = opticalDepth(grass, 0, 6).tau;
-    /* The control spends the SAME budget the level would have handed it, shared
-     * out by its own rows — so this is "the same instances, differently spent"
-     * and not "more instances". The meadow's density of 1.4 moves the budget by
-     * 1.2×; everything past that is shape. */
-    const wasThick = tableThickness(SHIPPED_TIERS, grass.count, grass.coverFrac);
-    const wasTau = tableTau(SHIPPED_TIERS, 0, 6, wasThick, grass.coverFrac, 1.15);
-    assert(nowTau / wasTau > 2.0,
-      `the near cover is only ${(nowTau / wasTau).toFixed(2)}× the ladder it replaces `
-      + `(τ ${wasTau.toFixed(2)} → ${nowTau.toFixed(2)})`);
-
-    /* AND THE GROUND ITSELF IS SWARD. The last few per cent of closure are not
-     * affordable in geometry — τ has to reach 3 for 95%, and that is seven
-     * times the instances — so on ground the field says is covered, the
-     * SURFACE is a mat of blade tips rather than soil crumb. This is the
-     * uniform that carries it, and it must be off on a level with no cover. */
-    const u = terrain._uniforms;
-    assert(u.uSward.value.x > 0.8,
-      `the meadow paints its ground as sward at ${u.uSward.value.x.toFixed(2)}`);
-    assert(u.uSward.value.z > 0.5,
-      `the sward has ${u.uSward.value.z.toFixed(2)} of relief — a flat mat is a printed pattern`);
-    // and it is the mat DOWN AMONG the blades, so it is darker than they are
-    const lum = (c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-    assert(lum(u.uSwardA.value) < lum(grass.tintA) * 0.8,
-      `the sward mat is ${(lum(u.uSwardA.value) / lum(grass.tintA)).toFixed(2)}× the blade's own value `
-      + '— a canopy floor lit from above through a canopy cannot be that bright');
-    assert(lum(u.uSwardB.value) < lum(u.uSwardA.value),
-      'the gap between the blades is brighter than the blade tips over it');
-
-    const rep = `${rows.join('  ')}; ${(nowTau / wasTau).toFixed(2)}× the shipped ladder; `
-      + `sward ${u.uSward.value.x.toFixed(2)} relief ${u.uSward.value.z.toFixed(2)}`;
-    grass.dispose(); terrain.dispose();
-    return rep;
-  });
-
-  check('meadow: the density is bought with area, not with instances', () => {
-    /* THE PERFORMANCE HALF, and it is a real constraint: "a meadow that is
-     * 100% covered at 4 fps is not a fix." Instances and triangles are what
-     * this costs, and the whole argument of the sward rung is that closure is
-     * quadratic in size and only linear in count — so the right way to buy it
-     * is bigger cover, not more of it.
-     *
-     * The budget is `count · 2.2 · (0.5 + 0.5·min(density, 1.4))`, and the
-     * meadow's density of 1.4 is exactly where that term saturates: 1.2× the
-     * instances for 2.2× the closure. Anything past 1.4 is free budget the
-     * formula refuses to spend, which is the point of the clamp.
-     */
-    const rows = [], closures = [];
-    for (const tier of ['low', 'medium', 'high', 'ultra']) {
-      const { terrain, grass } = levelField('meadow', tier);
-      let tris = 0;
-      for (const r of grass.rings) tris += r.count * (r.geo.index.count / 3);
-      const m = opticalDepth(grass, 0, 6);
-      rows.push(`${tier} ${grass.count} inst / ${(tris / 1000).toFixed(0)}k tri / `
-        + `${grass.meshes.length} draws / ${(m.closure * 100).toFixed(0)}%`);
-      // The tier the game calls `high` is the reference; nothing may exceed
-      // 1.25× the instances the shipped ladder spent there, which was 24,200.
-      if (tier === 'high') {
-        assert(grass.count <= 24200 * 1.25,
-          `the high tier now spends ${grass.count} instances against the 24,200 it did`);
-        assert(grass.meshes.length <= 10,
-          `${grass.meshes.length} draw calls for the ground cover`);
-      }
-      /* Every tier still closes the near ground, and the bar is per tier
-       * because the tier IS the budget: `low` holds a quarter of `high`'s
-       * instances by design and it is the one setting that exists to buy
-       * frames. What the ladder may not do is fall off a cliff — the shipped
-       * ladder closed 34% at HIGH, so the Performance tier now closes nearly
-       * twice what the top tier used to. */
-      const bar = tier === 'low' ? 0.50 : tier === 'medium' ? 0.78 : 0.92;
-      assert(m.closure > bar,
-        `${tier}: the cover closes ${(m.closure * 100).toFixed(0)}% of the first six metres, `
-        + `wanted ${(bar * 100).toFixed(0)}%`);
-      closures.push(m.closure);
-      grass.dispose(); terrain.dispose();
-    }
-    assert(closures.every((c, i) => i === 0 || c >= closures[i - 1] - 1e-9),
-      `the ladder is not monotone: ${closures.map((c) => (c * 100).toFixed(0)).join(' → ')}`);
-    return rows.join('; ');
-  });
-
-  /* ══ 2-3. snow, sand and metal grow nothing ══════════════════════════ */
-
   check('levels: nothing grows on snow, on sand or on deck plate', () => {
     /* "Delete grass from any level whose ground is snow, ice, sand or metal."
      *
@@ -488,7 +371,7 @@ export function run({ check, assert, near }) {
      * is what lets the field go quiet again.
      */
     const rows = [];
-    for (const [key, holds] of [['alpine', 0.55], ['drifts', 0.18], ['arena', 0.45]]) {
+    for (const [key, holds] of [['alpine', 0.55], ['drifts', 0.18], ['colosseum', 0.45]]) {
       const t = new Terrain(new THREE.Scene(), LEVELS[key].terrain, 0.74);
       ground.frame(0.02, V(0, 0, 0));
       let spot = null;

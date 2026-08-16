@@ -242,9 +242,20 @@ export function run({ check, assert }) {
       caps += s.caps;
       rovers += s.rovers;
     }
-    assert(levels >= 6, `only ${levels} levels have enough reachable objects to measure`);
+    /* Was 6 of 13 — a bit under half the roster. The roster is 7 now, and the
+     * same fraction is 4: the bar tracks the survey's power to see a regression
+     * (how many levels have to agree before "props are sliceable" is a claim
+     * about the game rather than about one level) and not the roster size. */
+    assert(levels >= 4, `only ${levels} levels have enough reachable objects to measure`);
     assert(objects > 200, `only ${objects} reachable objects across the whole game`);
-    assert(caps > 400, `only ${caps} fixed blade contacts offered across every level`);
+    /* 400 was a sum over thirteen levels and is therefore a roster count in
+     * disguise — the exact defect this project keeps removing. Six of those
+     * levels are deleted and the survivors offer 309, which is MORE per level
+     * than the thirteen did (44 against 31), because the levels that went were
+     * the sparse interiors. Stated per level, it cannot drift with the roster
+     * again. */
+    assert(caps / levels > 35,
+      `${caps} fixed blade contacts across ${levels} levels — ${(caps / levels).toFixed(0)} each`);
     // The roving half has to be exercised too, or the fix above is untested and
     // the survey is back to seeing Props alone.
     assert(rovers >= 3, `only ${rovers} levels publish a player-relative contact set`);

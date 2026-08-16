@@ -121,7 +121,7 @@ export class LiveToon {
        */
       this.settings = {
         ...DEFAULT_SETTINGS,
-        level: 'meadow', quality: 'ultra', mode: 'sandbox',
+        level: 'wood', quality: 'ultra', mode: 'sandbox',
         sandboxCount: 0, sandboxFire: 0,
         grassScale: 1.5, particleScale: 1.2, resolutionScale: 1,
         volume: 0, music: 0, firstPerson: false,

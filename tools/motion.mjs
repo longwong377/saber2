@@ -47,7 +47,7 @@ const argv = process.argv.slice(2);
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 
 const CLIP = flag('clip', 'walk');
-const LEVEL = flag('level', 'arena');
+const LEVEL = flag('level', 'colosseum');
 const TAG = flag('tag', 'now');
 const COLS = Number(flag('cols', 6));
 const ROWS = Number(flag('rows', 4));

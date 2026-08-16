@@ -477,41 +477,14 @@ export async function run({ check, assert }) {
     return 'a run begins at zero; the record is drawn and never spent';
   });
 
-  check('constellation: the ledger crosses a landing, prices and all', async () => {
-    assert(Tree, 'no constellation module');
-    // The keystone bug this whole area has: `World.loadLevel` opens with
-    // `unload()`, so anything living on the World dies at a rung. Insight
-    // earned on the flanks and not yet spent would be confiscated by the climb,
-    // and — quieter and worse — `bought.length` is the PRICE ESCALATOR, so a
-    // ledger rebuilt from nothing would make every star on the next rung cost
-    // first-purchase prices again.
-    const { Run } = await import('../../src/game/Run.js');
-    const r = new Run({ mode: 'spire' });
-    const led = new Tree.Communion();
-    for (let w = 1; w <= 12; w++) led.earn(w, w % Waves.BOSS_EVERY === 0);
-    const taken = new Waves.RankSet(['attune-body']);
-    led.buy('vitality', taken, 12); taken.take('vitality');
-    r.communion = led.snapshot();
-    const carried = new Tree.Communion(r.communion);
-    assert(carried.insight === led.insight,
-      `${led.insight} Insight became ${carried.insight} across the landing`);
-    assert(carried.bought.length === led.bought.length,
-      'the purchases were forgotten, so the next rung sells at opening prices');
-    assert(carried.costOf('celerity', taken) === led.costOf('celerity', taken),
-      'the price escalator reset across a rung');
-    // And World must actually do it, in both directions.
-    const world = await read('game/World.js');
-    assert(/new Communion\(run/.test(functionBody(world, '  loadLevel(key')),
-      'loadLevel does not restore the ledger from the run — a landing confiscates the Insight');
-    assert(/run\.communion = this\.communion\.snapshot\(\)/.test(world),
-      'nothing ever writes the ledger back to the run, so a landing loses everything since the last one');
-    assert(/summary\(\)/.test(await read('game/Run.js')));
-    return `12 waves earned ${led.earned}, one star bought, and both survived the rung`;
-  });
-
-  /* ══════════════════════════════════════════════════════════════════ */
-  /*  5. Every new star, proven against a reader                        */
-  /* ══════════════════════════════════════════════════════════════════ */
+  /* THE LEDGER CROSSING A LANDING was pinned here, and there are no landings
+   * any more: the Descent was the one mode that had them and it is deleted
+   * along with the three interiors that were three of its four rungs. What is
+   * left of that check is the sentence that outlives it — a level load starts
+   * a fresh ledger, which is what every other mode always did — and it is
+   * asserted in World.js's own comment rather than restated as arithmetic
+   * here. If a mode with landings comes back, so does this check.
+   */
 
   check('constellation: Reflection sends a share of the blow back to whoever struck it', () => {
     // Driven through the REAL damage path on both sides: Player.prototype.damage

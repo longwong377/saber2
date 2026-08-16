@@ -112,7 +112,7 @@ async function session(names = ['HOST', 'ALPHA'], looks = []) {
   const fake = H.installPeerStub();
   const settle = async (n = 8) => { for (let i = 0; i < n; i++) { await new Promise((r) => setTimeout(r, 0)); fake.flush(); } };
   const host = new Net();
-  const code = await (async () => { const p = host.host(names[0], { level: 'arena' }, looks[0] || null); await settle(); return p; })();
+  const code = await (async () => { const p = host.host(names[0], { level: 'colosseum' }, looks[0] || null); await settle(); return p; })();
   const clients = [];
   for (let i = 1; i < names.length; i++) {
     const c = new Net();
@@ -738,7 +738,7 @@ export async function run({ check, assert }) {
         + `${JSON.stringify(entry.look && entry.look[k])} instead of ${JSON.stringify(built[k])}`);
     }
 
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.rules = pvpRules({ pvp: true });
     const rival = new RemoteAvatar(world, { id: entry.id, name: entry.name, look: entry.look, team: entry.team });
     const plain = new RemoteAvatar(world, { id: 'X', name: 'X', look: null });

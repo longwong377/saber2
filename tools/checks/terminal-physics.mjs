@@ -135,7 +135,7 @@ export async function run({ check, assert, THREE }) {
     const shared = await snapshotShared();
     try {
       const H = await import('./_coop.mjs');
-      const { world } = await H.bootWorld({ level: 'arena' });
+      const { world } = await H.bootWorld({ level: 'colosseum' });
       const physics = world.physics;
       assert(physics.world, 'the world booted without a physics world');
       world.dispose();

@@ -106,7 +106,7 @@ export async function run({ check, assert }) {
 
   check('profiler: the report carries the context a diagnosis needs', () => {
     const p = feed(headless(), Array(200).fill(11.1));
-    const text = p.report({ level: 'arena', quality: 'high' });
+    const text = p.report({ level: 'colosseum', quality: 'high' });
     for (const want of ['frame', '1% low', 'p99', 'cpu', 'gpu', 'draw', 'level', 'quality']) {
       assert(text.includes(want), `the report omits "${want}":\n${text}`);
     }

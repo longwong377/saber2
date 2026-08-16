@@ -457,7 +457,17 @@ export function run({ check, assert, near }) {
      * rather than being allowed to pass with a token 0.4 of a cover mask that
      * nothing grew out of. A level cannot satisfy both halves at once, and
      * every outdoor level is in exactly one of them. */
-    assert(rows.length === COVERED.length && rows.length >= 2,
+    /* ONE, and it is the honest number rather than a relaxed one. The roster is
+     * seven levels: a volcanic shelf, an ocean platform, an arena of raked
+     * sand, a bog, a dune sea, a snow pass and one interior. Exactly one of
+     * those is a place plants grow. The bar was 3, then 2, and each step down
+     * followed a level being deleted rather than a property being given up —
+     * so what carries the weight is the OTHER half, which is strictly more
+     * than a headcount asked for: every bare level is checked to be actually
+     * bare (no field, no tint, no mat) rather than being allowed to pass with
+     * a token cover mask nothing grew out of. Every outdoor level is in
+     * exactly one of the two halves and cannot be in both. */
+    assert(rows.length === COVERED.length && rows.length >= 1,
       `${rows.length} of ${COVERED.length} levels with cover were compared`);
     const bare = [];
     for (const key of BARE) {

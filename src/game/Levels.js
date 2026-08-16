@@ -1281,7 +1281,28 @@ export const LEVELS = {
     // A duelling map wants blades in it. The pool is weighted to the one
     // sabered archetype this game has and thinned of hordes: half of what
     // walks out of the ash is something that will meet your guard.
-    pool: ['acolyte', 'acolyte', 'b2', 'droideka', 'acolyte', 'trooper', 'b1', 'sniper'],
+    /**
+     * THE FOUR JEDI ARCHETYPES LIVE HERE NOW, and the reason is that they had
+     * to live somewhere.
+     *
+     * `jedi`, `sentinel`, `guardian` and `master` were built, priced, given
+     * silhouettes, hilts, crystals and duel forms for the Temple Halls, and the
+     * Temple Halls is deleted. An archetype no pool names is unreachable —
+     * `unlockedAt` filters the ladder by `pool.includes` and `_setPiece` filters
+     * by it too — so deleting that level would have deleted four bodies with it,
+     * silently, which is exactly the failure tools/checks/roster.mjs exists to
+     * catch. It caught it.
+     *
+     * This level rather than another because it is the game's DUELLING map and
+     * says so at length above: a shelf with a clear middle to circle in and
+     * cover only at the edges. Four blades that feint, chamber and riposte want
+     * that shape; they would be four health bars in a foundry corridor.
+     *
+     * `master` keeps `setPieceOnly: true`, so it is still only ever a boss —
+     * naming it here opens the set-piece door, not the fill.
+     */
+    pool: ['acolyte', 'acolyte', 'b2', 'droideka', 'acolyte', 'trooper', 'b1', 'sniper',
+      'jedi', 'sentinel', 'guardian', 'master'],
     groundColor: 0x50443c,
     spawnRadius: [26, 48],
     /**

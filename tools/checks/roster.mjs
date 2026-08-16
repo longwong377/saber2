@@ -124,7 +124,12 @@ export function run({ check, assert }) {
     const orphan = Object.keys(LEVELS).filter((k) => !LEVEL_ORDER.includes(k));
     assert(!missing.length, `LEVEL_ORDER names ${missing.join(', ')}, which LEVELS does not have`);
     assert(!orphan.length, `${orphan.join(', ')} exist but are not in LEVEL_ORDER — unreachable content`);
-    assert(LEVEL_ORDER.length >= 8, `only ${LEVEL_ORDER.length} levels`);
+    /* SEVEN, and the floor is here to catch an accidental deletion rather than
+     * a deliberate one. It was 8 against a roster of 13; six were cut on the
+     * player's word — the ground broke the art direction, or the room was a
+     * box, or it was simply weaker than the rest. A menu is judged by what a
+     * player can pick WRONG, so the number going down is not a regression. */
+    assert(LEVEL_ORDER.length >= 6, `only ${LEVEL_ORDER.length} levels`);
     /* And every one of them has to have the two things a caller assumes without
      * checking: a display name (main.js puts it in the HUD) and a terrain key
      * (World builds the ground from it before anything else runs). */

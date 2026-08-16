@@ -482,7 +482,11 @@ export async function run({ check, assert }) {
         + 'contours is water on screen and dry rock underfoot');
       rows.push(`${key} ${a.toFixed(2)}`);
     }
-    assert(rows.length >= 5, `only ${rows.length} levels with water were surveyed`);
+    /* Four: the Ember Shelf's sea, Kamino's ocean, the Drowned Wood's bog and
+     * the foundry's canal of melt. That is every level in the roster that has
+     * a liquid in it, so the check surveys all of them — the bar was 5 of 13
+     * and is 4 of 4. */
+    assert(rows.length >= 4, `only ${rows.length} levels with water were surveyed`);
     return rows.join(', ');
   });
 
@@ -492,14 +496,14 @@ export async function run({ check, assert }) {
     /**
      * `World.doors` was allocated in the constructor, disposed on unload,
      * stepped every frame and handed to the blade solver every frame — and it
-     * was EMPTY on all thirteen levels, because World had no method that could
+     * was EMPTY on every level, because World had no method that could
      * put anything in it. `BlastDoor` is a finished object (kerf texture,
      * discard-through hole, static collider, capsules at 0.55 m for the blade,
      * a breach that drops the slug out) that no level had ever built, while
      * nine stub worlds in this suite implemented an `addDoor` the real World
      * did not have.
      */
-    for (const key of ['intake', 'foundry']) {
+    for (const key of ['foundry']) {   // the intake was the other one, and it is deleted
       const { world } = await level(key);
       assert(typeof world.addDoor === 'function', 'World still has no addDoor');
       assert(world.doors.length >= 3,
@@ -512,8 +516,8 @@ export async function run({ check, assert }) {
           `${key}: a door the blade solver cannot find (${d.capsules().length} capsules)`);
       }
     }
-    const { world } = await level('intake');
-    return `${world.doors.length} blast doors on the intake, each a collider and `
+    const { world } = await level('foundry');
+    return `${world.doors.length} blast doors on the foundry, each a collider and `
       + `${world.doors[0].capsules().length} blade capsules`;
   });
 
@@ -536,7 +540,7 @@ export async function run({ check, assert }) {
      * only reach on a frame-perfect input is not a place either.
      */
     const rows = [];
-    for (const key of ['intake', 'foundry', 'deeps', 'warship']) {
+    for (const key of ['foundry']) {   // the intake, the Cut and the warship went with the Descent
       const { world } = await level(key);
       const T = world.terrain;
       const decks = [];

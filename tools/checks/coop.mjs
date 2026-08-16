@@ -67,7 +67,7 @@ async function session(names = ['HOST', 'ALPHA', 'BRAVO'], looks = []) {
   const fake = H.installPeerStub();
   const settle = async (n = 8) => { for (let i = 0; i < n; i++) { await new Promise(r => setTimeout(r, 0)); fake.flush(); } };
   const host = new Net();
-  const code = await (async () => { const p = host.host(names[0], { level: 'arena' }, looks[0] || null); await settle(); return p; })();
+  const code = await (async () => { const p = host.host(names[0], { level: 'colosseum' }, looks[0] || null); await settle(); return p; })();
   const clients = [];
   for (let i = 1; i < names.length; i++) {
     const c = new Net();
@@ -220,7 +220,7 @@ export async function run({ check, assert }) {
     assert(entry.look && entry.look.hiltStyle === 'Crossguard' && entry.look.species === 'smallfolk',
       'the character sheet did not cross the wire — a partner is a default human in an index-picked robe');
 
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const theirs = new RemoteAvatar(world, { id: 'ALPHA', name: 'ALPHA', look: entry.look });
     const plain = new RemoteAvatar(world, { id: 'X', name: 'X' });
     assert(theirs.saber.hiltStyle === 'Crossguard' || theirs.saber.hilt !== plain.saber.hilt,
@@ -693,7 +693,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const out = [];
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {},
       toHost(m) { out.push(m); } }, 'client');
@@ -782,7 +782,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const e = world.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
     const feed = [];
@@ -814,7 +814,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const sent = [];
     world.attachNet({ connected: true, isHost: true, broadcast() {}, sweep() {},
       toPeer(id, m) { sent.push([id, m]); }, toHost() {} }, 'host');
@@ -855,7 +855,7 @@ export async function run({ check, assert }) {
      * The signal is already on the wire as an edge in `w`/`act`.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const said = [];
     world.onNotify = (t) => said.push(t);
@@ -902,7 +902,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     let over = 0, down = 0;
     world.onGameOver = () => over++;
@@ -936,7 +936,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     ally.position.set(6, 0, 6);
@@ -987,7 +987,7 @@ export async function run({ check, assert }) {
      * messages kept arriving from bodies that were no longer on screen.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const ids = [1, 2, 3, 4];
     const snap = () => ({ t: 'snapshot', bf: [], w: 1, act: 1, rem: 4, ic: 0, sc: 0,
@@ -1009,7 +1009,7 @@ export async function run({ check, assert }) {
     world.unload(); world.dispose?.();
 
     // A HOST may still restart, and must clear the id map with the list.
-    const { world: h } = await H.bootWorld({ level: 'arena' });
+    const { world: h } = await H.bootWorld({ level: 'colosseum' });
     h.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     h.spawnEnemy('trooper', new (await import('three')).Vector3(0, 0, 6));
     h._netEnemyIndex.set(99, h.enemies[0]);
@@ -1082,98 +1082,15 @@ export async function run({ check, assert }) {
     return 'the host\'s level/difficulty/mode live in a session object; only the player\'s own settings are saved';
   });
 
-  check('co-op: a client follows the host down a rung instead of standing in the old level', async () => {
-    /**
-     * A client's Run can never ascend — the rung signal is host-only by design
-     * — so the host's `start` broadcast is the ONLY thing that can take a
-     * joining player down the ladder. It was acted on `if (screens.state ===
-     * 'menu')` alone, so a client that was playing, paused, drafting or dead
-     * ignored it and stayed in the Intake receiving snapshots of bodies at
-     * Foundry coordinates: enemies inside walls and in mid-air, and an
-     * unrecoverable run.
-     */
-    const main = strip(await src('main.js'));
-    assert(main.includes("net.on('start'"), 'the start handler is gone');
-    const body = functionBody(main, "net.on('start'");
-    assert(!/screens\.state === 'menu'\s*\)\s*deploy\(/.test(body),
-      'the start message is still only acted on from the menu, so a client that is already playing '
-      + 'never follows the host to the next rung');
-    assert(/deploy\(/.test(body), 'the start message no longer deploys anything');
-    assert(/world\.dispose\(\)|world = null/.test(body),
-      'the old level is not torn down before the new one is built');
-
-    /**
-     * …AND THE LEVEL IT DEPLOYS INTO, WHICH THE GATE WAS NOT.
-     *
-     * Only `screens.state === 'menu'` came off. `deploy()` still fell through
-     * to its default argument — `startRun()`, which builds a brand new gauntlet
-     * Run at tier 0 — and `deploy`'s own next line is
-     * `const levelKey = run && !run.done ? run.rung.level : sessionOr('level')`,
-     * so that fresh run's rung beat the `msg.level` the handler had just put
-     * into `session` one line above. Evaluated against the real Run and DESCENT
-     * this was three of four rungs wrong: the host sends foundry, deeps, deeps
-     * and the client builds intake, intake, intake — a different building from
-     * everyone else while snapshots keep arriving at the host's coordinates.
-     *
-     * main.js cannot be imported under Node (it dereferences the DOM at module
-     * scope), so the four statements that decide the level are LIFTED FROM THE
-     * FILE and evaluated against the real `Run`. The lift refuses to run if any
-     * of them stops matching, which is what stops this from decaying into a
-     * regex that passes on a file it no longer describes. It is the strongest
-     * thing available here and it is stronger than reading the text: the answer
-     * below is computed by main.js's own arithmetic over the shipping ladder.
-     */
-    const raw = await src('main.js');
-    const lift = (re, what) => {
-      const m = raw.match(re);
-      assert(m, `main.js no longer contains ${what}, so this check is describing a file that is gone`);
-      return m[0];
-    };
-    const stSessionOr = lift(/const sessionOr = \(key\) => [^\n]*;/, 'sessionOr');
-    lift(/function deploy\(run = startRun\(\)\)/, "deploy's default-argument signature");
-    lift(/if \(sessionOr\('mode'\) !== 'gauntlet'\) return null;/, "startRun's gauntlet gate");
-    const stLevelKey = lift(/const levelKey = [^\n]*;/, "deploy's levelKey line");
-    const stDeployCall = lift(/deploy\((null)?\);\s*\}\);/, "the start handler's deploy call");
-
-    const { Run, DESCENT } = await import('../../src/game/Run.js');
-    const settings = { level: 'scoria', difficulty: 'knight', mode: 'roguelite', order: 'jedi', species: 'human' };
-    let session = null;
-    // eslint-disable-next-line no-eval
-    const sessionOr = eval(`(${stSessionOr.replace('const sessionOr = ', '').replace(/;\s*$/, '')})`);
-    const startRun = () => (sessionOr('mode') !== 'gauntlet'
-      ? null : new Run({ identity: {}, mode: 'spire' }));
-    // `deploy(null)` and `deploy()` are not the same call: a default parameter
-    // fires on `undefined` only, so an explicit null is what makes levelKey
-    // fall through to the level the host actually sent.
-    const passesNull = /deploy\(null\)/.test(stDeployCall);
-    const buildFor = (msg) => {
-      session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
-      const run = passesNull ? null : startRun();
-      // eslint-disable-next-line no-eval
-      return eval(`(() => { ${stLevelKey} return levelKey; })()`);
-    };
-
-    const host = new Run({ identity: {}, mode: 'spire' });
-    assert(DESCENT.length >= 4, `the Descent is ${DESCENT.length} rungs long — this check is calibrated on four`);
-    const wrong = [];
-    for (let rung = 0; rung < 4; rung++) {
-      const sent = host.rung.level;
-      const built = buildFor({ level: sent, difficulty: 'knight', mode: 'gauntlet' });
-      if (built !== sent) wrong.push(`rung ${rung}: host '${sent}' → client '${built}'`);
-      host.ascend();
-    }
-    assert(!wrong.length,
-      `${wrong.length} of 4 rungs of a co-op Descent put the joining player in a different level from `
-      + `the host — ${wrong.join('; ')}. The level is not on the wire anywhere else, and applySnapshot `
-      + 'writes the host\'s absolute coordinates into whatever terrain the client happens to have.');
-    // …and every other mode was always fine, because startRun returns null there.
-    assert(buildFor({ level: 'kamino', difficulty: 'knight', mode: 'waves' }) === 'kamino',
-      'a co-op client no longer follows the host outside the gauntlet either');
-    return 'a start from any state redeploys into the level the host is standing in — 4 of 4 rungs of '
-      + 'the Descent, and every other mode';
-  });
-
-  /* ══ the buffer, and the shape World assumes ═══════════════════════════ */
+  /* A CLIENT FOLLOWING THE HOST DOWN A RUNG was pinned here, and there are no
+   * rungs any more — the Descent is deleted. The defect it caught survives the
+   * mode though, and is worth the sentence: `deploy()` fell through to its
+   * default argument on a joining client, which built a run of its OWN and
+   * loaded that run's level instead of the one the host had just sent. Any
+   * future mode that carries the level in the session rather than in settings
+   * walks back into it, which is why `deploy(null)` vs `deploy()` is called
+   * out in main.js's own comment rather than only here.
+   */
 
   check('co-op: the interpolation window follows the connection instead of a constant', async () => {
     /**
@@ -1185,7 +1102,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const r = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
 
     let t = 0;
@@ -1220,7 +1137,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     ally.position.set(2, 0, 8);
@@ -1408,7 +1325,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
     const { boonById } = await import('../../src/game/Waves.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     world.players.push(ally); world.remotes.set('PEER', ally);
@@ -1470,7 +1387,7 @@ export async function run({ check, assert }) {
     const { RemoteAvatar } = await import('../../src/net/Net.js');
     const { SIDES, CO_OP_RULES, pvpRules } = await import('../../src/game/Player.js');
 
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     assert(!world.rules || !world.rules.friendlyFire,
       'a co-op world boots with friendly fire already on');
 

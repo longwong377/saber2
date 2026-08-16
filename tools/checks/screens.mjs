@@ -195,12 +195,18 @@ export async function run({ check, assert }) {
     for (const call of ['screens.take(', 'screens.guarded(']) {
       assert(strip.includes(call), `main.js never calls ${call} — an overlay is being raised the unsafe way`);
     }
-    // and the two overlays that could strand the player go up through `take`
-    for (const [what, show] of [['draft', 'showDraft'], ['landing', 'showLanding']]) {
+    /* …and every overlay that could strand the player goes up through `take`.
+     * There were two; the landing went with the Descent. It is worth saying
+     * that the LIST is the thing being checked rather than the pair — the next
+     * overlay somebody adds is the next one that can strand a player, and it
+     * has to be added here too. `OVERLAY_STATES` is the authority for what
+     * those are, so this reads it rather than restating it. */
+    for (const what of OVERLAY_STATES.filter(o => o !== 'dead')) {
       const re = new RegExp(`screens\\.take\\(\\s*'${what}'`);
       assert(re.test(strip), `the ${what} is raised without screens.take — it will not be remembered`);
+      const show = `show${what[0].toUpperCase()}${what.slice(1)}`;
       assert(strip.includes(`menu.${show}(`), `main.js no longer calls menu.${show}`);
     }
-    return 'no bare state assignments; draft and landing both go up through take()';
+    return 'no bare state assignments; every overlay goes up through take()';
   });
 }

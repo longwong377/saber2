@@ -28,7 +28,14 @@
 
 // The ladder itself, so `bestTier` can be shown as the place it names rather
 // than as an index — and so there is one list of rung names in the tree.
-import { DESCENT, ladderName } from './Run.js';
+/**
+ * The name a mode goes by in the record. It used to come from Run.js, which
+ * held a two-entry table so The Descent could print as "the Descent" rather
+ * than as "gauntlet"; the Descent is deleted and MODES is where a mode's
+ * display name has always lived for everything else. One authority.
+ */
+import { MODES } from './Waves.js';
+const ladderName = (mode) => MODES[mode]?.name || mode || null;
 
 const KEY = 'saber.progress.v1';
 /** How many runs to keep. A history, not an archive. */
@@ -213,10 +220,8 @@ export function progressLines(p = read()) {
   const out = [
     `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`,
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`
-      + (p.bestTier ? ` · ${DESCENT[p.bestTier]?.name || `rung ${p.bestTier + 1}`}` : '')
       + (p.bestScore ? ` · best ${Math.floor(p.bestScore).toLocaleString()}` : ''),
   ];
-  if (p.wins) out.push(`${p.wins} descent${p.wins === 1 ? '' : 's'} of the works`);
   const stars = Object.keys(p.lit || {}).length;
   if (stars || p.communed) {
     out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`
@@ -224,7 +229,6 @@ export function progressLines(p = read()) {
   }
   // What has ever been carried to the crown. A note about what has worked, and
   // emphatically not a gate: every card is in every draft from the first run.
-  if (p.crowned?.length) out.push(`${p.crowned.length} boons have reached the bottom with you`);
   const deepest = (map) => Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
   const orders = deepest(p.byOrder), species = deepest(p.bySpecies), modes = deepest(p.byMode);
   if (orders.length) out.push(orders.map(([k, v]) => `${k} ${v}`).join('  ·  '));

@@ -33,7 +33,7 @@ const OUT = process.env.SHOT_OUT || join(ROOT, '.shots');
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
 
-const LEVEL = flag('level', 'arena');
+const LEVEL = flag('level', 'colosseum');
 const MODE = flag('mode', 'sandbox');
 const QUALITY = flag('quality', 'medium');
 const POSE = flag('pose', '');

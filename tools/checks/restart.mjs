@@ -41,7 +41,7 @@ async function arena(seed) {
   const { seedWaves } = await import('../../src/game/Waves.js');
   enemyRng.seed(seed);
   seedWaves(seed, 0);
-  const { world } = await H.bootWorld({ level: 'arena', settings: { mode: 'roguelite', difficulty: 'knight' } });
+  const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
   return { world, input: H.idleInput() };
 }
 
@@ -198,7 +198,7 @@ export async function run({ check, assert }) {
      * `packSnapshot` puts on the wire.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena', settings: { mode: 'roguelite', difficulty: 'knight' } });
+    const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
     world.attachNet({ connected: true, isHost: false, name: 'PEER', roster: [],
       broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     let cleared = 0;

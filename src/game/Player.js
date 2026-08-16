@@ -1827,6 +1827,12 @@ export class Player {
 
   _applyViewMode() {
     const fp = this.camera.firstPerson;
+    // The blade's emission profile is tuned in third person, where the weapon
+    // is 3.5 m from the lens; in first it is 0.7 m, which is five times the
+    // angular size against a bloom pass that works in screen space. See
+    // Saber.FP_PINCH. This is the one place the view changes, so it is the one
+    // place that tells the blade.
+    if (this.saber) this.saber.firstPerson = fp;
 
     // Hide the MESHES, not the bones — scaling a bone enters matrixWorld, so a
     // 0.0001x head was silently seen by the sever code, the cloak colliders,

@@ -635,7 +635,7 @@ async function boot(level) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 async function cmdFrame() {
-  const level = flag('level', 'arena');
+  const level = flag('level', 'colosseum');
   const tag = flag('tag', 'now');
   const out = join(ROOT, '.smoke', 'lane-arena');
   mkdirSync(out, { recursive: true });
@@ -696,7 +696,7 @@ async function cmdFrame() {
 const PLATE_MODES = ['shipped', 'phase', 'lattice'];
 
 async function cmdPlate() {
-  const level = flag('level', 'arena');
+  const level = flag('level', 'colosseum');
   const tag = flag('tag', 'now');
   const size = parseFloat(flag('size', '48'));
   const px = parseInt(flag('px', '512'), 10);
@@ -1056,7 +1056,7 @@ function analyseQuiet(base, forControl) {
 if (CMD === 'atmos') await cmdAtmos();
 else if (CMD === 'frame') await cmdFrame();
 else if (CMD === 'plate') await cmdPlate();
-else if (CMD === 'hue') { for (const f of positional()) reportHue(f, flag('level', 'arena')); }
+else if (CMD === 'hue') { for (const f of positional()) reportHue(f, flag('level', 'colosseum')); }
 else if (CMD === 'grid') { for (const f of positional()) grid(f); }
 else if (CMD === 'lag') { const b = positional().map((s) => s.replace(/\.(meta\.json|f32|png)$/, '')); for (const x of b) analyse(x); compare(b); }
 else {

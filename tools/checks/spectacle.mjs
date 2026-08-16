@@ -731,7 +731,7 @@ export async function run({ check, assert }) {
      * `hud.update` → `input.end`) against a real World with a real level and a
      * real player in it, and measures the world clock.
      */
-    const { world } = await bootWorld({ level: 'arena' });
+    const { world } = await bootWorld({ level: 'colosseum' });
     const doc = makeDocument(INDEX);
     const restore = doc.install();
     try {

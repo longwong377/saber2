@@ -644,6 +644,14 @@ export class Saber {
     this.glowColor = new THREE.Color(c.glow);
     this.hue = new THREE.Color(1, 1, 1);
     this.punch = 1;
+    /**
+     * Which view this blade is being LOOKED at from, and therefore which pinch
+     * its lobes take. A field with a setter rather than a flag Player pokes,
+     * because the lobes have to be re-synced when it changes and there is
+     * exactly one place that may write them (_syncWidth). Set before
+     * `coreWidth` below, whose setter runs that sync.
+     */
+    this._firstPerson = false;
     this.bladeLength = opts.bladeLength ?? 1.15;
     /**
      * The order this weapon was built by, or null for a blade that belongs to
@@ -994,6 +1002,19 @@ export class Saber {
   };
 
   /**
+   * The per-VIEW pinch on that profile. See _syncWidth for the derivation; the
+   * short version is that first person is five times the angular size and the
+   * bloom pass works in screen space.
+   *
+   * NEUTRAL is 1.0 in every slot and `x * 1` is exact in IEEE float, so a
+   * third-person blade comes out of _syncWidth bit-for-bit what it was before
+   * this existed — which is what lets the whole saber-bloom suite, every one of
+   * whose bounds was measured in third person, stay untouched.
+   */
+  static NEUTRAL_PINCH = { width: [1, 1, 1], amp: [1, 1, 1] };
+  static FP_PINCH = { width: [0.82, 0.66, 0.52], amp: [0.90, 0.72, 0.58] };
+
+  /**
    * HOW MUCH OF THE CORE LOBE'S CHROMA IS GIVEN UP, and why there is any.
    *
    * Set from measurement. The established experiment for "why does the wielder
@@ -1167,8 +1188,43 @@ export class Saber {
    * The smear's two AMPLITUDES live here for the same reason its thickness does,
    * and they did not until this round — see the second half of the body.
    */
+  get firstPerson() { return this._firstPerson; }
+  set firstPerson(v) {
+    const b = !!v;
+    if (b === this._firstPerson) return;    // _syncWidth is not free; a no-op write is common
+    this._firstPerson = b;
+    this._syncWidth();
+  }
+
   _syncWidth() {
     const w = this._coreWidth, P = Saber.PROFILE;
+    /**
+     * FIRST PERSON IS A DIFFERENT ANGULAR SIZE, and the bloom pass works in
+     * screen space.
+     *
+     * The profile above is measured and tuned in THIRD person, where the
+     * camera sits 3.05 m back and the blade is another 1.4 m out in front of
+     * the chest — call it 3.5 m of eye-to-blade. In first person the emitter
+     * is in the player's own hand and the blade runs out from roughly 0.7 m.
+     * That is five times the angular size, so the same world-space lobe covers
+     * five times the screen WIDTH and twenty-five times the screen AREA, and
+     * every one of those pixels is over the bloom threshold. Nothing about the
+     * blade changed between views; the solid angle did.
+     *
+     * THE LEVER IS SIGMA AND NOT AMPLITUDE, which is not a preference — the
+     * blown radius of a gaussian against a threshold goes as
+     * sigma·sqrt(2·ln(amp/t)), so it is LINEAR in sigma and only square-root-
+     * of-log in amplitude. tools/checks/saber-bloom.mjs reached the same
+     * conclusion the last time this was pinched and says so at length.
+     *
+     * `FP_PINCH` is deliberately not 1/5. Matching the screen-space halo
+     * exactly would put the core sigma at 1.4 mm, which is not a lightsaber,
+     * it is a scratch. It is the largest step that leaves the core reading as
+     * a blade in the hand — the halo takes most of the cut because the halo is
+     * the term that is actually spread across the frame, and the core takes
+     * least because the core is the object.
+     */
+    const V = this.firstPerson ? Saber.FP_PINCH : Saber.NEUTRAL_PINCH;
     /* THE ORDER'S TUNING IS A FACTOR ON EVERY LOBE, applied here and nowhere
      * else, for exactly the reason the width slider is: a second place that
      * writes uWidth is a second place that can be forgotten. NEUTRAL_TUNING is
@@ -1177,14 +1233,16 @@ export class Saber {
     const T = this._tuning;
     // The two lobes the SMEAR is defined against, computed once here so the
     // blade and the trail cannot be given different exponents by accident.
-    const glow = P.amp[1] * w * T.amp[1];
-    const halo = P.amp[2] * w * w * T.amp[2];
+    const glow = P.amp[1] * w * T.amp[1] * V.amp[1];
+    const halo = P.amp[2] * w * w * T.amp[2] * V.amp[2];
     if (this.bladeMat) {
       this.bladeMat.uniforms.uWidth.value.set(
-        P.width[0] * w * T.width[0], P.width[1] * w * T.width[1], P.width[2] * w * T.width[2]);
+        P.width[0] * w * T.width[0] * V.width[0],
+        P.width[1] * w * T.width[1] * V.width[1],
+        P.width[2] * w * T.width[2] * V.width[2]);
       // The quad has to reach past the widest lobe, so an order that opens the
       // halo up has to open the quad with it or the halo is cut off square.
-      this.bladeMat.uniforms.uRadius.value = P.radius * w * T.radius;
+      this.bladeMat.uniforms.uRadius.value = P.radius * w * T.radius * V.width[2];
       // THE WIDTH SLIDER HAS TO REACH THE BLOOM, or it does not do what its
       // label says. It used to scale only the gaussian SIGMAS, and the player
       // reported — twice — that the blade "covers way too much of the screen in
@@ -1200,7 +1258,8 @@ export class Saber {
       // stripe), but the GLOW and HALO — the two terms that actually spread
       // across the screen — now scale with the setting, superlinearly for the
       // halo because that is the one you see from the far side of an arena.
-      this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w) * T.amp[0], glow, halo);
+      this.bladeMat.uniforms.uAmp.value.set(
+        P.amp[0] * (0.55 + 0.45 * w) * T.amp[0] * V.amp[0], glow, halo);
     }
     this.trailThickness = P.width[1] * 1.6 * w;
     /* AND IT HAS TO REACH THE SMEAR, for the same reason and with more force.

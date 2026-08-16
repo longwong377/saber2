@@ -53,7 +53,15 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
   assert(end > i, 'the body of record() could not be delimited');
   const body = src.slice(i + 1, end + 2);
   assert(/recordRun\(/.test(body), 'the lifted record() does not call recordRun at all — the lift is wrong');
-  assert(/world\.run\b/.test(body), 'the lifted record() no longer consults world.run — the lift is wrong');
+  /* It used to consult `world.run.done` too, and the whole point of this file
+   * is that the guard was written for one mode out of six. There is no Run at
+   * all now — the Descent was the only mode that made one, and it is deleted —
+   * so the dedupe is `world._recorded`, which is on the world for the same
+   * reason `run.done` was rather than in a module-level variable: it must not
+   * survive into the next world. */
+  assert(/world\._recorded\b/.test(body),
+    'the lifted record() no longer consults world._recorded — nothing stops a death and its own '
+    + 'card writing the same run twice');
   // eslint-disable-next-line no-new-func
   const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
     `const world = scope.world;\n${body}\nreturn record;`);
@@ -65,7 +73,7 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
 export async function run({ check, assert }) {
   check('history: dying and taking the death card\'s own exit records one run, not two', async () => {
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena', settings: { mode: 'roguelite', difficulty: 'knight' } });
+    const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
     world.director.start(1);
     for (let i = 0; i < 60; i++) world.update(1 / 60, H.idleInput());
 
@@ -80,9 +88,7 @@ export async function run({ check, assert }) {
       settings: { order: 'jedi', species: 'human' },
     });
 
-    assert(!world.run,
-      'this world carries a Run, so `run.done` would guard it and the defect could not show — the '
-      + 'defect is exactly the four modes that have no Run');
+    assert(!world.run, 'a Run is back: this check is about the dedupe that has to work without one');
 
     // gameOver's call, then the death card's "Return to the Temple" → quitToMenu.
     record({ wave: 3, score: 4200, kills: 11 });
@@ -95,7 +101,7 @@ export async function run({ check, assert }) {
       + 'forty-entry recent list holds two copies of it');
 
     // …and it is not simply refusing to record: a NEW world is a new session.
-    const { world: second } = await H.bootWorld({ level: 'arena', settings: { mode: 'roguelite', difficulty: 'knight' } });
+    const { world: second } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
     scope.world = second;
     record({ wave: 5, score: 900, kills: 2 });
     assert(written.length === 2,

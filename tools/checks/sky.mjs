@@ -219,7 +219,7 @@ export function run({ check, assert, near }) {
     // level at all — only in cast.
     const dome = new SkyDome(new THREE.Scene());
     const u = dome.mat.uniforms;
-    const base = { ...LEVELS.arena.atmosphere };
+    const base = { ...LEVELS.colosseum.atmosphere };
     dome.configure({ ...base, cloudDark: 0x101014, cloudLit: 0x202018 });
     const darkL = lum(u.uCloudDark.value), litL = lum(u.uCloudLit.value);
     dome.configure({ ...base, cloudDark: 0xf0f0ff, cloudLit: 0xfffff0 });
@@ -306,8 +306,8 @@ export function run({ check, assert, near }) {
       near(cloudLight(LEVELS[key].atmosphere).amb, 0.42, 1e-9,
         `${key}: an interior must fall back to the neutral default`);
     }
-    dome.configure(LEVELS.temple.atmosphere);
-    const L = cloudLight(LEVELS.temple.atmosphere);
+    dome.configure(LEVELS.foundry.atmosphere);
+    const L = cloudLight(LEVELS.foundry.atmosphere);
     near(L.amb, 0.42, 1e-9, 'an interior must fall back to the neutral default');
     near(lum(L.tint), 1, 1e-6, 'an interior cloud tint must be white');
     dome.dispose();

@@ -805,7 +805,7 @@ export function run({ check, assert, near, THREE: T }) {
     dome.configure(LEVELS.alpine.atmosphere);
     near(u.uCoverage.value, LEVELS.alpine.atmosphere.cloudCover, 1e-9, 'alpine cloud cover');
     assert(dome.mesh.visible, 'the White Pass has a sky');
-    dome.configure(LEVELS.temple.atmosphere);
+    dome.configure(LEVELS.foundry.atmosphere);
     assert(!dome.mesh.visible, 'the temple hall is an interior and must not draw a cloud deck');
     near(u.uOpacity.value, 0, 1e-9, 'interior cloud opacity');
 
