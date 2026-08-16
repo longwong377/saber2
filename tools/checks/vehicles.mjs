@@ -831,6 +831,38 @@ export async function run({ check, assert }) {
    * the reference" is exactly the kind of claim this project keeps replacing
    * with a number.
    */
+  /**
+   * A SECOND SHIP COSTS A TRANSFORM AND NOT A REBUILD, and its lamps are its
+   * own. Arrivals.js opens by promising that "every geometry and every material
+   * below is built ONCE, at module scope, and shared by every arrival that ever
+   * runs" — three ships can be in the sky at once — so a replacement that
+   * re-merged forty geometries per wave would quietly delete that property.
+   *
+   * The half that is easy to get wrong is the second assertion. `Object3D.clone`
+   * copies `userData` SHALLOW, so a clone's `engines` array still points at the
+   * template's own anchors, and every ship in the sky would light its engines in
+   * the same place — one place, in the air, wherever the first ship happened to
+   * be. That is why the anchors are named.
+   */
+  check('gunship: a second one shares its buffers and owns its own anchors', () => {
+    const a = buildGunship(), b = buildGunship();
+    assert(a !== b, 'buildGunship handed back the same object twice');
+    const ga = [], gb = [];
+    a.traverse((o) => { if (o.isMesh) ga.push(o.geometry); });
+    b.traverse((o) => { if (o.isMesh) gb.push(o.geometry); });
+    assert(ga.length === gb.length && ga.length > 6, `${ga.length} against ${gb.length} meshes`);
+    const shared = ga.filter((g, i) => g === gb[i]).length;
+    assert(shared === ga.length,
+      `only ${shared} of ${ga.length} geometries are shared between two ships — a wave with three `
+      + 'arrivals in it would merge a hundred and twenty geometries');
+    assert(b.userData.engines[0] && b.userData.engines[0] !== a.userData.engines[0],
+      'the second ship carries the FIRST ship\'s engine anchors — clone() copies userData shallow, '
+      + 'so both would light their exhaust at the same point in the sky');
+    assert(b.userData.lamp && b.userData.lamp !== a.userData.lamp, 'the same for the landing lamp');
+    assert(b.getObjectByName('engineL') === b.userData.engines[0], 'the anchors were resolved off the wrong tree');
+    return `${ga.length} meshes, all shared; anchors re-resolved per ship`;
+  });
+
   check('gunship: swept-forward wings, dorsal nacelles, chin turrets, a bay', () => {
     const g = buildGunship();
     g.updateMatrixWorld(true);
