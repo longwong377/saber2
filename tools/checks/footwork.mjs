@@ -287,7 +287,24 @@ export async function run({ check, assert }) {
     // and the price
     const walkCost = mean(rows.map((r) => r.back.stamSpent));
     const dashCost = mean(rows.map((r) => r.dash.stamSpent));
-    assert(walkCost === 0, `walking backwards now costs ${walkCost.toFixed(1)} stamina — it should be free and partial`);
+    /* NOT `=== 0`, AND THE LOOSENING IS A MEASUREMENT RATHER THAN A SHRUG.
+     *
+     * Since `tools/checks/powers.mjs` a duellist actually casts, and the `back`
+     * run is the one that satisfies `fleeing` — so an acolyte shoves and chokes
+     * a retreating player where it never touched a strafing one, which is why
+     * the sidestep's `=== 0` above still holds and this one stopped. Driven
+     * with the decrement instrumented, the entire cost across five forms and
+     * 24 s each is ONE event: `-0.344 stamina, swing=15.7 m/s`. That is
+     * Player.js's swing whoosh (`swing > 11` bills `swing * 0.055`) firing
+     * because a body being thrown through the air carries its blade with it.
+     * The walk itself still has no drain at all — there are four `stamina -=`
+     * sites in Player.js and not one of them is a walk.
+     *
+     * 1 over 24 s is a sixth of a single thrust (6) and a ninetieth of what the
+     * dash spends here, so it still catches "walking now drains" while not
+     * failing on one whoosh. */
+    assert(walkCost < 1, `walking backwards now costs ${walkCost.toFixed(2)} stamina over ${'24'} s `
+      + '— it should be free and partial');
     assert(dashCost > 30, `dashing away cost only ${dashCost.toFixed(1)} stamina over 24 s`);
     return `still ${still.toFixed(2)} > walk ${back.toFixed(2)} (0 stamina) > dash ${dash.toFixed(2)} hp/s `
       + `(${dashCost.toFixed(0)} stamina); sidestep ${strafe.toFixed(2)}, also free`;
