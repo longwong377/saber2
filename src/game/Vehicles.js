@@ -497,22 +497,33 @@ function hullProxy(rig, hipHeight, names) {
     _pb.setFromObject(b.primary);
     box.union(_pb);
     _pb.getCenter(_pc); _pb.getSize(_ps);
-    /* Spheres laid down the segment's LONGEST horizontal axis, sized to the
-     * other two. A sphere inscribed in the smallest dimension leaves the
-     * corners open and one circumscribing the largest blocks air; a chain sized
-     * to the cross-section is what the contact solver reads as "a hull is
-     * here", and it is why a 12.8 m walker gets six spheres and a 1.7 m dome
-     * gets one. */
-    const along = _ps.z >= _ps.x ? 'z' : 'x';
-    const span = along === 'z' ? _ps.z : _ps.x;
-    const cross = along === 'z' ? Math.min(_ps.x, _ps.y) : Math.min(_ps.z, _ps.y);
-    const r = Math.max(0.12, cross * 0.62);
-    const k = Math.max(1, Math.round(span / (r * 1.5)));
-    for (let i = 0; i < k; i++) {
-      const t = k === 1 ? 0 : (i / (k - 1) - 0.5) * (span - r);
-      const c = _pc.clone();
-      c[along] += t;
-      spheres.push({ c, r });
+    /**
+     * A GRID OVER THE SEGMENT'S FOOTPRINT, not a chain down its long axis.
+     *
+     * The chain was the first version and it left a hole exactly where it
+     * mattered. An AT-TE's stern is 4.2 m across and 3.5 m deep, so the long
+     * axis is the WIDTH: two spheres went to x = ±1.4 with radius 1.2, and the
+     * centreline — the line a player walks up to the back of the machine along
+     * — passed between them untouched. Measured coverage of the hull's own
+     * length: 75%. A collider with a hole down the middle of it is the defect
+     * being fixed, not a smaller version of it.
+     *
+     * The radius comes off the VERTICAL extent, so a sphere does not bulge
+     * below a hull you are supposed to be able to walk under — an AT-TE's belly
+     * is 2.34 m up and clones shelter under it in the reference plate — with a
+     * floor at a quarter of the narrowest horizontal dimension so a wide flat
+     * segment does not need a hundred spheres to cover itself.
+     */
+    const r = Math.max(0.12, _ps.y * 0.5, Math.min(_ps.x, _ps.z) * 0.25);
+    const cols = clamp(Math.round(_ps.x / (r * 1.4)), 1, 3);
+    const rows = clamp(Math.round(_ps.z / (r * 1.4)), 1, 4);
+    for (let ix = 0; ix < cols; ix++) {
+      for (let iz = 0; iz < rows; iz++) {
+        const c = _pc.clone();
+        if (cols > 1) c.x += (ix / (cols - 1) - 0.5) * Math.max(0, _ps.x - r);
+        if (rows > 1) c.z += (iz / (rows - 1) - 0.5) * Math.max(0, _ps.z - r);
+        spheres.push({ c, r });
+      }
     }
   }
   if (!spheres.length) return null;
@@ -1397,8 +1408,11 @@ export function buildGunship(opts = {}) {
  *   aat          a two-shell ripple 0.44 s apart. The gap is the point: it is
  *                long enough to be two events rather than a burst, which is what
  *                separates it by ear from the hailfire.
- *   hailfire     seven missiles in half a second, then 4.2 s of reload. The
- *                answer is the reload, and it is the only window it gives.
+ *   hailfire     seven missiles in half a second at 11 apiece, then 4.2 s of
+ *                reload. The biggest volley on the roster and the loosest, at
+ *                0.085 of spread, so what it actually costs depends on whether
+ *                you were standing still. The answer is the reload, and it is
+ *                the only window it gives.
  *
  * Threat and score are priced against `walker` (620 hp, threat 12, score 1600),
  * which is the roster's existing heavy.
@@ -1424,7 +1438,7 @@ Object.assign(ARCHETYPES, {
     label: 'Armoured Assault Tank', build: buildAAT, scale: 1.7,
     hp: 1050, mass: 2400, speed: 3.6, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
-    fireRate: 3.0, burst: 2, burstGap: 0.44, spread: 0.022, damage: 46,
+    fireRate: 3.0, burst: 2, burstGap: 0.44, spread: 0.022, damage: 52,
     preferred: [15, 40], boltColor: BOLT_COLORS.red,
     score: 2400, threat: 13, big: true, armored: true, unlockAt: 7,
   },
@@ -1432,7 +1446,7 @@ Object.assign(ARCHETYPES, {
     label: 'Hailfire Droid', build: buildHailfire, scale: 1.7,
     hp: 760, mass: 1500, speed: 5.8, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
-    fireRate: 4.2, burst: 7, burstGap: 0.07, spread: 0.085, damage: 15,
+    fireRate: 4.2, burst: 7, burstGap: 0.07, spread: 0.085, damage: 11,
     preferred: [22, 55], boltColor: BOLT_COLORS.gold,
     score: 1900, threat: 11, big: true, unlockAt: 5,
   },
