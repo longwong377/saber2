@@ -72,7 +72,38 @@ export function seedWaves(seed, rung = 0) {
 }
 
 export const MODES = {
-  waves:   { name: 'Trial of Waves', blurb: 'Endless escalation. Survive as long as the Force allows.' },
+  /**
+   * THE TRIAL OF WAVES WAS PATH OF THE BLADE WITH THE REWARD LOOP DELETED.
+   *
+   * Measured with a fresh RNG stream per mode, ten seeds over forty waves:
+   * **0 of 400 waves differed.** `_compose` never read the mode except in the
+   * duel branch, so the only thing that told the two apart was `DRAFT_MODES`,
+   * which takes the cards AWAY. A mode whose entire content is the absence of
+   * another mode's content is a menu entry, not a game.
+   *
+   * Two things make it a mode now, and both are DERIVED rather than declared:
+   *
+   *   THE RAMP IS SMALLER, because `budgetFor`'s exponent is derived from the
+   *   draft rate — its own note says BOON_POWER and DRAFT_EVERY "are not
+   *   independent, and moving one without the other is how a difficulty curve
+   *   drifts". A mode that drafts NOTHING was being charged ×1.27 at wave 30
+   *   for cards it never got. `budgetFor` reads `this.drafts` now, so the
+   *   correction is the existing rule being called rather than a second curve.
+   *
+   *   THE CONDITIONS ARRIVE EARLY AND OFTEN, because they are what this mode
+   *   has instead of a build. Path of the Blade escalates by making the PLAYER
+   *   bigger; the Trial escalates by changing the QUESTION, from wave 4 rather
+   *   than wave 13 and every other wave rather than every third. See TRIAL.
+   *
+   * The Insight and the Living Force are untouched and were never gated on the
+   * draft: `World._earnInsight` hangs off the wave-clear signal in every mode,
+   * so the tree is the Trial's whole progression and always has been.
+   */
+  waves: {
+    name: 'Trial of Waves',
+    blurb: 'Endless escalation, and no cards to soften it. The Force sets the terms of every second wave; '
+      + 'what you build, you build in the sky.',
+  },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
   /**
    * THE BLURB IS A CLAIM, AND IT USED TO BE THE ONLY TRUE THING HERE.
@@ -670,8 +701,33 @@ function shuffledOrder(n) {
 export const CONDITION_FROM = 13;
 /** A conditioned wave every this many from there, so a plain wave still exists. */
 export const CONDITION_EVERY = 3;
-/** Never more than this at once: three questions is a wave, four is noise. */
-export const CONDITION_MAX = 3;
+/**
+ * …AND THE TRIAL OF WAVES IS THE MODE THE CONDITIONS ARE FOR.
+ *
+ * A mode with no draft has no build, so it cannot escalate by making the player
+ * bigger and there is nothing left for depth to mean except the crowd — which
+ * is the whole complaint this file is answering. The Trial gets its ladder in
+ * the QUESTION instead: from wave 4, and every other wave. See MODES.waves.
+ */
+export const TRIAL = { from: 4, every: 2 };
+/**
+ * Never more than this at once.
+ *
+ * It was three, on the feeling that three questions is a wave and four is
+ * noise, and the measurement disagreed. Stranded budget on kamino/colosseum/
+ * the full pool, at three against four:
+ *
+ *     wave     no conditions      max 3        max 4
+ *      100      39-48%          12-24%        10-18%
+ *      140      64-69%          19-32%        10-18%
+ *      200      84-86%          31-41%        16-22%
+ *
+ * A fourth is only ever reached by the surplus loop, which cannot fire before
+ * about wave 95 — so the choice at the depths where it happens is not "a
+ * simpler wave or a busier one", it is "a busier wave or a fifth of the ramp
+ * thrown away". The scheduled path still gives exactly one.
+ */
+export const CONDITION_MAX = 4;
 
 /**
  * Every condition, and what each one costs.
@@ -731,7 +787,11 @@ export const CONDITIONS = {
     since: 14, worth: 0.18,
     excludes: ['fusillade'],
     types: (list) => list.filter((t) => !ARCHETYPES[t]?.ranged),
-    needs: (types) => types.filter((t) => !ARCHETYPES[t]?.ranged).length >= 1,
+    // TWO, not one, and the number is the difference between a condition and a
+    // monotony: kamino's only melee archetype is the acolyte, so a one-type
+    // gate turned NO GUNS into "six identical acolytes" on that level. A wave
+    // asked a different question still has to be a wave.
+    needs: (types) => new Set(types.filter((t) => !ARCHETYPES[t]?.ranged)).size >= 2,
   },
 
   /**
@@ -747,7 +807,7 @@ export const CONDITIONS = {
     since: 16, worth: 0.18,
     excludes: ['silence'],
     types: (list) => list.filter((t) => ARCHETYPES[t]?.ranged),
-    needs: (types) => types.filter((t) => ARCHETYPES[t]?.ranged).length >= 2,
+    needs: (types) => new Set(types.filter((t) => ARCHETYPES[t]?.ranged)).size >= 2,
   },
 
   /**
@@ -1047,9 +1107,24 @@ export class WaveDirector {
    */
   budgetFor(wave) {
     const base = 4 + wave * 2.6 + Math.pow(wave, 1.62) * 0.65;
+    /**
+     * …AND A MODE THAT DRAFTS NOTHING IS NOT CHARGED FOR CARDS IT NEVER GOT.
+     *
+     * The multiplier above this line exists for exactly one reason, stated in
+     * the note: the draft runs every DRAFT_EVERY waves, so a player at wave w
+     * holds w/2 cards and the budget is raised to match. `DRAFT_MODES` is the
+     * list of modes that is true of, and the Trial of Waves is deliberately not
+     * on it — so for its whole life the Trial faced a curve raised ×1.15 at
+     * wave 10 and ×1.27 at wave 30 for a build it structurally cannot have.
+     *
+     * The correction is `this.drafts`, which is the shipped statement of the
+     * same fact. Nothing about the roguelite moves: 1.05^n with n>0 is exactly
+     * what it was, and `tools/checks/escalation.mjs` pins both branches.
+     */
+    const growth = this.drafts ? Math.pow(BOON_POWER, (wave - 1) / 6) : 1;
     // `partyScale` is exactly 1 on every level that does not declare a `party`
     // share, so this line is a no-op for all of them — see partyScale.
-    return Math.floor(base * Math.pow(BOON_POWER, (wave - 1) / 6) * this.partyScale());
+    return Math.floor(base * growth * this.partyScale());
   }
 
   /**
@@ -1596,9 +1671,24 @@ export class WaveDirector {
 
   /* ── conditions ──────────────────────────────────────────────────── */
 
+  /**
+   * How deep a condition unlocks — and it is the SAME LADDER in both modes,
+   * started earlier in the one that has nothing else.
+   *
+   * `CONDITIONS[k].since` is authored against Path of the Blade, where the
+   * ladder resumes at CONDITION_FROM because that is where the modifier ladder
+   * stopped. The Trial of Waves has no cards at all, so its ladder starts at
+   * TRIAL.from and every rung shifts with it rather than being typed twice —
+   * a second `sinceTrial` column beside this one is §2.3's defect exactly.
+   */
+  conditionSince(key) {
+    const shift = this.drafts ? 0 : (CONDITION_FROM - TRIAL.from);
+    return Math.max(1, (CONDITIONS[key]?.since ?? Infinity) - shift);
+  }
+
   /** Which conditions this depth has earned. Mirrors `modifiersAt`. */
   conditionsAt(wave) {
-    return CONDITION_KEYS.filter((k) => wave >= CONDITIONS[k].since);
+    return CONDITION_KEYS.filter((k) => wave >= this.conditionSince(k));
   }
 
   /**
@@ -1609,7 +1699,11 @@ export class WaveDirector {
    * see the surplus loop in `_compose` — which is why this is only the FLOOR.
    */
   scheduledCondition(wave) {
-    return wave >= CONDITION_FROM && (wave - CONDITION_FROM) % CONDITION_EVERY === 0;
+    // A mode with no card draft runs the Trial's cadence: it is what that mode
+    // has instead of a build. `drafts` is the existing statement of which modes
+    // those are, called rather than restated (§2.4).
+    const { from, every } = this.drafts ? { from: CONDITION_FROM, every: CONDITION_EVERY } : TRIAL;
+    return wave >= from && (wave - from) % every === 0;
   }
 
   /** What a set of conditions is charged against this wave's budget. */
@@ -1626,20 +1720,25 @@ export class WaveDirector {
    * reason: a run that has earned the Heavy Guard should meet it rather than be
    * handed the No-Guns it has been fighting since wave 14.
    */
-  _pickCondition(wave, taken, types) {
+  _pickCondition(wave, taken, types, purse = Infinity) {
     const held = new Set(taken);
     const options = this.conditionsAt(wave).filter((k) => {
       if (held.has(k)) return false;
       const C = CONDITIONS[k];
+      // WHAT THE SURPLUS CAN ACTUALLY BUY. Without this the loop would draw a
+      // condition, find it unaffordable and stop — measured, that left 22% of
+      // wave 140's budget stranded because the one option left was the most
+      // expensive in the table and 1500 threat of surplus could not reach it.
+      if (C.worth * this.budgetFor(wave) > purse) return false;
       if (C.excludes && C.excludes.some((x) => held.has(x))) return false;
       for (const h of held) if (CONDITIONS[h].excludes?.includes(k)) return false;
       return !C.needs || C.needs(types, this);
     });
     if (!options.length) return null;
     let total = 0;
-    for (const k of options) total += CONDITIONS[k].since;
+    for (const k of options) total += this.conditionSince(k);
     let r = rng() * total;
-    for (const k of options) { r -= CONDITIONS[k].since; if (r <= 0) return k; }
+    for (const k of options) { r -= this.conditionSince(k); if (r <= 0) return k; }
     return options[options.length - 1];
   }
 
@@ -1709,6 +1808,35 @@ export class WaveDirector {
       }
     }
 
+    /**
+     * THE HEAD IS BOUGHT BEFORE THE FILL, not after it.
+     *
+     * It was bought last, out of whatever the wave had left, and the check
+     * written for it caught the consequence on its first run: **twelve
+     * vanguard waves produced zero leaders.** `_upgrade` spends the budget down
+     * to nothing by construction — that is its entire job — so a head paid for
+     * afterwards can never be afforded, and A HEAD TO CUT OFF was a banner over
+     * an ordinary wave. A condition that silently does not happen is worse than
+     * one that is too strong: the player is told a rule and then the rule is
+     * not there.
+     *
+     * So it is reserved first, exactly as the set-piece is, and moved into
+     * position after the shuffle. The heaviest chassis in the wave's own
+     * roster, so the head is worth cutting to.
+     */
+    if (shape.head) {
+      const wearable = [...new Set(shape.types)]
+        .filter((t) => modifiersFor(t).includes('leader'))
+        .sort((a, b) => ARCHETYPES[b].threat - ARCHETYPES[a].threat);
+      for (const t of wearable) {
+        const cost = modifierThreat(t, 'leader');
+        if (cost > budget) continue;
+        queue.push(`${t}|leader`);
+        budget -= cost;
+        break;
+      }
+    }
+
     let guard = 0;
     while (budget > 0 && queue.length < shape.cap && guard++ < 400) {
       const bigLeft = shape.heavy - queue.filter(e => isHeavy(spawnType(e))).length;
@@ -1734,32 +1862,22 @@ export class WaveDirector {
     }
 
     /**
-     * …AND THEN THE HEAD, if the wave has one.
+     * …AND THE HEAD IS PUT BACK DEEP IN THE QUEUE.
      *
-     * After the shuffle and deliberately deep in the queue: the whole value of
-     * "kill the leader and it ends" is that the leader is behind the wave, so
-     * the shortcut has to be cut to rather than sniped off the front rank. The
-     * `leader` modifier is taken out of `allowed` for the fill (see
-     * CONDITIONS.vanguard), so this is the only one in the wave and "the
-     * leader" is a thing the player can unambiguously find.
+     * The whole value of "kill the leader and it ends" is that the leader is
+     * BEHIND the wave, so the shortcut has to be cut to rather than sniped off
+     * the front rank. Found by looking for the `leader` entry rather than by
+     * remembering an index, because `_heavierOne` may have swapped its chassis
+     * for a heavier one in between — and because that is the same way `update`
+     * finds the body once it is standing. The modifier is out of `allowed` for
+     * the fill (see CONDITIONS.vanguard), so there is exactly one.
      */
-    if (shape.head && queue.length) {
-      const at = Math.min(queue.length - 1, Math.floor(queue.length * 0.65));
-      // The heaviest chassis that can wear it, so the head is worth reaching.
-      let best = -1, bestT = null;
-      for (let i = 0; i < queue.length; i++) {
-        const t = spawnType(queue[i]);
-        if (spawnMod(queue[i]) || !modifiersFor(t).includes('leader')) continue;
-        if ((ARCHETYPES[t]?.threat ?? 0) > best) { best = ARCHETYPES[t].threat; bestT = i; }
-      }
-      if (bestT !== null) {
-        const t = spawnType(queue[bestT]);
-        const extra = modifierThreat(t, 'leader') - ARCHETYPES[t].threat;
-        if (extra <= budget) {
-          budget -= extra;
-          queue.splice(bestT, 1);
-          queue.splice(Math.min(at, queue.length), 0, `${t}|leader`);
-        }
+    if (shape.head && queue.length > 1) {
+      const i = queue.findIndex((e) => spawnMod(e) === 'leader');
+      if (i >= 0) {
+        const at = Math.min(queue.length - 1, Math.floor(queue.length * 0.65));
+        const [head] = queue.splice(i, 1);
+        queue.splice(at, 0, head);
       }
     }
 
@@ -1796,8 +1914,8 @@ export class WaveDirector {
     }
     let out = this._composeUnder(w, conditions);
     while (conditions.length < CONDITION_MAX) {
-      const k = this._pickCondition(w, conditions, types);
-      if (!k || out.left < CONDITIONS[k].worth * this.budgetFor(w)) break;
+      const k = this._pickCondition(w, conditions, types, out.left);
+      if (!k) break;
       conditions.push(k);
       out = this._composeUnder(w, conditions);
     }
