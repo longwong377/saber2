@@ -1933,10 +1933,35 @@ export class World {
     if (t.enemy) {
       const e = t.enemy;
       const wasAlive = !e.dead;
-      e.takeCut(ev, player);
+      /**
+       * A PASS THAT WAS TURNED IS NOT A LIMB, AND THIS PAID FOR ONE.
+       *
+       * `takeCut` returns `'turned'` when a duellist's guard caught the blade
+       * and nothing came off — the derived guard is why "they die too easily"
+       * is fixed, and torso passes to a kill went 1 → 3 on an acolyte and 1 → 5
+       * on a master without a single health number moving. This branch predates
+       * that return and ran the whole sever path for it: `limbsRemoved++`, the
+       * combo, sixty score, lifesteal, hitstop and an `onHitmark(…, 'cut')`.
+       *
+       * So a player whose pass a Jedi Master BLOCKED was told they had taken a
+       * limb, and the run's limb counter — which is printed on the death card —
+       * inflated by one every time the guard did its job. A false reward is
+       * worse than a missing one: it teaches the player that the block was a
+       * hit and that the fight is going better than it is.
+       *
+       * The claim goes out either way, and deliberately: the host has to hear
+       * about the pass so it can run the same guard against the same bone and
+       * reach the same answer. What it must not do is pay for it here.
+       */
+      const outcome = e.takeCut(ev, player);
       if (player.isLocal) this._claim({ t: 'claim', k: 'cut', id: e.id, b: ev.bone, ct: ev.cutT,
         p: [ev.point.x, ev.point.y, ev.point.z],
         v: [ev.impulse.x, ev.impulse.y, ev.impulse.z] });
+      if (outcome === 'turned') {
+        // Felt, and not rewarded. Two blades met; the shake is the whole of it.
+        player.camera?.addShake(clamp(ev.speed / 90, 0.03, 0.18));
+        return;
+      }
       player.limbsRemoved++;
       player.addFlow(0.10);
       player.combo++;
