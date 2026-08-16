@@ -370,7 +370,28 @@ export function stoneField(world, seed = 3300, opts = {}) {
    * terrain, so a stale one from another level's teardown cannot leak in. */
   const cover = ground.grass && ground.grass.terrain === world.terrain ? ground.grass.cover : null;
   const shun = opts.shun ?? 0.8;
+  /**
+   * AND NOT UNDER THE SEA — 902 rock chips were floating in the ocean on
+   * Kamino.
+   *
+   * Every grade beds itself to `T.height(x, z)` and nothing asked whether that
+   * height was under water, so a 180 m strew on a platform level put half its
+   * stones on the sea floor and left them visible from the walkway as brown
+   * pebbles lying on the waves. Measured on the shipped level before this:
+   *
+   *     scree  n=1761  below water 902 (51.2%)  minY −78.08 m  maxY 13.61
+   *
+   * The field is the right place for it rather than each caller: it is the one
+   * thing every grade consults about where rock gathered, `addScree` and
+   * `addBoulderCluster` both SKIP a site the field refuses, and a level with no
+   * water (`waterLevel` −999) pays one comparison that is never true. Rock does
+   * gather under water in the world; it is not what is being drawn here, which
+   * is the litter you see from a walkway.
+   */
+  const T = world.terrain;
+  const sea = T && T.waterLevel > -900 ? T.waterLevel : null;
   const f = (x, z) => {
+    if (sea !== null && T.height(x, z) <= sea) return 0;
     const v = F.at(x, z);
     return v * v * (cover ? 1 - shun * cover.at(x, z) : 1);
   };
@@ -4699,7 +4720,19 @@ Object.assign(ARCHETYPES, {
     saddle: 'sniper', threat: 0,
   },
   pouncer: {
-    label: 'Gundark', build: (o) => buildQuadruped({ ...o, kind: 'pouncer' }),
+    /* WAMPA, which is what was actually built. CREATURE_PLANS.pouncer says so
+     * in its own first line — "built off `wampa.jpg` and `Wampas preyed on
+     * tauntauns.webp`" — and everything below it describes that animal: horns
+     * curving sideways out of the skull, a shag coat, the head sunk between the
+     * shoulders, the arms held high in "the wampa's reaching pose". A gundark
+     * is a four-armed, big-eared biped and this has two arms and no ears. The
+     * body is right and the label was the thing that was wrong.
+     *
+     * It stays in the menagerie rather than moving to the White Pass: an arena
+     * that ships in creatures is exactly where a cold-world predator turns up,
+     * and moving it is a pool-composition change with its own measurements to
+     * make. `pouncer` is still the key everything reads. */
+    label: 'Wampa', build: (o) => buildQuadruped({ ...o, kind: 'pouncer' }),
     scale: 2.0, hp: 560, mass: 520,
     speed: 7.2, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
     /* Pounce at phase 1, because a creature whose signature move only appears

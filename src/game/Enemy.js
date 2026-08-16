@@ -731,10 +731,20 @@ export const ARCHETYPES = {
     label: 'Droideka', build: buildDroideka, scale: 1.5, hp: 170, mass: 210,
     speed: 3.0, toughness: TOUGHNESS.armour, ranged: true, custom: 'droideka',
     fireRate: 0.72, burst: 6, burstGap: 0.07, spread: 0.055, damage: 8,
-    preferred: [8, 16], boltColor: 0x66ff99, score: 550, threat: 5, shield: true,
+    /* RED, like every other Trade Federation weapon on the field. The twin
+     * blaster cannons on a destroyer droid fire the same bolt a B1's E-5 does;
+     * the `0x66ff99` this carried was a mint green that belongs to nothing in
+     * the source material and made the one droid that shoots continuously read
+     * as a different faction from the ones beside it. `shield` is its tell and
+     * it does not need a second one. */
+    preferred: [8, 16], boltColor: BOLT_COLORS.red, score: 550, threat: 5, shield: true,
   },
   walker: {
-    label: 'Spider Walker', build: buildWalker, scale: 2.4, hp: 620, mass: 900,
+    /* Its real name. The Geonosis pool's own note identifies this body as
+     * "exactly the OG-9 homing spider droid of the reference plates: a sphere
+     * on four very tall thin legs with a single beam off the top" — so the
+     * research was done and the label said something generic anyway. */
+    label: 'OG-9 Homing Spider Droid', build: buildWalker, scale: 2.4, hp: 620, mass: 900,
     speed: 2.4, toughness: TOUGHNESS.heavy, ranged: true, custom: 'walker',
     fireRate: 2.6, burst: 2, burstGap: 0.22, spread: 0.03, damage: 26, big: true,
     preferred: [12, 26], boltColor: BOLT_COLORS.gold, score: 1600, threat: 12,
