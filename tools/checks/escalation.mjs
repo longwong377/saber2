@@ -1390,6 +1390,87 @@ export async function run({ check, assert }) {
     return rows.join('; ');
   });
 
+  check('boons: survival has a growth curve, and it is the blade attunement\'s own step', async () => {
+    /**
+     * OFFENCE COMPOUNDED AND DEFENCE DID NOT. Applied through the real
+     * `BOONS[].apply` onto Player's real `defaultBoonMods`, taking every card
+     * of its kind a wave-40 run can hold:
+     *
+     *     committed offence   cutPower  1.00 → 29.62     ×29.6
+     *     committed defence   maxHp      100 → 292       ×2.9
+     *     the wave itself     threat       7 → 425       ×61
+     *
+     * and an undirected run moves `maxHp` 0-9% over SIXTY waves. Offence
+     * multiplies — Shatterpoint ×1.9, Djem So ×1.4, the blade attunement ×1.12
+     * a rank and uncapped — while defence ADDS (Vitality +30, the body
+     * attunement +18) or is a flat cap (the Aegis is a 22-point ward,
+     * Encircled tops out at 42%). An additive pool against a multiplicative
+     * threat curve is not a defensive build, it is a slightly later death, and
+     * it left the deep waves with exactly one answer: kill it first.
+     *
+     * `attune-guard` was already the right shape — offered at every set-piece
+     * forever, uncapped, repeatable, the heart of the guard livingForce — and
+     * granted `deflectDamage`, which is offence through deflection. This
+     * asserts the axis exists and RACES: the same ATTUNE_STEP as the blade's,
+     * in the opposite direction, so a rank makes the edge 12% deeper there and
+     * a blow 12% shallower here.
+     */
+    const { defaultBoonMods } = await import('../../src/game/Player.js');
+    const stub = () => ({
+      maxHp: 100, hp: 100, maxStamina: 100, stamina: 100, maxForce: 100, force: 100,
+      boonMods: defaultBoonMods(), control: { sensitivity: 1 }, kills: 0, deflects: 0,
+      position: { distanceToSquared: () => 1e9 }, alive: true, world: { enemies: [] },
+      heal(n) { this.hp = Math.min(this.maxHp, this.hp + n); },
+      damage(a) { this.hp -= a; return a; },
+    });
+    const build = (list) => {
+      const p = stub(); const taken = new Waves.RankSet();
+      for (const [id, n] of list) {
+        const b = Waves.boonById(id);
+        assert(b, `no such boon: ${id}`);
+        for (let k = 0; k < n; k++) b.apply(p, Waves.rankScale(b, taken.take(id)));
+      }
+      return p;
+    };
+    const lands = (p) => { const before = p.hp; p.damage(50); return before - p.hp; };
+
+    const bare = lands(build([]));
+    assert(Math.abs(bare - 50) < 1e-6, `an unbuilt player takes ${bare} of a 50-point blow`);
+    const rows = [];
+    let prev = bare;
+    for (const n of [1, 2, 4, 6, 10]) {
+      const took = lands(build([['attune-guard', n]]));
+      assert(took < prev,
+        `${n} ranks of the Guard attunement takes ${took.toFixed(1)} of a 50-point blow against `
+        + `the previous rank's ${prev.toFixed(1)} — the only defensive axis that is allowed to `
+        + 'grow forever is not growing');
+      prev = took;
+      rows.push(`${n}:${took.toFixed(1)}`);
+    }
+    // The two attunements race on the SAME step, which is the property that
+    // stops one of them standing still while the other compounds.
+    const one = build([['attune-guard', 1]]);
+    const blade = build([['attune-blade', 1]]);
+    assert(Math.abs((1 - one.boonMods.ward) - Waves.ATTUNE_STEP) < 1e-9,
+      `a rank of the Guard shallows a blow by ${(1 - one.boonMods.ward).toFixed(3)} against `
+      + `ATTUNE_STEP ${Waves.ATTUNE_STEP} — the two axes are no longer racing on the same terms`);
+    assert(Math.abs((blade.boonMods.cutPower - 1) - Waves.ATTUNE_STEP) < 1e-9,
+      'the blade attunement no longer steps by ATTUNE_STEP');
+    // …and nothing in this game may become unkillable.
+    const deep = build([['attune-guard', 40]]);
+    assert(lands(deep) >= 50 * Waves.WARD_FLOOR - 1e-9,
+      `forty ranks takes ${lands(deep).toFixed(2)} of a 50-point blow — past the floor, `
+      + 'a player who kept choosing one card cannot be hurt at all');
+    // The committed build, which is what the complaint was about.
+    const held = build([['attune-guard', 4], ['vitality', 4], ['attune-body', 4]]);
+    const eff = held.maxHp * 50 / lands(held);
+    assert(eff > 350,
+      `a wave-40 defensive build is worth ${eff.toFixed(0)} effective hit points against an `
+      + 'unbuilt 100 — offence reaches ×29.6 over the same run');
+    return `a 50-point blow at guard ranks ${rows.join(' ')}; floor ${Waves.WARD_FLOOR}; `
+      + `a committed wave-40 defence is ${eff.toFixed(0)} effective hp (was 292)`;
+  });
+
   check('boons: two cards driving one multiplier compose instead of eating each other', () => {
     // The bug this exists for: a conditional card that remembers a base value
     // and writes `base × want` erases every flat card taken after it. There are

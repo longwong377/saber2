@@ -3128,6 +3128,48 @@ function secondWindAfter() {
   this.world?.engine?.flash?.(0.16);
 }
 
+/**
+ * Attunement of the Guard — the one defensive axis with a growth curve.
+ *
+ * ── THE HOLE, MEASURED ─────────────────────────────────────────────────────
+ *
+ * Every offensive axis in this game compounds and no defensive one did.
+ * Applied through the real `BOONS[].apply` onto a real `defaultBoonMods`, a
+ * build that takes every card of its kind that a wave-40 run can hold:
+ *
+ *     committed offence    cutPower  1.00 → 29.62      ×29.6
+ *     committed defence    maxHp      100 → 292        ×2.9
+ *     the wave itself      threat       7 → 425        ×61
+ *
+ * — and an undirected run moves `maxHp` by 0-9% over SIXTY waves. Offence
+ * multiplies (Shatterpoint ×1.9, Djem So ×1.4, the blade attunement ×1.12 per
+ * rank and uncapped); defence ADDS (Vitality +30, the body attunement +18) or
+ * is capped flat (the Aegis is a 22-point ward, Encircled tops out at 42%). An
+ * additive hit-point pool against a multiplicative threat curve is not a
+ * defensive build, it is a slightly later death, and the deep waves therefore
+ * have exactly one answer: kill it before it reaches you.
+ *
+ * ── WHY HERE AND NOT IN A NEW CARD ─────────────────────────────────────────
+ *
+ * `attune-guard` is offered at every set-piece forever, is uncapped, is
+ * repeatable, and is the heart of the guard livingForce — it is already the
+ * shape a growth curve needs. What it granted was `deflectDamage ×1.12`, which
+ * is OFFENCE THROUGH DEFLECTION, and `flowGain ×1.05`. Its own card text says
+ * "what you turn aside comes back harder", and that was the whole of it: the
+ * guard axis's permanent, unbounded choice bought no survivability at all.
+ *
+ * ATTUNE_STEP, the same constant and the same direction as the blade's — a
+ * rank makes the edge 12% deeper there and makes a blow 12% shallower here, so
+ * the two axes race on the same terms rather than one of them standing still.
+ * Compounding, because the thing it is racing compounds: four ranks is 0.64 of
+ * the blow, ten is 0.31. The floor exists because a multiplier this shape
+ * reaches zero eventually and nothing in this game may be unkillable.
+ */
+export const WARD_FLOOR = 0.2;
+function wardGuard(amount) {
+  return amount * Math.max(WARD_FLOOR, this.boonMods.ward ?? 1);
+}
+
 /** Bastion — a guard that pays for itself. See the honesty note under BOONS. */
 function bastionGuardRefund() {
   const back = this.boonMods.guardRefund ?? 0;
@@ -4270,8 +4312,16 @@ export const ATTUNEMENTS = [
   {
     id: 'attune-guard', icon: '🛡', name: 'Attunement of the Guard', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'guard',
-    text: 'What you turn aside comes back harder, every time you choose this.',
-    apply(p) { p.boonMods.deflectDamage *= 1 + ATTUNE_STEP; p.boonMods.flowGain *= 1.05; },
+    text: 'What you turn aside comes back harder, and what lands lands lighter. '
+      + 'Permanent, and repeatable.',
+    // See `wardGuard`: this is the game's only defensive axis that compounds,
+    // and it is the blade attunement's own step in the opposite direction.
+    apply(p) {
+      p.boonMods.deflectDamage *= 1 + ATTUNE_STEP;
+      p.boonMods.flowGain *= 1.05;
+      p.boonMods.ward = (p.boonMods.ward ?? 1) * (1 - ATTUNE_STEP);
+      boonGuard(p, 'attune-guard', wardGuard);
+    },
   },
   {
     id: 'attune-force', icon: '🌀', name: 'Attunement of the Force', tag: 'Attunement',
