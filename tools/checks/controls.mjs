@@ -1637,7 +1637,16 @@ export async function run({ check, assert }) {
     const world = await readFile(src('game/World.js'), 'utf8');
     assert(/density:\s*\(this\.settings\.grassScale \?\? 1\) \* L\.grass/.test(world),
       'grassScale no longer multiplies the level density');
-    assert(/const particleScale = \(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
+    /* The DECLARATION KEYWORD is not part of the claim, and pinning it made
+     * this red for a refactor that changed nothing it measures: World.js now
+     * hoists `particleScale` to the top of loadLevel and assigns it lower down,
+     * so `const particleScale = …` stopped matching while the two behavioural
+     * assertions above — half the slider halves the emission, and Performance
+     * at 150% still sits under Cinematic at 150% — went on passing. An
+     * instrument that restates a line will eventually disagree with a line that
+     * is still right (HANDOFF §2.4). What is asserted is the ARITHMETIC:
+     * particleScale is the setting TIMES the tier, however it is declared. */
+    assert(/particleScale\s*=\s*\(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
       'particleScale no longer multiplies the tier');
     return `slider 1.0→0.5 takes emission ${full.toFixed(2)}→${half.toFixed(2)}; `
       + `at 1.5, low ${lowMax.toFixed(2)} < ultra ${ultraMax.toFixed(2)}`;
@@ -1762,6 +1771,24 @@ export async function run({ check, assert }) {
       return out;
     };
     const files = ['game/Player.js', 'game/Enemy.js', 'game/World.js', 'game/Duel.js'];
+    /**
+     * THE ARITY CEILING IS READ OFF THE METHODS, NOT TYPED HERE.
+     *
+     * It was the literal 4, and it went red the day `Enemy.damage` grew a fifth
+     * parameter (`preResisted = false`) and a caller used it — a call that is
+     * CORRECT reported as a defect, which is the direction HANDOFF §2.4 warns
+     * about: an instrument that restates a rule eventually disagrees with it and
+     * manufactures a finding. The floor of 3 stays typed, because THAT is the
+     * bug this check exists for: `damage(x, null, 'fall')` put a string in the
+     * `source` slot and left `kind` undefined, and nothing threw.
+     */
+    const DECL = /(?:^|\n)\s{2}damage\(([^)]*)\)\s*\{/g;
+    let ceiling = 4;
+    for (const f of ['game/Player.js', 'game/Enemy.js']) {
+      for (const m of strip(await readFile(src(f), 'utf8')).matchAll(DECL)) {
+        ceiling = Math.max(ceiling, args(m[1]).length);
+      }
+    }
     const bad = [], kinds = new Set();
     let sites = 0;
     for (const f of files) {
@@ -1773,8 +1800,9 @@ export async function run({ check, assert }) {
         // rather than by arity — `pr` and `prop` are the only names used.
         if (/^(pr|prop)$/.test(m[1])) continue;
         sites++;
-        if (list.length < 3 || list.length > 4) {
-          bad.push(`${f}: ${m[1]}.damage(${m[2]}) has ${list.length} arguments`);
+        if (list.length < 3 || list.length > ceiling) {
+          bad.push(`${f}: ${m[1]}.damage(${m[2]}) has ${list.length} arguments, and damage() `
+            + `declares at most ${ceiling}`);
           continue;
         }
         // A string in the SOURCE slot is the bug, exactly.
@@ -1782,9 +1810,16 @@ export async function run({ check, assert }) {
           bad.push(`${f}: ${m[1]}.damage(…) passes ${list[2]} as \`source\`, which takes an entity — `
             + 'it belongs in `kind`, and `kind` is then undefined');
         }
-        if (list.length === 4) {
+        if (list.length >= 4) {
           if (!/^'[^']*'$/.test(list[3])) bad.push(`${f}: \`kind\` is ${list[3]}, which is not a string literal`);
           else kinds.add(list[3]);
+        }
+        // Anything past `kind` is a FLAG. A string there is the same mistake as
+        // a string in `source`, one slot along, and it would be just as silent.
+        for (let i = 4; i < list.length; i++) {
+          if (/^'[^']*'$/.test(list[i])) {
+            bad.push(`${f}: ${m[1]}.damage(…) passes the string ${list[i]} where damage() takes a flag`);
+          }
         }
       }
     }
