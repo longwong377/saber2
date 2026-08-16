@@ -829,6 +829,31 @@ const TURNED_CUT = 0.24;
 /** Seconds to win one turned pass back, and only while the guard is not beaten. */
 const GUARD_REFRESH = 6.0;
 
+/**
+ * ── A SHOVE HAS TO BUY THE RANGE THE NEXT BEAT NEEDS ───────────────────
+ *
+ * This roster has exactly one two-beat in it and it was one metre short of
+ * existing. `pressed` is the only situation a stand-up fight satisfies, so the
+ * push is the only opener any of these bodies has; and `lightning` wants
+ * `ranged`, which is `preferred[1] + 2.0` — 5.4 m for a Master. Measured, with
+ * the shoving body held still so the number is what the SHOVE bought and not
+ * what the chase gave back:
+ *
+ *     17.0 / 6.5   1.95 m → peak 5.00 m      lightning unreachable, by 0.4 m
+ *     20.4 / 7.8   1.95 m → peak 5.71 m      it opens
+ *     23.8 / 9.1   1.95 m → peak 6.39 m
+ *
+ * So the shove is sized at the second row and the combo is readable: he shoves
+ * you off him, and while you are still travelling he is already reaching. The
+ * pull's band (3.2) and the choke's (2.5) both sit under that peak too, so what
+ * comes next depends on which verbs the archetype was given rather than on
+ * whether the geometry happened to work out.
+ *
+ * `unleash` rides the same pair at 1.55×, the ratio the two prices stand in.
+ */
+export const PUSH_SPEED = 20.4;
+export const PUSH_LIFT = 7.8;
+
 export const ENEMY_POWERS = {
   push: {
     cost: POWER_COST.push, cd: 6.5, band: [0, 7.5], want: 'pressed',
@@ -2026,9 +2051,19 @@ export class Enemy {
    *     leaves the body staggered, so the ceiling on how long any of this can
    *     last is `1 / TURNED_CUT` passes no matter how deep the guard is.
    *
-   * The stagger is the important part of the feel: the answer to a turned cut
-   * is to keep swinging, because you just beat the guard you failed to get
-   * through.
+   * AND A TURNED CUT MUST NOT ITSELF OPEN THE GUARD, which is the one thing
+   * that made the first version of this worth almost nothing. It called
+   * `stun()`, which is what every other beaten-guard path calls — and `stun`
+   * sets `stunTimer`, which `_guardOpen` reads, so the pass immediately after
+   * a turn always landed. Measured: a 460 hp Master and a 130 hp acolyte both
+   * died in exactly 2 torso passes, and the whole guard was worth 0.42 s.
+   * A successful defence cannot be the thing that hands over the next one.
+   *
+   * So it goes through `DuelBrain.interrupt` instead, which Duel.js's own note
+   * describes as strictly WEAKER than a stagger: the blade is driven back to a
+   * neutral guard and no attack comes out of it for a beat. That is a real
+   * consequence — it lost its tempo, and it lost a quarter of its health —
+   * without being the opening. The openings stay the ones the player earns.
    */
   _turnCut(ev, bone, vital, source) {
     if (this.guard <= 0 || this.dead) return false;
@@ -2041,8 +2076,9 @@ export class Enemy {
     if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
     if (this.hp <= 0) { this.die(ev.point, source, 'cut'); return true; }
 
-    // It reads as what it is: steel stopping steel, and a guard thrown wide.
-    this.stun(0.42, ev.impulse ?? this._blowDir(ev.point, source), 1.15);
+    // It reads as what it is: steel stopping steel, and a beat lost.
+    this.duel?.interrupt(0.35);
+    this.breakCast();
     audio.clash(ev.point ?? this.position, 0.6);
     this.world.particles?.sparkBurst?.(ev.point ?? this.position, null, 16, { speed: 9 });
     this.world.notifyFloating?.(this.aimPoint(_v1), 'TURNED', '#cfe4ff');
@@ -3116,7 +3152,7 @@ export class Enemy {
        * answer to being surrounded rather than a bigger push. Reach and
        * impulse are the push's, times the ratio the two costs stand in. */
       const k = key === 'unleash' ? 1.55 : 1.0;
-      _v2.copy(dir).multiplyScalar(17 * k).setY(6.5 * k);
+      _v2.copy(dir).multiplyScalar(PUSH_SPEED * k).setY(PUSH_LIFT * k);
       t.applyKnockback?.(_v2, 9 * k, this);
       this.world.particles?.sandPuff(this.position.clone().addScaledVector(dir, 1.2),
         2.0 * k, this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);

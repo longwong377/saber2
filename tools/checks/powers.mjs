@@ -48,7 +48,7 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
-import { Enemy, ARCHETYPES, ENEMY_POWERS, FORCE_REGEN, enemyRng } from '../../src/game/Enemy.js';
+import { Enemy, ARCHETYPES, ENEMY_POWERS, FORCE_REGEN, PUSH_SPEED, PUSH_LIFT, enemyRng } from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
 import { duelRng, FORMS, BladeLock } from '../../src/game/Duel.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
@@ -139,14 +139,22 @@ function fight(type, seconds, opts = {}) {
     e, p, w, casts: [], winds: [], hpTaken: 0, dists: [], lockFrames: 0, frames: 0,
     minPool: e.forceMax, poolAtEnd: 0,
   };
-  // Wind-up starts announce themselves; the cast itself is the landing.
+  /**
+   * Wind-up starts announce themselves; the cast itself is the landing.
+   *
+   * COUNTED ON THE CALL, NOT ON THE POOL — and the first version of this counted
+   * on the pool, which lied the moment `Enemy` started charging at the wind-up
+   * instead of at the landing. It reported "jedi cast NOTHING, pool 44 → 23",
+   * a body spending 37 Force on nothing at all, and the sentence should have
+   * been read as the instrument breaking rather than the game being broken.
+   * HANDOFF 2.5, from the other side: a result that CONFIRMS the hypothesis you
+   * arrived with is exactly the one to re-derive.
+   */
   w.notifyFloating = (at, label) => s.winds.push({ t: w.time, label });
   const realCast = e._castPower.bind(e);
   e._castPower = (key, c, d) => {
-    const before = e.force;
-    const r = realCast(key, c, d);
-    if (e.force < before || e.casting === key) s.casts.push({ key, t: w.time, dist: d });
-    return r;
+    if (key && e.target?.alive) s.casts.push({ key, t: w.time, dist: d });
+    return realCast(key, c, d);
   };
   const realDamage = p.damage.bind(p);
   p.damage = (amt, pt, src, kind) => {
@@ -216,12 +224,41 @@ function bench(type = 'master', range = 2.2, frames = 30) {
   return { w, p, e, ctx };
 }
 
-/** Put a body into a wind-up on a named power, without waiting for its brain. */
-function wind(e, key) {
-  e.casting = null; e._castTimer = 0.45; e._castKey = key;
+/**
+ * Drive a body's OWN brain until it commits to a named power, and report the
+ * pool it held on the frame before it paid.
+ *
+ * Hand-setting `_castTimer` was the obvious way to do this and it is wrong now:
+ * the price and the cooldown are charged at the COMMIT, so a hand-built wind-up
+ * has never been paid for and an interrupt of it looks free when it is not.
+ * The body is pinned at a range inside the power's band so the situation it
+ * wants stays true while it decides.
+ */
+function windUp(type, key) {
+  const P = ENEMY_POWERS[key];
+  const A = ARCHETYPES[type];
+  const at = Math.max(P.band[0] + 1.0, A.preferred[1] + 2.6);
+  const b = bench(type, at, 4);
+  const { e, ctx } = b;
+  /* CLEAR WHATEVER THE WARM-UP ALREADY STARTED, and do it before the pool and
+   * the cooldowns are reset rather than after. The first version reset them
+   * after, which wiped the cooldown a wind-up committed DURING `bench` had just
+   * written — so the body could re-commit immediately, and every interrupt
+   * measurement was reading the second cast rather than the first surviving. */
+  e.breakCast();
+  e.powers = [key];
   e.force = e.forceMax;
-  e.powerCd[key] = 0;
-  return e;
+  for (const k in e.powerCd) e.powerCd[k] = 0;
+  b.poolBefore = e.force;
+  for (let i = 0; i < 900 && !(e._castTimer > 0); i++) {
+    b.poolBefore = e.force;
+    e.position.set(0, e.position.y, at);       // hold the range the band asks for
+    e.velocity.set(0, e.velocity.y, 0);
+    ctx.time = b.w.time = i / 60;
+    e.update(1 / 60, ctx);
+  }
+  b.key = key;
+  return b;
 }
 
 /** The real cap on a `takeCut` pass: the torso capsule, straight off the rig. */
@@ -308,6 +345,36 @@ export async function run({ check, assert }) {
     return FORCE_TYPES.map(t => `${t}: ${ARCHETYPES[t].powers.length} verb(s)`).join(', ');
   });
 
+  check('powers: a shove buys the range the next beat of the kit needs', () => {
+    // The roster has one two-beat in it — shove them off you, then reach for
+    // them while they are still travelling — and it was 0.4 m short of
+    // existing. `pressed` is the only situation a stand-up fight satisfies, so
+    // the push is every one of these bodies' only opener; `lightning` wants
+    // `ranged`, which is `preferred[1] + 2.0`. If a push cannot clear that, the
+    // second half of every kit on the roster is unreachable by construction.
+    const { w, p, e, ctx } = bench('master', 2.2, 20);
+    e.breakCast();
+    const d0 = p.position.distanceTo(e.position);
+    const dir = new THREE.Vector3().subVectors(p.position, e.position).setY(0).normalize();
+    p.applyKnockback(dir.multiplyScalar(PUSH_SPEED).setY(PUSH_LIFT), 9, e);
+    // The shoving body is held still, so this is what the SHOVE bought rather
+    // than what the chase gave back.
+    const at = e.position.clone();
+    let peak = 0;
+    for (let i = 0; i < 180; i++) {
+      ctx.time = w.time = (20 + i) / 60;
+      p.update(1 / 60, ctx);
+      e.position.copy(at); e.velocity.set(0, 0, 0);
+      peak = Math.max(peak, p.position.distanceTo(e.position));
+    }
+    const wants = ARCHETYPES.master.preferred[1] + 2.0;
+    assert(peak > wants,
+      `a shove takes a Master's target from ${d0.toFixed(2)} m to a peak of ${peak.toFixed(2)} m, `
+      + `and its own lightning does not open until ${wants.toFixed(1)} m — the two-beat cannot happen`);
+    return `${d0.toFixed(2)} m → peak ${peak.toFixed(2)} m against a ${wants.toFixed(1)} m `
+      + 'threshold for the next beat';
+  });
+
   /* ══ 2. can a cast be broken? ══════════════════════════════════════ */
 
   check('powers: a stagger BREAKS a wind-up instead of freezing it', () => {
@@ -317,10 +384,8 @@ export async function run({ check, assert }) {
     // clauses inside it were unreachable dead code.
     const results = [];
     for (const counter of ['stun', 'push', 'grip', 'lightning', 'unleash']) {
-      const { e, ctx } = bench('master');
-      wind(e, 'lightning');
-      e._castTimer = 0.30;
-      const poolBefore = e.force;
+      const { e, ctx } = windUp('master', 'lightning');
+      assert(e._castTimer > 0, 'the fixture never reached a wind-up, so it proves nothing');
       if (counter === 'stun') e.stun(0.5, V(0, 0, 1), 1);
       else if (counter === 'push') e.applyKnockback(V(0, 0, 14).setY(6), 9, null);
       else if (counter === 'grip') e.gripped = true;
@@ -329,15 +394,22 @@ export async function run({ check, assert }) {
       let arrived = false;
       const realCast = e._castPower.bind(e);
       e._castPower = (k, c, d) => { arrived = true; return realCast(k, c, d); };
-      for (let i = 0; i < 40; i++) e.update(1 / 60, ctx);
-      results.push({ counter, arrived, spent: poolBefore - e.force });
+      // One frame, because a grip is a STATE and the brain is where it is read.
+      e.update(1 / 60, ctx);
+      const stillWound = e._castTimer > 0;
+      /* Long enough that a FROZEN wind-up would have thawed and landed — the
+       * longest counter here holds the body for 0.5 s against a 0.45 s wind-up
+       * — and short enough that the power's own 8.5 s cooldown guarantees
+       * anything seen here is the ORIGINAL cast rather than a fresh one. */
+      for (let i = 0; i < 120; i++) e.update(1 / 60, ctx);
+      results.push({ counter, arrived, stillWound });
     }
-    const through = results.filter(r => r.arrived);
+    const through = results.filter(r => r.arrived || r.stillWound);
     assert(through.length === 0,
       `${through.map(r => r.counter).join(', ')} did not stop the cast — ${through.length} of `
-      + `${results.length} wind-ups arrived anyway`);
-    return `${results.length} counters, ${results.length} broken wind-ups; `
-      + `pool spent on the broken casts ${results.map(r => r.spent.toFixed(0)).join('/')}`;
+      + `${results.length} wind-ups ${through.some(r => r.arrived) ? 'arrived anyway' : 'were merely frozen'}`);
+    return `${results.length} counters, ${results.length} wind-ups cleared on the frame they landed `
+      + 'and none arrived in the 3 s after';
   });
 
   check('powers: a held power ENDS when the caster is hit, it does not pause', () => {
@@ -357,17 +429,16 @@ export async function run({ check, assert }) {
     // player learns to ignore the telegraph. The price and the cooldown are
     // committed when the body commits, which is what makes an interrupt worth
     // reaching for.
-    const { e, ctx } = bench('master');
-    wind(e, 'lightning');
-    const before = e.force;
+    const { e, ctx, poolBefore } = windUp('master', 'lightning');
     e.stun(0.5, V(0, 0, 1), 1);
+    const after = e.force;
     for (let i = 0; i < 20; i++) e.update(1 / 60, ctx);
-    assert(before - e.force >= POWER_COST.lightning * 0.5,
-      `a broken lightning cost ${(before - e.force).toFixed(0)} of a ${POWER_COST.lightning} pool `
+    assert(poolBefore - after >= POWER_COST.lightning * 0.9,
+      `a broken lightning cost ${(poolBefore - after).toFixed(0)} of a ${POWER_COST.lightning} price `
       + '— interrupting it took nothing away');
     assert(e.powerCd.lightning > 0,
       'a broken lightning left no cooldown behind, so it can be re-wound on the next frame');
-    return `a broken lightning costs ${(before - e.force).toFixed(0)} Force and `
+    return `a broken lightning costs ${(poolBefore - after).toFixed(0)} Force and `
       + `${e.powerCd.lightning.toFixed(1)} s of cooldown`;
   });
 
@@ -489,13 +560,17 @@ export async function run({ check, assert }) {
 
   check('powers: a duellist that loses an arm still loses the arm', () => {
     // The guard must not become a blanket immunity. A limb comes off, and the
-    // FIRST arm still disarms once the guard has been spent.
-    const { e } = bench('master');
+    // FIRST arm still disarms once the guard has been spent. An acolyte rather
+    // than a Master because a Master's guard outlives its own health — five
+    // turned passes at a quarter of maximum each is the whole body — so it dies
+    // holding its blade, which is a different (and correct) outcome.
+    const { e } = bench('acolyte');
     const arm = e.capsules().find(c => /^(armL|armR|foreL|foreR)$/.test(c.name));
     assert(arm, 'no arm capsule on a real rig');
     let cuts = 0;
-    while (!e.disarmed && cuts < 10) { cutOnce(e, arm); cuts++; }
-    assert(e.disarmed, `ten passes at the ${arm.name} and the blade is still in its hand`);
+    while (!e.disarmed && !e.dead && cuts < 10) { cutOnce(e, arm); cuts++; }
+    assert(e.disarmed, `${cuts} passes at the ${arm.name} and the blade is `
+      + `${e.dead ? 'still in the hand of a corpse' : 'still in its hand'}`);
     assert(cuts > 1, 'one pass at an arm still ends the fight outright');
     return `${cuts} passes at the ${arm.name} before the hilt falls`;
   });
@@ -546,6 +621,13 @@ export async function run({ check, assert }) {
       e._sustainDebt = 0;
       for (let i = 0; i < Math.round(P.hold * 60) + 30 && e.casting; i++) {
         w.time = ctx.time = i / 60;
+        /* THE PLAYER'S OWN UPDATE HAS TO RUN, and leaving it out is what
+         * produced the "45.88 against an authored 35.2" the audit could not
+         * explain. `Player.invuln` is decayed in `Player.update` and set to
+         * 0.18 by every hit — so a probe that only steps the ENEMY pins invuln
+         * at 0.18 forever, every tick after the first is refused, and the
+         * measurement comes out at 14% rather than either number. */
+        p.update(1 / 60, ctx);
         e.update(1 / 60, ctx);
         if (p.hp < p.maxHp * 0.4) { p.hp = p.maxHp; p.alive = true; }
       }
