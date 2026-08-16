@@ -866,9 +866,75 @@ const CAST_FLINCH_FRAC = 0.05;
  * Training bodies are excluded: the dojo's sparring partner exists to be hit.
  */
 const GUARD_PER_HP = 1 / 90;
-const TURNED_CUT = 0.24;
+export const TURNED_CUT = 0.24;
 /** Seconds to win one turned pass back, and only while the guard is not beaten. */
 const GUARD_REFRESH = 6.0;
+
+/**
+ * ── AND THE SAME ARGUMENT FOR EVERYTHING WITHOUT A BLADE ───────────────
+ *
+ * The note above fixed duellists and left the other twenty-four bodies exactly
+ * where they were, which the harness then measured: a 28 hp B1, a 420 kg Nexu,
+ * a 1250 hp Reek, a 900 hp Acklay and a 2200 hp Rancor ALL fell to one pass in
+ * 0.64 s, because `takeCut` makes any `vital >= 0.9` capsule instantly lethal
+ * and nothing that is not a duellist defends itself. The player's own words for
+ * it were "the large creatures all look the same… they all attack the same
+ * way"; the measurement adds the half nobody had said out loud, which is that
+ * they also DIE like nothing. Modelled through the Colosseum's wave-1 opener —
+ * the largest body in the game — a fresh player paid 0.0 hp for it.
+ *
+ * A duellist turns a killing pass with a blade. A body with no blade turns one
+ * with ITSELF, and how many it turns is a question of how much of it there is.
+ * A lightsaber ends a fight by reaching something vital in one pass; whether it
+ * can is set by how much animal is between the edge and the spine.
+ *
+ * MASS IS THE MEASURE, and it is deliberately not `toughness`. Toughness is
+ * already doing this job one layer down — it is the work-to-cut term inside
+ * BladeContactSolver, which is what makes a durasteel hull slow to part — and
+ * spending it twice would price a 520 kg dwarf spider like a 3600 kg AT-TE
+ * (14 × 520 against 14 × 3600 is the same ratio as the masses, but multiplied
+ * by a toughness that has already been charged for). Mass is the axis that is
+ * NOT yet spent, it is declared on every archetype, and it is the one the
+ * player can see.
+ *
+ * 300 kg per turned pass, and the boundary is what the number is for: nothing
+ * man-sized turns anything (a fully armoured clone trooper is 78 kg, a B2 is
+ * 130, a droideka 210 — all zero), and the lightest body that turns one is the
+ * 420 kg Nexu. Above that it rises with the animal:
+ *
+ *     nexu 1 · gundark 1 · dwarf spider 1 · spider walker 3 · acklay 4
+ *     hailfire 5 · reek 5 · rancor 5 · AAT 8 · AT-TE 12
+ *
+ * …and everything from the hailfire up is the SAME fight, because `TURNED_CUT`
+ * caps the real ceiling at five for every body in the game. That cap is the
+ * reason this is not a wall, and it is why the AT-TE's twelve is harmless.
+ *
+ * THE OPENINGS ARE THE ONES THE GAME ALREADY HAD, which is the whole reason
+ * this is derived rather than built. `_guardOpen` turns off the guard for a
+ * topple, a grip, a stagger, a stun — and now for WINDED, the state
+ * `_beastBrain` already enters when it takes 14% of its health quickly and
+ * which its own comment already calls "the only safe time to go for a leg".
+ * So against an animal the loop becomes: pressure it until it is winded, then
+ * take the killing pass or a leg. Against a machine it is the legs first —
+ * `_loseLimbBehaviour` topples a `walker` or a `beast` at three — and a topple
+ * opens the guard. Both of those were built and neither meant anything,
+ * because nothing was standing between the player and the neck.
+ */
+const HIDE_PER_KG = 1 / 300;
+
+/**
+ * How many fight-ending passes a body of this archetype can turn aside.
+ *
+ * THE SINGLE AUTHORITY. The constructor reads it and so does `tools/balance.mjs`
+ * — the harness imports this function rather than re-deriving `hp / 90`, so it
+ * measures the shipped rule instead of a second copy of it that can disagree
+ * with the game (HANDOFF §2.4: never restate a rule, call it).
+ */
+export function guardFor(A) {
+  if (!A || A.training || A.inert) return 0;
+  if (A.saber) return Math.max(1, Math.ceil((A.hp || 0) * GUARD_PER_HP));
+  return Math.floor((A.mass || 0) * HIDE_PER_KG);
+}
 
 /**
  * ── A SHOVE HAS TO BUY THE RANGE THE NEXT BEAT NEEDS ───────────────────
@@ -1456,10 +1522,10 @@ export class Enemy {
     this.casting = null;
     this.castLeft = 0;
     this._sustainDebt = 0;
-    /** Fight-ending cuts this body can still turn aside. See the note on
-     *  GUARD_PER_HP and `_turnCut`; 0 for anything that is not a duellist. */
-    this.guardMax = (A.saber && !A.training && !A.inert)
-      ? Math.max(1, Math.ceil(A.hp * GUARD_PER_HP)) : 0;
+    /** Fight-ending cuts this body can still turn aside — with a blade if it
+     *  has one, with its own bulk if it does not. See the notes on
+     *  GUARD_PER_HP and HIDE_PER_KG, and `guardFor`, which is the authority. */
+    this.guardMax = guardFor(A);
     this.guard = this.guardMax;
     this.guardT = GUARD_REFRESH;
     this.stateTime = 0;
@@ -2057,11 +2123,12 @@ export class Enemy {
    * A blade crossed a limb.
    *
    * @returns `'turned'` when the guard stopped it and nothing came off, so a
-   * caller can tell a parry from a sever. `World._applyBladeEvent` does not read
-   * it yet and should: it credits `limbsRemoved++`, a combo, 60 score and an
-   * `onHitmark(…, 'cut')` for every call, which now includes the passes a
-   * duellist turned aside. That is one `if` in World.js and it is not this
-   * workstream's file.
+   * caller can tell a parry from a sever. `World._applyBladeEvent` READS IT —
+   * it used to credit `limbsRemoved++`, a combo, 60 score, lifesteal and an
+   * `onHitmark(…, 'cut')` for a pass that was blocked, and now returns after
+   * the shake. (This note said the fix was still owed. It is not, and it
+   * matters more than it did: the guard is no longer only a duellist's, so
+   * every big body in the game would otherwise have paid a false reward.)
    */
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
@@ -2100,16 +2167,46 @@ export class Enemy {
   }
 
   /**
-   * Would this pass END the fight? Two ways, and the second is the one nobody
-   * counts: `takeCut`'s own lethality gate, and the fact that
-   * `_loseLimbBehaviour` disarms a blade-user on the FIRST arm it loses. One
-   * arm is a kill in every way that matters to a duel.
+   * Would this pass END the fight? Three ways, and only the first is obvious:
+   * `takeCut`'s own lethality gate; the fact that `_loseLimbBehaviour` disarms
+   * a blade-user on the FIRST arm it loses, so one arm is a kill in every way
+   * that matters to a duel; and — for a body with no blade — the sever itself.
+   *
+   * ── WHY A SEVER ENDS A CREATURE'S FIGHT, MEASURED ─────────────────────
+   *
+   * `takeCut` charges `maxHp * vital * 1.15` for a severed limb: a SHARE OF
+   * MAXIMUM HEALTH, not a fixed wound. So how many limbs a body can lose is a
+   * property of the vital table and nothing else, and its health does not enter
+   * into it — which is the same defect as "a 460 hp Master dies as fast as a
+   * 28 hp B1", one layer down and hiding.
+   *
+   * And every bone a quadruped or a machine HAS falls through `VITAL[name] ??
+   * 0.4`, because that table has nineteen humanoid names in it and a Rancor's
+   * are `hipL0`, `femur0`, `tibia0`, `tarsus0`. So a Rancor's TOE is worth 0.4
+   * — 46% of a 2200 hp animal — exactly as much as its hip, and two of them
+   * kill it. Measured before this: brute, charger, acklay, gundark and nexu all
+   * died in 1.28 s through a leg, five bodies spanning 420 to 2200 hp landing
+   * on the identical number.
+   *
+   * That is why the first version of the hide guard bought nothing. It turned
+   * the pass at the neck and the model simply went round it to a leg — which is
+   * the right instinct and the reason the leg route exists, but a leg cannot be
+   * BOTH the way in and free. So for a body with no blade, coming apart is what
+   * losing looks like, and the hide turns that pass too. In the player's words
+   * it is a hide that needs the same place hit twice: the first pass skids off,
+   * the second parts it.
+   *
+   * It is not a wall and it cannot become one. `_turnCut` returns false at
+   * `guard <= 0`, and `guardFor` gives 0 to everything under 300 kg — a B1, a
+   * trooper, a B2, a droideka all still come apart on the first pass — and a
+   * turned pass costs `TURNED_CUT` of maximum health, so five of them kill the
+   * body whatever its guard was.
    */
   _fightEnding(bone, vital) {
     if (vital >= 0.9) return true;
     if (vital >= 0.7 && this.hp < this.maxHp * 0.55) return true;
-    if (this.A.saber && !this.disarmed && /arm|fore|hand/.test(bone)) return true;
-    return false;
+    if (this.A.saber) return !this.disarmed && /arm|fore|hand/.test(bone);
+    return true;
   }
 
   /**
@@ -2152,12 +2249,45 @@ export class Enemy {
     if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
     if (this.hp <= 0) { this.die(ev.point, source, 'cut'); return true; }
 
-    // It reads as what it is: steel stopping steel, and a beat lost.
-    this.duel?.interrupt(0.35);
+    /* THE TEMPO COST, AND IT IS NOT THE SAME EVENT FOR EVERY BODY.
+     *
+     * A duellist loses the beat through `DuelBrain.interrupt` — Duel.js's own
+     * note calls that strictly weaker than a stagger, which is the point: a
+     * real consequence that is not itself the opening. A creature and a machine
+     * have no DuelBrain, so `this.duel?.` was silently nothing for them and the
+     * turn would have been free. `attackTimer` is the beat all three brains
+     * actually run on (`_rangedBrain`, `_beastBrain` and the training loop each
+     * count it down), so pushing it is the same consequence spelt in the
+     * vocabulary the body has. It is a DELAY and not a stun: `stunTimer` is
+     * read by `_guardOpen`, and a successful defence that opens the next pass
+     * is the bug the note above records costing the whole guard 0.42 s.
+     */
+    if (this.duel) this.duel.interrupt(0.35);
+    else this.attackTimer = Math.max(this.attackTimer || 0, 0.35);
     this.breakCast();
-    audio.clash(ev.point ?? this.position, 0.6);
-    this.world.particles?.sparkBurst?.(ev.point ?? this.position, null, 16, { speed: 9 });
-    this.world.notifyFloating?.(this.aimPoint(_v1), 'TURNED', '#cfe4ff');
+
+    /* AND IT READS AS WHAT IT IS. Steel stopping steel is a specific sound and
+     * a specific shower of sparks, and playing it off a Rancor's hide would be
+     * the loudest wrong note in the game — the player's complaint that started
+     * this work is that the big creatures are indistinguishable, and a blade
+     * skidding off two tonnes of animal is one of the few moments that can say
+     * otherwise. Which one is read off the body: `A.saber` for a blade,
+     * `TOUGHNESS.heavy` and up for a plated machine, everything else is hide. */
+    const at = ev.point ?? this.position;
+    const armour = (this.A.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.heavy;
+    if (this.A.saber || armour) {
+      audio.clash(at, armour ? 0.5 : 0.6);
+      this.world.particles?.sparkBurst?.(at, null, armour ? 22 : 16, { speed: armour ? 7 : 9 });
+      this.world.notifyFloating?.(this.aimPoint(_v1),
+        this.A.saber ? 'TURNED' : 'PLATE HOLDS', '#cfe4ff');
+    } else {
+      // Hide: a dull heavy slap with no ring in it, and no sparks at all —
+      // `spatter` is the pool the game already throws for a cut into flesh.
+      audio.thud(at, 0.9);
+      audio.noise({ dur: 0.13, gain: 0.16, type: 'lowpass', freq: 900, freqEnd: 260, pos: at });
+      this.world.particles?.spatter?.(at, null, 8, 0x7a2418, { speed: 3.0 });
+      this.world.notifyFloating?.(this.aimPoint(_v1), 'HIDE TURNS IT', '#e0b48a');
+    }
     return true;
   }
 
@@ -3194,7 +3324,17 @@ export class Enemy {
    */
   _guardOpen() {
     return this.dead || this.toppled || this.gripped || this.disarmed
-      || this.stunTimer > 0 || !!this.duel?.staggered || !!this.lock;
+      || this.stunTimer > 0 || !!this.duel?.staggered || !!this.lock
+      /* WINDED IS AN OPENING, and it is the one an animal has instead of a
+       * stagger. `_beastBrain` already enters this state when it takes 14% of
+       * its health inside its own decay window, already prints WINDED over its
+       * head for 2.4 s, and its own comment already calls it "the only safe
+       * time to go for a leg". Until the hide could turn a killing pass there
+       * was nothing for that window to be safe FROM — every pass landed. It is
+       * listed here rather than given its own gate in `_turnCut` because this
+       * predicate is the one rule both the blade and the Force read, and an
+       * opening the blade honours and the Force does not is two rules. */
+      || this.state === 'winded';
   }
 
   /** The cast lands. Everything that hits goes through `applyKnockback`. */

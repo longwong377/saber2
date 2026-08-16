@@ -116,7 +116,11 @@ const { defaultBoonMods } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
 const EnemyMod = await import('../src/game/Enemy.js');
-const { ARCHETYPES, Enemy, limitBackpedal } = EnemyMod;
+/* `guardFor` and `TURNED_CUT` are IMPORTED and not re-derived. The guard is the
+ * only thing standing between the blade and a one-pass kill on every body in
+ * the game, and a harness carrying its own copy of `hp / 90` would be HANDOFF
+ * §2.4's defect on the single number this file's headline answer turns on. */
+const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT } = EnemyMod;
 
 /**
  * The elite-modifier layer, read through the game's own exports and tolerated
@@ -748,6 +752,48 @@ export function engagementFor(entry, mods, guardShare = 0) {
     shieldPasses = r.severed ? passesOf(r.t, cadence) : 12;
   }
 
+  /* ── THE GUARD, AND IT IS NOT ONLY A DUELLIST'S ─────────────────────────
+   *
+   * `Enemy._turnCut` turns a FIGHT-ENDING pass aside while the body's guard is
+   * up, at a cost of `TURNED_CUT` of its maximum health and a lost beat. The
+   * cadence multiplier above models a duellist's blade being IN THE WAY; this
+   * models the turn itself, and the turn is what every body without a blade now
+   * has too — `guardFor` derives it from mass for anything that is not a
+   * duellist (Enemy.js, HIDE_PER_KG).
+   *
+   * Without it this file reported the same 0.64 s for a 28 hp B1, a 420 kg
+   * Nexu, a 1250 hp Reek and a 2200 hp Rancor, because `takeCut` makes any
+   * `vital >= 0.9` capsule instantly lethal and nothing stood between the
+   * player and the neck. That was not a bug in the cut arithmetic — a
+   * lightsaber DOES take a neck off in one pass — it was the model having no
+   * notion of a body defending itself.
+   *
+   * `_fightEnding` is CALLED, not restated: it is the rule that decides which
+   * passes are turned at all, it has three clauses, and a second copy of it
+   * here would be free to disagree with the game (HANDOFF §2.4). Evaluated at
+   * full health, which makes its middle clause — a `vital >= 0.7` bone on a
+   * body already under 55% — false here; that is the conservative direction.
+   *
+   * THE CEILING IS THE GAME'S OWN. A turned pass costs `TURNED_CUT` of maximum
+   * health, so `ceil(1 / TURNED_CUT)` = five turns kill the body outright
+   * however deep its guard is. An AT-TE's twelve and a Rancor's five are the
+   * same fight, which is exactly what stops this being a wall.
+   *
+   * AND IT IS PRICED INTO THE CHOICE OF BONE, which is the part that changes
+   * the fight rather than the number. A killing pass at the neck now costs the
+   * guard first; a leg does not, because severing one is not fight-ending. So
+   * the model discovers "take its legs" against a big animal on its own, from
+   * the rules the game already had, instead of being told.
+   */
+  const guardMax = guardFor(A);
+  const maxTurns = Math.ceil(1 / TURNED_CUT);
+  const turnsFor = (cap) => {
+    if (guardMax <= 0) return 0;
+    const ending = Enemy.prototype._fightEnding.call(
+      { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital ?? 0.4);
+    return ending ? Math.min(guardMax, maxTurns) : 0;
+  };
+
   // Try every capsule the body offers and keep the best plan, which is what a
   // player learns to do: you do not saw through a B2's chest, you take its arm.
   let best = null;
@@ -757,14 +803,20 @@ export function engagementFor(entry, mods, guardShare = 0) {
     const cons = r.severed ? limbConsequence(A, cap.name) : {};
     const neutral = r.dead || cons.decapitates
       || (cons.topplesAt === 1 && cons.legs) || cons.disarms;
-    const score = neutral ? r.t : r.t * 2.5;   // a cut that neither kills nor stops it is worth much less
-    if (!best || score < best.score) best = { score, cap, r, cons, neutral };
+    const turns = turnsFor(cap);
+    // Each turned pass is a swing that was thrown and did not land, so it is
+    // one pass at the model's own cadence.
+    const score = (neutral ? r.t : r.t * 2.5) + turns / cadence;
+    if (!best || score < best.score) best = { score, cap, r, cons, neutral, turns };
   }
   if (!best) { const v = { passes: 600, tNeutralise: Infinity, tKill: Infinity, via: 'out of reach' }; _engage.set(key, v); return v; }
 
   // Finish the job: after the first cut the bone is gone, so the rest of the hp
-  // comes off the next-best capsule.
-  let hp = best.r.hp, passes = passesOf(best.r.t, cadence), guard = 0;
+  // comes off the next-best capsule. The turns come off its health first — a
+  // turned pass is not free to the body, which is the whole reason the guard is
+  // a delay and not immunity.
+  let hp = best.r.hp - best.turns * maxHp * TURNED_CUT;
+  let passes = passesOf(best.r.t, cadence) + best.turns, guard = 0;
   const neutralPasses = passes;
   const used = new Set([best.cap.name]);
   while (hp > 0 && guard++ < 10) {
@@ -782,15 +834,20 @@ export function engagementFor(entry, mods, guardShare = 0) {
   // that never sever is real hp. Fall back to that rate against the best bone.
   if (hp > 0) {
     const g = workCapsule(best.cap, maxHp, maxHp, passSpeed, mods.cutPower, reach, cadence, 240);
-    passes = g.dead ? passesOf(g.t, cadence) : 600;
+    // …plus the turns, which this branch used to drop on the floor: it assigns
+    // rather than adds, so a body whose guard cost four passes and then had to
+    // be ground down was billed for the grind alone.
+    passes = (g.dead ? passesOf(g.t, cadence) : 600) + best.turns;
   }
 
   const out = {
     passes: passes + shieldPasses,
     tNeutralise: timeFor((best.neutral ? neutralPasses : passes) + shieldPasses, cadence),
     tKill: timeFor(passes + shieldPasses, cadence),
-    via: `${shieldCap ? 'shield→' : ''}${best.cap.name}${best.cons.decapitates ? ' (decap)' : best.cons.disarms ? ' (disarm)' : best.cons.topplesAt === 1 ? ' (topple)' : best.r.dead ? ' (kill)' : ''}`,
+    via: `${shieldCap ? 'shield→' : ''}${best.turns ? `guard×${best.turns}→` : ''}${best.cap.name}${best.cons.decapitates ? ' (decap)' : best.cons.disarms ? ' (disarm)' : best.cons.topplesAt === 1 ? ' (topple)' : best.r.dead ? ' (kill)' : ''}`,
     cuts: used.size,
+    turns: best.turns,
+    guardMax,
   };
   _engage.set(key, out);
   return out;
@@ -1855,9 +1912,35 @@ export function offenceReport() {
   out.push('');
   const mods = modsOf(makePlayer());
   const rows = [];
+  /* `BUILDERS[type]` — and this whole section threw a ReferenceError on it.
+   *
+   * The hand-written `type → builder` table was deleted when the archetype's
+   * own `build` became the authority (see `capsulesFor`), and these two lines
+   * were the last readers of it. Nothing caught that, because THE ONLY CALLER
+   * IS `main()`: `offenceReport` is not exercised by any check, so the section
+   * that prints time-to-kill per body — the one number this whole file exists
+   * to produce — has been dead since the table went. `--only=blade` crashed on
+   * line one of the table. It is the same defect the deleted table was: a
+   * second copy of something the archetype already knows. */
+  const buildable = (A) => typeof A.build === 'function';
+  /* THE SAME GUARD SHARE THE SIMULATION USES, and this table did not have it.
+   *
+   * `simulateRun` passes `measureDuel(...).guardShare` into `engagementFor`;
+   * this table called it with the default 0. So the row a reader reaches for —
+   * "how long does a Sentinel take" — printed 0.64 s while every run in the
+   * same report was fighting one that took 8. A table beside a simulation that
+   * disagrees with it is worse than no table.
+   *
+   * Knight is the reference tier, and a body that declares no form is given the
+   * MEAN share across the five rather than a die roll, so the table is
+   * deterministic. `simulateRun` rolls, deliberately; a report does not.
+   */
+  const meanGuard = FORM_KEYS.reduce((a, f) => a + measureDuel('knight', f).guardShare, 0) / FORM_KEYS.length;
+  const guardShareOf = (A) => (A.saber
+    ? (A.form ? measureDuel('knight', A.form).guardShare : meanGuard) : 0);
   for (const [type, A] of Object.entries(ARCHETYPES)) {
-    if (A.training || !BUILDERS[type]) continue;
-    const e = engagementFor(type, mods);
+    if (A.training || !buildable(A)) continue;
+    const e = engagementFor(type, mods, guardShareOf(A));
     rows.push([type, A.hp, A.threat, e.via, e.passes,
       isFinite(e.tNeutralise) ? e.tNeutralise.toFixed(2) : '—',
       isFinite(e.tKill) ? e.tKill.toFixed(2) : '—',
@@ -1868,10 +1951,11 @@ export function offenceReport() {
   for (const key of Object.keys(MODIFIERS)) {
     for (const type of Object.keys(ARCHETYPES)) {
       const A = ARCHETYPES[type];
-      if (A.training || !BUILDERS[type] || !MODIFIERS[key].allow(A)) continue;
+      if (A.training || !buildable(A) || !MODIFIERS[key].allow(A)) continue;
       const entry = `${type}|${key}`;
-      const e = engagementFor(entry, mods);
-      const EA = archetypeOf(entry).A;
+      const EA0 = archetypeOf(entry).A;
+      const e = engagementFor(entry, mods, guardShareOf(EA0));
+      const EA = EA0;
       rows.push([entry, Math.round(EA.hp), EA.threat.toFixed(1), e.via, e.passes,
         isFinite(e.tNeutralise) ? e.tNeutralise.toFixed(2) : '—',
         isFinite(e.tKill) ? e.tKill.toFixed(2) : '—',
@@ -1884,6 +1968,21 @@ export function offenceReport() {
   out.push('  "stop" is when it can no longer hurt you — dead, toppled by a severed leg,');
   out.push('  or disarmed by a severed arm. Those are real Enemy behaviours and they are');
   out.push('  most of what the blade is for; a model that only knew hp would miss them.');
+  out.push('');
+  out.push('  "guard×N→" in the middle column is Enemy._turnCut: N fight-ending passes');
+  out.push('  this body turns aside before one lands, derived by `guardFor` from hp for a');
+  out.push('  duellist and from MASS for anything without a blade. A pass it turns still');
+  out.push(`  costs it ${(TURNED_CUT * 100).toFixed(0)}% of maximum health, so ${Math.ceil(1 / TURNED_CUT)} turns kill it however deep the guard`);
+  out.push('  is — which is why the AT-TE\'s twelve and the Rancor\'s five are one fight.');
+  out.push('  Where the column names a LEG instead of a neck, the model found the guard');
+  out.push('  cheaper to go around than through; that is the intended answer to a big');
+  out.push('  animal and it was derived, not authored.');
+  out.push('');
+  out.push('  PESSIMISTIC, and stated so it can be argued with: none of the OPENINGS are');
+  out.push('  modelled. A topple, a grip, a Force shove, a heavy blow or the WINDED');
+  out.push('  window an animal enters after taking 14% of its health quickly all open the');
+  out.push('  guard outright in the game, and a player who earns one skips every');
+  out.push('  remaining turn. So these are the times for a player who only swings.');
   out.push('');
   const drows = [];
   for (const dk of DIFF_KEYS) {
