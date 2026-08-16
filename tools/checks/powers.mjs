@@ -155,9 +155,18 @@ function fight(type, seconds, opts = {}) {
     return realCast(key, c, d);
   };
   const realDamage = p.damage.bind(p);
-  p.damage = (amt, pt, src, kind) => {
+  /* EVERY ARGUMENT FORWARDED, and this counter has already been burned once by
+   * not doing it. `Player.damage` grew a fifth argument — `preResisted`, set by
+   * `applyKnockback` to say the pool has already paid for this blow — and a
+   * wrapper that named the four it knew about dropped it, so every enemy shove
+   * was resisted twice inside this fixture and nowhere else. It read as a
+   * finding: the Sentinel, whose entire kit is one shove, fell from 4.3 hp/s to
+   * 0.44 and looked like a body that had stopped fighting. It was the
+   * instrument. An instrument that restates a signature measures whatever that
+   * signature used to be. */
+  p.damage = (...a) => {
     const before = p.hp;
-    const r = realDamage(amt, pt, src, kind);
+    const r = realDamage(...a);
     if (p.hp < before) s.hpTaken += before - p.hp;
     return r;
   };
@@ -338,34 +347,107 @@ export async function run({ check, assert }) {
     return FORCE_TYPES.map(t => `${t}: ${ARCHETYPES[t].powers.length} verb(s)`).join(', ');
   });
 
-  check('powers: a shove buys the range the next beat of the kit needs', () => {
-    // The roster has one two-beat in it — shove them off you, then reach for
-    // them while they are still travelling — and it was 0.4 m short of
-    // existing. `pressed` is the only situation a stand-up fight satisfies, so
-    // the push is every one of these bodies' only opener; `lightning` wants
-    // `ranged`, which is `preferred[1] + 2.0`. If a push cannot clear that, the
-    // second half of every kit on the roster is unreachable by construction.
-    const { w, p, e, ctx } = bench('master', 2.2, 20);
-    e.breakCast();
-    const d0 = p.position.distanceTo(e.position);
-    const dir = new THREE.Vector3().subVectors(p.position, e.position).setY(0).normalize();
-    p.applyKnockback(dir.multiplyScalar(PUSH_SPEED).setY(PUSH_LIFT), 9, e);
-    // The shoving body is held still, so this is what the SHOVE bought rather
-    // than what the chase gave back.
-    const at = e.position.clone();
-    let peak = 0;
-    for (let i = 0; i < 180; i++) {
-      ctx.time = w.time = (20 + i) / 60;
-      p.update(1 / 60, ctx);
-      e.position.copy(at); e.velocity.set(0, 0, 0);
-      peak = Math.max(peak, p.position.distanceTo(e.position));
-    }
+  /**
+   * ── A SHOVE BUYS A RANGE OF DISTANCES NOW, NOT A DISTANCE ─────────────
+   *
+   * THIS CHECK'S PREMISE EXPIRED, AND THAT IS THE ONLY REASON IT IS EDITED —
+   * not because the change under it failed a bound it was still entitled to
+   * hold. It used to name no target: it shoved a Master's victim once, took the
+   * peak, and asserted it cleared `ranged` (`preferred[1] + 2.0`), because in
+   * the world it was written for there was one kind of victim and one answer.
+   *
+   * `Player.resistForce` blunts the SHOVE as well as the harm — one blow,
+   * weighed once, both halves scaled by what the pool bought back — so the same
+   * shove now buys 3.86 m from a braced player and 6.84 m from an empty bar.
+   * The question "does a shove buy the range the next beat needs" cannot be
+   * answered without saying WHOSE BAR, and the answer is different at the two
+   * ends on purpose: braced you deny him the lightning, empty-bar the whole kit
+   * opens on you. See the note over PUSH_SPEED for the sizing and for why no
+   * sizing reaches 5.4 m through a full pool without throwing an undefended
+   * player 14 m.
+   *
+   * WHAT IT ASSERTS IS THE KIT'S OWN TABLE, NOT A NUMBER COPIED OUT OF IT.
+   * The gates come off `ENEMY_POWERS`, and the second beat is DRIVEN — the
+   * Master's own `_forceBrain` decides whether a power opens, with `push` taken
+   * off the body so the peak is one shove's and not two stacked. That is the
+   * thing the metres were always a proxy for.
+   */
+  check('powers: a shove buys the range the next beat needs, against the bar it is aimed at', () => {
+    /**
+     * One shove, the shover pinned so the number is what the SHOVE bought and
+     * not what the chase gave back. `only` names the one verb left on the body
+     * afterwards, and the brain is then run on to see whether it opens.
+     */
+    const shove = (pool, only) => {
+      const { w, p, e, ctx } = bench('master', 2.2, 20);
+      e.breakCast();
+      /* EXPLICIT, because the fixture nearly lies. The Master's own push lands
+       * on this player around frame 28, and a stagger is a beaten guard —
+       * `forceResistance` gives a beaten guard `RESIST_BEATEN` of its cap. A
+       * bench that ran a few frames longer would silently be measuring a
+       * player who had already been knocked about, and calling it "braced". */
+      p.staggerTimer = 0;
+      p.force = pool;
+      const d0 = p.position.distanceTo(e.position);
+      const dir = new THREE.Vector3().subVectors(p.position, e.position).setY(0).normalize();
+      p.applyKnockback(dir.multiplyScalar(PUSH_SPEED).setY(PUSH_LIFT), 9, e);
+      const spent = pool - p.force;
+      const at = e.position.clone();
+      let peak = 0, beat = null, tBeat = 0;
+      if (only) { e.powers = [only]; e.force = e.forceMax; for (const k in e.powerCd) e.powerCd[k] = 0; }
+      const realCast = e._castPower.bind(e);
+      e._castPower = (key, c, d) => { if (key && !beat) { beat = key; tBeat = w.time; } return realCast(key, c, d); };
+      for (let i = 0; i < 180; i++) {
+        ctx.time = w.time = i / 60;
+        p.update(1 / 60, ctx);
+        if (only) e.update(1 / 60, ctx);
+        e.position.copy(at); e.velocity.set(0, 0, 0);
+        peak = Math.max(peak, p.position.distanceTo(e.position));
+      }
+      return { d0, peak, spent, beat, tBeat };
+    };
+
+    const beats = ['lightning', 'pull', 'choke'];
+    const braced = shove(100, null);
+    const bare = shove(0, null);
+    const opens = (pool) => beats.filter(k => shove(pool, k).beat === k);
+    const bracedOpens = opens(100), bareOpens = opens(0);
+
+    // A braced player is the binding case, and the nearest gate in the kit is
+    // the pull's band floor — read off the table rather than written down here.
+    const nearest = ENEMY_POWERS.pull.band[0];
+    assert(braced.peak > nearest + 0.3,
+      `a shove takes a BRACED Master's target from ${braced.d0.toFixed(2)} m to a peak of `
+      + `${braced.peak.toFixed(2)} m, and the nearest second beat in the kit — the pull — does not `
+      + `open until ${nearest.toFixed(1)} m. Clearing it by ${(braced.peak - nearest).toFixed(2)} m is `
+      + 'not a margin, it is a coincidence: bracing would leave the shove with no follow-up at all');
+    assert(bracedOpens.length > 0,
+      'a shove at a braced player opened NOTHING in a Master\'s own kit — its brain was run on for '
+      + '3 s after the shove with each verb in turn and committed to none of them');
+
+    // An empty bar is the other end, and it is the end the old bound measured:
+    // nothing spent on defence means the whole kit opens, lightning included.
     const wants = ARCHETYPES.master.preferred[1] + 2.0;
-    assert(peak > wants,
-      `a shove takes a Master's target from ${d0.toFixed(2)} m to a peak of ${peak.toFixed(2)} m, `
-      + `and its own lightning does not open until ${wants.toFixed(1)} m — the two-beat cannot happen`);
-    return `${d0.toFixed(2)} m → peak ${peak.toFixed(2)} m against a ${wants.toFixed(1)} m `
-      + 'threshold for the next beat';
+    assert(bare.peak > wants,
+      `a shove takes an EMPTY-BAR target from ${bare.d0.toFixed(2)} m to a peak of `
+      + `${bare.peak.toFixed(2)} m, and the Master's own lightning does not open until `
+      + `${wants.toFixed(1)} m — a player who spent nothing on defence must still fly`);
+    assert(bareOpens.includes('lightning'),
+      'a shove at a player with an empty bar did not open the lightning it is sized to open');
+
+    /* AND IT MUST NOT THROW THEM OUT OF THE CASTER'S OWN REACH. This is the
+     * ceiling the sizing is held under: `push` bands [0, 7.5], so a shove that
+     * carried further than that would leave the target somewhere the body
+     * cannot push them again — the shove would be its own last beat. */
+    const ceiling = ENEMY_POWERS.push.band[1];
+    assert(bare.peak < ceiling,
+      `a shove carries an undefended player ${bare.peak.toFixed(2)} m, past the far edge of the `
+      + `push's own ${ceiling.toFixed(1)} m band — the caster shoves its target out of its next cast`);
+
+    return `braced: ${braced.d0.toFixed(2)} → ${braced.peak.toFixed(2)} m for ${braced.spent.toFixed(1)} Force, `
+      + `opens [${bracedOpens.join(', ') || 'nothing'}]; empty bar: → ${bare.peak.toFixed(2)} m, `
+      + `opens [${bareOpens.join(', ') || 'nothing'}] against a ${wants.toFixed(1)} m lightning threshold `
+      + `and a ${ceiling.toFixed(1)} m ceiling`;
   });
 
   /* ══ 2. can a cast be broken? ══════════════════════════════════════ */
@@ -614,48 +696,89 @@ export async function run({ check, assert }) {
 
   /* ══ 6. the held-power bill ════════════════════════════════════════ */
 
-  check('powers: a held power delivers exactly what it is authored to', () => {
-    // `_sustain` used to bill per frame into `Player.invuln`'s 0.18 s window and
-    // deliver 8% of its authored damage; it bills on a 0.20 s tick now. This is
-    // the other side of that fix — the tick must not OVERPAY either, and the
-    // measured 45.88 hp against an authored 35.2 needed an answer.
+  /**
+   * ── THE POOL THIS IS MEASURED AGAINST IS NOW PART OF THE QUESTION ──────
+   *
+   * THIS CHECK'S PREMISE EXPIRED, AND THAT IS THE ONLY REASON IT IS EDITED.
+   * It used to be called "a held power delivers exactly what it is authored to"
+   * and it named no target at all, because in the world it was written for
+   * there was only one kind of target: one that could not answer. `_sustain`
+   * had been billing per frame into `Player.invuln`'s 0.18 s window and
+   * delivering 8% of its authored damage; the tick fixed that, and the bound
+   * existed to stop the fix OVER-paying.
+   *
+   * `Player.resistForce` makes "what it is authored to" a question with two
+   * answers. An enemy power CANNOT deliver its authored damage to a player with
+   * a full bar — by design, and it is the whole feature. Asserting that it does
+   * would be asserting the feature away, so the check has to say WHICH TARGET.
+   *
+   * It is the same bound, applied to the target it was always about. Against a
+   * bar with nothing in it the old question is exactly right and the old
+   * numbers are unchanged, 0.9–1.1 and all: 95% for lightning, 100% for choke,
+   * the same figures this check has always returned. The full-bar case is a
+   * NEW clause and it is deliberately a shape rather than a number — less than
+   * the empty bar, and more than nothing — because what a full bar buys is
+   * `RESIST_CAP`'s business and is asserted where that lives.
+   */
+  check('powers: a held power delivers what it is authored to, against the bar it is aimed at', () => {
     const rows = [];
     for (const key of ['lightning', 'choke']) {
-      const P = ENEMY_POWERS[key];
-      const { w, p, e, ctx } = bench(key === 'lightning' ? 'master' : 'acolyte', 3.0, 10);
-      p.invuln = 0;
-      let taken = 0;
-      const real = p.damage.bind(p);
-      p.damage = (a, pt, src, kind) => {
-        const b = p.hp; const r = real(a, pt, src, kind);
-        if (p.hp < b) taken += b - p.hp; return r;
-      };
-      e.force = 1e6; e.forceMax = 1e6;
-      e.casting = key; e.castLeft = P.hold;
-      e._sustainDebt = 0;
-      for (let i = 0; i < Math.round(P.hold * 60) + 30 && e.casting; i++) {
-        w.time = ctx.time = i / 60;
-        /* THE PLAYER'S OWN UPDATE HAS TO RUN, and leaving it out is what
-         * produced the "45.88 against an authored 35.2" the audit could not
-         * explain. `Player.invuln` is decayed in `Player.update` and set to
-         * 0.18 by every hit — so a probe that only steps the ENEMY pins invuln
-         * at 0.18 forever, every tick after the first is refused, and the
-         * measurement comes out at 14% rather than either number. */
-        p.update(1 / 60, ctx);
-        e.update(1 / 60, ctx);
-        if (p.hp < p.maxHp * 0.4) { p.hp = p.maxHp; p.alive = true; }
+      for (const bar of ['full', 'empty']) {
+        const P = ENEMY_POWERS[key];
+        const { w, p, e, ctx } = bench(key === 'lightning' ? 'master' : 'acolyte', 3.0, 10);
+        p.invuln = 0;
+        /* AN EMPTY BAR HAS TO STAY EMPTY. `Player._regen` puts 7.5 Force a
+         * second back, so a pool merely SET to zero is holding 0.125 by the
+         * next tick and quietly blunts 1.4 hp across a 1.6 s hold — which is
+         * exactly the shape of "a plausible default instead of the real
+         * thing" this project keeps finding. Taking `maxForce` to zero makes
+         * `_regen`'s own clamp do it, rather than fighting the regen. */
+        if (bar === 'empty') { p.maxForce = 0; p.force = 0; }
+        let taken = 0;
+        const real = p.damage.bind(p);
+        /* …AND EVERY ARGUMENT FORWARDED. See the note on the same wrapper in
+         * `fight`: this one named four and `Player.damage` has five, so the
+         * fifth — `preResisted` — was dropped and every tick paid the pool
+         * twice. It read as lightning delivering 19% of its authored damage.
+         * It was the instrument, not the game. */
+        p.damage = (...a) => {
+          const b = p.hp; const r = real(...a);
+          if (p.hp < b) taken += b - p.hp; return r;
+        };
+        e.force = 1e6; e.forceMax = 1e6;
+        e.casting = key; e.castLeft = P.hold;
+        e._sustainDebt = 0;
+        for (let i = 0; i < Math.round(P.hold * 60) + 30 && e.casting; i++) {
+          w.time = ctx.time = i / 60;
+          /* THE PLAYER'S OWN UPDATE HAS TO RUN, and leaving it out is what
+           * produced the "45.88 against an authored 35.2" the audit could not
+           * explain. `Player.invuln` is decayed in `Player.update` and set to
+           * 0.18 by every hit — so a probe that only steps the ENEMY pins invuln
+           * at 0.18 forever, every tick after the first is refused, and the
+           * measurement comes out at 14% rather than either number. */
+          p.update(1 / 60, ctx);
+          e.update(1 / 60, ctx);
+          if (p.hp < p.maxHp * 0.4) { p.hp = p.maxHp; p.alive = true; }
+        }
+        const authored = P.dps * P.hold * w.difficulty.damageTaken;
+        rows.push({ key, bar, taken, authored });
       }
-      const authored = P.dps * P.hold * w.difficulty.damageTaken;
-      rows.push({ key, taken, authored });
     }
-    for (const r of rows) {
-      const ratio = r.taken / r.authored;
+    const at = (key, bar) => rows.find(r => r.key === key && r.bar === bar);
+    for (const key of ['lightning', 'choke']) {
+      const empty = at(key, 'empty'), full = at(key, 'full');
+      const ratio = empty.taken / empty.authored;
       assert(ratio > 0.9 && ratio < 1.1,
-        `${r.key} delivered ${r.taken.toFixed(2)} hp against an authored `
-        + `${r.authored.toFixed(2)} (${(ratio * 100).toFixed(0)}%) — the tick is `
+        `${key} delivered ${empty.taken.toFixed(2)} hp into an EMPTY bar against an authored `
+        + `${empty.authored.toFixed(2)} (${(ratio * 100).toFixed(0)}%) — the tick is `
         + `${ratio > 1 ? 'overpaying' : 'still dropping payments'}`);
+      assert(full.taken < empty.taken - 0.5,
+        `${key} delivered ${full.taken.toFixed(2)} hp into a FULL bar against ${empty.taken.toFixed(2)} `
+        + 'into an empty one — holding Force bought the player nothing against a held power');
+      assert(full.taken > 0,
+        `${key} delivered NOTHING into a full bar — a pool must blunt a power, never refuse it`);
     }
-    return rows.map(r => `${r.key} ${r.taken.toFixed(1)}/${r.authored.toFixed(1)} hp `
+    return rows.map(r => `${r.key}/${r.bar} bar ${r.taken.toFixed(1)}/${r.authored.toFixed(1)} hp `
       + `(${(r.taken / r.authored * 100).toFixed(0)}%)`).join(', ');
   });
 
