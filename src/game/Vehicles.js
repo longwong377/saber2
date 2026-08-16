@@ -567,14 +567,19 @@ const _wp = new THREE.Vector3();
  * turn its wheels the wrong way, and that is a smaller lie than wheels that do
  * not turn at all.
  */
-function rollByOdometry(hoop, radius) {
+function rollByOdometry(driver, hoop, radius) {
   let init = false;
   const last = new THREE.Vector3();
-  hoop.onBeforeRender = function () {
+  driver.onBeforeRender = function () {
     this.getWorldPosition(_wp);
-    if (!init) { last.copy(_wp); init = true; return; }
     const d = Math.hypot(_wp.x - last.x, _wp.z - last.z);
-    if (d > 1e-5) { this.rotation.y += d / radius; last.copy(_wp); }
+    /* Two guards, and both are about the callback NOT firing. A frustum-culled
+     * mesh is never drawn, so it never asks; when it comes back the hub may
+     * have crossed half the map and `d` is a jump rather than a roll. And the
+     * first call has no previous position at all. Either way the reading is
+     * discarded and the wheel picks up from where it is. */
+    if (!init || d > 5) { last.copy(_wp); init = true; return; }
+    if (d > 1e-5) { hoop.rotation.y += d / radius; last.copy(_wp); }
   };
 }
 
@@ -1223,8 +1228,12 @@ export function buildHailfire(opts = {}) {
       kr.add(dark, plateGeo(0.05 * S, 0.04 * S, WR * 0.92, 0.01 * S, 1),
         [Math.sin(a) * WR * 0.48, 0, Math.cos(a) * WR * 0.48], [0, a, 0]);
     });
+    /* ONE driver for the whole hoop. The bake returns a mesh per material —
+     * ring, tread, spokes — and giving each its own callback would have three
+     * of them integrating the same displacement separately, which is fine until
+     * one is culled and the tyre and its tread come apart. */
     const rims = kr.bake(hoop, { silhouette: true });
-    for (const m of rims) rollByOdometry(m, WR);
+    if (rims.length) rollByOdometry(rims[0], hoop, WR);
 
     /* The lower rim bone: the run of hoop between the hub and the ground, which
      * is the only part of a five-metre wheel a player can reach. It carries a

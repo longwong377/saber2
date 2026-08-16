@@ -731,6 +731,58 @@ export async function run({ check, assert }) {
     return `${rows.join(', ')} (shipped proxy → published; worst shipped ${(worstShipped * 100).toFixed(0)}%)`;
   });
 
+  /**
+   * THE WHEELS TURN BECAUSE THE MACHINE MOVED, and only then.
+   *
+   * There is no per-frame hook from Enemy.js into a built body and this
+   * workstream may not add one, so the hailfire's hoops roll off their own hub
+   * displacement inside `onBeforeRender`. That is a seam nothing else in this
+   * project uses, which makes it exactly the kind of thing that stops working
+   * silently — a renamed field, a mesh that stops being drawn, a group that
+   * gets reparented, and the machine slides on frozen wheels forever.
+   *
+   * Three properties, all behavioural: a stationary wheel does not turn, a
+   * moving one turns by distance over radius, and a teleport is discarded
+   * rather than spun through (which is what a frustum cull looks like from
+   * inside the callback).
+   */
+  check('hailfire: the hoops roll off their own odometry, and only when it moves', () => {
+    const m = measure('hailfire');
+    const w = m.built.wheels?.[0];
+    assert(w && w.hoop, 'the hailfire publishes no wheels');
+    const drivers = w.hoop.children.filter((c) => Object.prototype.hasOwnProperty.call(c, 'onBeforeRender'));
+    assert(drivers.length === 1,
+      `${drivers.length} roll drivers on one hoop — two of them integrate the same motion separately, `
+      + 'and the tread comes off the tyre the first time one of them is culled');
+    const driver = drivers[0];
+
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();                      // first call only takes a reading
+    const a0 = w.hoop.rotation.y;
+    driver.onBeforeRender();
+    assert(w.hoop.rotation.y === a0, 'a stationary hailfire turned its wheels');
+
+    // roll it forward two metres
+    m.rig.hipsBone.obj.position.z += 2;
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();
+    const turned = w.hoop.rotation.y - a0;
+    const want = 2 / w.radius;
+    assert(Math.abs(turned - want) < 1e-6,
+      `two metres of travel turned a ${w.radius.toFixed(2)} m wheel by ${turned.toFixed(3)} rad, `
+      + `not ${want.toFixed(3)} — that is not rolling, it is a timer`);
+
+    // …and a jump (a cull, or a respawn) is discarded rather than spun through
+    const a1 = w.hoop.rotation.y;
+    m.rig.hipsBone.obj.position.z += 60;
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();
+    assert(w.hoop.rotation.y === a1, 'a sixty-metre jump was integrated as rolling');
+    m.rig.hipsBone.obj.position.z -= 62;
+    m.rig.root.updateMatrixWorld(true);
+    return `${want.toFixed(2)} rad per 2 m on a ${w.radius.toFixed(2)} m wheel; jumps discarded`;
+  });
+
   /* ── the gunship ─────────────────────────────────────────────────────── */
 
   /**
