@@ -296,6 +296,27 @@ function primary(bone, geo, mat, radius) {
   return m;
 }
 
+/**
+ * The chassis frame on the `hips` bone.
+ *
+ * `hips` carries no geometry on any body Bodies.js builds, and for a humanoid
+ * that is right — the pelvis is inside the abdomen. On a vehicle it costs two
+ * things that matter. `Enemy.capsules()` skips a bone with no parts, so the
+ * blade cannot touch the centre of the machine; and `Actor.goRagdoll` skips it
+ * too, so every joint anchored to it is dropped and a destroyed vehicle
+ * explodes into unconnected pieces instead of collapsing as a wreck.
+ *
+ * So every chassis here has a spine: a long shallow box down the centreline,
+ * mostly buried inside the hull that hangs off it, which is what a vehicle's
+ * frame actually is.
+ */
+function chassis(rig, mat, w, h, l, S) {
+  const b = rig.get('hips');
+  primary(b, plateGeo(w * S, h * S, l * S, h * S * 0.25, 1), mat, Math.max(w, h) * 0.5 * S);
+  b.primary.position.y = b.length * 0.5;
+  return b;
+}
+
 /* ── shared small geometry ───────────────────────────────────────────── */
 
 /** A vent grille: n slots recessed into a plate. */
@@ -354,9 +375,27 @@ function bladePlateGeo(len, w0, w1, thick) {
  * twelve-metre hull carried on a single `body` bone is a twelve-metre hull the
  * blade can only touch in the middle. A hull segment is a bone.
  *
- * `rest` is the direction a bone points in the rest pose, and a horizontal one
- * is legal: `Rig` aims each bone's local +Y along its rest vector, so a `prow`
- * with rest [0,0,1] is a capsule running forward out of the chassis.
+ * ── EVERY BONE HERE POINTS UP, AND THAT IS NOT LAZINESS ──────────────────
+ *
+ * The obvious way to write a fore-and-aft hull segment is `rest: [0, 0, 1]` —
+ * a bone that points forward, whose capsule then runs the length of the piece.
+ * It is wrong, and it fails SILENTLY. `Rig` builds each bone's rest frame with
+ * `aimY(restDir, BACK)`, and `aimY` treats a reference within about ten degrees
+ * of the direction as degenerate and swaps in a different one. `BACK` is
+ * (0,0,−1). So a bone pointing along ±Z takes the fallback branch, comes out
+ * rolled ninety degrees, and every piece of geometry authored "forward in z"
+ * on it is built STRAIGHT UP instead.
+ *
+ * Measured before it was found: the AT-TE's prow — cab, four barrels, sensor
+ * spheres — was standing vertically on top of the hull, and the machine read
+ * 7.1 m tall against a hull 9 m long. It threw no error and nothing but a
+ * bounding box could see it.
+ *
+ * So a hull segment is a SHORT, FAT, UPRIGHT bone placed by its offset, and its
+ * capsule is a blob rather than a tube. Three overlapping blobs down the
+ * centreline cover a twelve-metre hull perfectly well — `vehicles.mjs` measures
+ * that coverage — and every piece of geometry on every one of them is authored
+ * in the identity frame, where +Z is forward and stays forward.
  */
 function chassisSkeleton(S, P) {
   const out = [
@@ -364,10 +403,10 @@ function chassisSkeleton(S, P) {
     { name: 'body', parent: 'hips', offset: [0, P.body[0] * S, P.body[1] * S], length: P.body[2] * S, rest: [0, 1, 0] },
   ];
   if (P.prow) {
-    out.push({ name: 'prow', parent: 'hips', offset: [0, P.prow[0] * S, P.prow[1] * S], length: P.prow[2] * S, rest: [0, P.prow[3] ?? 0, 1] });
+    out.push({ name: 'prow', parent: 'hips', offset: [0, P.prow[0] * S, P.prow[1] * S], length: P.prow[2] * S, rest: [0, 1, 0] });
   }
   if (P.stern) {
-    out.push({ name: 'stern', parent: 'hips', offset: [0, P.stern[0] * S, P.stern[1] * S], length: P.stern[2] * S, rest: [0, P.stern[3] ?? 0, -1] });
+    out.push({ name: 'stern', parent: 'hips', offset: [0, P.stern[0] * S, P.stern[1] * S], length: P.stern[2] * S, rest: [0, 1, 0] });
   }
   out.push({ name: 'head', parent: 'body', offset: [0, P.head[0] * S, P.head[1] * S], length: P.head[2] * S, rest: P.head[3] || [0, 1, 0] });
   for (let i = 0; i < (P.legs || 0); i++) {
@@ -380,6 +419,11 @@ function chassisSkeleton(S, P) {
   }
   for (const w of (P.wheels || [])) {
     out.push({ name: w.name, parent: 'hips', offset: [w.x * S, w.y * S, w.z * S], length: w.len * S, rest: [w.dir, 0.06, 0] });
+    /* The lower half of the hoop, as a bone that hangs from the hub down to the
+     * ground. It exists because that is the part of a five-metre wheel a player
+     * standing next to it can actually put a blade through, and `capsules()`
+     * only offers the blade bones that carry geometry. */
+    if (w.rim) out.push({ name: w.name.replace('wheel', 'rim'), parent: w.name, offset: [0, w.len * S, 0], length: w.rim * S, rest: [0, -1, 0] });
   }
   return out;
 }
@@ -406,6 +450,83 @@ function chassisStance(S, P) {
   return {
     hipHeight: P.hipHeight * S, step: P.step * S, lift: P.lift * S,
     rear: P.rear * S, bob: P.bob * S, limbs,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The collider a machine this size actually wants                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+const _pb = new THREE.Box3(), _pc = new THREE.Vector3(), _ps = new THREE.Vector3();
+
+/**
+ * A sphere cluster covering the hull, DERIVED from the hull that was built.
+ *
+ * `Enemy` gives every body one movement proxy and sizes it from a single flag:
+ * `capsule(0.9, 1.1)` if the archetype says `big`, `capsule(0.55, 0.36)` if it
+ * does not. That is the right shape for a droideka and the wrong shape for a
+ * thirteen-metre walker — measured, a player meets an AT-TE's hull across 0% of
+ * its length, because the proxy is a 2.2 m column at its centre and the hull
+ * starts 2.3 m off the ground and runs 6.4 m fore and aft of that column.
+ *
+ * Enemy.js is not this workstream's to edit, so this cannot fix it. What it can
+ * do is make the fix a THREE-LINE change with the data already correct and
+ * already checked, instead of a modelling job somebody has to redo:
+ *
+ *     const P = built.proxy;                                    // Enemy.js ~1296
+ *     position: this.position.clone().setY(this.position.y + (P?.y ?? (A.big ? 1.4 : 0.9))),
+ *     spheres:  P ? P.spheres : capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
+ *
+ * `Physics.Body` already takes an arbitrary sphere list — `opts.spheres` — and
+ * the contact solver already walks it, so nothing else has to change.
+ *
+ * It is GENERATED off the posed rig rather than typed into the archetype table,
+ * which is HANDOFF §2.3: a hand-written collider beside a procedural hull is a
+ * table that drifts the first time somebody moves a plate, silently, in the
+ * direction of a hull you can walk through.
+ */
+function hullProxy(rig, hipHeight, names) {
+  rig.hipsBone.obj.position.set(0, hipHeight, 0);
+  rig.updateMatrices();
+  rig.root.updateMatrixWorld(true);
+  const spheres = [];
+  const box = new THREE.Box3().makeEmpty();
+  for (const name of names) {
+    const b = rig.get(name);
+    if (!b || !b.primary) continue;
+    _pb.setFromObject(b.primary);
+    box.union(_pb);
+    _pb.getCenter(_pc); _pb.getSize(_ps);
+    /* Spheres laid down the segment's LONGEST horizontal axis, sized to the
+     * other two. A sphere inscribed in the smallest dimension leaves the
+     * corners open and one circumscribing the largest blocks air; a chain sized
+     * to the cross-section is what the contact solver reads as "a hull is
+     * here", and it is why a 12.8 m walker gets six spheres and a 1.7 m dome
+     * gets one. */
+    const along = _ps.z >= _ps.x ? 'z' : 'x';
+    const span = along === 'z' ? _ps.z : _ps.x;
+    const cross = along === 'z' ? Math.min(_ps.x, _ps.y) : Math.min(_ps.z, _ps.y);
+    const r = Math.max(0.12, cross * 0.62);
+    const k = Math.max(1, Math.round(span / (r * 1.5)));
+    for (let i = 0; i < k; i++) {
+      const t = k === 1 ? 0 : (i / (k - 1) - 0.5) * (span - r);
+      const c = _pc.clone();
+      c[along] += t;
+      spheres.push({ c, r });
+    }
+  }
+  if (!spheres.length) return null;
+  box.getCenter(_pc);
+  const y = _pc.y;
+  for (const s of spheres) s.c.y -= y;
+  box.getSize(_ps);
+  /* The single capsule a caller that cannot take a sphere list would want: as
+   * wide as the hull is NARROW, so it is inside the machine rather than a
+   * cylinder circumscribing its length. */
+  return {
+    y, spheres,
+    radius: Math.min(_ps.x, _ps.z) * 0.5,
+    halfHeight: Math.max(0.2, _ps.y * 0.5 - Math.min(_ps.x, _ps.z) * 0.25),
   };
 }
 
@@ -475,6 +596,8 @@ export function buildDwarfSpider(opts = {}) {
   const glass = glassMat(0x191014, 0.14);
   const scorch = scorchMat();
 
+  chassis(rig, dark, 0.44, 0.18, 0.70, S);
+
   /* ── the dome ──
    * A hemisphere, a heavy equator lip, a shallower machined underside and an
    * underslung drum. The plates show a head that is a smooth cap over an
@@ -492,9 +615,6 @@ export function buildDwarfSpider(opts = {}) {
   // the underslung drum and its ventral barrel
   kb.add(dark, new THREE.CylinderGeometry(0.28 * S, 0.24 * S, 0.16 * S, 12), [0, -0.20 * S, 0]);
   kb.add(dark, new THREE.CylinderGeometry(0.07 * S, 0.055 * S, 0.34 * S, 8), [0, -0.30 * S, 0.10 * S], [0.5, 0, 0]);
-  // the whip antenna off the crown — thin, tall, and the one vertical line on
-  // an otherwise entirely horizontal machine
-  kb.add(dark, new THREE.CylinderGeometry(0.008 * S, 0.016 * S, 1.05 * S, 5), [0, 0.66 * S, -0.08 * S], [0.10, 0, 0]);
   // the two big photoreceptors and the three small ones between them
   kb.pair((sx) => {
     kb.add(dark, new THREE.CylinderGeometry(0.16 * S, 0.155 * S, 0.07 * S, 12), [sx * 0.21 * S, 0.20 * S, 0.42 * S], [1.42, 0, 0]);
@@ -517,6 +637,13 @@ export function buildDwarfSpider(opts = {}) {
       [Math.sin(a) * 0.50 * S, (0.06 + rng() * 0.22) * S, Math.cos(a) * 0.50 * S], [1.1, a, 0]);
   }
   kb.bake(body.obj);
+  /* The whip antenna off the crown: thin, tall, and the one vertical line on an
+   * otherwise entirely horizontal machine — so it goes in its own bucket and is
+   * kept at every range. Merged into the dome's `dark` bucket it would have been
+   * culled at thirty metres, and the machine loses a third of its height at
+   * exactly the distance the silhouette has to do all the work. */
+  new Kit().add(dark, new THREE.CylinderGeometry(0.008 * S, 0.016 * S, 1.05 * S, 5),
+    [0, 0.66 * S, -0.08 * S], [0.10, 0, 0]).bake(body.obj, { silhouette: true });
 
   /* ── the gun ──
    * One barrel on a trunnion under the eyes. It is on the HEAD bone, which
@@ -560,23 +687,28 @@ export function buildDwarfSpider(opts = {}) {
     kt.add(dark, new THREE.CylinderGeometry(0.055 * S, 0.055 * S, 0.13 * S, 8), [0, T, 0], [0, 0, 1.5708]);
     kt.bake(tibia.obj);
 
+    /* A FLAT CLAWED PAD, seated at the tarsus tip and flipped so it stands on
+     * the ground rather than under it — see the same note on the AT-TE's foot,
+     * and `ankle` in the stance below, which lifts the IK target by however far
+     * the tarsus hangs past it. */
     const kp = new Kit();
     const P = tarsus.length;
-    primary(tarsus, assemble([[plateGeo(0.30 * S, 0.07 * S, 0.36 * S, 0.03 * S, 1), [0, P * 0.92, 0.03 * S]]]), shell, 0.09 * S);
-    kp.row(4, (j, t) => kp.add(shell, plateGeo(0.055 * S, 0.045 * S, 0.22 * S, 0.015 * S, 1),
-      [(t - 0.5) * 0.24 * S, P * 0.90, 0.20 * S], [-0.16, (t - 0.5) * 0.5, 0]));
-    kp.add(dark, plateGeo(0.20 * S, 0.05 * S, 0.14 * S, 0.02 * S, 1), [0, P * 0.90, -0.16 * S], [0.2, 0, 0]);
+    primary(tarsus, assemble([[plateGeo(0.30 * S, 0.07 * S, 0.36 * S, 0.03 * S, 1), [0, P, -0.03 * S], [Math.PI, 0, 0]]]), shell, 0.10 * S);
+    kp.row(4, (j, t) => kp.add(shell, plateGeo(0.055 * S, 0.045 * S, 0.24 * S, 0.015 * S, 1),
+      [(t - 0.5) * 0.24 * S, P - 0.01 * S, -0.20 * S], [0.16, (t - 0.5) * 0.5, 0]));
+    kp.add(dark, plateGeo(0.20 * S, 0.05 * S, 0.14 * S, 0.02 * S, 1), [0, P - 0.01 * S, 0.16 * S], [-0.2, 0, 0]);
     kp.bake(tarsus.obj);
   }
 
-  return {
-    rig, muzzles: [muzzle], scale: S,
-    palette: { shell, dark, mark: rust, scorch, eye },
-    stance: chassisStance(S, {
+  const stance = chassisStance(S, {
       legs: 4, hipHeight: 0.92, step: 0.72, lift: 0.20, rear: 0.26, bob: 0.030,
-      plantX: 1.52, plantZ: [0.62, -0.62], ankle: 0, toe: 0.34,
+      plantX: 1.52, plantZ: [0.62, -0.62], ankle: 0.178, toe: 0.34,
       poleX: 1.75, poleY: 1.30, poleZ: 0,
-    }),
+  });
+  return {
+    rig, muzzles: [muzzle], scale: S, stance,
+    palette: { shell, dark, mark: rust, scorch, eye },
+    proxy: hullProxy(rig, stance.hipHeight, ['body']),
   };
 }
 
@@ -600,12 +732,12 @@ export function buildDwarfSpider(opts = {}) {
 export function buildATTE(opts = {}) {
   const S = opts.scale ?? 2.0;
   const rig = new Rig(chassisSkeleton(S, {
-    body: [0.30, -0.10, 0.62],
-    prow: [0.42, 0.55, 1.55, 0.10],
-    stern: [0.48, -0.60, 1.55, 0.06],
-    head: [0.66, 0.38, 0.46],
+    body: [0.34, 0, 0.62],
+    prow: [0.30, 2.05, 0.55],
+    stern: [0.38, -2.05, 0.60],
+    head: [0.62, 0.30, 0.46],
     legs: 6, rows: [1.42, 0.02, -1.40], hipX: 0.86, hipY: 0.14,
-    femur: 0.72, tibia: 0.84, tarsus: 0.26, splay: 0.70, rise: 0.62,
+    femur: 0.78, tibia: 0.92, tarsus: 0.26, splay: 0.70, rise: 0.62,
   }), { scale: S });
 
   const shell = armorMat(0xb6ab92, 0.08, 0.58, 1.5);
@@ -614,6 +746,8 @@ export function buildATTE(opts = {}) {
   const glass = glassMat(0x141c22, 0.15);
   const hot = emissiveMat(0xff8a30, 1.3);
   const scorch = scorchMat();
+
+  chassis(rig, dark, 0.9, 0.28, 4.4, S);
 
   /* ── mid hull ──
    * A long shallow wedge: a flat deck sloping down to the front, a slab belly
@@ -647,56 +781,56 @@ export function buildATTE(opts = {}) {
   }
   km.bake(body.obj);
 
-  /* ── the prow: the tall command cab, four barrels, sensor spheres ── */
+  /* ── the prow: the tall command cab, four barrels, sensor spheres ──
+   * Authored around the prow bone's own origin, which sits 2.05 of scale ahead
+   * of the chassis centre. +Z is forward here and everywhere else. */
   const prow = rig.get('prow');
-  const L = prow.length;
   const front = assemble([
-    // the wedge that runs forward out of the chassis, narrowing as it goes
-    [plateGeo(1.86 * S, 0.66 * S, L * 0.62, 0.12 * S, 2), [0, -0.06 * S, L * 0.30]],
+    // the wedge that runs forward out of the chassis
+    [plateGeo(1.86 * S, 0.62 * S, 1.50 * S, 0.12 * S, 2), [0, 0.10 * S, -0.10 * S]],
     // the cab: taller than anything else on the hull and square-shouldered
-    [plateGeo(1.44 * S, 1.02 * S, 0.86 * S, 0.10 * S, 1), [0, 0.40 * S, L * 0.72]],
+    [plateGeo(1.44 * S, 1.00 * S, 0.90 * S, 0.10 * S, 1), [0, 0.66 * S, 0.52 * S]],
     // the raked lower nose
-    [plateGeo(1.20 * S, 0.44 * S, 0.60 * S, 0.10 * S, 1), [0, -0.30 * S, L * 0.88], [0.42, 0, 0]],
+    [plateGeo(1.20 * S, 0.42 * S, 0.66 * S, 0.10 * S, 1), [0, -0.16 * S, 0.92 * S], [0.42, 0, 0]],
   ]);
-  primary(prow, front, shell, 0.80 * S);
+  primary(prow, front, shell, 0.86 * S);
 
   const kp = new Kit();
   // the maroon chevron and the viewport band across the cab face
-  kp.add(mark, plateGeo(1.30 * S, 0.46 * S, 0.03 * S, 0.01 * S, 1), [0, 0.52 * S, L * 0.72 + 0.44 * S]);
-  kp.add(dark, plateGeo(1.24 * S, 0.24 * S, 0.05 * S, 0.01 * S, 1), [0, 0.30 * S, L * 0.72 + 0.44 * S]);
-  kp.add(glass, plateGeo(1.10 * S, 0.16 * S, 0.03 * S, 0.008 * S, 1), [0, 0.30 * S, L * 0.72 + 0.46 * S]);
+  kp.add(mark, plateGeo(1.30 * S, 0.44 * S, 0.03 * S, 0.01 * S, 1), [0, 0.80 * S, 0.98 * S]);
+  kp.add(dark, plateGeo(1.24 * S, 0.22 * S, 0.05 * S, 0.01 * S, 1), [0, 0.56 * S, 0.98 * S]);
+  kp.add(glass, plateGeo(1.10 * S, 0.15 * S, 0.03 * S, 0.008 * S, 1), [0, 0.56 * S, 1.00 * S]);
   kp.pair((sx) => {
-    // the two spherical anti-personnel housings a side, each with a thin barrel
-    for (const [y, z, r] of [[0.24, 0.30, 0.20], [-0.20, 0.10, 0.17]]) {
-      kp.add(shell, new THREE.SphereGeometry(r * S, 10, 7), [sx * 0.80 * S, y * S, L * (0.42 + z * 0.2)]);
-      kp.add(dark, new THREE.CylinderGeometry(0.035 * S, 0.042 * S, 0.92 * S, 7),
-        [sx * 0.80 * S, y * S, L * (0.42 + z * 0.2) + 0.46 * S], [1.5708, 0, 0]);
+    // two spherical anti-personnel housings a side, each with a thin barrel
+    for (const [y, z, r] of [[0.36, 0.10, 0.20], [-0.06, -0.24, 0.17]]) {
+      kp.add(shell, new THREE.SphereGeometry(r * S, 10, 7), [sx * 0.82 * S, y * S, z * S]);
+      kp.add(dark, new THREE.CylinderGeometry(0.035 * S, 0.042 * S, 0.96 * S, 7),
+        [sx * 0.82 * S, y * S, (z + 0.50) * S], [1.5708, 0, 0]);
     }
-    kp.add(dark, ventGeo(0.26 * S, 0.18 * S, 0.04 * S, 4), [sx * 0.75 * S, -0.02 * S, L * 0.24], [0, sx * 1.5708, 0]);
+    kp.add(dark, ventGeo(0.26 * S, 0.18 * S, 0.04 * S, 4), [sx * 0.94 * S, 0.06 * S, -0.42 * S], [0, sx * 1.5708, 0]);
     // the boarding ladder up the cab flank
-    kp.row(4, (i, t) => kp.add(dark, plateGeo(0.03 * S, 0.03 * S, 0.20 * S, 0.008 * S, 1),
-      [sx * 0.74 * S, (0.02 + t * 0.66) * S, L * 0.72]));
+    kp.row(4, (i, t) => kp.add(dark, plateGeo(0.03 * S, 0.03 * S, 0.22 * S, 0.008 * S, 1),
+      [sx * 0.74 * S, (0.24 + t * 0.72) * S, 0.52 * S]));
   });
   kp.bake(prow.obj, { silhouette: true });
 
   /* ── the stern: the bulkier rear, the ramp and two rear-facing barrels ── */
   const stern = rig.get('stern');
-  const R = stern.length;
   const back = assemble([
-    [plateGeo(2.10 * S, 0.96 * S, R * 0.70, 0.14 * S, 2), [0, 0.16 * S, R * 0.34]],
-    [plateGeo(1.80 * S, 0.80 * S, 0.60 * S, 0.12 * S, 1), [0, 0.10 * S, R * 0.82], [-0.30, 0, 0]],
-    [plateGeo(1.90 * S, 0.28 * S, R * 0.50, 0.08 * S, 1), [0, 0.62 * S, R * 0.30], [0.10, 0, 0]],
+    [plateGeo(2.10 * S, 0.94 * S, 1.60 * S, 0.14 * S, 2), [0, 0.14 * S, 0.10 * S]],
+    [plateGeo(1.80 * S, 0.80 * S, 0.60 * S, 0.12 * S, 1), [0, 0.06 * S, -0.72 * S], [0.30, 0, 0]],
+    [plateGeo(1.90 * S, 0.26 * S, 1.20 * S, 0.08 * S, 1), [0, 0.62 * S, 0.20 * S], [-0.10, 0, 0]],
   ]);
-  primary(stern, back, shell, 0.90 * S);
+  primary(stern, back, shell, 0.94 * S);
 
   const ks = new Kit();
   ks.pair((sx) => {
-    ks.add(dark, new THREE.CylinderGeometry(0.032 * S, 0.040 * S, 0.80 * S, 7),
-      [sx * 0.86 * S, 0.30 * S, R * 0.92], [1.5708, 0, 0]);
-    ks.add(dark, ventGeo(0.70 * S, 0.40 * S, 0.05 * S, 6), [sx * 1.06 * S, 0.18 * S, R * 0.34], [0, sx * 1.5708, 0]);
-    ks.add(mark, plateGeo(0.02 * S, 0.30 * S, 0.34 * S, 0.006 * S, 1), [sx * 1.06 * S, 0.44 * S, R * 0.62]);
+    ks.add(dark, new THREE.CylinderGeometry(0.032 * S, 0.040 * S, 0.84 * S, 7),
+      [sx * 0.86 * S, 0.30 * S, -1.00 * S], [1.5708, 0, 0]);
+    ks.add(dark, ventGeo(0.70 * S, 0.40 * S, 0.05 * S, 6), [sx * 1.06 * S, 0.16 * S, 0.10 * S], [0, sx * 1.5708, 0]);
+    ks.add(mark, plateGeo(0.02 * S, 0.28 * S, 0.34 * S, 0.006 * S, 1), [sx * 1.06 * S, 0.42 * S, 0.44 * S]);
   });
-  ks.add(dark, plateGeo(1.30 * S, 0.60 * S, 0.06 * S, 0.02 * S, 1), [0, 0.06 * S, R * 0.96], [-0.30, 0, 0]);
+  ks.add(dark, plateGeo(1.30 * S, 0.58 * S, 0.06 * S, 0.02 * S, 1), [0, 0.06 * S, -0.86 * S], [0.30, 0, 0]);
   ks.bake(stern.obj);
 
   /* ── the turret: a triangular shield plate and the mass driver ──
@@ -752,18 +886,26 @@ export function buildATTE(opts = {}) {
     kt2.add(dark, new THREE.CylinderGeometry(0.22 * S, 0.22 * S, 0.14 * S, 12), [0, T, 0], [0, 0, 1.5708]);
     kt2.bake(tibia.obj);
 
+    /* THE PAD STANDS ON THE GROUND, and getting that right is arithmetic
+     * rather than taste. `_poseWalker` plants the TIBIA's tip at the foot
+     * target; the tarsus hangs on below it, so the pad has to be built at the
+     * tarsus TIP and flipped, and the stance's `ankle` has to lift the target
+     * by however far the tarsus drops. The shipped spider walker sets `ankle:
+     * 0` with a 0.3-of-scale tarsus, which buries its claws two thirds of a
+     * metre; this is what that field is for. */
     const P = tarsus.length;
-    primary(tarsus, padGeo(0.36 * S, 0.28 * S, 4), shell, 0.20 * S);
+    primary(tarsus, assemble([[padGeo(0.36 * S, 0.28 * S, 4), [0, P, 0], [Math.PI, 0, 0]]]), shell, 0.22 * S);
   }
 
-  return {
-    rig, muzzles: [muzzle], scale: S,
-    palette: { shell, dark, mark, scorch, eye: hot },
-    stance: chassisStance(S, {
+  const stance = chassisStance(S, {
       legs: 6, hipHeight: 1.30, step: 0.86, lift: 0.26, rear: 0.22, bob: 0.018,
-      plantX: 1.34, plantZ: [1.70, 0.02, -1.62], ankle: 0, toe: 0.32,
+      plantX: 1.34, plantZ: [1.70, 0.02, -1.62], ankle: 0.235, toe: 0.32,
       poleX: 1.05, poleY: 1.45, poleZ: 0,
-    }),
+  });
+  return {
+    rig, muzzles: [muzzle], scale: S, stance,
+    palette: { shell, dark, mark, scorch, eye: hot },
+    proxy: hullProxy(rig, stance.hipHeight, ['body', 'prow', 'stern']),
   };
 }
 
@@ -788,10 +930,10 @@ export function buildATTE(opts = {}) {
 export function buildAAT(opts = {}) {
   const S = opts.scale ?? 1.7;
   const rig = new Rig(chassisSkeleton(S, {
-    body: [0.30, -0.20, 0.60],
-    prow: [0.34, 0.60, 1.85, -0.14],
-    stern: [0.40, -0.70, 1.20, 0.05],
-    head: [0.52, -0.72, 0.50],
+    body: [0.16, 0, 0.50],
+    prow: [0.10, 1.75, 0.44],
+    stern: [0.20, -1.60, 0.46],
+    head: [0.34, -0.70, 0.42],
     legs: 0,
   }), { scale: S });
 
@@ -804,63 +946,64 @@ export function buildAAT(opts = {}) {
   const glass = glassMat(0x1a1c14, 0.15);
   const eye = emissiveMat(0xffb830, 2.2);
 
+  chassis(rig, dark, 0.8, 0.24, 3.4, S);
+
   /* ── the skirt and the mid hull ── */
   const body = rig.get('body');
   const hull = assemble([
     // the flat-bottomed repulsorlift skirt, wider than the hull it carries
-    [plateGeo(2.30 * S, 0.34 * S, 3.00 * S, 0.16 * S, 2), [0, -0.42 * S, 0.10 * S]],
+    [plateGeo(3.60 * S, 0.32 * S, 2.90 * S, 0.16 * S, 2), [0, -0.34 * S, 0.10 * S]],
     // the hull box, rising toward the rear
-    [plateGeo(1.72 * S, 0.62 * S, 2.30 * S, 0.14 * S, 2), [0, 0.02 * S, 0]],
-    [plateGeo(1.50 * S, 0.40 * S, 1.60 * S, 0.12 * S, 1), [0, 0.36 * S, -0.32 * S], [0.10, 0, 0]],
+    [plateGeo(2.40 * S, 0.56 * S, 2.30 * S, 0.16 * S, 2), [0, 0.06 * S, 0]],
+    [plateGeo(2.00 * S, 0.38 * S, 1.50 * S, 0.14 * S, 1), [0, 0.40 * S, -0.32 * S], [0.10, 0, 0]],
   ]);
-  primary(body, hull, shell, 0.95 * S);
+  primary(body, hull, shell, 1.00 * S);
 
   const kb = new Kit();
   kb.pair((sx) => {
-    // three oval intakes a side, sunk into the skirt
-    kb.row(3, (i, t) => kb.add(dark, new THREE.CylinderGeometry(0.15 * S, 0.15 * S, 0.09 * S, 12),
-      [sx * 1.14 * S, -0.42 * S, (t - 0.5) * 1.85 * S], [0, 0, 1.5708], [1, 1, 1.9]));
+    // THREE OVAL INTAKES A SIDE, sunk into the skirt. Every plate has them and
+    // they are what says "this floats" rather than "the tracks are missing".
+    kb.row(3, (i, t) => kb.add(dark, new THREE.CylinderGeometry(0.14 * S, 0.14 * S, 0.09 * S, 12),
+      [sx * 1.79 * S, -0.34 * S, (t - 0.5) * 1.70 * S], [0, 0, 1.5708], [1, 1, 2.0]));
     // the rounded sponson bulge along the flank
-    kb.add(shell, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 2.10 * S, 8), [sx * 0.88 * S, 0.04 * S, 0.05 * S], [1.5708, 0, 0]);
-    kb.add(trim, plateGeo(0.02 * S, 0.14 * S, 1.20 * S, 0.005 * S, 1), [sx * 0.885 * S, 0.22 * S, 0.05 * S]);
+    kb.add(shell, new THREE.CylinderGeometry(0.22 * S, 0.22 * S, 2.10 * S, 8), [sx * 1.20 * S, 0.06 * S, 0.05 * S], [1.5708, 0, 0]);
+    kb.add(trim, plateGeo(0.02 * S, 0.13 * S, 1.20 * S, 0.005 * S, 1), [sx * 1.225 * S, 0.24 * S, 0.05 * S]);
   });
-  kb.add(dark, ventGeo(1.00 * S, 0.30 * S, 0.05 * S, 5), [0, 0.24 * S, -1.14 * S], [0, Math.PI, 0]);
+  kb.add(dark, ventGeo(1.20 * S, 0.28 * S, 0.05 * S, 5), [0, 0.24 * S, -1.14 * S], [0, Math.PI, 0]);
   kb.bake(body.obj);
 
   /* ── the prow: raked nose, shell tubes, forward barrels ── */
   const prow = rig.get('prow');
-  const L = prow.length;
   const nose = assemble([
-    // a boat prow: it rakes down and narrows to a blunt point
-    [plateGeo(1.90 * S, 0.30 * S, L * 0.86, 0.16 * S, 2), [0, -0.30 * S, L * 0.40]],
-    [plateGeo(1.40 * S, 0.46 * S, L * 0.62, 0.14 * S, 2), [0, 0.02 * S, L * 0.28], [-0.20, 0, 0]],
-    [plateGeo(0.90 * S, 0.26 * S, 0.60 * S, 0.12 * S, 1), [0, -0.20 * S, L * 0.86], [-0.34, 0, 0]],
+    // a boat prow: the skirt runs forward flat, the hull above it rakes down
+    [plateGeo(3.10 * S, 0.28 * S, 1.70 * S, 0.20 * S, 2), [0, -0.28 * S, -0.10 * S]],
+    [plateGeo(2.10 * S, 0.44 * S, 1.60 * S, 0.16 * S, 2), [0, 0.10 * S, -0.20 * S], [-0.22, 0, 0]],
+    [plateGeo(1.30 * S, 0.26 * S, 0.70 * S, 0.14 * S, 1), [0, -0.22 * S, 0.72 * S], [-0.36, 0, 0]],
   ]);
-  primary(prow, nose, shell, 0.72 * S);
+  primary(prow, nose, shell, 0.86 * S);
 
   const kp = new Kit();
   kp.pair((sx) => {
     // THREE SHELL TUBES A SIDE on the prow shoulder, in a housing
-    kp.add(trim, plateGeo(0.28 * S, 0.24 * S, 0.62 * S, 0.05 * S, 1), [sx * 0.56 * S, 0.16 * S, L * 0.30]);
+    kp.add(trim, plateGeo(0.30 * S, 0.22 * S, 0.66 * S, 0.05 * S, 1), [sx * 0.80 * S, 0.26 * S, -0.28 * S]);
     kp.row(3, (i, t) => kp.add(dark, new THREE.CylinderGeometry(0.055 * S, 0.055 * S, 0.34 * S, 8),
-      [sx * 0.56 * S, 0.26 * S, L * 0.30 + (t - 0.5) * 0.42 * S], [0.24, 0, 0]));
+      [sx * 0.80 * S, 0.36 * S, -0.28 * S + (t - 0.5) * 0.44 * S], [0.24, 0, 0]));
     // the thin forward barrels under the shoulder
-    kp.add(dark, new THREE.CylinderGeometry(0.036 * S, 0.044 * S, 1.00 * S, 7),
-      [sx * 0.40 * S, -0.10 * S, L * 0.78], [1.5708, 0, 0]);
-    kp.add(trim, plateGeo(0.30 * S, 0.02 * S, 0.50 * S, 0.006 * S, 1), [sx * 0.50 * S, -0.42 * S, L * 0.50]);
+    kp.add(dark, new THREE.CylinderGeometry(0.036 * S, 0.044 * S, 1.10 * S, 7),
+      [sx * 0.56 * S, 0.02 * S, 0.60 * S], [1.5708, 0, 0]);
+    kp.add(trim, plateGeo(0.34 * S, 0.02 * S, 0.60 * S, 0.006 * S, 1), [sx * 1.30 * S, -0.13 * S, -0.10 * S]);
   });
-  kp.add(glass, plateGeo(0.60 * S, 0.10 * S, 0.03 * S, 0.008 * S, 1), [0, 0.05 * S, L * 0.90], [-0.34, 0, 0]);
+  kp.add(glass, plateGeo(0.70 * S, 0.10 * S, 0.03 * S, 0.008 * S, 1), [0, 0.02 * S, 0.94 * S], [-0.36, 0, 0]);
   kp.bake(prow.obj);
 
   /* ── the stern skirt ── */
   const stern = rig.get('stern');
-  const R = stern.length;
   primary(stern, assemble([
-    [plateGeo(2.20 * S, 0.32 * S, R * 0.80, 0.16 * S, 1), [0, -0.16 * S, R * 0.38]],
-    [plateGeo(1.60 * S, 0.50 * S, R * 0.55, 0.12 * S, 1), [0, 0.24 * S, R * 0.30]],
-  ]), shell, 0.80 * S);
+    [plateGeo(3.40 * S, 0.30 * S, 1.40 * S, 0.18 * S, 1), [0, -0.34 * S, 0.10 * S]],
+    [plateGeo(2.20 * S, 0.52 * S, 1.10 * S, 0.14 * S, 1), [0, 0.14 * S, 0.10 * S]],
+  ]), shell, 0.92 * S);
   const ks = new Kit();
-  ks.add(dark, ventGeo(1.20 * S, 0.36 * S, 0.06 * S, 6), [0, 0.10 * S, R * 0.78], [0, Math.PI, 0]);
+  ks.add(dark, ventGeo(1.40 * S, 0.34 * S, 0.06 * S, 6), [0, 0.06 * S, -0.44 * S], [0, Math.PI, 0]);
   ks.bake(stern.obj);
 
   /* ── the turret: box, cupola, one long stepped barrel and two flankers ── */
@@ -873,38 +1016,39 @@ export function buildAAT(opts = {}) {
 
   const kt = new Kit();
   // the domed commander's cupola and its whip antenna
-  kt.add(shell, new THREE.SphereGeometry(0.36 * S, 12, 7, 0, TAU, 0, Math.PI * 0.5), [0, 0.66 * S, -0.10 * S], null, [1, 0.72, 1]);
-  kt.add(trim, bandGeo(0.32 * S, 0.38 * S, 0.32 * S, 0.375 * S, 0.07 * S, 12), [0, 0.64 * S, -0.10 * S]);
+  kt.add(shell, new THREE.SphereGeometry(0.36 * S, 12, 7, 0, TAU, 0, Math.PI * 0.5), [0, 0.48 * S, -0.14 * S], null, [1, 0.70, 1]);
+  kt.add(trim, bandGeo(0.32 * S, 0.38 * S, 0.32 * S, 0.375 * S, 0.07 * S, 12), [0, 0.46 * S, -0.14 * S]);
   kt.row(4, (i, t) => kt.add(dark, new THREE.CylinderGeometry(0.045 * S, 0.045 * S, 0.05 * S, 8),
-    [Math.sin(t * TAU) * 0.30 * S, 0.74 * S, -0.10 * S + Math.cos(t * TAU) * 0.30 * S], [1.5708, 0, 0]));
-  kt.add(dark, new THREE.CylinderGeometry(0.008 * S, 0.014 * S, 0.90 * S, 5), [0.22 * S, 1.10 * S, -0.26 * S], [0.06, 0, -0.08]);
+    [Math.sin(t * TAU) * 0.30 * S, 0.56 * S, -0.14 * S + Math.cos(t * TAU) * 0.30 * S], [1.5708, 0, 0]));
+  kt.add(dark, new THREE.CylinderGeometry(0.007 * S, 0.012 * S, 0.62 * S, 5), [0.24 * S, 0.86 * S, -0.30 * S], [0.06, 0, -0.10]);
   // the mantlet and the long stepped main gun
-  kt.add(dark, new THREE.CylinderGeometry(0.19 * S, 0.19 * S, 0.36 * S, 10), [0, 0.30 * S, 0.44 * S], [1.5708, 0, 0]);
-  kt.add(trim, new THREE.CylinderGeometry(0.115 * S, 0.135 * S, 0.90 * S, 10), [0, 0.30 * S, 1.02 * S], [1.5708, 0, 0]);
-  kt.add(dark, new THREE.CylinderGeometry(0.080 * S, 0.100 * S, 1.10 * S, 9), [0, 0.30 * S, 2.02 * S], [1.5708, 0, 0]);
-  kt.add(dark, new THREE.CylinderGeometry(0.052 * S, 0.070 * S, 1.20 * S, 9), [0, 0.30 * S, 3.16 * S], [1.5708, 0, 0]);
-  kt.add(dark, new THREE.CylinderGeometry(0.072 * S, 0.072 * S, 0.20 * S, 9), [0, 0.30 * S, 3.82 * S], [1.5708, 0, 0]);
+  kt.add(dark, new THREE.CylinderGeometry(0.19 * S, 0.19 * S, 0.36 * S, 10), [0, 0.26 * S, 0.44 * S], [1.5708, 0, 0]);
+  kt.add(trim, new THREE.CylinderGeometry(0.115 * S, 0.135 * S, 0.85 * S, 10), [0, 0.26 * S, 1.00 * S], [1.5708, 0, 0]);
+  kt.add(dark, new THREE.CylinderGeometry(0.080 * S, 0.100 * S, 1.00 * S, 9), [0, 0.26 * S, 1.92 * S], [1.5708, 0, 0]);
+  kt.add(dark, new THREE.CylinderGeometry(0.052 * S, 0.070 * S, 1.00 * S, 9), [0, 0.26 * S, 2.90 * S], [1.5708, 0, 0]);
+  kt.add(dark, new THREE.CylinderGeometry(0.072 * S, 0.072 * S, 0.20 * S, 9), [0, 0.26 * S, 3.46 * S], [1.5708, 0, 0]);
   // the two thin flanking barrels
   kt.pair((sx) => {
-    kt.add(dark, new THREE.CylinderGeometry(0.038 * S, 0.048 * S, 1.40 * S, 7), [sx * 0.34 * S, 0.10 * S, 1.10 * S], [1.5708, 0, 0]);
-    kt.add(trim, plateGeo(0.16 * S, 0.14 * S, 0.30 * S, 0.03 * S, 1), [sx * 0.34 * S, 0.10 * S, 0.46 * S]);
-    kt.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 5), [sx * 0.44 * S, 0.36 * S, 0.52 * S]);
+    kt.add(dark, new THREE.CylinderGeometry(0.038 * S, 0.048 * S, 1.40 * S, 7), [sx * 0.34 * S, 0.06 * S, 1.10 * S], [1.5708, 0, 0]);
+    kt.add(trim, plateGeo(0.16 * S, 0.14 * S, 0.30 * S, 0.03 * S, 1), [sx * 0.34 * S, 0.06 * S, 0.46 * S]);
+    kt.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 5), [sx * 0.44 * S, 0.30 * S, 0.52 * S]);
   });
   kt.bake(head.obj, { silhouette: true });
   const muzzle = mesh(new THREE.CylinderGeometry(0.055 * S, 0.05 * S, 0.10 * S, 8), dark, head.obj,
-    [0, 0.30 * S, 3.96 * S], [1.5708, 0, 0]);
+    [0, 0.26 * S, 3.60 * S], [1.5708, 0, 0]);
   const flankL = mesh(new THREE.CylinderGeometry(0.04 * S, 0.036 * S, 0.08 * S, 7), dark, head.obj,
-    [0.34 * S, 0.10 * S, 1.84 * S], [1.5708, 0, 0]);
+    [0.34 * S, 0.06 * S, 1.84 * S], [1.5708, 0, 0]);
   const flankR = mesh(new THREE.CylinderGeometry(0.04 * S, 0.036 * S, 0.08 * S, 7), dark, head.obj,
-    [-0.34 * S, 0.10 * S, 1.84 * S], [1.5708, 0, 0]);
+    [-0.34 * S, 0.06 * S, 1.84 * S], [1.5708, 0, 0]);
 
-  return {
-    rig, muzzles: [muzzle, flankL, flankR], scale: S,
-    palette: { shell, dark, mark: trim, eye },
-    stance: chassisStance(S, {
-      legs: 0, hipHeight: 0.82, step: 0, lift: 0, rear: 0.16, bob: 0.055,
+  const stance = chassisStance(S, {
+      legs: 0, hipHeight: 0.72, step: 0, lift: 0, rear: 0.16, bob: 0.055,
       plantX: 0, plantZ: [], ankle: 0, toe: 0, poleX: 0, poleY: 0, poleZ: 0,
-    }),
+  });
+  return {
+    rig, muzzles: [muzzle, flankL, flankR], scale: S, stance,
+    palette: { shell, dark, mark: trim, eye },
+    proxy: hullProxy(rig, stance.hipHeight, ['body', 'prow', 'stern']),
   };
 }
 
@@ -932,12 +1076,10 @@ export function buildHailfire(opts = {}) {
     body: [-0.26, 0, 0.55], head: [0.55, -0.28, 0.62, [0, 0.80, -0.60]],
     legs: 0,
     wheels: [
-      { name: 'wheelL', x: 0.30, y: 0.06, z: 0, len: 1.05, dir: 1 },
-      { name: 'wheelR', x: -0.30, y: 0.06, z: 0, len: 1.05, dir: -1 },
+      { name: 'wheelL', x: 0.30, y: 0.06, z: 0, len: 1.05, dir: 1, rim: 1.44 },
+      { name: 'wheelR', x: -0.30, y: 0.06, z: 0, len: 1.05, dir: -1, rim: 1.44 },
     ],
   }), { scale: S });
-  // the pod hangs; `body`'s rest is +Y by default, so flip it by hand
-  rig.get('body').obj.rotation.set(Math.PI, 0, 0);
 
   const shell = armorMat(0xa88b4e, 0.22, 0.6, 2.4);
   const dark = metalMat(0x4a3a26, 0.55, 0.92, 2.6);
@@ -945,33 +1087,36 @@ export function buildHailfire(opts = {}) {
   const eye = emissiveMat(0xff3010, 3.2);
   const scorch = scorchMat();
 
+  chassis(rig, dark, 0.42, 0.20, 0.90, S);
+
   /* ── the pod ──
-   * A faceted drum with a ribbed radiator band and a conical underside. Built
-   * upside down because the bone hangs. */
+   * A faceted drum with a ribbed radiator band and a conical underside, slung
+   * BELOW the axle line — which is what all three plates agree on and what the
+   * studio render on its own does not tell you. */
   const body = rig.get('body');
   const pod = assemble([
-    [plateGeo(0.62 * S, 0.40 * S, 0.86 * S, 0.09 * S, 1), [0, 0.18 * S, 0]],
-    [new THREE.CylinderGeometry(0.30 * S, 0.34 * S, 0.24 * S, 10), [0, 0.06 * S, 0]],
-    [new THREE.CylinderGeometry(0.16 * S, 0.30 * S, 0.26 * S, 10), [0, -0.14 * S, 0]],
+    [plateGeo(0.62 * S, 0.40 * S, 0.86 * S, 0.09 * S, 1), [0, 0.30 * S, 0]],
+    [new THREE.CylinderGeometry(0.30 * S, 0.34 * S, 0.24 * S, 10), [0, 0.14 * S, 0]],
+    [new THREE.CylinderGeometry(0.16 * S, 0.30 * S, 0.26 * S, 10), [0, -0.06 * S, 0]],
   ]);
-  primary(body, pod, shell, 0.38 * S);
+  primary(body, pod, shell, 0.40 * S);
 
   const kb = new Kit();
   // the radiator ribs around the drum
   kb.row(9, (i, t) => {
     const a = t * TAU;
     kb.add(dark, plateGeo(0.05 * S, 0.20 * S, 0.05 * S, 0.01 * S, 1),
-      [Math.sin(a) * 0.32 * S, 0.06 * S, Math.cos(a) * 0.32 * S], [0, a, 0]);
+      [Math.sin(a) * 0.32 * S, 0.14 * S, Math.cos(a) * 0.32 * S], [0, a, 0]);
   });
   // the head plate and its single photoreceptor, on the pod's leading face
-  kb.add(dark, plateGeo(0.44 * S, 0.22 * S, 0.06 * S, 0.02 * S, 1), [0, 0.24 * S, -0.44 * S]);
-  kb.add(eye, new THREE.SphereGeometry(0.06 * S, 8, 6), [0.10 * S, 0.24 * S, -0.47 * S]);
+  kb.add(dark, plateGeo(0.44 * S, 0.22 * S, 0.06 * S, 0.02 * S, 1), [0, 0.36 * S, 0.44 * S]);
+  kb.add(eye, new THREE.SphereGeometry(0.06 * S, 8, 6), [0.10 * S, 0.36 * S, 0.47 * S]);
   kb.pair((sx) => {
-    kb.add(shell, plateGeo(0.10 * S, 0.28 * S, 0.30 * S, 0.03 * S, 1), [sx * 0.28 * S, 0.28 * S, -0.30 * S], [0, sx * 0.4, 0]);
+    kb.add(shell, plateGeo(0.10 * S, 0.28 * S, 0.30 * S, 0.03 * S, 1), [sx * 0.28 * S, 0.40 * S, 0.30 * S], [0, sx * -0.4, 0]);
     // the thin forward laser barrels under the axle arms
-    kb.add(dark, new THREE.CylinderGeometry(0.026 * S, 0.032 * S, 0.70 * S, 6), [sx * 0.22 * S, 0.02 * S, -0.50 * S], [1.5708, 0, 0]);
+    kb.add(dark, new THREE.CylinderGeometry(0.026 * S, 0.032 * S, 0.70 * S, 6), [sx * 0.22 * S, 0.14 * S, 0.50 * S], [1.5708, 0, 0]);
   });
-  kb.add(scorch, plateGeo(0.24 * S, 0.006 * S, 0.20 * S, 0.002 * S, 1), [0.12 * S, 0.385 * S, 0.10 * S]);
+  kb.add(scorch, plateGeo(0.24 * S, 0.006 * S, 0.20 * S, 0.002 * S, 1), [0.12 * S, 0.505 * S, 0.10 * S]);
   kb.bake(body.obj);
 
   /* ── the missile banks ──
@@ -991,19 +1136,19 @@ export function buildHailfire(opts = {}) {
     for (let c = 0; c < 5; c++) {
       for (let r = 0; r < 3; r++) {
         const x = sx * (0.16 + c * 0.115) * S;
-        const y = (0.34 + r * 0.115) * S;
+        const y = (0.30 + r * 0.115) * S;
         const z = -c * 0.035 * S;
         kh.add(dark, new THREE.CylinderGeometry(TR, TR, TUBE, 7), [x, y, z], [1.5708, 0, 0]);
-        kh.add(shell, new THREE.ConeGeometry(TR * 0.98, 0.14 * S, 7), [x, y, z - TUBE * 0.5 - 0.06 * S], [-1.5708, 0, 0]);
+        kh.add(shell, new THREE.ConeGeometry(TR * 0.98, 0.14 * S, 7), [x, y, z + TUBE * 0.5 + 0.06 * S], [1.5708, 0, 0]);
       }
     }
-    kh.add(shell, plateGeo(0.62 * S, 0.10 * S, 0.34 * S, 0.03 * S, 1), [sx * 0.40 * S, 0.26 * S, -0.08 * S], [0, 0, sx * 0.10]);
+    kh.add(shell, plateGeo(0.62 * S, 0.10 * S, 0.34 * S, 0.03 * S, 1), [sx * 0.40 * S, 0.22 * S, -0.08 * S], [0, 0, sx * 0.10]);
   });
   kh.bake(head.obj, { silhouette: true });
   const muzzles = [];
   for (const sx of [1, -1]) {
     muzzles.push(mesh(new THREE.CylinderGeometry(TR, TR * 0.8, 0.08 * S, 6), dark, head.obj,
-      [sx * 0.38 * S, 0.46 * S, -0.40 * S], [1.5708, 0, 0]));
+      [sx * 0.38 * S, 0.42 * S, 0.40 * S], [1.5708, 0, 0]));
   }
 
   /* ── the hoops ──
@@ -1023,13 +1168,17 @@ export function buildHailfire(opts = {}) {
     hub.position.y = A;
     bone.obj.add(hub);
 
+    /* THE HUB'S LOCAL +Y IS THE AXLE, which is the one thing to keep straight
+     * in here. Everything flat on a wheel has to be thin along local Y and
+     * broad in local X and Z. The teardrop plate was first authored the other
+     * way round and the machine measured 7.8 m across instead of 4.9 — a plate
+     * three metres wide standing out sideways from each wheel, which is not
+     * something a static read of the file would have caught. */
     const kw = new Kit();
     kw.add(dark, new THREE.CylinderGeometry(0.26 * S, 0.22 * S, 0.22 * S, 12), [0, 0, 0]);
-    // THE TEARDROP SUSPENSION PLATE, in the hoop's lower half — a broad flat
-    // wedge riding the inner rim, which is the shape the plates all show and
-    // which stops the wheel reading as a bare ring.
-    kw.add(shell, plateGeo(0.09 * S, WR * 1.15, WR * 0.60, 0.05 * S, 1), [0, 0, -WR * 0.42], [0.62, 0, 0]);
-    kw.add(shell, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 0.10 * S, 12), [0, 0, -WR * 0.72]);
+    // the teardrop suspension plate, riding the hoop's lower inner rim
+    kw.add(shell, plateGeo(WR * 0.62, 0.09 * S, WR * 1.10, 0.05 * S, 1), [0, 0, -WR * 0.36], [0.42, 0, 0]);
+    kw.add(shell, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 0.10 * S, 12), [0, 0, -WR * 0.66]);
     kw.bake(hub, { silhouette: true });
 
     const hoop = new THREE.Group();
@@ -1040,10 +1189,11 @@ export function buildHailfire(opts = {}) {
     const ring = new THREE.TorusGeometry(WR, 0.075 * S, 5, 34);
     ring.rotateX(Math.PI / 2);
     kr.add(shell, ring);
-    // tread blocks around the outer face
+    // tread blocks around the outer face — broad ACROSS the tyre (local Y),
+    // shallow radially (local X), long tangentially (local Z after the yaw)
     kr.row(26, (i, t) => {
       const a = t * TAU;
-      kr.add(tread, plateGeo(0.13 * S, 0.05 * S, 0.20 * S, 0.012 * S, 1),
+      kr.add(tread, plateGeo(0.10 * S, 0.17 * S, 0.26 * S, 0.012 * S, 1),
         [Math.sin(a) * (WR + 0.055 * S), 0, Math.cos(a) * (WR + 0.055 * S)], [0, a, 0]);
     });
     // three structural spokes out of the hub
@@ -1054,16 +1204,29 @@ export function buildHailfire(opts = {}) {
     });
     const rims = kr.bake(hoop, { silhouette: true });
     for (const m of rims) rollByOdometry(m, WR);
+
+    /* The lower rim bone: the run of hoop between the hub and the ground, which
+     * is the only part of a five-metre wheel a player can reach. It carries a
+     * slim guide-rail so it has geometry — a bone without any is a bone the
+     * blade solver never offers. */
+    const rimBone = rig.get(name.replace('wheel', 'rim'));
+    if (rimBone) {
+      const RL = rimBone.length;
+      const rm = primary(rimBone, limbGeo(RL, 0.11 * S, 0.13 * S, 7, false, { rings: 3 }), dark, 0.30 * S);
+      rm.userData.limb = { r0: 0.11 * S, r1: 0.13 * S, seg: 7 };
+      rm.userData.silhouette = true;
+    }
     wheels.push({ bone, hub, hoop, radius: WR });
   }
 
-  return {
-    rig, muzzles, wheels, scale: S, wheelRadius: WR,
-    palette: { shell, dark, mark: tread, scorch, eye },
-    stance: chassisStance(S, {
-      legs: 0, hipHeight: 1.52, step: 0, lift: 0, rear: 0.20, bob: 0.022,
+  const stance = chassisStance(S, {
+      legs: 0, hipHeight: 1.56, step: 0, lift: 0, rear: 0.20, bob: 0.022,
       plantX: 0, plantZ: [], ankle: 0, toe: 0, poleX: 0, poleY: 0, poleZ: 0,
-    }),
+  });
+  return {
+    rig, muzzles, wheels, scale: S, wheelRadius: WR, stance,
+    palette: { shell, dark, mark: tread, scorch, eye },
+    proxy: hullProxy(rig, stance.hipHeight, ['body', 'wheelL', 'wheelR', 'rimL', 'rimR']),
   };
 }
 

@@ -79,14 +79,23 @@ function measure(type) {
   lod.getSize(size);
   const L = { w: size.x, h: size.y, l: size.z };
 
-  // where the lowest hull piece sits, which is what "can I walk under it" means
-  let hullFloor = Infinity;
-  for (const name of ['body', 'prow', 'stern', 'head']) {
+  /* THE HULL, separately from the whole machine.
+   *
+   * "Long and low" is a claim about the BODY, and a bounding box that includes
+   * a five-metre gun barrel and a whip antenna cannot answer it. This is the
+   * box of the load-bearing hull segments alone — which is also what "can I
+   * walk under it" and "can the blade reach the middle of it" are about. */
+  const hullBox = new THREE.Box3().makeEmpty();
+  for (const name of ['body', 'prow', 'stern']) {
     const b = rig.get(name);
     if (!b || !b.primary) continue;
     box.setFromObject(b.primary);
-    hullFloor = Math.min(hullFloor, box.min.y);
+    hullBox.union(box);
   }
+  if (hullBox.isEmpty()) hullBox.copy(all);
+  const hullFloor = hullBox.min.y;
+  hullBox.getSize(size);
+  const H = { w: size.x, h: size.y, l: size.z };
 
   // what the blade can touch: one capsule per bone that carries geometry
   const caps = [];
@@ -103,11 +112,13 @@ function measure(type) {
   // how much of the hull's own length lies inside SOME capsule, sampled along
   // the centreline at hull height — the honest form of "can I cut it anywhere"
   const zs = 64;
-  let covered = 0;
-  const yMid = (all.min.y + all.max.y) * 0.55;
+  let covered = 0, inProxy = 0;
+  const yMid = (hullBox.min.y + hullBox.max.y) * 0.5;
   const s = new THREE.Vector3(), ab = new THREE.Vector3(), ap = new THREE.Vector3();
+  // the movement proxy Enemy gives every `big` body, copied from Enemy.js:1296
+  const proxyR = 1.1, proxyHalf = 0.9, proxyY = 1.4;
   for (let i = 0; i < zs; i++) {
-    const z = all.min.z + (i + 0.5) / zs * S.l;
+    const z = hullBox.min.z + (i + 0.5) / zs * H.l;
     s.set(0, yMid, z);
     for (const c of caps) {
       ab.subVectors(c.p1, c.p0);
@@ -115,13 +126,6 @@ function measure(type) {
       const t = Math.max(0, Math.min(1, ap.subVectors(s, c.p0).dot(ab) / len2));
       if (ap.copy(c.p0).addScaledVector(ab, t).distanceTo(s) <= c.r) { covered++; break; }
     }
-  }
-
-  // the movement proxy Enemy gives every `big` body, unchanged from Enemy.js
-  const proxyR = 1.1, proxyHalf = 0.9, proxyY = 1.4;
-  let inProxy = 0;
-  for (let i = 0; i < zs; i++) {
-    const z = all.min.z + (i + 0.5) / zs * S.l;
     const dy = Math.max(0, Math.abs(yMid - proxyY) - proxyHalf);
     if (Math.hypot(z, dy) <= proxyR) inProxy++;
   }
@@ -129,7 +133,7 @@ function measure(type) {
   const cycle = A.fireRate + A.burst * (A.burstGap ?? 0.12) + (A.telegraph ?? 0);
   return {
     type, side: VEHICLE_SIDE[type], legs, meshes, kept, tris: Math.round(tris),
-    S, L, hullFloor, caps: caps.length,
+    S, L, H, hullFloor, caps: caps.length,
     cut: covered / zs, proxy: inProxy / zs,
     burst: A.burst, cycle, dps: (A.burst * A.damage) / cycle,
     volley: A.burst * A.damage, band: A.preferred,
@@ -139,12 +143,13 @@ function measure(type) {
 const rows = types.map(measure);
 const f = (n, d = 2) => n.toFixed(d).padStart(d === 0 ? 4 : 5 + d);
 
-console.log('\n  type          side        legs   w × h × l (m)      L/H   clear  meshes  LOD1  caps  cut%  proxy%');
-console.log('  ' + '─'.repeat(100));
+console.log('\n  type          side        legs   whole w × h × l      hull w × h × l    hull L/H  clear  meshes LOD1 caps cut% proxy%');
+console.log('  ' + '─'.repeat(122));
 for (const r of rows) {
   console.log(`  ${r.type.padEnd(13)} ${String(r.side).padEnd(11)} ${String(r.legs).padStart(3)}  `
-    + `${f(r.S.w, 1)}×${f(r.S.h, 1)}×${f(r.S.l, 1)}  ${f(r.S.l / r.S.h, 2)}  ${f(r.hullFloor, 2)}`
-    + `  ${String(r.meshes).padStart(5)} ${String(r.kept).padStart(5)} ${String(r.caps).padStart(5)}`
+    + `${f(r.S.w, 1)}×${f(r.S.h, 1)}×${f(r.S.l, 1)}  `
+    + `${f(r.H.w, 1)}×${f(r.H.h, 1)}×${f(r.H.l, 1)}   ${f(r.H.l / r.H.h, 2)}  ${f(r.hullFloor, 2)}`
+    + `  ${String(r.meshes).padStart(5)} ${String(r.kept).padStart(4)} ${String(r.caps).padStart(4)}`
     + `  ${f(r.cut * 100, 0)}  ${f(r.proxy * 100, 0)}`);
 }
 
