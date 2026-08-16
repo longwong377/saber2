@@ -946,10 +946,49 @@ export class HUD {
     for (const [key, action] of POWERS) {
       const d = document.createElement('div');
       d.className = 'pw';
-      const label = bindings ? keyLabel((bindings[action] || [])[0]) : '';
-      d.innerHTML = `${POWER_ICONS[key] || ''}<span>${escKey(label)}</span><div class="cd"></div>`;
+      /**
+       * FIVE CHILDREN, EACH CREATED AND HELD — not one innerHTML blob picked
+       * apart with `querySelector` afterwards.
+       *
+       * Two reasons. The slot now has four writable parts rather than one, and
+       * `querySelector` on the check harness's DOM double returns the SAME node
+       * for every selector — so a blob-and-query build would hand `cd`, `label`
+       * and `tick` the same object under test and quietly make three assertions
+       * agree with each other. And the glyph is the only part that has to be
+       * parsed as markup, so it is the only part that goes in as markup.
+       *
+       * THE SLOT IS AN ICON WITH TAGS ON IT, which is the whole visual change.
+       * It used to be a 50 px grey square with a letter under a dim glyph, ten
+       * of them in a row — an auditor called the row the most "web demo" object
+       * in the frame, and they were right: what read at a glance was ten
+       * keycaps printed F R G H C Z B 3 4 N U. Now the GLYPH is the object; the
+       * key is a small tab in the corner where a key belongs; the price is in
+       * the Force's own colour where an ability bar puts a cost; and the
+       * seconds left are printed over the shutter, which is the one thing an
+       * ability bar exists to tell you and this one never did.
+       */
+      const gl = document.createElement('span');
+      gl.className = 'gl';
+      gl.innerHTML = POWER_ICONS[key] || '';
+      const cd = document.createElement('div');
+      cd.className = 'cd';
+      const cost = document.createElement('em');
+      cost.className = 'cost';
+      // Priced from the same imported table Player spends against — this file
+      // used to carry its own nine numbers and two of them were wrong.
+      const price = POWER_COST[key];
+      cost.textContent = price > 0 ? String(Math.round(price)) : '';
+      const label = document.createElement('span');
+      label.className = 'key';
+      label.textContent = bindings ? keyLabel((bindings[action] || [])[0]) : '';
+      const tick = document.createElement('b');
+      tick.className = 'tick';
+      // Order matters: the shutter goes over the glyph and under everything
+      // that has to stay readable while it is closed.
+      d.appendChild(gl); d.appendChild(cd);
+      d.appendChild(cost); d.appendChild(label); d.appendChild(tick);
       this.el.powers.appendChild(d);
-      this.powerEls[key] = { root: d, cd: d.querySelector('.cd'), label: d.querySelector('span') };
+      this.powerEls[key] = { root: d, cd, label, tick, cost, glyph: gl };
     }
     this._bindings = bindings;
   }
@@ -1548,6 +1587,18 @@ export class HUD {
     p.cd.style.transform = `scaleY(${clamp(shutter, 0, 1)})`;
     p.root.classList.toggle('ready', !!affordable && left <= 0.01);
     p.root.classList.toggle('active', !!active);
+    /* SECONDS, NOT A PROPORTION. The shutter is `left / peak`, which answers
+     * "how far through" and not "how long" — and how long is the only version
+     * of the question a player asks. Written through `_num`'s rule: only when
+     * the printed value moves, because this runs for eleven slots every frame.
+     * Under a second it counts in tenths, because the last second of a 2.4 s
+     * cooldown is the one you are actually waiting on. */
+    const cooling = left > 0.05;
+    p.root.classList.toggle('cool', cooling);
+    if (p.tick) {
+      const txt = cooling ? (left < 1 ? left.toFixed(1) : String(Math.ceil(left))) : '';
+      if (p.tick._last !== txt) { p.tick._last = txt; p.tick.textContent = txt; }
+    }
   }
 
   /**

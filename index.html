@@ -267,7 +267,10 @@
         <p class="hint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
           On, they simply appear — cheaper, and the honest choice on a machine that cannot afford the
           craft.</p>
-        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
+        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter &amp; adapter</label>
+        <p class="hint">Frame time, 1% low and draw calls in the corner of the HUD — and the graphics
+          adapter and build id in the footer of this screen. Off by default because they are
+          instruments: a title screen that opens with a driver string is a bug report.</p>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
@@ -367,8 +370,17 @@
          `screens.state === 'menu'`. -->
     <footer class="menu-foot">
       <button id="btn-commune" class="ghost commune-entry hidden">Open the Holocron</button>
-      <span id="gpu-line"></span>
-      <span class="build">build <b id="build-id">—</b></span>
+      <!-- THE ADAPTER STRING AND THE BUILD ID ARE DIAGNOSTICS, and they were
+           the last two things on the title screen. A player's first sight of
+           this game was a wordmark and then
+           "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device …)) · build r1.0",
+           which is a bug report, not a title screen. Both are hidden unless
+           Frame counter is ticked under Options -> Fidelity — the checkbox
+           that already means "show me the instruments" — and Menu._syncDiag
+           is what follows it. Nothing is deleted: the one machine that needs
+           the adapter name is the one whose owner has gone looking for it. -->
+      <span id="gpu-line" class="hidden"></span>
+      <span id="build-line" class="build hidden">build <b id="build-id">—</b></span>
     </footer>
   </div>
 </div>

@@ -1818,6 +1818,7 @@ export class Menu {
       restart: document.getElementById('btn-restart'),
       gpu: document.getElementById('gpu-line'),
       build: document.getElementById('build-id'),
+      buildLine: document.getElementById('build-line'),
     };
     // Blade length is reachable from the forge AND from the training panel, so
     // every control bound to a setting is registered and they all refresh
@@ -1843,6 +1844,9 @@ export class Menu {
     // that lives as long as the page.
     globalThis.addEventListener?.('resize', () => this._onPanelShown());
     this.el.build.textContent = 'r1.0';
+    // …and neither the build id nor the adapter string is on screen until the
+    // player asks for the instruments. See _syncDiag.
+    this._syncDiag();
   }
 
   /* ── boot ────────────────────────────────────────────────────────── */
@@ -1860,7 +1864,30 @@ export class Menu {
   }
   hideMenu() { this.el.menu.classList.add('hidden'); }
 
-  setGpuLine(text) { this.el.gpu.textContent = text; }
+  setGpuLine(text) { this.el.gpu.textContent = text; this._syncDiag(); }
+
+  /**
+   * THE TITLE SCREEN STOPS OPENING WITH A BUG REPORT.
+   *
+   * The last two things on the front screen were the WebGL adapter string —
+   * "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) …))" on the
+   * build every player of this game actually loads — and "build r1.0". A
+   * wordmark, five tabs and a driver string. Nothing is deleted, because the
+   * one machine that ever needs the adapter name is the one whose owner has
+   * gone looking for it: both ride `showPerf`, the Frame counter box, which
+   * already means "show me the instruments" and already governs the frame-time
+   * readout in the corner of the HUD.
+   *
+   * The elements stay where they are in the footer's flex row rather than
+   * being moved into a box of their own — two in-flow items of one row cannot
+   * overlap at any viewport, which is what that row was built to guarantee
+   * after `#btn-commune` was found floating over `#gpu-line` at six sizes.
+   */
+  _syncDiag() {
+    const on = !!this.s.showPerf;
+    this.el.gpu?.classList.toggle('hidden', !on);
+    this.el.buildLine?.classList.toggle('hidden', !on);
+  }
 
   /* ── tabs ────────────────────────────────────────────────────────── */
 
@@ -3905,7 +3932,7 @@ export class Menu {
     this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
-    this._check('opt-showperf', 'showPerf');
+    this._check('opt-showperf', 'showPerf', () => this._syncDiag());
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every
     // shake and every hitstop, so the hook exists only to kill what is already

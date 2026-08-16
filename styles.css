@@ -496,6 +496,11 @@ button{font-family:inherit}
   font:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase}
 #gpu-line{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .menu-foot .build{flex:none}
+/* With the two diagnostics behind the Frame counter box and the Holocron
+   button not yet earned, this row can be empty — and an empty bordered strip
+   under the panel is a rule with nothing on it. It takes its own height back
+   rather than being drawn. */
+.menu-foot:not(:has(> :not(.hidden))){display:none}
 
 /* ══════════════════ HUD ══════════════════ */
 /* THE HUD IS INKED TOO, and it has to be: it is drawn over a cel-shaded world
@@ -746,20 +751,51 @@ button{font-family:inherit}
    states have to be told apart at a glance while being shot at: cannot afford
    it (dim, no ink weight), can (inked and lit), casting (solid field of blade
    with the glyph knocked out). Colour alone did that before, on 1 px borders
-   0.16 alpha apart. */
-.powers{display:flex;gap:8px}
-.pw{position:relative;width:50px;height:50px;border:2px solid var(--stroke);background:var(--panel);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  overflow:hidden;transition:.13s;clip-path:var(--cut-sm);opacity:.6}
-.pw svg{width:21px;height:21px;stroke:var(--dim);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.pw span{font:var(--mono);font-size:8px;font-weight:800;letter-spacing:.08em;color:var(--dimmer);text-shadow:none}
+   0.16 alpha apart.
+
+   AND THE ROW HAD ONE MORE PROBLEM, WHICH WAS ITS READ. Ten 50 px squares of
+   the same grey, each with a letter set under a dim glyph, ran the width of
+   the bottom of the screen — and what a player saw was not ten powers, it was
+   ten keycaps printed F R G H C Z B 3 4 N U. An auditor called it the most
+   "web demo" object in the frame. The glyphs were there the whole time and the
+   letters were beating them.
+
+   So the hierarchy is inverted. The GLYPH is the slot, at 24 px in the middle
+   of it. The key is a small tab in the bottom-left corner where a key label
+   belongs, knocked into the ink rather than set on the field. The PRICE sits
+   top-right in the Force's own violet, because what an ability costs is what
+   decides whether you press it, and this row has never said. And the seconds
+   left are printed over the shutter — the one thing an ability bar exists to
+   tell you, which a proportional shutter cannot: `left / peak` answers "how
+   far through", never "how long". */
+.powers{display:flex;gap:6px}
+.pw{position:relative;width:46px;height:46px;border:2px solid var(--stroke);background:var(--panel);
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;transition:.13s;clip-path:var(--cut-sm);opacity:.55}
+.pw .gl{display:flex;align-items:center;justify-content:center;transition:opacity .12s}
+.pw svg{width:24px;height:24px;stroke:var(--dim);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pw .key{position:absolute;left:0;bottom:0;padding:1px 4px 2px;background:var(--stroke);
+  font:var(--mono);font-size:8px;font-weight:800;letter-spacing:.02em;line-height:1;
+  color:var(--dim);text-shadow:none}
+.pw .cost{position:absolute;right:3px;top:2px;font:var(--mono);font-size:8px;font-weight:800;
+  font-style:normal;line-height:1;letter-spacing:0;color:var(--force);text-shadow:none}
+.pw .cost:empty{display:none}
+/* Over the shutter and under nothing. Tabular so 10 and 1.4 sit in the same
+   place instead of shuffling the slot every tenth of a second. */
+.pw .tick{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  font-weight:800;font-size:15px;letter-spacing:.02em;color:var(--ink);text-shadow:none;
+  font-variant-numeric:tabular-nums}
+.pw.cool .tick{display:flex}
+.pw.cool .gl{opacity:.12}
+.pw.cool .cost{opacity:.3}
 .pw.ready{opacity:1;background:var(--panel-2);box-shadow:var(--stamp)}
 .pw.ready svg{stroke:var(--ink)}
-.pw.ready span{color:var(--ink)}
+.pw.ready .key{color:var(--ink)}
 .pw.active{opacity:1;background:var(--accent);transform:translate(-2px,-2px);
   box-shadow:var(--stamp),0 0 20px -3px var(--accent)}
 .pw.active svg{stroke:var(--stroke)}
-.pw.active span{color:var(--stroke)}
+.pw.active .key{color:var(--accent);background:var(--stroke)}
+.pw.active .cost{color:var(--stroke)}
 .pw .cd{position:absolute;inset:0;background:rgba(5,6,12,.78);transform-origin:bottom;transition:transform .1s linear}
 
 .centermsg{position:absolute;left:50%;top:31%;transform:translateX(-50%);text-align:center;opacity:0;
