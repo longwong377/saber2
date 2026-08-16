@@ -954,7 +954,74 @@ export function commandConfig(settings) {
   return {
     teamDamage: clamp(Number.isFinite(td) ? td : TEAM_DAMAGE_DEFAULT, 0, 1),
     formation: FORMATIONS[f] ? f : DEFAULT_FORMATION,
+    /**
+     * TWO COMMANDERS, TWO ARMIES, ONE FIELD — and it is a setting on Command
+     * rather than a mode of its own.
+     *
+     * `MODES` lives in Waves.js and a second Command entry there would be a
+     * second copy of `level: 'geonosis'`, `fixedTheatre` and the mode card, all
+     * to describe the same campaign with a different opponent in it. What
+     * actually differs is one question — is the other army a person's or the
+     * composer's — so it is one flag, read here, where `teamDamage` and the
+     * opening formation are already read. The same shape `sandboxConfig` and
+     * `pvpRules` have: a menu writes a free-form value and exactly one function
+     * decides what it means.
+     */
+    versus: !!s.commandVersus,
   };
+}
+
+/**
+ * HOW FAR APART TWO ARMIES START, in metres.
+ *
+ * Derived from the roster rather than picked: the longest reach any unit in
+ * this mode has is the marksman's 42 m, and two lines that begin inside each
+ * other's range are not a meeting engagement, they are an ambush that both
+ * sides walked into. 120 m is a little under three of those, which is about
+ * fifteen seconds of advance at a trooper's 4.1 m/s — long enough for an order
+ * to mean something before contact and short enough that the battle is the
+ * event rather than the walk. Geonosis is a 620 m plain, so both anchors and
+ * the whole approach sit well inside it.
+ */
+export const VERSUS_SEPARATION = 120;
+
+/**
+ * WHICH ARMY EACH COMMANDER LEADS, and this is the fix for two Jedi both
+ * leading the Republic.
+ *
+ * `sideForOrder` derives the army from the player's Jedi/Sith choice, and its
+ * own note explains why that is right: a Jedi at the head of a droid army "is
+ * not a build, it is a bug wearing a menu". That reasoning is entirely sound
+ * for ONE commander and it has no answer at all for two — two Jedi hosting each
+ * other both got the Republic, so the meeting was the Republic against itself,
+ * with identical bodies in identical armour and no way to tell whose line was
+ * whose.
+ *
+ * So the order still picks FIRST, and the conflict is what is resolved: a
+ * commander whose army is already taken gets the free one. Two Jedi are the
+ * Republic and the Confederacy in roster order; a Jedi and a Sith get exactly
+ * what they chose, whichever order they joined in.
+ *
+ * Pure and deterministic over the roster, for the same reason `assignSides` is:
+ * it runs on the host and the answer goes out on the wire, and a client that
+ * recomputes it must reach the same one or the two machines disagree about who
+ * is wearing which colour.
+ *
+ * With more commanders than armies — a 2v2 — the extras share, which is
+ * correct: the ARMY decides the units and the paint, the SIDE decides who may
+ * hurt whom, and they are deliberately different questions.
+ */
+export function assignArmies(orders = []) {
+  const out = [];
+  const taken = new Set();
+  for (let i = 0; i < orders.length; i++) {
+    const want = sideForOrder(orders[i]).id;
+    const free = ARMY_IDS.find((k) => !taken.has(k));
+    const id = !taken.has(want) ? want : (free ?? ARMY_IDS[i % ARMY_IDS.length]);
+    taken.add(id);
+    out.push(ARMIES[id]);
+  }
+  return out;
 }
 
 /**
@@ -1276,6 +1343,8 @@ export class CommandDirector extends WaveDirector {
       formation: cfg.formation,
     })];
     this.teamDamage = cfg.teamDamage;
+    /** Two commanders on one field, rather than one against the composer. */
+    this.versus = !!cfg.versus;
     this.areaIndex = 0;
     this.areaWaves = 0;
     /** Raised once, when the last area is behind you. See `_endCampaign`. */
@@ -2069,8 +2138,68 @@ export class CommandDirector extends WaveDirector {
    * player is crossing.
    */
   start(wave = 1) {
+    /**
+     * A MEETING HAS NO WAVE TO COMPOSE, and that is the whole of what versus
+     * changes about this class.
+     *
+     * `CommandDirector` subclasses `WaveDirector` because a campaign wants all
+     * of the escalation — the budget curve, the body cap, the heavy limit, the
+     * arrivals. In a meeting the other army is a PERSON'S, deployed rather than
+     * composed, so `super.start` has nothing to buy: it would fill the field
+     * with a third force nobody asked for and price it against one commander's
+     * strength. So the wave is never started at all and everything else about
+     * the mode — the roster, the ranks, permadeath, the formations, the leash,
+     * the muster — is untouched.
+     */
+    if (this.versus) { this.active = true; this.deployAll(); return; }
     super.start(wave);
     if (this.roster.living.some((t) => !t.body || t.body.dead)) this.deploy();
+  }
+
+  /**
+   * TWO ARMIES, PLACED FACING EACH OTHER.
+   *
+   * The anchors are the only geometry a meeting adds. `pickSpawn` and the
+   * arrival ring both assume one player at the centre of the world, which is
+   * correct for a horde arriving around you and meaningless for two lines that
+   * have to start apart and walk toward one another.
+   *
+   * Laid out along +Z through the middle of the plain, half the separation
+   * each way, each commander facing the other. Symmetric on purpose — a
+   * meeting engagement is the one fight in this game where neither side is
+   * entitled to the better ground, and any asymmetry here would be a balance
+   * decision smuggled in as a spawn point.
+   *
+   * @param sides the side number for each commander, in order, from `sideTeam`
+   *              — passed in for the same reason `enlistBody`'s team is (a
+   *              static edge from this file to Player.js closes a cycle).
+   * @param armies from `assignArmies`, so two Jedi are not both the Republic.
+   */
+  formUp(sides = [], armies = null, players = []) {
+    const t = this.world?.terrain;
+    const half = VERSUS_SEPARATION / 2;
+    const n = Math.max(this.commanders.length, sides.length, players.length);
+    for (let i = 0; i < n; i++) {
+      const c = this.commanders[i] || this.enlistCommander({ player: players[i] ?? null });
+      if (players[i]) c.player = players[i];
+      if (sides[i] !== undefined) c.side = sides[i];
+      if (armies && armies[i]) {
+        c.army = armies[i];
+        c.foe = enemyOf(c.army);
+        c.roster.army = c.army;
+      }
+      /* Alternating ends of one line through the origin. With two commanders
+       * that is exactly ±half; with four it is 2v2 sharing two anchors, which
+       * is what a side rather than an army means. */
+      const z = (i % 2 === 0 ? -half : half);
+      const x = (i < 2 ? 0 : (i % 2 === 0 ? -14 : 14));
+      c.anchor = new THREE.Vector3(x, t ? t.height(x, z) : 0, z);
+      // Facing the other end of the line. `_frame` uses this when there is no
+      // body to read a heading off — which is every frame before the peer's
+      // avatar has arrived, and every frame after their commander has fallen.
+      c.facing = i % 2 === 0 ? 0 : Math.PI;
+    }
+    return this.commanders;
   }
 
   /**
@@ -2090,9 +2219,50 @@ export class CommandDirector extends WaveDirector {
      * start wave 22 five and a half seconds after the campaign ended. */
     if (this.done) return;
     this._updateClosing(ctx);
+    /* A meeting has no queue, no arrivals and no wave to clear — see `start`.
+     * The army half of the frame is identical, which is the point: two players'
+     * lines are steered by the same code one player's is. */
+    if (this.versus) { this._troops(dt, ctx); return; }
     if (this.mustering) { this.arrivals.update(dt, ctx); this._troops(dt, ctx); return; }
     super.update(dt, ctx);
     this._troops(dt, ctx);
+  }
+
+  /**
+   * WHAT EACH SIDE HAS LEFT, as the two maps `DuelMatch.update` takes.
+   *
+   * The match model is `DuelMatch`, UNCHANGED and not subclassed, and that is
+   * worth stating because it is the reason a meeting has a win condition at
+   * all. Its `update(dt, standing, health)` already takes side → count and
+   * side → health rather than reading the arena — its own note says passing a
+   * count "is what keeps the match free of the world" — so an army-vs-army
+   * round is the same state machine as a duel with a different census. Rounds,
+   * the countdown, the health tiebreak on the clock, the draw when both sides
+   * fall together, and `packMatch`/`readMatch` on the wire all come free.
+   *
+   * THE COMMANDER COUNTS AS ONE OF THE STANDING. A side is out when it has
+   * nothing left at all — the general down AND the last of the army with them.
+   * The alternative, ending it the moment a Jedi falls, makes the armies
+   * decoration in the one mode that is about them; this way losing your
+   * general costs you your orders (`_frame` falls back to the anchor, so a
+   * leaderless line holds the ground it was on) and not the battle.
+   */
+  census() {
+    const standing = {}, health = {};
+    for (const c of this.commanders) {
+      const s = c.side;
+      standing[s] = standing[s] || 0;
+      health[s] = health[s] || 0;
+      for (const t of c.roster.living) {
+        const b = t.body;
+        if (!b || b.dead) continue;
+        standing[s]++;
+        health[s] += Math.max(0, b.hp || 0);
+      }
+      const p = c.player;
+      if (p && p.alive !== false && !p.dead) { standing[s]++; health[s] += Math.max(0, p.hp || 0); }
+    }
+    return { standing, health };
   }
 
   /**

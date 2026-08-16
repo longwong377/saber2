@@ -508,7 +508,17 @@ async function deploy() {
   input.enabled = true;
   input.requestLock();
 
-  if (world.netMode !== 'client' && !world.training) world.director.start(1);
+  /* A MEETING STARTS ITSELF DIFFERENTLY, and it is the same one line either
+   * way. `beginVersus` hands out the sides, the armies and the two anchors and
+   * then starts the director itself — a meeting has no wave to compose, so
+   * `start(1)` alone would deploy one army into the middle of an empty plain
+   * with nothing on the other side of it. It runs again when a peer's body
+   * arrives (see the avatar handler), which is when their commander gets
+   * somebody to lead. */
+  if (world.netMode !== 'client' && !world.training) {
+    if (world.command?.versus) world.beginVersus();
+    else world.director.start(1);
+  }
   world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
 }
 
@@ -1207,6 +1217,9 @@ function wireNet() {
    */
   net.on('army', (msg) => world?.applyArmy(msg));
   net.on('order', (peerId, msg) => world?.applyOrder(peerId, msg));
+  /* The meeting's own state — rounds, clock, who took the field. Host → peers
+   * only; `Net` refuses it on the host for the reason its own note gives. */
+  net.on('match', (rec) => world?.applyMatch(rec));
   /**
    * The host says we were hit.
    *
@@ -1271,9 +1284,19 @@ function wireNet() {
     let r = world.remotes.get(peerId);
     if (!r) {
       const entry = net.roster.find(x => x.id === peerId);
-      r = new RemoteAvatar(world, { id: peerId, name: entry?.name || 'Jedi', look: entry?.look || null });
+      /* THE SIDE, WHICH THE ROSTER HAS CARRIED ALL ALONG AND NOTHING READ.
+       * `Net._refreshRoster` writes `team` on every entry through `_sideOf`,
+       * `RemoteAvatar`'s constructor takes `opts.team` and its own note calls
+       * that field "the one a duel is made of" — and this, the only place in
+       * the tree that builds one, did not pass it. Every remote body in every
+       * session was on side 0 whatever the host had assigned. */
+      r = new RemoteAvatar(world, { id: peerId, name: entry?.name || 'Jedi',
+        look: entry?.look || null, team: entry?.team });
       world.remotes.set(peerId, r);
       world.players.push(r);
+      /* A new body on the field is a new commander to be given an army, if this
+       * is a meeting. Idempotent — see World.beginVersus. */
+      if (world.command?.versus && world.netMode === 'host') world.beginVersus();
     }
     r.push(msg, performance.now() / 1000);
   });

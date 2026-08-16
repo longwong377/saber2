@@ -14,7 +14,7 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Player.js';
+import { DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
@@ -110,13 +110,13 @@ export function roomOf(level, surface = 'sand') {
 }
 import { applyOrder } from './Order.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
-import { CommandDirector, COMMAND_POWER_RULES } from './Command.js';
+import { CommandDirector, COMMAND_POWER_RULES, assignArmies } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
-import { packAvatar, packSnapshot } from '../net/Net.js';
+import { packAvatar, packMatch, packSnapshot } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
@@ -570,6 +570,29 @@ export class World {
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = mode === 'command' ? this.director : null;
+    /**
+     * A MEETING IS A FIGHT BETWEEN PLAYERS, SO IT IS FOUGHT UNDER A FIGHT'S
+     * RULES — and this is where the mode-wide freeze retires.
+     *
+     * `COMMAND_POWER_RULES` is `{pvp: false, friendlyFire: true}`, frozen and
+     * applied to every Command world, and it is exactly right for a campaign:
+     * your powers must reach your own troops (note #29 asks for it in as many
+     * words) and there is nobody else on the field to hurt. It is the wrong
+     * object for two commanders, because `pvp: false` is a statement about the
+     * session and versus is the session it is false about.
+     *
+     * `pvpRules({pvp: true})` derives `friendlyFire` from `pvp` — one boolean,
+     * two consequences, no way to set them inconsistently — so a meeting gets
+     * the same friendly fire the campaign has plus the thing the campaign does
+     * not have, which is another player who may be hit. `duelRounds: 1` is a
+     * design decision and it is stated here rather than left to a default: a
+     * meeting engagement between two armies with PERMADEATH on the roster is
+     * one battle. A best-of-three would need both rosters restored between
+     * rounds, and a roster you get back is not a roster you can lose.
+     */
+    if (this.command?.versus) {
+      this.rules = pvpRules({ ...this.settings, pvp: true, duelRounds: 1 });
+    }
     this.director.onWaveStart = (w, n) => {
       this.notify(`WAVE ${w}`, `${n} contacts inbound`);
       audio.ui('wave');
@@ -1424,8 +1447,16 @@ export class World {
        *
        * `undefined` in every other mode, so `_foes` falls through to
        * `world.rules` exactly as it always did.
+       *
+       * …AND `undefined` IN A MEETING TOO, which is the mode-wide freeze
+       * retiring. The frozen object exists to say "friendly fire is on for
+       * powers even though the world's rules say it is off"; in versus the
+       * world's rules are `pvpRules({pvp: true})` and already say so, so
+       * overriding them here would be a second, quieter answer to a question
+       * that now has one — and it would say `pvp: false` about a session whose
+       * whole content is another player.
        */
-      rules: this.command ? COMMAND_POWER_RULES : undefined,
+      rules: this.command && !this.command.versus ? COMMAND_POWER_RULES : undefined,
       pickTarget: (e) => this.pickTarget(e),
       pickSpawn: (t) => this.pickSpawn(t),
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
@@ -1513,6 +1544,11 @@ export class World {
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
     if (this.netMode !== 'client' && !this.over) this.director.update(dt, ctx);
+    /* The meeting's clock, and it is outside the director because it is not the
+     * director's: `DuelMatch` is driven by facts about the WHOLE field — who
+     * has anybody left standing — and the host owns it whether or not there is
+     * a wave. See _matchTick. */
+    if (this.match) this._matchTick(dt);
     if (this.netMode) {
       // A remote player's death arrives as a field in a packet and raises
       // nothing, so the wipe condition has to be re-read rather than waited on.
@@ -2684,6 +2720,146 @@ export class World {
     if (s === this._armyLast) return;
     this._armyLast = s;
     net.broadcast({ t: 'army', r });
+  }
+
+  /* ── two commanders ─────────────────────────────────────────────────── */
+
+  /**
+   * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
+   *
+   * The owner's headline question, and this is the call that answers it. Five
+   * things, and each of them was the reason it could not happen:
+   *
+   *   A SIDE PER COMMANDER, from `sideTeam` — the only function allowed to
+   *     invent one. Everything downstream is already generic: `canHarm` is the
+   *     one gate every damage path consults, `hostileTo` is what both armies
+   *     pick targets through, and `_boltHitTest` asks the same question of a
+   *     bolt as `bladeTargets` does of a blade. None of them needed a line.
+   *   AN ARMY PER COMMANDER, from `assignArmies`, so two Jedi hosting each
+   *     other are the Republic and the Confederacy rather than the Republic
+   *     twice. See its note: the order still picks first, the CONFLICT is what
+   *     is resolved.
+   *   TWO ANCHORS, from `formUp`. `pickSpawn` and the arrival ring both assume
+   *     one player at the centre of the world.
+   *   THE PLAYERS THEMSELVES moved onto those anchors, because a commander
+   *     standing in the other army's line is not a meeting.
+   *   A WIN CONDITION, which is `DuelMatch` unchanged — see `census`.
+   *
+   * IDEMPOTENT, and that is not defensive coding. In a real session the peer's
+   * body does not exist until their first avatar packet arrives, which is after
+   * the world is standing; calling this again once it does is how the second
+   * commander gets a body to lead. Until then their army holds its anchor,
+   * which `_frame` supports on purpose.
+   *
+   * Returns the commanders, so a caller can say who is leading what.
+   */
+  beginVersus(players = null) {
+    const d = this.command;
+    if (!d || !d.versus) return null;
+    const list = (players || this.players).filter((p) => p && p.alive !== false);
+    if (!list.length) return null;
+
+    const sides = list.map((_, i) => sideTeam(i));
+    /* The peer's order is not on the wire — `LOOK_KEYS` leaves it off
+     * deliberately, because it grants boons rather than describing a face — so
+     * a commander this machine cannot ask defaults to the game's own default
+     * order. With two armies and two commanders who both want the same one,
+     * somebody has to take the other; knowing the peer's choice would only
+     * change WHICH of the two is disappointed. */
+    const armies = assignArmies(list.map((p) => p.order || this.settings?.order || 'jedi'));
+    d.formUp(sides, armies, list);
+
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i], c = d.commanders[i];
+      p.team = sides[i];
+      if (p === this.player) this.partyTeam = sides[i];
+      /* Onto their own end of the field. A remote body is driven by its own
+       * machine and will be corrected by the next packet — its commander's
+       * anchor is what its army forms up on, and that is the part that has to
+       * be right here. */
+      if (p.position && c?.anchor && typeof p.control === 'object') {
+        p.position.copy(c.anchor);
+        if (p.actor?.setPosition) p.actor.setPosition(c.anchor);
+      }
+    }
+
+    if (!this.match) {
+      this.match = new DuelMatch(this.rules, sides);
+      this._matchSent = '';
+    }
+    if (!d.active) d.start(1);
+    else d.deployAll();
+    return d.commanders;
+  }
+
+  /**
+   * THE MEETING'S OWN CLOCK.
+   *
+   * The host drives the match and everybody else receives it, for the reason
+   * `Net`'s `match` case gives: a round ends when a side has nothing standing,
+   * and the only node that can see every body is the host — a client knows its
+   * own health for certain and everybody else's as of 90 ms ago, so a client
+   * that scored its own rounds would award itself one every time a packet was
+   * late.
+   *
+   * Sent on a phase change rather than at the snapshot rate. The record is
+   * under 150 bytes and changes about four times a match; folding it into the
+   * 18 Hz snapshot would spend 2.7 KB/s saying the same thing eighteen times.
+   */
+  _matchTick(dt) {
+    const m = this.match, d = this.command;
+    if (!m || !d || this.netMode === 'client' || this.over) return;
+    const { standing, health } = d.census();
+    const events = m.update(dt, standing, health);
+    for (const ev of events) {
+      if (ev.type === 'fight') this.notify('ENGAGE', `${d.commander.army.name} against ${d.commander.foe.name}`);
+      if (ev.type !== 'match-end') continue;
+      this._endMeeting(m.winner);
+    }
+    if (this.net?.connected && this.netMode === 'host') {
+      const rec = packMatch(m);
+      const s = JSON.stringify(rec);
+      if (s !== this._matchSent) { this._matchSent = s; this.net.broadcast(rec); }
+    }
+  }
+
+  /**
+   * THE MEETING IS DECIDED.
+   *
+   * Through `onGameOver` with `won` on it, which is the door `_endCampaign`
+   * already uses and the one event in the tree that stops the director,
+   * releases the pointer, shows a card and writes the record. `won` is answered
+   * for THIS machine — the same match is a victory on one screen and a defeat
+   * on the other, which is the first time that has been true of anything in
+   * this game.
+   */
+  _endMeeting(winner) {
+    if (this.over) return;
+    this.over = true;
+    const d = this.command;
+    if (d) d.done = true;
+    const mine = this.partyTeam;
+    const name = d?.commanders.find((c) => c.side === winner)?.army.name ?? null;
+    this.notify(winner === mine ? 'THE FIELD IS YOURS' : 'THE FIELD IS LOST',
+      name ? `${name} holds Geonosis` : 'neither army holds the field');
+    const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
+    this.onGameOver?.({
+      won: winner === mine,
+      wave: this.director.wave,
+      score: this.score,
+      kills: sum('kills'),
+      deflects: sum('deflects'),
+      perfects: sum('perfects'),
+      limbs: sum('limbsRemoved'),
+    });
+  }
+
+  /** Host → this client: the state of the meeting. A client owns none of it. */
+  applyMatch(rec) {
+    if (!this.match || this.netMode !== 'client') return false;
+    this.match.apply(rec);
+    if (this.match.phase === 'match-over') this._endMeeting(this.match.winner);
+    return true;
   }
 
   /** Host → this client: the campaign as the host has it. */

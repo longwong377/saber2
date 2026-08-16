@@ -92,7 +92,8 @@ async function commandPair(opts = {}) {
    * of.
    */
   const toClient = (w, m) => (m.t === 'snapshot' ? w.applySnapshot(m)
-    : m.t === 'army' ? w.applyArmy(m) : null);
+    : m.t === 'army' ? w.applyArmy(m)
+      : m.t === 'match' ? w.applyMatch(m) : null);
   const toHost = (w, m) => (m.t === 'claim' ? w.applyClaim('PEER', m)
     : m.t === 'order' ? w.applyOrder('PEER', m) : null);
 
@@ -109,11 +110,33 @@ async function commandPair(opts = {}) {
   };
 
   if (opts.start !== false) {
-    a.world.director.start(1);
-    if (opts.trim) a.world.director.spawnQueue.length =
+    /* Exactly what main.js does on Ignite: a meeting hands out the sides, the
+     * armies and the two anchors and starts itself; a campaign starts a wave.
+     * The branch is the game's — this only reaches for the same door. */
+    if (a.world.command?.versus) a.world.beginVersus();
+    else a.world.director.start(1);
+    if (opts.trim && a.world.director.spawnQueue) a.world.director.spawnQueue.length =
       Math.min(a.world.director.spawnQueue.length, opts.trim);
   }
   return { host: a.world, client: b.world, pump, seen, input, wire };
+}
+
+/**
+ * A SECOND COMMANDER ON THE HOST'S FIELD.
+ *
+ * In a real session that body is a `RemoteAvatar` built by main.js's avatar
+ * handler from the roster, and `beginVersus` is re-run the moment it appears.
+ * Here it is built the same way, off the same class, with the same one field
+ * that decides everything — the side off the roster — so the host is holding
+ * the pair of players a real host holds.
+ */
+async function joinAsCommander(host, opts = {}) {
+  const { RemoteAvatar } = await import('../../src/net/Net.js');
+  const r = new RemoteAvatar(host, { id: opts.id || 'PEER', name: opts.name || 'RIVAL',
+    look: null, team: opts.team });
+  (host.remotes || (host.remotes = new Map())).set(r.id, r);
+  host.players.push(r);
+  return r;
 }
 
 /** Every body on the host that has a name on the roster. */
@@ -366,5 +389,178 @@ export function run({ check, assert }) {
     assert(logged.length === 1,
       `the host logged the order ${logged.length} times — a relayed order must be given once`);
     return `${was} → ${want}, given from the joining player's machine, logged once on the host`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  Phase C — versus: two commanders, two armies, one field           */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('command/versus: two Jedi lead two different armies', async () => {
+    /**
+     * `sideForOrder` DERIVES THE ARMY FROM THE JEDI/SITH CHOICE, and its own
+     * note is right about why: asking again on the deploy screen would let
+     * somebody be a Jedi at the head of a droid army, "which is not a build, it
+     * is a bug wearing a menu". That reasoning is sound for ONE commander and
+     * has no answer at all for two — two Jedi hosting each other both got the
+     * Republic, so the meeting was the Republic against itself, in identical
+     * armour, with no way to tell whose line was whose.
+     *
+     * Pure, so it is asserted without a World: this runs on the host and the
+     * answer goes out on the wire, and a client that recomputes it from the
+     * same roster must reach the same one.
+     */
+    const Cmd = await import('../../src/game/Command.js');
+    const two = Cmd.assignArmies(['jedi', 'jedi']).map((a) => a.id);
+    assert(two[0] !== two[1], `two Jedi both lead ${two[0]}`);
+    assert(two[0] === 'republic', `the first Jedi leads ${two[0]}, not the Republic`);
+
+    const sith = Cmd.assignArmies(['sith', 'sith']).map((a) => a.id);
+    assert(sith[0] !== sith[1], `two Sith both lead ${sith[0]}`);
+    assert(sith[0] === 'separatist', `the first Sith leads ${sith[0]}, not the Confederacy`);
+
+    /* The order still picks FIRST, in either join order — that is the half of
+     * `sideForOrder`'s argument this must not break. */
+    const mixed = Cmd.assignArmies(['jedi', 'sith']).map((a) => a.id);
+    const flipped = Cmd.assignArmies(['sith', 'jedi']).map((a) => a.id);
+    assert(mixed.join() === 'republic,separatist', `a Jedi and a Sith got ${mixed.join('/')}`);
+    assert(flipped.join() === 'separatist,republic', `a Sith and a Jedi got ${flipped.join('/')}`);
+    assert(Cmd.assignArmies([]).length === 0, 'an empty roster is not an empty answer');
+    return `jedi+jedi → ${two.join('/')}, sith+sith → ${sith.join('/')}, `
+      + `jedi+sith → ${mixed.join('/')} either way round`;
+  });
+
+  check('command/versus: two commanders meet on Geonosis', async () => {
+    /**
+     * THE OWNER'S HEADLINE QUESTION, DRIVEN.
+     *
+     * "can two sides command two different armies and meet on the battlefield?"
+     * Everything below is one real World with two real commanders in it: two
+     * rosters, two armies, two anchors 120 m apart, and the shipped damage gate
+     * asked about every pairing it can be asked about.
+     *
+     * The controls are the whole value of this check. "Two armies exist" is
+     * cheap; what is expensive to get right is that each side is hostile to the
+     * OTHER and friendly to its OWN, in both directions, through the same
+     * `canHarm` every bolt and every blade consults. A world where everything
+     * can hurt everything would satisfy a naive version of this and be a worse
+     * game than the one that could not do it at all.
+     */
+    const { canHarm, SIDES } = await import('../../src/game/Player.js');
+    const { VERSUS_SEPARATION } = await import('../../src/game/Command.js');
+    const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    const rival = await joinAsCommander(host, { team: SIDES[1] });
+    const cs = host.beginVersus();
+    assert(cs && cs.length === 2, `beginVersus produced ${cs ? cs.length : 0} commanders, expected 2`);
+
+    const [mine, theirs] = cs;
+    assert(mine.side !== theirs.side, `both commanders are on side ${mine.side}`);
+    assert(mine.army.id !== theirs.army.id, `both commanders lead ${mine.army.id}`);
+    assert(theirs.player === rival, 'the second commander is not leading the second player');
+
+    const gap = Math.hypot(mine.anchor.x - theirs.anchor.x, mine.anchor.z - theirs.anchor.z);
+    assert(Math.abs(gap - VERSUS_SEPARATION) < 1,
+      `the two armies formed up ${gap.toFixed(1)} m apart, not ${VERSUS_SEPARATION}`);
+
+    const mineBodies = host.enemies.filter((e) => e.cmdr === mine && !e.dead);
+    const theirBodies = host.enemies.filter((e) => e.cmdr === theirs && !e.dead);
+    assert(mineBodies.length >= 8 && theirBodies.length >= 8,
+      `${mineBodies.length} against ${theirBodies.length} — both armies must be on the field`);
+    assert(mineBodies.every((e) => e.team === mine.side) && theirBodies.every((e) => e.team === theirs.side),
+      'a body is standing on a side its commander is not on');
+
+    /* Nobody's line is standing in anybody else's. */
+    const centre = (l) => l.reduce((a, e) => a + e.position.z, 0) / l.length;
+    const zMine = centre(mineBodies), zTheirs = centre(theirBodies);
+    assert(Math.abs(zMine - zTheirs) > VERSUS_SEPARATION * 0.6,
+      `the two lines deployed ${Math.abs(zMine - zTheirs).toFixed(1)} m apart — they are in each other's ranks`);
+
+    /* THE GATE, both ways, on real bodies. */
+    const a0 = mineBodies[0], b0 = theirBodies[0];
+    assert(canHarm(a0, b0, host.rules) && canHarm(b0, a0, host.rules),
+      'the two armies cannot fight each other');
+    assert(canHarm(host.player, b0, host.rules) && canHarm(rival, a0, host.rules),
+      'a commander cannot fight the opposing army');
+    assert(canHarm(host.player, rival, host.rules) && canHarm(rival, host.player, host.rules),
+      'the two commanders cannot fight each other');
+    /* …and the control: your own line is still yours. `canHarm` says yes under
+     * a meeting's rules because friendly fire is derived from pvp — what stops
+     * a massacre is `installTeamDamage`'s scale, which is asserted in
+     * command.mjs. What must NOT be true is that they are on the same side. */
+    assert(a0.team === host.player.team && b0.team === rival.team,
+      'a commander is not on the same side as their own army');
+    return `${mine.army.name} (side ${mine.side}, ${mineBodies.length} bodies) against `
+      + `${theirs.army.name} (side ${theirs.side}, ${theirBodies.length}), ${gap.toFixed(0)} m apart`;
+  });
+
+  check('command/versus: the two armies actually fight, and one of them wins', async () => {
+    /**
+     * THE PART A STILL PICTURE CANNOT ASSERT.
+     *
+     * Two lines placed 120 m apart on a plain is a diorama. What makes it a
+     * battle is that both sides pick targets across the gap, close it, take
+     * casualties off each other's rosters, and that the thing ends — with a
+     * side named, once, through the same `onGameOver` a campaign's victory
+     * fires.
+     *
+     * `DuelMatch` is the model, UNCHANGED and not subclassed: its `update`
+     * already takes side → standing and side → health rather than reading the
+     * arena, so an army-vs-army round is the same state machine as a duel with
+     * a different census. That is asserted here by driving it to a real end.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const { host, pump } = await commandPair({ host: { commandVersus: true }, start: false });
+    await joinAsCommander(host, { team: SIDES[1] });
+    const cs = host.beginVersus();
+    const d = host.command;
+
+    const ended = [];
+    host.onGameOver = (s) => ended.push(s);
+    assert(host.match, 'a meeting has no match at all');
+    assert(host.rules.pvp === true && host.rules.friendlyFire === true,
+      `a meeting is being fought under co-op's rules (pvp ${host.rules.pvp})`);
+
+    /**
+     * BOTH SIDES ARE ORDERED TO ADVANCE, and that is a statement about the mode
+     * rather than a convenience for the harness.
+     *
+     * The anchor a formation is solved against is its COMMANDER, so an army
+     * under a holding order holds — which is correct, and it means two
+     * commanders who both stand still produce a stare-off across 120 m that the
+     * round clock decides on remaining strength. That is a legitimate ending
+     * and it is not a battle, so it cannot be what this check measures. Two
+     * armies meet because somebody orders them to; `charge` is the order, given
+     * through `order()` on both sides exactly as a key press gives it.
+     */
+    for (const c of cs) d.order('charge', c);
+
+    const before = cs.map((c) => c.roster.strength);
+    /* Long enough to cross 120 m at a trooper's pace and fight it out. The
+     * match's own clock is `roundTime`, well past this. */
+    let engaged = 0, closest = Infinity;
+    for (let i = 0; i < 60; i++) {
+      pump(2);
+      const mine = host.enemies.filter((e) => e.cmdr === cs[0] && !e.dead);
+      const them = host.enemies.filter((e) => e.cmdr === cs[1] && !e.dead);
+      for (const e of mine) {
+        if (e.target && e.target.team !== undefined && e.target.team !== e.team) engaged++;
+        for (const o of them) closest = Math.min(closest, e.position.distanceTo(o.position));
+      }
+      if (host.match.phase === 'match-over') break;
+    }
+
+    assert(engaged > 0, 'no trooper on either side ever picked a target on the other');
+    assert(closest < 40, `the two lines never got closer than ${closest.toFixed(0)} m — they did not meet`);
+    const after = cs.map((c) => c.roster.strength);
+    assert(after[0] < before[0] || after[1] < before[1],
+      `no casualties on either roster after 120 s (${before.join('v')} → ${after.join('v')})`);
+    assert(host.match.phase === 'match-over',
+      `the meeting is still in phase '${host.match.phase}' — ${after.join(' v ')} standing, `
+      + 'a battle that cannot end is worse than one that cannot start');
+    assert(ended.length === 1, `onGameOver fired ${ended.length} times`);
+    assert(typeof ended[0].won === 'boolean', 'the meeting did not report a winner');
+    const w = host.match.winner;
+    assert(w === null || cs.some((c) => c.side === w), `side ${w} took the field and is nobody's`);
+    return `${before.join(' v ')} → ${after.join(' v ')} standing, closed to ${closest.toFixed(1)} m, `
+      + `${engaged} target picks across the line; side ${w} took the field, won=${ended[0].won}`;
   });
 }
