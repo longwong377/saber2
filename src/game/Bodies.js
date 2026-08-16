@@ -6872,6 +6872,12 @@ function buildCreatureHead(rig, P, S, M) {
  * further away. A set-piece must be legible AS a set-piece before it moves.
  */
 export const BODYGUARD_KITS = {
+  /* THE DEFAULT ROW IS THE IDENTITY, and it has to be. Every other table in
+   * this file makes its no-kit row `{}` so that a builder called the way it
+   * has always been called emits what it has always emitted; this one was
+   * first written with the guard's girth in the default row, which quietly
+   * made the shipped IG general 22% thinner before anything had asked it to. */
+  chassis: {},
   /* `frame` goes through to buildB2's girth. An IG-100 is a spindle with a
    * cowl on it, not a slab — the reference plates are unambiguous — and at a
    * B2's own girth the two measured 0.965 alike. */
@@ -6915,7 +6921,7 @@ export const BODYGUARD_KITS = {
  */
 export function buildBodyguard(opts = {}) {
   /** See BODYGUARD_KITS — `banner` may also be passed directly. */
-  const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.guard), ...opts };
+  const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.chassis), ...opts };
   const S = opts.scale ?? 1.3;
   const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52, frame: K.frame ?? 1 });
   const rig = built.rig;
