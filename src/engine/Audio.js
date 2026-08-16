@@ -19,6 +19,7 @@
 import * as THREE from 'three';
 import { clamp, makeRng } from './MathUtil.js';
 import { utterance, peakGain } from './Voice.js';
+import { Score } from './Score.js';
 
 /** Finite-or-default. WebAudio params throw on NaN; game maths produces it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -87,18 +88,52 @@ const attenuation = (d) => (d <= REF_DIST ? 1 : REF_DIST / (REF_DIST + ROLLOFF *
  *   same request as Music 0, which is a level. A player who wants the room and
  *   the blade and no score can have exactly that.
  *
+ *   `synth: true` is the THIRD kind, and it is not a file at all: the score is
+ *   GENERATED, by src/engine/Score.js, out of the same oscillator bank
+ *   everything else in this game is made of. It fetches nothing, so it is a
+ *   sibling of the silence row rather than of the mp3 — which is also the
+ *   argument for the ORDER below.
+ *
  * WHAT IS DELIBERATELY NOT HERE: a row for a file this repository does not
  * ship. A list that offered three tracks and delivered one would be a menu of
  * lies. Drop an mp3 into assets/music/, add a row, and it is an option; the
  * engine reports a row whose file does not arrive (`musicMissing`) rather than
  * playing nothing and saying nothing.
+ *
+ * ── THE ORDER, AND WHY IT IS THIS ORDER ────────────────────────────────
+ *
+ * `musicIndex` is persisted as an INDEX (src/ui/Menu.js), so inserting a row
+ * changes the meaning of every stored value at or after it. There is exactly
+ * one arrangement that adds the generated score, makes it what a fresh profile
+ * and an untouched slider both land on, and leaves every other saved value
+ * meaning what it meant: put it FIRST, and leave `silence` at 1. A player who
+ * chose "no score" still gets no score; a player who never chose anything gets
+ * the adaptive score instead of the 28 MB stream, which is the intended change
+ * and the only one.
+ *
+ * The two rows that fetch nothing therefore lead and the one that costs 28 MB
+ * follows, which is also the right order to read them in.
  */
 export const MUSIC_TRACKS = [
-  { id: 'theme', name: 'Main Theme', files: null,
-    blurb: 'The score the game ships with.' },
+  { id: 'borz', name: 'Battle Score', files: [], synth: true,
+    blurb: 'Generated, and it follows the fight: brass and drums in A, '
+      + 'phrygian under a wave, a tritone under a boss. Nothing is downloaded.' },
   { id: 'silence', name: 'No score', files: [],
     blurb: 'The room, the blade and nothing else. Nothing is fetched at all.' },
+  { id: 'theme', name: 'Main Theme', files: null,
+    blurb: 'The orchestral track the game ships with — one 28 MB file, streamed.' },
 ];
+
+/**
+ * A row that plays NOTHING — no file to fetch and no generator behind it.
+ *
+ * `_trackList` does not need this — "no files" already means "fetch nothing"
+ * for the generated row too — but `_applyTrack` does, because those two rows
+ * differ in exactly one way and it is this one: silence must also turn the
+ * stingers off, and the generated score must not. Written down once so
+ * "silence" cannot come to mean two slightly different things (HANDOFF §2.3).
+ */
+export const isSilent = (t) => !!t && !t.synth && Array.isArray(t.files) && t.files.length === 0;
 
 /** The track at an index, clamped — never an invented row. */
 export function trackAt(i) {
@@ -240,6 +275,42 @@ const SPEECH_UNDER = 0.32;
 const SFX_DUCK = 0.62;
 /** How long the room stays down after the last syllable, in seconds. */
 const DUCK_TAIL = 0.16;
+
+/**
+ * THE MUSIC'S SIDECHAIN, as three tables. See `_duck` and `stinger`.
+ *
+ * DUCK_MIN_GAP is the floor under how often the score is allowed to be pushed
+ * down at all: two automations 20 ms apart are one automation with extra steps,
+ * and a clash followed by the cut it opened is one gesture, not two.
+ *
+ * MUSIC_DUCK says how far each thing in the game pushes it and for how long.
+ * The order is the argument: a player's own line is the loudest claim anything
+ * has on the mix, a clash is the game answering an input, an enemy dying is
+ * one of twenty in a wave and may only lean on the score rather than move it.
+ */
+const DUCK_MIN_GAP = 0.05;
+export const MUSIC_DUCK = {
+  /** The player speaks. The camera is their head; they win. */
+  self:      [0.42, 0.55],
+  /** Something on the field screams or powers down. Twenty a wave — a lean. */
+  room:      [0.74, 0.30],
+  /** Blade on blade. The one sound the score must never sit on top of. */
+  clash:     [0.52, 0.26],
+  /** Something detonated. */
+  explosion: [0.58, 0.45],
+};
+
+/**
+ * How close together a stinger of each kind may be fired, in seconds.
+ *
+ * Only the two that CAN repeat are listed. A boss entrance, a wave, a victory
+ * and a death each happen once and must never be refused for being near
+ * something else — a refused death stinger is the most important half-second in
+ * the run, silent, for a reason nobody could ever find.
+ */
+const STINGER_GAP = { kill: 2.2, streak: 1.4 };
+/** …and how far each one pushes the bed down, so it is not mud under itself. */
+const STINGER_DUCK = { wave: 0.5, clear: 0.55, boss: 0.42, triumph: 0.35, fall: 0.3 };
 /**
  * How long a dragged control is given to settle before its line is auditioned.
  * The shortest line in the game is 0.35 s (The Chosen's 'streak'), so a slider
@@ -291,6 +362,10 @@ export class AudioEngine {
     this.maxSpeech = MAX_SPEECH;
     /** Audio-clock time the effects bus is allowed back up to full. */
     this._duckUntil = 0;
+    /** …and the same pair for the music's own sidechain. See _duck(). */
+    this._musicDuckUntil = 0;
+    this._musicDuckAt = 1;
+    this._musicDuckSet = -1e9;
     this.maxVoices = 44;
     this._listenerPos = new THREE.Vector3();
     this._noiseBuf = null;
@@ -307,8 +382,9 @@ export class AudioEngine {
     /**
      * WHICH SCORE, as an index into MUSIC_TRACKS. See setMusicTrack.
      *
-     * 0 is "whatever the game armed" — the shipped theme — so an engine
-     * nobody has ever spoken to about tracks behaves exactly as it did.
+     * 0 is the GENERATED score (src/engine/Score.js) — the one row that
+     * fetches nothing and cannot fail to arrive, which is what a default
+     * should be. The streamed theme is still there, one row down the slider.
      */
     this.musicIndex = 0;
     /** The id of a track whose files would not load. Read by the options screen. */
@@ -415,6 +491,24 @@ export class AudioEngine {
 
     this.sfxBus = this.ctx.createGain(); this.sfxBus.gain.value = 1;
     this.musicBus = this.ctx.createGain(); this.musicBus.gain.value = num(this.musicVolume, 0.45);
+    /**
+     * THE ONE NODE THE MUSIC IS DUCKED ON, and it is not the one the slider
+     * writes.
+     *
+     * `duckMusic` used to automate `musicBus.gain` — the same param
+     * `setMusicVolume` owns — so the two fought: a duck schedules a return to
+     * `this.musicVolume` AS IT WAS WHEN THE DUCK STARTED, and a slider moved
+     * inside that window was silently undone a second later. Worse, nothing at
+     * all ducked the music before a clash or a death cry, which is the whole
+     * reason the mix had no room in it.
+     *
+     * So: `musicBus.gain` is the PLAYER'S LEVEL and nothing else ever writes
+     * it, and `musicDuck.gain` is the automation, resting at 1. Both the
+     * streamed track and the generated score go through it, because both of
+     * them are the music and both of them have to get out of the way.
+     */
+    this.musicDuck = this.ctx.createGain(); this.musicDuck.gain.value = 1;
+    this.musicDuck.connect(this.musicBus);
     // Wind and drone are the world, not the score. On musicBus, turning the
     // music down muted the level's own atmosphere along with it.
     this.ambBus = this.ctx.createGain(); this.ambBus.gain.value = 1;
@@ -467,6 +561,21 @@ export class AudioEngine {
     this._pinkBuf = this._makeNoise(2.0, true);
     this.ready = true;
     this._startAmbience();
+    /**
+     * THE GENERATED SCORE. See src/engine/Score.js.
+     *
+     * Built here rather than lazily on the first wave, because its eleven
+     * sustained oscillators are started once and glided for the life of the
+     * session — a bed that had to be constructed at the moment a fight began
+     * would arrive a frame late, every time, and that frame is the one the
+     * whole feature exists for.
+     *
+     * It plays into `musicDuck` and NOT into `sfxBus`: it is music, so the
+     * Music slider owns it, the duck reaches it, and the master compressor
+     * does not (a blaster shot must not pump the score — see musicBus).
+     */
+    this.score = new Score(this.ctx, this.musicDuck, this._pinkBuf);
+    this._applyTrack();
   }
 
   /**
@@ -527,9 +636,35 @@ export class AudioEngine {
   setMusicVolume(v) {
     this.musicVolume = num(v, 0.45);
     if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
-    if (!this.ready) return;
-    if (this.musicVolume > 0) { if (this._music) this.setMusicPlaying(true); else this._startMusic(); }
+    this._applyTrack();
+  }
+
+  /**
+   * WHAT IS ACTUALLY PLAYING, given the row and the slider — one place, and
+   * every caller that can move either of them ends here.
+   *
+   * There are three kinds of row and they need three different things done:
+   * the generated score is a graph to switch on, the streamed one is an
+   * element to build or pause, and silence is neither. That decision used to be
+   * repeated in four callers, each of which knew about only the case it was
+   * written for; adding a third kind to that arrangement is how a track ends up
+   * playing under the one the player chose.
+   */
+  _applyTrack() {
+    if (!this.ready) return null;
+    const t = trackAt(this.musicIndex);
+    const on = this.musicVolume > 0;
+    const synth = !!(t && t.synth);
+    // The two BEDS are alternatives, so the one that was not chosen is STOPPED
+    // and not merely turned down: a 28 MB stream paused at zero is still 28 MB.
+    // The stingers are not a bed and survive the streamed track — see
+    // `Score.arm`, and the one row that turns them off too.
+    this.score?.enable(synth && on);
+    this.score?.arm(on && !isSilent(t));
+    if (synth) { if (this._music) this.setMusicPlaying(false); return t; }
+    if (on) { if (this._music) this.setMusicPlaying(true); else this._startMusic(); }
     else if (this._music) this.setMusicPlaying(false);
+    return t;
   }
   /** The speech mixer. Zero is a legitimate answer and means "no voices". */
   setVoiceLevel(v) {
@@ -585,8 +720,12 @@ export class AudioEngine {
     const list = (Array.isArray(urls) ? urls : [urls]).filter(u => typeof u === 'string' && u);
     if (!list.length) return null;
     this._musicWanted = { list, opts };
-    if (!(this.musicVolume > 0)) return null;
-    return this._startMusic();
+    // ARMED, not started. main.js binds this to the first gesture anywhere on
+    // the page whatever the player picked, so the row decides whether a byte is
+    // ever fetched — a profile on the generated score (which is the default)
+    // must not pull 28 MB in order to play none of it.
+    this._applyTrack();
+    return this._music;
   }
 
   /**
@@ -612,7 +751,7 @@ export class AudioEngine {
     const armed = this._musicWanted ? this._musicWanted.list : [];
     const t = trackAt(this.musicIndex);
     if (!t || !t.files) return armed;                 // the shipped score
-    if (!t.files.length) return [];                   // silence, chosen
+    if (!t.files.length) return [];                   // silence, or generated
     const base = (armed[0] || '').replace(/[^/]*$/, '');
     return t.files.map(f => base + f);
   }
@@ -632,7 +771,7 @@ export class AudioEngine {
     this.musicIndex = want;
     this.musicMissing = null;
     this._stopMusic();
-    if (this.musicVolume > 0) this._startMusic();
+    this._applyTrack();
     return trackAt(this.musicIndex);
   }
 
@@ -679,7 +818,10 @@ export class AudioEngine {
       // starts at full level the instant the context unlocks is a jump-scare.
       gain.gain.value = 0;
       gain.gain.setTargetAtTime(num(opts.gain, 1), this.ctx.currentTime, opts.fade ?? 1.6);
-      src.connect(gain); gain.connect(this.musicBus);
+      // → musicDuck → musicBus. The stream is ducked by the same node the
+      // generated score is, because both of them are the music: a clash has to
+      // make room in the mix whichever one the player chose.
+      src.connect(gain); gain.connect(this.musicDuck);
       const m = this._music = { el, src, gain, list, at: 0 };
       const go = () => { try { el.play()?.catch?.(() => {}); } catch {} };
       if (list.length > 1) {
@@ -705,8 +847,9 @@ export class AudioEngine {
          * an mp3 nobody has dropped in yet. Silence with no explanation is the
          * worst of the three possible answers; inventing a track is the
          * second worst. So the failure is recorded where the options screen
-         * can read it (`musicMissing`) and the engine falls back to row 0,
-         * which is whatever main.js armed and is the one file that ships.
+         * can read it (`musicMissing`) and the engine falls back to row 0 —
+         * which is now the GENERATED score, and is therefore the one row that
+         * cannot itself fail to arrive. A fallback that can 404 is not one.
          */
         el.addEventListener('error', () => {
           const t = trackAt(this.musicIndex);
@@ -715,7 +858,7 @@ export class AudioEngine {
           this._stopMusic();
           this.musicIndex = 0;
           this.onMusicMissing?.(t);
-          if (this.musicVolume > 0) this._startMusic();
+          this._applyTrack();
         });
       }
       go();
@@ -1107,8 +1250,56 @@ export class AudioEngine {
     } catch { return ''; }
   }
 
+  /**
+   * WHAT A VOICE LINE TELLS THE SCORE.
+   *
+   * Three of the beats the score needs have exactly one announcement in the
+   * whole project and it is a line: `Announcer._enemies` says a 'boss' line the
+   * first frame a boss or a big body is on the field, and `Announcer._player`
+   * says 'kill' or 'streak' off the ladder it already keeps. Reading those is
+   * HANDOFF §2.4 — the rule for what a boss IS stays in one place and this
+   * file listens to the call it makes.
+   *
+   * Called BEFORE the voice pool is consulted and before `voiceLevel` is read,
+   * because the score's business is that the boss ARRIVED, not that a larynx
+   * was free to say so. It is still downstream of `settings.voiceLines`, which
+   * the announcer checks before it calls at all — a player who has turned voice
+   * lines off gets no derived boss cue, and `setMusicState` is the fix for that
+   * rather than a second boss detector living here.
+   *
+   * `opts.audition` is the options screen dragging the voice slider. A player
+   * comparing larynxes must not fire a killstreak stinger five times.
+   */
+  _scoreFromLine(kind, opts) {
+    if (!this.score || opts.audition || !opts.self) return;
+    if (kind === 'boss') {
+      this.score.boss = true;
+      if (!this.score.driven) this.score.setState('boss');
+      this.stinger('boss');
+    } else if (kind === 'kill') this.stinger('kill');
+    else if (kind === 'streak') this.stinger('streak');
+  }
+
+  /**
+   * THE MUSIC MAKES ROOM FOR A VOICE, for exactly as long as the voice lasts.
+   *
+   * The hold is the line's OWN duration and not a constant, which is what makes
+   * one table right for a 0.22 s grunt and a 1.0 s death cry: the depth says how
+   * much a speaker is worth and the length says how long they take. Only the
+   * player and the lines a body says as it dies move the score at all — an
+   * alarm call from the fourth droid in a squad is furniture, and furniture
+   * does not get to stop the music.
+   */
+  _duckMusicForLine(kind, opts, dur) {
+    const room = kind === 'scream' || kind === 'die' || kind === 'panic';
+    if (!opts.self && !room) return false;
+    const [level] = opts.self ? MUSIC_DUCK.self : MUSIC_DUCK.room;
+    return this._duck(level, clamp(num(dur, 0.4), 0.12, 2.5) + 0.18);
+  }
+
   speak(spec, kind = 'effort', opts = {}) {
     if (!this.ready || !spec || !this._live()) return 0;
+    this._scoreFromLine(kind, opts);
     if (this.voiceLevel <= 0.001) return 0;
     /*
      * THE WORDS FIRST, and they do not depend on a voice being free.
@@ -1127,7 +1318,11 @@ export class AudioEngine {
       // than off a synthesised contour that was never built: roughly 12
       // characters a second, floored at half a second, which is what an
       // ordinary rate says a short line takes.
-      return Math.max(0.5, said.length / 12);
+      const words = Math.max(0.5, said.length / 12);
+      // …and the score makes room for words on the same terms it makes room
+      // for a contour. A spoken line is MORE in need of it, not less.
+      this._duckMusicForLine(kind, opts, words);
+      return words;
     }
     const u = utterance(spec, kind, num(opts.vary, rng()));
     const level = clamp(num(opts.gain, 1), 0, 4);
@@ -1182,6 +1377,7 @@ export class AudioEngine {
       this._speech.push(entry);
       this.stats.spoke++;
       this._duckRoom(u.dur);
+      this._duckMusicForLine(kind, opts, u.dur);
 
       /**
        * The utterance is retired by its LAST grain.
@@ -1466,6 +1662,14 @@ export class AudioEngine {
     this.noise({ dur: 0.28, gain: 0.34 * power, type: 'bandpass', freq: 3200, freqEnd: 700, q: 0.7, pos, prio: P });
     this.tone({ freq: 1900 + rng() * 700, freqEnd: 420, dur: 0.24, gain: 0.20 * power, type: 'sawtooth', pos, prio: P });
     this.tone({ freq: 160, freqEnd: 70, dur: 0.3, gain: 0.24 * power, type: 'sine', pos, prio: P });
+    /**
+     * AND THE MUSIC GETS OUT OF THE WAY. Blade on blade is the one sound this
+     * game exists for, and the score used to sit on top of every one of them at
+     * constant gain. `_duck` only ever goes deeper and is rate limited, so a
+     * six-clash exchange is one hole in the music and not six.
+     */
+    const [level, hold] = MUSIC_DUCK.clash;
+    this._duck(level, hold * clamp(num(power, 1), 0.4, 2));
   }
 
   deflect(pos, grade = 1) {
@@ -1500,6 +1704,19 @@ export class AudioEngine {
     this.noise({ dur: 0.9 * size, gain: 0.5, type: 'lowpass', freq: 1800, freqEnd: 120, q: 0.6, pos, pink: true, prio: P });
     this.tone({ freq: 90, freqEnd: 28, dur: 0.85 * size, gain: 0.45, type: 'sine', pos, prio: P });
     this.tone({ freq: 220, freqEnd: 60, dur: 0.4 * size, gain: 0.22, type: 'triangle', pos, prio: P });
+    /**
+     * The loudest thing the game can make, and only if it was close enough to
+     * be one. `_reach` would say yes out to 190 m for a 0.5 detonation, which is
+     * the right answer for "is it worth a voice" and the wrong one for "should
+     * the music stop": a mine going off across the Colosseum must not punch a
+     * hole in the score for a flash the player can barely hear. 45 m is the
+     * distance at which the inverse law has already taken it to a fifth.
+     */
+    const d = pos && Number.isFinite(pos.x) ? this._listenerPos.distanceTo(pos) : 0;
+    if (d < 45) {
+      const [level, hold] = MUSIC_DUCK.explosion;
+      this._duck(level, hold * clamp(num(size, 1), 0.5, 2));
+    }
   }
 
   force(pos, kind = 'push') {
@@ -1615,10 +1832,31 @@ export class AudioEngine {
   }
 
   ui(kind = 'hover') {
+    /**
+     * A WAVE ARRIVING IS NOT A UI SOUND, and this is where it stopped being one.
+     *
+     * `World.onWaveStart` calls `audio.ui('wave')` and it is the ONLY caller of
+     * that kind anywhere in the project — every other `ui()` in `src/` is a
+     * menu click, a hover or a skill node. So this call is not a button being
+     * pressed, it is the game announcing that a wave has begun, and it is
+     * treated as one: the score goes to combat and the swell fires.
+     *
+     * Listening to the call the game already makes rather than restating the
+     * rule that raised it is HANDOFF §2.4. The director owns "when is a wave" and
+     * this file never needs to know.
+     */
+    if (kind === 'wave') {
+      if (this.score) { this.score.waveActive = true; this.score.wave++; this.score.dead = false; }
+      if (!this.score?.driven) this.score?.setState(this.score.boss ? 'boss' : 'combat');
+      this.stinger('wave');
+      // …and the 180 → 90 Hz sine is kept UNDER it. It is the sound a player
+      // has learned means "wave", and the swell is the thing it was missing.
+      this.tone({ freq: 180, freqEnd: 90, dur: 1.0, gain: 0.14, type: 'sine', prio: PRIO.critical });
+      return;
+    }
     const map = {
       hover: { freq: 900, end: 1200, dur: 0.05, gain: 0.05, type: 'sine' },
       click: { freq: 500, end: 1400, dur: 0.09, gain: 0.09, type: 'triangle' },
-      wave:  { freq: 180, end: 90, dur: 1.0, gain: 0.2, type: 'sine' },
       good:  { freq: 620, end: 1240, dur: 0.3, gain: 0.14, type: 'sine' },
       bad:   { freq: 300, end: 90, dur: 0.5, gain: 0.18, type: 'sawtooth' },
     }[kind];
@@ -1672,6 +1910,20 @@ export class AudioEngine {
     // AND THE SCORE STOPS. A 49-minute orchestral track carrying on over your
     // corpse is the single loudest thing wrong with the moment.
     this.duckMusic(0.12, 0.9);
+    /**
+     * …AND WHAT COMES BACK IS NOT THE FIGHT.
+     *
+     * The four layers above are the BODY dying and they are not touched. This
+     * is the SCORE dying, which is a different event and was the missing one:
+     * everything but the bass is taken away in 0.22 s, the bass drops a tritone,
+     * and the fifth is left hanging. It arrives under the duck and comes up
+     * with it, so the two-and-a-half-second drop still owns the front of the
+     * moment and the harmony owns the eight seconds after it — which is exactly
+     * the window the death card lands in.
+     */
+    if (this.score) { this.score.dead = true; this.score.waveActive = false; }
+    if (!this.score?.driven) this.score?.setState('death');
+    this.stinger('fall');
     return 2.6;
   }
 
@@ -1701,7 +1953,47 @@ export class AudioEngine {
     this.tone({ freq: 110, freqEnd: 220, dur: 1.4, gain: 0.16, type: 'sine', attack: 0.09, prio: P });
     this.noise({ dur: 0.9, gain: 0.07, type: 'bandpass', freq: 5200, freqEnd: 9000, q: 0.8,
       attack: 0.02, prio: P });
+    /**
+     * …AND THE SCORE PUTS THE WAVE DOWN.
+     *
+     * `World.onWaveClear` is the only caller of this, so it is the wave-clear
+     * signal and not a generic "something good happened" — see `ui('wave')` for
+     * the same argument on the other end of the wave. The bII and the drums
+     * leave, the cadence lands under the triad above (bVII → i, in the same A
+     * the triad resolves to, because there has only ever been one key), and a
+     * boss latch is released: whatever it was, it is over.
+     */
+    if (this.score) { this.score.waveActive = false; this.score.boss = false; }
+    if (!this.score?.driven) this.score?.setState('explore');
+    this.stinger('clear');
     return 1.4;
+  }
+
+  /**
+   * THE RUN IS WON — and until now it made no sound at all.
+   *
+   * Command mode can be finished: `World._endMeeting` and `Command`'s last
+   * advance both end in `onGameOver({ won: true })`, `main.js` prints a
+   * different card for it, and the one completable thing in this game was
+   * delivered in silence. `victory()` is NOT that moment — it is a wave being
+   * cleared, of which there are forty in a run — so this is its own gesture and
+   * its own state: the only full fanfare in the game and the only place the
+   * score is ever allowed a major third for more than a bar.
+   *
+   * NOTHING CALLS THIS YET. It is the seam, and the call it wants is one line
+   * at the top of `World._endMeeting`, beside the notify that is already there:
+   *
+   *     audio.runWon(winner === mine);
+   *
+   * — with `false` for the losing commander, who gets the death cue instead,
+   * because the same match is a victory on one screen and a defeat on the other.
+   */
+  runWon(won = true) {
+    if (!this.ready) return 0;
+    if (!won) return this.death();
+    if (this.score) { this.score.won = true; this.score.waveActive = false; this.score.boss = false; }
+    if (!this.score?.driven) this.score?.setState('victory');
+    return this.stinger('triumph') || 3.4;
   }
 
   /**
@@ -1729,17 +2021,140 @@ export class AudioEngine {
    * setting, and a player at Music 0 must not have it turned on for them.
    */
   duckMusic(level = 0.2, seconds = 1.2) {
-    if (!this.ready || !this.musicBus || !(this.musicVolume > 0)) return false;
+    return this._duck(level, seconds, { fall: 0.18, rise: 0.9 });
+  }
+
+  /**
+   * SIDECHAIN — the music getting out of the way, for a moment.
+   *
+   * Nothing in this game ducked anything before a clash or a death cry: the
+   * score sat at constant gain through every one of them, which is why the mix
+   * had no room in it. This is the mechanism, and everything about it is about
+   * what happens when it is asked TWICE.
+   *
+   *   IT ONLY EVER GOES DEEPER. A clash storm is six calls in half a second and
+   *     a naive one would re-schedule the release six times, so the music would
+   *     pump up between hits and read as a broken gate. A duck that is already
+   *     deeper, and still has longer to run, is left alone; a deeper one takes
+   *     over. `_musicDuckAt` is what was commanded, on the audio clock, for the
+   *     same reason `duckLevel()` exists: an AudioParam under a scheduled ramp
+   *     reports where it WAS, not where it is going.
+   *
+   *   IT IS RATE LIMITED. Two automations 20 ms apart are one automation with
+   *     extra steps. `DUCK_MIN_GAP` is under the shortest gesture the game can
+   *     produce and above the frame time, so a clash and the cut that follows
+   *     it are one duck.
+   *
+   * `musicDuck.gain` and not `musicBus.gain`: the bus is the player's slider,
+   * and a duck that wrote it would undo a slider moved while it was running.
+   */
+  _duck(level, seconds, { fall = 0.09, rise = 0.35 } = {}) {
+    if (!this.ready || !this.musicDuck || !(this.musicVolume > 0)) return false;
     const t = this.ctx.currentTime;
-    const l = clamp(num(level, 0.2), 0, 1) * this.musicVolume;
+    const l = clamp(num(level, 0.2), 0, 1);
     const d = clamp(num(seconds, 1.2), 0.05, 30);
+    if (t - (this._musicDuckSet || -1e9) < DUCK_MIN_GAP && l >= (this._musicDuckAt ?? 1)) return false;
+    if (t < (this._musicDuckUntil || 0) && l >= (this._musicDuckAt ?? 1) && t + d <= this._musicDuckUntil) return false;
     try {
-      this.musicBus.gain.cancelScheduledValues(t);
-      this.musicBus.gain.setTargetAtTime(l, t, 0.18);
-      this.musicBus.gain.setTargetAtTime(this.musicVolume, t + d, 0.9);
+      this.musicDuck.gain.cancelScheduledValues(t);
+      this.musicDuck.gain.setTargetAtTime(Math.max(0.0001, l), t, fall);
+      this.musicDuck.gain.setTargetAtTime(1, t + d, rise);
     } catch { return false; }
+    this._musicDuckSet = t;
+    this._musicDuckAt = l;
     this._musicDuckUntil = t + d;
+    this.stats.musicDucked = (this.stats.musicDucked || 0) + 1;
     return true;
+  }
+
+  /**
+   * How far the music is being HELD down right now, as a number, for the same
+   * reason `duckLevel()` exists — a param under a ramp cannot be read back.
+   */
+  musicDuckLevel() {
+    if (!this.ctx) return 1;
+    return this.ctx.currentTime < (this._musicDuckUntil || 0) ? (this._musicDuckAt ?? 1) : 1;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  THE SCORE — what it should be playing                                 */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * TELL THE SCORE WHAT THE GAME IS DOING. **This is the seam.**
+   *
+   * `src/engine/Score.js` is a state machine — explore, combat, boss, victory,
+   * death — and the facts it needs are all in `world.director`: the wave
+   * number, whether the wave is running, whether this one is a boss, whether
+   * the run is over. None of that reaches this file today, so the score DERIVES
+   * what it can from the calls the game already makes (see `ui('wave')`,
+   * `victory()`, `death()` and `speak()`, each of which is the game's own
+   * announcement of the event and not a second copy of the rule that raised
+   * it), plus the smoothed combat intensity `updateScore` already receives.
+   *
+   * That derivation is honest but it is thinner than the truth: it cannot tell
+   * a boss wave from an ordinary one until something announces the boss, and it
+   * cannot know a campaign has been WON at all, because nothing in the game
+   * makes a sound when it is.
+   *
+   * So this exists, and one call from `World` supersedes the lot:
+   *
+   *     audio.setMusicState({
+   *       state: this.over ? (won ? 'victory' : 'death')
+   *            : this.director.active ? (bossOnField ? 'boss' : 'combat')
+   *            : 'explore',
+   *       wave: this.director.wave,
+   *       boss: bossOnField,
+   *     });
+   *
+   * The moment anything calls it, `driven` latches and the derived transitions
+   * stop — one authority, never two disagreeing (HANDOFF §2.3). Stingers keep
+   * firing from their existing call sites either way, because those are events
+   * with exactly one source each and there is nothing for them to disagree with.
+   */
+  setMusicState(s = {}) {
+    if (!this.score) return null;
+    const sc = this.score;
+    sc.driven = true;
+    if (Number.isFinite(s.wave)) sc.wave = s.wave;
+    if (s.boss !== undefined) sc.boss = !!s.boss;
+    if (s.dead !== undefined) sc.dead = !!s.dead;
+    if (s.won !== undefined) sc.won = !!s.won;
+    if (s.active !== undefined) sc.waveActive = !!s.active;
+    if (typeof s.state === 'string') sc.setState(s.state);
+    else sc.setState(sc._derive(0));
+    return sc.state;
+  }
+
+  /** What the score is playing, for a HUD, a check, or a caller deciding. */
+  musicState() { return this.score ? this.score.state : 'off'; }
+
+  /**
+   * FIRE A STINGER — one musical gesture, on one event.
+   *
+   * Rate limited PER KIND rather than globally, because the two things that
+   * need limiting need different limits and everything else needs none: a kill
+   * accent is one of six inside a single frame during a Force rend, a boss
+   * entrance happens once, and a victory must never be refused for being close
+   * to anything.
+   *
+   * The score ducks itself for the big ones — a fanfare over a bed in the same
+   * key is mud — which is the one place ducking is used for something other
+   * than making room for the room.
+   */
+  stinger(kind, opts = {}) {
+    if (!this.ready || !this.score) return 0;
+    const gap = STINGER_GAP[kind];
+    const t = this.ctx.currentTime;
+    if (gap) {
+      const key = `_st_${kind}`;
+      if (t - (this[key] || -1e9) < gap) return 0;
+      this[key] = t;
+    }
+    const dur = this.score.stinger(kind, opts);
+    const d = STINGER_DUCK[kind];
+    if (d) this._duck(d, dur * 0.7, { fall: 0.06, rise: 0.5 });
+    return dur;
   }
 
   /* ── ambience & score ──────────────────────────────────────────────── */
@@ -1840,6 +2255,25 @@ export class AudioEngine {
     // The room travels with the bed because they are the same fact about a
     // level, arriving through the one call that already carries it.
     if (room) this.setRoom(room);
+    /**
+     * …AND SO DOES THE SCORE'S MEMORY, because this call is the ONLY thing in
+     * the project that means "a level began or ended". `World.loadLevel` makes
+     * it with the room; `World.unload` makes it with wind and drone at zero, to
+     * stop a level's weather playing under the main menu. Both of them are the
+     * moment the score has to forget what it latched: a player who quits from
+     * the death card and deploys again used to arrive on the next level with
+     * the bass still a tritone down, because `death` is a latch and only a new
+     * run releases it.
+     *
+     * The SMOOTHED combat level goes with it, and it has to: `updateScore`
+     * lags it by about a second and a half, so a player who quits a nine-body
+     * fight and deploys somewhere quiet arrives with `intensity` still over the
+     * threshold and hears a wave that is not there for the first second of the
+     * new level. A level change is not a fight winding down, it is a different
+     * place.
+     */
+    this.intensity = 0;
+    this.score?.reset();
   }
 
   /**
@@ -1893,7 +2327,16 @@ export class AudioEngine {
   }
 
   /**
-   * Drives the percussive pulse under combat, and the bed under both.
+   * The bed under everything, and the fight the score is answering.
+   *
+   * WHAT USED TO BE HERE was the whole of this game's "adaptive music": one
+   * sine oscillator per beat, sweeping 74 → 38 Hz, at 74 + 46 × intensity bpm,
+   * straight onto the music bus. No key, no harmony, no layers, no states, no
+   * transitions and nothing that changed when a wave arrived or a boss walked
+   * on — because a lone sub pulse has nothing to change INTO. It has been
+   * replaced by src/engine/Score.js, where that pulse survives as one voice of
+   * one layer (`taiko`) of five, and where the tempo is a property of the state
+   * the game is in rather than a linear function of how many bodies are near.
    *
    * @param storm 0..1 — `weather.intensity` from src/world/Scenery.js, passed
    *              by World.update. Zero indoors and on the five levels with no
@@ -1901,31 +2344,18 @@ export class AudioEngine {
    */
   updateScore(dt, intensity, storm = 0) {
     // The same reason the one-shots refuse a stopped context: a frozen clock
-    // stacks every pulse on one timestamp and none of them can end.
+    // stacks every scheduled note on one timestamp and none of them can end.
     if (!this.ready || !this._live()) return;
     dt = num(dt, 1 / 60); intensity = num(intensity, 0);
     this.intensity += (intensity - this.intensity) * Math.min(1, dt * 0.6);
-    // BEFORE the early return, and not after it: the bed has to be able to come
-    // back DOWN when the fight ends, and the storm is weather rather than
-    // combat — it blows through a level with nothing alive on it.
+    // BEFORE any early return: the bed has to be able to come back DOWN when
+    // the fight ends, and the storm is weather rather than combat — it blows
+    // through a level with nothing alive on it.
     this._bed(clamp(num(storm, 0), 0, 1));
-    if (this.intensity < 0.12) return;
-    this._pulseTimer -= dt;
-    if (this._pulseTimer <= 0) {
-      const bpm = 74 + this.intensity * 46;
-      this._pulseTimer = 60 / bpm;
-      const t = this.ctx.currentTime;
-      const o = this.ctx.createOscillator();
-      o.type = 'sine'; o.frequency.setValueAtTime(74, t);
-      o.frequency.exponentialRampToValueAtTime(38, t + 0.16);
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.14 * this.intensity, t + 0.006);
-      g.gain.setTargetAtTime(0.0001, t + 0.01, 0.07);
-      o.connect(g); g.connect(this.musicBus);
-      o.onended = () => { try { g.disconnect(); } catch {} };
-      o.start(t); o.stop(t + 0.35);
-    }
+    // …and so does the score, for the same reason. It is a state machine with
+    // an `explore` state; a score that only ran while something was on the
+    // field would have nothing to leave.
+    this.score?.update(dt, this.intensity);
   }
 }
 
