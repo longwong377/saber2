@@ -72,8 +72,32 @@ function throughTone(linear, exposure = 1, a = {}) {
   return c.map((v) => clampT(luma + (v - luma) * satEff));
 }
 
-const PRESETS = ['dunes', 'arena', 'canyon', 'hangar', 'meadow', 'drifts', 'alpine'];
-const OUTDOOR = ['dunes', 'arena', 'canyon', 'meadow', 'drifts', 'alpine'];
+/*
+ * THE GROUNDS THE GAME ACTUALLY HAS, and this list used to be neither.
+ *
+ * It read `['dunes', 'arena', 'canyon', 'hangar', 'meadow', 'drifts', 'alpine']`.
+ * `TERRAIN_PRESETS` holds eighteen presets; the ten a live level uses are
+ * `scoria, mustafar, kamino, colosseum, bog, drifts, alpine, geonosis, temple,
+ * foundry`, and the other eight — `dunes, arena, canyon, meadow, hangar, works,
+ * cavern, warship` — belong to levels deleted in the roster cull. So five of
+ * the seven names here were dead, the intersection with the shipped set was
+ * `{drifts, alpine}`, and TWELVE checks in this file were measuring two of the
+ * ten grounds a player stands on. `canyon` was built by name eight times; the
+ * meadow, whose cheapness one check asserts, was deleted at the player's
+ * request; and "the canyon wash you fight in is gravel, not cliff" describes a
+ * place nobody fights in.
+ *
+ * `roster.mjs` cannot catch this and says so: its header explicitly exempts
+ * terrain names, because `new Terrain(scene, 'dunes', 0.7)` is a perfectly
+ * valid thing to write. So the list is derived from the levels instead, which
+ * is the only source that knows which grounds are real.
+ */
+const SHIPPED = [...new Set(LEVEL_ORDER.map((k) => LEVELS[k]?.terrain).filter(Boolean))];
+const PRESETS = SHIPPED.filter((t) => TERRAIN_PRESETS[t]);
+const OUTDOOR = PRESETS.filter((t) => !TERRAIN_PRESETS[t].roofed);
+if (PRESETS.length !== SHIPPED.length) {
+  throw new Error(`levels name terrain(s) with no preset: ${SHIPPED.filter((t) => !TERRAIN_PRESETS[t]).join(', ')}`);
+}
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const fract = (v) => v - Math.floor(v);
