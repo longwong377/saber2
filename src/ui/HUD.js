@@ -1215,7 +1215,7 @@ export class HUD {
       const st = world.director.state();
       el.remaining.textContent = st.need === Infinity ? 'free practice' : `${st.progress} of ${st.need}`;
     } else {
-      const remaining = world.director.remaining;
+      const remaining = hostilesLeft(world);
       el.remaining.textContent = world.director.active
         ? `${remaining} remaining`
         : (world.director.intermission > 900 ? 'attune' : `next wave in ${Math.ceil(world.director.intermission)}`);
@@ -1708,6 +1708,47 @@ const _screen = new THREE.Vector2();
 
 /** Titles come from archetype labels, which are data. Data goes in as text. */
 const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+/**
+ * HOW MANY OF THE ENEMY ARE LEFT — and a note about where this belongs.
+ *
+ * `#hud-remaining` read `world.director.remaining`, which is
+ *
+ *     spawnQueue.length + arrivals.pending + enemies.filter(e => !e.dead).length
+ *
+ * and in Command mode `world.enemies` HOLDS YOUR OWN TROOPS. An ally is an
+ * Enemy with a different `team` — that is the design decision that makes allies
+ * real, and Waves.js's own `update()` has the correct rule forty lines above
+ * the getter, with a long comment about how counting your own army once stopped
+ * waves from ever closing. `remaining` never got it. So the top-left corner
+ * said "10 remaining" with nothing hostile on the field.
+ *
+ * THIS IS NOT WHERE THE FIX BELONGS AND IT IS DELIBERATELY MINIMAL. The getter
+ * is in src/game/Waves.js, which another lane owns; the request to hoist that
+ * predicate so both callers share one rule has been sent and is unanswered.
+ * Until it lands:
+ *
+ *   · every mode WITHOUT an army reads `director.remaining`, untouched, so
+ *     nothing that is currently right can be made wrong here and no second
+ *     copy of the rule can drift in the ninety-odd percent of play that has
+ *     no allies in `world.enemies` at all;
+ *   · Command mode — the only place the shipped getter is wrong — counts the
+ *     hostiles itself, off `world.partyTeam`, which is the authority for
+ *     "which side is mine" and the same field Waves.js reads.
+ *
+ * Written so it stays correct if `remaining` is fixed underneath it: it does
+ * not subtract from the getter's answer, it composes its own. A subtraction
+ * would silently start under-counting the moment the real fix landed.
+ */
+export function hostilesLeft(world) {
+  const d = world?.director;
+  if (!d) return 0;
+  if (!world.command) return d.remaining;
+  const party = world.partyTeam ?? 0;
+  let alive = 0;
+  for (const e of world.enemies || []) if (!e.dead && (e.team ?? 1) !== party) alive++;
+  return (d.spawnQueue?.length || 0) + (d.arrivals?.pending || 0) + alive;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE ROLL, drawn once and read twice                                    */

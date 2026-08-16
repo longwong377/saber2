@@ -218,6 +218,21 @@
           carries over. The other two are for looking at what is in here — a whole run can end without
           ever meeting Force lightning or Compel, and a power nobody can reach is a power nobody can tell
           you is broken.</p>
+        <!-- YOUR ARMY. Both of these had a reader in game/Command.js and no
+             control anywhere, which is how they escaped both dead-control
+             checks: those iterate DEFAULT_SETTINGS, and neither key was in it. -->
+        <h3 style="margin-top:22px">Your army</h3>
+        <label class="slider">Team damage <input type="range" id="opt-teamdamage" min="0" max="1" step="0.05" value="0.35"><b></b></label>
+        <p class="hint">How much of <b>your own</b> damage reaches your own troops. The physics is never
+          scaled — a push throws your sergeant exactly as far as it throws a B1, a grip lifts him, and
+          the blade goes through him whatever this says. What this scales is the damage that lands.
+          At 0 you can ragdoll the whole line into the air and lose nobody; at 100% a careless sweep
+          costs you a name off the roster.</p>
+        <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
+        <div id="command-list" class="difflist"></div>
+        <p class="hint">The formation your squads form up in at the start of every area. You can change
+          it mid-fight with the order keys — they are ordinary rebindable controls, listed under
+          <b>Key bindings</b> and printed on the controls page.</p>
       </div>
       <div class="col">
         <h3>Key bindings</h3>
@@ -239,6 +254,19 @@
              checkbox the tier has overruled has to say so instead of sitting
              there ticked and doing nothing. -->
         <label class="check" id="opt-bloom-row"><input type="checkbox" id="opt-bloom" checked> <span id="opt-bloom-label">Bloom</span></label>
+        <!-- WHAT THE FIELD KEEPS, and how things arrive on it. Both had a
+             reader and no control: `Waves.instantSpawn(settings)` is the one
+             gate on every gunship, door and drop pod in the game, and
+             RapierWorld's body cap was `settings.maxBodies ?? 1100` against a
+             key nothing anywhere wrote. -->
+        <label class="slider">Wreckage kept <input type="range" id="opt-maxbodies" min="300" max="2400" step="100" value="1100"><b></b></label>
+        <p class="hint">Severed limbs, cut props and shattered walls all share this budget; past it the
+          oldest piece is culled. It is the number that decides whether a long fight leaves a
+          battlefield behind it or a clean floor.</p>
+        <label class="check"><input type="checkbox" id="opt-instant-spawn"> Instant arrivals</label>
+        <p class="hint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
+          On, they simply appear — cheaper, and the honest choice on a machine that cannot afford the
+          craft.</p>
         <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>

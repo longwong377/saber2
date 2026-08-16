@@ -1049,6 +1049,117 @@ export async function run({ check, assert }) {
       + `  (${pSpread.toFixed(2)}× / ${gSpread.toFixed(2)}×)`;
   });
 
+  check('controls: no setting is read that nothing defaults — the guard is not the list', async () => {
+    /**
+     * THE HOLE IN THE OTHER TWO GUARDS, AND IT IS THE SHAPE OF THE HOLE THAT
+     * MATTERS.
+     *
+     * "every setting in DEFAULT_SETTINGS is read" and "every setting has a
+     * control" are both real checks and both iterate
+     * `Object.keys(DEFAULT_SETTINGS)`. So the ONE class of dead control neither
+     * can see is a setting that is READ by shipped code and never declared: it
+     * is not a key, so it is in neither loop, so it needs no reader and no
+     * control and nothing anywhere complains. A guard keyed on the list of
+     * things you remembered to declare cannot find the thing you forgot to
+     * declare.
+     *
+     * Four were hiding there and every one had a live reader:
+     *
+     *   settings.teamDamage        game/Command.js  — asked for by name in a
+     *                                                 player note
+     *   settings.commandFormation  game/Command.js
+     *   settings.instantSpawn      game/Waves.js    — the gate on every
+     *                                                 gunship, door and pod
+     *   settings.maxBodies         game/World.js    — the physics body cap
+     *
+     * So this one runs the other way round: it finds what the SOURCE reads and
+     * requires a default for it. Direct reads (`settings.x`, `world.settings.x`,
+     * `this.settings?.x`) and the aliased idiom the config functions all use
+     * (`const s = settings || {}` … `s.x`) — the second one scoped to the block
+     * the alias was declared in, or `s` in one function would credit `s` in
+     * every other.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const files = [];
+    const walk = async (dir, prefix) => {
+      for (const e of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1)) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) await walk(u, prefix + e.name + '/');
+        else if (e.name.endsWith('.js')) files.push([prefix + e.name, await readFile(u, 'utf8')]);
+      }
+    };
+    await walk(src(''), '');
+
+    // Comments and string literals go first. `'saber.settings.v4'` is a
+    // localStorage key, not a read, and the notes in this repo talk about
+    // settings by name constantly.
+    const strip = (t) => t
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"\\])\/\/.*$/gm, '$1')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+    /** From `at` forward to the end of the block that encloses it. */
+    const restOfBlock = (code, at) => {
+      let depth = 0;
+      for (let i = at; i < code.length; i++) {
+        if (code[i] === '{') depth++;
+        else if (code[i] === '}') { if (depth === 0) return code.slice(at, i); depth--; }
+      }
+      return code.slice(at);
+    };
+
+    const readAt = new Map();
+    const note = (key, where) => {
+      if (!readAt.has(key)) readAt.set(key, new Set());
+      readAt.get(key).add(where);
+    };
+    for (const [path, raw] of files) {
+      const code = strip(raw);
+      for (const m of code.matchAll(/\bsettings\??\.([A-Za-z_$][\w$]*)/g)) note(m[1], path);
+      for (const m of code.matchAll(
+        /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.?]*\.)?settings\s*(?:\|\||\?\?)?[^;\n]*;/g)) {
+        const scope = restOfBlock(code, m.index + m[0].length);
+        for (const u of scope.matchAll(new RegExp(`\\b${m[1]}\\??\\.([A-Za-z_$][\\w$]*)`, 'g'))) note(u[1], path);
+      }
+    }
+
+    /**
+     * THE ONE DECLARED EXCEPTION, and it is a scope and not an excuse.
+     *
+     * A duel's rules arrive in the HOST'S SESSION BLOB, not in the player's
+     * save: `worldSettings()` spreads `session` over `settings`, and the note
+     * over `session` in main.js is explicit that a session is a different scope
+     * from a preference — writing one of these into DEFAULT_SETTINGS would put
+     * somebody else's match rules into your own persisted file, which is the
+     * bug that note exists to record. `pvpRules({})` returns co-op's rules for
+     * every one of them by design, so a missing key here is an answer and not a
+     * hole. Held to a standard anyway: each must still be genuinely read, so
+     * this list cannot rot into a place to put things.
+     */
+    const SESSION_ONLY = ['pvp', 'duelRounds', 'duelHealth', 'duelRoundTime', 'duelBoons'];
+    const stale = SESSION_ONLY.filter(k => !readAt.has(k));
+    assert(!stale.length,
+      `declared session-scoped and read by nothing: ${stale.join(', ')} — the exemption list is rotting`);
+
+    const orphan = [...readAt.keys()]
+      .filter(k => !(k in DEFAULT_SETTINGS) && !SESSION_ONLY.includes(k))
+      .sort();
+    assert(!orphan.length,
+      `read by shipped code and defaulted nowhere: `
+      + orphan.map(k => `${k} (${[...readAt.get(k)].join(', ')})`).join('; ')
+      + ' — a setting with no default is invisible to every other check in this file, '
+      + 'so it needs no reader declaration and no control and nothing complains');
+
+    // …and the four this check was written for really are settled now.
+    for (const key of ['teamDamage', 'commandFormation', 'instantSpawn', 'maxBodies']) {
+      assert(key in DEFAULT_SETTINGS, `${key} has a reader in src/ and no default again`);
+      assert(readAt.has(key), `nothing in src/ reads ${key} any more — the setting is dead`);
+    }
+    return `${readAt.size} settings read across ${files.length} files: `
+      + `${readAt.size - SESSION_ONLY.length} defaulted, ${SESSION_ONLY.length} session-scoped, 0 orphaned`;
+  });
+
   check('controls: every setting in DEFAULT_SETTINGS is read by named code', async () => {
     const keys = Object.keys(DEFAULT_SETTINGS);
     const listed = Object.keys(SETTING_READERS);
@@ -1450,7 +1561,11 @@ export async function run({ check, assert }) {
       // object, the way `face` is one object, and written by `_wear`.
       'wardrobe',
       // Synthesised / spoken / both, on a card row of its own.
-      'speechMode'];
+      'speechMode',
+      // The standing order, as six cards built straight from FORMATIONS — the
+      // formation records ARE the card list, so the row cannot fall out of step
+      // with the orders on the keyboard.
+      'commandFormation'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the

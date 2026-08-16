@@ -47,7 +47,7 @@ import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
          WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
-import { FORMATIONS } from '../game/Command.js';
+import { FORMATIONS, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
 
 /**
  * THE SIX ORDER KEYS JOIN THE TABLE, HERE, AND IT HAS TO BE HERE.
@@ -305,8 +305,47 @@ export const DEFAULT_SETTINGS = {
    *           workshop setting, for looking at a power rather than earning it.
    */
   holocron: 'earned',
+  /**
+   * ── COMMAND: the two settings that had a reader and no control ──────
+   *
+   * `commandConfig` in game/Command.js reads both and is the only thing
+   * allowed to interpret either, exactly as `sandboxConfig` and `pvpRules`
+   * are for their own. Neither key was in this object, which is how both of
+   * them escaped BOTH of controls.mjs's dead-control guards at once: those
+   * guards iterate `Object.keys(DEFAULT_SETTINGS)`, so a setting that is read
+   * but never defaulted is invisible to the check that exists to find settings
+   * nothing can move. The guard is fixed in the same round as the settings —
+   * it now scans src/ for what is actually READ, which is what found these.
+   *
+   * `teamDamage` is note #29's, asked for by name: "maybe there's a setting
+   * for how much team damage you do." Its default is Command.js's own
+   * constant, not a second copy of 0.35.
+   */
+  teamDamage: TEAM_DAMAGE_DEFAULT,
+  /** The formation your army starts every area in. See FORMATIONS. */
+  commandFormation: DEFAULT_FORMATION,
   quality: 'high',
   resolutionScale: 1,
+  /**
+   * WHETHER REINFORCEMENTS FLY IN, OR SIMPLY APPEAR.
+   *
+   * `Waves.instantSpawn(settings)` is the single reader — a gunship on final
+   * approach, a door, a drop pod, all of Arrivals.js — and it had no default
+   * and no box, so the fast path existed and no player could reach it. Off is
+   * the game; on is what a machine that cannot afford the craft wants, and
+   * what anybody testing a wave wants.
+   */
+  instantSpawn: false,
+  /**
+   * HOW MUCH WRECKAGE THE PHYSICS WORLD WILL HOLD AT ONCE.
+   *
+   * Read by World's RapierWorld constructor, which culled the oldest debris
+   * past this many bodies and had no setting behind it — `settings.maxBodies
+   * ?? 1100`, where nothing anywhere wrote `maxBodies`. Severed limbs, cut
+   * props and shattered walls all land in that budget, so it is the one number
+   * that decides whether a long fight leaves a battlefield or a clean floor.
+   */
+  maxBodies: 1100,
   bloom: true,
   // Off by default: it is an instrument, not decoration. It exists because no
   // frame time in this project has ever been measured on real hardware — the
@@ -500,8 +539,18 @@ export const SETTING_READERS = {
   forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
   forceDrain:      ['game/Player.js', 'this.world.settings?.forceDrain'],
   holocron:        ['game/World.js', "settings.holocron"],
+  /* Command's two, and `commandConfig` is the only thing allowed to read
+   * either — the same shape as sandboxConfig and pvpRules, so a menu writes a
+   * free-form number and exactly one function decides what it means. */
+  teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
+  commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
+  /* One reader for arrivals, everywhere: the wave path, the sandbox path and
+   * the dojo's spawner all ask `instantSpawn(settings)` rather than testing the
+   * field, which is why there is one entry here and three call sites. */
+  instantSpawn:    ['game/Waves.js', 'settings.instantSpawn'],
+  maxBodies:       ['game/World.js', 'maxBodies: settings.maxBodies'],
   bloom:           ['main.js', '!!settings.bloom &&'],
   showPerf:        ['main.js', 'hud.perf(engine.profiler, settings.showPerf)'],
   grain:           ['main.js', 'engine.setGrain(settings.grain)'],
@@ -3776,6 +3825,31 @@ export class Menu {
     this._slider('opt-forcepower', 'forcePower', v => `${v.toFixed(2)}\u00d7`, v => this.hooks.onForce?.());
     this._slider('opt-forcedrain', 'forceDrain', v => (v <= 0 ? 'unlimited' : `${v.toFixed(2)}\u00d7`),
       v => this.hooks.onForce?.());
+    /**
+     * THE FOUR THAT HAD A READER AND NO CONTROL.
+     *
+     * `teamDamage` (note #29, asked for by name), `commandFormation`,
+     * `instantSpawn` and `maxBodies` were all read by shipped code and written
+     * by nothing — not a slider, not a box, not a card. All four slipped past
+     * BOTH dead-control checks for the same reason: those iterate
+     * `Object.keys(DEFAULT_SETTINGS)`, and none of the four was a key of it. A
+     * guard keyed on the list of things you remembered to declare cannot find
+     * the thing you forgot to declare. The guard now scans src/ for what is
+     * actually read, and that is what turned these up.
+     *
+     * None of them takes effect through a hook: `commandConfig`, `instantSpawn`
+     * and the physics constructor all read `world.settings` at the moment they
+     * need it, so the value written here is the value the next area, the next
+     * arrival and the next world get.
+     */
+    this._slider('opt-teamdamage', 'teamDamage',
+      v => (v <= 0 ? 'none' : `${Math.round(v * 100)}%`));
+    this._slider('opt-maxbodies', 'maxBodies', v => `${Math.round(v)} pieces`);
+    this._check('opt-instant-spawn', 'instantSpawn');
+    /* The standing order, as six cards — the formation records ARE the card
+     * list (id, name, blurb), so the row cannot fall out of step with the
+     * orders on the keyboard or with what the director will actually do. */
+    this._cardRow('command-list', 'h-standing-order', 'commandFormation', Object.values(FORMATIONS));
     this._slider('opt-scale', 'resolutionScale', v => `${Math.round(v * 100)}%`, v => this.hooks.onResolution?.(v));
     // The two multipliers on top of the tier. They have been keys of
     // DEFAULT_SETTINGS with real readers in World.loadLevel since the tier
