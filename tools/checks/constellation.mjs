@@ -487,6 +487,29 @@ export async function run({ check, assert }) {
      * So the size of the sky is load-bearing in two directions at once, and
      * this check is what says so: enough currents that a run cannot hold them
      * all, and few enough that a run holds a real share of them.
+     *
+     * ── WHAT IS ACTUALLY THIN, AND IT IS NOT THE SKY ─────────────────────
+     *
+     * The PURSE: 5.9 purchases against 24 drafted cards by wave 40. That is
+     * deliberate and it is pinned by "the tree never outgrows the draft it sits
+     * beside" three checks above, because the budget ramp is derived from the
+     * draft rate. Growing it is a balance pass, not an edit.
+     *
+     * Two things measured on the way here, neither of them fixed, both worth
+     * the next reader's time:
+     *
+     *   FIFTEEN of the 46 currents are never BOUGHT by a spender who buys the
+     *   moment it can afford anything — every root, every mastery, plus
+     *   lightning, compel and the saber throw. They are not unreachable: a
+     *   SAVER takes a mastery for 9 Insight at wave 12, because the escalator
+     *   counts purchases MADE and not Insight HELD. The system rewards saving
+     *   exactly as this file's header claims it should, and nothing in the game
+     *   tells the player that.
+     *
+     *   A QUARTER of purchases have exactly one affordable, reachable option
+     *   (mean 3.1, across 2.2 axes). A purchase with one option is not a
+     *   choice, and that — not the size of the table — is the honest form of
+     *   the "it is a lottery, not a build" complaint.
      */
     const styles = [{ kind: 'random' }, { kind: 'commit', axis: 'blade' }, { kind: 'commit', axis: 'dark' }];
     const runOne = (toWave, style, seed) => {
