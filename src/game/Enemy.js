@@ -1034,6 +1034,32 @@ const WIND_GAP = 7;          // seconds before it can be opened again
 const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
 
 /**
+ * HOW MANY LEGS A BODY LOSES BEFORE IT GOES DOWN, off the body's own bones.
+ *
+ * A free function rather than a method, and exported, because `tools/balance.mjs`
+ * needs the same answer to predict what a pass is worth and had its own copy of
+ * it — `/thigh|shin|foot|femur|tibia|tarsus/` plus a flat 3-or-1 — which stopped
+ * agreeing with the game the day the rule moved to `bone.role`. That is
+ * HANDOFF §2.4: the model restated the rule instead of calling it, and then the
+ * rule changed. One reader now, in both places.
+ *
+ * `chains - 1` is the cap and it is the whole of the interesting part: a body
+ * cannot be required to lose more legs than it has minus one, or a two-legged
+ * animal and a two-wheeled machine are asked for three and can never fall over
+ * at all. It is why a Rancor goes down on one leg — a Rancor with one leg is a
+ * Rancor on the sand — and why a Hailfire goes down on its first wheel, which
+ * `Rig.js` had already said in as many words ("losing one is losing the pair").
+ */
+export function toppleAt(A, rig) {
+  const authored = A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1;
+  let chains = 0;
+  for (const b of (rig?.list ?? [])) {
+    if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
+  }
+  return chains > 0 ? Math.max(1, Math.min(authored, chains - 1)) : authored;
+}
+
+/**
  * ── AND THE SAME ARGUMENT FOR EVERYTHING WITHOUT A BLADE ───────────────
  *
  * The note above fixed duellists and left the other twenty-four bodies exactly
@@ -2703,15 +2729,7 @@ export class Enemy {
    * `maxHp × vital × SEVER_LETHALITY` on the way through.
    */
   _toppleAt() {
-    if (this._toppleNeed === undefined) {
-      const A = this.A;
-      const authored = A.custom === 'walker' || A.custom === 'beast' ? 3 : 1;
-      let chains = 0;
-      for (const b of (this.rig?.list ?? [])) {
-        if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
-      }
-      this._toppleNeed = chains > 0 ? Math.max(1, Math.min(authored, chains - 1)) : authored;
-    }
+    if (this._toppleNeed === undefined) this._toppleNeed = toppleAt(this.A, this.rig);
     return this._toppleNeed;
   }
 

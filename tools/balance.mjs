@@ -120,7 +120,7 @@ const EnemyMod = await import('../src/game/Enemy.js');
  * only thing standing between the blade and a one-pass kill on every body in
  * the game, and a harness carrying its own copy of `hp / 90` would be HANDOFF
  * §2.4's defect on the single number this file's headline answer turns on. */
-const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT } = EnemyMod;
+const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT, toppleAt } = EnemyMod;
 
 /**
  * The elite-modifier layer, read through the game's own exports and tolerated
@@ -519,8 +519,12 @@ export function capsulesFor(entry) {
     const real = Enemy.prototype.capsules.call(stub);
     let floor = Infinity;
     for (const c of real) floor = Math.min(floor, c.p0.y - c.r, c.p1.y - c.r);
+    // The bone's own declared role travels with the capsule, so nothing
+    // downstream has to guess a leg from its spelling. See limbConsequence.
     out = real.map(c => ({
       name: c.name, r: c.r, len: c.p0.distanceTo(c.p1),
+      role: rig?.get?.(c.name)?.role ?? null,
+      topplesAt: toppleAt(A, rig),
       // No `?? 0.4`: `Enemy.severance` prices every capsule and throws on a
       // role it has no price for, so a default here would put back exactly the
       // silence this harness is used to measure the absence of.
@@ -532,15 +536,35 @@ export function capsulesFor(entry) {
   return out;
 }
 
-/** Enemy._loseLimbBehaviour, in the two forms that matter to a fight. */
-function limbConsequence(A, bone) {
-  if (/thigh|shin|foot|femur|tibia|tarsus/.test(bone)) {
-    const need = (A.custom === 'walker' || A.custom === 'beast') ? 3 : 1;
-    return { legs: 1, topplesAt: need };
-  }
+/**
+ * `Enemy._loseLimbBehaviour`, in the two forms that matter to a fight.
+ *
+ * THE LEG RULE IS CALLED, NOT RESTATED, and it used to be restated. This read
+ * `/thigh|shin|foot|femur|tibia|tarsus/` with a flat 3-or-1 topple threshold —
+ * a copy of what the game did before the rule moved onto `bone.role` and gained
+ * its `chains - 1` cap. The two then disagreed in both directions at once: the
+ * model counted no hip as a leg (the game counts every one), and it asked three
+ * legs of the two-chain bodies the game now takes down on one. A tuning harness
+ * that models a different game from the one it is tuning is worse than no
+ * harness, because its numbers look like measurements.
+ *
+ * So the role comes off the bone the capsule was built from, and the threshold
+ * is `Enemy.toppleAt` — the function the shipped `_toppleAt` itself calls —
+ * evaluated once per body and carried on the capsule beside it.
+ *
+ * STILL RESTATED, and named here rather than left to be found: the disarm rule
+ * and the decapitation rule below are literal copies of the two `if`s that
+ * follow the leg branch in `_loseLimbBehaviour`. They agree with it today. They
+ * are the same §2.4 shape as the leg rule was, and they will go the same way
+ * the first time somebody changes what an arm is worth — the fix is to lift the
+ * classification out of that method as a pure function, which is a refactor of
+ * live combat code and wants its own pass.
+ */
+function limbConsequence(A, cap) {
+  const bone = typeof cap === 'string' ? cap : cap.name;
+  if (cap?.role === 'leg') return { legs: 1, topplesAt: cap.topplesAt };
   if (/arm|fore|hand/.test(bone)) return { disarms: !!(A.ranged || A.saber) };
   if (bone === 'head' || bone === 'neck') return { decapitates: true };
-  if (/leg\d/.test(bone)) return { legs: 1, topplesAt: 2 };     // droideka
   return {};
 }
 
@@ -832,7 +856,7 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
   for (const cap of caps) {
     const r = workCapsule(cap, maxHp, maxHp, passSpeed, mods.cutPower, reach, cadence, 40);
     if (!isFinite(r.t)) continue;
-    const cons = r.severed ? limbConsequence(A, cap.name) : {};
+    const cons = r.severed ? limbConsequence(A, cap) : {};
     const neutral = r.dead || cons.decapitates
       || (cons.topplesAt === 1 && cons.legs) || cons.disarms;
     const turns = turnsFor(cap);
