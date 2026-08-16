@@ -878,6 +878,29 @@ export const TERRAIN_PRESETS = {
    * Everything else is the works, verbatim: same palette, same falls, same
    * shell. The two rooms are the same building.
    */
+  /**
+   * THE FOUNDRY'S SHELL MOVED OUT FROM 66 m TO 94, AND THAT IS THE DEPTH RULE.
+   *
+   * "The foundry could be cool if it weren't for the feeling that you're in a
+   * large box — the chemical stuff and industry stuff look cool but the walls
+   * and roof just take you out of it."
+   *
+   * The Temple is the level that worked out what to do about that and its own
+   * comment states the rule: an interior stops being a box when there are three
+   * more colonnades between the player and the wall. The plant on this floor is
+   * good and the player says so; what is wrong is that it stops at 56 m and
+   * then there is a wall, so the eye finds the edge of the room in one glance.
+   *
+   * So the wall goes back 28 m and the FIGHT DOES NOT MOVE. The bay grid, the
+   * gantries, the canal and the crate drift are all unchanged, at ±56; what
+   * fills the new annulus is three ranks of structure (see `deepRanks` in
+   * Levels.js), so from the middle of the floor the shell is behind a stanchion
+   * rank, behind a second, behind a third. It costs nothing on the fight and
+   * four draw calls on the frame, because the ranks are instanced.
+   *
+   * 94 → 112 rather than 66 → 84: the same 18 m of run, so the wall is still
+   * 46 m of ground at 69°, which is what `descent.mjs` needs it to be.
+   */
   foundry: {
     scale: 320, res: 180, waterLevel: -1.45, flat: true,
     // The works' palette verbatim: the two rooms are the same building, and
@@ -901,7 +924,7 @@ export const TERRAIN_PRESETS = {
     detail: [1.6, 26],
     height(x, z) {
       const d = Math.max(Math.abs(x), Math.abs(z));
-      const shell = smoothstep(66, 84, d) * 46;
+      const shell = smoothstep(94, 112, d) * 46;
       const gx = Math.abs(fract(x / 9) - 0.5), gz = Math.abs(fract(z / 9) - 0.5);
       const drain = -smoothstep(0.42, 0.5, Math.max(gx, gz)) * 0.09;
       // The canal, running across the hall on a slow S so it is never a ruled

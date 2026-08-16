@@ -617,13 +617,110 @@ function works(world, opts = {}) {
   const seed = opts.seed ?? 8100;
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
   const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
-  const R = 66;                       // where the shell wall starts climbing
+  /* R IS THE FIGHT AND SHELL IS THE ROOM, and they are two numbers now because
+   * the depth rule made them different things. R is where the plant, the bay
+   * grid, the gantries and the drift stop — unchanged at 66, because the note
+   * this pass answers is about the walls and not about the floor. SHELL is
+   * where the wall actually is, and it went out to 94 so there is somewhere for
+   * three ranks of structure to stand between the two. */
+  const R = 66;
+  const SHELL = 94;
   const lamp = opts.lampColor ?? 0xffb04a;
   const hot = !!opts.hot;
 
   // The roof first, because everything below is lit under it.
-  roof(world, { height: 16.5, half: R + 2, well: opts.well ?? 0, shadow: !!opts.well,
-    mat: M.hull, beamCount: 9 });
+  roof(world, { height: 16.5, half: SHELL + 2, well: opts.well ?? 0, shadow: !!opts.well,
+    mat: M.hull, beamCount: 11 });
+
+  /* ── THE DEPTH RANKS, and this is the fix for "you're in a large box".
+   *
+   * The rule is the Temple's and its own comment derives it: an interior stops
+   * being a box when there are three more colonnades between the player and the
+   * wall. Everything below this line is the works floor exactly as it was — the
+   * bay grid, the gantries, the canal, the drift — and it all stops at 56 m,
+   * which is why the player could find the wall in one glance.
+   *
+   * So the shell went out to 94 (see the `foundry` preset) and the 38 m of new
+   * room is filled with THREE RANKS of structure at 62, 76 and 90: stanchions
+   * carrying trusses, with the flare of a working floor between them. From
+   * anywhere in the fight the wall is behind three ranks, and every sight line
+   * out of the room ends on machinery rather than on plate.
+   *
+   * IT COSTS FOUR DRAW CALLS, which is the only reason it is affordable on a
+   * level already spending 386 of the 520 `world-immersion` allows. A rank is
+   * two instanced meshes' worth of geometry — the post and the truss — and the
+   * ranks share them, so three ranks of 96 stanchions come to two calls, and
+   * the collider is a static box per post.
+   *
+   * They are OUT OF THE FIGHT on purpose: the innermost rank is 6 m outside the
+   * bay grid's last cell, so nothing here changes what the floor plays like. It
+   * changes what it looks like past the last machine, which is the note. */
+  {
+    const posts = [], trusses = [], boxes = [];
+    const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
+    const pp = new THREE.Vector3(), ss = new THREE.Vector3();
+    for (const [rad, h] of [[62, 12.5], [76, 11.0], [90, 9.5]]) {
+      const n = Math.max(12, Math.round(rad * 8 / 14));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + rad * 0.013;
+        // walk the RECTANGLE, not a circle: this is a room
+        const c = Math.cos(a), s = Math.sin(a);
+        const kk = 1 / Math.max(Math.abs(c), Math.abs(s));
+        const x = c * kk * rad, z = s * kk * rad;
+        if (!T.inBounds(x, z, 3)) continue;
+        const y = T.height(x, z);
+        const yaw = Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2;
+        qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        posts.push(mm.clone().compose(pp.set(x, y, z), qq, ss.set(1, h / 10, 1)));
+        boxes.push({ x, y, z, h });
+        // the truss on to the next post of this rank, which is what makes a
+        // row of posts read as a building
+        const a2 = ((i + 0.5) / n) * TAU + rad * 0.013;
+        const c2 = Math.cos(a2), s2 = Math.sin(a2);
+        const k2 = 1 / Math.max(Math.abs(c2), Math.abs(s2));
+        const x2 = c2 * k2 * rad, z2 = s2 * k2 * rad;
+        if (!T.inBounds(x2, z2, 3)) continue;
+        const span = Math.hypot(x2 - x, z2 - z) * 2.0;
+        qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(x2 - x, z2 - z));
+        trusses.push(mm.clone().compose(pp.set(x2, T.height(x2, z2) + h - 0.6, z2), qq,
+          ss.set(1, 1, span)));
+      }
+    }
+    const postGeo = mergeGeos([
+      slabGeo(1.5, 0.4, 1.5, { tile: 2.4, seg: 2 }).translate(0, 0.2, 0),
+      slabGeo(0.85, 10.0, 0.85, { tile: 2.4, seg: 3 }).translate(0, 5.2, 0),
+      slabGeo(1.9, 0.5, 1.9, { tile: 2.4, seg: 2 }).translate(0, 10.3, 0),
+    ]);
+    const trussGeo = mergeGeos([
+      slabGeo(0.6, 0.5, 1.0, { tile: 2.4, seg: 2 }),
+      slabGeo(0.35, 1.5, 0.30, { tile: 1.6, seg: 2 }).translate(0, 0.9, 0),
+    ]);
+    addInstanced(world, postGeo, M.darkSteel, posts, V(0, 0, 0), { name: 'worksRank' });
+    addInstanced(world, trussGeo, M.rust, trusses, V(0, 0, 0),
+      { name: 'worksTruss', castShadow: false });
+    for (const b of boxes) {
+      world.physics.addStaticBox(new THREE.Vector3(b.x, b.y + b.h * 0.5, b.z),
+        new THREE.Vector3(0.45, b.h * 0.5, 0.45), new THREE.Quaternion(), { friction: 0.85 });
+    }
+    /* ── AND THE LIGHT THAT SAYS THERE IS SOMETHING OUT THERE. The one thing
+     * the Temple's references have that this room did not is a bright slot in
+     * the far distance: without it the depth is dark and reads as fog. Hazard
+     * lamps up the outer rank, instanced, so the far end of the room is a
+     * receding row of amber points rather than a wall. */
+    const slots = [];
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * TAU + 0.2;
+      const c = Math.cos(a), s = Math.sin(a);
+      const kk = 1 / Math.max(Math.abs(c), Math.abs(s));
+      const x = c * kk * 88, z = s * kk * 88;
+      if (!T.inBounds(x, z, 3)) continue;
+      qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2);
+      slots.push(mm.clone().compose(pp.set(x, T.height(x, z) + 7.0, z), qq, ss.set(1, 1, 1)));
+    }
+    addInstanced(world, slabGeo(0.5, 3.2, 0.9, { tile: 1.4, seg: 2 }),
+      opts.hot ? M.glowRed : M.glowAmber, slots, V(0, 0, 0),
+      { name: 'worksSlot', castShadow: false });
+  }
 
   /* ── THE SHELL. Bulkhead ribs standing against the terrain wall, so the
    * room has a built edge rather than a hillside painted grey. Every fourth
@@ -2693,9 +2790,14 @@ export const LEVELS = {
        * the bearings round the arena with nobody on them, and a crowd with
        * four holes in it reads as a set. */
       const gaps = [[Math.PI - 0.22, Math.PI + 0.22]];
+      /* FIVE SPECIES IN THE HOUSE. "Make them either alien species or mixes of
+       * aliens" — see the head table in `addCrowd`, which is where the five
+       * profiles and the reason each one exists are written down. Four extra
+       * draw calls on a level that spends 167. */
       addCrowd(world, V(0, 0, 0), {
         seed: 6300, rows: 20, rmin: 72, rmax: 118, rise: 1.62, y0: 6.2,
         aspect: 0.74, gaps, fill: 0.86, pitch: 1.2, stride: 240, excite: 1,
+        variants: 5,
       });
       /* THE LORDS, as the same instanced figure at 1.5× on three short rows
        * inside the box. One more draw call for the whole party, and the scale
