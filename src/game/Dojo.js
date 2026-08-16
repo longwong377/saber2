@@ -17,7 +17,7 @@ import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';
 import { GRADE } from './Combat.js';
 import { ARCHETYPES } from './Enemy.js';
-import { sandboxConfig, holdFire, tuneFireRate, DOJO_MIX } from './Waves.js';
+import { sandboxConfig, holdFire, tuneFireRate, walkIn, instantSpawn, DOJO_MIX } from './Waves.js';
 import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -270,7 +270,7 @@ export class DojoDirector {
 
     for (let i = 0; i < (s.remotes || 0); i++) {
       const a = (i / Math.max(1, s.remotes)) * TAU + 0.5;
-      const e = w.spawnEnemy('remote', _v2.set(anchor.x + Math.cos(a) * 5.5, 0, anchor.z + Math.sin(a) * 5.5));
+      const e = this._post('remote', anchor, a, 5.5);
       e.trainingFireRate = s.fireRate ?? 2.0;
       e.trainingBoltSpeed = s.boltSpeed ?? 30;
       e.invincible = !!s.invincibleRemotes;
@@ -278,11 +278,10 @@ export class DojoDirector {
     }
     for (let i = 0; i < (s.dummies || 0); i++) {
       const a = (i / Math.max(1, s.dummies)) * TAU - 0.8;
-      const e = w.spawnEnemy('dummy', _v2.set(anchor.x + Math.cos(a) * 3.4, 0, anchor.z + Math.sin(a) * 3.4));
-      this.dummies.push(e);
+      this.dummies.push(this._post('dummy', anchor, a, 3.4));
     }
     if (s.spar) {
-      const e = w.spawnEnemy('sparring', _v2.set(anchor.x, 0, anchor.z - 3.2));
+      const e = this._post('sparring', anchor, Math.PI, 3.2);
       if (e.duel) {
         e.duel.formKey = s.sparForm || 'makashi';
         e.duel.form = FORMS[e.duel.formKey];

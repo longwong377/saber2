@@ -285,6 +285,29 @@ export const ORDERS = [
 
 export const ORDER_IDS = ORDERS.map((o) => o.id);
 
+/**
+ * …AND IN COMMAND, THE ORDER IS ALSO THE ARMY.
+ *
+ * Player note #21 asks for "a Sith leading droids or a Jedi leading clone
+ * troopers", and that is not a second question the player should be asked. They
+ * have already chosen an order in the forge, that choice already costs them real
+ * numbers (see MODS above), and asking again on the deploy screen would let
+ * somebody be a Jedi at the head of a droid army — which is not a build, it is a
+ * bug wearing a menu.
+ *
+ * SO THE MAPPING IS NOT HERE. `ARMIES` in src/game/Command.js is the table with
+ * two entries in it, and each entry names the order it belongs to; a second copy
+ * of the pairing on this side would be the hand-maintained-twin defect this
+ * repository has been bitten by nine times, and it would be the copy that drifts
+ * — there are three orders and two armies, so a table here would have to invent
+ * an answer for the Grey and the two answers would eventually disagree.
+ *
+ * What the Grey gets is stated once, in `sideForOrder`: the Republic's, because
+ * somebody has to be at the head of the column. This paragraph exists so that a
+ * reader of THIS file, which is the file about what an order means, is not left
+ * to grep for where that decision lives.
+ */
+
 /** The order, or null. Null is a legal answer and means "no order at all". */
 export function getOrder(id) {
   return ORDERS.find((o) => o.id === id) || null;
