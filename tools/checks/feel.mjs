@@ -151,7 +151,7 @@ export async function run({ check, assert }) {
         // than being re-declared here — the same rule `_coop.stubEngine`
         // already applies to `lightUp`, and for the same reason: a second copy
         // of a rule beside the real one is HANDOFF §2.4.
-        engine._punch = 0; engine.rumbleLevel = 1;
+        engine._punch = 0;
         engine.punch = Engine.prototype.punch;
         engine.setDrain = Engine.prototype.setDrain;
         engine.setBars = Engine.prototype.setBars;
@@ -380,7 +380,7 @@ export async function run({ check, assert }) {
       const { world, engine } = await bootWorld({ level: 'arena' });
       let bars = 0;
       engine.setBars = (v) => { bars = v; };
-      engine.punch = Engine.prototype.punch; engine._punch = 0; engine.rumbleLevel = 1;
+      engine.punch = Engine.prototype.punch; engine._punch = 0;
       const boss = Object.keys(ARCHETYPES).find(k => ARCHETYPES[k].boss);
       assert(boss, 'no archetype on the roster declares itself a boss');
 
@@ -427,7 +427,7 @@ export async function run({ check, assert }) {
     const snap = await snapshotShared();
     try {
       const { world, engine } = await bootWorld({ level: 'arena' });
-      engine._punch = 0; engine.rumbleLevel = 1;
+      engine._punch = 0;
       engine.punch = Engine.prototype.punch;
       applyFeelSettings(world, { ...DEFAULT_SETTINGS, shake: false, slowmo: false });
       const e = world.spawnEnemy('b1', new THREE.Vector3(3, 0, -3));

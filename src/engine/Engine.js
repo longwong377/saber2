@@ -1593,13 +1593,13 @@ export class Engine {
     this._bars = 0; this._barsTarget = 0;
     /** Wall-clock ms the pad is busy until — see rumble(). */
     this._rumbleUntil = 0;
-    /**
-     * How hard the pad is allowed to be driven, 0..1. One number rather than a
-     * boolean so the same seam serves "off" and "less", and it is a MULTIPLIER
-     * on every call — a caller never has to know the setting. Written by the
-     * feel funnel; 1 until something says otherwise.
-     */
-    this.rumbleLevel = 1;
+    /* `rumbleLevel` is DELIBERATELY NOT INITIALISED HERE. Every call site
+     * already asks `world.feelOn('shake')` before it reaches the pad, so a
+     * field written once to the identity of its own operation and moved by
+     * nothing would be a second gate that is a claim rather than a control —
+     * the shape World.js's constructor removed `hpScale`/`dmgScale` for. The
+     * SEAM survives as `this.rumbleLevel ?? 1` in rumble(), so the day a
+     * strength slider exists it assigns this and every call scales. */
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
@@ -2248,13 +2248,13 @@ export class Engine {
    * @param ms     duration in milliseconds
    */
   rumble(strong = 0.4, weak = 0.2, ms = 90) {
-    if (this.rumbleLevel <= 0) return false;
+    const g = clamp(num(this.rumbleLevel, 1), 0, 1);
+    if (!(g > 0)) return false;
     const nav = typeof navigator !== 'undefined' ? navigator : null;
     if (!nav || typeof nav.getGamepads !== 'function') return false;
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const dur = clamp(num(ms, 90), 20, 1200);
     if (now < this._rumbleUntil) return false;
-    const g = clamp(num(this.rumbleLevel, 1), 0, 1);
     const s = clamp(num(strong, 0) * g, 0, 1), w = clamp(num(weak, 0) * g, 0, 1);
     let sent = false;
     let pads = null;

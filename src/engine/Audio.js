@@ -1662,10 +1662,13 @@ export class AudioEngine {
     this.tone({ freq: 2900, freqEnd: 2600, dur: 2.6, gain: 0.055, type: 'sine', attack: 0.35, prio: P });
     // Two beats at about 46 bpm — the rate a body slows to, not a resting pulse.
     this.tone({ freq: 58, freqEnd: 30, dur: 0.34, gain: 0.30, type: 'sine', attack: 0.006, prio: P });
-    this._beat = setTimeout(() => {
+    // `_at` and not `setTimeout`: the second beat belongs to the first, and a
+    // wall-clock timer is throttled to one a minute in a backgrounded tab and
+    // detached from a suspended context. Every musical timer in this file's
+    // history that used the wall clock has been wrong.
+    this._at(this.ctx.currentTime + 1.3, () => {
       this.tone({ freq: 54, freqEnd: 27, dur: 0.4, gain: 0.24, type: 'sine', attack: 0.006, prio: P });
-    }, 1300);
-    this._beat?.unref?.();
+    });
     // AND THE SCORE STOPS. A 49-minute orchestral track carrying on over your
     // corpse is the single loudest thing wrong with the moment.
     this.duckMusic(0.12, 0.9);
