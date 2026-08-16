@@ -21,6 +21,12 @@ import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Supp
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS } from './Combat.js';
+/* THE OTHER HALF OF THE FORCE CONTEST, IMPORTED RATHER THAN RE-DERIVED. The
+ * three constants that decide what a point of pool buys live over
+ * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
+ * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
+ * Enemy.js imports nothing from this file, so the edge is one-way. */
+import { forceResistance, IMPULSE_AS_HP } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -55,6 +61,11 @@ const _v12Q = new THREE.Quaternion(), _q5 = new THREE.Quaternion();
 // the exact class of bug that is invisible until an arm folds inside out.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
+/** `applyKnockback` scales the shove when the pool blunts it, and the vector it
+ *  is handed is somebody ELSE's scratch (`Enemy._castPower` passes its `_v2`) —
+ *  so it copies into its own rather than writing through the caller's. Exactly
+ *  the reason `Enemy.js` keeps a `_res` of its own. */
+const _res = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const FWD = new THREE.Vector3(0, 0, -1);
 /** Read-only stand-in for a missing pelvis offset. Never written to. */
@@ -2121,14 +2132,64 @@ export class Player {
    * keeping. `staggerTimer` rather than an `Enemy.stun`: a player is never
    * taken off the controls, which is a rule the whole game already keeps.
    */
+  /**
+   * SPEND THE POOL TO BLUNT AN INCOMING POWER — the player's half of the Force
+   * contest, and the half that did not exist. Driven before this line: a Sith
+   * shoving into your shove landed in full, and 50 hp of lightning delivered
+   * the same 42.5 whether your bar was empty or brimming. The bar was a
+   * spending account with no defensive side, so "answering a power with a
+   * power" could only ever mean casting first.
+   *
+   * `forceResistance` is CALLED, not copied. It is exported from Enemy.js for
+   * this exact caller and it carries the three numbers, the cap, the
+   * beaten-guard discount and the list of kinds that are the Force at all — one
+   * contest, one rulebook, both contestants reading it. A second copy here
+   * would be free to disagree with the body on the other end of the push.
+   *
+   * `staggerTimer > 0` is the player's `_guardOpen()`: the same "your guard is
+   * already beaten, so it defends less" rule the blade uses, expressed in the
+   * one state a player has instead of a stun (this game never takes the
+   * controls away, so there is no `stunTimer` to read).
+   *
+   * @returns hp of the blow taken off, having already spent the pool for it.
+   */
+  resistForce(amount, kind, source) {
+    if (!this.alive) return 0;
+    // …and never against yourself: a held power bills through the same door,
+    // and a caster paying twice for one cast is not a contest.
+    if (source === this) return 0;
+    const r = forceResistance(this.force, amount, kind, this.staggerTimer > 0);
+    this.force = Math.max(0, this.force - r.spend);
+    return r.blunt;
+  }
+
   applyKnockback(impulse, damage = 0, source = null, gentle = false) {
     if (!this.alive) return false;
+    /**
+     * PUSHING INTO A PUSH IS A CONTEST — and this mirrors `Enemy.applyKnockback`
+     * line for line, because it is the same contest seen from the other side.
+     *
+     * The blow is weighed ONCE, the shove priced alongside the damage in the
+     * same currency (`IMPULSE_AS_HP`), and the fraction the pool buys back is
+     * applied to both. Billing the two halves separately out of one pool would
+     * charge twice for one blow; blunting only the damage would let a resisted
+     * shove still take you the whole way. `preResisted` carries the decision
+     * down into `damage()` so it does not answer the same blow again.
+     */
+    let dmg = damage || 0;
+    const weight = dmg + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
+    const blunt = this.resistForce(weight, 'force', source);
+    if (blunt > 0) {
+      const k = Math.max(0, 1 - blunt / weight);
+      dmg *= k;
+      if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
+    }
     if (impulse) {
       this.velocity.add(impulse);
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
-    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+    return dmg > 0 ? this.damage(dmg, this.chest, source, 'force', true) : false;
   }
 
   setSaberColor(i) {
@@ -5618,7 +5679,7 @@ export class Player {
 
   /* ── damage & death ──────────────────────────────────────────────── */
 
-  damage(amount, point, source, kind) {
+  damage(amount, point, source, kind, preResisted = false) {
     if (!this.alive || this.invuln > 0) return false;
     /**
      * THE GATE, AND THIS IS THE ONLY PLACE A LOCAL PLAYER PASSES THROUGH IT.
@@ -5636,6 +5697,24 @@ export class Player {
      * explosions are untouched by this.
      */
     if (!canHarm(source, this)) return false;
+    /**
+     * THE FORCE ANSWERS THE FORCE — one call, at the SINK, so a blow is blunted
+     * exactly once however it was thrown. `Enemy.damage` carries the identical
+     * line for the identical reason: every power in the game arrives through
+     * either this method or `applyKnockback`, so one call in each is complete
+     * coverage, and a new power written next month inherits the contest without
+     * knowing it exists.
+     *
+     * `preResisted` is set by `applyKnockback`, which has already weighed the
+     * whole blow — shove and damage together — and must not have the remainder
+     * charged to the pool a second time here.
+     *
+     * BEFORE the difficulty scale, not after: `damageTaken` is how hard the
+     * world hits, and what the pool answers is the power that was thrown at it.
+     * The other order would make a Master's lightning cost more pool on Padawan
+     * than on Knight for landing less.
+     */
+    if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
     // A NaN here is unrecoverable and SILENT: hp becomes NaN, every later
