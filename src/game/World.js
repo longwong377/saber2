@@ -2838,13 +2838,18 @@ export class World {
       const p = list[i], c = d.commanders[i];
       p.team = sides[i];
       if (p === this.player) this.partyTeam = sides[i];
-      /* Onto their own end of the field. A remote body is driven by its own
-       * machine and will be corrected by the next packet — its commander's
-       * anchor is what its army forms up on, and that is the part that has to
-       * be right here. */
-      if (p.position && c?.anchor && typeof p.control === 'object') {
+      /**
+       * Onto their own end of the field — a remote body too, and that is not
+       * cosmetic. A formation is solved in its commander's frame, so a
+       * commander standing at the origin has their whole army walking back to
+       * the middle of the plain. A remote body is a DRAWING of one on another
+       * machine and its own next packet overwrites this; until that packet
+       * arrives, its army's frame has to be somewhere true, and the peer's own
+       * machine puts them here too (see `applySeat`).
+       */
+      if (p.position && c?.anchor) {
         p.position.copy(c.anchor);
-        if (p.actor?.setPosition) p.actor.setPosition(c.anchor);
+        p.actor?.setPosition?.(c.anchor);
       }
     }
 
