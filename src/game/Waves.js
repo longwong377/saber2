@@ -1627,16 +1627,23 @@ export class WaveDirector {
      * added budget goes on more bodies and the rest has nowhere to go but
      * quality — `_upgrade`, and past that the conditions.
      *
-     * `partyScale` divides back out because it is already in both budgets and
-     * in `heavyLimit`'s own per-blade term — a second blade is meant to buy a
-     * second interesting body, not a proportionally larger crowd of the same
-     * droids, and folding it in here would do the second.
+     * THE ALLOWANCE IS PER BLADE AND THE ANSWER IS SCALED, which is exactly the
+     * shape `heavyLimit` settled on and for the same reason. The arithmetic is
+     * done on one blade's share of the budget — otherwise a four-player party
+     * would be compared against a one-player knee and the curve would mean
+     * nothing — and the party multiplies the result, so a second blade on a
+     * level that scales with the party buys a longer wave as well as a heavier
+     * one. Dividing out and NOT multiplying back was measured and is wrong:
+     * `colosseum.mjs` reported wave 20 fielding ten creatures for two blades
+     * and seven for four, because the extra budget had nowhere to go but
+     * per-body quality and traded bodies away to get it.
      */
     const scale = this.partyScale();
     const atKnee = Math.min(curve(BODY_KNEE),
       this.budgetFor(BODY_KNEE) / scale / this.meanBodyThreat(BODY_KNEE, types));
     const added = (this.budgetFor(wave) - this.budgetFor(BODY_KNEE)) / scale;
-    return Math.max(1, Math.round(atKnee + BODY_COUNT_SHARE * added / this.meanBodyThreat(wave, types)));
+    const perBlade = atKnee + BODY_COUNT_SHARE * added / this.meanBodyThreat(wave, types);
+    return Math.max(1, Math.round(perBlade * scale));
   }
 
   /**
