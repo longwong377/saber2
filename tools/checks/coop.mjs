@@ -256,7 +256,36 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
-    const { host, client, pump } = await H.bootPair();
+    /**
+     * THE GROUND IS NAMED, AND THIS CHECK SPENT A WHOLE SESSION RED BECAUSE IT
+     * WAS NOT.
+     *
+     * `bootPair` defaulted to `'arena'`, a level the roster cull deleted, and
+     * `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does not know
+     * — so every drive of this check stood its marksman on the Ember Shelf,
+     * behind a rock. The `tel > 0` assertion below failed, and it was read as a
+     * telegraph-replication bug on the wire for as long as it stood. It is not.
+     * The HOST never charged either.
+     *
+     * Measured, one sniper at 26 m and 720 frames on each level of the roster,
+     * counting the frames it spends charging:
+     *
+     *     scoria      0        colosseum  71      geonosis  71
+     *     mustafar   65        wood       69      temple    77
+     *     kamino     71        drifts     71      foundry   72
+     *
+     * Nine of ten. Scoria is the one, it is the fallback every un-named boot
+     * lands on, and `_rangedBrain` gates `_beginTelegraph` behind
+     * `_hasLineOfSight`. So the ground is a PRECONDITION of what this measures
+     * and it has to be stated: an open arena floor, where a marksman 26 m away
+     * can see the person it is aiming at.
+     *
+     * The host's own telegraph is counted alongside the client's for the same
+     * reason. A check that measures only the far end cannot tell "the client
+     * never saw it" from "there was nothing to see", and it will report the
+     * first when the truth is the second — which is exactly what happened.
+     */
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
     for (let i = 0; i < 3; i++) {
       host.spawnEnemy(['sniper', 'trooper', 'trooper'][i], new THREE.Vector3(Math.cos(i) * 4, 0, 26 + Math.sin(i) * 3));
     }
@@ -268,12 +297,13 @@ export async function run({ check, assert }) {
       return live;
     };
     const hSeen = new Set(), cSeen = new Set();
-    let hPeak = 0, cPeak = 0, tel = 0;
+    let hPeak = 0, cPeak = 0, tel = 0, hTel = 0;
     for (let i = 0; i < 12 * 60; i++) {
       pump(1 / 60);
       hPeak = Math.max(hPeak, count(host, hSeen));
       cPeak = Math.max(cPeak, count(client, cSeen));
       for (const e of client.enemies) if (e.laser?.visible) tel++;
+      for (const e of host.enemies) if (e.laser?.visible) hTel++;
     }
     assert(hSeen.size > 5, `the host only fired ${hSeen.size} bolts — the scene is wrong, not the wire`);
     assert(cSeen.size > 0,
@@ -281,12 +311,15 @@ export async function run({ check, assert }) {
       + 'nothing to parry and no perfect return available in the whole session');
     assert(cSeen.size >= hSeen.size * 0.8,
       `the client saw ${cSeen.size} of the host's ${hSeen.size} bolts`);
+    assert(hTel > 0,
+      'no marksman charged a shot on the HOST either, so there was never a telegraph to replicate — '
+      + 'the scene is wrong, not the wire. Check the level this pair was booted on.');
     assert(tel > 0,
-      'a marksman charged its shot and the joining player never saw the laser — the fairness contract '
-      + 'of the entire ranged game is invisible to them');
+      `a marksman charged its shot on ${hTel} host frames and the joining player never saw the laser — `
+      + 'the fairness contract of the entire ranged game is invisible to them');
     assert(client.player.hp < 100, 'the replicated bolts do not reach the joining player at all');
     const line = `host ${hSeen.size} bolts (peak ${hPeak}) → client ${cSeen.size} (peak ${cPeak}), `
-      + `${tel} telegraph frames, client hp ${client.player.hp.toFixed(0)}`;
+      + `telegraph ${hTel} host / ${tel} client frames, client hp ${client.player.hp.toFixed(0)}`;
     host.unload(); client.unload();
     return line;
   });
