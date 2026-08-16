@@ -44,7 +44,40 @@ import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
-         WALK_SCALE, walkScale } from '../engine/Bindings.js';
+         WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS } from '../engine/Bindings.js';
+// The six formation orders, so they can be pushed through Bindings' seam below.
+import { FORMATIONS } from '../game/Command.js';
+
+/**
+ * THE SIX ORDER KEYS JOIN THE TABLE, HERE, AND IT HAS TO BE HERE.
+ *
+ * `FORMATIONS` is `game/`; `ACTIONS` is `engine/`. Neither may import the
+ * other — an engine module reaching up into game is the cross-layer edge this
+ * project has already paid for once as a boot-time TDZ crash. This file is
+ * `ui/`, it already imports eight game modules and the bindings table, and it
+ * is the screen where a control is rebound; it is the one place allowed to see
+ * both sides, so it is where they are introduced.
+ *
+ * At MODULE SCOPE, and above `CODEX`, on purpose. Everything downstream reads
+ * the table as a plain list — `defaultBindings`, `loadBindings`, the options
+ * list, `findConflicts`, `conflicts`, the Codex block generated below — and
+ * every one of them would see six fewer actions if this ran inside a
+ * constructor. A binding table that is complete only after somebody opens a
+ * menu is not a binding table.
+ *
+ * Nothing is typed twice: the id, the name, the default key and the blurb all
+ * come off the formation record. tools/checks/controls.mjs re-derives the same
+ * set straight from FORMATIONS and fails on any row that disagrees.
+ *
+ * Measured before it was written, because the graph is the whole risk: this
+ * edge was added and every module in the tree imported as a FIRST entry point
+ * in its own process — Player.js, Menu.js, Command.js, Enemy.js, HUD.js,
+ * World.js, Waves.js, Bodies.js. All eight evaluate clean, and FORMATIONS is
+ * fully initialised by the time this line runs from every one of them. Command
+ * imports Enemy, Bodies, Combat, Bolts, Waves and MathUtil, and none of those
+ * reaches back into ui/, so there is no cycle to close.
+ */
+registerOrders(FORMATIONS);
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
@@ -972,6 +1005,26 @@ export const CODEX = [
     // "In the Dojo" named a level that has been deleted; training is a MODE now
     // and runs in whichever theatre the player picked. See MODES.training.
     text: () => 'In <b>Training</b>: next lesson, previous lesson, start this one again.' },
+
+  /**
+   * THE ORDERS, GENERATED — six rows nobody typed.
+   *
+   * Every other row above names an action and lets the renderer print its live
+   * binding, which is what stops a key name going stale. These rows go one step
+   * further: the ROW ITSELF comes off `FORMATIONS`, through the registry
+   * `registerOrders` filled at the top of this file. Add a seventh formation in
+   * Command.js and it gets an action, a rebindable row in Options, a line here
+   * and a conflict warning, without a character being written in this file.
+   *
+   * A heading rather than six sentences each saying "in Command mode": the
+   * `head` row is a section title in the grid, and it is the only hand-written
+   * string in the whole block.
+   */
+  { head: 'Commanding an army' },
+  ...ORDER_ACTIONS.map(o => ({
+    keys: [o.action],
+    text: () => `<b>${o.name}</b> — ${o.blurb}`,
+  })),
 ];
 
 /**
@@ -1031,6 +1084,11 @@ export function keyChips(bindings, id, hold = false) {
  */
 export function codexHtml(bindings) {
   return CODEX.map((row) => {
+    // A SECTION TITLE, and it carries no key at all. It is an <h4> rather than
+    // a <div> so that everything measuring this grid — the row parser in
+    // tools/checks/controls.mjs included — goes on seeing exactly the rows a
+    // player can press, and a heading can never be mistaken for one.
+    if (row.head) return `<h4 class="codex-head">${escKey(row.head)}</h4>`;
     const lead = row.device ? `<kbd>${escKey(row.device)}</kbd>`
       : row.keys.map(id => keyChips(bindings, id, row.hold)).join(' ');
     return `<div>${lead}<span>${row.text(id => keyChips(bindings, id))}</span></div>`;

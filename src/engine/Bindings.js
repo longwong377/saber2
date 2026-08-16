@@ -170,6 +170,102 @@ export const ACTIONS = [
 
 export const ACTION_IDS = ACTIONS.map(a => a.id);
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  A REGISTRATION SEAM, so a table upstream of this file cannot drift    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * SIX ORDER KEYS THAT NOTHING COULD SEE — and why the fix is a seam.
+ *
+ * `FORMATIONS` (src/game/Command.js) carries the key each order wants —
+ * Digit6…Digit0 and Minus — and main.js read them RAW: `input.hit(F.key)`.
+ * Everything this file exists to guarantee was therefore false for six of the
+ * game's controls at once. They were not rebindable, they were on no controls
+ * card, they were in no Codex row, and `findConflicts` reported every one of
+ * those seven codes as FREE — so the options screen would happily hand Digit6
+ * to something else and produce a collision it could not warn about and no
+ * rebind could separate. That is the KeyB/KeyN disease, twice over, in the one
+ * mode where a mis-press means an order to your own army.
+ *
+ * THE OBVIOUS FIX IS THE WRONG ONE. Six literal rows in ACTIONS above —
+ * `{ id: 'form.circle', keys: ['Digit6'] }` and five more — is a hand-written
+ * table sitting beside the generated one it copies, which is HANDOFF §2.3 and
+ * the single most repeated defect in this repository (eight instances found so
+ * far). Change a formation's key in Command.js and the rows here go on
+ * describing the old game, silently, with nothing able to notice.
+ *
+ * AND THE DIRECT IMPORT IS ALSO THE WRONG ONE. This file is `engine/`;
+ * `FORMATIONS` is `game/`. An engine module that reaches up into game closes a
+ * cycle whose shape this project has already paid for once as a boot-time TDZ
+ * crash, and it would make the key table of every mode depend on the module
+ * graph of one of them.
+ *
+ * So neither side imports the other. The GAME's table stays the only authority
+ * for what an order is called and which key it wants; this file publishes the
+ * shape of a binding and a door to push records through. `src/ui/Menu.js` — a
+ * ui module, which is allowed to see both — calls `registerOrders(FORMATIONS)`
+ * once at module scope, and everything downstream (defaultBindings, the
+ * options list, the conflict finder, the Codex, main.js's own reader) sees six
+ * ordinary actions it does not have to know anything special about.
+ *
+ * Nothing here is typed twice. `id`, `name`, `key` and `blurb` all come off the
+ * formation record; `tools/checks/controls.mjs` re-derives the same set from
+ * `FORMATIONS` and fails if one row disagrees or is missing.
+ */
+export const ORDER_GROUP = 'Command';
+
+/** The action id a formation answers to. One rule, called by everyone. */
+export const orderActionId = (formationId) => `form.${formationId}`;
+
+/**
+ * The registered orders, in the order they were declared, as
+ * `{ id, action, label, blurb, key }` — `id` the formation's, `action` this
+ * table's. Empty until `registerOrders` runs; a mode that is never loaded
+ * costs nothing.
+ */
+export const ORDER_ACTIONS = [];
+
+/**
+ * Teach the bindings table about a set of orders.
+ *
+ * Idempotent and re-entrant BY DESIGN: called twice with a changed table, the
+ * second call rewrites the rows rather than appending a second set of them.
+ * That matters because the alternative — "first registration wins" — is how a
+ * seam quietly becomes the stale twin it was built to abolish.
+ *
+ * `ACTIONS` and `ACTION_IDS` are mutated in place rather than replaced.
+ * `ACTION_IDS` is a module-scope snapshot every consumer of this file already
+ * holds a reference to (`loadBindings`, `findConflicts`, `conflicts`), so a
+ * reassignment would leave all three of them iterating the old six-short list —
+ * which is precisely the invisibility this seam exists to end.
+ *
+ * @param {object|Array} formations `FORMATIONS`, or any list of records with
+ *        `{ id, name, key }` and optionally `blurb`.
+ * @returns {Array} the registered rows.
+ */
+export function registerOrders(formations) {
+  const list = Array.isArray(formations) ? formations : Object.values(formations || {});
+  for (const F of list) {
+    if (!F || !F.id || !F.key) continue;
+    const action = orderActionId(F.id);
+    const row = {
+      id: action, group: ORDER_GROUP,
+      // "Order:" so the options screen's Command group reads as a column of
+      // orders rather than six nouns, and so the label follows a rename of the
+      // formation without anybody editing this file.
+      label: `Order: ${F.name}`,
+      keys: [F.key],
+      order: F.id, blurb: F.blurb || '',
+    };
+    const at = ACTIONS.findIndex(a => a.id === action);
+    if (at >= 0) ACTIONS[at] = row; else { ACTIONS.push(row); ACTION_IDS.push(action); }
+    const seen = ORDER_ACTIONS.findIndex(o => o.action === action);
+    const pub = { id: F.id, action, name: F.name, label: row.label, blurb: row.blurb, key: F.key };
+    if (seen >= 0) ORDER_ACTIONS[seen] = pub; else ORDER_ACTIONS.push(pub);
+  }
+  return ORDER_ACTIONS;
+}
+
 /**
  * HOW MUCH OF THE ORDINARY PACE A HELD SLOW WALK LEAVES.
  *

@@ -34,7 +34,11 @@ import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings, CODEX, SCHEMES, c
   keyChips } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
 import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, findConflicts,
-  resolveConflicts, keyLabel } from '../../src/engine/Bindings.js';
+  resolveConflicts, keyLabel, ORDER_ACTIONS, ORDER_GROUP, orderActionId,
+  registerOrders } from '../../src/engine/Bindings.js';
+// The authority for what an order IS. Imported here so the check can re-derive
+// the six rows from the same place Menu.js derives them, and disagree.
+import { FORMATIONS, FORMATION_IDS } from '../../src/game/Command.js';
 import { Input } from '../../src/engine/Input.js';
 import { SaberController } from '../../src/game/SaberController.js';
 import { QUALITY } from '../../src/engine/Engine.js';
@@ -562,8 +566,29 @@ export async function run({ check, assert }) {
         readers.get(m[1]).push(path);
       }
     }
+    /**
+     * THE ORDERS ARE READ THROUGH A REGISTRY, NOT BY NAME, and the regex above
+     * cannot see that — by construction, because the whole point of the seam is
+     * that nobody types `'form.circle'` anywhere.
+     *
+     * So they are credited against the seam itself, stated: main.js must walk
+     * `ORDER_ACTIONS` and ask `actHit` for each row's own action id. Delete the
+     * loop and this fails exactly as a dead action would; replace it with six
+     * literal `actHit('form.…')` calls and the readers map picks them up on the
+     * ordinary path instead. Either way an order key that nothing presses is
+     * still caught.
+     */
+    const orderIds = new Set(ORDER_ACTIONS.map(o => o.action));
+    if (orderIds.size) {
+      const mainSrc = files.find(([p]) => p === 'main.js')?.[1] || '';
+      const walks = /for\s*\(\s*const\s+(\w+)\s+of\s+ORDER_ACTIONS\s*\)/.exec(mainSrc);
+      assert(walks, 'main.js no longer walks ORDER_ACTIONS, so the six order keys are read by nobody');
+      assert(new RegExp(`\\.actHit\\(\\s*${walks[1]}\\.action\\s*\\)`).test(mainSrc),
+        `main.js walks ORDER_ACTIONS but never asks input.actHit(${walks[1]}.action) — `
+        + 'the orders are back to being raw key codes');
+    }
     // moveF..moveR come through Input.moveAxis, which names every one of them.
-    const dead = ACTION_IDS.filter(id => !readers.has(id));
+    const dead = ACTION_IDS.filter(id => !readers.has(id) && !orderIds.has(id));
     assert(!dead.length,
       `bound, listed and handled by nobody: ${dead.join(', ')} — every one is a key that does nothing`);
     assert(readers.get('scoreboard').includes('main.js'),
@@ -644,6 +669,84 @@ export async function run({ check, assert }) {
     assert(/keyLabel\(\s*\(input\.bindings\.scoreboard/.test(main),
       'the scoreboard prints a hardcoded key instead of the one it is bound to');
     return `#scoreboard filled from act('scoreboard'), default ${b.scoreboard.join('+')}, hold, label from the binding`;
+  });
+
+  check('controls: the six order keys are in the table, and the table is not a copy', async () => {
+    /**
+     * WHAT THIS IS FOR.
+     *
+     * main.js used to read the orders as RAW key codes — `input.hit(F.key)`,
+     * straight off `FORMATIONS`, past ACTIONS entirely. Six controls that were
+     * not rebindable, on no controls card, in no Codex row, and — the part that
+     * makes it a bug rather than an omission — invisible to `findConflicts`,
+     * which reported Digit6-Digit0 and Minus as FREE. The options screen would
+     * hand one of them to something else, warn about nothing, and no rebind
+     * could separate the pair afterwards.
+     *
+     * The obvious repair is six literal rows in Bindings.js. That is HANDOFF
+     * §2.3 — a hand-written table beside its generated twin — and it fails
+     * SILENTLY: change a key in Command.js and the copy goes on describing a
+     * game that stopped existing. So the rows are derived, and this check is the
+     * thing that says so: it re-derives them from `FORMATIONS` itself and
+     * compares field by field. A hand-edited row cannot survive it.
+     */
+    assert(ORDER_ACTIONS.length === FORMATION_IDS.length,
+      `${FORMATION_IDS.length} formations, ${ORDER_ACTIONS.length} registered orders — `
+      + 'somebody added a formation and the bindings table did not follow');
+
+    const b = defaultBindings();
+    const wrong = [];
+    for (const id of FORMATION_IDS) {
+      const F = FORMATIONS[id];
+      const action = orderActionId(id);
+      const row = ACTIONS.find(a => a.id === action);
+      if (!row) { wrong.push(`${id}: no action row at all`); continue; }
+      if (row.group !== ORDER_GROUP) wrong.push(`${id}: group ${row.group}, not ${ORDER_GROUP}`);
+      // The DEFAULT KEY is the field that drifts, because it is the one a
+      // designer moves. It has exactly one author and this is the assertion
+      // that keeps it that way.
+      if ((b[action] || [])[0] !== F.key) {
+        wrong.push(`${id}: bound to ${(b[action] || []).join('+') || 'nothing'}, Command.js says ${F.key}`);
+      }
+      if (!row.label.includes(F.name)) wrong.push(`${id}: label "${row.label}" does not name the formation`);
+      const pub = ORDER_ACTIONS.find(o => o.action === action);
+      if (pub?.blurb !== F.blurb) wrong.push(`${id}: the registry's blurb is not the formation's`);
+    }
+    assert(!wrong.length, wrong.join('; '));
+
+    // Nothing typed the codes into this file's own layer either: no order key
+    // may appear as a literal anywhere in Bindings.js or main.js.
+    const bindingsSrc = await readFile(src('engine/Bindings.js'), 'utf8');
+    const mainSrc = await readFile(src('main.js'), 'utf8');
+    const keys = FORMATION_IDS.map(id => FORMATIONS[id].key);
+    for (const [what, text] of [['Bindings.js', bindingsSrc], ['main.js', mainSrc]]) {
+      // Comments are prose and may name a key; code may not. Strip both comment
+      // forms before looking, or the notes explaining this very rule trip it.
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const typed = keys.filter(k => code.includes(`'${k}'`) || code.includes(`"${k}"`));
+      assert(!typed.length,
+        `${what} types the order key(s) ${typed.join(', ')} as a literal — that is the copy `
+        + 'this seam exists to abolish');
+    }
+
+    // A registration run twice must not double the table. The seam is called
+    // once today; "first one wins" is how a seam becomes the stale twin.
+    const before = ACTION_IDS.length;
+    registerOrders(FORMATIONS);
+    assert(ACTION_IDS.length === before,
+      `registering the orders a second time grew the table from ${before} to ${ACTION_IDS.length}`);
+
+    // And they are reachable as ordinary bindings: no clash with anything, and
+    // the conflict finder can now SEE them, which was the whole hole.
+    assert(!conflicts(b).length, 'the shipped defaults clash once the orders are in the table');
+    for (const id of FORMATION_IDS) {
+      const found = findConflicts(b, FORMATIONS[id].key, null);
+      assert(found.includes(orderActionId(id)),
+        `findConflicts still reports ${FORMATIONS[id].key} as free — the options screen would `
+        + 'hand it to something else without a warning');
+    }
+    return `${ORDER_ACTIONS.length} orders under "${ORDER_GROUP}": `
+      + ORDER_ACTIONS.map(o => `${o.name} ${keyLabel(o.key)}`).join(', ');
   });
 
   check('controls: no shipped default binds one key to two actions', () => {

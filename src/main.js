@@ -17,9 +17,10 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
-import { FORMATIONS, FORMATION_IDS } from './game/Command.js';
+// No `FORMATIONS` import any more: the orders reach this file as ordinary
+// bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
-import { keyLabel } from './engine/Bindings.js';
+import { keyLabel, ORDER_ACTIONS } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
@@ -1265,14 +1266,22 @@ function lessonKeys() {
  * the raw `e.code === 'KeyN'` listener the note above records: one table, one
  * reader, and a formation added tomorrow is bound the day it is authored.
  *
- * READ AS RAW CODES AND NOT THROUGH `input.act`, WHICH IS A KNOWN GAP. Every
- * other verb in this game is an entry in `ACTIONS` (src/engine/Bindings.js), so
- * it appears on the controls card, it is rebindable, and `findConflict` can see
- * it — and that file is owned by another lane right now. Six rows under a
- * "Command" group is the whole change and it is written down in the handover at
- * the foot of src/game/Command.js. Until it lands these six are raw keys, which
- * means they are NOT rebindable and DO NOT show on the controls card; they are
- * also on Digit6-Digit0 and Minus, which `findConflict` reports as free.
+ * READ THROUGH THE TABLE NOW, AND THAT WAS THE WHOLE OF THE GAP. This loop used
+ * to be `input.hit(F.key)` — raw `KeyboardEvent.code`s, straight off the
+ * formation record, past `ACTIONS` entirely. Six of the game's controls were
+ * therefore not rebindable, on no controls card, in no Codex row, and INVISIBLE
+ * TO `findConflicts`: Digit6-Digit0 and Minus all reported as free, so the
+ * options screen would hand one of them to something else and produce a
+ * collision it could not warn about and no rebind could separate. That is the
+ * KeyB/KeyN disease — see the notes on `stasis` and `rend` in Bindings.js — in
+ * the one mode where a mis-press is an order to your own army.
+ *
+ * The fix is a SEAM and not six new literal rows beside `FORMATIONS`, because a
+ * hand-written table next to the generated one it copies is this repository's
+ * signature defect (HANDOFF §2.3). `Menu.js` pushes `FORMATIONS` through
+ * `registerOrders` at module scope; `ORDER_ACTIONS` is what comes back, in
+ * declaration order, and this reads it. Every key name, label and blurb still
+ * has exactly one author: Command.js.
  *
  * Guarded on `world.command` so the keys are inert in every other mode, rather
  * than being six more things that can happen while you are duelling.
@@ -1281,11 +1290,10 @@ function orderKeys() {
   if (screens.state !== 'playing') return;
   const cmd = world?.command;
   if (!cmd) return;
-  for (const id of FORMATION_IDS) {
-    const F = FORMATIONS[id];
-    if (!F.key || !input.hit(F.key)) continue;
-    if (!cmd.order(id)) continue;
-    hud.message(F.name.toUpperCase(), F.blurb);
+  for (const o of ORDER_ACTIONS) {
+    if (!input.actHit(o.action)) continue;
+    if (!cmd.order(o.id)) continue;
+    hud.message(o.name.toUpperCase(), o.blurb);
     break;                       // one order a frame; two at once is neither
   }
 }

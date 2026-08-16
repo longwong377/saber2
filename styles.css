@@ -479,6 +479,12 @@ button{font-family:inherit}
 .codex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px 22px}
 .codex-grid div{display:flex;gap:11px;align-items:flex-start;font-size:12px;color:var(--dim);line-height:1.55}
 .codex-grid kbd{flex:none;margin-top:1px}
+/* A section title inside the grid. Same rule as h3 — a tab knocked out of the
+   ink — one size down, because it divides a list rather than heading a column. */
+.codex-head{display:flex;align-items:center;gap:9px;margin:8px 0 -2px;
+  font:var(--mono);font-size:9.5px;font-weight:800;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--accent-warm)}
+.codex-head::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .codex-grid b{color:var(--ink)}
 .codex-list{margin:0 0 0 18px;color:var(--dim);font-size:12.5px;line-height:1.85}
 .codex-list b{color:var(--ink)}
