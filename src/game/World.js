@@ -3747,6 +3747,14 @@ export class World {
     e._netKnock = true;
     const inner = e.applyKnockback.bind(e);
     e.applyKnockback = (impulse, damage, source, gentle) => {
+      const mine = !!source?.isLocal && this.netMode === 'client';
+      /* READ BEFORE THE CALL, not after it. Every force power in Player.js
+       * hands this a shared module scratch (`_v2`), `applyKnockback` re-enters
+       * a great deal of code through `damage` and `stun`, and this file already
+       * carries a note about a direction being clobbered part way through a
+       * loop for exactly that reason. Three numbers cost less than the
+       * question of whether anything downstream writes to that vector. */
+      const v = mine && impulse ? [r2(impulse.x), r2(impulse.y), r2(impulse.z)] : null;
       /**
        * APPLIED LOCALLY FIRST, and for the reason the blade is: each player is
        * authoritative over their own hands because they cannot tolerate a frame
@@ -3756,14 +3764,13 @@ export class World {
        * stops the next snapshot stomping the shove it just applied.
        */
       inner(impulse, damage, source, gentle);
-      if (!source?.isLocal || this.netMode !== 'client') return;
+      if (!mine) return;
       this._netOwn(e);
       // A body you were holding and have now thrown is a body you have let go
       // of, and the host has to hear that BEFORE the throw or it will hold the
       // thing in place while it flies. One rule, two callers.
       this._netGripSync(e);
-      this._claim({ t: 'claim', k: 'imp', id: e.id,
-        v: impulse ? [r2(impulse.x), r2(impulse.y), r2(impulse.z)] : null,
+      this._claim({ t: 'claim', k: 'imp', id: e.id, v,
         d: Math.round((damage || 0) * 10) / 10,
         g: gentle ? 1 : 0 }, e);
     };
