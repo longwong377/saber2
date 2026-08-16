@@ -2242,13 +2242,15 @@ export class Enemy {
   }
 
   /**
-   * THE GUARD TURNS A KILLING PASS ASIDE — see the note on GUARD_PER_HP for the
-   * whole argument and the measurements it comes from.
+   * THE GUARD TURNS A KILLING PASS ASIDE — see the notes on GUARD_PER_HP (a
+   * duellist's blade) and HIDE_PER_KG (everything else's own bulk) for the whole
+   * argument and the measurements both come from.
    *
    * Three gates, and each is here so that this is a duel rather than a wall:
    *
    *   · only a FIGHT-ENDING pass is turned. A duellist still bleeds from every
    *     ordinary cut at exactly the rate it always did, and still loses legs.
+   *     `_fightEnding` is where the two kinds of body differ, and it says why.
    *   · only while the guard is UP. Everything the player earns — a parry, a
    *     chamber, a won blade lock, a Force shove, a heavy blow, a topple, a
    *     grip, a severed arm — opens it, and the killing pass lands at once.
