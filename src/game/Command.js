@@ -1035,6 +1035,17 @@ export function enlistBody(e, trooper, opts = {}) {
   const teamDamage = opts.teamDamage ?? TEAM_DAMAGE_DEFAULT;
   e.team = opts.team ?? 0;
   e.commandOf = opts.director ?? null;
+  /**
+   * …AND WHICH OF THEM COMMANDS IT, which is a different question the moment
+   * there are two people on the field with armies.
+   *
+   * `commandOf` is the DIRECTOR — the rules, one per world, and what
+   * `installCommand`'s wrapper calls into. `cmdr` is the COMMANDER — the state:
+   * whose roster this name is on, whose formation it forms up in, whose frame
+   * its slot is solved in and whose measured pace it walks home at. Every one
+   * of those used to be the local player's by construction.
+   */
+  e.cmdr = opts.cmdr ?? null;
   e.trooper = trooper;
   trooper.body = e;
 
@@ -1150,6 +1161,81 @@ export function installTeamDamage(e, scale) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  A commander                                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ONE PERSON AND THE ARMY THEY LEAD.
+ *
+ * THE OWNER'S QUESTION IS "can two sides command two different armies and meet
+ * on the battlefield?", and the answer was no for one structural reason: every
+ * piece of state an army has lived on the DIRECTOR, and the director keyed all
+ * of it to `world.player`. One roster, one formation, one army, one measured
+ * leader pace, one planted frame — nine methods reached for `this.world.player`
+ * and there is exactly one of those on a machine.
+ *
+ * So this object is the split, and the line it is drawn on is worth stating
+ * because it is the whole design: **the commander is the STATE, the director is
+ * the RULES.** A formation's geometry, a leash's arithmetic, the promotion
+ * ladder, the muster's prices and the wave composer are the same for everybody
+ * on the field and stay where they are; who is standing where, what they are
+ * called, which army they belong to and what order is in force are per-person
+ * and live here.
+ *
+ * That is why the methods did NOT move. `steer`, `slotFor`, `targetFor` and
+ * `followSpeed` still belong to the director and now read their state off the
+ * commander the body belongs to (`e.cmdr`), which means there is still exactly
+ * one implementation of every rule — two armies fight by the same physics, and
+ * a second copy of `slotFor` for the second commander is precisely the twin
+ * defect this codebase has paid for eight times.
+ *
+ * `side` is passed IN as a number rather than derived here, for the reason
+ * `enlistBody`'s `team` is: a static import edge from this file to Player.js
+ * closes a cycle through Waves.js, and Player.js is where `SIDES` and
+ * `sideTeam` live. World has the number in hand.
+ */
+export class Commander {
+  constructor(director, opts = {}) {
+    this.director = director;
+    /** The Player or RemoteAvatar giving the orders. */
+    this.player = opts.player ?? null;
+    /** Their side, from `sideTeam` — the number every body of theirs wears. */
+    this.side = opts.side ?? 0;
+    this.army = opts.army || ARMIES.republic;
+    this.foe = enemyOf(this.army);
+    this.roster = new CommandRoster(this.army);
+    this.formation = FORMATIONS[opts.formation] ? opts.formation : DEFAULT_FORMATION;
+    /** The frame a non-advancing formation was planted in. See `_anchorFor`. */
+    this._planted = null;
+    /** This commander's own measured pace. See `_trackLeader`/`followSpeed`. */
+    this._leaderSpeed = 0;
+    this._leaderPos = null;
+    /**
+     * WHERE THIS ARMY COMES DOWN, when there is no commander standing there to
+     * come down around.
+     *
+     * `deploy` puts the roster in a ring around its commander, which is right
+     * for a campaign — they arrived with you. Two armies meeting need two
+     * anchors 620 m apart on a plain, and the second one may belong to a peer
+     * whose body has not been built on this machine yet. Null means "around the
+     * commander", which is every existing caller.
+     */
+    this.anchor = opts.anchor ? opts.anchor.clone() : null;
+    /** Which way this army faces when it is planted on an anchor. */
+    this.facing = opts.facing ?? 0;
+  }
+
+  get world() { return this.director?.world ?? null; }
+  get name() { return this.player?.name ?? this.army.leader; }
+  /** Everything of this commander's still on its feet, the bodies alone. */
+  get standing() {
+    let n = 0;
+    for (const t of this.roster.living) if (t.body && !t.body.dead) n++;
+    return n;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  The director                                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -1174,17 +1260,22 @@ export class CommandDirector extends WaveDirector {
     super(world, { ...opts, mode: 'command' });
     const cfg = commandConfig(world?.settings);
 
-    /** Which army the player leads, and therefore which one comes for them. */
-    this.army = opts.army || sideForOrder(world?.settings?.order ?? world?.player?.order ?? 'jedi');
-    this.foe = enemyOf(this.army);
-    this.roster = new CommandRoster(this.army);
+    /**
+     * EVERY PERSON ON THIS FIELD WITH AN ARMY, and there used to be room for
+     * exactly one.
+     *
+     * The local player's is built here so that a solo campaign is the list with
+     * one entry in it and nothing about it is a special case. A second
+     * commander is added by `enlist` below when a session has one — that is the
+     * whole of "two sides command two different armies".
+     */
+    this.commanders = [new Commander(this, {
+      player: world?.player ?? null,
+      side: opts.side ?? world?.partyTeam ?? 0,
+      army: opts.army || sideForOrder(world?.settings?.order ?? world?.player?.order ?? 'jedi'),
+      formation: cfg.formation,
+    })];
     this.teamDamage = cfg.teamDamage;
-    this.formation = cfg.formation;
-    /** The frame a non-advancing formation was planted in. See `_anchorFor`. */
-    this._planted = null;
-    /** The commander's own pace, measured. See `_trackLeader`/`followSpeed`. */
-    this._leaderSpeed = 0;
-    this._leaderPos = null;
     this.areaIndex = 0;
     this.areaWaves = 0;
     /** Raised once, when the last area is behind you. See `_endCampaign`. */
@@ -1201,6 +1292,46 @@ export class CommandDirector extends WaveDirector {
 
     this._musterOpening();
   }
+
+  /* ── the local commander, and the surface every existing caller uses ── */
+
+  /**
+   * THE COMMANDER THIS MACHINE IS PLAYING.
+   *
+   * Every reader that predates two armies — the HUD, the muster screen, the run
+   * summary, twenty-six checks — asks the DIRECTOR for `roster`, `army`,
+   * `formation`. All of them mean "mine", and all of them keep working because
+   * these forward. That is deliberate rather than transitional: on a machine
+   * there is one person holding the mouse, and "the army I am leading" is a
+   * real thing to be able to ask for by name.
+   */
+  get commander() { return this.commanders[0]; }
+  get roster() { return this.commander.roster; }
+  get army() { return this.commander.army; }
+  get foe() { return this.commander.foe; }
+  get formation() { return this.commander.formation; }
+  set formation(id) { this.commander.formation = id; }
+
+  /**
+   * A SECOND PERSON WITH A SECOND ARMY.
+   *
+   * The one call that turns a campaign into a meeting. Idempotent per player,
+   * because a session announces its roster more than once and two Commanders
+   * for one body would be two rosters deploying into the same slots.
+   */
+  enlistCommander(opts = {}) {
+    const found = opts.player && this.commanders.find((c) => c.player === opts.player);
+    if (found) return found;
+    const c = new Commander(this, { formation: this.commander.formation, ...opts });
+    this.commanders.push(c);
+    // The same ten strangers everybody starts with. Through the same call, so
+    // there is no second idea anywhere of what an opening army is.
+    if (opts.muster !== false) this._musterOpening(c);
+    return c;
+  }
+
+  /** Whoever commands this body — its own commander, or mine if it has none. */
+  commanderOf(e) { return (e && e.cmdr) || this.commander; }
 
   /* ── the campaign ──────────────────────────────────────────────────── */
 
@@ -1274,10 +1405,10 @@ export class CommandDirector extends WaveDirector {
    * identical strangers, so that the three names in it four areas later are
    * something the player earned rather than something the mode handed them.
    */
-  _musterOpening() {
-    const first = this.army.tiers[0].type;
-    for (let i = 0; i < OPENING_STRENGTH; i++) this.roster.enlist(first);
-    this.roster.points = AREAS[0].muster;
+  _musterOpening(c = this.commander) {
+    const first = c.army.tiers[0].type;
+    for (let i = 0; i < OPENING_STRENGTH; i++) c.roster.enlist(first);
+    c.roster.points = AREAS[0].muster;
   }
 
   /**
@@ -1288,20 +1419,20 @@ export class CommandDirector extends WaveDirector {
    * number the screen actually wants — the interesting question at a muster is
    * never "what exists", it is "should this be my third heavy or my first ARC".
    */
-  musterOffer() {
+  musterOffer(c = this.commander) {
     const A = this.area;
     const have = new Map();
-    for (const t of this.roster.living) have.set(t.type, (have.get(t.type) || 0) + 1);
+    for (const t of c.roster.living) have.set(t.type, (have.get(t.type) || 0) + 1);
     return {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
       next: AREAS[Math.min(this.areaIndex + 1, AREAS.length - 1)],
-      points: this.roster.points,
-      strength: this.roster.strength,
+      points: c.roster.points,
+      strength: c.roster.strength,
       max: MAX_STRENGTH,
-      roster: this.roster.summary(),
-      units: this.army.tiers
+      roster: c.roster.summary(),
+      units: c.army.tiers
         // The AREA NUMBER, not a second column beside it. See AREAS.
         .filter((t) => t.at <= this.areaNumber)
         .map((t) => ({
@@ -1309,7 +1440,7 @@ export class CommandDirector extends WaveDirector {
           label: ARCHETYPES[t.type]?.label ?? t.type,
           threat: ARCHETYPES[t.type]?.threat ?? 0,
           have: have.get(t.type) || 0,
-          afford: this.roster.points >= t.cost && this.roster.strength < MAX_STRENGTH,
+          afford: c.roster.points >= t.cost && c.roster.strength < MAX_STRENGTH,
         })),
     };
   }
@@ -1321,15 +1452,15 @@ export class CommandDirector extends WaveDirector {
    * auto-muster below with no screen involved at all, and a mode that silently
    * over-spends is a mode whose roster screen lies.
    */
-  recruit(type) {
-    const rung = this.army.tiers.find((t) => t.type === type);
+  recruit(type, c = this.commander) {
+    const rung = c.army.tiers.find((t) => t.type === type);
     this.refused = null;
-    if (!rung) { this.refused = `${type} is not one of ${this.army.name}'s units`; return null; }
+    if (!rung) { this.refused = `${type} is not one of ${c.army.name}'s units`; return null; }
     if (rung.at > this.areaNumber) { this.refused = `${ARCHETYPES[type]?.label ?? type} is not available until area ${rung.at} of the advance`; return null; }
-    if (this.roster.points < rung.cost) { this.refused = `${rung.cost} points needed, you have ${this.roster.points}`; return null; }
-    if (this.roster.strength >= MAX_STRENGTH) { this.refused = `you cannot field more than ${MAX_STRENGTH}`; return null; }
-    this.roster.points -= rung.cost;
-    const t = this.roster.enlist(type, { joined: this.areaNumber });
+    if (c.roster.points < rung.cost) { this.refused = `${rung.cost} points needed, you have ${c.roster.points}`; return null; }
+    if (c.roster.strength >= MAX_STRENGTH) { this.refused = `you cannot field more than ${MAX_STRENGTH}`; return null; }
+    c.roster.points -= rung.cost;
+    const t = c.roster.enlist(type, { joined: this.areaNumber });
     this.log.push({ t: 'enlist', name: t.name, unit: t.label, area: this.areaNumber });
     return t;
   }
@@ -1349,17 +1480,17 @@ export class CommandDirector extends WaveDirector {
    * be PAID for, and a mode that quietly refills the line for free has removed
    * the thing it was asked to add.
    */
-  autoMuster() {
+  autoMuster(c = this.commander) {
     let bought = 0;
-    const want = Math.max(0, OPENING_STRENGTH - this.roster.strength);
-    const cheapest = this.army.tiers[0].type;
-    for (let i = 0; i < want; i++) if (this.recruit(cheapest)) bought++;
+    const want = Math.max(0, OPENING_STRENGTH - c.roster.strength);
+    const cheapest = c.army.tiers[0].type;
+    for (let i = 0; i < want; i++) if (this.recruit(cheapest, c)) bought++;
     // Then the best thing on the shelf, until nothing on it is affordable.
     for (let guard = 0; guard < 40; guard++) {
-      const affordable = this.musterOffer().units.filter((u) => u.afford);
+      const affordable = this.musterOffer(c).units.filter((u) => u.afford);
       if (!affordable.length) break;
       affordable.sort((a, b) => b.cost - a.cost);
-      if (!this.recruit(affordable[0].type)) break;
+      if (!this.recruit(affordable[0].type, c)) break;
       bought++;
     }
     return bought;
@@ -1379,11 +1510,21 @@ export class CommandDirector extends WaveDirector {
    * they arrived with you; the enemy is the thing that has to be announced from
    * a distance, and `Arrivals.js` already owns that.
    */
-  deploy() {
+  deploy(c = this.commander) {
     const w = this.world;
-    if (!w || typeof w.spawnEnemy !== 'function') return 0;
-    const anchor = w.player ? w.player.position : _v1.set(0, 0, 0);
-    const live = this.roster.living;
+    if (!w || typeof w.spawnEnemy !== 'function' || !c) return 0;
+    /**
+     * WHERE THE ARMY COMES DOWN, and it is the commander's own ground now.
+     *
+     * `w.player.position` was right when there was one commander and is the
+     * whole of why two armies could not be put on a field: both rosters would
+     * have landed in the same ring around the same body. The commander's own
+     * `anchor` wins when it has one — that is opposed deployment, two lines
+     * facing each other across a plain — and falls back to their body, which
+     * is every campaign caller and is unchanged by this.
+     */
+    const anchor = c.anchor || c.player?.position || w.player?.position || _v1.set(0, 0, 0);
+    const live = c.roster.living;
     let n = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
@@ -1400,10 +1541,20 @@ export class CommandDirector extends WaveDirector {
       }
       const e = w.spawnEnemy(t.type, _v2);
       if (!e) continue;
-      enlistBody(e, t, { team: w.partyTeam ?? 0, teamDamage: this.teamDamage, director: this });
+      /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
+       * is the LOCAL player's side and there is one of it; a second army on it
+       * would be an ally of the first, which is the whole question. */
+      enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
       n++;
     }
     this._announceRoster();
+    return n;
+  }
+
+  /** Every commander's army onto the field at once. Returns the total. */
+  deployAll() {
+    let n = 0;
+    for (const c of this.commanders) n += this.deploy(c);
     return n;
   }
 
@@ -1432,9 +1583,10 @@ export class CommandDirector extends WaveDirector {
    *
    * @returns how many bodies were withdrawn.
    */
-  recall() {
+  recall(c = null) {
+    if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k); return n; }
     let n = 0;
-    for (const t of this.roster.all) {
+    for (const t of c.roster.all) {
       const e = t.body;
       t.body = null;
       if (!e) continue;
@@ -1461,7 +1613,7 @@ export class CommandDirector extends WaveDirector {
    * holds until the next one, which is how an order works and also the only
    * design that survives the player being busy with a lightsaber.
    */
-  order(id) {
+  order(id, cmdr = null) {
     const F = FORMATIONS[id];
     if (!F) return false;
     /**
@@ -1480,32 +1632,49 @@ export class CommandDirector extends WaveDirector {
      * make, and it is the only version of this that cannot lie.
      */
     if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
-    this.formation = id;
+    const c = cmdr || this.commander;
+    c.formation = id;
     // A formation that does not advance is planted where the commander was
     // STANDING when the order was given — see `_anchorFor`.
-    this._planted = F.advance ? null : this._frame(new THREE.Vector3(), { yaw: 0 });
+    c._planted = F.advance ? null : this._frame(c, new THREE.Vector3());
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
-    this.onOrder?.(F, this.roster.squads().length);
+    if (c === this.commander) this.onOrder?.(F, c.roster.squads().length);
     return true;
   }
 
-  /** The commander's frame: where they are and which way they are looking. */
-  _frame(outPos, outYaw) {
-    const p = this.world?.player;
-    if (!p) { outPos.set(0, 0, 0); outYaw.yaw = 0; return { pos: outPos.clone(), yaw: 0 }; }
+  /**
+   * A COMMANDER'S FRAME: where they are and which way they are looking.
+   *
+   * `aimDir` rather than the camera yaw: the direction the commander is FACING
+   * is where they are pointing the blade, and on a body that strafes those are
+   * not the same thing.
+   *
+   * TWO FALLBACKS, AND BOTH ARE LOAD-BEARING FOR A SECOND COMMANDER. A
+   * `RemoteAvatar` has no `aimDir` at all — it is a drawing of a body on
+   * another machine, and what crosses the wire is `facing` — so a peer leading
+   * an army would have had every formation solved against a yaw of zero and
+   * pointed their whole line due north for the length of the match. And a
+   * commander with no body on this machine yet falls back to the ANCHOR their
+   * army was deployed on, which is a real place rather than the origin.
+   */
+  _frame(c, outPos) {
+    const p = c?.player;
+    if (!p || !p.position) {
+      const a = c?.anchor;
+      if (a) { outPos.copy(a); return { pos: outPos.clone(), yaw: c.facing || 0 }; }
+      outPos.set(0, 0, 0);
+      return { pos: outPos.clone(), yaw: 0 };
+    }
     outPos.copy(p.position);
-    // `aimDir` rather than the camera yaw: the direction the commander is
-    // FACING is where they are pointing the blade, and on a body that strafes
-    // those are not the same thing.
     const d = p.aimDir;
-    const yaw = d ? Math.atan2(d.x, d.z) : 0;
+    const yaw = d ? Math.atan2(d.x, d.z) : (p.facing ?? 0);
     return { pos: outPos.clone(), yaw };
   }
 
   /** The frame a formation is measured in — live, or frozen if it was planted. */
-  _anchorFor(F) {
-    if (!F.advance && this._planted) return this._planted;
-    return this._frame(_v1, { yaw: 0 });
+  _anchorFor(F, c = this.commander) {
+    if (!F.advance && c._planted) return c._planted;
+    return this._frame(c, _v1);
   }
 
   /**
@@ -1514,10 +1683,15 @@ export class CommandDirector extends WaveDirector {
    * @returns the vector, or null if this formation has no slot (CHARGE).
    */
   slotFor(e, out = _slot) {
-    const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* THE BODY'S OWN COMMANDER, not the machine's. `e.cmdr` is written by
+     * `enlistBody` at deploy, so a trooper solves its slot in the frame of the
+     * person who deployed it — which is what makes two lines face each other
+     * instead of both forming up on whoever is holding the mouse. */
+    const cmdr = this.commanderOf(e);
+    const F = FORMATIONS[cmdr.formation] || FORMATIONS[DEFAULT_FORMATION];
     const idx = e.cmdIndex | 0, n = e.cmdCount || 1, k = e.cmdSquad | 0;
     if (!F.slot(idx, n, k, out)) return null;
-    const A = this._anchorFor(F);
+    const A = this._anchorFor(F, cmdr);
     // Rotate the formation-local slot into the commander's frame. +Z is forward.
     const s = Math.sin(A.yaw), c = Math.cos(A.yaw);
     const x = out.x * c + out.z * s;
@@ -1618,7 +1792,7 @@ export class CommandDirector extends WaveDirector {
    */
   steer(e, dt) {
     if (!e.trooper) return;
-    const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.commanderOf(e).formation] || FORMATIONS[DEFAULT_FORMATION];
     const slot = this.slotFor(e);
     if (!slot) return;                                  // charge: no slot at all
     const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
@@ -1681,7 +1855,9 @@ export class CommandDirector extends WaveDirector {
    */
   followSpeed(e, gap) {
     const own = e.speed || 1;
-    const want = this._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.30;
+    /* Its OWN commander's measured pace: two armies chasing two people who are
+     * running at different speeds is two different follow speeds. */
+    const want = this.commanderOf(e)._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.30;
     return Math.min(own * CATCH_UP, Math.max(own, want));
   }
 
@@ -1702,7 +1878,7 @@ export class CommandDirector extends WaveDirector {
    * then supplies the walk home. Nothing has to be told to stop fighting.
    */
   targetFor(e, candidates) {
-    const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.commanderOf(e).formation] || FORMATIONS[DEFAULT_FORMATION];
     const leash = this.leashFor(F, e);
     const slot = leash === Infinity ? null : this.slotFor(e, _slot);
     const ax = slot ? slot.x : e.position.x;
@@ -1734,11 +1910,15 @@ export class CommandDirector extends WaveDirector {
     if (!e) return;
     if (e.trooper) {
       const t = e.trooper;
-      if (this.roster.fall(t, this.areaNumber)) {
+      /* Off the BODY's roster, not the machine's: a name only comes off the
+       * roll it was ever on, and with two armies on the field the wrong roll
+       * would silently keep a dead man standing and lose a living one. */
+      const c = this.commanderOf(e);
+      if (c.roster.fall(t, this.areaNumber)) {
         this.log.push({ t: 'fell', name: t.name, unit: t.label, rank: t.rankRec.short,
                         area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
-          `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${this.roster.strength} still standing`);
+          `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
         this._announceRoster();
       }
       e.trooper = null;
@@ -1929,12 +2109,15 @@ export class CommandDirector extends WaveDirector {
    * that flickers is twenty-four bodies stuttering at once.
    */
   _trackLeader(dt) {
-    const p = this.world?.player?.position;
-    if (!p || !(dt > 0)) return;
-    if (!this._leaderPos) { this._leaderPos = new THREE.Vector3().copy(p); return; }
-    const v = Math.hypot(p.x - this._leaderPos.x, p.z - this._leaderPos.z) / dt;
-    this._leaderPos.set(p.x, p.y, p.z);
-    this._leaderSpeed += (v - this._leaderSpeed) * Math.min(1, dt * 6);
+    if (!(dt > 0)) return;
+    for (const c of this.commanders) {
+      const p = c.player?.position;
+      if (!p) continue;
+      if (!c._leaderPos) { c._leaderPos = new THREE.Vector3().copy(p); continue; }
+      const v = Math.hypot(p.x - c._leaderPos.x, p.z - c._leaderPos.z) / dt;
+      c._leaderPos.set(p.x, p.y, p.z);
+      c._leaderSpeed += (v - c._leaderSpeed) * Math.min(1, dt * 6);
+    }
   }
 
   /**
@@ -1947,21 +2130,26 @@ export class CommandDirector extends WaveDirector {
    * circle exactly where the casualty was.
    */
   _troops(dt, ctx) {
-    const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
-    const squads = this.roster.squads();
-    let i = 0;
-    const n = this.roster.strength;
-    for (let k = 0; k < squads.length; k++) {
-      for (const t of squads[k]) {
-        const e = t.body;
-        if (!e || e.dead) { i++; continue; }
-        e.cmdIndex = i++;
-        e.cmdCount = n;
-        e.cmdSquad = k;
-        // Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
-        // the fuse back up without touching the brain, so a trooper ordered to
-        // hold still takes cover, calls out and tracks you exactly as it did.
-        if (F.fire <= 0) holdFire(e);
+    /* Per commander, and the indices restart per army: `cmdIndex` is a position
+     * in ONE roster's living list, and two armies sharing a numbering would
+     * have the second one solving its slots against the first one's count. */
+    for (const c of this.commanders) {
+      const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+      const squads = c.roster.squads();
+      let i = 0;
+      const n = c.roster.strength;
+      for (let k = 0; k < squads.length; k++) {
+        for (const t of squads[k]) {
+          const e = t.body;
+          if (!e || e.dead) { i++; continue; }
+          e.cmdIndex = i++;
+          e.cmdCount = n;
+          e.cmdSquad = k;
+          // Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
+          // the fuse back up without touching the brain, so a trooper ordered to
+          // hold still takes cover, calls out and tracks you exactly as it did.
+          if (F.fire <= 0) holdFire(e);
+        }
       }
     }
   }
@@ -2193,9 +2381,11 @@ export class CommandDirector extends WaveDirector {
   netShell() {
     this._netShell = true;
     this._netReadout = null;
-    this.roster.all.length = 0;
-    this.roster.taken.clear();
-    this.roster.points = 0;
+    for (const c of this.commanders) {
+      c.roster.all.length = 0;
+      c.roster.taken.clear();
+      c.roster.points = 0;
+    }
     return true;
   }
 

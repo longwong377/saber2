@@ -181,14 +181,22 @@ export class World {
      * everyone on side 0 — so every existing world is unchanged by this. */
     this.rules = pvpRules(settings);
     /**
-     * THE NUMBER THAT MEANS "ON THE PLAYER'S SIDE".
+     * THE NUMBER THAT MEANS "ON *MY* SIDE" — and the emphasis is the change.
      *
-     * `TEAM.PARTY` is 0 and every comparison in this game already spells it as
-     * the literal. This field exists for one caller: `CommandDirector.deploy`
-     * enlists an `Enemy` onto the party's team, and a mode file writing a bare
-     * `0` there would be a second place that decides what a side IS — which is
-     * exactly what `sideTeam`'s own note in Player.js forbids ("nobody can hand
-     * out a player side of 1 and post half a duel to the horde's ledger").
+     * It was `TEAM.PARTY`, a world-scoped constant, and it read correctly for
+     * as long as every player in a session was on side 0. Its two readers both
+     * mean "the side the person at THIS keyboard is on":
+     * `WaveDirector.blocksWaveEnd` counts what is left to fight, and the HUD's
+     * hostile count is the number beside it. On a machine whose player is on
+     * side 2 — which is what a duel and a two-commander Command match are —
+     * both of them counted their own army as the enemy and the enemy as their
+     * own.
+     *
+     * So it follows the local player now, written by `spawnPlayer`, and it is
+     * still `TEAM.PARTY` before there is one and in every co-op session there
+     * will ever be. `CommandDirector.deploy` no longer reads it at all: an army
+     * belongs to a COMMANDER and wears that commander's side, which is the
+     * whole of how two of them can stand on one field.
      */
     this.partyTeam = TEAM.PARTY;
     this.enemies = [];
@@ -831,7 +839,20 @@ export class World {
     // instead of easing back to the ready guard. Off unless asked for.
     p.control.holdPosition = !!this.settings.bladeHold;
     this.players.push(p);
-    if (!this.player) this.player = p;
+    if (!this.player) {
+      this.player = p;
+      /* …AND THE SIDE THIS MACHINE IS PLAYING ON. See `partyTeam` in the
+       * constructor: `blocksWaveEnd` and the HUD's hostile count both mean
+       * "not mine", and on a machine whose player is on side 2 the constant
+       * had them counting their own army as the enemy. `asTeam` because it
+       * comes off a settings blob or the wire. */
+      this.partyTeam = asTeam(p.team);
+      /* The commander this machine is playing is that player. `CommandDirector`
+       * is built during `loadLevel`, before any player exists, so its first
+       * commander is created with no body to lead. */
+      const c = this.command?.commander;
+      if (c && !c.player) { c.player = p; c.side = this.partyTeam; }
+    }
     p.saber.ignite();
     p.hum.ignite();
     return p;
