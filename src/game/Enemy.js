@@ -199,7 +199,7 @@ let _enemyId = 1;
  *              stand   strafe   dodge   retreat
  *   sweep      100%      0%       0%       0%     footwork, any direction
  *   lunge      100%      0%       0%       0%     footwork, any direction
- *   charge     100%    100%     100%     100%     nothing: it commits and hits
+ *   charge     100%      0%     100%       0%     break AT the commit
  *   SLAM       100%    100%     100%       0%     ONLY distance
  *   POUNCE     100%      0%      95%       0%     only a LATE break
  *
@@ -207,6 +207,20 @@ let _enemyId = 1;
  * has learned to circle a claw at knife range is caught by every slam, and a
  * player who has learned to break early on a telegraph is caught by every
  * pounce. Two creatures on the sand at once cannot be answered with one habit.
+ *
+ * ── AND EVERY ROW OF IT HAS TO HAVE A NUMBER UNDER 100%. The charge's row read
+ * `100% 100% 100% 100%`, captioned "nothing: it commits and hits", and the gore
+ * was the same blow with a tell on it — 100% at every speed a player can
+ * produce, up to 30 m/s. An attack no input answers is not difficulty; it is
+ * the 11.5 m sphere this whole table was written to replace, wearing the
+ * telegraph of the thing that replaced it. The rule those two now obey, and the
+ * only rule the shapes above are measured against, is that the interval between
+ * the LAST aim update (`aimUntil`, or the top of the wind-up) and the resolve
+ * (`hit[0]`) has to be long enough for movement the player actually has to
+ * carry them out of `reach × scale` — walk 4.6 m/s, sprint 7.45, dash 15.5 for
+ * 0.24 s. `tools/checks/dodgeable.mjs` derives that from this table, from the
+ * archetypes that own each move, and from a real Player it drives to find those
+ * three paces; it does not transcribe any of them.
  */
 export const BEAST_MOVES = {
   lunge: {
@@ -220,9 +234,30 @@ export const BEAST_MOVES = {
     reach: 1.15, damage: 0.85, lift: 0.9,
     pose: { rise: 1.0, up: 0.55, fall: 0.30, pitch: -0.42 },
   },
+  /**
+   * THE CHARGE — and it used to resolve on the frame it aimed.
+   *
+   * `aimUntil: 0.65` beside `hit: [0.65, …]` is a ZERO-SECOND window: the point
+   * is fixed and the horn arrives on the same frame, so there is no interval in
+   * which any movement can carry a body out of a 2.04 m footprint. Measured
+   * end to end through `_beastBrain` against a target breaking away on the
+   * first frame of the wind-up: 100% at every speed from a standstill to
+   * 30 m/s. The table above described that as "nothing: it commits and hits",
+   * which is a defect with a caption on it — the game draws a plant, a roar,
+   * a body wind-up and a floating CHARGE for a blow no input answers.
+   *
+   * The re-aim is the point of the move and it is KEPT: run away during the
+   * telegraph and the charge simply follows you, which is what makes it the
+   * answer to a runner and not a second claw. What it has now is half a second
+   * between the commit and the impact — the horn lands when the RUN arrives,
+   * about 3.7 m into the drive, instead of 0.18 m into it, so the moment the
+   * animal reaches you is also the moment it hurts you. A player who breaks
+   * when the drive begins clears the footprint at a walk; one who broke early
+   * and stopped is exactly who it is for. See `tools/checks/dodgeable.mjs`.
+   */
   charge: {
     unlock: 3, aim: 'drive', aimUntil: 0.65, plant: 0.65,
-    drive: [0.65, 1.9, 30], dust: true, hit: [0.65, 1.9], done: 1.9,
+    drive: [0.65, 1.9, 30], dust: true, hit: [1.15, 1.9], done: 1.9,
     reach: 0.85, damage: 1.3, lift: 0.8, roar: 0.9, call: 'CHARGE',
     pose: { rise: 0.7, up: 0.65, fall: 0.35, pitch: -0.34 },
   },
@@ -237,9 +272,16 @@ export const BEAST_MOVES = {
    * only way out of it is out. A 0.95 s wind-up is the longest in the file and
    * it has to be: at a sprint that is about eight metres of ground, and an
    * escape that is not achievable is not an escape.
+   *
+   * `unlock: 1`, AND THE ARCHETYPE ALREADY SAID SO. src/game/Levels.js states
+   * it in its own words — "`slam` unlocks at phase 1 — it is not a reward for
+   * hurting the animal, it is the first thing it does and the thing the player
+   * has to learn" — and this line said 2, so a Rancor at full health declared
+   * 10 lunges and zero slams over 30 s. The move the whole archetype is built
+   * around could not be seen until a third of a 2200 hp animal was gone.
    */
   slam: {
-    unlock: 2, aim: 'self', plant: 0.95, hit: [0.95, 1.15], done: 1.7,
+    unlock: 1, aim: 'self', plant: 0.95, hit: [0.95, 1.15], done: 1.7,
     reach: 2.05, damage: 1.15, lift: 1.5, shake: 1.0, roar: 1.1, quake: true,
     call: 'SLAM', callColor: '#ffb03a',
     // rears its whole front end up, then throws it down — the biggest travel
@@ -281,15 +323,40 @@ export const BEAST_MOVES = {
    *            in the file that does: every other blow in the game solves the
    *            player's problem by putting distance between you.
    */
+  /**
+   * THE GORE — sold as the answerable one, and it was not.
+   *
+   * `aimUntil: 0.5` against `hit: [0.6, …]` left a tenth of a second to leave a
+   * 2.16 m footprint: 21.6 m/s of sustained movement, where the player's walk
+   * is 4.6, the sprint 7.45 and the dash 15.5 for a quarter of a second.
+   * Measured through `_beastBrain` against a target breaking away on the first
+   * frame of the wind-up, it landed 100% at 0, 4.6, 7.45, 11 and 15.5 m/s —
+   * and a Reek dealt the SAME 18.73 hp/s to a stationary, a retreating, a
+   * strafing and a dashing player, to two decimals. Gore is the Reek's only
+   * phase-1 move, so it is the first thing a Colosseum player ever meets.
+   *
+   * The tell was never the problem: the head drops, the body goes low, a roar
+   * plays and GORE floats over it. What was missing is the INTERVAL the tell is
+   * advertising. The impact is at 1.0 s now — half a second after the aim is
+   * fixed, half a second into a 36 m/s² run — so the horn arrives with the
+   * animal instead of before it has moved, and the half second is walkable.
+   */
   gore: {
     unlock: 1, aim: 'drive', aimUntil: 0.5, plant: 0.5,
-    drive: [0.5, 1.5, 36], dust: true, hit: [0.6, 1.5], done: 1.6,
+    drive: [0.5, 1.5, 36], dust: true, hit: [1.0, 1.5], done: 1.6,
     reach: 0.9, damage: 1.35, lift: 1.0, roar: 1.0, call: 'GORE', callColor: '#ff8a3a',
     // head DOWN and body low through the wind-up, then it runs
     pose: { rise: -0.70, up: 0.50, fall: 0.45, pitch: -0.72 },
   },
   toss: {
-    unlock: 2, aim: 'windup', plant: 0.35, hit: [0.70, 1.00], done: 1.35,
+    /* Phase 1 beside the gore. The Reek's whole first phase was ONE move on a
+     * 2.4 s loop — measured, 11 gores and nothing else over 30 s at full health
+     * — and phase 1 is the longest phase of the fight. The pair is chosen for
+     * having different answers rather than for filling a slot: the gore fixes
+     * its aim when the drive begins, so it is answered by breaking AT the
+     * commit, and the toss fixes its aim at the top of the wind-up, so it is
+     * answered by footwork DURING the telegraph. Two verbs, two moments. */
+    unlock: 1, aim: 'windup', plant: 0.35, hit: [0.70, 1.00], done: 1.35,
     reach: 1.00, damage: 0.85, lift: 2.4, shake: 1.1, roar: 0.85,
     call: 'TOSS', callColor: '#ffd24a',
     // hooks upward: the longest rise of anything that is not the slam
@@ -314,7 +381,13 @@ export const BEAST_MOVES = {
     pose: { rise: 0.55, up: 0.40, fall: 0.10, pitch: -0.26 },
   },
   snatch: {
-    unlock: 2, aim: 'windup', plant: 0.45, hit: [0.68, 0.92], done: 1.20,
+    /* Phase 1 beside the stab, for the reason the toss is: the Acklay declared
+     * 11 stabs and nothing else over 30 s at full health. The pair is a RANGE
+     * pair rather than a timing one — the stab reaches 3.77 m, further than the
+     * player's own blade, and the snatch reaches 2.32 m and DRAGS you in, so
+     * the two want opposite standing distances and the animal punishes whichever
+     * one you have settled into. The sweep is still what phase 2 buys. */
+    unlock: 1, aim: 'windup', plant: 0.45, hit: [0.68, 0.92], done: 1.20,
     reach: 0.80, damage: 1.25, lift: 0.25, pull: true, shake: 0.9, roar: 0.8,
     call: 'SNATCH', callColor: '#ff6a52',
     // ducks, then throws the head forward — the mirror of the toss
@@ -324,16 +397,22 @@ export const BEAST_MOVES = {
   /**
    * THE POUNCE — twelve metres, off the ground, and it commits at the LAUNCH.
    *
-   * The charge already answers a runner, but it answers by being unanswerable:
-   * it re-aims and resolves on the same frame, which measured 100% against
-   * every evasion the harness has. The pounce commits its landing point at
-   * 0.55 s and does not arrive until 0.95, so there IS a window — 0.4 s of it —
-   * and it is at the END of the telegraph rather than the beginning. A player
-   * who breaks on the first frame of the wind-up has been standing still again
-   * by the time this lands.
+   * The charge answers a runner by re-aiming until its drive begins. The pounce
+   * commits its landing point as it gathers to leave the ground and does not
+   * arrive until 0.95, so the window is at the END of the telegraph rather than
+   * the beginning: a player who breaks on the first frame of the wind-up has
+   * been standing still again by the time this lands.
+   *
+   * THE COMMIT IS AT 0.50 AND NOT 0.55, which is 50 ms and the difference
+   * between a window and a claim of one. At 0.55 the interval was 0.40 s — 1.84 m
+   * of walking against the Gundark's own 2.00 m footprint — so the late break
+   * this move exists to teach only worked at a sprint, while the note here said
+   * a window existed. It is 0.45 s now, which a walk clears with 7 cm to spare
+   * and a sprint clears by half again. Measured in `tools/checks/dodgeable.mjs`
+   * against the real player pace, not asserted here.
    */
   pounce: {
-    unlock: 1, aim: 'launch', aimUntil: 0.55, plant: 0.55,
+    unlock: 1, aim: 'launch', aimUntil: 0.50, plant: 0.55,
     drive: [0.55, 0.95, 58], hit: [0.95, 1.15], done: 1.45,
     reach: 1.0, damage: 1.25, lift: 1.1, roar: 0.8, call: 'POUNCE', callColor: '#ff9a3a',
     // coils right down, then extends: the deepest crouch of any of them
