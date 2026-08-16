@@ -1442,10 +1442,23 @@ export function dressHumanoid(rig, style) {
   const LIMB = style.limbOpts || {};
   const tune = (n) => LIMB[n] || LIMB[n.replace(/[LR]$/, '')] || null;
   const SECT = style.sections === false ? {} : (style.sections || FLESH_SECTIONS);
+  /**
+   * PER-BONE MATERIAL OVERRIDES — the one channel that is never culled.
+   *
+   * A bone's primary is the mesh `Enemy._applyLod` keeps at every range, and
+   * before this the only way to colour one was to paint the whole slot: every
+   * torso bone, or every arm bone. So an archetype's unit colour had to live
+   * on Kit detail, which is culled, and six clone archetypes measured 0.000
+   * apart in visible colour at thirty metres. Keyed by bone name or by the
+   * name with its L/R suffix dropped, exactly like `limbOpts` above.
+   */
+  const MATS = style.mats || {};
+  const matFor = (n, fallback) => MATS[n] || MATS[n.replace(/[LR]$/, '')] || fallback;
 
   const addLimb = (boneName, r0, r1, mat, opts = {}) => {
     const b = rig.get(boneName);
     if (!b) return null;
+    mat = matFor(boneName, mat);
     const t = tune(boneName);
     const sect = SECT[boneName] || SECT[boneName.replace(/[LR]$/, '')];
     if (sect) opts = Object.assign({ section: sect }, opts);
@@ -1496,7 +1509,7 @@ export function dressHumanoid(rig, style) {
       hg.scale(0.94, 1.16, 1.03);
       hg.translate(0, 0.10 * S, 0);
     }
-    const hm = mesh(hg, style.head || style.skin || style.body, head.obj);
+    const hm = mesh(hg, matFor('head', style.head || style.skin || style.body), head.obj);
     head.parts.push(hm); head.primary = hm; head.radius = (style.headRadius ?? 0.12) * S;
     if (style.buildHead) style.buildHead(head.obj, S, hg);
   }
@@ -1544,7 +1557,7 @@ export function dressHumanoid(rig, style) {
       // had a hand-shape field that could be edited to no effect whatsoever.
       const geo = style.handGeo ? style.handGeo(side, S, style.hands || {})
                                 : buildHand(side, S, style.hands || {});
-      const m = mesh(geo, style.hand || style.arm || style.body, hand.obj);
+      const m = mesh(geo, matFor('hand' + side, style.hand || style.arm || style.body), hand.obj);
       hand.parts.push(m); hand.primary = m; hand.radius = (style.handRadius ?? 0.05) * S;
     }
   }
@@ -1559,7 +1572,7 @@ export function dressHumanoid(rig, style) {
     const foot = rig.get('foot' + side);
     if (foot) {
       const geo = style.footGeo ? style.footGeo(S, side) : buildFoot(S, style.feet || {});
-      const m = mesh(geo, style.boot || style.leg || style.body, foot.obj);
+      const m = mesh(geo, matFor('foot' + side, style.boot || style.leg || style.body), foot.obj);
       foot.parts.push(m); foot.primary = m; foot.radius = 0.06 * S;
     }
   }
@@ -4685,14 +4698,72 @@ export function buildB2(opts = {}) {
 /* ── clone trooper ───────────────────────────────────────────────────── */
 
 /**
+ * SIX ARCHETYPES RODE THIS ONE BUILDER AND THREE ARGUMENTS.
+ *
+ * `buildTrooper` took `scale`, `color` and `accent`, so a Clone Trooper, a
+ * Marksman, a Heavy Gunner, a Jet Trooper, an ARC and a Commander were one
+ * body six times over. Measured at LOD 1 in `tools/_roster.mjs`:
+ * trooper/sniper 1.000 flank IoU (identical geometry AND identical scale),
+ * arc/officer 0.940, trooper/jet 0.880, trooper/arc 0.878, heavy/officer 0.832.
+ * The colour did not save it either — the accent is 340 triangles of which
+ * ZERO survive the distance cull, so trooper↔heavy, trooper↔arc, trooper↔jet
+ * and heavy↔jet all measured 0.000 apart in triangle-weighted visible colour.
+ * Same shape and same colour, and the numbers said so.
+ *
+ * A kit is a set of HARDWARE, not a paint scheme, and each piece here is one
+ * the reference plates in `assets/reference/units/clones` actually show:
+ *
+ *   pack: 'jet'    two nozzles on a spine block between the shoulder bells.
+ *                  `jet` has `float: 1.35` and Command.js's own handover says
+ *                  it "hovers, but nothing on the model says why".
+ *   pack: 'field'  the heavy's ammunition box, its power feed, and the Z-6's
+ *                  barrel bundle slung across it. A suppression gunner is
+ *                  read by the mass on his back before anything else.
+ *   pauldron       one raked plate over the leading shoulder. `side` picks it,
+ *                  so an ARC and a Commander are not mirror images.
+ *   kama           the armoured skirt: four hanging leaves off the belt, which
+ *                  is the piece that breaks the leg line at range.
+ *   crest          a raised fin front-to-back over the crown, in the unit
+ *                  colour. Against the sky, so it survives everything.
+ *   rangefinder    the stalk-and-plate over one temple. It changes the head's
+ *                  outline, which is the first thing a silhouette is read by.
+ *
+ * WHERE THE UNIT COLOUR LIVES NOW. `tintBones` (Enemy.js) has always put its
+ * modifier tells on the bone PRIMARIES because `_applyLod` never culls them —
+ * that is the working pattern, and the archetypes were never given it. The
+ * accent now paints the two CLAVICLE primaries, which is exactly the shoulder
+ * line every clone plate flashes, at a cost of zero extra draw calls; the
+ * crest, the collar arc and the bells keep their paint and are tagged
+ * `userData.silhouette` so they stop being invisible past thirty metres.
+ */
+export const TROOPER_KITS = {
+  /** The line trooper: the baseline every other kit is read against. */
+  line: {},
+  /** The Marksman. A scope, a shoulder brace, and no bulk anywhere. */
+  marksman: { rangefinder: 'scope', brace: true },
+  /** The suppression gunner: the pack and the Z-6 across it. */
+  heavy: { pack: 'field' },
+  /** The raider. Nothing on the arms — the pack is the whole read. */
+  jet: { pack: 'jet' },
+  /** The ARC: pauldron right, kama, twin holsters on the belt. */
+  arc: { pauldron: 'R', kama: true, holsters: true },
+  /** The Commander: pauldron left, kama, crest and rangefinder. */
+  commander: { pauldron: 'L', kama: true, crest: true, rangefinder: 'stalk' },
+};
+
+/**
  * The read at range is the helmet: a domed cranium, a hard brow, cheeks that
  * flare out and down, and a fin along the crown. Everything else is armour
  * that has to look like *separate plates over a bodysuit* rather than a white
  * paint job — so every plate is a curved shell standing a centimetre off the
  * black undersuit, with its own rim, its own rivets and a unit colour on the
  * pieces a squad actually paints: the crest, the shoulder bells, the knees.
+ *
+ * `opts.kit` names a row of TROOPER_KITS; the individual knobs may also be
+ * passed directly and override it, so a check can sweep one piece at a time.
  */
 export function buildTrooper(opts = {}) {
+  const K = { ...(TROOPER_KITS[opts.kit] || TROOPER_KITS.line), ...opts };
   const S = opts.scale ?? 1.0;
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const plate = armorMat(opts.color ?? 0xe8e9ec, 0.08, 0.34, 3.0);
@@ -4743,6 +4814,14 @@ export function buildTrooper(opts = {}) {
   dressHumanoid(rig, {
     scale: S,
     body: under, arm: under, leg: under, hand: plate, boot: gear, head: plate,
+    /* THE UNIT COLOUR, ON A MESH THE LOD CANNOT TAKE AWAY.
+     *
+     * The clavicle primary runs from the sternum out to the point of the
+     * shoulder and is the one tube on this body that is bare undersuit at
+     * exactly the height a squad flash goes. Painting it costs nothing — the
+     * mesh already exists and is already kept at every range — and it is what
+     * takes trooper↔heavy↔jet↔officer off 0.000 visible-colour distance. */
+    mats: { clav: accent },
     // the shoulder bell does the deltoid's job and then some
     deltoid: false,
     // A soldier in full plate, and he has to read as one from thirty metres
@@ -4810,31 +4889,65 @@ export function buildTrooper(opts = {}) {
         const f = new THREE.Vector3(sx * 0.86, 0.48, 0.14).normalize();
         k.aim(plate, riv, onSurface(hg, f, -0.003 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), f);
       });
+      k.bake(headObj);
+
+      /* ── the head's OUTLINE, in one merged mesh that the LOD keeps ──
+       *
+       * Everything above is detail: a visor recess, a grille, ear vents and
+       * rivets, none of it resolvable past thirty metres and all of it
+       * correctly culled. Everything below changes the shape of the head
+       * against the sky, which is the first thing a silhouette is read by —
+       * and all of it is one material, so it merges to ONE extra draw call.
+       */
+      const ko = new Kit();
       // Crest: the fin along the crown, in unit colour, plus the stripes that
       // actually get painted on a helmet.
-      k.add(accent, plateGeo(0.032 * s, 0.020 * s, 0.174 * s, 0.007 * s, 1), [0, 0.226 * s, -0.016 * s], [0.04, 0, 0]);
-      k.pair((sx) => {
+      const tall = K.crest ? 1.9 : 1.0;      // a commander's is raised and swept
+      ko.add(accent, plateGeo(0.032 * s, 0.020 * s * tall, 0.174 * s, 0.007 * s, 1),
+        [0, (0.226 + (K.crest ? 0.012 : 0)) * s, -0.016 * s], [0.04, 0, 0]);
+      if (K.crest) {
+        // the swept tail off the back of the crown, which is what turns a fin
+        // into a plume from the flank — the view a firing line is read from
+        ko.add(accent, plateGeo(0.026 * s, 0.052 * s, 0.096 * s, 0.008 * s, 1),
+          [0, 0.222 * s, -0.128 * s], [0.62, 0, 0]);
+      }
+      ko.pair((sx) => {
         // aim()'s local X is ref × dir, which for a crown normal runs
         // front-to-back, and its local Z runs across. Authored the other way
         // round, this stripe was 13cm WIDE and 2cm long: a blue slab on each
         // side of the helmet rather than a stripe over the crown.
         const d = new THREE.Vector3(sx * 0.50, 0.86, 0.10).normalize();
-        k.aim(accent, plateGeo(0.130 * s, 0.006 * s, 0.022 * s, 0.002 * s, 1),
+        ko.aim(accent, plateGeo(0.130 * s, 0.006 * s, 0.022 * s, 0.002 * s, 1),
           onSurface(hg, d, 0.001 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), d);
       });
-      k.bake(headObj);
+      /* The rangefinder. Two of them, because the two bodies that carry one
+       * carry different ones: a Commander's folds down over the eye off a
+       * short stalk, a Marksman's is a long tube clamped along the temple. It
+       * is 4 cm of outline in the one place a helmet has none, and it is the
+       * only thing on this roster that changes a HEAD's shape. */
+      if (K.rangefinder) {
+        const sx = K.pauldron === 'R' ? -1 : 1;   // opposite the shoulder plate
+        if (K.rangefinder === 'scope') {
+          ko.add(accent, new THREE.CylinderGeometry(0.016 * s, 0.014 * s, 0.170 * s, 8),
+            [sx * 0.086 * s, 0.176 * s, 0.010 * s], [1.5708, 0, 0]);
+          ko.add(accent, plateGeo(0.020 * s, 0.052 * s, 0.018 * s, 0.005 * s, 1),
+            [sx * 0.086 * s, 0.146 * s, -0.030 * s]);
+        } else {
+          ko.add(accent, new THREE.CylinderGeometry(0.010 * s, 0.010 * s, 0.088 * s, 6),
+            [sx * 0.084 * s, 0.208 * s, -0.020 * s], [0, 0, sx * -0.34]);
+          ko.add(accent, plateGeo(0.030 * s, 0.086 * s, 0.026 * s, 0.006 * s, 1),
+            [sx * 0.104 * s, 0.176 * s, 0.028 * s], [0.30, sx * 0.24, sx * -0.22]);
+        }
+      }
+      markSilhouette(ko.bake(headObj));
     },
 
     dress(r, s) {
       const chestB = r.get('chest'), spineB = r.get('spine'), hipsB = r.get('hips');
       const D = 0.88;   // the torso's z squash — the plates have to match it
 
-      /* ── torso: separate front, back and abdominal plates ── */
+      /* ── torso: straps, boxes and scorch — detail, correctly culled ── */
       const k = new Kit();
-      k.add(plate, arcGeo(0.146 * s, 0.132 * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
-      k.add(plate, arcGeo(0.146 * s, 0.128 * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
-      // collar that the helmet sits into, and the shoulder straps
-      k.add(plate, bandGeo(0.104 * s, 0.126 * s, 0.086 * s, 0.108 * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
       k.add(accent, arcGeo(0.150 * s, 0.150 * s, 0.028 * s, 2.4, 0.008 * s, 8), [0, 0.150 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
         k.add(gear, plateGeo(0.030 * s, 0.230 * s, 0.014 * s, 0.004 * s, 1),
@@ -4847,6 +4960,78 @@ export function buildTrooper(opts = {}) {
       scorchBone(k, scorch, chestB, 3, 0.01 * s, 0.19 * s, 0.070 * s);
       k.bake(chestB.obj);
 
+      /* ── the torso's OUTLINE: the cuirass, and whatever is bolted to it ──
+       *
+       * The front, back and collar plates ARE the trooper's chest — 88% of the
+       * torso's outline at thirty metres — and they were Kit detail, so what
+       * survived the cull was the bare undersuit tube underneath. That is most
+       * of how six clone archetypes came to share one silhouette. One material,
+       * one merged mesh, one draw call. */
+      const ko = new Kit();
+      ko.add(plate, arcGeo(0.146 * s, 0.132 * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
+      ko.add(plate, arcGeo(0.146 * s, 0.128 * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      // collar that the helmet sits into
+      ko.add(plate, bandGeo(0.104 * s, 0.126 * s, 0.086 * s, 0.108 * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
+      /* THE PAULDRON. One plate, over the leading shoulder, raked out and back.
+       * `side` is the knob rather than a boolean because an ARC wearing it on
+       * the right and a Commander on the left are two silhouettes from the
+       * flank and one from the front — and the flank is the view a firing line
+       * is met in. */
+      if (K.pauldron) {
+        const sx = K.pauldron === 'L' ? -1 : 1;
+        ko.add(plate, plateGeo(0.132 * s, 0.052 * s, 0.186 * s, 0.020 * s, 2),
+          [sx * 0.170 * s, 0.132 * s, -0.006 * s], [0, 0, sx * -0.40]);
+        ko.add(plate, plateGeo(0.104 * s, 0.044 * s, 0.150 * s, 0.016 * s, 2),
+          [sx * 0.196 * s, 0.086 * s, -0.004 * s], [0, 0, sx * -0.52]);
+      }
+      /* THE BRACE. A marksman's cheek-weld needs somewhere for the stock to
+       * go, and it is the one piece that separates him from the line trooper
+       * he is otherwise built from bolt for bolt. */
+      if (K.brace) {
+        ko.add(plate, plateGeo(0.086 * s, 0.030 * s, 0.120 * s, 0.010 * s, 1),
+          [-0.132 * s, 0.176 * s, 0.010 * s], [0, 0, 0.30]);
+      }
+      markSilhouette(ko.bake(chestB.obj));
+
+      /* ── the pack ──
+       *
+       * Command.js's handover: "`jet` is a trooper with `float: 1.35` and no
+       * hardware — it hovers, but nothing on the model says why." Two packs,
+       * because the two bodies that carry one carry opposite ones: a raider's
+       * is compact and points DOWN, a suppression gunner's is a box with a
+       * weapon slung across it and points sideways. Both hang off the chest
+       * bone so they roll with the torso, and both are tagged silhouette —
+       * a pack culled at thirty metres answers nothing. */
+      if (K.pack) {
+        const kp = new Kit();
+        const jet = K.pack === 'jet';
+        if (jet) {
+          // spine block between the bells, two nozzles below the belt line
+          kp.add(plate, plateGeo(0.180 * s, 0.230 * s, 0.098 * s, 0.020 * s, 2), [0, 0.086 * s, -0.166 * s]);
+          kp.add(accent, plateGeo(0.052 * s, 0.150 * s, 0.020 * s, 0.006 * s, 1), [0, 0.096 * s, -0.216 * s]);
+          kp.pair((sx) => {
+            kp.add(gear, new THREE.CylinderGeometry(0.030 * s, 0.042 * s, 0.140 * s, 8),
+              [sx * 0.076 * s, -0.036 * s, -0.176 * s], [0.30, 0, sx * 0.16]);
+            kp.add(plate, new THREE.CylinderGeometry(0.036 * s, 0.036 * s, 0.070 * s, 8),
+              [sx * 0.076 * s, 0.048 * s, -0.184 * s], [0.16, 0, sx * 0.10]);
+          });
+        } else {
+          // ammunition box, power feed, and the Z-6's barrel bundle across it
+          kp.add(plate, plateGeo(0.230 * s, 0.250 * s, 0.130 * s, 0.022 * s, 2), [0, 0.062 * s, -0.184 * s]);
+          kp.add(gear, plateGeo(0.150 * s, 0.084 * s, 0.060 * s, 0.012 * s, 1), [0, -0.062 * s, -0.190 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.020 * s, 0.020 * s, 0.230 * s, 6),
+            [0.096 * s, 0.062 * s, -0.150 * s], [0, 0, 0.24]);
+          // the slung weapon: three barrels and a drum, raked across the back
+          for (let i = 0; i < 3; i++) {
+            kp.add(gear, new THREE.CylinderGeometry(0.016 * s, 0.016 * s, 0.520 * s, 6),
+              [(i - 1) * 0.026 * s, 0.130 * s, -0.250 * s], [0.24, 0.34, 1.20]);
+          }
+          kp.add(gear, new THREE.CylinderGeometry(0.062 * s, 0.062 * s, 0.048 * s, 8),
+            [-0.070 * s, 0.030 * s, -0.244 * s], [0.24, 0.34, 1.20]);
+        }
+        markSilhouette(kp.bake(chestB.obj));
+      }
+
       /* ── abdomen: three overlapping bands, so the waist articulates ── */
       const ks = new Kit();
       ks.row(3, (i, t) => {
@@ -4858,18 +5043,52 @@ export function buildTrooper(opts = {}) {
       });
       ks.bake(spineB.obj);
 
-      /* ── belt, codpiece and tassets ── */
+      /* ── belt, codpiece and pouches — detail ── */
       const kh = new Kit();
       kh.add(gear, bandGeo(0.118 * s, 0.136 * s, 0.118 * s, 0.136 * s, 0.056 * s, 16), [0, 0.056 * s, 0], null, [1, 1, D + 0.06]);
       kh.add(plate, plateGeo(0.052 * s, 0.046 * s, 0.024 * s, 0.006 * s, 1), onLimb(hipsB, 0.080 * s, [0, 0, 1], -0.008 * s));
-      kh.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
-      kh.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       kh.pair((sx) => {
         kh.add(gear, plateGeo(0.052 * s, 0.058 * s, 0.036 * s, 0.010 * s, 1),
           onLimb(hipsB, 0.052 * s, [sx * 0.85, 0, 0.62], -0.016 * s), [0, -sx * 0.5, 0]);
-        kh.add(plate, arcGeo(0.118 * s, 0.122 * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
       });
+      /* THE HOLSTERS. An ARC carries two sidearms on the belt in every plate
+       * there is, and they are the piece that reads at three metres where the
+       * kama reads at thirty. */
+      if (K.holsters) {
+        kh.pair((sx) => {
+          kh.add(gear, plateGeo(0.048 * s, 0.130 * s, 0.062 * s, 0.010 * s, 1),
+            [sx * 0.126 * s, -0.030 * s, 0.028 * s], [0.14, 0, sx * 0.24]);
+        });
+      }
       kh.bake(hipsB.obj);
+
+      /* ── the hips' OUTLINE: the tassets, and the kama over them ──
+       *
+       * The four tasset arcs are the only thing standing between the belt and
+       * two bare undersuit thighs, and they were culled at exactly the range
+       * that matters. */
+      const kho = new Kit();
+      kho.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
+      kho.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      kho.pair((sx) => {
+        kho.add(plate, arcGeo(0.118 * s, 0.122 * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
+      });
+      /* THE KAMA. Command.js asked for one for `arc` and `officer` — "at three
+       * metres they read as the same body" — and pointed at `attachSkirt`.
+       * This is not that: a simulated garment is the most expensive per-body
+       * system in the game and `cloth-cost` sizes the whole column on how many
+       * bodies wear one. Four hanging leaves off the belt are rigid geometry
+       * on the hips bone, cost one draw call, and do the whole job a kama does
+       * at range — they break the leg line and add 22 cm of outline below the
+       * belt where every other clone has none. */
+      if (K.kama) {
+        for (const [bearing, arc, len] of [[0, 1.35, 0.300], [Math.PI, 1.55, 0.320],
+                                           [1.45, 0.85, 0.260], [-1.45, 0.85, 0.260]]) {
+          kho.add(gear, arcGeo(0.132 * s, 0.150 * s, len * s, arc, 0.012 * s, 7),
+            [0, -0.052 * s - len * s, 0], [0, bearing, 0], [1, 1, D]);
+        }
+      }
+      markSilhouette(kho.bake(hipsB.obj));
 
       /* ── shoulders, arms ── */
       for (const side of ['L', 'R']) {
@@ -4890,11 +5109,19 @@ export function buildTrooper(opts = {}) {
           // stayed a zero-thickness shell you could see the inside of.
           ka.add(plate, bandGeo(0.0930 * s, 0.1095 * s, 0.0965 * s, 0.1095 * s, 0.032 * s, 14),
             [0, 0.030 * s, 0], null, [1, 1, 1.06]);
-          ka.add(accent, arcGeo(0.1035 * s, 0.1035 * s, 0.028 * s, 1.9, 0.006 * s, 7), [0, 0.004 * s, 0], null, [1, 1, 1.06]);
           // biceps plate over the suit
           ka.add(plate, limbPlate(arm, L * 0.34, L * 0.78, 3.1, { thick: 0.012 * s, seg: 7, gap: 0.005 * s }),
             [0, L * 0.34, 0]);
-          ka.bake(arm.obj);
+          /* The bell, its rim and the biceps plate are ONE material and ONE
+           * merged mesh, and they are the widest point of the figure — the
+           * line from the ear to the point of the shoulder that a human
+           * silhouette is read by first. Kept; the unit stripe under them is
+           * three centimetres of arc and is not, because the clavicle primary
+           * now carries that colour at the same height for nothing. */
+          markSilhouette(ka.bake(arm.obj));
+          const kab = new Kit();
+          kab.add(accent, arcGeo(0.1035 * s, 0.1035 * s, 0.028 * s, 1.9, 0.006 * s, 7), [0, 0.004 * s, 0], null, [1, 1, 1.06]);
+          kab.bake(arm.obj);
         }
         if (fore) {
           const kf = new Kit();
@@ -6408,7 +6635,19 @@ export function buildBlaster(kind = 'e5') {
     k.add(glow, new THREE.CylinderGeometry(0.016, 0.020, 0.04, 8), [0, 0.030, 0.50], [1.5708, 0, 0]);
     g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.53);
   }
-  k.bake(g);
+  /* A WEAPON IS PART OF A SOLDIER'S OUTLINE, and this one was culled.
+   *
+   * `Enemy._build` hangs the blaster off the hand, and `_build` runs BEFORE
+   * the constructor collects `_lodParts` — so every gun in the game was
+   * classed as decoration and stopped being drawn at thirty metres. Measured:
+   * a Training Droid and a B1 Battle Droid, the same chassis with one of them
+   * armed, shared 0.783 of one silhouette, and the whole difference between
+   * them is the carbine that was not on screen.
+   *
+   * The muzzle glow is NOT kept — a 40-triangle emissive cylinder is not an
+   * outline — so this is the receiver and the furniture, two merged meshes,
+   * on bodies already carrying nineteen. */
+  for (const m of k.bake(g)) { if (m.material !== glow) markSilhouette([m]); }
   g.traverse(o => { o.castShadow = true; });
   return g;
 }
