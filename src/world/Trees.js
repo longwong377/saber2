@@ -65,6 +65,9 @@
 import * as THREE from 'three';
 import { TOUGHNESS } from '../game/Combat.js';
 import { clamp, makeRng, TAU, lerp } from '../engine/MathUtil.js';
+/* `Prop` is what a log becomes when the player walks up to it — see `_realise`.
+ * Props.js does not import this file, so the edge is one-way. */
+import { Prop } from './Props.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
@@ -123,6 +126,37 @@ const REST = Math.PI * 0.5;
 const RING_PLAYER = 11;
 const RING_ENEMY = 0;
 const COLLIDER_H = 9;
+
+/**
+ * A LOG YOU CAN PICK UP, AND WHY IT IS ONLY EVER A FEW OF THEM.
+ *
+ * "Can't pick up the trees either, it's like they're not real." That is player
+ * note #8 at the tree — the same rule `tools/checks/physicality.mjs` enforces
+ * everywhere else — and it is the one complaint in this file the instancing
+ * argument at the top genuinely could not answer: a felled tree is a MATRIX
+ * WRITE, and the Force's grip searches `world.physics.bodies`, so there was
+ * nothing there to take hold of. Three draw calls for eighteen hundred trees is
+ * what makes the wood possible and it is also what made every log furniture.
+ *
+ * So a log becomes a REAL OBJECT when the player is close enough to reach for
+ * it, and goes back to being an instance when they leave. `LIFT_RING` is 9 m —
+ * the Force reach is 22 m but a log you grip from across a clearing is a log
+ * you never walked up to, and the point of this is that the thing you just cut
+ * down is a thing. `LIFT_CAP` is 4, which is the draw-call budget: four logs is
+ * four calls on a level that spends 98, and it is also more logs than a player
+ * can hold, throw or stand on at once.
+ *
+ * THE MASS IS CAPPED AT 900 kg AND THAT IS A DECISION RATHER THAN A CHEAT. A
+ * 20 m trunk 0.5 m through is eleven tonnes of green wood, and `force.mjs`
+ * holds one rule about the grip: the highest lift cap in the game is 1,760 kg
+ * and the heaviest body in the roster has to fit under it, because a thing the
+ * Force cannot move does not read as heavy — it reads as a power that has
+ * stopped working. A log is the largest object a player will ever try to lift,
+ * so it is the one that would break that promise first.
+ */
+const LIFT_RING = 9;
+const LIFT_CAP = 4;
+const LOG_MASS_CAP = 900;
 /** Grid cell for the standing-tree index, in metres. */
 const CELL = 12;
 /** How often the ring is rebuilt. At a 4.6 m/s walk that is 1.2 m of travel. */
@@ -161,8 +195,10 @@ export class Forest {
     this.stumpMesh = null;
     /** Indices currently falling — the only ones whose matrices are rewritten. */
     this.active = [];
-    /** Colliders laid down for trunks that have come to rest. */
-    this.logs = [];
+    /** Colliders laid down for trunks that have come to rest, by tree index. */
+    this.logs = new Map();
+    /** Down trees that have become real liftable objects: index → { prop, box }. */
+    this.real = new Map();
     /** Standing trunks that currently have a collider: index → static box. */
     this.live = new Map();
     /** Standing trunks by grid cell, so the ring is a lookup and not a scan. */
@@ -397,6 +433,122 @@ export class Forest {
       const box = this._standBox(i);
       if (box) this.live.set(i, box);
     }
+    this._syncLogs();
+  }
+
+  /**
+   * WHICH LOGS ARE REAL RIGHT NOW. Down trees inside `LIFT_RING` of a player
+   * become `Prop`s — cuttable, liftable, throwable, standable — and go back to
+   * being instances when the player walks away. See the note over the
+   * constants: this is the only way the three-draw-call forest and "you can
+   * pick up the trees" can both be true.
+   *
+   * A log the player is currently HOLDING or that has been moved is never taken
+   * back, because putting a thrown log back into the instance buffer would
+   * teleport it to where the tree fell.
+   */
+  _syncLogs() {
+    if (!this.world.physics?.add) return;
+    const D = this.data;
+    const players = (this.world.players || []).filter((p) => p && p.alive !== false);
+    // release the ones nobody is near, and the ones the blade has destroyed
+    for (const [i, rec] of this.real) {
+      if (rec.prop.dead) { this._release(i, true); continue; }
+      if (rec.moved || rec.prop.body.velocity.lengthSq() > 0.04) { rec.moved = true; continue; }
+      let near = false;
+      for (const p of players) {
+        const dx = p.position.x - D[i * F.N + F.X], dz = p.position.z - D[i * F.N + F.Z];
+        if (dx * dx + dz * dz < (LIFT_RING + 6) * (LIFT_RING + 6)) { near = true; break; }
+      }
+      if (!near) this._release(i, false);
+    }
+    if (!players.length || this.real.size >= LIFT_CAP) return;
+    // …and realise the nearest down trees that are not real yet
+    for (let i = 0; i < this.count && this.real.size < LIFT_CAP; i++) {
+      const k = i * F.N;
+      if (D[k + F.STATE] !== DOWN || this.real.has(i)) continue;
+      for (const p of players) {
+        const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
+        if (dx * dx + dz * dz < LIFT_RING * LIFT_RING) { this._realise(i); break; }
+      }
+    }
+  }
+
+  /** Turn down tree `i` into a real object. */
+  _realise(i) {
+    const D = this.data, k = i * F.N;
+    const r = D[k + F.R];
+    const len = Math.max(1.0, D[k + F.H] - D[k + F.CUT]);
+    this.hinge(i, _v1);
+    this.tip(i, _v2);
+    const mid = _v3.copy(_v1).add(_v2).multiplyScalar(0.5).clone();
+    /* The log's own geometry, at its own size — the instanced trunk is a unit
+     * rod scaled per instance, and a Prop needs a mesh of its own. Six sides
+     * and two rings, exactly as the instance is, so the object the player picks
+     * up is the object that was lying there. */
+    const geo = taperedGeo(len, r, 0.52, 6, 2);
+    geo.translate(0, -len * 0.5, 0);          // about its middle, for the body
+    const mat = this.trunkMesh.material;
+    const mesh = new THREE.Mesh(geo, mat);
+    const t = D[k + F.TONE];
+    // the instance carried its tone as an instance colour; a lone mesh carries
+    // it as a vertex colour, or the log comes out a different wood from the
+    // stand it fell out of
+    const col = new Float32Array(geo.attributes.position.count * 3);
+    for (let v = 0; v < col.length; v += 3) { col[v] = t; col[v + 1] = t; col[v + 2] = t; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+    // lying down: the rod's +Y runs from hinge to tip
+    const axis = _v2.clone().sub(_v1).normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(UP, axis);
+    /* A chain of spheres down the axis is what the blade solver walks, so a log
+     * can be cut anywhere along its length rather than only at its middle. */
+    const spheres = [];
+    const N = Math.max(3, Math.min(9, Math.round(len / 2.2)));
+    for (let s = 0; s < N; s++) {
+      spheres.push({ c: new THREE.Vector3(0, (s / (N - 1) - 0.5) * len, 0), r: r * 1.05 });
+    }
+    const prop = new Prop(this.world, {
+      kind: 'log', mesh, toughness: this.toughness, hp: 90, weather: false,
+      grippable: true, spheres,
+      mass: Math.min(LOG_MASS_CAP, Math.PI * r * r * len * 700),
+      friction: 0.86, restitution: 0.04,
+      position: mid, quaternion: quat, centre: true,
+    });
+    prop.body.position.copy(mid);
+    prop.body.quaternion.copy(quat);
+    // the instanced copy steps aside, and so does the static box under it
+    _s.setScalar(0);
+    this.trunkMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
+    this.crownMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownMesh.instanceMatrix.needsUpdate = true;
+    const box = this.logs.get(i);
+    if (box) { this.world.physics?.removeStaticBox?.(box); this.logs.delete(i); }
+    this.world.addProp?.(prop);
+    this.real.set(i, {
+      prop, moved: false,
+      // enough to lay the log's collider back down if the player walks away
+      box: box ? { c: box.center.clone(), he: box.halfExtents.clone(), q: box.quat?.clone?.() } : null,
+    });
+  }
+
+  /** Put log `i` back into the instance buffers. */
+  _release(i, destroyed) {
+    const rec = this.real.get(i);
+    if (!rec) return;
+    this.real.delete(i);
+    if (!destroyed) {
+      rec.prop.destroy?.();
+      if (rec.box) {
+        const b = this.world.physics?.addStaticBox?.(rec.box.c, rec.box.he, rec.box.q,
+          { friction: 0.86 });
+        if (b) this.logs.set(i, b);
+      }
+      this._writeTrunk(i); this._writeCrown(i);
+    }
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownMesh.instanceMatrix.needsUpdate = true;
   }
 
   /** Take a trunk's standing collider away — it is about to move. */
@@ -765,7 +917,7 @@ export class Forest {
       const r = D[k + F.R];
       const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, len * 0.5), q,
         { friction: 0.86 });
-      if (box) this.logs.push(box);
+      if (box) this.logs.set(i, box);
     }
     const fx = this.world.particles;
     if (fx) {
@@ -784,6 +936,11 @@ export class Forest {
     // trees on it. (`World.unload` clears the whole array either way.)
     for (const box of this.live.values()) this.world.physics?.removeStaticBox?.(box);
     this.live.clear();
+    // …and the logs that had become real objects go with it, for the same
+    // reason: they are the forest's, not the level's.
+    for (const rec of this.real.values()) if (!rec.prop.dead) rec.prop.destroy?.();
+    this.real.clear();
+    this.logs.clear();
     this._cells.clear();
     for (const m of [this.trunkMesh, this.crownMesh, this.stumpMesh]) {
       if (!m) continue;
