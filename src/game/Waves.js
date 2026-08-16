@@ -51,6 +51,10 @@ import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, app
 import { duelRng } from './Duel.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { ArrivalDirector, seedArrivals } from './Arrivals.js';
+/* The one table in the game that says which side a body fights for. It imports
+ * nothing, deliberately — see its header — so this edge costs no cycle and no
+ * canvas. */
+import { FACTIONS, factionOf } from './Databank.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -1121,6 +1125,11 @@ export class WaveDirector {
     this.intermission = 0;
     this.mode = opts.mode ?? 'roguelite';
     this.pool = opts.pool || ['b1', 'b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'];
+    /* THE ARMIES ON THIS FIELD — see `levelArmies`. Off the level in the game,
+     * because `World` hands this director a pool and not a level; overridable
+     * from opts so a harness can compose a two-army wave without building a
+     * World, exactly as `pool` is. */
+    this._armies = Array.isArray(opts.armies) ? opts.armies : null;
     this.maxAlive = opts.maxAlive ?? 26;
     /**
      * THE RULES THIS RUN IS FOUGHT UNDER — see the RUN RULES block above.
@@ -1445,7 +1454,106 @@ export class WaveDirector {
    */
   static LADDER = { b1: 1, trooper: 2, b2: 3, sniper: 4, droideka: 6, acolyte: 7, walker: 12 };
 
+  /* ── two armies ──────────────────────────────────────────────────── */
+
+  /**
+   * THE ARMIES THIS LEVEL HAS, IF IT HAS MORE THAN ONE.
+   *
+   * ── the defect, measured ───────────────────────────────────────────────
+   *
+   * Composed through this director on the shipped Geonosis pool, wave 3 read
+   * `5xb1 2xb2 2xtrooper`: five battle droids, two super battle droids and two
+   * clone troopers, arriving together, walking at the player shoulder to
+   * shoulder, on the field of the First Battle of Geonosis. Over twenty waves
+   * nineteen of them fielded Republic and Confederate bodies at once. The level
+   * names both armies in its pool deliberately — `CommandDirector.unlockedAt`
+   * filters them apart, and that filter is the only thing in the game that ever
+   * knew there were two — so in every mode that is not Command the two rosters
+   * were one horde. `grep -in faction src/game/Waves.js` returned nothing.
+   *
+   * ── what is built ─────────────────────────────────────────────────────
+   *
+   * A WAVE IS ONE ARMY'S PUSH, and the sides trade them. That is the smaller of
+   * the two shapes this could take — the other is both armies on the field
+   * fighting each other as well as you — and the reason it is this one is
+   * recorded rather than assumed: the second needs `World.pickTarget` to
+   * consider cross-team bodies outside Command mode, and that gate
+   * (`if (this.command)`, World.js) is one condition in a file this pass does
+   * not own. Everything else it would need already works — `Enemy.team`,
+   * `canHarm`, `blocksWaveEnd` — so it is one line away and it is written up in
+   * the handover rather than half-built here.
+   *
+   * IT IS OPT-IN PER LEVEL, exactly as `partyScale` is and for the same stated
+   * reason: the rotation moves a level's whole composition, and nine of the ten
+   * shipped levels mix a Republic body into a droid pool because their own notes
+   * say the thing coming at you is a HORDE ("what comes out of a ship is a
+   * boarding party", "the garrison is the Order, and one acolyte because
+   * something turned this hall"). One level's blurb says "two armies on it".
+   * That is the level that declares `armies`, and turning another one on is one
+   * line in Levels.js plus the measurement in `tools/checks/factions.mjs`.
+   */
+  levelArmies() {
+    const declared = this._armies ?? this.world?.level?.armies ?? null;
+    if (!Array.isArray(declared) || declared.length < 2) return [];
+    return declared.filter((id) => FACTIONS[id]?.army);
+  }
+
+  /**
+   * WHICH ARMY THIS WAVE IS, or null on a level that has only one.
+   *
+   * STRICT ALTERNATION, not a coin toss, and that is the design decision here.
+   * A random draw can hand a player five Confederate waves in a row, which on a
+   * level whose premise is two armies means one of them is content that shipped
+   * and was not met; alternation makes "you meet both inside any two waves" a
+   * property rather than a probability. It is also learnable, which is what this
+   * game asks of everything else it makes a rule out of — the droids came last
+   * time, so bring the answer to clone rifles.
+   *
+   * WHICH SIDE OPENS is folded out of the run's seed rather than drawn from the
+   * wave stream. Drawing would advance a stream four other systems share and
+   * move the composition of every level in the game by one step; a fold of a
+   * number that is already fixed for the run gives the same variety for free.
+   *
+   * A SIDE THAT CANNOT FIELD ANYTHING DOES NOT GET THE WAVE. At wave 1 the
+   * Republic's lightest body is a clone trooper, and the ladder opens that at
+   * wave 2 — so a Republic wave 1 would compose EMPTY and clear itself the frame
+   * it started. `open` is the roster this depth has actually earned, and a side
+   * with nothing in it is skipped rather than fielded; if neither side has
+   * anything the whole pool is used and the level behaves exactly as it did.
+   * That is the same law `_shapeUnder` states about conditions — "a condition
+   * never empties the field" — and it is what makes a stall impossible.
+   */
+  sideFor(wave, open = null) {
+    const armies = this.levelArmies();
+    if (armies.length < 2) return null;
+    /* Command already answers this question, once, its own way: its
+     * `unlockedAt` filters the level's two armies down to the one you are not
+     * leading. A rotation here would answer it a second time and half the waves
+     * would come back empty. */
+    if (this.mode === 'command') return null;
+    const types = open || this._openTypes(wave);
+    const live = armies.filter((id) => types.some((t) => factionOf(t) === id));
+    if (live.length < 2) return live[0] ?? null;
+    const opening = this.seed === null ? 0 : (Math.abs(this.seed >> 3) & 1);
+    return live[(wave - 1 + opening) % live.length];
+  }
+
+  /** Is this body allowed on the field this wave, given whose push it is? */
+  _sideAllows(type, wave) {
+    const side = this.sideFor(wave);
+    return !side || factionOf(type) === side;
+  }
+
   unlockedAt(wave) {
+    const open = this._openTypes(wave);
+    const side = this.sideFor(wave, open);
+    if (!side) return open;
+    const mine = open.filter((t) => factionOf(t) === side);
+    return mine.length ? mine : open;
+  }
+
+  /** Every pool member this depth has earned, both armies and all. */
+  _openTypes(wave) {
     /**
      * EVERY POOL MEMBER, AT THE LADDER'S DEPTH OR AT ONE DERIVED FROM ITS THREAT.
      *
@@ -2018,7 +2126,27 @@ export class WaveDirector {
     // with — on a level whose pool names `beast` and `walker` explicitly. A
     // rung that declares itself the bottom fields everything its level brought.
     const bottom = !!this.world?.run?.rung?.boss && !this.world.run.done;
-    const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from) && this.pool.includes(s.type))
+    /* …AND IT IS THE WAVE'S OWN SIDE'S LADDER on a level with two armies.
+     *
+     * Without the third clause a Republic push on Geonosis would be crowned by
+     * an OG-9 spider droid and a droideka, which is the mixed field this whole
+     * rotation exists to end — and worse on a boss wave than anywhere, because
+     * the set-piece is the body the wave is named after. `_sideAllows` answers
+     * `true` for every level that declares no armies and in Command mode, so
+     * every existing set-piece ladder is untouched.
+     *
+     * The cost is stated rather than hidden: SET_PIECE holds no Republic body,
+     * so a Republic boss wave has no rung to climb and spends the whole
+     * set-piece share on the fill instead. That is not a new behaviour — it is
+     * what the IG bodyguard's own note records happening on the foundry before
+     * wave 10 ("what wave 5 gets instead is the whole budget spent on bodies")
+     * — and on a 620 m plain a clone assault two dozen bodies deep is a
+     * legitimate climax. Adding an AT-TE rung would fix it and would ALSO put an
+     * AT-TE in front of a player who is commanding the Republic, because
+     * `_setPiece` is not filtered by side in Command mode; that is Command's
+     * lane and it is written up in the handover. */
+    const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from)
+      && this.pool.includes(s.type) && this._sideAllows(s.type, wave))
       .map(s => s.type);
     if (!ladder.length) return out;
     /* ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two

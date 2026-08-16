@@ -4056,16 +4056,35 @@ export const LEVELS = {
  * things that are ON this battlefield", which is two armies, because that is
  * what the images show and because Command lets you lead EITHER of them —
  * `CommandDirector.unlockedAt` filters this list down to whichever side you are
- * not. In an ordinary wave mode the filter does not run and you get both, which
- * is the honest reading of a lone blade dropped into the middle of a war that
- * does not care which side it is on. `roster.mjs` requires every archetype to be
- * reachable from some pool, and this is the pool that reaches the seven bodies
- * Command adds; a level that named only one army would leave the other's five
- * rungs as content that shipped and cannot be met.
+ * not. `roster.mjs` requires every archetype to be reachable from some pool, and
+ * this is the pool that reaches the seven bodies Command adds; a level that
+ * named only one army would leave the other's five rungs as content that shipped
+ * and cannot be met.
  *
- * The repeats are weights (see `WaveDirector.unlockedAt`): `b1` four times and
+ * The repeats are weights (see `WaveDirector._openTypes`): `b1` four times and
  * `trooper` three, because line infantry is what a battlefield is mostly made
  * of, and one each of the elites.
+ *
+ * ── AND `armies` IS WHAT MAKES THEM TWO ─────────────────────────────────
+ *
+ * The paragraph above used to end "in an ordinary wave mode the filter does not
+ * run and you get both, which is the honest reading of a lone blade dropped into
+ * the middle of a war". It was not honest, it was UNMEASURED: composed through
+ * the shipped director, wave 3 of this level fields `5xb1 2xb2 2xtrooper` —
+ * clone troopers marching at the player shoulder to shoulder with the droids
+ * they were sent here to destroy — and nineteen of its first twenty waves mix
+ * the two rosters. Command's filter was the only code in the game that knew
+ * there were two armies at all.
+ *
+ * So the level says so, in the two words the wave director reads: a wave here is
+ * one army's push and the sides trade them. See `WaveDirector.sideFor` for the
+ * rotation, why it is alternation rather than a draw, and why the other nine
+ * levels — whose own notes describe a horde rather than a war — are untouched.
+ *
+ * EVERY ENTRY IN THE POOL BELOW BELONGS TO ONE OF THESE TWO, and it has to:
+ * on a level with armies a body whose faction is neither is a body no wave can
+ * field, which is the unreachable-content failure `roster.mjs` exists for one
+ * layer up. `tools/checks/factions.mjs` holds that line.
  */
 Object.assign(ARCHETYPES, COMMAND_UNITS);
 
@@ -4073,6 +4092,7 @@ LEVELS.geonosis = {
   name: 'Geonosis',
   blurb: 'A red plain under a dust sky, two armies on it, and nothing between them but the ground you have to cross.',
   terrain: 'geonosis',
+  armies: ['republic', 'separatist'],
   pool: [
     // The Republic's five rungs, weighted toward the line.
     'trooper', 'trooper', 'trooper', 'heavy', 'sniper', 'jet', 'arc', 'officer',

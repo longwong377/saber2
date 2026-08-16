@@ -97,7 +97,14 @@ seedWaves(SEED);
  * there to be seen — two different levels producing byte-identical
  * composition — and it is the same shape as every harness defect this session:
  * a default answering for a missing thing and being reported as a measurement. */
-const stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set(), scene: null };
+/* …AND THE LEVEL ITSELF, not only its pool. `WaveDirector.sideFor` reads
+ * `world.level.armies` to decide whose push a wave is, so a stub with a pool and
+ * no level composed a Geonosis that mixes two armies while the game fields them
+ * one at a time. An instrument that restates half a rule disagrees with it
+ * eventually (HANDOFF §2.4) — and this is the instrument the defect was found
+ * with, so it is the one that must not lie about the fix. */
+const stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set(), scene: null,
+  level: LEVELS[level] };
 const dir = new WaveDirector(stubWorld, { pool: LEVELS[level].pool });
 
 const waves = [];
