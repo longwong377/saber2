@@ -333,6 +333,15 @@ export const ARMIES = {
     tiers: [
       rung('trooper', 1), rung('heavy', 1), rung('sniper', 2),
       rung('jet', 2), rung('arc', 3), rung('officer', 3),
+      /* THE MACHINE, and one apiece. See the note above `ARMIES` about why the
+       * two ladders' TOTALS are held close and their hardware is not: an AT-TE
+       * is a six-legged 1500 hp gun platform and an AAT is a hover tank, and
+       * making them threat-identical would be making one army the other with a
+       * repaint. `musterCost` keeps the exchange rate honest — 0.53 threat per
+       * point against 0.54 — which is the fairness property that actually
+       * matters. Area 4, because a machine is what the back half of the advance
+       * is FOR. */
+      rung('atte', 4),
     ],
   },
   separatist: {
@@ -347,6 +356,7 @@ export const ARMIES = {
     tiers: [
       rung('b1', 1), rung('b2', 1), rung('rocket', 2),
       rung('droideka', 2), rung('bx', 3), rung('magna', 3),
+      rung('aat', 4),
     ],
   },
 };
@@ -623,12 +633,12 @@ export const AREAS = [
   {
     id: 'spires', name: 'The Spire Approach',
     brief: 'Under the spires, in the smoke. Their elite are waiting where the sightlines close.',
-    waves: 5, budget: 1.25, heavy: 0.30, muster: 20, tier: 3,
+    waves: 5, budget: 1.25, heavy: 0.30, muster: 26, tier: 4,
   },
   {
     id: 'foundry', name: 'The Core Ship',
     brief: 'The last ground before the ship. Everything they have left is between you and it.',
-    waves: 5, budget: 1.45, heavy: 0.45, muster: 23, tier: 3,
+    waves: 5, budget: 1.45, heavy: 0.45, muster: 30, tier: 4,
   },
 ];
 

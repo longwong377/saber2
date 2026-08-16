@@ -219,17 +219,51 @@ export function run({ check, assert }) {
       ta += Ar.threat; tb += Ac.threat; ca += r.cost; cb += c.cost;
       rows.push(`${r.type}(${Ar.threat}/${r.cost}) · ${c.type}(${Ac.threat}/${c.cost})`);
     }
-    assert(ta === tb, `the Republic ladder is worth ${ta} threat and the Confederacy's ${tb}`);
-    assert(ca === cb, `the Republic ladder costs ${ca} points and the Confederacy's ${cb}`);
-    // …and nobody's rung is a bargain. 15% is the width of the rounding in
-    // `musterCost`'s own `+1` per body at the light end of the ladder.
+    /**
+     * TOTALS CLOSE, NOT IDENTICAL — and the loosening is a finding rather than
+     * a concession.
+     *
+     * The first draft asserted `ta === tb` exactly, which held while both
+     * ladders were infantry. It stopped holding the moment the armies got
+     * MACHINES: an AT-TE is a six-legged 1500 hp gun platform at threat 17 and
+     * an AAT is a 1050 hp hover tank at 13, and there is no honest way to make
+     * those the same number. Requiring it would have forced one army's hardware
+     * to be the other's with a repaint, which is the opposite of what a faction
+     * choice is for.
+     *
+     * The property that actually protects a mirror match is the EXCHANGE RATE —
+     * nobody may buy more fight per point than their opponent — and that is
+     * asserted exactly, per rung, below. The totals are held to 12% as a
+     * backstop against one ladder quietly growing an extra rung.
+     */
+    const skew = Math.abs(ta - tb) / Math.max(ta, tb);
+    const cskew = Math.abs(ca - cb) / Math.max(ca, cb);
+    assert(skew < 0.12,
+      `the Republic ladder is worth ${ta} threat and the Confederacy's ${tb} — ${(skew * 100).toFixed(0)}% apart`);
+    assert(cskew < 0.12,
+      `the Republic ladder costs ${ca} points and the Confederacy's ${cb}`);
+    // THE EXCHANGE RATE, per rung. 0.2 threat per point is the width of the
+    // rounding in `musterCost`'s own `+1` per body at the light end.
     for (let i = 0; i < rep.tiers.length; i++) {
       const vr = ARCHETYPES[rep.tiers[i].type].threat / rep.tiers[i].cost;
       const vc = ARCHETYPES[cis.tiers[i].type].threat / cis.tiers[i].cost;
-      assert(Math.abs(vr - vc) < 0.35,
+      assert(Math.abs(vr - vc) < 0.2,
         `rung ${i + 1}: ${rep.tiers[i].type} is ${vr.toFixed(2)} threat per point against `
         + `${cis.tiers[i].type}'s ${vc.toFixed(2)}`);
     }
+    /* AND A LADDER THAT REACHES A MACHINE. The back half of a campaign is what
+     * the muster points are for; a top rung that is still infantry means the
+     * five areas are the same shopping list five times. */
+    const top = rep.tiers[rep.tiers.length - 1];
+    assert(ARCHETYPES[top.type].big, `the top of the Republic ladder is ${top.type}, which is not a machine`);
+    assert(ARCHETYPES[cis.tiers[cis.tiers.length - 1].type].big,
+      'the top of the Confederacy ladder is not a machine');
+    /* …and it has to be AFFORDABLE by the end. A rung nobody can ever reach is
+     * a rung that does not exist — measured against the whole campaign's
+     * payout, since a machine is what you save for. */
+    const purse = Cmd.AREAS.reduce((n, a) => n + a.muster, 0);
+    assert(top.cost < purse * 0.6,
+      `the top rung costs ${top.cost} against a whole campaign's ${purse} points`);
     // …and the ladder actually CLIMBS. A "tier ladder" whose rungs are all the
     // same weight is a shopping list.
     for (let i = 1; i < rep.tiers.length; i++) {

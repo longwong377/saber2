@@ -48,6 +48,28 @@ import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
  * lines above, so Waves is fully evaluated before Command's class body runs.
  */
 import { COMMAND_UNITS } from './Command.js';
+/**
+ * THE MACHINES, imported FOR THE SIDE EFFECT and for no other reason.
+ *
+ * `src/game/Vehicles.js` ends in `Object.assign(ARCHETYPES, …)` — the same way
+ * the warship's set-piece is registered at the foot of this file, and for the
+ * same stated reason: this is the module that decides what levels exist, and a
+ * level and the bodies it fields are one decision.
+ *
+ * A BARE SIDE-EFFECT IMPORT IS EXACTLY THE SHAPE THAT ROTS, so it is written
+ * down: without this line the four keys named in `LEVELS.geonosis.pool` below do
+ * not exist, and `roster.mjs` fails. Without those pool entries, this line
+ * creates four orphan archetypes and `roster.mjs` fails the other way. The two
+ * halves landed in one commit and must stay together.
+ *
+ * There is an ORDERING HAZARD worth recording rather than rediscovering: the
+ * vehicles' own check suite imports that module too, so in a full run
+ * `ARCHETYPES` carries the four keys whether or not `src/` has imported them —
+ * which means a forward run could pass on a tree where this line was missing and
+ * `SABER_CHECK_ORDER=reverse` would fail. Naming them in a pool is what makes
+ * both orders agree.
+ */
+import './Vehicles.js';
 
 let rng = makeRng(20250805);
 
@@ -2762,6 +2784,23 @@ LEVELS.geonosis = {
     // very tall thin legs with a single beam off the top. It is the silhouette
     // that reads at any distance, which is what a heavy on this map is for.
     'walker',
+    /**
+     * THE MACHINES, one entry each and no repeats.
+     *
+     * `src/game/Vehicles.js` builds these four off the twenty-four vehicle
+     * plates in `assets/reference/vehicles/`, and this is the pool that makes
+     * them reachable — `roster.mjs` fails on any archetype no pool names, which
+     * is what stops four bodies somebody modelled, priced and gave a silhouette
+     * to from being content that shipped and cannot be met.
+     *
+     * UNWEIGHTED, and deliberately, against seventeen infantry entries above.
+     * Repeats in a pool are weights (see `WaveDirector.unlockedAt`), so one
+     * entry each puts a machine at roughly one draw in twenty-one — and
+     * `heavyLimit` caps how many can be on the field at once regardless, because
+     * an AT-TE is a great many meshes. The reference plates agree: a wide shot
+     * of this battle has hundreds of infantry and three or four machines.
+     */
+    'dwarfspider', 'hailfire', 'aat', 'atte',
   ],
   /* The ochre the whole level is graded around: dust puffs, footfall grit, the
    * hemisphere's lower half and the smoke's own tip all derive from it. */
