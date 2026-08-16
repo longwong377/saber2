@@ -267,13 +267,35 @@ export async function run({ check, assert }) {
 
     assert(!p.alive, 'the player survived 1e9 damage');
     assert(world.over, 'the run did not end');
-    assert(world.time - t0 > 2.5,
-      `the clock advanced ${(world.time - t0).toFixed(3)} s over the 3 s before the death card — `
+    /**
+     * THE BAR IS "NOT FROZEN", AND IT USED TO BE WRITTEN AS "> 2.5 s of 3".
+     *
+     * That number encoded an assumption the game has since deliberately
+     * changed: a death now takes the world to 0.34× for 2.4 s (`Player.die` →
+     * `World.killTime`), because a death with no slow motion was one of the
+     * audit's named defects. Three raw seconds through that dip is about 1.7 s
+     * of world time — measured 1.680 — and the old bar read that as the freeze
+     * it was written against.
+     *
+     * The defect it exists for is `running = false`, which advances the clock
+     * by EXACTLY ZERO and moves the camera 0.000000 m. So the bar is a floor
+     * that a frozen world cannot clear and a dilated one clears easily, plus
+     * the thing that actually distinguishes them: the clock must still be
+     * moving at the END of the window, not merely have moved at the start.
+     */
+    const dilated = world.time - t0;
+    assert(dilated > 0.9,
+      `the clock advanced ${dilated.toFixed(3)} s over the 3 s before the death card — `
       + 'the world is frozen, so nothing written for this moment can run');
+    const tick = world.time;
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    assert(world.time > tick, 'the clock stopped once the death dilation expired');
     assert(engine.camera.position.distanceTo(cam0) > 0.5,
       `the death camera moved ${engine.camera.position.distanceTo(cam0).toFixed(4)} m`);
-    assert(Math.abs(p.camera.pitch - (-0.42)) < 0.05,
-      `the death camera's pitch eased to ${p.camera.pitch.toFixed(3)} and the target is -0.42`);
+    // -0.52 is `CameraRig.beginDeathShot`'s own target; -0.42 was the old
+    // `_updateDead` fallback, which still runs when the shot is turned off.
+    assert(p.camera.pitch < -0.35 && p.camera.pitch > -0.62,
+      `the death camera's pitch eased to ${p.camera.pitch.toFixed(3)}, and the shot aims at -0.52`);
     assert(p.saber.ignition < ign0 * 0.2,
       `the blade is still at ${p.saber.ignition.toFixed(3)} ignition after dying — retract() was `
       + 'called and never stepped');
@@ -380,6 +402,13 @@ export async function run({ check, assert }) {
        * DetachedPiece path only exists for a body on its feet, which is
        * exactly the case where the corpse it came off is still rendering. */
       assert(b.actor && !b.actor.ragdolled, 'a living acolyte has no un-ragdolled actor to cut');
+      /* SPEND THE GUARD FIRST. A duellist turns aside the cuts that would end
+       * the fight, and losing its blade arm is one of them — `Enemy._turnCut`,
+       * added with `tools/checks/powers.mjs`. So an acolyte at full guard
+       * answers this pass instead of losing the forearm, and this check, which
+       * is about MATERIALS and not about combat, would silently have nothing to
+       * measure. `tools/checks/powers.mjs` owns the guard's own behaviour. */
+      b.guard = 0;
       b.takeCut({
         bone: 'foreR', cutT: 0.5, cap: { vital: 0.05, name: 'foreR' },
         point: V(0.3, 1.1, -5), impulse: V(3, 2, 0), normal: V(0, 1, 0), speed: 18,

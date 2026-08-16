@@ -185,6 +185,73 @@ export async function run({ check, assert }) {
     } finally { restoreShared(snap); }
   });
 
+  /**
+   * A LEVEL LOAD IS A FROZEN TAB.
+   *
+   * `deploy()` calls the whole build synchronously — heightfield, Rapier world,
+   * instanced fields, textures, up to 341 statics — with no yield and nothing
+   * on screen. The menu disappears and the page stops answering, which is
+   * indistinguishable from a crash. The boot sequence already does this
+   * properly, in eleven awaited steps behind a bar.
+   */
+  check('feel: a level load yields, and the async door builds the same world', async () => {
+    const { stubEngine } = await import('./_coop.mjs');
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const snap = await snapshotShared();
+    try {
+      await initPhysics();
+      const world = new World(await stubEngine(), { ...DEFAULT_SETTINGS, quality: 'low' });
+
+      /* SAME WORLD OUT OF BOTH DOORS. The two paths share one list of stages,
+       * so this cannot drift — but "cannot drift" is what every duplicated
+       * table in this codebase's history was said to be, so it is measured. */
+      world.loadLevel('temple');
+      const sync = { statics: world.statics.length, props: world.props.length,
+        terrain: !!world.terrain, grass: !!world.grass, key: world.levelKey,
+        director: world.director?.constructor?.name, running: world.running };
+
+      const seen = [];
+      let last = 0;
+      const cost = [];
+      await world.loadLevelAsync('temple', {}, (frac, name) => {
+        const now = performance.now();
+        // The callback fires BEFORE its stage runs, so each tick times the
+        // stage that came before it. Attributing it to the label being
+        // announced is off by one and would blame the wrong stage.
+        if (seen.length) cost.push([seen[seen.length - 1].name, now - last]);
+        seen.push({ frac, name });
+        last = now;
+      });
+      const async_ = { statics: world.statics.length, props: world.props.length,
+        terrain: !!world.terrain, grass: !!world.grass, key: world.levelKey,
+        director: world.director?.constructor?.name, running: world.running };
+      for (const k of Object.keys(sync)) {
+        assert(sync[k] === async_[k], `the async load built a different world: ${k} ${sync[k]} vs ${async_[k]}`);
+      }
+      assert(seen.length >= 6, `only ${seen.length} progress ticks — that is not a bar, it is a spinner`);
+      assert(seen[0].frac === 0 && seen[seen.length - 1].frac === 1,
+        `progress ran ${seen[0].frac} → ${seen[seen.length - 1].frac}`);
+      for (let i = 1; i < seen.length; i++) {
+        assert(seen[i].frac > seen[i - 1].frac, `progress went backwards at ${seen[i].name}`);
+        assert(seen[i].name && seen[i].name !== seen[i - 1].name, `an unnamed or repeated stage: ${seen[i].name}`);
+      }
+      // A stage that is the whole load is a load that has not been split.
+      const total = cost.reduce((a, [, t]) => a + t, 0);
+      const worst = cost.reduce((a, b) => (b[1] > a[1] ? b : a), ['—', 0]);
+      assert(total > 0, 'the load took no measurable time — nothing was built');
+      assert(worst[1] < total * 0.92,
+        `"${worst[0]}" is ${(worst[1] / total * 100).toFixed(0)}% of the load on its own`);
+
+      world.unload();
+      return `${seen.length} named stages, 0→1 monotone, same world both doors `
+        + `(${sync.statics} statics, ${sync.props} props, ${sync.director}); `
+        + `worst stage "${worst[0]}" ${worst[1].toFixed(0)} ms of ${total.toFixed(0)} ms`;
+    } finally { restoreShared(snap); }
+  });
+
   check('feel: the jump lens kick reaches the screen, and on the game clock', () => {
     const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 900);
     const rig = new CameraRig(cam);

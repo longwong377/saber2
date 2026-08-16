@@ -124,6 +124,24 @@ import { audio, PRIO } from '../engine/Audio.js';
 const rng = makeRng((Math.random() * 1e9) | 0);
 /** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
+
+/**
+ * Give the browser a frame — the yield `loadLevelAsync` is built out of.
+ *
+ * A real `requestAnimationFrame` where there is one, because only a repaint
+ * actually moves a progress bar: a `setTimeout(0)` or a bare `await` lets the
+ * next stage start before the pixels the last one paid for have been drawn, and
+ * the bar jumps from 0 to 1 in one frame at the end. A microtask where there is
+ * not, so a headless caller gets the same ORDERING without a 16 ms tax per
+ * stage — the checks run this path too, and eight stages of real frames is a
+ * tenth of a second per world.
+ */
+function nextFrame() {
+  if (typeof requestAnimationFrame === 'function') {
+    return new Promise((r) => requestAnimationFrame(() => r()));
+  }
+  return Promise.resolve();
+}
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
@@ -281,7 +299,65 @@ export class World {
    * other side, so a landing is a transition rather than a restart.
    */
   loadLevel(key, opts = {}) {
-    this.unload();
+    for (const step of this._loadSteps(key, opts)) step.run();
+    return this.level;
+  }
+
+  /**
+   * THE SAME LOAD, WITH THE TAB STILL BREATHING — and a progress bar over it.
+   *
+   * `deploy()` calls this work synchronously: terrain heightfield, Rapier
+   * world, instanced fields, textures and up to 341 hand-placed statics, all on
+   * the main thread with no yield. Measured headless per level on this box,
+   * warm: 444 ms (colosseum) to 1150 ms (mustafar), and the first load of a
+   * session 4469 ms. For that whole time the page cannot paint, cannot answer a
+   * click and cannot show a spinner — the menu simply disappears and the tab
+   * freezes, which is indistinguishable from a crash.
+   *
+   * THE BOOT SEQUENCE ALREADY DOES THIS PROPERLY. Eleven named steps, each
+   * awaiting a frame, with a bar over them. This is the same shape for the same
+   * reason, and it shares ONE list of steps with the synchronous path — a
+   * second copy of the level build beside the first is the defect this project
+   * keeps a section of HANDOFF for, and it would drift the moment a level
+   * gained a system.
+   *
+   * `frame()` is a real `requestAnimationFrame` where there is one and a
+   * microtask where there is not, so a headless caller gets the same ordering
+   * without a 16 ms tax per step.
+   *
+   * @param onProgress (fraction 0..1, label) before each step
+   */
+  async loadLevelAsync(key, opts = {}, onProgress = null) {
+    const steps = this._loadSteps(key, opts);
+    for (let i = 0; i < steps.length; i++) {
+      try { onProgress?.(i / steps.length, steps[i].name); } catch {}
+      await nextFrame();
+      steps[i].run();
+    }
+    try { onProgress?.(1, 'ready'); } catch {}
+    return this.level;
+  }
+
+  /**
+   * The level build, as a list of named stages.
+   *
+   * Closures over one scope rather than methods taking six arguments each: the
+   * stages genuinely share `L`, the quality tier and the two derived scales,
+   * and threading those through a signature would be six places for them to
+   * disagree. The list is the authority for BOTH doors above.
+   */
+  _loadSteps(key, opts = {}) {
+    let L = null, q = null, detail = 1, particleScale = 1;
+    const steps = [
+      /* THE OLD LEVEL GOING AWAY IS ITS OWN STAGE, and measured, it is the
+       * biggest one on a level-to-level transition: disposing a built Temple
+       * (341 statics, each with geometry and a collider) took 5366 ms of a
+       * 7098 ms rebuild on this box. Folded into the bookkeeping below it, the
+       * progress bar would have sat at 1/7 for three quarters of the wait and
+       * then run to the end — which is the shape of bar players read as hung. */
+      { name: 'clearing the field', run: () => this.unload() },
+
+      { name: 'reading the level', run: () => {
     /**
      * DERIVED, so it is rebuilt rather than appended to.
      *
@@ -332,7 +408,7 @@ export class World {
     const owned = MODES[this.settings?.mode]?.level;
     if (owned && LEVELS[owned]) key = owned;
     const resolved = LEVELS[key] ? key : LEVEL_ORDER[0];
-    const L = LEVELS[resolved];
+    L = LEVELS[resolved];
     this.level = L;
     this.levelKey = resolved;
     this.groundColor = L.groundColor;
@@ -355,7 +431,7 @@ export class World {
     // here, a default of 1 in DEFAULT_SETTINGS, no control anywhere in the menu
     // and therefore no way of ever being anything but 1, while this comment
     // described the UI a player would go looking for and not find.
-    const q = QUALITY[this.settings.quality] || QUALITY.high;
+    q = QUALITY[this.settings.quality] || QUALITY.high;
     // Terrain detail is the tier's own VIEW DISTANCE, normalised to `high`:
     // the mesh exists to be looked across, so the tier that draws to 900 m has
     // to carry the vertices for it. 380/520/700/900 against high's 700 gives
@@ -375,12 +451,19 @@ export class World {
      * World is not in that graph, so the lookup belongs here.
      */
     this.clothCut = q.cloth ?? 30;
-    const detail = q.viewDist / QUALITY.high.viewDist;
-    const particleScale = (this.settings.particleScale ?? 1) * q.particles;
+    detail = q.viewDist / QUALITY.high.viewDist;
+    particleScale = (this.settings.particleScale ?? 1) * q.particles;
+      } },
 
+      /* The heightfield and the Rapier collider under it — the single most
+       * expensive thing a level build does, and the reason the tab used to
+       * stop answering for half a second before anything appeared. */
+      { name: 'raising the ground', run: () => {
     this.terrain = new Terrain(this.scene, L.terrain, detail);
     this.physics.terrain = this.terrain;
+      } },
 
+      { name: 'lighting the sky', run: () => {
     this.particles = new Particles(this.scene, particleScale);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
@@ -397,6 +480,9 @@ export class World {
     this.room = roomOf(L, this.terrain.surfaceAt(0, 0));
     audio.setAmbience({ ...(L.ambience || {}), room: this.room });
 
+      } },
+
+      { name: 'seeding the air and the ground cover', run: () => {
     // The motes, windborne sheets, haze and heat shimmer are particles too, so
     // they ride the particle tier and not the terrain one.
     this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: particleScale });
@@ -419,7 +505,15 @@ export class World {
       });
     }
 
+      } },
+
+      /* Up to 341 hand-placed statics on the Temple, each with its own geometry
+       * and collider. The longest single stage on every level that has one. */
+      { name: 'dressing the level', run: () => {
     L.dress(this);
+      } },
+
+      { name: 'forming the enemy', run: () => {
 
     /**
      * LESSONS INSTEAD OF WAVES — and now anywhere, not only in the dojo.
@@ -560,7 +654,9 @@ export class World {
 
     this.running = true;
     this.over = false;
-    return L;
+      } },
+    ];
+    return steps;
   }
 
   /**
