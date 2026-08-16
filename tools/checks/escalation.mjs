@@ -1540,7 +1540,7 @@ export async function run({ check, assert }) {
      * it left the deep waves with exactly one answer: kill it first.
      *
      * `attune-guard` was already the right shape — offered at every set-piece
-     * forever, uncapped, repeatable, the heart of the guard livingForce — and
+     * forever, uncapped, repeatable, the heart of the guard current — and
      * granted `deflectDamage`, which is offence through deflection. This
      * asserts the axis exists and RACES: the same ATTUNE_STEP as the blade's,
      * in the opposite direction, so a rank makes the edge 12% deeper there and

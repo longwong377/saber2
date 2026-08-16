@@ -202,7 +202,7 @@ export async function run({ check, assert }) {
      * which is the run this file exists to make meaningful. Two checks were red
      * and both were wrong:
      *
-     *   ✗ livingForce: a communion crosses the wire and lands on the receiver
+     *   ✗ living force: a communion crosses the wire and lands on the receiver
      *   ✗ run: a landing carries the run across loadLevel
      *
      * `World.spawnPlayer` runs 89 lines and contains every line both checks

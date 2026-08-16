@@ -539,7 +539,7 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
-  check('menu: the way into the livingForce is a button, not a strip', () => {
+  check('menu: the way into the Holocron is a button, not a strip', () => {
     // Pure cascade, so it is read off the cascade. `.primary/.secondary/.ghost`
     // are `display:block; width:100%` because they are laid out in a column, so
     // a bare .ghost fills whatever line it is on: this button was once 100vw
