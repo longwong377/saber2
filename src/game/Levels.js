@@ -1977,7 +1977,10 @@ export const LEVELS = {
        * 36.4% to the dune sea's 41.4%. It is still one of the lowest suns in
        * the game and a smoke ceiling this thick is what makes the level dark,
        * not the elevation. */
-      elevation: 19.5, azimuth: 148,
+      /* 132°, not 148: the bearing IS the knob for aerial convergence (see the
+       * fog note below), and swinging it 16° toward the view axis more than
+       * halved the overshoot before the density finished the job. */
+      elevation: 19.5, azimuth: 132,
       /* 4.7 OVER 0.82, NOT 4.2 OVER 0.86. `cel.mjs` holds every level's shaded
        * ground to keeping at least 30% of its light from the KEY — the whole
        * reason a shadow on this project is a deeper version of the surface
@@ -2018,15 +2021,30 @@ export const LEVELS = {
        * Ember Shelf's because a river 26 m across at your feet throws more at
        * you than a sea 100 m away. */
       fillColor: 0xd2601e, fillIntensity: 0.86,
-      // Smoke. Half-light at 68 m, which hides the edge of a 500 m field on a
-      // level whose skyline is its own volcano wall.
-      fogColor: 0x5c2c1e, fogDensity: 0.0102, fogHeight: 34, fogBase: 4,
+      /* Smoke. Half-light at 96 m, which still hides the edge of a 500 m field
+       * on a level whose skyline is its own volcano wall.
+       *
+       * 0.0072 AND NOT THE 0.0102 FIRST WRITTEN, and the reason is a crossing
+       * rather than a visibility. `terrain-aerial` requires the ground to walk
+       * ONTO its own sky in chromaticity and keep walking; this ground is a
+       * near-neutral charcoal and this sky is a saturated orange, so the walk
+       * is long and mostly in one direction — and at 0.0102 it ARRIVED at 60 m
+       * and then overshot, coming back out the far side (0.021 → 0.073) as the
+       * mixing target slid from the near air onto the sky. Thinner air makes
+       * the same journey take until 200 m and it lands rather than passing
+       * through. The near air's SWATCH is not the knob here and that was
+       * measured: three fog colours from 0x5c2c1e to 0x584038 moved the
+       * crossing by 0.004, exactly as Kamino's own note predicts —
+       * `hazeRadiance` takes the near air's LEVEL from the sky model and only
+       * its tint from `fogColor`, so the bearing and the density are the knobs
+       * and the swatch is not. */
+      fogColor: 0x584038, fogDensity: 0.0072, fogHeight: 40, fogBase: 4,
       /* Authored rather than derived, for the reason the Ember Shelf's block
        * gives: on a sky this compressed the sunward and side skyline samples
        * land within a per cent of each other, the default estimate comes out at
        * zero and the forward-scatter glow switches off entirely — on the one
        * kind of sky where mie scatter is strongest. */
-      inscatter: 0.052,
+      inscatter: 0.034,
       exposure: 0.94, bloom: 0.56, saturation: 1.12,
       gain: [1.15, 0.99, 0.72],
       // Warm blacks: on this level the shadows are lit by the floor.
