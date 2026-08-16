@@ -1,5 +1,5 @@
 /**
- * SABER — first person, which is mostly a picture of your own hands.
+ * BATTLEFRONT BORZ — first person, which is mostly a picture of your own hands.
  *
  * The player's verdict was "1/10", and the two faults behind it are both things
  * a number can settle, which is why nothing had ever caught them: there was no
@@ -112,7 +112,7 @@ function frameOf(cam, pt) {
 export async function run({ check, assert, THREE: T }) {
   THREE = T;
 
-  check('first person: the hands are in the frame, not under it', () => {
+  check('first person: the SWORD hand is in the frame, and the off hand is out of it', () => {
     /**
      * The bound is the frustum's own half-angle, not a taste. At 60 degrees
      * vertical the half-angle is 30, so a hand at 33.2 degrees below the axis
@@ -125,30 +125,131 @@ export async function run({ check, assert, THREE: T }) {
      * nothing: the anchor's offset from the chest was ROTATED — 0.13 m up and
      * 0.28 forward became 0.26 up and 0.16 forward, the same 0.30 m away from
      * the body — which lifts the hands without lengthening the sword. That buys
-     * 33.2 degrees down to 24.4, NDC y -1.04 to -0.79, and it is where this
-     * stops until the two views share one anchor.
+     * 33.2 degrees down to 24.4, NDC y -1.04 to -0.79.
+     *
+     * ── THIS CHECK USED TO REQUIRE BOTH HANDS IN THE FRAME, AND THAT WAS AN
+     *    ASSUMPTION ABOUT A TWO-HANDED FIRST-PERSON GRIP ────────────────────
+     *
+     * First person is one-handed now (Player._updateBody, and the note over
+     * GRIP_AT), because the fault behind three separate reports of "the first
+     * person hand/hilt looks like jumbled garbage" was measured at last and it
+     * was OCCLUSION: two fists on a 25 cm shaft at 0.5 m from the lens hid 91%
+     * of the hilt. Requiring the OFF hand to sit in the lower third of the
+     * frame is requiring the second occluder back.
+     *
+     * So the sword hand keeps every bound it had, unweakened — in front of the
+     * lens, inside the half-field with the same 4 degrees of margin, in the
+     * lower part of the frame, not off to the side — and the off hand is
+     * asserted the other way round: it must be BELOW the frame, deliberately
+     * out of shot, which is what the reference the player supplied shows and
+     * what an idle hand at your side does. It must still be in front of the
+     * lens, because an arm folded behind the camera is sliced open by it; the
+     * MARGIN on that (the deltoid's 55 mm against a 45 mm near plane, at every
+     * pitch) is measured in tools/checks/viewmodel.mjs and is not restated here.
      */
     const { p, cam } = firstPersonFrame();
     const rig = p.rig;
     rig.updateMatrices(); rig.root.updateMatrixWorld(true);
     const half = cam.fov / 2;
     const out = [];
-    for (const name of ['handR', 'handL']) {
+    const at = (name) => {
       const b = rig.get(name);
       assert(b, `no ${name} bone`);
-      const pt = new THREE.Vector3().setFromMatrixPosition(b.obj.matrixWorld);
-      const f = frameOf(cam, pt);
+      const f = frameOf(cam, new THREE.Vector3().setFromMatrixPosition(b.obj.matrixWorld));
       assert(f.fwd > 0.05, `${name} is ${f.fwd.toFixed(2)} m in front of the lens — it is behind the camera`);
-      assert(f.down < half - 4,
-        `${name} sits ${f.down.toFixed(1)} degrees below the view axis against a ${half.toFixed(0)} degree `
-        + `half-field — NDC y ${f.ndc.y.toFixed(2)}. It is off the bottom of the screen.`);
-      assert(f.ndc.y < -0.05,
-        `${name} is at NDC y ${f.ndc.y.toFixed(2)} — a viewmodel belongs in the lower part of the frame, not across it`);
-      assert(Math.abs(f.side) < half * 1.6,
-        `${name} is ${f.side.toFixed(1)} degrees off to the side`);
-      out.push(`${name} ${f.down.toFixed(1)}° down, NDC y ${f.ndc.y.toFixed(2)}`);
-    }
+      return f;
+    };
+
+    const r = at('handR');
+    assert(r.down < half - 4,
+      `handR sits ${r.down.toFixed(1)} degrees below the view axis against a ${half.toFixed(0)} degree `
+      + `half-field — NDC y ${r.ndc.y.toFixed(2)}. It is off the bottom of the screen.`);
+    assert(r.ndc.y < -0.05,
+      `handR is at NDC y ${r.ndc.y.toFixed(2)} — a viewmodel belongs in the lower part of the frame, not across it`);
+    assert(Math.abs(r.side) < half * 1.6, `handR is ${r.side.toFixed(1)} degrees off to the side`);
+    out.push(`sword hand ${r.down.toFixed(1)}° down, NDC y ${r.ndc.y.toFixed(2)}`);
+
+    const l = at('handL');
+    assert(l.down > half,
+      `handL sits ${l.down.toFixed(1)} degrees below the axis, inside a ${half.toFixed(0)} degree half-field — `
+      + 'the off hand is back in the picture, and it is the second occluder this view was one-handed to remove');
+    out.push(`off hand ${l.down.toFixed(1)}° down, out of shot`);
     return out.join('; ');
+  });
+
+  check('first person: the hilt is ON SCREEN and not behind your own fist', () => {
+    /**
+     * THE NUMBER NOBODY HAD EVER MEASURED, and the reason the same complaint
+     * survived two rounds of fixing the pose. "The first person hand/hilt looks
+     * like jumbled garbage" was reported three times; the first two answers
+     * moved the shoulders off the ribcage and raised the blade anchor, both of
+     * which were real faults and neither of which was THE fault.
+     *
+     * It is occlusion. Measured with tools/_fpgeom.mjs on the running game
+     * before this pass:
+     *
+     *     hilt on screen                27.6% of frame height, 23 of 31 samples
+     *     of what was on screen, behind the player's own fists          91%
+     *
+     * A hilt that is a quarter of the frame and nine tenths hidden is not a
+     * hilt, it is a pale smudge where the blade begins. The supplied reference
+     * (assets/reference/first-person/) shows the target: ONE fist low on the
+     * grip with the whole emitter section standing clear above it.
+     *
+     * Both bounds are derived, not chosen:
+     *
+     *   ALL OF IT ON SCREEN. 31 samples along the shaft, the same span
+     *   _fpgeom uses (−0.5 … 1.0 of emitterY, which brackets metal that runs
+     *   −0.092 … +0.158). A hilt whose pommel is under the bottom edge is the
+     *   thing the screenshot shows.
+     *
+     *   UNDER 35% BEHIND THE HAND. The floor for a closed fist that is wholly
+     *   ON a shaft that is wholly ON screen is about 39% — the fist is 90 mm
+     *   across and the sampled shaft is 233 — so 35% says the fist is at the
+     *   pommel end with part of its width hanging past it, which is the
+     *   reference's own grip. Shipped measures 32%.
+     *
+     * Read at three pitches, because a framing that is only right looking level
+     * is not a framing. The three are IDENTICAL to the sample, which is the
+     * viewmodel weld doing its job rather than a coincidence.
+     */
+    const rows = [];
+    for (const [name, pitch] of [['level', 0], ['looking up', 1.1], ['looking down', -1.2]]) {
+      const { p, cam } = firstPersonFrame({ pitch });
+      const eye = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+      const S = p.saber;
+      S.root.updateMatrixWorld(true);
+      // What can stand in front of the hilt: the player's own hands and forearms.
+      const occluders = [];
+      for (const b of ['handR', 'handL', 'foreR', 'foreL']) {
+        const bone = p.rig.get(b);
+        if (bone) bone.obj.traverse((o) => { if (o.isMesh && o.visible) occluders.push(o); });
+      }
+      const rc = new THREE.Raycaster(); rc.near = 0.02; rc.far = 3;
+      let n = 0, seen = 0, blocked = 0, lo = 1, hi = -1;
+      for (let t = -0.5; t <= 1.001; t += 0.05) {
+        n++;
+        const w = S.root.localToWorld(new THREE.Vector3(0, t * S.emitterY, 0));
+        const ndc = w.clone().project(cam);
+        if (Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) continue;
+        lo = Math.min(lo, ndc.y); hi = Math.max(hi, ndc.y); seen++;
+        rc.setFromCamera({ x: ndc.x, y: ndc.y }, cam);
+        // 4 mm of slack so a sample sitting ON the glove's surface is not
+        // counted as being behind it.
+        const d = w.distanceTo(eye);
+        if (rc.intersectObjects(occluders, true).some((h) => h.distance < d - 0.004)) blocked++;
+      }
+      const pct = seen ? 100 * blocked / seen : 100;
+      assert(seen === n,
+        `${name}: ${n - seen} of ${n} points along the hilt are off the screen — the pommel is under the bottom edge`);
+      assert(pct < 35,
+        `${name}: ${pct.toFixed(0)}% of the hilt is behind the player's own hand, against 91% before this and a 35% bound`);
+      // and it is still a hilt you can see, not a speck receded out of the shot
+      assert((hi - lo) / 2 > 0.10,
+        `${name}: the hilt is only ${((hi - lo) / 2 * 100).toFixed(1)}% of the frame height`);
+      rows.push(`${name} ${seen}/${n} on screen, ${pct.toFixed(0)}% occluded, ${((hi - lo) / 2 * 100).toFixed(0)}% of frame`);
+    }
+    return rows.join('; ');
   });
 
   check('first person: the hands hold their place in the frame at every pitch', () => {

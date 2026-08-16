@@ -1,4 +1,4 @@
-/** SABER — deterministic noise, random and small math helpers. */
+/** BATTLEFRONT BORZ — deterministic noise, random and small math helpers. */
 
 import * as THREE from 'three';
 

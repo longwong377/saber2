@@ -1,5 +1,5 @@
 /**
- * SABER — what a run leaves behind.
+ * BATTLEFRONT BORZ — what a run leaves behind.
  *
  * The design document says "Runs are built, not saved", and that is right: this
  * game should not gate content behind grinding, and nothing here unlocks
@@ -28,7 +28,23 @@
 
 // The ladder itself, so `bestTier` can be shown as the place it names rather
 // than as an index — and so there is one list of rung names in the tree.
-import { DESCENT, ladderName } from './Run.js';
+/**
+ * The name a mode goes by in the record. It used to come from Run.js, which
+ * held a two-entry table so The Descent could print as "the Descent" rather
+ * than as "gauntlet"; the Descent is deleted and MODES is where a mode's
+ * display name has always lived for everything else. One authority.
+ */
+import { MODES, CONDITIONS } from './Waves.js';
+const ladderName = (mode) => MODES[mode]?.name || mode || null;
+/**
+ * What a stored rule key reads as on screen — `CONDITIONS[k].label`, which is
+ * the same string the wave's own banner shouts when the condition lands. One
+ * authority: a second table of seven names in this file is the defect the
+ * codebase keeps removing, and it would go stale the first time a card was
+ * re-worded.
+ */
+const ruleName = (key) => String(key || '').split('+')
+  .map((k) => CONDITIONS[k]?.label || k).join(' + ');
 
 const KEY = 'saber.progress.v1';
 /** How many runs to keep. A history, not an archive. */
@@ -36,7 +52,7 @@ const KEEP = 40;
 
 const blank = () => ({
   runs: 0, wins: 0, kills: 0,
-  bestDepth: 0, bestScore: 0, bestTier: 0,
+  bestDepth: 0, bestScore: 0,
   /** Deepest run achieved with each order/species, so the record says what you
    *  have actually done rather than only how far you got once. */
   byOrder: {}, bySpecies: {},
@@ -44,27 +60,44 @@ const blank = () => ({
    *  unlock — a note about what has worked. */
   crowned: [],
   /**
-   * THE SKY YOU HAVE WALKED: boon id → how many runs have ever held it.
+   * THE HOLOCRON YOU HAVE WALKED: boon id → how many runs have ever held it.
    *
    * Read by the meditation opened from the Temple, which is the one place this
    * game has where a player looks at the whole system at once and asks what
-   * they have actually tried. Every star is available in every run from the
+   * they have actually tried. Every facet is available in every run from the
    * first; this only draws where you have been, in a fainter colour.
    *
    * Emphatically NOT a currency and not an unlock — the file this sits in
    * exists to make that distinction and would be worthless if the first thing
    * added after it were a number that buys something. Nothing in src/ reads
-   * this back into a run: `grep -n "\.lit" src/` finds the chart and nothing
+   * this back into a run: `grep -n "\.woken" src/` finds the chart and nothing
    * else.
    */
-  lit: {},
-  /** Stars lit by communion, all-time. A tally of a thing done, same rule. */
+  woken: {},
+  /** Facets woken by communion, all-time. A tally of a thing done, same rule. */
   communed: 0,
   /**
    * Deepest run in each MODE — the field that says a record is about the game
    * and not about one ladder. See RECORDED.
    */
   byMode: {},
+  /**
+   * Deepest run under each set of RUN RULES, in the same shape as `byMode`.
+   *
+   * Keyed on the rules the run was actually fought under, sorted and joined, so
+   * "NO GUNS + ONE BEARING" and "ONE BEARING + NO GUNS" are one record rather
+   * than two. The empty set is not stored — that is `byMode`.
+   *
+   * THIS IS NOT THE THING THIS FILE'S HEADER FORBIDS, and the distinction is
+   * the whole reason the header is written the way it is. What is refused above
+   * is a currency, an unlock, and cross-run POWER. A rule set carries none of
+   * those: every rule is available in the first run, choosing one makes the
+   * player no stronger — it makes the run harder and is not even charged
+   * against the wave's budget — and nothing here is read back into a run. What
+   * is kept is exactly what the header says is kept: "how deep you have been,
+   * what you did it with". Under what terms is what you did it with.
+   */
+  byRule: {},
   recent: [],
 });
 
@@ -78,7 +111,7 @@ const blank = () => ({
  * three `recordRun` call sites are gated on that Run, and the shipped default
  * in the menu is `roguelite` — so a player who installs the game, presses
  * Ignite and plays for an hour still has nothing in `saber.progress.v1`, the
- * menu's record line still reads "No runs yet", and the star map's history
+ * menu's record line still reads "No runs yet", and the Holocron's history
  * layer is still empty.
  *
  * Half of that fix is here and half of it is at the call sites: this function
@@ -91,8 +124,23 @@ const blank = () => ({
  * dojo can kill you and the sandbox is a room with a slider, so a "deepest 99
  * waves" earned by typing 99 into a box is worse than no record. Deciding it
  * HERE rather than at the call site is what lets the wiring be a blind call.
+ *
+ * COMMAND WAS MISSING, AND IT IS THE ONE MODE THAT CAN BE WON.
+ *
+ * The paragraph above is about a mode that leaves no trace; Command left none
+ * either, and it is the mode where that hurts most. A campaign is five areas,
+ * two dozen named bodies and a casualty list — the most a run in this game has
+ * ever been worth remembering — and none of it reached `saber.progress.v1`.
+ *
+ * It also makes `wins` and `crowned` REACHABLE. Both fields have been written by
+ * this function since it was first added, both are gated on `summary.won`, and
+ * NOTHING IN `src/` HAS EVER PASSED THAT FIELD: the Descent was the only mode
+ * with a top and it was deleted, so `p.wins` was structurally pinned at 0 and
+ * `p.crowned` at empty for every player who has ever run this game. Command's
+ * `_endCampaign` is the first and only writer of `won: true`, which is why it
+ * had to be admitted here on the same commit.
  */
-const RECORDED = new Set(['spire', 'descent', 'gauntlet', 'roguelite', 'waves', 'duel']);
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command']);
 
 function read() {
   try {
@@ -103,7 +151,19 @@ function read() {
     // A record is not worth a crash. Anything malformed is a fresh start, and
     // silently — the alternative is a player who cannot open the game because
     // a number they never saw is a string.
-    return (v && typeof v === 'object') ? { ...blank(), ...v } : blank();
+    if (!v || typeof v !== 'object') return blank();
+    /**
+     * `woken` WAS `lit`, and a rename of a stored key is a silent deletion
+     * unless somebody carries the old one across. Under the star metaphor this
+     * field was "the sky you have walked"; the metaphor is gone and the field
+     * is the same fact, so a record written before the rename is read rather
+     * than replaced by an empty chart. The spread below would otherwise hand
+     * `blank()`'s empty `woken` to a player with fifty runs behind them and
+     * nothing anywhere would report it. Kept as long as `saber.progress.v1` is
+     * the key — bumping the version is what retires it.
+     */
+    if (v.lit && !v.woken) { v.woken = v.lit; delete v.lit; }
+    return { ...blank(), ...v };
   } catch { return blank(); }
 }
 
@@ -143,7 +203,19 @@ export function recordRun(summary) {
   if (summary.won) p.wins++;
   p.bestDepth = Math.max(p.bestDepth, depth);
   p.bestScore = Math.max(p.bestScore, summary.score || 0);
-  p.bestTier = Math.max(p.bestTier, summary.tier || 0);
+  /**
+   * `bestTier` IS GONE, and it is the second field in this file to have been
+   * written on every run and read by nothing.
+   *
+   * It was the Descent's rung index. The Descent is deleted, `Run.js` with it,
+   * and `summary.tier` was passed by nothing in `src/` — `World.onGameOver`
+   * does not carry a tier — so the field was pinned at 0 for every player who
+   * has ever run this game, and `grep -rn bestTier src/` found the write and no
+   * reader. Storage that nothing displays is not a record, it is a write-only
+   * log; this file's own note about `progressLines` says the honest choice is
+   * to delete the field or show it, and there is nothing left to show. A record
+   * written before this reads through `blank()`'s spread and simply drops it.
+   */
 
   // `identity` when a Run carried one, the loose pair when the caller is
   // holding settings rather than a run.
@@ -155,6 +227,9 @@ export function recordRun(summary) {
   deeper(p.byOrder, id.order);
   deeper(p.bySpecies, id.species);
   deeper(p.byMode, summary.mode);
+  // Sorted, so the key is the SET and not the order it was picked in.
+  const rules = [...new Set(summary.rules || [])].sort();
+  deeper(p.byRule, rules.join('+'));
 
   if (summary.won) {
     const set = new Set(p.crowned);
@@ -162,11 +237,11 @@ export function recordRun(summary) {
     p.crowned = [...set];
   }
 
-  // Once per run, not once per rank: this counts RUNS that held a star, so a
-  // four-rank Vitality is one visit to that star and not four.
-  p.lit = { ...p.lit };
-  for (const id of new Set(summary.boons || [])) p.lit[id] = (p.lit[id] || 0) + 1;
-  p.communed += (summary.lit || []).length;
+  // Once per run, not once per rank: this counts RUNS that held a facet, so a
+  // four-rank Vitality is one visit to that facet and not four.
+  p.woken = { ...p.woken };
+  for (const id of new Set(summary.boons || [])) p.woken[id] = (p.woken[id] || 0) + 1;
+  p.communed += (summary.woken || []).length;
 
   /**
    * THE SEED AND THE LADDER, which `Run.summary()` has always carried and this
@@ -181,10 +256,11 @@ export function recordRun(summary) {
    * about ONE run, and this file keeps totals at the top and runs in `recent`.
    */
   p.recent.unshift({
-    depth, tier: summary.tier || 0, score: summary.score || 0,
+    depth, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
     mode: summary.mode || null, seed: summary.seed ?? null,
-    stars: (summary.lit || []).length,
+    rules,
+    facets: (summary.woken || []).length,
     boons: (summary.boons || []).slice(0, 12),
   });
   if (p.recent.length > KEEP) p.recent.length = KEEP;
@@ -211,20 +287,30 @@ export function recordRun(summary) {
 export function progressLines(p = read()) {
   if (!p.runs) return ['No runs yet.'];
   const out = [
-    `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`,
+    `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`
+      // WINS ARE SHOWN NOW THAT THEY CAN HAPPEN. `p.wins` was written by
+      // `recordRun` from the day this file was added and could never be
+      // anything but 0 — no mode in the game passed `won` — so no reader was
+      // ever missed. Command's five-area advance is the first thing here that
+      // can be finished, and a record that counts a finished campaign and does
+      // not print it is the write-only log this file's header refuses to be.
+      + (p.wins ? ` · ${p.wins} won` : ''),
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`
-      + (p.bestTier ? ` · ${DESCENT[p.bestTier]?.name || `rung ${p.bestTier + 1}`}` : '')
       + (p.bestScore ? ` · best ${Math.floor(p.bestScore).toLocaleString()}` : ''),
   ];
-  if (p.wins) out.push(`${p.wins} descent${p.wins === 1 ? '' : 's'} of the works`);
-  const stars = Object.keys(p.lit || {}).length;
-  if (stars || p.communed) {
-    out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`
-      + (p.communed ? `, ${p.communed} lit by communion` : ''));
+  const woken = Object.keys(p.woken || {}).length;
+  if (woken || p.communed) {
+    out.push(`${woken} facet${woken === 1 ? '' : 's'} of the Holocron reached`
+      + (p.communed ? `, ${p.communed} woken in communion` : ''));
+  }
+  // …and what was in your hand when you finished one. Same rule as `woken`: a note
+  // about what has worked, not a gate — every card is in every draft from the
+  // first run.
+  if (p.crowned?.length) {
+    out.push(`${p.crowned.length} boon${p.crowned.length === 1 ? '' : 's'} carried to the end of an advance`);
   }
   // What has ever been carried to the crown. A note about what has worked, and
   // emphatically not a gate: every card is in every draft from the first run.
-  if (p.crowned?.length) out.push(`${p.crowned.length} boons have reached the bottom with you`);
   const deepest = (map) => Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
   const orders = deepest(p.byOrder), species = deepest(p.bySpecies), modes = deepest(p.byMode);
   if (orders.length) out.push(orders.map(([k, v]) => `${k} ${v}`).join('  ·  '));
@@ -232,11 +318,26 @@ export function progressLines(p = read()) {
   // Which game you have actually been playing. The record was blind to this for
   // the same reason it was blind to four of the five modes — see RECORDED.
   if (modes.length) out.push(modes.map(([k, v]) => `${ladderName(k)} ${v}`).join('  ·  '));
+  /**
+   * …AND UNDER WHAT TERMS, which is the line a rule set is chosen FOR.
+   *
+   * "Deepest run under NO GUNS" is the only thing that makes picking a rule
+   * worth anything after the run ends: it turns a handicap into a number to
+   * beat, and it is the whole of what run rules add to replayability that a
+   * harder wave does not. Deepest first, and capped at three lines — this is a
+   * record a player reads without a spreadsheet, and 46 rule sets per theatre
+   * is a spreadsheet.
+   */
+  const rules = deepest(p.byRule).filter(([k]) => k);
+  for (const [k, v] of rules.slice(0, 3)) {
+    out.push(`under ${ruleName(k)} — ${v} wave${v === 1 ? '' : 's'}`);
+  }
   const last = p.recent?.[0];
   if (last) {
     out.push(`last: ${last.depth} wave${last.depth === 1 ? '' : 's'}`
       + (ladderName(last.mode) ? ` of ${ladderName(last.mode)}` : '')
       + (last.won ? ', crowned' : '')
+      + (last.rules?.length ? ` · under ${ruleName(last.rules.join('+'))}` : '')
       + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));
   }

@@ -1,5 +1,5 @@
 /**
- * SABER — props, architecture and the blast door.
+ * BATTLEFRONT BORZ — props, architecture and the blast door.
  *
  * Anything you can see, you can hit; most of it you can cut. Props carry a
  * toughness and a cut budget, so a fruit crate parts instantly, a durasteel
@@ -191,6 +191,31 @@ export function propMaterials() {
      * darker — 0.105 luminance rather than 0.090, because a shadow is a
      * shadow and not a hole cut in the world. */
     stoneDark: mk(rock, lit(1.35, 1.15, 0.92), 0.94, 0.02),
+    /**
+     * SNOW-BLANKETED ROCK — for the one level where warm stone is wrong.
+     *
+     * Reported: "the snow map shouldnt have the same stones/spires as the
+     * desert, feels out of place… sometimes it feels like the desert map but
+     * with the sand being white. The brown rocks just take you out of it."
+     * Exactly right, and it was one line: the White Pass strewed `M.stone`,
+     * which is the DESERT's stone and whose own comment above explains at
+     * length why it is warm — desert varnish on a block that has sat in the
+     * sun for a few thousand years.
+     *
+     * The reference the player supplied (assets/reference/maps/alpine) settles
+     * what it should be instead, and the answer is not "grey": in it there is
+     * no bare rock at all. Every outcrop is under snow, and what separates one
+     * from the drift beside it is VALUE and a blue shadow, not hue. Rock on
+     * that planet reads as a cold shadow in a white field.
+     *
+     * So: bright, barely saturated, and tilted BLUE rather than neutral — a
+     * neutral grey against snow lit by a blue sky comes back looking brown by
+     * simultaneous contrast, which is the same trap `duracreteDark`'s comment
+     * records from the other direction. It keeps the rock map, because the
+     * crack network is still the right pattern for a snow-covered crag; it is
+     * the tint that was wrong.
+     */
+    stoneSnow: mk(rock, lit(2.45, 2.62, 2.95), 0.95, 0.0),
     /* Wind-blown sand banked against anything that has stood still in a desert
      * long enough to matter. It is built on the SAND map, and the reason is a
      * textbook case of a mean hiding a distribution.
@@ -4112,6 +4137,28 @@ export function addRailing(world, pos, opts = {}) {
     const b = new THREE.Vector3(L / 2 * cp, L / 2 * sp + yy, 0);
     kit.put(pipeBetween(a, b, yy === h ? 0.042 : 0.028, 6), mat);
   }
+  /**
+   * AND YOU CANNOT WALK THROUGH IT, which until now you could.
+   *
+   * This maker had NO COLLIDER AT ALL — neither the posts (`Kit.post` only
+   * builds one when the caller passes `collide`, and this never did) nor the
+   * rails (`kit.put` never builds one). Kamino's own dressing pass calls the
+   * ring of rail round its deck "the level's most important prop because it is
+   * the only thing between the fight and a nine-metre drop into the sea", and
+   * it was a picture: 28 rail segments you and every enemy walked straight
+   * through into the water. That is player note #8 exactly — "the majority of
+   * objects are still not physical, like you just fall through them" — and
+   * `tools/checks/physicality.mjs` is the rule it became.
+   *
+   * ONE box for the whole run rather than one per post, because a rail is a
+   * barrier and not a row of bollards: 0.09 m of thickness (the top rail is
+   * 0.084 through) by the run's own length, standing from the ground to the
+   * top rail, pitched with the run so a ramped rail is a ramped box. Sixteen
+   * boxes on Kamino instead of a hundred and twelve.
+   */
+  if (opts.collide !== false) {
+    kit.collider(0, h * 0.5, 0, L * 0.5, h * 0.5 + Math.abs(sp) * L * 0.5, 0.09);
+  }
   return kitClose(world, kit, pos, opts);
 }
 
@@ -5855,10 +5902,9 @@ export function addCrowd(world, centre, opts = {}) {
    * a costume survives that. Scale does. */
   const size = opts.scale ?? 1;
 
-  /* ONE FIGURE, built once. A seated body is a wedge — shoulders back, knees
-   * forward — because a box reads as a box and a wedge reads as somebody
-   * leaning. The head is the part that actually carries at range: it is the
-   * only convex highlight on the silhouette.
+  /* THE SEATED BODY, built once and shared by every variant. A seated body is
+   * a wedge — shoulders back, knees forward — because a box reads as a box and
+   * a wedge reads as somebody leaning.
    *
    * THE KNEES ARE NOT DECORATION. A seated person occupies about 0.5 m of
    * bench and 0.8 m of depth, and the depth is all legs — so a figure built as
@@ -5868,19 +5914,127 @@ export function addCrowd(world, centre, opts = {}) {
    * with three thousand people sitting on it measured as bare ground: 34% of
    * the level's walkable area with "nothing within twelve metres" on it. With
    * them the plan is 0.48 × 0.79 and a spectator is what a spectator is. */
-  const bodyG = extrudeBeveled([[-0.21, -0.42], [0.21, -0.42], [0.24, 0.30], [-0.24, 0.30]],
-    0.46, { bevel: 0.05, tile: FINE_TILE });
-  bodyG.translate(0, 0.42, -0.04);
-  const headG = new THREE.SphereGeometry(0.115, 6, 5);
-  headG.translate(0, 0.90, 0.02);
-  scaleUv(headG, uvm(0.6));
-  const shoulderG = plateGeo(0.44, 0.16, 0.30, 0.05, 1);
-  shoulderG.translate(0, 0.70, -0.02);
-  const thighG = plateGeo(0.40, 0.20, 0.44, 0.05, 1);
-  thighG.translate(0, 0.30, 0.30);
-  const shinG = plateGeo(0.36, 0.34, 0.20, 0.05, 1);
-  shinG.translate(0, 0.12, 0.46);
-  const geo = mergeGeos([bodyG, headG, shoulderG, thighG, shinG]);
+  const body = () => {
+    const bodyG = extrudeBeveled([[-0.21, -0.42], [0.21, -0.42], [0.24, 0.30], [-0.24, 0.30]],
+      0.46, { bevel: 0.05, tile: FINE_TILE });
+    bodyG.translate(0, 0.42, -0.04);
+    const thighG = plateGeo(0.40, 0.20, 0.44, 0.05, 1);
+    thighG.translate(0, 0.30, 0.30);
+    const shinG = plateGeo(0.36, 0.34, 0.20, 0.05, 1);
+    shinG.translate(0, 0.12, 0.46);
+    return [bodyG, thighG, shinG];
+  };
+
+  /**
+   * FIVE HEADS AND FIVE SETS OF SHOULDERS, and this is the whole of note #16's
+   * second half.
+   *
+   * "I like the colosseum map just increase the detail for the crowd — right
+   *  now it looks okay in the distance but anytime you're near the edge you see
+   *  how crude they are, make them either alien species or mixes of aliens."
+   *
+   * The diagnosis was exact and it was in the handoff before it was in the
+   * code: this maker built ONE figure — a wedge and a 6×5 sphere — and
+   * instanced it three thousand times, so variation was scale, garment colour
+   * and animation phase only. At ninety metres that is a crowd; at the rail it
+   * is the same person three thousand times, and no amount of colour fixes a
+   * repeated SILHOUETTE.
+   *
+   * The references (`colosseum/detailed arena view.webp`,
+   * `arena from above with crowd.jpeg`, `units/creatures/Geonosian*.png`) all
+   * say the same thing about the near tier: what reads is the PROFILE against
+   * the sky — a domed crest swept back, a pair of horns, antennae, a hooded
+   * bulk with no neck. So there are five of them, and the head is where the
+   * variety is spent because the head is the only part of a seated figure whose
+   * outline is not hidden by the row in front.
+   *
+   * IT COSTS FOUR EXTRA DRAW CALLS. A variant is a separate InstancedMesh, and
+   * the seats are partitioned across them — see `variants` below. On a level
+   * already spending 167 calls, four is under 3% and it is the cheapest
+   * possible way to buy a silhouette that is not a repeat.
+   */
+  const HEADS = [
+    // 0 — BALD. The baseline, and still the commonest: a crowd where everybody
+    // is exotic has no ordinary to be exotic against.
+    () => {
+      const g = new THREE.SphereGeometry(0.115, 6, 5);
+      g.translate(0, 0.90, 0.02);
+      scaleUv(g, uvm(0.6));
+      const sh = plateGeo(0.44, 0.16, 0.30, 0.05, 1);
+      sh.translate(0, 0.70, -0.02);
+      return [g, sh];
+    },
+    // 1 — CRESTED. A domed skull swept back and up over the shoulders. The
+    // single most recognisable alien profile in the reference plate, and the
+    // one that reads furthest because it breaks the round-head silhouette in
+    // the vertical.
+    () => {
+      const g = new THREE.SphereGeometry(0.105, 6, 5);
+      g.scale(1.0, 1.35, 1.15);
+      g.translate(0, 0.93, 0.01);
+      scaleUv(g, uvm(0.6));
+      const crest = new THREE.SphereGeometry(0.085, 5, 4);
+      crest.scale(0.55, 1.05, 1.9);
+      crest.translate(0, 1.02, -0.10);
+      scaleUv(crest, uvm(0.5));
+      const sh = plateGeo(0.42, 0.15, 0.28, 0.05, 1);
+      sh.translate(0, 0.70, -0.02);
+      return [g, crest, sh];
+    },
+    // 2 — HORNED. Two tapered horns curving up and out of a heavier skull.
+    () => {
+      const g = new THREE.SphereGeometry(0.125, 6, 5);
+      g.scale(1.05, 0.92, 1.0);
+      g.translate(0, 0.885, 0.02);
+      scaleUv(g, uvm(0.6));
+      const parts = [g];
+      for (const sx of [-1, 1]) {
+        const h = cylGeo(0.012, 0.042, 0.19, 5, 0.5);
+        h.rotateZ(sx * 0.55);
+        h.translate(sx * 0.085, 1.00, 0.0);
+        parts.push(h);
+      }
+      const sh = plateGeo(0.50, 0.18, 0.32, 0.05, 1);
+      sh.translate(0, 0.69, -0.02);
+      parts.push(sh);
+      return parts;
+    },
+    // 3 — ANTENNAED. A narrow head with two thin stalks. Almost nothing in
+    // triangles and it changes the whole profile, which is the point.
+    () => {
+      const g = new THREE.SphereGeometry(0.100, 6, 5);
+      g.scale(0.9, 1.15, 1.0);
+      g.translate(0, 0.90, 0.02);
+      scaleUv(g, uvm(0.6));
+      const parts = [g];
+      for (const sx of [-1, 1]) {
+        const a = cylGeo(0.008, 0.014, 0.24, 4, 0.4);
+        a.rotateZ(sx * 0.30);
+        a.translate(sx * 0.055, 1.09, -0.01);
+        parts.push(a);
+      }
+      const sh = plateGeo(0.38, 0.14, 0.26, 0.05, 1);
+      sh.translate(0, 0.71, -0.02);
+      parts.push(sh);
+      return parts;
+    },
+    // 4 — HOODED. No neck and no visible skull: a cowl running straight off a
+    // heavy set of shoulders, which is the bulk in the reference's middle rows.
+    () => {
+      const g = cylGeo(0.075, 0.185, 0.28, 6, 0.6);
+      g.translate(0, 0.86, 0.0);
+      const sh = plateGeo(0.56, 0.20, 0.36, 0.05, 1);
+      sh.translate(0, 0.68, -0.02);
+      return [g, sh];
+    },
+  ];
+  /* HOW MANY OF THEM THIS CALL WANTS. One by default, because most callers of
+   * this maker are not a thirty-thousand-seat house — the lords' box is
+   * sixteen figures and the Temple's crèche is a class of younglings, and a
+   * variant mesh with nine instances in it is a draw call for nothing. */
+  const nVar = clamp(Math.round(opts.variants ?? 1), 1, HEADS.length);
+  const geos = [];
+  for (let v = 0; v < nVar; v++) geos.push(mergeGeos([...body(), ...HEADS[v]()]));
 
   /* The material reads vertex colour AND instance colour, so the garment
    * families are free. Held ROUGH and matte: rule 8 — nothing is shiny — and a
@@ -5920,8 +6074,11 @@ export function addCrowd(world, centre, opts = {}) {
    * box are seated on a prop, not on the ground.
    */
   const T = world.terrain;
-  const seats = [];
-  const colors = [];
+  /* One bucket per variant. The seats are partitioned rather than shuffled
+   * because an InstancedMesh draws ONE geometry: which figure a spectator is
+   * decides which mesh they live in, and nothing else about them changes. */
+  const seats = [], colors = [];
+  for (let v = 0; v < nVar; v++) { seats.push([]); colors.push([]); }
   for (let r = 0; r < rows; r++) {
     const t = rows === 1 ? 0 : r / (rows - 1);
     const rad = lerp(rmin, rmax, t);
@@ -5938,46 +6095,66 @@ export function addCrowd(world, centre, opts = {}) {
       const jx = (rng2() - 0.5) * 0.34, jz = (rng2() - 0.5) * 0.34;
       const gy = opts.onGround === false || !T ? y
         : T.height(x + jx, z + jz) + (opts.sit ?? 0.05);
-      seats.push(x + jx, gy, z + jz, -a + Math.PI / 2 + (rng2() - 0.5) * 0.5,
+      /* WHICH SPECIES. Drawn from the stream like everything else about a
+       * seat, and BIASED TOWARD THE RAIL: the near third of the bank takes
+       * all five, the back rows take the two cheapest. That is not thrift —
+       * it is the note's own observation ("it looks okay in the distance but
+       * anytime you're near the edge you see how crude they are"). At sixty
+       * metres a horn is under a pixel and a crest is under two; what carries
+       * up there is the speckle, and what carries at the rail is the profile.
+       * Spending the variety where it can be seen is the whole trade. */
+      const pool = t < 0.34 ? nVar : Math.max(1, Math.min(nVar, 2));
+      const v = Math.min(nVar - 1, (rng2() * pool) | 0);
+      seats[v].push(x + jx, gy, z + jz, -a + Math.PI / 2 + (rng2() - 0.5) * 0.5,
         (0.92 + rng2() * 0.22) * size, rng2() * TAU + a);
       let pick = rng2(), k = 0, acc = 0;
       while (k < WEIGHT.length - 1 && (acc += WEIGHT[k]) < pick) k++;
-      colors.push(fam[k]);
+      colors[v].push(fam[k]);
     }
   }
-  const n = seats.length / 6;
-  if (!n) return null;
 
-  const im = new THREE.InstancedMesh(geo, mat, n);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion();
   const p = new THREE.Vector3(), s = new THREE.Vector3();
-  for (let i = 0; i < n; i++) {
-    const k = i * 6;
-    p.set(seats[k], seats[k + 1], seats[k + 2]);
-    q.setFromAxisAngle(UP, seats[k + 3]);
-    s.setScalar(seats[k + 4]);
-    im.setMatrixAt(i, m.compose(p, q, s));
-    im.setColorAt(i, colors[i]);
-  }
-  im.instanceMatrix.needsUpdate = true;
-  if (im.instanceColor) im.instanceColor.needsUpdate = true;
-  /* NO SHADOWS FROM THE CROWD. Three thousand casters in a shadow map that is
-   * sized for a fight on the floor buys nothing — every one of them is a
-   * four-pixel figure on a bank that is already in its own shade — and it
-   * costs the whole crowd a second pass. They RECEIVE, so the bowl's own
-   * shadow falls across them, which is the half that reads. */
-  im.castShadow = false;
-  im.receiveShadow = true;
-  im.name = 'crowd';
-  im.frustumCulled = true;
-  im.computeBoundingSphere?.();
-  world.scene.add(im);
-  world.statics.push(im);
+  let first = null;
+  for (let v = 0; v < nVar; v++) {
+    const n = seats[v].length / 6;
+    if (!n) continue;
+    const im = new THREE.InstancedMesh(geos[v], mat, n);
+    for (let i = 0; i < n; i++) {
+      const k = i * 6;
+      p.set(seats[v][k], seats[v][k + 1], seats[v][k + 2]);
+      q.setFromAxisAngle(UP, seats[v][k + 3]);
+      s.setScalar(seats[v][k + 4]);
+      im.setMatrixAt(i, m.compose(p, q, s));
+      im.setColorAt(i, colors[v][i]);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    /* NO SHADOWS FROM THE CROWD. Three thousand casters in a shadow map that is
+     * sized for a fight on the floor buys nothing — every one of them is a
+     * four-pixel figure on a bank that is already in its own shade — and it
+     * costs the whole crowd a second pass. They RECEIVE, so the bowl's own
+     * shadow falls across them, which is the half that reads. */
+    im.castShadow = false;
+    im.receiveShadow = true;
+    im.name = 'crowd';
+    im.frustumCulled = true;
+    im.computeBoundingSphere?.();
+    world.scene.add(im);
+    world.statics.push(im);
 
-  const crowd = new Crowd(world, im, new Float32Array(seats), opts);
-  if (world.addProp) world.addProp(crowd);
-  else if (world.props) world.props.push(crowd);
-  return crowd;
+    /* The animation budget is the WHOLE crowd's, not each variant's: `stride`
+     * is how many figures are re-posed per frame, and five buckets each doing
+     * 240 would be five times the per-frame cost of the crowd this replaces.
+     * Divided, so a five-species house animates at exactly the price the
+     * one-species house did. */
+    const crowd = new Crowd(world, im, new Float32Array(seats[v]),
+      { ...opts, stride: Math.max(16, Math.round((opts.stride ?? 240) / nVar)) });
+    if (world.addProp) world.addProp(crowd);
+    else if (world.props) world.props.push(crowd);
+    if (!first) first = crowd;
+  }
+  return first;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

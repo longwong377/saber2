@@ -1,5 +1,5 @@
 /**
- * SABER — what a body does while you are holding it in the air.
+ * BATTLEFRONT BORZ — what a body does while you are holding it in the air.
  *
  * Note 48: "held bodies have real limb physics as you swing them."
  *

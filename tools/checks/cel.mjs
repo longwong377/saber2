@@ -1,5 +1,5 @@
 /**
- * SABER — is this actually cel shaded, or is it PBR wearing a ramp?
+ * BATTLEFRONT BORZ — is this actually cel shaded, or is it PBR wearing a ramp?
  *
  * That is the whole question this file exists to answer, because it is the
  * question the player asked twice: first "make it cel shaded like the good
@@ -518,7 +518,7 @@ export function run({ check, assert, near }) {
      *     float spec = pow(sd, 90.0) * 1.9 + pow(sd, 8.0) * 0.34;
      *     col += vec3(1.0,0.96,0.88) * spec * fres * (0.35 + dw * 0.65);
      *
-     * It is the surface of FIVE levels — mustafar's lava, the foundry's melt,
+     * It is the surface of FIVE levels — scoria's lava, the foundry's melt,
      * the wood, kamino and the deeps — and Scenery.js copies the live engine
      * sun direction into uSunDir every frame, so the lobe tracks the sun in
      * play. Rule 8 is not "less shiny": "there is no specular highlight in any
@@ -531,7 +531,7 @@ export function run({ check, assert, near }) {
      * rotation and the ONLY thing that can move is the view-dependent term.
      * From a standing eye (8° above the surface), linear luminance at 3 m depth:
      *
-     *     mustafar 0.833 vs 0.126 = 6.63×      wood   0.671 vs 0.099 = 6.80×
+     *     scoria 0.833 vs 0.126 = 6.63×      wood   0.671 vs 0.099 = 6.80×
      *     kamino   0.815 vs 0.113 = 7.20×      foundry 0.731 vs 0.251 = 2.91×
      *     deeps    0.025 vs 0.016 = 1.58×
      *
@@ -1584,69 +1584,94 @@ export function run({ check, assert, near }) {
        * physical quantity rather than a number somebody liked. A 14° sun shines
        * through four times the air a 60° one does, so it delivers less of the
        * level's light and its shadows are legitimately cooler and closer to the
-       * ambient's hue — Mustafar sits at 30% and the Colosseum at 51% for
+       * ambient's hue — the Ember Shelf sits at 30% and the Colosseum at 51% for
        * exactly that reason. A constant pretending to be a physical quantity has
        * to fail here; the floor alone would not have noticed.
        *
        * THIS WAS A STRICT PAIRWISE ORDERING AND THAT WAS PHYSICALLY WRONG.
        * Air mass is not the only thing that sets the direct/ambient split — the
        * SKY'S OWN BRIGHTNESS is the other half, and it is authored per level.
-       * Measured across the eight outdoor levels:
+       * Measured across the eight outdoor levels, sun height against key share
+       * (`tools/_celrank.mjs` prints this table and the rank displacements):
        *
-       *     mustafar 0.259  ambient 0.579   30.1%
-       *     kamino   0.276  ambient 0.547   36.4%
-       *     alpine   0.292  ambient 0.767   35.3%   ← the only inversion
-       *     wood     0.326  ambient 0.633   37.7%
-       *     drifts   0.391  ambient 0.881   41.4%
-       *     meadow   0.469  ambient 0.775   44.9%
-       *     arena    0.559  ambient 0.840   49.5%
-       *     colosseum 0.602 ambient 0.803   51.0%
+       *     scoria    0.259  ambient 0.579   30.1%
+       *     kamino    0.276  ambient 0.405   32.7%
+       *     alpine    0.292  ambient 0.767   35.3%   ← the one inversion left
+       *     geonosis  0.309  ambient 0.681   34.0%   ←
+       *     wood      0.326  ambient 0.633   37.7%
+       *     mustafar  0.334  ambient 0.805   38.5%
+       *     drifts    0.391  ambient 0.881   41.4%
+       *     colosseum 0.602  ambient 0.803   51.0%
+       *
+       * rho 0.976 against the 0.90 bound. It measured 0.810 before Kamino's
+       * storm and Geonosis' dust were made to agree with their own suns.
        *
        * Alpine is a snowfield under 66% cloud and carries the highest ambient
-       * of the low-sun group; Kamino is a dark storm at sea and carries the
-       * lowest. They are as far apart on sky brightness as any pair in the game
-       * and one degree apart in sun height, and requiring the 1° to beat the
-       * sky is asking the check to resolve a difference that is not there.
-       * Every authored knob confirms it: a 22% cut in Kamino's sun intensity
-       * moves its share 36.4% → 35.4%, and doubling its hemisphere ambient
-       * moves it 36.4% → 35.5%, because `envI` scales with `direct` and the two
-       * terms move together.
+       * of the low-sun group. It and Geonosis are 5.7% apart in sun height and
+       * as far apart on sky brightness as any pair in the game, and requiring
+       * that 5.7% to beat the sky is asking the check to resolve a difference
+       * that is not there — which is exactly what the 10% band below exists to
+       * allow. `envI` scales with `direct`, so the two terms travel together and
+       * only the key-to-ambient ratio moves a level's share at all.
        *
        * So the property is stated three ways instead of one, and the set of
        * three is STRICTLY HARDER to satisfy than the pairwise rule was. A flat
        * set fails the span, which the old rule could not see at all: a roster
        * whose shares ran 30.0, 30.1, 30.2 … was monotone and would have passed.
+       *
+       * ALL THREE ARE EVALUATED BEFORE ANY OF THEM THROWS, and that is not
+       * tidiness. Each of these clauses has spent time INVISIBLE behind one of
+       * the others: the pairwise hid the correlation until Geonosis' elevation
+       * was fixed, and once the correlation was reachable it hid a pairwise
+       * violation between Geonosis and Kamino that had been live the whole
+       * time. Two defects, one message, and the second only surfaced because
+       * somebody printed the table by hand. A first-failure-wins assert over a
+       * set of clauses about the same data reports one thing and hides the
+       * rest, so the failures are collected and raised together.
        */
       seen.sort((p, q) => p[0] - q[0]);
       const shares = seen.map((s) => s[1]);
       const span = Math.max(...shares) / Math.min(...shares);
-      assert(span >= 1.5,
-        `the shadow's key share spans only ${span.toFixed(2)}x across the whole roster `
-        + `(${(Math.min(...shares) * 100).toFixed(0)}% to ${(Math.max(...shares) * 100).toFixed(0)}%) — `
-        + 'it is very nearly a constant with a physical name on it');
+      const wrong = [];
+      if (span < 1.5) {
+        wrong.push(`the shadow's key share spans only ${span.toFixed(2)}x across the whole roster `
+          + `(${(Math.min(...shares) * 100).toFixed(0)}% to ${(Math.max(...shares) * 100).toFixed(0)}%) — `
+          + 'it is very nearly a constant with a physical name on it');
+      }
 
       // rank correlation with sun height: the claim itself, over the set
       const n = seen.length;
       const byShare = [...seen].sort((p, q) => p[1] - q[1]);
       let d2 = 0;
-      seen.forEach((r, i) => { d2 += (i - byShare.indexOf(r)) ** 2; });
+      const off = [];
+      seen.forEach((r, i) => {
+        const d = i - byShare.indexOf(r);
+        d2 += d ** 2;
+        if (d) off.push(`${r[2]} ${d > 0 ? '+' : ''}${d}`);
+      });
       const rho = 1 - (6 * d2) / (n * (n * n - 1));
-      assert(rho >= 0.90,
-        `the key share and the sun's height rank-correlate at only ${rho.toFixed(3)} — `
-        + 'the shadow tone is not tracking the light');
+      if (rho < 0.90) {
+        // Name the levels that are OUT OF ORDER. A roster-wide number with no
+        // subject in it cannot be acted on, and this one sat red for a whole
+        // session partly because of that.
+        wrong.push(`the key share and the sun's height rank-correlate at only ${rho.toFixed(3)} — `
+          + `the shadow tone is not tracking the light. Out of order (rank displacement): ${off.join(', ')}`);
+      }
 
       // …and strictly, wherever the sun heights differ by more than the sky can
       // plausibly account for. 10% of sun height is about a degree and a half at
-      // these elevations; alpine and kamino differ by 5.8%.
+      // these elevations; alpine and geonosis differ by 5.7%.
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
           if (seen[j][0] <= seen[i][0] * 1.10) continue;
-          assert(seen[j][1] > seen[i][1],
-            `${seen[j][2]}'s sun is ${((seen[j][0] / seen[i][0] - 1) * 100).toFixed(0)}% higher than `
-            + `${seen[i][2]}'s and no more of its shadow comes from the key — the shadow tone is not `
-            + 'tracking the light');
+          if (seen[j][1] > seen[i][1]) continue;
+          wrong.push(`${seen[j][2]}'s sun is ${((seen[j][0] / seen[i][0] - 1) * 100).toFixed(0)}% higher than `
+            + `${seen[i][2]}'s and no more of its shadow comes from the key `
+            + `(${(seen[j][1] * 100).toFixed(1)}% against ${(seen[i][1] * 100).toFixed(1)}%) — the shadow `
+            + 'tone is not tracking the light');
         }
       }
+      assert(wrong.length === 0, wrong.join('; AND '));
       /* AND THE EXPOSURE DID NOT MOVE. The lit band is untouched by all of this —
        * a lit surface still receives exactly `irradiance` — which is the reason
        * the meter, the bloom headroom and every existing lighting check are
@@ -2051,7 +2076,10 @@ export function run({ check, assert, near }) {
       fragmentShader: '#include <common>\n#include <color_fragment>\n' });
 
     const rows = [];
-    for (const key of ['drifts', 'alpine', 'arena']) {
+    /* The two levels that PAINT ranges — `addHorizon` is called from exactly
+     * two dress() bodies, and a level with no ridge material has no ridge to
+     * quantise. It was three when the meadow existed. */
+    for (const key of ['drifts', 'alpine']) {
       const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
       await w.loadLevel(key);
       let sh = null, scanned = 0;

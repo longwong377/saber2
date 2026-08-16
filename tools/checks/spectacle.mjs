@@ -1,5 +1,5 @@
 /**
- * SABER — spectacle, and how the player presents themselves.
+ * BATTLEFRONT BORZ — spectacle, and how the player presents themselves.
  *
  * Five things arrived at once and every one of them is the kind that reads
  * perfectly well as source while doing nothing:
@@ -415,7 +415,13 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 25; i++) enemies.push(body(Math.cos(i) * 9, Math.sin(i) * 9));
     const world = { enemies, players: [] };
     const me = mapPlayer();
-    const s = { ...DEFAULT_SETTINGS, minimap: true };
+    /* `minimapSense: false` — this check is about what the map COSTS TO DRAW,
+     * and the always-on map is the one that draws on every eligible frame.
+     * With the shipped default the map is a Force reading (see
+     * Minimap.update): a stub player with no `senseActive` never asks for one,
+     * so every number below would be zero and the budget would go unmeasured.
+     * The gate itself is measured in tools/checks/hud-events.mjs. */
+    const s = { ...DEFAULT_SETTINGS, minimap: true, minimapSense: false };
 
     const SECONDS = 10, dt = 1 / 60;
     const frames = Math.round(SECONDS / dt);
@@ -486,7 +492,11 @@ export async function run({ check, assert }) {
         saber: { tipSpeed: 0 }, camera: { firstPerson: false, yaw: 0, aimQuat: new THREE.Quaternion() },
         control: { _grip: null, steering: 0, flourishT: -1, screenGuard: (a, b2, q, o) => o.set(0, 0) },
       };
-      const settings = { ...DEFAULT_SETTINGS };
+      // …and again the always-on map, for the same reason: this is the WIRING
+      // check — does the HUD's own frame drive the map at all — and the
+      // shipped Force-sense gate would answer "no" for a stub that never
+      // senses. The gate has its own check beside the reticle's.
+      const settings = { ...DEFAULT_SETTINGS, minimapSense: false };
       const world = {
         score: 0, enemies: [body(3, -4), body(-6, 2)], players: [], training: false, focus: null,
         settings, director: { wave: 1, remaining: 2, active: true, intermission: 0 },
@@ -584,6 +594,70 @@ export async function run({ check, assert }) {
     assert(EMOTES.some(e => e.gesture), 'no slot moves the body at all');
     return `${EMOTES.length} slots over ${PLAYER_LINES.length} player contours (${PLAYER_LINES.join(', ')}), `
       + `${EMOTES.filter(e => e.gesture).length} with a gesture; ${ENEMY_LINES.length} enemy calls kept off it`;
+  });
+
+  check('spectacle: every authored contour has something that actually plays it', async () => {
+    /**
+     * THE CHECK ABOVE ASKS WHETHER THE TABLES ADD UP. They did, and one contour
+     * was still silent for the whole project.
+     *
+     * `LINES.order` carries three paragraphs of its own rationale — "it is the
+     * officer's line and it is what the player hears when they change
+     * formation, so it has to be legible under a firefight" — and nothing
+     * emitted it. Fourteen of fifteen contours had a live caller; the formation
+     * path wrote two DOM strings and lit a chip in silence, so the one mode
+     * where you give orders was the one where nothing answered you. Set
+     * equality could not see that, because a contour that is in both tables and
+     * spoken by nobody satisfies every assertion above.
+     *
+     * A contour is authored to be HEARD. So the property is emission, and it is
+     * read off the source rather than off a list somebody keeps: any literal
+     * handed to a speaking call, anywhere under src/.
+     *
+     * TWO THINGS THE FIRST VERSION OF THIS GOT WRONG, both of which made it
+     * report contours as silent that are played every fight. It knew only
+     * `say`/`_say`/`cry`/`speak` and missed `_battleLine`/`_enemyLine`, which
+     * are how the announcer plays most of the room's calls. And it took the
+     * FIRST literal in the argument list, so `spec.ring ? 'alarm' : 'flung'`
+     * hid `flung` behind `alarm`. It now takes every literal in the call. A
+     * check that cries wolf about four working contours is worse than no check,
+     * because the next person to see it red will assume it always is.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const root = new URL('../../src/', import.meta.url);
+    const files = [];
+    const walk = async (dir) => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) await walk(u);
+        else if (e.name.endsWith('.js')) files.push(u);
+      }
+    };
+    await walk(root);
+
+    const spoken = new Set();
+    for (const f of files) {
+      const src = await readFile(f, 'utf8');
+      // Comments are stripped first: this file, and Voice.js, DISCUSS every
+      // contour by name, and a mention is not an emission.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      for (const call of code.matchAll(/\b(?:say|_say|cry|speak|_battleLine|_enemyLine)\s*\(([^;]{0,200})/g)) {
+        for (const lit of call[1].matchAll(/['"]([a-z]+)['"]/g)) {
+          if (LINE_KINDS.includes(lit[1])) spoken.add(lit[1]);
+        }
+      }
+    }
+
+    // The emote wheel plays its eight through a slot table rather than a
+    // literal, so those are emitted by construction and counted as such.
+    for (const e of EMOTES) spoken.add(e.line);
+
+    const silent = LINE_KINDS.filter((k) => !spoken.has(k));
+    assert(silent.length === 0,
+      `${silent.length} authored contour(s) are never played by anything: ${silent.join(', ')} — `
+      + 'a line in the table with no caller is a sound the game cannot make, and nothing else here '
+      + 'can tell you that because it is in the table exactly as the played ones are');
+    return `all ${LINE_KINDS.length} contours have a live emitter (${files.length} modules scanned)`;
   });
 
   check('spectacle: the wheel\'s markup and its hit test agree about where every slot is', () => {
@@ -731,7 +805,7 @@ export async function run({ check, assert }) {
      * `hud.update` → `input.end`) against a real World with a real level and a
      * real player in it, and measures the world clock.
      */
-    const { world } = await bootWorld({ level: 'arena' });
+    const { world } = await bootWorld({ level: 'colosseum' });
     const doc = makeDocument(INDEX);
     const restore = doc.install();
     try {

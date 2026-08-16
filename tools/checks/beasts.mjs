@@ -1,5 +1,5 @@
 /**
- * SABER — the big creatures, and whether there is anything to dodge.
+ * BATTLEFRONT BORZ — the big creatures, and whether there is anything to dodge.
  *
  * THE FIRST BUG, and it is kept here because it is what these numbers are
  * measured against. `_beastBrain`'s three attacks — sweep, lunge and charge —
@@ -48,9 +48,10 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
-import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, DEFAULT_BEAST_MOVES } from '../../src/game/Enemy.js';
+import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, beastMoveSet, guardFor, TURNED_CUT }
+  from '../../src/game/Enemy.js';
 import { duelRng } from '../../src/game/Duel.js';
-import { buildQuadruped, QUADRUPED_KINDS } from '../../src/game/Bodies.js';
+import { buildQuadruped, CREATURE_PLANS } from '../../src/game/Bodies.js';
 import '../../src/game/Levels.js';        // registers the Colosseum's creatures
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -63,8 +64,24 @@ const flat = () => ({
 /** Every archetype that runs the beast brain, found rather than listed. */
 const BEASTS = Object.keys(ARCHETYPES).filter((k) => ARCHETYPES[k].custom === 'beast');
 
-/** The attacks a given creature can make, over its whole health bar. */
-const movesOf = (type) => (ARCHETYPES[type].moves || DEFAULT_BEAST_MOVES).filter((k) => BEAST_MOVES[k]);
+/**
+ * The attacks a given creature can make, over its whole health bar.
+ *
+ * THIS USED TO BE `(ARCHETYPES[type].moves || DEFAULT_BEAST_MOVES)`, which is
+ * HANDOFF §2.4 exactly: a rule restated inside the instrument that measures
+ * it. The shipped resolution now has a second source — a creature that
+ * declares no move set takes the verbs its BODY PLAN affords (see
+ * `beastMoveSet`, and CREATURE_PLANS in src/game/Bodies.js) — and this line
+ * would have gone on measuring the move sets the reek, the nexu and the
+ * acklay used to share, reporting them as unchanged while the game shipped
+ * something else. It calls the resolver now, against a real built body, which
+ * is the same answer `Enemy.beastMoves` gets.
+ */
+const _built = new Map();
+const movesOf = (type) => {
+  if (!_built.has(type)) _built.set(type, ARCHETYPES[type].build({ scale: ARCHETYPES[type].scale }));
+  return beastMoveSet(ARCHETYPES[type], _built.get(type)).filter((k) => BEAST_MOVES[k]);
+};
 
 /**
  * THE FOUR EVASIONS, and why each is a thing a real player does.
@@ -169,6 +186,51 @@ function fight(type, mode, seconds = 90, window = [0, 0.45]) {
 /** rate as a percentage, or a dash when the move never came out. */
 const pc = (r) => (r === null ? '—' : `${Math.round(r * 100)}%`);
 
+/**
+ * One real body in a real world, standing still, for the cut tests below.
+ *
+ * Everything the guard does happens inside `takeCut`, which severs through
+ * `this.actor` — so a stub with a `capsules()` on it is not enough and the body
+ * has to be genuinely built. Same world shape `fight()` uses.
+ */
+function bench(type) {
+  const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 400 });
+  const terrain = flat();
+  physics.terrain = terrain;
+  const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+    spatter() {}, plasma: { spawn() {} }, smoke: { spawn() {} } };
+  const w = {
+    scene: new THREE.Scene(), physics, terrain, statics: [],
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+    players: [], enemies: [], props: [], doors: [], locks: [],
+    particles, bolts: { fire() {}, update() {}, threatsNear: () => [] },
+    time: 0, combatIntensity: 0, groundColor: 0xcfae82,
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+    onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {}, onHitmark() {},
+    onExplosion() {}, spawnDebrisGroup() {},
+  };
+  const e = new Enemy(w, type, V(0, 0, -6));
+  w.enemies.push(e);
+  const ctx = { enemies: w.enemies, particles, terrain, physics,
+    bolts: w.bolts, time: 0, pickTarget: () => null, camera: w.engine.camera };
+  e.update(1 / 60, ctx);
+  return { w, e, ctx, physics };
+}
+
+/**
+ * A cut event of the shape `BladeContactSolver` emits, aimed at one capsule of
+ * a real body. Read off `Enemy.capsules()` so the vital and the toughness are
+ * the game's own rather than typed here.
+ */
+function cutAt(e, pick) {
+  const caps = e.capsules();
+  const cap = caps.find((c) => pick.test(c.name)) || caps[0];
+  return { bone: cap.name, cap, cutT: 0.5,
+    point: e.position.clone().setY(1), impulse: new THREE.Vector3(0, 0, -1) };
+}
+
 export async function run({ check, assert }) {
   await initPhysics();
 
@@ -252,24 +314,55 @@ export async function run({ check, assert }) {
   });
 
   check('beasts: the charge is the answer to a runner, and still connects', () => {
-    /* Without this the previous check has a trivial solution — make every
+    /**
+     * Without this the previous check has a trivial solution — make every
      * attack miss — and the fix would have swapped an undodgeable beast for a
-     * harmless one. The charge commits its aim when its drive begins rather
+     * harmless one. The charge commits its aim when its DRIVE begins rather
      * than at the top of the wind-up, which is what lets it catch someone who
-     * has been running since the telegraph. */
+     * has been running since the telegraph.
+     *
+     * ── WHAT THIS USED TO ASK, AND WHY THAT WAS THE WRONG QUESTION.
+     *
+     * It asked for `> 0.6` against `strafe` — a player circling at 7.4 m/s for
+     * the WHOLE fight — and the charge scored 100%, because it re-aimed and
+     * resolved on the same frame: `aimUntil: 0.65` beside `hit: [0.65, …]` is a
+     * zero-second window, and no movement at any speed can be outside a
+     * remembered point that is fixed as the blow lands. Measured against a
+     * target breaking away on the first frame of the wind-up, the charge landed
+     * 100% at 0, 4.6, 7.45, 11, 15.5, 22 and 30 m/s. So this check was passing
+     * on the strength of a defect: the evidence it accepted for "the charge
+     * answers a runner" was that the charge answers EVERYTHING, which is the
+     * 11.5 m sphere the file above it exists to have removed.
+     *
+     * The move keeps its property and loses that. It resolves half a second
+     * after it commits now, so a player who breaks WHEN THE DRIVE BEGINS gets
+     * out — and a player who broke early and stopped, which is what `dodge`
+     * does (it moves only through the first 0.45 s of the attack), is caught
+     * exactly as before, because the re-aim followed them. That is the real
+     * statement of "it is the answer to a runner": it beats the habit that
+     * beats a claw. `tools/checks/dodgeable.mjs` holds the other half — that
+     * the window it now has is one a walking player can actually use.
+     */
     const rows = [];
     for (const type of BEASTS) {
       if (!movesOf(type).includes('charge')) continue;
-      const r = fight(type, 'strafe');
-      const got = r.rate('charge');
-      assert(got !== null, `${type} never charged`);
-      assert(got > 0.6,
-        `${ARCHETYPES[type].label}'s charge caught a sprinting player only ${pc(got)} of `
-        + 'the time — there is then no answer to running away');
-      rows.push(`${ARCHETYPES[type].label} ${pc(got)}`);
+      const early = fight(type, 'dodge').rate('charge');            // breaks, then stops
+      // …and one that is still going when the drive begins. The default window
+      // stops at 0.45 s, which is BEFORE the charge commits at 0.65 — so this
+      // one has to be told to keep moving, or both conditions are early breaks.
+      const late = fight(type, 'back', 90, [0, 9]).rate('charge');
+      assert(early !== null, `${type} never charged`);
+      assert(early > 0.6,
+        `${ARCHETYPES[type].label}'s charge caught a player who broke early and stopped only `
+        + `${pc(early)} of the time — the re-aim has stopped following, and there is then no `
+        + 'answer to running away');
+      assert(late === null || late < 0.35,
+        `${ARCHETYPES[type].label}'s charge landed ${pc(late)} on a player who was still moving when `
+        + 'it committed — it is unanswerable again, which is what the zero-second window was');
+      rows.push(`${ARCHETYPES[type].label} early ${pc(early)} / sustained ${pc(late)}`);
     }
     assert(rows.length >= 3, `only ${rows.length} creatures still carry the charge`);
-    return `charges landing on a sprinting player: ${rows.join(', ')}`;
+    return `charges: ${rows.join(', ')}`;
   });
 
   check('beasts: the slam is answered by DISTANCE and by nothing else', () => {
@@ -423,18 +516,48 @@ export async function run({ check, assert }) {
      * `damage()`, so cutting a leg off — the thing the winded comment says the
      * window exists FOR — accrued nothing on any of them.
      */
+    /**
+     * ── AND IT IS MEASURED NOW RATHER THAN GREPPED.
+     *
+     * This used to scan Enemy.js for the literal string `if (this.A.boss ||
+     * this.A.custom === 'beast') this.recentDamage` and count two of them —
+     * which is the mistake its neighbour four checks down already names in as
+     * many words ("THIS USED TO BE A GREP, and that was the wrong instrument
+     * twice over… it failed the moment the three curves were derived from one
+     * table instead of written out, which is a REFACTOR, not a regression").
+     * It failed exactly that way: the predicate was lifted into `keepsWind(A)`
+     * so that the three write sites and the reader cannot disagree about who
+     * keeps a tally, the behaviour was unchanged and strictly better organised,
+     * and the check went red over the spelling.
+     *
+     * What is measured is the property: a real body of every beast type, hit
+     * through `damage()` and then cut through `takeCut()`, has to accrue on
+     * both paths. That is true of any spelling and false of any regression.
+     */
+    const rows = [];
     for (const type of BEASTS) {
       const A = ARCHETYPES[type];
       assert(A.custom === 'beast', `${type} is not a beast any more`);
+      const { e } = bench(type);
+      e.recentDamage = 0;
+      e.damage(e.maxHp * 0.05, e.position.clone(), null, 'melee');
+      const byBlow = e.recentDamage;
+      assert(byBlow > 0,
+        `${A.label} took a blow worth 5% of its health and its winded meter did not move — `
+        + '`damage()` has stopped feeding it, so the window can never open');
+      e.recentDamage = 0;
+      e.guard = 0;                       // the hide is measured elsewhere
+      const caps = e.capsules();
+      const cap = caps.find((c) => /femur|tibia|thigh|hip/i.test(c.name)) || caps[0];
+      e.takeCut({ bone: cap.name, cap, cutT: 0.5, point: e.position.clone().setY(1),
+        impulse: new THREE.Vector3(0, 0, -1) }, null);
+      assert(e.recentDamage > 0,
+        `${A.label} lost a limb and its winded meter did not move — takeCut subtracts from hp `
+        + 'directly, and severing a limb is the thing the window exists for');
+      rows.push(`${type} blow ${byBlow.toFixed(0)} cut ${e.recentDamage.toFixed(0)}`);
+      e.dispose?.();
     }
-    const src = await import('node:fs/promises').then(({ readFile }) =>
-      readFile(new URL('../../src/game/Enemy.js', import.meta.url), 'utf8'));
-    const gate = /if \(this\.A\.boss \|\| this\.A\.custom === 'beast'\) this\.recentDamage/g;
-    const n = (src.match(gate) || []).length;
-    assert(n >= 2,
-      `only ${n} of the two damage paths accrue the winded meter for a beast — it is gated on `
-      + '`boss` again, which is one of the five, or `takeCut` has stopped feeding it');
-    return `all ${BEASTS.length} beasts accrue the winded meter from both damage and cuts`;
+    return `all ${BEASTS.length} beasts accrue the winded meter from both damage and cuts — ${rows.join(', ')}`;
   });
 
   check('beasts: the body reads the attack it is about to make', () => {
@@ -512,21 +635,23 @@ export async function run({ check, assert }) {
     return `${rows.join(', ')} attacks, each with its own readable wind-up`;
   });
 
-  check('beasts: four kinds out of one builder are four animals', () => {
+  check('beasts: five plans out of one builder are five animals', () => {
     /**
      * `buildQuadruped` was `const heavy = opts.kind !== 'stalker'` and
      * twenty-three `heavy ? a : b` expressions — a builder that could express
      * exactly two animals, where a third meant a third branch on every one of
      * those lines. It is a table now, and the risk a table carries is the
-     * opposite one: four rows that are the same animal with different numbers.
+     * opposite one: rows that are the same animal with different numbers,
+     * which is precisely what the player reported ("sphere with some legs").
      *
      * Measured off the built vertices rather than off the table: the bounding
-     * proportions of the four have to differ, and no two may share a
-     * fingerprint. `beast` is deliberately not here — the acklay has its own
-     * six-legged builder and is not a row of this table.
+     * proportions have to differ, and no two may share a fingerprint. The
+     * acklay IS a row now — it is the six-legged plan, built by the same
+     * function off the same table, which is what makes "no two share a body
+     * plan" a property of the table rather than of who wrote which builder.
      */
-    const kinds = Object.keys(QUADRUPED_KINDS);
-    assert(kinds.length >= 4, `only ${kinds.length} kinds in the table`);
+    const kinds = Object.keys(CREATURE_PLANS);
+    assert(kinds.length >= 5, `only ${kinds.length} plans in the table`);
     const seen = new Map();
     const rows = [];
     for (const kind of kinds) {
@@ -558,5 +683,134 @@ export async function run({ check, assert }) {
       `every kind is ${ratio.map((v) => v.toFixed(2)).join('/')} long for its height — `
       + 'that is one animal at four scales');
     return rows.map((r) => `${r.kind} ${r.verts}v ${r.len.toFixed(1)}x${r.tall.toFixed(1)} m`).join(', ');
+  });
+
+  /* ══ THE HIDE — a body with no blade defending itself ═══════════════════ */
+
+  check('beasts: a body with no blade turns a killing pass, and what it turns is its own mass', () => {
+    /**
+     * THE MEASUREMENT THAT ASKED FOR THIS. `tools/balance.mjs` put a 28 hp B1,
+     * a 420 kg Nexu, a 1250 hp Reek, a 900 hp Acklay and a 2200 hp Rancor down
+     * in the SAME 0.64 s, because `takeCut` makes any `vital >= 0.9` capsule
+     * instantly lethal and nothing that was not a duellist defended itself. The
+     * player's words were "the large creatures all look the same… they all
+     * attack the same way"; the number adds the half nobody had said, which is
+     * that they also died like nothing.
+     *
+     * `guardFor` is the whole rule and it is DERIVED — hp for a duellist, mass
+     * for everything else. What is asserted here is the shape rather than the
+     * constant: nothing man-sized turns anything, it rises with the body, and
+     * it never contradicts the mass ordering.
+     */
+    const rows = [];
+    for (const [type, A] of Object.entries(ARCHETYPES)) {
+      if (A.training || A.inert) continue;
+      const g = guardFor(A);
+      if (A.saber) continue;                     // the duellist half, tested elsewhere
+      rows.push({ type, mass: A.mass ?? 0, hp: A.hp, g });
+    }
+    rows.sort((a, b) => a.mass - b.mass);
+    // MONOTONE IN MASS. Two bodies of the same weight must turn the same
+    // number of passes, and a heavier one may never turn fewer — that is what
+    // makes this a derivation rather than a table with opinions in it.
+    for (let i = 1; i < rows.length; i++) {
+      assert(rows[i].g >= rows[i - 1].g,
+        `${rows[i].type} at ${rows[i].mass} kg turns ${rows[i].g} passes and the lighter `
+        + `${rows[i - 1].type} at ${rows[i - 1].mass} kg turns ${rows[i - 1].g}`);
+    }
+    // A MAN IS NOT A WALL. Everything a player meets at eye level still comes
+    // apart on the first pass, which is the half of the game that was right.
+    for (const r of rows) {
+      if (r.mass <= 260) {
+        assert(r.g === 0, `${r.type} weighs ${r.mass} kg and turns ${r.g} killing passes — `
+          + 'a body a player can pick up should not be shrugging off a lightsaber');
+      }
+    }
+    // …AND THE BIG ONES DO. Named by what they are rather than by a list: any
+    // body over half a tonne is one of the "large creatures" the note is about.
+    const heavies = rows.filter((r) => r.mass >= 520);
+    assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg on the roster`);
+    for (const r of heavies) {
+      assert(r.g >= 1, `${r.type} weighs ${r.mass} kg and still turns nothing`);
+    }
+    return rows.filter((r) => r.g > 0)
+      .map((r) => `${r.type} ${r.mass}kg→${r.g}`).join(', ')
+      + `; ${rows.length - rows.filter((r) => r.g > 0).length} bodies turn nothing`;
+  });
+
+  check('beasts: the hide is a DELAY and never a wall — every body still dies, and the ceiling is the game\'s own', () => {
+    /**
+     * The failure mode a guard invites is the opposite of the one it fixes, and
+     * it is worse: a body nothing can finish. It cannot happen here and this is
+     * the proof, driven through the real `takeCut` on a real built body.
+     *
+     * A turned pass costs `TURNED_CUT` of maximum health, so `ceil(1 /
+     * TURNED_CUT)` turns kill the body outright however deep its guard is —
+     * which is why the AT-TE's twelve and the Rancor's five are one fight. The
+     * bound below is that ceiling plus the passes that actually land, and the
+     * point of it is that it does not scale with the guard.
+     */
+    const rows = [];
+    for (const type of [...BEASTS, 'walker', 'atte', 'aat', 'hailfire', 'dwarfspider', 'b1']) {
+      const { e } = bench(type);
+      const guard0 = e.guardMax;
+      let passes = 0, turned = 0;
+      // The same leg, over and over — the pessimistic case, and the one the
+      // player actually plays: you do not get to choose a new limb each swing.
+      while (!e.dead && passes < 40) {
+        const ev = cutAt(e, /femur|thigh|tibia|shin|hipL|leg/);
+        passes++;
+        if (e.takeCut(ev, null) === 'turned') turned++;
+      }
+      assert(e.dead, `${type} survived 40 passes at the same limb — the hide has become a wall`);
+      assert(turned <= Math.ceil(1 / TURNED_CUT),
+        `${type} turned ${turned} passes against a ceiling of ${Math.ceil(1 / TURNED_CUT)}`);
+      assert(turned <= guard0, `${type} turned ${turned} passes with a guard of ${guard0}`);
+      rows.push({ type, guard0, turned, passes });
+      e.dispose?.();
+    }
+    // The control: a battle droid still comes apart on the first pass. If this
+    // ever turns anything the constant has slipped down onto man-sized bodies.
+    const b1 = rows.find((r) => r.type === 'b1');
+    assert(b1.turned === 0 && b1.passes <= 3,
+      `a B1 turned ${b1.turned} passes and took ${b1.passes} — the hide has reached the droids`);
+    // …and the heavies cost strictly more than it does.
+    for (const r of rows) {
+      if (r.type === 'b1') continue;
+      assert(r.passes > b1.passes,
+        `${r.type} takes ${r.passes} passes and a B1 takes ${b1.passes} — it dies like a droid`);
+    }
+    return rows.map((r) => `${r.type} guard ${r.guard0}→turned ${r.turned}, ${r.passes} passes`).join('; ');
+  });
+
+  check('beasts: WINDED is the opening, and it is the one the animal already had', () => {
+    /**
+     * A guard with no way through is a wall, and the way through an animal is
+     * the state it already enters when you hurt it fast enough. `_beastBrain`
+     * has printed WINDED over its head since the move sets landed, and its own
+     * comment calls it "the only safe time to go for a leg" — but until the
+     * hide could turn a pass there was nothing for that window to be safe FROM,
+     * because every pass landed. `_guardOpen` reads it now, which is the same
+     * predicate the Force reads, so the opening is one rule and not two.
+     */
+    const rows = [];
+    for (const type of BEASTS) {
+      const { e } = bench(type);
+      if (e.guardMax <= 0) { e.dispose?.(); continue; }
+      // Guard up: the pass is turned.
+      assert(e.takeCut(cutAt(e, /femur|thigh|tibia|hipL/), null) === 'turned',
+        `${type} did not turn a pass with a full guard of ${e.guardMax}`);
+      const guardLeft = e.guard;
+      // Winded: the same pass lands, and does not spend the guard.
+      e.state = 'winded';
+      assert(e.takeCut(cutAt(e, /femur|thigh|tibia|hipL/), null) !== 'turned',
+        `${type} turned a pass while WINDED — the window the brain prints is a lie`);
+      assert(e.guard === guardLeft,
+        `${type} spent guard on a pass it did not turn`);
+      rows.push(`${type} ${e.guardMax}`);
+      e.dispose?.();
+    }
+    assert(rows.length >= 4, `only ${rows.length} beasts have a guard to open`);
+    return `${rows.join(', ')} — a full guard turns it, WINDED lets it through`;
   });
 }

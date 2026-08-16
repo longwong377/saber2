@@ -1,5 +1,5 @@
 /**
- * SABER — what every Force power costs.
+ * BATTLEFRONT BORZ — what every Force power costs.
  *
  * A leaf module on purpose: it imports nothing, so both the thing that SPENDS
  * the Force (src/game/Player.js) and the thing that DRAWS the price
@@ -29,6 +29,22 @@ export const POWER_COST = {
    * nothing here, so the HUD had no number for it and the refusal quoted a
    * literal. Same table as every other power now. */
   rend: 38,
+  /**
+   * THE PANIC BUTTON, and it is priced as one.
+   *
+   * "I want one force power that is a 360 degree 'get off me' type of ability,
+   * costs a lot of force but you like yell really loud and raise both your
+   * arms out and push everything around you off (like in a scenario where
+   * you're being overwhelmed)."
+   *
+   * 52 is the most expensive thing on this table, past `heal`'s 40, and that
+   * is the whole design: a power that answers "there are eleven of them and
+   * they are all inside my guard" has to cost enough that it cannot be the
+   * answer to "there are two". At the base pool it is most of a bar, so using
+   * it means choosing not to jump, dash-recover or heal for a while after —
+   * which is what makes it a decision rather than a rotation.
+   */
+  unleash: 52,
 };
 
 /**

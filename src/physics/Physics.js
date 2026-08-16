@@ -1,5 +1,5 @@
 /**
- * SABER — physics
+ * BATTLEFRONT BORZ — physics
  *
  * A bespoke sequential-impulse rigid body solver.
  *

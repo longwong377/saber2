@@ -177,7 +177,7 @@ export function run({ check, assert, near }) {
       'the terrain adds raw phase-function inscatter while every other material has it capped');
 
     // the strip has to BE ground.skyBand, not a second derivation of it
-    const a = LEVELS.arena.atmosphere;
+    const a = LEVELS.colosseum.atmosphere;
     const band = bakeBand(a);
     const tex = writeSkyStrip(new THREE.DataTexture(new Uint16Array(SKY_STRIP * 4), SKY_STRIP, 1,
       THREE.RGBAFormat, THREE.HalfFloatType), band);
@@ -281,7 +281,7 @@ export function run({ check, assert, near }) {
        * "Two hundred metres of air takes the chroma out of the ground" is true
        * whenever the sky is less chromatic than the ground — which was every
        * level in the game until one of them was a lava sea under a smoke
-       * ceiling. Mustafar's sky is a saturated orange and its ash is a
+       * ceiling. the Ember Shelf's sky is a saturated orange and its ash is a
        * near-neutral grey, so distance there legitimately ADDS chroma, and a
        * bare saturation-loss bar would be demanding that the ground fail to
        * converge on its own sky.
@@ -311,7 +311,7 @@ export function run({ check, assert, near }) {
        * old line waved through, now fails too.
        *
        * That distinction stopped being academic the moment a level had a
-       * SATURATED sky. Mustafar's ash is a near-neutral grey under an orange
+       * SATURATED sky. the Ember Shelf's ash is a near-neutral grey under an orange
        * smoke ceiling: its ground's saturation dips through 0.034 at 90 m and
        * comes back to 0.045 at 240 m, against a sky of 0.046 — dead on it, and
        * the old line reads that as the bug.
@@ -325,7 +325,7 @@ export function run({ check, assert, near }) {
        *
        * THE ENDPOINT BAR IS UNCHANGED and still applies to every level: at
        * 200 m the ground keeps under 60% of the saturation it had at 20 m.
-       * mustafar 14%, meadow 20%, drifts 22%, alpine 21%, arena 18%. */
+       * scoria 14%, meadow 20%, drifts 22%, alpine 21%, arena 18%. */
       const norm = (c) => { const l = Math.max(lum({ r: c[0], g: c[1], b: c[2] }), 1e-6); return c.map((v) => v / l); };
       const skyN = norm(sky);
       const dist = out.map((c) => {
@@ -357,7 +357,7 @@ export function run({ check, assert, near }) {
        * hole. The fault this caught was the arena at SATURATION 0.222 and hue
        * 222°: a visible violet cast. Below about 0.08 a colour has no hue worth
        * measuring and the angle between two near-neutrals is noise — measured,
-       * Mustafar's ash lands at 0.052 saturation and reports a 172° "swing"
+       * the Ember Shelf's ash lands at 0.052 saturation and reports a 172° "swing"
        * that is invisible on any display. So the two cases are asserted
        * separately and between them they cover the whole range: a far ground
        * either still has a hue, in which case it must be its own, or it has
@@ -399,7 +399,7 @@ export function run({ check, assert, near }) {
       'ripple amplitude is constant from the toe to the horizon');
 
     const out = [];
-    for (const name of ['dunes', 'arena', 'canyon', 'hangar', 'works', 'cavern', 'mustafar', 'temple']) {
+    for (const name of ['dunes', 'arena', 'canyon', 'hangar', 'works', 'cavern', 'scoria', 'temple']) {
       const t = new Terrain(new THREE.Scene(), name, 0.5);
       const cell = t._uniforms.uHex.value.x, tile = 1 / t._uniforms.uScales.value.x;
       // a cell smaller than a tile scrambles the map instead of placing it; a

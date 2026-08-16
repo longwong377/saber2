@@ -30,9 +30,10 @@ import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS, DEATH_TITLE } from '../../src/ui/Menu.js';
 import { ACTIONS } from '../../src/engine/Bindings.js';
-import { DESCENT } from '../../src/game/Run.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
+import { MODES } from '../../src/game/Waves.js';
+import { LEVEL_ORDER } from '../../src/game/Levels.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -101,7 +102,8 @@ export async function run({ check, assert }) {
       const empty = PICKER_HOSTS.filter(id => kids(doc, id).length === 0);
       assert(!empty.length, `hosts the menu left empty: ${empty.join(', ')}`);
       // The three lists whose length is a fact about the game, not about the DOM
-      assert(kids(doc, 'level-list').length === 13, `${kids(doc, 'level-list').length} theatres`);
+      assert(kids(doc, 'level-list').length === LEVEL_ORDER.length,
+        `${kids(doc, 'level-list').length} theatres against ${LEVEL_ORDER.length} in LEVEL_ORDER`);
       assert(kids(doc, 'opt-quality').length === 4, 'the fidelity tiers are not four');
       assert(doc.getElementById('bind-list').children.length > 30, 'the key table did not render');
       assert(doc.getElementById('codex-grid').children.length > 20, 'the Codex did not render');
@@ -177,6 +179,98 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
+  check('menu: the front end can be walked and pressed with a controller', () => {
+    /**
+     * THE HALF OF "PLAYABLE ON A PAD" A BINDINGS TABLE CANNOT ANSWER.
+     *
+     * Every action in the game reaches a pad button now, and a player who
+     * cannot press Deploy still cannot play: the front screen is DOM, a pad
+     * raises no DOM events, and there is no Tab key on a controller. So the pad
+     * moves the FOCUS and presses the focused thing, riding the activation
+     * model the check above pins rather than growing a second one.
+     *
+     * Driven through `padNav`/`padConfirm` against a real Menu on a real parse
+     * of index.html, and asserted on what actually happened to the settings —
+     * not on whether a method exists.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      // index.html ships every `.screen` hidden and main.js raises the front
+      // one after the boot; the walk is over what is ON SCREEN, so the check
+      // has to put it there the same way rather than reaching past the rule.
+      menu.showMenu();
+      const host = menu._padHost();
+      assert(host && host.id === 'menu',
+        `with the front screen up the pad walks #${host?.id || 'nothing'}`);
+      const list = menu._padFocusable(host);
+      assert(list.length > 20, `only ${list.length} controls are reachable from a pad`);
+
+      // The first press lands on the FIRST control, not the second — "press
+      // down to start reading a list" is what a controller means by that.
+      doc.activeElement = null;
+      menu.padNav('down');
+      assert(doc.activeElement === list[0],
+        'the first press of down did not land on the first control');
+      menu.padNav('down');
+      assert(doc.activeElement === list[1], 'down twice did not reach the second control');
+      menu.padNav('up');
+      assert(doc.activeElement === list[0], 'up did not go back');
+      // …and it wraps rather than dead-ending, which is the one thing a linear
+      // walk must not do: a pad has no scrollbar to tell you where the end is.
+      menu.padNav('up');
+      assert(doc.activeElement === list[list.length - 1], 'up from the first control dead-ends');
+
+      // CONFIRM REALLY PICKS. A theatre card, chosen because it writes a
+      // setting and lights up, so "it fired" is a fact about the game and not
+      // about a listener count.
+      const cards = doc.getElementById('level-list').children;
+      const card = cards.find(c => !c.classList.contains('sel'));
+      const before = settings.level;
+      card.focus();
+      menu.padConfirm();
+      assert(settings.level !== before,
+        `A on a focused theatre card left settings.level at ${settings.level}`);
+      assert(card.classList.contains('sel'), 'the card the pad picked is not the lit one');
+
+      /**
+       * A CONTROL THAT IS NOT ON SCREEN IS NOT REACHABLE, and the walk asks the
+       * layout engine rather than restating the rule.
+       *
+       * The front end's tabs are `.panel{display:none}` / `.panel.active
+       * {display:flex}` in styles.css, so "is this panel showing" has exactly
+       * one authority and it is CSS. `_padFocusable` consults `offsetParent`,
+       * which is that authority answering; this harness has no layout engine,
+       * which is why the count above is every panel at once and a real browser
+       * walks only the tab the player is looking at.
+       *
+       * Both halves of the exclusion are driven here: the layout answer, and
+       * the `.hidden` class, which is what every OVERLAY in this front end
+       * uses and which a DOM with no layout can still be held to.
+       */
+      const probe = list[3];
+      Object.defineProperty(probe, 'offsetParent', { value: null, configurable: true });
+      assert(!menu._padFocusable(host).includes(probe),
+        'a control the layout engine says is not displayed is still on the pad walk');
+      delete probe.offsetParent;
+      const buried = list[4];
+      buried.parentElement.classList.add('hidden');
+      assert(!menu._padFocusable(host).includes(buried),
+        'a control inside a hidden box is still on the pad walk');
+      buried.parentElement.classList.remove('hidden');
+
+      // …and the topmost card wins. A draft over the menu must take the walk
+      // with it, or the pad presses a button underneath the thing on screen.
+      const draft = doc.getElementById('boon-draft');
+      draft.classList.remove('hidden');
+      assert(menu._padHost() === draft,
+        'a draft is on screen and the pad is still walking the menu underneath it');
+      draft.classList.add('hidden');
+      return `${list.length} controls reachable with no layout engine (a browser walks the open `
+        + `tab only), walk wraps both ways, A wrote settings.level ${before} → ${settings.level}, `
+        + 'undisplayed and hidden controls excluded, draft takes the walk';
+    } finally { close(); }
+  });
+
   check('menu: the focus ring is visible on the ground the pickers sit on', () => {
     // Keyboard reach with no visible focus is not operability. This is measured
     // rather than eyeballed: WCAG 1.4.11 asks 3:1 of a non-text indicator, and
@@ -192,9 +286,15 @@ export async function run({ check, assert }) {
     assert(parseFloat(outline[1]) >= 2, `a ${outline[1]}px ring is a hairline`);
     const token = css.match(new RegExp(`${outline[2].trim()}\\s*:\\s*(#[0-9a-fA-F]{3,6})`));
     assert(token, `${outline[2]} is not a colour token in :root`);
-    const bg = hex(css.match(/--bg\s*:\s*(#[0-9a-fA-F]{6})/)[1]);
-    const panel = css.match(/--panel\s*:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
-    const ground = over([+panel[1], +panel[2], +panel[3]], parseFloat(panel[4]), bg);
+    // The panel is OPAQUE now — the interface has no glass in it — so the
+    // ground a ring is painted over is the panel itself rather than the panel
+    // composited over the page. `over()` with an alpha of 1 is that, and it is
+    // kept rather than dropped so this check still measures a composite the
+    // day a translucent surface comes back.
+    const bg = hex(css.match(/--void\s*:\s*(#[0-9a-fA-F]{6})/)[1]);
+    const panel = css.match(/--panel\s*:\s*(#[0-9a-fA-F]{6})/);
+    assert(panel, 'no --panel colour token in :root');
+    const ground = over(hex(panel[1]), 1, bg);
     const ratio = contrast(hex(token[1]), ground);
     assert(ratio >= 3, `the focus ring is ${ratio.toFixed(2)}:1 against the card ground — WCAG asks 3`);
     // …and it must not be the same colour as "this one is selected", or the
@@ -300,36 +400,51 @@ export async function run({ check, assert }) {
   });
 
   check('menu: the Theatre column is honoured, or it says it is not', () => {
-    // The Descent takes its level from the rung: main.js reads `run.rung.level`
-    // whenever a Run exists, a fresh Run is tier 0, and DESCENT[0] is The
-    // Intake. Every one of the thirteen cards used to stay live, write
-    // settings.level, save it and light up — a control that is highlighted,
-    // saved and thrown away, and the write leaked into the NEXT run of another
-    // mode, so the level the player picked turned up somewhere they did not.
-    const { menu, settings, doc, close } = menuOn({ mode: 'gauntlet', level: 'mustafar' });
+    /**
+     * THE MECHANISM OUTLIVED ITS ONE USER, which is why this check now
+     * installs its own.
+     *
+     * The Descent took its level from the rung and every one of the thirteen
+     * cards stayed live, wrote settings.level, saved it and lit up — a control
+     * that is highlighted, saved and thrown away, and the write LEAKED into the
+     * next run of another mode, so the level the player picked turned up
+     * somewhere they did not. The Descent is deleted; the defect it exposed is
+     * not, and the next mode that owns its own ground (Command is one) walks
+     * straight back into it.
+     *
+     * So the switch is a declaration on the mode — `MODES[key].fixedTheatre`,
+     * whose value is the sentence shown beside the dead column — and this check
+     * drives the real front end through a real mode carrying one. Driving it
+     * through a mode name typed into Menu.js is what the old shape did, and it
+     * is exactly the hand-maintained-table-beside-its-twin defect.
+     */
+    MODES.waves.fixedTheatre = 'This trial chooses its own ground: The Ember Shelf → Kamino.';
     try {
-      const list = doc.getElementById('level-list');
-      assert(list.classList.contains('inert'), 'the Theatre column is live in The Descent');
-      const focusable = [...list.children].filter(c => c.tabIndex >= 0);
-      assert(!focusable.length, `${focusable.length} discarded cards are still in the tab order`);
-      const note = doc.getElementById('level-note');
-      assert(note, 'there is no note beside the Theatre column to say the mode owns the choice');
-      assert(!note.classList.contains('hidden') && note.textContent.length > 20,
-        'nothing on screen says the column is not this mode\'s to choose');
-      for (const rung of DESCENT) {
-        assert(note.textContent.includes(rung.name), `the ladder does not name ${rung.name}`);
-      }
-      // and a click on a card cannot write the setting the game will discard
-      list.children[3].dispatchEvent({ type: 'click' });
-      assert(settings.level === 'mustafar', `a discarded card wrote settings.level = ${settings.level}`);
-      // …while every other mode keeps the column exactly as it was
-      menu.selectMode('waves');
-      assert(!list.classList.contains('inert'), 'the column stayed inert outside The Descent');
-      assert(note.classList.contains('hidden'), 'the ladder is still on screen in a mode that has none');
-      list.children[3].dispatchEvent({ type: 'keydown', key: 'Enter' });
-      assert(settings.level !== 'mustafar', 'the column did not come back to life');
-      return `gauntlet → inert, 0 focusable, ladder names ${DESCENT.length} rungs; waves → live and writes`;
-    } finally { close(); }
+      const { menu, settings, doc, close } = menuOn({ mode: 'waves', level: 'scoria' });
+      try {
+        const list = doc.getElementById('level-list');
+        assert(list.classList.contains('inert'), 'the Theatre column is live in a mode that owns the ground');
+        const focusable = [...list.children].filter(c => c.tabIndex >= 0);
+        assert(!focusable.length, `${focusable.length} discarded cards are still in the tab order`);
+        const note = doc.getElementById('level-note');
+        assert(note, 'there is no note beside the Theatre column to say the mode owns the choice');
+        assert(!note.classList.contains('hidden') && note.textContent.length > 20,
+          'nothing on screen says the column is not this mode\'s to choose');
+        assert(note.textContent === MODES.waves.fixedTheatre,
+          'the note is not the mode\'s own sentence — there is a second copy of it somewhere');
+        // and a click on a card cannot write the setting the game will discard
+        list.children[3].dispatchEvent({ type: 'click' });
+        assert(settings.level === 'scoria', `a discarded card wrote settings.level = ${settings.level}`);
+        // …while a mode that does NOT own the ground keeps the column live
+        delete MODES.waves.fixedTheatre;
+        menu.selectMode('waves');
+        assert(!list.classList.contains('inert'), 'the column stayed inert in a mode that does not own it');
+        assert(note.classList.contains('hidden'), 'the note is still on screen in a mode that has none');
+        list.children[3].dispatchEvent({ type: 'keydown', key: 'Enter' });
+        assert(settings.level !== 'scoria', 'the column did not come back to life');
+        return 'fixedTheatre → inert, 0 focusable, note is the mode\'s own string; without it → live and writes';
+      } finally { close(); }
+    } finally { delete MODES.waves.fixedTheatre; }
   });
 
   check('menu: the Bloom checkbox tells the truth about the tier', () => {
@@ -424,7 +539,7 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
-  check('menu: the way into the constellation is a button, not a strip', () => {
+  check('menu: the way into the Holocron is a button, not a strip', () => {
     // Pure cascade, so it is read off the cascade. `.primary/.secondary/.ghost`
     // are `display:block; width:100%` because they are laid out in a column, so
     // a bare .ghost fills whatever line it is on: this button was once 100vw

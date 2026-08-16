@@ -1,5 +1,5 @@
 /**
- * SABER — things that are ridden.
+ * BATTLEFRONT BORZ — things that are ridden.
  *
  * "A wave of unique large creatures each fought differently, SOME RIDDEN."
  *

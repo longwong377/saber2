@@ -1,5 +1,5 @@
 /**
- * SABER — the player.
+ * BATTLEFRONT BORZ — the player.
  *
  * A kinematic capsule for movement, a spring-arm camera, and a body whose arms
  * are IK'd to wherever the blade controller put the hilt. The character is not
@@ -9,11 +9,11 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
-import { SaberController } from './SaberController.js';
+import { SaberController, THRUST_STANDING_SPEED } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
-import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
@@ -21,6 +21,12 @@ import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Supp
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS } from './Combat.js';
+/* THE OTHER HALF OF THE FORCE CONTEST, IMPORTED RATHER THAN RE-DERIVED. The
+ * three constants that decide what a point of pool buys live over
+ * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
+ * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
+ * Enemy.js imports nothing from this file, so the edge is one-way. */
+import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -55,6 +61,11 @@ const _v12Q = new THREE.Quaternion(), _q5 = new THREE.Quaternion();
 // the exact class of bug that is invisible until an arm folds inside out.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
+/** `applyKnockback` scales the shove when the pool blunts it, and the vector it
+ *  is handed is somebody ELSE's scratch (`Enemy._castPower` passes its `_v2`) —
+ *  so it copies into its own rather than writing through the caller's. Exactly
+ *  the reason `Enemy.js` keeps a `_res` of its own. */
+const _res = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const FWD = new THREE.Vector3(0, 0, -1);
 /** Read-only stand-in for a missing pelvis offset. Never written to. */
@@ -162,6 +173,35 @@ class StasisAnchor {
 const isMechanical = (e) => bodyOf(e).droid;
 
 /** Bones a droid still needs to be a droid. Never the first thing to come off. */
+/**
+ * THE FOUR HEIGHTS A FIGURE IS MEASURED AT, in metres, on a 1.78 m human.
+ *
+ * They were four literals typed into two expressions in `_updateBlade`, which
+ * is exactly the shape that cannot be scaled by a species: there was no name
+ * to multiply. Everything that reads them multiplies by `player.stature`.
+ *
+ * The crouch pair are not the standing pair times a constant — a crouch takes
+ * more off the eye (0.40 m) than off the chest (0.34 m), because the spine
+ * folds forward as well as down.
+ */
+const CHEST_H = 1.34, CHEST_H_CROUCH = 1.0;
+const EYE_H = 1.62, EYE_H_CROUCH = 1.22;
+/**
+ * What all four of those are heights ON. `frame.stature` is authored in METRES
+ * — the small-folk row says 0.66 and its own comment says "the figure comes
+ * out 3.6 heads tall at 0.72 m" — so the ratio, not the field, is the
+ * multiplier. A species that declares no stature is this tall.
+ */
+const HUMAN_H = 1.78;
+
+/**
+ * What is left of a pace that points behind you — see `_move`, and Enemy.js's
+ * `limitBackpedal`, which is the law and is shared. The bodies use 0.5; this is
+ * the player's share of the same rule and the number is argued where it is
+ * spent.
+ */
+const PLAYER_BACKPEDAL = 0.72;
+
 const CORE_BONE = /^(hips|spine|chest|body|core|pelvis)$/;
 
 /** Anything it is standing on — see forceDisassemble for why these go last. */
@@ -303,6 +343,21 @@ const VM_CLAV = [['clavL', -1], ['clavR', 1]];
  * stops smearing the lens on its way past.
  */
 const HEAT_NEAR = 0.55;
+
+/**
+ * UNLEASH, as four numbers, each argued against `forcePush`'s in the method
+ * that spends them. Named here rather than typed into the call so the HUD's
+ * price list and tools/checks can read the same values the power uses.
+ */
+const UNLEASH = { radius: 11, impulse: 34, damage: 30, stun: 1.6 };
+
+/**
+ * `_shockwave`'s own direction vector, and it may not be one of the shared
+ * `_v*` scratches. See the note over that method: `applyKnockback` re-enters
+ * code that borrows them, so a shared vector is clobbered part way through the
+ * loop and every body after that point is thrown in the wrong direction.
+ */
+const _shockDir = new THREE.Vector3();
 
 /**
  * How far in front of the chest a held body still counts as cover, and how much
@@ -464,11 +519,40 @@ const HEAL_FRACTION = 0.45;
  * not to the rig."
  *
  * So: unifying the anchor is blocked on the guard model, and the guard model is
- * the prerequisite rather than the other way round. The offsets below are the
- * shipped ones, unchanged. The sweep is committed so nobody has to derive this
- * twice.
+ * the prerequisite rather than the other way round. The sweep is committed so
+ * nobody has to derive this twice.
+ *
+ * ── RISE 0.26 → 0.32, WHEN FIRST PERSON WENT ONE-HANDED ─────────────────
+ *
+ * The one-handed grip (see GRIP_AT.FP) slides the fist to the bottom of the
+ * shaft, and at rise 0.26 that put NINE of the hilt's thirty-one sample points
+ * off the bottom of the frame — the whole pommel section, and the fist with it
+ * at 30.7 degrees below the view axis against a 26 degree bound. Sweeping rise
+ * against fwd on the same bench tools/checks/first-person.mjs uses:
+ *
+ *     rise   fwd    hilt on screen   behind the fist   handR down   reach ratio
+ *     0.260  0.16      23/31              17%            30.7°        1.276
+ *     0.308  0.16      29/31              34%            24.5°        1.289
+ *     0.316  0.16      30/31              30%            25.3°        1.292
+ *     0.320  0.16      31/31              32%            24.8°        1.293
+ *     0.340  0.16      31/31              39%            20.5°        1.300
+ *     0.320  0.13      30/31              30%            25.7°        1.287
+ *     0.320  0.11      29/31              28%            27.9°        1.276
+ *
+ * Pulling `fwd` IN to pay for the rise does not work and the reason is worth
+ * writing down: the frame is an ANGLE, so bringing the hilt nearer the lens
+ * narrows the frame at the hilt's own depth faster than the lift raises it.
+ * Every row with fwd reduced loses samples. The rise has to be bought.
+ *
+ * WHAT IT COSTS is 1.5 cm of sword: the first/third reach ratio goes 1.276 to
+ * 1.293 against the 1.30 ratchet in tools/checks/first-person.mjs, which is
+ * NOT relaxed. The mechanism is that ratchet's own subject — `armMax` clamps
+ * the hands to 0.78 m from the ANCHOR, so every centimetre the anchor leaves
+ * the chest is a centimetre the tip can reach past third person's. The margin
+ * is now 0.7% and the next person who wants to move this anchor has to unify
+ * it first; that is the whole content of the note above.
  */
-const HILT = { rise: 0.26, fwd: 0.16 };
+const HILT = { rise: 0.32, fwd: 0.16 };
 /** Exported so tools/_anchor.mjs can sweep it. */
 export const HILT_ANCHOR = HILT;
 
@@ -540,8 +624,28 @@ export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
  * @param outWrist receives the offset from the grip point BACK to the wrist, in
  *                world space; add it to a point on the hilt's axis to get where
  *                the wrist joint belongs.
+ * @param handScale  how big this figure's hand is against the reference one —
+ *                `rig.scale`. See below; the default of 1 is a human.
+ *
+ * ── THE BORE IS A HAND-SPACE CONSTANT AND THE HAND IS NOT ALWAYS THAT SIZE ──
+ *
+ * `GRIP_BORE` says of itself that it is measured "at the scale buildHand is
+ * called with here", which is 1. `Rig` bakes a figure's scale into the bone
+ * lengths and leaves every bone Object3D at scale 1, so a hand-space offset
+ * does NOT shrink with the figure when it is pushed through the hand's matrix —
+ * it stays 72 mm on a fist that is 40 mm long.
+ *
+ * That is a fixed 43 mm error in exactly the direction reported: the arm is
+ * told to hold its wrist 72 mm back from the hilt's axis, the hand is only 40
+ * mm long, and the hilt ends up outside the fist. Measured on the shipped
+ * small frame before this, in units of that figure's OWN hand
+ * (tools/_stature.mjs): the metal sat 2.42 hands clear of the hole it is
+ * supposed to be inside, against 0.00 for a human.
+ *
+ * Scaled here rather than at the call site because every caller has the same
+ * problem and only one of them had noticed it.
  */
-export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
+export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1) {
   const L = side === 'L';
   const bore = _hp1.set(0, 1, 0).applyQuaternion(hiltQuat);      // the blade
   const x = _hp2.copy(bore).multiplyScalar(L ? 1 : -1);          // thumb to the emitter
@@ -559,13 +663,42 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
     // no arm to ask: the hilt's own frame, turned a quarter
     outQuat.copy(hiltQuat).multiply(L ? GRIP_ROLL_L : GRIP_ROLL_R);
   }
-  if (outWrist) outWrist.copy(GRIP_BORE).applyQuaternion(outQuat).negate();
+  if (outWrist) {
+    outWrist.copy(GRIP_BORE).multiplyScalar(handScale).applyQuaternion(outQuat).negate();
+  }
   return outQuat;
 }
 
 const _hp1 = new THREE.Vector3(), _hp2 = new THREE.Vector3();
 const _hp3 = new THREE.Vector3(), _hp4 = new THREE.Vector3();
 const _hpM = new THREE.Matrix4();
+
+/**
+ * HOW MUCH BODY GOES INTO AN ATTACK — player note 23. See `_attackDrive` for
+ * what each of these buys and for the before/after measurement.
+ *
+ * Radians, and every one of them is applied ON TOP of whatever the blade and
+ * the Force were already doing to the spine, never instead of it.
+ *
+ * `SPINE_OVER` is the big one: multiplied by the overhead's own arc, which runs
+ * +0.95 chambered to −1.08 through the cut, it spends 0.32 rad arching back and
+ * 0.37 folding forward — 38 degrees of trunk across the swing, against the 1.0
+ * degree the swing used to have. It is set from what a body can actually do:
+ * thoracolumbar extension is about 25 degrees and flexion about 60, so this
+ * sits inside both with the arch as the tighter half.
+ *
+ * `CLAV_*` drive the shoulder girdle. The clavicle's rest direction is sideways
+ * (`Rig.humanoidSkeleton` gives clavR rest [-1, 0.18, 0]), so X elevates and
+ * depresses the shoulder and Y protracts it — which is why the overhead uses
+ * the first and the lunge uses both. 0.30 rad of elevation carries the shoulder
+ * JOINT about 19 cm through the swing, measured, against the 9 mm an idle body
+ * breathes.
+ */
+const SPINE_OVER = 0.34, SPINE_LUNGE = 0.26, SPINE_LUNGE_TWIST = 0.22;
+const CLAV_OVER = 0.30, CLAV_LUNGE = 0.16, CLAV_YAW = 0.34;
+/** Sword side first. The off shoulder answers at a fraction — one torso. */
+const CLAV_DRIVE = [['clavR', 1], ['clavL', -0.45]];
+const _eulA = new THREE.Euler();
 
 /**
  * The last degree of freedom, and it is the hand's own rest pose.
@@ -595,7 +728,108 @@ const GRIP_TWIST = 35 * Math.PI / 180;
 export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
 export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
 
-export const GRIP_AT = { R: 0.050, L: -0.015 };
+/**
+ * WHERE ON THE SHAFT EACH FIST CLOSES — and why first person gets its own.
+ *
+ * `R`/`L` are the third-person grip and are unchanged: two fists straddling the
+ * middle of a shaft whose metal spans −0.092 … +0.158, which is correct for a
+ * two-handed sabre grip and invisible at 3.5 m from the lens.
+ *
+ * `FP` IS THE ONE-HANDED FIRST-PERSON GRIP, and it exists because at 0.5 m from
+ * a lens those same two fists are the entire picture. Measured with
+ * `tools/_fpgeom.mjs` before this:
+ *
+ *     hilt on screen        27.6% of frame height, 23 of 31 samples in frame
+ *     of what was in frame, behind the player's own fists        91%
+ *
+ * A hilt that is a quarter of the frame and nine tenths hidden is not a hilt,
+ * it is a pale smudge where the blade begins — which is what the player's
+ * screenshot shows and what `assets/reference/first-person/` does not: there ONE
+ * fist sits low on the grip with the entire emitter section standing clear above
+ * it.
+ *
+ * Sliding both fists down was tried first and is refuted: 91% → 40%, and then
+ * the raise needed to keep the OFF hand in frame brings elbowL inside the 100 mm
+ * the deltoid needs against a 45 mm near plane. Swept as a pair over grip
+ * −0.020 … −0.105 against rise +0 … +0.070, nothing satisfies both — the note in
+ * tools/_fpgeom.mjs has the sweep. The second hand is the constraint, so the
+ * second hand goes: see `twoHanded` in _updateBody.
+ *
+ * −0.062 rather than the −0.092 the metal bottoms out at, because the fist is
+ * ~90 mm across and a grip point at the very end of the shaft hangs half the
+ * hand off it. This puts the whole closed fist on metal with the pommel just
+ * clear below it, which is the reference's own framing. Swept against the
+ * finished anchor (rise 0.32), reading the hilt at a level gaze, looking up
+ * 1.1 rad and looking down 1.2 rad — all three identical, because a viewmodel
+ * holds its place in the frame:
+ *
+ *     grip     behind the fist    handR below the axis
+ *     +0.050         71%                 15.9°       ← the third-person grip
+ *     −0.040         45%                 21.5°
+ *     −0.062         39%                 23.0°
+ *     −0.075         32%                 24.8°       ← the Graflex, derived
+ *     −0.085         29%                 26.3°       (past the 26° frame bound)
+ *     −0.100         23%                 28.6°
+ *
+ * The two columns pull against each other and this is where they cross. ~39% is
+ * the floor for a fist wholly ON a shaft that is wholly ON screen — a closed
+ * hand is 90 mm across and the sampled shaft is 233 — so anything below that is
+ * the fist hanging past the pommel, and past −0.085 it hangs out of the frame
+ * as well. Note the first row: taking the off hand off the hilt and changing
+ * nothing else is 91% → 71%. Both halves were needed.
+ *
+ * THIS TABLE IS THE GRAFLEX'S, and that is the whole of the correction below:
+ * it was read as the game's. −0.075 is what `hiltFloor + FIST_CLEAR` now comes
+ * to on a hilt whose metal bottoms out at −85 mm, so the row still stands — it
+ * is derived per weapon rather than typed once, and the nine other hilts get
+ * their own. See `fpGripOn`.
+ */
+export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
+
+/**
+ * …AND THE FIRST-PERSON GRIP IS THE HILT'S, NOT THE GAME'S.
+ *
+ * `GRIP_AT.FP` was one constant applied to ten hilts that do not agree about
+ * where their metal stops: the Graflex bottoms out at −85 mm and the Shoto at
+ * −54, because a pommel, a control box and a belt hook reach past whatever
+ * `len` says. So there is no single number, and it is provable rather than a
+ * matter of taste. Two checks bound it from opposite sides:
+ *
+ *   `hilts: the hands still close on the grip`   needs the point inside EVERY
+ *       hilt's own extent with a margin → fp > −0.042, set by the Shoto.
+ *   `first person: the hilt is ON SCREEN`        needs at most 35% of the hilt
+ *       behind the fist → fp ≲ −0.070, set by the table above.
+ *
+ * −0.042 > fp > −0.070 is an empty interval. −0.075 shipped and hung the fist
+ * off the Graflex's pommel; −0.062 was tried here and moved the same failure to
+ * the Shoto while breaking the occlusion bound as well. Neither is a fix,
+ * because a constant cannot be one — which is what §6.0's title has said all
+ * along: the first-person grip is OVER-CONSTRAINED.
+ *
+ * AND IT IS STILL OVER-CONSTRAINED PER HILT, BY ABOUT TWO MILLIMETRES. On the
+ * Graflex the derived point is −0.072, which is 11 of the occlusion check's 31
+ * samples behind the glove — 35.5% against a `pct < 35` bound. Dropping it the
+ * ~2 mm that would clear one more sample puts the fist back inside `hilts`'s
+ * own 12 mm margin, so the two checks now disagree by one sample point rather
+ * than by a design. Worth saying plainly: `pct < 35` on a 31-point grid can
+ * only ever be satisfied at 10/31 = 32.3%, so the "35%" in that check's message
+ * is not a number its measurement can produce, and the real bound is 32.3%.
+ * Neither constant is touched here. Which of them gives is a question about how
+ * the weapon should look in frame, and that belongs to whoever owns §6.0 — not
+ * to the change that noticed they cannot both hold.
+ *
+ * `Saber.hiltFloor` is measured off the built meshes once per hilt, so each
+ * weapon can be held at the bottom of ITS OWN grip. 13 mm of clearance is the
+ * check's own margin (12 mm) plus a millimetre, because a hand exactly on a
+ * bound is a hand the next hilt tips over it. `GRIP_AT.FP` stays as the answer
+ * for a saber whose hilt has not been measured — a preview, a fixture, a
+ * dropped weapon rebuilt from the wire — and is no longer what the game holds.
+ */
+export const FIST_CLEAR = 0.013;
+export function fpGripOn(saber) {
+  const lo = saber?.hiltFloor;
+  return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
+}
 
 
 
@@ -604,6 +838,15 @@ export const GRIP_AT = { R: 0.050, L: -0.015 };
 const _m1 = new THREE.Vector3(), _m2 = new THREE.Vector3(), _m3 = new THREE.Vector3();
 const _m4 = new THREE.Vector3(), _m5 = new THREE.Vector3(), _m6 = new THREE.Vector3();
 const _m7 = new THREE.Vector3();
+
+/**
+ * Scratch for the camera rig's shoulder probe alone. It runs inside
+ * CameraRig.update, which is already holding _v1.._v5 (forward, right, anchor,
+ * the collision back-vector and the terrain probe), so it may borrow none of
+ * them — and the probe is a raycast, so a shared temp aliased into a physics
+ * call is a bug that only shows up against geometry.
+ */
+const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3();
 
 export class CameraRig {
   constructor(camera) {
@@ -651,6 +894,144 @@ export class CameraRig {
     this.eyeOffset = new THREE.Vector3();
     /** How much of the pelvis the cap had to refuse this frame, metres. */
     this.eyeCapped = 0;
+    /**
+     * WHICH SIDE THE CAMERA STANDS ON, as a sign rather than a distance.
+     *
+     * `shoulder` is the offset and it was written once in this constructor and
+     * never again by anything in the project, so the camera stood over the same
+     * shoulder into every corner in the game. Splitting the sign off the
+     * magnitude is what lets the swap be a smooth ease of one number rather
+     * than a teleport, and it is what `_resolveShoulder` moves.
+     */
+    this.shoulderSide = 1;
+    this.shoulderAt = this.shoulder;
+    /** The death shot, or null. See beginDeathShot. */
+    this.shot = null;
+  }
+
+  /**
+   * A DEATH CAMERA — the worst 2.6 seconds in the game, framed.
+   *
+   * What happened before this: `_updateDead` pulled the boom to 4.4 m and eased
+   * the pitch to -0.42, and that was the whole of it. The camera that had been
+   * over your shoulder stayed over the shoulder of a corpse, at the yaw the
+   * mouse happened to be at when you were hit, until the card arrived.
+   *
+   * The shot is a SCRIPT on the rig's own numbers rather than a second camera:
+   * the boom rises and pulls back, the pitch eases down onto the body, the
+   * shoulder offset unwinds to zero (there is nothing left to aim), and the
+   * whole thing drifts a fifth of a radian around the body so the frame is
+   * moving when the card lands. Written as targets and left to the rig's
+   * existing damping, so it costs no new integrator and it cannot fight the
+   * collision pull-in — a death against a wall still frames.
+   *
+   * It runs on the WORLD's clock, which by then is at a third speed, and that
+   * is the point: the drift is authored at the rate it should read at 1.0 and
+   * arrives slower because everything else has.
+   */
+  beginDeathShot(opts = {}) {
+    this.shot = {
+      t: 0,
+      dur: clamp(opts.seconds ?? 3.4, 0.5, 12),
+      // Away from whatever the body was facing, so the camera swings to look at
+      // the front of it rather than following it down from behind.
+      turn: (this.shoulderSide >= 0 ? 1 : -1) * (opts.turn ?? 0.62),
+      yaw0: this.yaw,
+      fov0: this.fovTarget,
+      // Everything the shot commandeers, so ending it is a restore and not a
+      // second table of defaults that can drift from the constructor's.
+      fp0: this.firstPerson, dist0: this.targetDistance, height0: this.height,
+    };
+    return this.shot;
+  }
+
+  /**
+   * A LENS KICK THAT EXPIRES ON THE GAME'S CLOCK. See the caller in _jump.
+   *
+   * The rig damps `fov` toward `fovTarget` at 7/s every frame already, so all
+   * this owns is putting the target up and taking it down again — and taking it
+   * down `seconds` of GAME time later, not of wall time. Whoever else is
+   * writing `fovTarget` that frame (the speed FOV) wins the moment the kick
+   * expires, because the kick restores what it found rather than a constant.
+   */
+  kickFov(degrees = 6, seconds = 0.18) {
+    this.fovKick = { amp: degrees, left: clamp(seconds, 0.02, 3), dur: clamp(seconds, 0.02, 3) };
+    return this.fovKick;
+  }
+
+  /**
+   * How many degrees the kick is adding right now. Decays on the game clock.
+   *
+   * `k ** 0.6` starts at the full amplitude and eases out. It is applied on top
+   * of the SMOOTHED fov rather than to the target it damps toward, because the
+   * damp is 7/s and 6 degrees fed through it for 0.18 s reaches 1.97 — measured
+   * — so a kick written as a target could never be the kick it says it is. A
+   * lens kick is an impulse; the ease-out is its release.
+   */
+  _fovKickAmount(dt) {
+    const k = this.fovKick;
+    if (!k) return 0;
+    k.left -= Math.max(dt, 0);
+    if (k.left <= 0) { this.fovKick = null; return 0; }
+    return k.amp * Math.pow(k.left / k.dur, 0.6);
+  }
+
+  /** Give the rig back. Idempotent — respawn and dispose may both call it. */
+  endShot() {
+    const s = this.shot;
+    if (!s) return false;
+    this.shot = null;
+    this.firstPerson = s.fp0;
+    this.targetDistance = s.dist0;
+    this.height = s.height0;
+    this.fovTarget = s.fov0;
+    return true;
+  }
+
+  /**
+   * Where the camera stands, and how far off the body's line it may be.
+   *
+   * TWO DEFECTS IN ONE NUMBER, and both of them are about a boom that has been
+   * pulled in. `dist` collapses to as little as 0.55 m against a wall, and the
+   * lateral offset did not collapse with it: at 0.55 m a fixed 0.46 m sideways
+   * is 40 degrees off axis, which puts the player's own head and shoulder
+   * across the middle of the frame — and screen centre is where the reticle is.
+   * Scaling the offset by how much of the boom survived keeps the body at a
+   * constant ANGLE instead of a constant distance, which is the thing the eye
+   * actually reads.
+   *
+   * And the side is now a decision rather than a constant. If the wall is on
+   * the right and not on the left, the camera steps to the left — the same
+   * thing a player would do with a manual swap and the same thing every
+   * third-person game has done for fifteen years. Hysteresis (the 0.6 m) stops
+   * it flapping in a doorway.
+   */
+  _resolveShoulder(dt, base, fwd, right, ctx) {
+    // The shot owns the frame; a corpse is not aiming past its own shoulder.
+    if (this.shot) {
+      this.shoulderAt = damp(this.shoulderAt, 0, 3.2, dt);
+      return this.shoulderAt;
+    }
+    // Two extra raycasts a frame to answer a question that changes on the scale
+    // of a doorway is waste; six frames is a tenth of a second and the ease
+    // below is slower than that anyway.
+    this._sideTick = (this._sideTick | 0) + 1;
+    if (ctx.physics && this.shoulder > 0.01 && (this._sideTick % 6) === 0) {
+      const reach = this.targetDistance + 0.42;
+      const filter = (b) => b.static || b.layer === LAYER.PROP;
+      _c2.copy(fwd).negate();
+      let r = reach, l = reach;
+      _c1.copy(base).addScaledVector(right, this.shoulder);
+      const hr = ctx.physics.raycast(_c1, _c2, reach, filter);
+      if (hr) r = hr.distance;
+      _c1.copy(base).addScaledVector(right, -this.shoulder);
+      const hl = ctx.physics.raycast(_c1, _c2, reach, filter);
+      if (hl) l = hl.distance;
+      if (this.shoulderSide > 0 && l > r + 0.6) this.shoulderSide = -1;
+      else if (this.shoulderSide < 0 && r > l + 0.6) this.shoulderSide = 1;
+    }
+    this.shoulderAt = damp(this.shoulderAt, this.shoulder * this.shoulderSide, 5, dt);
+    return this.shoulderAt;
   }
 
   /**
@@ -720,6 +1101,29 @@ export class CameraRig {
   }
 
   update(dt, target, ctx = {}) {
+    /**
+     * THE SHOT DRIVES THE RIG, and it does it here — before syncAim — so the
+     * yaw it writes is the yaw the aim quaternion, the boom and the collision
+     * probe all read on the SAME frame. Written as an else-if on `firstPerson`
+     * as well: a first-person death has to come out of the head, or the shot is
+     * three seconds of the inside of your own skull.
+     */
+    const shot = this.shot;
+    if (shot) {
+      shot.t = Math.min(shot.dur, shot.t + Math.max(dt, 0));
+      const k = shot.t / shot.dur;
+      // ease-out on everything, so the move is quick where it is informative
+      // (getting off the shoulder and onto the body) and slow where it is not.
+      const e = 1 - Math.pow(1 - k, 2.2);
+      this.firstPerson = false;
+      this.yaw = shot.yaw0 + shot.turn * e;
+      this.pitch = lerp(this.pitch, -0.52, Math.min(1, dt * 2.4));
+      this.targetDistance = lerp(3.05, 5.1, e);
+      this.height = lerp(1.52, 2.15, e);
+      // A wider lens as it settles: the frame opening up is what says the fight
+      // is over, and it is the one FOV move in the game that is not a speed cue.
+      this.fovTarget = shot.fov0 + 7 * e;
+    }
     this.syncAim();
 
     if (!this._init) { this._smoothTarget.copy(target); this._init = true; }
@@ -733,7 +1137,19 @@ export class CameraRig {
     else dampVec(this._smoothTarget, target, 16, dt);
 
     this.distance = damp(this.distance, this.targetDistance, 8, dt);
+    /* THE KICK IS AN IMPULSE ON TOP, and that is the fix rather than a refinement.
+     *
+     * `_jump` wrote `camera.fovTarget = camera.fov + 6` and armed a
+     * `setTimeout` to put it back 180 ms later. Two things wrong with it, and
+     * the second is fatal: the timer is on the WALL clock, so inside a hitstop
+     * or a Force Sense it expired before the jump had visibly started and
+     * behind a pause card it expired behind the pause card — and
+     * `Player._updateCamera` ASSIGNS `fovTarget` from the speed term on every
+     * single frame, so the six degrees were overwritten on the very next one
+     * and the kick the audit describes never reached the screen at all.
+     * Additive, and decayed on the dt the rig is already handed. */
     this.fov = damp(this.fov, this.fovTarget, 7, dt);
+    this.fovKickAt = this._fovKickAmount(dt);
     this.roll = damp(this.roll, this.rollTarget, 6, dt);
 
     const fwd = _v1.set(0, 0, -1).applyQuaternion(this.aimQuat);
@@ -745,8 +1161,13 @@ export class CameraRig {
     } else {
       this.eyeOffset.set(0, 0, 0);
       this.eyeCapped = 0;
-      const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height)
-        .addScaledVector(right, this.shoulder);
+      const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height);
+      // THE OFFSET IS SCALED BY HOW MUCH OF THE BOOM SURVIVED. See
+      // _resolveShoulder: a pull-in to 0.55 m with a fixed 0.46 m sideways puts
+      // the player's own head 40 degrees off axis and across the reticle.
+      const side = this._resolveShoulder(dt, anchor, fwd, right, ctx)
+        * clamp(this.distance / Math.max(this.targetDistance, 0.6), 0.3, 1);
+      anchor.addScaledVector(right, side);
       let dist = this.distance;
       // pull in when the camera would clip geometry
       if (ctx.physics) {
@@ -800,8 +1221,11 @@ export class CameraRig {
     // the base of the blade clip through it.
     const near = this.firstPerson ? 0.045 : 0.15;
     if (this.camera.near !== near) { this.camera.near = near; this.camera.updateProjectionMatrix(); }
-    if (Math.abs(this.camera.fov - this.fov) > 0.01) {
-      this.camera.fov = this.fov;
+    // `fov` is where the lens is settling; `fovKickAt` is the impulse riding on
+    // top of it. Only the sum is ever a real focal length.
+    const shown = this.fov + (this.fovKickAt || 0);
+    if (Math.abs(this.camera.fov - shown) > 0.01) {
+      this.camera.fov = shown;
       this.camera.updateProjectionMatrix();
     }
   }
@@ -879,6 +1303,25 @@ export function sideTeam(i) {
  */
 export function asSide(v) {
   return SIDES.includes(v) ? v : TEAM.PARTY;
+}
+
+/**
+ * THE SAME THING FOR A BODY RATHER THAN A PLAYER, AND IT FAILS THE OTHER WAY.
+ *
+ * `asSide` is for a PLAYER's side and lands a bad value in co-op, because the
+ * worst thing that can happen to a player who could not be identified is that
+ * they are on your team. A BODY off the wire is the opposite question: an enemy
+ * record that arrived without a legible team is the horde, because that is what
+ * every body on this wire was before the field existed, and answering it with
+ * the party's 0 would hand a joining player a level full of allies that shoot
+ * at nobody. So this accepts the horde's number as well as the four sides, and
+ * anything else — undefined, a string, a 7 — is the horde.
+ *
+ * Two functions rather than one with a flag: the two callers want opposite
+ * failure directions and a shared default would have to pick one of them.
+ */
+export function asTeam(v) {
+  return v === TEAM.HORDE || SIDES.includes(v) ? v : TEAM.HORDE;
 }
 
 /**
@@ -1015,15 +1458,16 @@ export function bladeTargets(holder, players, rules = null) {
  * DIFFERS between them is the two callbacks: what each bone is made of, and how
  * much of the body it is.
  *
- * `vital` is deliberately left undefined unless a caller supplies it. Enemy.js
- * keeps a nineteen-row `VITAL` table as a module-private const, and typing a
- * second copy of it here is exactly the drift this codebase has paid for
- * repeatedly — `World._boltHitTest` scales bolt damage by
- * `lerp(0.6, 1.9, vital)`, so two tables that disagreed would make a duel's
+ * `vital` is deliberately left undefined unless a caller supplies it, and the
+ * handover this note used to ask for has landed: there is no `VITAL` table left
+ * to copy. Enemy.js EXPORTS `severanceOf(bone)`, which prices a bone off the
+ * role it declares in its own skeleton, so a caller that wants the game's own
+ * lethality passes `vital: severanceOf` and cannot hold a stale second copy of
+ * anything. That matters because `World._boltHitTest` scales bolt damage by
+ * `lerp(0.6, 1.9, vital)`: two tables that disagreed would make a duel's
  * headshots and a wave's headshots different sizes. Nothing on the player's
- * path reads it yet (the contact solver never does; World's bolt test uses a
- * single 0.36 m capsule for a player, not this), and the one-word handover that
- * exports the real table is in this lane's notes.
+ * path reads it yet — the contact solver never does, and World's bolt test uses
+ * a single 0.36 m capsule for a player rather than this.
  *
  * `severed` and empty bones are skipped for the reason they always were: a rig
  * lists every joint it could have, and an arm already taken off is not standing
@@ -1359,6 +1803,19 @@ export function defaultBoonMods() {
     riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
     conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
     guardRefund: 0, tempest: 0, sunderReach: 0, mend: 0, absorb: false,
+    /**
+     * The share of an incoming blow that gets through. A MULTIPLIER, so its
+     * identity is 1 and not 0 like the additive rows above it.
+     *
+     * `Waves.wardGuard` reads it as `?? 1`, so the guard attunement worked
+     * without this line — which is exactly why it needs one. Every other
+     * conditional field here declares its own identity, and the one that does
+     * not is the one that breaks the first time somebody iterates this table or
+     * serialises it instead of reading the field by name. The header two
+     * paragraphs up is about precisely that: a boon writing a key that is not
+     * declared here, and `undefined * 1.33` being NaN.
+     */
+    ward: 1,
     /** Domination. Force compel refuses by name without it — see forceCompel. */
     compel: false,
   };
@@ -1404,6 +1861,45 @@ export class Player {
      */
     this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, speed) => this._footstep(p, speed);
+    /**
+     * STATURE — how tall this figure actually stands, as a fraction of a human,
+     * and it had NO READER anywhere in src/.
+     *
+     * `SPECIES.smallfolk.frame.stature` has said 0.66 since the row was
+     * written. Everything downstream of it used the constants below instead:
+     * the chest at a flat 1.34 m and the eye at a flat 1.62. On a 0.66 m
+     * figure that puts the guard point — which is where the HILT hangs and
+     * therefore what the two-bone arm IK solves to — a clear 0.6 m above the
+     * top of its own head. Both arms go up because that is where the weapon
+     * is, and the weapon floats because nothing ever asked whether the hands
+     * could reach it. Reported as "the blade floats above them, both their
+     * arms in the air too", which is a precise description of an arm solver
+     * doing its job against a target authored for somebody else.
+     *
+     * It is NOT `rig.scale`. The body scale is 0.40 and the standing height is
+     * 0.66, because the head is authored at 0.74 and the legs at 0.80 of the
+     * body — that is the whole point of the small-folk row, and it is why
+     * these are two numbers rather than one. `rig.scale` is right for the
+     * gait (it measures bones); `stature` is right for anything measured off
+     * the FLOOR.
+     */
+    this.stature = (speciesOf(opts.species)?.frame?.stature ?? HUMAN_H) / HUMAN_H;
+    /**
+     * …AND STATURE IS ONLY ONE OF THREE SCALES. See `limbScale` in Rig.js.
+     *
+     * `stature` places things measured off the FLOOR. It is the wrong number
+     * for anything measured off the CHEST — which is where the whole guard
+     * model is measured from — because a species frame scales the arm
+     * separately from the body, and it is the wrong number for a hem, which is
+     * measured down a leg scaled separately again. Three scales, three readers,
+     * each named at the point of use so the next one is not left guessing which
+     * `S` was meant.
+     */
+    this.limbs = limbScale(this.rig);
+    /* An eye is a height on a body, so it takes `stand` like the other three
+     * (see the note over `st` in _updateBlade). Exactly 1 for every human-framed
+     * species, so no camera in the game moves but the small one's. */
+    this.eyeHeight = EYE_H * this.limbs.stand;
     this._makeCloak();
 
     // ── saber
@@ -1412,11 +1908,35 @@ export class Player {
       bladeLength: opts.bladeLength ?? 1.15,
       coreWidth: opts.coreWidth ?? 1,
       hiltStyle: opts.hiltStyle ?? 'Graflex',
+      /**
+       * THE FIRST BLADE IN THE SCENE PUBLISHES THE LIGHT POOL for every blade
+       * built after it — see `resolveLightSink`. This is that blade: nothing in
+       * a level is constructed before the player, and the alternative is a new
+       * constructor argument in Enemy.js, Net.js and World.js, none of which
+       * this pass owns.
+       */
+      engine: world.engine,
+      /**
+       * …and YOUR blade never loses a slot. Priority is the first term of the
+       * pool's ranking, so a local player standing in a crowd of thirty keeps
+       * both of their own lights whatever else is on the field. A remote
+       * player's blade ranks on brightness and distance like anyone else's,
+       * because from here it IS anyone else's.
+       */
+      lightPriority: opts.isLocal ? 1 : 0,
     });
+    /* THE HILT IS SIZED BY THE HAND, not by the stature. It is an object held
+     * IN a fist, and `buildHand` is called with the body scale — see
+     * Saber.setGripScale for the measurement and for why it shrinks at all. */
+    this.saber.setGripScale?.(this.limbs.torso);
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
       followStrength: opts.followStrength ?? 0,
       scheme: opts.scheme ?? 'hold',
+      /* The guard is held at arm's length, and the arm is this one's. Every
+       * distance in GRIPS is chest-to-hand; see `reachScale` there for what
+       * leaving it at a human's did to the small frame. */
+      reachScale: this.limbs.arm,
     });
     this.hum = audio.createHum(this.saber.color.getHex());
 
@@ -1487,6 +2007,14 @@ export class Player {
     this.senseActive = false;
     this.senseTimer = 0;
     this.saberThrown = false;
+    /**
+     * THE HAND IS EMPTY. See `disarmed` and `_dropSaber`.
+     *
+     * Declared here rather than materialising on the first drop, because
+     * `disarmed` is read on every frame of `_updateBlade` and `_updateBody` and
+     * an undefined that happens to be falsey is not a state, it is a coincidence.
+     */
+    this.saberDown = false;
     this.throwState = 'held';
     this.throwPos = new THREE.Vector3();
     this.throwVel = new THREE.Vector3();
@@ -1494,6 +2022,14 @@ export class Player {
     this.throwTimer = 0;
     /** The arm gesture currently reading out whatever the Force is doing. */
     this.gesture = { kind: '', t: 0, env: 0, sustain: false, at: new THREE.Vector3(), hasAt: false };
+    /**
+     * How much of the BODY is currently in the attack — see `_attackDrive`.
+     * `over` is the overhead's own arc, `lunge` the stab's envelope, and `shift`
+     * the world-space offset both of them put on the anchor the blade is solved
+     * from. Held here rather than recomputed by each reader, because
+     * `_updateBlade` and `_updateBody` both need it and they must not disagree.
+     */
+    this.attack = { over: 0, lunge: 0, shift: new THREE.Vector3() };
     /**
      * Force stop. `held` is what is frozen right now, `firing` is what has been
      * let go and is leaving in a ripple, and `bodies` is the membership test so
@@ -1513,7 +2049,7 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0 };
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0 };
     this.boons = new RankSet();
     this.boonMods = defaultBoonMods();
     this.airJumps = 0;
@@ -1521,7 +2057,7 @@ export class Player {
     // ── camera
     this.camera = new CameraRig(world.engine.camera);
     this.camera.yaw = Math.PI;
-    this.eyeHeight = 1.62;
+    this.eyeHeight = EYE_H;   // re-derived from the species below, once the rig exists
 
     // ── physics proxy so enemies and props collide with us
     this.body = new Body({
@@ -1555,9 +2091,20 @@ export class Player {
     this.skirt?.dispose(); this.skirt = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
+    /**
+     * `scale` — and Enemy.js has passed it since capes existed.
+     *
+     * Cloth.js reads `opts.scale ?? 1`, so a cape ordered 0.86 m long was 0.86
+     * m long on a 0.66 m figure: a garment longer than the character wearing
+     * it, which is what "the clothes look really oversized and funny" is. The
+     * numbers below are authored against a 1.78 m human and are multiplied
+     * into the figure's own size here rather than restated per species.
+     */
+    const S = this.rig.scale ?? 1;
     this.cloak = attachCloak(this.world.scene, this.rig, {
       // narrow at the collar, flared at the hem, and stopping above the knee so
       // the legs still read — a floor-length sack hides the whole silhouette.
+      scale: S,
       material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0,
       cut: this.robeCut,
     });
@@ -1575,6 +2122,7 @@ export class Player {
       const smat = (this.palette.over || this.palette.outer).clone();
       smat.side = THREE.DoubleSide;
       this.skirt = attachSkirt(this.world.scene, this.rig, {
+        scale: S,
         material: smat, rigid: this.built.robeSkirt, cut: this.robeCut,
         // The belt's own two ends, which hang over this. Same material as the
         // obi they are tied in, because they are the same band of cloth.
@@ -1592,6 +2140,13 @@ export class Player {
   get difficulty() { return this.world.difficulty; }
   aimPoint(out = new THREE.Vector3()) { return out.copy(this.chest); }
   get dead() { return !this.alive; }
+
+  /**
+   * NOTHING IN THE HAND. The same name Enemy uses for the same condition, so
+   * the two halves of note 61 read alike: a duellist that loses the sword arm
+   * and a player who puts theirs down are in one state, not two.
+   */
+  get disarmed() { return !!this.saberDown; }
 
   /**
    * THIS BODY, AS SOMETHING A BLADE CAN FIND.
@@ -1637,14 +2192,64 @@ export class Player {
    * keeping. `staggerTimer` rather than an `Enemy.stun`: a player is never
    * taken off the controls, which is a rule the whole game already keeps.
    */
+  /**
+   * SPEND THE POOL TO BLUNT AN INCOMING POWER — the player's half of the Force
+   * contest, and the half that did not exist. Driven before this line: a Sith
+   * shoving into your shove landed in full, and 50 hp of lightning delivered
+   * the same 42.5 whether your bar was empty or brimming. The bar was a
+   * spending account with no defensive side, so "answering a power with a
+   * power" could only ever mean casting first.
+   *
+   * `forceResistance` is CALLED, not copied. It is exported from Enemy.js for
+   * this exact caller and it carries the three numbers, the cap, the
+   * beaten-guard discount and the list of kinds that are the Force at all — one
+   * contest, one rulebook, both contestants reading it. A second copy here
+   * would be free to disagree with the body on the other end of the push.
+   *
+   * `staggerTimer > 0` is the player's `_guardOpen()`: the same "your guard is
+   * already beaten, so it defends less" rule the blade uses, expressed in the
+   * one state a player has instead of a stun (this game never takes the
+   * controls away, so there is no `stunTimer` to read).
+   *
+   * @returns hp of the blow taken off, having already spent the pool for it.
+   */
+  resistForce(amount, kind, source) {
+    if (!this.alive) return 0;
+    // …and never against yourself: a held power bills through the same door,
+    // and a caster paying twice for one cast is not a contest.
+    if (source === this) return 0;
+    const r = forceResistance(this.force, amount, kind, this.staggerTimer > 0);
+    this.force = Math.max(0, this.force - r.spend);
+    return r.blunt;
+  }
+
   applyKnockback(impulse, damage = 0, source = null, gentle = false) {
     if (!this.alive) return false;
+    /**
+     * PUSHING INTO A PUSH IS A CONTEST — and this mirrors `Enemy.applyKnockback`
+     * line for line, because it is the same contest seen from the other side.
+     *
+     * The blow is weighed ONCE, the shove priced alongside the damage in the
+     * same currency (`IMPULSE_AS_HP`), and the fraction the pool buys back is
+     * applied to both. Billing the two halves separately out of one pool would
+     * charge twice for one blow; blunting only the damage would let a resisted
+     * shove still take you the whole way. `preResisted` carries the decision
+     * down into `damage()` so it does not answer the same blow again.
+     */
+    let dmg = damage || 0;
+    const weight = dmg + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
+    const blunt = this.resistForce(weight, 'force', source);
+    if (blunt > 0) {
+      const k = Math.max(0, 1 - blunt / weight);
+      dmg *= k;
+      if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
+    }
     if (impulse) {
       this.velocity.add(impulse);
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
-    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+    return dmg > 0 ? this.damage(dmg, this.chest, source, 'force', true) : false;
   }
 
   setSaberColor(i) {
@@ -1717,15 +2322,33 @@ export class Player {
         this.stamina = Math.max(0, this.stamina - 6);
         audio.swing(16, this.saber.base);
       },
+      /* WHETHER THE FEET ARE UNDER THE LUNGE, from the body's OWN velocity.
+       * The controller can otherwise only infer it from how fast the anchor it
+       * is handed is travelling, and `_attackDrive` now moves that anchor on
+       * purpose — see the note at the read in SaberController. The threshold is
+       * imported rather than repeated. */
+      moving: Math.hypot(this.velocity.x, this.velocity.z) > THRUST_STANDING_SPEED,
     });
     this.camera.addYaw(camDelta.yaw);
     this.camera.addPitch(camDelta.pitch);
 
     // ignite / retract
+    //
+    // THE HOLE NOTE 39 CAME THROUGH. `toggle()` asks the Saber whether its
+    // blade is lit; it cannot ask whether anybody is holding it. So after a
+    // drop this one key lit a hilt lying six metres away, and the player was
+    // armed again — "you still have one like you never actually lose it".
+    // Measured: ignition 0.01 → 0.97 in half a second, from an empty hand.
     if (input.actHit('ignite')) {
-      this.saber.toggle();
-      if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
-      else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
+      // …and NOT `return`: this sits above the view toggle, the grip and all
+      // eleven powers, so an early exit here would make an empty hand cost the
+      // player the rest of their controls for that frame.
+      if (this.saberDown) this._refuse('ignite', 'your hands are empty');
+      else {
+        this.saber.toggle();
+        if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
+        else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
+      }
     }
     if (input.actHit('view')) {
       this.camera.firstPerson = !this.camera.firstPerson;
@@ -1757,6 +2380,7 @@ export class Player {
     if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
+    if (input.actHit('unleash')) this.forceUnleash(ctx);
     if (input.actHit('swap')) this.swapSaber(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
@@ -1770,6 +2394,12 @@ export class Player {
 
   _applyViewMode() {
     const fp = this.camera.firstPerson;
+    // The blade's emission profile is tuned in third person, where the weapon
+    // is 3.5 m from the lens; in first it is 0.7 m, which is five times the
+    // angular size against a bloom pass that works in screen space. See
+    // Saber.FP_PINCH. This is the one place the view changes, so it is the one
+    // place that tells the blade.
+    if (this.saber) this.saber.firstPerson = fp;
 
     // Hide the MESHES, not the bones — scaling a bone enters matrixWorld, so a
     // 0.0001x head was silently seen by the sever code, the cloak colliders,
@@ -1862,6 +2492,34 @@ export class Player {
     const right = _v2.set(fwd.z, 0, -fwd.x).negate();
     const wish = _v3.set(0, 0, 0).addScaledVector(fwd, axis.y).addScaledVector(right, axis.x);
     if (wish.lengthSq() > 1) wish.normalize();
+    /**
+     * NOBODY BACKPEDALS AS FAST AS THEY RUN — INCLUDING THE PLAYER.
+     *
+     * `limitBackpedal` is Enemy.js's, it is exported for the reason its own
+     * note gives ("a numeric law, and numeric laws in this codebase get
+     * measured, not eyeballed"), tools/checks/movement.mjs asserts it, and
+     * every body in the game has obeyed it for as long as it has existed. The
+     * player never did. So the one fighter on the field who could give ground
+     * at a dead run, in the direction they are looking, for nothing, was the
+     * one holding the camera — and holding one movement key was the strongest
+     * answer in a duel because of it (see the FOOTWORK note in Duel.js).
+     *
+     * `fwd` is the body's own forward: `facing` is driven to `camera.yaw + PI`
+     * and a body facing `f` looks along `(sin f, 0, cos f)`, which is this
+     * vector exactly. So the law applied here is the one the enemies obey — the
+     * component pointing BEHIND you is slowed and everything across that line
+     * is untouched. A sidestep keeps its full pace, an advance is not touched
+     * at all, and a diagonal retreat loses only the part of it that is retreat.
+     *
+     * NOT the bodies' 0.5. A player who has committed to a direction cannot
+     * re-plant as freely as one who has not, but they are also the only fighter
+     * on the field with a camera to turn: 0.72 leaves a straight walk backwards
+     * at 3.31 m/s against a 4.60 m/s advance, which is a real retreat and no
+     * longer a free one. The DASH is untouched — `targetV` is overwritten
+     * wholesale below — because a dodge is the answer this is meant to leave
+     * standing, and it is the one that costs 18 stamina.
+     */
+    limitBackpedal(wish, fwd, PLAYER_BACKPEDAL);
 
     // acceleration: crisp on the ground, floaty in the air
     const accel = this.grounded ? 46 : 12;
@@ -2175,15 +2833,47 @@ export class Player {
     if (impactSpeed > 26) this.damage(clamp((impactSpeed - 26) * 2.6, 0, 45), null, null, 'fall');
   }
 
+  /**
+   * A RADIAL SHOVE — and the local vector on the first line is a bug fix, not
+   * a style choice.
+   *
+   * This used the module scratch `_v1` for the direction and handed it
+   * straight to `applyKnockback`. That call does `velocity.add(impulse)` and
+   * then `this.damage(...)`, and damage re-enters a great deal of code — hit
+   * reactions, the score, the announcer, anything watching a kill — some of
+   * which reaches back into Player.js and takes `_v1` for its own use. So the
+   * direction was being clobbered PART WAY THROUGH THE LOOP: every body after
+   * whichever one first triggered a re-entrant path got whatever was left in
+   * the scratch.
+   *
+   * HONESTY ABOUT WHAT THIS FIXED: nothing observed, yet. I wrote it while
+   * chasing a ring of eight B1s in which five flew 7.7 m and three moved 0.25,
+   * and I was sure this was the cause. It was not — the three were culled by
+   * `sandboxCount: 5`, which is a default of the mode the probe booted, and
+   * the change made no difference to that measurement at all. The hypothesis
+   * is recorded as refuted rather than deleted, because the next person to see
+   * an asymmetric shockwave will form it too.
+   *
+   * The change STAYS on its own merits: handing a shared module scratch to a
+   * callee that re-enters this file is a hazard whether or not it has bitten,
+   * and `Enemy.unstable`'s own call at line ~1798 has always passed
+   * `_v2.clone()` for exactly this reason. It costs one vector.
+   *
+   * A dedicated vector rather than `.clone()` per body: this loop runs over
+   * every enemy in the radius, and a clone per body is an allocation per body
+   * in the one function whose whole job is to be called when the field is
+   * full.
+   */
   _shockwave(ctx, radius, force, damage) {
     const enemies = ctx.enemies || [];
+    const dir = _shockDir;
     for (const e of enemies) {
       if (e.dead) continue;
       const d = e.position.distanceTo(this.position);
       if (d > radius) continue;
       const k = 1 - d / radius;
-      _v1.subVectors(e.position, this.position).setY(0.6).normalize();
-      e.applyKnockback(_v1.multiplyScalar(force * k), damage * k, this);
+      dir.subVectors(e.position, this.position).setY(0.6).normalize();
+      e.applyKnockback(dir.multiplyScalar(force * k), damage * k, this);
     }
     if (ctx.physics) {
       for (const b of ctx.physics.bodies) {
@@ -2243,8 +2933,22 @@ export class Player {
     }
     audio.force(this.position, 'jump');
     if (ctx.particles) ctx.particles.sandPuff(this.position.clone(), 0.9, this.position.y, ctx.groundColor);
-    this.camera.fovTarget = this.camera.fov + 6;
-    setTimeout(() => { this.camera.fovTarget = this.world.settings.fov; }, 180);
+    /**
+     * THE LENS KICK, ON THE GAME'S CLOCK.
+     *
+     * This was `setTimeout(…, 180)`, which is the wall clock, and the wall
+     * clock is not what the game is running on. Force-jump inside a hitstop or
+     * a Force Sense and the world is at 0.06× or 0.42× while the timer counts
+     * real milliseconds — so the kick came back before the jump had visibly
+     * started. Pause the game and it came back behind the pause card. Alt-tab
+     * and the browser throttles the timer to one a minute, so it did not come
+     * back at all until you returned.
+     *
+     * `kickFov` is the same 6 degrees over the same 0.18 s, measured on the dt
+     * the rig is already being handed, which is the only clock the rest of the
+     * camera obeys.
+     */
+    this.camera.kickFov(6, 0.18);
   }
 
   _footstep(p, speed) {
@@ -2285,8 +2989,30 @@ export class Player {
     // it 0.20 m ABOVE the player's own eye, so every droid in the level would
     // have been shooting over the head of a player who looked at the sky.
     // They are two points and they are now two fields.
-    this.chest.copy(this.position).setY(this.position.y + lerp(1.34, 1.0, this.crouch));
-    const chestH = lerp(1.34, 1.0, this.crouch), eyeH = lerp(1.62, 1.22, this.crouch);
+    /**
+     * `stand`, NOT `stature` — and this is the second half of "both arms in
+     * the air".
+     *
+     * All four of these are heights on a body, and `stature` is a fraction of
+     * total HEIGHT. Those are the same thing only on a figure whose parts are
+     * all scaled alike, and `smallfolk` is deliberately not one: `legLen: 0.80`
+     * against a torso at 0.40 puts its chest lower than its overall height
+     * suggests. Measured (tools/_stature.mjs), stature reads 0.371 where the
+     * bones put the chest at 0.340 — so the guard, and with it the hilt and
+     * both arms, was solved from a point 4 cm too high on a figure whose whole
+     * arm is 23 cm long. In arm-lengths: the anchor sat 0.01 ABOVE the small
+     * frame's shoulder where a human's sits 0.11 BELOW it, and everything
+     * hanging off it rode up by the difference.
+     *
+     * `limbScale` reads it off the bones, so it is the height the body actually
+     * has rather than a second opinion about it (HANDOFF 2.3), and it is
+     * exactly 1 for every human-framed species in the table — nothing that
+     * ships today moves by a bit except the one this note is about.
+     */
+    const st = this.limbs?.stand ?? this.stature ?? 1;
+    this.chest.copy(this.position).setY(this.position.y + lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st);
+    const chestH = lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st,
+          eyeH = lerp(EYE_H, EYE_H_CROUCH, this.crouch) * st;
     this.gripAnchor.copy(this.chest);
     if (this.camera.firstPerson) {
       // OFF THE EYE, AND OFF THE SAME EYE THE CAMERA USES.
@@ -2322,12 +3048,30 @@ export class Player {
       // so it lands where the same offset from the CHEST would, plus the eye's
       // own ride. Written this way rather than as a bare drop because it is the
       // form a unified anchor needs, and see HILT for how close that came.
+      /* `HILT` is the offset from the CHEST to the hands — the `- (eyeH -
+       * chestH)` term is there precisely to say so — so it is an arm length and
+       * takes the arm's scale like every other one. A human's is exactly 1
+       * (`limbScale` divides the reference figure's arm by itself), so the
+       * first-person reach ratchet in tools/checks/first-person.mjs sees the
+       * identical anchor it was swept against and none of its 0.7% of margin is
+       * spent here. Nothing below a human moves the human. */
+      const A = this.limbs.arm;
       this.gripAnchor.copy(eye)
-        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), HILT.rise - (eyeH - chestH))
-        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd);
+        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat),
+          HILT.rise * A - (eyeH - chestH))
+        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd * A);
     }
-    this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
+    // The same two heights EYE_H/EYE_H_CROUCH already name, and on the same
+    // body scale — they were typed again here, unscaled, which is the shape
+    // HANDOFF 2.4 is about even on a field nothing currently reads.
+    this.headPos.copy(this.position).setY(this.position.y + eyeH);
     this.camera.aimDirection(this.aimDir);
+
+    /* THE BODY GOES WITH THE ATTACK — and it moves the anchor the blade is
+     * SOLVED from, so the extra travel is real travel and not a decoration
+     * layered over a blade that is somewhere else. See _attackDrive. */
+    this._attackDrive(dt);
+    this.gripAnchor.add(this.attack.shift);
 
     // The tier's scale on the parry window. Set unconditionally, unlike assist:
     // Grandmaster has assist 0 and still declares the tightest window in the
@@ -2352,8 +3096,14 @@ export class Player {
     });
 
     if (this.throwState === 'held') {
-      this.saber.setHiltPose(this.control.handPos, this.control.quat);
-      this.saber.setVisible(true);
+      /* THE UNCONDITIONAL `setVisible(true)` IS WHY A DROP DID NOTHING. It ran
+       * every frame, so `_dropSaber` hiding the hilt would have lasted exactly
+       * one frame. The hilt is drawn iff it is in the hand. */
+      if (this.saberDown) this.saber.setVisible(false);
+      else {
+        this.saber.setHiltPose(this.control.handPos, this.control.quat);
+        this.saber.setVisible(true);
+      }
     } else {
       this._updateThrow(dt, ctx);
     }
@@ -2411,6 +3161,99 @@ export class Player {
         }
       }
     }
+  }
+
+  /**
+   * THE WHOLE BODY BEHIND AN ATTACK — player note 23.
+   *
+   * "I want the arm movement for the overhead attack to be more pronounced,
+   * right now it feels kind of weak like it's only a small movement that happens
+   * at the elbows rather than a whole body overhead down attack. Same for the
+   * stab — it's like a small wrist movement and the blade only goes a little
+   * further out. Imagine how graceful and cool a fencing stab looks, I want to
+   * see more of the body involved, more effective and cooler."
+   *
+   * HE IS DESCRIBING THE MEASUREMENT. Driven on the real Player and read at the
+   * bones over the whole attack, third person, before this existed — hand and
+   * tip are travel relative to the body, spine and shoulder are the total range
+   * across the attack, and the last column is how far the shoulder JOINT moved:
+   *
+   *                 hand      tip      spine   shoulder   joint
+   *     overhead    22 cm    113 cm     1.0°     0.0°      9 mm   <- 9 mm is idle breathing
+   *     stab        32 cm     57 cm     1.6°     0.0°     22 mm
+   *
+   * A degree of spine and nothing at all at the shoulder. The 113 cm of tip is
+   * the blade's own length acting as a lever on a wrist — which is exactly what
+   * "only a small movement that happens at the elbows" means, and it is why the
+   * tip number looked respectable while the attack did not.
+   *
+   * WHY THE FIX IS NOT IN SaberController. The controller owns the GUARD — where
+   * the blade points, on a sphere about the anchor it is handed. Its overhead
+   * already sweeps 2.03 of the 2.05 units that sphere HAS (`_swY` clamps at
+   * GY_MIN/GY_MAX), so there is no more arc to give: raising OVERHEAD.rise/drop
+   * buys nothing, because the clamp eats it. What is missing is not a bigger
+   * arc, it is that the sphere's CENTRE never moved. A body swinging an axe
+   * drops its chest and drives its shoulder through the cut; a body lunging
+   * takes its whole trunk forward. That is this function, and it is Player's
+   * because it is the body's.
+   *
+   * It publishes ONE thing — `attack.shift`, a world-space offset added to
+   * `gripAnchor` — plus the two scalars `_updateBody` poses the spine and the
+   * clavicles from. Everything downstream (the guard, the hands, the blade, the
+   * volume a deflection is graded in) follows the anchor, so the body's
+   * contribution cannot disagree with the weapon's.
+   *
+   * AFTER, same instrument, same run:
+   *
+   *                 hand      tip      spine   shoulder   joint
+   *     overhead    33 cm    118 cm    37.9°    33.3°    187 mm
+   *     stab        45 cm     73 cm    22.1°    21.5°    181 mm
+   *
+   * and the hand's peak speed 2.0 -> 5.9 m/s on the overhead, 2.8 -> 5.7 on the
+   * stab, which is the part that reads as commitment rather than as reach.
+   *
+   * THE MAGNITUDES, and what each buys:
+   *
+   *   OVERHEAD, driven by `control.swingArc` (+0.95 wind -> -1.08 cut):
+   *     · 0.13 m of anchor rise on the wind and fall through the cut — a real
+   *       chambering, and the single biggest term;
+   *     · 0.075 m back then forward, so the cut TRAVELS rather than pivots;
+   *     · 0.34 rad of spine, arched on the wind and folded through the cut.
+   *   STAB, driven by `control.thrust` (0 -> 1 -> 0 over 0.40 s):
+   *     · 0.22 m of trunk along the AIM — the lunge itself. Along the aim and
+   *       not the guard, because the legs and the trunk go where the fencer
+   *       faces while the point goes where the guard is;
+   *     · 0.26 rad of forward lean and 0.22 of twist onto the sword side.
+   *
+   * A STANDING stab gets the whole of it and a moving one 60%, following
+   * THRUST_REACH.standing's own reasoning: with the feet already carrying you
+   * forward the trunk has less left to give, and doubling up reads as a stumble.
+   */
+  _attackDrive(dt) {
+    const a = this.attack;
+    const c = this.control;
+    // The two envelopes, straight off the controller. Neither is recomputed
+    // here — see SaberController.swingArc for why that matters.
+    const arc = c.swingArc || 0;
+    const thrust = c.thrust || 0;
+    // A moving lunge is already half-made by the legs. `thrustStanding` is
+    // latched at the press by the controller, so this cannot flicker if the
+    // player starts walking halfway through the stab.
+    const lunge = thrust * lerp(0.6, 1, c.thrustStanding ?? 0);
+
+    a.over = arc;
+    a.lunge = lunge;
+
+    const up = _v3.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
+    const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
+    a.shift.set(0, 0, 0)
+      .addScaledVector(up, arc * 0.13)
+      .addScaledVector(fwd, -arc * 0.075)
+      .addScaledVector(fwd, lunge * 0.22)
+      // A lunge drops a little as it goes out — a fencer's line is not level,
+      // and without this the stab reads as the arm being extruded forwards.
+      .addScaledVector(up, -lunge * 0.045);
+    return a;
   }
 
   /**
@@ -2612,6 +3455,7 @@ export class Player {
     // solved hands straight off the hilt — measured up to 18cm at the clamp
     // limits, on exactly the fast swings where this layer is most active.
     const spine = rig.get('spine');
+    const A = this.attack;
     if (spine) {
       const w = this.control.angVel;
       let twist = clamp(-w.y * 0.026, -0.32, 0.32);
@@ -2621,24 +3465,113 @@ export class Player {
       // keeps the swing's weight and gains the push's.
       const g = GESTURES[this.gesture.kind];
       if (g) { lean += g.lean * this.gesture.env; twist += g.twist * this.gesture.env; }
+      /**
+       * AND SO DOES AN ATTACK — note 23, and this is the half of it a camera
+       * can see. Added the same way a gesture is, so a stab thrown out of a
+       * swing keeps both.
+       *
+       * The overhead's arc is NEGATED: `swingArc` is positive when the blade is
+       * chambered above the head, and a chambered body is arched BACK, so the
+       * spine's forward lean runs opposite to it. Through the cut the arc goes
+       * to −1.08 and the same term folds the trunk 21 degrees forward over the
+       * blade. Measured across the whole swing: 1.0 degrees of spine before
+       * this, 37.9 after.
+       */
+      lean += -A.over * SPINE_OVER + A.lunge * SPINE_LUNGE;
+      twist += A.lunge * SPINE_LUNGE_TWIST;
       spine.obj.quaternion.copy(spine.restQuat)
-        .multiply(_q1.setFromEuler(new THREE.Euler(lean, twist, 0, 'XYZ')));
+        .multiply(_q1.setFromEuler(_eulA.set(lean, twist, 0, 'XYZ')));
+    }
+    /**
+     * THE SHOULDER, which had exactly zero degrees in it.
+     *
+     * A shoulder is most of what reads as commitment: an overhead chambers by
+     * lifting the whole girdle and lands by driving it down and through, and a
+     * fencing lunge is very largely scapular protraction — the sword shoulder
+     * travelling forward is what makes the arm look long. Measured before this,
+     * over the entire attack: 0.0 degrees of clavicle on both, and 9 mm of
+     * shoulder-JOINT travel on the overhead against the 9 mm an idle body
+     * breathes. After: 33.3 degrees and 187 mm.
+     *
+     * THIRD PERSON ONLY, and that is not laziness. In first person the
+     * clavicles are the viewmodel's own weld — `_anchorViewArms` pins them to a
+     * fixed point in the aim frame every frame precisely so the arms cannot
+     * swim against the view, and it runs after this. Driving them there would
+     * fight that solve and put the swim back; first person gets the body
+     * through `attack.shift` on the anchor instead, which is what actually
+     * moves in the frame you are looking down. Measured: the first-person
+     * shoulder joint still travels 8 mm through an attack, i.e. the weld holds.
+     *
+     * The off shoulder counter-rotates at a fraction, because a torso is one
+     * piece: the girdle turns about the spine rather than one end of it moving
+     * on its own.
+     *
+     * Written EVERY third-person frame rather than only while an attack runs. A
+     * conditional here leaves the girdle frozen at whatever the last frame of
+     * the swing happened to be, because nothing else in the game writes a
+     * clavicle — the skeleton gives them a rest direction and the animator
+     * swings `armR`/`armL` below them. At zero drive `setFromEuler(0,0,0)` is
+     * exactly the identity and `q.multiply(identity)` returns `q` bit for bit,
+     * so an idle third-person figure is the same figure it was.
+     */
+    if (!this.camera.firstPerson) {
+      const drive = A.over * CLAV_OVER + A.lunge * CLAV_LUNGE;
+      for (const [name, side] of CLAV_DRIVE) {
+        const b = rig.get(name);
+        if (!b) continue;
+        b.obj.quaternion.copy(b.restQuat)
+          .multiply(_q1.setFromEuler(_eulA.set(drive * side, A.lunge * CLAV_YAW * side, 0, 'XYZ')));
+      }
     }
     rig.updateMatrices();
 
     // arms to the hilt
     // A gesture takes the off hand off the hilt without touching the blade's
     // grip model — see the note in _readInput on why those are separate.
-    const twoHanded = this.control.grip === 'two' && this.throwState === 'held' && !this.gesture.kind;
+    /**
+     * FIRST PERSON IS ONE-HANDED, AND THAT IS A DECISION ABOUT WHAT A
+     * FIRST-PERSON GRIP IS — not a tuning pass. It is the player's call and the
+     * player made it ("no half measures").
+     *
+     * Three separate reports of "the first person hand/hilt looks like jumbled
+     * garbage" were answered by moving the shoulders off the ribcage and by
+     * raising the blade anchor. Both were real faults, both are fixed, and the
+     * complaint survived them — because the fault was never the pose. It was
+     * OCCLUSION, and nothing had ever measured it: 91% of the on-screen hilt was
+     * behind a glove, with two fists on a 25 cm shaft at 0.5 m from the lens.
+     *
+     * Taking the off hand off the hilt removes BOTH halves of that in one move —
+     * the second occluder, and the folded left arm that the near plane was
+     * slicing whenever the fists were low enough for the first to matter. It is
+     * also what the reference the player supplied actually shows.
+     *
+     * Third person is untouched: at 3.5 m the second hand costs nothing and a
+     * two-handed guard is the form the whole controller is tuned around
+     * (`GRIPS.two` vs `GRIPS.one` move handExtend 0.29 → 0.36). This changes
+     * where the ARMS go, and nothing about the blade's grip model — `control.grip`
+     * is not touched, so first person keeps the two-handed guard's reach,
+     * stiffness and inertia and does not silently become a different weapon.
+     */
+    const twoHanded = this.control.grip === 'two' && this.throwState === 'held'
+      && !this.gesture.kind && !this.saberDown && !this.camera.firstPerson;
     // In first person the arms hang off the VIEW, not off the ribcage, and
     // `chest` — which is the frame every elbow pole below is built in — becomes
     // the point midway between the two viewmodel shoulders. See _anchorViewArms.
     const chest = this.camera.firstPerson
       ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
-    if (this.throwState === 'held') {
-      const gripR = this.saber.root.localToWorld(_v2.set(0, GRIP_AT.R, 0));
-      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L, 0));
+    if (this.throwState === 'held' && !this.saberDown) {
+      const fp = this.camera.firstPerson;
+      /* GRIP_AT IS A PLACE ON THE HILT, so it moves with the hilt. The offsets
+       * are in the saber ROOT's frame and `setGripScale` scales the hilt group
+       * inside it, so an unscaled +0.050 on a hilt whose metal now ends at
+       * +0.063 puts the fist on the emitter face. One multiply keeps the two
+       * fists where the spec says they are — on the grip section — at any size,
+       * and it is 1 for every full-sized wielder in the game. */
+      const gs = this.saber.gripScale ?? 1;
+      const gripR = this.saber.root.localToWorld(
+        _v2.set(0, (fp ? fpGripOn(this.saber) : GRIP_AT.R) * gs, 0));
+      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L * gs, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
        *
@@ -2650,9 +3583,12 @@ export class Player {
        * roll.
        */
       this.saber.root.getWorldQuaternion(_q1);
-      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9);
+      // `rig.scale` and not `stature`: the bore is a place inside the HAND, and
+      // buildHand is called with the body scale. See handPoseOnHilt.
+      const hs = rig.scale ?? 1;
+      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9, hs);
       const wristR = _v7.copy(gripR).add(_v9);
-      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9);
+      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
@@ -2661,16 +3597,22 @@ export class Player {
       // pole pinned to the right of the chest folds the right elbow straight
       // through the ribs the moment the guard crosses to the left — which is
       // most of what read as the body overlapping itself.
-      const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62, 0.62);
-      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1, 0.42);
+      /* AN ELBOW POLE IS AN ARM'S LENGTH FROM THE CHEST, so every constant from
+       * here to the end of this block is one of the three scales — this one —
+       * and not a free number. A pole 0.75 m out from a chest whose arm is
+       * 0.23 m long is not "to the side of the shoulder", it is a point in the
+       * next postcode, and solveIK aims the whole limb at it. See limbScale. */
+      const A = this.limbs.arm;
+      const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62 * A, 0.62 * A);
+      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1 * A, 0.42 * A);
 
-      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 + side)
-        .addScaledVector(UP, -0.75 + lift).addScaledVector(fwd, -0.2);
+      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
+        .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
       rig.solveIK('armR', 'foreR', wristR, poleR);
       this._rollForearm('foreR', 'handR', _q2);
       if (twoHanded) {
-        const poleL = _v6.copy(chest).addScaledVector(right, -0.62 + side)
-          .addScaledVector(UP, -0.8 + lift).addScaledVector(fwd, -0.2);
+        const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
+          .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
         rig.solveIK('armL', 'foreL', wristL, poleL);
         this._rollForearm('foreL', 'handL', _q3);
       } else {
@@ -2682,9 +3624,43 @@ export class Player {
         // this used to be a single `gripBody ? 0.55 : -0.05` reach that only
         // applied while the one-hand key was ALSO held, so in practice no power
         // in the game had a visible arm.
-        const rest = _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
-          .addScaledVector(fwd, -0.05);
-        const poleL = _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
+        /**
+         * …EXCEPT IN FIRST PERSON, WHERE THE HIP IS BEHIND THE CAMERA.
+         *
+         * The third-person rest drops the hand along WORLD up, and in first
+         * person `chest` is the viewmodel anchor 0.115 m in front of the lens.
+         * At a level gaze that already puts the wrist only 65 mm in front of a
+         * 45 mm near plane; look UP 63 degrees and world-up acquires a −0.55 m
+         * component along the view axis, so the whole off arm goes BEHIND the
+         * eye and is sliced open by the camera. That is the elbowL failure the
+         * two-handed grip was hiding, and it arrives the moment the off hand
+         * stops being pinned to the hilt.
+         *
+         * So the off hand gets a rest expressed in the AIM frame, exactly like
+         * every other part of the viewmodel: fixed in view space at every pitch,
+         * low and to the left, and far enough forward that the whole chain
+         * clears the near plane. Measured after: nearest arm joint 197 mm at a
+         * level gaze and 174 mm looking up, against the 100 mm the deltoid
+         * needs. It hangs below the frame the way the reference's does — the
+         * off hand is not part of the picture, and that is the point.
+         */
+        const up = _v9.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
+        /* THE OFF ARM IS HALF OF "BOTH ARMS IN THE AIR". Its rest is the hip,
+         * expressed as a reach from the chest — so on the small frame an
+         * unscaled 0.62 m drop is nearly three times the arm, the IK cannot get
+         * there either, and the idle off hand stands out from the body pointing
+         * at the floor instead of hanging by it. Scaled, it lands on the hip it
+         * names. First person is a viewmodel and is scaled for the same reason:
+         * `chest` is the view anchor and everything off it is this arm. */
+        const rest = fp
+          ? _v6.copy(chest).addScaledVector(right, -0.20 * A).addScaledVector(up, -0.30 * A)
+            .addScaledVector(fwd, 0.20 * A)
+          : _v6.copy(chest).addScaledVector(right, -0.34 * A).addScaledVector(UP, -0.62 * A)
+            .addScaledVector(fwd, -0.05 * A);
+        const poleL = fp
+          ? _v2.copy(chest).addScaledVector(right, -0.62 * A).addScaledVector(up, -0.34 * A)
+            .addScaledVector(fwd, 0.10 * A)
+          : _v2.copy(chest).addScaledVector(right, -0.85 * A).addScaledVector(UP, -0.7 * A);
         const palm = this._gesturePose(rest, poleL, chest, fwd, right);
         rig.solveIK('armL', 'foreL', rest, poleL);
         // Wrist AFTER the IK: solveIK writes armL and foreL, and the hand hangs
@@ -2758,11 +3734,26 @@ export class Player {
         b.obj.quaternion.copy(_q4.invert()).multiply(want);
       }
     } else {
-      // saber is in flight — the throwing hand stays extended, calling it back
+      // Either the saber is in flight — the throwing hand stays extended,
+      // calling it back — or the hand is EMPTY, in which case it must not:
+      // reaching out at nothing for as long as you are disarmed is the pose of
+      // a player permanently recalling a blade they no longer own. An empty
+      // sword hand rests where the off hand does, mirrored, and that is the
+      // whole visual difference between armed and disarmed on the third-person
+      // figure. See `disarmed`.
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
-      const reach = _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
+      const reach = this.saberDown
+        ? _v6.copy(chest).addScaledVector(right, 0.32).addScaledVector(UP, -0.58).addScaledVector(fwd, 0.04)
+        : _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
       rig.solveIK('armR', 'foreR', reach, _v2.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.6));
+      if (this.saberDown) {
+        // and the wrist goes back to its own rest, or it keeps whatever roll
+        // the grip solve last forced on it — the same defect the one-hand
+        // branch above records for handL.
+        const hr = rig.get('handR');
+        if (hr) hr.obj.quaternion.copy(hr.restQuat);
+      }
       const rest = _v6.copy(chest).addScaledVector(right, -0.3).addScaledVector(UP, -0.6);
       const poleL = _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7);
       // The off hand still answers to the Force with the blade away — and the
@@ -3323,7 +4314,16 @@ export class Player {
     // An enemy's movement proxy is KINEMATIC, so invMass is 0 and the old
     // filter could never see one. That is why gripping a droid only worked when
     // the ray hit nothing at all — a crate anywhere behind it won the pick.
-    if (b.layer === LAYER.ENEMY) return !!(b.userData.enemy && !b.userData.enemy.dead);
+    //
+    // `Enemy.grippable` is the second field in this method's history to have
+    // been written everywhere and read nowhere, and it now means what its
+    // archetype says: a siege walker is not a heavy enemy, it is terrain that
+    // shoots. See Vehicles.js. The refusal is NOT silent — `_forceSeen` keeps
+    // the thing pickable so `toggleGrip` can say no in words.
+    if (b.layer === LAYER.ENEMY) {
+      const e = b.userData.enemy;
+      return !!(e && !e.dead && e.grippable !== false);
+    }
     // `grippable` was WRITTEN AND NEVER READ. Props.js sets it false on exactly
     // two things — the pillar and the spire — and Destruction's proxy sets it
     // false too, and not one line in src/ or tools/ ever looked at it. The only
@@ -3334,6 +4334,30 @@ export class Player {
     if (b.userData && b.userData.prop && b.userData.prop.grippable === false) return false;
     return b.invMass > 0
       && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL);
+  }
+
+  /**
+   * Everything the Force OWES THE PLAYER AN ANSWER ABOUT: what it can hold,
+   * plus the bodies it must refuse out loud.
+   *
+   * The two are not the same set, and collapsing them is how a power ends up
+   * appearing to do nothing. If the AT-TE were simply dropped from the pick,
+   * the aim ray would pass straight THROUGH thirteen metres of walker and grip
+   * whatever stood behind it — so pointing at the biggest thing in the game and
+   * pressing grip would either grab a battle droid forty metres away or return
+   * null and play no sound at all. Both read as a broken button.
+   *
+   * So the ray and the cone see it, `toggleGrip` refuses it by name, and the
+   * refusal carries the counter-play (its legs) rather than a number the player
+   * cannot act on.
+   */
+  _forceSeen(b) {
+    if (this._grippableBody(b)) return true;
+    if (b && b.layer === LAYER.ENEMY) {
+      const e = b.userData.enemy;
+      return !!(e && !e.dead && e.grippable === false);
+    }
+    return false;
   }
 
   /**
@@ -3360,10 +4384,13 @@ export class Player {
     const maxD = reach + lead;
 
     const hit = ctx.physics ? ctx.physics.raycast(this.camera.pos, this.aimDir, maxD,
-      (b) => this._grippableBody(b)) : null;
-    if (hit && hit.body && this._grippableBody(hit.body)) {
+      (b) => this._forceSeen(b)) : null;
+    if (hit && hit.body && this._forceSeen(hit.body)) {
       const e = hit.body.userData.enemy;
-      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance }
+      // The crosshair was ON it, so it is the answer whether or not the answer
+      // is yes — see `_forceSeen`.
+      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance,
+                   immovable: e.grippable === false }
                : { body: hit.body, mass: hit.body.mass, distance: hit.distance };
     }
 
@@ -3371,11 +4398,27 @@ export class Player {
     // through the wall the ray just stopped on.
     const wall = hit ? hit.distance : maxD;
     let best = null, bestDot = 0.965;              // ≈15° cone
-    const consider = (obj, point, mass, isEnemy) => {
+    /* TWO TIERS, NOT ONE SORT. A thing the Force cannot lift must never STEAL
+     * the pick from one it can: off the crosshair the player is not pointing at
+     * anything in particular, and an AT-TE filling half the sky behind a battle
+     * droid would win every cone it appeared in on angle alone. Ranking them
+     * together — even with a tie-break — gets that wrong whenever the immovable
+     * body is the better-aligned of the two, which for something thirteen
+     * metres wide is most of the time. So the liftable tier is resolved first
+     * and the immovable one only answers a cone that held nothing else, which
+     * is what keeps the refusal reachable without pixel-perfect aim. */
+    let refuse = null, refuseDot = 0.965;
+    const consider = (obj, point, mass, isEnemy, immovable = false) => {
       _g1.subVectors(point, this.camera.pos);
       const d = _g1.length();
       if (d > maxD || d < 0.6 || d > wall + 1.2) return;
       const dot = _g1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (immovable) {
+        if (dot < refuseDot) return;
+        refuseDot = dot;
+        refuse = { enemy: obj, mass, distance: d, immovable: true };
+        return;
+      }
       if (dot < bestDot) return;
       bestDot = dot;
       best = isEnemy ? { enemy: obj, mass, distance: d } : { body: obj, mass, distance: d };
@@ -3386,9 +4429,9 @@ export class Player {
     }
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
-      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true);
+      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true, e.grippable === false);
     }
-    return best;
+    return best || refuse;
   }
 
   toggleGrip(ctx) {
@@ -3399,11 +4442,49 @@ export class Player {
     this.lastGripRefusal = null;
     if (!target) return;
 
-    // The mass gate. Note this replaces Enemy.grippable, which was a flat
-    // `!A.big && !A.boss` — a size limit no setting could reach, and precisely
+    const cap = this.liftCapacity;
+
+    /* THE ONE THING THE SLIDER DOES NOT ANSWER, and it is a REFUSAL rather
+     * than a silence.
+     *
+     * Everything else here is a mass gate: turn Force Power up far enough and a
+     * spider walker, an Acklay or a hailfire droid comes off the ground. Two
+     * bodies are outside that argument — the AT-TE at 3600 kg and the AAT at
+     * 2400 — because they are not heavy enemies, they are terrain that shoots,
+     * and Vehicles.js records why. A player who points at one and presses grip
+     * must be TOLD that, in the same beat and with the same strain the mass
+     * refusal plays; the alternative is a power that appears to do nothing,
+     * which is the complaint this whole path exists to answer.
+     *
+     * The message names the COUNTER-PLAY instead of a number, because unlike
+     * "too heavy" there is no setting that changes the answer, and a refusal
+     * with no next move in it is still a dead end.
+     *
+     * Which counter-play is READ OFF THE BODY rather than typed beside it. The
+     * AT-TE walks on six legs and `custom: 'walker'` drops the chassis at
+     * `legsLost >= 3`, so the legs are the way in — but the AAT is a
+     * repulsorlift built with `legs: 0`, and telling a player to cut the legs
+     * off a hovering tank is the hand-written-table defect wearing a sentence.
+     * `Enemy._loseLimbBehaviour` severs on bones matching thigh/shin/foot, so
+     * the rig itself is the authority on whether this one has any. */
+    if (target.immovable) {
+      const e = target.enemy;
+      const label = e && e.A ? e.A.label : 'it';
+      const legged = !!(e && e.rig && [...e.rig.bones.keys()]
+        .some((n) => /thigh|shin|foot|femur|tibia|tarsus/.test(n)));
+      this.lastGripRefusal = { mass: target.mass, cap, immovable: true, label, legged };
+      const why = this.lastGripRefusal;
+      this.world?.notify?.(`${String(why.label).toUpperCase()} WILL NOT LIFT`,
+        `${(why.mass / 1000).toFixed(1)} tonnes — no Force Power moves it. `
+        + (why.legged ? 'Cut its legs out from under it.' : 'Break its armour instead.'));
+      this._gripStrain(ctx, target);
+      return;
+    }
+
+    // The mass gate. Note this replaces the SIZE gate Enemy.grippable used to
+    // be — a flat `!A.big && !A.boss` that no setting could reach, and precisely
     // the cap the player hit. A walker or an Acklay is now a question of how
     // far the Force slider is turned up, not a permanent no.
-    const cap = this.liftCapacity;
     if (target.mass > cap) {
       // Say WHY. This recorded the two numbers and nothing ever read them, so a
       // refused lift was a groan and a shudder and no explanation — which reads
@@ -3768,6 +4849,10 @@ export class Player {
 
   throwOrRecall(ctx) {
     if (this.throwState === 'held') {
+      // An empty hand throws nothing. `!this.saber.lit` already caught this by
+      // accident — a dropped blade is out — but only by accident, and the
+      // silence was indistinguishable from a bug. Say so.
+      if (this.saberDown) return this._refuse('saber throw', 'your hands are empty');
       if (!this.saber.lit || this.cooldowns.throw > 0) return;
       /* Through `_spend`, not `this.force -= …`. The hand-rolled version
        * applied the boon multiplier and ignored the drain slider entirely, so
@@ -3925,6 +5010,103 @@ export class Player {
   }
 
   /**
+   * UNLEASH — the 360-degree "get off me".
+   *
+   * Asked for in these words: "one force power that is a 360 degree 'get off
+   * me' type of ability, costs a lot of force but you like yell really loud
+   * and raise both your arms out and push everything around you off (like in a
+   * scenario where you're being overwhelmed)". Every clause of that is a
+   * requirement and each is answered below.
+   *
+   * WHY IT IS NOT `boonMods.repulse`. That already existed and is a different
+   * thing wearing a similar name: a passive that fires when you LAND from a
+   * height, which you cannot use while standing in a ring of eleven droids —
+   * the exact situation this is for. The passive stays; it is a landing, this
+   * is a decision.
+   *
+   * 360 AND NOT A CONE. `forcePush` cones off `aimDir` and that is right for
+   * it. This one deliberately does not read `aimDir` at all: being surrounded
+   * means there is no direction to face, and a power that asked you to pick
+   * one would be answering a different question.
+   *
+   * THE NUMBERS, and each is against `forcePush`'s so the comparison is the
+   * argument. Push reaches 9 m in a cone at impulse 26; this reaches 11 m in a
+   * full circle at 34 and lands 30 damage at the centre. So it is stronger
+   * than push in every term — it costs 52 Force against push's 20 (the most
+   * expensive power in the game, past heal) and holds a 9-second cooldown,
+   * which is long enough that it cannot be a rotation and short enough that it
+   * is there for the second time a wave collapses on you.
+   *
+   * THE STAGGER IS THE POINT, more than the damage. Everything it reaches is
+   * stunned for 1.6 s on top of the knockback — that is what buys the room the
+   * player pressed it for. A version that only threw bodies would have them
+   * back inside your guard by the time you had turned round.
+   */
+  forceUnleash(ctx) {
+    if (this.cooldowns.unleash > 0) {
+      return this._refuse('unleash', `recovering — ${this.cooldowns.unleash.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.unleash)) {
+      const cost = POWER_COST.unleash * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
+      return this._refuse('unleash', `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this.cooldowns.unleash = 9;
+
+    /* BOTH ARMS OUT. `unleash` is already in GESTURES — it was written for
+     * this shape and had no caller — and `_gesture` with no `at` is the
+     * two-handed version, because `_gesturePose` mirrors when nothing is being
+     * pointed at. That is why this passes no target: a target would turn it
+     * back into a one-armed shove. */
+    this._gesture('unleash');
+
+    /* THE YELL. Routed through the Announcer rather than straight at
+     * `audio.speak` so it takes the quip budget with it — otherwise the kill
+     * lines from everything this just threw land on top of the shout that
+     * threw them. `force: true` because this one is never suppressed: the
+     * player pressed a button and has to hear that it happened. */
+    this.world.hud?.announcer?.say(this.world.settings, 'streak', this.chest);
+    audio.force(this.chest, 'push');
+    audio.explosion(this.position, 0.7);
+    this.camera.addShake(0.62);
+    /* The cloak and skirt take it OUTWARD in every direction, which they can
+     * do because `impulse` is a direction and a magnitude and nothing here
+     * has a facing: straight up, so the cloth blows off the body rather than
+     * behind it. */
+    this.cloak?.impulse(_v5.set(0, 1, 0), 4.2);
+    this.skirt?.impulse(_v5.set(0, 1, 0), 4.2);
+
+    this._shockwave(ctx, UNLEASH.radius, UNLEASH.impulse, UNLEASH.damage);
+    /* …and the stagger, which `_shockwave` does not do — it knocks back and
+     * damages. Applied here rather than inside it because the landing
+     * shockwave and the repulse boon share that function and neither should
+     * start stunning. */
+    for (const e of this._foes(ctx)) {
+      if (e.dead) continue;
+      const d = e.position.distanceTo(this.position);
+      if (d > UNLEASH.radius) continue;
+      _v2.subVectors(e.position, this.position).setY(0.4).normalize();
+      e.stun?.(UNLEASH.stun * (1 - 0.4 * d / UNLEASH.radius), _v2, 1.2);
+    }
+    /**
+     * BOLTS ARE NOT TOUCHED, and that is a decision rather than an omission.
+     *
+     * I wrote `ctx.bolts?.scatter?.(…)` here first, on the reasoning that
+     * being overwhelmed includes being shot at. BoltPool has no `scatter` —
+     * its surface is fire/hold/release/update/threatsNear/clear — so the
+     * optional chaining would have made that line a silent no-op that LOOKED
+     * like a feature, which is this project's signature defect (see
+     * HANDOFF 2.3: a missing thing answered with a plausible default).
+     *
+     * And on reflection it should not do it anyway. `release` and the deflect
+     * grades are how a bolt is turned in this game, and every one of them is
+     * something the player did with the blade. A power that also wiped the
+     * air of incoming fire would be answering the one question the whole game
+     * is about. This throws BODIES; the blade is still yours to move.
+     */
+    this.world.engine.setRadial?.(1.0);
+  }
+
+  /**
    * FORCE HEAL.
    *
    * A channel, not a button: `HEAL_TIME` of standing still with your hands
@@ -4064,6 +5246,24 @@ export class Player {
     if (this.throwState !== 'held') {
       return this._refuse('drop', 'your blade is not in your hand');
     }
+    /**
+     * YOU CANNOT DROP WHAT YOU ARE NOT HOLDING — note 39, and this is the half
+     * of it that made hilts out of nothing.
+     *
+     * Measured on the real Player before this line existed: drop, walk clear of
+     * the 1.6 m reach, press it again — and again. **Five presses made five
+     * hilts**, every one of them carrying the same crystal, the same style and
+     * the same order, all five of them pickable. `saberDown` was set on the
+     * first drop and read by exactly one line in `_takeSaber`, so nothing here
+     * ever asked whether there was still a weapon in the hand.
+     *
+     * That is the literal reading of "you still have one like you never
+     * actually lose it": the game agreed you had dropped it, drew it in your
+     * hand anyway, and would sell you another.
+     */
+    if (this.saberDown) {
+      return this._refuse('drop', 'your hands are empty — find a hilt');
+    }
     this._dropSaber(ctx);
     return true;
   }
@@ -4071,7 +5271,7 @@ export class Player {
   /** Let go of what is in the hand. */
   _dropSaber(ctx, opts = {}) {
     const s = this.saber;
-    if (!s) return null;
+    if (!s || this.saberDown) return null;
     const put = dropSaber(this.world, {
       position: _v1.copy(this.gripAnchor).addScaledVector(this.aimDir, 0.25),
       // Out of the hand and down, not thrown: a drop is a decision, and a hilt
@@ -4083,8 +5283,37 @@ export class Player {
       owner: this,
       ...opts,
     });
+    /* A HILT THAT LEAVES YOUR HAND IS THE SAME OBJECT IT WAS IN IT. `dropSaber`
+     * machines a fresh group from the style alone, at full size, so a small
+     * wielder's shoto tripled in length the instant it hit the ground and shrank
+     * again when anyone picked it up. Scaled here rather than in Dropped.js
+     * because the size belongs to the WEAPON, and the weapon is the thing this
+     * method is holding. `put` is the prop; its mesh is the whole hilt. */
+    const gs = s.gripScale ?? 1;
+    if (put?.mesh && gs !== 1) put.mesh.scale.setScalar(gs);
     s.retract();
+    /**
+     * AND THE HILT LEAVES THE HAND — which it did not.
+     *
+     * `retract()` puts the blade out and nothing else: the Saber object, its
+     * root, and all nineteen machined pieces of the Graflex stayed parented to
+     * the scene and were re-shown by `_updateBlade`'s unconditional
+     * `setVisible(true)` on the very next frame. Measured on the bench: `lit`
+     * false, `ignition` 0.01 — and 19 hilt meshes still drawn, in your hand.
+     * Then one press of `ignite` lit them again (0.97 in half a second) and you
+     * were armed, standing over your own hilt, with nothing having happened.
+     *
+     * So the state is `saberDown`, and every reader of it is a place the game
+     * used to pretend the weapon was still there. It is not a `saber = null`
+     * because sixty call sites outside this file dereference `player.saber`
+     * without a guard — World's blade entries, the catch window, the HUD's heat
+     * bar, Net's wire record — and a null there is a crash per frame in five
+     * files I do not own. An empty hand is a STATE of the wielder, not the
+     * absence of an object.
+     */
+    s.setVisible(false);
     this.saberDown = true;
+    this.hum?.retract?.();
     this._gesture('cast');
     audio.thud?.(this.gripAnchor, 0.4);
     this.world?.notify?.('DROPPED', `${SABER_COLORS[s.colorIndex]?.name ?? 'your blade'} is on the ground`);
@@ -4110,8 +5339,22 @@ export class Player {
     s.setColor(id.colorIndex ?? 0);
     s.rebuildHilt?.();
     this.saberDown = false;
+    /**
+     * AND IT COMES UP LIT.
+     *
+     * The alternative — hand it back dark and let the player press ignite — was
+     * written first and is wrong for one reason: this is a thing you do inside a
+     * fight, one press, while something is swinging at you. A pick-up that hands
+     * you an unlit hilt costs a second key at the exact moment the game is least
+     * survivable, and reads as the pick-up having half-failed. `rebuildHilt`
+     * above has already re-machined the blade group, so `ignite` here lights THIS
+     * weapon's crystal and not the one you were carrying.
+     */
+    s.setVisible(true);
+    s.ignite();
     prop.destroy ? prop.destroy() : (prop.dead = true);
     this.hum?.setColor?.(s.color.getHex());
+    this.hum?.ignite?.();
     this._gesture('reach');
     audio.force(this.chest, 'pull');
     this.world?.notify?.('TAKEN', `${SABER_COLORS[s.colorIndex]?.name ?? 'a blade'}, ${s.hiltStyle}`);
@@ -4437,7 +5680,10 @@ export class Player {
       // of the budget: a cut takes the whole subtree, so an elbow already
       // brings the hand with it, and spending the entire default budget on two
       // detached hands is not what "take it apart" looks like.
-      .filter(c => !c.shield && (c.vital ?? 0.4) >= 0.15 && (c.vital ?? 0.4) < 0.7 && !CORE_BONE.test(c.name))
+      /* No `?? 0.4` on the reads: every capsule the game emits is priced by
+       * `Enemy.severance`, which throws rather than defaulting, so a fallback
+       * here would only ever hide the one thing it was there to cover up. */
+      .filter(c => !c.shield && c.vital >= 0.15 && c.vital < 0.7 && !CORE_BONE.test(c.name))
       .filter(c => !e.actor || !e.actor.isSevered(c.name))
       .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
@@ -4494,10 +5740,19 @@ export class Player {
       // so ~28 here is the 3 m/s of drift that makes a piece leave rather than
       // drop; the rest is what forcePower buys.
       _g4.normalize().multiplyScalar(18 + 14 * P);
-      e.takeCut({
+      /* `force: true` — this is a joint pulled apart, not a blade drawn through
+       * one, and `Enemy._turnCut` is the BLADE's guard. A heavy body turns a
+       * killing edge with a plate or a hide; the answer to a Force power is the
+       * Force pool (`resistForce`), which already runs on the enemy side. See
+       * the note at `_turnCut`. */
+      const outcome = e.takeCut({
         bone: c.name, cutT: 0.14, cap: c, point: _g3.clone(),
-        impulse: _g4.clone(), normal: UP.clone(), speed: 18,
+        impulse: _g4.clone(), normal: UP.clone(), speed: 18, force: true,
       }, this);
+      // …and a pass that took nothing off is not a limb. World._applyBladeEvent
+      // learnt this when the duellist guard landed and this site did not, so a
+      // rend that a guard caught still credited the counter on the death card.
+      if (outcome === 'turned') continue;
       this.limbsRemoved++;
       cut++;
     }
@@ -4525,7 +5780,7 @@ export class Player {
 
   /* ── damage & death ──────────────────────────────────────────────── */
 
-  damage(amount, point, source, kind) {
+  damage(amount, point, source, kind, preResisted = false) {
     if (!this.alive || this.invuln > 0) return false;
     /**
      * THE GATE, AND THIS IS THE ONLY PLACE A LOCAL PLAYER PASSES THROUGH IT.
@@ -4543,6 +5798,24 @@ export class Player {
      * explosions are untouched by this.
      */
     if (!canHarm(source, this)) return false;
+    /**
+     * THE FORCE ANSWERS THE FORCE — one call, at the SINK, so a blow is blunted
+     * exactly once however it was thrown. `Enemy.damage` carries the identical
+     * line for the identical reason: every power in the game arrives through
+     * either this method or `applyKnockback`, so one call in each is complete
+     * coverage, and a new power written next month inherits the contest without
+     * knowing it exists.
+     *
+     * `preResisted` is set by `applyKnockback`, which has already weighed the
+     * whole blow — shove and damage together — and must not have the remainder
+     * charged to the pool a second time here.
+     *
+     * BEFORE the difficulty scale, not after: `damageTaken` is how hard the
+     * world hits, and what the pool answers is the power that was thrown at it.
+     * The other order would make a Master's lightning cost more pool on Padawan
+     * than on Knight for landing less.
+     */
+    if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
     // A NaN here is unrecoverable and SILENT: hp becomes NaN, every later
@@ -4568,6 +5841,15 @@ export class Player {
     this.combo = 0;
     this.camera.addShake(clamp(dmg / 22, 0.12, 0.9));
     this.world.engine.hurt(clamp(dmg / 30, 0.2, 1));
+    /* AND THE PAD. `grep vibrationActuator|hapticActuators|playEffect` returned
+     * zero over the whole project, so a player on a controller took a blaster
+     * bolt to the chest and felt nothing at all. Gated on the same toggle the
+     * shake two lines up is gated on, and only for the body this machine is
+     * looking through — a peer being shot is not your hands. */
+    if (this.isLocal && this.world.feelOn?.('shake') !== false) {
+      this.world.engine.rumble?.(clamp(dmg / 26, 0.2, 1), clamp(dmg / 60, 0.1, 0.5),
+        Math.round(80 + clamp(dmg, 0, 60) * 3));
+    }
     audio.boltHit(point || this.chest);
     if (dmg > 14) this.staggerTimer = Math.max(this.staggerTimer, 0.28);
     if (this.hp <= 0) { this.hp = 0; this.die(source); return true; }
@@ -4600,7 +5882,38 @@ export class Player {
     this.cloak?.dispose(); this.cloak = null;
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
-    audio.ui('bad');
+    /**
+     * DYING HAS TO FEEL LIKE DYING, and it was `audio.ui('bad')` — the exact
+     * sound the menu plays when you click a skill node you cannot afford.
+     *
+     * Four channels, and every one of them is gated the way §the feel funnel
+     * gates the rest: `audio.death()` (a two-and-a-half-second drop, the room
+     * closing, a ring and two slowing heartbeats, and the score ducked out from
+     * under it), the colour draining out of the frame, the letterbox arriving,
+     * and the world going to a third speed so the last two seconds are watched
+     * rather than skipped.
+     *
+     * `isLocal` because a peer dying in co-op is their moment, not yours: their
+     * body ragdolls on your screen and your world keeps its speed and its
+     * colour.
+     */
+    if (this.isLocal) {
+      audio.death();
+      const w = this.world;
+      /* The drain and the bars are deliberately NOT behind the feel toggles.
+       * Everything else here is motion — the pad, the camera move, the clock —
+       * and a player who has turned motion off must still be told, in the
+       * frame, that the run has ended. Colour leaving and the frame narrowing
+       * are the two cues that cost no movement at all. */
+      w.engine?.setDrain?.(0.72);
+      w.engine?.setBars?.(0.085);
+      if (w.feelOn?.('shake') !== false) {
+        w.engine?.rumble?.(0.9, 0.5, 620);
+        // A death is the one moment the camera is allowed to take the frame over.
+        this.camera.beginDeathShot?.();
+      }
+      w.killTime?.(0.34, 2.4);
+    } else audio.ui('bad');
     /**
      * COLLAPSE — AND ONLY IF THIS BODY IS STILL THE ONE THAT DIED.
      *
@@ -4642,15 +5955,37 @@ export class Player {
 
   _updateDead(dt, ctx) {
     if (this.actor) this.actor.update(dt);
-    this.camera.targetDistance = 4.4;
-    this.camera.pitch = damp(this.camera.pitch, -0.42, 2, dt);
+    // While the shot is running it owns the boom and the pitch; these two lines
+    // are what the camera does for a death with the shot turned off (a peer's
+    // body, or a player who has motion feedback off), and they are the reason
+    // the shot is a script over the rig rather than a replacement for it.
+    if (!this.camera.shot) {
+      this.camera.targetDistance = 4.4;
+      this.camera.pitch = damp(this.camera.pitch, -0.42, 2, dt);
+    }
+    // FRAME THE BODY, not the ground under it. The old target sat 0.6 m BELOW
+    // the corpse's centre, which on a ragdoll lying flat is under the floor —
+    // so the one shot in the game that is only ever about one object pointed
+    // the camera past it. Half that, and only while the shot is not running.
     const t = this.actor ? this.actor.centre(_v1) : this.position;
-    this.camera.update(dt, _v2.copy(t).setY(t.y - 0.6), { physics: ctx.physics, terrain: ctx.terrain });
+    const drop = this.camera.shot ? 0.15 : 0.6;
+    this.camera.update(dt, _v2.copy(t).setY(t.y - drop), { physics: ctx.physics, terrain: ctx.terrain });
     this.saber.update(dt, ctx.time);
   }
 
   respawn(pos) {
     this.alive = true;
+    /* Everything die() took over comes back here, and it has to be here rather
+     * than on the death card: co-op's revive puts a player back on their feet
+     * without any screen ever closing, and a revived Jedi playing on through a
+     * grey letterboxed frame at a third speed is a worse bug than the one the
+     * effects fix. */
+    if (this.isLocal) {
+      this.camera.endShot();
+      this.world.engine?.setDrain?.(0);
+      this.world.engine?.setBars?.(0);
+      if (this.world._killTime) { this.world._killTime = null; this.world.setTimeScale(1); }
+    }
     this.hp = this.maxHp; this.force = this.maxForce; this.stamina = this.maxStamina;
     this.flow = 0; this.combo = 0;
     this.velocity.set(0, 0, 0);
@@ -4689,8 +6024,23 @@ export class Player {
      */
     this.animator = new BipedAnimator(this.rig, { scale: this.rig.scale ?? 1, hipHeight: 0.95 });
     this.animator.onFootstep = (p, s) => this._footstep(p, s);
+    /* A NEW BODY IS A NEW SET OF SCALES. Same species today, so these are the
+     * same four numbers — but they are read off the rig, and the rig on the
+     * line above is a different object from the one the constructor measured.
+     * A field derived from a thing that has just been rebuilt and not rederived
+     * beside it is the exact shape this file keeps finding bugs in. */
+    this.limbs = limbScale(this.rig);
+    this.eyeHeight = EYE_H * this.limbs.stand;
+    this.saber.setGripScale?.(this.limbs.torso);
+    this.control.reachScale = this.limbs.arm;
     this._makeCloak();
     this._applyViewMode();
+    /* YOU COME BACK ARMED. `saberDown` survives a respawn otherwise, and the
+     * hilt you dropped is on a floor two waves ago — so the revive would put a
+     * player back on their feet permanently unable to ignite anything, and the
+     * only tell would be a refusal message. A new body gets its weapon. */
+    this.saberDown = false;
+    this.saber.setVisible(true);
     this.saber.ignite();
     this.hum.ignite();
   }

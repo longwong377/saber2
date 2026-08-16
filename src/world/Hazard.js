@@ -1,5 +1,5 @@
 /**
- * SABER — the water that is not water.
+ * BATTLEFRONT BORZ — the water that is not water.
  *
  * WHAT WAS WRONG. Nothing in any of the thirteen levels could hurt anybody.
  * `L.water` had exactly one consumer in the whole game — `new Water(...)` in
@@ -7,7 +7,7 @@
  * plane with `ripple()`, `update()` and `dispose()`: no query, no volume, no
  * callback. So a lava sea, a canal of molten metal and an ocean were all
  * FLOORS. Measured with a real World and a real Player holding forward from
- * the spawn: 90 s on Mustafar ended 33 m under the surface of the lava sea at
+ * the spawn: 90 s on the Ember Shelf ended 33 m under the surface of the lava sea at
  * 100/100 HP; 45 s on Kamino ended on the seabed at y = -9.0 with the eye under
  * the ocean for 64% of the walk, at 100/100 HP. The Foundry's own on-screen
  * notification says "the melt is not cover" about a decal.

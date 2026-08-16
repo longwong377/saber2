@@ -171,14 +171,14 @@ page.on('requestfailed', (r) => errors.push(`requestfailed: ${r.url()} — ${r.f
  * trace you cannot see during the run is not a trace.
  */
 const STEP_MS = parseInt(flag('step-timeout', '90000'), 10);
-const step = async (name, fn) => {
+const step = async (name, fn, ms = STEP_MS) => {
   process.stderr.write(`▸ ${name} … `);
   let timer;
   try {
     const r = await Promise.race([
       fn(),
       new Promise((_, rej) => { timer = setTimeout(() => rej(
-        new Error(`timed out after ${STEP_MS} ms`)), STEP_MS); }),
+        new Error(`timed out after ${ms} ms`)), ms); }),
     ]);
     process.stderr.write('ok\n');
     return r;
@@ -231,11 +231,57 @@ await step('saber forge tab renders', async () => {
   await page.click('.tab[data-tab="play"]');
 });
 
+/**
+ * DEPLOY IS WAITED OUT IN FRAMES, NOT IN SECONDS.
+ *
+ * This was `waitForSelector('#hud:not(.hidden)', { timeout: 30000 })` followed
+ * by a flat 1600 ms. Thirty seconds is a generous wait on a machine with a GPU
+ * and it is about FIFTEEN FRAMES here, where §2.6 measures one frame at up to
+ * 4.1 s through swiftshader — and the frames just after a deploy are the most
+ * expensive in the whole run, because that is where the terrain, the textures
+ * and the instanced fields are built. So the step was not asking "did the game
+ * deploy"; it was asking "is this box quiet", and under load it answered no.
+ * Measured: four steps failed that way in one run while `tools/_deployprobe.mjs`
+ * deployed the same build in 22.2 s with zero page errors.
+ *
+ * A timeout that fires on a loaded box reports a regression that is not there,
+ * which is worse than no smoke test — HANDOFF §2.5 counts four of one day's
+ * apparent defects as harnesses lying, and this is the fifth.
+ *
+ * The unit that means what this step means is a RENDERED FRAME. Two conditions
+ * replace the clock, and each one is a real regression when it fires:
+ *
+ *   - the render loop stops producing frames at all (`__frame`'s own ceiling,
+ *     which is per-frame and so does not accumulate with the box's slowness);
+ *   - the HUD is still hidden after the game has had DEPLOY_FRAMES frames to
+ *     show it, which is a deploy that did not happen however long it took.
+ *
+ * The outer `step` deadline is passed explicitly and sized so it cannot be the
+ * thing that decides — it stays only as the backstop for a hang that neither
+ * condition above can see.
+ */
+const DEPLOY_FRAMES = parseInt(flag('deploy-frames', '24'), 10);
+const FRAME_CEIL_MS = parseInt(flag('frame-ceiling', '15000'), 10);
 await step('deploy', async () => {
   await page.click('#btn-deploy');
-  await page.waitForSelector('#hud:not(.hidden)', { timeout: 30000 });
-  await page.waitForTimeout(1600);
-});
+  const n = await page.evaluate(async ([budget, ceil]) => {
+    const shown = () => {
+      const h = document.querySelector('#hud');
+      return !!h && !h.classList.contains('hidden');
+    };
+    let f = 0;
+    while (!shown()) {
+      if (f >= budget) throw new Error(`the HUD was still hidden after ${f} rendered frames`);
+      await window.__frame(ceil);
+      f++;
+    }
+    /* Two settled frames before anything screenshots it — as frames, for the
+     * same reason: the 1600 ms this replaces was under one frame here. */
+    for (let i = 0; i < 2; i++) { await window.__frame(ceil); f++; }
+    return f;
+  }, [DEPLOY_FRAMES, FRAME_CEIL_MS]);
+  return `HUD up after ${n} rendered frames`;
+}, DEPLOY_FRAMES * FRAME_CEIL_MS + 30000);
 
 if (has('shots')) await page.screenshot({ path: join(OUT, '03-deployed.png') });
 

@@ -1,5 +1,5 @@
 /**
- * SABER — the instrument that measures the frame has to be right about it.
+ * BATTLEFRONT BORZ — the instrument that measures the frame has to be right about it.
  *
  * The player's first complaint about this game was that it ran badly and got
  * worse the longer they played. That complaint is weeks old and has never been
@@ -106,7 +106,7 @@ export async function run({ check, assert }) {
 
   check('profiler: the report carries the context a diagnosis needs', () => {
     const p = feed(headless(), Array(200).fill(11.1));
-    const text = p.report({ level: 'arena', quality: 'high' });
+    const text = p.report({ level: 'colosseum', quality: 'high' });
     for (const want of ['frame', '1% low', 'p99', 'cpu', 'gpu', 'draw', 'level', 'quality']) {
       assert(text.includes(want), `the report omits "${want}":\n${text}`);
     }

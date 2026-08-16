@@ -1,5 +1,5 @@
 /**
- * SABER — entry point.
+ * BATTLEFRONT BORZ — entry point.
  *
  * Boot, warm the procedural content, then hand the frame to the World.
  */
@@ -14,17 +14,18 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
-import { boonById, drawBoons, BOSS_EVERY } from './game/Waves.js';
-import { Run } from './game/Run.js';
+import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
+// No `FORMATIONS` import any more: the orders reach this file as ordinary
+// bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
-import { keyLabel } from './engine/Bindings.js';
+import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
-import { Communion, shapeOf, constellationName, dominantAxis } from './game/Constellation.js';
+import { Communion, shapeOf, currentName, dominantAxis } from './game/LivingForce.js';
 
 const canvas = document.getElementById('view');
 
@@ -47,6 +48,19 @@ const net = new Net();
 
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
+
+/**
+ * THE DEVICE, in one place, for every prompt this file paints.
+ *
+ * Three surfaces here print a live binding — the communion prompt, the
+ * scoreboard's caption and the coach panel's three lesson keys — and all three
+ * had `keyLabel((input.bindings.x || [])[0])` written out. A player on a
+ * controller was told to press Ctrl to kneel. One helper, so the answer cannot
+ * be right on two screens and wrong on the third; `padOf()` is the same
+ * descriptor the Menu and the HUD are handed.
+ */
+const padOf = () => ({ device: input.device, family: input.padFamily });
+const liveKey = (id) => keyLabel(codesFor(input.bindings, id, input.device)[0], input.padFamily);
 
 /**
  * WHAT THE PLAYER IS CALLED ON EVERY OTHER PLAYER'S SCREEN.
@@ -113,7 +127,7 @@ let fpsSmooth = 60;
 /* ══════════════════════════════════════════════════════════════════════ */
 
 const menu = new Menu(settings, {
-  onDeploy: () => deploy(),
+  onDeploy: () => { deploy().catch((e) => console.error('deploy failed', e)); },
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
@@ -128,7 +142,7 @@ const menu = new Menu(settings, {
     enemies: world ? world.enemies.length : 0,
     wave: world && world.director ? (world.director.wave ?? '-') : '-',
   }),
-  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy(); },
+  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy().catch((e) => console.error('deploy failed', e)); },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
   onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
@@ -143,7 +157,7 @@ const menu = new Menu(settings, {
   // Both are live: switch the deflection model or a keybind mid-fight and the
   // very next bolt uses it, which is the only honest way to compare them.
   onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
-  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); hud.setBindings(b); },
+  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); hud.setBindings(b, padOf()); },
   // Force settings are read live off world.settings, so the sliders take effect
   // mid-fight without a reload.
   onForce: () => {
@@ -241,7 +255,7 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-function buildWorld(levelKey, run = null) {
+async function buildWorld(levelKey, onProgress = null) {
   if (world) { world.dispose(); world = null; }
   audio.init();
   audio.resume();
@@ -249,6 +263,35 @@ function buildWorld(levelKey, run = null) {
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
   world = new World(engine, worldSettings());
+  /**
+   * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
+   *
+   * `WaveDirector` picks this up in its constructor — which `loadLevel` runs a
+   * few stages below — and puts the wave stream, the enemy stream, the duel
+   * stream and the arrivals on it. Assigned here rather than inside World
+   * because a seed is a fact about a SESSION, and this is the one place that
+   * knows whether the session is the player's own or a host's.
+   *
+   * It used to be `world.run.seed`, and `Run.js` went with the Descent: for
+   * every mode in the shipped game `WaveDirector.seed` was null, `seedWaves`
+   * was called by nothing, and the whole "a run is a shareable number rather
+   * than an unrepeatable accident" apparatus — the record's `seed` column, the
+   * `· seed N` line in the menu — was unreachable. It is a number a player can
+   * read off the record and type back in now, which is what makes a rule set
+   * worth telling somebody about: beat THIS seed under NO GUNS.
+   *
+   * A stated seed is honoured; otherwise one is drawn, so two runs still differ
+   * by default. In a session the host's number wins, exactly as the level and
+   * the difficulty do — a co-op run has to be ONE run.
+   */
+  // Two statements rather than one `sessionOr`, for the reason the difficulty
+  // line below gives: `settings.seed` is the named reader Menu.SETTING_READERS
+  // points at, and a setting whose only reader is behind an indirection is a
+  // setting the "every control reaches the game" check can no longer see.
+  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
+  world.runSeed = Number.isFinite(Number(asked)) && asked !== null && asked !== ''
+    ? (Number(asked) | 0) >>> 0
+    : (Math.random() * 0xffffffff) >>> 0;
   // The player's own difficulty — and then the host's over the top of it, if
   // this is their session. Two statements rather than one `sessionOr`, because
   // `settings.difficulty` is the named reader Menu.SETTING_READERS points at
@@ -260,6 +303,27 @@ function buildWorld(levelKey, run = null) {
   world.onNotify = (t, s) => hud.message(t, s);
   world.onFloating = (p, text, color) => hud.floating(p, text, color);
   world.onHitmark = (p, kind, bone) => hud.hitmark(p, kind, bone);
+  /**
+   * A BODY WANTS TO SAY SOMETHING — player note #21, "I want to hear their
+   * screams… as they get force thrown or killed".
+   *
+   * Enemy.js decides WHEN (see `Enemy.cry`) and deliberately decides nothing
+   * else, because both of the other decisions already have exactly one owner
+   * and duplicating either is the defect this project keeps removing:
+   * `_enemySpec` derives the larynx from `bodyOf`, the roster's one body
+   * classifier, and `_enemyLine` spends the shared budget that stops five
+   * simultaneous deaths from talking over each other. So the event goes to the
+   * announcer and the announcer answers both questions.
+   *
+   * The two methods are private today, which is the wart in this line and not
+   * in the design: `Announcer` wants a public `enemyLine(enemy, kind)` that is
+   * exactly these two calls, and it is owned by another pass this session.
+   */
+  world.onEnemyVoice = (enemy, kind) => {
+    const a = hud.announcer;
+    if (!a || !enemy?.position) return;
+    a._enemyLine(a._enemySpec(enemy), kind, enemy.position, settings.enemyVoices !== false);
+  };
   world.onKillFeed = (who, what, kind) => hud.killFeed(who, what, kind);
   world.onGameOver = (stats) => gameOver(stats);
   world.onDraftOffer = (boons) => offerDraft(boons);
@@ -269,7 +333,6 @@ function buildWorld(levelKey, run = null) {
     hud.explain(why, colour, grade < 0 ? 2.0 : 1.4);
   };
 
-  world.onRungClear = (r) => landing(r);
   /**
    * YOU ARE DOWN, and your friends are not.
    *
@@ -290,11 +353,29 @@ function buildWorld(levelKey, run = null) {
   world.onInsight = (n, ledger) => {
     communePrompt.insight = Math.floor(ledger.insight);
     setTimeout(() => {
-      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to connect to the Force`);
+      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to open the Holocron`);
     }, 1500);
   };
 
-  world.loadLevel(levelKey, { run });
+  /**
+   * ASYNC, SO THE TAB DOES NOT SIMPLY STOP.
+   *
+   * This was `world.loadLevel(levelKey)` — one synchronous statement that built
+   * a terrain heightfield, a Rapier world, every instanced field, the level's
+   * textures and up to 224 hand-placed props on the main thread. Measured:
+   * 352-1090 ms warm and 3821 ms on a cold first build, with no progress bar,
+   * no spinner and no yield. The only feedback a player got was that the page
+   * stopped responding and then the menu was gone.
+   *
+   * The boot sequence has done this properly all along — eleven named steps,
+   * each awaiting a frame behind a progress bar — and deploy() never used it.
+   * `loadLevelAsync` yields between seven named stages; `unload()` is its own,
+   * because it is 2408 ms of a 3706 ms rebuild and hiding it would leave the
+   * longest single pause unaccounted for.
+   *
+   * `loadLevel` stays synchronous for `toon/live.js` and the check suites.
+   */
+  await world.loadLevelAsync(levelKey, {}, onProgress);
   const player = world.spawnPlayer({ name: playerName(), isLocal: true });
   player.control.sensitivity = settings.sensitivity;
   player.control.followStrength = settings.camFollow;
@@ -308,7 +389,7 @@ function buildWorld(levelKey, run = null) {
   // `world.level`, not `LEVELS[levelKey]`: loadLevel is allowed to substitute
   // a level for a key it does not know, and the world is the only thing that
   // knows which one it settled on.
-  hud.setLevel(world.rung ? world.rung.name : world.level.name, world.difficulty.name);
+  hud.setLevel(world.level.name, world.difficulty.name);
   hud.setBoons(heldBoons());
 
   if (world.training) {
@@ -317,28 +398,84 @@ function buildWorld(levelKey, run = null) {
     hud.setCoach(world.director.state());
   } else hud.showCoach(false);
 
-  return world;
-}
+  /**
+   * THE ARMY'S THREE WIRES — all three ends exist now, and none of them did.
+   *
+   * `CommandDirector` publishes everything the front end needs and reaches for
+   * nothing: a roster summary when a name is promoted or lost, a muster offer
+   * between areas, and the formation whenever an order is given. All three
+   * calls were here and ALL THREE WENT NOWHERE. `hud.setRoster?.()` and
+   * `hud.setOrder?.()` named methods that did not exist, so the optional-call
+   * operator swallowed them silently on every promotion and every casualty for
+   * the whole life of the mode; and `typeof screens.muster === 'function'` was
+   * false, so `onMuster` was never installed and the director took its
+   * documented fallback — `autoMuster()`, spending the player's reinforcement
+   * points for them, between every area, with nothing on the screen.
+   *
+   * The `?.` stay. They are not decoration: this is the one place three
+   * subsystems in three files meet, and a front end that cannot draw a roster
+   * must still not be able to stop a campaign. What has changed is that they
+   * now find something.
+   */
+  if (world.command) {
+    const d = world.command;
+    d.onRoster = (summary) => hud.setRoster?.(summary);
+    if (typeof screens.muster === 'function') {
+      d.onMuster = (offer) => screens.muster(offer, {
+        /* Buy, then re-read. The director guards every refusal case itself and
+         * puts the reason on `refused`, so the screen asks for the new offer
+         * rather than adjusting a copy of the numbers — a screen keeping its
+         * own points would disagree with the director the first time it was
+         * told no, and a muster whose totals lie is worse than no muster. */
+        recruit: (type) => {
+          d.recruit(type);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
+        done: () => {
+          /* The overlay is forgotten FIRST — `resume()` would otherwise put the
+           * muster the player has just finished straight back on the screen.
+           *
+           * But the state is moved to 'paused' AFTER `closeMuster`, and that
+           * ordering is deliberate. `closeMuster` deploys the whole roster: it
+           * builds a body per living trooper, and it is the riskiest call in
+           * this file. It runs inside `guarded`, and `guarded`'s recovery is
+           * `pause()` — which returns FALSE without showing anything when the
+           * state is already 'paused'. So saying 'paused' before the throw
+           * would cost the player the one card that can always resume or
+           * abandon. Left at 'muster' it is an ordinary live overlay state and
+           * the pause card arrives. */
+          screens.overlay = null;
+          d.closeMuster();
+          screens.state = 'paused';        // so resume() takes the playing branch
+          hud.setRoster?.(d.roster.summary());
+          resume();
+        },
+      }) || fallbackMuster(d);
+    }
+    d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
+    d.onRoster(d.roster.summary());
+    /* The formation you START in, which nothing announced. `order()` fires
+     * `onOrder` and the opening formation is never ordered — it is configured
+     * (settings.commandFormation, through commandConfig) — so without this the
+     * indicator would read '—' until the player pressed a key, which is exactly
+     * the question it exists to answer. `readout()` is the authority for both
+     * the id and the name — and for the squad count too, which used to be
+     * fetched separately off `roster.squads().length`. That was a second caller
+     * deriving a number the readout had everything for, and it is unanswerable
+     * on a joining player's machine, where the roster is a wire record rather
+     * than a list of Troopers. */
+    const r = d.readout();
+    hud.setOrder?.(r.formation, r.formationName, r.squads);
+    hud.setLevel(`${world.level.name} — ${d.area.name}`, world.difficulty.name);
+  } else {
+    // Every other mode. The panel is one flow with the bars, so leaving it up
+    // in a Trial of Waves would push a stale army list into the corner of a
+    // run that has no army — and `hidden` is the only thing that takes its
+    // height back out of the column.
+    hud.setRoster?.(null);
+  }
 
-/**
- * THE SPIRE, at last connected to something.
- *
- * `gauntlet` has been in the mode list since the menu was written, with a blurb
- * promising "a fixed ladder of set-pieces, ending in a boss", and had ZERO
- * implementation — it fell through to the generic path and was byte-identical
- * to the thing it claimed to be an alternative to. Run.js and Progress.js were
- * written, checked, and had no callers at all. This is the wire.
- *
- * A run is created ONLY for the gauntlet. Every other mode is still a place you
- * fight in rather than a climb, and giving them a Run would silently change
- * what `Esc → Abandon` means in all of them.
- */
-function startRun() {
-  if (sessionOr('mode') !== 'gauntlet') return null;
-  return new Run({
-    identity: { order: settings.order, species: settings.species },
-    mode: 'spire',
-  });
+  return world;
 }
 
 /**
@@ -358,17 +495,25 @@ function startRun() {
  * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
  * a world to show them, and a failure puts the menu back with the reason on it.
  */
-function deploy(run = startRun()) {
+async function deploy() {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
   // and mode into the joining player's save.
   saveSettings(settings);
 
-  // A rung BORROWS a level; outside the Spire the player's own choice stands —
-  // or the host's, in a session.
-  const levelKey = run && !run.done ? run.rung.level : sessionOr('level');
+  /* The player's own choice stands — or the host's, in a session — UNLESS the
+   * mode owns its ground. `MODES.command` declares `level: 'geonosis'`, which
+   * is the machine-readable half of the `fixedTheatre` sentence the menu prints
+   * while greying the Theatre column. Without this line the menu said Geonosis
+   * and the army deployed onto whatever was last picked, which for a fresh
+   * profile is the Ember Shelf. */
+  const levelKey = MODES[settings.mode]?.level ?? sessionOr('level');
   try {
-    buildWorld(levelKey, run);
+    /* AWAITED, so the build yields between its stages instead of freezing the
+     * tab. The progress callback is the same shape the boot sequence's bar
+     * already takes; `screens.loading` renders it if it exists, and a build
+     * that finishes before the first paint simply never shows one. */
+    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label));
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -405,52 +550,18 @@ function deploy(run = startRun()) {
   input.enabled = true;
   input.requestLock();
 
-  if (world.netMode !== 'client' && !world.training) world.director.start(1);
-  if (run) world.notify(run.rung.name.toUpperCase(), run.rung.brief);
-  else world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
-}
-
-/**
- * A rung survived.
- *
- * The heal is applied by `Run.ascend` (LANDING_HEAL), so the card can report
- * the health the player will actually START the next rung on rather than the
- * sliver they finished this one with — which is the number that decides whether
- * they want to keep climbing.
- */
-function landing(run) {
-  audio.ui('wave');
-
-  const cleared = run.rung;
-  const more = run.ascend();      // heals, and steps the tier if there is one
-  if (!more) return crowned(run);
-
-  const next = run.rung;
-  const ascend = screens.guarded('going down a rung', () => { screens.overlay = null; deploy(run); });
-  screens.take('landing', () => menu.showLanding({
-    altitude: next.altitude,
-    name: next.name,
-    brief: next.brief,
-    stats: [
-      [`${cleared.name} cleared`, `${cleared.waves} wave${cleared.waves === 1 ? '' : 's'}`],
-      ['Climbed so far', `${run.depth} waves`],
-      ['Vitality', `${Math.round(run.hpFrac * 100)}%`],
-      ['Score', Math.floor(run.score).toLocaleString()],
-    ],
-    onAscend: ascend,
-  }));
-}
-
-/** The crown. The one way this game has ever had of being finished. */
-function crowned(run) {
-  recordRun(run.summary());
-  showRecord();
-  screens.take('dead', () => menu.showDeath([
-    ['Waves climbed', run.depth],
-    ['Score', Math.floor(run.score).toLocaleString()],
-    ['Kills', run.kills],
-    ['Boons held', run.boons.length],
-  ], 'You stand above the storm'));
+  /* A MEETING STARTS ITSELF DIFFERENTLY, and it is the same one line either
+   * way. `beginVersus` hands out the sides, the armies and the two anchors and
+   * then starts the director itself — a meeting has no wave to compose, so
+   * `start(1)` alone would deploy one army into the middle of an empty plain
+   * with nothing on the other side of it. It runs again when a peer's body
+   * arrives (see the avatar handler), which is when their commander gets
+   * somebody to lead. */
+  if (world.netMode !== 'client' && !world.training) {
+    if (world.command?.versus) world.beginVersus();
+    else world.director.start(1);
+  }
+  world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
 }
 
 /**
@@ -488,7 +599,7 @@ const pause = () => screens.pause();
 /**
  * CONNECT TO THE FORCE.
  *
- * The constellation is opened by KNEELING, and that is the whole design of the
+ * The Holocron is opened by KNEELING, and that is the whole design of the
  * entry point rather than a flourish on it. A key that opens a menu is a menu;
  * what this is meant to be is a thing you do in the world, at a moment when the
  * world allows it — so it asks for the three conditions a moment of quiet
@@ -521,12 +632,12 @@ const communePrompt = {
 };
 
 const tree = new SkillTree(document, {
-  onBuy: (id) => buyStar(id),
+  onBuy: (id) => wakeFacet(id),
   onClose: () => closeMeditation(),
 });
 // Screens now knows how to take this card down, which is what makes a pause
 // raised over a meditation (or a callback that threw inside one) recoverable
-// instead of leaving a star map sitting on top of the pause menu.
+// instead of leaving the Holocron sitting on top of the pause menu.
 screens.card('meditation', () => tree.hide());
 
 /** Is a communion possible this frame? The three conditions, in order. */
@@ -557,7 +668,7 @@ function communeTick(dt) {
     communePrompt.shown = true;
     // The label is read off the live binding, never typed in — the same rule
     // the coach panel and the scoreboard follow, and for the same reason.
-    if (communePrompt.key) communePrompt.key.textContent = keyLabel((input.bindings.crouch || [])[0]);
+    if (communePrompt.key) communePrompt.key.textContent = liveKey('crouch');
     // …and the purse, so the prompt is a reason and not just an instruction.
     // Written when the prompt is raised rather than every frame: it only moves
     // on a wave clear, and this runs sixty times a second.
@@ -583,7 +694,7 @@ function communeTick(dt) {
  * The way in from the Temple, between runs.
  *
  * A button rather than a kneel, because there is no body to kneel with at the
- * menu — and it exists at all because a star map you can only see mid-fight is
+ * menu — and it exists at all because a Holocron you can only see mid-fight is
  * one you can never study. What it opens there is read-only; see openMeditation.
  */
 let _entryShown = null;
@@ -595,22 +706,22 @@ function setCommuneEntry(show) {
 }
 communePrompt.entry?.addEventListener('click', () => { audio.ui('click'); openMeditation(); });
 
-/** What the sky is being read with: the run's own alignment. */
+/** What the Holocron is being read with: the run's own alignment. */
 function communeContext(live) {
   const taken = world ? world.takenBoons : new Set();
   const ledger = world ? world.communion : new Communion();
-  // Between runs the chart is drawn over the RECORD: the stars this player has
-  // ever held, in a fainter colour. It buys nothing and carries nothing into
-  // the next run (see Progress.js) — it is the answer to "what have I actually
-  // tried", which is the question a star map is for when you cannot spend.
-  const history = live ? null : Object.entries(loadProgress().lit || {});
+  // Between runs the chart is drawn over the RECORD: the facets this player
+  // has ever held, in a fainter colour. It buys nothing and carries nothing
+  // into the next run (see Progress.js) — it is the answer to "what have I
+  // actually tried", which the Holocron is for when you cannot spend.
+  const history = live ? null : Object.entries(loadProgress().woken || {});
   return {
     taken, ledger, live,
     wave: world?.director?.wave ?? 1,
     order: settings.order || null,
     history: history ? new Map(history) : null,
     subtitle: live
-      ? 'Insight is earned by surviving. A star may be lit if you already hold one joined to it.'
+      ? 'Insight is earned by surviving. A facet wakes only if you already hold one joined to it.'
       : undefined,
   };
 }
@@ -623,15 +734,15 @@ function openMeditation() {
     screens.take('meditation', () => tree.show(communeContext(true)));
     return;
   }
-  // Between runs there is no world to stop and no Insight to spend. The sky is
-  // a chart you read and a plan you make — see the doctrine note in
-  // Constellation.js about why it is deliberately not a shop.
+  // Between runs there is no world to stop and no Insight to spend. It is a
+  // chart you read and a plan you make — see the doctrine note in
+  // LivingForce.js about why it is deliberately not a shop.
   tree.show(communeContext(false));
 }
 
 function closeMeditation() {
   if (!world) { tree.hide(); return; }
-  // The overlay is forgotten FIRST, or resume() would put the star map straight
+  // The overlay is forgotten FIRST, or resume() would put the Holocron straight
   // back on the screen. Same idiom as answering a draft.
   tree.hide();
   screens.overlay = null;
@@ -640,18 +751,18 @@ function closeMeditation() {
 }
 
 /**
- * Spend Insight on a star.
+ * Spend Insight on a facet.
  *
  * The purchase itself is `Communion.buy`, which decides and charges; the EFFECT
  * goes through `World.applyBoon`, which is the only path that records the rank
  * on the taken-set, tells the Run, applies it to every local player and
- * re-derives what depends on it. A star that applied its own boon would be a
+ * re-derives what depends on it. A facet that applied its own boon would be a
  * second, divergent way of taking a card — and the first thing it would break
  * is a landing, which replays the Run's list into a freshly built player.
  */
-const buyStar = (id) => screens.guarded('lighting a star', (starId) => {
+const wakeFacet = (id) => screens.guarded('waking a facet', (facetId) => {
   if (!world) return;
-  const boon = world.communion.buy(starId, world.takenBoons, world.director?.wave ?? 1);
+  const boon = world.communion.buy(facetId, world.takenBoons, world.director?.wave ?? 1);
   if (!boon) return;                       // not affordable / not reachable — the UI said so
   world.applyBoon(boon);
   hud.setBoons(heldBoons());
@@ -784,7 +895,7 @@ function cardAfter(ms, what, show) {
  * first thing a new player does after their very first death, on the shipped
  * default mode, wrote the same run to the store twice. Driven in a browser
  * against the real page with both localStorage keys removed so the game chose
- * its own defaults (mustafar / knight / roguelite): kill the player and the
+ * its own defaults (scoria / knight / roguelite): kill the player and the
  * store reads `{runs: 1, recent: 1}`; click "Return to the Temple" on that same
  * card, with no other input, and it reads `{runs: 2, recent: 2}` and the menu
  * prints "2 runs, 0 felled · deepest 1 wave" after one run.
@@ -797,8 +908,8 @@ function cardAfter(ms, what, show) {
  * world is one session, and the next Ignite builds a new one.
  *
  * Not every total doubled, which is why this was easy to look at and not see:
- * `Progress.recordRun` adds `runs`, `kills`, `communed`, the lit stars and the
- * forty-entry `recent` history, but takes `Math.max` for `bestDepth`,
+ * `Progress.recordRun` adds `runs`, `kills`, `communed`, the woken facets and
+ * the forty-entry `recent` history, but takes `Math.max` for `bestDepth`,
  * `bestScore`, `bestTier` and the by-order/species/mode maps. Hence a record
  * line reading "2 runs" beside "roguelite 1".
  */
@@ -806,18 +917,27 @@ function record(stats = null) {
   if (!world) return;
   if (world._recorded) return;
   world._recorded = true;
-  if (world.run) {
-    if (world.run.done) return;                 // already recorded at the crown
-    world.run.end();
-    recordRun(world.run.summary());
-    return;
-  }
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
     identity: { order: settings.order, species: settings.species },
+    /**
+     * …AND WHAT THE RUN WAS ACTUALLY FOUGHT UNDER.
+     *
+     * Both off the DIRECTOR rather than off `settings`, because the director is
+     * what honoured them: `legalRuleSet` has already dropped anything the
+     * theatre vetoed, so a record that read the settings would claim a run was
+     * fought under THE HEAVY GUARD on a level that stations nothing enormous.
+     *
+     * `seed` has been carried by `Progress.recent[]` and printed by
+     * `progressLines` since both were written and has been null on every run
+     * ever recorded — the field it came from was deleted with the Descent. It
+     * is the number above.
+     */
+    seed: world.runSeed ?? null,
+    rules: world.director?.rules ? [...world.director.rules] : [],
   });
 }
 
@@ -834,14 +954,39 @@ function gameOver(stats) {
   // the only exit from a state to be in flight, and if the call throws the
   // player is watching their own corpse with nothing on screen. Escape puts it
   // back — see the keydown handler.
-  const card = () => menu.showDeath([
-    ['Wave reached', stats.wave],
-    ['Score', Math.floor(stats.score).toLocaleString()],
-    ['Kills', stats.kills],
-    ['Deflections', stats.deflects],
-    ['Perfect returns', stats.perfects],
-    ['Limbs taken', stats.limbs],
-  ]);
+  /**
+   * A WON RUN AND A LOST RUN ARE NOT THE SAME CARD.
+   *
+   * `showDeath` has always taken a title and nothing has ever passed one, so a
+   * player who finished the Geonosis campaign — the one completable thing in
+   * this game — was told "You are one with the Force" over a table of their own
+   * casualties. The campaign now sets `won` (Command.js raises it the moment the
+   * advance is over, and `world.onGameOver` carries it), so the discriminator
+   * exists and this is the one place that has to read it.
+   *
+   * The stat rows change with it. "Wave reached" is the right question for an
+   * endless mode and the wrong one for a campaign you have just finished; a
+   * won run reports the ground it took instead.
+   */
+  const won = !!stats.won;
+  const rows = won
+    ? [
+      ['Areas taken', stats.areas ?? 5],
+      ['Score', Math.floor(stats.score).toLocaleString()],
+      ['Kills', stats.kills],
+      ['Troops lost', stats.fallen ?? 0],
+      ['Deflections', stats.deflects],
+      ['Limbs taken', stats.limbs],
+    ]
+    : [
+      ['Wave reached', stats.wave],
+      ['Score', Math.floor(stats.score).toLocaleString()],
+      ['Kills', stats.kills],
+      ['Deflections', stats.deflects],
+      ['Perfect returns', stats.perfects],
+      ['Limbs taken', stats.limbs],
+    ];
+  const card = () => menu.showDeath(rows, won ? VICTORY_TITLE : undefined);
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
@@ -958,12 +1103,12 @@ function setScoreboard(open) {
   const p = world.player;
   /**
    * THE HOLDING, AS A SHAPE. `takenBoons` is a set and the chips below are a
-   * list, which is the flat readout the constellation exists to replace: seven
+   * list, which is the flat readout the Holocron exists to replace: seven
    * chips tell you what you have and nothing about what you ARE. The two rows
    * added here are read straight off the same tree the meditation draws, so
-   * they cannot describe a build the sky does not show.
+   * they cannot describe a build the Holocron does not show.
    */
-  const shape = shapeOf(world.takenBoons).filter((r) => r.lit > 0).sort((a, b) => b.ranks - a.ranks);
+  const shape = shapeOf(world.takenBoons).filter((r) => r.woken > 0).sort((a, b) => b.ranks - a.ranks);
   const axis = dominantAxis(world.takenBoons);
   scoreEl.stats.innerHTML = [
     ['Wave', world.director?.wave ?? 1],
@@ -973,8 +1118,8 @@ function setScoreboard(open) {
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
     ['Insight', Math.floor(world.communion?.insight ?? 0)],
-    ['Constellation', axis ? constellationName(axis, settings.order) : '—'],
-    ['Stars lit', shape.reduce((n, r) => n + r.lit, 0)],
+    ['Teaching', axis ? currentName(axis, settings.order) : '—'],
+    ['Facets woken', shape.reduce((n, r) => n + r.woken, 0)],
   ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 
   // Only in co-op. Solo, a one-row table of yourself is noise.
@@ -997,7 +1142,7 @@ function setScoreboard(open) {
 
   // The one label in the game that has to track a rebind, because it is the
   // label for the key you are holding to read it.
-  if (scoreEl.key) scoreEl.key.textContent = keyLabel((input.bindings.scoreboard || [])[0]);
+  if (scoreEl.key) scoreEl.key.textContent = liveKey('scoreboard');
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1005,7 +1150,15 @@ function setScoreboard(open) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 function wireNet() {
-  net.on('roster', (roster) => menu.netRoster(roster));
+  net.on('roster', (roster) => {
+    menu.netRoster(roster);
+    /* …AND OUR OWN SEAT AT IT. The host writes a side and, in a meeting, the
+     * ground that side forms up on; both ride the roster because both are
+     * identity for the length of a match. Nothing read either of them before
+     * this line — every remote body in every session was on side 0 whatever the
+     * host had decided. See World.applySeat. */
+    world?.applySeat?.(roster.find((r) => r.id === net.peer?.id));
+  });
   net.on('error', (err) => menu.netStatus(String(err.message || err), 'err'));
   net.on('peer-joined', (id, name) => menu.netStatus(`${name || 'a Jedi'} joined`, 'ok'));
   net.on('peer-left', (id) => {
@@ -1110,26 +1263,28 @@ function wireNet() {
       screens.clear();
       world.dispose(); world = null;
     }
-    deploy(null);
+    deploy();
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
   /**
-   * The host says we were hit.
+   * COMMAND, WHICH HAD NO WIRE AT ALL.
    *
-   * Until this existed a joining player was INVULNERABLE, and not by half
-   * measures: a client's enemies are `netDriven`, which returns before
-   * `_think`, so they never fire a bolt and never run a duel strike — there was
-   * nothing on this machine that could hurt us. Meanwhile the host skipped
-   * remote avatars in its own blade loop and threw a TypeError when a bolt
-   * reached one. Co-op had two players and one of them could not lose.
-   *
-   * Applied through OUR OWN Player.damage, so every boon that lives in the
-   * damage path is consulted here where it actually exists: Second Wind,
-   * Steadfast, Encircled, the difficulty's damageTaken. Tutaminis is the one
-   * exception — `absorb` is applied at World's call site rather than inside
-   * `damage`, so it has to be repeated here or a peer would silently lose it.
+   * Nothing about the army crossed: not a name, not a rank, not the area, not
+   * the formation, not who had fallen. A joining player's roster panel was fed
+   * by a director that had mustered ten strangers of its own and deployed none
+   * of them. `army` is the host's `readout()` verbatim; `order` is the one
+   * message that travels the other way, because the six formation keys are
+   * bound on whichever machine pressed them and the bodies are on the host.
+   * Both are routed here for the reason every other message is — the world a
+   * packet applies to is the one standing when it arrives, not the one that was
+   * standing when the connection opened.
    */
+  net.on('army', (msg) => world?.applyArmy(msg));
+  net.on('order', (peerId, msg) => world?.applyOrder(peerId, msg));
+  /* The meeting's own state — rounds, clock, who took the field. Host → peers
+   * only; `Net` refuses it on the host for the reason its own note gives. */
+  net.on('match', (rec) => world?.applyMatch(rec));
   // A draft is open on the host. Draw OUR hand, from OUR taken-set.
   net.on('draft', (msg) => {
     if (!world || world.netMode !== 'client') return;
@@ -1149,16 +1304,26 @@ function wireNet() {
    * peer the sender cannot reach directly.
    */
   net.on('bond', (msg, peerId) => { world?.applyBond(msg, peerId); });
-  net.on('hit', (msg) => {
-    const p = world?.player;
-    if (!p || !p.alive || !(msg.d > 0)) return;
-    let d = msg.d;
-    if (msg.k === 'bolt' && p.boonMods.absorb) {
-      p.force = Math.min(p.maxForce, p.force + d * 0.8);
-      d *= 0.45;
-    }
-    p.damage(d, null, null, msg.k || 'bolt');
-  });
+  /**
+   * The host says we were hit.
+   *
+   * Until this existed a joining player was INVULNERABLE, and not by half
+   * measures: a client's enemies are `netDriven`, which returns before
+   * `_think`, so they never fire a bolt and never run a duel strike — there was
+   * nothing on this machine that could hurt us. Meanwhile the host skipped
+   * remote avatars in its own blade loop and threw a TypeError when a bolt
+   * reached one. Co-op had two players and one of them could not lose.
+   *
+   * THE RULE MOVED INTO `World.applyHit`, AND THE MOVE IS THE POINT. This was
+   * eight lines of policy — which boon answers a bolt, which door the blow goes
+   * through, whose name is on it — living in a closure inside the entry point,
+   * where no check in the repository could reach it. Every other message on
+   * this wire is applied by a method on World and is driven by `coop.mjs`
+   * against two real endpoints; this one was the exception, and it was the one
+   * that spent the whole life of the protocol applying a shove as a bare number
+   * from nobody. A handler in main.js should route and nothing else.
+   */
+  net.on('hit', (msg) => { world?.applyHit(msg); });
   /**
    * A PACKET FROM A PARTICULAR PERSON.
    *
@@ -1178,9 +1343,19 @@ function wireNet() {
     let r = world.remotes.get(peerId);
     if (!r) {
       const entry = net.roster.find(x => x.id === peerId);
-      r = new RemoteAvatar(world, { id: peerId, name: entry?.name || 'Jedi', look: entry?.look || null });
+      /* THE SIDE, WHICH THE ROSTER HAS CARRIED ALL ALONG AND NOTHING READ.
+       * `Net._refreshRoster` writes `team` on every entry through `_sideOf`,
+       * `RemoteAvatar`'s constructor takes `opts.team` and its own note calls
+       * that field "the one a duel is made of" — and this, the only place in
+       * the tree that builds one, did not pass it. Every remote body in every
+       * session was on side 0 whatever the host had assigned. */
+      r = new RemoteAvatar(world, { id: peerId, name: entry?.name || 'Jedi',
+        look: entry?.look || null, team: entry?.team });
       world.remotes.set(peerId, r);
       world.players.push(r);
+      /* A new body on the field is a new commander to be given an army, if this
+       * is a meeting. Idempotent — see World.beginVersus. */
+      if (world.command?.versus && world.netMode === 'host') world.beginVersus();
     }
     r.push(msg, performance.now() / 1000);
   });
@@ -1243,6 +1418,67 @@ input.onLockChange = (locked) => {
 };
 
 /**
+ * PICKING UP A CONTROLLER REPAINTS EVERY PROMPT IN THE GAME.
+ *
+ * Fired once per change rather than polled, so this is a handful of innerHTML
+ * writes when the player swaps hands and nothing at all while they play. Every
+ * surface that names a control is on this one line: the Codex grid, the pause
+ * card, the three scheme cards and the bindings list (Menu.setDevice), the
+ * power wheel, the map caption, the free camera's way back and the order
+ * keycaps (HUD.setBindings), and this file's own three.
+ */
+input.onDevice = () => {
+  menu.setDevice(input.device, input.padFamily);
+  hud.setBindings(input.bindings, padOf());
+  refreshCoachKeys();
+  // The scoreboard's caption is painted when the overlay is RAISED, so a
+  // device swapped while it is up would leave the one label whose whole job is
+  // to name the key you are holding naming the other device's key.
+  if (scoreEl.key) scoreEl.key.textContent = liveKey('scoreboard');
+};
+
+/**
+ * START IS ESCAPE, and it is the same handler and not a second one.
+ *
+ * Pausing is deliberately not an ACTION — see pauseHintsHtml — because the way
+ * out has to survive a binding that has gone wrong, and a pad player had NO way
+ * out at all: Escape is a key, and a controller has none. So Start lands on the
+ * same `screens.escape()` the keydown listener below calls, through the same
+ * Holocron special case, and there is still exactly one rule for what the way
+ * out does from each state. Input only raises it when no modifier is held, so
+ * the Start chords in the pad map stay bindable.
+ */
+input.onMenu = () => {
+  if (tree.open) { closeMeditation(); return; }
+  screens.escape();
+};
+
+/**
+ * A pad button, for whichever binding chip in the options list is listening.
+ *
+ * The answer matters: `true` means the rebinder took the press, and Input drops
+ * the rest of the frame's pad handling so one button cannot both bind an action
+ * and press whatever the focus ring was on.
+ */
+input.onPadCode = (code) => !!menu.padCode?.(code);
+
+/**
+ * THE FRONT END, WALKED WITH A PAD — and the policy is here rather than in
+ * Input, because "is a menu on top of the game" is this file's question and
+ * `screens.state` is where every other answer to it already lives.
+ *
+ * In a fight these do nothing: A is Force jump, B is dash and the D-pad is the
+ * attack rose, and none of that may also be moving a focus ring. Off a fight
+ * they are the whole reason a controller player can start a run at all — a pad
+ * that could fight and not press Deploy is not a pad you can play with.
+ */
+const inMenu = () => screens.state !== 'playing' && !menu.isListeningForBind?.();
+input.onNav = (dir) => { if (inMenu()) menu.padNav(dir); };
+input.onConfirm = () => { if (inMenu()) menu.padConfirm(); };
+// B is the way back, and it is the same rule Escape is: never a dead key.
+input.onBack = () => { if (inMenu()) screens.escape(); };
+
+/**
  * The dojo's lesson navigation, read as ACTIONS once a frame.
  *
  * It used to be a raw `e.code === 'KeyN'` listener sitting right here, beside
@@ -1267,6 +1503,69 @@ function lessonKeys() {
 }
 
 /**
+ * GIVING AN ORDER — player note #30, read once a frame beside the lessons.
+ *
+ * "you can order your troops into different formations, circle around you,
+ * behind you, in front idk you know better than me."
+ *
+ * `FORMATIONS` carries the key each order wants, so this loop is derived from
+ * the same table the director steers off and there is no second list of six
+ * keys anywhere. That is deliberate and it is the difference between this and
+ * the raw `e.code === 'KeyN'` listener the note above records: one table, one
+ * reader, and a formation added tomorrow is bound the day it is authored.
+ *
+ * READ THROUGH THE TABLE NOW, AND THAT WAS THE WHOLE OF THE GAP. This loop used
+ * to be `input.hit(F.key)` — raw `KeyboardEvent.code`s, straight off the
+ * formation record, past `ACTIONS` entirely. Six of the game's controls were
+ * therefore not rebindable, on no controls card, in no Codex row, and INVISIBLE
+ * TO `findConflicts`: Digit6-Digit0 and Minus all reported as free, so the
+ * options screen would hand one of them to something else and produce a
+ * collision it could not warn about and no rebind could separate. That is the
+ * KeyB/KeyN disease — see the notes on `stasis` and `rend` in Bindings.js — in
+ * the one mode where a mis-press is an order to your own army.
+ *
+ * The fix is a SEAM and not six new literal rows beside `FORMATIONS`, because a
+ * hand-written table next to the generated one it copies is this repository's
+ * signature defect (HANDOFF §2.3). `Menu.js` pushes `FORMATIONS` through
+ * `registerOrders` at module scope; `ORDER_ACTIONS` is what comes back, in
+ * declaration order, and this reads it. Every key name, label and blurb still
+ * has exactly one author: Command.js.
+ *
+ * Guarded on `world.command` so the keys are inert in every other mode, rather
+ * than being six more things that can happen while you are duelling.
+ */
+/**
+ * THE MUSTER SCREEN DID NOT COME UP, AND THE ADVANCE CARRIES ON ANYWAY.
+ *
+ * `Screens.muster` answers false when the card could not be raised — no markup,
+ * a stripped DOM, a Menu built against a page that does not have it. Installing
+ * `onMuster` at all takes the director OFF its own fallback, so without this
+ * that failure would be a campaign stopped forever on an area boundary with
+ * nothing on screen and no button to press. This is Command.js's own fallback,
+ * called by name from the one place that took it away: spend sensibly, deploy,
+ * press on. It is a floor, not a feature — the screen exists and this should
+ * never run — and it is exactly what the mode did for its whole life before it.
+ */
+function fallbackMuster(d) {
+  console.warn('the muster screen could not be raised — mustering automatically');
+  d.autoMuster();
+  d.closeMuster();
+  hud.setRoster?.(d.roster.summary());
+}
+
+function orderKeys() {
+  if (screens.state !== 'playing') return;
+  const cmd = world?.command;
+  if (!cmd) return;
+  for (const o of ORDER_ACTIONS) {
+    if (!input.actHit(o.action)) continue;
+    if (!cmd.order(o.id)) continue;
+    hud.message(o.name.toUpperCase(), o.blurb);
+    break;                       // one order a frame; two at once is neither
+  }
+}
+
+/**
  * The coach panel's key legend, from the bindings rather than from the markup.
  *
  * index.html shipped `N next / B back / R etry with Y` baked in, which was
@@ -1276,7 +1575,7 @@ function lessonKeys() {
 function refreshCoachKeys() {
   const host = document.querySelector('#coach .coach-keys');
   if (!host) return;
-  const k = (id) => keyLabel((input.bindings[id] || [])[0]);
+  const k = liveKey;
   host.innerHTML = [
     [k('lessonNext'), 'next'], [k('lessonBack'), 'back'], [k('lessonRepeat'), 'again'],
   ].map(([key, what]) => `<span><kbd>${key}</kbd> ${what}</span>`).join('');
@@ -1284,11 +1583,11 @@ function refreshCoachKeys() {
 refreshCoachKeys();
 // …and the power wheel, which carried five typed key letters before this, two
 // of them wrong on a fresh install. It is on screen for the whole fight.
-hud.setBindings(input.bindings);
+hud.setBindings(input.bindings, padOf());
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && tree.open) {
-    // The star map's own way out, and it is the same one the Return button
+    // The Holocron's own way out, and it is the same one the Return button
     // uses. Not a special case in the state machine: closing it restores the
     // world through `resume()` exactly as answering a draft does, so Escape
     // still changes what is on the screen (rule 1) and still cannot leave the
@@ -1377,6 +1676,7 @@ function frame(now) {
   setScoreboard(screens.state === 'playing' && !!world && !world.freeCamera
     && input.act('scoreboard'));
   lessonKeys();
+  orderKeys();
   communeTick(dt);
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 

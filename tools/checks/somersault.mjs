@@ -1,5 +1,5 @@
 /**
- * SABER — the air dodge is a flip, and the cape has to come round with it.
+ * BATTLEFRONT BORZ — the air dodge is a flip, and the cape has to come round with it.
  *
  * Note 29: "air dodge does a coordinated flip in the input direction."
  *

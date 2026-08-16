@@ -1,5 +1,5 @@
 /**
- * SABER — the anchor sweep, and the trade it is a trade between.
+ * BATTLEFRONT BORZ — the anchor sweep, and the trade it is a trade between.
  *
  * The blade is solved from one point. In first person that point has to be in
  * front of the lens or you cannot see your own hands; in third person the

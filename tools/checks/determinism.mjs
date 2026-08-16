@@ -1,5 +1,5 @@
 /**
- * SABER — the suite has to answer the same question twice.
+ * BATTLEFRONT BORZ — the suite has to answer the same question twice.
  *
  * THE DEFECT THIS FILE EXISTS FOR. `verify.mjs` runs eighty-odd suites one at a
  * time, in one process, in `readdir` order. Several things the game keeps at
@@ -202,7 +202,7 @@ export async function run({ check, assert }) {
      * which is the run this file exists to make meaningful. Two checks were red
      * and both were wrong:
      *
-     *   ✗ constellation: a communion crosses the wire and lands on the receiver
+     *   ✗ living force: a communion crosses the wire and lands on the receiver
      *   ✗ run: a landing carries the run across loadLevel
      *
      * `World.spawnPlayer` runs 89 lines and contains every line both checks

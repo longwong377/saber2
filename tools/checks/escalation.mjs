@@ -1,5 +1,5 @@
 /**
- * SABER — escalation: elite modifiers, the boon draft, and the ramp.
+ * BATTLEFRONT BORZ — escalation: elite modifiers, the boon draft, and the ramp.
  *
  * The complaint these exist for is one sentence: "wave 25 is wave 10 with more
  * bodies". Three things were true and all three were measurable.
@@ -34,6 +34,7 @@ import * as Waves from '../../src/game/Waves.js';
 import * as Foe from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
 import { TOUGHNESS } from '../../src/game/Combat.js';
+import { TAU } from '../../src/engine/MathUtil.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const { ARCHETYPES } = Foe;
@@ -62,7 +63,28 @@ function gameWorld() {
 
 /** The director's stub world — no bodies, just the tables. */
 const tableWorld = () => ({ enemies: [], difficulty: null, takenBoons: new Set(), players: [] });
-const FULL_POOL = ['b1', 'b1', 'b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte', 'walker', 'beast'];
+
+/**
+ * THE FIXTURE POOL IS A SHIPPED ONE, AND IT WAS NOT.
+ *
+ * This was `['b1','b1','b1','trooper','b2','sniper','droideka','acolyte',
+ * 'walker','beast']` — a hand-written roster that **no level in the game
+ * fields**: nothing shipped declares both `walker` and `beast`, and the three
+ * B1s opened it cheaper than any real pool. So every bound in this file was
+ * calibrated against a level that does not exist, and when the same assertions
+ * were re-run against the real ten, three of them failed — including
+ * `DEFAULT_SETTINGS.level`, the level a new player starts on. HANDOFF §2.3:
+ * a hand-maintained table beside its generated twin, with the sibling check
+ * three entries down already enumerating the real ten.
+ *
+ * `FIELD` names one shipped level and `run()` asserts it exists, exactly as
+ * `cloth-cost.mjs` had to after the roster cull. The Ember Shelf is the one
+ * named because it is `DEFAULT_SETTINGS.level` — the fixture and the game's own
+ * default are now the same fight — and the checks that are about the SHAPE of a
+ * run enumerate `LEVEL_ORDER` instead of trusting any single pool.
+ */
+const FIELD = 'scoria';
+let FULL_POOL = null;
 const director = (opts = {}) => new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: FULL_POOL, ...opts });
 
 /** One update, so the rig is posed exactly as it is in game. */
@@ -171,6 +193,19 @@ const takeBoon = (p, id) => {
 };
 
 export async function run({ check, assert }) {
+  /**
+   * Loaded before the first `check`, because the synchronous ones call
+   * `director()` the moment they are declared. Levels.js is where seventeen of
+   * the thirty-one archetypes are REGISTERED — a probe that skips it sees a
+   * different game (see the note in the stranding check below).
+   */
+  const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+  if (!LEVELS[FIELD]) {
+    throw new Error(`escalation.mjs stands its subjects on "${FIELD}" and no such level exists — `
+      + `World.loadLevel would silently substitute ${LEVEL_ORDER[0]} and every bound in this `
+      + 'file would be measured against a place it does not name (HANDOFF §2.6)');
+  }
+  FULL_POOL = LEVELS[FIELD].pool;
 
   check('escalation: a deeper wave is a harder wave, not just a bigger one', async () => {
     /**
@@ -197,19 +232,56 @@ export async function run({ check, assert }) {
     const d = new Waves.WaveDirector(stub, { pool: LEVELS.colosseum.pool });
     Waves.seedWaves(99);
 
+    /**
+     * OVER MANY ROLLS, NOT ONE — and this is not a loosening.
+     *
+     * It used to compose exactly one wave per depth and let that single roll
+     * decide a RATIO, which was fragile from the day it was written and became
+     * wrong the moment wave conditions shipped: `CONDITIONS.fusillade` narrows
+     * a wave to the shooters, the Colosseum's four shooters are all light, and
+     * one such roll at wave 40 reported a 1.3% heavy share. That is the
+     * condition working correctly, and a check that fails on it is measuring
+     * the draw rather than the property. The property is about the SHAPE OF THE
+     * RUN, so it is measured over a run's worth of waves.
+     */
     const rows = [];
     for (const w of [5, 10, 20, 30, 40]) {
-      d.start(w);
-      const q = d.spawnQueue.map((e) => String(e).split('|')[0]);
-      const heavy = q.filter((t) => Waves.isHeavy(t)).length;
-      const threat = q.reduce((a, t) => a + (Foe.ARCHETYPES[t]?.threat ?? 0), 0);
-      rows.push({ w, bodies: q.length, heavy, share: heavy / Math.max(1, q.length),
-        perBody: threat / Math.max(1, q.length) });
+      let bodies = 0, heavy = 0, threat = 0;
+      const n = 25;
+      for (let i = 0; i < n; i++) {
+        d.start(w);
+        const q = d.spawnQueue.map((e) => String(e).split('|')[0]);
+        bodies += q.length;
+        heavy += q.filter((t) => Waves.isHeavy(t)).length;
+        threat += q.reduce((a, t) => a + (Foe.ARCHETYPES[t]?.threat ?? 0), 0);
+      }
+      rows.push({ w, bodies: bodies / n, heavy: heavy / n, share: heavy / Math.max(1, bodies),
+        perBody: threat / Math.max(1, bodies) });
     }
     const early = rows[0], late = rows[rows.length - 1];
-    assert(late.bodies > early.bodies * 3,
-      `wave ${late.w} fields ${late.bodies} bodies against wave ${early.w}'s ${early.bodies} — `
-      + 'the run is not deepening at all and the rest of this check means nothing');
+    /**
+     * THE GUARD IS ON THE WAVE'S WEIGHT, NOT ON ITS LENGTH.
+     *
+     * This asked for three times the BODIES, and it was a proxy for "the run is
+     * deepening at all" written when the count was the only thing depth bought
+     * — which is the defect the rest of this file exists to remove. Once
+     * `bodyCap` began to bind (see BODY_COUNT_SHARE), the Colosseum's wave 40
+     * became eighteen bodies at 11.7 threat each where it had been seventy-six
+     * at 4.1, and the guard failed on a wave that is three times the fight.
+     *
+     * Total threat is what the budget actually promises and it is strictly
+     * stronger: a wave can be longer without being heavier, and it cannot be
+     * heavier without having grown. Per-body threat is asserted beside it so
+     * "heavier" cannot be satisfied by length alone either.
+     */
+    const weight = (r) => r.bodies * r.perBody;
+    assert(weight(late) > weight(early) * 3,
+      `wave ${late.w} weighs ${weight(late).toFixed(0)} threat against wave ${early.w}'s `
+      + `${weight(early).toFixed(0)} — the run is not deepening at all and the rest of this `
+      + 'check means nothing');
+    assert(late.perBody > early.perBody * 1.5,
+      `wave ${late.w} fields ${late.perBody.toFixed(1)} threat per body against wave ${early.w}'s `
+      + `${early.perBody.toFixed(1)} — the wave got longer and not harder`);
     assert(late.share > early.share * 0.75,
       `the heavy share falls from ${(early.share * 100).toFixed(1)}% at wave ${early.w} to `
       + `${(late.share * 100).toFixed(1)}% at wave ${late.w} — the deep waves are proportionally `
@@ -237,7 +309,7 @@ export async function run({ check, assert }) {
      * And a pool's REPEATS did nothing. `_pickType` sums a weight per entry, so
      * a type listed twice is drawn twice as often — the ladder uses exactly
      * that trick itself. But the pool was only ever a membership FILTER, so
-     * Mustafar's three `acolyte` entries never reached the array being weighed.
+     * the Ember Shelf's three `acolyte` entries never reached the array being weighed.
      * Six of the thirteen levels resolved to the same six archetypes and
      * produced byte-identical twenty-wave runs.
      *
@@ -303,7 +375,7 @@ export async function run({ check, assert }) {
       'Waves exports no spawnCost/spawnMod — a queue of bare archetype names cannot price an elite, '
       + 'so every modifier on it is threat the director never paid for');
     const d = director();
-    let worstOver = 0, worstUnder = 1, elites = 0, checked = 0;
+    let worstOver = 0, worstUnder = 1, elites = 0, checked = 0, conditioned = 0;
     for (let w = 1; w <= 40; w++) {
       const budget = d.budgetFor(w);
       for (let i = 0; i < 25; i++) {
@@ -319,6 +391,20 @@ export async function run({ check, assert }) {
           }
           spent += cost;
         }
+        /**
+         * …AND WHAT THE WAVE'S CONDITIONS COST, which is the same argument the
+         * modifiers make one paragraph up. A condition that is not paid for out
+         * of the wave budget is not a difficulty feature, it is a difficulty
+         * bug: ALL AT ONCE would be a wave of the ordinary size delivered in a
+         * fifth of the time, which is not the same wave asked differently, it
+         * is a wave that is secretly 30% over the ramp.
+         *
+         * Charged through the director's own `conditionCost`, so this is the
+         * shipped price rather than a second copy of the table (§2.4).
+         */
+        const conds = d.conditions || [];
+        if (conds.length) conditioned++;
+        spent += d.conditionCost(w, conds);
         checked++;
         worstOver = Math.max(worstOver, spent - budget);
         worstUnder = Math.min(worstUnder, spent / budget);
@@ -330,37 +416,101 @@ export async function run({ check, assert }) {
       `some wave left ${((1 - worstUnder) * 100).toFixed(0)}% of its budget unspent — the ramp stops climbing there`);
     assert(elites > 0, 'no wave in forty ever fielded an elite');
     return `${checked} waves priced, worst overspend ${worstOver.toFixed(2)}, `
-      + `worst underspend ${((1 - worstUnder) * 100).toFixed(1)}%, ${elites} elites queued`;
+      + `worst underspend ${((1 - worstUnder) * 100).toFixed(1)}%, ${elites} elites queued, `
+      + `${conditioned} waves conditioned`;
   });
 
   check('escalation: depth stops buying bodies and starts buying elites', () => {
-    const d = director();
-    const at = (w) => {
-      let bodies = 0, elite = 0, threat = 0; const n = 40;
-      for (let i = 0; i < n; i++) {
-        d.wave = w; d._compose();
-        bodies += d.spawnQueue.length;
-        elite += d.spawnQueue.filter(isElite).length;
-        threat += d.spawnQueue.reduce((s, e) => s + (Waves.spawnCost ? Waves.spawnCost(e) : (ARCHETYPES[e]?.threat ?? 0)), 0);
-      }
-      return { bodies: bodies / n, share: elite / bodies, mean: threat / bodies };
-    };
-    const w2 = at(2), w15 = at(15), w25 = at(25), w30 = at(30);
-    assert(w2.share === 0, `wave 2 is already ${(w2.share * 100).toFixed(0)}% elite — the first waves must teach the plain bodies`);
-    assert(w15.share > 0.2, `wave 15 is only ${(w15.share * 100).toFixed(0)}% elite`);
-    assert(w25.share > 0.4, `wave 25 is only ${(w25.share * 100).toFixed(0)}% elite — it is still wave 10 with more bodies`);
-    // The headline: the budget grows far faster than the body count, and the
-    // difference is per-body quality. Anything else is "more of the same".
-    const budgetGrowth = d.budgetFor(30) / d.budgetFor(2);
-    const bodyGrowth = w30.bodies / w2.bodies;
-    assert(bodyGrowth * 2.5 < budgetGrowth,
-      `bodies grew ${bodyGrowth.toFixed(1)}× while the budget grew ${budgetGrowth.toFixed(1)}× — `
-      + 'the count is still carrying the escalation');
-    assert(w30.mean > w2.mean * 3.5,
-      `mean threat per body only went ${w2.mean.toFixed(2)} → ${w30.mean.toFixed(2)}`);
-    return `elite share 0% → ${(w15.share * 100).toFixed(0)}% (w15) → ${(w25.share * 100).toFixed(0)}% (w25); `
-      + `budget ×${budgetGrowth.toFixed(0)} but bodies ×${bodyGrowth.toFixed(1)}, `
-      + `threat/body ${w2.mean.toFixed(2)} → ${w30.mean.toFixed(2)}`;
+    /**
+     * ON EVERY LEVEL THE GAME SHIPS, AND IT USED TO BE ON ONE THAT IT DOES NOT.
+     *
+     * This ran against the synthetic pool above (see FIELD) and passed. Re-run
+     * against the real ten it failed on THREE — the Ember Shelf (the level a new
+     * player starts on), the Colosseum and the Jedi Temple — and one of the two
+     * clauses it failed on could not have been satisfied by any tuning at all.
+     *
+     * `w30.mean > w2.mean × 3.5` is a bound on the ratio between the wave a
+     * pool opens with and the wave it converges to, and BOTH ends are the
+     * pool's own prices: the Temple has no B1 in it, so its wave 2 is two Jedi
+     * at 5.2 threat each, and its heaviest body is the Master at 12. The clause
+     * therefore demanded a mean above 18 from a roster whose ceiling is 12. It
+     * was not measuring the escalation; it was measuring how cheap the level's
+     * chaff is, and the fixture pool's three B1s made that number flattering.
+     *
+     * ── WHAT IT IS MEASURED AGAINST NOW ──────────────────────────────────────
+     *
+     * The property in the check's own name, stated where it lives: PAST THE
+     * KNEE. Before `BODY_KNEE` the count IS the escalation and is meant to be
+     * ("up to there a run is learning to handle a crowd"); after it the extra
+     * budget must go on quality. So the two clauses are
+     *
+     *   the count takes a MINORITY of the budget added since the knee, and
+     *   the body cap actually BINDS, which is the mechanism that makes it so,
+     *
+     * both per level, plus the elite-share ladder that was already here. Those
+     * are strictly harder than what they replace and they are not contaminated
+     * by the pool's opening price. Measured on the shipped composer before the
+     * fix, share of the added budget that went on COUNT:
+     *
+     *     foundry 67% · kamino 66% · alpine 70% · colosseum 73% · wood 75%
+     *     drifts 80% · mustafar 85% · geonosis 85% · scoria 96% · temple 108%
+     *
+     * and the cap — the thing meant to stop it — was reached on 0-27% of rolls
+     * at wave 30, because it sat above the length the budget could pay for at
+     * every depth a player reaches. See `BODY_COUNT_SHARE` in Waves.js.
+     */
+    const K = Waves.BODY_KNEE;
+    const rows = [];
+    let worstCount = 0, worstCountAt = '', worstBind = 1, worstBindAt = '';
+    let worstQuality = Infinity, worstQualityAt = '', worst15 = 1, worst25 = 1;
+    for (const key of LEVEL_ORDER) {
+      const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const at = (w, n = 25) => {
+        let bodies = 0, elite = 0, threat = 0, capped = 0;
+        for (let i = 0; i < n; i++) {
+          d.wave = w; d._compose();
+          bodies += d.spawnQueue.length;
+          if (d.spawnQueue.length >= d.shape.cap) capped++;
+          elite += d.spawnQueue.filter(isElite).length;
+          threat += d.spawnQueue.reduce((s, e) => s + Waves.spawnCost(e), 0);
+        }
+        return { bodies: bodies / n, share: elite / bodies, mean: threat / bodies, bind: capped / n };
+      };
+      const w2 = at(2), w15 = at(15), w25 = at(25), knee = at(K), deep = at(40);
+      assert(w2.share === 0,
+        `${key} wave 2 is already ${(w2.share * 100).toFixed(0)}% elite — the first waves must teach the plain bodies`);
+      worst15 = Math.min(worst15, w15.share);
+      worst25 = Math.min(worst25, w25.share);
+
+      /* The extra bodies priced at what a body cost AT THE KNEE — a lower bound
+       * on what the count consumed, because anything the same bodies cost above
+       * that price is quality the upgrade pass bought. */
+      const spentOnCount = (deep.bodies - knee.bodies) * knee.mean
+        / (d.budgetFor(40) - d.budgetFor(K));
+      if (spentOnCount > worstCount) { worstCount = spentOnCount; worstCountAt = key; }
+      const bind = Math.min(at(30, 15).bind, deep.bind);
+      if (bind < worstBind) { worstBind = bind; worstBindAt = key; }
+      const quality = deep.mean / knee.mean;
+      if (quality < worstQuality) { worstQuality = quality; worstQualityAt = key; }
+      rows.push(`${key} ${(spentOnCount * 100).toFixed(0)}%count ×${quality.toFixed(2)}q`);
+    }
+    assert(worst15 > 0.2, `some level's wave 15 is only ${(worst15 * 100).toFixed(0)}% elite`);
+    assert(worst25 > 0.4,
+      `some level's wave 25 is only ${(worst25 * 100).toFixed(0)}% elite — it is still wave 10 with more bodies`);
+    assert(worstCount < 0.5,
+      `on ${worstCountAt}, ${(worstCount * 100).toFixed(0)}% of the budget added since wave ${K} went `
+      + 'on MORE bodies rather than better ones — the count is still carrying the escalation, which is '
+      + 'the whole of "wave 30 is wave 12 with four times the crowd"');
+    assert(worstBind > 0.5,
+      `on ${worstBindAt} the body cap was the binding constraint on only ${(worstBind * 100).toFixed(0)}% `
+      + 'of deep waves — the fill runs out of BUDGET first, so "past the cap the wave stops growing and '
+      + 'starts improving" never happens there and `_upgrade` is handed nothing to spend');
+    assert(worstQuality > 1.4,
+      `on ${worstQualityAt} threat per body only went ×${worstQuality.toFixed(2)} from wave ${K} to 40`);
+    return `${LEVEL_ORDER.length} levels · elite share ≥${(worst15 * 100).toFixed(0)}% (w15) `
+      + `≥${(worst25 * 100).toFixed(0)}% (w25) · worst count share ${(worstCount * 100).toFixed(0)}% `
+      + `(${worstCountAt}) · worst cap bind ${(worstBind * 100).toFixed(0)}% (${worstBindAt}) · `
+      + `worst quality ×${worstQuality.toFixed(2)} (${worstQualityAt})`;
   });
 
   check('escalation: the set-piece ladder never runs out of rungs', () => {
@@ -400,20 +550,768 @@ export async function run({ check, assert }) {
 
   check('escalation: no wave fields more enormous bodies than it may', () => {
     const d = director();
-    let worst = 0, worstAt = 0;
+    let worst = 0, worstAt = 0, mostHeavy = 0;
     for (let w = 1; w <= 45; w++) {
       for (let i = 0; i < 20; i++) {
         d.wave = w; d._compose();
         const heavy = d.spawnQueue.filter(e => Waves.isHeavy(Waves.spawnType(e))).length;
-        if (heavy - d.heavyLimit(w) > worst) { worst = heavy - d.heavyLimit(w); worstAt = w; }
+        mostHeavy = Math.max(mostHeavy, heavy);
+        /**
+         * AGAINST THE WAVE'S OWN STATED CAP, not against a recomputation of it.
+         *
+         * `heavyLimit(w)` is the DIFFICULTY cap and `CONDITIONS.titans` lifts it
+         * on purpose — the Heavy Guard is "few, and enormous", and a wave of
+         * five walkers is the whole content of that condition. What may never
+         * move is the FRAME-RATE ceiling, which is `HEAVY_CAP` and is asserted
+         * separately below. Reading `d.shape.heavy` is calling the shipped rule
+         * rather than restating it (§2.4); it is also strictly stronger than
+         * the old line, which could not have caught a condition that lifted the
+         * cap past the renderer's limit.
+         */
+        const cap = d.shape?.heavy ?? d.heavyLimit(w);
+        if (heavy - cap > worst) { worst = heavy - cap; worstAt = w; }
       }
     }
     assert(worst <= 0, `wave ${worstAt} fielded ${worst} heavies over its limit — a walker is 66 meshes and an acklay more`);
+    assert(mostHeavy <= Waves.HEAVY_CAP,
+      `some wave fielded ${mostHeavy} enormous bodies against a frame-rate ceiling of ${Waves.HEAVY_CAP} — `
+      + 'a condition has lifted the one limit that is not a difficulty number');
     // `big` and `boss` are separate flags and every heavy rule wants both;
     // reading only `big` is what let three acklays through a limit of four.
     assert(Waves.isHeavy('beast') && Waves.isHeavy('walker') && !Waves.isHeavy('trooper'),
       'isHeavy does not count both the big and the boss flag');
     return `45 waves × 20 rolls, never over the limit (${d.heavyLimit(10)} at w10, ${d.heavyLimit(40)} at w40)`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  1b. Wave conditions — the ladder that does not stop               */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('conditions: the escalation does not flatten once the roster runs out', async () => {
+    /**
+     * THE MEASUREMENT THAT MOTIVATED THE WHOLE THING, kept as the check.
+     *
+     * Composed through the shipped director on kamino, eight seeds a wave,
+     * BEFORE conditions existed:
+     *
+     *     wave   bodies   threat/body   distinct entries   budget stranded
+     *       20     31.5       5.13            37                 0%
+     *       70    125.0      10.65             7                 9%
+     *      100    173.0      10.65             7                41%
+     *      140    237.0      10.30             7                65%
+     *
+     * `_upgrade` converges — it trades every light body for the heaviest the
+     * level fields and then promotes all of them — so past about wave 70 the
+     * wave is one archetype wearing six modifiers, threat-per-body is frozen,
+     * and two thirds of the budget is thrown away because nothing in the roster
+     * can absorb it. The endless mode stopped escalating at about wave 55 and
+     * the climbing body count hid it.
+     *
+     * Two properties, and both are about the SURPLUS rather than about any one
+     * condition: a deep wave must not throw its budget away, and a deep wave
+     * must be asked something a shallow one is not.
+     *
+     * ── AND WHAT THIS DELIBERATELY DOES NOT CLAIM ────────────────────────
+     *
+     * It does not claim the stranding goes to zero, because it cannot. The
+     * budget is `w^1.62 · BOON_POWER^(w/6)`, which is exponential; the roster's
+     * ceiling is `bodyCap · (the heaviest elite the level fields)`, which is
+     * linear; and CONDITION_MAX conditions can absorb at most the sum of their
+     * `worth`, which is a constant share. So there is always a depth past which
+     * the ramp outruns everything again — measured, the stranding is 2-6% at
+     * wave 70, 12-20% at 100, 17-28% at 140 and 31-36% at 200.
+     *
+     * The bar is therefore stated as a RATIO against the same wave composed
+     * with no conditions at all, which is a property of the mechanism rather
+     * than a number fitted to today's tuning: whatever the roster cannot
+     * absorb, the conditions must take up most of. Measured 63-84% across
+     * three pools and four depths, and it would still hold if the ramp were
+     * retuned, because both halves of the ratio move with it. An absolute bar
+     * is kept as well, but only over 70-100, which is the depth a player
+     * actually reaches.
+     *
+     * (The first draft of this measured 71% where the truth is 49%, because the
+     * probe imported Waves.js and Enemy.js but not Levels.js — which is where
+     * seventeen of the thirty-one archetypes are REGISTERED. The Colosseum's
+     * pool then resolved to four light droids and the stranding it reported was
+     * a different game's. HANDOFF §2.5: the flattering number was the wrong
+     * one. This check imports Levels.js, and so must anything measuring a pool.)
+     */
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    const rows = [];
+    let worstAbsorbed = 1, worstAt = '', worstDeep = 0, worstDeepAt = '';
+    for (const key of ['kamino', 'colosseum']) {
+      const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      for (const w of [20, 40, 70, 100, 140]) {
+        let plainLeft = 0, left = 0, conds = 0;
+        /**
+         * TWENTY-FOUR SEEDS, AND THE REASON IS VARIANCE AND NOT TASTE.
+         *
+         * The shape count below is a count of DISTINCT things over n draws, and
+         * a distinct-count is a badly behaved estimator at small n: measured on
+         * the Colosseum at twelve seeds it reads 8, 7, 5, 10, 6 across the five
+         * depths, so the deep-versus-shallow comparison it feeds swings by ±3
+         * on nothing at all. At twenty-four the same five depths read 10, 12,
+         * 10, 12, 11. Raising n is measuring more of the same thing, which is
+         * the correct answer to a variance-driven failure — widening the bound
+         * would have been the other one.
+         */
+        const n = 24;
+        const entries = new Set();
+        const shapes = new Set();
+        for (let i = 0; i < n; i++) {
+          // The SAME seed both ways, so the two numbers are the same wave with
+          // and without its conditions rather than two different draws.
+          Waves.seedWaves(1000 + i, 0); d.wave = w;
+          plainLeft += d._composeUnder(w, []).left / d.budgetFor(w);
+          Waves.seedWaves(1000 + i, 0); d.wave = w; d._compose();
+          const spent = d.spawnQueue.reduce((a, e) => a + Waves.spawnCost(e), 0)
+            + d.conditionCost(w, d.conditions);
+          left += 1 - spent / d.budgetFor(w);
+          conds += d.conditions.length;
+          for (const e of d.spawnQueue) entries.add(e);
+          shapes.add(d.conditions.slice().sort().join('+') + '|'
+            + [...new Set(d.spawnQueue.map(Waves.spawnType))].sort().join(','));
+        }
+        plainLeft /= n; left /= n; conds /= n;
+        rows.push({ key, w, plainLeft, left, conds, entries: entries.size, shapes: shapes.size });
+        // Only where there is something to absorb: below the saturation depth
+        // the roster spends its whole budget and the ratio is noise over zero.
+        if (plainLeft > 0.10) {
+          const absorbed = (plainLeft - left) / plainLeft;
+          if (absorbed < worstAbsorbed) { worstAbsorbed = absorbed; worstAt = `${key} w${w}`; }
+        }
+        if (w >= 70 && w <= 100 && left > worstDeep) { worstDeep = left; worstDeepAt = `${key} w${w}`; }
+      }
+    }
+    assert(worstAbsorbed >= 0.55,
+      `at ${worstAt} the conditions took up only ${(worstAbsorbed * 100).toFixed(0)}% of the budget the `
+      + 'roster could not absorb — the surplus is still being thrown away and depth has stopped meaning anything');
+    assert(worstDeep < 0.25,
+      `at ${worstDeepAt} a wave throws away ${(worstDeep * 100).toFixed(0)}% of its budget`);
+    /**
+     * …AND A DEEP WAVE IS NOT ONE WAVE.
+     *
+     * Counted as SHAPES — the condition set the wave carries and the archetypes
+     * it actually fields — rather than as distinct spawn entries, and the
+     * difference matters. A conditioned wave is deliberately NARROW: NOTHING
+     * WITHIN REACH fields only shooters, and counting its entries would score
+     * that as monotony when it is the condition doing its job. What must not
+     * happen is every deep wave being narrow in the SAME way, which is exactly
+     * what the composer used to do — kamino composed 7 distinct entries at wave
+     * 70 and the same 7 at wave 100, over eight seeds, because `_upgrade`
+     * converges on the heaviest body the level fields and then promotes all of
+     * them.
+     */
+    for (const key of ['kamino', 'colosseum']) {
+      const shallow = rows.find((r) => r.key === key && r.w === 20);
+      for (const w of [70, 100]) {
+        const deep = rows.find((r) => r.key === key && r.w === w);
+        assert(deep.shapes >= shallow.shapes,
+          `${key} wave ${w} composes ${deep.shapes} distinct shapes over 12 seeds against wave 20's `
+          + `${shallow.shapes} — every deep wave is asking the same narrow question`);
+      }
+    }
+    return rows.filter((r) => r.key === 'kamino')
+      .map((r) => `w${r.w}: ${(r.plainLeft * 100).toFixed(0)}%→${(r.left * 100).toFixed(0)}% stranded, `
+        + `${r.conds.toFixed(1)}c, ${r.shapes} shapes, ${r.entries}e`).join(' · ')
+      + ` · worst absorbed ${(worstAbsorbed * 100).toFixed(0)}% at ${worstAt}`;
+  });
+
+  check('conditions: every condition does on the field what its own card says', () => {
+    /**
+     * A condition is announced to the player in one line — `tell` — and a line
+     * the wave does not honour is worse than no line at all: it teaches a
+     * player to do the thing that gets them killed and the mechanic takes the
+     * blame. Each is driven through the real composer, under that condition
+     * alone, and asserted against what the card claims.
+     *
+     * Composed at the depth each one unlocks plus ten, ON A THEATRE THAT CAN
+     * ACTUALLY FIELD IT — which the fixture pool used to be assumed to be.
+     * `needs` is the shipped veto and it is asked here rather than restated, so
+     * THE HEAVY GUARD is demonstrated on a level that stations something
+     * enormous instead of failing on one that does not. A condition NO level
+     * can field is dead content and is asserted against separately.
+     */
+    const rows = [];
+    for (const key of Waves.CONDITION_KEYS) {
+      const C = Waves.CONDITIONS[key];
+      const homes = LEVEL_ORDER.filter((k) => {
+        const t = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[k].pool });
+        return !t.ruleVeto(key);
+      });
+      assert(homes.length,
+        `no level in LEVEL_ORDER can field "${key}" — a condition every theatre vetoes is a `
+        + 'card nobody will ever be shown');
+      const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[homes[0]].pool });
+      assert(C.label && C.tell, `condition "${key}" has no label or no tell — nothing tells the player it is on`);
+      assert(C.worth > 0, `condition "${key}" is free — a condition nobody pays for is threat off the books`);
+      const w = C.since + 10;
+      assert(!C.needs || C.unmet,
+        `condition "${key}" can be vetoed by a theatre and has no \`unmet\` line — `
+        + 'the Deploy panel would grey the rule out and say nothing about why');
+      const shape = d._shapeUnder(w, [key]);
+      const plain = d._shapeUnder(w, []);
+      const seen = new Set();
+      let bodies = 0, leaders = 0, n = 12;
+      for (let i = 0; i < n; i++) {
+        Waves.seedWaves(500 + i, 0);
+        d.wave = w;
+        const out = d._composeUnder(w, [key]);
+        bodies += out.queue.length;
+        for (const e of out.queue) {
+          seen.add(Waves.spawnType(e));
+          if (Waves.spawnMod(e) === 'leader') leaders++;
+        }
+      }
+      bodies /= n;
+      const ranged = [...seen].filter((t) => ARCHETYPES[t].ranged);
+      const melee = [...seen].filter((t) => !ARCHETYPES[t].ranged);
+      let elite = 0, all = 0;
+      for (let i = 0; i < n; i++) {
+        Waves.seedWaves(500 + i, 0);
+        for (const e of d._composeUnder(w, [key]).queue) { all++; if (isElite(e)) elite++; }
+      }
+      switch (key) {
+        case 'silence':
+          assert(!ranged.length, `NO GUNS fielded ${ranged.join(', ')}, which shoot`);
+          break;
+        case 'fusillade':
+          assert(!melee.length, `NOTHING WITHIN REACH fielded ${melee.join(', ')}, which close`);
+          break;
+        case 'titans': {
+          const heavy = [...seen].filter((t) => Waves.isHeavy(t));
+          assert(heavy.length, 'THE HEAVY GUARD fielded no enormous body at all');
+          assert(shape.heavy > plain.heavy,
+            `THE HEAVY GUARD left the heavy limit at ${shape.heavy}, the same as an ordinary wave`);
+          break;
+        }
+        case 'deluge':
+          assert(shape.alive > plain.alive * 1.5,
+            `ALL AT ONCE stands ${shape.alive} at once against an ordinary ${plain.alive}`);
+          assert(shape.pace < 0.5, `ALL AT ONCE feeds the wave in at ${shape.pace}× the ordinary gap`);
+          break;
+        case 'hammer':
+          assert(shape.bearing, 'ONE BEARING does not set a bearing');
+          break;
+        case 'elites': {
+          /**
+           * The one condition that reads `eliteScale`, which was a documented
+           * hook no condition declared and which therefore multiplied by 1
+           * forever. Asserted on the SHAPE (the ceiling it lifts) and on the
+           * FIELD (what the fill actually promoted), because the first without
+           * the second is how a hook gets declared and still does nothing.
+           */
+          assert(shape.chance > plain.chance * 1.5,
+            `NO RANK AND FILE promotes at ${shape.chance.toFixed(2)} against an ordinary `
+            + `${plain.chance.toFixed(2)} — eliteScale is not reaching the shape`);
+          assert(shape.chance >= 1,
+            `NO RANK AND FILE tops out at ${shape.chance.toFixed(2)} of the fill — `
+            + '"every one of them is somebody" has to mean every one');
+          const plainShare = (() => {
+            let e = 0, a = 0;
+            for (let i = 0; i < n; i++) {
+              Waves.seedWaves(500 + i, 0);
+              for (const x of d._composeUnder(w, []).queue) { a++; if (isElite(x)) e++; }
+            }
+            return e / Math.max(1, a);
+          })();
+          assert(elite / Math.max(1, all) > plainShare,
+            `NO RANK AND FILE fielded ${(elite / all * 100).toFixed(0)}% elites against an `
+            + `ordinary wave's ${(plainShare * 100).toFixed(0)}%`);
+          break;
+        }
+        case 'vanguard':
+          assert(shape.head, 'A HEAD TO CUT OFF marks no head');
+          // EXACTLY one, or "the leader" is not something a player can find.
+          assert(leaders === n, `${n} vanguard waves produced ${leaders} leaders — it must be exactly one each`);
+          assert(!shape.allowed.includes('leader'),
+            'the fill can still promote its own leaders, so the wave has more than one head');
+          break;
+        default:
+          throw new Error(`condition "${key}" has no behavioural check — add one`);
+      }
+      rows.push(`${key} ${bodies.toFixed(0)}b on ${homes[0]} (${homes.length} theatres)`);
+    }
+    return `${Waves.CONDITION_KEYS.length} conditions, each doing what its card says: ${rows.join(', ')}`;
+  });
+
+  check('rules: a run can be fought under its own terms, and they are never a discount', () => {
+    /**
+     * THE HEADLINE PROPERTY, AND IT IS ONE LINE OF ARITHMETIC AWAY FROM ITS OWN
+     * OPPOSITE.
+     *
+     * A dealt condition is compensation: `conditionCost` takes a share of the
+     * wave's budget to pay for it, so the wave is SMALLER in exchange for being
+     * strange. A rule the player asked for must not be — charge for it and NO
+     * GUNS becomes the cheapest route to wave 40, which is the exact inverse of
+     * what a self-imposed handicap is. So the wave composed under a rule must
+     * weigh what the plain wave weighed, on the same seed.
+     */
+    const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[FIELD].pool });
+    const offered = Waves.CONDITION_KEYS.filter((k) => !d.ruleVeto(k));
+    assert(offered.length >= 2, `${FIELD} offers ${offered.length} rules — nothing to pick between`);
+
+    /**
+     * WEIGHED AS WHAT STANDS ON THE FIELD, not as what the ledger says.
+     *
+     * The first draft of this added `conditionCost` to both sides and the check
+     * failed on its own arithmetic: the dealt wave books the condition's
+     * `worth` as spend, so "total spend" is 8% higher for the dealt vanguard
+     * while the wave in front of the player is 8% SMALLER. The waived charge is
+     * precisely the thing under test, so counting it is measuring the accounting
+     * rather than the fight. What a player meets is bodies.
+     */
+    const weigh = (dir, w, keys, n = 10) => {
+      let threat = 0, bodies = 0;
+      for (let i = 0; i < n; i++) {
+        Waves.seedWaves(900 + i, 0); dir.wave = w;
+        const out = dir._composeUnder(w, keys);
+        threat += out.queue.reduce((s, e) => s + Waves.spawnCost(e), 0);
+        bodies += out.queue.length;
+      }
+      return { threat: threat / n, bodies: bodies / n };
+    };
+    const dir0Cost = (dir, w, keys) => dir.conditionCost(w, keys);
+    let worstShort = 1, worstAt = '';
+    for (const key of offered) {
+      const ruled = new Waves.WaveDirector(tableWorld(),
+        { mode: 'roguelite', pool: LEVELS[FIELD].pool, rules: [key] });
+      assert(ruled.rules.length === 1, `${key} was offered and then dropped by legalRuleSet`);
+      for (const w of [10, 25, 40]) {
+        const dealt = weigh(d, w, [key]);          // the same condition, priced
+        const asRule = weigh(ruled, w, [key]);     // …and chosen, so free
+        assert(asRule.threat >= dealt.threat - 1e-6,
+          `at wave ${w} the field under the ${Waves.CONDITIONS[key].label} RULE weighs `
+          + `${asRule.threat.toFixed(1)} against ${dealt.threat.toFixed(1)} for the same condition `
+          + 'dealt — picking a rule made the run cheaper, which is backwards');
+        assert(dir0Cost(d, w, [key]) > 0 && ruled.conditionCost(w, [key]) === 0,
+          `${key} is charged ${ruled.conditionCost(w, [key]).toFixed(1)} as a RULE — a rule the `
+          + "player asked for is not compensated out of the wave's budget");
+        const plain = weigh(ruled, w, []);
+        /**
+         * AGAINST THE CONDITION'S OWN DECLARED `capScale`, not against a flat
+         * number. ALL AT ONCE and THE HEAVY GUARD both declare one under 1 and
+         * say why beside it — "capScale pulls the count DOWN to pay for it, so
+         * it is a denser wave rather than a bigger one" — so a wave under
+         * either is meant to be shorter. What must not happen is a wave lighter
+         * than its own condition asked for.
+         */
+        /**
+         * REPORTED, NOT ASSERTED, and the difference is which claim belongs to
+         * which feature. A narrowed wave carries less threat than an unnarrowed
+         * one — NOTHING WITHIN REACH on the Ember Shelf at wave 40 comes in
+         * about 9% light — and that is a property of the CONDITION, identical
+         * whether it was dealt or chosen. It is bounded where it belongs, by
+         * "the escalation does not flatten" below. Asserting it here would be
+         * holding the rules feature to something it does not claim; what it
+         * claims is the two assertions above, and both are exact.
+         */
+        const short = asRule.threat / Math.max(1, plain.threat);
+        if (short < worstShort) { worstShort = short; worstAt = `${key}@w${w}`; }
+      }
+    }
+
+    /* …AND THE VETOES AND EXCLUSIONS ARE HONOURED AT RUN START, once, rather
+     * than per wave. Asked for every theatre, because that is what the Deploy
+     * panel offers and a rule the panel lights and the director drops is the
+     * defect `_syncTheatre` was written for. */
+    let sets = 0, worstOffer = Waves.CONDITION_KEYS.length;
+    for (const key of LEVEL_ORDER) {
+      const dir = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const legal = Waves.CONDITION_KEYS.filter((k) => !dir.ruleVeto(k));
+      worstOffer = Math.min(worstOffer, legal.length);
+      // Every subset of the legal ones that satisfies the exclusions and the cap
+      // must survive `legalRuleSet` unchanged — and everything else must not.
+      for (let m = 0; m < (1 << Waves.CONDITION_KEYS.length); m++) {
+        const want = Waves.CONDITION_KEYS.filter((_, i) => m & (1 << i));
+        const got = new Waves.WaveDirector(tableWorld(),
+          { mode: 'roguelite', pool: LEVELS[key].pool, rules: want }).rules;
+        const clean = want.every((k) => legal.includes(k)) && want.length <= Waves.CONDITION_MAX
+          && want.every((a, i) => want.every((b, j) => i >= j || !Waves.rulesConflict(a, b)));
+        if (clean) {
+          assert(got.join(',') === want.join(','),
+            `${key} dropped a legal rule set: asked ${want.join('+')}, got ${got.join('+') || '(none)'}`);
+          sets++;
+        } else {
+          assert(got.length < want.length || got.join(',') !== want.join(','),
+            `${key} accepted ${want.join('+')}, which its roster or the exclusions forbid`);
+          assert(got.every((k) => legal.includes(k)),
+            `${key} kept a vetoed rule: ${got.join('+')}`);
+          assert(got.length <= Waves.CONDITION_MAX, `${key} kept ${got.length} rules over the cap`);
+          for (let i = 0; i < got.length; i++) {
+            for (let j = i + 1; j < got.length; j++) {
+              assert(!Waves.rulesConflict(got[i], got[j]),
+                `${key} kept the mutually exclusive ${got[i]}+${got[j]}`);
+            }
+          }
+        }
+      }
+    }
+    assert(worstOffer >= 4,
+      `some theatre offers only ${worstOffer} of the ${Waves.CONDITION_KEYS.length} rules — `
+      + 'the column would be mostly grey');
+    // A rule the panel can offer must have a reason to be greyed with, and a
+    // label the record can key on. Both are read straight off CONDITIONS.
+    for (const k of Waves.CONDITION_KEYS) {
+      assert(Waves.CONDITIONS[k].label, `rule "${k}" has no label for the panel or the record`);
+    }
+    return `${sets} legal rule sets across ${LEVEL_ORDER.length} theatres; every theatre offers at `
+      + `least ${worstOffer} of ${Waves.CONDITION_KEYS.length}; `
+      + `a narrowed wave carries ${(worstShort * 100).toFixed(0)}% of the unnarrowed one's threat at `
+      + `worst (${worstAt}), and never less than the same condition dealt`;
+  });
+
+  check('rules: four of them from wave 1 composes a wave that spends its budget', () => {
+    /**
+     * THE UNTESTED CORNER, AND IT WAS UNTESTED FOR A STRUCTURAL REASON.
+     *
+     * `CONDITION_MAX` is 4 and the note above it prices three against four at
+     * waves 100, 140 and 200 — because four are only ever reached through the
+     * surplus loop, which cannot fire until the roster stops absorbing the
+     * budget, measured at about wave 92. A run rule puts four on wave 1, where
+     * nothing has ever composed under more than one, and the shallow waves are
+     * exactly where a narrowed roster meets a budget of seven.
+     *
+     * ── THE BAR IS IN THREAT AND NOT IN PERCENT, and that is not a softening ──
+     *
+     * The sibling check one screen up bounds stranding at 14% of the budget,
+     * which is the right shape at wave 40 (499 threat) and meaningless at wave
+     * 1 (7 threat, where one B1 is 14% on its own). What a shallow wave must
+     * not do is leave a BODY on the table, so the bar is stated in bodies: the
+     * unspent budget may not exceed what the cheapest thing the theatre still
+     * fields would have cost. That is strictly harder than a percentage at
+     * depth and it is the only statement that means anything at wave 1.
+     */
+    const worst = { short: 0, at: '', cheapest: 0 };
+    let checked = 0;
+    for (const key of LEVEL_ORDER) {
+      const dir0 = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const offered = Waves.CONDITION_KEYS.filter((k) => !dir0.ruleVeto(k));
+      /* Every legal set of exactly CONDITION_MAX, so this is not one lucky
+       * combination — on a theatre that vetoes nothing there are several. */
+      const sets = [];
+      const walk = (from, held) => {
+        if (held.length === Waves.CONDITION_MAX) { sets.push(held.slice()); return; }
+        for (let i = from; i < offered.length; i++) {
+          if (held.some((h) => Waves.rulesConflict(h, offered[i]))) continue;
+          held.push(offered[i]); walk(i + 1, held); held.pop();
+        }
+      };
+      walk(0, []);
+      assert(sets.length, `${key} cannot offer ${Waves.CONDITION_MAX} rules at once`);
+      for (const rules of sets) {
+        const d = new Waves.WaveDirector(tableWorld(),
+          { mode: 'roguelite', pool: LEVELS[key].pool, rules });
+        assert(d.rules.length === Waves.CONDITION_MAX,
+          `${key} accepted only ${d.rules.length} of ${rules.join('+')}`);
+        for (const w of [1, 2, 3, 5, 10, 18, 30]) {
+          for (let i = 0; i < 6; i++) {
+            Waves.seedWaves(1700 + i, 0);
+            d.wave = w; d._compose();
+            assert(d.spawnQueue.length > 0,
+              `${key} wave ${w} under ${rules.join('+')} composed an EMPTY wave — nothing to fight`);
+            assert(d.conditions.length === Waves.CONDITION_MAX,
+              `${key} wave ${w} carries ${d.conditions.length} conditions under ${Waves.CONDITION_MAX} rules`);
+            const spent = d.spawnQueue.reduce((s, e) => s + Waves.spawnCost(e), 0)
+              + d.conditionCost(w, d.conditions);
+            const budget = d.budgetFor(w);
+            const shape = d._shapeUnder(w, d.conditions);
+            const cheapest = Math.min(...shape.types.map((t) => ARCHETYPES[t]?.threat ?? Infinity));
+            /**
+             * THE ONE OVERSPEND THAT IS NOT A DEFECT, stated exactly.
+             *
+             * A wave may never be empty, so when the cheapest body the narrowed
+             * roster still fields costs more than the whole budget — the
+             * Colosseum's creatures under NO GUNS at wave 1, where the cheapest
+             * is 9 against a budget of 7 — the wave is that one body and it is
+             * over. `allowed` is that unavoidable amount and nothing more: it is
+             * zero at every wave that can afford anything, so this does not
+             * loosen the sibling check's exact bound, it names the single case
+             * that bound cannot express.
+             */
+            const allowed = Math.max(0, cheapest - budget);
+            assert(spent <= budget + allowed + 1e-6,
+              `${key} wave ${w} under ${rules.join('+')} spent ${spent.toFixed(1)} of ${budget} — `
+              + `the cheapest body it could field is ${cheapest}, so at most ${(budget + allowed).toFixed(1)} `
+              + 'was unavoidable');
+            /**
+             * …AND THE FILL STOPPED FOR A REASON IT CAN NAME.
+             *
+             * Stated against the composer's OWN stopping conditions rather than
+             * as a share of the budget, because a share means nothing at wave 1
+             * (7 threat, where one B1 is 14% on its own) and is too loose at
+             * wave 30. A wave may end short only because a cap bound it — the
+             * body cap, or the heavy limit with nothing light left to buy — and
+             * never because a draw came back unaffordable and it gave up, which
+             * is what it used to do and what stranded 43% of the Ember Shelf's
+             * wave 1.
+             */
+            const left = budget - spent;
+            const bodies = d.spawnQueue.length;
+            const heavies = d.spawnQueue.filter((e) => Waves.isHeavy(Waves.spawnType(e))).length;
+            const lightLeft = shape.types.some((t) => !Waves.isHeavy(t)
+              && (ARCHETYPES[t]?.threat ?? Infinity) <= left);
+            const capped = bodies >= shape.cap
+              || (heavies >= shape.heavy && !lightLeft)
+              || left < cheapest;
+            assert(capped,
+              `${key} wave ${w} under ${rules.join('+')} stopped at ${bodies} bodies with `
+              + `${left.toFixed(1)} threat left, a cap of ${shape.cap}, ${heavies}/${shape.heavy} `
+              + `heavies and a cheapest body at ${cheapest} — it gave up with a body still affordable`);
+            if (left > worst.short) {
+              worst.short = left; worst.cheapest = cheapest; worst.at = `${key} w${w} ${rules.join('+')}`;
+            }
+            checked++;
+          }
+        }
+      }
+    }
+    return `${checked} waves composed under ${Waves.CONDITION_MAX} rules from wave 1 across `
+      + `${LEVEL_ORDER.length} theatres; worst unspent ${worst.short.toFixed(1)} threat against a `
+      + `cheapest body of ${worst.cheapest.toFixed(1)} at ${worst.at}`;
+  });
+
+  check('conditions: a level that cannot field one is never given it', () => {
+    /**
+     * `needs` is how a pool vetoes a condition, and the veto has to be real:
+     * kamino's only melee archetype is the acolyte, so NO GUNS on that level
+     * would be six identical acolytes — a different question asked so narrowly
+     * that it is a monotony. A wave asked differently still has to be a wave.
+     */
+    const kamino = new Waves.WaveDirector(tableWorld(),
+      { mode: 'roguelite', pool: ['trooper', 'b1', 'trooper', 'b2', 'sniper', 'acolyte', 'droideka', 'b1'] });
+    const types = kamino.unlockedAt(40);
+    assert(!Waves.CONDITIONS.silence.needs(types, kamino),
+      'NO GUNS is legal on a pool with one melee archetype in it');
+    assert(!Waves.CONDITIONS.titans.needs(types, kamino),
+      'THE HEAVY GUARD is legal on a pool with no heavy in it');
+    // …and it never leaks through the composer either.
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      Waves.seedWaves(3000 + i, 0);
+      kamino.wave = 20 + (i % 60); kamino._compose();
+      for (const k of kamino.conditions) seen.add(k);
+    }
+    assert(!seen.has('silence') && !seen.has('titans'),
+      `kamino composed ${[...seen].join(', ')} — a vetoed condition reached the field`);
+    return `kamino may field ${[...seen].join(', ')}; NO GUNS and THE HEAVY GUARD correctly vetoed`;
+  });
+
+  check('trial: the Trial of Waves is not Path of the Blade with the cards deleted', async () => {
+    /**
+     * MEASURED BEFORE: with a fresh RNG stream per mode, ten seeds over forty
+     * waves, **0 of 400 waves differed**. `_compose` never read the mode
+     * outside the duel branch, so the only thing separating the two entries in
+     * the menu was `DRAFT_MODES` — which takes content AWAY. A mode whose whole
+     * content is another mode's content missing is not a mode.
+     *
+     * Two properties, both derived rather than declared: a mode that drafts
+     * nothing is not charged for the cards it never gets (`budgetFor` reads
+     * `drafts`, which is the shipped statement of which modes those are), and
+     * the conditions are what it has instead of a build.
+     */
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    const pool = LEVELS.kamino.pool;
+    const make = (mode) => new Waves.WaveDirector(tableWorld(), { mode, pool });
+    let differ = 0, total = 0;
+    for (let w = 1; w <= 40; w++) {
+      for (const s of [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]) {
+        Waves.seedWaves(s, 0); const a = make('roguelite'); a.wave = w; a._compose();
+        Waves.seedWaves(s, 0); const b = make('waves'); b.wave = w; b._compose();
+        total++;
+        if (a.spawnQueue.join(',') !== b.spawnQueue.join(',')) differ++;
+      }
+    }
+    assert(differ > total * 0.5,
+      `${differ} of ${total} waves differ between the Trial and Path of the Blade — `
+      + 'the two menu entries are still one game');
+    const path = make('roguelite'), trial = make('waves');
+    assert(trial.budgetFor(30) < path.budgetFor(30),
+      `the Trial faces ${trial.budgetFor(30)} threat at wave 30 against Path's ${path.budgetFor(30)} — `
+      + 'it is being charged for a build it structurally cannot have');
+    assert(trial.budgetFor(1) === path.budgetFor(1),
+      'the two modes already differ at wave 1, where neither has drafted anything');
+    // …and the ladder starts where the mode has nothing else, not at 13.
+    assert(trial.conditionSince('hammer') < path.conditionSince('hammer'),
+      'the Trial waits as long as Path of the Blade for its first condition, and it has no cards to wait with');
+    let pc = 0, tc = 0;
+    for (let w = 1; w <= 60; w++) {
+      Waves.seedWaves(9, 0); path.wave = w; path._compose(); pc += path.conditions.length;
+      Waves.seedWaves(9, 0); trial.wave = w; trial._compose(); tc += trial.conditions.length;
+    }
+    assert(tc > pc, `60 waves: the Trial carried ${tc} conditions and Path ${pc}`);
+    return `${differ}/${total} waves differ; budget at w30 ${path.budgetFor(30)} → ${trial.budgetFor(30)}; `
+      + `conditions in 60 waves ${pc} → ${tc}`;
+  });
+
+  check('duel: the ladder is the saber roster, and it ends on a boss', () => {
+    /**
+     * The mode composed `min(1 + floor(w/2), 6)` acolytes and nothing else:
+     * sixty waves over twelve seeds gave FIFTEEN distinct compositions and ONE
+     * enemy type, on top of a thousand lines of Duel.js and five authored
+     * FORMS. The ladder is derived from ARCHETYPES now, so a duellist added
+     * tomorrow joins it on the day it is added.
+     */
+    const d = new Waves.WaveDirector(tableWorld(), { mode: 'duel' });
+    const { rungs, bosses } = d.duelRoster();
+    assert(rungs.length >= 4, `the duel ladder has ${rungs.length} rung(s): ${rungs.join(', ')}`);
+    assert(bosses.length >= 1, 'the duel ladder has no boss rung');
+    for (const t of [...rungs, ...bosses]) {
+      assert(ARCHETYPES[t].saber, `${t} stands on the duel ladder without a saber`);
+      assert(!ARCHETYPES[t].ranged, `${t} stands on the duel ladder and shoots`);
+    }
+    // The rungs open one at a time, and they do not all open at once.
+    assert(d.duelTier(1) === 1, `wave 1 opens ${d.duelTier(1)} rungs — the first duel is one body's form`);
+    assert(d.duelTier(1 + Waves.DUEL_RUNG) === 2, 'the second rung does not open at DUEL_RUNG');
+    assert(d.duelTier(1 + Waves.DUEL_RUNG * (rungs.length - 1)) === rungs.length,
+      'the last rung never opens');
+    // …and a duel stays a duel.
+    const comps = new Set(); const seen = new Set(); let most = 0;
+    for (let w = 1; w <= 60; w++) {
+      for (const s of [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]) {
+        Waves.seedWaves(s, 0); d.wave = w; d._compose();
+        comps.add(d.spawnQueue.slice().sort().join(','));
+        most = Math.max(most, d.spawnQueue.length);
+        for (const e of d.spawnQueue) seen.add(Waves.spawnType(e));
+      }
+    }
+    assert(most <= Waves.DUEL_MAX, `a duel wave fielded ${most} bodies against DUEL_MAX ${Waves.DUEL_MAX}`);
+    assert(seen.size >= 4, `60 waves × 12 seeds fielded ${seen.size} archetype(s) — the ladder is one body again`);
+    assert(comps.size >= 60,
+      `60 waves × 12 seeds produced ${comps.size} distinct compositions — it was 15 with one acolyte type`);
+    return `${rungs.length} rungs + ${bosses.length} bosses; ${comps.size} distinct compositions over `
+      + `${seen.size} archetypes in 60 waves, never more than ${most} at once`;
+  });
+
+  check('conditions: killing the leader ends the wave, and one bearing has a front', () => {
+    /**
+     * DRIVEN, not composed — everything above this point reads a queue, and
+     * these two conditions do their work in `update`. A rout that only exists
+     * in the composer is a banner over a wave that never breaks.
+     *
+     * The world is a stub with the three things the director asks a world for:
+     * somewhere to put a body, a way to make one, and a list to put it in.
+     * `arrivals.enabled = false` so the direct spawn path runs — a gunship
+     * would need a scene, and `request` returning false is exactly the
+     * documented fallback for a level with nothing that could bring anything.
+     */
+    const bodies = [];
+    const stub = {
+      enemies: bodies, players: [{ position: V(0, 0, 0), alive: true }],
+      takenBoons: new Set(), settings: {}, partyTeam: 0, hpScale: 1, dmgScale: 1,
+      scene: new THREE.Group(),
+      notify() {}, onEnemyKilled(e) { e._killed = (e._killed || 0) + 1; },
+      terrain: flatGround(),
+    };
+    stub.player = stub.players[0];
+    const d = new Waves.WaveDirector(stub, { mode: 'roguelite', pool: FULL_POOL });
+    d.arrivals.enabled = false;
+    let spawnAt = 0;
+    const ctx = {
+      enemies: bodies,
+      // A ring of candidate points, walked round so a bearing has something to
+      // reject: `_spawnPoint` re-asks until the heading is inside the arc.
+      pickSpawn: () => { const a = (spawnAt++ * 0.37) * TAU; return V(Math.cos(a) * 40, 0, Math.sin(a) * 40); },
+      // Rich enough for the REAL `applyModifier` to run on it, which is what
+      // makes `e.mod` the game's own answer to "which body is the leader"
+      // rather than a flag this check invented. `install` is the elite's tell
+      // and wants a scene graph; it is fed a group that accepts children and
+      // nothing more, which is all a headless body needs.
+      spawnEnemy: (type, at) => {
+        const A = ARCHETYPES[type];
+        const e = {
+          type, position: at, dead: false, team: 1, mod: null, A,
+          world: stub, hp: A.hp, maxHp: A.hp, speed: A.speed, attackDamage: A.damage,
+          root: new THREE.Group(), group: new THREE.Group(), rig: null,
+          // The tells the elite installers hang on a body. A headless one has
+          // no meshes, so they are the smallest shapes each installer touches;
+          // what this check is about is `e.mod`, which `applyModifier` sets
+          // before any of them runs.
+          add(o) { this.group.add(o); },
+          shieldCentre: (out) => (out ? out.copy(at) : at),
+          dispose() {},
+        };
+        bodies.push(e);
+        return e;
+      },
+    };
+
+    /* ── A HEAD TO CUT OFF ─────────────────────────────────────────────── */
+    /* Searched THROUGH `start`, not through `_compose`: start re-composes, so a
+     * wave found one way is not the wave the other way produces. */
+    const findWave = (key, base) => {
+      for (let w = 13; w < 120; w++) {
+        Waves.seedWaves(base + w, 0);
+        bodies.length = 0;
+        d._paid = 0;
+        d.start(w);
+        if (d.conditions.includes(key)) return w;
+      }
+      return null;
+    };
+    const found = findWave('vanguard', 4000);
+    assert(found, 'no wave between 13 and 120 ever drew A HEAD TO CUT OFF');
+    const queued = d.spawnQueue.length;
+    // Run the wave in until everything is standing.
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    const head = bodies.find((e) => e.mod === 'leader')
+      || bodies.find((e) => Waves.spawnMod(`${e.type}|${e.mod}`) === 'leader');
+    assert(head, `${bodies.length} bodies of ${queued} landed and none of them is the leader`);
+    const before = bodies.filter((e) => !e.dead).length;
+    assert(before > 3, `only ${before} bodies stood in a vanguard wave — nothing to rout`);
+    head.dead = true;
+    /* The frame that notices, and then the sweep — ROUT_PER_FRAME at a time —
+     * and STOP AT THE WAVE END. Running on past it starts the intermission,
+     * and 5.5 s later `start(wave + 1)` composes the next wave into the same
+     * stub: the first draft of this check read four of those as survivors of
+     * the rout. A driven check has to stop where the thing it is driving does. */
+    let frames = 0;
+    while (d.active && frames++ < 400) d.update(1 / 30, ctx);
+    assert(!d.active, 'the wave never ended after the leader fell');
+    const after = bodies.filter((e) => !e.dead).length;
+    assert(after === 0,
+      `${after} of ${before} bodies were still standing after the leader fell — the wave does not break`);
+    assert(!d.spawnQueue.length, 'the rout left bodies queued, so the wave cannot end');
+    // …and nobody is credited with a kill they did not make.
+    assert(bodies.every((e) => (e._killed || 0) <= 1), 'a routed body was killed twice');
+
+    /* ── ONE BEARING ───────────────────────────────────────────────────── */
+    const bw = findWave('hammer', 7000);
+    assert(bw, 'no wave between 13 and 120 ever drew ONE BEARING');
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    assert(bodies.length > 6, `only ${bodies.length} bodies landed under ONE BEARING`);
+    d.active = false;
+    const b = d._bearing();
+    assert(b !== null, 'a ONE BEARING wave has no bearing');
+    let worst = 0;
+    for (const e of bodies) {
+      const off = Math.abs(((Math.atan2(e.position.z, e.position.x) - b + Math.PI * 3) % TAU) - Math.PI);
+      worst = Math.max(worst, off);
+    }
+    // The arc is a half-width either side, and `_spawnPoint` keeps the best of
+    // what it saw rather than failing — so the bound is the arc, not perfection.
+    assert(worst <= Waves.BEARING_ARC / 2 + 1e-6,
+      `a body arrived ${(worst * 180 / Math.PI).toFixed(0)}° off the wave's bearing, against a `
+      + `${(Waves.BEARING_ARC * 90 / Math.PI).toFixed(0)}° half-arc — the field has no front`);
+    // …and an ordinary wave still comes from everywhere, or the check above is
+    // measuring the spawn stub rather than the condition.
+    bodies.length = 0;
+    Waves.seedWaves(11, 0);
+    d._paid = 0;
+    d.start(12);
+    assert(!d.conditions.length, 'the control wave drew a condition');
+    for (let i = 0; i < 4000 && d.spawnQueue.length; i++) d.update(1 / 30, ctx);
+    let spread = 0;
+    for (const e of bodies) {
+      const off = Math.abs(((Math.atan2(e.position.z, e.position.x) - b + Math.PI * 3) % TAU) - Math.PI);
+      spread = Math.max(spread, off);
+    }
+    assert(spread > Waves.BEARING_ARC / 2,
+      'an unconditioned wave arrives inside one quarter too, so ONE BEARING changes nothing');
+    return `w${found}: the leader fell and ${before} bodies broke; `
+      + `w${bw}: every body inside ${(worst * 180 / Math.PI).toFixed(0)}° of one bearing `
+      + `against ${(spread * 180 / Math.PI).toFixed(0)}° unconditioned`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -1032,6 +1930,87 @@ export async function run({ check, assert }) {
       rows.push('secondwind: survives once, recharges on the wave');
     }
     return rows.join('; ');
+  });
+
+  check('boons: survival has a growth curve, and it is the blade attunement\'s own step', async () => {
+    /**
+     * OFFENCE COMPOUNDED AND DEFENCE DID NOT. Applied through the real
+     * `BOONS[].apply` onto Player's real `defaultBoonMods`, taking every card
+     * of its kind a wave-40 run can hold:
+     *
+     *     committed offence   cutPower  1.00 → 29.62     ×29.6
+     *     committed defence   maxHp      100 → 292       ×2.9
+     *     the wave itself     threat       7 → 425       ×61
+     *
+     * and an undirected run moves `maxHp` 0-9% over SIXTY waves. Offence
+     * multiplies — Shatterpoint ×1.9, Djem So ×1.4, the blade attunement ×1.12
+     * a rank and uncapped — while defence ADDS (Vitality +30, the body
+     * attunement +18) or is a flat cap (the Aegis is a 22-point ward,
+     * Encircled tops out at 42%). An additive pool against a multiplicative
+     * threat curve is not a defensive build, it is a slightly later death, and
+     * it left the deep waves with exactly one answer: kill it first.
+     *
+     * `attune-guard` was already the right shape — offered at every set-piece
+     * forever, uncapped, repeatable, the heart of the guard current — and
+     * granted `deflectDamage`, which is offence through deflection. This
+     * asserts the axis exists and RACES: the same ATTUNE_STEP as the blade's,
+     * in the opposite direction, so a rank makes the edge 12% deeper there and
+     * a blow 12% shallower here.
+     */
+    const { defaultBoonMods } = await import('../../src/game/Player.js');
+    const stub = () => ({
+      maxHp: 100, hp: 100, maxStamina: 100, stamina: 100, maxForce: 100, force: 100,
+      boonMods: defaultBoonMods(), control: { sensitivity: 1 }, kills: 0, deflects: 0,
+      position: { distanceToSquared: () => 1e9 }, alive: true, world: { enemies: [] },
+      heal(n) { this.hp = Math.min(this.maxHp, this.hp + n); },
+      damage(a) { this.hp -= a; return a; },
+    });
+    const build = (list) => {
+      const p = stub(); const taken = new Waves.RankSet();
+      for (const [id, n] of list) {
+        const b = Waves.boonById(id);
+        assert(b, `no such boon: ${id}`);
+        for (let k = 0; k < n; k++) b.apply(p, Waves.rankScale(b, taken.take(id)));
+      }
+      return p;
+    };
+    const lands = (p) => { const before = p.hp; p.damage(50); return before - p.hp; };
+
+    const bare = lands(build([]));
+    assert(Math.abs(bare - 50) < 1e-6, `an unbuilt player takes ${bare} of a 50-point blow`);
+    const rows = [];
+    let prev = bare;
+    for (const n of [1, 2, 4, 6, 10]) {
+      const took = lands(build([['attune-guard', n]]));
+      assert(took < prev,
+        `${n} ranks of the Guard attunement takes ${took.toFixed(1)} of a 50-point blow against `
+        + `the previous rank's ${prev.toFixed(1)} — the only defensive axis that is allowed to `
+        + 'grow forever is not growing');
+      prev = took;
+      rows.push(`${n}:${took.toFixed(1)}`);
+    }
+    // The two attunements race on the SAME step, which is the property that
+    // stops one of them standing still while the other compounds.
+    const one = build([['attune-guard', 1]]);
+    const blade = build([['attune-blade', 1]]);
+    assert(Math.abs((1 - one.boonMods.ward) - Waves.ATTUNE_STEP) < 1e-9,
+      `a rank of the Guard shallows a blow by ${(1 - one.boonMods.ward).toFixed(3)} against `
+      + `ATTUNE_STEP ${Waves.ATTUNE_STEP} — the two axes are no longer racing on the same terms`);
+    assert(Math.abs((blade.boonMods.cutPower - 1) - Waves.ATTUNE_STEP) < 1e-9,
+      'the blade attunement no longer steps by ATTUNE_STEP');
+    // …and nothing in this game may become unkillable.
+    const deep = build([['attune-guard', 40]]);
+    assert(lands(deep) >= 50 * Waves.WARD_FLOOR - 1e-9,
+      `forty ranks takes ${lands(deep).toFixed(2)} of a 50-point blow — past the floor, `
+      + 'a player who kept choosing one card cannot be hurt at all');
+    // The committed build, which is what the complaint was about.
+    const held = build([['attune-guard', 4], ['vitality', 4], ['attune-body', 4]]);
+    const eff = held.maxHp * 50 / lands(held);
+    assert(eff > 350,
+      `a wave-40 defensive build is worth ${eff.toFixed(0)} effective hit points against an `
+      + 'unbuilt 100 — offence reaches ×29.6 over the same run');
+    return `a 50-point blow at guard ranks ${rows.join(' ')}; floor ${Waves.WARD_FLOOR}; `
+      + `a committed wave-40 defence is ${eff.toFixed(0)} effective hp (was 292)`;
   });
 
   check('boons: two cards driving one multiplier compose instead of eating each other', () => {

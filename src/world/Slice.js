@@ -1,5 +1,5 @@
 /**
- * SABER — convex mesh slicing.
+ * BATTLEFRONT BORZ — convex mesh slicing.
  *
  * Props are cut on the plane the blade actually swept, not at pre-authored
  * break points. Each triangle is clipped against the plane, the cross-section

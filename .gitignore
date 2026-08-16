@@ -7,3 +7,6 @@ node_modules
 .terr/
 .shots-ad/
 .shots/
+
+# agent worktrees — transient, never part of a commit
+.claude/worktrees/

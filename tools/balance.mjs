@@ -1,5 +1,5 @@
 /**
- * SABER — the balance instrument.
+ * BATTLEFRONT BORZ — the balance instrument.
  *
  *   node tools/balance.mjs                    everything, default settings
  *   node tools/balance.mjs --runs=60          more seeds per difficulty
@@ -116,7 +116,11 @@ const { defaultBoonMods } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
 const EnemyMod = await import('../src/game/Enemy.js');
-const { ARCHETYPES, Enemy, limitBackpedal } = EnemyMod;
+/* `guardFor` and `TURNED_CUT` are IMPORTED and not re-derived. The guard is the
+ * only thing standing between the blade and a one-pass kill on every body in
+ * the game, and a harness carrying its own copy of `hp / 90` would be HANDOFF
+ * §2.4's defect on the single number this file's headline answer turns on. */
+const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT, toppleAt } = EnemyMod;
 
 /**
  * The elite-modifier layer, read through the game's own exports and tolerated
@@ -399,15 +403,21 @@ export function measureDuel(diffKey, formKey) {
   const e = stubDuelEnemy(DIFFICULTY[diffKey]);
   const b = new DuelBrain(e, { form: formKey });
   const dt = 1 / 120;
-  let strikes = 0, wasStrike = false, T = 0;
+  let strikes = 0, wasStrike = false, T = 0, guardT = 0;
   for (let i = 0; i < 120 * 240; i++) {
     b.update(dt, {}, (FORMS[formKey].spacing[0] + FORMS[formKey].spacing[1]) / 2);
     T += dt;
     const isStrike = b.phase === 'strike';
     if (isStrike && !wasStrike) strikes++;
     wasStrike = isStrike;
+    /* HOW MUCH OF THE FIGHT IT SPENDS WITH ITS BLADE UP, counted off the real
+     * brain rather than typed. `guardQuat` holds the blade between the body and
+     * its target through the whole `guard` phase, and it is what a player's
+     * pass runs into. See `guardShare` in engagementFor. */
+    if (b.phase === 'guard') guardT += dt;
   }
-  const r = { strikesPerSec: strikes / T, damageScale: ATTACK_DAMAGE_BY_FORM[formKey] };
+  const r = { strikesPerSec: strikes / T, guardShare: guardT / T,
+    damageScale: ATTACK_DAMAGE_BY_FORM[formKey] };
   _duel.set(key, r);
   return r;
 }
@@ -416,11 +426,33 @@ export function measureDuel(diffKey, formKey) {
  *  The real capsule set of a real body
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const BUILDERS = {
-  b1: Bodies.buildB1, b2: Bodies.buildB2, trooper: Bodies.buildTrooper,
-  sniper: Bodies.buildTrooper, acolyte: Bodies.buildAcolyte,
-  droideka: Bodies.buildDroideka, walker: Bodies.buildWalker, beast: Bodies.buildBeast,
-};
+/**
+ * THERE IS NO BUILDERS TABLE ANY MORE, AND THAT WAS THE WHOLE PROBLEM.
+ *
+ * This file used to carry a hand-written map of eight `type → builder` pairs
+ * beside `ARCHETYPES`, which has thirty-one entries and already stores each
+ * body's builder on its own record. HANDOFF §2.3's signature defect, and the
+ * most expensive instance of it found so far, because of what the miss did
+ * rather than what it was:
+ *
+ * `capsulesFor` answered a missing builder with `[]`, `engagementFor` reads an
+ * empty capsule set as unreachable, and so **twenty-three of the thirty-one
+ * archetypes were modelled as INVULNERABLE.** Measured share of a wave-20 queue
+ * this harness could not kill: scoria — the shipped default level — **37.1%**,
+ * temple 67.6%, geonosis 51.1%.
+ *
+ * That is why the tuning report printed "median depth 0.00, survived-30 = 0"
+ * for all twelve tier×skill cells and "Δdepth 0.000, helped 0%, hurt 0%" for
+ * all forty boons, and it is why HANDOFF §6.2.4's question — is the whole kit
+ * worth using — was recorded as unanswerable. The instrument was not measuring
+ * a hard game; it was measuring a game a third of whose bodies could not be
+ * hit. Every tuning decision taken against this report was taken blind.
+ *
+ * The archetype's own `build` is now the single authority, so a body added
+ * tomorrow is modelled the day it is authored. And a missing one THROWS rather
+ * than returning empty: a harness that silently reports an enemy as
+ * unkillable is worse than one that refuses to start.
+ */
 
 /**
  * The archetype a queue entry actually spawns, elite included.
@@ -464,9 +496,16 @@ const _caps = new Map();
 export function capsulesFor(entry) {
   if (_caps.has(entry)) return _caps.get(entry);
   const { type, A } = archetypeOf(entry);
-  const build = BUILDERS[type];
+  const build = A?.build;
+  if (typeof build !== 'function') {
+    throw new Error(
+      `balance.mjs cannot build '${type}': ARCHETYPES.${type} has no \`build\`. `
+      + 'Refusing to model it as an empty capsule set, because engagementFor reads '
+      + 'that as unreachable and would report this body as INVULNERABLE — which is '
+      + 'exactly how 23 of 31 archetypes silently voided every tuning run.');
+  }
   let out = [];
-  if (build) {
+  {
     const built = build({ scale: A.scale });
     const rig = built.rig || (built.list ? built : null);
     rig?.root?.updateMatrixWorld?.(true);
@@ -480,9 +519,16 @@ export function capsulesFor(entry) {
     const real = Enemy.prototype.capsules.call(stub);
     let floor = Infinity;
     for (const c of real) floor = Math.min(floor, c.p0.y - c.r, c.p1.y - c.r);
+    // The bone's own declared role travels with the capsule, so nothing
+    // downstream has to guess a leg from its spelling. See limbConsequence.
     out = real.map(c => ({
       name: c.name, r: c.r, len: c.p0.distanceTo(c.p1),
-      toughness: c.toughness, vital: c.vital ?? 0.4, shield: !!c.shield,
+      role: rig?.get?.(c.name)?.role ?? null,
+      topplesAt: toppleAt(A, rig),
+      // No `?? 0.4`: `Enemy.severance` prices every capsule and throws on a
+      // role it has no price for, so a default here would put back exactly the
+      // silence this harness is used to measure the absence of.
+      toughness: c.toughness, vital: c.vital, shield: !!c.shield,
       height: (c.p0.y + c.p1.y) / 2 - (isFinite(floor) ? floor : 0),
     }));
   }
@@ -490,15 +536,35 @@ export function capsulesFor(entry) {
   return out;
 }
 
-/** Enemy._loseLimbBehaviour, in the two forms that matter to a fight. */
-function limbConsequence(A, bone) {
-  if (/thigh|shin|foot|femur|tibia|tarsus/.test(bone)) {
-    const need = (A.custom === 'walker' || A.custom === 'beast') ? 3 : 1;
-    return { legs: 1, topplesAt: need };
-  }
+/**
+ * `Enemy._loseLimbBehaviour`, in the two forms that matter to a fight.
+ *
+ * THE LEG RULE IS CALLED, NOT RESTATED, and it used to be restated. This read
+ * `/thigh|shin|foot|femur|tibia|tarsus/` with a flat 3-or-1 topple threshold —
+ * a copy of what the game did before the rule moved onto `bone.role` and gained
+ * its `chains - 1` cap. The two then disagreed in both directions at once: the
+ * model counted no hip as a leg (the game counts every one), and it asked three
+ * legs of the two-chain bodies the game now takes down on one. A tuning harness
+ * that models a different game from the one it is tuning is worse than no
+ * harness, because its numbers look like measurements.
+ *
+ * So the role comes off the bone the capsule was built from, and the threshold
+ * is `Enemy.toppleAt` — the function the shipped `_toppleAt` itself calls —
+ * evaluated once per body and carried on the capsule beside it.
+ *
+ * STILL RESTATED, and named here rather than left to be found: the disarm rule
+ * and the decapitation rule below are literal copies of the two `if`s that
+ * follow the leg branch in `_loseLimbBehaviour`. They agree with it today. They
+ * are the same §2.4 shape as the leg rule was, and they will go the same way
+ * the first time somebody changes what an arm is worth — the fix is to lift the
+ * classification out of that method as a pure function, which is a refactor of
+ * live combat code and wants its own pass.
+ */
+function limbConsequence(A, cap) {
+  const bone = typeof cap === 'string' ? cap : cap.name;
+  if (cap?.role === 'leg') return { legs: 1, topplesAt: cap.topplesAt };
   if (/arm|fore|hand/.test(bone)) return { disarms: !!(A.ranged || A.saber) };
   if (bone === 'head' || bone === 'neck') return { decapitates: true };
-  if (/leg\d/.test(bone)) return { legs: 1, topplesAt: 2 };     // droideka
   return {};
 }
 
@@ -573,7 +639,7 @@ function _workCapsule(saber, solver, cap, hp, maxHp, speed, power, reach, cadenc
         const d = (ev.dWork / ev.need) * maxHp * GRIND_LETHALITY;
         hp -= d; dealt += d;
       } else if (ev.type === 'cut') {
-        const vital = ev.cap.vital ?? 0.4;
+        const vital = ev.cap.vital;
         const lethal = vital >= 0.9 || (vital >= 0.7 && hp < maxHp * 0.55);
         const d = lethal ? maxHp * 2 : maxHp * vital * 1.15;
         hp -= d; dealt += d; severed = true;
@@ -635,15 +701,74 @@ function memoGet(map, key, make) {
  */
 const q = (v) => (Math.round(v * 100) / 100).toFixed(2);
 
-const _engage = new Map();
+/**
+ * @param guardShare how much of the fight this body spends with its blade
+ *        between you and it — MEASURED off the real DuelBrain, see
+ *        `measureDuel`. Zero for anything that does not carry a saber.
+ *
+ * ── WHY THIS PARAMETER HAD TO EXIST, and it is the largest single defect this
+ * instrument has had ─────────────────────────────────────────────────────
+ *
+ * Without it, `engagementFor` reported the SAME 0.64 seconds to put down a
+ * 28 hp B1, a 200 hp Jedi Sentinel, a 420 hp stalker, a 900 hp beast and a
+ * 460 hp Jedi Master — every one of them "head (decap)" or "hips (kill)" in one
+ * pass. That is not a bug in the cut arithmetic: a lightsaber DOES take a neck
+ * off in one pass and `takeCut` is right about it. The bug is that the model
+ * had no notion of the body DEFENDING ITSELF. It stood every archetype still
+ * and let the player choose its neck.
+ *
+ * The consequence reached all the way out to the headline question. Driven on
+ * the shipped default level, which opens on a single Jedi Sentinel on 13 of 24
+ * seeds, wave 1 measured as costing the player **0.0 hp** and clearing 100% of
+ * the time — so "does the wave-1 boss kill a new player" could not be asked,
+ * because the instrument could not see the boss.
+ *
+ * WHAT THIS MODELS, stated so it can be argued with: a pass that arrives while
+ * the body is in its `guard` phase does not reach the body, so the player's
+ * effective cadence against a duellist is `cadence × (1 − guardShare)`. That is
+ * Enemy.js's own stated answer to Soresu — "bait a swing, then take the
+ * recovery" — as arithmetic. It is the PESSIMISTIC end: `TIER.guardBreak` gives
+ * a player a real way through a raised guard and this does not model it, so a
+ * skilled player beats these numbers. The share itself is not a guess; it is
+ * counted off 240 s of the real brain per form (Soresu 87.9%, Makashi 48.9%,
+ * Djem So 40.2%, Juyo 38.3%, Ataru 24.3%).
+ */
 /**
  * How long the blade needs to NEUTRALISE a body and how long to KILL it — two
  * different numbers, because severing one leg topples a droid and severing one
  * arm disarms a shooter, and both stop it hurting you long before it is dead.
  * A model that only knows hp would miss the whole of that.
+ *
+ * @param opts.only  a predicate on a capsule NAME. When given, the model may
+ *   only reach the bones it admits — every other capsule is treated as out of
+ *   reach, exactly as the `ceiling` filter already treats one that is too high.
+ *
+ *   It exists to answer a question the "best plan" number cannot: *if the only
+ *   thing you can put a blade on is its feet, how long does this take?* That is
+ *   a real question about a six-metre animal — the head is over the ceiling and
+ *   the toes are at eye level — and it is the question the vital table is
+ *   answerable to, because `takeCut` charges a SHARE OF MAXIMUM HEALTH per
+ *   sever. Restricting the capsule set is the whole implementation: everything
+ *   downstream is the same rule, so this cannot disagree with the unrestricted
+ *   number (HANDOFF §2.4).
+ *
+ * @param opts.guardOpen  the player has already EARNED an opening, so no pass
+ *   is turned. The prose under this table has always said the openings are
+ *   unmodelled — "a topple, a grip, a Force shove, a heavy blow or the WINDED
+ *   window … all open the guard outright in the game" — and with a heavy body's
+ *   guard costing `TURNED_CUT` a pass, five turns kill anything, so the guarded
+ *   number is the SAME five or six passes for every body over 1500 kg whatever
+ *   its bones are worth. That makes the guarded column blind to the thing the
+ *   vital table decides. This supplies the input the game computes in
+ *   `_guardOpen()`; it does not restate it.
  */
-export function engagementFor(entry, mods) {
-  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}`;
+/* Declared HERE and not above the doc block: `balance: a memo keyed on a moving
+ * number cannot grow without bound` reads the 34 lines that follow this line and
+ * asserts the bound is in them, so a long comment wedged between a memo and its
+ * own guard is enough to make that check report a leak that is not there. */
+const _engage = new Map();
+export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
+  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}|${opts.onlyKey ?? ''}|${opts.guardOpen ? 'open' : ''}`;
   if (_engage.has(key)) return _engage.get(key);
   if (_engage.size >= MEMO_MAX) _engage.clear();
 
@@ -659,13 +784,17 @@ export function engagementFor(entry, mods) {
    * UNMODELLED is worse than one with a known gap, because the gap is invisible
    * in the ranking.
    */
-  const cadence = measureSwing().attacksPerSec * (mods.attackRate ?? 1);
+  const cadence = measureSwing().attacksPerSec * (mods.attackRate ?? 1)
+    // …and only the openings count against a body that is guarding. See above.
+    * Math.max(0.05, 1 - guardShare);
   const reach = mods.bladeLength;
   const passSpeed = measureSwing().passSpeed;
   // How high a standing player's blade goes, MEASURED off the real controller
   // driving a real authored attack, plus whatever the boons added to the blade.
   const ceiling = measureSwing().reachHeight + (reach - BLADE_REACH_BASE);
-  const caps = capsulesFor(entry).filter(c => !c.shield && c.height - c.r <= ceiling);
+  const caps = capsulesFor(entry)
+    .filter(c => !c.shield && c.height - c.r <= ceiling)
+    .filter(c => !opts.only || opts.only(c.name));
 
   // A shield — a droideka's, or the Shielded elite's bubble — is in front of
   // every bone, and takeCut only DROPS it, so the passes that break it are pure
@@ -679,23 +808,71 @@ export function engagementFor(entry, mods) {
     shieldPasses = r.severed ? passesOf(r.t, cadence) : 12;
   }
 
+  /* ── THE GUARD, AND IT IS NOT ONLY A DUELLIST'S ─────────────────────────
+   *
+   * `Enemy._turnCut` turns a FIGHT-ENDING pass aside while the body's guard is
+   * up, at a cost of `TURNED_CUT` of its maximum health and a lost beat. The
+   * cadence multiplier above models a duellist's blade being IN THE WAY; this
+   * models the turn itself, and the turn is what every body without a blade now
+   * has too — `guardFor` derives it from mass for anything that is not a
+   * duellist (Enemy.js, HIDE_PER_KG).
+   *
+   * Without it this file reported the same 0.64 s for a 28 hp B1, a 420 kg
+   * Nexu, a 1250 hp Reek and a 2200 hp Rancor, because `takeCut` makes any
+   * `vital >= 0.9` capsule instantly lethal and nothing stood between the
+   * player and the neck. That was not a bug in the cut arithmetic — a
+   * lightsaber DOES take a neck off in one pass — it was the model having no
+   * notion of a body defending itself.
+   *
+   * `_fightEnding` is CALLED, not restated: it is the rule that decides which
+   * passes are turned at all, it has three clauses, and a second copy of it
+   * here would be free to disagree with the game (HANDOFF §2.4). Evaluated at
+   * full health, which makes its middle clause — a `vital >= 0.7` bone on a
+   * body already under 55% — false here; that is the conservative direction.
+   *
+   * THE CEILING IS THE GAME'S OWN. A turned pass costs `TURNED_CUT` of maximum
+   * health, so `ceil(1 / TURNED_CUT)` = five turns kill the body outright
+   * however deep its guard is. An AT-TE's twelve and a Rancor's five are the
+   * same fight, which is exactly what stops this being a wall.
+   *
+   * AND IT IS PRICED INTO THE CHOICE OF BONE, which is the part that changes
+   * the fight rather than the number. A killing pass at the neck now costs the
+   * guard first; a leg does not, because severing one is not fight-ending. So
+   * the model discovers "take its legs" against a big animal on its own, from
+   * the rules the game already had, instead of being told.
+   */
+  const guardMax = opts.guardOpen ? 0 : guardFor(A);
+  const maxTurns = Math.ceil(1 / TURNED_CUT);
+  const turnsFor = (cap) => {
+    if (guardMax <= 0) return 0;
+    const ending = Enemy.prototype._fightEnding.call(
+      { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital);
+    return ending ? Math.min(guardMax, maxTurns) : 0;
+  };
+
   // Try every capsule the body offers and keep the best plan, which is what a
   // player learns to do: you do not saw through a B2's chest, you take its arm.
   let best = null;
   for (const cap of caps) {
     const r = workCapsule(cap, maxHp, maxHp, passSpeed, mods.cutPower, reach, cadence, 40);
     if (!isFinite(r.t)) continue;
-    const cons = r.severed ? limbConsequence(A, cap.name) : {};
+    const cons = r.severed ? limbConsequence(A, cap) : {};
     const neutral = r.dead || cons.decapitates
       || (cons.topplesAt === 1 && cons.legs) || cons.disarms;
-    const score = neutral ? r.t : r.t * 2.5;   // a cut that neither kills nor stops it is worth much less
-    if (!best || score < best.score) best = { score, cap, r, cons, neutral };
+    const turns = turnsFor(cap);
+    // Each turned pass is a swing that was thrown and did not land, so it is
+    // one pass at the model's own cadence.
+    const score = (neutral ? r.t : r.t * 2.5) + turns / cadence;
+    if (!best || score < best.score) best = { score, cap, r, cons, neutral, turns };
   }
   if (!best) { const v = { passes: 600, tNeutralise: Infinity, tKill: Infinity, via: 'out of reach' }; _engage.set(key, v); return v; }
 
   // Finish the job: after the first cut the bone is gone, so the rest of the hp
-  // comes off the next-best capsule.
-  let hp = best.r.hp, passes = passesOf(best.r.t, cadence), guard = 0;
+  // comes off the next-best capsule. The turns come off its health first — a
+  // turned pass is not free to the body, which is the whole reason the guard is
+  // a delay and not immunity.
+  let hp = best.r.hp - best.turns * maxHp * TURNED_CUT;
+  let passes = passesOf(best.r.t, cadence) + best.turns, guard = 0;
   const neutralPasses = passes;
   const used = new Set([best.cap.name]);
   while (hp > 0 && guard++ < 10) {
@@ -713,15 +890,20 @@ export function engagementFor(entry, mods) {
   // that never sever is real hp. Fall back to that rate against the best bone.
   if (hp > 0) {
     const g = workCapsule(best.cap, maxHp, maxHp, passSpeed, mods.cutPower, reach, cadence, 240);
-    passes = g.dead ? passesOf(g.t, cadence) : 600;
+    // …plus the turns, which this branch used to drop on the floor: it assigns
+    // rather than adds, so a body whose guard cost four passes and then had to
+    // be ground down was billed for the grind alone.
+    passes = (g.dead ? passesOf(g.t, cadence) : 600) + best.turns;
   }
 
   const out = {
     passes: passes + shieldPasses,
     tNeutralise: timeFor((best.neutral ? neutralPasses : passes) + shieldPasses, cadence),
     tKill: timeFor(passes + shieldPasses, cadence),
-    via: `${shieldCap ? 'shield→' : ''}${best.cap.name}${best.cons.decapitates ? ' (decap)' : best.cons.disarms ? ' (disarm)' : best.cons.topplesAt === 1 ? ' (topple)' : best.r.dead ? ' (kill)' : ''}`,
+    via: `${shieldCap ? 'shield→' : ''}${best.turns ? `guard×${best.turns}→` : ''}${best.cap.name}${best.cons.decapitates ? ' (decap)' : best.cons.disarms ? ' (disarm)' : best.cons.topplesAt === 1 ? ' (topple)' : best.r.dead ? ' (kill)' : ''}`,
     cuts: used.size,
+    turns: best.turns,
+    guardMax,
   };
   _engage.set(key, out);
   return out;
@@ -1005,13 +1187,35 @@ export function boonChannels(boon) {
  *  WAVE COMPOSITION — the real director
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const _stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set() };
+/**
+ * THE LEVEL ITSELF, not only its pool — and the stub is per level, not shared.
+ *
+ * `WaveDirector.sideFor` reads `world.level.armies` to decide whose push a wave
+ * is. One stub world with a pool and no level therefore composed a Geonosis
+ * that mixes Republic and Confederate bodies in one wave, which is the game as
+ * it was before the factions landed and is not the game any more. `tools/trace.mjs`
+ * had the identical defect and it is the instrument the mixing was *found*
+ * with, so it was fixed there first; this is the second call site, and a
+ * harness that restates half a rule disagrees with it eventually (§2.4).
+ *
+ * It was also a single shared object across every level, which is the thing
+ * that made it easy to miss: one `_stubWorld` cannot carry ten levels, so the
+ * only field it could safely hold was none.
+ */
+const _stubs = new Map();
+const stubWorldFor = (L) => {
+  if (!_stubs.has(L)) {
+    _stubs.set(L, { enemies: [], player: null, terrain: null, settings: {},
+      takenBoons: new Set(), scene: null, level: L });
+  }
+  return _stubs.get(L);
+};
 const _pool = new Map();
 function compositionPool(levelKey, wave, mode = 'roguelite') {
   const key = `${levelKey}|${wave}|${mode}`;
   if (_pool.has(key)) return _pool.get(key);
   const L = LEVELS[levelKey] || LEVELS[LEVEL_ORDER[0]];
-  const d = new WaveDirector(_stubWorld, { mode, pool: L.pool });
+  const d = new WaveDirector(stubWorldFor(L), { mode, pool: L.pool });
   const out = [];
   for (let i = 0; i < MODEL.poolPerWave; i++) {
     d.wave = wave;
@@ -1023,7 +1227,7 @@ function compositionPool(levelKey, wave, mode = 'roguelite') {
 }
 
 export function budgetFor(wave) {
-  return new WaveDirector(_stubWorld, {}).budgetFor(wave);
+  return new WaveDirector(stubWorldFor(LEVELS[LEVEL_ORDER[0]]), {}).budgetFor(wave);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1104,7 +1308,9 @@ export function simulateRun(opts) {
     p.world.enemies = alive;
     let qi = 0, spawnTimer = 0, t = 0, killed = 0;
     const hpAtStart = p.hp;
-    let engaged = null, phase = 'travel', phaseT = 0;
+    // `travelNeed` is how long the engagement's travel phase lasts, SNAPSHOT
+    // when the target is picked — see the note at its only reader.
+    let engaged = null, phase = 'travel', phaseT = 0, travelNeed = 0;
     const maxAlive = 26;   // WaveDirector's own default
 
     while ((qi < total || alive.length) && p.alive) {
@@ -1134,9 +1340,20 @@ export function simulateRun(opts) {
       if (qi < total && alive.length < maxAlive && spawnTimer <= 0) {
         const entry = queue[qi++];
         const { A } = archetypeOf(entry);
-        const form = A.saber ? FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)] : null;
+        /**
+         * ITS OWN FORM WHEN IT DECLARES ONE, and a die only when it does not.
+         *
+         * Enemy.js's note is explicit that the four Jedi were given declared
+         * forms so a player could learn "that is Djem So, it commits hard,
+         * punish the recovery" — and rolling a die here made the harness blind
+         * to exactly that: a Sentinel measured as Ataru three times in five,
+         * and Soresu is the form that changes the answer most (87.9% guard
+         * against Ataru's 24.3%).
+         */
+        const form = A.saber ? (A.form || FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)]) : null;
+        const guard = form ? measureDuel(difficulty, form).guardShare : 0;
         alive.push({
-          entry, A, form, hp: A.hp,
+          entry, A, form, guard, hp: A.hp,
           // A droideka's own 260, or the Shielded elite's SHIELD_HP share of hp.
           shield: A.shield ? 260 : (A.elite === 'shielded' ? A.hp * 2.2 : 0),
           neutral: false, arm: armTime(entry, diff, level), auto: 0,
@@ -1144,7 +1361,7 @@ export function simulateRun(opts) {
           // has to have one. Its distance is the band it actually holds.
           position: new THREE.Vector3((A.preferred[0] + A.preferred[1]) / 2, 0, 0),
           dead: false,
-          eng: engagementFor(entry, mods),
+          eng: engagementFor(entry, mods, guard),
           close: closeTime(entry, mods),
           // Cached on the body rather than looked up per step: the inner loop
           // runs a million times a run and a Map key built from three strings
@@ -1161,14 +1378,17 @@ export function simulateRun(opts) {
         // Fury and Juyo move cutPower and moveSpeed as the fight goes; re-read
         // them whenever a new body is picked rather than once at wave start.
         mods = modsOf(p);
-        for (const e of alive) { e.eng = engagementFor(e.entry, mods); e.close = closeTime(e.entry, mods); }
+        for (const e of alive) { e.eng = engagementFor(e.entry, mods, e.guard); e.close = closeTime(e.entry, mods); }
         let best = Infinity;
         for (const e of alive) {
           if (e.hp <= 0) continue;
-          const cost = e.close + e.eng.tKill;
+          const cost = (e.A.melee ? Math.max(e.close, e.arm) : e.close) + e.eng.tKill;
           if (cost < best) { best = cost; engaged = e; }
         }
         phase = 'travel'; phaseT = 0;
+        /* CAPTURED HERE, and that is the whole of the fix below. */
+        travelNeed = engaged
+          ? (engaged.A.melee ? Math.max(engaged.close, engaged.arm) : engaged.close) : 0;
       }
 
       /* ── blade work ── */
@@ -1176,7 +1396,45 @@ export function simulateRun(opts) {
       if (engaged) {
         phaseT += dt;
         if (phase === 'travel') {
-          if (phaseT >= engaged.close) { phase = 'cut'; phaseT = 0; }
+          /**
+           * A BODY YOU HAVE NOT REACHED HAS NOT REACHED YOU EITHER.
+           *
+           * `armTime` charges an enemy the whole walk in from the spawn ring —
+           * 7.6 s for a Sentinel on the shipped default level — while
+           * `closeTime` charges the player only the last couple of metres from
+           * the body's own preferred band. That is the same distance billed to
+           * one side and not the other, and against a MELEE opener it is the
+           * whole answer: the player was modelled as standing in the body's
+           * face from frame one and killing it before its clock had started.
+           * Measured on scoria, which opens on a single 200 hp Jedi Sentinel on
+           * 13 of 24 seeds, wave 1 cost the player 0.0 hp.
+           *
+           * Contact is ONE event. A melee body's own arm clock is therefore the
+           * floor on when the player can begin cutting it. This is the
+           * pessimistic reading — a player running at it meets it sooner than
+           * either clock alone says — and it is the one that removes the bias
+           * rather than the one that flatters the player.
+           *
+           * ── AND THE FLOOR WAS EXACTLY HALF WHAT THAT SAYS ────────────────
+           *
+           * `e.arm` is a COUNTDOWN. The incoming loop below runs `e.arm -= dt`
+           * on every body every tick, so this line compared a clock counting UP
+           * from zero against a clock counting DOWN to it, and they meet in the
+           * middle: the player began cutting at `arm / 2`, not at `arm`.
+           *
+           * That is HANDOFF §2.4 wearing the comment above as a disguise — the
+           * rule is stated correctly three lines up and the arithmetic does
+           * something else, and it fails in the direction nobody checks,
+           * because it flatters the player. Measured on the Colosseum's wave-1
+           * opener at Knight: the Nexu's arm clock is 4.16 s and it dies at
+           * 3.36 s, so it never attacked once in 24 seeds at three tiers and
+           * the wave cost 0.0 hp — the identical symptom the note above says
+           * was fixed, still there, one line under the fix.
+           *
+           * `travelNeed` is the same quantity captured when the engagement
+           * begins, which is what the note always described.
+           */
+          if (phaseT >= travelNeed) { phase = 'cut'; phaseT = 0; }
         } else if (canSwing) {
           if (phaseT >= engaged.eng.tNeutralise) engaged.neutral = true;
           if (phaseT >= engaged.eng.tKill) {
@@ -1709,7 +1967,8 @@ export function rampReport(cfg) {
     rows.push([w, b, d, prevD === null ? '' : (d - prevD).toFixed(0),
       mean(counts).toFixed(1), mean(elites).toFixed(1), mean(threat).toFixed(1),
       mean(hpSum).toFixed(0), mean(dps).toFixed(1),
-      new WaveDirector(_stubWorld, { pool: (LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]).pool })
+      new WaveDirector(stubWorldFor(LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]),
+        { pool: (LEVELS[cfg.level] || LEVELS[LEVEL_ORDER[0]]).pool })
         .unlockedAt(w).filter((x, i, a) => a.indexOf(x) === i).join(' ')]);
     prevD = d; prev = b;
   }
@@ -1755,9 +2014,35 @@ export function offenceReport() {
   out.push('');
   const mods = modsOf(makePlayer());
   const rows = [];
+  /* `BUILDERS[type]` — and this whole section threw a ReferenceError on it.
+   *
+   * The hand-written `type → builder` table was deleted when the archetype's
+   * own `build` became the authority (see `capsulesFor`), and these two lines
+   * were the last readers of it. Nothing caught that, because THE ONLY CALLER
+   * IS `main()`: `offenceReport` is not exercised by any check, so the section
+   * that prints time-to-kill per body — the one number this whole file exists
+   * to produce — has been dead since the table went. `--only=blade` crashed on
+   * line one of the table. It is the same defect the deleted table was: a
+   * second copy of something the archetype already knows. */
+  const buildable = (A) => typeof A.build === 'function';
+  /* THE SAME GUARD SHARE THE SIMULATION USES, and this table did not have it.
+   *
+   * `simulateRun` passes `measureDuel(...).guardShare` into `engagementFor`;
+   * this table called it with the default 0. So the row a reader reaches for —
+   * "how long does a Sentinel take" — printed 0.64 s while every run in the
+   * same report was fighting one that took 8. A table beside a simulation that
+   * disagrees with it is worse than no table.
+   *
+   * Knight is the reference tier, and a body that declares no form is given the
+   * MEAN share across the five rather than a die roll, so the table is
+   * deterministic. `simulateRun` rolls, deliberately; a report does not.
+   */
+  const meanGuard = FORM_KEYS.reduce((a, f) => a + measureDuel('knight', f).guardShare, 0) / FORM_KEYS.length;
+  const guardShareOf = (A) => (A.saber
+    ? (A.form ? measureDuel('knight', A.form).guardShare : meanGuard) : 0);
   for (const [type, A] of Object.entries(ARCHETYPES)) {
-    if (A.training || !BUILDERS[type]) continue;
-    const e = engagementFor(type, mods);
+    if (A.training || !buildable(A)) continue;
+    const e = engagementFor(type, mods, guardShareOf(A));
     rows.push([type, A.hp, A.threat, e.via, e.passes,
       isFinite(e.tNeutralise) ? e.tNeutralise.toFixed(2) : '—',
       isFinite(e.tKill) ? e.tKill.toFixed(2) : '—',
@@ -1768,10 +2053,11 @@ export function offenceReport() {
   for (const key of Object.keys(MODIFIERS)) {
     for (const type of Object.keys(ARCHETYPES)) {
       const A = ARCHETYPES[type];
-      if (A.training || !BUILDERS[type] || !MODIFIERS[key].allow(A)) continue;
+      if (A.training || !buildable(A) || !MODIFIERS[key].allow(A)) continue;
       const entry = `${type}|${key}`;
-      const e = engagementFor(entry, mods);
-      const EA = archetypeOf(entry).A;
+      const EA0 = archetypeOf(entry).A;
+      const e = engagementFor(entry, mods, guardShareOf(EA0));
+      const EA = EA0;
       rows.push([entry, Math.round(EA.hp), EA.threat.toFixed(1), e.via, e.passes,
         isFinite(e.tNeutralise) ? e.tNeutralise.toFixed(2) : '—',
         isFinite(e.tKill) ? e.tKill.toFixed(2) : '—',
@@ -1784,6 +2070,21 @@ export function offenceReport() {
   out.push('  "stop" is when it can no longer hurt you — dead, toppled by a severed leg,');
   out.push('  or disarmed by a severed arm. Those are real Enemy behaviours and they are');
   out.push('  most of what the blade is for; a model that only knew hp would miss them.');
+  out.push('');
+  out.push('  "guard×N→" in the middle column is Enemy._turnCut: N fight-ending passes');
+  out.push('  this body turns aside before one lands, derived by `guardFor` from hp for a');
+  out.push('  duellist and from MASS for anything without a blade. A pass it turns still');
+  out.push(`  costs it ${(TURNED_CUT * 100).toFixed(0)}% of maximum health, so ${Math.ceil(1 / TURNED_CUT)} turns kill it however deep the guard`);
+  out.push('  is — which is why the AT-TE\'s twelve and the Rancor\'s five are one fight.');
+  out.push('  Where the column names a LEG instead of a neck, the model found the guard');
+  out.push('  cheaper to go around than through; that is the intended answer to a big');
+  out.push('  animal and it was derived, not authored.');
+  out.push('');
+  out.push('  PESSIMISTIC, and stated so it can be argued with: none of the OPENINGS are');
+  out.push('  modelled. A topple, a grip, a Force shove, a heavy blow or the WINDED');
+  out.push('  window an animal enters after taking 14% of its health quickly all open the');
+  out.push('  guard outright in the game, and a player who earns one skips every');
+  out.push('  remaining turn. So these are the times for a player who only swings.');
   out.push('');
   const drows = [];
   for (const dk of DIFF_KEYS) {
@@ -1852,7 +2153,7 @@ async function main() {
   const t0 = Date.now();
 
   console.log('');
-  console.log('  SABER — BALANCE. Every depth below is MODEL-DEPTH under one fixed');
+  console.log('  BATTLEFRONT BORZ — BALANCE. Every depth below is MODEL-DEPTH under one fixed');
   console.log('  model of a player (see the header of tools/balance.mjs). Compare the');
   console.log('  rows to each other; do not read a row as a prediction about a human.');
 

@@ -1,5 +1,5 @@
 /**
- * SABER — every sentence this game says about itself, against what it does.
+ * BATTLEFRONT BORZ — every sentence this game says about itself, against what it does.
  *
  * The owner's complaint, six times over in different words: "pointed out
  * repeatedly and missed every time", "changes nothing", "never observed; verify
@@ -57,9 +57,8 @@ import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Player } from '../../src/game/Player.js';
 import { Enemy, enemyRng, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BOONS, ATTUNEMENTS, MODES, rankScale, maxRank, WaveDirector, seedWaves,
-  sandboxUnits } from '../../src/game/Waves.js';
+  sandboxUnits, DUEL_RUNG, DUEL_MAX } from '../../src/game/Waves.js';
 import { LESSONS } from '../../src/game/Dojo.js';
-import { DESCENT } from '../../src/game/Run.js';
 import { DIFFICULTY, OPEN_STATES, openState, openMul, openness,
   BladeContactSolver, TOUGHNESS, SPEED_GRADE } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
@@ -726,7 +725,6 @@ export async function run({ check, assert }) {
     const rows = [];
     const claims = [
       ['training blurb', MODES.training.blurb, 'lessons', LESSONS.length],
-      ['the Descent blurb', MODES.gauntlet.blurb, 'rungs', DESCENT.length],
       ['the cut lesson', LESSONS.find((l) => l.id === 'cut').hint, 'limbs',
         LESSONS.find((l) => l.id === 'cut').need],
     ];
@@ -836,37 +834,64 @@ export async function run({ check, assert }) {
     return `wave ${wave}, one blade → four: ${rows.join(', ')}`;
   });
 
-  check('claims: the Duel mode blurb is the roster the director composes', () => {
+  check('claims: the Duel mode blurb is the ladder the director composes', () => {
     /**
-     * "Acolytes only. No blasters, no crowd. Just blades." — three claims, and
-     * the first two are checkable against the shipped `_compose`. Driven across
-     * thirty waves of a real WaveDirector in duel mode, which is also where the
-     * elite promotion lives, so an elite variant that turned an acolyte into a
-     * shooter would fail here.
+     * "No blasters, no crowd. A ladder of duellists — a new form every 3 waves,
+     * and a master at the top." Four claims, and every one of them is
+     * checkable against the shipped `_compose`.
      *
-     * The archetype names are parsed out of the blurb the same way the counts
-     * check parses its numbers: the sentence names one archetype and the roster
-     * has to be that archetype and nothing else.
+     * THIS CHECK USED TO ASSERT THE OPPOSITE, and the reason is worth keeping.
+     * The blurb said "Acolytes only", the mode composed acolytes only, and this
+     * check parsed the noun out of the sentence and pinned the roster to it. It
+     * passed for the whole life of the mode and it was measuring a defect:
+     * `Duel.js` is a thousand lines of blade-lock, chambering and five authored
+     * FORMS, and sixty waves over twelve seeds fielded fifteen distinct
+     * compositions and ONE enemy type. A check can only ever hold a claim to
+     * what it says; it cannot notice that the claim is small.
+     *
+     * So the claims are now about the SHAPE — no blasters, more than one body,
+     * a rung cadence, a boss — and each is read off the sentence rather than
+     * typed here a second time.
      */
-    const said = /^(\w+)s only/i.exec(MODES.duel.blurb);
-    assert(said, `the Duel blurb no longer names a roster: "${MODES.duel.blurb}"`);
-    const want = said[1].toLowerCase();
+    const blurb = MODES.duel.blurb;
+    assert(/no blasters/i.test(blurb), `the Duel blurb no longer promises "no blasters": "${blurb}"`);
+    assert(/no crowd/i.test(blurb), `the Duel blurb no longer promises "no crowd": "${blurb}"`);
+    const rung = /every (\d+) waves?/i.exec(blurb);
+    assert(rung, `the Duel blurb no longer states a rung cadence: "${blurb}"`);
+    assert(Number(rung[1]) === DUEL_RUNG,
+      `the blurb says a new form every ${rung[1]} waves and DUEL_RUNG is ${DUEL_RUNG}`);
+
     seedWaves(4242, 0);
     const d = new WaveDirector(gameWorld(), { mode: 'duel' });
     const seen = new Set();
+    const bosses = new Set();
     let most = 0;
     for (let w = 1; w <= 30; w++) {
       d.wave = w;
       d._compose();
       most = Math.max(most, d.spawnQueue.length);
-      for (const entry of d.spawnQueue) seen.add(String(entry).split('|')[0]);
+      for (const entry of d.spawnQueue) {
+        const t = String(entry).split('|')[0];
+        seen.add(t);
+        if (ARCHETYPES[t].boss) bosses.add(t);
+        // "no blasters" — nothing the ladder fields may shoot, elite or not.
+        assert(!ARCHETYPES[t].ranged && !ARCHETYPES[t].fireRate,
+          `the Duel blurb says "no blasters" and it fielded a ${t}, which fires`);
+        // "just blades" — everything on the ladder carries one.
+        assert(ARCHETYPES[t].saber, `the Duel ladder fielded a ${t}, which has no saber`);
+      }
     }
-    assert(seen.size === 1 && seen.has(want),
-      `the Duel blurb says "${said[0]}" and thirty waves composed ${[...seen].join(', ')}`);
-    // "no blasters" — the archetype it fields must not be one that shoots
-    assert(!ARCHETYPES[want].ranged && !ARCHETYPES[want].fireRate,
-      `the Duel blurb says "no blasters" and a ${want} fires`);
-    return `30 waves of Duel: only ${[...seen].join(', ')}, never more than ${most} at once, no ranged archetype`;
+    // "a ladder", not a stack of one body. This is the claim the old check
+    // could not make, and it is the one that was false.
+    assert(seen.size >= 4,
+      `thirty waves of Duel fielded ${seen.size} archetype(s): ${[...seen].join(', ')} — a ladder has rungs`);
+    // "a master at the top" — the boss rungs field something the ladder itself
+    // never offers, which is what `setPieceOnly` means.
+    assert(bosses.size >= 1, 'thirty waves of Duel never fielded a boss duellist');
+    // "no crowd" — it is still a duel.
+    assert(most <= DUEL_MAX, `a Duel wave fielded ${most} bodies against a stated ceiling of ${DUEL_MAX}`);
+    return `30 waves of Duel: ${seen.size} duellists (${[...seen].join(', ')}), `
+      + `bosses ${[...bosses].join(', ')}, never more than ${most} at once, no ranged archetype`;
   });
 
   check('claims: the coach\'s colours and answers are the game\'s colours and answers', () => {

@@ -1,5 +1,5 @@
 /**
- * SABER — enemies.
+ * BATTLEFRONT BORZ — enemies.
  *
  * Everything here respects the same rules the player does: real limbs on a
  * real skeleton, real ragdolls, real cuts wherever the blade crossed. A droid
@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
+  buildJedi, bodyOptsFor, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
@@ -24,6 +24,7 @@ import { TOUGHNESS, bladesTouching } from './Combat.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
+import { POWER_COST } from './Powers.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -146,6 +147,10 @@ const _hit = new THREE.Vector3();
 /* Its own temp, so a stagger direction can be built inside damage() and
  * takeCut() without stepping on whatever _v1 was holding for the caller. */
 const _stag = new THREE.Vector3();
+/** `applyKnockback` scales the caller's impulse when the body resists it, and
+ *  the caller's vector is usually somebody else's scratch — so it copies into
+ *  its own rather than writing through a Player's `_v2`. */
+const _res = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 /** The pitch axis for a body already yawed to `facing` — see _poseWalker. */
@@ -194,7 +199,7 @@ let _enemyId = 1;
  *              stand   strafe   dodge   retreat
  *   sweep      100%      0%       0%       0%     footwork, any direction
  *   lunge      100%      0%       0%       0%     footwork, any direction
- *   charge     100%    100%     100%     100%     nothing: it commits and hits
+ *   charge     100%      0%     100%       0%     break AT the commit
  *   SLAM       100%    100%     100%       0%     ONLY distance
  *   POUNCE     100%      0%      95%       0%     only a LATE break
  *
@@ -202,6 +207,20 @@ let _enemyId = 1;
  * has learned to circle a claw at knife range is caught by every slam, and a
  * player who has learned to break early on a telegraph is caught by every
  * pounce. Two creatures on the sand at once cannot be answered with one habit.
+ *
+ * ── AND EVERY ROW OF IT HAS TO HAVE A NUMBER UNDER 100%. The charge's row read
+ * `100% 100% 100% 100%`, captioned "nothing: it commits and hits", and the gore
+ * was the same blow with a tell on it — 100% at every speed a player can
+ * produce, up to 30 m/s. An attack no input answers is not difficulty; it is
+ * the 11.5 m sphere this whole table was written to replace, wearing the
+ * telegraph of the thing that replaced it. The rule those two now obey, and the
+ * only rule the shapes above are measured against, is that the interval between
+ * the LAST aim update (`aimUntil`, or the top of the wind-up) and the resolve
+ * (`hit[0]`) has to be long enough for movement the player actually has to
+ * carry them out of `reach × scale` — walk 4.6 m/s, sprint 7.45, dash 15.5 for
+ * 0.24 s. `tools/checks/dodgeable.mjs` derives that from this table, from the
+ * archetypes that own each move, and from a real Player it drives to find those
+ * three paces; it does not transcribe any of them.
  */
 export const BEAST_MOVES = {
   lunge: {
@@ -215,9 +234,30 @@ export const BEAST_MOVES = {
     reach: 1.15, damage: 0.85, lift: 0.9,
     pose: { rise: 1.0, up: 0.55, fall: 0.30, pitch: -0.42 },
   },
+  /**
+   * THE CHARGE — and it used to resolve on the frame it aimed.
+   *
+   * `aimUntil: 0.65` beside `hit: [0.65, …]` is a ZERO-SECOND window: the point
+   * is fixed and the horn arrives on the same frame, so there is no interval in
+   * which any movement can carry a body out of a 2.04 m footprint. Measured
+   * end to end through `_beastBrain` against a target breaking away on the
+   * first frame of the wind-up: 100% at every speed from a standstill to
+   * 30 m/s. The table above described that as "nothing: it commits and hits",
+   * which is a defect with a caption on it — the game draws a plant, a roar,
+   * a body wind-up and a floating CHARGE for a blow no input answers.
+   *
+   * The re-aim is the point of the move and it is KEPT: run away during the
+   * telegraph and the charge simply follows you, which is what makes it the
+   * answer to a runner and not a second claw. What it has now is half a second
+   * between the commit and the impact — the horn lands when the RUN arrives,
+   * about 3.7 m into the drive, instead of 0.18 m into it, so the moment the
+   * animal reaches you is also the moment it hurts you. A player who breaks
+   * when the drive begins clears the footprint at a walk; one who broke early
+   * and stopped is exactly who it is for. See `tools/checks/dodgeable.mjs`.
+   */
   charge: {
     unlock: 3, aim: 'drive', aimUntil: 0.65, plant: 0.65,
-    drive: [0.65, 1.9, 30], dust: true, hit: [0.65, 1.9], done: 1.9,
+    drive: [0.65, 1.9, 30], dust: true, hit: [1.15, 1.9], done: 1.9,
     reach: 0.85, damage: 1.3, lift: 0.8, roar: 0.9, call: 'CHARGE',
     pose: { rise: 0.7, up: 0.65, fall: 0.35, pitch: -0.34 },
   },
@@ -232,9 +272,16 @@ export const BEAST_MOVES = {
    * only way out of it is out. A 0.95 s wind-up is the longest in the file and
    * it has to be: at a sprint that is about eight metres of ground, and an
    * escape that is not achievable is not an escape.
+   *
+   * `unlock: 1`, AND THE ARCHETYPE ALREADY SAID SO. src/game/Levels.js states
+   * it in its own words — "`slam` unlocks at phase 1 — it is not a reward for
+   * hurting the animal, it is the first thing it does and the thing the player
+   * has to learn" — and this line said 2, so a Rancor at full health declared
+   * 10 lunges and zero slams over 30 s. The move the whole archetype is built
+   * around could not be seen until a third of a 2200 hp animal was gone.
    */
   slam: {
-    unlock: 2, aim: 'self', plant: 0.95, hit: [0.95, 1.15], done: 1.7,
+    unlock: 1, aim: 'self', plant: 0.95, hit: [0.95, 1.15], done: 1.7,
     reach: 2.05, damage: 1.15, lift: 1.5, shake: 1.0, roar: 1.1, quake: true,
     call: 'SLAM', callColor: '#ffb03a',
     // rears its whole front end up, then throws it down — the biggest travel
@@ -244,18 +291,128 @@ export const BEAST_MOVES = {
   },
 
   /**
+   * ── THE FIVE VERBS THE BODY PLANS ADDED ──────────────────────────────
+   *
+   * "They all attack the same way", and the table said so: of the five
+   * creatures, THREE (the acklay, the reek, the nexu) declared no move set at
+   * all and took `DEFAULT_BEAST_MOVES` — the same lunge, sweep and charge —
+   * and the other two shared `lunge` with them. Five animals, three verbs,
+   * one of them on all five.
+   *
+   * Each of the five below is a verb some ANATOMY affords, which is why they
+   * are declared beside the body plan that performs them (CREATURE_PLANS in
+   * src/game/Bodies.js) rather than beside the health bar:
+   *
+   *   GORE     a metre of horn carried in front of the eyes, driven at you in
+   *            a committed run. Like the charge it aims when the drive
+   *            begins, so running does not answer it; unlike the charge it
+   *            drops its head first, which is a tell you can read from behind.
+   *   TOSS     the same horn hooking UNDER you. The only attack in the game
+   *            whose answer to "I am in front of it" is height rather than
+   *            damage: `lift` 2.4 against everything else's 0.5–1.5, so the
+   *            impulse is almost vertical and where you land is your problem.
+   *   RAKE     a cat's forepaw, twice. The shortest wind-up in the file at
+   *            0.32 s against the sweep's 0.55, for two thirds of the damage:
+   *            what makes it dangerous is that it arrives before you have
+   *            finished reading it, and it comes round again fastest.
+   *   STAB     a spindly foreleg driven out from 3.8 m — further than
+   *            anything else can reach and further than the player's own
+   *            blade, which is the acklay's whole problem statement.
+   *   SNATCH   mandibles closing and DRAGGING. `pull` makes the impulse point
+   *            at the animal instead of away from it, and it is the only one
+   *            in the file that does: every other blow in the game solves the
+   *            player's problem by putting distance between you.
+   */
+  /**
+   * THE GORE — sold as the answerable one, and it was not.
+   *
+   * `aimUntil: 0.5` against `hit: [0.6, …]` left a tenth of a second to leave a
+   * 2.16 m footprint: 21.6 m/s of sustained movement, where the player's walk
+   * is 4.6, the sprint 7.45 and the dash 15.5 for a quarter of a second.
+   * Measured through `_beastBrain` against a target breaking away on the first
+   * frame of the wind-up, it landed 100% at 0, 4.6, 7.45, 11 and 15.5 m/s —
+   * and a Reek dealt the SAME 18.73 hp/s to a stationary, a retreating, a
+   * strafing and a dashing player, to two decimals. Gore is the Reek's only
+   * phase-1 move, so it is the first thing a Colosseum player ever meets.
+   *
+   * The tell was never the problem: the head drops, the body goes low, a roar
+   * plays and GORE floats over it. What was missing is the INTERVAL the tell is
+   * advertising. The impact is at 1.0 s now — half a second after the aim is
+   * fixed, half a second into a 36 m/s² run — so the horn arrives with the
+   * animal instead of before it has moved, and the half second is walkable.
+   */
+  gore: {
+    unlock: 1, aim: 'drive', aimUntil: 0.5, plant: 0.5,
+    drive: [0.5, 1.5, 36], dust: true, hit: [1.0, 1.5], done: 1.6,
+    reach: 0.9, damage: 1.35, lift: 1.0, roar: 1.0, call: 'GORE', callColor: '#ff8a3a',
+    // head DOWN and body low through the wind-up, then it runs
+    pose: { rise: -0.70, up: 0.50, fall: 0.45, pitch: -0.72 },
+  },
+  toss: {
+    /* Phase 1 beside the gore. The Reek's whole first phase was ONE move on a
+     * 2.4 s loop — measured, 11 gores and nothing else over 30 s at full health
+     * — and phase 1 is the longest phase of the fight. The pair is chosen for
+     * having different answers rather than for filling a slot: the gore fixes
+     * its aim when the drive begins, so it is answered by breaking AT the
+     * commit, and the toss fixes its aim at the top of the wind-up, so it is
+     * answered by footwork DURING the telegraph. Two verbs, two moments. */
+    unlock: 1, aim: 'windup', plant: 0.35, hit: [0.70, 1.00], done: 1.35,
+    reach: 1.00, damage: 0.85, lift: 2.4, shake: 1.1, roar: 0.85,
+    call: 'TOSS', callColor: '#ffd24a',
+    // hooks upward: the longest rise of anything that is not the slam
+    pose: { rise: 1.25, up: 0.70, fall: 0.16, pitch: -0.50 },
+  },
+  rake: {
+    unlock: 1, aim: 'windup', plant: 0.18, hit: [0.32, 0.55], done: 0.75,
+    reach: 0.72, damage: 0.62, lift: 0.35,
+    /* It DROPS rather than rears, which is a cat gathering its shoulders, and
+     * it has to: a rake that rose would be the charge's curve at 6/7 the
+     * height — measured 79 mm apart at their widest against the 80 the wind-up
+     * check requires, which is two attacks with one telegraph. */
+    pose: { rise: -0.45, up: 0.32, fall: 0.10, pitch: -0.33 },
+  },
+  stab: {
+    unlock: 1, aim: 'windup', plant: 0.30, hit: [0.62, 0.85], done: 1.05,
+    reach: 1.30, damage: 1.10, lift: 0.5, roar: 0.7, call: 'STAB', callColor: '#8affc4',
+    /* Short and early: the body gathers, drops back to rest, and THEN the leg
+     * goes out. Against the sweep's slow full rear over the same window the
+     * two were 75 mm apart, and a spear that looks like a claw is not a
+     * different attack. */
+    pose: { rise: 0.55, up: 0.40, fall: 0.10, pitch: -0.26 },
+  },
+  snatch: {
+    /* Phase 1 beside the stab, for the reason the toss is: the Acklay declared
+     * 11 stabs and nothing else over 30 s at full health. The pair is a RANGE
+     * pair rather than a timing one — the stab reaches 3.77 m, further than the
+     * player's own blade, and the snatch reaches 2.32 m and DRAGS you in, so
+     * the two want opposite standing distances and the animal punishes whichever
+     * one you have settled into. The sweep is still what phase 2 buys. */
+    unlock: 1, aim: 'windup', plant: 0.45, hit: [0.68, 0.92], done: 1.20,
+    reach: 0.80, damage: 1.25, lift: 0.25, pull: true, shake: 0.9, roar: 0.8,
+    call: 'SNATCH', callColor: '#ff6a52',
+    // ducks, then throws the head forward — the mirror of the toss
+    pose: { rise: -0.95, up: 0.45, fall: 0.22, pitch: 0.34 },
+  },
+
+  /**
    * THE POUNCE — twelve metres, off the ground, and it commits at the LAUNCH.
    *
-   * The charge already answers a runner, but it answers by being unanswerable:
-   * it re-aims and resolves on the same frame, which measured 100% against
-   * every evasion the harness has. The pounce commits its landing point at
-   * 0.55 s and does not arrive until 0.95, so there IS a window — 0.4 s of it —
-   * and it is at the END of the telegraph rather than the beginning. A player
-   * who breaks on the first frame of the wind-up has been standing still again
-   * by the time this lands.
+   * The charge answers a runner by re-aiming until its drive begins. The pounce
+   * commits its landing point as it gathers to leave the ground and does not
+   * arrive until 0.95, so the window is at the END of the telegraph rather than
+   * the beginning: a player who breaks on the first frame of the wind-up has
+   * been standing still again by the time this lands.
+   *
+   * THE COMMIT IS AT 0.50 AND NOT 0.55, which is 50 ms and the difference
+   * between a window and a claim of one. At 0.55 the interval was 0.40 s — 1.84 m
+   * of walking against the Gundark's own 2.00 m footprint — so the late break
+   * this move exists to teach only worked at a sprint, while the note here said
+   * a window existed. It is 0.45 s now, which a walk clears with 7 cm to spare
+   * and a sprint clears by half again. Measured in `tools/checks/dodgeable.mjs`
+   * against the real player pace, not asserted here.
    */
   pounce: {
-    unlock: 1, aim: 'launch', aimUntil: 0.55, plant: 0.55,
+    unlock: 1, aim: 'launch', aimUntil: 0.50, plant: 0.55,
     drive: [0.55, 0.95, 58], hit: [0.95, 1.15], done: 1.45,
     reach: 1.0, damage: 1.25, lift: 1.1, roar: 0.8, call: 'POUNCE', callColor: '#ff9a3a',
     // coils right down, then extends: the deepest crouch of any of them
@@ -263,8 +420,35 @@ export const BEAST_MOVES = {
   },
 };
 
-/** What a creature that does not name its own attacks can do — the shipped three. */
+/** What a creature with neither a declared set nor a body plan can do. */
 export const DEFAULT_BEAST_MOVES = ['lunge', 'sweep', 'charge'];
+
+/**
+ * WHICH ATTACKS THIS CREATURE HAS — one function, and everything calls it.
+ *
+ * There are two authorities and they are ordered, not merged:
+ *
+ *   1. the ARCHETYPE. `A.moves` is a level designer saying what this creature
+ *      does; the rancor's slam and the gundark's pounce are argued for in
+ *      src/game/Levels.js and win here.
+ *   2. the BODY PLAN. A creature that declares none gets the verbs its
+ *      ANATOMY affords — `built.moves`, off CREATURE_PLANS in
+ *      src/game/Bodies.js, beside the horns and the mandibles that make them
+ *      possible. That is how the reek, the nexu and the acklay stop sharing
+ *      one move set without their archetypes being touched.
+ *
+ * `DEFAULT_BEAST_MOVES` is the floor under both, and after this pass nothing
+ * in the shipped roster reaches it.
+ *
+ * It is exported because the checks need the same answer the brain gets, and
+ * a check that recomputes `A.moves || DEFAULT` is HANDOFF §2.4's defect:
+ * tools/checks/beasts.mjs and tools/checks/colosseum.mjs both had that line,
+ * and both would have gone on measuring the move set the creatures used to
+ * have. They call this instead.
+ */
+export function beastMoveSet(A, built = null) {
+  return (A && A.moves) || (built && built.moves) || DEFAULT_BEAST_MOVES;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The Jedi                                                              */
@@ -423,10 +607,43 @@ export const ARCHETYPES = {
     trooperColor: 0x2c3038, accent: 0xff9a20, hipHeight: 0.95,
   },
   acolyte: {
-    label: 'Sith Acolyte', build: buildAcolyte, scale: 1.04, hp: 130, mass: 82,
+    /* DARK ACOLYTE, not "Sith Acolyte". There are two Sith and the game fields
+     * this one twelve at a time; the name for a dark-side duellist who is not
+     * one of the two is the one the source material already uses for Dooku's
+     * students, and it costs a string. */
+    label: 'Dark Acolyte', build: buildAcolyte, scale: 1.04, hp: 130, mass: 82,
     speed: 5.0, toughness: TOUGHNESS.flesh, melee: true, saber: true,
     saberColor: 4, damage: 26, preferred: [1.6, 3.4], score: 700, threat: 6,
     hipHeight: 0.97,
+    /**
+     * MAKASHI, DECLARED — AND IT WAS A DIE ROLL.
+     *
+     * `Enemy._build` falls back to `FORM_KEYS[floor(rng() * 5)]` for a body
+     * that declares no form, and this one declared none: the acolyte is 12 of
+     * 101 pool slots across the ten levels and the only duellist on seven of
+     * them, so the enemy the player meets most fought a different way every
+     * time it spawned. The note over JEDI_BASE names that exact defect as the
+     * reason the four Jedi declare theirs — "the player could not learn 'that
+     * is Djem So, it commits hard, punish the recovery'" — and the fix reached
+     * only the six archetypes written after it.
+     *
+     * Makashi for two reasons that agree. It is the form Dooku taught his
+     * acolytes, which is who these are; and it is the form whose whole content
+     * is the PARRY — 5 light attacks of 5, chain 1-2, `punishRecovery` 0.85 —
+     * so the duellist a player meets on seven levels is the one that teaches
+     * the fundamental of the duelling game rather than the exception to it.
+     * The Master (also Makashi) is a set-piece on one level with 460 hp and
+     * four powers; nobody is going to mistake one for the other, and sharing a
+     * form is sharing a LESSON, which is what forms are for.
+     */
+    form: 'makashi',
+    /* THE SITH TAKES WHAT THE JEDI WILL NOT. Lightning and the choke are the
+     * two powers `Powers.js` gates behind an attunement for the player and the
+     * two the source material is most consistent about being the dark side's;
+     * giving them to the roster's one Sith is what separates fighting him from
+     * fighting a Jedi at the same threat. 62 of pool buys the lightning twice
+     * or a choke and a push, and then he is a fencer again. */
+    force: 62, powers: ['lightning', 'choke', 'push'],
   },
 
   /* ── the order ──
@@ -451,6 +668,10 @@ export const ARCHETYPES = {
     scale: 1.0, hp: 140, mass: 78, speed: 5.4,
     saberColor: 1, hilt: 'Graflex', form: 'ataru',
     damage: 24, preferred: [1.5, 3.4], score: 800, threat: 6, unlockAt: 1,
+    /* Ataru is the acrobatic form and its danger is the flurry, so the knight
+     * gets the power that RESETS distance in its favour: 44 is two pulls, and
+     * a pull puts you back inside a chain-of-four it had already started. */
+    force: 44, powers: ['pull', 'push'],
   },
   sentinel: {
     ...JEDI_BASE,
@@ -458,6 +679,10 @@ export const ARCHETYPES = {
     scale: 1.02, hp: 200, mass: 84, speed: 4.6,
     saberColor: 0, hilt: 'Sentinel', form: 'soresu',
     damage: 22, preferred: [1.8, 3.0], score: 950, threat: 7, unlockAt: 1,
+    /* Soresu attacks at 0.42 aggression and wins by outlasting, so it gets the
+     * one power that buys it SPACE and nothing that buys it damage. One verb,
+     * and it is the defensive one. */
+    force: 40, powers: ['push'],
   },
   guardian: {
     ...JEDI_BASE,
@@ -467,6 +692,23 @@ export const ARCHETYPES = {
      * Temple Guard yellow". It was added for a body that did not exist. */
     saberColor: 10, hilt: 'Guardian', form: 'djemSo',
     damage: 34, preferred: [1.5, 3.2], score: 1300, threat: 9, unlockAt: 4,
+    /* Djem So hits hardest and recovers slowest, which is an opening you take
+     * by backing off. The pull is the answer to that habit and it is the
+     * SIGNATURE: it drags you back into the 34-damage swing you just stepped
+     * out of.
+     *
+     * IT WAS ALSO, FOR A WHOLE SESSION, THE ENTIRE KIT — AND A ONE-VERB KIT
+     * WHOSE VERB ANSWERS A HABIT THE PLAYER MAY NEVER SHOW IS NOT A KIT.
+     * Driven for 25 s against a player who stood and fought, a Temple Guardian
+     * cast NOTHING: `pull` wants `fleeing`, and in a stand-up fight at a
+     * measured p50 of 1.6 m nobody is fleeing, ever. `pressed` is the only
+     * situation a stand-up fight satisfies at all, so a body with no `pressed`
+     * verb is a body with no Force, which is exactly the complaint. The shove
+     * is the one that fits the form rather than a second favour: Djem So's
+     * 0.58 s recovery is the longest opening in the game, and a body that
+     * cannot clear its own guard during it is a free hit every cycle. 48 of
+     * pool is two of them, or a shove and the pull that follows it. */
+    force: 48, powers: ['pull', 'push'],
   },
   master: {
     ...JEDI_BASE,
@@ -477,16 +719,32 @@ export const ARCHETYPES = {
     setPieceOnly: true,
     saberColor: 2, hilt: 'Duelist', form: 'makashi',
     damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
+    /* The set-piece gets four of the five and the only UNLEASH on the roster,
+     * which fires once, below a third of its health, with a blade inside its
+     * guard — the same moment the player's own costs 52 for. 150 of pool is
+     * roughly three exchanges' worth; it is a boss, and it is meant to make you
+     * spend the whole fight reacting rather than trading. */
+    force: 150, powers: ['unleash', 'lightning', 'pull', 'push'],
   },
 
   droideka: {
     label: 'Droideka', build: buildDroideka, scale: 1.5, hp: 170, mass: 210,
     speed: 3.0, toughness: TOUGHNESS.armour, ranged: true, custom: 'droideka',
     fireRate: 0.72, burst: 6, burstGap: 0.07, spread: 0.055, damage: 8,
-    preferred: [8, 16], boltColor: 0x66ff99, score: 550, threat: 5, shield: true,
+    /* RED, like every other Trade Federation weapon on the field. The twin
+     * blaster cannons on a destroyer droid fire the same bolt a B1's E-5 does;
+     * the `0x66ff99` this carried was a mint green that belongs to nothing in
+     * the source material and made the one droid that shoots continuously read
+     * as a different faction from the ones beside it. `shield` is its tell and
+     * it does not need a second one. */
+    preferred: [8, 16], boltColor: BOLT_COLORS.red, score: 550, threat: 5, shield: true,
   },
   walker: {
-    label: 'Spider Walker', build: buildWalker, scale: 2.4, hp: 620, mass: 900,
+    /* Its real name. The Geonosis pool's own note identifies this body as
+     * "exactly the OG-9 homing spider droid of the reference plates: a sphere
+     * on four very tall thin legs with a single beam off the top" — so the
+     * research was done and the label said something generic anyway. */
+    label: 'OG-9 Homing Spider Droid', build: buildWalker, scale: 2.4, hp: 620, mass: 900,
     speed: 2.4, toughness: TOUGHNESS.heavy, ranged: true, custom: 'walker',
     fireRate: 2.6, burst: 2, burstGap: 0.22, spread: 0.03, damage: 26, big: true,
     preferred: [12, 26], boltColor: BOLT_COLORS.gold, score: 1600, threat: 12,
@@ -508,12 +766,489 @@ export const ARCHETYPES = {
     speed: 3.4, toughness: TOUGHNESS.flesh, melee: true, saber: true,
     saberColor: 1, hilt: 'Guardian', damage: 3, preferred: [1.6, 3.2],
     score: 0, threat: 0, training: true,
+    /* SORESU, because this one is a lesson and a lesson cannot be a die roll.
+     * The dojo partner rolled a random form per spawn like every other
+     * undeclared duellist, so the room built to teach the blade taught a
+     * different blade each visit. Soresu is 3 light attacks of 3 — everything
+     * it throws is parryable — at aggression 0.42, the lowest in the table, so
+     * it waits instead of rushing and every exchange happens when the student
+     * is ready for it. `punishRecovery: 1.0` is the highest, which is the other
+     * half of the lesson: swing wildly at it and it takes the opening. */
+    form: 'soresu',
   },
 
   beast: {
     label: 'Acklay', build: buildBeast, scale: 2.9, hp: 900, mass: 1400,
     speed: 4.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
     damage: 42, preferred: [2.5, 5], score: 2400, threat: 16, boss: true,
+  },
+};
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The other side's Force                                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "PERHAPS THE ENEMY FORCE/SABER USERS SHOULD HAVE THE SAME FORCE POWERS YOU
+ * DO… I FEEL LIKE THEY DIE TOO EASILY AND ARE TOO INEFFECTIVE."
+ *
+ * They had none. `grep -n "force" src/game/Enemy.js` returned the word only in
+ * `forceScale` on incoming damage — every sabered body in the game (the
+ * acolyte, the four Jedi, the sparring partner, the IG bodyguard) was a fencer
+ * with exactly one verb, so a duel was one exchange repeated until somebody ran
+ * out of health. The player is right and it is not a numbers problem: raising
+ * their health makes the same fight longer, which is the opposite of the note.
+ *
+ * ── WHAT IS SHARED AND WHAT IS NOT.
+ *
+ * `POWER_COST` (src/game/Powers.js) is imported, not copied. That module exists
+ * precisely because its table had already been duplicated once and drifted —
+ * the HUD greyed out a power the player could afford — and an enemy paying a
+ * different price for the same power is the same defect with a new reader. So a
+ * Sith's push costs the twenty a player's push costs.
+ *
+ * The EFFECTS cannot be shared, and this is worth writing down rather than
+ * apologising for. `Player.forcePush` is 78 lines that reach `this.cooldowns`,
+ * `_spend`, `_refuse`, `_gesture`, `this.cloak`, `camera.addShake`,
+ * `world.destruction`, `ctx.bolts` and `forceScale`, and none of those exist on
+ * an Enemy. What IS shared is the thing that matters for consistency: the blow
+ * lands through `target.applyKnockback(impulse, damage, source)` — the exact
+ * call every one of the player's own powers ends in, and the reason Player.js
+ * grew that method in the first place — so being pushed by a Sith and being
+ * pushed by a player go through one path, one damage gate, one stagger rule.
+ *
+ * ── WHY THESE FIVE, AND WHY THEY ARE HANDED OUT UNEVENLY.
+ *
+ * A kit that every duellist carries is one duellist wearing five faces, which
+ * is the defect this same session fixed in the menagerie. Each power answers a
+ * different player HABIT, and an archetype gets the ones its form already
+ * argues for:
+ *
+ *   PUSH       answers standing inside their guard. Fired when the player is
+ *              close AND the enemy is losing the exchange, so it reads as "get
+ *              off me" rather than as an opener.
+ *   PULL       answers backing off to heal or to wait out a recovery. It drags
+ *              you to blade range and the swing is already coming.
+ *   CHOKE      answers nothing you can do while it is on: 35% movement speed
+ *              (`Player.staggerTimer`) and damage a second, held for as long as
+ *              they can pay. Its cost is 10 and its DRAIN is the balance — a
+ *              choke ends because the pool ran out.
+ *   LIGHTNING  answers hanging back at range, which is what the whole roster of
+ *              ranged enemies teaches you to do to a melee one.
+ *   UNLEASH    the 360 the player got last session, at the one moment it is
+ *              earned: a master below a third of its health, with a blade
+ *              inside its guard.
+ *
+ * Balanced by POOL rather than by damage. `force` is small — a knight can pay
+ * for two pushes and then it has to fight — and it regenerates at
+ * `FORCE_REGEN` a second, so a duellist that opens with everything is a
+ * duellist with nothing at the end. Nobody's health or damage moved.
+ */
+/**
+ * …and the regen is the whole balance, so it is measured rather than picked.
+ *
+ * At 5.5 a second the pool was never the limit: 4352 of the 4384 frames on
+ * which an acolyte was otherwise free to cast were refused by a COOLDOWN and
+ * none by the price, so a duellist pushed every 4.6 s forever and the kit read
+ * as a tic rather than as a resource. At 3.0 the push's 20 costs more than the
+ * 19.5 its cooldown regenerates, so the pool falls: the opening exchange buys
+ * two or three powers and everything after it is fought with the blade, which
+ * is the shape the note asks for ("more dangerous", not "unanswerable").
+ */
+export const FORCE_REGEN = 3.0;
+
+/** How long a held power's drain accumulates before it is billed. Slightly
+ * longer than `Player.invuln` (0.18 s), so no tick is ever refused — see
+ * `_sustain`, where a per-frame bill was losing 55 of every 60 payments. */
+const SUSTAIN_TICK = 0.20;
+
+/**
+ * ── ANSWERING A POWER WITH A POWER ─────────────────────────────────────
+ *
+ * Driven before this existed: 50 damage of kind `force`, `lightning`, `blaster`
+ * and `saber` all delivered **identically** into a Jedi Master, and a player's
+ * lightning moved its Force pool **150 → 150**. It spent nothing defending
+ * itself because no code path could. Two Force users pushing at each other both
+ * landed in full. The pool was a spending account with no defensive side at
+ * all, so "the enemies that use the force" could only ever mean "the enemies
+ * that fire powers at you", never "the enemies you have a Force fight with".
+ *
+ * `resistForce` is the way in. A body that holds a pool spends it to blunt an
+ * incoming power, and the three numbers below are the whole balance:
+ *
+ *   RESIST_PER_FORCE  what a point of pool buys, in hp of blunting. Above 1 so
+ *                     that defending is CHEAPER than casting — a duel of pools
+ *                     that the defender always loses is not a duel.
+ *   RESIST_CAP        the most of one blow a full pool may ever take off. Not
+ *                     1.0, deliberately: a power that can be refused outright
+ *                     teaches the player to stop using powers, which is the
+ *                     opposite of the note this whole file answers.
+ *   RESIST_BEATEN     what is left of that while the guard is already beaten —
+ *                     stunned, staggered, gripped, toppled. This is the reason
+ *                     to break their guard BEFORE you spend 30 on lightning,
+ *                     and it is the same rule `_turnCut` uses for the blade.
+ */
+const RESIST_PER_FORCE = 1.4;
+const RESIST_CAP = 0.55;
+const RESIST_BEATEN = 0.35;
+/** The kinds that are the Force, and are therefore answerable by it. */
+export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
+
+/**
+ * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
+ * of this contest is three lines rather than a second copy of it.
+ *
+ * **BOTH HALVES ARE IN NOW.** This note used to end "the player cannot yet
+ * answer a power with a power, and that is the one thing this file could not
+ * fix", because `Player.applyKnockback` and `Player.damage` — the two doors an
+ * enemy's push, pull, choke and lightning arrive through — were in a file that
+ * work did not own. `Player.resistForce` calls THIS function through those two
+ * doors, so the contest is symmetric: measured on a Knight-difficulty player
+ * taking 50 hp of an authored power, force / lightning / choke land for 19.1 hp
+ * against a full pool and 42.5 against an empty one, and a blade or a bolt
+ * takes the bar not at all.
+ *
+ * Keeping the arithmetic here rather than writing it twice is the point: this
+ * project has un-duplicated the same kind of table three times (`POWER_COST`,
+ * the HUD price list, the announcer voice map) and the note over `Powers.js`
+ * is about what happens when the two copies drift. It is also why `RESIST_CAP`
+ * cannot quietly be re-tuned for one side: `1 - RESIST_CAP` is the factor a
+ * deep pool scales an incoming SHOVE by, so it sets how far the enemy's push
+ * carries a braced player, which is what `PUSH_SPEED` is sized against.
+ *
+ * ── WHAT A DEEP POOL BUYS DEFENSIVELY, MEASURED: NOTHING PAST 19.64.
+ *
+ * The `min` saturates. For a 50 hp blow the first term is `50 × 0.55` = 27.50
+ * and the second is `pool × 1.4`, so every pool at or above **19.64** blunts
+ * exactly 27.50 and spends exactly 19.64 — measured at 25, 50, 100 and 150 and
+ * identical at all four. A 460 hp Master carrying 150 of pool and a 200 hp
+ * Sentinel carrying 40 therefore defend the same, and the archetype `force:`
+ * numbers are a SPENDING budget and nothing else.
+ *
+ * That is recorded rather than changed, and deliberately. Making depth defend —
+ * scaling `RESIST_CAP` by the fraction of pool the blow costs — is a balance
+ * decision, it is symmetric (the player is the other caller), and `1 -
+ * RESIST_CAP` is what `PUSH_SPEED` was sized against, so it would move how far
+ * every shove in the game carries a braced body. It wants its own pass with its
+ * own measurements on both sides of the contest, not a line changed in passing.
+ *
+ * @param pool    the defender's Force, whatever it is called on that class
+ * @param beaten  is the guard already broken — stunned, staggered, gripped
+ * @returns `{ blunt, spend }`: hp taken off the blow, and pool it cost.
+ */
+export function forceResistance(pool, amount, kind, beaten) {
+  if (!(amount > 0) || !(pool > 0) || !FORCE_KINDS.test(kind ?? '')) return { blunt: 0, spend: 0 };
+  const blunt = Math.min(amount * RESIST_CAP * (beaten ? RESIST_BEATEN : 1), pool * RESIST_PER_FORCE);
+  return { blunt, spend: blunt / RESIST_PER_FORCE };
+}
+/**
+ * A shove's speed, priced in the same currency as its damage, so ONE call to
+ * `resistForce` answers a whole blow rather than billing its two halves
+ * separately out of the same pool.
+ */
+export const IMPULSE_AS_HP = 1.2;
+
+/**
+ * ── HOW HARD YOU HAVE TO HIT TO BREAK A CAST ───────────────────────────
+ *
+ * Anything that beats the guard (`stun`, a grip, a real shove) breaks a cast
+ * outright. A plain blow has to be worth flinching at, or a single stray bolt
+ * cancels every power the roster has and the telegraph becomes a joke in the
+ * other direction. `max(8, 5% of maxHp)` puts a lightsaber (24–34) through a
+ * Jedi's concentration and a blaster bolt (9–13) through nobody's but a
+ * B1-tier body's, which is the right shape: the blade is the answer.
+ */
+const CAST_FLINCH_FLOOR = 8;
+const CAST_FLINCH_FRAC = 0.05;
+
+/**
+ * ── THE GUARD, AND WHY "THEY DIE TOO EASILY" IS NOT A HEALTH NUMBER ────
+ *
+ * `takeCut` makes any capsule with `vital >= 0.9` — head 0.95, neck, chest,
+ * spine and hips all 1.0 — instantly lethal at `maxHp * 2`, and the FIRST arm
+ * lost sets `disarmed` on anything holding a blade. So a 460 hp Jedi Master and
+ * a 130 hp Sith acolyte died to exactly the same single torso pass, and raising
+ * anybody's health could never have changed that by one frame. Measured
+ * time-to-kill with a blade sweeping: acolyte 3.1 s, knight 4.5 s.
+ *
+ * The fix is not more hp and it is not invulnerability. It is a GUARD: a
+ * duellist turns a fight-ending cut aside while its guard is up, and the counter
+ * -play is the duel game this file already has. Every one of the openings the
+ * player earns — a parry, a chamber, a won blade lock, a Force shove, a heavy
+ * blow, a topple, a grip, a severed arm — sets `stunTimer`, `duel.staggered`,
+ * `toppled`, `gripped` or `disarmed`, and every one of them makes the killing
+ * pass land immediately (`_guardOpen`). So the answer to "how do I kill a Jedi"
+ * stops being "swing at its chest" and becomes "beat its guard, then swing at
+ * its chest", which is the fight the rest of Duel.js was built for.
+ *
+ * It is DERIVED and not authored — HANDOFF 2.3, no hand-maintained table beside
+ * its generated twin. 90 hp per turned pass is two thirds of the lightest
+ * duellist on the roster (acolyte 130, knight 140), so the count rises with
+ * health without anybody having to keep a second column in step:
+ *
+ *     acolyte 2 · knight 2 · sentinel 3 · guardian 3 · master 6 · bodyguard 12
+ *
+ * …and the last two never spend all of it, because a turned pass is NOT free.
+ * It costs `TURNED_CUT` of maximum health and leaves the body staggered, so the
+ * real ceiling is `1 / TURNED_CUT` passes however deep the guard is — five for
+ * everything. Health and guard multiply up to that ceiling and no further,
+ * which is what stops this from being the wall the note is not asking for.
+ *
+ * Training bodies are excluded: the dojo's sparring partner exists to be hit.
+ */
+const GUARD_PER_HP = 1 / 90;
+export const TURNED_CUT = 0.24;
+/** Seconds to win one turned pass back, and only while the guard is not beaten. */
+const GUARD_REFRESH = 6.0;
+
+/**
+ * WINDED — the opening a big body has instead of a stagger, and for two of them
+ * it was BOOKKEEPING WITH NO READER.
+ *
+ * `recentDamage` is written at three sites — `damage()`, `takeCut()` and the
+ * turned pass — behind `A.boss || A.custom === 'beast'`, and it was read at
+ * exactly ONE, inside `_beastBrain`. `master` and `bodyguard` are `boss` and
+ * neither runs the beast brain, so on those two the number accumulated forever
+ * and nothing ever looked at it: **the WINDED opening did not exist for the two
+ * duellist bosses**, while `_guardOpen` — the one predicate the blade and the
+ * Force both read — lists `state === 'winded'` as an opening every body has.
+ *
+ * What that costs is not subtle. The IG Bodyguard has 1050 hp, a durasteel
+ * torso and TWELVE turned passes, so the pass that ends the fight is refused
+ * twelve times unless the guard is beaten first — and the one opening its own
+ * mechanic offered was unreachable. Measured against a player who walks
+ * backwards: 0.00 hp/s in either direction.
+ *
+ * So the rule lives here, once, and every brain that owns a body with the tally
+ * calls `_windTick`. The three numbers are the ones the creatures were already
+ * tuned with — take 14% of your maximum health faster than 12% of it decays per
+ * second and you are open for 2.4 s, once every 7 — because a window that means
+ * one thing on a Rancor and another on a droid general is two mechanics sharing
+ * a name.
+ */
+const WIND_TAKE = 0.14;      // share of max health inside the window that opens it
+const WIND_DECAY = 0.12;     // share of max health the tally sheds per second
+const WIND_OPEN = 2.4;       // seconds the body is open for
+const WIND_GAP = 7;          // seconds before it can be opened again
+/** Does this body keep a `recentDamage` tally at all? One predicate, four readers. */
+const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
+
+/**
+ * HOW MANY LEGS A BODY LOSES BEFORE IT GOES DOWN, off the body's own bones.
+ *
+ * A free function rather than a method, and exported, because `tools/balance.mjs`
+ * needs the same answer to predict what a pass is worth and had its own copy of
+ * it — `/thigh|shin|foot|femur|tibia|tarsus/` plus a flat 3-or-1 — which stopped
+ * agreeing with the game the day the rule moved to `bone.role`. That is
+ * HANDOFF §2.4: the model restated the rule instead of calling it, and then the
+ * rule changed. One reader now, in both places.
+ *
+ * `chains - 1` is the cap and it is the whole of the interesting part: a body
+ * cannot be required to lose more legs than it has minus one, or a two-legged
+ * animal and a two-wheeled machine are asked for three and can never fall over
+ * at all. It is why a Rancor goes down on one leg — a Rancor with one leg is a
+ * Rancor on the sand — and why a Hailfire goes down on its first wheel, which
+ * `Rig.js` had already said in as many words ("losing one is losing the pair").
+ */
+export function toppleAt(A, rig) {
+  const authored = A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1;
+  let chains = 0;
+  for (const b of (rig?.list ?? [])) {
+    if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
+  }
+  return chains > 0 ? Math.max(1, Math.min(authored, chains - 1)) : authored;
+}
+
+/**
+ * ── AND THE SAME ARGUMENT FOR EVERYTHING WITHOUT A BLADE ───────────────
+ *
+ * The note above fixed duellists and left the other twenty-four bodies exactly
+ * where they were, which the harness then measured: a 28 hp B1, a 420 kg Nexu,
+ * a 1250 hp Reek, a 900 hp Acklay and a 2200 hp Rancor ALL fell to one pass in
+ * 0.64 s, because `takeCut` makes any `vital >= 0.9` capsule instantly lethal
+ * and nothing that is not a duellist defends itself. The player's own words for
+ * it were "the large creatures all look the same… they all attack the same
+ * way"; the measurement adds the half nobody had said out loud, which is that
+ * they also DIE like nothing. Modelled through the Colosseum's wave-1 opener —
+ * the largest body in the game — a fresh player paid 0.0 hp for it.
+ *
+ * A duellist turns a killing pass with a blade. A body with no blade turns one
+ * with ITSELF, and how many it turns is a question of how much of it there is.
+ * A lightsaber ends a fight by reaching something vital in one pass; whether it
+ * can is set by how much animal is between the edge and the spine.
+ *
+ * MASS IS THE MEASURE, and it is deliberately not `toughness`. Toughness is
+ * already doing this job one layer down — it is the work-to-cut term inside
+ * BladeContactSolver, which is what makes a durasteel hull slow to part — and
+ * spending it twice would price a 520 kg dwarf spider like a 3600 kg AT-TE
+ * (14 × 520 against 14 × 3600 is the same ratio as the masses, but multiplied
+ * by a toughness that has already been charged for). Mass is the axis that is
+ * NOT yet spent, it is declared on every archetype, and it is the one the
+ * player can see.
+ *
+ * 300 kg per turned pass, and the boundary is what the number is for: nothing
+ * man-sized turns anything (a fully armoured clone trooper is 78 kg, a B2 is
+ * 130, a droideka 210 — all zero), and the lightest body that turns one is the
+ * 420 kg Nexu. Above that it rises with the animal:
+ *
+ *     nexu 1 · gundark 1 · dwarf spider 1 · spider walker 3 · acklay 4
+ *     hailfire 5 · reek 5 · rancor 5 · AAT 8 · AT-TE 12
+ *
+ * …and everything from the hailfire up is the SAME fight, because `TURNED_CUT`
+ * caps the real ceiling at five for every body in the game. That cap is the
+ * reason this is not a wall, and it is why the AT-TE's twelve is harmless.
+ *
+ * THE OPENINGS ARE THE ONES THE GAME ALREADY HAD, which is the whole reason
+ * this is derived rather than built. `_guardOpen` turns off the guard for a
+ * topple, a grip, a stagger, a stun — and now for WINDED, the state
+ * `_beastBrain` already enters when it takes 14% of its health quickly and
+ * which its own comment already calls "the only safe time to go for a leg".
+ * So against an animal the loop becomes: pressure it until it is winded, then
+ * take the killing pass or a leg. Against a machine it is the legs first —
+ * `_loseLimbBehaviour` topples a `walker` or a `beast` at three — and a topple
+ * opens the guard. Both of those were built and neither meant anything,
+ * because nothing was standing between the player and the neck.
+ */
+const HIDE_PER_KG = 1 / 300;
+
+/**
+ * How many fight-ending passes a body of this archetype can turn aside.
+ *
+ * THE SINGLE AUTHORITY. The constructor reads it and so does `tools/balance.mjs`
+ * — the harness imports this function rather than re-deriving `hp / 90`, so it
+ * measures the shipped rule instead of a second copy of it that can disagree
+ * with the game (HANDOFF §2.4: never restate a rule, call it).
+ */
+export function guardFor(A) {
+  if (!A || A.training || A.inert) return 0;
+  if (A.saber) return Math.max(1, Math.ceil((A.hp || 0) * GUARD_PER_HP));
+  return Math.floor((A.mass || 0) * HIDE_PER_KG);
+}
+
+/**
+ * ── A SHOVE HAS TO BUY THE RANGE THE NEXT BEAT NEEDS ───────────────────
+ *
+ * This roster has exactly one two-beat in it and it was one metre short of
+ * existing. `pressed` is the only situation a stand-up fight satisfies, so the
+ * push is the only opener any of these bodies has; and `lightning` wants
+ * `ranged`, which is `preferred[1] + 2.0` — 5.4 m for a Master. Measured, with
+ * the shoving body held still so the number is what the SHOVE bought and not
+ * what the chase gave back:
+ *
+ *     17.0 / 6.5   1.95 m → peak 5.00 m      lightning unreachable, by 0.4 m
+ *     20.4 / 7.8   1.95 m → peak 5.71 m      it opens
+ *     23.8 / 9.1   1.95 m → peak 6.39 m
+ *
+ * So the shove was sized at the second row and the combo was readable: he shoves
+ * you off him, and while you are still travelling he is already reaching.
+ *
+ * ── AND THEN THE PLAYER LEARNED TO BRACE, WHICH RE-OPENS ALL OF IT ─────
+ *
+ * Every row above was measured against a target that could not answer a power
+ * with a power. `Player.resistForce` exists now, it mirrors `Enemy`'s, and it
+ * blunts the SHOVE as well as the harm — one blow, weighed once, both halves
+ * scaled by what the pool bought back. So a shove no longer buys a distance; it
+ * buys a RANGE of distances, and which end of it you get is a thing the player
+ * decides by what is left in their bar. Re-measured, same fixture, the shoving
+ * body still pinned:
+ *
+ *                     braced (100 Force)      empty bar
+ *     20.4 / 7.8      peak 3.28 m             peak 5.71 m
+ *     26.0 / 10.0     peak 3.86 m             peak 6.84 m
+ *
+ * THE 45% IS STRUCTURAL AND NO SIZING GETS AROUND IT. `RESIST_CAP` is 0.55 of
+ * the blow, so a deep pool always scales a shove to 0.45 of itself — the factor
+ * does not depend on how big the shove is. Reaching `ranged` (5.4 m) through a
+ * full pool therefore needs 2.2× the impulse, and 45 / 17 throws an EMPTY-bar
+ * player 14 m: past the far edge of the push's own band, so the caster shoves
+ * its target out of its own next cast. Driven rather than reasoned — the
+ * Master's own brain, run on after the shove with `push` taken off it so the
+ * peak is one shove's and not two:
+ *
+ *                     braced                        empty bar
+ *     20.4 / 7.8      choke only                    lightning, pull, choke
+ *     26.0 / 10.0     pull @0.62s, choke @0.52s     lightning, pull, choke
+ *     40.0 / 15.0     pull, choke (peak 5.20 m)     all three, and a 10.4 m fly
+ *
+ * So the shove is re-sized to the middle row, and the two-beat is now a
+ * CONTEST rather than a certainty. Braced, you deny him the lightning and eat
+ * the pull or the choke instead — the shove clears the pull's 3.2 m band by
+ * 0.66 m where before it cleared it by 0.08, which was a coincidence and not a
+ * margin. Empty-bar, you fly 6.84 m and the whole kit opens on you. That is
+ * what spending 16.7 Force to brace is FOR, and it is a better two-beat than
+ * the deterministic one: which second beat arrives is now something the player
+ * bought.
+ *
+ * The ceiling on the other side is the push's own band, [0, 7.5]. 6.84 m sits
+ * inside it, so even an unbraced target lands somewhere the caster can still
+ * reach — the property `unleash`, at 1.55× this pair, deliberately gives up.
+ *
+ * The pair keeps its ANGLE. 17.0/6.5 and 20.4/7.8 are the same vector at two
+ * magnitudes (both 0.382 lift-to-speed), and this is the same vector again a
+ * shade over a quarter larger; a shove that changed the direction you were
+ * thrown would be a different move, not a re-tune.
+ */
+export const PUSH_SPEED = 26.0;
+export const PUSH_LIFT = 10.0;
+
+export const ENEMY_POWERS = {
+  push: {
+    cost: POWER_COST.push, cd: 6.5, band: [0, 7.5], want: 'pressed',
+    label: 'FORCE PUSH', color: '#8ad8ff', sound: 'push',
+  },
+  /**
+   * BANDED AT 3.2 AND NOT 6.5, because 6.5 was outside the fight.
+   *
+   * A pull is authored to answer "backing off to heal or to wait out a
+   * recovery" — the moment the gap OPENS — and it banded from 6.5 m, which is
+   * more than twice the widest duelling band on the roster. Measured stand-off
+   * over 25 s fights against a real player: p50 1.6 m, p90 1.7 m. So the power
+   * could only ever fire at somebody who had already fully disengaged, by
+   * which point "drags you back into the swing you just stepped out of" is not
+   * what it does. 3.2 is the far edge of the widest melee band (`bodyguard`
+   * 3.8, `master` 3.4) plus nothing: it is the first metre at which the target
+   * is genuinely OUT rather than merely circling.
+   */
+  pull: {
+    cost: POWER_COST.pull, cd: 5.4, band: [3.2, 20], want: 'fleeing',
+    label: 'FORCE PULL', color: '#8affc4', sound: 'pull',
+  },
+  /* Held rather than fired: `hold` is the seconds it may run for and it is
+   * paid per second, so the pool is the real limit. `cost` is the price of
+   * opening it, exactly as `Player.forceGrip` charges to take hold and then
+   * bills per second while it lifts. */
+  choke: {
+    cost: POWER_COST.grip, cd: 9.0, band: [2.5, 16], want: 'fleeing',
+    hold: 2.4, drain: 9, dps: 7,
+    label: 'CHOKE', color: '#ff6a6a', sound: 'grip',
+  },
+  /**
+   * BANDED AT 2.8 AND NOT 4.5, for the reason the pull is banded at 3.2.
+   *
+   * 4.5 m is further than any duellist on the roster stands (the widest band is
+   * the bodyguard's 3.8) and further than its own shove throws — a braced
+   * player lands at 3.86 m — so the two-beat this power exists for could not
+   * complete: shove, then burn. Measured over five real 45-second duels, one
+   * per Force archetype: 22 casts, 20 push, 2 pull, and lightning fired ZERO
+   * times on any body that has it, including the Sith whose signature it is.
+   *
+   * 2.4 is inside where the shove lands and outside where a blade fights, and
+   * the gap is smaller than it sounds because THE CASTER WALKS IN BEHIND ITS
+   * OWN SHOVE: measured peak separation over the 1.2 s after a push, with the
+   * duel brain closing at the same time, is 2.89 m on a Temple Guardian and
+   * 3.49 m on a Knight — against a resting stand-off of 1.6 m. So the beam is
+   * reachable exactly in the gap the push opens and not while the two of them
+   * are nose to nose. The `ranged` situation is the other half of the same fix
+   * — see `_forceBrain`.
+   */
+  lightning: {
+    cost: POWER_COST.lightning, cd: 8.5, band: [2.4, 18], want: 'ranged',
+    hold: 1.6, drain: 6, dps: 22,
+    label: 'LIGHTNING', color: '#c8e8ff', sound: 'lightning',
+  },
+  unleash: {
+    cost: POWER_COST.unleash, cd: 22, band: [0, 9], want: 'cornered',
+    label: 'UNLEASH', color: '#ffd24a', sound: 'push',
   },
 };
 
@@ -962,7 +1697,24 @@ export class Enemy {
     this.team = 1;
     this.dead = false;
     this.dying = 0;
-    this.grippable = !A.big && !A.boss;
+    /**
+     * Can the Force take hold of this at all?
+     *
+     * This was `!A.big && !A.boss` — a flat size limit that no setting could
+     * reach, written before the lift cap existed and left standing after the
+     * cap replaced it. It was WRITTEN AND NEVER READ for the whole of that
+     * time: the mass gate in `Player.toggleGrip` was the only thing deciding,
+     * so the field said "an Acklay can never be lifted" while the game happily
+     * lifted one at Force Power 4. Both halves of that were wrong — the rule
+     * had been overturned, and it was inert anyway.
+     *
+     * It is now the ARCHETYPE'S declaration, and it has a reader:
+     * `Player._grippableBody`. Default is yes; `Vehicles.js` says no on the
+     * AT-TE and the AAT and explains why there. Size does not come into it —
+     * the walker, the Acklay and the hailfire droid are all `big` and all
+     * liftable, at a price in Force Power.
+     */
+    this.grippable = A.grippable !== false;
     this.gripped = false;
     this.liftTarget = null;
     /** Seconds left of the "just dragged off my feet" window a Force pull
@@ -1001,7 +1753,33 @@ export class Enemy {
     this.burstLeft = 0;
     this.burstTimer = 0;
     this.aimCharge = 0;
+    /** Where the aimed shot is going, fixed when the red line goes up and read
+     *  by both the line and the bolt. Null when nothing is being aimed. */
+    this.telegraphAim = null;
     this.state = 'approach';
+
+    /* THE OTHER SIDE'S FORCE — see ENEMY_POWERS. `powers` is null for every
+     * body that is not a Force user, and `_meleeBrain` tests exactly that, so
+     * a droid pays nothing for the feature existing. The pool starts FULL:
+     * a duellist that had to stand around regenerating before it could do
+     * anything would spend the first exchange — the only one some of them get
+     * — being the fencer this is meant to stop them being. */
+    this.powers = A.powers && A.powers.length ? A.powers : null;
+    this.forceMax = A.force ?? 0;
+    this.force = this.forceMax;
+    this.powerCd = {};
+    if (this.powers) for (const k of this.powers) this.powerCd[k] = 0;
+    this._castTimer = 0;
+    this._castKey = null;
+    this.casting = null;
+    this.castLeft = 0;
+    this._sustainDebt = 0;
+    /** Fight-ending cuts this body can still turn aside — with a blade if it
+     *  has one, with its own bulk if it does not. See the notes on
+     *  GUARD_PER_HP and HIDE_PER_KG, and `guardFor`, which is the authority. */
+    this.guardMax = guardFor(A);
+    this.guard = this.guardMax;
+    this.guardT = GUARD_REFRESH;
     this.stateTime = 0;
     this.bossPhase = 1;
     this.recentDamage = 0;
@@ -1048,12 +1826,31 @@ export class Enemy {
 
     this._build();
 
-    // movement proxy so bodies and players collide with a living enemy
-    const r = A.big ? 1.1 : 0.36;
+    /**
+     * Movement proxy so bodies and players collide with a living enemy.
+     *
+     * ONE SHAPE FOR EVERY HEAVY WAS THE DEFECT. `capsule(0.9, 1.1)` for
+     * anything `big` is right for a droideka and wrong for a thirteen-metre
+     * walker: measured by tools/_vehicle.mjs, a player met **0% of an AT-TE's
+     * hull** and 27% of an AAT's, because the proxy is a 2.2 m column at the
+     * centre while the AT-TE's hull starts 2.3 m up and runs 6.4 m fore and aft
+     * of it. You walked through the machine.
+     *
+     * That is player note #8 in its own words — "the majority of objects are
+     * still not physical, like you just fall through them" — so a builder may
+     * now publish `built.proxy`, a sphere chain GENERATED off the hull it just
+     * built rather than typed into the archetype table beside it (HANDOFF 2.3:
+     * a hand-written collider next to a procedural hull drifts silently the
+     * first time somebody moves a plate). `Body` already accepts an arbitrary
+     * sphere list and the contact solver already walks it, so nothing below
+     * changes. Bodies that publish nothing keep the capsule exactly as before.
+     */
+    const P = this.built?.proxy;
+    const r = P?.radius ?? (A.big ? 1.1 : 0.36);
     this.radius = r;
     this.body = new Body({
-      position: this.position.clone().setY(this.position.y + (A.big ? 1.4 : 0.9)),
-      spheres: capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
+      position: this.position.clone().setY(this.position.y + (P?.y ?? (A.big ? 1.4 : 0.9))),
+      spheres: P?.spheres ?? capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
       shape: capsule(A.big ? 0.9 : 0.55, r),
       mass: A.mass, kinematic: true, layer: LAYER.ENEMY,
       mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
@@ -1092,21 +1889,44 @@ export class Enemy {
     }
   }
 
-  /** Collect the meshes that are decoration rather than silhouette. */
+  /**
+   * Collect the meshes that are decoration rather than silhouette.
+   *
+   * …AND `userData.silhouette` IS THE OTHER HALF OF "SPHERE WITH SOME LEGS".
+   *
+   * One primary per bone is right for a droid, whose outline really is its
+   * limb tubes and whose rivets really are noise. It is catastrophic for an
+   * animal: a reek's horns, a nexu's mane, an acklay's crest and every tail in
+   * the game were Kit detail, so past thirty metres the whole menagerie was
+   * its trunk plus its legs and nothing else — which is exactly the sentence
+   * the player used. Bodies.js tags the merged outline pieces (see
+   * `markSilhouette`) and they are kept at every range. It is at most two
+   * extra draw calls per creature, on bodies there are never more than a
+   * handful of, against the thing they are recognised BY.
+   */
   _collectLodParts() {
     if (!this.rig) return;
     const keep = new Set();
     for (const b of this.rig.list) { if (b.primary) keep.add(b.primary); }
     this._lodParts = [];
     this.rig.root.traverse((o) => {
-      if (o.isMesh && !keep.has(o)) this._lodParts.push(o);
+      if (o.isMesh && !keep.has(o) && !o.userData.silhouette) this._lodParts.push(o);
     });
     this._lodShadow = true;
   }
 
   _build() {
     const A = this.A;
-    const opts = { scale: A.scale };
+    /* THE ARCHETYPE'S OWN IDENTITY REACHES THE BUILDER. Without the spread this
+     * was `{ scale: A.scale }` and a one-line special case for the marksman's
+     * paint, so every kit table in Bodies.js — the trooper hardware, the Jedi
+     * ranks, the B1 and acolyte and bodyguard rungs — was reachable, measured,
+     * and worn by nothing that ever spawned. `BODY_KITS` is the authority and
+     * `bodyOptsFor` is its only reader; see the long note over it. Measured in
+     * the shipped roster: trooper/sniper and acolyte/sparring sat at 1.000
+     * flank IoU — identical silhouettes at 30 m — and the roster's worst pair
+     * drops to 0.895 with this line in. */
+    const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
     if (this.type === 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }
     const built = A.build(opts);
     this.built = built;
@@ -1135,10 +1955,46 @@ export class Enemy {
       this.group = built.group;
       this.world.scene.add(this.group);
       if (A.custom === 'remote') {
+        /* DRAW ORDER IS LOAD-BEARING. These two `rng()` calls were originally
+         * hover-then-orbit, and moving the hover draw out of this branch
+         * silently swapped them — same number of draws, different values, and
+         * every seeded remote in the dojo landed somewhere new. It surfaced as
+         * a training lesson placing its body in the wrong spot. The generic
+         * `float` initialiser below is written not to take a draw when this
+         * branch has already taken one. */
         this.hoverPhase = rng() * TAU;
         this.orbitPhase = rng() * TAU;
       }
     }
+
+    /**
+     * ANYTHING THAT HOVERS NEEDS A PHASE, and this used to be initialised in
+     * exactly one branch of the wrong `if`.
+     *
+     * `hoverPhase` lived inside the `else` above — the branch for bodies built
+     * as a bare `group` — and was gated further on `custom === 'remote'`. The
+     * Jet Trooper (note #31) is a RIGGED HUMANOID with `float: 1.35`, so it
+     * takes the `built.rig` branch and never got the field. Its first frame
+     * then ran `this.hoverPhase += dt` on `undefined`, which is NaN, and NaN
+     * propagates:
+     *
+     *   · the hover target is NaN, so `position.y` is NaN from frame 0;
+     *   · `distToTarget` is a 3-D length, so every range test in
+     *     `_rangedBrain` is false and the body NEVER FIRES — measured, 0 shots
+     *     in 45 s against a trooper's 33;
+     *   · `positionIsValid` (Waves.js) rejects non-finite y, so the liveness
+     *     watchdog rescues it twice and then RETIRES it.
+     *
+     * Every jet trooper ever spawned was teleported twice and deleted without
+     * taking a shot. It is in the geonosis pool and is a purchasable Command
+     * rung, so the player paid for it.
+     *
+     * It is set here, unconditionally, for anything that declares `float` —
+     * keyed off the DATUM that makes a body hover rather than off which
+     * builder it happened to use, which is the distinction the old gate got
+     * wrong. `remote` keeps its own `orbitPhase` above because only it orbits.
+     */
+    if (A.float && this.hoverPhase === undefined) this.hoverPhase = rng() * TAU;
 
     // weapon
     if (A.weapon) {
@@ -1154,6 +2010,22 @@ export class Enemy {
       this.hum = audio.createHum(this.saber.color.getHex());
       this.hum.ignite();
       this.telegraphArc = new Telegraph(this.world.scene);
+      /**
+       * THE DIE ROLL IS NOW UNREACHABLE FROM THE SHIPPED ROSTER, and it was
+       * reached by the three commonest sabered bodies in the game.
+       *
+       * `A.form || FORM_KEYS[floor(rng() * 5)]` is the line the note over
+       * JEDI_BASE describes as the reason a player "could not learn 'that is
+       * Djem So, it commits hard, punish the recovery'". Six archetypes were
+       * given a declared form when that was written and three were not: the
+       * ACOLYTE (12 of 101 pool slots and the only duellist on seven levels),
+       * the SPARRING PARTNER (the dojo, whose entire job is to be learnable)
+       * and the IG BODYGUARD (a boss). All three declare one now.
+       *
+       * The fallback stays because a level or a mode may spawn a sabered body
+       * that no archetype table owns, and a duellist with no form at all cannot
+       * fight. `tools/checks/duelling.mjs` holds the roster to declaring one.
+       */
       this.duel = new DuelBrain(this, {
         form: A.form || FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)],
         telegraph: this.telegraphArc,
@@ -1396,27 +2268,37 @@ export class Enemy {
         }
         out.push({
           name: b.name, p0: _v1.clone(), p1: _v2.clone(), r: b.radius * 1.12,
-          toughness: this._boneToughness(b.name), enemy: this, vital: VITAL[b.name] ?? 0.4,
+          toughness: this._boneToughness(b.name), enemy: this, vital: severanceOf(b),
         });
       }
     } else if (this.group && this.A.custom === 'remote') {
       const c = _v1.copy(this.group.position);
       out.push({ name: 'core', p0: c.clone(), p1: c.clone(), r: 0.14 * this.A.scale,
-        toughness: this.A.toughness, enemy: this, vital: 1 });
+        toughness: this.A.toughness, enemy: this, vital: severance('core') });
     } else if (this.group) {
-      // droideka: shield first, then the core
+      /* THE TWO BODIES WITH NO RIG GO THROUGH THE SAME PRICE, and they used to
+       * carry two literals instead. `vital: 1` for the core happened to agree
+       * with it; `vital: 0.2` for a leg did not, and there was nothing to say
+       * which of the two numbers a third body should copy. A droideka has THREE
+       * legs, so `severance` divides a leg's worth by three and prices one at
+       * 0.37 — losing all three kills it, where at 0.2 it could lose all three
+       * and keep two thirds of its health. It is spelt out here because these
+       * capsules are synthesised rather than walked off a rig: there is no bone
+       * to carry the role, so the call site says it. */
       const c = _v1.copy(this.group.position).addScaledVector(UP, 0.62 * this.A.scale);
       if (this.shieldUp) {
         out.push({ name: 'shield', p0: c.clone(), p1: c.clone(),
           r: 1.15 * this.A.scale, toughness: TOUGHNESS.heavy, enemy: this, shield: true });
       }
       out.push({ name: 'core', p0: c.clone(), p1: c.clone().setY(c.y + 0.3 * this.A.scale),
-        r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: 1 });
-      for (const leg of (this.built.legs || [])) {
+        r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: severance('core') });
+      const legs = this.built.legs || [];
+      for (const leg of legs) {
         leg.leg.getWorldPosition(_v2);
         leg.lower.getWorldPosition(_v3);
-        out.push({ name: 'leg' + this.built.legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
-          r: 0.12 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: 0.2 });
+        out.push({ name: 'leg' + legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
+          r: 0.12 * this.A.scale, toughness: this.A.toughness, enemy: this,
+          vital: severance('leg', 1, legs.length) });
       }
     }
     return out;
@@ -1447,7 +2329,7 @@ export class Enemy {
    * Nothing failed loudly: the exception surfaced as a console error behind a
    * requestAnimationFrame that had already been scheduled.
    */
-  damage(amount, point, source, kind) {
+  damage(amount, point, source, kind, preResisted = false) {
     if (this.dead) return false;
     if (this.invincible) return false;
     if (this.shieldUp && kind !== 'melee') {
@@ -1461,6 +2343,24 @@ export class Enemy {
       if (this.shieldHp <= 0) this.dropShield();
       return false;
     }
+    /**
+     * THE FORCE ANSWERS THE FORCE — one call, at the sink, so a blow is blunted
+     * exactly once however it was thrown. `preResisted` is set by
+     * `applyKnockback`, which has already answered the whole blow (shove and
+     * damage together) so that the two halves do not bill the pool twice.
+     *
+     * `incoming` is deliberately the PRE-resist figure for the two tests below
+     * it: what breaks a body's concentration and what throws its guard aside is
+     * the blow that arrived, not what was left of it after it paid to survive.
+     */
+    const incoming = amount;
+    if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
+    // A power lands, a power answers it, and the answer costs the caster the
+    // cast it was in the middle of. Chip damage does not — see CAST_FLINCH_FLOOR.
+    if (this._castTimer > 0 || this.casting) {
+      const flinch = Math.max(CAST_FLINCH_FLOOR, this.maxHp * CAST_FLINCH_FRAC);
+      if (incoming >= flinch || FORCE_KINDS.test(kind ?? '')) this.breakCast();
+    }
     this.hp -= amount;
     /**
      * NOT `if (this.A.boss)`. The winded window — "the only safe time to go for
@@ -1471,7 +2371,7 @@ export class Enemy {
      * `winded` fired 0 times. The gate is on the creature that HAS the window,
      * which is anything running the beast brain.
      */
-    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + amount;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + amount;
     if (this.hp <= 0) { this.die(point, source, kind); return true; }
     // A heavy blow throws the guard AWAY from whoever landed it, and how far
     // scales with how heavy. Both arguments used to be omitted here, so every
@@ -1497,13 +2397,41 @@ export class Enemy {
     return _stag.lengthSq() > 1e-6 ? _stag : null;
   }
 
-  /** A blade crossed a limb. */
+  /**
+   * A blade crossed a limb.
+   *
+   * @returns `'turned'` when the guard stopped it and nothing came off, so a
+   * caller can tell a parry from a sever. `World._applyBladeEvent` READS IT —
+   * it used to credit `limbsRemoved++`, a combo, 60 score, lifesteal and an
+   * `onHitmark(…, 'cut')` for a pass that was blocked, and now returns after
+   * the shake. (This note said the fix was still owed. It is not, and it
+   * matters more than it did: the guard is no longer only a duellist's, so
+   * every big body in the game would otherwise have paid a false reward.)
+   */
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
     const bone = ev.bone;
-    const vital = ev.cap.vital ?? 0.4;
-
+    /* THE SHIELD FIRST, AND IT IS NOT A BONE. A bubble carries no `vital` on
+     * purpose — nothing is severed and nothing is billed, the pass costs the
+     * shield and stops — so it has to be answered before anything asks what
+     * losing it is worth. Putting the price check above this line is a real
+     * mistake somebody has now made: `escalation: an elite comes apart like
+     * everything else does` threw on the Shielded elite's first pass. */
     if (ev.cap.shield) { this.dropShield(); return; }
+    /* NO `?? 0.4` HERE EITHER. Every BONE capsule this game emits is priced by
+     * `severance`, which throws rather than guessing, so a missing `vital` is
+     * a capsule from somewhere that has not been through it — and answering
+     * that with the number that used to hide the whole defect is how it would
+     * come back. A synthetic capsule in a fixture must say what it is worth. */
+    const vital = ev.cap.vital;
+    if (typeof vital !== 'number') {
+      throw new Error(`Enemy.takeCut: capsule '${ev.cap?.name ?? bone}' carries no \`vital\`. `
+        + 'Capsules are priced by `severance` at the point they are built.');
+    }
+
+    // BEFORE anything is severed: a turned cut is a cut that did not land, and
+    // a body that "turned" a pass while losing the limb would be nonsense.
+    if (this._turnCut(ev, bone, vital, source)) return 'turned';
 
     if (this.actor) {
       const impulse = _v1.copy(ev.impulse).multiplyScalar(0.35);
@@ -1515,13 +2443,13 @@ export class Enemy {
     }
 
     const lethal = vital >= 0.9 || (vital >= 0.7 && this.hp < this.maxHp * 0.55);
-    const dmg = lethal ? this.maxHp * 2 : this.maxHp * vital * 1.15;
+    const dmg = lethal ? this.maxHp * 2 : this.maxHp * vital * SEVER_LETHALITY;
     this.hp -= dmg;
     /* …and a CUT winds a beast, which is the whole point of the window. This
      * path subtracts from `hp` directly rather than going through `damage()`,
      * so severing a limb — the thing the winded comment says the window exists
      * for — accrued nothing at all and could never open it. */
-    if (this.A.boss || this.A.custom === 'beast') this.recentDamage = (this.recentDamage || 0) + dmg;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + dmg;
     if (this.hp <= 0) this.die(ev.point, source, 'cut');
     else {
       // The cut carries its own line — `ev.impulse` is the direction the blade
@@ -1531,14 +2459,191 @@ export class Enemy {
     }
   }
 
+  /**
+   * Would this pass END the fight? Three ways, and only the first is obvious:
+   * `takeCut`'s own lethality gate; the fact that `_loseLimbBehaviour` disarms
+   * a blade-user on the FIRST arm it loses, so one arm is a kill in every way
+   * that matters to a duel; and — for a body with no blade — the sever itself.
+   *
+   * ── WHY A SEVER ENDS A CREATURE'S FIGHT, MEASURED ─────────────────────
+   *
+   * `takeCut` charges `maxHp * vital * 1.15` for a severed limb: a SHARE OF
+   * MAXIMUM HEALTH, not a fixed wound. So how many limbs a body can lose is a
+   * property of the vital table and nothing else, and its health does not enter
+   * into it — which is the same defect as "a 460 hp Master dies as fast as a
+   * 28 hp B1", one layer down and hiding.
+   *
+   * **AND THE TABLE WAS NINETEEN HUMANOID NAMES OVER A ROSTER OF QUADRUPEDS AND
+   * MACHINES.** Read as `VITAL[name] ?? 0.4`, so a Rancor's `tarsus0` — and 33
+   * other names — came out at 0.4: 46% of a 2200 hp animal, exactly as much as
+   * its hip, three toes to kill it out of the four it has. Measured with the
+   * guard open, brute, charger, acklay, gundark and nexu ALL died in 1.28 s
+   * through a toe, five bodies spanning 420 to 2200 hp on one number.
+   *
+   * That is fixed at the source: see `SEVERANCE`/`severance` at the foot of this
+   * file. A bone declares its ROLE beside its length in the skeleton that
+   * generates it, the price is that role divided by how many of the limb the
+   * body has and scaled by how much of it comes off, and an unpriced role
+   * throws. A Rancor's toe is 0.101 now against its hip's 0.55, so it takes
+   * NINE toe-severs to kill an animal that has four; the acklay and the reek
+   * need 24 against six and four, the nexu 26, the gundark 11, the walker 20
+   * and the AT-TE 36. **No body on the roster can now be killed by taking its
+   * extremities off, and eight of them could.**
+   *
+   * That is why the first version of the hide guard bought nothing. It turned
+   * the pass at the neck and the model simply went round it to a leg — which is
+   * the right instinct and the reason the leg route exists, but a leg cannot be
+   * BOTH the way in and free. So for a body with no blade, coming apart is what
+   * losing looks like, and the hide turns that pass too. In the player's words
+   * it is a hide that needs the same place hit twice: the first pass skids off,
+   * the second parts it.
+   *
+   * It is not a wall and it cannot become one. `_turnCut` returns false at
+   * `guard <= 0`, and `guardFor` gives 0 to everything under 300 kg — a B1, a
+   * trooper, a B2, a droideka all still come apart on the first pass — and a
+   * turned pass costs `TURNED_CUT` of maximum health, so five of them kill the
+   * body whatever its guard was.
+   */
+  _fightEnding(bone, vital) {
+    if (vital >= 0.9) return true;
+    if (vital >= 0.7 && this.hp < this.maxHp * 0.55) return true;
+    if (this.A.saber) return !this.disarmed && /arm|fore|hand/.test(bone);
+    return true;
+  }
+
+  /**
+   * THE GUARD TURNS A KILLING PASS ASIDE — see the notes on GUARD_PER_HP (a
+   * duellist's blade) and HIDE_PER_KG (everything else's own bulk) for the whole
+   * argument and the measurements both come from.
+   *
+   * Three gates, and each is here so that this is a duel rather than a wall:
+   *
+   *   · only a FIGHT-ENDING pass is turned. A duellist still bleeds from every
+   *     ordinary cut at exactly the rate it always did, and still loses legs.
+   *     `_fightEnding` is where the two kinds of body differ, and it says why.
+   *   · only while the guard is UP. Everything the player earns — a parry, a
+   *     chamber, a won blade lock, a Force shove, a heavy blow, a topple, a
+   *     grip, a severed arm — opens it, and the killing pass lands at once.
+   *   · it is NOT free. A turned pass costs a quarter of maximum health and
+   *     leaves the body staggered, so the ceiling on how long any of this can
+   *     last is `1 / TURNED_CUT` passes no matter how deep the guard is.
+   *
+   * AND A TURNED CUT MUST NOT ITSELF OPEN THE GUARD, which is the one thing
+   * that made the first version of this worth almost nothing. It called
+   * `stun()`, which is what every other beaten-guard path calls — and `stun`
+   * sets `stunTimer`, which `_guardOpen` reads, so the pass immediately after
+   * a turn always landed. Measured: a 460 hp Master and a 130 hp acolyte both
+   * died in exactly 2 torso passes, and the whole guard was worth 0.42 s.
+   * A successful defence cannot be the thing that hands over the next one.
+   *
+   * So it goes through `DuelBrain.interrupt` instead, which Duel.js's own note
+   * describes as strictly WEAKER than a stagger: the blade is driven back to a
+   * neutral guard and no attack comes out of it for a beat. That is a real
+   * consequence — it lost its tempo, and it lost a quarter of its health —
+   * without being the opening. The openings stay the ones the player earns.
+   */
+  _turnCut(ev, bone, vital, source) {
+    if (this.guard <= 0 || this.dead) return false;
+    /* THE FORCE IS A DIFFERENT CONTEST AND IT ALREADY HAS ONE. `ev.force` marks
+     * a joint torn off by Force Rend rather than a pass of a blade, and this is
+     * the blade's guard: a plate turns an EDGE, and nothing about a hide
+     * explains a limb being pulled out of its socket from the inside. The Force
+     * half is `resistForce`, which spends the body's own pool against the
+     * power, and charging a Force rend for both would be one act billed twice.
+     *
+     * It is also the difference between a heavy that is hard to cut and a power
+     * that appears to do nothing, which is the complaint this session has
+     * already answered once: with the walker's guard eating rend passes,
+     * `force: a droid comes apart, and how far scales with the setting` went
+     * red on a walker whose joints stopped coming off while the score, the
+     * shake and the sound all still fired. */
+    if (ev && ev.force) return false;
+    if (this._guardOpen()) return false;
+    if (!this._fightEnding(bone, vital)) return false;
+
+    this.guard--;
+    this.guardT = GUARD_REFRESH;
+    this.hp -= this.maxHp * TURNED_CUT;
+    if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + this.maxHp * TURNED_CUT;
+    if (this.hp <= 0) { this.die(ev.point, source, 'cut'); return true; }
+
+    /* THE TEMPO COST, AND IT IS NOT THE SAME EVENT FOR EVERY BODY.
+     *
+     * A duellist loses the beat through `DuelBrain.interrupt` — Duel.js's own
+     * note calls that strictly weaker than a stagger, which is the point: a
+     * real consequence that is not itself the opening. A creature and a machine
+     * have no DuelBrain, so `this.duel?.` was silently nothing for them and the
+     * turn would have been free. `attackTimer` is the beat all three brains
+     * actually run on (`_rangedBrain`, `_beastBrain` and the training loop each
+     * count it down), so pushing it is the same consequence spelt in the
+     * vocabulary the body has. It is a DELAY and not a stun: `stunTimer` is
+     * read by `_guardOpen`, and a successful defence that opens the next pass
+     * is the bug the note above records costing the whole guard 0.42 s.
+     */
+    if (this.duel) this.duel.interrupt(0.35);
+    else this.attackTimer = Math.max(this.attackTimer || 0, 0.35);
+    this.breakCast();
+
+    /* AND IT READS AS WHAT IT IS. Steel stopping steel is a specific sound and
+     * a specific shower of sparks, and playing it off a Rancor's hide would be
+     * the loudest wrong note in the game — the player's complaint that started
+     * this work is that the big creatures are indistinguishable, and a blade
+     * skidding off two tonnes of animal is one of the few moments that can say
+     * otherwise. Which one is read off the body: `A.saber` for a blade,
+     * `TOUGHNESS.heavy` and up for a plated machine, everything else is hide. */
+    const at = ev.point ?? this.position;
+    const armour = (this.A.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.heavy;
+    if (this.A.saber || armour) {
+      audio.clash(at, armour ? 0.5 : 0.6);
+      this.world.particles?.sparkBurst?.(at, null, armour ? 22 : 16, { speed: armour ? 7 : 9 });
+      this.world.notifyFloating?.(this.aimPoint(_v1),
+        this.A.saber ? 'TURNED' : 'PLATE HOLDS', '#cfe4ff');
+    } else {
+      // Hide: a dull heavy slap with no ring in it, and no sparks at all —
+      // `spatter` is the pool the game already throws for a cut into flesh.
+      audio.thud(at, 0.9);
+      audio.noise({ dur: 0.13, gain: 0.16, type: 'lowpass', freq: 900, freqEnd: 260, pos: at });
+      this.world.particles?.spatter?.(at, null, 8, 0x7a2418, { speed: 3.0 });
+      this.world.notifyFloating?.(this.aimPoint(_v1), 'HIDE TURNS IT', '#e0b48a');
+    }
+    return true;
+  }
+
   /** @param point where the blade crossed, so a dropped hilt starts there. */
   _loseLimbBehaviour(bone, point) {
-    // walking on a severed leg does not work
-    if (/thigh|shin|foot|femur|tibia|tarsus/.test(bone)) {
+    /**
+     * WALKING ON A SEVERED LEG DOES NOT WORK — AND THE BIGGEST LEG BONE ON
+     * EVERY MULTI-LEGGED BODY DID NOT COUNT AS ONE.
+     *
+     * This asked `/thigh|shin|foot|femur|tibia|tarsus/.test(bone)`: the leg
+     * vocabulary of a HUMANOID, spelled out, against a roster whose quadrupeds
+     * name their bones `hipL0`, `femur0`, `tibia0`, `tarsus0` and whose
+     * hailfire names them `wheelL` and `rimL`. `hipL#` is on none of those
+     * lists. Severing a bone also takes its whole subtree (Ragdoll.cut) while
+     * reporting only the CUT bone's name, so cutting a Spider Walker at the HIP
+     * removed the entire leg and incremented `legsLost` by ZERO, while cutting
+     * the toe of that same leg counted. Measured across the roster:
+     *
+     *   walker 12 of 16 leg bones counted, 4 × hipL# uncounted (0.275 each,
+     *   the most expensive leg bone it has, against a tarsus at 0.045)
+     *   acklay 18 of 24 · charger 12 of 16 · stalker 12 of 16
+     *   brute 6 of 8 · pouncer 6 of 8 · HAILFIRE 0 of 4
+     *
+     * What a player saw: a Spider Walker losing three of its four legs at the
+     * hip — 588 of its 620 hp — with `legsLost === 0`, still upright and still
+     * moving at full speed, because `_move` reads the same counter. And a
+     * Hailfire had no bone in its body that could ever increment it, so
+     * `topple()` was unreachable for that machine entirely.
+     *
+     * `Rig.js` gave every bone a `role` and `severanceOf` already prices off
+     * it; this was the older reader, and Rig.js's own note names it as "the
+     * next thing to route through `bone.role`". Now it is. A body plan added
+     * tomorrow is counted the day it is authored, in the same place its bones
+     * declare what they are.
+     */
+    if (this.rig?.get(bone)?.role === 'leg') {
       this.legsLost = (this.legsLost || 0) + 1;
-      if (this.legsLost >= (this.A.custom === 'walker' || this.A.custom === 'beast' ? 3 : 1)) {
-        this.topple();
-      }
+      if (this.legsLost >= this._toppleAt()) this.topple();
     }
     // The off hand holds a real weapon, so losing it loses the weapon. Checked
     // before the general arm rule, which only knows about the main one.
@@ -1579,6 +2684,11 @@ export class Enemy {
       if (/droid|b1|b2|walker|droideka/.test(this.type)) p.sparkBurst(point, null, 22, { speed: 8 });
     }
     audio.cut(point, this.A.big);
+    // Losing a limb and living through it. `cry` decides nothing about what
+    // comes out of the throat — see the note there — only that there is
+    // something to say, and a droid's version of a scream is that it powers
+    // down, which is the announcer's call to make.
+    if (!this.dead) this.cry('scream', 0.7);
   }
 
   _cutDroideka(name, ev, source) {
@@ -1593,6 +2703,34 @@ export class Enemy {
       this.legsLost = (this.legsLost || 0) + 1;
       if (this.legsLost >= 2) this.topple();
     }
+  }
+
+  /**
+   * How many leg cuts put this body on the ground.
+   *
+   * The authored number is 3 for a walker or a creature and 1 for everything
+   * else, and it is CAPPED BY THE ANATOMY: you cannot ask for more legs than
+   * the body has, and a body standing on its last leg is on the ground whatever
+   * the number says. A leg CHAIN is counted off the rig — a bone with role
+   * 'leg' whose parent is not one — so it is 4 on a Spider Walker, 6 on an
+   * Acklay, 2 on the two bipeds and 2 on a Hailfire.
+   *
+   * THE HAILFIRE IS WHY THIS IS DERIVED. `Rig.js` says outright that its wheels
+   * are legs — "two of them, weight-bearing, and losing one is losing the pair"
+   * — and it carries `custom: 'walker'`, so the flat 3 was a threshold its four
+   * leg bones could never reach: `wheelL` takes `rimL` with it, so there are
+   * exactly two cuts available and three were required. One wheel now puts it
+   * over, which is what a two-wheeled machine does when it loses a wheel.
+   *
+   * The two bipedal creatures move with it, from 3 to 1, and that is the same
+   * sentence: a Rancor has two legs, and a Rancor with one leg is a Rancor on
+   * the sand. Reaching it is not cheap — a severing pass has to beat five
+   * turned passes or catch the animal WINDED first, and it costs
+   * `maxHp × vital × SEVER_LETHALITY` on the way through.
+   */
+  _toppleAt() {
+    if (this._toppleNeed === undefined) this._toppleNeed = toppleAt(this.A, this.rig);
+    return this._toppleNeed;
   }
 
   topple() {
@@ -1610,19 +2748,83 @@ export class Enemy {
 
   applyKnockback(impulse, damage, source, gentle) {
     if (this.dead) {
-      if (this.actor?.ragdolled) {
+      // `impulse` is legitimately null — `_sustain` bills damage with no shove
+      // behind it — and this line dereferenced it, so a held power that outlived
+      // its victim threw inside world.update(). Latent, but reachable.
+      if (this.actor?.ragdolled && impulse) {
         for (const b of this.actor.bodies.values()) b.applyImpulse(_v1.copy(impulse).multiplyScalar(b.mass * 0.4), b.position);
       }
       return;
     }
-    this.velocity.add(impulse);
+    /**
+     * PUSHING INTO A PUSH IS A CONTEST. Measured before this existed: two Force
+     * users shoving at each other both landed in full, and a Master with 150 of
+     * pool was moved exactly as far as one with none.
+     *
+     * The blow is weighed ONCE — the shove priced alongside the damage, see
+     * IMPULSE_AS_HP — and the fraction the pool buys back is applied to both,
+     * so a body cannot be billed twice for one blow and cannot blunt the harm
+     * while taking the whole ride. `preResisted` carries that decision down
+     * into `damage()`.
+     */
+    let dmg = damage || 0;
+    const weight = dmg + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
+    const blunt = this.resistForce(weight, 'force', source);
+    if (blunt > 0) {
+      const k = Math.max(0, 1 - blunt / weight);
+      dmg *= k;
+      if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
+    }
+    if (impulse) this.velocity.add(impulse);
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;
-    if (damage > 0) this.damage(damage, this.position, source, 'force');
-    if (!gentle && impulse.length() > 12 && this.actor && !this.A.boss) {
+    // A real shove beats a guard, so it beats whatever that guard was holding
+    // together. `stun` below only fires past 12 m/s and never on a boss, which
+    // is why this cannot be left to it.
+    if (!gentle) this.breakCast();
+    if (dmg > 0) this.damage(dmg, this.position, source, 'force', true);
+    if (!gentle && impulse && impulse.length() > 12 && this.actor && !this.A.boss) {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
     }
+    // "I want to hear the enemies scream as they get force thrown" — the throw
+    // is the impulse, so the trigger belongs exactly here rather than in
+    // whichever power happened to produce it.
+    if (!gentle && impulse && impulse.length() > 10) this.cry('scream', 0.9);
+  }
+
+  /**
+   * SAY SOMETHING — player note #21, "I want to hear their screams".
+   *
+   * WHAT THIS FILE DECIDES IS *WHEN*, AND NOTHING ELSE. It does not pick a
+   * larynx and it does not call `audio.speak`, for two reasons that are both
+   * about not making a second copy of a rule:
+   *
+   *  · WHICH VOICE a body has is derived from `bodyOf` (src/engine/Presence.js)
+   *    and mapped to a spec by `Announcer._enemySpec` — one classifier, and the
+   *    note over it explains at length what happened the last time that mapping
+   *    was written down twice (the Reek and the Nexu died with a human throat).
+   *  · HOW OFTEN the room may speak is the announcer's shared enemy budget,
+   *    which exists so a squad wiped in one second does not produce five
+   *    simultaneous deaths. A body that spoke directly would be outside it.
+   *
+   * So this raises an EVENT — the same `world.onXxx` shape `onHitmark`,
+   * `onKillFeed` and `onDeflectFeedback` already use, wired in src/main.js —
+   * and the announcer, which owns both of those rules, decides what comes out.
+   * `kind` is one of Voice.js's ENEMY_LINES: 'scream', 'panic', 'alarm',
+   * 'chatter'.
+   *
+   * The per-body gap is here rather than in the announcer because it is a
+   * different rule from the room's: it stops ONE body from screaming twice in
+   * a second while being knocked down a slope, which no shared budget can see.
+   */
+  cry(kind, gap = 1.2) {
+    if (this.dead || this._netRemote) return false;
+    const t = this.world?.time ?? 0;
+    if (t < (this._cryAt ?? -99) + gap) return false;
+    this._cryAt = t;
+    this.world?.onEnemyVoice?.(this, kind);
+    return true;
   }
 
   /**
@@ -1638,6 +2840,11 @@ export class Enemy {
    */
   stun(t, fromDir = null, power = 1) {
     this.stunTimer = Math.max(this.stunTimer, t);
+    // …AND IT BREAKS WHATEVER THE BODY WAS REACHING FOR. Every caller of this
+    // method has already decided the guard lost, and a guard that lost cannot
+    // be holding a power together. See `breakCast` for what used to happen
+    // instead, which was that the wind-up FROZE and arrived afterwards.
+    this.breakCast();
     if (this.duel && !this.dead) this.duel.stagger(t, fromDir, power);
   }
 
@@ -1660,6 +2867,26 @@ export class Enemy {
     this.dead = true;
     this.dying = 0;
     this.world.onEnemyKilled?.(this, source, kind);
+
+    /* THE ONE WHO SAW IT, and this is the half the announcer cannot do.
+     *
+     * `Announcer._enemies` already breaks a squad after three deaths inside
+     * three and a half seconds — a WAVE-level rule, and a good one — but it
+     * speaks through whichever body is nearest the PLAYER, which on a wide
+     * field is regularly somebody who was not there. A death is witnessed by
+     * whoever is standing next to it: 14 m, one of them, and it is the nearest
+     * because that is the one the player can also see falling.
+     *
+     * The gap is deliberately long. A wave cleared body by body would
+     * otherwise produce a running commentary, and panic that never stops is
+     * not panic. */
+    let saw = null, sawD = 14 * 14;
+    for (const o of (this.world.enemies || [])) {
+      if (o === this || o.dead || !o.position || o.team !== this.team) continue;
+      const d2 = o.position.distanceToSquared(this.position);
+      if (d2 < sawD) { sawD = d2; saw = o; }
+    }
+    saw?.cry('panic', 6.0);
 
     // Retire the hum with the body. dispose() only runs 40s later, when the
     // corpse is cleaned up, and retract() merely fades the gain — so a cleared
@@ -1828,6 +3055,14 @@ export class Enemy {
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
+    /* A guard is won back by COMPOSING yourself, so the clock does not run while
+     * the body is stunned, staggered, toppled, gripped or locked. That is what
+     * makes pressure worth keeping up: a player who backs off to heal is handing
+     * the duellist its guard back, and one who stays on it is not. */
+    if (this.guard < this.guardMax && !this._guardOpen()) {
+      this.guardT -= dt;
+      if (this.guardT <= 0) { this.guard++; this.guardT = GUARD_REFRESH; }
+    }
     if (this.compelled) {
       this.compelled.t -= dt;
       // It ends when the clock runs out, when the victim dies (there is nothing
@@ -1922,7 +3157,17 @@ export class Enemy {
     if (_v1.lengthSq() > 1e-6) _v1.normalize();
     this.toTarget = _v1.clone();
 
-    if (this.gripped) { this.wish = null; return; }
+    if (this.gripped) {
+      // held off the ground by something it cannot see. `cry` is gapped, so
+      // holding one up for six seconds is one cry rather than 360.
+      this.cry('scream', 2.5);
+      // A body off its feet is not casting. This return is ABOVE `_meleeBrain`,
+      // so the identical test inside `_forceBrain` was never reachable and a
+      // grip froze a wind-up rather than breaking it — see `breakCast`.
+      this.breakCast();
+      this.wish = null;
+      return;
+    }
     if (this.stunTimer > 0 || this.toppled) {
       this.wish = null;
       // A beaten guard has to TRAVEL while the body is reeling. The brain is
@@ -2062,6 +3307,9 @@ export class Enemy {
         this._shoot(ctx);
         this.burstLeft--;
         this.burstTimer = (A.burstGap ?? 0.12) * rally;
+        // The committed ray outlives the burst it was drawn for and nothing
+        // else: once the shot is away the next one aims fresh.
+        if (this.burstLeft <= 0) this.telegraphAim = null;
       }
       return;
     }
@@ -2102,7 +3350,28 @@ export class Enemy {
     }
   }
 
+  /**
+   * THE RED LINE MEANS WHAT IT SAYS, AND IT DID NOT.
+   *
+   * `sniper` (1.0 s), `rocket` (0.9 s), the AT-TE (1.1 s) and the `marksman`
+   * elite (0.9 s) draw a line from the muzzle to the player's chest and hold it
+   * there for most of a second. The modifier's own text calls that the whole of
+   * the counter-play — "a red targeting line on your chest, and most of a
+   * second to leave it" — and leaving it was the one thing that did nothing:
+   * `_pose` re-pointed the line at `target.chest` EVERY FRAME and `_shoot`
+   * computed its aim from `target.chest` at the moment of firing, so the line
+   * followed you and the shot was aimed when it left rather than when the
+   * warning went up. The player who did exactly what the tell told them to do
+   * was hit anyway, which teaches them the telegraph is a lie.
+   *
+   * The point is committed HERE, at the top of the telegraph, and both the line
+   * and the bolt read it. Step off it and the shot goes where you were.
+   */
   _beginTelegraph(ctx) {
+    const t = this.target;
+    if (t) {
+      this.telegraphAim = (this.telegraphAim || new THREE.Vector3()).copy(t.chest ?? t.position);
+    }
     if (!this.laser) {
       const g = new THREE.CylinderGeometry(0.006, 0.006, 1, 4);
       g.translate(0, 0.5, 0);
@@ -2160,7 +3429,11 @@ export class Enemy {
     const target = this.target;
     if (!target) return;
     const from = this._muzzleWorld(_v1).clone();
-    const aimAt = _v2.copy(target.chest ?? target.position);
+    // Down the committed ray if one was drawn — see `_beginTelegraph`. A shot
+    // the player was given a second to leave has to leave from where the line
+    // was, not from where they ended up.
+    const aimed = !!this.telegraphAim;
+    const aimAt = _v2.copy(aimed ? this.telegraphAim : (target.chest ?? target.position));
     /* SHOOTING ITSELF is aimed at the chest like everything else, but the
      * muzzle is already past it — a rifle held at the shoulder has its barrel
      * end a good half metre in FRONT of the ribs — so `aimAt - from` points
@@ -2180,7 +3453,10 @@ export class Enemy {
     // lead the shot, then throw it off by however good this difficulty is
     const speed = 88 * (diff ? diff.boltSpeed : 1) * (A.big ? 1.2 : 1);
     const tof = from.distanceTo(aimAt) / speed;
-    if (target.velocity) aimAt.addScaledVector(target.velocity, tof * acc);
+    /* …and a committed shot does not lead. Leading a fixed point by the
+     * target's CURRENT velocity would put the bolt back on the player and off
+     * the line that was drawn, which is the same defect one layer down. */
+    if (target.velocity && !aimed) aimAt.addScaledVector(target.velocity, tof * acc);
 
     _v3.subVectors(aimAt, from).normalize();
     const spread = (A.spread ?? 0.06) * (2 - acc);
@@ -2210,7 +3486,37 @@ export class Enemy {
 
   _meleeBrain(dt, ctx, dist) {
     if (!this.saber) { this._beastBrain(dt, ctx, dist); return; }
-    if (this.lock) { this.wish = null; return; }   // a blade lock pins both fighters
+    if (this.lock) {
+      /**
+       * A BLADE LOCK PINS THE FEET AND THE BLADE. IT DOES NOT SWITCH OFF THE
+       * FORCE — AND IT USED TO.
+       *
+       * This was one line — `this.wish = null; return;` — placed above the call
+       * to `_forceBrain`, so the whole kit was disabled for the duration of
+       * every bind. Measured share of a 25 s duel spent locked: Sentinel 41%,
+       * Master 29%. Which means the archetypes that survive long enough to USE
+       * a kit were exactly the ones whose kit was off for a third to a half of
+       * the fight, and it was off during the one moment a shove means the most:
+       * two blades crossed, nose to nose, nothing else either of you can do.
+       * Every film this game is made of answers that moment with a hand.
+       *
+       * The feet stay pinned — the lock owns those — and `_castPower` resolves
+       * the bind when the shove lands.
+       */
+      this.wish = null;
+      if (this.powers) this._forceBrain(dt, ctx, dist);
+      return;
+    }
+    /* WINDED, for the two duellist bosses — see `_windTick` and WIND_TAKE. The
+     * tally was being written for them and read for nobody, so a boss with
+     * twelve turned passes had no window in which the thirteenth would land.
+     * The blade is out of line for the duration (the stagger the tick opens),
+     * so this only keeps the FEET and the kit still. */
+    if (this._windTick(dt)) {
+      this.wish = null;
+      if (this.duel.staggered) this.duel.update(dt, ctx, dist);
+      return;
+    }
     if (this.trainingSpeed) this.duel.timeScale = this.trainingSpeed;
     // The leader's aura reaches the duel brain as tempo, which is what the form
     // actually spends: shorter guards, shorter recoveries, the same attacks.
@@ -2226,7 +3532,450 @@ export class Enemy {
     if (this.duel.lungeSpeed > 0.01 && this.toTarget) {
       this.velocity.addScaledVector(this.toTarget, this.duel.lungeSpeed * dt * 9);
     }
+    if (this.powers) this._forceBrain(dt, ctx, dist);
     if (this.offSaber && !this.offDisarmed) this._offhandStrike(dt, ctx);
+  }
+
+  /**
+   * WHEN A DUELLIST REACHES FOR THE FORCE — see ENEMY_POWERS for what and why.
+   *
+   * Three gates, in this order, and each is here to stop a different kind of
+   * bad fight:
+   *
+   *   AFFORDABILITY  the pool, off the same POWER_COST table the player pays.
+   *                  This is the balance: a knight can pay for two pulls, and
+   *                  a duellist that opens with everything is a fencer for the
+   *                  next eight seconds.
+   *   SITUATION      `want`. A push fired at nothing is not a threat, it is
+   *                  noise, and it teaches the player that the tell means
+   *                  nothing. `pressed` means a blade is inside the band it
+   *                  wants to fight at — and it used to mean that AND "it is
+   *                  losing on health", which made the whole feature invisible;
+   *                  see the note on the object itself. `fleeing` means the
+   *                  target is opening the distance; `ranged` means they have
+   *                  already opened it; `cornered` is the boss's last third.
+   *   TELEGRAPH      `_castTimer`. The cast is a 0.45 s wind-up with a floating
+   *                  call over the body, because everything else this game does
+   *                  to the player is readable and a power that arrives with no
+   *                  frame of warning is the 11.5 m sphere the beasts check has
+   *                  a note about.
+   *
+   * It never casts through its own strike — `phase === 'strike'` — so a power
+   * cannot arrive on the same frame as a blade and make an exchange
+   * unanswerable.
+   *
+   * ── AND NOTHING HERE TOUCHES THE FEET. That is the one regression this
+   * feature caused and both wrong answers are worth recording.
+   *
+   * The first version set `this.wish = null` through a cast — 0.45 s of wind-up
+   * plus up to 2.4 s of held choke on a 9 s cooldown, so a third of the fight
+   * was spent standing still. `tools/checks/footwork.mjs` failed immediately
+   * and it failed on the thing the player actually reported (note #7, "the
+   * enemies are unreachable, the wave won't progress"): a duellist that stops
+   * to cast at somebody walking backwards never closes, and walking backwards
+   * went back to being a shutout — 10.50 hp/s standing still against 0.20
+   * walking away.
+   *
+   * The second version scaled the wish to 0.55 instead of nulling it, which
+   * fixed that and broke a different check for a better reason: `wish` is a
+   * DIRECTION, not a speed. `footwork: the band a duellist holds is inside the
+   * band it swings from` finds the band edge by sweeping in and watching for
+   * `wish.dot(toTarget) > 0.999`, so a wish scaled to 0.55 reads as a body that
+   * has stopped driving straight in at 6 m — outside its own trigger, which is
+   * the copied-spacing defect that check exists for.
+   *
+   * So a cast costs no ground at all. Its commitment is already three things:
+   * the price out of a pool that does not refill fast enough, the cooldown, and
+   * a 0.45 s telegraph with a call over the body. The player casts while moving
+   * too.
+   */
+  _forceBrain(dt, ctx, dist) {
+    const t = this.target;
+    this.force = Math.min(this.forceMax, this.force + FORCE_REGEN * dt);
+    for (const k in this.powerCd) this.powerCd[k] = Math.max(0, this.powerCd[k] - dt);
+
+    // a power already running — pay for it by the second, or it stops
+    if (this.casting) { this._sustain(dt, ctx, dist); return; }
+
+    if (this._castTimer > 0) {
+      this._castTimer -= dt;
+      if (this._castTimer <= 0) this._castPower(this._castKey, ctx, dist);
+      return;
+    }
+    if (!t || !t.alive || this.duel.phase === 'strike' || this.duel.staggered) return;
+    if (this.stunTimer > 0 || this.gripped) return;
+
+    const closing = this.toTarget && t.velocity
+      ? t.velocity.x * this.toTarget.x + t.velocity.z * this.toTarget.z : 0;
+    const hpFrac = this.hp / this.maxHp;
+    const situation = {
+      /**
+       * A BLADE INSIDE THE BAND IT WANTS TO FIGHT AT. That used to read
+       * `&& hpFrac < 0.72`, and that clause is why the whole feature was
+       * invisible: a duellist at full health could never OPEN with a shove, and
+       * `pressed` is the ONLY one of these four that a stand-up fight ever
+       * satisfies. Driven 25 s each, 1v1, against a real player with a sweeping
+       * blade, every archetype on the roster cast nothing at all and every pool
+       * finished on its maximum — acolyte 62/62, knight 44/44, sentinel 40/40,
+       * guardian 48/48, master 150/150. A Sentinel, whose entire kit is this
+       * one verb, cast zero powers across 75 s and three behaviours.
+       *
+       * So the shove goes back to being what its own header calls it, "get off
+       * me", and the thing that stops it being a tic is what was always meant
+       * to: a 6.5 s cooldown and a pool that regenerates slower than it spends
+       * (FORCE_REGEN 3.0/s against a 20 price). It is also the first beat of
+       * the only two-beat this roster has — see `_castPower`, where the push is
+       * sized to buy the distance that `ranged` (and therefore lightning, and
+       * therefore the pull) needs to become reachable at all.
+       */
+      pressed: dist < this.A.preferred[1] + 0.8,
+      // opening the distance: `closing` is positive when they move away from it
+      fleeing: closing > 1.6 || dist > this.A.preferred[1] + 3.5,
+      /**
+       * OUTSIDE THE RANGE THIS BODY FIGHTS AT — and it used to be two metres
+       * outside it, which is a place the fight never went.
+       *
+       * `+ 2.0` is 5.4 m on a Master. Measured stand-off in a real 1v1 duel:
+       * ~1.6 m. And the shove that is supposed to CREATE the opening — the
+       * first beat of the only two-beat this roster has — lands a braced player
+       * at 3.86 m, still under the floor. So the situation was unreachable in
+       * both of the ways it could be reached, and the consequence was measured
+       * across five archetypes over 45 s each: 22 casts, 20 of them `push`, 2
+       * `pull`, and ZERO lightning — the Sith acolyte's signature power, the
+       * thing that is supposed to separate fighting him from fighting a Jedi.
+       * A five-power roster that plays as one power.
+       *
+       * PAST THE MIDDLE OF THE BAND THIS BODY FIGHTS IN, and that is derived
+       * rather than picked: the shove has to be able to reach it and the
+       * resting stand-off must not. Measured, both halves — a duel sits at
+       * ~1.6 m, and the peak separation in the 1.2 s after a push is 2.89 to
+       * 3.49 m, because the caster is walking in behind its own shove while the
+       * player is still travelling. `preferred` mid-points are 2.35 to 2.55, so
+       * the gap the shove opens clears it and the fight standing still does
+       * not. `lightning`'s own band floor comes down to meet it — see
+       * ENEMY_POWERS.
+       */
+      ranged: dist > (this.A.preferred[0] + this.A.preferred[1]) * 0.5,
+      /* Half health, not a third. `unleash` is the only one in the roster and
+       * it fired zero times in the same measurement: a duel that reaches 34% of
+       * a Master's 460 hp is a duel that is nearly over, so the one power the
+       * boss has that nothing else does was authored into the last few seconds
+       * of a fight most players end before it. Half is a beat you can lose to
+       * and come back from. */
+      cornered: hpFrac < 0.5 && dist < 6,
+    };
+
+    for (const key of this.powers) {
+      const P = ENEMY_POWERS[key];
+      if (!P || this.powerCd[key] > 0 || this.force < P.cost) continue;
+      if (dist < P.band[0] || dist > P.band[1]) continue;
+      if (!situation[P.want]) continue;
+      if (!this._hasLineOfSight(ctx)) continue;
+      /**
+       * THE PRICE IS PAID WHEN THE BODY COMMITS, NOT WHEN THE BLOW ARRIVES.
+       *
+       * Both halves used to be charged inside `_castPower`, at the far end of
+       * the 0.45 s wind-up, so a wind-up that never landed cost the caster
+       * nothing at all: no pool, no cooldown, and it could be started again on
+       * the very next frame. Once casts became breakable (see `breakCast`) that
+       * would have made every telegraph a free bluff and every interrupt
+       * worthless — the player would learn to ignore the tell, which is the
+       * exact failure the telegraph exists to prevent.
+       *
+       * Charging here makes an interrupt worth reaching for and it makes the
+       * pool move on the screen at the moment the player can see why.
+       */
+      this.force -= P.cost;
+      this.powerCd[key] = P.cd;
+      this._castKey = key;
+      this._castTimer = 0.45;
+      this.world.notifyFloating?.(this.aimPoint(_v1), P.label, P.color);
+      audio.tone({ freq: 180, freqEnd: 900, dur: 0.45, gain: 0.10, type: 'sine', pos: this.position });
+      return;
+    }
+  }
+
+  /**
+   * BREAK A CAST — the thing nothing in the game could do.
+   *
+   * `_forceBrain` checks `_castTimer` before every situational test and returns,
+   * and `_think` returns EARLIER still on `stunTimer > 0 || this.gripped` — so
+   * being stunned or gripped mid-wind-up never reached the two interrupt clauses
+   * inside `_forceBrain` at all. They were unreachable dead code, and what a
+   * stun actually did was FREEZE the wind-up: the timer stopped, the body stood
+   * there, and the cast arrived the moment it could think again. Driven against
+   * a mid-wind-up Jedi Master with five different counters — a parry-strength
+   * stun, a push, a grip, lightning and unleash — the cast arrived five times
+   * out of five.
+   *
+   * The same freeze applied one layer down. `_sustain` already refuses to keep
+   * a held power running while `stunTimer > 0 || this.gripped`, and `_think`
+   * returned before it could: a choke survived a stagger with its full duration
+   * intact and resumed afterwards.
+   *
+   * So there is one verb for it, it is called from the places that BEAT a guard
+   * rather than from the brain that would like to keep casting, and the price
+   * is already spent by the time it runs.
+   *
+   * @returns the key of whatever was broken, or null.
+   */
+  breakCast() {
+    let broke = null;
+    if (this._castTimer > 0) { broke = this._castKey; this._castTimer = 0; this._castKey = null; }
+    if (this.casting) { broke = broke ?? this.casting; this._endSustain(); }
+    return broke;
+  }
+
+  /** A held power stops. Separate from `breakCast` because a hold that simply
+   *  runs out of seconds has arrears to settle and a broken one does not. */
+  _endSustain() {
+    this.casting = null;
+    this.castLeft = 0;
+    /* AND THE ARREARS GO WITH IT. `_sustainDebt` is per-body state that nothing
+     * cleared when a cast ended, so a hold that stopped part-way through a tick
+     * handed its unpaid remainder to whatever power ran next — including one
+     * with a completely different `dps`. Small, silent, and the sort of thing
+     * that makes a later measurement of a different power inexplicable. */
+    this._sustainDebt = 0;
+  }
+
+  /**
+   * SPEND THE POOL TO BLUNT AN INCOMING POWER — the defensive half of the Force,
+   * which did not exist. See the note on RESIST_PER_FORCE for the argument and
+   * the measurements.
+   *
+   * Consulted by the SINK and by nothing else: `damage()` and `applyKnockback`
+   * are the two doors every power in the game comes through, so one call each
+   * means a blow is answered exactly once however it was thrown. A body with no
+   * pool returns 0 and pays nothing for the feature existing.
+   *
+   * @returns hp of the blow taken off, having already spent the pool for it.
+   */
+  resistForce(amount, kind, source) {
+    if (this.dead || !this.powers) return 0;
+    // …and never against itself: a body's own held power bills through the same
+    // door, and a caster paying twice for one cast is not a contest.
+    if (source === this) return 0;
+    const r = forceResistance(this.force, amount, kind, this._guardOpen());
+    this.force = Math.max(0, this.force - r.spend);
+    return r.blunt;
+  }
+
+  /**
+   * Is this body's guard already beaten? One predicate, two readers — the blade
+   * (`_turnCut`) and the Force (`resistForce`) — so "the opening you earned" is
+   * one rule rather than two that drift.
+   */
+  _guardOpen() {
+    return this.dead || this.toppled || this.gripped || this.disarmed
+      || this.stunTimer > 0 || !!this.duel?.staggered || !!this.lock
+      /* WINDED IS AN OPENING, and it is the one an animal has instead of a
+       * stagger. `_beastBrain` already enters this state when it takes 14% of
+       * its health inside its own decay window, already prints WINDED over its
+       * head for 2.4 s, and its own comment already calls it "the only safe
+       * time to go for a leg". Until the hide could turn a killing pass there
+       * was nothing for that window to be safe FROM — every pass landed. It is
+       * listed here rather than given its own gate in `_turnCut` because this
+       * predicate is the one rule both the blade and the Force read, and an
+       * opening the blade honours and the Force does not is two rules. */
+      || this.state === 'winded';
+  }
+
+  /**
+   * The winded window, for every body that keeps the tally — see WIND_TAKE.
+   *
+   * Called by `_beastBrain` for the creatures and by `_meleeBrain` for the two
+   * duellist bosses, and it is the same rule in both places rather than a
+   * second one that reads similar. Returns true while the body is open, which
+   * is the caller's cue to stop it doing anything.
+   *
+   * WHAT A DUELLIST DOES WITH IT that an animal does not: the guard goes with
+   * it. `duel.stagger` is how every other earned opening in the game is SHOWN —
+   * the blade driven wide and low and held there — so a boss that has been hurt
+   * faster than it can absorb reads exactly like one that has been parried,
+   * from across the room, and `_guardOpen` is true either way. An animal has no
+   * blade to throw and gets the floating call and the roar it always had.
+   */
+  _windTick(dt) {
+    if (!keepsWind(this.A)) return false;
+    this.windTimer = Math.max(0, (this.windTimer || 0) - dt);
+    this.recentDamage = Math.max(0, (this.recentDamage || 0) - dt * this.maxHp * WIND_DECAY);
+    if (this.recentDamage > this.maxHp * WIND_TAKE && this.windTimer <= 0 && this.state !== 'winded') {
+      this.recentDamage = 0;
+      this.state = 'winded';
+      this.stateTime = 0;
+      this.windTimer = WIND_GAP;
+      this.world.notifyFloating?.(this.aimPoint(_v1), 'WINDED', '#ffd88a');
+      audio.explosion(this.position, 0.7);
+      // A body with a blade shows it with the blade. `stagger` clears the
+      // attack, the chain and the chamber and hides the telegraph, so the
+      // window cannot be spent on a swing that was already in flight.
+      this.duel?.stagger(WIND_OPEN, null, 1.4);
+    }
+    if (this.state === 'winded') {
+      if (this.stateTime > WIND_OPEN) { this.state = 'approach'; return false; }
+      return true;
+    }
+    return false;
+  }
+
+  /** The cast lands. Everything that hits goes through `applyKnockback`. */
+  _castPower(key, ctx, dist) {
+    const P = ENEMY_POWERS[key];
+    const t = this.target;
+    this._castKey = null;
+    // The price and the cooldown were taken when the body committed — see the
+    // note in `_forceBrain`. Nothing is charged here, and a cast that reaches
+    // this line has already been paid for.
+    if (!P || !t || !t.alive) return;
+    audio.force(this.position, P.sound);
+    this.world.engine?.setRadial?.(0.22);
+
+    if (P.hold) { this.casting = key; this.castLeft = P.hold; this._sustainDebt = 0; return; }
+
+    const dir = _v1.subVectors(t.position, this.position).setY(0);
+    const d = dir.length() || 1;
+    dir.multiplyScalar(1 / d);
+    if (key === 'push' || key === 'unleash') {
+      /* A SHOVE ENDS A BIND. `_meleeBrain` runs the kit through a blade lock
+       * now (see the note there), and the one verb that means anything with two
+       * blades crossed is "get off me" — so it does that, rather than shoving a
+       * body the lock is holding in place. The lock resolves the enemy's way,
+       * which is what winning a shove IS; it has already cost the pool and the
+       * cooldown, and the player's answer is the same one the lock always had. */
+      if (this.lock) this.lock.forceBreak?.('enemy');
+      /* The 360 is the 360: `unleash` takes everything inside its band whatever
+       * side of the body it is on, which is the property that makes it the
+       * answer to being surrounded rather than a bigger push. Reach and
+       * impulse are the push's, times the ratio the two costs stand in. */
+      const k = key === 'unleash' ? 1.55 : 1.0;
+      _v2.copy(dir).multiplyScalar(PUSH_SPEED * k).setY(PUSH_LIFT * k);
+      t.applyKnockback?.(_v2, 9 * k, this);
+      this.world.particles?.sandPuff(this.position.clone().addScaledVector(dir, 1.2),
+        2.0 * k, this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+      if (key === 'unleash') {
+        // …and it moves the furniture, which is what says "everything around me"
+        for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
+          if (b.invMass === 0 || b === this.body) continue;
+          _v3.subVectors(b.position, this.position);
+          const bd = _v3.length();
+          if (bd > 9 || bd < 0.01) continue;
+          b.applyImpulse(_v3.multiplyScalar(b.mass * 9 * (1 - bd / 9) / bd).setY(b.mass * 4), b.position);
+        }
+      }
+    } else if (key === 'pull') {
+      /* A PULL ENDS IN FRONT OF THE PULLER, which is the note Player.forcePull
+       * carries: an impulse "toward me" overshoots at 4 m and falls short at
+       * 16, so the target is a DESTINATION — blade range — and the speed is
+       * whatever covers the gap against the damping the body already has. */
+      const want = Math.max(0, d - this.A.preferred[0]);
+      _v2.copy(dir).multiplyScalar(-Math.min(want * 6, 26)).setY(2.5);
+      t.applyKnockback?.(_v2, 0, this, true);
+    }
+  }
+
+  /** A held power, billed by the second. It ends when the pool does. */
+  _sustain(dt, ctx, dist) {
+    const P = ENEMY_POWERS[this.casting];
+    const t = this.target;
+    this.castLeft -= dt;
+    const pay = P.drain * dt;
+    const lost = !t || !t.alive || dist > P.band[1] + 2 || this.duel.staggered
+      || this.stunTimer > 0 || this.gripped;
+    if (this.castLeft <= 0 || this.force < pay || lost) {
+      /**
+       * AND THE LAST TICK IS PAID, WHICH IT WAS NOT.
+       *
+       * The audit reported lightning delivering 45.88 hp against an authored
+       * 35.2 (130%) and asked whether the tick overpays. **It does not, and the
+       * 130% does not reproduce.** Driven against a real Player whose own
+       * `update` is running — the part the earlier probe was missing, so
+       * `invuln` never decayed and every tick after the first was refused —
+       * lightning delivers 28.36 hp against an authored 29.92 at Knight's
+       * `damageTaken` of 0.85. That is 94.8%, an UNDER-pay, and the missing
+       * 5.2% is exactly the arrears standing in `_sustainDebt` when `castLeft`
+       * ran out mid-tick and the hold returned without settling them.
+       *
+       * A hold that runs its course pays what it accrued. One that is BROKEN —
+       * staggered, gripped, out of range — does not, because that is the whole
+       * point of breaking it.
+       */
+      if (!lost && this._sustainDebt > 0 && t?.alive) {
+        t.applyKnockback?.(null, this._sustainDebt, this, true);
+      }
+      this._endSustain();
+      return;
+    }
+    this.force -= pay;
+
+    /**
+     * BILL ON A TICK CLOCK, NOT PER FRAME — the enemy's held powers were
+     * delivering 8% of their authored damage.
+     *
+     * `Player.damage` sets `invuln = 0.18` on every hit and refuses while it
+     * holds. A per-frame drain therefore offered 60 payments a second into a
+     * sink that accepts about five, and the other 55 were silently dropped.
+     * Measured on a real player: choke authored 7 dps × 2.4 s = 16.8 hp,
+     * delivered **1.39**; lightning authored 35.2 hp, delivered **2.81**.
+     *
+     * The asymmetry was total, because `Enemy.damage` has no such window: the
+     * player's own choke kills a Jedi Knight in 5.0 s while the Sith's does
+     * 1.4 hp over its whole duration. That is the largest single gap between
+     * what the archetype table promises and what the player feels, and it is
+     * why "the enemies that use the Force" never seemed to.
+     *
+     * So the drain accumulates and is spent in whole ticks slightly longer
+     * than the i-frame. No authored number changes — `dps` still means dps —
+     * the payments simply stop being thrown away.
+     */
+    this._sustainDebt = (this._sustainDebt ?? 0) + P.dps * dt;
+    if (this._sustainDebt >= P.dps * SUSTAIN_TICK) {
+      t.applyKnockback?.(null, this._sustainDebt, this, true);
+      this._sustainDebt = 0;
+    }
+
+    /**
+     * …AND THE SLOW THE FILE ALREADY CLAIMS. The choke's own note promises
+     * "35% movement speed (`Player.staggerTimer`)", but `_sustain` passes
+     * `gentle = true` and `applyKnockback` writes `staggerTimer` only when
+     * `!gentle` — measured through a full choke: 0.00 s. The velocity scale
+     * below is undone by the movement integrator on the very next frame, so
+     * the documented mechanic had no implementation at all.
+     */
+    if (this.casting === 'choke' && t.velocity) {
+      t.velocity.multiplyScalar(0.86);
+      if (t.staggerTimer !== undefined) t.staggerTimer = Math.max(t.staggerTimer, 0.12);
+    }
+    /*
+     * THREE ARGUMENTS INTO A SIGNATURE OF FOUR, and it stopped the game.
+     *
+     * This was `sparkBurst(chest, 2, 0x9fd8ff)` against
+     * `sparkBurst(pos, normal, count, opts)`. So `2` landed in `normal` — and
+     * `_v.lerp(normal, …)` on a number gives NaN, spreading every spark in
+     * those bursts in no direction at all — while the COLOUR landed in
+     * `count`, asking for 10 467 583 sparks, 17.8 million spawns after the
+     * recipe's multiplier, each paying an sRGB→linear conversion.
+     *
+     * It ran on 35% of frames for every enemy holding a power. Measured
+     * headless with 20 acolytes: frames 1-20 cost 10-15 ms, and from frame 30
+     * — the first held lightning or choke — 71 to 134 SECONDS each, with 96%
+     * of a 439 s profile on this one path. In the shipped game that is a
+     * multi-second freeze every time an enemy casts, on the feature that was
+     * added so enemies would cast at all. It also ran the `cloth-cost` suite
+     * past forty minutes six times without it ever being seen to finish, which
+     * is how it was finally found.
+     *
+     * `Particles.sparkBurst` now bounds a burst by its own pool capacity, and
+     * that bound is not this fix — a ring buffer cannot show more than it
+     * holds, so the surplus was invisible work, but the arguments were still
+     * in the wrong slots. This is the fix. The count matches the other
+     * per-frame sustained effect in the game, which is guarded by the same
+     * 35% roll: three sparks, no embers.
+     */
+    if (rng() < 0.35) {
+      this.world.particles?.sparkBurst?.(t.chest ?? t.position, null, 3,
+        { speed: 5, embers: false, color: this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a });
+    }
   }
 
   /**
@@ -2430,21 +4179,7 @@ export class Enemy {
     }
 
     // being hurt fast enough winds it — the only safe time to go for a leg
-    this.windTimer = Math.max(0, (this.windTimer || 0) - dt);
-    this.recentDamage = Math.max(0, (this.recentDamage || 0) - dt * this.maxHp * 0.12);
-    if (this.recentDamage > this.maxHp * 0.14 && this.windTimer <= 0 && this.state !== 'winded') {
-      this.recentDamage = 0;
-      this.state = 'winded';
-      this.stateTime = 0;
-      this.windTimer = 7;
-      this.world.notifyFloating?.(this.aimPoint(_v1), 'WINDED', '#ffd88a');
-      audio.explosion(this.position, 0.7);
-    }
-    if (this.state === 'winded') {
-      this.wish = null;
-      if (this.stateTime > 2.4) { this.state = 'approach'; }
-      return;
-    }
+    if (this._windTick(dt)) { this.wish = null; return; }
 
     this.attackTimer -= dt;
     if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
@@ -2565,7 +4300,12 @@ export class Enemy {
       // remember a point; `swingAt` for the ones that do.
       const at = M.aim === 'self' ? _v2.copy(this.position) : this.swingAt;
       if (t && at && t.position.distanceTo(at) < reach) {
-        _v1.subVectors(t.position, this.position).setY(M.lift).normalize().multiplyScalar(16);
+        // `pull` reverses the impulse: the snatch DRAGS you in, which is the
+        // one blow on the field that does not solve your problem for you by
+        // putting distance between the two of you.
+        if (M.pull) _v1.subVectors(this.position, t.position);
+        else _v1.subVectors(t.position, this.position);
+        _v1.setY(M.lift).normalize().multiplyScalar(16);
         t.damage?.(this.attackDamage * M.damage, this.position, this);
         t.velocity?.add(_v1);
         t.camera?.addShake(M.shake ?? 0.7);
@@ -2604,13 +4344,13 @@ export class Enemy {
   /**
    * Which of this creature's attacks the phase has unlocked.
    *
-   * The list is the ARCHETYPE's, so a creature is defined by what it can do
-   * rather than by how much health it has — see BEAST_MOVES. Anything that does
-   * not declare one gets the three the game shipped with, which is what keeps
-   * the acklay, the reek and the nexu exactly as they were.
+   * A creature is defined by what it can DO rather than by how much health it
+   * has — see BEAST_MOVES — and what it can do comes off `beastMoveSet`, which
+   * is the archetype's declaration if it made one and its body plan's
+   * otherwise. Nothing restates that here; this only filters by phase.
    */
   beastMoves(phase = this.bossPhase || 1) {
-    const list = this.A.moves || DEFAULT_BEAST_MOVES;
+    const list = beastMoveSet(this.A, this.built);
     return list.filter((k) => BEAST_MOVES[k] && phase >= BEAST_MOVES[k].unlock);
   }
 
@@ -2928,7 +4668,10 @@ export class Enemy {
 
     if (this.laser && this.laser.visible && this.target) {
       const from = this._muzzleWorld(_v1);
-      _v2.subVectors(this.target.chest ?? this.target.position, from);
+      // The COMMITTED point, not a live read of the chest. This line used to
+      // track the player, which made "leave the line" impossible: the line went
+      // with them. See `_beginTelegraph`.
+      _v2.subVectors(this.telegraphAim ?? this.target.chest ?? this.target.position, from);
       const len = _v2.length();
       this.laser.position.copy(from);
       this.laser.quaternion.setFromUnitVectors(_v3.set(0, 0, 1), _v2.normalize());
@@ -3126,10 +4869,54 @@ export class Enemy {
     rig.solveIK('armL', 'foreL', this.offHand, poleL);
   }
 
+  /**
+   * THE STANCE THIS BODY ACTUALLY STANDS IN.
+   *
+   * `nLegs` was `this.A.custom === 'beast' ? 6 : 4`, which is HANDOFF §2.4's
+   * defect exactly — a rule restated away from the thing that owns it — and it
+   * had been wrong the whole time: the reek, the nexu, the rancor and the
+   * gundark all declare `custom: 'beast'` and all four have FOUR legs, so the
+   * solver ran a six-leg layout over them. `femur4`/`femur5` came back
+   * undefined and were skipped, which hid the bug, but the row arithmetic did
+   * not: `(row - (nLegs / 2 - 1) / 2)` with nLegs 6 puts the front pair's foot
+   * target at z = 0 and the rear pair's at −0.62·S, so every quadruped in the
+   * game planted both pairs of feet BEHIND its own hips, bunched under the
+   * middle. A sphere with some legs under it.
+   *
+   * Nothing is restated now. The leg count is counted off the rig, and
+   * everything else — where each foot plants, how high the ankle rides, which
+   * way the joint bends, stride, lift, hip height — comes off the `stance` the
+   * builder publishes with the body it built (see CREATURE_PLANS in
+   * src/game/Bodies.js). The fallback below is the shipped walker's own
+   * numbers, unchanged to the digit, because the spider walker is the one body
+   * that reaches this function without a plan.
+   */
+  _stance() {
+    if (this._stanceCache) return this._stanceCache;
+    const S = this.A.scale;
+    const st = this.built?.stance;
+    if (st) return (this._stanceCache = st);
+    let n = 0;
+    while (this.rig?.get(`femur${n}`)) n++;
+    const limbs = [];
+    for (let i = 0; i < n; i++) {
+      const side = i % 2 === 0 ? 1 : -1;
+      const row = Math.floor(i / 2);
+      limbs.push({
+        arm: false, x: side * 1.35 * S, z: (row - (n / 2 - 1) / 2) * 0.62 * S,
+        // 0: the walker's ankle target has always been the floor itself.
+        ankle: 0, toe: 0.30, pole: [side * 1.4 * S, 1.5 * S, 0], hand: null,
+      });
+    }
+    return (this._stanceCache = {
+      hipHeight: 1.6 * S, step: 1.0 * S, lift: 0.42 * S, rear: 0.48 * S, bob: 0.05 * S, limbs,
+    });
+  }
+
   _poseWalker(dt, ctx) {
     const rig = this.rig;
     const S = this.A.scale;
-    const nLegs = this.A.custom === 'beast' ? 6 : 4;
+    const ST = this._stance();
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.walkPhase = (this.walkPhase + dt * clamp(speed / (1.1 * S), 0.1, 2.4)) % 1;
 
@@ -3177,11 +4964,16 @@ export class Enemy {
       // …and being winded reads as being winded: the head drops to the floor.
       rise = -0.5; pitch = 0.5;
     }
-    const bodyH = (this.A.custom === 'beast' ? 1.5 : 1.6) * S;
+    /* The hip height and the rear-up are the ANIMAL's, not a constant times
+     * its scale. A reek stands at 0.88 of scale and a rancor at 1.15, where
+     * both used to stand at 1.5; `rear` is metres of hip travel per unit of
+     * rise, so the low animals still telegraph as far as the tall ones
+     * instead of in proportion to how short they are. */
+    const bodyH = ST.hipHeight;
     const hips = rig.hipsBone.obj;
     const gh = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
     hips.position.set(this.position.x,
-      Math.max(this.position.y, gh) + bodyH * (1 + 0.30 * rise) + Math.sin(this.walkPhase * TAU * 2) * 0.05 * S,
+      Math.max(this.position.y, gh) + bodyH + ST.rear * rise + Math.sin(this.walkPhase * TAU * 2) * ST.bob,
       this.position.z);
     hips.quaternion.setFromAxisAngle(UP, this.facing);
     if (pitch) hips.quaternion.multiply(_q1.setFromAxisAngle(RIGHT, pitch));
@@ -3192,26 +4984,51 @@ export class Enemy {
     const fwd = _v1.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     const right = _v2.set(fwd.z, 0, -fwd.x);
 
-    for (let i = 0; i < nLegs; i++) {
+    for (let i = 0; i < ST.limbs.length; i++) {
       const femur = rig.get(`femur${i}`);
       if (!femur || femur.severed) continue;
-      const side = i % 2 === 0 ? 1 : -1;
-      const row = Math.floor(i / 2);
-      const ph = (this.walkPhase + (i % 2) * 0.5 + row * 0.18) % 1;
+      const L = ST.limbs[i];
+
+      /* AN ARM IS NOT A LEG, and until there were arms nothing here knew the
+       * difference. The rancor's and the gundark's forelimbs are mounted on
+       * the trunk and never touch the ground: they hang at a home point that
+       * swings against the gait, and an attack's `rise` throws them forward
+       * and down — so the wind-up the brain commits to is on the limb that
+       * makes the blow as well as on the chest. */
+      if (L.arm && L.hand) {
+        const swing = Math.sin((this.walkPhase + (i % 2) * 0.5) * TAU) * 0.16 * S;
+        const hand = _v3.copy(this.position)
+          .addScaledVector(right, L.hand[0])
+          .addScaledVector(fwd, L.hand[2] + swing - rise * 0.55 * S)
+          .setY(Math.max(this.position.y, gh) + bodyH + L.hand[1] + rise * 0.42 * S);
+        const pole = _v4.copy(hand).addScaledVector(right, L.pole[0]).addScaledVector(fwd, L.pole[2])
+          .setY(hand.y + L.pole[1]);
+        rig.solveIK(`femur${i}`, `tibia${i}`, hand, pole);
+        if (rig.get(`tarsus${i}`)) {
+          _v5.copy(fwd).multiplyScalar(0.55).setY(-0.8).normalize();
+          rig.aimBoneWorld(`tarsus${i}`, _v5, null);
+        }
+        continue;
+      }
+
+      const ph = (this.walkPhase + (i % 2) * 0.5 + Math.floor(i / 2) * 0.18) % 1;
       const stance = ph < 0.5;
       const t = stance ? 0 : (ph - 0.5) * 2;
 
-      const zOff = (row - (nLegs / 2 - 1) / 2) * 0.62 * S;
       const foot = _v3.copy(this.position)
-        .addScaledVector(right, side * 1.35 * S)
-        .addScaledVector(fwd, zOff + (stance ? -0.3 : lerp(-0.3, 0.7, t)) * S);
-      foot.y = (ctx.terrain ? ctx.terrain.height(foot.x, foot.z) : 0) + (stance ? 0 : Math.sin(t * Math.PI) * 0.42 * S);
+        .addScaledVector(right, L.x)
+        .addScaledVector(fwd, L.z + (stance ? -0.3 * ST.step : lerp(-0.3, 0.7, t) * ST.step));
+      // …plus the ankle offset, so the toe lands on the floor rather than the
+      // ankle landing on it and the whole foot going under. See `stanceOf`.
+      foot.y = (ctx.terrain ? ctx.terrain.height(foot.x, foot.z) : 0)
+        + L.ankle + (stance ? 0 : Math.sin(t * Math.PI) * ST.lift);
 
-      const knee = _v4.copy(foot).addScaledVector(right, side * 1.4 * S).addScaledVector(UP, 1.5 * S);
+      const knee = _v4.copy(foot).addScaledVector(right, L.pole[0]).addScaledVector(fwd, L.pole[2])
+        .setY(foot.y + L.pole[1]);
       rig.solveIK(`femur${i}`, `tibia${i}`, foot, knee);
       const tarsus = rig.get(`tarsus${i}`);
       if (tarsus) {
-        _v5.copy(fwd).multiplyScalar(0.3).setY(-0.95).normalize();
+        _v5.copy(fwd).multiplyScalar(L.toe).setY(-(1 - L.toe)).normalize();
         rig.aimBoneWorld(`tarsus${i}`, _v5, null);
       }
     }
@@ -3220,7 +5037,21 @@ export class Enemy {
     const headBone = rig.get('head');
     if (this.target && headBone && !headBone.severed) {
       _v3.subVectors(this.target.chest ?? this.target.position, rig.worldPos('head', _v4));
-      const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing - Math.PI;
+      /**
+       * `atan2(x, z) - facing` IS the local bearing. The `- Math.PI` that used
+       * to close this line put it half a turn out, and the symptom was hidden
+       * by the clamp two lines down rather than by anything looking wrong:
+       * wrapped into range, a target dead ahead asked for ±π, the ±0.7 clamp
+       * saturated, and the turret sat 40° off — flipping sign as the target
+       * crossed the centreline. Measured on the shipped Spider Walker with
+       * tools/_vehicle.mjs: 43.8° of error, which is the clamp, not the aim.
+       *
+       * It never affected damage — `_shoot` aims from the target, not the
+       * muzzle — so nothing that measured hits could see it. It is a five-metre
+       * gun barrel pointing somewhere the machine is not shooting, and it went
+       * unnoticed until an AT-TE gave it a barrel long enough to read at range.
+       */
+      const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing;
       headBone.obj.quaternion.copy(headBone.restQuat).multiply(
         _q1.setFromEuler(new THREE.Euler(clamp(Math.atan2(_v3.y, Math.hypot(_v3.x, _v3.z)), -0.5, 0.5),
           clamp(((localYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI, -0.7, 0.7), 0, 'YXZ')));
@@ -3287,10 +5118,153 @@ export class Enemy {
   }
 }
 
-/** How lethal losing each bone is. */
-const VITAL = {
-  head: 0.95, neck: 1.0, chest: 1.0, spine: 1.0, hips: 1.0, body: 1.0,
-  clavL: 0.5, clavR: 0.5, armL: 0.35, armR: 0.35, foreL: 0.22, foreR: 0.22,
-  handL: 0.1, handR: 0.1, thighL: 0.55, thighR: 0.55, shinL: 0.3, shinR: 0.3,
-  footL: 0.12, footR: 0.12,
+/**
+ * ══ HOW LETHAL LOSING A BONE IS ═══════════════════════════════════════════
+ *
+ * `takeCut` charges `maxHp * vital * 1.15` for a severed limb — a SHARE OF
+ * MAXIMUM HEALTH, not a fixed wound — so how many pieces a body can lose is a
+ * property of these six numbers and NOTHING ELSE. Its health does not enter
+ * into it. That sentence is the whole reason this is derived rather than typed.
+ *
+ * ── WHAT WAS HERE, AND WHAT IT COST ───────────────────────────────────────
+ *
+ * A `VITAL` object of nineteen HUMANOID bone names, read as `VITAL[b.name] ??
+ * 0.4`. The roster is 31 bodies and 54 distinct bone names; 34 of them — every
+ * bone a quadruped, a hexapod, a tank or a hailfire droid has — hit the
+ * default. Measured on the shipped table:
+ *
+ *   a Rancor's TOE       0.400, the same as its hip, 46% of a 2200 hp animal
+ *   three of its four toes killed it, and it has nothing else in blade reach
+ *   acklay, reek, nexu, gundark and rancor ALL died in 1.28 s through a toe
+ *   once the guard was open — five bodies from 420 to 2200 hp, one number
+ *
+ * A hand-written table beside a GENERATED skeleton is HANDOFF §2.3's signature
+ * defect, and a missing entry answered with a plausible default is the close
+ * relative it names in the same paragraph. Both, in one line, for the roster's
+ * whole non-humanoid half.
+ *
+ * ── WHAT IT IS NOW ────────────────────────────────────────────────────────
+ *
+ * The bone says what it IS (`Rig.BONE_ROLES`, declared in the skeleton beside
+ * the bone's own length), and the price is that role against the body's own
+ * shape. Six numbers, and every one of them is a statement about anatomy:
+ *
+ *   core 1.00  cutting the trunk is cutting the body in two.
+ *   neck 1.00  severing the neck IS decapitation.
+ *   head 0.95  under 1.0 only so that `takeCut`'s "already under 55%" clause
+ *              has something to be about; still over the 0.9 that makes a pass
+ *              fight-ending, which is load-bearing in `_fightEnding`.
+ *   hull 1.00  SHARED between the segments: an AT-TE's prow and stern are half
+ *              each, so taking both ends off kills it and taking one wounds it.
+ *   leg  1.10  the whole leg SET is worth 1.10 bodies, so a biped's thigh is
+ *              0.55 — which is the number the old table had, arrived at from
+ *              the other end.
+ *   arm  1.00  likewise: a humanoid's clavicle comes out at 0.50, the old
+ *              table's number, and the rest of the chain follows from the
+ *              bones instead of being typed under it.
+ *
+ * Two divisors turn those into a bone's price and both are read off the rig:
+ *
+ *   ÷ roleOf     how many of that limb the body HAS. This is the part a name
+ *                table can never express — `femur0` on a six-legged acklay and
+ *                `femur0` on a four-legged reek are spelt identically and are
+ *                not the same fraction of an animal. One of six legs is 0.18
+ *                where one of two is 0.55.
+ *   × roleShare  how much of its own limb comes off with it, in bone length.
+ *                A cut at the thigh takes the shin and the foot; a cut at the
+ *                foot takes a foot. So core > proximal > distal > extremity
+ *                holds on every body without anyone maintaining an order.
+ *
+ * Measured against the nineteen numbers it replaces, on the human frame:
+ * thigh 0.55 → 0.55, clav 0.50 → 0.50, shin 0.30 → 0.32, fore 0.22 → 0.23,
+ * arm 0.35 → 0.42, hand 0.10 → 0.06, foot 0.12 → 0.10. It lands on the
+ * considered numbers, which is the argument that the derivation is the right
+ * one; where it differs it differs because the bones say so.
+ *
+ * And a Rancor's toe is 0.101 against its hip's 0.55, so it takes nine toes to
+ * kill an animal that has four.
+ *
+ * ── WHAT THIS DOES NOT REACH, AND IT IS THE BIGGER HALF OF THE TOE ────────
+ *
+ * A sever is not what a pass costs. `World._applyBladeEvent` pays the grind
+ * that LEADS UP to it at `(dWork / need) * maxHp * GRIND_LETHALITY`, and
+ * `need` is the total work the capsule takes — so completing a sever anywhere
+ * on a body has already dealt **0.55 of its maximum health**, the same 0.55
+ * for a toe as for a torso. Measured, one completed pass:
+ *
+ *   Rancor toe   grind 55.0% + sever 11.6% = 66.6% of a 2200 hp animal
+ *   Acklay toe   grind 55.0% + sever  4.2% = 59.2%
+ *   AT-TE toe    grind 55.0% + sever  2.8% = 57.8%
+ *
+ * So TWO completed passes still kill anything, and the second half of that sum
+ * is the only half this file decides. `GRIND_LETHALITY`'s own note argues the
+ * share correctly for a body — "what stops a failed pass from being free" —
+ * and never asks whether a toe is a body. It is the same shape as the defect
+ * above, one module to the side, and it is not fixed: it lives in World.js.
+ */
+/**
+ * What TAKING the bone costs, as a multiple of what the bone is worth.
+ *
+ * A completed pass bills twice — `World._applyBladeEvent` pays the grind that
+ * leads up to the sever at `GRIND_LETHALITY × severance`, and `takeCut` pays
+ * this for the sever itself. Over 1.0 because parting a limb is meant to be
+ * worth more than the work of getting there.
+ *
+ * Named rather than left as a literal because it is now READ from outside: a
+ * check that wanted to know how many passes a body survives had to have this
+ * number, and the choice was to export it or to let the check keep a second
+ * copy — which is the hand-maintained twin that this whole area of the code
+ * exists to be rid of.
+ */
+export const SEVER_LETHALITY = 1.15;
+
+const SEVERANCE = {
+  core: { axial: 1.00 },
+  neck: { axial: 1.00 },
+  head: { axial: 0.95 },
+  hull: { budget: 1.00 },
+  leg: { budget: 1.10 },
+  arm: { budget: 1.00 },
 };
+
+/**
+ * The price of losing one bone, and the ONLY way to get one.
+ *
+ * IT THROWS, and that is the feature. The bug this replaces was not the numbers
+ * in a table, it was the `?? 0.4` beneath them: a body plan nobody had thought
+ * about got an answer that looked like an answer, and it looked like one for
+ * the entire life of the project. A role with no price must stop the game on
+ * the first body that carries it, loudly, with the role in the message.
+ *
+ * @param role   one of Rig.BONE_ROLES
+ * @param share  how much of its own limb comes off with it — `bone.roleShare`
+ * @param of     how many of that limb the body has — `bone.roleOf`
+ */
+export function severance(role, share = 1, of = 1) {
+  const S = SEVERANCE[role];
+  if (!S) {
+    throw new Error(`Enemy.severance: bone role ${JSON.stringify(role)} has no price. `
+      + `Priced roles are ${Object.keys(SEVERANCE).join(', ')}. `
+      + 'A role with no price is not 0.4 and is not the average of the others; '
+      + 'the whole point of this function is that it refuses to guess.');
+  }
+  if (S.axial !== undefined) return S.axial;
+  return S.budget * share / Math.max(1, of);
+}
+
+/** The same, for a bone that has been through `Rig._measureLimbs`. */
+export function severanceOf(bone) { return severance(bone.role, bone.roleShare, bone.roleOf); }
+
+/** The roles that have a price, so a check can hold it against BONE_ROLES. */
+export const PRICED_ROLES = Object.keys(SEVERANCE);
+/**
+ * …and which of them are AXIAL — priced flat, because reaching the trunk or the
+ * head ends it wherever along them you reach.
+ *
+ * Derived from the table rather than listed beside it, for the reason the whole
+ * of this section exists: `tools/checks/severance.mjs` needs to know which roles
+ * are a limb and which are the body, and a second list spelling `core, neck,
+ * head` would be a hand-maintained twin of a generated thing inside the very
+ * check written to keep that shape out.
+ */
+export const AXIAL_ROLES = PRICED_ROLES.filter((r) => SEVERANCE[r].axial !== undefined);

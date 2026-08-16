@@ -1,5 +1,5 @@
 /**
- * SABER — what a thrown blade does to the picture.
+ * BATTLEFRONT BORZ — what a thrown blade does to the picture.
  *
  * THE BUG. The player reported "condensation/blur in front of the camera on
  * saber throw and recall". It is the heat haze, and it was not being emitted by

@@ -1,5 +1,5 @@
 /**
- * SABER — IS A LEVEL A PLACE? — src/game/Levels.js, src/world/*.
+ * BATTLEFRONT BORZ — IS A LEVEL A PLACE? — src/game/Levels.js, src/world/*.
  *
  * Every check in this file drives a REAL World: the terrain the game builds,
  * the props the level dresses, a real Player with real input, real physics.
@@ -24,7 +24,7 @@
  *                        at zero cost, 100/100 HP.
  *   SPAWNS ARE CLEAR.    11.9% of Temple spawns arrived inside solid masonry.
  *   THE CUT IS A CAVE.   92.6% of its floor was under its own water sheet.
- *   ONE SEA, ONE NUMBER. Mustafar drew its coast at 0.55 and walked it at 0.00.
+ *   ONE SEA, ONE NUMBER. the Ember Shelf drew its coast at 0.55 and walked it at 0.00.
  *   THE DOORS EXIST.     `world.doors` was empty on all thirteen levels.
  *   THE DECKS ARE REACHED. Eight of twelve gantry decks stood above the ceiling
  *                        of the highest jump in the game.
@@ -69,6 +69,29 @@ const held = (x = 0, y = 0) => ({
 const WORLDS = new Map();
 /** One booted World per level, shared by every check in this file. */
 async function level(key) {
+  /**
+   * THE KEY HAS TO EXIST, AND NOTHING SAID SO UNTIL A SUITE STOPPED FINISHING.
+   *
+   * `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does not know —
+   * correctly, because a saved profile pointing at a deleted level must still
+   * boot. In a CHECK that safety net is a trap: this file asked for `deeps`,
+   * which was deleted in the roster cull, got the Ember Shelf back, cached it
+   * under a second key, and measured the wrong level's water against a
+   * submersion bar. It also built a NINTH full World — terrain heightfield,
+   * Rapier world, instanced fields, texture set — and this suite is one of the
+   * two HANDOFF §2.7 names as holding the most Worlds alive at once. Adding an
+   * eighth real level on top of that is what took it from slow to not
+   * finishing.
+   *
+   * `roster.mjs` scans the whole tree for level names and could not see this
+   * one: it knows five syntactic forms and `level('deeps')` is none of them —
+   * which its own note predicts ("a form this does not know is a violation that
+   * goes unreported"). So the assertion goes where the call is.
+   */
+  if (!LEVELS[key]) {
+    throw new Error(`levels-quality asks for the level '${key}', which no longer exists — `
+      + `loadLevel would silently substitute ${LEVEL_ORDER[0]} and this file would measure it instead`);
+  }
   if (WORLDS.has(key)) return WORLDS.get(key);
   const engine = stubEngine();
   /* `low`, deliberately: the terrain grid is coarser at the bottom tier — the
@@ -236,7 +259,7 @@ export async function run({ check, assert }) {
     /**
      * `L.water` had one consumer in the entire game — the shader plane World
      * builds from it — so a lava sea, a canal of molten metal and an ocean were
-     * all floors. Measured: 90 s of holding forward on Mustafar finished 33 m
+     * all floors. Measured: 90 s of holding forward on the Ember Shelf finished 33 m
      * UNDER the surface of the sea at 100/100 HP; 45 s on Kamino finished on
      * the seabed at y = -9.0 with the camera under the ocean for 64% of the
      * walk, also at 100/100. The Foundry puts "the melt is not cover" on screen
@@ -248,7 +271,7 @@ export async function run({ check, assert }) {
      * game swims and an ocean that kills in two seconds is a lava sea painted
      * blue.
      */
-    const mus = (await level('mustafar')).world;
+    const mus = (await level('scoria')).world;
     const T = mus.terrain;
     // find sea: walk out along a bearing until the ground is under the sheet
     const sea = { x: 0, z: 0 };
@@ -377,8 +400,28 @@ export async function run({ check, assert }) {
      * body born in a column is never pushed out of it — it walks out through
      * the masonry — and a body born under a hazard sheet is born in lava.
      */
+    /**
+     * FIVE DEAD LEVEL NAMES, and the whole check had been measuring the Ember
+     * Shelf five times over.
+     *
+     * It named `temple`, `arena`, `warship`, `intake` and `deeps` — every one of
+     * which was deleted in the roster cull. `World.loadLevel` substitutes the
+     * first surviving level for a key it does not know, so each of the five
+     * booted a copy of the Ember Shelf, cached it under a dead key, and had its
+     * spawn picks measured against a sentence about a level that is not there.
+     * FIVE EXTRA WORLDS, held simultaneously, on top of the file's real six —
+     * which is precisely why HANDOFF §2.7 names this suite as the one holding
+     * the most Worlds alive at once, and why adding an eighth real level took it
+     * from slow to not finishing. `roster.mjs` cannot see these: `level('x')` is
+     * none of the five syntactic forms it scans for.
+     *
+     * ENUMERATED over the real roster instead. The property is not about those
+     * five rooms — it is that NO level puts a body inside its own masonry or
+     * under its own water — so it is asked of every level the game has, and it
+     * cannot be outlived by another cull.
+     */
     const rows = [];
-    for (const key of ['temple', 'arena', 'warship', 'intake', 'deeps']) {
+    for (const key of LEVEL_ORDER) {
       const { world } = await level(key);
       const T = world.terrain;
       let inside = 0, deep = 0, n = 0;
@@ -426,22 +469,65 @@ export async function run({ check, assert }) {
      * Both halves are held: the geometry, and then the CAMERA, which is the
      * thing the player actually complains about.
      */
-    const { world, engine } = await level('deeps');
-    const T = world.terrain, wl = world.level.water.level;
-    let n = 0, sub = 0, eye = 0;
-    for (let x = -60; x <= 60; x += 1) {
-      for (let z = -60; z <= 60; z += 1) {
-        if (x * x + z * z > 3600) continue;
-        const y = T.height(x, z); n++;
-        if (y < wl) sub++;
-        if (y + 1.62 < wl) eye++;
+    /**
+     * NAMED `deeps`, WHICH WAS DELETED, and the check went on running for
+     * months against a level that was not there.
+     *
+     * `loadLevel` substitutes the first surviving level for a key it does not
+     * know, so this measured the Ember Shelf's LAVA sheet against a submersion
+     * bar written for a flooded cavern, cached a second copy of that world under
+     * the dead key, and — the part that showed — pushed this suite's peak to
+     * nine simultaneous Worlds. It is one of the two HANDOFF §2.7 names as
+     * holding the most alive at once, and adding an eighth real level on top
+     * took it from slow to not finishing. `level()` now refuses a dead key
+     * outright; this is the check that was pointed at one.
+     *
+     * ENUMERATED RATHER THAN NAMED, which is the fix this file has already made
+     * three times over. The property is not about one cavern — it is that NO
+     * level drowns the ground it is fought on — so it is asked of every level
+     * that has a sea. That is strictly stronger and it cannot be outlived by a
+     * roster cull.
+     */
+    const rows = [];
+    let worst = null;
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L?.water || !(L.water.level > -900)) continue;
+      const { world } = await level(key);
+      const T = world.terrain, wl = L.water.level;
+      let n = 0, sub = 0, eye = 0;
+      for (let x = -60; x <= 60; x += 1) {
+        for (let z = -60; z <= 60; z += 1) {
+          if (x * x + z * z > 3600) continue;
+          const y = T.height(x, z); n++;
+          if (y < wl) sub++;
+          if (y + 1.62 < wl) eye++;
+        }
       }
+      /* A LAVA SEA IS NOT A FLOODED FLOOR. The Ember Shelf's own note says 69%
+       * of that map is lava and that walking into it is a death rather than a
+       * swim — the level is a shelf standing OUT of a sea, so the sea is the
+       * boundary and not the floor. What the bar is about is water you fight
+       * IN, so a hazard sea is asked the eye-height question only: whatever the
+       * fluid is, the player's eye must not be under the plane on the ground
+       * they are meant to stand on. */
+      if (!L.water.damage) {
+        assert(sub / n < 0.60,
+          `${key}: ${(100 * sub / n).toFixed(1)}% of the fighting floor is under the water sheet`);
+      }
+      assert(eye / n < 0.03,
+        `${key}: ${(100 * eye / n).toFixed(1)}% of the fighting floor is deep enough to put the `
+        + "player's eye under the surface");
+      rows.push(`${key} ${(100 * sub / n).toFixed(0)}% wet / ${(100 * eye / n).toFixed(1)}% over eye`);
+      if (!worst || eye / n > worst.eye) worst = { key, eye: eye / n, wl };
     }
-    assert(sub / n < 0.60,
-      `${(100 * sub / n).toFixed(1)}% of the fighting floor is under the water sheet`);
-    assert(eye / n < 0.03,
-      `${(100 * eye / n).toFixed(1)}% of the fighting floor is deep enough to put the player's eye `
-      + 'under the surface');
+    assert(rows.length > 0, 'no level in the roster has a sea, so this check measured nothing');
+
+    /* …and then the CAMERA, on the worst of them, which is the half the player
+     * actually complains about: a floor that is technically dry at the feet and
+     * puts the eye through a DoubleSide depthWrite-off plane while you walk. */
+    const { world, engine } = await level(worst.key);
+    const wl = worst.wl;
     let frames = 0, camUnder = 0;
     for (let b = 0; b < 4; b++) {
       const p = stand(world, 0, 0, (b / 4) * Math.PI * 2);
@@ -453,10 +539,10 @@ export async function run({ check, assert }) {
       }
     }
     assert(camUnder / frames < 0.05,
-      `the render camera is under the water plane on ${(100 * camUnder / frames).toFixed(0)}% of frames `
-      + 'over four bearings of walking');
-    return `${(100 * sub / n).toFixed(0)}% of the floor wet, ${(100 * eye / n).toFixed(1)}% over eye height, `
-      + `camera under the sheet on ${(100 * camUnder / frames).toFixed(1)}% of ${frames} frames`;
+      `${worst.key}: the render camera is under the water plane on `
+      + `${(100 * camUnder / frames).toFixed(0)}% of frames over four bearings of walking`);
+    return rows.join('; ') + `; camera under ${worst.key}'s sheet on `
+      + `${(100 * camUnder / frames).toFixed(1)}% of ${frames} frames`;
   });
 
   /* ── 6. one sea, one number ───────────────────────────────────────── */
@@ -465,7 +551,7 @@ export async function run({ check, assert }) {
     /**
      * `Levels.water.level` is what World builds the sheet from;
      * `TERRAIN_PRESETS[...].waterLevel` is what `surfaceAt` (footstep sample,
-     * splash particle) and the ground shader's damp band key off. Mustafar had
+     * splash particle) and the ground shader's damp band key off. the Ember Shelf had
      * 0.55 and 0.00. Ray-walking 64 bearings on the built heightfield, the
      * drawn contour came out at 100.8-145.0 m and the terrain's at
      * 104.5-147.3 m: a ring 0.3 to 11.0 m wide, median 2.5, that was molten on
@@ -482,7 +568,11 @@ export async function run({ check, assert }) {
         + 'contours is water on screen and dry rock underfoot');
       rows.push(`${key} ${a.toFixed(2)}`);
     }
-    assert(rows.length >= 5, `only ${rows.length} levels with water were surveyed`);
+    /* Four: the Ember Shelf's sea, Kamino's ocean, the Drowned Wood's bog and
+     * the foundry's canal of melt. That is every level in the roster that has
+     * a liquid in it, so the check surveys all of them — the bar was 5 of 13
+     * and is 4 of 4. */
+    assert(rows.length >= 4, `only ${rows.length} levels with water were surveyed`);
     return rows.join(', ');
   });
 
@@ -492,14 +582,14 @@ export async function run({ check, assert }) {
     /**
      * `World.doors` was allocated in the constructor, disposed on unload,
      * stepped every frame and handed to the blade solver every frame — and it
-     * was EMPTY on all thirteen levels, because World had no method that could
+     * was EMPTY on every level, because World had no method that could
      * put anything in it. `BlastDoor` is a finished object (kerf texture,
      * discard-through hole, static collider, capsules at 0.55 m for the blade,
      * a breach that drops the slug out) that no level had ever built, while
      * nine stub worlds in this suite implemented an `addDoor` the real World
      * did not have.
      */
-    for (const key of ['intake', 'foundry']) {
+    for (const key of ['foundry']) {   // the intake was the other one, and it is deleted
       const { world } = await level(key);
       assert(typeof world.addDoor === 'function', 'World still has no addDoor');
       assert(world.doors.length >= 3,
@@ -512,8 +602,8 @@ export async function run({ check, assert }) {
           `${key}: a door the blade solver cannot find (${d.capsules().length} capsules)`);
       }
     }
-    const { world } = await level('intake');
-    return `${world.doors.length} blast doors on the intake, each a collider and `
+    const { world } = await level('foundry');
+    return `${world.doors.length} blast doors on the foundry, each a collider and `
       + `${world.doors[0].capsules().length} blade capsules`;
   });
 
@@ -536,7 +626,7 @@ export async function run({ check, assert }) {
      * only reach on a frame-perfect input is not a place either.
      */
     const rows = [];
-    for (const key of ['intake', 'foundry', 'deeps', 'warship']) {
+    for (const key of ['foundry']) {   // the intake, the Cut and the warship went with the Descent
       const { world } = await level(key);
       const T = world.terrain;
       const decks = [];
@@ -673,7 +763,43 @@ export async function run({ check, assert }) {
       mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
       delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
 
-    const N = 16, RADIUS = 26, SECONDS = 40;
+    /**
+     * TEN BEARINGS AND NOT SIXTEEN, because the level list doubled.
+     *
+     * This ran 16 bearings on four levels — 56 placeable bodies for 40 s each.
+     * Those four levels were `temple`, `warship`, `intake` and `cut`, ALL OF
+     * WHICH WERE DELETED, so it was really walking four copies of the Ember
+     * Shelf and calling the result four interiors (see the note in the spawns
+     * check). Pointed at the real roster it covers eight genuinely different
+     * grounds instead, and 10 × 8 keeps the sample within a body or two of what
+     * it was while doubling the number of layouts it is drawn from. A wider
+     * sample over more places beats a deeper one over the same place four times.
+     *
+     * SIX, AND THIS IS THE LONG POLE OF THE WHOLE SUITE — measured, because it
+     * looks exactly like the §2.7 hang and is not one.
+     *
+     * Cost here is bodies × SECONDS × 60 of full `world.update` with real
+     * physics and real enemies. Traced check by check on a ten-level roster:
+     * ELEVEN of this file's twelve finish together in 72 s, and this one alone
+     * was still running at 840 s. It is not stalled and it is not new — the
+     * original 4 levels × 16 bearings × 40 s is 134,400 frames and the present
+     * 10 × 6 × 40 is 144,000, so it has always been most of this suite's
+     * wall-clock. What WAS a hang — nine dead level names booting nine extra
+     * Worlds — is the fix above, and it is the reason eleven checks now finish
+     * in the time twelve used to fail to.
+     *
+     * SECONDS stays at 40 because the 92% bar was calibrated at 40 and a shorter
+     * walk would move it. The BEARINGS are what may safely move: the bar is a
+     * RATIO, so fewer bearings is the same measurement with a slightly wider
+     * error bar. Six is chosen so that a roster which has grown from four
+     * levels to ten costs what it did when it was measuring four copies of one —
+     * a wider sample over ten real layouts for the frames that bought four fake
+     * ones.
+     *
+     * IF THIS EVER HAS TO GET CHEAPER, take it off the bearings and never off
+     * SECONDS, and re-run the two-sided table above rather than moving the bar.
+     */
+    const N = 6, RADIUS = 26, SECONDS = 40;
     const walk = async (level) => {
       enemyRng.seed(4711);
       duelRng.seed(8123);
@@ -709,9 +835,33 @@ export async function run({ check, assert }) {
 
     const rows = [];
     let got = 0, tot = 0;
-    for (const level of ['temple', 'warship', 'intake', 'cut']) {
+    /* FOUR MORE DEAD NAMES — see the note in the spawns check above. All four
+     * of these rooms were deleted, so this walked four copies of the Ember Shelf
+     * and called the result four interiors. Asked of the real roster instead:
+     * "an enemy gets to you" is a property of every level, and the ones with
+     * architecture in them are the ones that will fail it. */
+    for (const level of LEVEL_ORDER) {
       const r = await walk(level);
-      assert(r.n >= 10, `only ${r.n} of ${N} bearings on ${level} were placeable — nothing measured`);
+      /**
+       * THE FLOOR IS A FRACTION OF `N`, BECAUSE A LITERAL HERE WENT STALE THE
+       * MOMENT `N` MOVED — and this is the first run that could ever have said so.
+       *
+       * It read `r.n >= 10`: correct while the check cast 16 bearings, and
+       * unsatisfiable once the note above took it to 6. The failure it produced
+       * says `only 6 of 6 bearings on scoria were placeable — nothing measured`,
+       * which is every bearing the check asked for and the healthiest possible
+       * result. Nobody had seen it because this suite has not completed a run
+       * since: it was the second of the two suites voiding the gate, and the
+       * check is the last one in the file.
+       *
+       * HANDOFF §2.3 in miniature — a hand-maintained number beside the thing it
+       * is derived from. The guard exists to refuse a sample too small to carry
+       * the 92% ratio, so it is written as the share of the cast it needs and
+       * cannot be outlived by the next change to `N`.
+       */
+      assert(r.n >= Math.ceil(N * 0.6),
+        `only ${r.n} of ${N} bearings on ${level} were placeable — fewer than the `
+        + `${Math.ceil(N * 0.6)} this needs to carry a ratio`);
       got += r.arrived; tot += r.n;
       rows.push(`${level} ${r.arrived}/${r.n}`);
     }

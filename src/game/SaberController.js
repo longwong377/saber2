@@ -1,5 +1,5 @@
 /**
- * SABER — blade control.
+ * BATTLEFRONT BORZ — blade control.
  *
  * This is the game. Everything else is scenery.
  *
@@ -67,6 +67,17 @@ const THRUST = { rise: 0.07, hold: 0.13, fall: 0.20 };
  * a standstill should still cross the gap a walking one covers with its feet.
  */
 const THRUST_REACH = { hand: 0.34, guard: 0.40, standing: 1.55 };
+
+/**
+ * The speed above which a lunge counts as having feet behind it, m/s. A quarter
+ * of walking pace — genuinely planted, not merely slow.
+ *
+ * Exported because `Player` answers the same question from its own velocity
+ * (see `ctx.moving` at the press) and two files deciding "is this body moving"
+ * with two hand-written numbers is how they come to disagree. One constant,
+ * both readers.
+ */
+export const THRUST_STANDING_SPEED = 1.2;
 
 /**
  * FLOURISH — an idle twirl. Purely cosmetic: it drives roll and traces the
@@ -336,6 +347,34 @@ export class SaberController {
     this.roll = 0;
     this.rollVel = 0;
 
+    /**
+     * HOW LONG THIS WIELDER'S ARM IS, against the one every number in `GRIPS`
+     * was authored for — 1 for a human, and set by the Player from its own rig
+     * (see `limbScale` in Rig.js).
+     *
+     * `guardR`, `handExtend`, `offset`, the lateral split and both reach clamps
+     * are all DISTANCES FROM THE CHEST TO THE HANDS. They are a body
+     * measurement wearing the name of a tuning constant, and on a body that is
+     * not 1.78 m they are simply the wrong body's. On the 0.66 m frame,
+     * measured before this (tools/_stature.mjs), the hand target sat 1.35 times
+     * the whole reach of the arm away from the shoulder — so the two-bone IK
+     * could not arrive at ALL. It did what an IK does when it cannot reach:
+     * straightened the arm, pointed it at the target, and stopped short. That
+     * is both of the note's first two claims in one line — the hilt hangs in
+     * the gap the hand could not close, and under a raised guard the target is
+     * above the figure's own head, so both arms go up to point at it (68° and
+     * 47° above their own shoulders, against a human's 40° and 19°).
+     *
+     * NOT `stature`. The chest these are measured FROM is already placed by
+     * stature; what is measured from it is arm, and a species frame scales the
+     * arm separately (`smallfolk` is `scale: 0.40` with `armLen: 1.06`).
+     *
+     * Everything the blade DOES is untouched — kP, kD, inertia and the two
+     * linear gains are a weapon's character, not a body's, and a smaller Jedi
+     * is not holding a lighter sword.
+     */
+    this.reachScale = opts.reachScale ?? 1;
+
     this.sensitivity = opts.sensitivity ?? 1;
     this.followStrength = opts.followStrength ?? 0;
     this.deadzone = 0.24;
@@ -487,6 +526,22 @@ export class SaberController {
     this.flow = 0;
     this.locked = false;
   }
+
+  /**
+   * WHERE THE OVERHEAD IS IN ITS OWN ARC, in guard units: +0.95 at the top of
+   * the wind-up, −1.08 at the bottom of the cut, 0 when nothing is swinging.
+   *
+   * Published because `Player._attackDrive` puts the SPINE and the SHOULDERS
+   * behind the swing and has to be in phase with it, and the alternative is
+   * Player recomputing the three phases from `swingT` against `OVERHEAD` — a
+   * second copy of the envelope in another file, which is the exact shape
+   * HANDOFF §2.4 is about. This is the arc itself, AFTER the clamp, so a swing
+   * out of a guard already near its travel limit drives the body by exactly as
+   * much as it drives the blade rather than by what it asked for.
+   *
+   * A getter over `_swY` rather than a second field: one value, one owner.
+   */
+  get swingArc() { return this._swY; }
 
   reset(chest, aimQuat) {
     this.gx = this.readyX; this.gy = this.readyY; this.roll = 0;
@@ -768,13 +823,18 @@ export class SaberController {
     // which had to steal the wheel back frame by frame to get a notch of its
     // own. The wheel is now `attackOver` / `attackStab` like any other control
     // and the roll is the two rebindable keys it always also had.
+    //
+    // …AND SO WAS `input.padDown(4)` / `padDown(5)`, WHICH SAT HERE UNTIL THE
+    // PAD JOINED THE TABLE. Two raw button INDICES, so the last two controls in
+    // the game that no binding could move: not listed, not rebindable, and
+    // invisible to findConflicts in exactly the way the wheel above was. They
+    // also became actively wrong the moment the pad had a default map — button
+    // 4 is LB, which is the Force modifier, so holding it to cast would have
+    // rolled the wrist left. `rollL`/`rollR` carry the D-pad now and this reads
+    // the actions, once, for every device.
     let rollInput = 0;
     if (input.act('rollL')) rollInput -= 1;
     if (input.act('rollR')) rollInput += 1;
-    if (input.padButtons) {
-      if (input.padDown(4)) rollInput -= 1;
-      if (input.padDown(5)) rollInput += 1;
-    }
     this.rollVel = damp(this.rollVel, rollInput * 5.4, 14, dt);
     this.roll += this.rollVel * dt;
 
@@ -886,10 +946,15 @@ export class SaberController {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so
       // it gets more of them. The controller works this out from how fast the
-      // chest anchor it is handed each frame is actually travelling — 1.2 m/s
-      // is a quarter of walking pace, i.e. genuinely planted. Callers may say so
-      // explicitly with ctx.moving, but none has to.
-      this.thrustStanding = (ctx.moving ?? this.carrierSpeed > 1.2) ? 0 : 1;
+      // chest anchor it is handed each frame is actually travelling — a quarter
+      // of walking pace, i.e. genuinely planted. Callers may say so explicitly
+      // with ctx.moving, and Player now does: `_attackDrive` puts the trunk
+      // behind an attack by MOVING THE ANCHOR, which this inference reads as the
+      // body walking. Measured, a standing overhead drives the anchor at up to
+      // 2.6 m/s, so a stab pressed shortly after one would have been graded a
+      // moving lunge and given 40% less reach for standing still. The fallback
+      // stays for every other caller and is unchanged.
+      this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
       this.thrustCooldown = 0.42;
       if (ctx.onThrust) ctx.onThrust();
     }
@@ -924,12 +989,15 @@ export class SaberController {
     // across you (85 deg). 5 cm of forward gap is all that is kept, and only so
     // the blade still has a direction to point in.
     const sAbs = Math.abs(this.stance);
-    const guardR = lerp(g.guardR, g.handExtend + 0.05, sAbs) + reach * THRUST_REACH.guard;
+    // Every length from here down is chest-to-hand, i.e. arm — see reachScale.
+    const R = this.reachScale;
+    const guardR = (lerp(g.guardR, g.handExtend + 0.05, sAbs) + reach * THRUST_REACH.guard) * R;
     const guardWorld = _v2.copy(chest).addScaledVector(gd, guardR);
 
     // hands: partway along the guard direction, offset into the body
-    _v3.copy(g.offset).applyQuaternion(aimQuat);
-    const handTarget = _v4.copy(chest).add(_v3).addScaledVector(gd, g.handExtend + reach * THRUST_REACH.hand);
+    _v3.copy(g.offset).multiplyScalar(R).applyQuaternion(aimQuat);
+    const handTarget = _v4.copy(chest).add(_v3)
+      .addScaledVector(gd, (g.handExtend + reach * THRUST_REACH.hand) * R);
 
     // ── LATERAL GUARD. Split the hands off the guard ray in one direction and
     // the guard point in the other, about an axis perpendicular to both the
@@ -944,8 +1012,8 @@ export class SaberController {
       _v3.crossVectors(gd, UP);
       if (_v3.lengthSq() < 1e-6) _v3.set(1, 0, 0).applyQuaternion(aimQuat);
       _v3.normalize();
-      handTarget.addScaledVector(_v3, -this.stance * 0.30);
-      guardWorld.addScaledVector(_v3, this.stance * 0.34);
+      handTarget.addScaledVector(_v3, -this.stance * 0.30 * R);
+      guardWorld.addScaledVector(_v3, this.stance * 0.34 * R);
       // A guard across the body is carried level. Without this the hands' own
       // 20 cm drop below the guard point tilts the bar 17 deg, and the blade
       // rides up with whatever elevation the cursor happened to have.
@@ -956,7 +1024,7 @@ export class SaberController {
     // move where the shoulder and the torso add to the arm, so the ceiling
     // lifts with the thrust rather than clipping the one action that needs it.
     _v5.subVectors(handTarget, chest);
-    const armMax = 0.78 + this.thrust * 0.10;
+    const armMax = (0.78 + this.thrust * 0.10) * R;
     if (_v5.length() > armMax) { _v5.setLength(armMax); handTarget.copy(chest).add(_v5); }
 
     this._handTarget = this._handTarget || new THREE.Vector3();
@@ -1084,8 +1152,10 @@ export class SaberController {
     if (this.handVel.lengthSq() > 900) this.handVel.setLength(30);
     this.handLocal.addScaledVector(this.handVel, dt);
 
-    // keep the hands within reach of the chest no matter what hit them
-    const maxReach = 0.86, minReach = 0.16;
+    // keep the hands within reach of the chest no matter what hit them — and
+    // within THIS chest's reach: a parry impulse that flings a human's hands
+    // 0.86 m out would put a 0.66 m figure's fists past the end of its arms.
+    const maxReach = 0.86 * this.reachScale, minReach = 0.16 * this.reachScale;
     const rl = this.handLocal.length();
     if (rl > maxReach) { this.handLocal.setLength(maxReach); this.handVel.multiplyScalar(0.5); }
     else if (rl < minReach) this.handLocal.setLength(minReach);

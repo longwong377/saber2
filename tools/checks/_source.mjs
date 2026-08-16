@@ -1,10 +1,10 @@
 /**
- * SABER — reading a function out of a file, without guessing how long it is.
+ * BATTLEFRONT BORZ — reading a function out of a file, without guessing how long it is.
  *
  * THE DEFECT THIS FILE EXISTS FOR, caught by running the whole suite on a tree
  * with nothing else moving in it:
  *
- *   ✗ constellation: a communion crosses the wire and lands on the receiver
+ *   ✗ living force: a communion crosses the wire and lands on the receiver
  *       World.spawnPlayer does not install the bond receiver
  *   ✗ run: a landing carries the run across loadLevel, which disposes players
  *       the run's boons are not re-applied to the new player

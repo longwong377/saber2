@@ -1,5 +1,5 @@
 /**
- * SABER — arrivals.
+ * BATTLEFRONT BORZ — arrivals.
  *
  * WHAT WAS WRONG: `WaveDirector.update` did this, and only this —
  *
@@ -56,6 +56,29 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear } from './Spawn.js';
+
+/**
+ * THE SHIP'S MODEL, INJECTED — and the direction of the arrow is the whole
+ * reason this is a setter and not an import.
+ *
+ * `src/game/Vehicles.js` builds the LAAT/i, and it registers its archetypes
+ * with `Object.assign(ARCHETYPES, …)` at module scope. This file is reached
+ * from `Enemy.js → Dojo.js → Waves.js → Arrivals.js`, so a static edge from
+ * here to Vehicles.js closes that cycle and Vehicles' registration runs while
+ * `ARCHETYPES` is still in its temporal dead zone — a `ReferenceError` on boot,
+ * not a warning. That is the identical trap `Waves.js`'s note above
+ * `sandboxUnits` records, sprung from the other end, and it was sprung: the
+ * import went in, the whole suite failed to load, and this is what replaced it.
+ *
+ * So the dependency points the other way. Whoever owns both — `Levels.js`,
+ * which is the module that decides what levels and what bodies exist — hands
+ * the builder in, exactly as it hands in `ARRIVAL_BY_TERRAIN` entries. With
+ * nothing registered the primitives below are used and every range, lead time
+ * and flare this director is tuned at is unchanged, so a tree without
+ * Vehicles.js in it still flies.
+ */
+let _shipModel = null;
+export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? fn : null; }
 
 const rng = makeRng(20931);
 
@@ -174,12 +197,10 @@ export const ARRIVAL_BY_TERRAIN = {
   // also 80–100 m of walking before the body is in the fight, and a wave made
   // mostly of them is a wave you spend watching. Weighted by repetition rather
   // than by a probability table so the whole model is one literal you can read.
-  meadow: ['dropship', 'dropship', 'march'],
   drifts: ['dropship', 'dropship', 'march'],
   alpine: ['dropship', 'dropship', 'march'],
   dunes: ['dropship', 'dropship', 'march'],
   canyon: ['dropship', 'dropship', 'march'],
-  arena: ['gate'],
   hangar: ['gate'],
 };
 
@@ -249,6 +270,60 @@ class Arrival {
 
   _makeDropship() {
     const g = this.group;
+    /**
+     * IT IS A GUNSHIP NOW, AND IT WAS A BOX BEFORE.
+     *
+     * What stood here was seven primitives — a box, a four-sided cone, two
+     * boxes for wings, two cylinders and two glows — sized honestly against the
+     * range it is seen at (see the note above `G.hull`) and reading, at fifty
+     * metres, as a dart. The reference plates the Command mode was built from
+     * have a LAAT/i in almost every frame of this battle, and the vehicles lane
+     * modelled one: swept-forward wings with wingtip pods and rocket racks,
+     * dorsal cone nacelles, chin ball turrets, gunner bubbles on outriggers and
+     * an open troop bay with clones standing in it.
+     *
+     * NOTHING ABOUT THE FLIGHT PATH MOVES, and that is why this is four lines
+     * rather than a retune. `buildGunship` is written to the box's own contract:
+     * the nose is at −Z (the direction `_updateDropship` flies and the direction
+     * `G.nose` pointed), and it measures 10.9 × 3.7 × 7.4 m against the box's
+     * 10.0 × 1.55 × 7.6 — so every range, lead time and flare this director was
+     * tuned at is unchanged.
+     *
+     * The two animated meshes are PARENTED rather than re-placed: `_fireL`,
+     * `_fireR` and `_lamp` are written every frame by `_updateDropship`, and the
+     * model publishes anchors for exactly them (`userData.engines`,
+     * `userData.lamp`) so the flare and the strobe end up on the real nacelles
+     * and under the real nose instead of at coordinates that used to be right.
+     *
+     * The primitive geometries stay in `G` and are still used by the gate; the
+     * fallback below is not decoration either — a level must never fail to
+     * produce its wave, and a model that throws must not take the arrival with
+     * it.
+     */
+    let ship = null;
+    try { ship = _shipModel ? _shipModel() : null; } catch (e) { ship = null; }
+    if (ship) {
+      g.add(ship);
+      this._model = ship;
+      const anchors = ship.userData?.engines || [];
+      const lampAt = ship.userData?.lamp || null;
+      for (let i = 0; i < 2; i++) {
+        const fire = new THREE.Mesh(G.glow, M.engine);
+        fire.frustumCulled = false;
+        fire.scale.set(0.8, 0.8, 1.5);
+        const host = anchors[i];
+        if (host) host.add(fire);
+        else { fire.position.set((i ? 1 : -1) * 4.5, -0.22, 2.6); g.add(fire); }
+        this[i ? '_fireR' : '_fireL'] = fire;
+      }
+      const lamp = new THREE.Mesh(G.glow, M.lamp);
+      lamp.frustumCulled = false;
+      lamp.scale.setScalar(0.45);
+      if (lampAt) lampAt.add(lamp); else { lamp.position.set(0, -0.7, -3.8); g.add(lamp); }
+      this._lamp = lamp;
+      this._makeWash(g);
+      return this._flightPath();
+    }
     const hull = mesh(G.hull, M.hull, g);
     hull.castShadow = true;
     const nose = mesh(G.nose, M.hull, g); nose.position.z = -4.9;
@@ -270,14 +345,25 @@ class Arrival {
     lamp.scale.setScalar(0.45);
     this._lamp = lamp;
 
-    // the light and the dust it throws at the ground while it hovers
+    this._makeWash(g);
+    this._flightPath();
+  }
+
+  /** The light and the dust the ship throws at the ground while it hovers. */
+  _makeWash(g) {
     this._wash = new THREE.Mesh(G.wash, M.wash.clone());
     this._wash.frustumCulled = false;
     this._wash.renderOrder = 6;
     g.add(this._wash);
+  }
 
-    // the flight path: in from beyond the ring, high and fast, flaring to a
-    // hover over the drop point
+  /**
+   * In from beyond the ring, high and fast, flaring to a hover over the drop
+   * point. Lifted out of `_makeDropship` when the hull became a choice between
+   * a model and the primitives — the PATH is the same for both, and a second
+   * copy of it in the model branch is the shape §2.4 of the handover is about.
+   */
+  _flightPath() {
     const away = _v1.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)).multiplyScalar(-1);
     this.hover = this.at.clone().setY(this.at.y + 5.6);
     this.start = this.at.clone().addScaledVector(away, 88).setY(this.at.y + 38);
@@ -495,10 +581,18 @@ export class ArrivalDirector {
    * Ask for one body. It is delivered later, by something you can watch.
    * Returns false if arrivals are off, in which case the caller spawns
    * directly — a level with no arrival for its terrain still has to work.
+   *
+   * `bearing` is a radian heading the caller wants the delivery to come in on,
+   * or null for the uniform draw every arrival has always used. It exists for
+   * `CONDITIONS.hammer` in Waves.js — a wave that arrives from one quarter, so
+   * the field has a front — and it is honoured for the SITE only: which ship
+   * comes, how it flies and how the squad spills out are unchanged. A flight is
+   * only reused for another body with the same bearing, or a bearing wave would
+   * pick up a ship already inbound from the far side.
    */
-  request(type, mod = null) {
+  request(type, mod = null, bearing = null, arc = Math.PI / 2) {
     if (!this.enabled) return false;
-    this.staging.push({ type, mod });
+    this.staging.push({ type, mod, bearing, arc });
     return true;
   }
 
@@ -531,12 +625,16 @@ export class ArrivalDirector {
    * 77.6 m against an 80.9 m floor — and those are exactly the ones that read
    * as popping in.
    */
-  _sitePoint(rMin, rMax, out) {
+  _sitePoint(rMin, rMax, out, bearing = null, arc = Math.PI / 2) {
     const t = this.world.terrain;
     this._anchor(out);
     const ax = out.x, az = out.z;
     for (let i = 0; i < 20; i++) {
-      const a = rng() * TAU;
+      /* A bearing narrows the draw to one quarter of the compass instead of
+       * replacing it, so every rejection test below still runs and a site that
+       * fails them all still falls back to the full circle. See `request`. */
+      const a = bearing === null ? rng() * TAU
+        : bearing + (rng() - 0.5) * arc;
       const r = lerp(rMin, rMax, rng());
       const x = ax + Math.cos(a) * r, z = az + Math.sin(a) * r;
       if (t && !t.inBounds(x, z, 10)) continue;
@@ -552,13 +650,14 @@ export class ArrivalDirector {
     return this._ground(out.set(ax + Math.cos(a) * rMin, 0, az + Math.sin(a) * rMin));
   }
 
-  _open(kind, A) {
+  _open(kind, A, bearing = null, arc = Math.PI / 2) {
     const anchor = this._anchor(new THREE.Vector3());
     const ring = this._ring();
     const at = kind === 'march'
-      ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3())
-      : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3());
+      ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3(), bearing, arc)
+      : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3(), bearing, arc);
     const f = new Arrival(this.world, kind, at, anchor, this.group);
+    f.bearing = bearing;
     this.flights.push(f);
     return f;
   }
@@ -571,8 +670,10 @@ export class ArrivalDirector {
       const kind = arrivalKindFor(this.world.level, A, rng);
       // an existing flight of the right kind with room takes it, so a squad
       // rides in together instead of one ship per droid
-      let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6);
-      if (!f) f = this._open(kind, A);
+      const want = slot.bearing ?? null;
+      let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6
+        && (x.bearing ?? null) === want);
+      if (!f) f = this._open(kind, A, want, slot.arc ?? Math.PI / 2);
       f.add(slot.type, slot.mod);
       this.staging.shift();
     }
@@ -596,6 +697,66 @@ export class ArrivalDirector {
     });
     if (this.log.length > 200) this.log.shift();
     return e;
+  }
+
+  /**
+   * PUT A BODY THAT IS SOMEWHERE IMPOSSIBLE SOMEWHERE POSSIBLE.
+   *
+   * The recovery half of player note #7 — a body inside geometry or outside the
+   * heightfield blocks a wave forever, and `WaveDirector._rescue` is what
+   * notices. This is what it does about it, and it lives here because the answer
+   * is a question this file already answers for every march: WHERE IS A VALID
+   * PLACE TO PUT A BODY. `_sitePoint` tests terrain bounds, slope and the level's
+   * own `spawnClear`, in twenty tries, with the ring as the give-up case.
+   *
+   * At MARCH radius rather than the drop ring, deliberately: that is beyond the
+   * distance anything is spawned at, so the body walks back into the fight from
+   * the edge exactly as a marching arrival does, and the recovery is a thing you
+   * watch rather than a thing that happens. The delivery goes in `this.log`, so
+   * `deliveryIsAnnounced` holds it to the same invariant as every other body
+   * this director has ever put down.
+   *
+   * The BODY IS KEPT, not replaced — see the note at the call site. Its velocity
+   * is zeroed and the two navigation counters are cleared, because a body that
+   * has spent fourteen seconds pressed into a wall is carrying a committed
+   * strafe direction and a saturated `_stuckT` that would send it straight back.
+   *
+   * @returns whether a valid site was found and the body moved to it.
+   */
+  relocate(e) {
+    if (!e || !e.position) return false;
+    const ring = this._ring();
+    const at = this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3());
+    if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return false;
+    /* AND THE GIVE-UP CASE HAS TO BE CHECKED, which is the whole reason this
+     * returns a boolean at all. `_sitePoint` falls back to the ring itself when
+     * twenty tries all miss — a last resort that is right for a MARCH, where
+     * the worst case is an awkward walk. It is not right here: on a world whose
+     * bounds are tighter than `ring × MARCH_RADIUS` that fallback point is
+     * outside the heightfield, so a rescue would move a body from one
+     * impossible place to another and the caller would believe it had worked.
+     * Measured end to end in tools/checks/command.mjs, where the wave then
+     * never cleared. */
+    const t = this.world.terrain;
+    if (t?.inBounds && !t.inBounds(at.x, at.z, 0)) return false;
+    e.position.set(at.x, at.y, at.z);
+    e.velocity?.set?.(0, 0, 0);
+    // The two counters `Enemy._move`'s navigation runs on. Left as they were,
+    // the body arrives at its new site already convinced it is stuck.
+    if (e._wallN?.set) e._wallN.set(0, 0, 0);
+    e._wallT = 0;
+    e._stuckT = 0;
+    e._prevPos?.copy?.(e.position);
+    // Re-home the physics capsule too, or the body is drawn at the new site and
+    // collides at the old one — which is the same bug with a longer symptom.
+    e._syncBody?.();
+    const anchor = this._anchor(_v2);
+    this.log.push({
+      kind: 'march', flight: 'rescue', lead: ARRIVAL_LEAD,
+      dist: Math.hypot(at.x - anchor.x, at.z - anchor.z), type: e.type, rescue: true,
+    });
+    if (this.log.length > 200) this.log.shift();
+    return true;
   }
 
   /** Drop everything — a wave reset, a level change, a run ending. */

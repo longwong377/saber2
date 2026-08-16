@@ -1,5 +1,5 @@
 /**
- * SABER — the ink.
+ * BATTLEFRONT BORZ — the ink.
  *
  * Rule 4 of src/toon/REFERENCE.md: "dark, thin, even weight, on interior detail
  * as well as silhouettes … they draw the strata in the cliffs, the mortar

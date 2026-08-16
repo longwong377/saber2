@@ -1,5 +1,5 @@
 /**
- * SABER — heads-up display.
+ * BATTLEFRONT BORZ — heads-up display.
  *
  * DOM over the canvas: cheap, crisp at any resolution, and it keeps text out
  * of the render target where bloom would eat it.
@@ -9,8 +9,22 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
-import { keyLabel, walkScale } from '../engine/Bindings.js';
+import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings.js';
+/**
+ * The two lookup tables the roster panel draws WITH, never a copy of them.
+ *
+ * `roster.summary()` publishes a rank by its short code ('SGT') and an army by
+ * its id ('republic'), and a panel that wants the insignia colour or the army's
+ * proper name has to ask the table those came out of. Typing `SGT → #2f6fbe`
+ * here would be the eighth hand-maintained twin in this codebase (HANDOFF
+ * §2.3), and the first repaint of an insignia would make the HUD disagree with
+ * the model wearing it.
+ */
+import { RANKS, ARMIES } from '../game/Command.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+// The words a slot is about to say, and whether this browser can say them
+// at all. Audio.js owns both the table and the speaking; the wheel prints.
+import { wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { openState, openMul } from '../game/Combat.js';
 
 const _v = new THREE.Vector3();
@@ -136,6 +150,11 @@ export const POWERS = [
   ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
   ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
   ['heal', 'heal'], ['compel', 'compel'], ['rend', 'rend'],
+  /* Unleash — the 360° repulse. This LIST is what builds the slots; `_power`
+   * only repaints one that already exists, so adding a price and a `_power`
+   * call without a row here draws nothing and prices eleven against ten
+   * slots. hud-events counts exactly that, which is how it was caught. */
+  ['unleash', 'unleash'],
 ];
 
 /**
@@ -179,6 +198,11 @@ const POWER_ICONS = {
   compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
   // A chassis coming apart: a core with four plates pulling off it.
   rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
+  /* A ring with arrows leaving it in every direction: the icon has to say
+     "outward, all of it" at 21 px, which is the one thing that separates this
+     from push in the row. */
+  unleash: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/>'
+    + '<path d="M12 7.5V3M12 16.5V21M7.5 12H3M16.5 12H21M8.8 8.8L5.6 5.6M15.2 8.8l3.2-3.2M8.8 15.2l-3.2 3.2M15.2 15.2l3.2 3.2"/></svg>',
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -205,7 +229,20 @@ const POWER_ICONS = {
  * something behind you, far away" is the single most useful thing a radar can
  * say and a dropped contact says nothing.
  */
-export const MINIMAP = { range: 42, hz: 20, size: 132 };
+/**
+ * …and `linger` is how long a READING lasts after the Force sense that bought
+ * it ends. See Minimap.update.
+ *
+ * 3.5 s, and the number is the pulse's whole design. Force sense is a TOGGLE
+ * (Player.toggleSense) that costs POWER_COST.sense to switch on, drains 22
+ * Force a second while it is held open and blocks regeneration entirely — so a
+ * player who wants a map has two ways to pay for it: hold the power open and
+ * watch the pool drain, or tap it on and off for a snapshot that costs the
+ * activation and nothing more. The linger is what makes the second one a real
+ * choice: at 3.5 s a tap is worth about one exchange, which is long enough to
+ * find the body behind you and far too short to fight with the map up.
+ */
+export const MINIMAP = { range: 42, hz: 20, size: 132, linger: 3.5 };
 
 /**
  * The palette, exported so the checks can name a colour instead of matching a
@@ -246,6 +283,14 @@ export class Minimap {
      *  this is the only way to state a rate as something a check can read. */
     this.repaints = 0;
     this.on = null;
+    /**
+     * HOW WARM THE READING IS, 1 while the Force is on it and falling to 0
+     * over MINIMAP.linger seconds afterwards. Read by nothing but this class;
+     * exposed because "the map fades rather than blinking out" is a claim a
+     * check can only measure against a number.
+     */
+    this.read = 0;
+    this._fade = -1;
     if (canvas && typeof canvas.getContext === 'function') {
       // BOTH sizes, from the one number, here rather than in the stylesheet.
       // A canvas has two of them — the backing store the arcs are drawn into
@@ -270,12 +315,47 @@ export class Minimap {
    * off the element is display:none, which is the difference between a map
    * that is not drawn and a map that is drawn transparent: the second one
    * still costs a composite every frame.
+   *
+   * ── AND IT IS A FORCE READING, NOT A PERMANENT WINDOW ───────────────────
+   *
+   * "Bringing up the minimap should maybe use some force like you're using
+   * force sense you know what I mean?" — and the game already has the power
+   * they are describing. `Force sense` (Player.toggleSense) costs to switch
+   * on, drains 22 Force a second while it is open and stops regeneration
+   * dead; what it did was tint the world through the shader. It never told
+   * the player where anything WAS, while a permanently-on radar did, for
+   * free, forever.
+   *
+   * So the map rides that power: `senseActive` warms the reading to 1, and it
+   * cools over MINIMAP.linger once the power is off. No second Force cost is
+   * charged here — inventing one would mean two prices for one act, and the
+   * player would pay both. The map is what Force sense is FOR now.
+   *
+   * `minimapSense` false is the accessibility answer and is the behaviour
+   * that shipped: always on, costing nothing. It is a separate setting from
+   * `minimap` because "I do not want a map" and "I do not want to pay for the
+   * map" are different requests and answering both with one box would force
+   * anyone who cannot manage the power to give up the map entirely.
    */
   update(dt, world, player, settings) {
-    const want = !!settings && settings.minimap !== false && !!player;
+    const sensed = !!settings && settings.minimapSense !== false;
+    if (player && player.senseActive) this.read = 1;
+    else if (this.read > 0) this.read = Math.max(0, this.read - dt / MINIMAP.linger);
+    const want = !!settings && settings.minimap !== false && !!player && (!sensed || this.read > 0);
     if (want !== this.on) {
       this.on = want;
       this.canvas?.classList?.toggle('hidden', !want);
+    }
+    /*
+     * IT FADES RATHER THAN BLINKING OUT. A reading that vanishes on a frame
+     * boundary reads as a bug — the player did nothing, and the map went. The
+     * last second of the linger takes it down to nothing, and the opacity is
+     * only WRITTEN when the tenth changes, so a fade costs at most ten style
+     * writes rather than one every frame for three and a half seconds.
+     */
+    if (this.canvas && this.canvas.style) {
+      const a = !sensed || this.read >= 0.29 ? 1 : Math.round((this.read / 0.29) * 10) / 10;
+      if (a !== this._fade) { this._fade = a; this.canvas.style.opacity = a === 1 ? '' : String(a); }
     }
     if (!want || !this.ctx) return false;
     this.acc += dt;
@@ -473,10 +553,42 @@ export class EmoteWheel {
       // at different places, and the player would only find out by pressing.
       d.style.left = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
       d.style.top = `${(50 + Math.sin(a) * 37).toFixed(3)}%`;
+      /*
+       * THE WORDS, WHERE THERE ARE WORDS.
+       *
+       * `blurb` is a description of a NOISE — "come on, then", "one note,
+       * downward" — which is the right caption for a wordless larynx and the
+       * wrong one the moment the same slot says an actual sentence. So a slot
+       * prints the line it will really speak when spoken lines are on, and its
+       * description when they are not. `wordsFor(kind, i)` is deterministic on
+       * the slot index, so the caption and the line that follows it are the
+       * same line; it is refreshed by setSpeech rather than decided once here,
+       * because the mode is a live setting.
+       */
       d.innerHTML = `<b>${esc(e.name)}</b><span>${esc(e.blurb)}</span>`;
+      d._say = d.querySelector('span');
       this.host.appendChild(d);
       this.slots.push(d);
     }
+    this.setSpeech(this.spoken);
+  }
+
+  /**
+   * Print what each slot will SAY, or what it will sound like.
+   *
+   * Called from HUD.update off the live setting and only when the answer has
+   * changed — eight innerHTML writes a frame, for a wheel that is on screen a
+   * second at a time, would be a real cost for no change at all.
+   */
+  setSpeech(spoken) {
+    this.spoken = !!spoken;
+    for (let i = 0; i < this.slots.length; i++) {
+      const e = EMOTES[i], el = this.slots[i];
+      if (!el || !el._say) continue;
+      const words = this.spoken ? wordsFor(e.line, i) : '';
+      el._say.textContent = words ? `“${words}”` : e.blurb;
+    }
+    return this.spoken;
   }
 
   /**
@@ -711,6 +823,13 @@ export class HUD {
       hpGhost: root.getElementById('bar-hp-ghost'),
       force: root.getElementById('bar-force'),
       stam: root.getElementById('bar-stam'),
+      /* The three READINGS beside the three captions. A bar is a proportion,
+       * and a proportion cannot answer "can I take one more hit" — which is
+       * the only question anybody asks of a health bar. Written through
+       * `_num`, so a value that has not moved costs no DOM write. */
+      hpNum: root.getElementById('bar-hp-num'),
+      forceNum: root.getElementById('bar-force-num'),
+      stamNum: root.getElementById('bar-stam-num'),
       flow: root.getElementById('hud-flow'),
       flowFill: root.querySelector('#hud-flow i'),
       combo: root.getElementById('hud-combo'),
@@ -740,6 +859,7 @@ export class HUD {
       flowVig: root.getElementById('flow-vignette'),
       dmgVig: root.getElementById('dmg-vignette'),
       minimap: root.getElementById('minimap'),
+      mapKey: root.getElementById('minimap-key'),
       emotes: root.getElementById('emote-wheel'),
       // The free camera's own line lives OUTSIDE #hud, because #hud is the
       // thing it hides — a legend inside it would go away with everything else
@@ -748,7 +868,20 @@ export class HUD {
       // part of the HUD it belongs to.
       freecam: root.getElementById('freecam-bar'),
       freecamKey: root.getElementById('freecam-key'),
+      // ── the army (Command mode only; hidden everywhere else)
+      roster: root.getElementById('roster'),
+      rpArmy: root.getElementById('rp-army'),
+      rpStrength: root.getElementById('rp-strength'),
+      rpOrderName: root.getElementById('rp-order-name'),
+      rpOrderSub: root.getElementById('rp-order-sub'),
+      rpOrders: root.getElementById('rp-orders'),
+      rpList: root.getElementById('rp-list'),
+      rpFoot: root.getElementById('rp-foot'),
     };
+    /** Which formation is current, so a rebind can re-light the right chip. */
+    this._order = null;
+    /** The last roll drawn, as a signature — the panel is not rebuilt per frame. */
+    this._rosterKey = null;
     this.hpGhostValue = 1;
     this.centerTimer = 0;
     this._buildPowers();
@@ -813,28 +946,255 @@ export class HUD {
     for (const [key, action] of POWERS) {
       const d = document.createElement('div');
       d.className = 'pw';
-      const label = bindings ? keyLabel((bindings[action] || [])[0]) : '';
-      d.innerHTML = `${POWER_ICONS[key] || ''}<span>${escKey(label)}</span><div class="cd"></div>`;
+      /**
+       * FIVE CHILDREN, EACH CREATED AND HELD — not one innerHTML blob picked
+       * apart with `querySelector` afterwards.
+       *
+       * Two reasons. The slot now has four writable parts rather than one, and
+       * `querySelector` on the check harness's DOM double returns the SAME node
+       * for every selector — so a blob-and-query build would hand `cd`, `label`
+       * and `tick` the same object under test and quietly make three assertions
+       * agree with each other. And the glyph is the only part that has to be
+       * parsed as markup, so it is the only part that goes in as markup.
+       *
+       * THE SLOT IS AN ICON WITH TAGS ON IT, which is the whole visual change.
+       * It used to be a 50 px grey square with a letter under a dim glyph, ten
+       * of them in a row — an auditor called the row the most "web demo" object
+       * in the frame, and they were right: what read at a glance was ten
+       * keycaps printed F R G H C Z B 3 4 N U. Now the GLYPH is the object; the
+       * key is a small tab in the corner where a key belongs; the price is in
+       * the Force's own colour where an ability bar puts a cost; and the
+       * seconds left are printed over the shutter, which is the one thing an
+       * ability bar exists to tell you and this one never did.
+       */
+      const gl = document.createElement('span');
+      gl.className = 'gl';
+      gl.innerHTML = POWER_ICONS[key] || '';
+      const cd = document.createElement('div');
+      cd.className = 'cd';
+      const cost = document.createElement('em');
+      cost.className = 'cost';
+      // Priced from the same imported table Player spends against — this file
+      // used to carry its own nine numbers and two of them were wrong.
+      const price = POWER_COST[key];
+      cost.textContent = price > 0 ? String(Math.round(price)) : '';
+      const label = document.createElement('span');
+      label.className = 'key';
+      label.textContent = bindings
+        ? keyLabel(codesFor(bindings, action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+          this._pad?.family || 'xbox')
+        : '';
+      const tick = document.createElement('b');
+      tick.className = 'tick';
+      // Order matters: the shutter goes over the glyph and under everything
+      // that has to stay readable while it is closed.
+      d.appendChild(gl); d.appendChild(cd);
+      d.appendChild(cost); d.appendChild(label); d.appendChild(tick);
       this.el.powers.appendChild(d);
-      this.powerEls[key] = { root: d, cd: d.querySelector('.cd'), label: d.querySelector('span') };
+      this.powerEls[key] = { root: d, cd, label, tick, cost, glyph: gl };
     }
     this._bindings = bindings;
   }
 
-  /** Repaint the wheel's key labels. Called on boot and after any rebind. */
-  setBindings(bindings) {
+  /**
+   * Repaint the wheel's key labels. Called on boot, after any rebind, and
+   * whenever the player swaps between a keyboard and a controller.
+   *
+   * `pad` is `{ device, family }` or nothing, and nothing means the keyboard —
+   * so every existing caller and every check keeps the markup it had. It is
+   * held rather than passed on, because the four surfaces below are repainted
+   * from other places too (`_buildPowers` on a HUD rebuild, `setOrder` on a
+   * formation change) and a device the HUD had forgotten would silently
+   * repaint half the screen back to keyboard letters.
+   */
+  setBindings(bindings, pad = this._pad) {
     this._bindings = bindings;
+    this._pad = pad || null;
+    const fam = (pad && pad.family) || 'xbox';
+    const dev = pad && pad.device === 'pad' ? 'pad' : 'key';
+    const chip = (id) => keyLabel(codesFor(bindings, id, dev)[0], fam);
     for (const [key, action] of POWERS) {
       const p = this.powerEls[key];
-      if (p && p.label) p.label.textContent = keyLabel((bindings[action] || [])[0]);
+      if (p && p.label) p.label.textContent = chip(action);
     }
     // The free camera's own legend, from the same table and on the same call.
     // It is the only text on screen while the HUD is hidden, so it is the one
     // place a stale key name would be unrecoverable: a player who cannot read
     // the way out has to reload the page.
     if (this.el.freecamKey) {
-      this.el.freecamKey.textContent = `${keyLabel((bindings.freecam || [])[0])} to come back`;
+      this.el.freecamKey.textContent = `${chip('freecam')} to come back`;
     }
+    /*
+     * The map's own legend, from the same table and on the same call. It names
+     * the POWER the map now rides — Force sense — and what it costs, because a
+     * caption that said only "press C" would leave the player wondering why
+     * their Force pool moved. The price comes off POWER_COST, which is what
+     * the wheel already prices every other power from.
+     */
+    if (this.el.mapKey) {
+      this.el.mapKey.innerHTML = `<b>${escKey(chip('sense'))}</b> `
+        + `sense · ${Math.round(POWER_COST.sense)} Force`;
+    }
+    // The order keycaps, on the same call and for the same reason. They were
+    // raw key codes read past the table until this round; now that they are
+    // rebindable, printing one from memory is exactly the bug the wheel above
+    // was built to stop.
+    this._buildOrderKeys(bindings);
+  }
+
+  /**
+   * One of the three bar readings, written only when the printed value moves.
+   *
+   * A bar's fill is a transform and the compositor eats a repeat of it; a
+   * textContent write is layout, and three of them sixty times a second for a
+   * number that changes twice a fight is the shape of a HUD that costs frames
+   * for nothing. `Math.round` is the comparison because the ROUNDED value is
+   * what the player reads — 61.4 and 61.0 are the same string.
+   */
+  _num(node, v) {
+    if (!node) return;
+    const n = Math.max(0, Math.round(num(v, 0)));
+    if (node._last === n) return;
+    node._last = n;
+    node.textContent = String(n);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  THE ARMY                                                              */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE ROSTER PANEL — note #21, finally on the screen. See `rosterHtml`.
+   *
+   * "you can see who lived or who died, maybe one particular one lasts longer
+   * than the others and you protect him."
+   *
+   * Everything that makes that sentence true has been built for a while and
+   * none of it was visible. A trooper is a record that outlives its body; it
+   * carries a designation, a nickname EARNED by surviving to Sergeant, a rank
+   * with a painted insignia on the real mesh, kills, areas survived, and a
+   * death that is permanent. `CommandDirector` published the lot through
+   * `onRoster` and main.js called `hud.setRoster?.(summary)` — into a method
+   * that did not exist. The optional-call operator meant it failed silently,
+   * every promotion and every casualty, for the whole life of the mode.
+   *
+   * WHAT IT DRAWS, and why in this order. The living, best first — rank, then
+   * kills — so the two or three names you have been protecting are at the top
+   * of the column where you can watch them; then the fallen, struck through,
+   * with the area they died in. That asymmetry IS the mechanic: a column of
+   * numbers with three names in it is the game telling you who you managed to
+   * keep alive.
+   *
+   * `summary` is `CommandRoster.summary()` exactly as shipped — nothing here
+   * asks for a field the director does not already publish. Pass `null` to put
+   * the panel away, which is what every non-Command mode does.
+   */
+  setRoster(summary) {
+    const host = this.el.roster;
+    if (!host) return;
+    if (!summary || !Array.isArray(summary.roll)) {
+      host.classList.add('hidden');
+      this._rosterKey = null;
+      return;
+    }
+    host.classList.remove('hidden');
+    const army = ARMIES[summary.army];
+    if (this.el.rpArmy) this.el.rpArmy.textContent = army ? army.name : String(summary.army ?? '');
+
+    // A signature, so a summary that has not changed costs no innerHTML write.
+    // onRoster fires on every promotion and every death; the panel is cheap but
+    // it is not free, and a rebuild throws away the arrival animation.
+    const key = `${summary.army}|${summary.points}|`
+      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}`).join(',');
+    if (key === this._rosterKey) return;
+    this._rosterKey = key;
+
+    const { living, fallen } = rosterSides(summary);
+    if (this.el.rpStrength) this.el.rpStrength.textContent = `${living.length}/${summary.roll.length}`;
+    if (this.el.rpList) this.el.rpList.innerHTML = rosterHtml(summary);
+    if (this.el.rpFoot) {
+      // Reinforcement points belong here and not only on the muster screen: it
+      // is what a casualty COSTS, and the price is worth knowing while the
+      // decision that produces one is still being made.
+      this.el.rpFoot.innerHTML = `<span>${living.length} standing</span>`
+        + `<span>${fallen.length} lost</span><b>${summary.points | 0} rp</b>`;
+    }
+  }
+
+  /**
+   * WHICH FORMATION YOU ARE IN — the other thing nothing on screen ever said.
+   *
+   * Six order keys change how twenty-four bodies behave and the only feedback
+   * was a message that faded in two seconds, so the answer to "am I still in
+   * cover?" was to press a key and watch. The name is held on screen; the six
+   * keycaps under it are built from the live bindings by `setBindings`, and the
+   * one you are in is lit.
+   *
+   * Signature is the director's: `onOrder(F, squads)` → `setOrder(F.id, F.name,
+   * squads)`, which is exactly what main.js was already calling into thin air.
+   */
+  setOrder(id, name, squads) {
+    const was = this._order;
+    this._order = id || null;
+    if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
+    if (this.el.rpOrderSub) {
+      const n = squads | 0;
+      this.el.rpOrderSub.textContent = n ? `${n} squad${n === 1 ? '' : 's'}` : '';
+    }
+    this._lightOrder();
+    /*
+     * AND THE ORDER IS SPOKEN, which it never was.
+     *
+     * `Voice.LINES.order` is a fully authored contour with three paragraphs
+     * over it — "it is the officer's line and it is what the player hears when
+     * they change formation, so it has to be legible under a firefight" — and
+     * it was the ONE kind of the fifteen that nothing ever emitted. Every other
+     * contour (effort, hurt, land, die, kill, streak, boss, low, alarm, panic,
+     * scream, chatter, flung, cheer) has a live caller; this path wrote two DOM
+     * strings and lit a chip in silence. The one mode where you give orders was
+     * the one where nothing answered you.
+     *
+     * Only on a CHANGE. `setOrder` is also called when the HUD is rebuilt — the
+     * note over `_buildPowers` says so in as many words — and an officer who
+     * repeats the standing order every time a panel is redrawn is worse than
+     * one who says nothing.
+     */
+    if (this._order && this._order !== was) this.announcer?.say(this._settings, 'order');
+  }
+
+  /** Light the chip for the current formation, and only that one. */
+  _lightOrder() {
+    const host = this.el.rpOrders;
+    if (!host || !host.children) return;
+    for (const c of host.children) {
+      c.classList?.toggle('on', !!this._order && c.dataset?.order === this._order);
+    }
+  }
+
+  /**
+   * The six order keycaps, from the bindings table.
+   *
+   * Rebuilt on every rebind for the same reason the power wheel is: these are
+   * ordinary rebindable actions now (see the seam in Bindings.js), so a typed
+   * key here would be a lie the first time somebody moved one. Empty when no
+   * orders are registered, which is every build that never loads Command.
+   */
+  _buildOrderKeys(bindings) {
+    const host = this.el.rpOrders;
+    if (!host) return;
+    host.innerHTML = '';
+    for (const o of ORDER_ACTIONS) {
+      const chip = document.createElement('i');
+      chip.className = 'rp-key';
+      chip.dataset.order = o.id;
+      chip.title = `${o.name} — ${o.blurb}`;
+      chip.textContent = bindings
+        ? keyLabel(codesFor(bindings, o.action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+          this._pad?.family || 'xbox')
+        : '';
+      host.appendChild(chip);
+    }
+    this._lightOrder();
   }
 
   show(on) { this.el.hud.classList.toggle('hidden', !on); }
@@ -856,6 +1216,12 @@ export class HUD {
      * no bars to move, no announcer, no room. See FreeCam for why the world is
      * paused rather than merely unwatched.
      */
+    // Kept so `setOrder` can pick a voice. It is called by the director, not by
+    // the frame, so it has no world of its own to ask — and everything else the
+    // announcer speaks is spoken from inside this method, where `world` is in
+    // hand. One field rather than threading a fifth argument through a seam the
+    // director owns the signature of.
+    this._settings = world?.settings ?? this._settings ?? null;
     const input = world ? world.liveInput : null;
     if (input && input.actHit('freecam') && camera) this.freecam.toggle(world, camera, this);
     if (this.freecam.on) {
@@ -880,13 +1246,17 @@ export class HUD {
     this.hpGhostValue = Math.max(hp, this.hpGhostValue - dt * 0.35);
     el.hpGhost.style.transform = `scaleX(${clamp(this.hpGhostValue, 0, 1)})`;
     el.hp.parentElement.classList.toggle('low', hp < 0.3);
+    this._num(el.hpNum, player.hp);
     el.force.style.transform = `scaleX(${clamp(player.force / player.maxForce, 0, 1)})`;
+    this._num(el.forceNum, player.force);
     // Focus reads on the Force bar itself — it is Force being spent, and
     // showing it anywhere else would hide the trade the ability is built on.
     const fs = world?.focus;
     if (fs) el.force.parentElement.classList.toggle('focus', fs.held > 0.05);
-    el.stam.style.transform = `scaleX(${clamp(player.stamina / player.maxStamina, 0, 1)})`;
-    el.stam.parentElement.classList.toggle('low', player.stamina / player.maxStamina < 0.25);
+    const stam = player.stamina / player.maxStamina;
+    el.stam.style.transform = `scaleX(${clamp(stam, 0, 1)})`;
+    el.stam.parentElement.classList.toggle('low', stam < 0.25);
+    this._num(el.stamNum, player.stamina);
 
     // ── flow
     el.flowFill.style.width = `${clamp(player.flow, 0, 1) * 100}%`;
@@ -929,7 +1299,7 @@ export class HUD {
       const st = world.director.state();
       el.remaining.textContent = st.need === Infinity ? 'free practice' : `${st.progress} of ${st.need}`;
     } else {
-      const remaining = world.director.remaining;
+      const remaining = hostilesLeft(world);
       el.remaining.textContent = world.director.active
         ? `${remaining} remaining`
         : (world.director.intermission > 900 ? 'attune' : `next wave in ${Math.ceil(world.director.intermission)}`);
@@ -961,6 +1331,12 @@ export class HUD {
     /* Rend, whose slot did not exist until the audit found it bound to KeyN,
      * priced at 38 and drawn nowhere. 2.4 s, from `forceDisassemble`. */
     this._power('rend', cd.rend, this._afford(player, 'rend'));
+    /* Unleash — the 360° repulse. Its slot exists for the same reason rend's
+     * had to be added: a power that is bound, priced and castable and drawn
+     * nowhere is a power the player has to be told about out of band, and
+     * hud-events counts the wheel against POWER_COST so a new price without a
+     * new slot fails rather than shipping quiet. */
+    this._power('unleash', cd.unleash, this._afford(player, 'unleash'));
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;
@@ -1120,6 +1496,25 @@ export class HUD {
      * drawable, and neither may change anything the lines above it read.
      */
     this.minimap.update(dt, world, player, world.settings);
+    /*
+     * …and the line that says how to bring it up, which only exists while the
+     * map is something you have to ask for. It is written on a CHANGE rather
+     * than every frame: a DOM class toggle sixty times a second for a caption
+     * that changes twice a fight is the same waste the map's own 20 Hz budget
+     * exists to refuse.
+     */
+    if (this.el.mapKey) {
+      const s = world.settings || {};
+      const ask = s.minimap !== false && s.minimapSense !== false && this.minimap.read <= 0;
+      if (ask !== this._mapAsk) {
+        this._mapAsk = ask;
+        this.el.mapKey.classList.toggle('hidden', !ask);
+      }
+    }
+    // The wheel prints WORDS when the player has asked for words — the same
+    // live read as everything else on this frame, written only on a change.
+    const spoken = (world.settings?.speechMode ?? 'synth') !== 'synth' && canSpeakWords();
+    if (spoken !== this.emotes.spoken) this.emotes.setSpeech(spoken);
     const picked = this.emotes.update(input, this);
     if (picked) this.emote(picked, world, player);
   }
@@ -1237,6 +1632,18 @@ export class HUD {
     p.cd.style.transform = `scaleY(${clamp(shutter, 0, 1)})`;
     p.root.classList.toggle('ready', !!affordable && left <= 0.01);
     p.root.classList.toggle('active', !!active);
+    /* SECONDS, NOT A PROPORTION. The shutter is `left / peak`, which answers
+     * "how far through" and not "how long" — and how long is the only version
+     * of the question a player asks. Written through `_num`'s rule: only when
+     * the printed value moves, because this runs for eleven slots every frame.
+     * Under a second it counts in tenths, because the last second of a 2.4 s
+     * cooldown is the one you are actually waiting on. */
+    const cooling = left > 0.05;
+    p.root.classList.toggle('cool', cooling);
+    if (p.tick) {
+      const txt = cooling ? (left < 1 ? left.toFixed(1) : String(Math.ceil(left))) : '';
+      if (p.tick._last !== txt) { p.tick._last = txt; p.tick.textContent = txt; }
+    }
   }
 
   /**
@@ -1397,6 +1804,133 @@ const _screen = new THREE.Vector2();
 
 /** Titles come from archetype labels, which are data. Data goes in as text. */
 const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+/**
+ * HOW MANY OF THE ENEMY ARE LEFT — and a note about where this belongs.
+ *
+ * `#hud-remaining` read `world.director.remaining`, which is
+ *
+ *     spawnQueue.length + arrivals.pending + enemies.filter(e => !e.dead).length
+ *
+ * and in Command mode `world.enemies` HOLDS YOUR OWN TROOPS. An ally is an
+ * Enemy with a different `team` — that is the design decision that makes allies
+ * real, and Waves.js's own `update()` has the correct rule forty lines above
+ * the getter, with a long comment about how counting your own army once stopped
+ * waves from ever closing. `remaining` never got it. So the top-left corner
+ * said "10 remaining" with nothing hostile on the field.
+ *
+ * THIS IS NOT WHERE THE FIX BELONGS AND IT IS DELIBERATELY MINIMAL. The getter
+ * is in src/game/Waves.js, which another lane owns; the request to hoist that
+ * predicate so both callers share one rule has been sent and is unanswered.
+ * Until it lands:
+ *
+ *   · every mode WITHOUT an army reads `director.remaining`, untouched, so
+ *     nothing that is currently right can be made wrong here and no second
+ *     copy of the rule can drift in the ninety-odd percent of play that has
+ *     no allies in `world.enemies` at all;
+ *   · Command mode — the only place the shipped getter is wrong — counts the
+ *     hostiles itself, off `world.partyTeam`, which is the authority for
+ *     "which side is mine" and the same field Waves.js reads.
+ *
+ * Written so it stays correct if `remaining` is fixed underneath it: it does
+ * not subtract from the getter's answer, it composes its own. A subtraction
+ * would silently start under-counting the moment the real fix landed.
+ */
+export function hostilesLeft(world) {
+  /**
+   * COMPOSED, NOT DELEGATED — and it stays that way on purpose.
+   *
+   * `WaveDirector.remaining` has since been fixed at the source: `blocksWaveEnd`
+   * is now the single statement of the party predicate with three callers, two
+   * of which were wrong. So this function is, strictly, a second computation of
+   * a rule that is now right in one place — the twin this codebase keeps
+   * deleting (HANDOFF 2.3) — and collapsing it to `d.remaining` was tried.
+   *
+   * It was put back, because the check that guards this is written against a
+   * director whose `remaining` is deliberately a LIE (99, with six real
+   * hostiles). That fixture is the point: the HUD's job is to be right about
+   * what the player can see even when the thing it asks has been broken, and
+   * `remaining` has been broken twice already this session. Making the
+   * delegation pass would have meant editing that fixture to accept the
+   * delegation — relaxing a bound to fit a cleanup that buys no behaviour.
+   *
+   * Redundant and independently correct beats terse and jointly wrong. If this
+   * is ever collapsed, the check has to be rewritten to drive a REAL director
+   * first, not restubbed.
+   */
+  const d = world?.director;
+  if (!d) return 0;
+  if (!world.command) return d.remaining;
+  const party = world.partyTeam ?? 0;
+  let alive = 0;
+  for (const e of world.enemies || []) if (!e.dead && (e.team ?? 1) !== party) alive++;
+  return (d.spawnQueue?.length || 0) + (d.arrivals?.pending || 0) + alive;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE ROLL, drawn once and read twice                                    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The roll split and ordered, from `CommandRoster.summary()`.
+ *
+ * The living come first and the BEST of them first — rank, then kills, then
+ * experience — because the panel's whole job is to put the two or three names
+ * you have been protecting where you can watch them. The fallen come after,
+ * most recent first, because a casualty list is read backwards from the last
+ * thing that happened.
+ *
+ * `rank` arrives as a short code ('SGT'), so the ordering is the RANKS table's
+ * own index and not an alphabetical accident: 'SGT' sorts before 'TRP' either
+ * way, and 'CMD' before 'VET' does not.
+ */
+export function rosterSides(summary) {
+  const roll = summary?.roll || [];
+  const rung = (short) => RANKS.findIndex(r => r.short === short);
+  return {
+    living: roll.filter(t => t.alive)
+      .sort((a, b) => (rung(b.rank) - rung(a.rank)) || (b.kills - a.kills) || (b.xp - a.xp)),
+    fallen: roll.filter(t => !t.alive)
+      .sort((a, b) => (b.diedIn ?? 0) - (a.diedIn ?? 0)),
+  };
+}
+
+/**
+ * One name, as a row.
+ *
+ * The insignia chip is the RANK'S OWN COLOUR, looked up in `RANKS` rather than
+ * typed here — those five colours are painted onto the real meshes when a
+ * trooper is promoted, and a second table of them in the HUD would drift from
+ * the army the player is looking at. A Trooper has `color: null` in that table
+ * on purpose (a fresh clone is unmarked), so the chip falls back to the panel's
+ * own line rather than inventing a colour nobody wears.
+ */
+export function trooperRow(t) {
+  const rec = RANKS.find(r => r.short === t.rank);
+  const chip = rec && rec.color != null
+    ? `#${(rec.color >>> 0).toString(16).padStart(6, '0')}` : '';
+  const right = t.alive ? String(t.kills | 0) : `A${t.diedIn ?? '?'}`;
+  return `<div class="rp-row${t.alive ? '' : ' gone'}" title="${esc(t.rankTitle)} · ${esc(t.unit)}">`
+    + `<i${chip ? ` style="background:${chip}"` : ''}></i>`
+    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}</span><em>${esc(right)}</em></div>`;
+}
+
+/**
+ * THE WHOLE ROLL AS MARKUP — living above fallen, the dead struck through.
+ *
+ * Exported because it is drawn in two places: the HUD's own column during a
+ * fight, and the muster screen between areas, where there is room for all of
+ * it. Two renderers would be two answers to "what does a casualty list look
+ * like", and the one that is wrong is always the one you are not looking at.
+ * Pure and DOM-free so a check can assert what a player would read.
+ */
+export function rosterHtml(summary) {
+  const { living, fallen } = rosterSides(summary);
+  return '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>'
+    + living.map(trooperRow).join('')
+    + (fallen.length ? `<div class="rp-div">Fallen — ${fallen.length}</div>` : '')
+    + fallen.map(trooperRow).join('');
+}
 
 /** Detach a node whether it is a real one or a test double. */
 function drop(node, host) {

@@ -1,5 +1,5 @@
 /**
- * SABER — what a level leaves behind when it goes.
+ * BATTLEFRONT BORZ — what a level leaves behind when it goes.
  *
  * THE PREMISE THIS FILE DISPROVES. Two check files say the same thing in their
  * own comments — "Building a whole World needs an Engine and a GPU; calling its
@@ -267,13 +267,53 @@ export async function run({ check, assert }) {
 
     assert(!p.alive, 'the player survived 1e9 damage');
     assert(world.over, 'the run did not end');
-    assert(world.time - t0 > 2.5,
-      `the clock advanced ${(world.time - t0).toFixed(3)} s over the 3 s before the death card — `
+    /**
+     * THE BAR IS "NOT FROZEN", AND IT USED TO BE WRITTEN AS "> 2.5 s of 3".
+     *
+     * That number encoded an assumption the game has since deliberately
+     * changed: a death now takes the world to 0.34× for 2.4 s (`Player.die` →
+     * `World.killTime`), because a death with no slow motion was one of the
+     * audit's named defects. Three raw seconds through that dip is about 1.7 s
+     * of world time — measured 1.680 — and the old bar read that as the freeze
+     * it was written against.
+     *
+     * The defect it exists for is `running = false`, which advances the clock
+     * by EXACTLY ZERO and moves the camera 0.000000 m. So the bar is a floor
+     * that a frozen world cannot clear and a dilated one clears easily, plus
+     * the thing that actually distinguishes them: the clock must still be
+     * moving at the END of the window, not merely have moved at the start.
+     */
+    const dilated = world.time - t0;
+    assert(dilated > 0.9,
+      `the clock advanced ${dilated.toFixed(3)} s over the 3 s before the death card — `
       + 'the world is frozen, so nothing written for this moment can run');
+    /**
+     * THE DISCRIMINATOR, and the old bar did not have one.
+     *
+     * "1.68 s of world time over 3 s of frames" is what a FREEZE looks like and
+     * it is also what a DILATION looks like, and the two want opposite
+     * responses — one is a bug to hunt and the other is the feature the audit
+     * asked for. They are told apart per FRAME, not in aggregate: a frozen
+     * world advances by EXACTLY ZERO on the frames it is frozen for, and a
+     * dilated one advances by `dt × scale` on every single one. Measured over
+     * the 180 frames below: 0 frames at zero, minimum advance 0.00567 s =
+     * 0.34 × 1/60, which is `Player.die`'s own `killTime(0.34, 2.4)`, and the
+     * wall clock costs a median 0.85 ms a frame throughout — nothing blocks.
+     */
+    const adv = [];
+    for (let i = 0; i < 180; i++) { const t = world.time; world.update(1 / 60, input); adv.push(world.time - t); }
+    const stalled = adv.filter((v) => v <= 1e-9).length;
+    assert(stalled === 0,
+      `${stalled} of ${adv.length} frames advanced the clock by exactly zero — that is a STALL, `
+      + 'not the death dilation, and a camera move layered over it will stutter');
+    assert(world.timeScale > 0.98,
+      `the world never came back to speed after the death dip (${world.timeScale.toFixed(3)})`);
     assert(engine.camera.position.distanceTo(cam0) > 0.5,
       `the death camera moved ${engine.camera.position.distanceTo(cam0).toFixed(4)} m`);
-    assert(Math.abs(p.camera.pitch - (-0.42)) < 0.05,
-      `the death camera's pitch eased to ${p.camera.pitch.toFixed(3)} and the target is -0.42`);
+    // -0.52 is `CameraRig.beginDeathShot`'s own target; -0.42 was the old
+    // `_updateDead` fallback, which still runs when the shot is turned off.
+    assert(p.camera.pitch < -0.35 && p.camera.pitch > -0.62,
+      `the death camera's pitch eased to ${p.camera.pitch.toFixed(3)}, and the shot aims at -0.52`);
     assert(p.saber.ignition < ign0 * 0.2,
       `the blade is still at ${p.saber.ignition.toFixed(3)} ignition after dying — retract() was `
       + 'called and never stepped');
@@ -284,7 +324,8 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 600; i++) world.update(1 / 60, input);
     assert(world.enemies.length <= before,
       `the director sent ${world.enemies.length - before} more enemies after the run ended`);
-    const line = `clock +${(world.time - t0).toFixed(1)} s, camera back `
+    const line = `clock +${(world.time - t0).toFixed(1)} s over 6 s of frames with 0 frozen frames `
+      + `(min advance ${Math.min(...adv).toFixed(5)} s = the 0.34x death dip), camera back `
       + `${engine.camera.position.distanceTo(cam0).toFixed(2)} m to pitch ${p.camera.pitch.toFixed(2)}, `
       + `blade ${ign0.toFixed(2)}→${p.saber.ignition.toFixed(2)}, director stopped`;
     world.unload(); world.dispose?.();
@@ -380,6 +421,13 @@ export async function run({ check, assert }) {
        * DetachedPiece path only exists for a body on its feet, which is
        * exactly the case where the corpse it came off is still rendering. */
       assert(b.actor && !b.actor.ragdolled, 'a living acolyte has no un-ragdolled actor to cut');
+      /* SPEND THE GUARD FIRST. A duellist turns aside the cuts that would end
+       * the fight, and losing its blade arm is one of them — `Enemy._turnCut`,
+       * added with `tools/checks/powers.mjs`. So an acolyte at full guard
+       * answers this pass instead of losing the forearm, and this check, which
+       * is about MATERIALS and not about combat, would silently have nothing to
+       * measure. `tools/checks/powers.mjs` owns the guard's own behaviour. */
+      b.guard = 0;
       b.takeCut({
         bone: 'foreR', cutT: 0.5, cap: { vital: 0.05, name: 'foreR' },
         point: V(0.3, 1.1, -5), impulse: V(3, 2, 0), normal: V(0, 1, 0), speed: 18,
@@ -470,7 +518,13 @@ export async function run({ check, assert }) {
     const settle = () => new Promise((r) => setTimeout(r, 40));
     const boot = async () => {
       const w = new World(stub(), { ...DEFAULT_SETTINGS, quality: 'low' });
-      await w.loadLevel('meadow');
+      /* ANY level — this suite is about build/teardown, not about a place. It
+       * said `'meadow'`, which the roster cull deleted, and `loadLevel`
+       * substitutes `LEVEL_ORDER[0]` for a key it does not know
+       * (src/game/World.js:236) — so it has been running here all along while
+       * appearing to name somewhere else. Asking for the first level outright
+       * is the same world, honestly stated, and cannot dangle again. */
+      await w.loadLevel(LEVEL_ORDER[0]);
       w.spawnPlayer();
       for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
       return w;

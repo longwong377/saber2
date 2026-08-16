@@ -1,5 +1,5 @@
 /**
- * SABER — what the Force does when it takes hold of something.
+ * BATTLEFRONT BORZ — what the Force does when it takes hold of something.
  *
  * Three of the player's notes are one mechanic seen from three sides:
  *

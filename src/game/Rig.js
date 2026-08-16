@@ -1,5 +1,5 @@
 /**
- * SABER — skeletal rig and procedural animation.
+ * BATTLEFRONT BORZ — skeletal rig and procedural animation.
  *
  * There are no animation clips in this game. Every pose is solved: feet are
  * planted by a gait solver against the actual terrain, arms are IK'd to
@@ -54,57 +54,176 @@ export function aimY(dir, ref, out = new THREE.Quaternion()) {
 /* ── skeleton templates ──────────────────────────────────────────────── */
 
 /**
+ * WHAT A BONE IS, in the only vocabulary anything downstream may ask in — and
+ * the reason it exists is `VITAL[b.name] ?? 0.4`.
+ *
+ * `Enemy.capsules` used to price a severed bone off a table of NINETEEN
+ * HUMANOID NAMES with a silent default under it. The roster is thirty-one
+ * bodies and 54 distinct bone names: a quadruped's are `hipL0`, `femur0`,
+ * `tibia0`, `tarsus0`, a hull's are `prow` and `stern`, a hailfire's are
+ * `wheelL` and `rimL`, and every one of the 34 names the table did not hold
+ * came out at 0.4 — so a Rancor's TOE was worth 46% of a 2200 hp animal,
+ * exactly as much as its hip, and three of the four killed it.
+ *
+ * The fix is not a longer table. A name list beside a generated skeleton is
+ * HANDOFF §2.3's signature defect, and this file GENERATES the names — the
+ * index in `femur3` is a loop counter. So the bone declares what it IS, here,
+ * on the same line that declares how long it is, and the price is derived from
+ * that plus the body's own shape (`severanceOf`, src/game/Enemy.js). A bone
+ * added tomorrow is priced the day it is authored or it throws on the first
+ * build; there is nothing left to keep in sync by hand.
+ *
+ *   core   the trunk or chassis: cutting it is cutting the body in two.
+ *   neck   what carries the head.
+ *   head   the head.
+ *   hull   a chassis segment fore or aft of the core — an AT-TE's prow and
+ *          stern. Axial like the core, but the machine is not only that piece.
+ *   leg    a limb the body stands and moves on. A hailfire's wheels are legs:
+ *          two of them, weight-bearing, and losing one is losing the pair.
+ *   arm    a limb that reaches rather than carries.
+ *
+ * A limb is a CHAIN, and where a bone sits along it is read off the bones —
+ * a cut takes everything below it — so `femur` needs no entry separate from
+ * `tibia`. What a role must NOT become is a synonym for one body plan: `leg` on
+ * a six-legged acklay and `leg` on a biped are the same role priced
+ * differently, because the redundancy divisor is COUNTED off the rig.
+ *
+ * ── NOT THE ONLY READER OF "WHICH BONE IS A LEG", AND THE OTHER IS OLDER.
+ * `Enemy._loseLimbBehaviour` still asks `/thigh|shin|foot|femur|tibia|tarsus/`
+ * to count a lost leg, which is this vocabulary restated as a regex and is why
+ * a hailfire that loses both wheels does not topple. Left alone deliberately —
+ * it decides TOPPLING, not lethality — but it is the next thing to route
+ * through `bone.role`.
+ */
+export const BONE_ROLES = ['core', 'neck', 'head', 'hull', 'leg', 'arm'];
+
+/**
  * offset  — position relative to the parent bone's tip frame
  * length  — bone length along local +Y
  * rest    — direction the bone points in the rest pose (world-ish, character space)
+ * role    — one of BONE_ROLES. Required: `Rig` throws on a bone without one.
  */
 export function humanoidSkeleton(scale = 1, opts = {}) {
   const s = scale;
   const armLen = opts.armLen ?? 1;
   const legLen = opts.legLen ?? 1;
   return [
-    { name: 'hips',      parent: null,      offset: [0, 0, 0],                 length: 0.14 * s, rest: [0, 1, 0] },
-    { name: 'spine',     parent: 'hips',    offset: [0, 0.10 * s, 0],          length: 0.19 * s, rest: [0, 1, 0.06] },
-    { name: 'chest',     parent: 'spine',   offset: [0, 0.19 * s, 0],          length: 0.21 * s, rest: [0, 1, -0.04] },
-    { name: 'neck',      parent: 'chest',   offset: [0, 0.21 * s, 0.005 * s],  length: 0.075 * s, rest: [0, 1, 0.05] },
-    { name: 'head',      parent: 'neck',    offset: [0, 0.075 * s, 0],         length: 0.23 * s, rest: [0, 1, 0] },
+    { name: 'hips',      parent: null,      offset: [0, 0, 0],                 length: 0.14 * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'spine',     parent: 'hips',    offset: [0, 0.10 * s, 0],          length: 0.19 * s, rest: [0, 1, 0.06], role: 'core' },
+    { name: 'chest',     parent: 'spine',   offset: [0, 0.19 * s, 0],          length: 0.21 * s, rest: [0, 1, -0.04], role: 'core' },
+    { name: 'neck',      parent: 'chest',   offset: [0, 0.21 * s, 0.005 * s],  length: 0.075 * s, rest: [0, 1, 0.05], role: 'neck' },
+    { name: 'head',      parent: 'neck',    offset: [0, 0.075 * s, 0],         length: 0.23 * s, rest: [0, 1, 0], role: 'head' },
 
-    { name: 'clavL',     parent: 'chest',   offset: [0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [1, 0.18, 0] },
-    { name: 'armL',      parent: 'clavL',   offset: [0, 0.13 * s, 0],          length: 0.285 * s * armLen, rest: [0.30, -0.95, -0.05] },
-    { name: 'foreL',     parent: 'armL',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [0.10, -0.99, 0.05] },
-    { name: 'handL',     parent: 'foreL',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0] },
+    { name: 'clavL',     parent: 'chest',   offset: [0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [1, 0.18, 0], role: 'arm' },
+    { name: 'armL',      parent: 'clavL',   offset: [0, 0.13 * s, 0],          length: 0.285 * s * armLen, rest: [0.30, -0.95, -0.05], role: 'arm' },
+    { name: 'foreL',     parent: 'armL',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [0.10, -0.99, 0.05], role: 'arm' },
+    { name: 'handL',     parent: 'foreL',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0], role: 'arm' },
 
-    { name: 'clavR',     parent: 'chest',   offset: [-0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [-1, 0.18, 0] },
-    { name: 'armR',      parent: 'clavR',   offset: [0, 0.13 * s, 0],           length: 0.285 * s * armLen, rest: [-0.30, -0.95, -0.05] },
-    { name: 'foreR',     parent: 'armR',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [-0.10, -0.99, 0.05] },
-    { name: 'handR',     parent: 'foreR',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0] },
+    { name: 'clavR',     parent: 'chest',   offset: [-0.035 * s, 0.185 * s, 0], length: 0.13 * s, rest: [-1, 0.18, 0], role: 'arm' },
+    { name: 'armR',      parent: 'clavR',   offset: [0, 0.13 * s, 0],           length: 0.285 * s * armLen, rest: [-0.30, -0.95, -0.05], role: 'arm' },
+    { name: 'foreR',     parent: 'armR',    offset: [0, 0.285 * s * armLen, 0], length: 0.265 * s * armLen, rest: [-0.10, -0.99, 0.05], role: 'arm' },
+    { name: 'handR',     parent: 'foreR',   offset: [0, 0.265 * s * armLen, 0], length: 0.10 * s, rest: [0, -1, 0], role: 'arm' },
 
-    { name: 'thighL',    parent: 'hips',    offset: [0.095 * s, -0.02 * s, 0], length: 0.44 * s * legLen, rest: [0.04, -1, 0] },
-    { name: 'shinL',     parent: 'thighL',  offset: [0, 0.44 * s * legLen, 0], length: 0.42 * s * legLen, rest: [0, -1, 0.02] },
-    { name: 'footL',     parent: 'shinL',   offset: [0, 0.42 * s * legLen, 0], length: 0.20 * s, rest: [0, -0.2, 1] },
+    { name: 'thighL',    parent: 'hips',    offset: [0.095 * s, -0.02 * s, 0], length: 0.44 * s * legLen, rest: [0.04, -1, 0], role: 'leg' },
+    { name: 'shinL',     parent: 'thighL',  offset: [0, 0.44 * s * legLen, 0], length: 0.42 * s * legLen, rest: [0, -1, 0.02], role: 'leg' },
+    { name: 'footL',     parent: 'shinL',   offset: [0, 0.42 * s * legLen, 0], length: 0.20 * s, rest: [0, -0.2, 1], role: 'leg' },
 
-    { name: 'thighR',    parent: 'hips',    offset: [-0.095 * s, -0.02 * s, 0], length: 0.44 * s * legLen, rest: [-0.04, -1, 0] },
-    { name: 'shinR',     parent: 'thighR',  offset: [0, 0.44 * s * legLen, 0],  length: 0.42 * s * legLen, rest: [0, -1, 0.02] },
-    { name: 'footR',     parent: 'shinR',   offset: [0, 0.42 * s * legLen, 0],  length: 0.20 * s, rest: [0, -0.2, 1] },
+    { name: 'thighR',    parent: 'hips',    offset: [-0.095 * s, -0.02 * s, 0], length: 0.44 * s * legLen, rest: [-0.04, -1, 0], role: 'leg' },
+    { name: 'shinR',     parent: 'thighR',  offset: [0, 0.44 * s * legLen, 0],  length: 0.42 * s * legLen, rest: [0, -1, 0.02], role: 'leg' },
+    { name: 'footR',     parent: 'shinR',   offset: [0, 0.42 * s * legLen, 0],  length: 0.20 * s, rest: [0, -0.2, 1], role: 'leg' },
   ];
+}
+
+/**
+ * WHAT EVERY LENGTH TYPED IN METRES ELSEWHERE IN THE GAME IS AUTHORED AGAINST.
+ *
+ * A species frame carries THREE scales, not one — `smallfolk` is `scale: 0.40`
+ * with `armLen: 1.06` and `legLen: 0.80` — and a constant authored in metres
+ * against the reference figure is only correct on another figure if it is
+ * multiplied by the scale of the limb it belongs to. Multiplying by
+ * `rig.scale` alone is right for the torso and wrong for both limbs, and the
+ * error is not small: a robe scaled 0.40 hung down legs scaled 0.32 ends on the
+ * floor, and a guard point placed 0.29 m out from the chest is 1.35 times the
+ * whole reach of an arm scaled 0.42.
+ *
+ * These are DERIVED from `humanoidSkeleton` rather than typed beside it, so a
+ * change to a bone length cannot leave a stale copy behind (HANDOFF 2.3). The
+ * template is pure and takes no arguments here, so this is one call at load.
+ */
+const _REF = humanoidSkeleton(1);
+const _refLen = (n) => _refDef(n)?.length ?? 0;
+const _refDef = (n) => _REF.find((d) => d.name === n);
+export const REF_ARM = _refLen('armR') + _refLen('foreR');
+export const REF_LEG = _refLen('thighR') + _refLen('shinR');
+
+/**
+ * How high a named bone stands above the ANKLE, in the rest pose, from the
+ * skeleton's own numbers alone — no world matrices, so it is a property of the
+ * figure and not of whatever the gait happened to be doing this frame.
+ *
+ * A bone's `offset` is its position in its parent's local frame, and for the
+ * spine chain each one equals the parent's length, so summing `offset.y` up the
+ * parent chain is the height above the hips; the legs hang below.
+ */
+function standOf(get, name) {
+  let y = 0;
+  for (let b = get(name); b; b = b.parent) y += b.offset.y;
+  return y + (get('thighR')?.length ?? 0) + (get('shinR')?.length ?? 0);
+}
+const _refGet = (n) => {
+  const d = _refDef(n);
+  return d && { offset: { y: d.offset[1] }, length: d.length, parent: _refGet(d.parent) };
+};
+export const REF_CHEST = standOf(_refGet, 'chest');
+
+/**
+ * How this rig's limbs compare with the reference figure's — 1, 1 for a human.
+ *
+ * Read off the rig's OWN bones rather than off the species row, because the
+ * bones are the thing that got built: a caller that overrode `armLen` by hand,
+ * a droid frame, or a body whose arm has been cut short all answer correctly,
+ * and nothing has to know which species table a figure came from.
+ *
+ * `torso` is `rig.scale` under its proper name, so a caller can say which of
+ * the three it means at the call site instead of leaving `S` to be guessed at.
+ *
+ * `stand` is the fourth and it is not any of the other three: it is how high
+ * this figure's CHEST stands above its own feet. A frame with short legs and an
+ * ordinary torso — which is what `legLen: 0.80` is — carries its chest lower
+ * than its overall height suggests, and nothing that scales by total height can
+ * know that. It is the number for anything placed at a HEIGHT ON THE BODY.
+ */
+export function limbScale(rig) {
+  const get = (n) => rig?.get?.(n) ?? null;
+  const g = (n) => get(n)?.length ?? 0;
+  const arm = (g('armR') + g('foreR')) / REF_ARM;
+  const leg = (g('thighR') + g('shinR')) / REF_LEG;
+  const torso = rig?.scale ?? 1;
+  const chest = get('chest') ? standOf(get, 'chest') / REF_CHEST : 0;
+  return {
+    torso,
+    arm: arm > 0 ? arm : torso,
+    leg: leg > 0 ? leg : torso,
+    stand: chest > 0 ? chest : torso,
+  };
 }
 
 /** Four-legged / multi-legged frames for walkers and beasts. */
 export function walkerSkeleton(scale = 1, legs = 4) {
   const s = scale;
   const out = [
-    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0] },
-    { name: 'body', parent: 'hips', offset: [0, 0.25 * s, 0], length: 0.7 * s, rest: [0, 1, 0] },
-    { name: 'head', parent: 'body', offset: [0, 0.1 * s, -0.6 * s], length: 0.4 * s, rest: [0, 1, 0] },
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'body', parent: 'hips', offset: [0, 0.25 * s, 0], length: 0.7 * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'head', parent: 'body', offset: [0, 0.1 * s, -0.6 * s], length: 0.4 * s, rest: [0, 1, 0], role: 'head' },
   ];
   for (let i = 0; i < legs; i++) {
     const side = i % 2 === 0 ? 1 : -1;
     const row = Math.floor(i / 2);
     const z = (row - (legs / 2 - 1) / 2) * 0.55 * s;
-    out.push({ name: `hipL${i}`, parent: 'hips', offset: [0.34 * s * side, 0.1 * s, z], length: 0.16 * s, rest: [side, 0.2, 0] });
-    out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, 0.16 * s, 0], length: 0.62 * s, rest: [side * 0.5, 0.72, 0] });
-    out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, 0.62 * s, 0], length: 0.74 * s, rest: [side * 0.15, -1, 0] });
-    out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, 0.74 * s, 0], length: 0.3 * s, rest: [0, -0.4, 0.6] });
+    out.push({ name: `hipL${i}`, parent: 'hips', offset: [0.34 * s * side, 0.1 * s, z], length: 0.16 * s, rest: [side, 0.2, 0], role: 'leg' });
+    out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, 0.16 * s, 0], length: 0.62 * s, rest: [side * 0.5, 0.72, 0], role: 'leg' });
+    out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, 0.62 * s, 0], length: 0.74 * s, rest: [side * 0.15, -1, 0], role: 'leg' });
+    out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, 0.74 * s, 0], length: 0.3 * s, rest: [0, -0.4, 0.6], role: 'leg' });
   }
   return out;
 }
@@ -114,6 +233,23 @@ export function walkerSkeleton(scale = 1, legs = 4) {
 export class Bone {
   constructor(def, scale = 1) {
     this.name = def.name;
+    /**
+     * WHAT THIS BONE IS — see BONE_ROLES. Required, and the throw is the whole
+     * point: the defect this replaces was a MISSING entry answered with a
+     * plausible default, which is the close relative HANDOFF §2.3 names. A bone
+     * with no role must stop the build, not be priced at the average of the
+     * ones that have one.
+     */
+    if (!BONE_ROLES.includes(def.role)) {
+      throw new Error(`Rig: bone '${def.name}' declares role ${JSON.stringify(def.role)}, `
+        + `which is not one of ${BONE_ROLES.join(', ')}. Every bone says what it is, `
+        + 'because Enemy.severanceOf prices a severed limb off the role and refuses to guess.');
+    }
+    this.role = def.role;
+    /* Filled in by Rig once the tree exists — they are properties of the whole
+     * skeleton, not of one def. See `_measureLimbs`. */
+    this.roleShare = 1;
+    this.roleOf = 1;
     this.length = def.length;
     this.obj = new THREE.Object3D();
     this.obj.name = def.name;
@@ -182,6 +318,53 @@ export class Rig {
     this.hipsBone = this.bones.get('hips');
     this.pose = {};
     for (const b of this.list) this.pose[b.name] = b.restQuat.clone();
+    this._measureLimbs();
+  }
+
+  /**
+   * HOW MUCH OF ITSELF EACH BONE TAKES WITH IT, AND HOW MANY OF IT THERE ARE.
+   *
+   * Two numbers, both read off the skeleton and neither authored anywhere:
+   *
+   *   roleShare  the fraction of its own LIMB that comes off with this bone,
+   *              measured in bone length along the chain. A cut at the thigh
+   *              takes the shin and the foot; a cut at the foot takes a foot.
+   *              1 at the top of a limb and smallest at the extremity, so
+   *              "proximal costs more than distal" is a consequence of the
+   *              body's shape rather than a rule anybody has to remember to
+   *              keep true. Computed for every bone, including the axial ones
+   *              (a cut at the spine takes 74% of a humanoid's trunk with it),
+   *              but the price only READS it for a limb — reaching the core is
+   *              fatal wherever along it you reach.
+   *   roleOf     how many of this KIND of thing the body has: two legs on a
+   *              biped, six on an acklay, six on an AT-TE, two wheels on a
+   *              hailfire. This is the redundancy divisor, and it is the whole
+   *              reason a name table could never have been right — losing one
+   *              of six legs is not what losing one of two is, and the two
+   *              bodies spell the bone the same way.
+   *
+   * A limb ROOT is a bone whose parent carries a different role, which makes
+   * the count independent of how a plan happens to parent things: a rancor's
+   * arms hang off `body` and its legs off `hips`, and both come out as two.
+   */
+  _measureLimbs() {
+    const isRoot = (b) => !b.parent || b.parent.role !== b.role;
+    // reach: this bone plus the longest chain of the same role below it.
+    const reach = (b) => {
+      let deepest = 0;
+      for (const c of b.children) if (c.role === b.role) deepest = Math.max(deepest, reach(c));
+      return b.length + deepest;
+    };
+    const counts = new Map();
+    for (const b of this.list) if (isRoot(b)) counts.set(b.role, (counts.get(b.role) || 0) + 1);
+    this.roleCounts = counts;
+    for (const b of this.list) {
+      b.roleOf = counts.get(b.role) || 1;
+      let root = b;
+      while (!isRoot(root)) root = root.parent;
+      const whole = reach(root);
+      b.roleShare = whole > 0 ? reach(b) / whole : 1;
+    }
   }
 
   get(name) { return this.bones.get(name); }

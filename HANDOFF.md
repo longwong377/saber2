@@ -1,10 +1,15 @@
-# SABER — session handoff
+# BATTLEFRONT BORZ — session handoff
 
 Written for whoever picks this up next, human or otherwise. It is not a status
 report; it is the set of things that cost time to learn and would cost the same
 again. Read the traps section before touching a tool.
 
-Repo: `longwong377/saber2` · branch `claude/lightsaber-combat-game-lxw391`
+Repo: `longwong377/saber2` · branch `claude/battlefront-borz-improvements-1g2xei`
+
+> **The default branch is still `claude/lightsaber-combat-game-lxw391`.** Everything
+> from this session is on the branch above, and a player opening the repo lands
+> on the default and sees none of it. That cost a round trip; it will cost the
+> next one too unless the default moves.
 Playable: <https://longwong377.github.io/saber2/> (Pages deploys on every push
 to that branch; all recent runs green)
 
@@ -14,15 +19,16 @@ to that branch; all recent runs green)
 
 | | |
 |---|---|
-| Suite | **1142 passed, 0 failed** — forward *and* `SABER_CHECK_ORDER=reverse` |
+| Suite | **1260 passed, 8 failed, ~11 min** — it completes again; §2.7b, failures in §6.4 |
 | Smoke | 11/11 steps clean, ~2 min |
-| Levels | 13, all composing distinctly |
-| Content | plan items P0–P8 closed; Audits 2 and 3 closed; V2 lanes landed |
+| Levels | **7**, down from 13 — six deleted on the player's word |
+| Modes | **5** — the Descent is deleted, and `Run.js` with it |
 
 Run things this way and no other way:
 
 ```bash
-npm run verify                                   # the gate — 1142 checks
+npm run verify                                   # the gate — ~1268 checks, ~11 min
+SABER_CHECK_ORDER=reverse npm run verify         # same suites backwards — §6.4
 node --import ./tools/register.mjs tools/_one.mjs <suite>
 node --import ./tools/register.mjs tools/trace.mjs --waves 20 --level colosseum
 node --import ./tools/register.mjs tools/combat-trace.mjs --waves 8
@@ -74,6 +80,84 @@ survived only because it was already on `origin`.
 - The scratchpad is *not* durable — files written there vanished mid-session.
   Anything worth keeping goes in a commit.
 
+### 2.2b Parallel agents share ONE working tree — git verbs that take the whole tree are loaded guns
+
+Five agents were run in parallel on this branch, each owning a disjoint set of
+files. That partitioning is sound for *editing* — two agents never touched the
+same file — and it is **completely undone by any git command whose unit is the
+tree rather than the path.** One agent tidied up with `git stash` and took
+**1 825 lines across 19 files belonging to five different agents** with it,
+including a whole new terrain preset and level that had never been committed.
+
+It was fully recoverable (`git stash list` → the WIP commit → `git checkout
+<stash> -- <paths>`), and the reflog line to look for is `reset: moving to
+HEAD`. Nothing was lost. But the recovery cost more than the tidying saved, and
+the failure is silent: the agent that stashed saw a clean tree and carried on,
+while four others kept editing files whose contents had reverted underneath
+them.
+
+The rules that follow, for any future parallel run:
+
+- **Banned outright while peers are live:** `git stash`, `git reset --hard`,
+  `git checkout -- <path>`, `git restore`, `git clean`. Every one of them
+  operates on paths the caller does not own.
+- **`git add` takes explicit paths. Never `-A`, never `.`, never `commit -a`.**
+  The soundtrack agent's commit swept in seven files belonging to three other
+  agents. Harmless that time — it is what rescued them — but it means a commit
+  message describes a third of its own diff.
+- **A dirty tree full of other agents' files is the correct steady state.** Tell
+  agents this explicitly in their brief, or they will try to make it clean.
+
+**IT HAPPENED AGAIN, TO AN AGENT WHOSE BRIEF BANNED IT BY NAME.** A second
+parallel run, six lanes live; the run-rules lane ran `git stash` and took five
+files — `src/game/Duel.js`, `tools/checks/footwork.mjs`, `forms.mjs`,
+`living-force.mjs`, `terrain.mjs` — three of them belonging to a lane that was
+still working. It restored them within about two minutes by reading blobs out
+of the stash commit, and it reported the failure itself, in full, at the top of
+its own report. That is the behaviour to want; the ban still did not hold.
+
+Three things that run taught which the first one did not:
+
+- **`git stash pop`, `apply` and `checkout <stash> -- <paths>` were all refused
+  by the permission layer**, so the only recovery route left was
+  `git show 'stash@{0}:<path>'` piped back to the file. That is worth knowing
+  *before* you need it: the documented recovery in the paragraph above is not
+  available, and the one that works is a read.
+- **Do not drop the stash.** It is the only record of the window. Verify from
+  outside instead: diff `git show 'stash@{0}:<path>'` against the live file and
+  look for lines present in the stash and absent now. On this occasion that came
+  to 6 comment lines in `Duel.js` and 25 in `footwork.mjs`, both prose the
+  owning lane was rewriting anyway — but the owning lane is the only one that
+  can confirm that, so ask it while it is still alive.
+- **The silent half is the re-read, not the revert.** A file that is longer than
+  the stashed copy looks safe and is not: an agent that read one of its own
+  files during the window and wrote back on top of what it read has undone its
+  own edit, and the line count never shows it. A number is easier to lose that
+  way than a paragraph.
+
+So the rule earns one more clause: **a brief that bans the verb is not enough.**
+If a future run cannot tolerate this, give each lane its own worktree
+(`isolation: "worktree"`) and merge, rather than relying on six agents to each
+refrain from one convenient command.
+- **Commit early, by path.** A commit is the only thing that makes an agent's
+  work safe from its peers.
+- **A new file and the import of it are ONE commit.** `src/world/Smoke.js` was
+  created untracked while `Levels.js` — committed by a *different* agent's
+  broad `git add` — imported it. Three consecutive commits (`28072ad`,
+  `dd6b757`, `d3df970`) therefore cannot be loaded at all in a clean checkout:
+  `ERR_MODULE_NOT_FOUND`. Nobody noticed, because every agent had the file on
+  disk. It only surfaced when a bisect checked out those commits somewhere
+  else. `git status` showing `??` next to a file that something already imports
+  is the signal, and it is exactly what a path-scoped `git add` is prone to
+  missing.
+
+The deeper lesson is that file-ownership partitioning is necessary and *not
+sufficient*: the shared mutable resource is not the files, it is the index and
+the working tree. Either brief every agent off the tree-wide verbs, or give each
+one a worktree (`isolation: 'worktree'`) and pay the merge cost instead. The
+one agent that ran in a worktree here was the only one that could not have
+caused this and could not have been hurt by it.
+
 ### 2.3 The signature defect: a hand-maintained table beside its generated twin
 
 Eight instances found so far. A HUD price list, an announcer voice map, the
@@ -122,7 +206,285 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
-### 2.7 Bash has a 10-minute cap
+> **SOLVED, AND THE HYPOTHESIS BELOW IS REFUTED BY MEASUREMENT — see §2.7b.**
+> The roster's growth to 31 archetypes is **not** why `cloth-cost` never
+> finished: the whole 31-archetype census World builds, spawns and steps in
+> **5.2 seconds**, and 4 frames costs 53 ms with 4 enemies against 50 ms with
+> 24. It was one call site — `Enemy._sustain` handing `sparkBurst` a colour
+> where the parameter is `count`, so a frame asked for 17.8 million particles
+> and took 71-134 seconds. `cloth-cost` runs in **12.7 s** now and
+> `levels-quality`, which had the same cause, in **1 m 59 s**.
+>
+> Keep the paragraph below anyway. It is a good record of a plausible story
+> built from real symptoms, and it names itself as a hypothesis — which is the
+> only reason the next person went and timed it instead of optimising against
+> it. **The lesson is the one §2.6 already draws about `ps`: a CPU profile of
+> 34 frames cost four minutes and named the function outright, after six
+> attempts across two callers had spent a session guessing.** Profile before
+> theorising about a CPU-bound thing, exactly as you read the process table
+> before theorising about a hang.
+
+> **LATER, AND IT CHANGES THE CONCLUSION BELOW.** Everything in this section is
+> still true about the *early* symptoms, but contention was not the whole story.
+> Measured afterwards on a QUIET box, with the full run as the machine's main
+> consumer: `verify.mjs` spent **over forty minutes inside `cloth-cost` alone**
+> with its worker at 85-86% CPU the whole time, and was killed by a 50-minute
+> timeout having never left that suite. Six attempts across two callers have now
+> failed the same way. So:
+>
+> - It is **not** the §2.7 hang — that signature is a live worker burning NO
+>   CPU. This one burns CPU continuously and makes progress.
+> - It is **not** only contention — it does not finish with the box to itself.
+> - **`cloth-cost` is simply too expensive to sit in the default gate.** It
+>   spawns one of *every* archetype into an `ultra` World and steps 400 physics
+>   frames, and the roster grew from ~20 archetypes to **31** this session
+>   (seven Command units, four machines). That growth is the obvious suspect and
+>   **it is a hypothesis, not a measurement** — nobody has yet timed the suite
+>   against archetype count. Do that before "optimising" anything.
+>
+> To get a gate number meanwhile: `SABER_CHECK_ORDER=reverse` puts `cloth-cost`
+> near the END of the run instead of sixteenth, so every other suite reports
+> before it stalls. That is also the order-dependence check, so it is not a
+> workaround with no other value.
+
+**`cloth-cost` did not finish, and TWO diagnoses of it were wrong.** Worth
+reading in full, because the wrong answers were more attractive than the right
+one and one of them is still open.
+
+The symptom: three attempts, 10-25 min each, no output, from two callers who had
+not spoken to each other. `cloth-cost` builds a real World and steps 400 physics
+frames.
+
+- **Wrong diagnosis 1 (mine): CPU contention.** Six subagents were running. It
+  is a CPU-bound suite. The story fit every fact I had and I wrote it into this
+  file as a finding. That is the trap: *a slow suite on a loaded box explains any
+  hang you meet, and it will always fit the evidence.*
+- **Diagnosis 2 (an agent's): the deleted level.** `cloth-cost.mjs` stood its
+  subjects on `loadLevel('temple')`, deleted in the roster cull. I rejected this
+  because `World.loadLevel` resolves `LEVELS[key] ? key : LEVEL_ORDER[0]`
+  (src/game/World.js:236) — an unknown key **silently substitutes the first
+  level**, deliberately and with a comment calling it a safety net — so it
+  cannot hang. **That rejection was too strong, and a second agent found the
+  mechanism I had missed.** In `levels-quality`, `level('deeps')` fell back to
+  the first surviving level and the suite then **cached that substitute under a
+  second key**, so one dead name bought an extra simultaneous World — a ninth,
+  in the suite §2.7 already names as holding the most alive at once. That is
+  what took it from slow to not finishing.
+
+  So a dangling level key does not hang a suite *directly*; it inflates the
+  world count, and world count is what kills these runs. Both of us were partly
+  right and neither account was complete. `roster.mjs` could not have caught it:
+  `level('deeps')` is none of the five syntactic forms it scans for, exactly as
+  its own note predicts.
+
+**The cause was contention after all — and the process table is how you prove
+it, not the story's plausibility.** Measured on this box while the fleet ran:
+
+    $ ps -eo pid,etimes,args | grep -c "[c]loth-cost"
+    11                       ← eleven concurrent runs of this one suite
+    $ nproc
+    4
+    $ cat /proc/loadavg
+    9.74 11.41 10.98
+
+Eleven copies of a World-building suite on four cores, the oldest 43 minutes in.
+Nothing was deadlocked; nothing could finish. Killing the runs over 15 minutes
+old took it to four.
+
+So diagnosis 1 was **right and unearned** — I asserted it from "six agents are
+running, it is a slow suite", which is not evidence, and only went looking for
+the process table after being wrong a second time. Had the true cause been
+anything else, that reasoning would have produced the same confident sentence.
+The lesson is not "contention is usually it"; the lesson is that `ps` and
+`/proc/loadavg` take ten seconds and turn the guess into a measurement.
+
+**Two of these suites are also a trap for a probe that runs its own.** If you
+shell out to `_one.mjs` while agents are working, you are adding to the number
+above. Check it first.
+
+The second diagnosis also uncovered a defect worth fixing on its own account:
+after the cull, four checks were measuring a level they did not name. `cloth-cost` asked for `temple`, `garments`, `lifecycle` and
+`force` ask for `meadow`, and all four silently got `scoria`. A check that
+believes it is testing one place while testing another is HANDOFF 2.4's problem
+wearing a different coat — the fallback is right for a player with a stale save
+and wrong for a test, which should be told. `cloth-cost` now names its field once
+as `FIELD` and asserts the level exists. **The three `meadow` callers have not
+been fixed** — `grep -rn "loadLevel('" tools/` is the list.
+
+### 2.7 A LATE full run can hang on a suite that passes alone — **SOLVED, see the top**
+
+> **RESOLVED.** The cause was DEAD LEVEL NAMES, not ordering and not CPU.
+> `levels-quality.mjs` named **nine deleted levels** across three checks
+> (`temple`, `arena`, `warship`, `intake`, `deeps`, `cut`). `World.loadLevel`
+> substitutes `LEVEL_ORDER[0]` for a key it does not know — right for a player
+> with a stale profile, a trap in a check — so **every dead name booted another
+> full World**, cached it under the dead key, and then measured a property of a
+> room that no longer exists against a copy of the Ember Shelf. Five extra
+> Worlds in one check, on top of that file's real six.
+>
+> That is *why* the diagnosis below correctly fingered "the two suites holding
+> the most Worlds alive at once": the observation was right and the cause was
+> one layer further down. Adding an eighth real level is what took it from slow
+> to never finishing. `cloth-cost.mjs` had the same defect independently.
+>
+> Fixed: `level()` throws on a dead key, the three checks enumerate over
+> `LEVEL_ORDER`, and `roster.mjs` gained a **sixth form** — `level('x')` /
+> `loadLevel('x')` — so the class cannot hide again. Nine of twelve checks now
+> finish in ~44 s. The sixth form caught a live one on its first run, in `src`
+> rather than `tools`.
+>
+> **Still worth doing:** `coop.mjs` is the other suite named below and has not
+> been audited for the same shape.
+
+The original observation, kept because the reasoning was sound and only the
+cause was missing:
+
+Observed twice at the end of a long session, on two different suites:
+`verify.mjs` stopped making progress on `levels-quality.mjs` once and on
+`coop.mjs` once, sitting there for 20+ minutes with the worker alive and
+burning no CPU. **Both suites pass on their own** — `coop` 29/29,
+`levels-quality` 12/12 in 74 s — and three earlier full runs the same session
+completed normally (1066, 1088, 1097 passing).
+
+So the last *completed* number is trustworthy and the hang is in the harness,
+not the game.
+
+**THE DISCRIMINATOR WAS RUN.** `SABER_CHECK_ORDER=reverse` hung on
+`levels-quality.mjs` **again** — the same suite, from the opposite end of the
+run, after ~55 other suites had passed through first. Two of the three
+observed hangs are that suite and the third is `coop.mjs`. **It is not
+ordering.**
+
+What the two share is the thing to look at: they are the two suites that hold
+the most Worlds ALIVE AT ONCE.
+
+I first wrote here that `levels-quality.mjs` "calls `await level(...)` twelve
+times against three `unload()` calls" and left it as the lead. **That was
+wrong, and it is worth leaving the correction in** — it is exactly the shape
+§2.4 warns about, an instrument restating a rule and manufacturing a defect
+out of the difference. `level()` is a CACHE keyed on the level name: twelve
+calls resolve to six distinct worlds, and the suite's last check disposes all
+of them and asserts it did (`WORLDS.clear()`, line ~605).
+
+So it does not leak. What it does is hold up to six fully-built Worlds —
+terrain heightfield, Rapier world, instanced fields, texture set each —
+**simultaneously**, deliberately, so it does not rebuild them per check. That
+is a peak, not a leak, and the two want different fixes: a peak is capped by
+evicting the cache between groups, a leak by disposing at the end, which it
+already does.
+
+So the next step is a memory READING and not a bisect, and it should
+distinguish those two: log `process.memoryUsage()` per suite across a full
+run. **Monotonic climb** across unrelated suites means a leak somewhere else
+and these two are merely where it tips over. **A spike confined to these two**
+means the peak is the problem and the cache wants a cap.
+
+Two things that are NOT the cause, ruled out rather than assumed: suite order
+(above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
+reverse run; it hung anyway).
+
+### 2.7b THE GATE RUNS. **1260 passed, 8 failed, ~11 minutes.** — CLOSED
+
+*Was "verify.mjs is ALL-OR-NOTHING, and that is why nobody has a gate number".
+All three of the problems it named are now measured and fixed, and one of the
+three diagnoses in it was wrong in a way worth keeping.*
+
+**`npm run verify` completes and prints a number.** Forward and reverse agree.
+Run it, don't take this figure — the point of the section is that it is now
+cheap to get one.
+
+**1. verify.mjs reports as it goes.** It used to print one line per suite as it
+*started* and hold every result to the summary at the bottom, so a run that
+stalled on suite 42 discarded the evidence from the 41 that had passed: forty
+minutes of CPU bought a list of filenames. Each suite now prints its own tally
+the moment it settles — failures in full where they happen, elapsed seconds,
+RSS, and a running total — so a killed run still has a number attached to it.
+The stdout summary table is byte-identical; the new output is on stderr, for
+the reason the `… name` line always was.
+
+That also answers §2.7's standing peak-vs-leak question from the runner that
+actually runs, rather than from `_memtrace.mjs`'s second copy of one: **RSS
+climbs monotonically from 366 MB to 1.8 GB across the whole run** and is not
+confined to two suites. It is a slow accumulation across eighty suites, not a
+spike, and nothing on the list below is blocked by it.
+
+**The core block is drained before the suite loop now.** It was the one block
+exempt from the runner's own rule, so this file's ~700 checks ran concurrently
+with all eighty suites, and `snapshotShared()` was reading the baseline while
+they were still advancing `enemyRng`, `duelRng` and `wind.time`.
+
+**2. `cloth-cost`: 40+ minutes → 12.7 seconds. THE ROSTER WAS NEVER THE
+REASON**, and §2.6 said so as a hypothesis that nobody had measured. Measured:
+building the `ultra` census World, spawning all **31** archetypes and stepping
+it costs **5.2 seconds**. 4 frames with 4 enemies is 53 ms and with 24 enemies
+is 50 ms — flat, inside the noise. Archetype count is not on the curve at all.
+
+The cost was one call site, and a CPU profile named it in one pass where six
+attempts across two callers had guessed at it for a session. **96% of a 439 s
+run is `Enemy._sustain → sparkBurst → ParticlePool.spawn → SRGBToLinear`.**
+Frames 1-20 of that suite cost 10-15 ms each; from frame 30, once the first
+enemy holds lightning or choke, **they cost 71 to 134 SECONDS each.**
+
+`Enemy._sustain` calls
+
+```js
+sparkBurst(chest, 2, 0x9fd8ff)          // Enemy.js:3544
+```
+
+against a signature of `sparkBurst(pos, normal, count, opts)`. Three arguments
+into four slots: `2` lands in `normal`, and **the COLOUR lands in `count`**. The
+burst asks for 10 467 583 sparks — 17.8 million spawns after the recipe's own
+multiplier — on 35% of frames, per casting enemy, each paying a `THREE.Color`
+sRGB→linear conversion. Measured: **810 of 828 bursts over the pool's capacity,
+worst 10 475 775 against 4 200 slots, a factor of 2 494.**
+
+**This is a game defect and not a harness one.** It is a multi-second freeze on
+a player's machine every time an enemy uses a held power, and `normal = 2` also
+spreads every spark in the burst along a NaN direction. The call site is in
+`Enemy.js`, the other lane's file, and **has not been touched**.
+
+`Particles.sparkBurst` now bounds a burst by its own pool's capacity: a ring
+buffer cannot show more than it holds, so the surplus was provably invisible
+work, and removing it stops the whole gate being hostage to one call site. That
+bound is **not** the fix. `cloth-cost.mjs` carries the check that stays red
+until the call site is corrected, so bounding the damage can never silence it.
+
+**3. `levels-quality`: does not finish → 12/12 in 1 m 59 s.** Same root cause —
+it drives 24 000 frames of real fighting enemies and every one of them was
+paying the runaway. **The ten-entry `WORLDS` cache was not the reason**, which
+was the standing lead; it is a real 606 MB peak and it is not what stopped the
+suite. (`cloth-cost`'s 31-body `ultra` census World *was* being held for the
+whole rest of the run behind a promise nothing released — 276 MB, now given
+back — but that is a peak this file contributed to others, not its own stall.)
+
+Finishing exposed a failure nobody could have seen. The `nav` check is the last
+in the file and guarded its sample with `r.n >= 10` — correct while it cast 16
+bearings, unsatisfiable since the note above it took the cast to 6. It failed
+with `only 6 of 6 bearings on scoria were placeable`, which is every bearing it
+asked for and the healthiest possible result. §2.3 in miniature. The floor is a
+share of the cast now.
+
+**4. `smoke.mjs`'s deploy step waited 30 s of WALL CLOCK for the HUD** — about
+fifteen frames here, where §2.6 measures one frame at up to 4.1 s, and the
+frames just after a deploy are the most expensive in the run. It was not asking
+"did the game deploy", it was asking "is this box quiet". It waits in **rendered
+frames** now, on two conditions that are each a real regression when they fire:
+the render loop stopping, and the HUD still hidden after 24 frames.
+
+**What the run reports, and how to read it.** Individual re-runs on a quiet box
+are how you tell a real failure from contention — `training` and `prefracture`
+were red in the full run and are green alone, which is §2.6's timing-check
+warning doing exactly what it says. The live list is in §6.4.
+
+**`_memtrace.mjs` is answered and did not answer it.** Its header said "WRITTEN,
+NOT YET ANSWERED" and guessed both the reason it could not work — a second copy
+of `verify.mjs`'s runner, §2.4 — and the right move, "instrument `verify.mjs`
+itself with a `process.memoryUsage()` line per suite". That is what was done.
+The file is kept, and its header now says so, because reaching for it again is
+the natural mistake and the header is where that gets stopped. **For a per-suite
+memory reading, run the gate and read the RSS column.**
+
+### 2.8 Bash has a 10-minute cap
 
 A full `verify` run takes ~12 min. Use `run_in_background: true`. Foreground
 `sleep` is blocked; use an `until` loop in a background command to wait.
@@ -173,7 +535,7 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5. What today changed in the game
+## 5. What the LAST session changed
 
 - **13 of 13 levels compose distinctly**, where six were byte-identical. Pool
   repeats are weights now — `_pickType` already weighed per entry, but the pool
@@ -195,10 +557,390 @@ corrected *me* more often than they corrected the finders.
 
 ## 6. Open
 
-**Design calls — the user's, not yours.** Both confirmed exactly as the judges
-described; both defended by written reasoning and pinned by existing checks.
-Overriding a stated intent once today was correctly stopped by `temple.mjs` and
-`warship.mjs`. Do not repeat that on a judge's say-so.
+### 6.0 The first-person grip is OVER-CONSTRAINED — and this is the live one
+
+Third report of "the first person hand/hilt looks like jumbled garbage", and
+the first one with a number against it. `tools/_fpgeom.mjs` (new) projects
+every arm joint and 31 samples along the hilt into NDC in about a second,
+where `fpview.mjs` costs twenty minutes:
+
+```
+arms cover                    5.8% of the frame
+hilt on screen               27.7% of frame height
+of that, behind the fists              91%
+```
+
+The arms are **not** the mess and have not been since the shoulders were moved
+off the ribcage. The hilt is *bigger* in frame than the reference the player
+supplied (`assets/reference/first-person/`). What is wrong is that nine tenths
+of it is behind a glove: `GRIP_AT` puts both fists at +0.050 and −0.015 on a
+shaft whose metal spans −0.092 to +0.158.
+
+Sliding the fists down the shaft works — 91% → 40%, and the render shows the
+shroud and neck rings clear of the hand for the first time. **It also fails two
+checks, and both were written for earlier rounds of this same complaint:**
+raise the hilt to keep the hands in frame and looking up brings `elbowL` inside
+the 100 mm the deltoid needs against a 45 mm near plane (`viewmodel.mjs`); skip
+the raise and the off hand leaves the bottom of the frame (`first-person.mjs`).
+Swept as a pair over grip −0.020…−0.105 against rise +0…+0.070, **nothing
+satisfies both.**
+
+The way out is what the reference shows: **one hand on the hilt in first
+person**, which removes the second occluder and the folded left arm together.
+That is a decision about what a first-person grip IS. Ask before doing it.
+
+### 6.1 Held for reference images
+
+The player asked for these to wait, and the folders are `assets/reference/`:
+
+- **Geonosis** — the Command mode (lead named troops with permadeath and
+  promotion, squads, formations, mechs, jet troopers) is built on it.
+- **The Coruscant Jedi Temple** — as a level, ending in the younglings. The
+  references are in and they answer the BOX problem outright, which is the
+  lesson worth carrying to every interior: in
+  `coruscant-temple/temple 1.jpg` the sense of place is made entirely of
+  DEPTH — arcade behind arcade behind arcade, columns running up out of frame,
+  light raking in from windows too high to see — and not by a ceiling and four
+  walls. Every interior this project has shipped read as a cube because the eye
+  could find the far wall. The fix is not more detail on the walls; it is
+  putting three more colonnades between the player and them.
+- **The real Mustafar** — the current one is renamed *The Ember Shelf*; its
+  molten sea is still a lava sea and the player wants it changed to something
+  that is not Mustafar's.
+- **A flagship** — to replace the deleted *Invisible Hand*.
+- **Kamino's platforms** — one slab where it should be a series of tall
+  connected decks. I built the colony and rolled it back on instruction; the
+  work is in the reflog if it is wanted.
+- **The Drowned Wood's ground** — the last surface still drawn outside the cel
+  pipeline, and the reason the meadow was deleted rather than tuned. The
+  references are in and they change the JOB: `drowned-wood/dagobah.jpeg` has
+  **no grass in it at all.** A swamp floor is standing water, buttress roots,
+  matted litter and fallen branches — the "ground cover" is ROOTS, not blades.
+  So the fix is not a better grass shader, which is what the last three
+  attempts were; it is a different ground-cover kind. That also explains why
+  the level reads as two games stitched together: a grass field is the one
+  surface a bog cannot have, so no amount of tuning it was ever going to sit
+  in the frame. `makeCoverField` already takes a kind; this wants a new one.
+- **The big creatures, and Mandalorians** — "all your monsters look the same,
+  sphere with some legs, like you really need to make the big enemies more
+  dangerous and more interesting and menacing, they all attack the same way."
+  The arena references already in
+  (`colosseum/more arena.jpg`, `fighting monster in arena.jpg`) are the brief
+  for the first half: three creatures share one frame and no two share a
+  BODY PLAN — a bulky horned quadruped, a tall spindly six-legged insectoid, a
+  low pouncing cat. Not three skins on one skeleton, which is what
+  `buildQuadruped` gives today. The second half — "they all attack the same
+  way" — is `Enemy.js`'s move sets, and is a separate job from the meshes.
+
+### 6.1a The player half of the Force contest — LANDED, all three steps
+
+*Was "BUILT, MEASURED, REVERTED". It is in now, as the balance pass this section
+said it had to be: `a057525` the four lines, `18c3cfe` the shove re-tuned against
+a bracing player, `8b81e82` the two checks whose premise expired. `powers` ends
+21/21, the number it started at.*
+
+`Player.resistForce` CALLS `forceResistance` — one contest, one rulebook, both
+contestants reading it. `damage` takes `preResisted`; `applyKnockback` mirrors
+`Enemy.applyKnockback` line for line, weighing the shove and the damage once in
+the same currency (`IMPULSE_AS_HP`). Measured, Knight difficulty, 50 hp authored:
+
+    full pool   force / lightning / choke   19.1 hp   pool 100 → 80.4
+    full pool   saber / blaster             42.5 hp   pool untouched
+    empty pool  everything                  42.5 hp
+
+**Step 2, and the thing that was not obvious.** The shove had been tuned UP
+(17.0/6.5 → 20.4/7.8) to peak at 5.71 m, clearing the 5.4 m at which a Master's
+lightning opens; braced, that peak is 3.28 m. **No sizing of the shove fixes
+it.** `RESIST_CAP` is 0.55 of the whole blow, so a deep pool always scales a
+shove to 0.45 of itself and the factor does not depend on the shove's size —
+reaching 5.4 m through a full pool needs 2.2× the impulse, and 45/17 throws an
+empty-bar player 14 m, past the far edge of the push's own [0, 7.5] band.
+
+So the shove went to **26.0/10.0** — the same vector as both earlier pairs, all
+three at 0.382 lift-to-speed — and the two-beat became a CONTEST rather than a
+certainty. Driven with the Master's own brain, `push` taken off it so the peak
+is one shove's:
+
+                braced (100 F)              empty bar
+    20.4/7.8    3.28 m · choke only         5.71 m · lightning, pull, choke
+    26.0/10.0   3.86 m · pull, choke        6.84 m · lightning, pull, choke
+
+Braced, you spend 16.7 Force and deny him the lightning; empty-bar you fly and
+the whole kit opens. The shove now clears the pull's 3.2 m band by 0.66 m where
+it cleared it by 0.08 — a coincidence, not a margin. **Shove→lightning against a
+full bar is gone and is not coming back without changing `RESIST_CAP`.** That is
+a design call, made deliberately, and it is the one thing here a reviewer might
+want reversed.
+
+**Step 3 re-stated exactly two checks**, both because their premise expired and
+each saying so in its own comment. The empty-bar half of the held-power bound is
+untouched and returns the same 95% / 100% it always did.
+
+**The trap this uncovered, and it is the reusable part.** `Player.damage` grew a
+fifth argument, and **four separate wrappers sitting in front of it named the
+four they knew about**: `Waves.js boonGuard`, `Injury.js armInjury` (both
+shipped, both a real double-bill on the pool), and the `p.damage` wrappers in
+`powers.mjs` and `duelling.mjs`. The harness one manufactured a finding —
+Sentinel 4.3 → 0.44 hp/s, which reads exactly like a body that had stopped
+fighting. All four are variadic now. **`Command.js:1251` has the same defect
+against `Enemy.damage` and is still open** — that file belonged to another lane.
+Grep `\.damage = (` before changing that signature again.
+
+### 6.1b Diagnosed, scoped, not yet built
+
+**`cel: a shadow is READABLE` — CLOSED, 24/24, and it was TWO failures wearing
+one message.** Kept in full because the way it hid is the reusable part.
+
+The check asserts three clauses over the same data — a span, a Spearman rank
+correlation of key share against sun height, and a strict pairwise ordering
+wherever two suns differ by more than 10%. It used `assert` for each, so the
+first one to fail was the only one anybody ever saw. Fixing the pairwise
+(geonosis 21° → 20°) revealed the correlation at rho 0.810 against a 0.90
+bound; fixing the correlation revealed that the pairwise was **still red**,
+between geonosis and kamino, and had been the whole time. The 21→20 fix had
+been measured against ONE neighbour and the clause is over every pair.
+
+All three clauses are now collected and raised together, and the correlation
+failure NAMES the levels that are out of order instead of quoting a roster-wide
+number with no subject in it. `tools/_celrank.mjs` (new) prints the table, the
+rank displacements and every neighbouring bound in about a second — use it
+before moving any level's light.
+
+Two levels moved, each because its own numbers contradicted its own prose:
+
+- **kamino** `sunIntensity` 5.4 → 3.4 and `ambient` 0.50 → 1.20. Its block said
+  "almost none of it reaches the deck, which is why `ambient` carries this
+  level" beside the fourth-strongest key in the game under a 0.94 cloud ceiling
+  and the SMALLEST indirect term on the roster (0.083). Both knobs move because
+  neither reaches alone: the ambient is nearly inert here (0.50 → 2.00 buys 2.5
+  points, because `skyColor` is almost black) and the sun runs into a good
+  bound before it is done — below ~2.9 a sunlit cloud top falls under its own
+  sky and `sky.mjs` correctly calls the deck smoke.
+- **geonosis** `elevation` 20 → 18. Turbidity 10.0 is optical depth by another
+  route, and a level whose look is "weak key, strong sky" cannot also hold the
+  roster's third-highest sun. 19 was measured and rejected: it ties the wood and
+  `lighting.mjs` orders the indirect budget strictly.
+
+rho 0.810 → 0.976, pairwise clean, span 1.69x, the 0.90 bound untouched. Two
+stale comments beside their own numbers went with it (kamino claimed "6°, the
+lowest sun in the game" at `elevation: 16`; geonosis said "21°" twice).
+
+**CLOSED: the character creator's grip — and the framing was a THIRD defect, not
+a cost of fixing the first two.** The repair written out here was applied
+verbatim (scale the guard offsets and the elbow pole by `limbScale(rig).arm`,
+pass `rig.scale` to `handPoseOnHilt`, size the hilt with `saber.setGripScale`)
+and it is correct. Measured on `smallfolk`, in its own units, against the human's
+own reading — which is the only kind of bound stature.mjs allows:
+
+    bore (own hands)     4.86 → 0.72      human 0.72
+    hilt (own hands)     5.99 → 2.39      human 2.39
+    reach (own arm)      0.99 → 0.83      human 0.84
+
+The reason it "regressed `preview` 11/11 → 10/11" is worth keeping, because the
+diagnosis above was right about the mechanism and wrong about the CAUSE, and the
+difference is a whole design argument that turned out not to be needed.
+
+Two more things in the creator had never taken the species scale, and both were
+inside the content box the camera frames:
+
+- `dressPreviewFigure` passed no `scale` to `attachCloak`/`attachSkirt`, so the
+  creator hung a human's 0.86 m cape on a 0.66 m body. Measured, the hem settled
+  **280 mm below the floor the figure stands on**. That is the third claim of
+  note #2 — "their clothes are oversized" — alive on the character screen after
+  it was fixed in the game, and it is 280 mm of dead air the camera had to
+  include under a 677 mm figure. `Player._makeCloak` and `applyWardrobe` have
+  both passed `rig.scale` for a while; this copy never did.
+- `assemblePreview` pushed the pommel in at a hilt-local `-0.16` with no grip
+  scale, so it claimed 96 mm of metal that does not exist on a 0.40 hilt.
+
+With those two the content box goes from `[-0.28, 1.39]` to `[0, 1.39]` and the
+figure's middle from NDC −0.364 to −0.345 — still over the 0.32. So the design
+call was still real, and it was made:
+
+**The shot's blade allowance is a length in the WIELDER's metres, not in a
+human's.** `BLADE_CAP` already refuses to frame a 4 m blade on a human, and its
+own note says why in the exact words this problem needs — "the creator would
+stop showing you the character in order to show you a strip light". 1.15 m on a
+0.677 m body is 1.70 of its own height against that refusal's 2.37: the same
+imposition, so the same rule, de-humanised by one multiply that is 1 for every
+full-sized species. A small wielder's blade leaves the top of the frame the way
+a 4 m one already does. Figure 39.5% → 62.6% of the frame height, middle −0.345
+→ −0.187 against the human's −0.169.
+
+The two rejected options, and why, since both were on the list above:
+
+1. **A proportionally short blade** overrides a stated intent. `Saber.setGripScale`'s
+   own note says it outright — "the BLADE is untouched; `bladeLength` is a player
+   setting and a combat reach, and a smaller wielder is not carrying a shorter
+   sword" — and framing is not allowed to decide a combat number (§6.2).
+3. **Scaling the centring bound by content share** does not work the way `fill`
+   does, and the arithmetic is the argument. Share enters `fill` as a factor
+   ≤ 1; it enters the centring offset as `(1 − share)`, so the factor would be
+   0.51/0.18 and the 0.32 bound would become 0.90. That is not a relaxation, it
+   is an abolition — the bound would permit the figure almost anywhere in the
+   box, which is the one thing "do not simply relax the 0.32" was protecting
+   against.
+
+`preview` is 12/12; the twelfth is new and is the check that could have seen any
+of this — bore, hilt length and reach in the figure's own units, plus the hem,
+over every species, with the human's reading as the bar. `tools/_previewgrip.mjs`
+prints the whole table in about twenty seconds.
+
+**The Colosseum crowd is ONE MESH.** "I like the colosseum map, just increase
+the detail for the crowd — right now it looks okay in the distance but anytime
+you're near the edge you see how crude they are, make them either alien species
+or mixes of aliens."
+
+`addCrowd` (Props.js) builds exactly one figure — an extruded wedge body, a
+6×5-segment sphere head, three plates — and instances it three thousand times.
+Variation today is scale, garment colour and phase only, so at the rail every
+spectator is the same silhouette with the same head. The reference the player
+uploaded (`assets/reference/maps/colosseum/detailed arena view.webp`) shows what
+the near tier should be: individual alien profiles — domed crests swept back,
+horns, antennae, hooded bulk — reading as SHAPES against the sky, while the far
+tiers stay a speckled texture.
+
+The fix is four or five head/shoulder variants distributed across as many
+InstancedMeshes rather than one, which costs four extra draw calls on a level
+that already spends 224 hand-placed ones. It is not a shader problem and it is
+not a budget problem; it simply has not been built.
+
+### 6.1d CLOSED: the controller — and what a future control has to do now
+
+A pad was a stick you could wave. `Input._codeDown` resolved a binding as a
+wheel pseudo-key, a `Mouse*` button or `keys.has(code)`; there was **no code
+form a pad button could take**, so 0 of 46 actions could be bound to one. It is
+46 of 46 now, and the parts a future round has to know:
+
+- **`Pad*` is a code, in the same namespace as `Mouse*` and `WheelUp`.** Sixteen
+  buttons on the standard mapping plus four LEFT-STICK directions. The pad
+  default is a **third entry on the action's existing key list** and not a
+  parallel table (§2.3), and the six orders are DEALT theirs from
+  `ORDER_PAD_POOL` by `registerOrders`, so a seventh formation is bound the day
+  it is authored. A seventh gets no pad code rather than a wrong one, and
+  `controls.mjs` says so.
+- **Chords exist.** `PadLB+PadA` is one code, joined by `+`. Bindings.js's header
+  has promised "the most specific chord wins" since it was written and nothing
+  implemented it; `Input._masked` does, off an index rebuilt on `setBindings`.
+  **LB and View are pure modifiers and are bound to nothing of their own** — a
+  modifier that also fires something drops that hold for the frame every chord
+  lands on, and the obvious candidates (lateral guard, one-handed grip) are
+  exactly the holds you would be in the middle of when you cast.
+- **The pad has a press edge for the first time.** `getGamepads()` returns a
+  fresh SNAPSHOT every call, so the old `this.padButtons = gp.buttons` had no
+  previous frame to compare against and every pad read was a `down`. Two sets,
+  swapped in `_readPad`.
+- **Analog triggers are buttons at 0.35, with `pressed` also honoured.** `blade`
+  is on RT; a browser that only latches `pressed` at the stop would be a guard
+  the player cannot raise.
+- **The left stick is IN the table and still analog.** `moveAxis` used to do
+  `x += this.padLeft.x` — a second set of movement bindings no table knew about,
+  which is the arrows bug wearing a different device, and the check written for
+  the arrows could not see it because it probes key codes. It is four codes read
+  through `actAxis`, which returns a MAGNITUDE: 0.4 of a stick is 0.400 of pace,
+  and W plus a stick is 1.000 and not 2.
+- **Start is Escape.** Pausing is deliberately not an ACTION so the way out
+  survives a broken binding, which left a pad player with no way out at all.
+  Start lands on the same `screens.escape()`, and only when no modifier is held
+  so its chords stay bindable.
+- **Glyphs follow the device.** Every surface that prints a binding takes a
+  `{ device, family }` that DEFAULTS TO THE KEYBOARD — which is what keeps every
+  other check and all existing markup byte-identical. Button 3 is Y, △ or X
+  depending on the shell, and `padFamily()` tests Xbox FIRST because Chromium
+  calls a DualShock 4 "Wireless Controller" and "Xbox Wireless Controller"
+  contains that phrase word for word.
+- **The front end is walked with the pad by moving DOM FOCUS**, not by a second
+  set of menu handlers: every control already answers Enter and Space, and
+  `menu.mjs` pins that. Reachability asks `offsetParent` rather than restating
+  `.panel{display:none}`, so a browser walks the open tab and the harness — which
+  has no layout — walks all of it.
+
+**Rumble** landed in the seam `Engine.rumble` left for it (`this.rumbleLevel ?? 1`,
+with a note saying "the day a strength slider exists it assigns this").
+`applyFeelSettings` writes it. It is **not** a second gate on `shake` — every
+call site already asks `feelOn('shake')` and `feel.mjs` pins that the pad stays
+quiet with the box off — it scales what survives that.
+
+**The rule for the next control, in one line:** if it is not in `ACTIONS` it
+cannot be rebound, cannot be listed and cannot be seen to collide, and
+`controls.mjs`'s raw-device clause now names the pad's fields as well as the
+mouse's — which is what would have caught `SaberController`'s `padDown(4)`,
+the last two raw reads in the game, if it had.
+
+### 6.1c CLOSED: the AT-TE lift, and the bodies that died like nothing
+
+**`force` 24/1 → 26/0 — the rule was right and its SUBJECT had expired.** "The
+top of the slider clears the heaviest body" is exactly right about a roster of
+animals; it is not right about one with a 3600 kg six-legged siege walker in it,
+and raising the cap past 3600 would price a 210 kg droideka at nothing on the
+way past. The exclusion is authored where the decision belongs
+(`grippable: false` on the AT-TE and the AAT, Vehicles.js) and the check asks
+the narrowed question, with three guards so the narrowing cannot become a dodge:
+every excluded body must be HEAVIER than the top of the slider, the exclusion
+set must be non-empty, and at least one `big` body must stay liftable. Heaviest
+liftable is the Rancor at 1700 kg against a 1760 kg cap — 60 kg of margin, which
+is real and tight, and the check now prints it.
+
+`Enemy.grippable` was the second field in that method's history to be WRITTEN
+AND NEVER READ: `!A.big && !A.boss`, a size wall the mass cap had overturned and
+nobody deleted, so the field claimed an Acklay could never be lifted while the
+game lifted one at Force Power 4. It carries the archetype's declaration now and
+`Player._grippableBody` reads it. **The refusal is out loud** — dropping the
+AT-TE from the pick would let the aim ray pass through thirteen metres of walker
+and grip whatever stood behind it, so `_forceSeen` keeps it pickable and
+`toggleGrip` names it and names the way in. Which way in is read off the RIG:
+the AAT is a repulsorlift with `legs: 0` and is told to have its armour broken
+instead of its legs cut.
+
+**Unarmed bodies now have a guard, and it is derived.** `guardFor` (Enemy.js) is
+the single authority — hp/90 for a duellist, MASS/300 for everything else — and
+`tools/balance.mjs` imports it rather than keeping a copy. Mass and not
+toughness, because toughness is already spent one layer down as the work-to-cut
+term in BladeContactSolver. Nothing man-sized turns anything; the lightest body
+that does is the 420 kg Nexu. Model time-to-kill: charger 0.64 → 3.83 s, beast
+0.64 → 3.19, brute 1.28 → 3.83, walker 2.56 → 4.47, AT-TE 2.56 → 5.75, and b1,
+trooper, sniper, heavy, jet, arc, officer and rocket all unmoved at 0.64.
+
+**Three things about that are worth carrying forward.**
+
+1. *The first version bought almost nothing and the harness said so.* It turned
+   the pass at the neck and the model went round it to a leg — five bodies from
+   420 to 2200 hp all landing on 1.28 s. The cause is one layer down again:
+   `takeCut` charges `maxHp * vital * 1.15` for a severed limb, a SHARE of
+   maximum health, and every non-humanoid bone falls through `VITAL[name] ??
+   0.4` because that table holds nineteen HUMANOID names. **A Rancor's toe was
+   worth 46% of it, exactly as much as its hip.** That fallback is §2.3's close
+   relative and it is still there for anything that reads `VITAL` directly.
+2. *The openings were all already built and all meant nothing.* `_guardOpen`
+   reads WINDED now — the state `_beastBrain` has entered for a session, whose
+   own comment already called it "the only safe time to go for a leg" and which
+   had nothing to be safe from while every pass landed. Machines keep the legs
+   (`legsLost >= 3` topples, and a topple opens the guard).
+3. *A guard that catches a pass must never pay for one.* `World._applyBladeEvent`
+   already returned early on `'turned'`; `Player.forceDisassemble` did not, so a
+   walker whose plate turned a rend still credited a limb, 40 score, the shake
+   and both sounds. A Force rend is also not a blade pass and is now marked
+   `force: true` so `_turnCut` declines it — the Force's contest is
+   `resistForce`, and billing one act to both is double-charging.
+
+**And the instrument had three defects of its own**, every one flattering the
+player. `offenceReport` threw `ReferenceError: BUILDERS is not defined` and had
+been dead since the builder table was deleted, because `main()` is its only
+caller and no check exercises it. The blade table called `engagementFor` with no
+guard share while every run in the same report passed one. And the travel phase
+compared a `phaseT` counting UP against `e.arm`, a countdown the incoming loop
+decrements every tick, so the player began cutting at HALF the arm time — three
+lines under a comment that states the rule correctly and says it was fixed after
+the identical symptom. The Colosseum's wave-1 opener cost 0.0 hp at all four
+tiers over 24 seeds because of it; it is 7.2 / 11.2 / 13.8 / 17.8 now, and still
+clears 24/24. `balance: a melee opener gets to attack — wave 1 is not free` pins
+the zero out.
+
+### 6.2 Older design calls — the user's, not yours
+
+Both confirmed exactly as the judges described; both defended by written
+reasoning and pinned by existing checks. Do not override a stated intent on a
+judge's say-so.
 
 1. The attunement screen offers the same six cards in the same fixed order at
    every attune wave, uncapped and unexcluded. `drawBoons` explains why it is
@@ -222,6 +964,82 @@ Overriding a stated intent once today was correctly stopped by `temple.mjs` and
    with a shared stream's phase (escalation 5, props 4, presence and co-op 3
    each). They pass both ways because they have margin. `ground` (Scenery.js) is
    the one piece of shared state the runner does not restore between suites.
+
+---
+
+## 6.3 New instruments
+
+| Tool | Answers |
+|---|---|
+| `tools/_fpgeom.mjs` | where the first-person arms and hilt are **in the frame**, and how much of the hilt is behind the fists — one second, against `fpview.mjs`'s twenty minutes |
+| `tools/_celrank.mjs` | every outdoor level's sun height against its shadow's key share, the rank displacements, and **every neighbouring bound in one table** — `cel`'s span/rho/pairwise, `lighting`'s indirect budget and cast-shadow floor, `sky`'s cloud-top-over-sky, and the exposure clamp. `--set=kamino.sunIntensity=3.4,geonosis.elevation=18` measures a candidate look without editing Levels.js |
+| `tools/_previewgrip.mjs` | every species' creator preview in ONE table: the bore gap and the hilt's length in that figure's own hands, the hand target in its own arm-lengths, the figure's share of the content box, and where it lands in the frame. Twenty seconds, and it is what showed the framing was three defects rather than one |
+| `tools/_deployprobe.mjs` | **did the page throw, and does it deploy** — every pageerror and console error, plus the run seams read out of the RUNNING page. ~40 s against `smoke.mjs`'s five minutes. Written because smoke's deploy step waits 30 s for the HUD, which at §2.6's two seconds a frame is FIFTEEN FRAMES: it timed out on four steps while this probe deployed the same build in 22.2 s with zero errors. A smoke timeout is not evidence of a regression; this is what tells you which you have |
+
+All except `_deployprobe` take `--import ./tools/register.mjs`; `_fpgeom`,
+`_celrank` and `_previewgrip` open with `dom-shim.mjs` because they reach
+Textures.js and Engine.js, which bake onto a canvas — and `_celrank` imports
+Engine.js DYNAMICALLY for §2.1. `_deployprobe` drives a real Chromium instead,
+so it needs neither: it must live under `tools/` rather than in a scratchpad
+because `playwright-core` resolves out of the repo's own node_modules, and it
+names the browser the same way `smoke.mjs` does (`/opt/pw-browsers/chromium-1194`
+— do NOT run `playwright install`).
+
+**Use `_celrank` before touching any level's light.** Six bounds in four suites
+read the same atmosphere block, they are not in the same file, and three of them
+bite in opposite directions: cutting a sun to soften a shadow drops the cloud
+deck under its own sky (`sky.mjs` calls that smoke), and raising the ambient to
+compensate walks into `lighting.mjs`'s cast-shadow floor. That is how a
+one-level tuning pass becomes a four-suite bisect.
+
+---
+
+## 6.4 The eight the gate is red on, and who owns each
+
+Three full runs, measured on this box, with the load recorded at the head of
+each. **Every one of them completed** — which is the change; the numbers below
+are ordinary work, not a blocked gate.
+
+```
+forward  (before the §2.7b stub fix)   1258 passed,  9 failed   10 m 57 s
+forward  (after)                       1250 passed,  8 failed    9 m 57 s
+reverse  (after)                       1260 passed,  8 failed   11 m 58 s
+```
+
+The forward/reverse totals differ by ten because a **shared-tree race**, not a
+defect, voided one suite in the middle run: `severance.mjs` imports
+`SEVER_LETHALITY` and the other lane committed the export (`7a4e36a`) while the
+run was in flight, so the suite failed to load and its checks did not run. If
+you see `does not provide an export named …` on a shared tree, check the log
+before believing it.
+
+**Seven failures are stable across both orders.** None of them is in this
+lane's files, and none blocks a run.
+
+| # | Check | Reads | Whose |
+|---|---|---|---|
+| 1 | `particles: no effect asks a pool for more sparks than the pool can hold` | 810 of 828 bursts over capacity, worst 10 475 775 against 4 200 | **`Enemy._sustain`, Enemy.js:3544** — §2.7b. The argument list is out of step; this is the loudest thing on the list and it is a shipped multi-second freeze |
+| 2 | `terrain: every preset stays finite, bounded and continuous everywhere` | `kamino reaches a gradient of 24.7 (88°)` against a bound of 20 | the Kamino platforms work (§6.1). **Steep, not discontinuous** — the check's fine/coarse clause passes, so it is a face too sheer for the bound, not a hole |
+| 3 | `audio: a NaN never leaks the voice pool dry` | `NaN reached an AudioParam` | `AudioEngine.noise` (Audio.js) does not sanitise `dur`/`gain`/`freq` at the door. The check's own summary line says it should |
+| 4-5 | `vitals: the duel strike passes the number, and it kills`, `vitals: a bad amount cannot make the player immortal` | `this.resistForce is not a function` | thrown from inside `Player.damage` (Player.js:5730), so `damage` is being invoked against something that is not a Player. The §6.1a lane |
+| 6 | `hilts: the hands still close on the grip, whichever one it is` | `Graflex: the FP hand grips at −75 mm, and the hilt runs −85…158 mm` | the first-person grip, §6.0 — the live one |
+| 7 | `training: the eleven lessons run in any theatre, not only the dojo` | a lesson placed a body away from the player | **order-dependent, not a defect: 23/23 alone.** §6.2.5 |
+
+**Two more are order-dependent and appear in exactly one direction**, which is
+what the reverse switch is for:
+
+- `escalation: depth stops buying bodies and starts buying elites` — red in
+  reverse, green forward, **27/27 alone**. §6.2.5 already names `escalation` as
+  the largest block of order-dependent residue (5 checks).
+- `prefracture: preparing a piece the player is walking towards never costs a
+  frame` — red in the first run under load 5.07, **3/3 alone**. §2.6's timing
+  warning doing exactly what it says.
+
+**Read this table the way it is built.** A red line in a full run is not a
+finding until it has been re-run alone on a quiet box — three of the nine in the
+first run evaporated that way, and one was a race with a peer's commit. That is
+now cheap to do, because the per-suite output tells you which line to re-run
+instead of handing you a filename.
 
 ---
 

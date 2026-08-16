@@ -1,7 +1,7 @@
 /**
- * SABER — what a run actually CONTAINS.
+ * BATTLEFRONT BORZ — what a run actually CONTAINS.
  *
- *   node --import ./tools/register.mjs tools/trace.mjs [--waves 20] [--level mustafar]
+ *   node --import ./tools/register.mjs tools/trace.mjs [--waves 20] [--level scoria]
  *   node --import ./tools/register.mjs tools/trace.mjs --json > trace.json
  *
  * ══════════════════════════════════════════════════════════════════════════
@@ -71,7 +71,7 @@ const {
 const { ARCHETYPES } = await import('../src/game/Enemy.js');
 const { POWER_COST, POWER_BOON } = await import('../src/game/Powers.js');
 const { LEVELS, LEVEL_ORDER } = await import('../src/game/Levels.js');
-const Tree = await import('../src/game/Constellation.js');
+const Tree = await import('../src/game/LivingForce.js');
 
 const level = LEVEL || LEVEL_ORDER[0];
 if (!LEVELS[level]) {
@@ -97,7 +97,14 @@ seedWaves(SEED);
  * there to be seen — two different levels producing byte-identical
  * composition — and it is the same shape as every harness defect this session:
  * a default answering for a missing thing and being reported as a measurement. */
-const stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set(), scene: null };
+/* …AND THE LEVEL ITSELF, not only its pool. `WaveDirector.sideFor` reads
+ * `world.level.armies` to decide whose push a wave is, so a stub with a pool and
+ * no level composed a Geonosis that mixes two armies while the game fields them
+ * one at a time. An instrument that restates half a rule disagrees with it
+ * eventually (HANDOFF §2.4) — and this is the instrument the defect was found
+ * with, so it is the one that must not lie about the fix. */
+const stubWorld = { enemies: [], player: null, terrain: null, settings: {}, takenBoons: new Set(), scene: null,
+  level: LEVELS[level] };
 const dir = new WaveDirector(stubWorld, { pool: LEVELS[level].pool });
 
 const waves = [];
@@ -206,14 +213,14 @@ const powers = Object.entries(POWER_COST).map(([id, cost]) => ({
     : null,
 }));
 
-/* ── the sky, and what a run of this length can afford of it ────────────── */
+/* ── the Holocron, and what a run of this length can afford of it ───────── */
 
 const insight = Tree.insightAfter(WAVES, BOSS_EVERY);
-const stars = Tree.STARS?.length ?? 0;
-const constellation = (Tree.CONSTELLATIONS ?? []).map((c) => ({
+const facets = Tree.FACETS?.length ?? 0;
+const currents = (Tree.CURRENTS ?? []).map((c) => ({
   axis: c.axis,
   root: c.root,
-  stars: Tree.starsOf?.(c.axis)?.length ?? null,
+  facets: Tree.facetsOf?.(c.axis)?.length ?? null,
 }));
 
 /* ── the roster it could all happen on ──────────────────────────────────── */
@@ -236,7 +243,7 @@ const trace = {
   firstOffered,
   axisTally,
   powers,
-  economy: { insightAfter: insight, starsInSky: stars, constellation },
+  economy: { insightAfter: insight, facetsInLattice: facets, currents },
   levels,
 };
 
@@ -246,7 +253,7 @@ if (has('json')) {
   const pad = (s, n) => String(s).padEnd(n);
   console.log(`\nSABER — run trace: ${level}, ${WAVES} waves, seed ${SEED}\n`);
   console.log(`  ${Object.keys(ARCHETYPES).length} archetypes · ${BOONS.length} boons + `
-    + `${ATTUNEMENTS.length} attunements · ${stars} stars · ${LEVEL_ORDER.length} levels\n`);
+    + `${ATTUNEMENTS.length} attunements · ${facets} facets · ${LEVEL_ORDER.length} levels\n`);
 
   console.log('  WAVE  BODIES  THREAT  KINDS  COMPOSITION');
   for (const w of waves) {
@@ -272,7 +279,7 @@ if (has('json')) {
   }
 
   console.log(`\n  ECONOMY  ${insight} Insight after ${WAVES} waves`);
-  for (const c of constellation) console.log(`  ${pad(c.axis, 10)}${c.stars} stars, root ${c.root}`);
+  for (const c of currents) console.log(`  ${pad(c.axis, 10)}${c.facets} facets, root ${c.root}`);
 
   console.log('\n  LEVELS');
   for (const l of levels) {

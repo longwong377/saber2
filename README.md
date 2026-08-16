@@ -1,6 +1,6 @@
-# SABER
+# BATTLEFRONT BORZ
 
-> *A single blade against a hundred.*
+> *Clone Wars. Front line.*
 
 A physics-driven lightsaber game that runs in a browser tab. No install, no
 launcher, no build step — the repository *is* the game.
@@ -37,6 +37,9 @@ nothing to compile.
 
 **On the web** — the repository is a static site, so it deploys as-is to GitHub
 Pages, Netlify, Cloudflare Pages, or anything that serves files.
+
+> Pages builds the **default branch**. If work is happening on a feature branch
+> and the deployed game looks unchanged, that is why.
 
 A Pages workflow is included at `.github/workflows/pages.yml`. It needs one
 click first: **Settings → Pages → Source: “GitHub Actions”**. (GitHub's default

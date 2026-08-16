@@ -67,7 +67,7 @@ async function session(names = ['HOST', 'ALPHA', 'BRAVO'], looks = []) {
   const fake = H.installPeerStub();
   const settle = async (n = 8) => { for (let i = 0; i < n; i++) { await new Promise(r => setTimeout(r, 0)); fake.flush(); } };
   const host = new Net();
-  const code = await (async () => { const p = host.host(names[0], { level: 'arena' }, looks[0] || null); await settle(); return p; })();
+  const code = await (async () => { const p = host.host(names[0], { level: 'colosseum' }, looks[0] || null); await settle(); return p; })();
   const clients = [];
   for (let i = 1; i < names.length; i++) {
     const c = new Net();
@@ -220,7 +220,7 @@ export async function run({ check, assert }) {
     assert(entry.look && entry.look.hiltStyle === 'Crossguard' && entry.look.species === 'smallfolk',
       'the character sheet did not cross the wire — a partner is a default human in an index-picked robe');
 
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const theirs = new RemoteAvatar(world, { id: 'ALPHA', name: 'ALPHA', look: entry.look });
     const plain = new RemoteAvatar(world, { id: 'X', name: 'X' });
     assert(theirs.saber.hiltStyle === 'Crossguard' || theirs.saber.hilt !== plain.saber.hilt,
@@ -256,7 +256,36 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
-    const { host, client, pump } = await H.bootPair();
+    /**
+     * THE GROUND IS NAMED, AND THIS CHECK SPENT A WHOLE SESSION RED BECAUSE IT
+     * WAS NOT.
+     *
+     * `bootPair` defaulted to `'arena'`, a level the roster cull deleted, and
+     * `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does not know
+     * — so every drive of this check stood its marksman on the Ember Shelf,
+     * behind a rock. The `tel > 0` assertion below failed, and it was read as a
+     * telegraph-replication bug on the wire for as long as it stood. It is not.
+     * The HOST never charged either.
+     *
+     * Measured, one sniper at 26 m and 720 frames on each level of the roster,
+     * counting the frames it spends charging:
+     *
+     *     scoria      0        colosseum  71      geonosis  71
+     *     mustafar   65        wood       69      temple    77
+     *     kamino     71        drifts     71      foundry   72
+     *
+     * Nine of ten. Scoria is the one, it is the fallback every un-named boot
+     * lands on, and `_rangedBrain` gates `_beginTelegraph` behind
+     * `_hasLineOfSight`. So the ground is a PRECONDITION of what this measures
+     * and it has to be stated: an open arena floor, where a marksman 26 m away
+     * can see the person it is aiming at.
+     *
+     * The host's own telegraph is counted alongside the client's for the same
+     * reason. A check that measures only the far end cannot tell "the client
+     * never saw it" from "there was nothing to see", and it will report the
+     * first when the truth is the second — which is exactly what happened.
+     */
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
     for (let i = 0; i < 3; i++) {
       host.spawnEnemy(['sniper', 'trooper', 'trooper'][i], new THREE.Vector3(Math.cos(i) * 4, 0, 26 + Math.sin(i) * 3));
     }
@@ -268,12 +297,13 @@ export async function run({ check, assert }) {
       return live;
     };
     const hSeen = new Set(), cSeen = new Set();
-    let hPeak = 0, cPeak = 0, tel = 0;
+    let hPeak = 0, cPeak = 0, tel = 0, hTel = 0;
     for (let i = 0; i < 12 * 60; i++) {
       pump(1 / 60);
       hPeak = Math.max(hPeak, count(host, hSeen));
       cPeak = Math.max(cPeak, count(client, cSeen));
       for (const e of client.enemies) if (e.laser?.visible) tel++;
+      for (const e of host.enemies) if (e.laser?.visible) hTel++;
     }
     assert(hSeen.size > 5, `the host only fired ${hSeen.size} bolts — the scene is wrong, not the wire`);
     assert(cSeen.size > 0,
@@ -281,12 +311,15 @@ export async function run({ check, assert }) {
       + 'nothing to parry and no perfect return available in the whole session');
     assert(cSeen.size >= hSeen.size * 0.8,
       `the client saw ${cSeen.size} of the host's ${hSeen.size} bolts`);
+    assert(hTel > 0,
+      'no marksman charged a shot on the HOST either, so there was never a telegraph to replicate — '
+      + 'the scene is wrong, not the wire. Check the level this pair was booted on.');
     assert(tel > 0,
-      'a marksman charged its shot and the joining player never saw the laser — the fairness contract '
-      + 'of the entire ranged game is invisible to them');
+      `a marksman charged its shot on ${hTel} host frames and the joining player never saw the laser — `
+      + 'the fairness contract of the entire ranged game is invisible to them');
     assert(client.player.hp < 100, 'the replicated bolts do not reach the joining player at all');
     const line = `host ${hSeen.size} bolts (peak ${hPeak}) → client ${cSeen.size} (peak ${cPeak}), `
-      + `${tel} telegraph frames, client hp ${client.player.hp.toFixed(0)}`;
+      + `telegraph ${hTel} host / ${tel} client frames, client hp ${client.player.hp.toFixed(0)}`;
     host.unload(); client.unload();
     return line;
   });
@@ -382,24 +415,65 @@ export async function run({ check, assert }) {
      * positions, while the host bills the identical blast over `hit`. Measured
      * with that version: 24.8 hp off a client's local player standing 2 m away.
      * World._applyNetModifier marks the client's copy spent for exactly this.
+     *
+     * THE ASSERTION USED TO BE `hp did not move`, AND THAT IS NOT THE QUANTITY.
+     *
+     * It read true only because `bootPair` built no RemoteAvatar, so the host
+     * had no body for the peer, `onExplosion` reached nobody, and no `hit` could
+     * arrive however correct the host was being. The moment the pair carried
+     * avatars the same check went red at 38.7 hp — every one of them the host's
+     * own bill, arriving exactly as designed. A check that cannot tell the
+     * blast it wants from the blast it is testing for is the shape §2.4 warns
+     * about: it manufactures a defect out of a fix.
+     *
+     * So the two sources are told apart at the door. Everything `applyHit`
+     * takes off is attributed to the host; the RESIDUAL is what this machine
+     * did to itself, and that is the number that has to be zero. Strictly
+     * stronger than the old form, which could not have distinguished a client
+     * that blasted itself from one that was correctly billed.
      */
     const bomb = host.enemies.find((e) => e.mod === 'unstable');
     const cb = client._netEnemyIndex.get(bomb.id);
+    /* THE FIELD IS SILENCED FIRST, and it has to be. Twenty-three elites now
+     * have a body for the joining player to shoot at — they did not before the
+     * pair carried avatars — and every one of those bolts is replicated and
+     * resolved on the client's own machine, deliberately, by the rule the check
+     * two below this one asserts. Measured with the field live: 60.3 hp off the
+     * local player over the blast window, of which 1.7 was the blast. A control
+     * that leaves the room shooting is not measuring the bomb. */
+    for (const e of host.enemies) if (e !== bomb) e._think = () => {};
+    pump(1);   // let whatever was already in the air land or expire
     client.player.position.copy(cb.position).add(new THREE.Vector3(1.5, 0, 0));
     client.player.position.y = client.terrain.height(client.player.position.x, client.player.position.z);
     client.player.hp = client.player.maxHp;
+    client.player.invuln = 0;
     const hp0 = client.player.hp;
     assert(!!cb.coreMesh, 'an Unstable elite reached the client with no reactor core on its chest');
+    assert(cb._detonated,
+      'the client\'s copy of an Unstable elite is armed — it will run its own _detonate the moment it dies');
+    let billed = 0, packets = 0;
+    const applyHit = client.applyHit.bind(client);
+    client.applyHit = (m) => {
+      const before = client.player.hp;
+      const r = applyHit(m);
+      packets++; billed += Math.max(0, before - client.player.hp);
+      return r;
+    };
     bomb.damage(9999, bomb.position.clone(), null, 'saber');
     pump(3);
+    client.applyHit = applyHit;
     assert(bomb._detonated, 'the host never detonated its own bomb — the scene is wrong');
-    assert(client.player.hp >= hp0 - 0.01,
-      `a client's own copy of an Unstable elite took ${(hp0 - client.player.hp).toFixed(1)} hp off its `
-      + 'local player — the host bills that blast over `hit`, so the joining player pays for it twice');
+    assert(packets > 0 && billed > 0,
+      'the host billed the joining player nothing at all for a blast beside them — the scene is wrong');
+    const selfInflicted = (hp0 - client.player.hp) - billed;
+    assert(selfInflicted <= 0.01,
+      `a client's own copy of an Unstable elite took ${selfInflicted.toFixed(1)} hp off its local player `
+      + 'over and above the host\'s bill — the joining player pays for that blast twice');
 
     const line = `${host.enemies.length} elite pairs, ${host.enemies.length} on the client with tells `
       + `${Object.entries(H0).map(([k, v]) => `${k} ${v}/${C0[k]}`).join(', ')}, `
-      + `worst maxHp ratio ${worstBill.toFixed(3)}, 0 hp of double blast`;
+      + `worst maxHp ratio ${worstBill.toFixed(3)}, blast billed once (${billed.toFixed(1)} hp over `
+      + `${packets} packet${packets === 1 ? '' : 's'}, 0 self-inflicted)`;
     host.unload(); client.unload();
     return line;
   });
@@ -693,7 +767,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const out = [];
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {},
       toHost(m) { out.push(m); } }, 'client');
@@ -771,6 +845,495 @@ export async function run({ check, assert }) {
     return `claimed: ${Object.entries(claims).map(([k, d]) => `${k} ${d.toFixed(0)}`).join(', ')}; no double billing`;
   });
 
+  check('co-op: a joining player\'s Force moves the body, not only its health bar', async () => {
+    /**
+     * A GUEST'S FORCE DID NOTHING PHYSICAL. ONLY THE NUMBER CROSSED.
+     *
+     * `_claim` sent `k:'cut'` and `k:'dmg'`, and that was the whole protocol —
+     * there was no impulse on this wire anywhere. Driven on a real host/client
+     * pair with the host body taken off its brain so nothing else could move
+     * it, every figure below measured on BOTH machines:
+     *
+     *     CONTROL   host 0.000 m   client 0.000 m
+     *     SHOVE     host 0.000 m   client 0.000 m   (hp 46 → 40: the DAMAGE crossed)
+     *     PULL      host 0.000 m   client 0.000 m
+     *     THROW     host 0.000 m   client 0.000 m
+     *     GRIP      host y −0.364 → −0.364, client y −0.360 → −0.360, and
+     *               `player.gripEnemy` TRUE the whole time on the guest's own
+     *               machine — the hold was real state with no physics under it
+     *
+     * So for everybody who was not the host, the Force was a number applied at
+     * a distance. `tools/checks/force.mjs` is 26/26 on all of it because it only
+     * ever builds a single-player world — which is the defect in one sentence,
+     * and the reason this one takes its numbers on two machines or not at all.
+     *
+     * FOUR POWERS, TWO MACHINES, ONE PAIR. Every one of them is driven through
+     * the shipped `Player` method a key press reaches, against a body the host
+     * owns, and measured at both ends.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+
+    /** A pair with one host-owned body standing still, and a guest beside it. */
+    const scene = async () => {
+      const pair = await H.bootPair({ level: 'colosseum' });
+      const e = pair.host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+      e.id = 'subject';
+      /* Off its brain, so the only thing in the session that can move this body
+       * is the guest. Without it a walking trooper covers metres on its own and
+       * the measurement is of the horde, not of the wire. */
+      e._think = () => {};
+      pair.pump(0.5);
+      const ce = pair.client._netEnemyIndex.get('subject');
+      const cp = pair.client.player;
+      cp.position.set(0, 0, 3);
+      pair.pump(0.3);
+      const ctx = { enemies: pair.client.enemies, players: pair.client.players, bolts: pair.client.bolts,
+        physics: pair.client.physics, terrain: pair.client.terrain, particles: pair.client.particles };
+      cp.force = cp.maxForce;
+      for (const k in cp.cooldowns) cp.cooldowns[k] = 0;
+      return { ...pair, e, ce, cp, ctx };
+    };
+    /** Peak displacement of the host's body and the guest's copy of it. */
+    const flight = (s, seconds = 1.5) => {
+      const h0 = s.e.position.clone(), c0 = s.ce.position.clone();
+      let host = 0, client = 0;
+      for (let i = 0; i < Math.round(seconds * 60); i++) {
+        s.pump(1 / 60);
+        host = Math.max(host, h0.distanceTo(s.e.position));
+        client = Math.max(client, c0.distanceTo(s.ce.position));
+      }
+      return { host, client };
+    };
+    const out = {};
+
+    // CONTROL — nothing pressed. Anything that moves here is not the Force.
+    {
+      const s = await scene();
+      out.control = flight(s);
+      assert(out.control.host < 0.05 && out.control.client < 0.05,
+        `the subject drifted ${out.control.host.toFixed(3)} m with nothing pressed — the scene moves on `
+        + 'its own and every number below is noise');
+      s.host.unload(); s.client.unload();
+    }
+
+    // SHOVE, PULL — aimed from the chest, the way the powers read it.
+    for (const [name, fire] of [['shove', (s) => s.cp.forcePush(s.ctx)],
+      ['pull', (s) => s.cp.forcePull(s.ctx)]]) {
+      const s = await scene();
+      s.cp.aimDir.subVectors(s.ce.position, s.cp.chest).normalize();
+      fire(s);
+      out[name] = flight(s);
+      s.host.unload(); s.client.unload();
+    }
+
+    // GRIP and THROW — aimed from the CAMERA, because `_pickGripTarget` casts
+    // its ray from there so the pick agrees with the crosshair.
+    {
+      const s = await scene();
+      s.cp.aimDir.subVectors(s.ce.position, s.cp.camera.pos).normalize();
+      const hy = s.e.position.y, cy = s.ce.position.y;
+      s.cp.toggleGrip(s.ctx);
+      assert(s.cp.gripEnemy, 'the guest could not take hold of the body at all — the scene is wrong');
+      for (let i = 0; i < 90; i++) s.pump(1 / 60);
+      out.liftHost = s.e.position.y - hy;
+      out.liftClient = s.ce.position.y - cy;
+      assert(s.e.gripped, 'the host does not know the joining player is holding this body');
+      s.cp.hurlGripped(s.ctx);
+      out.throw = flight(s);
+      assert(!s.e.gripped, 'the host is still holding a body the guest has thrown');
+      s.host.unload(); s.client.unload();
+    }
+
+    for (const k of ['shove', 'pull', 'throw']) {
+      assert(out[k].host > 0.3,
+        `a guest's ${k} moved the host's body ${out[k].host.toFixed(3)} m — the impulse is not on the wire`);
+      assert(out[k].client > 0.3,
+        `a guest's ${k} moved their own copy ${out[k].client.toFixed(3)} m — the snapshot stomped it`);
+      /* The two machines integrated the same impulse a round trip apart, so they
+       * are allowed to differ by the round trip and not by the blow. */
+      assert(Math.abs(out[k].host - out[k].client) < Math.max(0.4, out[k].host * 0.1),
+        `a guest's ${k} travelled ${out[k].host.toFixed(2)} m on the host and `
+        + `${out[k].client.toFixed(2)} m on the guest — the two machines are simulating different blows`);
+    }
+    assert(out.liftHost > 0.3,
+      `the guest lifted the body ${out.liftHost.toFixed(3)} m on the host's screen — the grip is state `
+      + 'with no physics under it off-host');
+    assert(out.liftClient > 0.3,
+      `the guest lifted the body ${out.liftClient.toFixed(3)} m on their own screen`);
+
+    return ['control', 'shove', 'pull', 'throw'].map((k) =>
+      `${k} ${out[k].host.toFixed(2)}/${out[k].client.toFixed(2)} m`).join(', ')
+      + `, lift ${out.liftHost.toFixed(2)}/${out.liftClient.toFixed(2)} m (host/guest)`;
+  });
+
+  check('co-op: a peer who goes silent mid-lift does not leave a body in the air', async () => {
+    /**
+     * EVERY OTHER CLAIM IS AN EVENT THAT HAPPENED. The lift is a standing
+     * instruction — `e.gripped` and `e.liftTarget`, held for as long as the
+     * player holds the key — and `_think` returns early on `gripped`, so a body
+     * abandoned in that state hangs in the air out of its own brain for the
+     * rest of the host's session. That is the one thing on this wire a closing
+     * lid can strand, and a silence is the only signal that can say so.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const e = host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    e.id = 'stranded';
+    e._think = () => {};
+    pump(0.5);
+    const ce = client._netEnemyIndex.get('stranded');
+    const cp = client.player;
+    cp.position.set(0, 0, 3);
+    pump(0.3);
+    cp.force = cp.maxForce; cp.cooldowns.grip = 0;
+    cp.aimDir.subVectors(ce.position, cp.camera.pos).normalize();
+    cp.toggleGrip({ enemies: client.enemies, players: client.players, bolts: client.bolts,
+      physics: client.physics, terrain: client.terrain, particles: client.particles });
+    pump(1.0);
+    assert(e.gripped, 'the host never took the lift at all');
+    const heldY = e.position.y;
+
+    // the lid closes: the endpoint stops talking, everything else keeps running
+    client.net.toHost = () => {};
+    let released = -1;
+    for (let i = 0; i < 180 && released < 0; i++) { pump(1 / 60); if (!e.gripped) released = i / 60; }
+    assert(released >= 0,
+      'the host is still holding a body for a peer that stopped talking a full three seconds ago');
+    assert(released > 0.2,
+      `the host dropped the lift after ${released.toFixed(2)} s of silence — one late packet on a bad `
+      + 'connection would put down whatever a player is holding');
+    host.unload(); client.unload();
+    return `held at y ${heldY.toFixed(2)}, dropped ${released.toFixed(2)} s after the peer went quiet`;
+  });
+
+  check('co-op: the enemy record is read with as many slots as it is written with', async () => {
+    /**
+     * THE SIGNATURE DEFECT OF THIS REPOSITORY, and this record has already had
+     * it once: a hand-typed twelve-slot reader against a thirteen-slot packer.
+     * A positional record cannot fail loudly — the reader destructures by
+     * position, so a short list is not an error, it is a quiet `undefined` that
+     * every downstream `|| 0` turns into a plausible default. The record has
+     * grown four times now (velocity, the duel, the modifier, the side, the
+     * cast) and nothing in the suite has ever compared the two ends of it.
+     *
+     * Counted off the shipped packer and the shipped reader, so it cannot be
+     * satisfied by a third copy of the list written here.
+     */
+    const { packSnapshot } = await import('../../src/net/Net.js');
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({ level: 'colosseum' });
+    world.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    const rec = packSnapshot(world).e[0];
+    const text = await src('game/World.js');
+    const m = text.match(/const \[([^\]]*)\] = rec;/);
+    assert(m, 'applySnapshot no longer destructures the enemy record — this check cannot see the reader');
+    const names = m[1].split(',').map((s) => s.trim()).filter(Boolean);
+    assert(rec.length === names.length,
+      `packSnapshot writes ${rec.length} slots per enemy and applySnapshot reads ${names.length} `
+      + `(${names.join(', ')}) — the ${Math.abs(rec.length - names.length)} on the end arrive as `
+      + 'undefined and every `|| 0` beside them turns that into a plausible default');
+    world.unload(); world.dispose?.();
+    return `${rec.length} slots written, ${names.length} read: ${names.join(' ')}`;
+  });
+
+  check('co-op: the next snapshot does not stomp the shove the guest just applied', async () => {
+    /**
+     * THE CRUX, AND IT IS NOT THE CLAIM — IT IS THE FRAME AFTER IT.
+     *
+     * `_stepNetEnemies` hard-overwrites `e.velocity` from `_netVel` and damps
+     * position toward `_netPos` at 14/s at the TOP OF EVERY FRAME. That is
+     * right for ordinary motion and wrong for the frames after a shove: an
+     * impulse applied locally was erased before anything integrated it, so a
+     * guest did not even get the local illusion of their own push working.
+     * Sending the impulse without fixing this would have left the guest
+     * watching the host's copy fly 90 ms later while their own stood still.
+     *
+     * Two things have to be true at once and they pull in opposite directions,
+     * which is why this is its own check:
+     *
+     *   IMMEDIATE — the body moves on the guest's machine before any answer
+     *   could possibly have come back. The claim goes at 1/24 s and the host
+     *   answers at 1/18 s, so three frames at 60 Hz is 50 ms and cannot contain
+     *   a round trip. Anything that moves in there is local.
+     *
+     *   STILL THE HOST'S — the window closes, and the moment it does the host's
+     *   position is authoritative again. Driven by teleporting the host's body
+     *   somewhere the guest could never have put it and watching the guest's
+     *   copy come to it.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const e = host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    e.id = 'shoved';
+    e._think = () => {};
+    pump(0.5);
+    const ce = client._netEnemyIndex.get('shoved');
+    const cp = client.player;
+    cp.position.set(0, 0, 3);
+    pump(0.3);
+    cp.force = cp.maxForce; cp.cooldowns.push = 0;
+    cp.aimDir.subVectors(ce.position, cp.chest).normalize();
+
+    const from = ce.position.clone();
+    cp.forcePush({ enemies: client.enemies, players: client.players, bolts: client.bolts,
+      physics: client.physics, terrain: client.terrain, particles: client.particles });
+    let early = 0;
+    for (let i = 0; i < 3; i++) { pump(1 / 60); early = Math.max(early, from.distanceTo(ce.position)); }
+    assert(early > 0.1,
+      `the guest's own copy moved ${early.toFixed(3)} m in the 50 ms after their own push — no round `
+      + 'trip fits in that, so this is the local illusion being erased by the snapshot');
+
+    // …and the flight lands in the same place on both machines.
+    for (let i = 0; i < 180; i++) pump(1 / 60);
+    const apart = e.position.distanceTo(ce.position);
+    assert(apart < 1.0,
+      `the two machines put the shoved body ${apart.toFixed(2)} m apart once it came down — the guest is `
+      + 'simulating a body it does not own');
+
+    /* THE HOST IS STILL THE AUTHORITY. A place the guest's own physics could
+     * never have produced, so following it is proof the window shut. */
+    const away = new THREE.Vector3(18, 0, -14);
+    away.y = host.terrain.height(away.x, away.z);
+    e.position.copy(away);
+    e.velocity.set(0, 0, 0);
+    for (let i = 0; i < 120; i++) pump(1 / 60);
+    const followed = ce.position.distanceTo(away);
+    assert(followed < 1.0,
+      `the host moved its body and the guest's copy stayed ${followed.toFixed(2)} m away — the authority `
+      + 'window never closes and the guest owns the horde now');
+    host.unload(); client.unload();
+
+    /**
+     * …AND THE WHOLE THING AGAIN OVER A REAL ROUND TRIP, because a window whose
+     * length is derived from the latency is not tested at zero latency. 120 ms
+     * one way is a bad-but-ordinary connection, and `bootPair` publishes it as
+     * `net.latency` so `_netOwn` derives the window from the wire it is on.
+     *
+     * The number that matters here is the SNAP-BACK: how far the guest's copy
+     * ever travels back toward where it started, which is what a rubber-band
+     * is. Measured on this scene, an 11.5 m flight at a 240 ms round trip:
+     *
+     *     the shipped window            0.78 m in 50 ms, snap-back 0.74 m
+     *     window = knockTimer only      0.78 m in 50 ms, snap-back 2.31 m
+     *     no window (what shipped)      0.00 m in 50 ms, snap-back 0.00 m
+     *
+     * The last line is the defect and it is worth reading carefully: the guest's
+     * copy still ENDS UP flying, because the impulse claim alone gets the shove
+     * to the host and the host's position comes back — it simply does nothing
+     * for a quarter of a second and then teleports into a flight it never
+     * started. And the middle line is why the window carries the round trip
+     * rather than only the body's own knock clock: cut that term and the
+     * correction triples.
+     */
+    const far = await H.bootPair({ level: 'colosseum', lag: 0.12 });
+    const fe = far.host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    fe.id = 'lagged';
+    fe._think = () => {};
+    far.pump(0.6);
+    const fce = far.client._netEnemyIndex.get('lagged');
+    const fcp = far.client.player;
+    fcp.position.set(0, 0, 3);
+    far.pump(0.4);
+    fcp.force = fcp.maxForce; fcp.cooldowns.push = 0;
+    fcp.aimDir.subVectors(fce.position, fcp.chest).normalize();
+    const fFrom = fce.position.clone();
+    fcp.forcePush({ enemies: far.client.enemies, players: far.client.players, bolts: far.client.bolts,
+      physics: far.client.physics, terrain: far.client.terrain, particles: far.client.particles });
+    let fEarly = 0, back = 0, best = 0;
+    for (let i = 0; i < 180; i++) {
+      far.pump(1 / 60);
+      const d = fFrom.distanceTo(fce.position);
+      back = Math.max(back, best - d);
+      best = Math.max(best, d);
+      if (i < 3) fEarly = Math.max(fEarly, d);
+    }
+    const fApart = fe.position.distanceTo(fce.position);
+    assert(fEarly > 0.1,
+      `over a 240 ms round trip the guest's own copy moved ${fEarly.toFixed(3)} m in the first 50 ms`);
+    assert(fApart < 1.0,
+      `over a 240 ms round trip the two machines ended ${fApart.toFixed(2)} m apart`);
+    assert(back < best * 0.15,
+      `the guest's copy travelled ${back.toFixed(2)} m BACK toward where it started during an `
+      + `${best.toFixed(2)} m flight — the window closes before the host's stream carries the shove, `
+      + 'and a shove that rubber-bands is worse to look at than one that does not move at all');
+    far.host.unload(); far.client.unload();
+    return `guest's own copy moved ${early.toFixed(2)} m inside 50 ms, landed ${apart.toFixed(2)} m from `
+      + `the host's, and came back to within ${followed.toFixed(2)} m when the host moved it; over a `
+      + `240 ms round trip ${fEarly.toFixed(2)} m / ${fApart.toFixed(2)} m apart / ${back.toFixed(2)} m `
+      + `of snap-back on an ${best.toFixed(1)} m flight`;
+  });
+
+  check('co-op: an enemy\'s cast reaches a joining player as a cast, and they can break it', async () => {
+    /**
+     * A POWER ARRIVED AS AN UNSOURCED NUMBER WITH NO WARNING.
+     *
+     * `packSnapshot`'s fourteen slots carried `tg` and `dl` and nothing for
+     * `_castTimer`, `_castKey` or `casting`, and `main.js` applied the result as
+     * `p.damage(d, null, null, msg.k)`. Driven — a Jedi Master targeting a
+     * RemoteAvatar for 40 s:
+     *
+     *     casts:          ["push" ×6]
+     *     host screen:    "FORCE PUSH" ×6 floating tells
+     *     peer receives:  hit:force:9.0 ×6   telegraphs: 0   displacement: 0
+     *
+     * `_forceBrain`'s own note calls the 0.45 s wind-up the fairness contract of
+     * the whole kit, and `breakCast` makes it generous — 100% break at 400 ms
+     * into a 450 ms tell, measured. All of it invisible and unanswerable off the
+     * host, which is worse than the power not existing: the player learns the
+     * horde has an attack with no tell.
+     *
+     * Both halves are here because either alone is worthless. A tell you can see
+     * and cannot answer is decoration; an answer you cannot see coming is luck.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { ENEMY_POWERS } = await import('../../src/game/Enemy.js');
+
+    const scene = async () => {
+      const pair = await H.bootPair({ level: 'colosseum' });
+      /* The host's own player walks off so the duellist has exactly one target
+       * — the joining player — and its blade is stilled so the only thing it can
+       * reach them with is a power. */
+      pair.host.player.position.set(60, 0, 60);
+      pair.client.player.position.set(0, 0, 6);
+      pair.pump(0.5);
+      const e = pair.host.spawnEnemy('master', new THREE.Vector3(0, 0, 3));
+      e.id = 'caster';
+      e.duel.update = () => {};
+      pair.pump(0.3);
+      return { ...pair, e, ce: pair.client._netEnemyIndex.get('caster') };
+    };
+
+    // ── 1. the tell crosses, and it is the same tell
+    const s = await scene();
+    const hostTells = [], guestTells = [];
+    s.host.onFloating = (p, t) => hostTells.push(t);
+    s.client.onFloating = (p, t) => guestTells.push(t);
+    const cast = s.e._castPower.bind(s.e);
+    const casts = [];
+    s.e._castPower = (k, ctx, d) => { casts.push(k); return cast(k, ctx, d); };
+    let sawWindup = 0, sawHold = 0, worstDrift = 0;
+    const from = s.client.player.position.clone();
+    let shoved = 0;
+    for (let i = 0; i < 60 * 30; i++) {
+      s.pump(1 / 60);
+      if (s.e._castTimer > 0 && s.ce._castTimer > 0) {
+        sawWindup++;
+        worstDrift = Math.max(worstDrift, Math.abs(s.e._castTimer - s.ce._castTimer));
+      }
+      if (s.e.casting && s.ce.casting === s.e.casting) sawHold++;
+      shoved = Math.max(shoved, from.distanceTo(s.client.player.position));
+    }
+    const labels = new Set(Object.values(ENEMY_POWERS).map((P) => P.label));
+    const guestCalls = guestTells.filter((t) => labels.has(t));
+    const hostCalls = hostTells.filter((t) => labels.has(t));
+    assert(casts.length > 0, 'the duellist never cast anything — the scene is wrong, not the wire');
+    assert(hostCalls.length > 0, 'the host drew no floating call for its own casts — the scene is wrong');
+    assert(guestCalls.length >= hostCalls.length,
+      `the host drew ${hostCalls.length} floating calls (${[...new Set(hostCalls)]}) and the joining `
+      + `player saw ${guestCalls.length} — a power with no tell off-host`);
+    assert(sawWindup > 0,
+      'the joining player never held a wind-up at the same time as the host — `_castTimer` is not crossing');
+    assert(worstDrift < 0.12,
+      `the guest's copy of the wind-up ran ${worstDrift.toFixed(3)} s away from the host's — the clock a `
+      + 'player reads to time an interrupt is not the clock the interrupt is against');
+    assert(sawHold > 0, 'a HELD power (choke, lightning) never showed on the joining player as held');
+    assert(shoved > 0.3,
+      `the enemy's own shove moved the joining player ${shoved.toFixed(3)} m — the cast lands as damage `
+      + 'with no physics again');
+    s.host.unload(); s.client.unload();
+
+    // ── 2. and the guest can answer what the guest can see
+    let broke = 0, tried = 0;
+    for (let n = 0; n < 5; n++) {
+      const t = await scene();
+      let landed = null, done = false;
+      const inner = t.e._castPower.bind(t.e);
+      t.e._castPower = (k, ctx, d) => { landed = k; return inner(k, ctx, d); };
+      for (let i = 0; i < 60 * 20 && !done; i++) {
+        t.pump(1 / 60);
+        /* Timed off the GUEST's own copy of the wind-up, which is the whole
+         * point: a player answers the clock on their screen. 0.05 s left of a
+         * 0.45 s tell is 400 ms in, where the host measures 100%. */
+        if (!(t.ce._castTimer > 0 && t.ce._castTimer <= 0.05)) continue;
+        tried++; landed = null; done = true;
+        const cp = t.client.player;
+        cp.force = cp.maxForce; cp.cooldowns.push = 0;
+        cp.aimDir.subVectors(t.ce.position, cp.chest).normalize();
+        cp.forcePush({ enemies: t.client.enemies, players: t.client.players, bolts: t.client.bolts,
+          physics: t.client.physics, terrain: t.client.terrain, particles: t.client.particles });
+        t.pump(0.5);
+        if (!landed) broke++;
+      }
+      t.host.unload(); t.client.unload();
+    }
+    assert(tried > 0, 'no cast was ever answered — the guest could not see one to answer');
+    assert(broke === tried,
+      `the joining player broke ${broke} of ${tried} casts at 400 ms into a 450 ms tell, where the host `
+      + 'breaks 100% — the counterplay is generous on one machine and a coin flip on the other');
+    return `${casts.length} casts: host ${hostCalls.length} calls / guest ${guestCalls.length}, wind-up `
+      + `agrees to ${worstDrift.toFixed(3)} s, ${sawHold} frames of a shared hold, the guest moved `
+      + `${shoved.toFixed(2)} m, and broke ${broke}/${tried} at 400 ms`;
+  });
+
+  check('co-op: a joining player killed by an enemy was killed BY that enemy', async () => {
+    /**
+     * `main.js` applied every `hit` as `p.damage(d, null, null, msg.k)` — the
+     * third null being the attacker. `Player.die` hands its source to
+     * `onPlayerDeath`, which is what names the killer on the death card and
+     * credits the kill, so a joining player cut down by a Sith Master died to
+     * nobody at all for the whole life of the protocol.
+     *
+     * Both directions, because they are two different lookups: an enemy is an
+     * id the snapshot already agreed on, and a player is the awkward one — the
+     * host's own Player answers to 'local' on the host and is a RemoteAvatar
+     * keyed by the host's peer id everywhere else.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const P = await import('../../src/game/Player.js');
+    const { host, client, pump, seen } = await H.bootPair({ level: 'colosseum' });
+    pump(0.4);
+    const peer = host.remotes.get('PEER');
+    assert(peer, 'the host has no body for the joining player');
+    const e = host.spawnEnemy('acolyte', new THREE.Vector3(0, 0, 20));
+    e.id = 'namedKiller';
+    pump(0.3);   // the body has to have reached the guest before it can be named
+
+    let killer = 'nobody';
+    client.onPlayerDeath = (p, src) => { killer = src === null || src === undefined ? 'nobody' : src.id; };
+    client.player.hp = 4;
+    peer.damage(50, null, e, 'saber');
+    pump(0.2);
+    assert(!client.player.alive, 'the guest survived a 50 hp blow on 4 hp — the hit never arrived');
+    assert(killer === 'namedKiller',
+      `the joining player was killed by "${killer}" — the death card and the kill feed have nobody to name`);
+
+    /* …and a PLAYER's kill, which needs the host's own body to be findable by a
+     * name the guest knows it under. */
+    const duel = P.pvpRules({ pvp: true, duelRounds: 3, duelHealth: 150 });
+    host.rules = duel; client.rules = duel;
+    host.player.team = P.SIDES[0]; peer.team = P.SIDES[1]; client.player.team = P.SIDES[1];
+    client.player.alive = true; client.player.hp = 4; client.player.invuln = 0;
+    killer = 'nobody';
+    peer.damage(50, null, host.player, 'saber');
+    pump(0.2);
+    const named = seen.toClient.filter((m) => m.t === 'hit').map((m) => m.s);
+    assert(!client.player.alive, 'the guest survived a duellist\'s 50 hp blow on 4 hp');
+    assert(killer && killer !== 'nobody' && killer !== 'local',
+      `a duel kill named "${killer}" — 'local' is what the host calls its own body and nothing over `
+      + 'here answers to it');
+    assert(client.remotes.get(killer) === client.remotes.get('HOST'),
+      `the id on the wire (${killer}) is not the one the joining player draws the host under`);
+    host.unload(); client.unload();
+    return `killed by an enemy: "namedKiller"; killed by a player: "${killer}"; ids on the wire ${JSON.stringify(named)}`;
+  });
+
   check('co-op: a friend\'s kill is credited to the friend', async () => {
     /**
      * `applyClaim` passed `null` as the damage source and `onEnemyKilled`
@@ -782,7 +1345,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const e = world.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
     const feed = [];
@@ -814,7 +1377,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const sent = [];
     world.attachNet({ connected: true, isHost: true, broadcast() {}, sweep() {},
       toPeer(id, m) { sent.push([id, m]); }, toHost() {} }, 'host');
@@ -848,14 +1411,14 @@ export async function run({ check, assert }) {
      * CLEAR announcements, `score += 500 * w`, the 8 hp and 0.35 flow every
      * player gets for surviving one — and Insight, whose single earning path is
      * `_earnInsight` installed on `onWaveClear`. So a client earned ZERO
-     * Insight for a whole session: the Constellation was a dead screen, no star
+     * Insight for a whole session: the LivingForce was a dead screen, no star
      * could ever be lit, and they were strictly weaker than the host by 8 hp
      * per wave for as long as they played.
      *
      * The signal is already on the wire as an edge in `w`/`act`.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const said = [];
     world.onNotify = (t) => said.push(t);
@@ -871,7 +1434,7 @@ export async function run({ check, assert }) {
     assert(said.includes('WAVE CLEAR'), 'the client never hears a wave clear');
     assert(world.communion.insight > insight0,
       `the client earned ${world.communion.insight - insight0} Insight over a cleared wave — the whole `
-      + 'Constellation is unreachable for anybody who joins');
+      + 'LivingForce is unreachable for anybody who joins');
     assert(p.hp === hp0 + 8, `the client healed ${p.hp - hp0} of the 8 hp a survived wave pays`);
     assert(p.flow > flow0, 'the client got no flow for surviving the wave');
 
@@ -902,7 +1465,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     let over = 0, down = 0;
     world.onGameOver = () => over++;
@@ -936,7 +1499,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     ally.position.set(6, 0, 6);
@@ -987,7 +1550,7 @@ export async function run({ check, assert }) {
      * messages kept arriving from bodies that were no longer on screen.
      */
     const H = await import('./_coop.mjs');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: false, broadcast() {}, toPeer() {}, toHost() {} }, 'client');
     const ids = [1, 2, 3, 4];
     const snap = () => ({ t: 'snapshot', bf: [], w: 1, act: 1, rem: 4, ic: 0, sc: 0,
@@ -1009,7 +1572,7 @@ export async function run({ check, assert }) {
     world.unload(); world.dispose?.();
 
     // A HOST may still restart, and must clear the id map with the list.
-    const { world: h } = await H.bootWorld({ level: 'arena' });
+    const { world: h } = await H.bootWorld({ level: 'colosseum' });
     h.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     h.spawnEnemy('trooper', new (await import('three')).Vector3(0, 0, 6));
     h._netEnemyIndex.set(99, h.enemies[0]);
@@ -1082,98 +1645,15 @@ export async function run({ check, assert }) {
     return 'the host\'s level/difficulty/mode live in a session object; only the player\'s own settings are saved';
   });
 
-  check('co-op: a client follows the host down a rung instead of standing in the old level', async () => {
-    /**
-     * A client's Run can never ascend — the rung signal is host-only by design
-     * — so the host's `start` broadcast is the ONLY thing that can take a
-     * joining player down the ladder. It was acted on `if (screens.state ===
-     * 'menu')` alone, so a client that was playing, paused, drafting or dead
-     * ignored it and stayed in the Intake receiving snapshots of bodies at
-     * Foundry coordinates: enemies inside walls and in mid-air, and an
-     * unrecoverable run.
-     */
-    const main = strip(await src('main.js'));
-    assert(main.includes("net.on('start'"), 'the start handler is gone');
-    const body = functionBody(main, "net.on('start'");
-    assert(!/screens\.state === 'menu'\s*\)\s*deploy\(/.test(body),
-      'the start message is still only acted on from the menu, so a client that is already playing '
-      + 'never follows the host to the next rung');
-    assert(/deploy\(/.test(body), 'the start message no longer deploys anything');
-    assert(/world\.dispose\(\)|world = null/.test(body),
-      'the old level is not torn down before the new one is built');
-
-    /**
-     * …AND THE LEVEL IT DEPLOYS INTO, WHICH THE GATE WAS NOT.
-     *
-     * Only `screens.state === 'menu'` came off. `deploy()` still fell through
-     * to its default argument — `startRun()`, which builds a brand new gauntlet
-     * Run at tier 0 — and `deploy`'s own next line is
-     * `const levelKey = run && !run.done ? run.rung.level : sessionOr('level')`,
-     * so that fresh run's rung beat the `msg.level` the handler had just put
-     * into `session` one line above. Evaluated against the real Run and DESCENT
-     * this was three of four rungs wrong: the host sends foundry, deeps, deeps
-     * and the client builds intake, intake, intake — a different building from
-     * everyone else while snapshots keep arriving at the host's coordinates.
-     *
-     * main.js cannot be imported under Node (it dereferences the DOM at module
-     * scope), so the four statements that decide the level are LIFTED FROM THE
-     * FILE and evaluated against the real `Run`. The lift refuses to run if any
-     * of them stops matching, which is what stops this from decaying into a
-     * regex that passes on a file it no longer describes. It is the strongest
-     * thing available here and it is stronger than reading the text: the answer
-     * below is computed by main.js's own arithmetic over the shipping ladder.
-     */
-    const raw = await src('main.js');
-    const lift = (re, what) => {
-      const m = raw.match(re);
-      assert(m, `main.js no longer contains ${what}, so this check is describing a file that is gone`);
-      return m[0];
-    };
-    const stSessionOr = lift(/const sessionOr = \(key\) => [^\n]*;/, 'sessionOr');
-    lift(/function deploy\(run = startRun\(\)\)/, "deploy's default-argument signature");
-    lift(/if \(sessionOr\('mode'\) !== 'gauntlet'\) return null;/, "startRun's gauntlet gate");
-    const stLevelKey = lift(/const levelKey = [^\n]*;/, "deploy's levelKey line");
-    const stDeployCall = lift(/deploy\((null)?\);\s*\}\);/, "the start handler's deploy call");
-
-    const { Run, DESCENT } = await import('../../src/game/Run.js');
-    const settings = { level: 'mustafar', difficulty: 'knight', mode: 'roguelite', order: 'jedi', species: 'human' };
-    let session = null;
-    // eslint-disable-next-line no-eval
-    const sessionOr = eval(`(${stSessionOr.replace('const sessionOr = ', '').replace(/;\s*$/, '')})`);
-    const startRun = () => (sessionOr('mode') !== 'gauntlet'
-      ? null : new Run({ identity: {}, mode: 'spire' }));
-    // `deploy(null)` and `deploy()` are not the same call: a default parameter
-    // fires on `undefined` only, so an explicit null is what makes levelKey
-    // fall through to the level the host actually sent.
-    const passesNull = /deploy\(null\)/.test(stDeployCall);
-    const buildFor = (msg) => {
-      session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
-      const run = passesNull ? null : startRun();
-      // eslint-disable-next-line no-eval
-      return eval(`(() => { ${stLevelKey} return levelKey; })()`);
-    };
-
-    const host = new Run({ identity: {}, mode: 'spire' });
-    assert(DESCENT.length >= 4, `the Descent is ${DESCENT.length} rungs long — this check is calibrated on four`);
-    const wrong = [];
-    for (let rung = 0; rung < 4; rung++) {
-      const sent = host.rung.level;
-      const built = buildFor({ level: sent, difficulty: 'knight', mode: 'gauntlet' });
-      if (built !== sent) wrong.push(`rung ${rung}: host '${sent}' → client '${built}'`);
-      host.ascend();
-    }
-    assert(!wrong.length,
-      `${wrong.length} of 4 rungs of a co-op Descent put the joining player in a different level from `
-      + `the host — ${wrong.join('; ')}. The level is not on the wire anywhere else, and applySnapshot `
-      + 'writes the host\'s absolute coordinates into whatever terrain the client happens to have.');
-    // …and every other mode was always fine, because startRun returns null there.
-    assert(buildFor({ level: 'kamino', difficulty: 'knight', mode: 'waves' }) === 'kamino',
-      'a co-op client no longer follows the host outside the gauntlet either');
-    return 'a start from any state redeploys into the level the host is standing in — 4 of 4 rungs of '
-      + 'the Descent, and every other mode';
-  });
-
-  /* ══ the buffer, and the shape World assumes ═══════════════════════════ */
+  /* A CLIENT FOLLOWING THE HOST DOWN A RUNG was pinned here, and there are no
+   * rungs any more — the Descent is deleted. The defect it caught survives the
+   * mode though, and is worth the sentence: `deploy()` fell through to its
+   * default argument on a joining client, which built a run of its OWN and
+   * loaded that run's level instead of the one the host had just sent. Any
+   * future mode that carries the level in the session rather than in settings
+   * walks back into it, which is why `deploy(null)` vs `deploy()` is called
+   * out in main.js's own comment rather than only here.
+   */
 
   check('co-op: the interpolation window follows the connection instead of a constant', async () => {
     /**
@@ -1185,7 +1665,7 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     const r = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
 
     let t = 0;
@@ -1220,7 +1700,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const THREE = await import('three');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     ally.position.set(2, 0, 8);
@@ -1408,7 +1888,7 @@ export async function run({ check, assert }) {
     const H = await import('./_coop.mjs');
     const { RemoteAvatar } = await import('../../src/net/Net.js');
     const { boonById } = await import('../../src/game/Waves.js');
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
     const ally = new RemoteAvatar(world, { id: 'PEER', name: 'ALPHA' });
     world.players.push(ally); world.remotes.set('PEER', ally);
@@ -1470,7 +1950,7 @@ export async function run({ check, assert }) {
     const { RemoteAvatar } = await import('../../src/net/Net.js');
     const { SIDES, CO_OP_RULES, pvpRules } = await import('../../src/game/Player.js');
 
-    const { world } = await H.bootWorld({ level: 'arena' });
+    const { world } = await H.bootWorld({ level: 'colosseum' });
     assert(!world.rules || !world.rules.friendlyFire,
       'a co-op world boots with friendly fire already on');
 

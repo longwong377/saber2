@@ -1,5 +1,5 @@
 /**
- * SABER — what the fight says about itself.
+ * BATTLEFRONT BORZ — what the fight says about itself.
  *
  * Two complaints, one system. The game was silent about the player's own body
  * — you could swing a metre of plasma through four people, fall six metres onto
@@ -54,6 +54,30 @@ export const QUIP_GAP = 4.5;
 export const EFFORT_GAP = 0.85;
 /** Seconds between anything the ENEMIES say, across all of them. */
 export const ENEMY_GAP = 0.45;
+/**
+ * …AND A SEPARATE, SHORTER BUDGET FOR THE BATTLE.
+ *
+ * Player note #21's last sentence is "I want to hear their screams and cheers,
+ * in general make the game MORE AUDIBLE as far as voices", and the shared 0.45 s
+ * enemy budget is what would silently refuse most of it: a Force push that
+ * throws six bodies at once is six `flung` calls on one frame, and five of them
+ * would be swallowed and thrown away by the same budget that is meant to stop
+ * the room chattering.
+ *
+ * So a throw and a cheer are on their OWN budget, and it is short. That is not
+ * a hole in the rate limit, it is the recognition that the limit was written
+ * for lines the room says about ITSELF — an alarm, a panic call, idle banter —
+ * where one is representative and six are noise. A body being flung is a thing
+ * the PLAYER just did, one per body, and hearing only one of six is hearing the
+ * power wrong. 0.14 s lets a six-body push produce four or five voices stacked
+ * over each other, which is what a six-body push sounds like.
+ *
+ * `AudioEngine.speak`'s own hard cap of three concurrent utterances is still
+ * under all of it, so this cannot become a wall of sound.
+ */
+export const BATTLE_GAP = 0.14;
+/** Speed a body has to gain in one frame to have been THROWN rather than to be running. */
+const FLUNG_SPEED = 8.5;
 /** …and how often a droid is allowed to say nothing in particular. */
 export const CHATTER_GAP = 6.5;
 /** A kill inside this many seconds of the last one extends the streak. */
@@ -141,6 +165,7 @@ export class Announcer {
     this.quipT = 0;
     this.effortT = 0;
     this.enemyT = 0;
+    this.battleT = 0;
     this.chatterT = CHATTER_GAP;
     this.streak = 0;
     this.streakT = 0;
@@ -193,7 +218,7 @@ export class Announcer {
     if (!(dt > 0)) return;
     const settings = world?.settings || {};
     this._mixer(settings);
-    this.quipT -= dt; this.effortT -= dt; this.enemyT -= dt;
+    this.quipT -= dt; this.effortT -= dt; this.enemyT -= dt; this.battleT -= dt;
     if (this.streakT > 0 && (this.streakT -= dt) <= 0) this.streak = 0;
     if (this.returnT > 0 && (this.returnT -= dt) <= 0) this.returns = 0;
     if (this.chamberT > 0 && (this.chamberT -= dt) <= 0) this.chamberRun = 0;
@@ -379,9 +404,66 @@ export class Announcer {
         this._say(this.voice(settings), 'boss', player?.chest || null, 1.0, settings.voiceLines !== false);
       }
 
+      /**
+       * THROWN — player note #21: "I want to hear the enemies scream as they get
+       * force thrown or killed."
+       *
+       * OBSERVED, not told, and that is the whole reason this is six lines
+       * rather than an edit to every power in Player.js. `forcePush` ends in
+       * `e.applyKnockback(...)`, `forcePull` in a yank, `unleash` in a repulse
+       * and a grip in a hurl — four call sites, in a file this lane does not
+       * own, and a fifth would be added next month and forget to speak. What
+       * every one of them has in common is the only thing that matters here: the
+       * body's speed goes up by a great deal in one frame.
+       *
+       * 8.5 m/s of GAIN, and the number is chosen against what a body can do to
+       * itself. The fastest archetype in the roster runs at 6.2 m/s and reaches
+       * it over about a second (`_move` damps toward the wish at rate 8), so the
+       * most a running body gains in one 60 Hz frame is on the order of 0.1 m/s.
+       * A push applies 20·k·P along the aim with a 7·k+3 lift — twenty-odd m/s,
+       * instantly. There is a factor of a hundred between the two, so this
+       * cannot fire on a droid breaking into a run and cannot miss a throw.
+       *
+       * Gated on being ALIVE: a body that is thrown after it is dead is a
+       * ragdoll being kicked, and a corpse does not scream. A droid does not
+       * either — it has no throat and the whole point of ENEMY_VOICES is that a
+       * droid's tell is an inharmonic partial rather than a larynx — so a droid
+       * that is flung gives its `alarm`, which through a ring-modulated square
+       * at cadence 1.9 is exactly the panicked chirp the source material has.
+       */
+      const sp = e.velocity ? e.velocity.length() : 0;
+      /* `st.speed !== undefined` is the first-frame guard and it is load-bearing
+       * rather than defensive: a body delivered by a dropship is put down with
+       * the ship's own velocity on it, so its FIRST reading is already 20 m/s
+       * and a bare `sp - (st.speed || 0)` would have every arrival scream on the
+       * frame it landed. The gain is only meaningful once there is a previous
+       * frame to gain over. */
+      if (!e.dead && st.speed !== undefined && sp - st.speed > FLUNG_SPEED) {
+        const spec = this._enemySpec(e);
+        this._battleLine(spec, spec.ring ? 'alarm' : 'flung', e.position, on);
+      }
+      st.speed = sp;
+
       if (e.dead && !st.dead) {
         st.dead = true;
         this.deaths.push(3.5);
+        /**
+         * …AND SOMEBODY CHEERS. The other half of the same sentence: "or cheer
+         * when someone dies."
+         *
+         * WHO cheers is the whole of it, and it is derived rather than branched
+         * on a mode: whoever is on the OPPOSITE side of the body that just fell,
+         * is near enough to have seen it, and is alive. In an ordinary wave that
+         * is nobody — there is nothing on your side but you — and this costs one
+         * loop over a list that is already being walked. In Command it is your
+         * own army, which is what makes a kill feel like a kill: you cut down a
+         * B2 and eleven clones behind you shout about it.
+         *
+         * It also works in the other direction, which is the part that makes it
+         * a battlefield rather than a cheer squad: a trooper of yours falls and
+         * the DROIDS cheer. Nothing here knows which side the player is on.
+         */
+        this._cheerFor(e, ear, on);
         /**
          * A squad breaking is a WANT, not an event.
          *
@@ -492,10 +574,36 @@ export class Announcer {
    */
   _enemySpec(enemy) {
     const body = bodyOf(enemy);
+    const A = enemy?.A || {};
     if (body.walker) return ENEMY_VOICES.walker;
     if (body.beast) return ENEMY_VOICES.beast;
-    if (body.droid) return ENEMY_VOICES.droid;
-    if (body.trooper) return ENEMY_VOICES.trooper;
+    /**
+     * TWO MORE THROATS, AND BOTH SPLITS ARE DERIVED FROM A FIELD THAT MEANS
+     * SOMETHING — never from a list of type names, which is the defect this
+     * method's own header is four hundred words about.
+     *
+     * A DROID THAT FIGHTS WITH A BLADE IS NOT A B1. `ENEMY_VOICES.droid` is a
+     * B1: f0 300, cadence 1.9, a 2.71 ring partial, and its whole character is
+     * that it sounds SILLY. That is exactly right for the body it was written
+     * for and exactly wrong for a BX commando droid, a MagnaGuard or the IG
+     * general, which are the CIS bodies meant to frighten you. `A.melee` is the
+     * real distinction and it is already load-bearing everywhere else in the
+     * game — it is what puts a body through `DuelBrain`.
+     *
+     * (That change reaches `bodyguard` too, and it is an improvement rather
+     * than a side effect. This method's header records the 1050 hp IG general
+     * "screaming with a man's throat" as a bug and the fix as sending it to the
+     * droid voice; the honest answer was always that a general is neither, and
+     * `commando` is the machine that is taken seriously.)
+     *
+     * AN OFFICER IS A TROOPER WHO COMMANDS. `commandAura` is the field that
+     * says a body carries the rally ring — it is read by `enlistBody` to install
+     * the modifier and it is what makes the fifth rung of both ladders worth
+     * buying. A body whose job is to make the line around it better is a body
+     * that SHOUTS, and this is the one place in the game that can say so.
+     */
+    if (body.droid) return A.melee ? ENEMY_VOICES.commando : ENEMY_VOICES.droid;
+    if (body.trooper) return A.commandAura ? ENEMY_VOICES.officer : ENEMY_VOICES.trooper;
     return ENEMY_VOICES.sith;
   }
 
@@ -521,6 +629,54 @@ export class Announcer {
     if (!dur) return false;
     this.effortT = EFFORT_GAP + dur;
     this.stats.efforts++;
+    return true;
+  }
+
+  /**
+   * SOMEBODY ON THE OTHER SIDE OF `fallen` CHEERS — the nearest one who saw it.
+   *
+   * Nearest rather than random for the same reason the panic call picks the
+   * nearest: a cheer from a body forty metres behind a rock is a sound with no
+   * source, and the whole point of positional voice is that you can look toward
+   * it. 30 m is the same window the panic call uses.
+   *
+   * `team` and nothing else decides who is opposed, so this needs no mode
+   * branch and cannot disagree with `canHarm` — it is the same field.
+   */
+  _cheerFor(fallen, ear, enabled) {
+    const list = this._level?.enemies;
+    if (!list || fallen.team === undefined || !ear) return false;
+    let best = null, bestD = 30 * 30;
+    for (const e of list) {
+      if (!e || e.dead || !e.position || e.team === undefined) continue;
+      if (e.team === fallen.team) continue;
+      const d = e.position.distanceToSquared(fallen.position);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return false;
+    // Only if the player is close enough to be in the moment. A cheer eighty
+    // metres away is a sound the mixer will place and the player will not
+    // connect to anything.
+    if (best.position.distanceToSquared(ear) > 46 * 46) return false;
+    return this._battleLine(this._enemySpec(best), 'cheer', best.position, enabled);
+  }
+
+  /**
+   * A LINE THE BATTLE ITSELF MAKES — a body flung, an army cheering.
+   *
+   * Its own budget, and see the note on BATTLE_GAP for why that is a decision
+   * rather than a loophole. It deliberately does NOT touch `enemyT`, so a push
+   * that throws six droids cannot also silence the alarm call of the seventh —
+   * those are two different things the room is saying and they are not competing
+   * for the same air.
+   */
+  _battleLine(spec, kind, pos, enabled) {
+    if (!enabled) { this.stats.suppressed++; return false; }
+    if (this.battleT > 0) { this.stats.suppressed++; return false; }
+    const dur = this.audio.speak(spec, kind, { pos, gain: 0.95 });
+    if (!dur) return false;
+    this.battleT = BATTLE_GAP;
+    this.stats.enemyLines++;
     return true;
   }
 

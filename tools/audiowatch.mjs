@@ -1,5 +1,5 @@
 /**
- * SABER — why does the sound stop?
+ * BATTLEFRONT BORZ — why does the sound stop?
  *
  * "The sound is really buggy and totally silent in most situations, comes in
  * and out." That is not a thing you can read your way to. leakwatch.mjs proved

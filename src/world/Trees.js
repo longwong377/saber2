@@ -1,5 +1,5 @@
 /**
- * SABER — trees you can cut down, and trees that come down on each other.
+ * BATTLEFRONT BORZ — trees you can cut down, and trees that come down on each other.
  *
  * "Fellable trees with chain reactions, Valheim-style: cut a trunk, the tree
  *  falls in the direction the cut implies, and a falling tree knocks over what
@@ -65,6 +65,9 @@
 import * as THREE from 'three';
 import { TOUGHNESS } from '../game/Combat.js';
 import { clamp, makeRng, TAU, lerp } from '../engine/MathUtil.js';
+/* `Prop` is what a log becomes when the player walks up to it — see `_realise`.
+ * Props.js does not import this file, so the edge is one-way. */
+import { Prop } from './Props.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
@@ -123,6 +126,37 @@ const REST = Math.PI * 0.5;
 const RING_PLAYER = 11;
 const RING_ENEMY = 0;
 const COLLIDER_H = 9;
+
+/**
+ * A LOG YOU CAN PICK UP, AND WHY IT IS ONLY EVER A FEW OF THEM.
+ *
+ * "Can't pick up the trees either, it's like they're not real." That is player
+ * note #8 at the tree — the same rule `tools/checks/physicality.mjs` enforces
+ * everywhere else — and it is the one complaint in this file the instancing
+ * argument at the top genuinely could not answer: a felled tree is a MATRIX
+ * WRITE, and the Force's grip searches `world.physics.bodies`, so there was
+ * nothing there to take hold of. Three draw calls for eighteen hundred trees is
+ * what makes the wood possible and it is also what made every log furniture.
+ *
+ * So a log becomes a REAL OBJECT when the player is close enough to reach for
+ * it, and goes back to being an instance when they leave. `LIFT_RING` is 9 m —
+ * the Force reach is 22 m but a log you grip from across a clearing is a log
+ * you never walked up to, and the point of this is that the thing you just cut
+ * down is a thing. `LIFT_CAP` is 4, which is the draw-call budget: four logs is
+ * four calls on a level that spends 98, and it is also more logs than a player
+ * can hold, throw or stand on at once.
+ *
+ * THE MASS IS CAPPED AT 900 kg AND THAT IS A DECISION RATHER THAN A CHEAT. A
+ * 20 m trunk 0.5 m through is eleven tonnes of green wood, and `force.mjs`
+ * holds one rule about the grip: the highest lift cap in the game is 1,760 kg
+ * and the heaviest body in the roster has to fit under it, because a thing the
+ * Force cannot move does not read as heavy — it reads as a power that has
+ * stopped working. A log is the largest object a player will ever try to lift,
+ * so it is the one that would break that promise first.
+ */
+const LIFT_RING = 9;
+const LIFT_CAP = 4;
+const LOG_MASS_CAP = 900;
 /** Grid cell for the standing-tree index, in metres. */
 const CELL = 12;
 /** How often the ring is rebuilt. At a 4.6 m/s walk that is 1.2 m of travel. */
@@ -161,8 +195,10 @@ export class Forest {
     this.stumpMesh = null;
     /** Indices currently falling — the only ones whose matrices are rewritten. */
     this.active = [];
-    /** Colliders laid down for trunks that have come to rest. */
-    this.logs = [];
+    /** Colliders laid down for trunks that have come to rest, by tree index. */
+    this.logs = new Map();
+    /** Down trees that have become real liftable objects: index → { prop, box }. */
+    this.real = new Map();
     /** Standing trunks that currently have a collider: index → static box. */
     this.live = new Map();
     /** Standing trunks by grid cell, so the ring is a lookup and not a scan. */
@@ -397,6 +433,151 @@ export class Forest {
       const box = this._standBox(i);
       if (box) this.live.set(i, box);
     }
+    this._syncLogs();
+  }
+
+  /**
+   * WHICH LOGS ARE REAL RIGHT NOW. Down trees inside `LIFT_RING` of a player
+   * become `Prop`s — cuttable, liftable, throwable, standable — and go back to
+   * being instances when the player walks away. See the note over the
+   * constants: this is the only way the three-draw-call forest and "you can
+   * pick up the trees" can both be true.
+   *
+   * A log the player is currently HOLDING or that has been moved is never taken
+   * back, because putting a thrown log back into the instance buffer would
+   * teleport it to where the tree fell.
+   */
+  _syncLogs() {
+    if (!this.world.physics?.add) return;
+    const D = this.data;
+    const players = (this.world.players || []).filter((p) => p && p.alive !== false);
+    // release the ones nobody is near, and the ones the blade has destroyed
+    for (const [i, rec] of this.real) {
+      if (rec.prop.dead) { this._release(i, true); continue; }
+      /* HAS IT ACTUALLY BEEN MOVED? On DISPLACEMENT and not on velocity, and
+       * the difference is the whole feature working or not: a log that has just
+       * been dropped by the solver has a velocity for a second or two, so
+       * latching on `velocity > 0` marked every log as moved, and a moved log
+       * is never given back — four fellings later the cap was full of logs
+       * nobody had touched and the fifth tree you cut was furniture again.
+       * Measured with `tools/_logprobe.mjs`: 3 of 4 latched on the velocity
+       * test having gone nowhere; 0 of 4 on this one. */
+      if (!rec.moved && rec.prop.body.position.distanceToSquared(rec.home) > 4) rec.moved = true;
+      const x = rec.moved ? rec.prop.body.position.x : D[i * F.N + F.X];
+      const z = rec.moved ? rec.prop.body.position.z : D[i * F.N + F.Z];
+      let near = false;
+      for (const p of players) {
+        const dx = p.position.x - x, dz = p.position.z - z;
+        if (dx * dx + dz * dz < (LIFT_RING + 6) * (LIFT_RING + 6)) { near = true; break; }
+      }
+      if (!near) this._release(i, false);
+    }
+    if (!players.length || this.real.size >= LIFT_CAP) return;
+    // …and realise the nearest down trees that are not real yet
+    for (let i = 0; i < this.count && this.real.size < LIFT_CAP; i++) {
+      const k = i * F.N;
+      if (D[k + F.STATE] !== DOWN || this.real.has(i)) continue;
+      for (const p of players) {
+        const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
+        if (dx * dx + dz * dz < LIFT_RING * LIFT_RING) { this._realise(i); break; }
+      }
+    }
+  }
+
+  /** Turn down tree `i` into a real object. */
+  _realise(i) {
+    const D = this.data, k = i * F.N;
+    const r = D[k + F.R];
+    const len = Math.max(1.0, D[k + F.H] - D[k + F.CUT]);
+    this.hinge(i, _v1);
+    this.tip(i, _v2);
+    const mid = _v3.copy(_v1).add(_v2).multiplyScalar(0.5).clone();
+    /* The log's own geometry, at its own size — the instanced trunk is a unit
+     * rod scaled per instance, and a Prop needs a mesh of its own. Six sides
+     * and two rings, exactly as the instance is, so the object the player picks
+     * up is the object that was lying there. */
+    const geo = taperedGeo(len, r, 0.52, 6, 2);
+    geo.translate(0, -len * 0.5, 0);          // about its middle, for the body
+    const mat = this.trunkMesh.material;
+    const mesh = new THREE.Mesh(geo, mat);
+    const t = D[k + F.TONE];
+    // the instance carried its tone as an instance colour; a lone mesh carries
+    // it as a vertex colour, or the log comes out a different wood from the
+    // stand it fell out of
+    const col = new Float32Array(geo.attributes.position.count * 3);
+    for (let v = 0; v < col.length; v += 3) { col[v] = t; col[v + 1] = t; col[v + 2] = t; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+    // lying down: the rod's +Y runs from hinge to tip
+    const axis = _v2.clone().sub(_v1).normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(UP, axis);
+    /* A chain of spheres down the axis is what the blade solver walks, so a log
+     * can be cut anywhere along its length rather than only at its middle. */
+    const spheres = [];
+    const N = Math.max(3, Math.min(9, Math.round(len / 2.2)));
+    for (let s = 0; s < N; s++) {
+      spheres.push({ c: new THREE.Vector3(0, (s / (N - 1) - 0.5) * len, 0), r: r * 1.05 });
+    }
+    const prop = new Prop(this.world, {
+      kind: 'log', mesh, toughness: this.toughness, hp: 90, weather: false,
+      grippable: true, spheres,
+      mass: Math.min(LOG_MASS_CAP, Math.PI * r * r * len * 700),
+      friction: 0.86, restitution: 0.04,
+      position: mid, quaternion: quat, centre: true,
+    });
+    prop.body.position.copy(mid);
+    prop.body.quaternion.copy(quat);
+    // the instanced copy steps aside, and so does the static box under it
+    _s.setScalar(0);
+    this.trunkMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
+    this.crownMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownMesh.instanceMatrix.needsUpdate = true;
+    const box = this.logs.get(i);
+    if (box) { this.world.physics?.removeStaticBox?.(box); this.logs.delete(i); }
+    this.world.addProp?.(prop);
+    this.real.set(i, {
+      prop, moved: false, home: mid.clone(),
+      // enough to lay the log's collider back down if the player walks away
+      box: box ? { c: box.center.clone(), he: box.halfExtents.clone(), q: box.quat?.clone?.() } : null,
+    });
+  }
+
+  /** Put log `i` back into the instance buffers. */
+  _release(i, destroyed) {
+    const rec = this.real.get(i);
+    if (!rec) return;
+    this.real.delete(i);
+    if (!destroyed) {
+      /* A LOG THE PLAYER MOVED GOES BACK WHERE IT NOW IS, not where the tree
+       * fell. The instance buffers are the authority for a down tree's pose, so
+       * handing one back without rewriting the record would teleport a log the
+       * player had just thrown twenty metres back to its stump — which is the
+       * single most obviously broken thing this could do. The record is
+       * rewritten from the body: the hinge is the log's own end, and the fall
+       * direction is its axis in plan. */
+      if (rec.moved) {
+        const D = this.data, k = i * F.N;
+        const len = Math.max(0.2, D[k + F.H] - D[k + F.CUT]);
+        const ax = _v1.set(0, 1, 0).applyQuaternion(rec.prop.body.quaternion);
+        const foot = _v2.copy(rec.prop.body.position).addScaledVector(ax, -len * 0.5);
+        D[k + F.X] = foot.x; D[k + F.Z] = foot.z;
+        D[k + F.Y] = foot.y - D[k + F.CUT];
+        const g = Math.hypot(ax.x, ax.z) || 1;
+        D[k + F.DX] = ax.x / g; D[k + F.DZ] = ax.z / g;
+        D[k + F.ANG] = Math.acos(clamp(ax.y, -1, 1));
+        rec.box = null;                      // its old collider is meaningless now
+      }
+      rec.prop.destroy?.();
+      if (rec.box) {
+        const b = this.world.physics?.addStaticBox?.(rec.box.c, rec.box.he, rec.box.q,
+          { friction: 0.86 });
+        if (b) this.logs.set(i, b);
+      }
+      this._writeTrunk(i); this._writeCrown(i);
+    }
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownMesh.instanceMatrix.needsUpdate = true;
   }
 
   /** Take a trunk's standing collider away — it is about to move. */
@@ -420,17 +601,39 @@ export class Forest {
     this.trunkMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
+  /**
+   * THE CANOPY, AND WHY IT MOVED UP THE TRUNK.
+   *
+   * "The trunk extends further out than the canopy, it looks weird." It did,
+   * and it was one number: the crown sat at 0.78 of the trunk's length with a
+   * half-height of 0.62 × spread, so on the median tree (13 m, r 0.42) the
+   * canopy's top reached 10.1 + 2.2 = 12.3 m and the trunk went on to 13.0 —
+   * three quarters of a metre of bare pole sticking out of the top of the
+   * foliage, on every tree in the wood, which is precisely what a tree does not
+   * do.
+   *
+   * 0.88 and 0.76. The crown's centre is 0.88 of the way up and its half-height
+   * is 0.76 of its spread, so the same tree now closes at 11.4 + 3.0 = 14.4 m
+   * against a 13.0 m trunk: the shaft is INSIDE the canopy by a metre and a
+   * half, at every size in the distribution, which is what was asked for. The
+   * spread went up with it — 9.4 × the butt radius rather than 8.5 — because a
+   * canopy that is taller and no wider is a bush.
+   *
+   * A FELLED tree keeps the tighter, lower figure: a crown that has hit the
+   * ground is crushed, and the difference is the cheapest way to tell a
+   * standing tree from a lying one at range.
+   */
   _writeCrown(i) {
     const k = i * F.N;
     const h = this.data[k + F.H], r = this.data[k + F.R];
     const len = Math.max(0.2, h - this.data[k + F.CUT]);
+    const down = this.data[k + F.STATE] === DOWN;
     this.hinge(i, _p);
     this.axis(i, AXIS);
-    // the canopy sits at 0.78 of the surviving trunk and rides it over
-    _p.addScaledVector(AXIS, len * 0.78);
+    _p.addScaledVector(AXIS, len * (down ? 0.80 : 0.88));
     _q.setFromUnitVectors(UP, AXIS);
-    const spread = r * (this.data[k + F.STATE] === DOWN ? 7.0 : 8.5);
-    _s.set(spread, spread * 0.62, spread);
+    const spread = r * (down ? 7.6 : 9.4);
+    _s.set(spread, spread * (down ? 0.58 : 0.76), spread);
     this.crownMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
@@ -448,14 +651,34 @@ export class Forest {
       if (D[k + F.STATE] !== STANDING) continue;
       const dx = D[k + F.X] - near.x, dz = D[k + F.Z] - near.z;
       if (dx * dx + dz * dz > r2) continue;
-      /* THE CAPSULE STOPS AT 3.2 m, and that is the mechanic rather than an
-       * optimisation. A blade can only reach the bottom of a tree, so that is
-       * the only part of it that may be offered as a target — a capsule up the
-       * whole trunk would let a player standing on a rock cut a tree through
-       * its canopy, and would put the CUT HEIGHT, which decides how tall the
-       * stump is, wherever the blade happened to be. */
+      /* THE CAPSULE IS THE WHOLE TRUNK NOW, and the note that used to stand
+       * here defended the opposite:
+       *
+       *   "THE CAPSULE STOPS AT 3.2 m, and that is the mechanic rather than an
+       *    optimisation. A blade can only reach the bottom of a tree… a capsule
+       *    up the whole trunk would let a player standing on a rock cut a tree
+       *    through its canopy, and would put the CUT HEIGHT, which decides how
+       *    tall the stump is, wherever the blade happened to be."
+       *
+       * It is kept because it names the two consequences correctly and then
+       * calls them faults. THE PLAYER CALLED THEM THE FEATURE: "the trees can't
+       * be cut anywhere, only at the bottom, so that needs to be fixed — needs
+       * to be sliceable anywhere." A blade that stops mattering above chest
+       * height on the one object in the game built to be cut is exactly the
+       * "it's like it's not there" complaint, and a player who jumps, or stands
+       * on a log, or Force-leaps into a canopy and swings has every right to
+       * take the top off a tree.
+       *
+       * So the capsule runs the full standing length and the cut height goes
+       * wherever the blade put it — see the clamp in `fell`, which now allows
+       * 92% of the height instead of 60%. A high cut leaves a tall spar as its
+       * "stump" (`stumpMesh` is drawn from the ground to the cut) and drops the
+       * crown and whatever trunk was over it, which is what lopping a tree
+       * does. Nothing about the cost changed: this list is already culled to
+       * trunks within `reach` of the blade, and a capsule is two points.
+       */
       const y0 = D[k + F.Y] + 0.15;
-      const y1 = D[k + F.Y] + Math.min(3.2, D[k + F.H] * 0.6);
+      const y1 = D[k + F.Y] + Math.max(0.5, D[k + F.H] - 0.2);
       out.push({
         name: 't' + i, tree: i, forest: this,
         p0: new THREE.Vector3(D[k + F.X], y0, D[k + F.Z]),
@@ -523,7 +746,15 @@ export class Forest {
     const D = this.data;
     if (D[k + F.STATE] !== STANDING) return false;
     const h = D[k + F.H];
-    D[k + F.CUT] = clamp(cutH, 0.25, Math.max(0.3, h * 0.6));
+    /* 0.92 OF THE HEIGHT, not 0.6 — the other half of "sliceable anywhere".
+     * The cap is not zero-cost: what stands after a cut is `stumpMesh` scaled
+     * to the cut height, and what falls is scaled to `h − cut`, so a cut at
+     * 0.99 h would drop a 20 cm disc and leave the whole tree standing, which
+     * reads as a failed swing rather than as a cut. At 0.92 the shortest thing
+     * this can fell off a 7.5 m sapling is 60 cm, which still visibly goes
+     * over. Below, the floor stays at 0.25 m: a cut at the very ground has no
+     * hinge to pivot on. */
+    D[k + F.CUT] = clamp(cutH, 0.25, Math.max(0.3, h * 0.92));
     const m = Math.hypot(dx, dz) || 1;
     D[k + F.DX] = dx / m;
     D[k + F.DZ] = dz / m;
@@ -715,7 +946,7 @@ export class Forest {
       const r = D[k + F.R];
       const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, len * 0.5), q,
         { friction: 0.86 });
-      if (box) this.logs.push(box);
+      if (box) this.logs.set(i, box);
     }
     const fx = this.world.particles;
     if (fx) {
@@ -734,6 +965,11 @@ export class Forest {
     // trees on it. (`World.unload` clears the whole array either way.)
     for (const box of this.live.values()) this.world.physics?.removeStaticBox?.(box);
     this.live.clear();
+    // …and the logs that had become real objects go with it, for the same
+    // reason: they are the forest's, not the level's.
+    for (const rec of this.real.values()) if (!rec.prop.dead) rec.prop.destroy?.();
+    this.real.clear();
+    this.logs.clear();
     this._cells.clear();
     for (const m of [this.trunkMesh, this.crownMesh, this.stumpMesh]) {
       if (!m) continue;
@@ -757,21 +993,43 @@ export class Forest {
  * fan nobody sees. This is a ring-by-ring lathe with a flat cap at the top —
  * the top cap IS seen, because it is the cut face — and none at the bottom.
  */
-function taperedGeo(h, r0, top, sides = 7, rings = 3) {
+/**
+ * A tapered trunk, standing on its own origin, with a BUTTRESS FLARE at the
+ * foot.
+ *
+ * THE FLARE IS THE REFERENCE'S SIGNATURE and it is what a straight rod does not
+ * have. In `drowned-wood/dagobah.jpeg` and every Kashyyyk frame the trunks do
+ * not meet the ground, they SPREAD into it — a skirt a third again as wide as
+ * the shaft in the bottom eighth of the tree, which is what a shallow-rooted
+ * tree in saturated ground grows. It is also the cheapest possible fix for
+ * "the trees look like poles": one extra ring of vertices, `sides` more
+ * triangles a tree, no extra draw call and no extra instance.
+ *
+ * `t` is remapped rather than the ring count raised, so the flare costs one
+ * ring and the shaft keeps the rings it had.
+ */
+function taperedGeo(h, r0, top, sides = 7, rings = 3, flare = 1.42) {
   const pos = [], nrm = [], uv = [], idx = [];
-  for (let ry = 0; ry <= rings; ry++) {
-    const t = ry / rings;
-    const y = t * h, r = lerp(r0, r0 * top, t);
+  for (let ry = 0; ry <= rings + 1; ry++) {
+    /* ring 0 is the flared foot at y = 0; ring 1 is where the shaft proper
+     * starts, an eighth of the way up; the rest are the shaft's own. */
+    const t = ry === 0 ? 0 : (ry - 1) / rings * 0.875 + 0.125;
+    const y = t * h;
+    const r = ry === 0 ? r0 * flare : lerp(r0, r0 * top, (t - 0.125) / 0.875);
     for (let s = 0; s <= sides; s++) {
       const a = (s / sides) * TAU;
+      /* The flare is LOBED rather than conical: a buttress root is three or
+       * four fins, not a skirt, and the difference is what the ink pass draws
+       * at the foot of every trunk in the wood. */
+      const fin = ry === 0 ? 1 + Math.cos(a * 3 + s * 0.0) * 0.22 : 1;
       const cx = Math.cos(a), cz = Math.sin(a);
-      pos.push(cx * r, y, cz * r);
+      pos.push(cx * r * fin, y, cz * r * fin);
       nrm.push(cx, 0.18, cz);
       uv.push(s / sides * 2.4, t * 2.2);
     }
   }
   const row = sides + 1;
-  for (let ry = 0; ry < rings; ry++) {
+  for (let ry = 0; ry < rings + 1; ry++) {
     for (let s = 0; s < sides; s++) {
       const a = ry * row + s, b = a + 1, c = a + row, d = c + 1;
       idx.push(a, c, b, b, c, d);

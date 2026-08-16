@@ -31,7 +31,7 @@ import { extname, join, resolve, normalize } from 'node:path';
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
-const LEVEL = flag('level', 'arena');
+const LEVEL = flag('level', 'colosseum');
 const OUT = join(ROOT, '.smoke', 'lane-sky');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',

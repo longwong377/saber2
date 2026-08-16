@@ -1,5 +1,5 @@
 /**
- * SABER — duelling.
+ * BATTLEFRONT BORZ — duelling.
  *
  * V1 gave duellists a swing on a timer. You could parry one, but only by luck,
  * because nothing about the attack was legible before it landed. A skill
@@ -107,8 +107,40 @@ export const ATTACKS = {
   slashL:     { label: 'slash',      from: D(-0.95, 0.3, -0.55), to: D(0.85, 0.05, -0.6), tier: 'light', damage: 1.0 },
   riposteCut: { label: 'wrist cut',  from: D(0.5, 0.55, -0.75),  to: D(-0.3, -0.2, -0.95), tier: 'light', damage: 0.85 },
   rising:     { label: 'rising cut', from: D(0.35, -0.8, -0.6),  to: D(-0.25, 0.85, -0.6), tier: 'light', damage: 1.05 },
-  thrust:     { label: 'thrust',     from: D(0.1, 0.15, -0.95),  to: D(0, 0.05, -1.0), tier: 'light', damage: 1.15, reach: 0.42, lunge: 3.4 },
-  lunge:      { label: 'lunge',      from: D(0, 0.2, -0.9),      to: D(0, 0.0, -1.0), tier: 'unblockable', damage: 1.6, reach: 0.5, lunge: 7.5 },
+  /* THE TWO THAT DREW A SPOKE, AND IT IS THE `spin` DEFECT ONE STEP SHORT OF
+   * TOTAL. `Telegraph.shape` slerps from `from` to `to`; the note below records
+   * what `to === from` does, and these two were 8.5° and 12.5° apart. Measured
+   * as the arc the shipped Telegraph actually draws, against the width of the
+   * same ribbon — the blade's own length, which is what the ghost is thick in:
+   *
+   *     attack      span     drawn arc   ribbon width   arc/width
+   *     thrust       8.5°      0.29 m       1.19 m        0.25
+   *     lunge       12.5°      0.43 m       1.19 m        0.36
+   *     riposteCut  65.1°      2.11 m       1.19 m        1.77     ← narrowest real arc
+   *     spin       154.8°      4.99 m       1.19 m        4.18
+   *
+   * A shape five times wider than it is long is not an arc, it is a spoke — the
+   * exact word the `spin` note uses for the picture `to === from` drew. Two
+   * spokes 4° apart are also indistinguishable FROM EACH OTHER, and `thrust` is
+   * 33% of a Jedi Master's declared attacks and 27% of a Sentinel's, so a third
+   * of everything the game's two most-fought duellists throw arrived as the
+   * same unreadable line. `answerable.mjs` passed it because `chambersWith`
+   * normalises the travel, which is the maths; the player reads the picture.
+   *
+   * A THRUST IS STILL A THRUST. What makes one is not a short arc — it is where
+   * the point ENDS (dead on the centre line, where every cut in this table ends
+   * somewhere off it), the `reach` that drives the hands out past a slash's, and
+   * the `lunge` that carries the body behind it. All three are untouched. What
+   * changed is the PREPARATION, which is the half the telegraph is drawing: the
+   * blade is chambered off the line and comes to the centre, which is what a
+   * thrust does with a real arm. High inside line for the thrust, low outside
+   * for the lunge — 55.9° and 53.0°, arc/width 1.52 and 1.44 — so the two no
+   * longer draw the same picture as each other either. The two corners were
+   * picked by measuring: the closest pair of same-tier ghosts on the roster
+   * went from 0.97 blade-widths apart to 1.05, so nothing else in the table was
+   * crowded to make room for these. */
+  thrust:     { label: 'thrust',     from: D(-0.62, 0.62, -0.55), to: D(0, 0.05, -1.0), tier: 'light', damage: 1.15, reach: 0.42, lunge: 3.4 },
+  lunge:      { label: 'lunge',      from: D(0.34, -0.72, -0.6), to: D(0, 0.0, -1.0), tier: 'unblockable', damage: 1.6, reach: 0.5, lunge: 7.5 },
   /* THE SPIN CUT'S `to` USED TO EQUAL ITS `from`, and that made the one heavy
    * attack in the game impossible to answer. `chambersWith` builds the attack's
    * travel as `to − from`, which was the zero vector; three's `normalize()`
@@ -202,6 +234,56 @@ export const ATTACKS = {
  */
 
 /**
+ * THE DEADLOCK THE LOOP ABOVE COULD NOT BREAK — and the six bodies it shut out.
+ *
+ * `_closing` is written for a duellist that has DECLARED, and it is right to
+ * be: a body that presses forward with no arc on screen is a body walking into
+ * you with nothing to read. But it returns 0 unless `phase` is `windup` or
+ * `strike`, and a duellist only ever enters `windup` from the guard branch's
+ * `inRange = dist < reachOut`. So the two halves lock:
+ *
+ *     you must be attacking to be allowed to close
+ *     you cannot attack because you are not close
+ *
+ * A body whose own top speed is under the player's walk can never break that
+ * on its own. `Enemy._move` drives straight down the line whenever `dist > far`
+ * — full speed, no circling — and full speed is 4.4 m/s for a Temple Guardian
+ * and 4.6 for a Sentinel against a 4.6 m/s walk. The gap does not shrink, so
+ * the trigger never fires, so the loop that exists to fix exactly this never
+ * runs. Measured, real Player against a real body, knife range, 30 s, Knight —
+ * hp/s dealt standing still, then walking backwards, and attacks DECLARED
+ * while the player backed away:
+ *
+ *     sentinel   4.6   2.26 → 0.11    0 declared
+ *     guardian   4.4   3.56 → 0.11    0
+ *     sparring   3.4   0.48 → 0.00    0
+ *     master     5.2  10.11 → 0.57    8
+ *     magna      4.8   3.33 → 2.10    8
+ *     bodyguard  4.4   5.31 → 6.61   19        ← a 1050 hp BOSS
+ *
+ * Three of the roster's nine sabered bodies declared NOTHING for thirty
+ * seconds, which is the same shutout the note above this one is about, arrived
+ * at by a different route: there it was a scale factor, here it is a footrace
+ * the body cannot win.
+ *
+ * So there are two presses and they answer two different questions.
+ *
+ *   `_closing`  I have committed to an arc and there is ground between it and
+ *               the body it was declared against. Capped at CLOSE_CAP.
+ *   `_chase`    the body I am fighting is running, and I am keeping my measure.
+ *               Gated on the target's own retreat, capped at CHASE_CAP, and it
+ *               stops dead at `spacing[0]` — the distance the form fights at.
+ *
+ * The property `_closing` was written to protect survives that intact, and it
+ * is worth stating in the form it now takes: THE ONLY THING THAT CAN TAKE A
+ * DUELLIST INSIDE THE BAND ITS FORM FIGHTS AT IS A DECLARED ATTACK. A body that
+ * has drawn no arc can close ground it has been given and no more; it cannot
+ * walk into your face, and it cannot press at all unless you are the one making
+ * the ground. That is a fencer keeping measure, which is what every one of the
+ * five tells describes, and it is the thing this file promised and never did.
+ */
+
+/**
  * How hard the duellist presses per metre of ground still to cover, in the
  * same units as an attack's authored `lunge`. Chosen so that the loop shuts a
  * one-metre gap over a wind-up rather than teleporting through it.
@@ -219,6 +301,62 @@ const CLOSE_GAIN = 3.4;
  * cover a room still out-runs ordinary footwork.
  */
 const CLOSE_CAP = 4.4;
+
+/**
+ * The chase, per metre of ground between the blade and the near edge of the
+ * band the form fights in. Gentler than CLOSE_GAIN: a committed lunge is a
+ * step and this is a run, so it builds over a metre rather than over a
+ * hand's breadth.
+ */
+const CHASE_GAIN = 1.9;
+
+/**
+ * The ceiling on the chase, and it is the whole reason a dash is still an exit.
+ *
+ * Enemy.js turns this into about 1.1× its value of extra closing speed, so a
+ * 4.6 m/s Sentinel chasing flat out makes 7.5 m/s against a 4.6 m/s walk and
+ * shuts a metre of gap in a little under half a second. A dash is 15.5 m/s for
+ * 0.24 s on a 0.55 s cooldown — about 9.3 m/s averaged over a player spending
+ * 18 stamina every half second to keep it up — so a player who pays for the
+ * exit still opens ground, and a player who holds one key no longer does.
+ *
+ * It is deliberately well UNDER CLOSE_CAP. Being chased down is not supposed to
+ * feel like being lunged at: the lunge is the declared thing, it is what the
+ * arc on screen is promising, and ordinary footwork must never be able to
+ * reach it.
+ */
+const CHASE_CAP = 2.6;
+
+/**
+ * How fast the target has to be opening the distance, along the line between
+ * the two bodies, before a duellist reads it as running away.
+ *
+ * Under a fifth of a walk. It is here so that the two answers that are supposed
+ * to stay free stay free: a SIDESTEP has no component along that line at all,
+ * and two bodies circling each other drift by a few tenths. Everything a player
+ * does deliberately to open ground — walking back, dashing back, a diagonal
+ * retreat — is well over it, including a slow walk backwards.
+ */
+const FLEE_MIN = 0.9;
+
+/**
+ * The floor under the chamber window, in SECONDS — see the windup branch, where
+ * the measurements are. `chamberWindow` is a share of a wind-up, so the forms
+ * that read fastest had the smallest window twice over and the shortest of them
+ * was three frames at 60 Hz. This is roughly the spread of a practised human on
+ * an event they can see coming, which is what the arc's fill makes this.
+ */
+const CHAMBER_MIN = 0.18;
+
+/**
+ * How far ahead of the window the chamber cue is sounded, in seconds.
+ *
+ * A little over a simple auditory reaction time. The tone used to fire at the
+ * instant the window OPENED, which is a cue whose only possible message is that
+ * you have already missed; sounding it this far ahead means a player who
+ * answers it at human speed arrives while the window is still open.
+ */
+const CHAMBER_LEAD = 0.22;
 
 /**
  * How far past the hilt's wind-up radius the ghost is drawn, in body scales.
@@ -242,20 +380,59 @@ const TELE_PAD = 0.07;
  */
 const RHYTHM = 0.72;
 
+/**
+ * MAKASHI AND SORESU WERE ONE FIGHT AT TWO VOLUMES.
+ *
+ * Measured on one body with the kit off, three seeds × 60 s each, against a
+ * real Player standing still:
+ *
+ *     form      atk/s  hp/s   light% heavy% unbl%  spacing p10..p90
+ *     makashi   0.78   8.82   100     0      0     1.65 .. 1.98
+ *     soresu    0.18   1.60   100     0      0     1.75 .. 1.84
+ *     ataru     1.32  20.09    80    20      0     1.17 .. 2.45
+ *     juyo      0.93  10.76    30    56     14     1.46 .. 1.79
+ *     djemSo    0.44   3.74     0    70     30     1.56 .. 1.76
+ *
+ * On the profile a player actually answers — what share must be parried, what
+ * share can only be chambered, what share must be evaded, how far out it fights
+ * and how fast — makashi↔soresu was the closest pair on the roster and each was
+ * the other's nearest neighbour. Both 100% parryable, both standing 7 cm apart,
+ * both drawing three of the same five moves. They differed in how OFTEN and how
+ * HARD, which is a volume knob, and the two most iconic defensive forms in the
+ * source material deserve better than being one fighter at two settings.
+ *
+ * They are now separated on three axes rather than one, and every one of them
+ * is a thing the player has to answer differently:
+ *
+ *   WHAT IT THROWS. Makashi picks: the thrust and the wrist cut you parry, and
+ *   a LUNGE at one move in five that your blade is no answer to at all. Soresu
+ *   stays 100% parryable on purpose — everything it offers can be met with
+ *   steel, and that is the point of it. Evade-share 20% against 0%.
+ *
+ *   WHERE IT STANDS. `standAt` below. Makashi fights at the far end of its own
+ *   band and steps in only behind a declared point; Soresu holds one distance
+ *   and does not chase. Against a moving player that is 0.7 m of daylight
+ *   between two forms that used to stand 7 cm apart.
+ *
+ *   WHEN IT COMES. `defensive` is now a magnitude rather than a flag — see the
+ *   guard branch. Soresu's rate swings by a factor of six on whether the player
+ *   has committed to a swing, so the form is genuinely waiting for you rather
+ *   than merely slow, and `punishRecovery` finishes what that opens.
+ */
 export const FORMS = {
   makashi: {
     name: 'Makashi', numeral: 'II',
-    tell: 'economical, blade-tip precise — it will thrust the moment you overcommit',
+    tell: 'economical, blade-tip precise — it fights at the end of the blade and lunges the moment you overcommit',
     windup: 0.34, strike: 0.13, recover: 0.24, chamberWindow: 0.42,
-    aggression: 0.9, spacing: [1.7, 2.9], chain: [1, 2],
-    moves: ['thrust', 'riposteCut', 'slashR', 'slashL', 'thrust'],
+    aggression: 0.9, spacing: [1.7, 2.9], standAt: 0.82, chain: [1, 2],
+    moves: ['thrust', 'riposteCut', 'lunge', 'slashR', 'thrust'],
     feint: 0.30, punishRecovery: 0.85,
   },
   djemSo: {
     name: 'Djem So', numeral: 'V',
     tell: 'heavy and committed — long wind-ups, longer recoveries',
     windup: 0.68, strike: 0.19, recover: 0.58, chamberWindow: 0.34,
-    aggression: 0.7, spacing: [1.5, 3.2], chain: [1, 1],
+    aggression: 0.7, spacing: [1.5, 3.2], standAt: 0.05, chain: [1, 1],
     moves: ['overhead', 'cleave', 'smash', 'overhead'],
     feint: 0.10, punishRecovery: 0.3, strength: 1.8,
   },
@@ -263,7 +440,7 @@ export const FORMS = {
     name: 'Ataru', numeral: 'IV',
     tell: 'acrobatic flurries — it will not stop at one',
     windup: 0.24, strike: 0.11, recover: 0.17, chamberWindow: 0.5,
-    aggression: 1.3, spacing: [1.4, 3.6], chain: [2, 4],
+    aggression: 1.3, spacing: [1.4, 3.6], standAt: 0, chain: [2, 4],
     moves: ['slashR', 'slashL', 'rising', 'spin', 'riposteCut'],
     feint: 0.22, punishRecovery: 0.6, mobile: true,
   },
@@ -271,15 +448,23 @@ export const FORMS = {
     name: 'Soresu', numeral: 'III',
     tell: 'gives you nothing — it is waiting for you to swing first',
     windup: 0.40, strike: 0.14, recover: 0.26, chamberWindow: 0.45,
-    aggression: 0.42, spacing: [1.8, 3.0], chain: [1, 2],
-    moves: ['slashR', 'riposteCut', 'thrust'],
-    feint: 0.14, punishRecovery: 1.0, defensive: 1.7,
+    /* `standAt: 0` — IT WILL NOT BE DRAWN OUT. Soresu holds the one distance
+     * its form fights at and no other: run and it follows you to exactly that
+     * measure and stops, where Makashi at 0.82 refuses to let you inside the
+     * point and works the far edge of a band that is nearly as wide. The two
+     * were 7 cm apart in a stand-up fight and are 0.84 m apart the moment
+     * anybody moves. The band itself is untouched — where a form PARKS against
+     * a player who never moves is `Enemy._move`'s, and this lane does not own
+     * that file. */
+    aggression: 0.42, spacing: [1.8, 3.0], standAt: 0, chain: [1, 2],
+    moves: ['slashR', 'riposteCut', 'slashL'],
+    feint: 0.14, punishRecovery: 1.6, defensive: 2.4,
   },
   juyo: {
     name: 'Juyo', numeral: 'VII',
     tell: 'erratic — the rhythm is the trap',
     windup: 0.30, strike: 0.13, recover: 0.22, chamberWindow: 0.36,
-    aggression: 1.15, spacing: [1.4, 3.2], chain: [1, 3],
+    aggression: 1.15, spacing: [1.4, 3.2], standAt: 0.18, chain: [1, 3],
     moves: ['cleave', 'slashL', 'lunge', 'rising', 'overhead', 'spin'],
     feint: 0.42, punishRecovery: 0.75, erratic: 0.55,
   },
@@ -637,6 +822,77 @@ export class DuelBrain {
     return clamp(gap * CLOSE_GAIN, 0, CLOSE_CAP);
   }
 
+  /**
+   * How hard this duellist should be RUNNING right now — the other press, and
+   * the one that breaks the deadlock. See the note above CLOSE_GAIN.
+   *
+   * IT ANSWERS FOOTWORK WITH FOOTWORK, and that is the whole gate: it is alive
+   * only while the BODY IT IS FIGHTING is opening the distance under its own
+   * power. Not while the gap merely grows — a mobile form breaking out of its
+   * own band opens the gap too, and a chase that could not tell the difference
+   * would cancel Ataru's whole character. `target.velocity · e.toTarget` is the
+   * same projection `Enemy._forceBrain` reads for its `fleeing` situation, off
+   * the same two shipped fields, so "the player is running" means one thing in
+   * this file and in that one.
+   *
+   * WHAT IT MAY NEVER DO is press inside the distance the form fights at. That
+   * is `standAt`, and it is THE FOOTWORK READER `spacing[1]` NEVER HAD: the
+   * band is authored 1.2 to 2.2 m wide on every form and, outside Ataru's
+   * `mobile`, the only thing that had ever read the outer number was an "am I
+   * close enough to swing" gate — so four of the five forms lived in the inner
+   * 30 cm of their own band and the far edge described nothing. `standAt` is
+   * where in its own band a form holds when the fight is MOVING: Makashi at
+   * 0.82 fights at the end of the blade and steps in only behind a declared
+   * point, Djem So at 0.05 wants to be on top of you. Scaled by the body
+   * exactly as `Enemy._move` scales the same two numbers.
+   *
+   * So a duellist maintains its measure against a retreating player and stops
+   * dead at the distance it wants to fight from; the only thing in this file
+   * that can take it closer than that is a DECLARED attack, which is
+   * `_closing`, which draws an arc on screen before it moves. A stagger stops
+   * this too, because a blade that has been beaten aside has something else to
+   * do with the next half second.
+   */
+  _chase(dist) {
+    if (!(dist > 0) || this.phase === 'stagger') return 0;
+    const t = this.e.target, to = this.e.toTarget;
+    if (!t || !to || !t.velocity) return 0;
+    /**
+     * AND NOT A BODY THIS DUELLIST HAS JUST THROWN.
+     *
+     * A player flying backwards out of a shove is not walking away, and running
+     * them down while they are still in the air cancels the two-beat the shove
+     * exists to open. Measured: with this clause missing, the Temple Guardian
+     * reached `push` and never `pull` in a 25 s stand-up fight —
+     * tools/checks/powers.mjs's "a kit is not one verb repeated" — because
+     * `pull` wants a fleeing target at 3.2 m and the chase had already shut
+     * that gap before the 0.45 s cast telegraph finished. One verb of a
+     * two-verb kit, deleted by a footwork loop that could not tell a retreat
+     * from a body in mid-air.
+     *
+     * `staggerTimer` is what `Player.applyKnockback` sets, and it is what this
+     * game has instead of a stun on the player ("a player is never taken off
+     * the controls"); leaving the ground is the other half of the same event.
+     * Neither is a step.
+     */
+    if (t.staggerTimer > 0 || t.grounded === false) return 0;
+    const flee = t.velocity.x * to.x + t.velocity.z * to.z;
+    if (!(flee > FLEE_MIN)) return 0;
+    const gap = dist - this.standOff;
+    if (!(gap > 0)) return 0;
+    return clamp(gap * CHASE_GAIN, 0, CHASE_CAP);
+  }
+
+  /**
+   * The distance this form wants between the two bodies, in metres, on this
+   * body. `standAt` is a fraction of its own authored band and 0 is the near
+   * edge, so a form that declares nothing keeps the behaviour it had.
+   */
+  get standOff() {
+    const sp = this.form.spacing;
+    return lerp(sp[0], sp[1], clamp(this.form.standAt ?? 0, 0, 1)) * (this.e.A?.scale ?? 1);
+  }
+
   update(dt, ctx, dist) {
     const F = this.form;
     const sp = this._speed();
@@ -646,7 +902,8 @@ export class DuelBrain {
      * fall below what the footwork loop is asking for while there is still
      * ground between this blade and the body it was declared against. When the
      * gap is shut the floor is 0 and this line is what it always was. */
-    this.lungeSpeed = Math.max(this._closing(dist), damp(this.lungeSpeed, 0, 8, dt));
+    this.lungeSpeed = Math.max(this._closing(dist), this._chase(dist),
+      damp(this.lungeSpeed, 0, 8, dt));
     this.spin = this.phase === 'strike' && this.attack?.spin ? this.spin + dt * 26 : 0;
 
     const target = this.e.target;
@@ -669,8 +926,25 @@ export class DuelBrain {
         this.guardTargetDir = this.restDir;
 
         const inRange = dist < this.reachOut;
+        /**
+         * `defensive` IS A MAGNITUDE NOW, AND IT WAS AUTHORED AS ONE.
+         *
+         * It shipped as `F.defensive && !playerCommitted ? 0.35 : 1` — a
+         * TRUTHINESS test against a field authored `1.7`, so the number meant
+         * nothing and the whole of "it is waiting for you to swing first" was
+         * one hard-coded 0.35 that would have read the same if the field said
+         * `true`. That is this codebase's oldest defect in miniature: a value
+         * beside a reader that does not read it.
+         *
+         * It cuts both ways now, which is what makes it a wait rather than a
+         * slowness: a defensive form asks for LESS than its own aggression
+         * while the player's blade is quiet and MORE than it the moment the
+         * player commits. Soresu at 2.4 swings by a factor of six across that
+         * line, which is the difference between a form you can walk up to and
+         * a form that answers the first thing you throw.
+         */
         const want = F.aggression * (playerRecovering ? 1 + F.punishRecovery : 1)
-                   * (F.defensive && !playerCommitted ? 0.35 : 1);
+                   * (F.defensive ? (playerCommitted ? F.defensive : 1 / F.defensive) : 1);
         // The decision happens when the pause between attacks runs out — once,
         // not every frame. Rolling per-frame made aggression depend on the
         // player's framerate and left duellists idling for seconds at a time.
@@ -705,10 +979,50 @@ export class DuelBrain {
         this.trackSpeed = 13;
         this.guardTargetDir = this.attack.from;
         const k = 1 - clamp(this.timer / this._windupLen, 0, 1);
-        // the chamber window is the tail of the wind-up
+        /**
+         * THE CHAMBER WINDOW, IN SECONDS, AND WHETHER A HUMAN CAN REACH IT.
+         *
+         * It was a share of the wind-up and nothing else — `k > 1 -
+         * chamberWindow` — so a form that reads faster also gets a shorter
+         * window, twice over. Measured through the shipped brain, per attack,
+         * as the wall-clock time `chamberOpen` is true:
+         *
+         *               Knight   Grandmaster   chained, Grandmaster
+         *     djemSo     0.216 s    0.172 s          0.124 s
+         *     soresu     0.168      0.134            0.097
+         *     makashi    0.135      0.108            0.077
+         *     ataru      0.112      0.089            0.064
+         *     juyo       0.078      0.062            0.045
+         *
+         * Worst of twelve draws of the wind-up jitter, which is the corner a
+         * player actually meets. Two things are wrong with that and only one of
+         * them is the number.
+         *
+         * THE CUE FIRED AT THE START OF THE WINDOW. A 2100→2600 Hz tone that
+         * begins at the instant the window opens is a cue you cannot react to:
+         * simple auditory reaction time is ~160 ms and a chamber is not a
+         * simple reaction — it is a swing, in a chosen direction, that has to
+         * arrive with the blade already moving at 5.5 m/s. Every one of the
+         * numbers above is shorter than the reaction the cue was asking for, so
+         * the cue could only ever say "you have just missed it". It leads the
+         * window by CHAMBER_LEAD now, which is the whole of the change: the
+         * sound means the same thing it always meant and it arrives while there
+         * is still time to answer it. A wind-up too short to hold the lead
+         * fires it as the arc goes up, which is the earliest there is.
+         *
+         * AND THE FLOOR. 49 ms is three frames at 60 Hz. A practised human
+         * timing a PREDICTED event — which is what the arc's fill makes this,
+         * since the cue can only ever be a reminder — lands inside about
+         * ±90 ms, so a window under ~0.18 s is one nobody can hold, and the
+         * fastest forms had the smallest one. CHAMBER_MIN is that floor, in
+         * seconds, and it is stated rather than folded into the share: djemSo
+         * and soresu keep the windows they authored at every difficulty, and
+         * the three fast forms stop being unanswerable on the ninth frame.
+         */
         const tier = TIER[this.attack.tier];
-        this.chamberOpen = tier.chamberable && k > (1 - F.chamberWindow);
-        if (this.chamberOpen && !this._cued) {
+        const win = Math.max(F.chamberWindow * this._windupLen, CHAMBER_MIN);
+        this.chamberOpen = tier.chamberable && this.timer <= win;
+        if (tier.chamberable && !this._cued && this.timer <= win + CHAMBER_LEAD) {
           this._cued = true;
           audio.tone({ freq: 2100, freqEnd: 2600, dur: 0.07, gain: 0.05, type: 'sine', pos: this.e.position });
         }
@@ -1016,6 +1330,18 @@ export class BladeLock {
     if (this.pressure >= 1) this._finish('player');
     else if (this.pressure <= -1 || this.time > 4.5) this._finish('enemy');
   }
+
+  /**
+   * SHOVED APART — a Force power big enough to move a body ends the bind.
+   *
+   * `Enemy._meleeBrain` runs a duellist's kit through a lock now (it used to
+   * return before `_forceBrain` and switch the Force off for the 29–41% of a
+   * long duel that is spent locked), and the one verb that means anything with
+   * two blades crossed is "get off me". This exists so `_castPower` does not
+   * have to reach into a private method to say so — and so that a shove ends
+   * the bind rather than trying to knock back a body the lock is pinning.
+   */
+  forceBreak(winner = 'enemy') { this._finish(winner); }
 
   _finish(winner) {
     if (this.done) return;

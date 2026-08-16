@@ -1,5 +1,5 @@
 /**
- * SABER — peer-to-peer co-op.
+ * BATTLEFRONT BORZ — peer-to-peer co-op.
  *
  * One player hosts and simulates the horde; everyone else runs their own blade
  * locally and tells the host what it did. That split is deliberate: enemy
@@ -57,6 +57,23 @@ export const PEER_TIMEOUT = 8;
  * `order` are deliberately absent: the first dresses a simulated cloak a remote
  * body does not have, and the second grants boons rather than describing a
  * face. Sending them would be two more fields on the wire with no reader.
+ *
+ * `ORDER` WAS PUT ON THIS LIST AND TAKEN OFF AGAIN, and the measurement is
+ * worth keeping so the next reader does not spend the same hour. It looks like
+ * it has a reader now: Command's `assignArmies` derives the ARMY from the
+ * Jedi/Sith choice, and with the field absent `World.beginVersus` reads every
+ * peer as the HOST's own order. So the peer's real choice ought to change which
+ * of two commanders is handed the army they did not want.
+ *
+ * It does not, and it cannot. `assignArmies` gives the first commander what
+ * they ask for and resolves every conflict after that against what is already
+ * taken — so with TWO armies on the roster the second side gets the one the
+ * first did not take, whatever it asked for. Enumerated over every roster of
+ * two, three and four commanders and both orders apiece: the peer's real order
+ * changes the assignment in **0 of 28**. A field whose reader cannot change an
+ * outcome is bandwidth and a maintenance cost, which is what the check below
+ * this one exists to catch. It becomes worth sending the day there is a third
+ * army — and not before.
  */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
   'skinIndex', 'hairIndex', 'build', 'species', 'face'];
@@ -251,12 +268,50 @@ export class Net {
   }
 
   _refreshRoster() {
-    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look, team: this._sideOf(this.peer?.id) }];
+    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look,
+      team: this._sideOf(this.peer?.id), ...this._seatOf(this.peer?.id) }];
     for (const [id, c] of this.conns) {
-      this.roster.push({ id, name: c.name, host: false, look: c.look || null, team: this._sideOf(id) });
+      this.roster.push({ id, name: c.name, host: false, look: c.look || null,
+        team: this._sideOf(id), ...this._seatOf(id) });
     }
     this._emit('roster', this.roster);
     if (this.isHost) this.broadcast({ t: 'roster', roster: this.roster });
+  }
+
+  /**
+   * WHERE A PLAYER STANDS AT THE START OF A MATCH — the other half of a side.
+   *
+   * `sides` answers who may hit whom and it is not enough on its own for two
+   * armies. A meeting engagement puts the two commanders 120 m apart, and a
+   * client that was told its SIDE but not its GROUND spawned at the level's own
+   * home spot — so the Confederacy's general stood in the middle of the
+   * Republic's line while their own army formed up around them, because a
+   * formation is solved in its commander's frame. Both machines were internally
+   * consistent and the battle had no two sides in it.
+   *
+   * A seat is identity for the length of a match, exactly as a side is, so it
+   * rides the same roster for the same reason and is written by the same
+   * authority. Empty for every session that is not a meeting, which is all of
+   * them so far — `...{}` spreads to nothing and the roster entry is byte for
+   * byte what it was.
+   */
+  _seatOf(id) {
+    const s = this.seats?.get(id);
+    if (!s || !Array.isArray(s.at)) return {};
+    return { at: s.at, facing: s.facing ?? 0 };
+  }
+
+  /**
+   * Host: hand out ground. `map` is peer id → `{ at: [x, y, z], facing }`.
+   *
+   * Refused on a client for the reason `setSides` is: a peer that could choose
+   * its own ground could choose the middle of yours.
+   */
+  setSeats(map) {
+    if (!this.isHost) return this.roster;
+    this.seats = map instanceof Map ? map : new Map(Object.entries(map || {}));
+    this._refreshRoster();
+    return this.roster;
   }
 
   /**
@@ -341,6 +396,54 @@ export class Net {
       // host can know; this is how everybody else finds out. See _dropPeer.
       case 'left': if (!this.isHost) this._emit('peer-left', msg.id); break;
       case 'claim': this._emit('claim', conn.peer, msg); break;
+      /**
+       * Host → peers: the army, the area and the order in force.
+       *
+       * One direction only, and for the same reason `match` is: the roster is a
+       * ledger of promotions, casualties and reinforcement points that only the
+       * machine holding the bodies can keep. A client that kept its own version
+       * of it kept a DIFFERENT army — measured on a real pair, two disjoint
+       * lists of ten names, one of which had never been deployed.
+       *
+       * Not folded into the snapshot: it is 2.5 KB at a full roster and changes
+       * about twice a second at its very worst, so the 18 Hz record would spend
+       * 45 KB/s repeating a casualty list. Exactly the argument `match` makes.
+       */
+      case 'army': if (!this.isHost) this._emit('army', msg); break;
+      /**
+       * Peer → host: "form wedge."
+       *
+       * The one Command message that travels the other way, and the only thing
+       * a commander who is not holding the army can do. Stamped with the sender
+       * the way `claim` is, so the host can tell whose army is being asked for
+       * once there is more than one — see the sides work in Player.js.
+       */
+      case 'order': if (this.isHost) this._emit('order', conn.peer, msg); break;
+      /**
+       * THE MUSTER, AND IT IS THE ONE MESSAGE THAT TRAVELS BOTH WAYS.
+       *
+       * Host → peers it is the OFFER: `musterOffer()` verbatim, or null when
+       * the card comes down. Peer → host it is an INTENT: a unit to buy, or
+       * "I am done". One type rather than two because it is one conversation
+       * with one subject, and every reply is the answer to an ask — the shape
+       * `ping`/`pong` has, without the second name.
+       *
+       * THE DIRECTION IS NOT DECIDED HERE, and that is deliberate rather than
+       * an omission. `army` and `order` each guard on `isHost` because each has
+       * exactly one direction and the guard IS the direction; this one has two,
+       * so a guard here could only ever assert half of it. It is resolved in
+       * `World.applyMuster`, which branches on `netMode` — a total split, so a
+       * message lands in exactly one branch and neither branch reads the
+       * other's fields. A client cannot hand the host an offer, because the
+       * host branch never looks for one; a host cannot be made to spend a
+       * client's claim about its own points, because no such claim is on the
+       * wire at all. The only thing a peer may say is which unit it wants.
+       *
+       * Stamped with the sender the way `order` and `claim` are, so the host
+       * can tell whose purse is being spent once there is more than one — a
+       * meeting gives every commander a roster and a purse of their own.
+       */
+      case 'muster': this._emit('muster', msg, this._sender(msg, conn)); break;
       // Host → this peer: you were hit. The reverse of `claim`, and it exists
       // for the same reason — the authority for a thing is not where the thing
       // is drawn. A peer owns its own health (its avatar packet carries `hp`,
@@ -629,16 +732,27 @@ export class RemoteAvatar {
    * Shoved. The call shape every force power ends in, so a duel's push reaches
    * a peer through the same line it reaches an acolyte through.
    *
-   * The impulse moves `velocity`, which `update()` overwrites from the next
-   * snapshot 42 ms later — and that is correct rather than a bug: the peer's
-   * own machine is running its own body, and this copy is a drawing of it. The
-   * DAMAGE is the part that has to travel, and it goes through `damage()`
-   * below, which is addressed to the one peer that owns the health.
+   * THE SHOVE TRAVELS NOW, AND UNTIL IT DID A DUEL'S FORCE WAS A NUMBER.
+   *
+   * This used to add the impulse to `velocity` and send nothing but `{d, k}` —
+   * a bare amount. `update()` overwrites `velocity` from the interpolation
+   * buffer on the very next frame, so the local add was inert (it still is, and
+   * it is kept only as the one frame of smoothing before the buffer speaks),
+   * and the packet had no room for a direction. Measured on a real host/client
+   * pair: a point-blank push on another player took hp off them and moved them
+   * 0.000 m on both machines. Push, pull, throw and the enemy kit's own shove
+   * were all damage with no physics for everybody who was not the host.
+   *
+   * So the impulse goes in the packet and the peer applies it to their OWN
+   * Player, which is the only body in the session that can move it — and it
+   * arrives through `Player.applyKnockback` rather than `damage`, so the shove
+   * and the harm are weighed together in one contest exactly as they are when
+   * the two fighters share a machine. See the note over `_tellHit`.
    */
   applyKnockback(impulse, damage = 0, source = null, gentle = false) {
     if (!this.alive) return false;
     if (impulse) this.velocity.add(impulse);
-    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+    return this._tellHit(damage || 0, 'force', source, impulse, gentle);
   }
 
   /**
@@ -654,13 +768,27 @@ export class RemoteAvatar {
    * Returns false ("not killed") unconditionally for the same reason: whether
    * this was lethal is not knowable here, and callers use the return only to
    * decide local flourishes.
+   */
+  damage(amount, point, source, kind) {
+    if (!(amount > 0) || !this.alive) return false;
+    return this._tellHit(amount, kind, source, null, false);
+  }
+
+  /**
+   * ONE DOOR OUT, so a shove and a cut cannot end up on the wire under two
+   * different sets of rules — which is precisely what happened while
+   * `applyKnockback` reached the wire only by calling `damage`: a pull carries
+   * no damage at all (`Enemy._castPower` bills it at 0), so `amount > 0` threw
+   * the whole packet away and a peer being yanked across the field received
+   * nothing whatsoever.
    *
    * Silently does nothing on a client, so a peer cannot damage another peer —
    * the host is the only authority, and the alternative is four machines each
    * applying their own version of the same sword.
    */
-  damage(amount, point, source, kind) {
-    if (!(amount > 0) || !this.alive) return false;
+  _tellHit(amount, kind, source, impulse, gentle) {
+    const push = impulse && impulse.lengthSq() > 1e-8 ? impulse : null;
+    if (!this.alive || (!(amount > 0) && !push)) return false;
     /**
      * THE SAME GATE THE LOCAL PLAYER PASSES THROUGH, AND THE SAME FUNCTION.
      *
@@ -694,7 +822,25 @@ export class RemoteAvatar {
      * direction and no source.
      */
     if ((kind || 'bolt') === 'bolt') return false;
-    net.toPeer(this.id, { t: 'hit', d: amount, k: kind });
+    /**
+     * WHO DID IT — and it was nobody, all the way to the far end.
+     *
+     * `main.js` applied every one of these as `p.damage(d, null, null, k)`.
+     * `Player.die` hands `source` to `onPlayerDeath`, so a joining player
+     * killed by a Sith Master's lightning died to a null: no kill credit, no
+     * name on the death card, nothing in the feed. One field fixes it, and the
+     * only work is saying which id the far end knows this body by.
+     */
+    const msg = { t: 'hit', d: r3(amount || 0), k: kind, s: hitSourceId(source, net) };
+    if (push) {
+      msg.v = [r3(push.x), r3(push.y), r3(push.z)];
+      // `gentle` is what tells the far end whether this shove beats a guard:
+      // `Player.applyKnockback` writes `staggerTimer` only when it is NOT
+      // gentle, and a pull and a held power's tick both are. Absent means false,
+      // which is what a shove is.
+      if (gentle) msg.g = 1;
+    }
+    net.toPeer(this.id, msg);
     return false;
   }
 
@@ -797,6 +943,29 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 
+/**
+ * THE NAME THE FAR END KNOWS AN ATTACKER BY.
+ *
+ * An enemy is easy: `packSnapshot` sends `e.id` and `applySnapshot` writes the
+ * same string onto the replicated copy, so the two machines have agreed on it
+ * all along. A PLAYER is the awkward one, and it is the reason this is a
+ * function rather than `source.id` written at the call site: the host's own
+ * Player answers to `'local'` (Player.js: `this.id = opts.id ?? 'local'`) and
+ * is a `RemoteAvatar` keyed by the host's PEER id on every other machine in the
+ * session. Sending `'local'` would name a body that does not exist over there
+ * and resolve to nobody, which is the null this field exists to remove.
+ *
+ * `0` for an attacker with no id at all — the environment, a fall, a wave-clear
+ * blast — which is what `World.netSource` reads as "unattributed", and is
+ * exactly the state every `hit` was in before the field existed.
+ */
+export function hitSourceId(source, net) {
+  const id = source?.id;
+  if (id === undefined || id === null) return 0;
+  if (!source.isLocal) return id;
+  return net?.peer?.id ?? net?.roster?.find((r) => r.host)?.id ?? 0;
+}
+
 /* ── snapshot packing ────────────────────────────────────────────────── */
 
 export function packAvatar(player) {
@@ -886,6 +1055,64 @@ export function packAvatar(player) {
  *           at the host's 18 Hz. 1.5 KB/s is not worth a decoder that can be
  *           silently wrong.
  *
+ *   tm      WHOSE SIDE THIS BODY IS ON, and it is one number against the worst
+ *           defect co-op and Command had between them. Every record on this
+ *           wire described a body and never said whose it was, because for the
+ *           whole life of the protocol the answer was "the horde's" and a
+ *           constant does not need a slot. Command broke that: `enlistBody`
+ *           puts your named troopers in `world.enemies` on the PARTY's team,
+ *           and they crossed as team 1 like everything else.
+ *
+ *           Driven on two real Worlds with a ten-man roster deployed, before
+ *           the field existed: 10 of 10 of the host's named troopers arrived on
+ *           the joining player's machine on the horde's team, so
+ *           `canHarm(theirPlayer, yourSergeant)` was TRUE and every gate in the
+ *           game that asks it opened. The two that matter both fire without
+ *           anybody aiming at anything:
+ *
+ *             · `_boltHitTest` reads `bolt.owner.team`, and a replicated bolt's
+ *               owner is the body that fired it — so YOUR OWN ARMY'S RIFLES
+ *               shot the joining player in the back, all game, from a line they
+ *               were standing behind.
+ *             · a bolt that player deflected carried their own team 0 against
+ *               your trooper's wrongly-read 1, so every deflection they made
+ *               into the line was a friendly casualty they could not have
+ *               known about.
+ *
+ *           `e.team` raw, not an index and not a boolean: the numbers are the
+ *           game's own (`TEAM.PARTY` 0, the horde's 1, further player sides 2-4
+ *           from `SIDES`), one slot carries all five, and `asTeam` on the far
+ *           end is what makes an illegible one the horde rather than a friend.
+ *
+ *   ck      WHICH POWER THIS BODY IS THROWING, and off-host there was no such
+ *   cw      thing as a warning. `_forceBrain` opens every cast with a 0.45 s
+ *   ch      wind-up and a floating call over the head, and its own note says
+ *           why: "a power that arrives with no frame of warning is the 11.5 m
+ *           sphere the beasts check has a note about". None of `_castKey`,
+ *           `_castTimer` or `casting` was on the wire, so on a joining player's
+ *           screen the whole thing was invisible. Driven — a Jedi Master
+ *           targeting a peer for 40 s — the host drew six FORCE PUSH tells and
+ *           the peer received six anonymous numbers, 0 telegraphs, 0 metres.
+ *
+ *           THE COUNTERPLAY IS THE POINT, not the decoration. `breakCast` is
+ *           reached from everything that beats a guard and the window is
+ *           generous — measured 100% break at 400 ms into a 450 ms tell — and a
+ *           tell nobody can see is a window nobody can take. It is also the
+ *           only thing on this wire that tells a peer WHICH power is coming,
+ *           and a push and a choke want opposite answers.
+ *
+ *           Three slots because a cast has two stages and they are different
+ *           facts: `ck` is the key (a STRING, for the reason `md` is one — an
+ *           index decodes as a different power the day ENEMY_POWERS is
+ *           reordered), `cw` is the wind-up left, and `ch` is what remains of a
+ *           HELD power once the wind-up has landed. A body doing neither pays
+ *           `0, 0, 0`, which is most of every wave.
+ *
+ *           Priced on a real director run rather than guessed at, the way `md`
+ *           was: wave 20 on the Colosseum fields 17 bodies and one snapshot of
+ *           it is 1226 bytes without these three and 1328 with — 21.6 against
+ *           23.3 KB/s at the host's 18 Hz.
+ *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
  * protocol can never contain one.
@@ -901,6 +1128,10 @@ export function packSnapshot(world) {
       e.aimCharge > 0 ? 1 : 0,
       packDuel(e.duel),
       e.mod || 0,
+      e.team,
+      e._castKey || e.casting || 0,
+      r2(e._castTimer > 0 ? e._castTimer : 0),
+      r2(e.casting ? Math.max(0, e.castLeft || 0) : 0),
     ]);
   }
   const fires = world._netFires || [];

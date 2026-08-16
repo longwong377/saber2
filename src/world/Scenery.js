@@ -1,5 +1,5 @@
 /**
- * SABER — wind, ground cover, water and the air itself.
+ * BATTLEFRONT BORZ — wind, ground cover, water and the air itself.
  *
  * Three ideas hold this file together.
  *
@@ -22,7 +22,7 @@
  */
 
 import * as THREE from 'three';
-import { grassSprite, smokeSprite } from '../engine/Textures.js';
+import { grassSprite, litterSprite, smokeSprite } from '../engine/Textures.js';
 /* The cel model's own arithmetic, so `grassShade` cannot drift from the shader
  * it stands for. Cel.js imports nothing at all — in particular not Engine.js,
  * which would close the loop this file's own note at line 566 is about. */
@@ -1850,6 +1850,16 @@ export function makeCoverField(opts = {}) {
  *
  * Radii are quoted at the reference `radius` of 46 m and scale with it.
  */
+/**
+ * THE COVER KINDS. One row per kind, applied as multipliers over the tier table
+ * below so a kind cannot fork the ladder — see the long note in the GrassField
+ * constructor for why the Drowned Wood needed one and why a fourth grass tuning
+ * pass could not have worked.
+ */
+const COVER_KINDS = {
+  swamp: { width: 1.55, height: 0.52, wave: 0.14, bend: 1.70 },
+};
+
 const GRASS_TIERS = [
   /* Real blade geometry, eight to a clump. The only tier the player ever sees
    * as separate plants, so it is deliberately SMALL and DENSE — and it keeps
@@ -1975,6 +1985,52 @@ export class GrassField {
      * blade is a point on that ramp. See grassPalette. */
     this.palette = grassPalette(this.tintA, this.tintB);
 
+    /**
+     * WHAT KIND OF COVER THIS IS, and it is the fix three grass passes could
+     * not be.
+     *
+     * "I like the drowned wood map but the grass and ground look like absolute
+     *  fucking garbage and need to be redone from the ground up, it's sparse,
+     *  you can see the ground, it looks pbr, just get rid of it entirely and
+     *  redo it."
+     *
+     * The reference settles what "redo it" means: `drowned-wood/dagobah.jpeg`
+     * has NO GRASS IN IT AT ALL — a swamp floor is standing water, matted
+     * litter, fallen deadwood and the rootlets off every buttress. So the fix
+     * is not a better grass shader, which is what the last three attempts were;
+     * it is a different KIND, and the machinery for one was already here: the
+     * tier table is data, the card map is a parameter, and every rung reads its
+     * width, height, bend and sway off the table.
+     *
+     * `swamp` changes four things and nothing else:
+     *
+     *   THE SPRITE      `litterSprite` instead of `grassSprite`. Every mark in
+     *                   it is horizontal or arched — mats, root arches that
+     *                   touch the ground at both ends, fallen twigs — and none
+     *                   is an upright blade.
+     *   THE PROPORTION  0.52× the height and 1.55× the width, on every rung. A
+     *                   grass card is a tuft; a litter card is a MAT, and the
+     *                   difference between the two is entirely aspect ratio.
+     *   THE SWAY        0.14× the wave. Litter and roots do not move in wind,
+     *                   and a bog floor rippling like a wheat field was half of
+     *                   what made the old one read as a lawn in a swamp.
+     *   THE ARCH        1.7× the bend, so the near rung's real geometry leaves
+     *                   the ground and comes back over instead of standing up.
+     *
+     * WHAT IT DOES NOT CHANGE, deliberately: the field, the budget, the tier
+     * radii and the whole shading path, so every measurement `ground-cover.mjs`
+     * makes about clustering, hue spread, tuft coherence and the wind's GLSL
+     * twin still applies to it unmodified.
+     */
+    this.kind = opts.kind || 'grass';
+    const K = COVER_KINDS[this.kind] || null;
+    this.tiers = K ? GRASS_TIERS.map((T) => ({
+      ...T,
+      width: T.width * K.width,
+      base: T.base * K.height, varies: T.varies * K.height,
+      wave: T.wave * K.wave, bend: T.bend * K.bend,
+    })) : GRASS_TIERS;
+
     const half = terrain && terrain.half ? terrain.half : 280;
     const seed = opts.seed ?? (terrain && terrain.presetKey ? hashString(terrain.presetKey) : 1337);
     this.species = makeSpeciesField(seed);
@@ -2040,7 +2096,7 @@ export class GrassField {
      * ratio between the rungs is fixed by the table and only the overall
      * thickness moves with the budget. */
     const k = this.radius / 46;
-    const tiers = GRASS_TIERS.map((T) => {
+    const tiers = this.tiers.map((T) => {
       const rIn = T.rIn * k, rOut = T.rOut * k, cell = T.cell * k;
       const oR = rOut + cell, iR = Math.max(0, rIn - cell);
       const hold = Math.min(1, this.coverFrac
@@ -2061,7 +2117,7 @@ export class GrassField {
 
     this.nearRadius = tiers[0].rOut;      // where real blades stop
     this.reach = tiers[tiers.length - 1].rOut;
-    this._cardMap = repeating(grassSprite(96));
+    this._cardMap = repeating(this.kind === 'swamp' ? litterSprite(96) : grassSprite(96));
 
     this.rings = tiers.map((t) => this._buildRing({
       count: t.cap, card: t.T.card,
@@ -2789,6 +2845,21 @@ const WATER_EXT = [2.6, 0.85, 0.62];
  * wash, it is an aquarium — and it is why two thirds of the canyon river was
  * reading as gravel with a wash of colour over it rather than as water. */
 const BED_FADE = 2.8;
+/**
+ * HOW FAST A BODY OF WATER STOPS BEING SHALLOW, per metre of depth.
+ *
+ * The body colour is `mix(shallow, deep, 1 - exp(-depth * BODY_FADE))`, so this
+ * is the one number that says where the game itself stops calling water
+ * shallow: half-deep at `ln 2 / 0.55` = 1.26 m.
+ *
+ * Named and exported because it is read outside the shading now. `stoneField`
+ * in Levels.js has to decide whether a submerged site is a wadeable margin or
+ * a sea floor, and the honest answer is the one the water already draws — a
+ * shore you can see the bottom of is a shore. A second copy of 0.55 over there
+ * would be HANDOFF §2.4 on the number that decides where half the litter on
+ * two levels goes.
+ */
+export const BODY_FADE = 0.55;
 
 const WATER_VERT = /* glsl */`
   #include <common>
@@ -2949,7 +3020,7 @@ const WATER_FRAG = /* glsl */`
     vec3 bed = uBed * (0.34 + 0.66 * clamp(dot(bedN, L), 0.0, 1.0));
     vec3 trans = exp(-WATER_EXT * bedDepth);
     float dw = 1.0 - exp(-depth * 1.5);
-    vec3 body = mix(uShallow, uDeep, 1.0 - exp(-bedDepth * 0.55));
+    vec3 body = mix(uShallow, uDeep, 1.0 - exp(-bedDepth * ${BODY_FADE.toFixed(2)}));
     vec3 col = mix(body, bed * trans, exp(-bedDepth * BED_FADE));
     /*
      * What the surface mirrors, and it depends on WHERE THE MIRRORED RAY GOES.
@@ -2973,7 +3044,7 @@ const WATER_FRAG = /* glsl */`
      * view-dependent lobe of their own. Measured with waterShade() by walking
      * the eye round the sheet at 8 degrees of elevation, with climb 0 so
      * dot(bedN,L) cannot move and only the view term can: luminance swung
-     * 6.63x on mustafar, 6.80x on the wood, 7.20x on kamino, 2.91x on the
+     * 6.63x on scoria, 6.80x on the wood, 7.20x on kamino, 2.91x on the
      * foundry and 1.58x on the deeps. A surface that changes brightness
      * sevenfold as you walk round it is a specular highlight, whatever it is
      * called in the code.
@@ -3084,7 +3155,7 @@ export function waterShade(o) {
   const bed = o.bed.map((v) => v * (0.34 + 0.66 * clamp(dot3(bedN, Ln), 0, 1)));
   const trans = WATER_EXT.map((k) => Math.exp(-k * bedDep));
   const dw = 1 - Math.exp(-dep * 1.5);
-  const body = mix3(o.shallow, o.deep, 1 - Math.exp(-bedDep * 0.55));
+  const body = mix3(o.shallow, o.deep, 1 - Math.exp(-bedDep * BODY_FADE));
   let col = mix3(body, bed.map((v, i) => v * trans[i]), Math.exp(-bedDep * BED_FADE));
   const diffuse = col.slice();
 

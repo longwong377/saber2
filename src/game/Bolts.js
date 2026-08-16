@@ -1,5 +1,5 @@
 /**
- * SABER — blaster bolts.
+ * BATTLEFRONT BORZ — blaster bolts.
  *
  * Bolts are swept segments, not points: every frame each bolt is tested as the
  * line it actually travelled, against the quad each blade actually swept. That

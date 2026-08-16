@@ -1,11 +1,14 @@
 /**
- * SABER — who owns the screen, and how the player gets out.
+ * BATTLEFRONT BORZ — who owns the screen, and how the player gets out.
  *
  * THE BUG THIS FILE EXISTS FOR.
  *
- * `draft` and `landing` are states in which the world is stopped and an overlay
- * owns the screen, and the only way out of either was a click on that overlay.
- * Two things had to hold for that to be safe. Neither did.
+ * `draft` was a state in which the world is stopped and an overlay owns the
+ * screen, and the only way out of it was a click on that overlay. Two things
+ * had to hold for that to be safe. Neither did. (It was one of a PAIR: the
+ * other was 'landing', since deleted. Every trace of that state is gone from
+ * this file now except this sentence, which is here so nobody re-derives the
+ * bug from a half-removed name.)
  *
  * The overlay hides itself BEFORE it calls back — Menu.showDraft's card does
  * `this.el.draft.classList.add('hidden'); onPick(b)` — so anything that throws
@@ -49,12 +52,12 @@
 /**
  * The states in which a world exists and the player is not at a menu.
  *
- * 'meditation' is the constellation, raised mid-run by kneeling. It is here
+ * 'meditation' is the Holocron, raised mid-run by kneeling. It is here
  * because rule 1 is about EVERY reachable state: Escape has to get you out of
- * the star map exactly as it gets you out of a draft, and `guarded` has to be
+ * the Holocron exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead', 'meditation'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and
@@ -64,12 +67,12 @@ export const LIVE = ['playing', 'paused', 'draft', 'landing', 'dead', 'meditatio
  * An overlay that owns its own card registers a hider with `card()` instead;
  * it is raised through the identical `take()` and gets the identical
  * guarantees (remembered as it is raised, restored by resume, escapable), which
- * is what tools/checks/constellation.mjs drives the meditation through. Adding
+ * is what tools/checks/living-force.mjs drives the meditation through. Adding
  * such a state to this array would be a lie of a different kind: the array is
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.
  */
-export const OVERLAY_STATES = ['draft', 'landing', 'dead'];
+export const OVERLAY_STATES = ['draft', 'dead', 'muster'];
 
 export class Screens {
   /**
@@ -116,10 +119,23 @@ export class Screens {
     this.state = name;
   }
 
-  /** Hide everything this class raised, and forget it. */
+  /**
+   * Hide everything this class raised, and forget it.
+   *
+   * `m.hideLanding?.()` used to be in this line and is gone. There has been no
+   * 'landing' state since it was deleted — it is not in LIVE, not in
+   * OVERLAY_STATES, `_hide` has no branch for it, and no Menu in this tree has
+   * ever had a `hideLanding`. So the optional call was a no-op that read like a
+   * fourth overlay, and the comment on `pause()` still names 'landing' as one
+   * of the two states you could be stuck in. That is worse than dead code: the
+   * next person to add a screen copies it, sees `?.()` beside three real
+   * hiders, and assumes an overlay whose card is not one of Menu's is handled
+   * here. It is not — `card(name, hide)` is the seam for that, and it is the
+   * one the muster screen goes up through.
+   */
   clear() {
     const m = this.io.menu;
-    m.hidePause?.(); m.hideDraft?.(); m.hideLanding?.(); m.hideDeath?.();
+    m.hidePause?.(); m.hideDraft?.(); m.hideMuster?.(); m.hideDeath?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
   }
@@ -143,6 +159,60 @@ export class Screens {
   }
 
   /**
+   * THE MUSTER, raised the same way the draft is.
+   *
+   * This method is the thing `main.js` has been testing for since the Command
+   * mode was written — `if (typeof screens.muster === 'function')` — and never
+   * finding, which is why `CommandDirector` fell through to `autoMuster()` and
+   * spent the player's reinforcement points for them between every area with
+   * nothing on the screen.
+   *
+   * It is a method here rather than eight lines in main.js for the reason this
+   * whole module exists: an overlay that stops the world and owns the screen is
+   * a state you can be stranded in, and every guarantee against that lives in
+   * `take` — remembered as it is raised, restored by resume, escapable, and its
+   * buttons wrapped so a throw lands on the pause card instead of on a frozen
+   * field with nothing to click. A muster raised any other way would have none
+   * of those, and it is the one overlay in the game a player can sit on for a
+   * minute deciding.
+   *
+   * `io.recruit` and `io.done` are the director's, wrapped in `guarded` here so
+   * the caller cannot forget to.
+   *
+   * @param {object} offer `CommandDirector.musterOffer()`
+   * @param {{recruit:(t:string)=>object, done:()=>void}} io
+   */
+  muster(offer, io = {}) {
+    const menu = this.io.menu;
+    if (typeof menu.showMuster !== 'function') return false;
+    let up = true;
+    this.take('muster', () => {
+      up = menu.showMuster(offer, {
+        recruit: this.guarded('recruiting', (type) => io.recruit?.(type)),
+        done: this.guarded('closing the muster', () => io.done?.()),
+      }) !== false;
+    });
+    if (up) return true;
+    /**
+     * THE CARD DID NOT ARRIVE — and this is the branch that stops that being a
+     * frozen campaign.
+     *
+     * `take` has already stopped the world and put the state in 'muster'.
+     * Without this, a menu whose markup is missing leaves the player paused on
+     * a state whose overlay is not on the screen; Escape still works (rule 1
+     * holds — it pauses, and the pause card can abandon), but the advance can
+     * never continue, because the only thing that calls `closeMuster` is a
+     * button that was never drawn. So the screen is handed straight back and
+     * `false` is returned, which is the caller's signal to muster without one —
+     * exactly what CommandDirector does when no handler is installed at all.
+     */
+    this.overlay = null;
+    this.state = 'paused';
+    this.resume();
+    return false;
+  }
+
+  /**
    * Anything an overlay button calls.
    *
    * A throw in one of these used to strand the game in a state with nothing on
@@ -157,7 +227,7 @@ export class Screens {
         this.io.onError ? this.io.onError(what, e)
                         : console.error(`${what} failed — falling back to the pause menu:`, e);
         this.overlay = null;
-        // 'draft'/'landing' pause fine; if we were somewhere pause() refuses,
+        // A draft pauses fine; if we were somewhere pause() refuses,
         // say we are playing so the player gets a card they can act on.
         if (this.state === 'dead' || !LIVE.includes(this.state)) this.state = 'playing';
         this.pause();
@@ -170,8 +240,8 @@ export class Screens {
 
   pause() {
     // Every live state EXCEPT 'dead' — see rule 4. Notably including 'draft'
-    // and 'landing', which is the whole fix: those were the two you could be
-    // stuck in.
+    // and every overlay registered through `card()`, which is the whole fix:
+    // an overlay you cannot pause out of is an overlay you are stuck in.
     if (this.state === 'paused' || this.state === 'dead') return false;
     if (!LIVE.includes(this.state) || !this.io.world()) return false;
     if (this.overlay) this._hide(this.overlay.state);
@@ -229,7 +299,7 @@ export class Screens {
     if (own) { own(); return; }
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
-    else if (name === 'landing') m.hideLanding?.();
+    else if (name === 'muster') m.hideMuster?.();
     else if (name === 'dead') m.hideDeath?.();
   }
 }

@@ -563,6 +563,219 @@ export async function run({ check, assert }) {
     return `scene held at ${after} objects across 12 runs`;
   });
 
+  check('balance: a body that defends itself does not die as fast as one that cannot', async () => {
+    /**
+     * THE LARGEST SINGLE DEFECT THIS INSTRUMENT HAS HAD, and nothing could see
+     * it because every number it produced was internally consistent.
+     *
+     * `engagementFor` worked the real capsules against the real toughness
+     * tables with the real cut arithmetic — and stood every archetype PERFECTLY
+     * STILL while it did. Measured before the fix, time to put one down at
+     * stock cut power:
+     *
+     *     b1        28 hp    0.64 s   head (decap)
+     *     sentinel 200 hp    0.64 s   hips (kill)
+     *     stalker  420 hp    0.64 s   head (decap)
+     *     beast    900 hp    0.64 s   head (decap)
+     *     master   460 hp    0.64 s   hips (kill)
+     *
+     * The cut arithmetic is not wrong: a lightsaber does take a neck off in one
+     * pass. What was missing is that a Jedi Master does not let you have its
+     * neck. `measureDuel` now counts the share of a fight the real `DuelBrain`
+     * spends in its `guard` phase — Soresu 87.9%, Makashi 48.9%, Djem So 40.2%,
+     * Juyo 38.3%, Ataru 24.3% — and the player's cadence against a duellist is
+     * only its openings.
+     *
+     * This check pins the ORDERING that was false, not the numbers: a body with
+     * a blade in the way must cost more time than one without.
+     */
+    const { engagementFor, measureDuel } = B;
+    const { FORM_KEYS } = await import('../../src/game/Duel.js');
+    const mods = { cutPower: 1, bladeLength: 1.15, attackRate: 1, moveSpeed: 1 };
+    const shares = FORM_KEYS.map((k) => ({ k, g: measureDuel('knight', k).guardShare }));
+    for (const { k, g } of shares) {
+      assert(g > 0.05 && g < 0.99,
+        `${k} spends ${(g * 100).toFixed(0)}% of a fight guarding, which is not a fight`);
+    }
+    const defensive = shares.reduce((a, b) => (a.g > b.g ? a : b));
+    const aggressive = shares.reduce((a, b) => (a.g < b.g ? a : b));
+    assert(defensive.k === 'soresu',
+      `the most defensive form measures as ${defensive.k}; Duel.js authors Soresu as the one that `
+      + '"gives you nothing — it is waiting for you to swing first"');
+    assert(aggressive.k === 'ataru',
+      `the least defensive form measures as ${aggressive.k}; Duel.js authors Ataru as the flurry`);
+
+    // …and the ordering that was false. A B1 has no blade; a Sentinel does.
+    const bare = engagementFor('b1', mods, 0).tKill;
+    const rows = [];
+    for (const t of ['sentinel', 'guardian', 'master', 'acolyte']) {
+      const A = ARCHETYPES[t];
+      if (!A) continue;
+      const g = measureDuel('knight', A.form || 'ataru').guardShare;
+      const held = engagementFor(t, mods, g).tKill;
+      assert(held > bare,
+        `a ${t} (${A.hp} hp, a saber and ${(g * 100).toFixed(0)}% guard) goes down in ${held.toFixed(2)} s `
+        + `against a 28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
+      rows.push(`${t} ${held.toFixed(2)}s`);
+    }
+    const sen = engagementFor('sentinel', mods, measureDuel('knight', 'soresu').guardShare).tKill;
+    const jed = engagementFor('jedi', mods, measureDuel('knight', 'ataru').guardShare).tKill;
+    assert(sen > jed * 2,
+      `a Soresu Sentinel (${sen.toFixed(2)} s) is not meaningfully harder to reach than an Ataru Jedi `
+      + `(${jed.toFixed(2)} s) — the forms are not separating`);
+    return `guard share ${shares.map((x) => `${x.k} ${(x.g * 100).toFixed(0)}%`).join(', ')}; `
+      + `b1 ${bare.toFixed(2)}s vs ${rows.join(', ')}`;
+  });
+
+  check('balance: a body with NO blade defends itself too, and its mass is the form it has', async () => {
+    /**
+     * The check above fixed duellists and this is the half it left behind. With
+     * the guard gated on `A.saber`, `engagementFor` still reported:
+     *
+     *     b1       28 hp    0.64 s   head (decap)
+     *     stalker 420 hp    0.64 s   head (decap)
+     *     beast   900 hp    0.64 s   head (decap)
+     *     charger 1250 hp   0.64 s   head (decap)
+     *     brute   2200 hp   1.28 s   tibia0
+     *
+     * — the player's "the large creatures all look the same" with a number
+     * against it. `Enemy.guardFor` derives a guard from MASS for anything
+     * without a blade and `engagementFor` models `_turnCut` itself.
+     *
+     * ORDERINGS, not numbers, for the reason this file's header gives. Three of
+     * them, and each was false before:
+     *   · a body over half a tonne costs strictly more than a battle droid;
+     *   · the heavies are ordered by their guard, so the mass derivation
+     *     actually reaches the answer instead of being decorative;
+     *   · and it is bounded — nothing is unkillable, at any cut power.
+     */
+    const { engagementFor } = B;
+    const { guardFor, TURNED_CUT } = await import('../../src/game/Enemy.js');
+    const mods = { cutPower: 1, bladeLength: 1.15, attackRate: 1, moveSpeed: 1 };
+    const bare = engagementFor('b1', mods, 0).tKill;
+    const heavies = Object.entries(ARCHETYPES)
+      .filter(([, A]) => !A.saber && !A.training && !A.inert && (A.mass ?? 0) >= 520)
+      .map(([t, A]) => ({ t, A, g: guardFor(A), tKill: engagementFor(t, mods, 0).tKill }));
+    assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg to measure`);
+    for (const h of heavies) {
+      assert(h.tKill > bare,
+        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) goes down in ${h.tKill.toFixed(2)} s against a `
+        + `28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
+      assert(isFinite(h.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
+    }
+    // The guard is what buys the time, so a body that turns more passes than
+    // another of the same shape must not die faster. Compared within the beast
+    // family only, because a machine's capsules are a different problem.
+    const beasts = heavies.filter((h) => h.A.custom === 'beast').sort((a, b) => a.g - b.g);
+    for (let i = 1; i < beasts.length; i++) {
+      assert(beasts[i].tKill >= beasts[i - 1].tKill - 1e-9,
+        `${beasts[i].t} turns ${beasts[i].g} passes and dies in ${beasts[i].tKill.toFixed(2)} s, `
+        + `while ${beasts[i - 1].t} turns ${beasts[i - 1].g} and takes ${beasts[i - 1].tKill.toFixed(2)} s`);
+    }
+    // …and the ceiling the game itself imposes is respected: no engagement may
+    // charge more turns than `1 / TURNED_CUT`, whatever the guard says.
+    for (const h of heavies) {
+      const e = engagementFor(h.t, mods, 0);
+      assert((e.turns ?? 0) <= Math.ceil(1 / TURNED_CUT),
+        `${h.t} is billed ${e.turns} turned passes against a ceiling of ${Math.ceil(1 / TURNED_CUT)}`);
+    }
+    return `b1 ${bare.toFixed(2)}s vs ` + heavies.map((h) => `${h.t} ${h.tKill.toFixed(2)}s(g${h.g})`).join(', ');
+  });
+
+  check('balance: a melee opener gets to attack — wave 1 is not free', async () => {
+    /**
+     * TWO DEFECTS MET HERE AND THE SECOND WAS INVISIBLE BEHIND THE FIRST.
+     *
+     * `armTime` charges a melee body the whole walk in from the spawn ring and
+     * the travel phase is supposed to hold the player off until it arrives —
+     * the note at that line says so, and says it was written after the identical
+     * symptom on scoria. But `e.arm` is a COUNTDOWN the incoming loop
+     * decrements every tick, and it was compared against a `phaseT` counting
+     * UP, so the two met in the middle and the player began cutting at half the
+     * arm time. Measured on the Colosseum, whose wave 1 is a single creature on
+     * every seed: the Nexu's arm clock is 4.16 s, it died at 3.36 s, and wave 1
+     * cost the player 0.0 hp across 24 seeds at all four tiers.
+     *
+     * A SIMULATED number in a file whose header forbids them, and deliberately:
+     * the assertion is not a depth, it is that a wave which spawns a body with
+     * a 54-damage claw is not free. Zero is a claim about the instrument, not
+     * about the game, and it is the exact reading that hid this for a session.
+     *
+     * ── AND THE FIRST VERSION OF THIS CHECK FLAKED, WHICH IS WORTH THE SPACE ─
+     *
+     * It asserted a per-tier mean and that wave 1 cleared on EVERY seed, and it
+     * failed 3 runs in 8 — on the clear clause, at Master. The cause is written
+     * at the top of `tools/balance.mjs` in as many words: `Math.random` is
+     * pinned around the Waves.js import so a standalone run is reproducible,
+     * and *"under verify.mjs the module is already loaded and this does nothing
+     * — which is why nothing in tools/checks/balance.mjs may depend on a
+     * specific composition."* The Colosseum's wave-1 pool is 22/40 Nexu, 9/40
+     * Reek, 6/40 Gundark and 3/40 battle droids, so which twelve compositions
+     * twelve seeds draw moves between PROCESSES, and with it the mean, the
+     * worst case and whether the modelled player survives the Reek.
+     *
+     * So the property is stated in a way the composer cannot move:
+     *
+     *   · WORST > 0 at every tier. That is the defect exactly — before the fix
+     *     every seed at every tier cost 0.0, and it takes only one melee body
+     *     landing one claw to falsify that. A pool with no melee body in
+     *     twenty-four draws is not a thing this level composes.
+     *   · a POOLED mean over all four tiers, against 1 hp — two orders of
+     *     magnitude under what it measures, and averaged over 96 runs rather
+     *     than 12 so a droid-heavy pool cannot carry it.
+     *   · and the other half, so this cannot be satisfied by making wave 1 a
+     *     wall: it still clears on at least three quarters of seeds. Measured
+     *     24/24 on a quiet pool and 11/12 on the worst one observed.
+     *
+     * ── AND THE CLEAR CLAUSE FLAKED AGAIN, FOR THE REASON ABOVE ──────────────
+     *
+     * The paragraph two up gives the fix — state the property so the composer
+     * cannot move it — and then the clear clause was left stated PER TIER while
+     * only the mean was pooled. A per-tier rate over 24 draws from a pool that
+     * changes between processes is exactly the movable thing that note warns
+     * about. Measured five consecutive runs of this file after the creature
+     * work landed, grandmaster: **21, 19, 18, 20 and one below the floor of 18**
+     * — four passes and a fail, with the bound sitting inside the noise.
+     *
+     * So the clear clause is pooled over all 96 runs, for the same reason and
+     * with the same words as the mean beside it: a tier whose pool drew badly
+     * cannot carry it, and a wave-1 that is genuinely a wall still fails
+     * because it would be a wall at every tier. Measured pooled across those
+     * same five runs: 92, 90, 90, 91 of 96 against a floor of 72 — steady.
+     *
+     * The per-tier reading is kept and PRINTED rather than asserted, because it
+     * is worth knowing: grandmaster clearing 18-21 of 24 is a real balance
+     * signal that the Colosseum's opener got harder when the creatures gained
+     * their phase-1 vocabulary, and the next person to tune that should see the
+     * number rather than discover it as a flake.
+     */
+    const rows = [];
+    let pooled = 0, runs = 0, clearedAll = 0;
+    for (const difficulty of ['padawan', 'knight', 'master', 'grandmaster']) {
+      let sum = 0, n = 0, worst = 0, cleared = 0;
+      for (let seed = 1; seed <= 24; seed++) {
+        const r = B.simulateRun({ difficulty, level: 'colosseum', seed, maxWave: 1 });
+        const w = r.waveLog[0];
+        if (!w) continue;
+        const cost = w.hpStart - w.hpEnd;
+        sum += cost; n++; worst = Math.max(worst, cost); cleared += w.cleared >= 1 ? 1 : 0;
+      }
+      assert(n === 24, `only ${n} of 24 seeds produced a wave 1`);
+      assert(worst > 0,
+        `not one of ${n} seeds at ${difficulty} cost the player a single point — the Colosseum's `
+        + 'opener is being killed before its own clock starts');
+      clearedAll += cleared;
+      pooled += sum; runs += n;
+      rows.push(`${difficulty} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)}, cleared ${cleared}/${n})`);
+    }
+    assert(pooled / runs > 1,
+      `the Colosseum's wave-1 opener costs ${(pooled / runs).toFixed(2)} hp averaged over ${runs} runs`);
+    assert(clearedAll >= runs * 0.75,
+      `wave 1 cleared on only ${clearedAll} of ${runs} runs across all four tiers — the opener is a wall`);
+    return `${(pooled / runs).toFixed(1)} hp pooled over ${runs} runs, cleared ${clearedAll}/${runs} — `
+      + rows.join(', ');
+  });
+
   check('balance: a memo keyed on a moving number cannot grow without bound', async () => {
     // The companion to the leak above: `engagementFor` keys on cutPower, which
     // Fury moves every tick with the player's health, so the key space is

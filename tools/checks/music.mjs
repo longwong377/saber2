@@ -24,7 +24,30 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { engine } from './audio.mjs';
+import { MUSIC_TRACKS, isSilent } from '../../src/engine/Audio.js';
 import { handler, parseRange } from '../serve.mjs';
+
+/**
+ * THE ROW THAT STREAMS, found rather than typed.
+ *
+ * The soundtrack list is data and it has grown a generated score, which is now
+ * row 0 — so an engine nobody has spoken to about tracks plays no file at all,
+ * which is the whole point of it and would silently turn every check below into
+ * a measurement of nothing. `files: null` is the row that means "whatever
+ * main.js armed", and that definition lives in MUSIC_TRACKS' own docstring; a
+ * literal `2` here would be this project's signature defect (HANDOFF §2.3) in a
+ * check rather than in the game.
+ */
+const STREAM_ROW = MUSIC_TRACKS.findIndex(t => t.files === null);
+
+/** Put an engine on the streamed row, the way the options screen would. */
+const streamed = (a) => { a.setMusicTrack(STREAM_ROW); return a; };
+
+/** Every node reachable downstream of `n`, on the recording context. */
+function downstream(n, seen = new Set()) {
+  for (const d of n.outs || []) if (!seen.has(d)) { seen.add(d); downstream(d, seen); }
+  return seen;
+}
 
 /**
  * The score's whole path in Audio.js, as text: playMusic → _startMusic →
@@ -80,6 +103,56 @@ function withAudioElement(fn) {
 }
 
 export async function run({ check, assert }) {
+
+  /**
+   * THE SOUNDTRACK LIST IS PERSISTED BY INDEX, AND THAT IS A TRAP.
+   *
+   * `musicIndex` goes into localStorage as a NUMBER (src/ui/Menu.js), so
+   * inserting a row silently changes the meaning of every value already stored
+   * at or after it. Adding the generated score in the middle of the list would
+   * have handed a 28 MB download to every player who had chosen "No score" —
+   * a settings migration, invisible, in a game that has no settings migration.
+   *
+   * There is exactly one arrangement with the properties the change needed, and
+   * this is the check that says so rather than a comment claiming it: the
+   * generated score is row 0 so a fresh profile and an untouched slider both
+   * land on it, and `silence` keeps the index it has always had. Only row 0's
+   * meaning moved, from the streamed theme to the generated one, which is the
+   * intended change and the only one.
+   */
+  check('music: the track list can grow without re-meaning a stored index', () => {
+    const ids = MUSIC_TRACKS.map(t => t.id);
+    assert(new Set(ids).size === ids.length, `duplicate track ids: ${ids.join(', ')}`);
+    assert(MUSIC_TRACKS[0].synth === true,
+      `row 0 is '${ids[0]}', which is what a fresh profile and an unmoved slider get — `
+      + 'it has to be the one that fetches nothing and cannot fail to arrive');
+    assert(ids[1] === 'silence',
+      `'silence' has moved to row ${ids.indexOf('silence')} — every player who chose `
+      + 'no score is now on something else');
+    assert(STREAM_ROW > 0, 'no row streams a file at all, so the shipped mp3 is unreachable');
+
+    // The three kinds are distinguishable and no row is two of them at once.
+    for (const t of MUSIC_TRACKS) {
+      const kinds = [t.files === null, !!t.synth, isSilent(t)].filter(Boolean).length;
+      assert(kinds === 1, `'${t.id}' is ${kinds} kinds of row at once, not one`);
+      assert(typeof t.name === 'string' && t.name && typeof t.blurb === 'string' && t.blurb,
+        `'${t.id}' has nothing for the options screen to print`);
+    }
+
+    // …and the engine can be put on every one of them and back.
+    const { a } = engine();
+    const seen = [];
+    for (let i = 0; i < MUSIC_TRACKS.length; i++) {
+      a.setMusicTrack(i);
+      seen.push(`${MUSIC_TRACKS[i].id}:${a.score.enabled ? 'bed' : '—'}${a.score.armed ? '+cue' : ''}`);
+    }
+    assert(/bed\+cue/.test(seen[0]), 'the generated row does not play the generated score');
+    assert(seen[1] === 'silence:—', `"No score" left something running: ${seen[1]}`);
+    assert(/^theme:—\+cue$/.test(seen[STREAM_ROW]),
+      `the streamed row is wrong: ${seen[STREAM_ROW]} (it wants the stingers and not the bed)`);
+    return `${ids.join(' → ')}; ${seen.join(' ')}`;
+  });
+
   check('music: the score is STREAMED, never decoded into memory', async () => {
     const body = await scorePath(assert);
     assert(/new Audio\(\)|createElement\('audio'\)/.test(body),
@@ -88,14 +161,17 @@ export async function run({ check, assert }) {
       'the element is not routed into WebAudio, so the Music slider cannot reach it');
     assert(!/decodeAudioData/.test(body),
       'the score is decoded into a buffer — at 49 minutes that is ~1 GB resident and the tab dies');
-    assert(/musicBus/.test(body),
-      'the score is not on the music bus, so the Music slider does not control it');
+    /* "…and it reaches the mixer" used to be `/musicBus/.test(body)`. It is now
+     * a walk of the real graph, in the check below — there is a duck node
+     * between the stream and the slider, and a text match on the bus name would
+     * have had to be widened to accept it, which is the point at which a source
+     * check stops discriminating. Left as a note rather than deleted silently. */
     assert(/loop/.test(body), 'the score does not loop');
     // 'auto' is a request for the whole 28 MB up front, whether or not a note
     // of it is ever heard. play() pulls what it is playing and no more.
     assert(!/preload = 'auto'/.test(body),
       "the element asks for preload='auto' — that is the whole file, before the first note");
-    return 'streamed through <audio> into musicBus, looping, never decoded, no preload=auto';
+    return 'streamed through <audio>, looping, never decoded, no preload=auto';
   });
 
   check('music: a missing or unplayable file is silence, not a broken game', async () => {
@@ -125,7 +201,8 @@ export async function run({ check, assert }) {
    */
   check('music: at Music 0 the score is never fetched, and the slider is what starts it', () => {
     return withAudioElement(() => {
-      const { a } = engine();
+      const { a, ctx } = engine();
+      streamed(a);
       a.setMusicVolume(0);
       const armed = a.playMusic(['theme.mp3'], { loop: true });
       assert(armed === null, 'playMusic started a stream the player had turned off');
@@ -137,6 +214,28 @@ export async function run({ check, assert }) {
       assert(FakeAudio.made.length === 1,
         'moving the Music slider off zero did not start the score it had suppressed');
       const el = FakeAudio.made[0];
+
+      /**
+       * …AND IT REACHES THE MIXER, measured on the real graph rather than by
+       * grepping for the word `musicBus` in the method that builds it.
+       *
+       * The stream used to connect straight to `musicBus`, which is the param
+       * the Music slider owns, so a duck and a slider move fought over one
+       * number. There is a node between them now, and a text check would either
+       * have to be relaxed to accept it (which accepts anything) or would fail
+       * for a change that is an improvement. The graph answers the question the
+       * text was standing in for: does the score arrive at the mixer, and does
+       * it pass the thing that ducks it on the way.
+       */
+      const media = ctx.edges.map(([f]) => f).find(n => n.kind === 'media');
+      assert(media, 'the element was never wired into WebAudio at all');
+      const reach = downstream(media);
+      assert(reach.has(a.musicDuck),
+        'the stream bypasses musicDuck — a clash cannot make room for itself over the score');
+      assert(reach.has(a.musicBus), 'the stream never reaches musicBus — the Music slider is not on it');
+      assert(reach.has(a.master) && reach.has(ctx.destination), 'the stream never reaches the destination');
+      assert(!reach.has(a.comp),
+        'the stream goes through the master compressor — every blaster shot would pump the music');
       assert(el.srcs.length === 1 && el.srcs[0] === 'theme.mp3', `the element was handed ${el.srcs.join(', ')}`);
       assert(el.plays === 1, `play() was called ${el.plays} times`);
       assert(el.preload !== 'auto', `preload is '${el.preload}' — that is the whole file up front`);
@@ -150,7 +249,8 @@ export async function run({ check, assert }) {
       a.setMusicVolume(0.7);
       assert(el.plays === 2 && el.srcs.length === 1,
         `the score restarted from the top: ${el.srcs.length} loads, ${el.plays} plays`);
-      return `0 elements at Music 0, 1 on the first move off it, paused/resumed with the slider`;
+      return `0 elements at Music 0, 1 on the first move off it, paused/resumed with the slider; `
+        + 'media → musicDuck → musicBus → master, around the compressor';
     });
   });
 
@@ -170,6 +270,7 @@ export async function run({ check, assert }) {
   check('music: a split score chains, wraps, and steps over a half that is not there', () => {
     return withAudioElement(() => {
       const { a } = engine();
+      streamed(a);
       const m = a.playMusic(['one.mp3', 'two.mp3'], { loop: true });
       assert(m, 'a two-file score did not start at all');
       const el = FakeAudio.made[0];
@@ -192,6 +293,7 @@ export async function run({ check, assert }) {
 
       // and one file still loops natively, with no gap for anything to schedule
       const { a: b } = engine();
+      streamed(b);
       b.playMusic('solo.mp3', { loop: true });
       const solo = FakeAudio.made[1];
       assert(solo.loop === true, 'a single-file score lost its native loop');

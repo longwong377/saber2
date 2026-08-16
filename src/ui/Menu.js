@@ -1,5 +1,5 @@
 /**
- * SABER — front end.
+ * BATTLEFRONT BORZ — front end.
  *
  * Menus, the saber forge preview, the boon draft, and the settings that are
  * persisted between sessions.
@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES } from '../game/Bodies.js';
-import { BipedAnimator } from '../game/Rig.js';
+import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
@@ -17,12 +17,13 @@ import { BipedAnimator } from '../game/Rig.js';
 // have finished evaluating, whichever of the two the browser reaches first.
 import { handPoseOnHilt, GRIP_AT } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
-import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku } from '../game/Cloth.js';
+import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
+         CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
+         garmentTone } from '../game/Cloth.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
-import { DESCENT } from '../game/Run.js';
 import { DIFFICULTY } from '../game/Combat.js';
 // The Codex and the training panel both quote Focus's numbers. They are read
 // from the system rather than typed, because both of them had been left behind
@@ -33,16 +34,58 @@ import { FOCUS } from '../game/Focus.js';
 // list it starts. MODES.training's own blurb says "the eleven lessons" and it
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
-import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
-import { audio } from '../engine/Audio.js';
+import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig,
+         DRAFT_EVERY, BOSS_EVERY,
+         CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
+import { audio, MUSIC_TRACKS, trackAt, SPOKEN_LINES, wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
 // the options screen borrows both rather than keeping a second copy that could
 // fall out of step with what is actually on screen.
-import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES } from './HUD.js';
+import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
+         rosterHtml } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
-         WALK_SCALE, walkScale } from '../engine/Bindings.js';
+         WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
+         codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
+// The six formation orders, so they can be pushed through Bindings' seam below.
+import { FORMATIONS, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+// THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
+// and never typed — and Databank.js carries the one thing a roster cannot hold:
+// which side a body fights for, what it is carrying, and who it is.
+import { ARCHETYPES } from '../game/Enemy.js';
+import { DATABANK, FACTIONS, entryFor } from '../game/Databank.js';
+
+/**
+ * THE SIX ORDER KEYS JOIN THE TABLE, HERE, AND IT HAS TO BE HERE.
+ *
+ * `FORMATIONS` is `game/`; `ACTIONS` is `engine/`. Neither may import the
+ * other — an engine module reaching up into game is the cross-layer edge this
+ * project has already paid for once as a boot-time TDZ crash. This file is
+ * `ui/`, it already imports eight game modules and the bindings table, and it
+ * is the screen where a control is rebound; it is the one place allowed to see
+ * both sides, so it is where they are introduced.
+ *
+ * At MODULE SCOPE, and above `CODEX`, on purpose. Everything downstream reads
+ * the table as a plain list — `defaultBindings`, `loadBindings`, the options
+ * list, `findConflicts`, `conflicts`, the Codex block generated below — and
+ * every one of them would see six fewer actions if this ran inside a
+ * constructor. A binding table that is complete only after somebody opens a
+ * menu is not a binding table.
+ *
+ * Nothing is typed twice: the id, the name, the default key and the blurb all
+ * come off the formation record. tools/checks/controls.mjs re-derives the same
+ * set straight from FORMATIONS and fails on any row that disagrees.
+ *
+ * Measured before it was written, because the graph is the whole risk: this
+ * edge was added and every module in the tree imported as a FIRST entry point
+ * in its own process — Player.js, Menu.js, Command.js, Enemy.js, HUD.js,
+ * World.js, Waves.js, Bodies.js. All eight evaluate clean, and FORMATIONS is
+ * fully initialised by the time this line runs from every one of them. Command
+ * imports Enemy, Bodies, Combat, Bolts, Waves and MathUtil, and none of those
+ * reaches back into ui/, so there is no cycle to close.
+ */
+registerOrders(FORMATIONS);
 
 // v2: the control scheme defaults changed, and a stored v1 blob would keep
 // pinning returning players to the old blade-leads-camera scheme.
@@ -94,6 +137,13 @@ export const LEGACY_KEYS = ['saber.settings.v5', 'saber.settings.v4', 'saber.set
  */
 export const DEATH_TITLE = 'You are one with the Force';
 
+/**
+ * …and the other ending. `showDeath` has taken a title since it was written and
+ * nothing ever passed one, so finishing the campaign printed the death line over
+ * a victory. The advance is the only thing in this game that can be WON.
+ */
+export const VICTORY_TITLE = 'The advance is yours';
+
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
 
@@ -136,7 +186,7 @@ export const HAIR_COLORS = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  level: 'mustafar',
+  level: 'scoria',
   /**
    * WHO YOU ARE ON SOMEBODY ELSE'S SCREEN.
    *
@@ -149,6 +199,37 @@ export const DEFAULT_SETTINGS = {
   order: 'jedi',
   difficulty: 'knight',
   mode: 'roguelite',
+  /**
+   * THE RULES THE RUN IS FOUGHT UNDER — `Waves.CONDITIONS` keys, chosen on the
+   * Deploy panel and in force from wave 1. Empty by default, so a player who
+   * never opens the column plays exactly the game they always played.
+   *
+   * A LIST OF KEYS, not a set of booleans, because the ORDER is the player's:
+   * `legalRuleSet` walks it and drops what the theatre vetoes or an earlier
+   * pick excludes, so which of two mutually exclusive rules survives is the one
+   * that was picked first rather than whichever comes first in the table.
+   *
+   * Not a meta-progression and not an unlock: every rule is available in the
+   * first run, none of them makes the player stronger, and none is charged
+   * against the wave's budget (see `WaveDirector.conditionCost`).
+   */
+  rules: [],
+  /**
+   * THE RUN'S OWN NUMBER, or null to draw a fresh one on every Ignite.
+   *
+   * `WaveDirector.seed` and `seedWaves` have described themselves for a long
+   * time as what makes a run "a shareable number rather than an unrepeatable
+   * accident", and the field they read — `world.run.seed` — has not existed
+   * since `Run.js` was deleted with the Descent. So the seed was null in every
+   * mode, `Progress.recent[].seed` was always null, and the `· seed N` clause
+   * in `progressLines` was unreachable code.
+   *
+   * Null rather than a number by default: two runs of the same seed compose the
+   * same waves, and a game whose default is to replay yesterday's run is not
+   * what an endless mode is for. Set it and the run is repeatable — which is
+   * what makes a rule set worth telling somebody about.
+   */
+  seed: null,
   colorIndex: 0,
   // 0x9fd8ff is what the Force has always come out at, so a player who never
   // touches the row keeps exactly the lightning they had. See LIGHTNING_COLORS.
@@ -175,6 +256,28 @@ export const DEFAULT_SETTINGS = {
   face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5 },
   robeCut: 'temple',
   robeIndex: 1,
+  /**
+   * THE REST OF THE CLOTHES, and it is ONE object for the reason `face` is.
+   *
+   * The report: "you can only change the lower robe, like you can't change all
+   * the clothes. I want to be able to change all the clothes and also be able
+   * to choose from different capes or even go capeless." Exactly right —
+   * `robeCut` above cuts the SKIRT and `robeIndex` picks one palette for the
+   * whole figure, and every other layer on the body was the same on every
+   * character in the game.
+   *
+   * Nine keys rather than nine settings, because they are one choice made on
+   * one screen, and because nine top-level keys would each want a line in this
+   * blob, a reader declaration, and a row in three checks. `face` made the same
+   * trade for the same reason and the note over it is the precedent.
+   *
+   * The shape, the defaults and the normaliser all live in game/Cloth.js
+   * (WARDROBE / wardrobeOf), beside the garments they describe — this file
+   * stores the answer and does not own the vocabulary. `wardrobeOf` is applied
+   * on load exactly as `characterSheet` is, so a blob written by an older build
+   * or a corrupt one cannot leave a character with no cape at all.
+   */
+  wardrobe: { ...WARDROBE },
   skinIndex: 2,
   hairIndex: 1,
   /**
@@ -224,8 +327,86 @@ export const DEFAULT_SETTINGS = {
   deflectAim: 'reticle',
   forcePower: 1,
   forceDrain: 1,
+  /**
+   * HOW MUCH OF THE HOLOCRON IS ALREADY OPEN when a run begins.
+   *
+   * 'earned' is the game: Insight is a run currency, you kneel to spend it,
+   * and nothing carries over. That is load-bearing design and it stays the
+   * default.
+   *
+   * The other two exist because of a real report — "I can't actually test out
+   * anything in the Holocron to even know if it works… I haven't even been
+   * able to force lightning or force compel yet." Both of those powers are
+   * gated behind `boonMods.lightning` / `boonMods.compel`, which arrive only
+   * as a boon, which arrives only from a draft or a facet you paid Insight
+   * for, at roughly 1.4 Insight a wave. A player can finish a run without
+   * ever seeing half the kit, and a kit nobody can reach is a kit nobody can
+   * tell you is broken.
+   *
+   *   'open'  a full purse at the start of every run. Everything is
+   *           reachable and the SHAPE of the choice is intact — you still
+   *           kneel, you still pick, prices still escalate.
+   *   'all'   every facet already woken. No choice at all: this is the
+   *           workshop setting, for looking at a power rather than earning it.
+   */
+  holocron: 'earned',
+  /**
+   * ── COMMAND: the two settings that had a reader and no control ──────
+   *
+   * `commandConfig` in game/Command.js reads both and is the only thing
+   * allowed to interpret either, exactly as `sandboxConfig` and `pvpRules`
+   * are for their own. Neither key was in this object, which is how both of
+   * them escaped BOTH of controls.mjs's dead-control guards at once: those
+   * guards iterate `Object.keys(DEFAULT_SETTINGS)`, so a setting that is read
+   * but never defaulted is invisible to the check that exists to find settings
+   * nothing can move. The guard is fixed in the same round as the settings —
+   * it now scans src/ for what is actually READ, which is what found these.
+   *
+   * `teamDamage` is note #29's, asked for by name: "maybe there's a setting
+   * for how much team damage you do." Its default is Command.js's own
+   * constant, not a second copy of 0.35.
+   */
+  teamDamage: TEAM_DAMAGE_DEFAULT,
+  /** The formation your army starts every area in. See FORMATIONS. */
+  commandFormation: DEFAULT_FORMATION,
+  /**
+   * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
+   *
+   * `commandConfig` reads it and nothing else may, exactly as for the two
+   * above. Off by default because a meeting needs two people: it turns Command
+   * from a campaign against a composed horde into one battle against another
+   * player's roster, on two anchors 120 m apart, decided by whose army is left
+   * standing (World.beginVersus).
+   *
+   * Declared here even though no control writes it yet, and that is the whole
+   * point of the guard this key was caught by: a setting that is READ by
+   * shipped code and never DECLARED is invisible to both of the dead-control
+   * checks, because they iterate the keys of this object. Being in it is what
+   * makes "this has no control" a question anybody can ask.
+   */
+  commandVersus: false,
   quality: 'high',
   resolutionScale: 1,
+  /**
+   * WHETHER REINFORCEMENTS FLY IN, OR SIMPLY APPEAR.
+   *
+   * `Waves.instantSpawn(settings)` is the single reader — a gunship on final
+   * approach, a door, a drop pod, all of Arrivals.js — and it had no default
+   * and no box, so the fast path existed and no player could reach it. Off is
+   * the game; on is what a machine that cannot afford the craft wants, and
+   * what anybody testing a wave wants.
+   */
+  instantSpawn: false,
+  /**
+   * HOW MUCH WRECKAGE THE PHYSICS WORLD WILL HOLD AT ONCE.
+   *
+   * Read by World's RapierWorld constructor, which culled the oldest debris
+   * past this many bodies and had no setting behind it — `settings.maxBodies
+   * ?? 1100`, where nothing anywhere wrote `maxBodies`. Severed limbs, cut
+   * props and shattered walls all land in that budget, so it is the one number
+   * that decides whether a long fight leaves a battlefield or a clean floor.
+   */
+  maxBodies: 1100,
   bloom: true,
   // Off by default: it is an instrument, not decoration. It exists because no
   // frame time in this project has ever been measured on real hardware — the
@@ -245,6 +426,46 @@ export const DEFAULT_SETTINGS = {
   injury: true,
   shake: true,
   slowmo: true,
+  /**
+   * HOW HARD THE PAD IS ALLOWED TO SHAKE, 0..1.
+   *
+   * `Engine.rumble` shipped with `this.rumbleLevel ?? 1` and a note saying, in
+   * as many words, that the field is deliberately uninitialised and "the day a
+   * strength slider exists it assigns this and every call scales". This is that
+   * day: `applyFeelSettings` writes it, so it lands on the very next kill from
+   * the pause card with no redeploy.
+   *
+   * A SLIDER AND NOT A CHECKBOX, because rumble is the one piece of feedback in
+   * this game with a physical intensity a player can be sensitive to. 0 is off
+   * — `rumble()` returns before it touches a pad — and 1 is what every call
+   * site was authored against, so a player who never moves it feels exactly
+   * what the game was tuned to give.
+   *
+   * It is NOT a second gate on `shake`. Every rumble call site already asks
+   * `world.feelOn('shake')` first, so unticking Camera shake still silences the
+   * pad; this scales what survives that. Two gates that mean different things —
+   * "no kinetic feedback at all" and "less of it" — and the slider would be a
+   * claim rather than a control if it duplicated the box.
+   */
+  rumble: 1,
+  /**
+   * THE LETTERBOX AND THE DEATH DRAIN, one box each.
+   *
+   * Both were left out of the `shake` gate on purpose, and the note over
+   * Engine.setBars records why: with motion feedback off they are the only cue
+   * that you died, so folding them into the motion box would take a player who
+   * turned it off for comfort and leave them nothing on screen at the one
+   * moment that matters. They are separate controls because they are separate
+   * questions.
+   *
+   * The names ARE the feel kinds. `World.feelOn(kind)` is `s[kind] !== false`,
+   * so `feelOn('letterbox')` and `feelOn('deathDrain')` answer correctly the
+   * moment these keys exist — nothing in World.js had to learn a word. The
+   * Engine-side gate is for the eight call sites that hold an engine and no
+   * world; see Engine.setBars.
+   */
+  letterbox: true,
+  deathDrain: true,
   volume: 0.8,
   music: 0.45,
   /**
@@ -259,6 +480,32 @@ export const DEFAULT_SETTINGS = {
    * next frame — see SETTING_READERS below for where each one lands.
    */
   voiceIndex: 0,
+  /**
+   * WORDS, OR THE WORDLESS VOICE, OR BOTH.
+   *
+   * "I want to be able to say actual voice lines. Like the alien robotic
+   * speech is cool and all but we should be able to do actual voicelines."
+   * The synthesiser stays — it is five larynxes built from an oscillator, two
+   * formant filters and a breath of noise, and the player says it is the cool
+   * part — and 'spoken' says the same line through the browser's own
+   * `speechSynthesis`, which is real words at zero bytes on a project whose
+   * whole claim is that there is nothing to download.
+   *
+   * 'synth' is the default because it is the game as it stands, and because a
+   * feature that changes how everyone's game sounds without being asked is not
+   * an option, it is a patch. Read live by engine/Audio.js.
+   */
+  speechMode: 'synth',
+  /**
+   * WHICH SCORE, as an index into MUSIC_TRACKS (engine/Audio.js).
+   *
+   * "I want to have different options for the soundtrack… like selecting one
+   * or the other?" An index rather than an id for the reason `voiceIndex` is
+   * one: it rides a slider, which is the only control this screen has that can
+   * carry a NAME and still be one input, and the table is the authority for
+   * how many there are.
+   */
+  musicIndex: 0,
   voiceLevel: 0.9,
   voiceLines: true,
   enemyVoices: true,
@@ -276,6 +523,24 @@ export const DEFAULT_SETTINGS = {
    * stops it costing anything at all — see MINIMAP for the budget.
    */
   minimap: true,
+  /**
+   * …AND WHETHER IT COSTS ANYTHING TO LOOK AT IT.
+   *
+   * "Bringing up the minimap should maybe use some force like you're using
+   * force sense you know what I mean?" On, so the map is a READING taken with
+   * Force sense — the power that already costs to switch on, drains while it
+   * is open and stops regeneration — and off, so it is the permanent window
+   * that shipped.
+   *
+   * The two boxes are separate on purpose. `minimap` answers "do I want a map
+   * at all" and this answers "am I willing to pay for it", and folding them
+   * into one control would mean a player who cannot manage a Force power
+   * mid-fight has to give up the map entirely to stop being charged for it.
+   * That is the accessibility case, and it is the whole reason this is a
+   * setting rather than a rule. Read live by HUD.Minimap, so it bites on the
+   * next frame.
+   */
+  minimapSense: true,
   /** The reticle, which was a hard-coded white ring for the whole project. */
   reticleShape: 0,
   reticleSize: 1,
@@ -339,12 +604,24 @@ export const SETTING_READERS = {
   order:           ['game/World.js', 'applyOrder(p, this.settings.order)'],
   difficulty:      ['main.js', 'DIFFICULTY[settings.difficulty]'],
   mode:            ['game/World.js', 'this.settings.mode'],
+  rules:           ['game/Waves.js', 'world?.settings?.rules'],
+  seed:            ['main.js', 'settings.seed'],
   colorIndex:      ['game/World.js', 'colorIndex: this.settings.colorIndex'],
   hiltStyle:       ['game/World.js', 'hiltStyle: this.settings.hiltStyle'],
   species:         ['game/World.js', 'species: this.settings.species'],
   face:            ['game/World.js', 'face: this.settings.face'],
   robeCut:         ['game/World.js', 'robeCut: this.settings.robeCut'],
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
+  /**
+   * The rest of the clothes, read HERE rather than in World.spawnPlayer — and
+   * that is a statement about ownership, not a workaround. `buildJedi` takes
+   * one palette index and no garment list, and the cape, the over-panels and
+   * the belt's ends are all attached AFTER a body is built, by
+   * `attachCloak`/`attachSkirt`. `applyWardrobe` is the seam that does it, it
+   * runs on every `applyFeelSettings`, and it is what makes a piece picked on
+   * the pause card land on the body without a redeploy.
+   */
+  wardrobe:        ['ui/Menu.js', 'wardrobeOf(s.wardrobe)'],
   skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
   hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
   build:           ['game/World.js', 'build: this.settings.build'],
@@ -364,14 +641,35 @@ export const SETTING_READERS = {
   deflectAim:      ['game/World.js', 'this.settings.deflectAim'],
   forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
   forceDrain:      ['game/Player.js', 'this.world.settings?.forceDrain'],
+  holocron:        ['game/World.js', "settings.holocron"],
+  /* Command's two, and `commandConfig` is the only thing allowed to read
+   * either — the same shape as sandboxConfig and pvpRules, so a menu writes a
+   * free-form number and exactly one function decides what it means. */
+  teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
+  commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
+  commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
+  /* One reader for arrivals, everywhere: the wave path, the sandbox path and
+   * the dojo's spawner all ask `instantSpawn(settings)` rather than testing the
+   * field, which is why there is one entry here and three call sites. */
+  instantSpawn:    ['game/Waves.js', 'settings.instantSpawn'],
+  maxBodies:       ['game/World.js', 'maxBodies: settings.maxBodies'],
   bloom:           ['main.js', '!!settings.bloom &&'],
   showPerf:        ['main.js', 'hud.perf(engine.profiler, settings.showPerf)'],
   grain:           ['main.js', 'engine.setGrain(settings.grain)'],
   injury:          ['game/Injury.js', 's.injury !== false'],
   shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
   slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
+  /* The seam Engine.rumble left open — `this.rumbleLevel ?? 1` — assigned on
+   * the same call the two feel gates are installed on, so a pad that is too
+   * strong is turned down mid-fight from the pause card. */
+  rumble:          ['ui/Menu.js', 'world.engine.rumbleLevel = clamp01(s.rumble)'],
+  /* The bars and the drain, gated at their own funnel rather than at the eight
+   * call sites — Engine.setBars/setDrain are the only writers of either target.
+   * Named after the feel kinds, so `feelOn('letterbox')` answers too. */
+  letterbox:       ['engine/Engine.js', 'this.letterboxOn === false ? 0 : clamp(num(v, 0), 0, 0.2)'],
+  deathDrain:      ['engine/Engine.js', 'this.deathDrainOn === false ? 0 : clamp(num(v, 0), 0, 1)'],
   volume:          ['main.js', 'audio.setVolume(settings.volume)'],
   music:           ['main.js', 'audio.setMusicVolume(settings.music)'],
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
@@ -387,12 +685,19 @@ export const SETTING_READERS = {
    * the line that actually consults the player's answer, once per frame.
    */
   voiceIndex:      ['ui/Announcer.js', 'settings?.voiceIndex ?? 0'],
+  // Both of these are read inside the engine that acts on them rather than at
+  // the control: `speechMode` decides whether a line is said in words at the
+  // moment the announcer spends its budget, and `musicIndex` decides which
+  // urls the score's element is handed when it is built.
+  speechMode:      ['engine/Audio.js', "this.speechMode === 'synth'"],
+  musicIndex:      ['engine/Audio.js', 'trackAt(this.musicIndex)'],
   voiceLevel:      ['ui/Announcer.js', 'Number.isFinite(settings.voiceLevel)'],
   voiceLines:      ['ui/Announcer.js', 'settings.voiceLines !== false'],
   enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
+  minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
   reticleSize:     ['ui/HUD.js', 'num(s.reticleSize, 1)'],
   reticleColor:    ['ui/HUD.js', 'colorAt(s.reticleColor)'],
@@ -425,6 +730,9 @@ export const SETTING_READERS = {
  *
  * @returns true once both gates are in place on this world.
  */
+/** 0..1, and a missing or corrupt value is the full-strength default. */
+const clamp01 = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1);
+
 export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   if (!world) return false;
   const rig = world.player?.camera;
@@ -447,6 +755,33 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // has damped out (about 0.4 s) or the hitstop already running has expired.
   if (!s.shake && rig) rig.shake = 0;
   if (!s.slowmo) world.hitstop = 0;
+  /**
+   * THE PAD'S STRENGTH, into the seam Engine.rumble left for it.
+   *
+   * Not a wrapper like the two above, because `rumble()` is already ONE
+   * function every call site goes through — the funnel exists — and it already
+   * reads `this.rumbleLevel ?? 1` on every call. So this is an assignment and
+   * not a gate, and the `?? 1` means an Engine nobody has spoken to still
+   * rumbles at full: every check and every headless harness measures the
+   * shipped behaviour, which is the same rule `feelOn` is written to.
+   */
+  if (world.engine) world.engine.rumbleLevel = clamp01(s.rumble);
+  /**
+   * …and the two that were never gated at all.
+   *
+   * Pushed rather than gated with a wrapper, because `setBars` and `setDrain`
+   * ARE the funnel — they are the only writers of the two targets — so the
+   * switch belongs inside them and this only has to say what the player chose.
+   * Turning one off has to bite NOW and not at the next death, which is what
+   * the second half of each line is for: the frame currently drawn is released.
+   */
+  if (world.engine) {
+    const e = world.engine;
+    e.letterboxOn = s.letterbox !== false;
+    e.deathDrainOn = s.deathDrain !== false;
+    if (!e.letterboxOn) e.setBars?.(0);
+    if (!e.deathDrainOn) e.setDrain?.(0);
+  }
   // "Blade holds position" is the same shape and rides the same seam.
   // SaberController reads `holdPosition` every frame, but the only line that
   // ever wrote it was World.spawnPlayer, so even once the setting existed the
@@ -459,9 +794,126 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // applyInjury() for why the funnel and not the frame.
   applyInjury(world, s);
   applyLekku(world);
+  applyWardrobe(world, s);
   applyGait(world);
   tapFrame(world);
   return !!(world._feelGated && (!rig || rig._feelGated));
+}
+
+/**
+ * Throw a garment away, MATERIALS AND ALL.
+ *
+ * `Cloak.dispose` deliberately leaves a material it was HANDED alone, because
+ * in the game the wearer owns it — and every material in a garment set here is
+ * a per-figure CLONE that nothing else will ever free (Player clones the robe
+ * palette for its cape and its skirt, attachSash clones again for the straps,
+ * and the panels take a clone of the over-cloth). A wardrobe change that only
+ * called dispose() would leak one clone per garment per change, which is a
+ * texture-bearing material every time somebody tries a different cape on.
+ * Collected by identity because the pair of sash straps share one.
+ */
+function disposeGarment(g) {
+  if (!g) return 0;
+  const mats = new Set();
+  const walk = (c) => {
+    if (!c || typeof c !== 'object') return;
+    if (c.mat && c._sharedMat) mats.add(c.mat);
+    for (const k of ['sash', 'tabard']) if (c[k]) walk(c[k]);
+    for (const arr of ['parts', 'panels']) if (Array.isArray(c[arr])) c[arr].forEach(walk);
+  };
+  walk(g);
+  g.dispose?.();
+  for (const m of mats) m.dispose?.();
+  return mats.size;
+}
+
+/**
+ * DRESS EVERY LOCAL BODY IN WHAT THE PLAYER CHOSE, on the same seam.
+ *
+ * The wardrobe is nine choices and `Player._makeCloak` takes none of them: it
+ * builds one cape at one size with one tabard under it, and src/game/Player.js
+ * and src/game/Bodies.js both belong to other lanes this round. So the pieces
+ * are put on from out here, exactly as the head-tails are — and for the same
+ * three reasons, which are worth restating because they are what make this a
+ * seam rather than a hack:
+ *
+ *   the garment has to be stepped on the GAME's clock, inside the frame the
+ *   chest it hangs from was posed in, which `attachCloak`'s own contract with
+ *   Player.update already guarantees for anything held in `p.cloak`;
+ *
+ *   it has to be disposed with the body, which is what `p.die()` already does
+ *   to whatever is in those two fields;
+ *
+ *   and it has to survive a rebuild, which is what the signature below is for.
+ *
+ * WHAT IT REBUILDS AND WHAT IT DOES NOT. Colour is a material write and costs
+ * nothing, so tones are pushed on every call. A cut is geometry, so the two
+ * garments are torn down and rebuilt only when the choice actually changed —
+ * `applyFeelSettings` runs on every checkbox tick on the pause card, and
+ * rebuilding 287 particles of cloth because somebody turned film grain off
+ * would be a stutter with no cause a player could see.
+ *
+ * THE NUMBERS THIS PASSES ARE NOT TYPED HERE. The cape's dimensions come from
+ * CAPE_CUTS (whose `cloak` entry is Player._makeCloak's own five numbers, held
+ * to them by tools/checks/preview.mjs), the skirt's from the robe cut, and the
+ * materials from the palette the builder made. The one thing this states is
+ * which pieces to build.
+ *
+ * Idempotent. Returns how many bodies were dressed.
+ */
+export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
+  if (!world || !world.scene) return 0;
+  const w = wardrobeOf(s.wardrobe);
+  const key = JSON.stringify([w.cape, w.tabard, w.sash, s.robeCut]);
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || p.isRemote || p.isLocal === false || !p.built || !p.rig || !p.palette) continue;
+    /*
+     * A BODY THAT HAS JUST BEEN BUILT IS ALREADY WEARING THE DEFAULT.
+     *
+     * `Player._makeCloak` builds the shipped cape, the shipped belt and the
+     * chosen robe cut, so seeding the signature with those means a player who
+     * has never opened these rows pays NOTHING here — no dispose, no rebuild,
+     * no reallocation — and the figure in the world is the one the builder
+     * made, particle for particle. Without the seed every deploy would tear
+     * down 287 particles of cloth and build the same 287 again.
+     */
+    if (p._wardrobeKey === undefined) {
+      p._wardrobeKey = JSON.stringify([WARDROBE.cape, WARDROBE.tabard, WARDROBE.sash, p.robeCut ?? s.robeCut]);
+    }
+    if (p._wardrobeKey !== key) {
+      p._wardrobeKey = key;
+      const S = p.rig.scale ?? 1;
+      const cut = p.robeCut ?? s.robeCut;
+      /*
+       * The skirt first, because the cape collides against the skirt's own
+       * particles and a cape built against a skirt that is about to be
+       * replaced would spend its first frame hanging through the robe.
+       */
+      if (p.built.robeSkirt) {
+        disposeGarment(p.skirt);
+        const smat = (p.palette.over || p.palette.outer).clone();
+        smat.side = THREE.DoubleSide;
+        p.skirt = attachSkirt(world.scene, p.rig, {
+          scale: S, material: smat, rigid: p.built.robeSkirt, cut,
+          sashMaterial: p.palette.trim, sash: w.sash,
+        });
+      }
+      disposeGarment(p.cloak);
+      const cmat = p.palette.outer.clone();
+      cmat.side = THREE.DoubleSide;
+      const tmat = (p.palette.over || p.palette.outer).clone();
+      tmat.side = THREE.DoubleSide;
+      p.cloak = attachCloak(world.scene, p.rig, {
+        scale: S, material: cmat, cut, cape: w.cape,
+        tabard: w.tabard, tabardMaterial: tmat,
+      });
+      if (p.cloak) p.cloak.outer = p.skirt || null;
+    }
+    tintWardrobe(p.built, w, { skirt: p.skirt, cape: p.cloak });
+    n++;
+  }
+  return n;
 }
 
 /**
@@ -669,10 +1121,10 @@ export const CODEX = [
   { keys: ['blade'], hold: true,
     text: () => 'Raise the <b>guard</b>. Under Directional the camera keeps moving; under the '
       + 'other two schemes the mouse becomes the blade and the camera holds still.' },
-  { device: 'Mouse',
+  { device: 'Mouse', padDevice: 'Right stick',
     text: () => '<b>Flick</b> up, left, right or down to set the guard zone. It stays where you '
       + 'put it. Slow movement is pure aim.' },
-  { device: 'Mouse',
+  { device: 'Mouse', padDevice: 'Right stick',
     text: () => 'Flick into a zone as the bolt lands — inside 0.2 s — and it is a <b>parry</b>: '
       + 'the bolt goes back at whatever is under your reticle.' },
   { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down.' },
@@ -713,7 +1165,7 @@ export const CODEX = [
   { keys: ['push'], text: () => 'Force push.' },
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
-    text: k => `Grip an object — then move the mouse to swing it, ${k('hurl')} to hurl it.` },
+    text: k => `Grip an object — then aim to swing it, ${k('hurl')} to hurl it.` },
   { keys: ['throw'], text: () => 'Throw the saber. Press again to recall it.' },
   { keys: ['sense'], text: () => 'Force sense — see through walls.' },
   { keys: ['stasis'],
@@ -723,6 +1175,10 @@ export const CODEX = [
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'],
     text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },
+  { keys: ['unleash'],
+    text: () => 'Unleash — a full circle of Force, thrown outward with both arms. It staggers '
+      + 'everything within eleven metres and costs more than any other power. For when there is '
+      + 'no direction left to face.' },
   { keys: ['compel'],
     text: () => 'Force compel, once <b>Domination</b> is drafted. The unit you are looking at '
       + 'turns on its own — or, alone, on itself.' },
@@ -734,7 +1190,7 @@ export const CODEX = [
   // The slot count is read off the table, so a ninth emote changes this line.
   { keys: ['emote'], hold: true,
     text: () => `Emote wheel — ${EMOTES.length} things to say, in your own voice. `
-      + 'Hold it, move the mouse to a slot, let go.' },
+      + 'Hold it, aim at a slot, let go.' },
   { keys: ['freecam'],
     text: () => '<b>Free camera</b> — the view comes off your body and the game '
       + 'STOPS while it is off. Fly it with the movement keys; press again to put it back.' },
@@ -742,6 +1198,26 @@ export const CODEX = [
     // "In the Dojo" named a level that has been deleted; training is a MODE now
     // and runs in whichever theatre the player picked. See MODES.training.
     text: () => 'In <b>Training</b>: next lesson, previous lesson, start this one again.' },
+
+  /**
+   * THE ORDERS, GENERATED — six rows nobody typed.
+   *
+   * Every other row above names an action and lets the renderer print its live
+   * binding, which is what stops a key name going stale. These rows go one step
+   * further: the ROW ITSELF comes off `FORMATIONS`, through the registry
+   * `registerOrders` filled at the top of this file. Add a seventh formation in
+   * Command.js and it gets an action, a rebindable row in Options, a line here
+   * and a conflict warning, without a character being written in this file.
+   *
+   * A heading rather than six sentences each saying "in Command mode": the
+   * `head` row is a section title in the grid, and it is the only hand-written
+   * string in the whole block.
+   */
+  { head: 'Commanding an army' },
+  ...ORDER_ACTIONS.map(o => ({
+    keys: [o.action],
+    text: () => `<b>${o.name}</b> — ${o.blurb}`,
+  })),
 ];
 
 /**
@@ -786,8 +1262,25 @@ const escKey = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * to anyone using the other one. `—` when an action has been cleared, which is
  * the honest answer and not a crash.
  */
-export function keyChips(bindings, id, hold = false) {
-  const list = (bindings[id] || []).map(keyLabel);
+/**
+ * ── THE DEVICE, and why it is an argument rather than a global ──────────
+ *
+ * "Show pad buttons when a pad is the active device" is one rule, and every
+ * surface that prints a binding has to obey the same one — the Codex, the power
+ * wheel, the coach panel, the scoreboard's own caption, the free camera's way
+ * back, the pause card and the three control-scheme cards. A module-level "the
+ * player is on a pad" flag would make all of them read a hidden input, which is
+ * exactly the shape this file spent a round removing from the bindings.
+ *
+ * So it travels as an argument, `{ device, family }`, and it has a default that
+ * is the keyboard — so every existing caller, every check and every headless
+ * render produces byte-identical markup to what it produced before the pad
+ * existed.
+ */
+export function keyChips(bindings, id, hold = false, pad = null) {
+  const dev = pad && pad.device === 'pad' ? 'pad' : 'key';
+  const family = (pad && pad.family) || 'xbox';
+  const list = codesFor(bindings, id, dev).map(c => keyLabel(c, family));
   if (!list.length) return '<kbd>—</kbd>';
   return list.map((label, i) => `<kbd>${escKey((hold && i === 0 ? 'Hold ' : '') + label)}</kbd>`).join(' / ');
 }
@@ -799,12 +1292,107 @@ export function keyChips(bindings, id, hold = false) {
  * assert what a PLAYER would read, rather than re-deriving the answer with a
  * copy of this loop and agreeing with itself.
  */
-export function codexHtml(bindings) {
+export function codexHtml(bindings, pad = null) {
   return CODEX.map((row) => {
-    const lead = row.device ? `<kbd>${escKey(row.device)}</kbd>`
-      : row.keys.map(id => keyChips(bindings, id, row.hold)).join(' ');
-    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id))}</span></div>`;
+    // A SECTION TITLE, and it carries no key at all. It is an <h4> rather than
+    // a <div> so that everything measuring this grid — the row parser in
+    // tools/checks/controls.mjs included — goes on seeing exactly the rows a
+    // player can press, and a heading can never be mistaken for one.
+    if (row.head) return `<h4 class="codex-head">${escKey(row.head)}</h4>`;
+    // The one row that names a DEVICE and not an action — "flick the mouse" —
+    // is the one row a pad has to rename, because on a pad the blade is the
+    // right stick and a player told to flick a mouse they are not holding has
+    // been told nothing. See CODEX's `device` rows.
+    const lead = row.device
+      ? `<kbd>${escKey(pad && pad.device === 'pad' && row.padDevice ? row.padDevice : row.device)}</kbd>`
+      : row.keys.map(id => keyChips(bindings, id, row.hold, pad)).join(' ');
+    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id, false, pad))}</span></div>`;
   }).join('');
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The databank                                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * EVERY BODY IN THE GAME, AS A PAGE — AND THE LIST IS ENUMERATED, NOT TYPED.
+ *
+ * The product fields thirty-one archetypes and, before this, told the player
+ * what none of them was: the tab called "Codex" is a keybind reference and the
+ * HUD prints a label. So a player meets a droideka, a BX commando, a hailfire
+ * droid, an acklay and a reek, and nothing in the game ever says what any of
+ * them is or whose army it belongs to — while the research to say it is already
+ * written in the comments that price them.
+ *
+ * `Object.keys(ARCHETYPES)` is the roster and this walks it. Nothing here holds
+ * a second list of bodies, and that is the whole reason it is a function rather
+ * than a constant: Levels.js, Vehicles.js and Command.js each register more
+ * archetypes AFTER this module finishes evaluating, so a table built at module
+ * scope would show fifteen of the thirty-one and look complete doing it. Same
+ * temporal trap `sandboxKeys` records in Waves.js.
+ *
+ * WHAT COMES FROM WHERE. The name, the threat, the health, the speed, the reach
+ * and the levels a body is met on are read off `ARCHETYPES` and the level pools
+ * at call time — none of them is repeated in `DATABANK`, so none of them can
+ * drift. `DATABANK` carries only what cannot be computed: the faction, the real
+ * name of the weapon, and the paragraph.
+ *
+ * A MISSING ENTRY IS AN ERROR AND SAYS SO. `entryFor` returns null rather than a
+ * plausible default and this passes the null straight through, so an archetype
+ * registered without an entry renders as a page that names itself as missing
+ * instead of a page with confident wrong prose on it —
+ * `tools/checks/databank.mjs` fails on it either way.
+ */
+export function databankPages() {
+  return Object.keys(ARCHETYPES).map((key) => {
+    const A = ARCHETYPES[key];
+    const e = entryFor(key);
+    return {
+      key,
+      /* The name a player sees in the HUD, so the page and the kill feed agree. */
+      name: A.label || key,
+      faction: e ? FACTIONS[e.faction] : null,
+      factionId: e ? e.faction : null,
+      weapon: e ? e.weapon : null,
+      text: e ? e.text : null,
+      /* Read, never typed. */
+      hp: A.hp, threat: A.threat ?? 0, speed: A.speed ?? 0, mass: A.mass ?? 0,
+      boss: !!A.boss, big: !!A.big, training: !!A.training,
+      setPieceOnly: !!A.setPieceOnly,
+      /* WHERE IT IS MET, derived from the pools — which is the question a player
+       * actually has ("where do I go to fight one of these") and the one thing
+       * on the page that no comment anywhere in the source already answers.
+       * A dojo body is met in the dojo and says so; a set-piece is met on a boss
+       * wave of the levels whose pool names it, which is the same list. */
+      levels: LEVEL_ORDER.filter((k) => (LEVELS[k].pool || []).includes(key))
+        .map((k) => LEVELS[k].name),
+    };
+  });
+}
+
+/**
+ * The pages, grouped under their faction, in the order FACTIONS declares.
+ *
+ * Sorted inside a group by threat, so a group reads as its own ladder — a B1
+ * before a droideka before an AAT — which is the same order the muster and the
+ * unlock ladder put them in, and it is the order a player meets them in.
+ */
+export function databankGroups() {
+  const pages = databankPages();
+  const out = [];
+  for (const id of Object.keys(FACTIONS)) {
+    const mine = pages.filter((p) => p.factionId === id)
+      .sort((a, b) => a.threat - b.threat || (a.name < b.name ? -1 : 1));
+    if (mine.length) out.push({ id, faction: FACTIONS[id], pages: mine });
+  }
+  /* Anything the databank does not know is its own group at the bottom, named
+   * as the defect it is rather than dropped. A body silently missing from this
+   * page is exactly the failure the page exists to end. */
+  const orphans = pages.filter((p) => !p.factionId);
+  if (orphans.length) {
+    out.push({ id: null, faction: { name: 'Unrecorded', short: 'Unrecorded', note: '' }, pages: orphans });
+  }
+  return out;
 }
 
 /**
@@ -815,11 +1403,18 @@ export function codexHtml(bindings) {
  * when a binding has gone wrong, so it is not in ACTIONS and there is nothing
  * to read. Declared here, once, instead of typed into index.html beside two
  * that ARE rebindable.
+ *
+ * ON A PAD IT IS THE OTHER DEVICE-LEVEL BUTTON, and it is the same claim: Start
+ * is the way out for exactly the reason Escape is, so it is not in ACTIONS
+ * either and it is named here rather than typed into the markup. `padLabel` is
+ * what decides whether that word is "Menu", "Options" or "+".
  */
-export function pauseHintsHtml(bindings) {
-  return ['<span><kbd>Esc</kbd> resume</span>']
+export function pauseHintsHtml(bindings, pad = null) {
+  const out = pad && pad.device === 'pad'
+    ? keyLabel('PadStart', pad.family || 'xbox') : 'Esc';
+  return [`<span><kbd>${escKey(out)}</kbd> resume</span>`]
     .concat([['view', 'camera'], ['scoreboard', 'boons']]
-      .map(([id, what]) => `<span>${keyChips(bindings, id)} ${what}</span>`))
+      .map(([id, what]) => `<span>${keyChips(bindings, id, false, pad)} ${what}</span>`))
     .join('');
 }
 
@@ -915,6 +1510,11 @@ export function loadSettings() {
     // version-bumped, because a bump does not help: drainLegacy spreads the old
     // key over the new default too, so the string arrives either way.
     s.face = characterSheet(s.face);
+    // …and the same treatment for the clothes, for the same reason: a blob
+    // written before a piece existed is missing keys, and a cut id that has
+    // been renamed since must fall back to the shipped garment rather than
+    // leaving a character with no cape at all. See wardrobeOf in Cloth.js.
+    s.wardrobe = wardrobeOf(s.wardrobe);
     return s;
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
@@ -1060,6 +1660,26 @@ export const PREVIEW_SEED = { cloak: 4242, skirt: 991, lekku: 7311 };
 export const PREVIEW_VIEW = { fov: 34, azimuth: 0.4232, elevation: 0.1418, margin: 0.06 };
 
 /**
+ * How far in the preview can be walked, and the three shots it can be sent to.
+ *
+ * 5x is the point at which a human head fills the box; past it the near plane
+ * starts clipping the shoulder the camera is looking over, and there is
+ * nothing behind a procedural face worth seeing at that range.
+ *
+ * `focus` is in units of the figure's own half-height, so FACE lands on a face
+ * whatever species is in the box and whatever build slider says — a fixed
+ * metre offset would frame a human's chin and Yoda's species' knees. HILT is
+ * negative because the weapon hangs BELOW the middle of a standing figure:
+ * GRIPS.two.offset puts the hands about 20 cm under the chest.
+ */
+export const PREVIEW_ZOOM_MAX = 5;
+export const PREVIEW_SHOTS = [
+  { id: 'full',  label: 'Full',  zoom: 1,    focus: 0 },
+  { id: 'face',  label: 'Face',  zoom: 3.4,  focus: 0.72 },
+  { id: 'blade', label: 'Blade', zoom: 2.6,  focus: -0.18 },
+];
+
+/**
  * HOW A HAND HOLDS A HILT — the game's own statement of it, not a copy.
  *
  * `handPoseOnHilt` and `GRIP_AT` come out of Player.js, which is where the fist
@@ -1129,13 +1749,41 @@ export function standPreviewFigure(rig) {
  */
 export function poseSaberArm(rig, saber, out = {}) {
   const chest = rig.worldPos('chest', new THREE.Vector3());
+  /**
+   * THE THREE SCALES, AND WHY THIS FUNCTION NEEDED ALL OF THEM.
+   *
+   * Player note #2 — "the saber floats above their hands" — was fixed in the
+   * game rig and stayed on the screen where you PICK the character, because
+   * this is a second copy of the grip model and it was authored against a
+   * 1.78 m body. Measured on the small frame before this: the fist held the
+   * hilt 4.86 of its own hands clear of its palm, on a hilt 5.99 of its own
+   * hands long, with the hand target 0.99 of the arm's whole reach from the
+   * shoulder — the point at which two-bone IK stops being able to arrive.
+   * A human read 0.72 / 2.39 / 0.84.
+   *
+   * Every constant below is one of `limbScale`'s three, named at the site the
+   * way Player.js names them, and each is 1 for every full-sized figure:
+   *
+   *   A = limbs.arm    chest-to-hand distances — the guard offsets and the
+   *                    elbow pole. A pole 0.75 m out from a chest whose arm is
+   *                    0.23 m long is not beside the shoulder, it is in the
+   *                    next postcode, and solveIK aims the whole limb at it.
+   *   hs = rig.scale   the BORE of the closed hand, which is a place inside
+   *                    the hand and therefore scales with the hand.
+   *   gs               the hilt's own size, from Saber.setGripScale — a grip
+   *                    is a contact between two objects and the smaller of
+   *                    them sets the scale. GRIP_AT is a point ON the hilt, so
+   *                    it moves with it.
+   */
+  const L = limbScale(rig);
+  const A = L.arm;
   // the figure faces +Z, so its own right hand is toward -X
   const right = new THREE.Vector3(-1, 0, 0), up = new THREE.Vector3(0, 1, 0), fwd = new THREE.Vector3(0, 0, 1);
   // The guard: hilt in front of the right hip, blade up and 21.7° forward. Far
   // enough forward that the fist clears the robe — measured, 445 mm of air
   // between the pommel and the nearest cloth particle — and low enough that the
   // tip of a capped 1.45 m blade still lands inside the frame.
-  const grip = chest.clone().addScaledVector(right, 0.28).addScaledVector(up, -0.16).addScaledVector(fwd, 0.26);
+  const grip = chest.clone().addScaledVector(right, 0.28 * A).addScaledVector(up, -0.16 * A).addScaledVector(fwd, 0.26 * A);
   const blade = new THREE.Vector3(0, 0.93, 0.37).normalize();
   // The hilt's frame: +Y up the blade, +Z as near the way the figure faces as
   // a blade at that angle allows. `x = y × ref` then `z = x × y` — the same
@@ -1144,12 +1792,16 @@ export function poseSaberArm(rig, saber, out = {}) {
   const bz = new THREE.Vector3().crossVectors(bx, blade).normalize();
   const hiltQ = new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().makeBasis(bx, blade, bz));
+  // The hilt is sized to the hand BEFORE the fist is asked where to close, so
+  // `gs` below is the size the metal actually is when GRIP_AT is read off it.
+  saber?.setGripScale?.(L.torso);
+  const gs = saber?.gripScale ?? 1;
   // …and the hand's, from the game's own grip model. `back` is the offset from
   // the point on the hilt to the WRIST JOINT, which is not the same place.
   const handQ = new THREE.Quaternion(), back = new THREE.Vector3();
-  handPoseOnHilt('R', hiltQ, null, handQ, back);
+  handPoseOnHilt('R', hiltQ, null, handQ, back, rig.scale ?? 1);
   const wrist = grip.clone().add(back);
-  const pole = chest.clone().addScaledVector(right, 0.75).addScaledVector(up, -0.75).addScaledVector(fwd, -0.2);
+  const pole = chest.clone().addScaledVector(right, 0.75 * A).addScaledVector(up, -0.75 * A).addScaledVector(fwd, -0.2 * A);
   rig.solveIK('armR', 'foreR', wrist, pole);
   const hand = rig.get('handR');
   if (hand && hand.obj.parent) {
@@ -1164,7 +1816,7 @@ export function poseSaberArm(rig, saber, out = {}) {
     // hilt used to be parented with a bare -90° about X and an offset typed in
     // centimetres, which put the blade out of the character's back.
     saber.root.quaternion.copy(hiltQ);
-    saber.root.position.copy(grip).sub(new THREE.Vector3(0, GRIP_AT.R, 0).applyQuaternion(hiltQ));
+    saber.root.position.copy(grip).sub(new THREE.Vector3(0, GRIP_AT.R * gs, 0).applyQuaternion(hiltQ));
     saber.root.updateMatrixWorld(true);
     hand.obj.attach(saber.root);
   }
@@ -1181,23 +1833,68 @@ export function poseSaberArm(rig, saber, out = {}) {
  * lathe handed over so `attachSkirt` can hide it. tools/checks/preview.mjs
  * reads those constants back out of Player.js so this cannot drift from it in
  * silence.
+ *
+ * Those five numbers are no longer TYPED here — they are CAPE_CUTS.cloak's,
+ * which is the same five and is the row the wardrobe's default names. That is
+ * what stops "Jedi Cloak" and "the cape the game builds" being two garments
+ * that merely happen to agree, and the check above still measures the preview
+ * against Player.js rather than against the table.
  */
-export function dressPreviewFigure(host, built, cut) {
+export function dressPreviewFigure(host, built, cut, wardrobe) {
   const rig = built.rig;
+  /*
+   * THE WARDROBE, and why it is the fourth argument rather than read off `s`.
+   *
+   * Everything else in here is Player._makeCloak's, to the number. The pieces
+   * are the same: `cape`, `tabard` and `sash` are cut ids that reach the same
+   * two functions the game reaches, and the dimensions of the shipped cape now
+   * come out of CAPE_CUTS.cloak rather than being typed here — which is what
+   * lets the four other capes exist at all, since `withCape` only fills in
+   * fields the caller left alone.
+   *
+   * Left out (a check, an older caller) it is the shipped set, so a preview
+   * asked for nothing but a cut is exactly the preview that shipped.
+   */
+  const w = wardrobeOf(wardrobe);
+  /**
+   * `scale`, AND IT IS THE THIRD CLAIM OF PLAYER NOTE #2.
+   *
+   * "Their clothes are oversized." Player._makeCloak passes `this.rig.scale`
+   * and applyWardrobe passes it too; this — the copy that dresses the figure
+   * you are LOOKING at while you choose it — passed nothing, and Cloth.js
+   * reads `opts.scale ?? 1`. So the creator hung a human's 0.86 m cape on a
+   * 0.66 m body: measured, the hem settled 280 mm BELOW the floor the figure
+   * stands on, a garment that outreaches its wearer from crown to hem.
+   *
+   * It is also most of why the shot looked wrong. `previewContent` frames
+   * whatever is in the box, so 280 mm of cloth on the floor is 280 mm of dead
+   * air the camera has to include, under a figure only 677 mm tall.
+   *
+   * A human is `rig.scale === 1` and every length is multiplied by exactly 1,
+   * so nothing about any full-sized figure moves by a bit.
+   */
+  const S = rig.scale ?? 1;
   const mat = built.palette.outer.clone();
   mat.side = THREE.DoubleSide;
+  const tmat = (built.palette.over || built.palette.outer).clone();
+  tmat.side = THREE.DoubleSide;
   const cloak = attachCloak(host, rig, {
-    material: mat, width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0, cut,
+    scale: S,
+    material: mat, cut, cape: w.cape, tabard: w.tabard, tabardMaterial: tmat,
     seed: PREVIEW_SEED.cloak,
   });
   let skirt = null;
   if (built.robeSkirt) {
     const smat = (built.palette.over || built.palette.outer).clone();
     smat.side = THREE.DoubleSide;
-    skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut,
-      seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim });
+    skirt = attachSkirt(host, rig, { scale: S, material: smat, rigid: built.robeSkirt, cut,
+      seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim, sash: w.sash });
     if (cloak) cloak.outer = skirt;
   }
+  // The tones, on the figure and on the garments at once — the skirt's cloth
+  // and the cape's are clones the builder never sees, so a palette-only tint
+  // would leave the two largest surfaces on the character unchanged.
+  tintWardrobe(built, w, { skirt, cape: cloak });
   /**
    * THE HEAD-TAILS, if this species has any.
    *
@@ -1265,7 +1962,7 @@ export function assemblePreview(host, built, saber, s = {}) {
   if (host && rig.root.parent !== host) host.add(rig.root);
   standPreviewFigure(rig);
   poseSaberArm(rig, saber);
-  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut);
+  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut, s.wardrobe);
   const pts = [];
   clothPoints(cloak, pts);
   clothPoints(skirt, pts);
@@ -1282,10 +1979,46 @@ export function assemblePreview(host, built, saber, s = {}) {
      * Measured: at the stock 1.15 m the tip lands 2.060 m up, 370 mm over the
      * crown, and the figure keeps 67.0% of the frame height; at the 1.45 m cap
      * 2.338 m and 59.2%; and 4 m is framed as 1.45 m, identically.
+     *
+     * ── AND THE CAP IS A LENGTH IN THE WIELDER'S OWN METRES ──────────────
+     *
+     * BLADE_CAP is 1.45 m, authored against the 1.69 m figure the paragraph
+     * above measures — 0.86 of its own height, which is the most blade this
+     * shot has ever been willing to frame. A `smallfolk` body stands 0.677 m
+     * and holds the same 1.15 m blade the slider ships with, which is 1.70 of
+     * ITS own height: proportionally a worse imposition than the 4 m blade
+     * this clamp already refuses to frame on a human (2.37), and the picture
+     * it produced was the one that refusal exists to prevent — measured, the
+     * figure fell to 39.5% of the frame height and its middle sat at NDC
+     * -0.364, in the bottom third of the box, under a metre of bar.
+     *
+     * So the SAME rule, stated in the wielder's units instead of a human's:
+     * `rig.scale` is `limbScale(rig).torso` — the figure's own metre — and it
+     * is exactly 1 for every full-sized species, so the human's shot, and
+     * every claim measured about it above, is unchanged to the bit. What
+     * changes is that a small wielder's blade now leaves the top of the frame
+     * the way a 4 m blade already does, and the CHARACTER — which is what this
+     * screen is for choosing — gets 66% of the box instead of 39%.
+     *
+     * The alternative was a proportionally short blade, and it is refused for
+     * the reason Saber.setGripScale states in its own note: `bladeLength` is a
+     * player setting and a combat reach, and a smaller wielder is not carrying
+     * a shorter sword. The hilt scales because a grip is a contact between two
+     * objects. The blade does not, and framing is not allowed to decide it.
      */
-    const len = Math.min(s.bladeLength ?? 1.15, BLADE_CAP);
+    const len = Math.min(s.bladeLength ?? 1.15, BLADE_CAP * (rig.scale ?? 1));
     pts.push(saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
-    pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
+    /* THE POMMEL IS ON THE HILT, so it is the HILT's scale and not 1.
+     *
+     * -0.16 is where the butt of a full-sized hilt sits below the saber root,
+     * and the shot's lowest point is whichever of that and the figure's soles
+     * is lower. On a small frame `setGripScale` takes the metal to 0.40 — its
+     * real butt is 64 mm down, not 160 — so an unscaled -0.16 put 96 mm of
+     * pommel that does not exist under a 0.66 m figure's feet, and the camera
+     * dutifully framed the empty air. Measured: it alone took the content box
+     * from -0.28 m to -0.18 and moved the figure 5% of the frame height back
+     * toward the middle of it. It is 1 for every full-sized wielder. */
+    pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16 * (saber.gripScale ?? 1), 0)));
   }
   return { cloak, skirt, lekku, content: previewContent([rig.root], pts) };
 }
@@ -1308,8 +2041,30 @@ const _RING = 16;
  * The content is expected to be centred on the origin — see the pivot in
  * _startPreview.
  */
+/**
+ * ZOOM AND FOCUS, added on the report "you should be able to zoom into the
+ * preview image to better see the customizations, or even zoom on the saber,
+ * it's too far away".
+ *
+ * Both default to the identity — `zoom: 1` and `focus: 0` — and `d / 1` and
+ * `y + 0` are exact, so a caller that passes neither gets the camera this
+ * function has always produced. tools/checks/preview.mjs measures the fit at
+ * 24 bearings and does not pass either.
+ *
+ * The zoom divides the SOLVED distance rather than fighting the solver: the
+ * fit is still computed against the whole figure, and then the camera walks in
+ * along the same axis. That way zooming never changes what "framed" means, and
+ * zooming back out lands exactly where it started rather than somewhere the
+ * iteration happened to converge.
+ *
+ * `focus` slides the look-at up the figure in units of its own half-height, so
+ * +1 is the crown and -1 the feet whatever species is in the box — a fixed
+ * metre offset would put a human's face and Yoda's species' face in different
+ * places, which is the same defect that had the blade floating over its head.
+ */
 export function framePreviewCamera(camera, content, opts = {}) {
-  const { pitch = 0, aspect = camera.aspect, margin = PREVIEW_VIEW.margin } = opts;
+  const { pitch = 0, aspect = camera.aspect, margin = PREVIEW_VIEW.margin,
+    zoom = 1, focus = 0 } = opts;
   camera.aspect = aspect || 1;
   camera.fov = PREVIEW_VIEW.fov;
   const half = Math.max(1e-3, (content.y1 - content.y0) / 2);
@@ -1331,11 +2086,14 @@ export function framePreviewCamera(camera, content, opts = {}) {
   // lands. The two are never separated: an earlier draft scaled the distance
   // one last time after the final measurement and returned a number the camera
   // was not actually at.
+  // The point the camera orbits and looks at. `half` is the figure's own
+  // half-height, so this is species-independent by construction.
+  const fy = focus * half;
   const at = (d) => {
-    camera.position.copy(dir).multiplyScalar(d);
+    camera.position.copy(dir).multiplyScalar(d).setY(camera.position.y + fy);
     camera.near = Math.max(0.02, d * 0.02);
     camera.far = d * 3 + 8;
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(0, fy, 0);
     camera.updateMatrixWorld(true);
     camera.updateProjectionMatrix();
     let worst = 0;
@@ -1351,10 +2109,20 @@ export function framePreviewCamera(camera, content, opts = {}) {
     const worst = at(d);
     // ndc ≈ k/d for a point near the axis, so this is Newton's method with the
     // derivative known: it converges in three or four passes from anywhere.
-    if (Math.abs(worst - want) < 0.002) return { distance: d, fill: worst };
+    if (Math.abs(worst - want) < 0.002) return { distance: at2(d, zoom), fill: worst, zoom };
     d = clamp40(d * worst / want);
   }
-  return { distance: d, fill: at(d) };
+  return { distance: at2(d, zoom), fill: at(d), zoom };
+
+  /* Walk in along the solved axis. Separated from `at` so the ITERATION never
+   * sees the zoom — an earlier draft folded it into the fit and the solver
+   * then converged on "the figure fills the frame at 3x", which is not a zoom,
+   * it is a smaller figure. */
+  function at2(dist, z) {
+    const d2 = clamp40(dist / Math.max(0.25, z));
+    at(d2);
+    return d2;
+  }
 }
 
 export class Menu {
@@ -1375,6 +2143,8 @@ export class Menu {
       levels: document.getElementById('level-list'),
       diffs: document.getElementById('diff-list'),
       modes: document.getElementById('mode-list'),
+      rules: document.getElementById('rule-list'),
+      ruleSeed: document.getElementById('rule-seed'),
       colors: document.getElementById('color-list'),
       lightning: document.getElementById('lightning-list'),
       hilts: document.getElementById('hilt-list'),
@@ -1387,11 +2157,6 @@ export class Menu {
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
-      landing: document.getElementById('landing'),
-      landingAlt: document.getElementById('landing-alt'),
-      landingTitle: document.getElementById('landing-title'),
-      landingBrief: document.getElementById('landing-brief'),
-      landingStats: document.getElementById('landing-stats'),
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
@@ -1399,6 +2164,7 @@ export class Menu {
       restart: document.getElementById('btn-restart'),
       gpu: document.getElementById('gpu-line'),
       build: document.getElementById('build-id'),
+      buildLine: document.getElementById('build-line'),
     };
     // Blade length is reachable from the forge AND from the training panel, so
     // every control bound to a setting is registered and they all refresh
@@ -1406,10 +2172,14 @@ export class Menu {
     // kind of bug this codebase specialises in.
     this._bound = new Map();
     this._buildTraining();          // must exist before the tab wiring runs
+    this._buildDatabank();          // …and so must this, for the same reason
     this._buildTabs();
     this._buildLevels();
     this._buildDifficulty();
     this._buildModes();
+    // After the modes, because a rule's legality reads the theatre AND the mode
+    // and `_syncRules` normalises `settings.rules` against both on the way in.
+    this._buildRules();
     this._buildSaber();
     this._buildOptions();
     this._buildButtons();
@@ -1424,6 +2194,9 @@ export class Menu {
     // that lives as long as the page.
     globalThis.addEventListener?.('resize', () => this._onPanelShown());
     this.el.build.textContent = 'r1.0';
+    // …and neither the build id nor the adapter string is on screen until the
+    // player asks for the instruments. See _syncDiag.
+    this._syncDiag();
   }
 
   /* ── boot ────────────────────────────────────────────────────────── */
@@ -1441,7 +2214,30 @@ export class Menu {
   }
   hideMenu() { this.el.menu.classList.add('hidden'); }
 
-  setGpuLine(text) { this.el.gpu.textContent = text; }
+  setGpuLine(text) { this.el.gpu.textContent = text; this._syncDiag(); }
+
+  /**
+   * THE TITLE SCREEN STOPS OPENING WITH A BUG REPORT.
+   *
+   * The last two things on the front screen were the WebGL adapter string —
+   * "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) …))" on the
+   * build every player of this game actually loads — and "build r1.0". A
+   * wordmark, five tabs and a driver string. Nothing is deleted, because the
+   * one machine that ever needs the adapter name is the one whose owner has
+   * gone looking for it: both ride `showPerf`, the Frame counter box, which
+   * already means "show me the instruments" and already governs the frame-time
+   * readout in the corner of the HUD.
+   *
+   * The elements stay where they are in the footer's flex row rather than
+   * being moved into a box of their own — two in-flow items of one row cannot
+   * overlap at any viewport, which is what that row was built to guarantee
+   * after `#btn-commune` was found floating over `#gpu-line` at six sizes.
+   */
+  _syncDiag() {
+    const on = !!this.s.showPerf;
+    this.el.gpu?.classList.toggle('hidden', !on);
+    this.el.buildLine?.classList.toggle('hidden', !on);
+  }
 
   /* ── tabs ────────────────────────────────────────────────────────── */
 
@@ -1553,7 +2349,7 @@ export class Menu {
    * `key === 'hangar'` special cases inside the silhouette loop — and by the
    * time the roster moved it was wrong in both directions at once. Four of its
    * eight entries named levels that had been deleted. The five newest levels
-   * had no entry at all, so Mustafar, the Temple, the Intake, the Foundry and
+   * had no entry at all, so the Ember Shelf, the Temple, the Intake, the Foundry and
    * the Deeps every one of them fell to the same dark default and the same
    * wavy hill: five identical cards, which is a menu telling the player those
    * five places are the same place.
@@ -1573,7 +2369,7 @@ export class Menu {
      * so a canvas taller than the box's aspect has its TOP AND BOTTOM cut off —
      * which is where a landscape keeps its sky and its floor. At 2.86:1 a card
      * has to be wider than 275 px before anything vertical is lost, and the
-     * margins above and below the composition absorb the rest. Mustafar's
+     * margins above and below the composition absorb the rest. the Ember Shelf's
      * fissure and the Foundry's pour were both authored at y=121 and neither
      * was ever on screen. */
     const W = 320, H = 112;
@@ -1626,7 +2422,7 @@ export class Menu {
      * `elevation`, `azimuth`, `cloudCover`, `cloudLit` and `cloudDark` are
      * already authored on every outdoor level — they are what the sky shader
      * runs on — so the card can draw the level's own weather instead of
-     * inventing some. Mustafar is 96% covered in ash lit orange from below;
+     * inventing some. the Ember Shelf is 96% covered in ash lit orange from below;
      * the meadow is 42% covered in white; the White Pass is 66% and grey. That
      * is three completely different skies, and the old card had one empty
      * gradient for all of them.
@@ -1694,7 +2490,7 @@ export class Menu {
       alpine: (x, s) => 6 + Math.max(0, tri(x * 0.0138 + s)) * 30
         + Math.max(0, tri(x * 0.062 + s * 2)) * 7,
       // mesas: flat tops, sheer sides, made by quantising a smooth curve
-      mustafar: (x, s) => Math.round((Math.sin(x * 0.0115 + s) * 20 + Math.sin(x * 0.031) * 7) / 8) * 8,
+      scoria: (x, s) => Math.round((Math.sin(x * 0.0115 + s) * 20 + Math.sin(x * 0.031) * 7) / 8) * 8,
       // low broken ground with one landmark rise
       arena: (x, s) => Math.sin(x * 0.021 + s) * 8 + Math.sin(x * 0.058) * 4
         + Math.max(0, 22 - Math.abs(x - 232) * 0.5),
@@ -1759,10 +2555,10 @@ export class Menu {
       g.stroke();
     });
 
-    /* Mustafar gets its fissure and the Foundry its pour: one hot line each,
+    /* the Ember Shelf gets its fissure and the Foundry its pour: one hot line each,
      * because the thing that identifies both places is that the LIGHT comes
      * off the floor. Everything else here is lit from above. */
-    if (L.terrain === 'mustafar' || L.terrain === 'foundry') {
+    if (L.terrain === 'scoria' || L.terrain === 'foundry') {
       g.fillStyle = css(sun, 0.26);
       g.fillRect(0, 82, W, 12);
       g.fillStyle = css(mix(sun, [255, 255, 255], 0.35), 0.92);
@@ -1823,8 +2619,8 @@ export class Menu {
    * One helper rather than a tag change, for two reasons. The cards contain
    * block content (`<div class="art">`, `<div class="meta">`), which a `<button>`
    * may not legally hold; and this codebase has the other failure already on
-   * file — SkillTree.js sets `tabindex="0"` and `role="button"` on every star
-   * and registers only `click` and `dblclick`, so a focused star announces
+   * file — SkillTree.js sets `tabindex="0"` and `role="button"` on every facet
+   * and registers only `click` and `dblclick`, so a focused facet announces
    * itself as a button and does nothing when activated. A single function that
    * always does all three is the only version of this that cannot drift apart.
    *
@@ -1857,7 +2653,7 @@ export class Menu {
    * weighted by repeats") and picks from it uniformly by index, so a repeated
    * key is a weight and not a second kind of enemy. The card printed
    * `pool.length` and called it "unit types", which made twelve of the thirteen
-   * cards overstate themselves: measured over LEVEL_ORDER, mustafar 8→6,
+   * cards overstate themselves: measured over LEVEL_ORDER, scoria 8→6,
    * temple 8→4, warship 9→5, colosseum 9→7, wood 8→6, kamino 8→6, meadow 7→6,
    * drifts 8→7, arena 9→8, intake 7→5, foundry 8→6, deeps 8→6, with only alpine
    * honest and only because its pool happens to have no repeats. 25 phantom
@@ -1894,6 +2690,11 @@ export class Menu {
         audio.ui('click');
         this.s.level = key;
         [...this.el.levels.children].forEach(c => c.classList.toggle('sel', c === card));
+        // A theatre vetoes rules, so the column beside this one has to answer
+        // the moment the card is clicked — and the store has to be normalised
+        // with it, or a rule the Ember Shelf cannot field survives in settings
+        // and turns back up the next time a level that CAN field it is picked.
+        this._syncRules();
         saveSettings(this.s);
       });
       card.addEventListener('mouseenter', () => audio.ui('hover'));
@@ -1905,25 +2706,21 @@ export class Menu {
   /**
    * THE THEATRE COLUMN, WHEN THE MODE HAS ALREADY CHOSEN THE THEATRE.
    *
-   * The Descent is a ladder of four fixed rungs: main.js takes `run.rung.level`
-   * whenever a Run exists, `startRun()` builds one for exactly this mode, and a
-   * fresh Run is at tier 0 — so the game always begins in The Intake no matter
-   * which of the thirteen cards is lit. And the card WAS lit: `_buildLevels`
-   * left every card live, wrote `settings.level` on click, saved it, and drew
-   * the `.sel` highlight, so the largest, left-most control on the first screen
-   * of the game was highlighted, persisted and thrown away. Worse, the write
-   * stuck: the level the player thought they had picked turned up in the NEXT
-   * run of some other mode, which reads as the picker being randomly broken.
+   * Nothing does, today — the Descent was the one mode that owned its own
+   * ladder of levels, and it is deleted. This stays because the mechanism is
+   * the answer to a real defect and the next mode that picks its own ground
+   * (Command is one) needs it: a card that is lit, written to settings and
+   * then thrown away reads as the picker being randomly broken, and it stuck
+   * — the level the player thought they picked turned up in the NEXT run of
+   * some other mode.
    *
-   * So the column says what it is. The cards go inert — not focusable, not
-   * clickable, visibly dimmed — and the ladder they are standing in for is
-   * printed above them, in order, from DESCENT itself so it cannot drift from
-   * the rungs the run will actually walk.
+   * `MODES[key].fixedTheatre` is the switch. A mode declares it; this reads it.
+   * That is one authority rather than a mode name repeated in the front end.
    */
   _syncTheatre() {
     const host = this.el.levels;
     if (!host) return;
-    const inert = this.s.mode === 'gauntlet';
+    const inert = !!MODES[this.s.mode]?.fixedTheatre;
     this._theatreInert = inert;
     host.classList.toggle('inert', inert);
     for (const card of host.children) {
@@ -1932,10 +2729,104 @@ export class Menu {
     }
     const note = document.getElementById('level-note');
     if (note) {
-      note.textContent = inert
-        ? `The Descent chooses its own places: ${DESCENT.map(r => r.name).join(' → ')}.`
-        : '';
+      note.textContent = inert ? MODES[this.s.mode].fixedTheatre : '';
       note.classList.toggle('hidden', !inert);
+    }
+  }
+
+  /**
+   * THE RULES A RUN IS FOUGHT UNDER — the Deploy panel's third column.
+   *
+   * `Waves.CONDITIONS` is the table and this reads it; a list of seven rules
+   * typed into index.html would be the ninth instance of the defect this
+   * project keeps removing. Every card's title, its one line and its veto
+   * reason come off the record, so a condition added to that table appears here
+   * on the day it is authored.
+   *
+   * WHY THE LEGALITY QUESTION GOES THROUGH A DIRECTOR. A rule is vetoed by
+   * `CONDITIONS[k].needs(types, d)`, which reads the level's pool through
+   * `unlockedAt` and, for A HEAD TO CUT OFF, the modifier ladder off the
+   * director itself. Restating any of that here is HANDOFF §2.4 exactly — the
+   * menu would eventually offer a rule the composer refuses, or grey one it
+   * would have honoured. So the panel builds the same object the run will,
+   * asks it the same two questions (`ruleVeto`, `legalRuleSet`), and shows the
+   * answer. It is a table-only director with a stub world; it never spawns
+   * anything.
+   */
+  _ruleDirector() {
+    const pool = LEVELS[this.s.level]?.pool ?? LEVELS[LEVEL_ORDER[0]].pool;
+    return new WaveDirector({ enemies: [], players: [], settings: {}, takenBoons: new Set() },
+      { mode: this.s.mode, pool, rules: [] });
+  }
+
+  _buildRules() {
+    const host = this.el.rules;
+    if (!host) return;
+    host.innerHTML = '';
+    this._ruleCards = new Map();
+    for (const key of CONDITION_KEYS) {
+      const C = CONDITIONS[key];
+      const d = document.createElement('div');
+      d.className = 'diff rule';
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${C.label}</b><span></span></div>`;
+      this._activate(d, () => {
+        if (d.classList.contains('barred')) return;
+        audio.ui('click');
+        const held = new Set(this.s.rules || []);
+        if (held.has(key)) held.delete(key); else held.add(key);
+        // Through the director, so what is stored is what the run will honour:
+        // the order the player picked in, minus anything the theatre vetoes,
+        // minus anything an earlier pick excludes, capped at CONDITION_MAX.
+        const wanted = CONDITION_KEYS.filter((k) => held.has(k));
+        this.s.rules = this._ruleDirector().legalRuleSet(wanted);
+        saveSettings(this.s);
+        this._syncRules();
+      });
+      d.addEventListener('mouseenter', () => audio.ui('hover'));
+      this._ruleCards.set(key, d);
+      host.appendChild(d);
+    }
+    this._syncRules();
+  }
+
+  /**
+   * Light what is chosen, bar what cannot be chosen, and SAY WHY.
+   *
+   * The same argument `_syncTheatre` makes: a control that is dead and silent
+   * reads as the picker being broken, and it sticks — a player who cannot pick
+   * THE HEAVY GUARD on the Ember Shelf will conclude the rule does not work
+   * rather than that the level stations nothing enormous. So a barred card
+   * keeps its place and swaps its tell for the reason.
+   */
+  _syncRules() {
+    if (!this._ruleCards) return;
+    const d = this._ruleDirector();
+    this.s.rules = d.legalRuleSet(this.s.rules || []);
+    const held = new Set(this.s.rules);
+    d.rules = this.s.rules;
+    for (const [key, card] of this._ruleCards) {
+      const C = CONDITIONS[key];
+      const on = held.has(key);
+      // Three ways a rule can be unavailable, and each names itself.
+      const veto = d.ruleVeto(key);
+      const clash = !on && [...held].find((h) => CONDITIONS[h]?.excludes?.includes(key)
+        || C.excludes?.includes(h));
+      const full = !on && held.size >= CONDITION_MAX;
+      const why = veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
+        : clash ? `cannot be held with ${CONDITIONS[clash].label}`
+        : full ? `${CONDITION_MAX} rules is the most a wave can carry`
+        : null;
+      card.classList.toggle('sel', on);
+      card.classList.toggle('barred', !!why);
+      card.tabIndex = why ? -1 : 0;
+      card.setAttribute('aria-disabled', why ? 'true' : 'false');
+      card.setAttribute('aria-pressed', on ? 'true' : 'false');
+      card.querySelector('.txt span').textContent = why || C.tell;
+    }
+    if (this.el.ruleSeed) {
+      this.el.ruleSeed.textContent = held.size
+        ? `${held.size} of ${CONDITION_MAX} · no rule is charged against the wave's budget`
+        : '';
     }
   }
 
@@ -1979,6 +2870,8 @@ export class Menu {
     // moment the mode changes, not after the player has deployed into a level
     // they did not choose.
     this._syncTheatre();
+    // A mode can pick its own theatre, and the theatre is what vetoes a rule.
+    this._syncRules();
     saveSettings(this.s);
   }
 
@@ -2069,6 +2962,11 @@ export class Menu {
         this.s.robeIndex = i;
         [...this.el.robes.children].forEach(x => x.classList.toggle('sel', x === sw));
         saveSettings(this.s);
+        // The whole panel, not just this row: every "as the robe" swatch below
+        // is painted with the tone this palette derives, so a robe picked here
+        // moves nine other swatches. Repainting them is what makes "leave this
+        // piece alone" a thing a player can SEE rather than infer.
+        this._buildSaber();
         this._refreshPreview(true);
       });
       this.el.robes.appendChild(sw);
@@ -2167,6 +3065,32 @@ export class Menu {
     this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
     this._swatchRow('skin-list', 'skinIndex', this._skinRack(), () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
+
+    /*
+     * ── THE REST OF THE CLOTHES ────────────────────────────────────────────
+     *
+     * "You can only change the lower robe… I want to be able to change all the
+     * clothes and also be able to choose from different capes or even go
+     * capeless." Six rows of tone and three of cut, all of them writing into
+     * `this.s.wardrobe` through `_wear`, which is the one place that object is
+     * rebuilt and saved — the same shape `_sheet` has for the character sheet
+     * and for the same reason.
+     *
+     * Each tone row's FIRST swatch is "as the robe", painted with the tone the
+     * builder would actually derive from the robe palette in the row above. It
+     * is not a grey placeholder: a player has to be able to see what leaving a
+     * piece alone gets them, and that answer changes every time the robe
+     * colour does — which is why these rows are rebuilt with the panel.
+     */
+    this._wardrobeCards('cape-list', 'h-cape', 'cape', CAPE_CUTS);
+    this._wardrobeTones('cape-tone-list', 'capeTone', 'outer');
+    this._wardrobeCards('tabard-list', 'h-tabard', 'tabard', TABARD_CUTS);
+    this._wardrobeTones('tabard-tone-list', 'tabardTone', 'over');
+    this._wardrobeTones('tunic-tone-list', 'tunicTone', 'inner');
+    this._wardrobeCards('sash-list', 'h-sash', 'sash', SASH_CUTS);
+    this._wardrobeTones('sash-tone-list', 'sashTone', 'trim');
+    this._wardrobeTones('boot-tone-list', 'bootTone', 'leather');
+    this._wardrobeTones('glove-tone-list', 'gloveTone', 'leather');
 
     this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
       () => this._refreshPreview(true));
@@ -2303,8 +3227,11 @@ export class Menu {
     group.add(pivot);
 
     this.preview = { renderer, scene, camera, group, pivot, running: true, drag: false,
-      yaw: 0.4, pitch: 0.1, t: 0, content: null, cloth: [], w: 0, h: 0 };
+      yaw: 0.4, pitch: 0.1, t: 0, content: null, cloth: [], w: 0, h: 0,
+      // 1 frames the whole figure, which is where this has always been.
+      zoom: 1, focus: 0, shot: 'full' };
     this._refreshPreview(true);
+    this._buildShotBar();
 
     let lastX = 0, lastY = 0;
     host.addEventListener('pointerdown', (e) => { this.preview.drag = true; lastX = e.clientX; lastY = e.clientY; host.setPointerCapture(e.pointerId); });
@@ -2315,6 +3242,25 @@ export class Menu {
       this.preview.pitch = Math.max(-1.1, Math.min(1.1, this.preview.pitch + (e.clientY - lastY) * 0.008));
       lastX = e.clientX; lastY = e.clientY;
     });
+    /**
+     * THE WHEEL ZOOMS. `passive: false` and a preventDefault, because the
+     * forge column scrolls and a wheel over the preview would otherwise scroll
+     * the list behind it while zooming — two things at once, which reads as
+     * neither working.
+     *
+     * Multiplicative rather than additive so a notch is the same proportion of
+     * the view at every zoom; that is what makes it feel like a lens instead of
+     * a slider.
+     */
+    host.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const p = this.preview;
+      if (!p) return;
+      p.zoom = Math.max(1, Math.min(PREVIEW_ZOOM_MAX, p.zoom * (e.deltaY > 0 ? 0.88 : 1.136)));
+      // Zooming by hand leaves the named shots behind — the buttons say where
+      // the camera IS, and after a wheel it is nowhere any of them named.
+      if (p.shot !== 'free') { p.shot = 'free'; this._syncShotButtons(); }
+    }, { passive: false });
 
     const loop = () => {
       if (!this.preview) return;
@@ -2340,6 +3286,42 @@ export class Menu {
   }
 
   _stopPreview() { if (this.preview) this.preview.running = false; }
+
+  /**
+   * The three named shots under the preview, plus what the wheel does.
+   *
+   * Built here rather than typed into index.html for the reason every list in
+   * this front end is: PREVIEW_SHOTS is the authority for how many there are
+   * and what each is called, and a row of buttons in the markup is a second
+   * copy of that list waiting to disagree with it.
+   */
+  _buildShotBar() {
+    const host = document.getElementById('preview-shots');
+    if (!host) return;
+    host.innerHTML = '';
+    this._shotButtons = new Map();
+    for (const shot of PREVIEW_SHOTS) {
+      const b = document.createElement('button');
+      b.className = 'shot';
+      b.textContent = shot.label;
+      this._activate(b, () => {
+        audio.ui('click');
+        const p = this.preview;
+        if (!p) return;
+        p.zoom = shot.zoom; p.focus = shot.focus; p.shot = shot.id;
+        this._syncShotButtons();
+      });
+      this._shotButtons.set(shot.id, b);
+      host.appendChild(b);
+    }
+    this._syncShotButtons();
+  }
+
+  _syncShotButtons() {
+    if (!this._shotButtons) return;
+    const at = this.preview?.shot ?? 'full';
+    for (const [id, b] of this._shotButtons) b.classList.toggle('sel', id === at);
+  }
 
   /** The skin tones of the chosen species, falling back to the shared row. */
   _skinRack() { return skinRackFor(this.s.species); }
@@ -2438,6 +3420,89 @@ export class Menu {
     this._refreshPreview(true);
   }
 
+  /**
+   * Write one piece of the wardrobe, rebuild it, save it, and re-dress.
+   *
+   * The ONE place `this.s.wardrobe` is written — `_sheet`'s shape, and the
+   * reason is the same: nine controls each doing their own spread is nine
+   * chances to drop a key, and `wardrobeOf` has to run on the way through or a
+   * control could store an id the garment layer will not recognise.
+   *
+   * `onWardrobe` is live: the seam re-dresses whatever is standing in the
+   * world, so a cape chosen from the pause card lands on the body without a
+   * redeploy — which is the whole reason the wardrobe is applied from a seam
+   * rather than at spawn.
+   */
+  _wear(key, value) {
+    this.s.wardrobe = wardrobeOf({ ...this.s.wardrobe, [key]: value });
+    saveSettings(this.s);
+    this.hooks.onFeel?.(this.s);
+    this._refreshPreview(true);
+  }
+
+  /** A card row bound to a key of the wardrobe rather than to a setting. */
+  _wardrobeCards(hostId, headId, key, list) {
+    const host = document.getElementById(hostId), head = headId && document.getElementById(headId);
+    if (!host) return;
+    host.innerHTML = '';
+    const w = wardrobeOf(this.s.wardrobe);
+    for (const it of list) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (w[key] === it.id ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${it.blurb || ''}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._wear(key, it.id);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === d));
+      });
+      host.appendChild(d);
+    }
+    if (head) head.style.display = list.length ? '' : 'none';
+  }
+
+  /**
+   * A row of garment tones, with "as the robe" first.
+   *
+   * `from` names which tone of the chosen ROBE_COLORS palette this piece is
+   * derived from, so the leading swatch shows the real answer rather than a
+   * grey square: `over` is the mix the builder makes for the over-cloth,
+   * `leather` is the one tone on the figure that is not derived from the robe
+   * at all. Those derivations are Bodies.js's; the two that are a MIX are
+   * restated here, which is a copy — the alternative was exporting three more
+   * constants from a file this workstream may not edit this round, and the
+   * cost of being wrong is one swatch that is slightly the wrong brown.
+   */
+  _wardrobeTones(hostId, key, from) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const R = ROBE_COLORS[this.s.robeIndex ?? 0] || ROBE_COLORS[0];
+    const mix = (a, b, t) => {
+      const c = (x, s) => (x >> s) & 255;
+      const l = (x, y) => Math.round(x + (y - x) * t);
+      return (l(c(a, 16), c(b, 16)) << 16) | (l(c(a, 8), c(b, 8)) << 8) | l(c(a, 0), c(b, 0));
+    };
+    const derived = from === 'inner' ? R.inner
+      : from === 'trim' ? R.trim
+        : from === 'over' ? mix(R.outer, R.trim, 0.46)
+          : from === 'leather' ? 0x53412f : R.outer;
+    const rack = [{ name: 'As the robe', hex: derived, index: -1 },
+      ...GARMENT_TONES.map((t, i) => ({ ...t, index: i }))];
+    const w = wardrobeOf(this.s.wardrobe);
+    host.innerHTML = '';
+    for (const c of rack) {
+      const sw = document.createElement('div');
+      sw.className = 'sw' + (w[key] === c.index ? ' sel' : '') + (c.index < 0 ? ' as-robe' : '');
+      sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
+      sw.title = c.name;
+      this._activate(sw, () => {
+        audio.ui('click');
+        this._wear(key, c.index);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === sw));
+      }, c.name);
+      host.appendChild(sw);
+    }
+  }
+
   /** One row of colour swatches bound to an index setting. */
   _swatchRow(hostId, key, palette, onPick) {
     const host = document.getElementById(hostId);
@@ -2467,7 +3532,8 @@ export class Menu {
     if (!p || !p.content) return;
     const host = this.el.preview;
     const w = host?.clientWidth || p.w || 300, h = host?.clientHeight || p.h || 260;
-    framePreviewCamera(p.camera, p.content, { pitch: p.pitch, aspect: w / h });
+    framePreviewCamera(p.camera, p.content,
+      { pitch: p.pitch, aspect: w / h, zoom: p.zoom, focus: p.focus });
   }
 
   _refreshPreview(rebuild = false) {
@@ -2749,6 +3815,169 @@ export class Menu {
     });
   }
 
+  /* ── databank ────────────────────────────────────────────────────── */
+
+  /**
+   * THE PAGE PER BODY.
+   *
+   * Built here rather than in index.html for the reason `_buildTraining` is:
+   * the list has to come from `ARCHETYPES`, and thirty-one blocks of markup
+   * typed into a file would be wrong the day somebody adds a droid — which is
+   * the defect this repository has now removed nine times. There is no unit
+   * name, threat number or level name in the markup below; every one of them is
+   * interpolated from `databankGroups()`.
+   *
+   * TWO COLUMNS AND NOT A GRID OF CARDS. A card grid can show thirty-one names
+   * and no prose, or thirty-one paragraphs and no shape; the point of this page
+   * is the paragraph. So the roster is a narrow list of every body grouped by
+   * army, and the wide column is whichever one is selected, at length. It is the
+   * same shape the Deploy panel already uses for theatres and the creator uses
+   * for species, so it inherits the keyboard path (`_activate`) and the scroll
+   * fade with it.
+   *
+   * It has to exist before `_buildTabs` runs — that is what collects `.tab` and
+   * `.panel` — hence the call order in the constructor.
+   */
+  _buildDatabank() {
+    const tabs = document.querySelector('.menu-tabs');
+    const wrap = document.querySelector('.menu-wrap');
+    if (!tabs || !wrap) return;                       // stripped DOM (tests)
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.dataset.tab = 'databank';
+    tab.textContent = 'Databank';
+    /* Immediately before the Codex, which is the other reference page. The two
+     * are one thought — what the controls do, and what the things you are using
+     * them on are — and a player who has found one has found the other. */
+    const codexTab = [...tabs.children].find((t) => t.dataset.tab === 'train');
+    tabs.insertBefore(tab, codexTab || null);
+
+    const panel = document.createElement('section');
+    panel.className = 'panel';
+    panel.dataset.panel = 'databank';
+    panel.innerHTML = `
+      <div class="col narrow databank-roster">
+        <h3>Roster</h3>
+        <div id="databank-list"></div>
+      </div>
+      <div class="col wide databank-page" id="databank-page"></div>`;
+    /* Before the footer, so the tab order and the DOM order agree. */
+    const foot = wrap.querySelector('.menu-foot');
+    wrap.insertBefore(panel, foot || null);
+
+    this._buildDatabankList();
+    this._showDatabank(null);
+  }
+
+  /** The roster column: every archetype in the game, under its faction. */
+  _buildDatabankList() {
+    const host = document.getElementById('databank-list');
+    if (!host) return;
+    host.innerHTML = '';
+    for (const group of databankGroups()) {
+      const head = document.createElement('h4');
+      head.className = 'codex-head databank-army';
+      head.textContent = group.faction.short;
+      host.appendChild(head);
+      const list = document.createElement('div');
+      list.className = 'difflist';
+      for (const p of group.pages) {
+        const d = document.createElement('div');
+        d.className = 'diff';
+        d.dataset.entry = p.key;
+        /* The sub-line is the two numbers a player can act on — what it is
+         * carrying and how hard it hits — and both are read off the roster. */
+        d.innerHTML = `<i class="dot"></i><div class="txt"><b>${escKey(p.name)}</b>`
+          + `<span>${escKey(p.weapon || 'no entry')} · threat ${p.threat}</span></div>`;
+        this._activate(d, () => {
+          audio.ui('click');
+          this._showDatabank(p.key);
+        });
+        list.appendChild(d);
+      }
+      host.appendChild(list);
+    }
+  }
+
+  /**
+   * One page, or the standing instruction when nothing is chosen.
+   *
+   * `key` is validated against the pages rather than trusted: it comes back off
+   * a saved profile, and a profile written before an archetype was renamed would
+   * otherwise open the tab on a blank column.
+   */
+  _showDatabank(key) {
+    const host = document.getElementById('databank-page');
+    if (!host) return;
+    const pages = databankPages();
+    const p = pages.find((x) => x.key === key) || null;
+    const list = document.getElementById('databank-list');
+    if (list) {
+      for (const d of list.querySelectorAll('.diff')) {
+        d.classList.toggle('sel', !!p && d.dataset.entry === p.key);
+      }
+    }
+    /* HELD ON THE MENU AND NOT IN THE PROFILE, deliberately. Which page you
+     * last read is not a setting — it changes nothing about a run, it would need
+     * a reader declaration in SETTING_READERS to state that it changes nothing,
+     * and the tab is better for opening on the index every time: the index is
+     * the sentence that says what this page is for. */
+    this._databankKey = p ? p.key : null;
+
+    if (!p) {
+      const groups = databankGroups();
+      /* Both numbers counted, neither typed. "Thirty-one bodies on three sides"
+       * was in this sentence for about an hour and it was already the defect
+       * this page exists to end — a hand-written count beside the generated list
+       * directly under it. */
+      host.innerHTML = `<h3>The databank</h3>
+        <p class="hint">${pages.length} bodies fight this war and ${groups.length} banners fly
+          over them. Pick one. Every page is the same four things: whose it is, what it is
+          carrying, where you meet it, and what it is.</p>
+        ${groups.map((g) => `<p class="hint"><b>${escKey(g.faction.short)}</b> — `
+          + `${escKey(g.faction.note || '')}</p>`).join('')}`;
+      return;
+    }
+
+    /* A body with no entry renders as the hole it is. Silence here would be the
+     * thing this whole page exists to end. */
+    if (!p.text) {
+      host.innerHTML = `<h3>${escKey(p.name)}</h3>
+        <p class="hint">This body is in the game and has no databank entry.
+          <b>tools/checks/databank.mjs</b> fails while that is true.</p>`;
+      return;
+    }
+
+    const where = p.training ? 'The dojo, and nowhere else'
+      : p.levels.length ? p.levels.join(' · ')
+      : 'Nowhere — no theatre fields this one';
+    /* The tags are facts off the archetype, not adjectives. `setPieceOnly` is
+     * the one a player cannot otherwise discover: it is why a Jedi Master never
+     * turns up in an ordinary wave however long you fight. */
+    const tags = [
+      p.boss ? 'set-piece' : null,
+      p.big && !p.boss ? 'heavy' : null,
+      p.setPieceOnly ? 'boss waves only' : null,
+      p.training ? 'training' : null,
+    ].filter(Boolean);
+
+    host.innerHTML = `
+      <h3 class="databank-name">${escKey(p.name)}</h3>
+      <p class="databank-army-line">${escKey(p.faction.name)}</p>
+      <div class="databank-stats">
+        <div><b>Weapon</b><span>${escKey(p.weapon)}</span></div>
+        <div><b>Health</b><span>${p.hp}</span></div>
+        <div><b>Threat</b><span>${p.threat}</span></div>
+        <div><b>Pace</b><span>${p.speed ? p.speed.toFixed(1) + ' m/s' : 'stationary'}</span></div>
+        <div><b>Mass</b><span>${p.mass ? p.mass + ' kg' : '—'}</span></div>
+        <div class="wide"><b>Met on</b><span>${escKey(where)}</span></div>
+      </div>
+      ${tags.length ? `<p class="databank-tags">${tags.map((t) => `<i>${escKey(t)}</i>`).join('')}</p>` : ''}
+      <p class="databank-text">${escKey(p.text)}</p>
+      <p class="hint databank-foot">${escKey(p.faction.note)}</p>`;
+  }
+
   _buildSandboxUnits() {
     const host = document.getElementById('opt-sandbox-type');
     if (!host) return;
@@ -2838,12 +4067,74 @@ export class Menu {
   }
 
   /**
+   * HOW MUCH OF THE HOLOCRON IS OPEN. See DEFAULT_SETTINGS.holocron for why
+   * the last two exist; the short version is that a power nobody can reach is
+   * a power nobody can tell you is broken.
+   *
+   * Live-switchable like every other picker in this column, but it only bites
+   * on the next deploy — the grant happens in `World.spawnPlayer`, which is a
+   * thing that has already happened by the time a run is under way. The blurb
+   * says so rather than the setting silently doing nothing.
+   */
+  _buildHolocronModes() {
+    const host = document.getElementById('opt-holocron');
+    if (!host) return;
+    const modes = [
+      ['earned', 'Earned',
+       'The game. Insight is a run currency, you kneel to spend it, and nothing carries over.'],
+      ['open', 'Open',
+       'A full purse at every deploy. You still kneel, still choose, and prices still climb — you simply never run short.'],
+      ['all', 'Everything woken',
+       'Every facet already yours before the first wave. No choice at all: this is for looking at a power, not earning it.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.holocron === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this.s.holocron = key;
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        saveSettings(this.s);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /**
    * Key bindings. Clicking a key listens for the next keypress or mouse button
    * and takes it, warning if it is already spoken for. Escape cancels.
    */
+  /**
+   * THE KEY TABLE — and it is drawn wherever there is a host for it.
+   *
+   * "You should be able to change your key bindings mid game not just in the
+   * main menu." The list was one `#bind-list` in the Options panel, which
+   * behind a run means Abandon Run, rebind, deploy again — and a binding is
+   * exactly the thing you discover is wrong in the first thirty seconds of a
+   * fight.
+   *
+   * The fix is NOT a second copy of this method on the pause card. Everything
+   * that makes the list correct is in here — the group map that stopped
+   * headings rendering twice, the capture-phase listener that hears a mouse
+   * button and a wheel notch, the resolver that settles every clash rather
+   * than the first, the "never leave an action unbound" rule on right-click,
+   * and the repaint of every other surface that prints a key. A second copy
+   * would be a second place for all nine of those to go stale. So `render()`
+   * paints every host in HOSTS that exists on the page, and the pause card is
+   * just another host.
+   *
+   * Both lists stay live at once: they read `this.bindings`, one object, so a
+   * key rebound on the pause card is already rebound in Options when the run
+   * ends. `_listening` is the one piece of state that must be global to the
+   * pair — two chips waiting for the same keystroke is two rebinds from one
+   * press — and it always was.
+   */
   _buildBindings() {
-    const host = document.getElementById('bind-list');
-    if (!host) return;
+    const HOSTS = ['bind-list', 'pause-bind-list'];
+    const hosts = HOSTS.map(id => document.getElementById(id)).filter(Boolean);
+    if (!hosts.length) return;
     this.bindings = this.bindings || loadBindings();
     const hint = document.getElementById('bind-hint');
 
@@ -2866,12 +4157,13 @@ export class Menu {
      * Training the way the table intends.
      */
     const render = () => {
-      host.innerHTML = '';
       const grouped = new Map();
       for (const a of ACTIONS) {
         if (!grouped.has(a.group)) grouped.set(a.group, []);
         grouped.get(a.group).push(a);
       }
+      for (const host of hosts) {
+      host.innerHTML = '';
       for (const [group, rows] of grouped) {
         const g = document.createElement('div');
         g.className = 'grp'; g.textContent = group;
@@ -2887,7 +4179,7 @@ export class Menu {
           // always offer one empty slot so a second key can be added
           for (let i = 0; i < Math.min(bound.length + 1, 3); i++) {
             const b = document.createElement('b');
-            b.textContent = keyLabel(bound[i]);
+            b.textContent = keyLabel(bound[i], this.pad?.family || 'xbox');
             b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
             // A key chip is a control, so it takes focus and answers Enter and
             // Space — rebinding the keyboard was itself mouse-only.
@@ -2904,6 +4196,7 @@ export class Menu {
           row.appendChild(label); row.appendChild(keys);
           host.appendChild(row);
         }
+      }
       }
       // Every OTHER surface that prints a key reads the same table, so a
       // rebind lands on all of them in the same frame it lands here.
@@ -2922,6 +4215,7 @@ export class Menu {
         window.removeEventListener('mousedown', onMouse, true);
         window.removeEventListener('wheel', onWheel, true);
         this._listening = false;
+        this._padCapture = null;
         if (hint) hint.textContent = '';
         if (code) {
           // EVERY other action loses the key, not just the first one found.
@@ -2959,13 +4253,31 @@ export class Menu {
         e.preventDefault(); e.stopPropagation();
         finish(e.deltaY < 0 ? WHEEL.up : WHEEL.down);
       };
+      /**
+       * …AND SO IS A PAD BUTTON, for exactly the same reason.
+       *
+       * A pad code that can be bound by the game and not by the PLAYER is half
+       * a control, and the pad's own default map would then be the only map
+       * that exists. The press arrives through `Input.onPadCode` — main.js
+       * forwards it to `padCode()` below — rather than through a listener,
+       * because a gamepad raises no DOM events at all: it is polled, and Input
+       * is the one thing in the project polling it.
+       *
+       * It arrives AS THE CHORD it was pressed with, so binding "LB + A" is
+       * holding LB and pressing A, which is the same gesture that fires it.
+       */
+      this._padCapture = (code) => finish(code || null);
       window.addEventListener('keydown', onKey, true);
       window.addEventListener('mousedown', onMouse, true);
       window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     };
 
-    const reset = document.getElementById('btn-bind-reset');
-    if (reset && !reset._wired) {
+    // Both reset buttons, for the same reason both lists exist: a player who
+    // has rebound something mid-fight and wants it back should not have to
+    // leave the run to get it.
+    for (const id of ['btn-bind-reset', 'btn-pause-bind-reset']) {
+      const reset = document.getElementById(id);
+      if (!reset || reset._wired) continue;
       reset._wired = true;
       reset.addEventListener('click', () => {
         audio.ui('click');
@@ -2973,6 +4285,26 @@ export class Menu {
         saveBindings(this.bindings);
         this.hooks.onBindings?.(this.bindings);
         render();
+      });
+    }
+    /**
+     * THE PAUSE CARD'S LIST IS FOLDED AWAY UNTIL IT IS ASKED FOR.
+     *
+     * `.pause-wrap` is a 400 px card with five buttons on it, and forty rows
+     * of key table dropped into that is a card you have to scroll past to
+     * reach Resume. So the pause copy is a disclosure: one button that says
+     * what is behind it, and the list underneath when it is open. It starts
+     * closed on every pause — a card that remembers being open is a card that
+     * hides Resume behind a list you opened once, twenty minutes ago.
+     */
+    const toggle = document.getElementById('btn-pause-bind');
+    const box = document.getElementById('pause-bind-box');
+    if (toggle && box && !toggle._wired) {
+      toggle._wired = true;
+      toggle.addEventListener('click', () => {
+        audio.ui('click');
+        const open = box.classList.toggle('hidden');
+        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
       });
     }
     render();
@@ -2991,20 +4323,229 @@ export class Menu {
    */
   _buildKeyLegends() {
     this.bindings = this.bindings || loadBindings();
+    const pad = this.pad;
     const grid = document.getElementById('codex-grid');
-    if (grid) grid.innerHTML = codexHtml(this.bindings);
+    if (grid) grid.innerHTML = codexHtml(this.bindings, pad);
     const hints = document.getElementById('pause-hints');
-    if (hints) hints.innerHTML = pauseHintsHtml(this.bindings);
+    if (hints) hints.innerHTML = pauseHintsHtml(this.bindings, pad);
 
     // The control-scheme cards name the key you hold to hand the camera back.
     for (const s of SCHEMES) {
       const el = document.querySelector(`#opt-scheme [data-scheme="${s.key}"] .txt span`);
-      if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id));
+      if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id, false, pad));
     }
   }
 
+  /**
+   * THE PLAYER PICKED UP A CONTROLLER — repaint everything that names a key.
+   *
+   * Called by main.js off `Input.onDevice`, which fires once on each change
+   * rather than every frame, so this is a handful of innerHTML writes when the
+   * player swaps hands and nothing at all while they play.
+   *
+   * `family` is which pad: the same button index is Y, △ or X depending on the
+   * shell, and a creator screen that says "Y" to somebody holding a DualSense
+   * is the typed-key-name defect wearing a controller.
+   */
+  setDevice(device, family = 'xbox') {
+    if (this.pad && this.pad.device === device && this.pad.family === family) return false;
+    this.pad = { device, family };
+    // Both, and in this order. `_buildBindings` repaints the key chips and ends
+    // by calling `_buildKeyLegends` — but it RETURNS EARLY on a page with no
+    // bind list, and the Codex is on a page of its own. A device change is not
+    // a frame, so the one redundant repaint when both hosts exist costs
+    // nothing and is what makes this correct on every page shape.
+    this._buildBindings();
+    this._buildKeyLegends();
+    return true;
+  }
+
+  /**
+   * A pad button, for whichever binding chip is listening. See _buildBindings.
+   *
+   * Returns whether it was TAKEN, and Input reads that: a press the rebinder
+   * consumed must not also press the control under the focus ring or walk the
+   * list. One press, one thing — inside the editor for the table that rule
+   * belongs to.
+   */
+  padCode(code) {
+    if (!this._padCapture) return false;
+    // Start CANCELS, which is what Escape does for a keyboard — and it costs
+    // nothing, because bare Start is the device-level way out and is bound to
+    // no action for exactly that reason. Without it a pad-only player who
+    // opened a chip by accident has no way to close it again.
+    this._padCapture(code === 'PadStart' ? null : code);
+    return true;
+  }
+
+  /**
+   * Is a binding chip waiting for a button right now?
+   *
+   * Asked by main.js before it lets a pad press walk the menu: while a chip is
+   * listening, A means "bind A to this action" and NOT "press the thing under
+   * the focus ring", and doing both would rebind an action and activate
+   * whatever the ring happened to be on in the same press.
+   */
+  isListeningForBind() { return !!this._padCapture; }
+
+  /**
+   * ── WALKING THE FRONT END WITH A CONTROLLER ────────────────────────────
+   *
+   * The other half of "playable on a pad", and the half no bindings table can
+   * answer: a player who cannot press Deploy cannot play whatever the pad does
+   * in a fight. It is deliberately NOT a second set of menu handlers — every
+   * control here already takes focus and answers Enter and Space, because
+   * `_activate` gives it `tabIndex`, `role` and a keydown, and menu.mjs pins
+   * that every control a mouse can reach a keyboard can reach. So a pad needs
+   * to move the focus and press the thing, and nothing else.
+   *
+   * DOCUMENT ORDER, and up/left is simply the other way. A spatial solver over
+   * this DOM — level cards in a grid, swatch rows, forty bind rows in a
+   * scroller — is a great deal of geometry to get subtly wrong, and the linear
+   * walk is the same order Tab already takes: whatever a keyboard player has
+   * learned, the pad agrees with.
+   */
+  _padHost() {
+    // Topmost first. A draft is over the pause card is over the menu, and a
+    // pad must never move focus into the screen underneath the one on top.
+    for (const id of ['boon-draft', 'muster', 'death', 'pause', 'meditation', 'menu']) {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains('hidden')) return el;
+    }
+    return null;
+  }
+
+  _padFocusable(host) {
+    if (!host || !host.querySelectorAll) return [];
+    const all = [...host.querySelectorAll(
+      'button, [tabindex], input, select, textarea, a[href]')];
+    return all.filter((el) => {
+      if (el.disabled || el.tabIndex < 0) return false;
+      // `offsetParent` is null for anything display:none, and every panel in
+      // this front end is hidden that way — so a control on a tab the player
+      // is not looking at cannot be focused from a pad. The check harness's
+      // DOM double has no layout, so an element with no `offsetParent`
+      // PROPERTY at all is treated as visible rather than as hidden.
+      if ('offsetParent' in el && el.offsetParent === null
+        && el.getAttribute?.('aria-hidden') !== 'false') return false;
+      for (let p = el; p; p = p.parentElement) {
+        if (p.classList?.contains('hidden')) return false;
+      }
+      return true;
+    });
+  }
+
+  /** Move the focus one control. `dir` is up/down/left/right. */
+  padNav(dir) {
+    const host = this._padHost();
+    const list = this._padFocusable(host);
+    if (!list.length) return false;
+    const back = dir === 'up' || dir === 'left';
+    const at = list.indexOf(document.activeElement);
+    // Nothing focused yet — the first press lands on the first control rather
+    // than on the second, which is what "press down to start reading a list"
+    // means to anybody who has held a controller.
+    const next = at < 0 ? (back ? list.length - 1 : 0)
+      : (at + (back ? -1 : 1) + list.length) % list.length;
+    list[next].focus?.();
+    list[next].scrollIntoView?.({ block: 'nearest' });
+    audio.ui('hover');
+    return true;
+  }
+
+  /** Press the focused control. */
+  padConfirm() {
+    const host = this._padHost();
+    const list = this._padFocusable(host);
+    const el = list.includes(document.activeElement) ? document.activeElement : null;
+    if (!el) return this.padNav('down');
+    el.click?.();
+    return true;
+  }
+
+  /** Which track is really playing, and why it may not be the chosen one. */
+  _syncTrackBlurb() {
+    const el = document.getElementById('music-blurb');
+    if (!el) return;
+    const t = trackAt(this.s.musicIndex);
+    el.textContent = this._musicMissing
+      ? `${this._musicMissing} is not in this build — playing ${trackAt(audio.musicIndex).name}. `
+        + 'Drop the file into assets/music/ and it is an option.'
+      : t.blurb;
+  }
+
+  /**
+   * SYNTHESISED / SPOKEN / BOTH.
+   *
+   * Three cards rather than a checkbox because there are three answers and one
+   * of them is the game as it stands. The cards say what each costs a player:
+   * the synthesiser is wordless on purpose, the browser's speech is real words
+   * and sounds like the browser, and 'both' is the pair together for anyone
+   * who wants the alien cadence AND to know what was said.
+   *
+   * The third card is disabled outright where the browser has no synthesiser,
+   * rather than being offered and silently doing nothing — the dead-control
+   * shape this whole front end has a check against.
+   */
+  _buildSpeechModes() {
+    const host = document.getElementById('opt-speech');
+    if (!host) return;
+    const able = canSpeakWords();
+    const modes = [
+      ['synth', 'Synthesised', 'Wordless, and built from an oscillator and two formant filters at the '
+        + 'moment it is needed. Five larynxes, no recordings, nothing to download.'],
+      ['spoken', 'Spoken', 'The same lines in actual words, through your browser\'s own speech '
+        + 'synthesiser. Your chosen voice sets the pitch and the pace.'],
+      ['both', 'Both', 'The words over the larynx. Twice the voice, and it is a lot.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      const dead = key !== 'synth' && !able;
+      d.className = 'diff' + (this.s.speechMode === key ? ' sel' : '') + (dead ? ' overruled' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}`
+        + `${dead ? '<br><b>This browser has no speech synthesiser.</b>' : ''}</span></div>`;
+      if (dead) { d.setAttribute('aria-disabled', 'true'); host.appendChild(d); continue; }
+      this._activate(d, () => {
+        audio.ui('click');
+        this._pick('speechMode', key);
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        audio.setSpeechMode(key);
+      });
+      host.appendChild(d);
+    }
+    audio.setSpeechMode(this.s.speechMode);
+  }
+
+  /**
+   * Write a PICKED setting by name, and save.
+   *
+   * The pickers each did this inline — `this.s.x = k; saveSettings(this.s)` —
+   * which is fine until a picker forgets the save, and tools/checks/controls.mjs
+   * matches the assignment by name to prove a picked setting really has a
+   * control. One helper keeps both true.
+   */
+  _pick(key, value) {
+    this.s[key] = value;
+    saveSettings(this.s);
+    return value;
+  }
+
   _buildOptions() {
+    /* FOUR of these sliders index a TABLE, and the tables can grow. Their
+     * `max` is taken from the table rather than typed into index.html, so
+     * adding a sixth voice, an eighth reticle shape or a second soundtrack
+     * cannot leave the new one unreachable behind a stale attribute.
+     *
+     * Declared at the top of the method rather than beside the voice block it
+     * was written for: the soundtrack slider is built with the rest of the
+     * audio controls, forty lines earlier, and a `const` used above its own
+     * declaration is a TDZ throw that takes the whole front end down — which
+     * is exactly what it did, on every check in tools/checks/menu.mjs at once.
+     */
+    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
     this._buildDeflectModes();
+    this._buildHolocronModes();
     this._buildBindings();
     const host = document.getElementById('opt-scheme');
     host.innerHTML = '';
@@ -3070,6 +4611,34 @@ export class Menu {
     this._slider('opt-forcepower', 'forcePower', v => `${v.toFixed(2)}\u00d7`, v => this.hooks.onForce?.());
     this._slider('opt-forcedrain', 'forceDrain', v => (v <= 0 ? 'unlimited' : `${v.toFixed(2)}\u00d7`),
       v => this.hooks.onForce?.());
+    /**
+     * THE FOUR THAT HAD A READER AND NO CONTROL.
+     *
+     * `teamDamage` (note #29, asked for by name), `commandFormation`,
+     * `instantSpawn` and `maxBodies` were all read by shipped code and written
+     * by nothing — not a slider, not a box, not a card. All four slipped past
+     * BOTH dead-control checks for the same reason: those iterate
+     * `Object.keys(DEFAULT_SETTINGS)`, and none of the four was a key of it. A
+     * guard keyed on the list of things you remembered to declare cannot find
+     * the thing you forgot to declare. The guard now scans src/ for what is
+     * actually read, and that is what turned these up.
+     *
+     * None of them takes effect through a hook: `commandConfig`, `instantSpawn`
+     * and the physics constructor all read `world.settings` at the moment they
+     * need it, so the value written here is the value the next area, the next
+     * arrival and the next world get.
+     */
+    this._slider('opt-teamdamage', 'teamDamage',
+      v => (v <= 0 ? 'none' : `${Math.round(v * 100)}%`));
+    this._slider('opt-maxbodies', 'maxBodies', v => `${Math.round(v)} pieces`);
+    this._check('opt-instant-spawn', 'instantSpawn');
+    /* The meeting. Read by `commandConfig` at world build, like the two above,
+     * so the value written here is the one the next deployment gets. */
+    this._check('opt-command-versus', 'commandVersus');
+    /* The standing order, as six cards — the formation records ARE the card
+     * list (id, name, blurb), so the row cannot fall out of step with the
+     * orders on the keyboard or with what the director will actually do. */
+    this._cardRow('command-list', 'h-standing-order', 'commandFormation', Object.values(FORMATIONS));
     this._slider('opt-scale', 'resolutionScale', v => `${Math.round(v * 100)}%`, v => this.hooks.onResolution?.(v));
     // The two multipliers on top of the tier. They have been keys of
     // DEFAULT_SETTINGS with real readers in World.loadLevel since the tier
@@ -3092,6 +4661,31 @@ export class Menu {
       () => this.hooks.onQualityChange?.(this.s.quality));
     this._slider('opt-vol', 'volume', v => `${Math.round(v * 100)}%`, v => audio.setVolume(v));
     this._slider('opt-music', 'music', v => `${Math.round(v * 100)}%`, v => audio.setMusicVolume(v));
+    /*
+     * THE SCORE ITSELF, on the same shape as the voice picker: a slider that
+     * prints a NAME. The ceiling comes off MUSIC_TRACKS rather than out of the
+     * markup, so dropping an mp3 into assets/music/ and adding a row is the
+     * whole of adding a track — a `max` typed into index.html would leave the
+     * new one unreachable behind a stale attribute.
+     */
+    cap('opt-music-track', MUSIC_TRACKS.length);
+    this._slider('opt-music-track', 'musicIndex', v => trackAt(v).name, (v) => {
+      audio.setMusicTrack(v);
+      this._syncTrackBlurb();
+    });
+    /*
+     * …and the engine reports back. A row may name a file that is not in the
+     * build — that is what a data-driven list costs — so the one thing the
+     * screen must never do is offer it, play nothing and say nothing. Audio
+     * falls back to the shipped score and calls this; the blurb says which
+     * track is really playing.
+     */
+    audio.onMusicMissing = (t) => {
+      this._musicMissing = t?.name || null;
+      this._set('musicIndex', audio.musicIndex, true);
+      this._syncTrackBlurb();
+    };
+    this._syncTrackBlurb();
     this._check('opt-invert', 'invertY', v => this.hooks.onInvert?.(v));
     this._check('opt-firstperson', 'firstPerson');
     // Live on the same seam as shake and slowmo: applyFeelSettings pushes it
@@ -3100,7 +4694,7 @@ export class Menu {
     this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
-    this._check('opt-showperf', 'showPerf');
+    this._check('opt-showperf', 'showPerf', () => this._syncDiag());
     this._check('opt-grain', 'grain', v => this.hooks.onGrain?.(v));
     // Both toggles are live: applyFeelSettings re-reads `this.s` on every
     // shake and every hitstop, so the hook exists only to kill what is already
@@ -3110,6 +4704,15 @@ export class Menu {
     this._check('opt-injury', 'injury', () => this.hooks.onFeel?.(this.s));
     this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
     this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
+    // The bars and the drain, on the same hook: unticking either has to release
+    // the frame that is drawn NOW, not wait for the next death.
+    this._check('opt-letterbox', 'letterbox', () => this.hooks.onFeel?.(this.s));
+    this._check('opt-deathdrain', 'deathDrain', () => this.hooks.onFeel?.(this.s));
+    // The pad, on the same hook and for the same reason: applyFeelSettings is
+    // where the strength is pushed into Engine.rumbleLevel, so a player turning
+    // it down mid-fight feels the next kill at the new level.
+    this._slider('opt-rumble', 'rumble', v => (v <= 0 ? 'off' : `${Math.round(v * 100)}%`),
+      () => this.hooks.onFeel?.(this.s));
 
     /* ── voices ──────────────────────────────────────────────────────────
      *
@@ -3120,11 +4723,6 @@ export class Menu {
      * this menu is writing — so no hook is needed and none is faked: a toggle
      * here is not a message to the game, it IS the game's answer next frame.
      */
-    /* Three of these sliders index a TABLE, and the tables can grow. Their
-     * `max` is taken from the table rather than typed into index.html, so
-     * adding a sixth voice or an eighth reticle shape cannot leave the new one
-     * unreachable behind a stale attribute. */
-    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
     cap('opt-voice', PLAYER_VOICES.length);
     cap('opt-ret-shape', RETICLE_SHAPES.length);
     cap('opt-ret-color', RETICLE_COLORS.length);
@@ -3138,6 +4736,7 @@ export class Menu {
       // audition is a slider you set once and never touch again.
       this._auditionVoice(v);
     });
+    this._buildSpeechModes();
     this._check('opt-voicelines', 'voiceLines');
     this._check('opt-enemyvoices', 'enemyVoices');
     this._check('opt-enemybody', 'enemyBody');
@@ -3146,6 +4745,9 @@ export class Menu {
     // the same object this menu is writing. A hook here would be a message to a
     // system that is already reading the answer.
     this._check('opt-minimap', 'minimap');
+    // Same shape and the same reason as the box above it: HUD.Minimap asks
+    // `world.settings` on the frame it draws, and that is this object.
+    this._check('opt-minimap-sense', 'minimapSense');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));
 
@@ -3270,6 +4872,27 @@ export class Menu {
         this.hooks.onName?.(this.s.playerName);
       });
     }
+    /**
+     * THE RUN'S NUMBER — typed, like the co-op name, and for the same reason:
+     * it is the other setting in this game whose value the player supplies
+     * rather than picks off a list.
+     *
+     * Empty is null and null means "draw one", so a player who never touches
+     * the box plays exactly the game they always played. Digits only, because
+     * `main.js` seeds a 32-bit stream with it and a word would silently become
+     * NaN and then a fresh seed — a control that quietly ignores what was typed
+     * into it is the same defect as one nothing reads.
+     */
+    const seedField = document.getElementById('opt-seed');
+    if (seedField) {
+      seedField.value = this.s.seed == null ? '' : String(this.s.seed);
+      seedField.addEventListener('input', () => {
+        const clean = String(seedField.value || '').replace(/[^0-9]/g, '').slice(0, 10);
+        if (seedField.value !== clean) seedField.value = clean;
+        this.s.seed = clean === '' ? null : (Number(clean) >>> 0);
+        saveSettings(this.s);
+      });
+    }
     bind('btn-host', () => this.hooks.onHost?.());
     bind('btn-join', () => {
       const code = document.getElementById('join-code').value.trim().toUpperCase();
@@ -3342,8 +4965,58 @@ export class Menu {
    * focus ring, and the arrows walk the row while the number keys take a card
    * outright. The numbers are printed on the cards, because a shortcut nobody
    * is told about is not a shortcut.
+   *
+   * ── AND IT SAYS WHAT IT IS, WHY IT IS THERE, AND HOW TO ANSWER IT ───────
+   *
+   * The report: "once I pressed a button and saw a menu mid game where I
+   * selected a power up but idk how it happened or what button I pressed."
+   * They pressed nothing. This card opened itself, and it was headed
+   * "Attune" — a word for a thing that happens on boss waves — over an
+   * ordinary between-waves boon draft, with one line of copy that began "The
+   * Force offers" and never mentioned that the wave they had just cleared is
+   * what opened it. A modal that stops the world and does not say why is
+   * indistinguishable from a bug the player caused.
+   *
+   * So three sentences are written here rather than in the markup, because
+   * two of them differ per draft:
+   *
+   *   WHAT — an attunement is permanent, repeatable and only on a boss wave;
+   *          a boon is one card off this wave. The `attune` flag on the offer
+   *          is what says which, so the title follows the offer.
+   *   WHY  — the cadence, READ from Waves.js (DRAFT_EVERY, BOSS_EVERY) rather
+   *          than typed. Every number this front end has ever typed by hand
+   *          has eventually described a game that stopped existing, and this
+   *          one is load-bearing: it is the sentence that tells the player
+   *          nothing they pressed did this.
+   *   KEYS — the numbers, the arrows, Enter, and what Escape does. Escape is
+   *          worth a clause of its own because it does NOT skip the offer:
+   *          Screens.resume puts the draft straight back, deliberately, and a
+   *          player who does not know that will not press it.
    */
   showDraft(boons, onPick) {
+    const attune = boons.some(b => b.attune);
+    const title = document.getElementById('draft-title');
+    const why = document.getElementById('draft-why');
+    const keys = document.getElementById('draft-keys');
+    if (title) title.textContent = attune ? 'Attune' : 'The Force Offers';
+    if (why) {
+      why.innerHTML = attune
+        ? '<b>A master has fallen.</b> This is an <b>attunement</b> — a permanent change to how you '
+          + 'fight, and the only place the game hands one out is after a boss. It opened on its own: '
+          + `you pressed nothing. Bosses arrive every ${BOSS_EVERY} waves.`
+        : `<b>The wave is clear.</b> This is the <b>boon draft</b> — one card, taken now, that lasts `
+          + `the rest of the run. It opened on its own every ${DRAFT_EVERY === 1 ? 'wave' : `${DRAFT_EVERY} waves`} `
+          + 'and after every boss: you pressed nothing, and there is no key that opens it.';
+      // Written as innerHTML for the <b>s, and the two sentences above are the
+      // only strings on this card that are not either a boon's own text or a
+      // number read out of Waves.js.
+    }
+    if (keys) {
+      keys.innerHTML = `Click a card, press its <kbd>number</kbd>, or walk the row with the `
+        + `<kbd>arrows</kbd> and take one with <kbd>Enter</kbd>. `
+        + `<kbd>Esc</kbd> opens the pause card — the offer comes back when you resume, `
+        + 'because the wave paid for it.';
+    }
     this.el.draftCards.innerHTML = '';
     const cards = [];
     const take = (b) => {
@@ -3378,6 +5051,132 @@ export class Menu {
     cards[0]?.focus?.();
   }
   hideDraft() { this.el.draft.classList.add('hidden'); }
+
+  /**
+   * THE MUSTER — the screen that did not exist, and what its absence cost.
+   *
+   * `CommandDirector._areaClear` publishes an offer between every pair of
+   * areas: your reinforcement points, the units this far into the advance will
+   * sell you, what each costs, how many you already field, and the whole roll.
+   * There was no screen, so main.js's `typeof screens.muster === 'function'`
+   * found nothing, `onMuster` was never installed, and the director took the
+   * documented fallback — `autoMuster()`, which replaces losses with the
+   * cheapest body it can and then spends everything left on the heaviest thing
+   * on the shelf. Correct behaviour for a mode with no UI, and it means the
+   * player's army was rebuilt for them four times a campaign, by a heuristic,
+   * with nothing on screen. Permadeath whose replacement budget you never see
+   * is permadeath with the decision taken out of it.
+   *
+   * WHAT IS ON IT AND WHY IT IS TWO COLUMNS. The shelf on the left and the roll
+   * on the right, in one glance, because the question at a muster is never
+   * "what exists" — `musterOffer`'s own comment says so — it is "should this be
+   * my third heavy or my first ARC", and that question cannot be asked without
+   * the casualty list beside the price list.
+   *
+   * NOTHING HERE DECIDES ANYTHING. Every purchase goes through
+   * `director.recruit`, which guards against every refusal case itself and puts
+   * a reason on `director.refused`; this screen prints that reason and redraws
+   * from a fresh `musterOffer()`. A screen that decremented its own copy of the
+   * points would disagree with the director the first time it was refused, and
+   * a muster whose numbers lie is worse than no muster.
+   *
+   * @param {object} offer `CommandDirector.musterOffer()`, verbatim.
+   * @param {{recruit:(type:string)=>object, done:()=>void}} io  `recruit`
+   *        returns `{ offer, refused }` — the director's new state and its
+   *        reason for refusing, if it did.
+   */
+  showMuster(offer, io = {}) {
+    const el = {
+      root: document.getElementById('muster'),
+      held: document.getElementById('muster-held'),
+      title: document.getElementById('muster-title'),
+      brief: document.getElementById('muster-brief'),
+      units: document.getElementById('muster-units'),
+      refused: document.getElementById('muster-refused'),
+      rollHead: document.getElementById('muster-roll-head'),
+      list: document.getElementById('muster-list'),
+      points: document.getElementById('muster-points'),
+      strength: document.getElementById('muster-strength'),
+      done: document.getElementById('btn-muster-done'),
+    };
+    /* Returns whether the card actually went up. Screens.muster reads it: a
+     * muster that cannot be drawn must not leave a campaign stopped on a state
+     * whose overlay is not on the screen, and the caller's fallback is to
+     * muster without one. */
+    if (!el.root) return false;
+    this._musterEl = el;
+    /* The LIVE handlers, on the instance rather than in the listener's
+     * closure. The Advance button is bound once — binding it per muster would
+     * stack five listeners over a campaign and close the screen five times —
+     * and a listener that closed over the FIRST offer's `io` would, on area
+     * four, call area one's director callback. Same class of bug as the four
+     * duplicate listeners this file already carries a note about. */
+    this._musterIo = io;
+
+    const draw = (o) => {
+      if (!o) return;
+      this._muster = o;
+      // The area just HELD, and the one being walked into. Both are the
+      // director's own strings — the brief that names the ground is what makes
+      // the next four minutes legible, and it is already written.
+      if (el.held) el.held.textContent = `${o.areaName} — held`;
+      if (el.title) el.title.textContent = o.next ? o.next.name : 'The advance is over';
+      if (el.brief) el.brief.textContent = o.next ? o.next.brief : '';
+      if (el.points) el.points.textContent = String(o.points | 0);
+      if (el.strength) el.strength.textContent = `${o.strength | 0}/${o.max | 0}`;
+      if (el.rollHead) {
+        const lost = (o.roster?.roll || []).filter(t => !t.alive).length;
+        el.rollHead.textContent = lost ? `The roll — ${lost} lost` : 'The roll';
+      }
+      if (el.list) el.list.innerHTML = rosterHtml(o.roster);
+
+      if (el.units) {
+        el.units.innerHTML = '';
+        for (const u of o.units || []) {
+          const card = document.createElement('div');
+          // Priced out rather than removed: what you cannot afford is the shape
+          // of the decision, and a shelf that empties itself says nothing about
+          // what you are saving up for.
+          card.className = u.afford ? 'mu' : 'mu poor';
+          card.innerHTML = `<b>${escKey(u.label)}</b>`
+            + `<span class="cost">${u.cost} points · threat ${u.threat}</span>`
+            + `<span class="have">You field ${u.have}</span>`;
+          if (u.afford) {
+            card.addEventListener('mouseenter', () => audio.ui('hover'));
+            this._activate(card, () => buy(u.type), `${u.label} — ${u.cost} points`);
+          }
+          el.units.appendChild(card);
+        }
+      }
+    };
+
+    const buy = (type) => {
+      const res = this._musterIo?.recruit?.(type);
+      if (el.refused) el.refused.textContent = res?.refused || '';
+      audio.ui(res?.refused ? 'bad' : 'click');
+      draw(res?.offer || this._muster);
+    };
+
+    if (el.refused) el.refused.textContent = '';
+    draw(offer);
+
+    if (el.done && !el.done.dataset.musterBound) {
+      el.done.dataset.musterBound = '1';
+      // The card hides itself BEFORE the callback, exactly as the draft does,
+      // which is the reason Screens.guarded exists — a throw inside `done`
+      // lands the player on the pause card instead of on a frozen field.
+      this._activate(el.done, () => {
+        audio.ui('good');
+        this.hideMuster();
+        this._musterIo?.done?.();
+      });
+    }
+    el.root.classList.remove('hidden');
+    el.done?.focus?.();
+    return true;
+  }
+
+  hideMuster() { document.getElementById('muster')?.classList.add('hidden'); }
 
   /**
    * The two sandbox numbers, repeated where you can actually reach them.
@@ -3460,6 +5259,11 @@ export class Menu {
       box.style.display = live ? '' : 'none';
       if (this._pauseType) this._pauseType.value = sandboxConfig(this.s).type;
     }
+    // The key table folds itself away between pauses — see _buildBindings.
+    const binds = document.getElementById('pause-bind-box');
+    const toggle = document.getElementById('btn-pause-bind');
+    if (binds) binds.classList.add('hidden');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
     this.el.pause.classList.remove('hidden');
   }
   hidePause() { this.el.pause.classList.add('hidden'); }
@@ -3482,24 +5286,4 @@ export class Menu {
   }
   hideDeath() { this.el.death.classList.add('hidden'); }
 
-  /**
-   * The landing between rungs of the Spire.
-   *
-   * `next` is the rung about to be climbed INTO, so the altitude and the brief
-   * describe where the player is going rather than where they have been — the
-   * card is a threshold, not a receipt. On the crown there is no next rung and
-   * the caller shows the death card with a different title instead.
-   */
-  showLanding({ altitude, name, brief, stats = [], onAscend }) {
-    this.el.landingAlt.textContent = `${Math.round(altitude).toLocaleString()} m`;
-    this.el.landingTitle.textContent = name;
-    this.el.landingBrief.textContent = brief || '';
-    this.el.landingStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
-    const btn = document.getElementById('btn-ascend');
-    // Replaced rather than added to: this screen is shown once per rung and a
-    // listener per landing would fire the fourth ascent four times.
-    btn.onclick = () => { audio.ui('good'); this.hideLanding(); onAscend?.(); };
-    this.el.landing.classList.remove('hidden');
-  }
-  hideLanding() { this.el.landing.classList.add('hidden'); }
 }

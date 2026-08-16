@@ -1,5 +1,5 @@
 /**
- * SABER — a hilt on the ground.
+ * BATTLEFRONT BORZ — a hilt on the ground.
  *
  * Note 61: "drop and pick up sabers, including a friend's."
  *
@@ -22,8 +22,27 @@
  * partner's hilt is built from THEIR order's tuning with THEIR crystal. Pick it
  * up and you are holding their weapon — a Sith's bled red in a Jedi's hand, or
  * a Consular's gold hilt in yours — until you drop it again. Nothing about the
- * player's own saved identity is touched; `Player.takeSaber` rebuilds the blade
- * from what it was handed and remembers what it put down.
+ * player's own saved identity is touched; `Player._takeSaber` rebuilds the blade
+ * from what it was handed and remembers what it put down. (It was written here
+ * as `Player.takeSaber`, which is not a method of anything — the sort of small
+ * lie that costs the next reader a search.)
+ *
+ * ── AND THE OTHER END OF IT IS NOT IN THIS FILE, WHICH IS WHY NOTE 39 ────
+ *
+ * "When you drop your lightsaber you drop it but you still have one like you
+ * never actually lose it, therefore you can never really pick one up."
+ *
+ * Every line above was working. `dropSaber` put a real, identity-carrying,
+ * physical hilt on the floor every time it was asked to — and the WIELDER was
+ * never told. `Player._dropSaber` called `saber.retract()`, which puts the
+ * blade out and does nothing else, so the hilt stayed drawn in the fist, the
+ * ignite key lit it again from nothing, and pressing drop a second time made a
+ * second hilt. Five presses, five sabers, all pickable.
+ *
+ * The lesson is worth more than the fix: this file did its whole job and the
+ * feature still did not exist, because a dropped weapon is a fact about the
+ * PERSON as much as about the object. `Player.disarmed` is that fact, and every
+ * reader of it is a place the game used to pretend the weapon was still there.
  */
 
 import * as THREE from 'three';

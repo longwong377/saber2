@@ -1,5 +1,5 @@
 /**
- * SABER — enemy sabers, and the 180° that made every duel free.
+ * BATTLEFRONT BORZ — enemy sabers, and the 180° that made every duel free.
  *
  * The player's words: "the enemies with lightsabers just circle and wave their
  * sabers and never hurt me", and "I have never once seen the blades touch".
@@ -152,10 +152,33 @@ function duel(formKey, seconds, opts = {}) {
     worstHitsInOneStrike: 0, e, p, w,
   };
   const realDamage = p.damage.bind(p);
-  p.damage = (amt, pt, src, kind) => {
-    if (src === e && kind === 'saber') { s.hits++; s.hitsThisStrike++; }
-    return realDamage(amt, pt, src, kind);
+  /* `...rest` FORWARDED WHOLE. An instrument that names the arguments it knows
+   * about measures a different function the day the real one grows one —
+   * `Player.damage` took a fifth (`preResisted`) when the Force learned to
+   * answer the Force, and a wrapper that dropped it made every knockback pay
+   * the pool twice INSIDE THE HARNESS ONLY. Nothing here reads past `kind`, so
+   * there is no reason to name any of them. */
+  /**
+   * AND `s.hits` IS THE SWEPT TEST'S ALONE, WHICH IT WAS NOT.
+   *
+   * The tip branch below bills through this same `p.damage`, so every tip hit
+   * used to land in BOTH counters — and the clause "the two hit tests must
+   * never both fire for the same swing" then read `tipHits + hits > strikes`
+   * with the tips counted twice. A form that connects on more than half its
+   * swings and takes one tip hit fails an inequality about double-billing
+   * without anything having been billed twice, and the pass line's "N swept
+   * hits, M tip-test hits" printed the total under the word `swept`. The two
+   * counters are disjoint now; `hitsThisStrike`, which is the per-swing latch,
+   * still counts either.
+   */
+  p.damage = (amt, pt, ...rest) => {
+    if (rest[0] === e && rest[1] === 'saber') {
+      if (!inTipTest) s.hits++;
+      s.hitsThisStrike++;
+    }
+    return realDamage(amt, pt, ...rest);
   };
+  let inTipTest = false;
   const c0 = new THREE.Vector3(), c1 = new THREE.Vector3();
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const dt = 1 / 60, N = Math.round(seconds * 60);
@@ -199,7 +222,9 @@ function duel(formKey, seconds, opts = {}) {
         s.minTipDist = Math.min(s.minTipDist, d);
         if (d <= 0.44) {
           s.tipHits++;
+          inTipTest = true;
           p.damage(e.attackDamage * e.duel.damageScale, a.clone(), e, 'saber');
+          inTipTest = false;
           e.duel.interrupt(0.45);
         }
       }
@@ -226,7 +251,21 @@ function duel(formKey, seconds, opts = {}) {
   return s;
 }
 
-/** One posed frame of a real duellist, so its blade can be measured in place. */
+/**
+ * One posed frame of a real duellist, so its blade can be measured in place.
+ *
+ * THE KIT IS TAKEN OUT, and it has to be. Three of the checks below pose a
+ * blade at fixed WORLD coordinates either side of a player they assume is
+ * standing on the origin — which is what makes "the whole edge cuts, not only
+ * the tip" a test of the edge rather than of where anybody happens to be. Once
+ * an acolyte could actually cast (it never could until `tools/checks/powers.mjs`
+ * existed), 60 warm-up frames were long enough for it to open with a shove, and
+ * the player was 3.96 m from a blade laid through where they used to be. The
+ * check failed, correctly, on a fixture that had stopped measuring its subject.
+ *
+ * `duel()` above deliberately keeps the kit — that one measures a whole fight.
+ * What a duellist does with the Force belongs to `powers.mjs`.
+ */
 function posedDuellist(formKey = 'djemSo', range = 1.8, frames = 90) {
   const w = gameWorld();
   const p = new Player(w, { isLocal: true });
@@ -235,6 +274,7 @@ function posedDuellist(formKey = 'djemSo', range = 1.8, frames = 90) {
   w.players.push(p);
   const e = new Enemy(w, 'acolyte', V(0, 0, range));
   e.duel.formKey = formKey; e.duel.form = FORMS[formKey];
+  e.powers = null;
   w.enemies.push(e);
   const ctx = {
     input: stubInput(), terrain: w.terrain, physics: w.physics, particles: null,

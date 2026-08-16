@@ -1,5 +1,5 @@
 /**
- * SABER — renderer, HDR pipeline, post stack.
+ * BATTLEFRONT BORZ — renderer, HDR pipeline, post stack.
  *
  * Scene renders into a multisampled half-float target so the blade and the
  * bolts stay bright above 1.0 and bloom picks them up honestly; ACES filmic
@@ -45,7 +45,11 @@ import { installCelShading, CEL, CEL_BAND_GLSL } from '../toon/Cel.js';
 import { OutlinePass } from '../toon/Ink.js';
 import { Profiler } from './Profiler.js';
 import { noiseTexture } from './Textures.js';
+import { setSceneDepth } from '../world/SoftDepth.js';
 import { clamp, damp } from './MathUtil.js';
+
+/** Finite-or-default. Game maths produces NaN; a uniform holding one is a black frame. */
+const num = (v, d) => (Number.isFinite(v) ? v : d);
 
 /**
  * THE LADDER IS A FILL-RATE LADDER, AND THE TOP THREE ROWS COST THE SAME CPU.
@@ -99,6 +103,8 @@ import { clamp, damp } from './MathUtil.js';
  * (1.0x / 1.0x / 1.56x / 2.25x fragments) and msaa (0 / 2 / 4 / 4). Never quote
  * a frame rate for any of it.
  */
+export const LIGHT_POOL_SIZE = 8;
+
 export const QUALITY = {
   // `shadowDist` is the REACH of the outermost cascade, and `shadow` is the map
   // size of EACH of the three (see CASCADE_SPLIT / cascadeBoxes). It used to be
@@ -631,6 +637,11 @@ const WHITE = new THREE.Color(1, 1, 1);
  * and a quarter of real difference against a 5% nominal one — so the canyon
  * shipped nearly a stop underexposed and the arena nearly a stop over, and no
  * amount of grading fixes a frame that is simply metered wrong.
+ *
+ * That metering is BOUNDED — see METER_TRIM. Unbounded it did the mirror-image
+ * damage: a level authored dark was lifted to the same mid-grey as a level
+ * authored bright, so the two knobs an author has for "this place is dark"
+ * (the atmosphere, and `exposure`) were reduced to one.
  */
 const EXPOSURE = 0.92;
 
@@ -722,6 +733,66 @@ const BLOOM = {
 /** Radiance a mid-grey horizontal surface should land on. Calibrated so the
  *  dune sea, the one level that was correctly exposed, does not move. */
 const KEY = 0.191;
+
+/**
+ * …AND HOW FAR THE METER IS ALLOWED TO MOVE A LEVEL TOWARD IT.
+ *
+ * `KEY` on its own is not a target, it is a magnet: `exposure = authored ×
+ * KEY / key` lands EVERY outdoor level on exactly `authored × KEY` whatever its
+ * atmosphere says, so the only thing left with any say over how bright a level
+ * renders is the one scalar the meter multiplies through. Measured on the
+ * shipped roster, that correction ran:
+ *
+ *     kamino   ×3.14      geonosis ×1.80      wood     ×1.75
+ *     scoria   ×2.36      alpine   ×1.54      mustafar ×1.34
+ *
+ * — i.e. THE DARKER A LEVEL IS AUTHORED, THE HARDER IT IS LIFTED, which
+ * inverts the art direction: an author who cuts a sun to say "storm" gets the
+ * light handed straight back with interest. Kamino's own card says "at night,
+ * in the rain"; it authored the weakest key on the roster (3.4), the darkest
+ * `skyColor` (luminance 0.10) and 94% cloud, and rendered as bright overcast
+ * noon — sky luminance 0.786 and saturation 0.046 against its reference plate
+ * (assets/reference/maps/kamino/kamino outside.webp) at 0.129 and 0.667.
+ *
+ * So the meter becomes a TRIM on the authored exposure rather than a
+ * replacement for it, and this is the width of the trim. Three measurements
+ * set it, none of them a taste call:
+ *
+ *  1. THE TONE CURVE DOES NOT ASK FOR MORE. Exposure exists to keep the frame
+ *     off the ends of the ACES curve. Its log-log slope — how much display
+ *     contrast a stop of scene contrast buys — is ~1.5 in the toe, passes 1.0
+ *     near an exposed key of 0.3 and falls to 0.5 by 0.75. With the trim OFF,
+ *     every level on this roster lands between an exposed key of 0.045
+ *     (kamino) and 0.189 (colosseum): all eight sit in the toe, where the
+ *     curve is expanding contrast rather than losing it, and the brightest is
+ *     four stops clear of the shoulder. There is no level here the curve needs
+ *     rescued, so the trim's width cannot be derived from the curve — which is
+ *     the finding, because the flat normalisation was defended on curve
+ *     grounds.
+ *
+ *  2. THE REFERENCE PLATES WANT MORE SEPARATION, NOT LESS. Sky-band display
+ *     luminance across `assets/reference/`, per level: mustafar 0.18, wood
+ *     0.20, colosseum 0.23, kamino 0.13–0.28, geonosis 0.47, drifts 0.65,
+ *     alpine 0.80 — a 4.4:1 span. Authored and untrimmed, this roster spans
+ *     2.6:1 in display. The levels are ALREADY less separated than the images
+ *     they were built from, so any width spent flattening them further is
+ *     spent against the reference.
+ *
+ *  3. WHAT IS LEFT IS THE ONE THING THE AUTHOR HOLDS. `exposure` spans
+ *     0.74 … 1.20 across the outdoor roster, a factor of 1.62. A meter that
+ *     may move a frame further than the full travel of that knob can overrule
+ *     any decision an author is able to express with it, and did. So the trim
+ *     is capped at the authored travel and centred on 1 in log: √1.62 = 1.273,
+ *     pulled in a hair so a small re-author cannot silently push the meter
+ *     past the author. `tools/checks/lighting.mjs` asserts that relationship
+ *     rather than these two numbers, so it survives the roster changing.
+ *
+ * What this does NOT change is the semantics Levels.js was authored against —
+ * `exposure` is still a ± bias about a metered key and every block that says so
+ * is still right. What changes is that the bias is no longer the only surviving
+ * term: a level that authors a dark atmosphere now renders one.
+ */
+const METER_TRIM = [0.79, 1.27];
 
 /**
  * HOW MANY PLATEAUS THE DRAWN SKY IS CUT INTO.
@@ -949,26 +1020,86 @@ export const SKY_PHYSICAL = { knee: 2.4, ceil: 9.5 };
  * the 1.55 linear ceiling below and therefore under the bloom pass's 1.8, so
  * the dome still cannot become a bloom source — the drawn sky approaches its
  * ceiling asymptotically and tops out around three quarters of it.
+ *
+ * IT IS A CAP AND IT USED TO BE A TARGET, and that is the second half of the
+ * exposure fault METER_TRIM fixes. `ceil = SKY_CLIP / exposure` does not limit
+ * the sky, it PINS it: every level's dome asymptotes to the same 0.906 display
+ * whatever its atmosphere says, and a level metered darker gets a proportionally
+ * BRIGHTER linear sky to land on the same number. So trimming the meter alone
+ * would have darkened the ground and the cloud deck and left the sky exactly
+ * where it was — measured mid-change, Kamino's deck fell under its own dome and
+ * `sky.mjs` correctly called it smoke.
+ *
+ * Blown-sky share (pixels over 0.85 display in the top quarter of frame) is the
+ * same fault read off the pixels: the Shifting Waste 62.7% and Geonosis 59.5%
+ * against reference plates at 0–13%, and neither of those two levels is one the
+ * meter was moving at all. See skyDisplayShoulder for what the sky is anchored
+ * to instead.
  */
 const SKY_CLIP = 1.18;
+/**
+ * …and what the drawn sky reaches when the cap is NOT binding: a fixed number
+ * of stops over the frame's own mid-grey.
+ *
+ * Derived off the two levels the meter and the author already agree about.
+ * `drifts` and `colosseum` are the only outdoor levels whose metered correction
+ * falls inside METER_TRIM, i.e. the only two whose exposure the meter does not
+ * have to bend — so whatever relationship their sky already has to their own
+ * key is the relationship that was working. Measured on the shipped tree:
+ *
+ *     drifts     ceil 1.216 / key 0.1696 = 7.17
+ *     colosseum  ceil 1.372 / key 0.2053 = 6.68
+ *
+ * — geometric mean 6.92. At 6.9 those two frames move by 4% and 3%, which is
+ * the point: the levels the old rule got right are held still and every other
+ * level gets the same RELATIONSHIP instead of the same absolute display value.
+ *
+ * `key` is a linear radiance and so is `ceil`, so exposure cancels out of this
+ * term entirely: a level's drawn sky is now a property of its atmosphere, and
+ * the one thing that still reads the exposure is the cap.
+ */
+const SKY_OVER_KEY = 6.9;
 /**
  * …held inside this band in LINEAR radiance whatever the exposure asks for.
  * The ceiling is the load-bearing one: 1.55 is under the bloom pass's 1.8
  * threshold, so the dome cannot become a bloom source. The floor stops a level
  * metered for a dark gorge — the canyon meters at 1.71, two and a half stops
  * off the arena — from compressing its own sky into a flat grey card.
+ *
+ * THE FLOOR BINDS ON ONE LEVEL NOW and that is worth knowing before it is
+ * moved: Kamino's key asks for 0.419 through SKY_OVER_KEY and gets 0.45. It is
+ * the floor doing exactly what it says — at 0.419 the storm's skyline is only
+ * 1.49× its own zenith and `sky.mjs`'s flatness bound is at 1.35 — so the
+ * darkest sky in the game is held a hair above being one card. It is not a
+ * level to "fix" by widening the band; it is the band earning its keep.
  */
 const SKY_CLIP_RANGE = [0.45, 1.55];
 
 /**
- * The shoulder the DRAWN sky is compressed onto for a given atmosphere. It has
- * to move with the exposure: a single fixed pair put the arena's skyline at
- * 0.96 display and the canyon's at 1.002 — clipped — because the two levels
- * meter two and a half stops apart off the same authored numbers.
+ * The shoulder the DRAWN sky is compressed onto for a given atmosphere.
+ *
+ * TWO TERMS, AND ONLY ONE OF THEM IS THE EXPOSURE. The first is the level's own
+ * sky: SKY_OVER_KEY × the metered key, in linear radiance, with no exposure in
+ * it at all — a dark atmosphere draws a dark sky and a bright one draws a bright
+ * one, and the ordering between two levels is the ordering their authors wrote.
+ * The second is the cap: `SKY_CLIP / exposure` is the ceiling at which the drawn
+ * dome would reach 0.906 display, and no level is allowed past it whatever its
+ * key says. On the shipped roster the cap binds on the Colosseum alone, which is
+ * what a cap should look like.
+ *
+ * It used to be the cap alone, and that is the fault named at SKY_CLIP: a single
+ * fixed pair put the arena's skyline at 0.96 display and the canyon's at 1.002 —
+ * clipped — because the two levels metered two and a half stops apart, but
+ * dividing by the exposure over-corrected in the other direction and made every
+ * sky in the game land on the same number.
  */
 export function skyDisplayShoulder(a, meter = null) {
   const m = meter || atmosphereMeter(a);
-  const ceil = clamp(SKY_CLIP / Math.max(m.exposure, 1e-3), SKY_CLIP_RANGE[0], SKY_CLIP_RANGE[1]);
+  const cap = SKY_CLIP / Math.max(m.exposure, 1e-3);
+  // An interior has no key to anchor to — and no dome drawn either; it keeps
+  // the cap so `_linearSky`'s uniforms are always something sane.
+  const want = m.key != null ? Math.min(SKY_OVER_KEY * m.key, cap) : cap;
+  const ceil = clamp(want, SKY_CLIP_RANGE[0], SKY_CLIP_RANGE[1]);
   // The knee is where compression starts, and it has to be LOW. The drawn sky
   // spans about ten to one from zenith to skyline; put the knee where the
   // zenith is and everything above it lands inside the last 5% of the range.
@@ -1160,7 +1291,10 @@ export function sunDirection(a, out = new THREE.Vector3()) {
  *   • WHAT EXPOSURE PUTS A MID-GREY ON THE CURVE. The authored exposures span
  *     5% across three levels whose real ground irradiance spans 140%, so the
  *     canyon shipped the best part of a stop under and the arena a stop over.
- *     The authored number becomes a ± bias about the measured key.
+ *     The authored number becomes a ± bias about the measured key — TRIMMED,
+ *     not replaced: see METER_TRIM. Metering all the way to `KEY` made the
+ *     atmosphere block unable to say how bright its own level is, which is a
+ *     bigger fault than the one it was fixing.
  */
 export function atmosphereMeter(a) {
   const sunPos = sunDirection(a, new THREE.Vector3());
@@ -1176,8 +1310,10 @@ export function atmosphereMeter(a) {
 
   if (!outdoor) {
     // No atmosphere to meter — an interior is lit by lamps this cannot see.
+    // `trim` is 1 and not absent: there is nothing to trim here, and a reader
+    // that has to tell "not metered" from "field missing" gets it wrong.
     return { sunPos, outdoor, direct, skyFull: 0, envI: ENV_INTENSITY,
-      irradiance: direct + hemiIrr + fillIrr, key: null,
+      irradiance: direct + hemiIrr + fillIrr, key: null, trim: 1, rawTrim: 1,
       exposure: (a.exposure ?? 1.05) * EXPOSURE };
   }
 
@@ -1201,8 +1337,26 @@ export function atmosphereMeter(a) {
   const envI = ENV_INTENSITY * clamp(diffuseCap(sunPos.y) * direct / Math.max(skyFull, 1e-4), 0.16, 1);
   const irradiance = direct + skyFull * (envI / ENV_INTENSITY) + hemiIrr + fillIrr;
   const key = irradiance * 0.18 / Math.PI;
-  return { sunPos, outdoor, direct, skyFull, envI, irradiance, key,
-    exposure: clamp((a.exposure ?? 1.05) * KEY / Math.max(key, 1e-4), 0.2, 3.0) };
+  /* THE TRIM, AND WHY IT IS A CLAMP ON THE CORRECTION AND NOT ON THE RESULT.
+   *
+   * Clamping the finished exposure would bound how bright a frame can be and
+   * still let the meter erase the difference between two levels inside the
+   * bound — which is the actual defect. Clamping the CORRECTION makes
+   * `key → exposure × key` monotone by construction: below KEY/hi it is
+   * key × hi, above KEY/lo it is key × lo, and in between it is the flat
+   * KEY. So a level authored darker than another can never render brighter
+   * than it, and the only thing the trim's width buys is how much authored
+   * difference the flat middle is allowed to swallow.
+   *
+   * The outer clamp stays as a backstop against an atmosphere nobody has
+   * authored yet; with the trim in place no shipped level comes near it. */
+  // `rawTrim` is the correction BEFORE the bound — the whole of what the meter
+  // used to apply. Kept on the meter so a check can build the flattened frame
+  // as a control without a second copy of this arithmetic living in tools/.
+  const rawTrim = KEY / Math.max(key, 1e-4);
+  const trim = clamp(rawTrim, METER_TRIM[0], METER_TRIM[1]);
+  return { sunPos, outdoor, direct, skyFull, envI, irradiance, key, trim, rawTrim,
+    exposure: clamp((a.exposure ?? 1.05) * trim, 0.2, 3.0) };
 }
 
 /* ── composite shader ────────────────────────────────────────────────── */
@@ -1275,6 +1429,36 @@ const CompositeShader = {
      * zero and tools/skyshot.mjs reports it. */
     uSharpen:    { value: 0 },
     uFlash:      { value: 0 },
+    /**
+     * A PUNCH IN THE FRAME, and it is NOT uFlash.
+     *
+     * uFlash adds white everywhere, which is a detonation. What a kill wants is
+     * the other thing a camera does when something lands: the edges close in
+     * and the middle gets harder for about a sixth of a second. So this drives
+     * the vignette up and the contrast with it, centred — the frame squeezes
+     * around what you just did rather than washing out.
+     *
+     * Kept separate from uVignette rather than added into it because the
+     * vignette is COMPOSITION (see the note on it) and this is an EVENT: the
+     * composition must be able to stay at 0.10 while an event rides on top, and
+     * a check reading uVignette must still measure the composition.
+     */
+    uPunch:      { value: 0 },
+    /**
+     * DRAIN THE COLOUR OUT, over seconds rather than frames. Death, and only
+     * death: the run is over and the world stops being a place you can act on.
+     * 1.0 is fully grey. Kept off the Sense grade, which is a COOL desaturation
+     * that silvers the highlights — an ability reads as an ability, and a death
+     * has to read as an ending.
+     */
+    uDrain:      { value: 0 },
+    /**
+     * LETTERBOX. `x` is the bar height as a fraction of the frame, 0 for none.
+     * It is here rather than in the DOM because the DOM overlay is Agent B's
+     * file and because a bar drawn in the composite is inside the grade — it
+     * cannot disagree with the frame's own black point.
+     */
+    uBars:       { value: 0 },
     uBlack:      { value: 0.018 },  // where black actually is
     uCurve:      { value: 0.32 },   // filmic S, applied in display space
     uShadowTint: { value: new THREE.Vector3(0.955, 0.985, 1.070) },
@@ -1290,6 +1474,7 @@ const CompositeShader = {
     uniform vec2 uResolution;
     uniform float uTime, uGrain, uVignette, uAberration, uSaturation, uContrast;
     uniform float uSense, uHurt, uRadial, uSharpen, uFlash;
+    uniform float uPunch, uDrain, uBars;
     uniform float uBlack, uCurve;
     uniform vec3 uLift, uGain, uShadowTint, uHighTint;
     uniform vec4 uHeat[6];
@@ -1382,7 +1567,36 @@ const CompositeShader = {
       // the middle, gentle at both ends — so it adds bite without clipping.
       col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);
       col = (col - 0.5) * uContrast + 0.5;
-      col = col * uGain + uLift;
+
+      /**
+       * THE GAIN ROLLS OFF INTO THE HIGHLIGHTS, and the blue lightsaber that
+       * came out YELLOW is why.
+       *
+       * A channel gain is a tint, and a tint applied at full strength to a
+       * pixel that is already at the top of the curve does not tint it — it
+       * REPLACES its hue, because the three channels are all near 1 and their
+       * ratios are whatever the gain says. The Ember Shelf grades
+       * [1.13, 1.00, 0.74], which is correct for a world lit by fire and is
+       * catastrophic for the one object in that world making its own light:
+       * measured in this shader's own arithmetic, a Cerulean blade core came
+       * out 147 degrees off its crystal — blue in, yellow out. Amethyst went
+       * 139 the other way. The coloured lobe around the core, which is dimmer,
+       * only moved 56, which is why the halo stayed blue while the blade in
+       * the middle of it did not.
+       *
+       * Rolling the gain toward neutral as luma approaches white is what film
+       * does and what the saturation term two lines down ALREADY does, on this
+       * same ramp. It was simply the one operator that had no shoulder. After
+       * it, every level's core sits within 26 degrees of its crystal, which is
+       * the ACES shoulder alone and is the same on all seven.
+       *
+       * The ramp is driven by luma BEFORE the gain — the whole point is to
+       * decide how much tint a pixel can take from how bright it already is,
+       * and a luma read afterwards has the tint in it.
+       */
+      float preLuma = dot(col, vec3(0.2126,0.7152,0.0722));
+      float tintable = 1.0 - smoothstep(0.62, 1.0, preLuma);
+      col = col * mix(vec3(1.0), uGain, tintable) + uLift * tintable;
 
       float luma = dot(col, vec3(0.2126,0.7152,0.0722));
       // Split tone. Daylight is two lights — a warm sun and a cold sky — and
@@ -1407,10 +1621,36 @@ const CompositeShader = {
       }
       col += uFlash;
 
-      // — vignette
+      // — THE COLOUR GOING OUT OF IT. Before the vignette, so a drained frame
+      //   still darkens at its edges rather than going flat grey to the corner.
+      if(uDrain > 0.001){
+        float dl = dot(col, vec3(0.2126,0.7152,0.0722));
+        // Not a straight mix to luma: a drained frame also loses its highlights,
+        // which is what stops it reading as a black-and-white photograph and
+        // starts it reading as consciousness leaving.
+        col = mix(col, vec3(dl) * mix(1.0, 0.72, uDrain), uDrain);
+      }
+
+      // — vignette. The composition (uVignette) and the EVENT (uPunch) are one
+      //   operator here and two numbers everywhere else, so a kill can squeeze
+      //   the frame without moving the level's own grade.
       vec2 vc = centred * vec2(uResolution.x / uResolution.y, 1.0);
-      float vig = 1.0 - uVignette * smoothstep(0.16, 0.86, dot(vc, vc) * 1.6);
+      float r2v = dot(vc, vc) * 1.6;
+      float vig = 1.0 - (uVignette + uPunch * 0.55) * smoothstep(0.16, 0.86, r2v);
       col *= vig;
+      // …and the middle gets harder for the same sixth of a second. Pivoted on
+      // 0.36 rather than 0.5 so the punch bites in the mid-tones the fight
+      // actually lives in and cannot blow the sky.
+      if(uPunch > 0.001){
+        col = mix(col, (col - 0.36) * (1.0 + uPunch * 0.30) + 0.36,
+                  1.0 - smoothstep(0.0, 0.9, r2v));
+      }
+
+      // — letterbox, drawn inside the grade so the bars are the frame's own black
+      if(uBars > 0.0005){
+        float edge = min(vUv.y, 1.0 - vUv.y);
+        col *= smoothstep(uBars - 0.004, uBars + 0.004, edge);
+      }
 
       // — grain, gently animated, scaled by darkness so highlights stay clean
       float g = hash(gl_FragCoord.xy + fract(uTime)*vec2(311.0,271.0)) - 0.5;
@@ -1462,10 +1702,52 @@ export class Engine {
     this.clock = new THREE.Clock();
     this.time = 0;
     this.heatSources = [];
+    /**
+     * THE FIXED POINT-LIGHT POOL. See `lightUp` for why it is fixed.
+     *
+     * EIGHT, and the number is derived rather than felt. `_crowd.mjs` measures
+     * an empty colosseum at 2 lights and thirty saber users at 64; the shading
+     * cost of a forward frame is linear in this number and the recompile
+     * hazard is the number CHANGING. Eight is the most a scene can carry
+     * without the per-fragment loop dominating at this project's material
+     * count (465 materials with thirty bodies on the field), and it is enough
+     * that the player's own blade, an opponent's, and half a dozen of the
+     * nearest others are all real lights. Everything past that still glows —
+     * the drawn blade does 88% of the visible work without its lights at all,
+     * which is measured in Saber.js.
+     *
+     * They live in the scene from construction and are never added or removed,
+     * so NUM_POINT_LIGHTS is a constant for the life of the renderer.
+     */
+    this.lightPool = [];
+    this._lightReq = [];
+    this._lightsWanted = 0;
+    this._lightsLit = 0;
+    for (let i = 0; i < LIGHT_POOL_SIZE; i++) {
+      const L = new THREE.PointLight(0xffffff, 0, 7, 1);
+      L.castShadow = false;
+      this.scene.add(L);
+      this.lightPool.push(L);
+    }
     this._flash = 0;
     this._hurt = 0;
     this._sense = 0;
     this._radial = 0;
+    /* The event punch decays on its own; the drain and the bars are held at a
+     * target until something lets go of them, because a death is a state and
+     * not an impulse. */
+    this._punch = 0;
+    this._drain = 0; this._drainTarget = 0;
+    this._bars = 0; this._barsTarget = 0;
+    /** Wall-clock ms the pad is busy until — see rumble(). */
+    this._rumbleUntil = 0;
+    /* `rumbleLevel` is DELIBERATELY NOT INITIALISED HERE. Every call site
+     * already asks `world.feelOn('shake')` before it reaches the pad, so a
+     * field written once to the identity of its own operation and moved by
+     * nothing would be a second gate that is a claim rather than a control —
+     * the shape World.js's constructor removed `hpScale`/`dmgScale` for. The
+     * SEAM survives as `this.rumbleLevel ?? 1` in rumble(), so the day a
+     * strength slider exists it assigns this and every call scales. */
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
@@ -2079,7 +2361,176 @@ export class Engine {
   setSense(v) { this._senseTarget = v; }
   setRadial(v) { this._radialTarget = v; }
 
+  /**
+   * The frame squeezing around something that just landed. 0..1, decays.
+   *
+   * `Math.max` for the same reason flash() and hurt() use it: two kills on one
+   * frame are one punch at the strength of the bigger, not a doubled one.
+   */
+  punch(v) { this._punch = Math.max(this._punch, Math.min(1, num(v, 0))); }
+  /**
+   * ── THE TWO CONTROLS THE DRAIN AND THE BARS NEVER HAD ──────────────────
+   *
+   * Camera shake and cinematic slow-motion have had boxes for a while, and
+   * these two — the colour draining out of the frame when you die, and the
+   * letterbox that arrives with it and with a boss — were deliberately left
+   * OUT of the `shake` gate. The reason is worth keeping, because it is why
+   * they get controls of their own rather than being folded in: with motion
+   * feedback off they are the ONLY cue that you died. Gating them behind the
+   * motion box would take a player who turned it off for comfort and leave
+   * them with nothing on screen at the one moment that matters.
+   *
+   * So each is its own switch, on by default, and the gate is HERE rather than
+   * at the eight call sites — `setBars` and `setDrain` are the only writers of
+   * either target, exactly as `CameraRig.addShake` is the only writer of
+   * `rig.shake`, so this is the same funnel argument applyFeelSettings makes
+   * about those. It also means the call sites, which live in files this
+   * workstream does not own, needed no change at all.
+   *
+   * The FIELDS ARE NAMED AFTER THE SETTINGS — `letterboxOn`, `deathDrainOn` —
+   * and that is not decoration: SETTING_READERS points at these two lines, and
+   * the check that verifies it requires the named expression to MENTION the
+   * setting it claims to read. A gate called `barsOn` reads perfectly and
+   * proves nothing about `letterbox`, which is the same distance between a
+   * declaration and a reader that whole guard exists to close.
+   *
+   * `!== false` and not `??`: an Engine nobody has spoken to draws both, which
+   * is what keeps every check and every headless harness measuring the shipped
+   * behaviour. applyFeelSettings (ui/Menu.js) assigns them, and
+   * `world.feelOn('letterbox')` / `feelOn('deathDrain')` answer for anything
+   * that has a world to ask — the predicate is `s[kind] !== false`, so naming
+   * the settings after the kinds is what wires the funnel with no new lookup.
+   */
+  /** Hold the colour out of the frame, 0..1. A state — nothing decays it. */
+  setDrain(v) { this._drainTarget = this.deathDrainOn === false ? 0 : clamp(num(v, 0), 0, 1); }
+  /** Letterbox bar height as a fraction of the frame. A state, like the drain. */
+  setBars(v) { this._barsTarget = this.letterboxOn === false ? 0 : clamp(num(v, 0), 0, 0.2); }
+
+  /**
+   * RUMBLE, and it is here rather than in the input layer on purpose.
+   *
+   * Bindings own which pad the player is holding; this owns what the GAME does
+   * to it, and the events worth feeling — a kill, a death, a detonation — are
+   * raised in exactly the same breath as flash() and punch(). Putting it beside
+   * them means one call site says the whole sentence.
+   *
+   * Everything about it is best-effort. Two vendor spellings of the same
+   * feature exist (`vibrationActuator` on Chromium, `hapticActuators[]` on
+   * Firefox), neither is present on a keyboard-only player, and `playEffect`
+   * rejects on a pad that has gone away mid-frame — so every path ends in "no
+   * rumble" and never in a thrown frame.
+   *
+   * A SHORTER EFFECT DOES NOT INTERRUPT A LONGER ONE. `playEffect` replaces
+   * whatever is playing, so a wave of kills at 60 ms each would cut the 400 ms
+   * of a boss going down back to 60. The wall-clock deadline is what stops it.
+   *
+   * @param strong 0..1 the low-frequency (heavy) motor
+   * @param weak   0..1 the high-frequency (buzz) motor
+   * @param ms     duration in milliseconds
+   */
+  rumble(strong = 0.4, weak = 0.2, ms = 90) {
+    const g = clamp(num(this.rumbleLevel, 1), 0, 1);
+    if (!(g > 0)) return false;
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    if (!nav || typeof nav.getGamepads !== 'function') return false;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const dur = clamp(num(ms, 90), 20, 1200);
+    if (now < this._rumbleUntil) return false;
+    const s = clamp(num(strong, 0) * g, 0, 1), w = clamp(num(weak, 0) * g, 0, 1);
+    let sent = false;
+    let pads = null;
+    try { pads = nav.getGamepads(); } catch { return false; }
+    for (const p of pads || []) {
+      if (!p || !p.connected) continue;
+      const act = p.vibrationActuator || (p.hapticActuators && p.hapticActuators[0]);
+      if (!act || typeof act.playEffect !== 'function') continue;
+      try {
+        act.playEffect('dual-rumble', { startDelay: 0, duration: dur,
+          strongMagnitude: s, weakMagnitude: w })?.catch?.(() => {});
+        sent = true;
+      } catch {}
+    }
+    if (sent) this._rumbleUntil = now + dur;
+    return sent;
+  }
+
+  /**
+   * THE LIGHT POOL — a FIXED number of point lights, whoever asks.
+   *
+   * Player note #15, and it is two complaints in one sentence: "any situation
+   * where multiple characters with sabers are on the screen it gets really
+   * really laggy AND FREEZES too", and "sometimes for fun I'll spawn like 30
+   * enemies and then it gets really really laggy, framerate probably <10".
+   *
+   * Measured with tools/_crowd.mjs, thirty acolytes on the colosseum:
+   *
+   *     empty            2 lights
+   *     30 alive        64 lights        ← two per lit saber, plus the sky pair
+   *
+   * Sixty-four dynamic point lights in a FORWARD renderer. Saber.js's own
+   * comment already saw half of this — "every enemy in a wave carries one of
+   * these, and NUM_POINT_LIGHTS is a per-fragment unrolled loop in every lit
+   * material in the game" — and capped it at two per blade. Nothing capped the
+   * number of BLADES.
+   *
+   * TWO SEPARATE COSTS, and the second is the one that explains "freezes":
+   *
+   *   · every lit fragment loops over every light, so the shading cost of the
+   *     whole frame scales with how many people are holding a sabre;
+   *   · three.js bakes NUM_POINT_LIGHTS into the shader SOURCE, so the count
+   *     changing recompiles every lit material in the scene. A blade igniting,
+   *     retracting, or a body dying mid-fight moves that count, and a compile
+   *     of four hundred materials is a stall you feel as a freeze rather than
+   *     as a frame rate.
+   *
+   * So the pool is FIXED SIZE and always in the scene. Nothing else may add a
+   * point light: callers ask for illumination once a frame with `lightUp()`,
+   * the best `POOL` requests win, and the losers still light the scene through
+   * their own emissive geometry and the bloom — which is where most of a
+   * lightsaber's apparent light comes from anyway (see the note over
+   * Saber.PROFILE: the drawn blade with its lights switched off does 88% of
+   * the work).
+   *
+   * The count therefore never changes, which means the recompile never
+   * happens, which is the freeze gone by construction rather than by tuning.
+   */
+  lightUp(pos, color, intensity, range = 7, priority = 0) {
+    if (!(intensity > 0)) return;
+    this._lightReq.push({ pos, color, intensity, range, priority });
+  }
+
+  /** Rank the frame's requests and drive the fixed pool from the winners. */
+  _syncLights() {
+    const req = this._lightReq;
+    const cam = this.camera.position;
+    /* IMPORTANCE, not distance. A blade behind you lighting the wall you are
+     * looking at matters more than a brighter one off screen, but the camera
+     * is the only cheap proxy for "is this on screen", so the rank is the
+     * request's own priority first (the local player's blade declares one) and
+     * then its brightness attenuated by how far away it is. */
+    for (const r of req) {
+      r._score = r.priority * 1e6 + r.intensity / (1 + cam.distanceToSquared(r.pos) * 0.02);
+    }
+    req.sort((a, b) => b._score - a._score);
+    for (let i = 0; i < this.lightPool.length; i++) {
+      const L = this.lightPool[i], r = req[i];
+      if (r) {
+        L.position.copy(r.pos);
+        L.color.set(r.color);
+        L.intensity = r.intensity;
+        L.distance = r.range;
+      } else {
+        // Parked, NOT removed: taking it out of the scene is the recompile.
+        L.intensity = 0;
+      }
+    }
+    this._lightsWanted = req.length;
+    this._lightsLit = Math.min(req.length, this.lightPool.length);
+    req.length = 0;
+  }
+
   render(dt) {
+    this._syncLights();
     const u = this.composite.uniforms;
     this.time += dt;
     u.uTime.value = this.time;
@@ -2089,8 +2540,18 @@ export class Engine {
     this._hurt = damp(this._hurt, 0, 4.2, dt);
     this._sense = damp(this._sense, this._senseTarget || 0, 7, dt);
     this._radial = damp(this._radial, this._radialTarget || 0, 8, dt);
+    // The punch is FAST — 6.4 puts a 0.5 punch under a tenth of its peak in
+    // 0.36 s — because an event you can still see when the next one lands is a
+    // filter and not an event. The drain and the bars are slow on purpose: they
+    // are the two seconds after a death and they should be felt arriving.
+    this._punch = damp(this._punch, 0, 6.4, dt);
+    this._drain = damp(this._drain, this._drainTarget || 0, 1.9, dt);
+    this._bars = damp(this._bars, this._barsTarget || 0, 3.4, dt);
     u.uFlash.value = this._flash;
     u.uHurt.value = this._hurt;
+    u.uPunch.value = this._punch;
+    u.uDrain.value = this._drain;
+    u.uBars.value = this._bars;
     u.uSense.value = this._sense;
     // Focus reuses the Sense grade's cool desaturation at a fraction of its
     // strength, so the two read as the same family of ability.
@@ -2115,6 +2576,27 @@ export class Engine {
     // Inside the profiler bracket because it is part of the frame's GPU cost
     // and a pass that does not show up in the profile is a pass nobody tunes.
     this.outline.prepass(this.renderer);
+    /**
+     * …AND PUBLISH ITS DEPTH, which is the whole of what soft particles cost.
+     *
+     * The prepass has just rasterised the scene with every transparent,
+     * additive and alpha-tested material hidden (`cutsItsOwnSilhouette`), into
+     * a target with a 24-bit DepthTexture on it. That is opaque-only depth,
+     * finished, for THIS frame, before the composer draws a single particle —
+     * so the sprites can be faded against it with no second target and no
+     * second pass. `uRange.x/.y` is the near/far pair the prepass actually
+     * used, and it is NOT the camera's: Ink narrows its own far plane to the
+     * ink's reach, and linearising against the camera's frustum instead would
+     * put the fade at the wrong distance by a factor of three on a foggy level.
+     */
+    const r = this.outline.uniforms.uRange.value;
+    // The FRAME's size and not the prepass target's. `gl_FragCoord` in the
+    // particle pass is in the composer's pixel space; the prepass may be at
+    // half of that on the medium tier, and dividing by ITS size would sample
+    // the depth buffer at uv up to 2.0 — the whole frame reading as empty sky
+    // on exactly the tier most likely to need the help.
+    const px = u.uResolution.value;
+    setSceneDepth(this.outline.target?.depthTexture, r.x, r.y, px.x, px.y);
     this.composer.render(dt);
     this.profiler.endDraw();
   }

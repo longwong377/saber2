@@ -1,5 +1,5 @@
 /**
- * SABER — procedural texture foundry.
+ * BATTLEFRONT BORZ — procedural texture foundry.
  *
  * Every surface in the game is generated here at boot. No image files, nothing
  * to download, and full control over tiling, normal strength and roughness.
@@ -1238,6 +1238,84 @@ export function grassSprite(size = 64) {
     ctx.quadraticCurveTo(x + size * 0.03, size * 0.45, x + size * 0.02, size * 0.04);
     ctx.quadraticCurveTo(x + size * 0.05, size * 0.45, x + size * 0.055, size);
     ctx.closePath(); ctx.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/**
+ * A SWAMP FLOOR, and it is a different KIND of ground cover rather than a
+ * browner grass.
+ *
+ * "I like the drowned wood map but the grass and ground look like absolute
+ *  fucking garbage and need to be redone from the ground up… just get rid of it
+ *  entirely and redo it."
+ *
+ * Three attempts had already been made at that as a grass problem — a better
+ * shader, a better palette, a better density — and the reference says why none
+ * of them could work. `drowned-wood/dagobah.jpeg` HAS NO GRASS IN IT AT ALL.
+ * Not sparse grass, not brown grass: none. A swamp floor is standing water,
+ * matted leaf litter, fallen branches and the rootlets coming off the buttress
+ * of every tree. A field of upright blades is the one surface a bog cannot
+ * have, which is exactly why the level read as two games stitched together.
+ *
+ * So this is the sprite that replaces it, and every mark in it is horizontal or
+ * arched rather than vertical:
+ *
+ *   MATS      broad low fans of sodden litter, three of them, overlapping. They
+ *             are what actually closes the ground, and they are the reason this
+ *             is drawn dark and warm rather than green — soaked leaf litter is
+ *             umber, and green here would be grass again.
+ *   ROOTLETS  arches: up out of the mat, over, and back down. A root is the one
+ *             plant shape that touches the ground at BOTH ends, and it is the
+ *             single clearest tell that what you are looking at is not grass.
+ *   TWIGS     bare fallen deadwood lying across it, near-black.
+ *
+ * The alpha is deliberately much more solid than `grassSprite`'s: litter is a
+ * MAT and blades are separate. That also matters to the budget — a card that
+ * covers 70% of its own footprint instead of 25% covers the ground with three
+ * times fewer instances.
+ */
+export function litterSprite(size = 64) {
+  const c = canvasOf(size);
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  const S = size;
+  // ── the mats: broad, low, overlapping fans of wet leaf litter
+  for (let i = 0; i < 3; i++) {
+    const x = S * (0.24 + i * 0.26), w = S * (0.30 + i * 0.04);
+    const g = ctx.createLinearGradient(0, S, 0, S * 0.42);
+    g.addColorStop(0, 'rgba(38,30,18,1)');
+    g.addColorStop(1, 'rgba(104,86,44,1)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x - w, S);
+    ctx.quadraticCurveTo(x - w * 0.7, S * 0.52, x, S * (0.44 + i * 0.06));
+    ctx.quadraticCurveTo(x + w * 0.7, S * 0.52, x + w, S);
+    ctx.closePath(); ctx.fill();
+  }
+  // ── the rootlets: arches, down at both ends, which is what says "root"
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++) {
+    const x0 = S * (0.06 + i * 0.20), span = S * (0.16 + (i % 2) * 0.08);
+    const rise = S * (0.30 + (i % 3) * 0.12);
+    ctx.strokeStyle = i % 2 ? 'rgba(74,58,34,1)' : 'rgba(52,44,26,1)';
+    ctx.lineWidth = S * (0.030 + (i % 2) * 0.014);
+    ctx.beginPath();
+    ctx.moveTo(x0, S);
+    ctx.quadraticCurveTo(x0 + span * 0.5, S - rise, x0 + span, S);
+    ctx.stroke();
+  }
+  // ── the deadwood, lying across it
+  for (let i = 0; i < 3; i++) {
+    const y = S * (0.62 + i * 0.13);
+    ctx.strokeStyle = 'rgba(26,22,16,1)';
+    ctx.lineWidth = S * 0.028;
+    ctx.beginPath();
+    ctx.moveTo(S * (0.02 + i * 0.22), y);
+    ctx.lineTo(S * (0.44 + i * 0.20), y + S * (i % 2 ? 0.05 : -0.04));
+    ctx.stroke();
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;

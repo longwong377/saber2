@@ -1,5 +1,5 @@
 /**
- * SABER — the world.
+ * BATTLEFRONT BORZ — the world.
  *
  * Owns the frame: input, blade solve, contact resolution, physics, spawning,
  * and everything the HUD reads. The update order matters — blades resolve
@@ -14,24 +14,134 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { Player, bladeTargets, canHarm, hostileTo, pvpRules } from './Player.js';
+import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
-import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND } from './Waves.js';
-import { Communion } from './Constellation.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS } from './Enemy.js';
+import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
+import { Communion, FACETS, insightRate } from './LivingForce.js';
+/**
+ * What "open" is worth, in Insight. Every facet in the lattice, at its first-
+ * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
+ * facet already woken, so the last one costs a great deal more than the
+ * first. 600 clears the whole chart with room over; it is deliberately a
+ * number rather than a computed sum, because the point is "you will not run
+ * out" and a computed sum would be exactly enough and therefore tense.
+ */
+const HOLOCRON_PURSE = 600;
+
+/**
+ * HOW HARD THE GROUND IS, as a reflection coefficient.
+ *
+ * The four keys are `Terrain.surfaceAt`'s own vocabulary — the same one
+ * `Audio.SURFACES` already keys a footstep off — so this is a second reading of
+ * an existing fact rather than a second table of levels. Sand is close to
+ * anechoic; a steel deck gives you almost all of it back.
+ */
+const GROUND_ECHO = { sand: 0.14, water: 0.52, stone: 0.86, metal: 1.0 };
+
+/**
+ * WHAT ROOM IS THIS, derived from what the level already says.
+ *
+ * `Audio.init` built ONE convolver — `_makeImpulse(2.4, 2.6)` at a send of
+ * 0.16 — and `grep reverbSend` found nothing after line 388. A 30,000-seat
+ * stone bowl, an open dune sea and a sealed foundry shared a 2.4 s tail
+ * forever, which is the one thing that makes seven distinct places sound like
+ * one place.
+ *
+ * A level may say only `ambience: {wind, windFreq, drone}` and NONE of them has
+ * a reverb field. Adding one to ten levels would be ten more hand-written
+ * numbers beside a generated twin, which is the defect HANDOFF §2.3 is a
+ * section about. So the room is DERIVED, from four facts every level already
+ * carries, and each term is a physical claim rather than a taste:
+ *
+ *   WIND is the tell of OPENNESS. A sealed room has none — the temple ships
+ *     0.05 and the foundry 0.04 — and an exposed ridge has all of it (alpine
+ *     0.34, kamino 0.42). Air moving past your ears means there is nothing
+ *     close enough to stop it, which is the same statement as "nothing close
+ *     enough to reflect".
+ *   THE GROUND decides how much of what does come back, comes back. Sand eats
+ *     it; a foundry's steel deck returns nearly all of it.
+ *   HOW FAR THE FIGHT SPREADS sets the path length, and `spawnRadius` is the
+ *     one number every level states about its own size — geonosis's 96 m plain
+ *     against the temple's 52 m hall.
+ *   GRASS AND WATER are absorption and brightness. A metre of cover is the best
+ *     broadband absorber outdoors; standing water is a mirror.
+ *
+ * @param level    a LEVELS entry
+ * @param surface  what `Terrain.surfaceAt` says is underfoot
+ * @returns {{seconds, decay, send}} straight into `audio.setRoom`
+ */
+export function roomOf(level, surface = 'sand') {
+  const A = level?.ambience || {};
+  // 0.26 is geonosis's open plain, and it is the point at which a level is
+  // fully outdoors as far as this is concerned rather than the windiest thing
+  // on the roster — alpine and kamino are ABOVE it because a ridge and an ocean
+  // platform are more open than a plain, not because they are louder.
+  const open = clamp(num(A.wind, 0.2) / 0.26, 0, 1);
+  const enclosed = 1 - open;
+  const echo = GROUND_ECHO[surface] ?? 0.4;
+  const far = clamp(num(level?.spawnRadius?.[1], 50) / 96, 0.25, 1);
+  const soft = clamp(num(level?.grass, 0) * 0.5, 0, 0.6);
+  const wet = level?.water ? 1 : 0;
+
+  /* THREE NUMBERS AND THREE SEPARATE CAUSES, which is the whole reason this is
+   * not one curve with three outputs:
+   *
+   *   LENGTH is geometry. How far the reflection has to travel, and nothing
+   *     else — a marble hall and a hay barn of the same size have the same
+   *     path length and sound nothing alike, and that difference is `decay`.
+   *   DECAY is material. How much survives each bounce.
+   *   SEND is enclosure. How much of the room reaches the ear at all.
+   *
+   * Mixing them is how the first version of this gave a 30,000-seat stone bowl
+   * a 1.13 s tail, because it multiplied the length by the SAND on its floor. */
+  const seconds = clamp(0.28 + 2.7 * enclosed * (0.5 + 0.8 * far), 0.28, 3.6);
+  // `decay` is the impulse's own exponent — bigger is a steeper die-away — so
+  // absorption RAISES it. Grass is the strongest broadband absorber outdoors.
+  const decay = clamp(3.4 - 1.9 * echo + 2.6 * soft - 0.4 * wet, 1.1, 5.2);
+  /* Half the reflectors in an enclosed space are its WALLS, and the level says
+   * nothing about those — only about the ground under your feet. So the surface
+   * gets half the vote and the fact of being enclosed at all gets the other
+   * half, which is what stops an arena with a sand floor reading as a field.
+   * `enclosed ** 1.3` rather than linear: a partly sheltered plain is a plain. */
+  const send = clamp(0.035 + 0.34 * Math.pow(enclosed, 1.3) * (0.5 + 0.5 * echo)
+    + 0.05 * wet - 0.06 * soft, 0.03, 0.38);
+  return { seconds, decay, send };
+}
 import { applyOrder } from './Order.js';
-import { SPIRE } from './Run.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
+import { ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, assignArmies } from './Command.js';
+import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
-import { packAvatar, packSnapshot } from '../net/Net.js';
+import { packAvatar, packMatch, packSnapshot } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
-import { audio } from '../engine/Audio.js';
+import { audio, PRIO } from '../engine/Audio.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
+/** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
+const num = (v, d) => (Number.isFinite(v) ? v : d);
+
+/**
+ * Give the browser a frame — the yield `loadLevelAsync` is built out of.
+ *
+ * A real `requestAnimationFrame` where there is one, because only a repaint
+ * actually moves a progress bar: a `setTimeout(0)` or a bare `await` lets the
+ * next stage start before the pixels the last one paid for have been drawn, and
+ * the bar jumps from 0 to 1 in one frame at the end. A microtask where there is
+ * not, so a headless caller gets the same ORDERING without a 16 ms tax per
+ * stage — the checks run this path too, and eight stages of real frames is a
+ * tenth of a second per world.
+ */
+function nextFrame() {
+  if (typeof requestAnimationFrame === 'function') {
+    return new Promise((r) => requestAnimationFrame(() => r()));
+  }
+  return Promise.resolve();
+}
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
@@ -47,10 +157,66 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
  * share of the target's maximum health along the way. 0.55 rather than 1.0
  * because taking the limb is itself supposed to be the decisive event — the
  * damage is what stops a failed pass from being free.
+ *
+ * ── AND IT IS A SHARE OF THE BONE, NOT OF THE BODY ────────────────────────
+ *
+ * That paragraph argues the number correctly for a body and never asks whether
+ * a TOE is a body. It was a flat 0.55 of maximum health for every capsule on
+ * every archetype, so completing a pass anywhere had already dealt 55% before
+ * the sever was billed at all:
+ *
+ *   Rancor toe   grind 55.0% + sever 11.6% = 66.6% of a 2200 hp animal
+ *   Acklay toe   grind 55.0% + sever  4.2% = 59.2%
+ *   AT-TE toe    grind 55.0% + sever  2.8% = 57.8%
+ *
+ * Two completed passes killed anything in the game, through any bone it has.
+ * That is the same defect that `VITAL[name] ?? 0.4` was — one price for every
+ * part of every body — surviving one module to the side of where it was fixed,
+ * and `SEVERANCE`'s note in Enemy.js named it as the bigger half of the toe.
+ *
+ * `grindWorth` below multiplies by what the capsule is actually worth, so this
+ * constant keeps its meaning and its tuned value: for a full-worth capsule —
+ * a torso, a neck, a head — a completed grind still deals exactly 0.55 of
+ * maximum health, which is where the number was measured and felt. Everything
+ * cheaper than a body now costs what it is.
  */
-const GRIND_LETHALITY = 0.55;
+export const GRIND_LETHALITY = 0.55;
+/**
+ * What the capsule under the blade is worth, for billing a grind.
+ *
+ * The shield first, and for `takeCut`'s reason: a bubble is not a bone, it
+ * carries no `vital` on purpose, and the pass costs the shield rather than the
+ * body. Grinding one bills nothing here; `takeCut` drops it when the pass
+ * completes.
+ *
+ * And no `?? 1` after that. A bone capsule with no price is a capsule that has
+ * not been through `severance`, which is exactly the condition `takeCut` throws
+ * on — so answering it here with a quiet default would put the silent fallback
+ * back into the game one function away from where it was taken out. A capsule
+ * that reaches this without a price will throw there a moment later anyway;
+ * this returns 0 so the frame survives to get there, and bills nothing rather
+ * than billing a body.
+ */
+export function grindWorth(cap) {
+  if (!cap || cap.shield) return 0;
+  return typeof cap.vital === 'number' ? cap.vital : 0;
+}
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
+/**
+ * The most often the army's state is put on the wire, in seconds. See
+ * `_armyTick` — it is a ceiling on a message that is only sent when something
+ * changed, not a heartbeat.
+ */
+const ARMY_INTERVAL = 0.5;
+/**
+ * How long the host keeps holding a body a peer said it was lifting, with
+ * nothing further heard. See `applyClaim`'s grip branch — the claim is re-sent
+ * on every one of the client's claim ticks (1/24 s), so this is fourteen of
+ * them: long enough that a bad connection cannot drop what a player is holding,
+ * short enough that a lid closing does not leave an acolyte in the air.
+ */
+const NET_GRIP_LEASE = 0.6;
 
 export class World {
   constructor(engine, settings) {
@@ -64,6 +230,25 @@ export class World {
      * damage path. `pvpRules({})` returns co-op's rules — friendly fire off,
      * everyone on side 0 — so every existing world is unchanged by this. */
     this.rules = pvpRules(settings);
+    /**
+     * THE NUMBER THAT MEANS "ON *MY* SIDE" — and the emphasis is the change.
+     *
+     * It was `TEAM.PARTY`, a world-scoped constant, and it read correctly for
+     * as long as every player in a session was on side 0. Its two readers both
+     * mean "the side the person at THIS keyboard is on":
+     * `WaveDirector.blocksWaveEnd` counts what is left to fight, and the HUD's
+     * hostile count is the number beside it. On a machine whose player is on
+     * side 2 — which is what a duel and a two-commander Command match are —
+     * both of them counted their own army as the enemy and the enemy as their
+     * own.
+     *
+     * So it follows the local player now, written by `spawnPlayer`, and it is
+     * still `TEAM.PARTY` before there is one and in every co-op session there
+     * will ever be. `CommandDirector.deploy` no longer reads it at all: an army
+     * belongs to a COMMANDER and wears that commander's side, which is the
+     * whole of how two of them can stand on one field.
+     */
+    this.partyTeam = TEAM.PARTY;
     this.enemies = [];
     this.props = [];
     this.doors = [];
@@ -73,11 +258,11 @@ export class World {
     this.levelLights = [];
     this.takenBoons = new RankSet();
     /**
-     * The Insight this run has earned and the stars it has spent it on.
+     * The Insight this run has earned and the facets it has spent it on.
      *
      * Lives on the World because the wave director is what earns it and the
      * meditation is what spends it; carried across a landing by the Run, which
-     * is the only object that outlives a level. See Constellation.js.
+     * is the only object that outlives a level. See LivingForce.js.
      *
      * SURVIVING A WAVE IS THE ONLY THING THAT EARNS IT — not kills, not score,
      * not accuracy. A currency that pays out for anything other than the thing
@@ -111,6 +296,34 @@ export class World {
     // scale a droid's hp it assigns it here and every enemy spawned after
     // picks it up, which is exactly what the old line looked like it was for
     // and never did.
+
+    /**
+     * HOW MANY OF THE DEAD THE FIELD KEEPS — player note #15, second half.
+     *
+     * "sometimes for fun I'll spawn like 30 enemies and then it gets really
+     * really laggy, framerate probably <10 once there are that many DEAD AND
+     * ALIVE enemies on the map." Measured with tools/_crowd.mjs, thirty
+     * acolytes on the colosseum: thirty CORPSES simulate at 11.46 ms against
+     * thirty live ones at 6.76 and an empty field at 5.30, because a ragdoll is
+     * nineteen loose bodies with joints where a walking enemy is one capsule —
+     * 573 rigid bodies against 33. Nothing in this repository had ever removed
+     * one.
+     *
+     * ON THE WORLD rather than on the director, because a corpse outlives the
+     * wave that made it and every mode makes them — a duel, the sandbox and the
+     * dojo all leave bodies on the floor and none of them has a wave director
+     * that could own the budget.
+     *
+     * The budget rides the fidelity tier and not the difficulty: it is a
+     * frame-rate number, in the same sense `HEAVY_CAP` is, and `CORPSE_BUDGET`
+     * derives it from the measured cost of one corpse against the draw budget
+     * `world-immersion` holds a level to. Read `Corpses.js` before changing it —
+     * retirement is GRADED, and the big win (573 bodies → 33) is the SETTLE step
+     * which every corpse gets unrationed and which takes nothing off the screen.
+     */
+    this.corpses = new Corpses(this, {
+      budget: CORPSE_BUDGET[settings?.quality] ?? CORPSE_BUDGET.high,
+    });
 
     this.bladeSolver = new BladeContactSolver();
     /**
@@ -150,11 +363,65 @@ export class World {
    * other side, so a landing is a transition rather than a restart.
    */
   loadLevel(key, opts = {}) {
-    // Read BEFORE unload: `this.run` lives on the world, and unload is allowed
-    // to clear the world.
-    const run = opts.run || this.run || null;
-    this.unload();
-    this.run = run;
+    for (const step of this._loadSteps(key, opts)) step.run();
+    return this.level;
+  }
+
+  /**
+   * THE SAME LOAD, WITH THE TAB STILL BREATHING — and a progress bar over it.
+   *
+   * `deploy()` calls this work synchronously: terrain heightfield, Rapier
+   * world, instanced fields, textures and up to 341 hand-placed statics, all on
+   * the main thread with no yield. Measured headless per level on this box,
+   * warm: 444 ms (colosseum) to 1150 ms (mustafar), and the first load of a
+   * session 4469 ms. For that whole time the page cannot paint, cannot answer a
+   * click and cannot show a spinner — the menu simply disappears and the tab
+   * freezes, which is indistinguishable from a crash.
+   *
+   * THE BOOT SEQUENCE ALREADY DOES THIS PROPERLY. Eleven named steps, each
+   * awaiting a frame, with a bar over them. This is the same shape for the same
+   * reason, and it shares ONE list of steps with the synchronous path — a
+   * second copy of the level build beside the first is the defect this project
+   * keeps a section of HANDOFF for, and it would drift the moment a level
+   * gained a system.
+   *
+   * `frame()` is a real `requestAnimationFrame` where there is one and a
+   * microtask where there is not, so a headless caller gets the same ordering
+   * without a 16 ms tax per step.
+   *
+   * @param onProgress (fraction 0..1, label) before each step
+   */
+  async loadLevelAsync(key, opts = {}, onProgress = null) {
+    const steps = this._loadSteps(key, opts);
+    for (let i = 0; i < steps.length; i++) {
+      try { onProgress?.(i / steps.length, steps[i].name); } catch {}
+      await nextFrame();
+      steps[i].run();
+    }
+    try { onProgress?.(1, 'ready'); } catch {}
+    return this.level;
+  }
+
+  /**
+   * The level build, as a list of named stages.
+   *
+   * Closures over one scope rather than methods taking six arguments each: the
+   * stages genuinely share `L`, the quality tier and the two derived scales,
+   * and threading those through a signature would be six places for them to
+   * disagree. The list is the authority for BOTH doors above.
+   */
+  _loadSteps(key, opts = {}) {
+    let L = null, q = null, detail = 1, particleScale = 1;
+    const steps = [
+      /* THE OLD LEVEL GOING AWAY IS ITS OWN STAGE, and measured, it is the
+       * biggest one on a level-to-level transition: disposing a built Temple
+       * (341 statics, each with geometry and a collider) took 5366 ms of a
+       * 7098 ms rebuild on this box. Folded into the bookkeeping below it, the
+       * progress bar would have sat at 1/7 for three quarters of the wait and
+       * then run to the end — which is the shape of bar players read as hung. */
+      { name: 'clearing the field', run: () => this.unload() },
+
+      { name: 'reading the level', run: () => {
     /**
      * DERIVED, so it is rebuilt rather than appended to.
      *
@@ -170,11 +437,13 @@ export class World {
      * which are the only two things it should ever have contained.
      */
     this.takenBoons = new RankSet();
-    // …and the same for the Insight ledger, restored from the run rather than
-    // rebuilt: `bought.length` is the price escalator, so a climb that forgot
-    // it would quietly make every star on the next rung cost first-purchase
-    // prices again.
-    this.communion = new Communion(run ? run.communion : {});
+    // …and the same for the Insight ledger. It used to be restored from the
+    // Run across a landing, because `bought.length` is the price escalator and
+    // a climb that forgot it would make every facet on the next rung cost
+    // first-purchase prices again. There are no landings now — the Descent was
+    // the only mode with them — so a level load starts a fresh ledger, which is
+    // what every other mode always did.
+    this.communion = new Communion({});
     // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
     // level stays load-bearing after it is gone. See Levels.js's alias block.
     //
@@ -185,19 +454,28 @@ export class World {
     // name — indexed LEVELS with a key that is not in it and threw. A saved
     // profile pointing at a deleted level took the game down on the frame after
     // it had already recovered.
+    /**
+     * A MODE THAT OWNS ITS GROUND OVERRULES THE REQUEST, and this belongs here
+     * rather than in `deploy()`.
+     *
+     * `MODES.command` declares `level: 'geonosis'` — the machine-readable half
+     * of the `fixedTheatre` sentence the menu prints while greying the Theatre
+     * column. My first fix read that field in `main.js:deploy()`, which fixes
+     * the game and nothing else: `bootWorld`, the checks, the net layer and
+     * every future caller reach `loadLevel` directly and would each have needed
+     * their own copy of the rule. That is HANDOFF §2.4 — the rule lives with
+     * the thing it governs, and is CALLED, not restated.
+     *
+     * Putting it here is also what makes the check honest: it can ask for
+     * `kamino` through the ordinary door and observe geonosis come back.
+     */
+    const owned = MODES[this.settings?.mode]?.level;
+    if (owned && LEVELS[owned]) key = owned;
     const resolved = LEVELS[key] ? key : LEVEL_ORDER[0];
-    const L = LEVELS[resolved];
+    L = LEVELS[resolved];
     this.level = L;
     this.levelKey = resolved;
     this.groundColor = L.groundColor;
-    /**
-     * A rung BORROWS a level and changes only its height. `air` is merged over
-     * the level's own atmosphere and `weather` over its own dust block, so the
-     * Spire never needs a level of its own — the climb is told by the air, and
-     * the air is the one thing a level already parameterises fully.
-     */
-    const rung = run && !run.done ? SPIRE[Math.min(run.tier, SPIRE.length - 1)] : null;
-    this.rung = rung;
 
     // ONE VALUE, ONE HOME. This used to be `{low:0.55, medium:0.8, high:1,
     // ultra:1.25}[quality]`, written out here, and Engine's QUALITY.grass
@@ -217,7 +495,7 @@ export class World {
     // here, a default of 1 in DEFAULT_SETTINGS, no control anywhere in the menu
     // and therefore no way of ever being anything but 1, while this comment
     // described the UI a player would go looking for and not find.
-    const q = QUALITY[this.settings.quality] || QUALITY.high;
+    q = QUALITY[this.settings.quality] || QUALITY.high;
     // Terrain detail is the tier's own VIEW DISTANCE, normalised to `high`:
     // the mesh exists to be looked across, so the tier that draws to 900 m has
     // to carry the vertices for it. 380/520/700/900 against high's 700 gives
@@ -237,26 +515,41 @@ export class World {
      * World is not in that graph, so the lookup belongs here.
      */
     this.clothCut = q.cloth ?? 30;
-    const detail = q.viewDist / QUALITY.high.viewDist;
-    const particleScale = (this.settings.particleScale ?? 1) * q.particles;
+    detail = q.viewDist / QUALITY.high.viewDist;
+    particleScale = (this.settings.particleScale ?? 1) * q.particles;
+      } },
 
+      /* The heightfield and the Rapier collider under it — the single most
+       * expensive thing a level build does, and the reason the tab used to
+       * stop answering for half a second before anything appeared. */
+      { name: 'raising the ground', run: () => {
     this.terrain = new Terrain(this.scene, L.terrain, detail);
     this.physics.terrain = this.terrain;
+      } },
 
+      { name: 'lighting the sky', run: () => {
     this.particles = new Particles(this.scene, particleScale);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
-    this.engine.applyAtmosphere(rung ? { ...L.atmosphere, ...rung.air } : L.atmosphere);
-    audio.setAmbience(L.ambience || {});
+    this.engine.applyAtmosphere(L.atmosphere);
+    /**
+     * The bed AND the room, out of the one call, because they are the same fact
+     * about a place. `surfaceAt(0, 0)` is the level's own centre — the ground
+     * the fight is standing on — and it is the same reading `audio.step` takes
+     * for a footstep, so a level whose floor is steel gets a steel room without
+     * anybody writing "steel" down twice. See roomOf().
+     */
+    this.room = roomOf(L, this.terrain.surfaceAt(0, 0));
+    audio.setAmbience({ ...(L.ambience || {}), room: this.room });
 
+      } },
+
+      { name: 'seeding the air and the ground cover', run: () => {
     // The motes, windborne sheets, haze and heat shimmer are particles too, so
     // they ride the particle tier and not the terrain one.
-    this.atmosphere = new Atmosphere(this.scene, rung
-      ? { ...(L.dust || {}), density: particleScale,
-          weather: { ...((L.dust || {}).weather || {}), ...rung.weather } }
-      : { ...(L.dust || {}), density: particleScale });
+    this.atmosphere = new Atmosphere(this.scene, { ...(L.dust || {}), density: particleScale });
     if (L.water) this.water = new Water(this.scene, { ...L.water, size: this.terrain.size + 60 });
     if (L.grass) {
       // The tier scales the BLADE BUDGET (count); the level and the player's
@@ -268,10 +561,23 @@ export class World {
         count: Math.round(11000 * q.grass),
         density: (this.settings.grassScale ?? 1) * L.grass,
         tintA: L.grassTint?.[0], tintB: L.grassTint?.[1], radius: 46,
+        /* WHAT KIND OF COVER, and the default is grass because it always was.
+         * See COVER_KINDS in Scenery.js: the Drowned Wood asks for `swamp`,
+         * whose cards are matted litter and root arches rather than blades,
+         * because the reference for that level has no grass in it at all. */
+        kind: L.grassKind,
       });
     }
 
+      } },
+
+      /* Up to 341 hand-placed statics on the Temple, each with its own geometry
+       * and collider. The longest single stage on every level that has one. */
+      { name: 'dressing the level', run: () => {
     L.dress(this);
+      } },
+
+      { name: 'forming the enemy', run: () => {
 
     /**
      * LESSONS INSTEAD OF WAVES — and now anywhere, not only in the dojo.
@@ -296,42 +602,73 @@ export class World {
       return L;
     }
     this.training = false;
-    this.director = new WaveDirector(this, { mode: this.settings.mode ?? 'roguelite', pool: L.pool });
+    /**
+     * COMMAND GETS ITS OWN DIRECTOR, off the mode string and nothing else.
+     *
+     * `CommandDirector` IS a `WaveDirector` — it subclasses it, and every one of
+     * the escalation's tuned parts (the budget curve, the body cap, the heavy
+     * limit, the modifier ladder, the arrivals, the liveness watchdog) runs
+     * unchanged inside it. What it adds is a second army, an AREA above the
+     * wave, and a pool filtered to one side. So this branch is which class, not
+     * which code path: everything below this line — the callbacks, the Insight,
+     * the draft, the party heal — is identical for both, which is the property
+     * that keeps Command inside the balance the rest of the game is held to.
+     */
+    const mode = this.settings.mode ?? 'roguelite';
+    this.director = mode === 'command'
+      ? new CommandDirector(this, { pool: L.pool })
+      : new WaveDirector(this, { mode, pool: L.pool });
+    /** The army, or null. Read by the HUD, the summary and the checks. */
+    this.command = mode === 'command' ? this.director : null;
+    /**
+     * A MEETING IS A FIGHT BETWEEN PLAYERS, SO IT IS FOUGHT UNDER A FIGHT'S
+     * RULES — and this is where the mode-wide freeze retires.
+     *
+     * `COMMAND_POWER_RULES` is `{pvp: false, friendlyFire: true}`, frozen and
+     * applied to every Command world, and it is exactly right for a campaign:
+     * your powers must reach your own troops (note #29 asks for it in as many
+     * words) and there is nobody else on the field to hurt. It is the wrong
+     * object for two commanders, because `pvp: false` is a statement about the
+     * session and versus is the session it is false about.
+     *
+     * `pvpRules({pvp: true})` derives `friendlyFire` from `pvp` — one boolean,
+     * two consequences, no way to set them inconsistently — so a meeting gets
+     * the same friendly fire the campaign has plus the thing the campaign does
+     * not have, which is another player who may be hit. `duelRounds: 1` is a
+     * design decision and it is stated here rather than left to a default: a
+     * meeting engagement between two armies with PERMADEATH on the roster is
+     * one battle. A best-of-three would need both rosters restored between
+     * rounds, and a roster you get back is not a roster you can lose.
+     */
+    if (this.command?.versus) {
+      this.rules = pvpRules({ ...this.settings, pvp: true, duelRounds: 1 });
+    }
+    /**
+     * …AND THE SCORE, WHICH IS TOLD FACTS AND NOT A STATE.
+     *
+     * `setMusicState` takes `{active, boss, wave, dead, won}` and DERIVES what
+     * to play, so a mode that never raises a wave — the dojo, the sandbox —
+     * still gets a score out of combat intensity. Handing it `{state: 'boss'}`
+     * instead latches the derivation off, which is one authority replaced by
+     * two. The wave director is the authority for all three of these and it is
+     * the thing raising the callback, so this is where they are known.
+     *
+     * `isBossWave(w)` and NOT the announcer's boss line. The audio lane tried
+     * that and every wave on the Colosseum became a boss wave: the announcer
+     * fires for `A.boss || A.big`, and four archetypes carry `big` at
+     * `unlockAt: 1`.
+     */
     this.director.onWaveStart = (w, n) => {
       this.notify(`WAVE ${w}`, `${n} contacts inbound`);
       audio.ui('wave');
+      audio.setMusicState({ wave: w, active: true, boss: !!this.director.isBossWave?.(w) });
     };
     this.director.onWaveClear = (w) => {
       this.notify('WAVE CLEAR', 'the Force is with you');
-      audio.ui('good');
-      if (!this.run || this.run.done) return;
-      this.run.wave = w;
-      this.run.score = this.score;
-      this.run.kills = this.players.reduce((a, p) => a + p.kills, 0);
-      // Health crosses a landing as a FRACTION, so it is snapshotted at the
-      // moment the rung is survived rather than read off a player who is about
-      // to be disposed by the level change.
-      const alive = this.players.filter((p) => p.alive);
-      if (alive.length) {
-        this.run.hpFrac = Math.max(0.05,
-          alive.reduce((a, p) => a + p.hp / Math.max(1, p.maxHp), 0) / alive.length);
-      }
-      /**
-       * THE RUNG IS DONE — the one signal the Spire is made of.
-       *
-       * Fired here rather than inferred in main.js because `rung.waves` and
-       * `run.wave` both live on this side, and a caller that had to reconstruct
-       * "is this the last wave of this tier" from a wave number and a table
-       * would be a second copy of the ladder. The client decides what a landing
-       * LOOKS like; the world decides when one has been earned.
-       *
-       * The host is the only one that may say so: in co-op the peers are told
-       * by the level change that follows, and two clients both deciding to
-       * ascend would run the ladder twice.
-       */
-      if (this.netMode !== 'client' && this.run.wave >= (this.rung?.waves ?? Infinity)) {
-        this.onRungClear?.(this.run);
-      }
+      // `audio.ui('good')` was the same 620 → 1240 Hz ping the menu plays when
+      // you buy an upgrade. Holding a field is not buying an upgrade.
+      audio.victory();
+      audio.setMusicState({ active: false, boss: false });
     };
     /**
      * INSIGHT hangs off the same signal — composed onto it rather than written
@@ -421,7 +758,9 @@ export class World {
 
     this.running = true;
     this.over = false;
-    return L;
+      } },
+    ];
+    return steps;
   }
 
   /**
@@ -521,24 +860,48 @@ export class World {
     if (rec) for (const id of rec.grants) this.takenBoons.add(id);
 
     /**
+     * AND THEN THE HOLOCRON, if the player has asked for it to be open.
+     *
+     * `settings.holocron` has three values and the default, 'earned', does
+     * nothing here — Insight is a run currency, you kneel to spend it, and
+     * that is the game. The other two exist because of a real report: "I can't
+     * actually test out anything… I haven't even been able to force lightning
+     * or force compel yet." Both are gated on `boonMods.lightning` /
+     * `boonMods.compel`, which arrive only as a boon, which arrives only from
+     * a draft or a facet bought at roughly 1.4 Insight a wave. A player can
+     * finish a run without ever meeting half the kit.
+     *
+     *   'open'  a full purse. Everything is REACHABLE and the shape of the
+     *           choice survives — you still kneel, you still pick, prices
+     *           still escalate.
+     *   'all'   every facet already woken. No choice at all: the workshop
+     *           setting, for looking at a power rather than earning it.
+     *
+     * Applied through `applyBoon`-equivalent paths rather than by poking
+     * `boonMods`, so a facet cannot behave differently when it is granted than
+     * when it is bought — which is the whole reason the facet table carries an
+     * id into BOONS instead of carrying an effect of its own.
+     */
+    if (this.settings.holocron === 'open') {
+      this.communion.insight = Math.max(this.communion.insight, HOLOCRON_PURSE);
+    } else if (this.settings.holocron === 'all') {
+      for (const facet of FACETS) {
+        const boon = boonById(facet.id);
+        if (!boon) continue;
+        this.takenBoons.take?.(boon.id) ?? this.takenBoons.add(boon.id);
+        if (typeof p.applyBoon === 'function') p.applyBoon(boon);
+      }
+    }
+
+    /**
      * AND THEN THE RUN, which is what makes a landing a transition rather than
      * a restart. Order first, boons second: the order STARTS the numbers and a
      * boon multiplies them, so the reverse order would have the order overwrite
      * everything the run had earned.
      *
      * The boons are re-applied rather than a snapshot of `boonMods` restored,
-     * because a snapshot would drift the first time a boon's effect changed —
-     * and health comes back as a FRACTION, since maxHp is itself a thing boons
-     * move and a raw number would silently undo Vitality at every landing.
+     * because a snapshot would drift the first time a boon's effect changed.
      */
-    if (this.run) {
-      for (const b of this.run.boons) {
-        this.takenBoons.add(b.id);
-        p.applyBoon(b);
-      }
-      p.hp = Math.max(1, Math.round(p.maxHp * this.run.hpFrac));
-      this.score = this.run.score;
-    }
     /**
      * THE OTHER END OF EVERY COMMUNION, installed whether or not this player
      * holds a single bond card.
@@ -566,7 +929,20 @@ export class World {
     // instead of easing back to the ready guard. Off unless asked for.
     p.control.holdPosition = !!this.settings.bladeHold;
     this.players.push(p);
-    if (!this.player) this.player = p;
+    if (!this.player) {
+      this.player = p;
+      /* …AND THE SIDE THIS MACHINE IS PLAYING ON. See `partyTeam` in the
+       * constructor: `blocksWaveEnd` and the HUD's hostile count both mean
+       * "not mine", and on a machine whose player is on side 2 the constant
+       * had them counting their own army as the enemy. `asTeam` because it
+       * comes off a settings blob or the wire. */
+      this.partyTeam = asTeam(p.team);
+      /* The commander this machine is playing is that player. `CommandDirector`
+       * is built during `loadLevel`, before any player exists, so its first
+       * commander is created with no body to lead. */
+      const c = this.command?.commander;
+      if (c && !c.player) { c.player = p; c.side = this.partyTeam; }
+    }
     p.saber.ignite();
     p.hum.ignite();
     return p;
@@ -576,8 +952,23 @@ export class World {
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });
+    /* …and so is everything a death left on the screen and on the clock. A
+     * player who quits from the death card and deploys again used to arrive on
+     * the next level grey, letterboxed and at a third speed, because the three
+     * states die() sets are held until something lets go of them and only
+     * `respawn` ever did. */
+    this.engine?.setDrain?.(0);
+    this.engine?.setBars?.(0);
+    this._killTime = null;
+    this.setTimeScale(1);
+    this.timeScale = 1;
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
+    /* The corpse ledger holds references to bodies that have just been
+     * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
+     * level exactly as the World does, and what must not survive is its
+     * pointers into a scene graph that no longer exists. */
+    this.corpses?.clear();
     this.locks.length = 0;
     // …and the client's id→enemy map, which holds a whole Enemy graph per
     // entry. Clearing the list it points into is not the same as clearing it.
@@ -631,6 +1022,34 @@ export class World {
   spawnEnemy(type, pos) {
     const e = new Enemy(this, type, pos);
     this.enemies.push(e);
+    /**
+     * A BOSS ARRIVING IS A SHOT, and the camera had never framed one.
+     *
+     * A boss got exactly the same nothing as a B1: the notify banner, and the
+     * body simply standing there. `setBars` and `punch` already exist for the
+     * death card; an entrance is the same two channels used the other way
+     * round — the frame narrows and holds, a low swell arrives under it, and
+     * the world dips for three quarters of a second so you actually see the
+     * thing walk in. The bars are released by a timer on the WORLD's clock (see
+     * `_bossFrame`), never by a `setTimeout`, for the reason the jump's lens
+     * kick is now on the world's clock too.
+     */
+    if (e.A?.boss && this.player?.isLocal && !this._bossFrame) {
+      this.notify(String(e.A.label || 'A CHALLENGER').toUpperCase(), 'it has come for you');
+      this._bossFrame = 2.6;
+      this.engine?.setBars?.(0.075);
+      if (this.feelOn?.('shake') !== false) {
+        this.engine?.punch?.(0.5);
+        this.engine?.rumble?.(0.75, 0.3, 420);
+      }
+      this.killTime(0.5, 0.75);
+      const at = e.position;
+      audio.tone({ freq: 46, freqEnd: 30, dur: 2.4, gain: 0.34, type: 'sine', attack: 0.04,
+        prio: PRIO.critical });
+      audio.tone({ freq: 92, freqEnd: 61, dur: 1.9, gain: 0.14, type: 'triangle', attack: 0.12,
+        prio: PRIO.critical });
+      if (at) audio.bodyThump(at, clamp(num(e.A.mass, 300) * 3, 200, 2400));
+    }
     return e;
   }
 
@@ -667,7 +1086,35 @@ export class World {
       anchor.z + Math.sin(a) * rmin);
   }
 
+  /**
+   * WHO IS THIS BODY FIGHTING — one function, and it now answers for both
+   * armies rather than for the horde alone.
+   *
+   * `Enemy._think` asks this every frame and twelve things downstream read the
+   * answer, so it is the single seam that decides who anybody in this world is
+   * pointing at. Two branches:
+   *
+   *   A TROOP OF YOURS delegates to the command director, because the answer
+   *     depends on its FORMATION as well as on distance — the leash is what
+   *     makes "circle around me" a wall that will not chase and "charge" a wall
+   *     that will. The director owns the formation; it therefore owns the pick.
+   *     Returning null is a legitimate answer there and is what makes the leash
+   *     mean anything: `_think` sets `wish = null` on a null target and
+   *     `CommandDirector.steer` supplies the walk home.
+   *
+   *   EVERYTHING ELSE keeps exactly the rule it had, plus the enemy list. That
+   *     addition is the whole of "the horde fights your army too": with allies
+   *     living in `this.enemies` on the party's team, a B1 asking this question
+   *     used to be shown only the players and would walk past a squad of clones
+   *     to reach you. `hostileTo` is the same gate `bladeTargets` and
+   *     `Player.damage` consult, so nothing anywhere is built from a different
+   *     idea of who is fighting whom — and in every mode with no allies in it
+   *     the second loop finds nothing and this costs one `canHarm` per body.
+   */
   pickTarget(enemy) {
+    if (enemy?.trooper && this.command) {
+      return this.command.targetFor(enemy, this._hostilesFor(enemy));
+    }
     let best = null, bestD = Infinity;
     /* `hostileTo` rather than every player: in a duel the horde is on nobody's
      * side, and in co-op it returns all four unchanged. Filtering here rather
@@ -678,7 +1125,38 @@ export class World {
       const d = p.position.distanceToSquared(enemy.position);
       if (d < bestD) { bestD = d; best = p; }
     }
+    /* …and the other army, if there is one. Skipped entirely when there is not,
+     * which is every mode but Command: `this.command` is null and this line
+     * does not run at all. */
+    if (this.command) {
+      for (const e of this.enemies) {
+        if (e === enemy || e.dead || e.team === enemy.team) continue;
+        const d = e.position.distanceToSquared(enemy.position);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
     return best;
+  }
+
+  /**
+   * Everything one body on this field is opposed to — players and bodies alike.
+   *
+   * The array is retained between calls for the reason `Player._foeList` is:
+   * this runs once per troop per frame, and a Command wave is twenty-four
+   * troops against forty droids.
+   */
+  _hostilesFor(who) {
+    const out = (this._foes ||= []);
+    out.length = 0;
+    for (const e of this.enemies) {
+      if (e === who || e.dead || e.team === who.team) continue;
+      out.push(e);
+    }
+    for (const p of this.players) {
+      if (!p.alive || p.team === who.team) continue;
+      out.push(p);
+    }
+    return out;
   }
 
   /** A loose mesh becomes a rigid body — with the mesh's own shape, hulled. */
@@ -746,7 +1224,14 @@ export class World {
       p.damage(damage * 0.4 * k, centre, null, 'explosion');
       _v1.subVectors(p.position, centre).setY(0.6).normalize().multiplyScalar(force * 0.35 * k);
       p.velocity.add(_v1);
-      p.camera.addShake(k);
+      /* `?.` — see the note over `_applyBladeEvent`. A RemoteAvatar is in
+       * `world.players` and has no camera, and this is the third site of that
+       * same crash the note describes: it throws out of `World.update()` on the
+       * HOST, which abandons the frame before the snapshot goes out. Reachable
+       * from any blast next to a joining player — a grenade, a wave clear, or
+       * the Unstable elite the co-op suite drives, which is where it surfaced
+       * the moment the pair harness started building avatars at all. */
+      p.camera?.addShake(k);
     }
     for (const b of this.physics.bodies) {
       if (b.invMass === 0) continue;
@@ -764,6 +1249,164 @@ export class World {
 
   setTimeScale(s) { this.targetTimeScale = s; }
   addHitstop(t) { this.hitstop = Math.max(this.hitstop, t); }
+
+  /**
+   * IS THIS CLASS OF FEEDBACK TURNED ON?
+   *
+   * `applyFeelSettings` (ui/Menu.js) hangs the player's answer on
+   * `world._feelSettings` and wraps the two funnels that existed when it was
+   * written — `addShake` and `addHitstop`. Everything added since needs the
+   * same gate and must not need a second copy of the lookup, so it is one
+   * predicate and every new effect asks it.
+   *
+   * The mapping is the honest one rather than the literal one: `shake` means
+   * "kinetic feedback the game applies without being asked", which is the
+   * screen punch and the pad as much as the camera, and `slowmo` means "the
+   * game bending time at me", which is hitstop and kill-time. A world nobody
+   * has spoken to answers yes, which is what keeps every check and every
+   * headless harness measuring the shipped behaviour.
+   */
+  feelOn(kind) {
+    const s = this._feelSettings;
+    return !s || s[kind] !== false;
+  }
+
+  /**
+   * KILL-TIME — the world holding its breath, and the reason it is not hitstop.
+   *
+   * Hitstop is a freeze: `update` runs the whole world at 0.06× for 30–120 ms
+   * and it exists to make a blow land in the hands. This is the other half of
+   * the same sentence — the world *continuing*, at a third of its speed, for
+   * long enough to watch a body fall. It rides `targetTimeScale`, which damps
+   * at 9 rather than snapping, so the entry and the exit are both ramps.
+   *
+   * `setTimeScale` had exactly two callers in the whole project before this,
+   * both of them `Player.toggleSense`. A held power owns the scale for as long
+   * as it is held, so this must never be able to take it back: `_killTime`
+   * carries the value it wrote, and the release only restores 1 if nothing else
+   * has moved the target in the meantime.
+   */
+  killTime(scale, seconds) {
+    if (!this.feelOn('slowmo')) return false;
+    const s = clamp(num(scale, 0.4), 0.05, 1);
+    const d = clamp(num(seconds, 0.2), 0.02, 2);
+    const k = this._killTime;
+    // A dip may only ever slow the world FURTHER than whatever is already
+    // commanded. Force Sense at 0.42 is a power the player is paying for, and a
+    // kill landing inside it must not speed the world back up.
+    const now = this.targetTimeScale;
+    if (!k && s >= now) return false;
+    // Deeper or longer wins; shallower and shorter may not cut one short.
+    if (k && s >= k.scale && d <= k.left) return false;
+    // `restore` is what was commanded BEFORE any dip — captured once, so a
+    // second kill inside the first does not record the first dip as the state
+    // to go back to.
+    this._killTime = { scale: Math.min(s, k ? k.scale : s), left: Math.max(d, k ? k.left : d),
+      restore: k ? k.restore : now };
+    this.setTimeScale(this._killTime.scale);
+    return true;
+  }
+
+
+  /**
+   * WHAT A KILL FEELS LIKE — the one place, because a kill has one place.
+   *
+   * `_applyBladeEvent` knew it had killed (`wasAlive && e.dead`) and spent the
+   * answer on choosing the string 'kill' over 'cut' for the hitmarker: the
+   * hitstop, the shake, the particles and the sound were byte-identical whether
+   * the blow took an arm or ended a life. And it could only ever have covered
+   * blade kills — a body dropped by lightning, a detonation, a fall or a
+   * trooper's rifle raised nothing at all.
+   *
+   * `Enemy.die` calls `onEnemyKilled` before it does anything else, for every
+   * death by every cause, so this is the only site that sees all of them.
+   *
+   * WEIGHT IS DERIVED FROM THE BODY, not typed per archetype. `A.mass` spans
+   * 3 kg (a training remote) to 1400 kg (an acklay) across the roster, and
+   * `Math.pow(m/78, 0.32)` maps that onto 0.35…1.85 — a curve rather than a
+   * table, so the seven Command units and the four machines added last session
+   * are already weighed and the next one will be too. HANDOFF §2.3 is a section
+   * about exactly the table this is not.
+   *
+   * EVERY LINE OF IT IS GATED. A player who has turned the two feel toggles off
+   * gets the score, the feed and the notification and nothing that moves the
+   * camera, the clock or the pad.
+   */
+  _killFelt(enemy, source, kind) {
+    const A = enemy.A || {};
+    const w = clamp(Math.pow(clamp(num(A.mass, 78), 2, 2000) / 78, 0.32), 0.3, 2);
+    // A boss is not a heavy trooper. `big`/`boss` add a step the mass curve
+    // cannot, because a Jedi Master weighs 78 kg and ending one is an event.
+    const rank = A.boss ? 1 : (A.big ? 0.55 : 0);
+    const heft = clamp(w * (1 + rank), 0.3, 3);
+    const at = enemy.position;
+    /**
+     * WHOSE KILL, and it decides everything but the sound.
+     *
+     * A body makes its noise whoever felled it — that is physics, and in
+     * Command it is the difference between an army fighting around you and a
+     * silent diorama. The CLOCK and the FRAME are not physics: hitstop and
+     * kill-time are global, so a friend's kill on the far side of a co-op field
+     * freezing your world would be the worst possible reading of "wire it to
+     * the player's senses". Only what this machine's player did moves them.
+     */
+    const mine = source?.isLocal === true;
+
+    /* ── THE BODY'S OWN SOUND. Enemy.die ends on `audio.thud(pos, 1)` — the
+     * same 110 Hz for a 3 kg remote and a 1400 kg acklay — and the announcer's
+     * death cry goes through a shared once-per-ENEMY_GAP budget, so most of the
+     * bodies in a wave fell in silence. `bodyThump` already scales all three of
+     * its terms off mass and exists for precisely this; the low sweep over it is
+     * the sound of the thing STOPPING, which is what a kill has and a wound
+     * does not. */
+    if (at) {
+      audio.bodyThump(at, clamp(num(A.mass, 78) * 2.2, 60, 2400));
+      audio.tone({ freq: 210 / heft, freqEnd: 46 / heft, dur: 0.28 + heft * 0.16,
+        gain: 0.10 + heft * 0.06, type: 'triangle', pos: at, prio: PRIO.combat });
+      audio.noise({ dur: 0.26 + heft * 0.1, gain: 0.09 + heft * 0.05, type: 'lowpass',
+        freq: 1500, freqEnd: 190, q: 0.7, pos: at, pink: true, prio: PRIO.combat });
+    }
+
+    /* ── THE FRAME. A wound already flashes; a kill squeezes. The punch is the
+     * only new screen effect and it is short by construction (see Engine's
+     * damp rate) so twenty of them across a wave read as twenty impacts rather
+     * than as a filter. */
+    if (mine && this.feelOn('shake')) {
+      this.engine?.punch?.(clamp(0.20 + heft * 0.22, 0.2, 0.85));
+      source.camera?.addShake?.(clamp(0.10 + heft * 0.18, 0.1, 0.6));
+      this.engine?.rumble?.(clamp(0.28 + heft * 0.30, 0.2, 1),
+        clamp(0.14 + heft * 0.12, 0.1, 0.6), Math.round(60 + heft * 90));
+    }
+    // A boss going down lights the room whoever landed the blow.
+    if (rank > 0) this.engine?.flash?.(0.06 + rank * 0.09);
+
+    /* ── THE CLOCK. Not on every kill — a dip that fires twenty times a wave is
+     * a frame-rate problem, not a moment. It is reserved for the two kills that
+     * are punctuation: anything big or boss, and the body that empties the
+     * side it was fighting for. */
+    if (mine) {
+      const lastOne = !this.enemies?.some(e => e !== enemy && !e.dead && e.team === enemy.team);
+      if (rank > 0) {
+        this.addHitstop(0.10 + rank * 0.06);
+        this.killTime(rank >= 1 ? 0.32 : 0.45, 0.55 + rank * 0.35);
+      } else {
+        // An ordinary kill still lands harder in the hands than a wound: the
+        // cut that wounded gave 0.03–0.055 and this is on top of it, by
+        // Math.max inside addHitstop.
+        this.addHitstop(0.055 + heft * 0.03);
+        if (lastOne) this.killTime(0.36, 0.6);
+      }
+    }
+
+    /* ── THE FIELD. Something visibly leaves the body: a burst at the chest in
+     * the killer's own blade colour where there is one, so the kill is drawn in
+     * the same ink as the blow that caused it. */
+    if (at && this.particles) {
+      const col = kind === 'cut' && source?.saber ? source.saber.color.getHex() : 0xffb060;
+      this.particles.sparkBurst(_v3.copy(at).setY(at.y + 0.9), null,
+        Math.round(10 + heft * 12), { speed: 5 + heft * 4, color: col });
+    }
+  }
 
   /** Anything a lesson might be watching for. Free outside the dojo. */
   report(ev) { if (this.director && this.director.report) this.director.report(ev); }
@@ -803,7 +1446,43 @@ export class World {
       if (spent && !free) P.force = Math.max(0, P.force - spent);
     } else this.focus.reset();
 
+    /**
+     * KILL-TIME EXPIRING, on the RAW clock and inline.
+     *
+     * Raw because a dip that measured itself in dilated seconds would run for
+     * 1/0.32 as long as it asked for, and a dip deep enough to be worth having
+     * would never end. Inline rather than a method because several checks drive
+     * `World.prototype.update` against a hand-built stub world that lists the
+     * methods it borrows — a new call out of the frame loop breaks every one of
+     * them with `is not a function`, and six lines is not worth that.
+     *
+     * The scale only goes back if it is still OURS: Force Sense pressed during
+     * a dip owns the clock from that moment, and the dip expiring underneath it
+     * must not cancel a power the player is holding.
+     */
+    const kt = this._killTime;
+    if (kt && (kt.left -= rawDt) <= 0) {
+      this._killTime = null;
+      if (Math.abs(this.targetTimeScale - kt.scale) < 1e-6) this.setTimeScale(kt.restore);
+    }
+    // …and the boss entrance's letterbox, on the same clock and inline for the
+    // same reason. A `setTimeout` would release the bars behind a pause card.
+    if (this._bossFrame > 0 && (this._bossFrame -= rawDt) <= 0) {
+      this._bossFrame = 0;
+      this.engine?.setBars?.(0);
+    }
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
+    /**
+     * THE MIX HEARS THE CLOCK. The dilation the player is HOLDING — Sense at
+     * 0.42×, a full Focus hold at 0.18×, kill-time at 0.32–0.45 — and
+     * deliberately not the hitstop, which is a 30–120 ms freeze rather than a
+     * slowdown and reads as a dropout if the whole mix drops with it.
+     *
+     * Before this line, `grep focus src/engine/Audio.js` returned nothing: the
+     * signature power of the game slowed the world with no acoustic response
+     * whatsoever.
+     */
+    audio.setTimeScale?.(this.timeScale * this.focus.scale);
     dt *= this.timeScale * this.focus.scale;
     dt = Math.min(dt, 1 / 24);
     this.time += dt;
@@ -815,6 +1494,43 @@ export class World {
       physics: this.physics, terrain: this.terrain, particles: this.particles,
       bolts: this.bolts, enemies: this.enemies, players: this.players,
       groundColor: this.groundColor,
+      /**
+       * WHAT THE PLAYER'S FORCE POWERS MAY REACH — player note #29, in one field.
+       *
+       * "your allies should be as real as the enemies like no difference — you
+       * can do damage to them and throw them and manipulate them so you need to
+       * be careful not to hurt them … but like obviously the force blaster-stop
+       * thing shouldn't affect your allies' blasters."
+       *
+       * `Player._foes` — the list EVERY force power in this game iterates — reads
+       * `ctx.rules ?? this.world.rules`. The first half of that expression had no
+       * writer anywhere in the tree until this line. Handing the POWERS a
+       * friendly-fire rule while the WORLD keeps co-op's is not a fudge; it is
+       * exactly the distinction the note draws, and it is why every clause of it
+       * falls out of one field:
+       *
+       *   push, pull, grip, lightning, compel and rend reach your own troops,
+       *     because a Force power does not check a uniform;
+       *   an ally's BLASTER does not reach you or another ally, because
+       *     `_boltHitTest` and `bladeTargets` both consult `world.rules`, which
+       *     is untouched;
+       *   the BOLT-STOP does not freeze your army's fire, because
+       *     `Player._stasisCapture` skips `bolt.team === this.team` and your
+       *     troops are on your team — a line written years before this mode and
+       *     correct for it by construction.
+       *
+       * `undefined` in every other mode, so `_foes` falls through to
+       * `world.rules` exactly as it always did.
+       *
+       * …AND `undefined` IN A MEETING TOO, which is the mode-wide freeze
+       * retiring. The frozen object exists to say "friendly fire is on for
+       * powers even though the world's rules say it is off"; in versus the
+       * world's rules are `pvpRules({pvp: true})` and already say so, so
+       * overriding them here would be a second, quieter answer to a question
+       * that now has one — and it would say `pvp: false` about a session whose
+       * whole content is another player.
+       */
+      rules: this.command && !this.command.versus ? COMMAND_POWER_RULES : undefined,
       pickTarget: (e) => this.pickTarget(e),
       pickSpawn: (t) => this.pickSpawn(t),
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
@@ -835,7 +1551,7 @@ export class World {
 
     // 2 — enemies. On a client the body is placed from the wire FIRST, so the
     // pose that follows is solved against a velocity that is the host's own.
-    if (this.netMode === 'client') this._stepNetEnemies(dt);
+    if (this.netMode === 'client') this._stepNetEnemies(dt, ctx);
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
@@ -844,6 +1560,13 @@ export class World {
     // …and the hilts lying about age, so one just dropped cannot be picked
     // straight back up before the player has seen it leave their hand.
     ageDropped(this, dt);
+
+    /* …and the dead, whose cost this is the only thing that bounds. AFTER the
+     * enemy step, because that is where a ragdoll's bodies are integrated and
+     * `Corpses` decides to settle one on how fast it is still moving — asking
+     * before the step reads last frame's velocity, which on the frame a body
+     * lands is exactly the frame it would wrongly look still. */
+    this.corpses?.update(dt);
 
     // 3 — blades against everything
     this._resolveBlades(dt);
@@ -895,10 +1618,21 @@ export class World {
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
     if (this.netMode !== 'client' && !this.over) this.director.update(dt, ctx);
+    /* The meeting's clock, and it is outside the director because it is not the
+     * director's: `DuelMatch` is driven by facts about the WHOLE field — who
+     * has anybody left standing — and the host owns it whether or not there is
+     * a wave. See _matchTick. */
+    if (this.match) this._matchTick(dt);
     if (this.netMode) {
       // A remote player's death arrives as a field in a packet and raises
       // nothing, so the wipe condition has to be re-read rather than waited on.
       this._checkWipe();
+      /* OUTSIDE `_netTick`, and deliberately: that method returns on the first
+       * line when the connection is gone, and a body a peer was holding when
+       * the session ended would then stay held for the rest of the run — out of
+       * its own brain, hanging in the air, with nothing left that could ever
+       * say otherwise. The lease has to outlive the wire it came from. */
+      this._netGripLeases();
       this._netTick(rawDt);
     }
     // Solo, the aura still runs — it is what keeps the holder's own half — but
@@ -1043,7 +1777,9 @@ export class World {
 
     owner.addFlow([0.03, 0.06, 0.13, 0.24][res.grade]);
     owner.score += [10, 25, 70, 160][res.grade];
-    owner.camera.addShake(0.03 + res.grade * 0.02);
+    // `?.` — `_bladeEntries` offers every lit blade in `world.players`, and a
+    // RemoteAvatar's is one of them. See the note over `_applyBladeEvent`.
+    owner.camera?.addShake(0.03 + res.grade * 0.02);
     if (res.grade === GRADE.PERFECT) owner.perfects++;
     else if (res.grade === GRADE.BLOCK) owner.stamina = Math.max(0, owner.stamina - 4);
     this.report({ type: 'deflect', grade: res.grade });
@@ -1234,7 +1970,7 @@ export class World {
           const e = t.enemy;
           const wasAlive = !e.dead;
           const share = ev.dWork / ev.need;
-          const dmg = share * e.maxHp * GRIND_LETHALITY;
+          const dmg = share * e.maxHp * GRIND_LETHALITY * grindWorth(ev.cap);
           e.damage(dmg, ev.point, player, 'saber');
           if (player.isLocal) this._claim({ t: 'claim', k: 'dmg', id: e.id, d: dmg,
             p: [ev.point.x, ev.point.y, ev.point.z] });
@@ -1279,10 +2015,35 @@ export class World {
     if (t.enemy) {
       const e = t.enemy;
       const wasAlive = !e.dead;
-      e.takeCut(ev, player);
+      /**
+       * A PASS THAT WAS TURNED IS NOT A LIMB, AND THIS PAID FOR ONE.
+       *
+       * `takeCut` returns `'turned'` when a duellist's guard caught the blade
+       * and nothing came off — the derived guard is why "they die too easily"
+       * is fixed, and torso passes to a kill went 1 → 3 on an acolyte and 1 → 5
+       * on a master without a single health number moving. This branch predates
+       * that return and ran the whole sever path for it: `limbsRemoved++`, the
+       * combo, sixty score, lifesteal, hitstop and an `onHitmark(…, 'cut')`.
+       *
+       * So a player whose pass a Jedi Master BLOCKED was told they had taken a
+       * limb, and the run's limb counter — which is printed on the death card —
+       * inflated by one every time the guard did its job. A false reward is
+       * worse than a missing one: it teaches the player that the block was a
+       * hit and that the fight is going better than it is.
+       *
+       * The claim goes out either way, and deliberately: the host has to hear
+       * about the pass so it can run the same guard against the same bone and
+       * reach the same answer. What it must not do is pay for it here.
+       */
+      const outcome = e.takeCut(ev, player);
       if (player.isLocal) this._claim({ t: 'claim', k: 'cut', id: e.id, b: ev.bone, ct: ev.cutT,
         p: [ev.point.x, ev.point.y, ev.point.z],
         v: [ev.impulse.x, ev.impulse.y, ev.impulse.z] });
+      if (outcome === 'turned') {
+        // Felt, and not rewarded. Two blades met; the shake is the whole of it.
+        player.camera?.addShake(clamp(ev.speed / 90, 0.03, 0.18));
+        return;
+      }
       player.limbsRemoved++;
       player.addFlow(0.10);
       player.combo++;
@@ -1382,7 +2143,14 @@ export class World {
     audio.clash(clash.point, clash.power);
     player.saber.strain(clash.power);
     enemy.saber.strain(clash.power);
-    player.camera.addShake(0.08 + clash.power * 0.12);
+    /* GUARDED, because a clash is resolved for whichever blade in
+     * `world.players` met the enemy's and a RemoteAvatar has no camera — see
+     * the note over `_applyBladeEvent` for what that TypeError costs on the
+     * host. Written as an `if` and not `?.` on purpose: `duelling.mjs` pins the
+     * six consequences of a clash by looking for `camera.addShake(` in this
+     * method, and an optional-chain spells it `camera?.addShake(` and reads to
+     * that check as the kick having been deleted. */
+    if (player.camera) player.camera.addShake(0.08 + clash.power * 0.12);
 
     // ── CHAMBER: swung against the declared arc, inside the window
     if (duel && duel.chamberOpen && bladeSpeed > 5.5 && duel.chambersWith(_v4)) {
@@ -1573,6 +2341,20 @@ export class World {
     bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
     this._creditDeflect(owner, bolt, res, bladePoint);
     audio.deflect(bladePoint, res.grade);
+    /* A BOLT LANDING ON YOUR BLADE IS THE MOST TACTILE EVENT IN THE GAME and it
+     * reached the pad through nothing at all. Scaled by the grade so a lucky
+     * block and a perfect return are not the same in the hands — which is the
+     * whole argument of this pass, applied to the one mechanic that already had
+     * a four-step grade to spend on it. */
+    /* `feelOn?.()` and not `feelOn()`: three suites drive World.prototype
+     * methods against a hand-built stub world that lists the members it
+     * borrows, and a bare call out of one of them fails every one of them with
+     * `is not a function`. The optional call reads as "ask the gate if there is
+     * one", and the absent case is the shipped behaviour rather than a
+     * plausible default for a missing thing. */
+    if (owner.isLocal && this.feelOn?.('shake') !== false) {
+      this.engine?.rumble?.(0.20 + res.grade * 0.16, 0.34 + res.grade * 0.14, 45 + res.grade * 22);
+    }
     if (res.grade >= GRADE.RETURN) {
       this.notifyFloating(bladePoint, GRADE_NAME[res.grade], '#a8f0ff');
       if (res.grade === GRADE.PERFECT) { this.addHitstop(0.07); this.engine.flash(0.09); }
@@ -1658,6 +2440,41 @@ export class World {
       const friendly = bolt.deflected || bolt.turned;
       if (bolt.team === 1 && !friendly) continue;
       if (bolt.team === 1 && bolt.owner === e && !bolt.turned) continue;
+      /**
+       * …AND THE THIRD WAY, WHICH IS AN ARMY OF YOUR OWN.
+       *
+       * The two rules above sort bolts by the literal team 1, which is right
+       * for as long as everything in `this.enemies` is on it. Command puts your
+       * troops in that same array on the PARTY's team, and their bolts carry
+       * their owner's team — so without this line every trooper's rifle would
+       * pass the `team === 1` gate above and mow down the squad in front of it.
+       *
+       * `canHarm` rather than a team comparison, because that is the one gate
+       * this game is allowed to answer the question with, and it is the same
+       * one the player loop twenty lines up already consults. In every mode
+       * with no allies this is one extra call per body per bolt and its answer
+       * is always the one the two lines above already gave.
+       */
+      /* …EXCEPT A TURNED ONE, WHICH IS THE ABILITY.
+       *
+       * This gate and the `friendly` bypass six lines up disagreed, and the
+       * gate won. `turned` means a unit has been MADE to fire on its own side —
+       * that is the whole of Force compel and the reason the flag exists — so
+       * asking `canHarm` whether a droid may shoot a droid unmakes it: the
+       * shooter and its victim are both team 1, friendly fire is off in every
+       * mode that is not a duel, and the bolt passed straight through the ally
+       * it was aimed at. Measured on the shipped hit test with a real compelled
+       * shooter and a real ally at 6 m: the turned bolt found nothing and the
+       * ally lost 0.0 hp, in the check whose own note says "a fix that let
+       * every enemy bolt hit every enemy would also pass a one-sided test".
+       *
+       * `deflected` is deliberately NOT included. A bolt the player sent back
+       * carries their team, and letting it past this line would put every
+       * deflection into their own troopers — which is the exact defect the gate
+       * was added for. One flag is an explicit override of the side rule; the
+       * other is just a bolt that changed hands.
+       */
+      if (bolt.owner && !bolt.turned && !canHarm(bolt.owner, e, this.rules)) continue;
       const caps = e.capsules();
       for (const c of caps) {
         if (c.shield) {
@@ -1720,6 +2537,31 @@ export class World {
 
   onEnemyKilled(enemy, source, kind) {
     const A = enemy.A;
+    /**
+     * THE ONE PLACE A DEATH IS VISIBLE CENTRALLY, so it is where both of the
+     * things that care about one are hung.
+     *
+     * `corpses.take` is the budget from note #15: the body has stopped being a
+     * fighter and started being a cost, and this is the frame that transition
+     * happens on. `command.onDeath` is the roster from note #21: yours is a name
+     * off the roll and permanent, theirs is experience for whoever killed it.
+     *
+     * Both are `?.` because a check drives this method with a five-field stub
+     * world, and neither is worth a branch at the call sites that would
+     * otherwise have to remember them.
+     */
+    this.corpses?.take(enemy);
+    this.command?.onDeath(enemy, source);
+    /* BEFORE the casualty return below, and deliberately so: one of your own
+     * troopers falling is not a reward, but it is still a body hitting the
+     * ground three metres away and it has to make the sound and move the frame.
+     * `_killFelt` reads the BODY, not the scoreboard. */
+    this._killFelt(enemy, source, kind);
+    /* A trooper of yours is not worth score, is not a kill, and does not feed
+     * the combo — it is a casualty. Everything below this line is the reward for
+     * killing something on the other side, and it must not pay out for losing
+     * one of your own. */
+    if (enemy.team !== undefined && enemy.team !== 1 && this.command) return;
     this.score += A.score;
     /**
      * `instanceof Player` OR a peer's avatar.
@@ -1783,6 +2625,20 @@ export class World {
    */
   _checkWipe() {
     if (this.over || !this.players.length) return false;
+    /**
+     * A MEETING IS NOT DECIDED BY WHO IS STILL HOLDING A LIGHTSABER.
+     *
+     * The wipe rule is "every player on this field is down, so the run is
+     * over", and it is right for every mode where the players ARE the side. In
+     * a meeting the side is an army: `census` counts the commander as one of
+     * the standing precisely so that losing your general costs you your orders
+     * and not the battle, and `_frame` falls back to the anchor so a leaderless
+     * line holds the ground it was on. Two generals who kill each other in the
+     * opening pass would otherwise end a match with twenty bodies still firing
+     * — and end it as a DEFEAT for both, when the field is about to belong to
+     * one of them. `DuelMatch` is the authority here and it is already running.
+     */
+    if (this.match && !this.match.over) return false;
     if (this.players.every(p => !p.alive)) {
       /**
        * THE RUN IS OVER. THE WORLD IS NOT.
@@ -1845,15 +2701,22 @@ export class World {
    * read off a corpse as well as off a winner.
    */
   _earnInsight(wave) {
-    const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave));
-    if (this.run && !this.run.done) this.run.communion = this.communion.snapshot();
+    /**
+     * …AT THE RATE THE MODE IS PAID AT, which was one rate for every mode.
+     *
+     * A mode with no draft has the Holocron and nothing else, and 1/wave against
+     * an arithmetic price series bought it four facets in forty waves. See
+     * LivingForce's TRIAL_INSIGHT_PER_WAVE for the derivation; `director.drafts`
+     * is the shipped statement of which modes hand out cards, called here rather
+     * than restated as a mode name.
+     */
+    const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave),
+      insightRate(this.director?.drafts !== false));
     this.onInsight?.(gained, this.communion);
   }
 
   applyBoon(boon) {
     this.takenBoons.take(boon.id);
-    this.run?.take(boon);
-    if (this.run) this.run.communion = this.communion.snapshot();
     for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
     // How hard the ground is hit scales with how strong the player has become,
     // and `might` is otherwise fixed at dressing time — so a boon taken mid-run
@@ -1897,8 +2760,13 @@ export class World {
     if (!pool || pool._netRecorder) return;
     const inner = pool.fire.bind(pool);
     pool._netRecorder = true;
-    pool.fire = (origin, dir, opts = {}) => {
-      const b = inner(origin, dir, opts);
+    /* Variadic past the three it reads, for the reason `installTeamDamage` is:
+     * a wrapper that names the whole argument list has taken a position on a
+     * signature it does not own, and it goes silently wrong the day that list
+     * grows — which is exactly how a fifth parameter on `Enemy.damage` came to
+     * be dropped by four different wrappers in this tree. */
+    pool.fire = (origin, dir, opts = {}, ...rest) => {
+      const b = inner(origin, dir, opts, ...rest);
       if (b && this._netFires && this.netMode === 'host') {
         this._netFires.push([
           opts.owner?.id ?? 0,
@@ -1928,6 +2796,12 @@ export class World {
    */
   _netDirector() {
     const d = this.director;
+    /* …AND THE ARMY THIS MACHINE INVENTED FOR ITSELF. `CommandDirector`'s
+     * constructor musters ten troopers on every machine in the session and a
+     * client deploys none of them, so a joining player's roster panel was ten
+     * names that could never fight, never fall and never appear on anybody
+     * else's screen. See `CommandDirector.netShell`. */
+    this.command?.netShell?.();
     if (!d || Object.prototype.hasOwnProperty.call(d, 'remaining')) return;
     Object.defineProperty(d, 'remaining', {
       configurable: true,
@@ -1963,7 +2837,567 @@ export class World {
       net.broadcast(packAvatar(this.player));
       if (this.netMode === 'host') net.broadcast(packSnapshot(this));
     }
+    if (this.netMode === 'host') this._armyTick(net);
     this._bondTick(net);
+  }
+
+  /**
+   * THE ARMY, AS A FACT ABOUT THE CAMPAIGN RATHER THAN ABOUT A FRAME.
+   *
+   * Nothing about the roster was on the wire at all: not a name, not a rank,
+   * not an experience total, not the area, not the formation, not who had
+   * fallen. A joining player's Command HUD was fed entirely by a director that
+   * had mustered its own ten strangers and never deployed one of them.
+   *
+   * SENT WHOLE, AND ONLY WHEN IT CHANGES.
+   *
+   * Whole, because a roster is a hundred small fields that move together — a
+   * promotion is a rank, a title, an experience total and a colour at once —
+   * and a diff of that is a second encoder with its own opinion about which
+   * fields go together, which is precisely the shape that produced a twelve-slot
+   * record against a thirteen-slot packer. `readout()` is already the single
+   * authority for what a campaign looks like from outside; this puts THAT
+   * object on the wire and the far end returns it verbatim.
+   *
+   * On change, because it is not a per-frame quantity. The comparison is over
+   * the serialised payload itself rather than over a list of fields somebody
+   * remembered to include — a hand-kept signature beside a generated payload is
+   * the twin defect again, and it fails silently in the direction where a
+   * promotion never reaches the other machine.
+   *
+   * `ARMY_INTERVAL` bounds the worst case rather than setting the pace. A
+   * twenty-four man roll is about 2.5 KB and every kill moves it, so an
+   * unbounded on-change send during a firefight would cost more than the
+   * snapshot does; half a second is imperceptible on a roster panel and caps it
+   * at 5 KB/s in the worst composition the mode can field. Zero the rest of the
+   * time, which is most of the time.
+   */
+  _armyTick(net) {
+    const d = this.command;
+    if (!d) return;
+    if (this.time - (this._armyAt ?? -ARMY_INTERVAL) < ARMY_INTERVAL) return;
+    this._armyAt = this.time;
+    /**
+     * ADDRESSED IN A MEETING, BROADCAST IN A CAMPAIGN — and the difference is
+     * not an optimisation, it is the difference between a joining commander
+     * seeing their own army and seeing somebody else's.
+     *
+     * In co-op there is one army and everybody in the session is leading it, so
+     * one readout is the truth on every screen. In a meeting each commander has
+     * a roster, a rank ladder and a casualty list of their OWN, and a broadcast
+     * of the host's would put the Republic's dead down the side of the
+     * Confederacy's screen. `readout(c)` takes the commander for exactly this.
+     *
+     * Keyed per peer for the change test as well, or a two-army session would
+     * compare the Confederacy's payload against the Republic's and resend both
+     * every half second forever.
+     */
+    if (!d.versus || d.commanders.length < 2) {
+      const s = JSON.stringify(d.readout());
+      if (s === this._armyLast) return;
+      this._armyLast = s;
+      net.broadcast({ t: 'army', r: JSON.parse(s) });
+      return;
+    }
+    const sent = (this._armyPer ||= new Map());
+    for (const c of d.commanders) {
+      const id = c.player?.id;
+      if (!id || c.player === this.player) continue;
+      const s = JSON.stringify(d.readout(c));
+      if (sent.get(id) === s) continue;
+      sent.set(id, s);
+      net.toPeer(id, { t: 'army', r: JSON.parse(s) });
+    }
+  }
+
+  /* ── two commanders ─────────────────────────────────────────────────── */
+
+  /**
+   * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
+   *
+   * The owner's headline question, and this is the call that answers it. Five
+   * things, and each of them was the reason it could not happen:
+   *
+   *   A SIDE PER COMMANDER, from `sideTeam` — the only function allowed to
+   *     invent one. Everything downstream is already generic: `canHarm` is the
+   *     one gate every damage path consults, `hostileTo` is what both armies
+   *     pick targets through, and `_boltHitTest` asks the same question of a
+   *     bolt as `bladeTargets` does of a blade. None of them needed a line.
+   *   AN ARMY PER COMMANDER, from `assignArmies`, so two Jedi hosting each
+   *     other are the Republic and the Confederacy rather than the Republic
+   *     twice. See its note: the order still picks first, the CONFLICT is what
+   *     is resolved.
+   *   TWO ANCHORS, from `formUp`. `pickSpawn` and the arrival ring both assume
+   *     one player at the centre of the world.
+   *   THE PLAYERS THEMSELVES moved onto those anchors, because a commander
+   *     standing in the other army's line is not a meeting.
+   *   A WIN CONDITION, which is `DuelMatch` unchanged — see `census`.
+   *
+   * IDEMPOTENT, and that is not defensive coding. In a real session the peer's
+   * body does not exist until their first avatar packet arrives, which is after
+   * the world is standing; calling this again once it does is how the second
+   * commander gets a body to lead. Until then their army holds its anchor,
+   * which `_frame` supports on purpose.
+   *
+   * Returns the commanders, so a caller can say who is leading what.
+   */
+  beginVersus(players = null) {
+    const d = this.command;
+    if (!d || !d.versus) return null;
+    const list = (players || this.players).filter((p) => p && p.alive !== false);
+    if (!list.length) return null;
+
+    /**
+     * ONE SIDE PER ARMY, AND THE RULE IS `assignSides`' — CALLED, NOT RESTATED.
+     *
+     * It used to be `sideTeam(i)`: a side of its own for every commander, up to
+     * the four `SIDES` holds. That is right for a free-for-all and it is not
+     * what this mode can field. Driven at four commanders, which had never been
+     * done: four sides against a roster of TWO armies, so the third and fourth
+     * commanders fielded somebody else's units in somebody else's colours; two
+     * commanders sharing each end of `formUp`'s line while opposed to each
+     * other; and a `DuelMatch` whose `sides` carried the same number twice — so
+     * its "one side left standing" filter counted a wiped-out army as two
+     * survivors and the battle could not end at all.
+     *
+     * `ARMY_IDS.length` rather than a 2, because that is where the limit comes
+     * from: a side with no army has no units, no paint and no enemy list.
+     * `assignSides` rather than `i % 2`, because it is the same question the
+     * duel already answers and its own note already writes this file's answer
+     * down — "the roster alternates, so a four-player session is 2v2 in roster
+     * order and a three-player one is 2v1 with the host on the larger side".
+     * A second copy of that sentence here is the shape this repository has paid
+     * for six times. The keys are indices because a local Player carries no
+     * peer id and the answer is positional either way.
+     *
+     * Identical for two commanders, which is every session that has run. An odd
+     * count is a 2v1 rather than a refusal: an uneven meeting is a real thing to
+     * want and stranding the third player is not.
+     */
+    const seats = assignSides(list.map((_, i) => ({ id: i })), ARMY_IDS.length);
+    const sides = list.map((_, i) => seats.get(i));
+    /**
+     * …AND AN ARMY PER SIDE, so two allies lead one and wear one colour.
+     *
+     * Every commander is read as the HOST's own order, and that is measured
+     * rather than tolerated. `LOOK_KEYS` leaves `order` off the wire, so a
+     * commander this machine cannot ask has no stated choice — and it turns out
+     * not to matter: `assignArmies` gives the first commander what they ask for
+     * and resolves everything after that against what is already taken, so with
+     * two armies the second side gets whichever one is left whatever it wanted.
+     * Enumerated over every roster of two, three and four commanders and both
+     * orders apiece, the peer's real order changes the assignment in 0 of 28.
+     * The note in Net.js carries the same measurement, because that is where
+     * somebody will next be tempted to add the field.
+     */
+    const armies = assignArmies(list.map((p) => p.order || this.settings?.order || 'jedi'), sides);
+    d.formUp(sides, armies, list);
+
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i], c = d.commanders[i];
+      p.team = sides[i];
+      if (p === this.player) this.partyTeam = sides[i];
+      /**
+       * Onto their own end of the field — a remote body too, and that is not
+       * cosmetic. A formation is solved in its commander's frame, so a
+       * commander standing at the origin has their whole army walking back to
+       * the middle of the plain. A remote body is a DRAWING of one on another
+       * machine and its own next packet overwrites this; until that packet
+       * arrives, its army's frame has to be somewhere true, and the peer's own
+       * machine puts them here too (see `applySeat`).
+       */
+      if (p.position && c?.anchor) {
+        p.position.copy(c.anchor);
+        p.actor?.setPosition?.(c.anchor);
+      }
+    }
+
+    /**
+     * …AND TELL THE OTHER MACHINES, because a side and a seat are exactly the
+     * two things a client cannot work out for itself.
+     *
+     * `assignSides` and `Net.setSides` both existed, complete, with ZERO
+     * CALLERS anywhere in the repository — the same wire-built-at-one-end shape
+     * `claim` and `toHost` were. So every remote body in every session was on
+     * side 0 whatever the host had decided, and a client's own local player was
+     * built by `spawnPlayer` with no team at all.
+     *
+     * The SEAT goes with it, and without it the sides alone are not enough: a
+     * client told it was the Confederacy but not where the Confederacy stands
+     * spawns at the level's home spot, in the middle of the Republic's line,
+     * with its own army forming up around it — because a formation is solved in
+     * its commander's frame. Both machines internally consistent, and no two
+     * sides on the field.
+     */
+    if (this.netMode === 'host' && this.net?.setSides) {
+      const teams = new Map(), seats = new Map();
+      for (let i = 0; i < list.length; i++) {
+        /* The host's own id is the PEER's, not a field on the Player — only a
+         * RemoteAvatar carries one, because only a remote body needs to be
+         * addressed. Without this the host is absent from its own map and
+         * `_sideOf` falls back to the party's 0, which is right today only
+         * because the host happens to be first in the roster. */
+        const id = list[i] === this.player ? this.net.peer?.id : list[i].id;
+        if (!id) continue;
+        const a = d.commanders[i]?.anchor;
+        teams.set(id, sides[i]);
+        if (a) seats.set(id, { at: [r2(a.x), r2(a.y), r2(a.z)], facing: d.commanders[i].facing });
+      }
+      this.net.setSides(teams);
+      this.net.setSeats?.(seats);
+    }
+
+    /**
+     * NO MATCH UNTIL THERE IS SOMEBODY TO HAVE ONE WITH.
+     *
+     * `DuelMatch` ends a round when one side is left standing, so a match built
+     * with ONE side ends on the frame the countdown does — a host who deploys
+     * into a meeting before their opponent's body has arrived would be handed
+     * the field against nobody, three seconds in, and the peer would join a
+     * finished battle. `beginVersus` is idempotent and runs again when that
+     * body appears, which is where the match is really made.
+     */
+    /* The sides IN PLAY, each named once. `DuelMatch` keys its scores on the
+     * side and filters `sides` for who is still standing, so the same number
+     * twice — which is what a 2v2 hands it — makes a wiped-out side look like
+     * two survivors and the round never ends. */
+    const fielded = [...new Set(sides)];
+    if (!this.match && fielded.length >= 2) {
+      this.match = new DuelMatch(this.rules, fielded);
+      this._matchSent = '';
+    }
+    /**
+     * …AND A HOST WHO TURNED THIS ON AND IS STANDING HERE ALONE IS TOLD SO.
+     *
+     * The line above is why they are not simply handed the field three seconds
+     * in — a match needs two sides — and the cost of that fix was silence: an
+     * army deployed onto an empty plain, a countdown that never starts, no
+     * opponent, and nothing anywhere saying why. The player's own reading of
+     * that is that the mode is broken.
+     *
+     * Said ONCE per spell of being alone. `beginVersus` is idempotent and
+     * main.js calls it again on every roster change, so an unguarded notify
+     * would be a banner every time anybody's name moved; and clearing the flag
+     * when a second side does arrive is what makes it say so AGAIN if that
+     * opponent then leaves, which is the same fact arriving the other way
+     * round.
+     */
+    if (fielded.length < 2) {
+      if (!this._aloneAt) {
+        this._aloneAt = true;
+        this.notify('NO OPPONENT YET', this.net?.code
+          ? `a meeting needs a second commander — share the code ${this.net.code}`
+          : 'a meeting needs a second commander — this is a session for two');
+      }
+    } else this._aloneAt = false;
+    if (!d.active) d.start(1);
+    else d.deployAll();
+    return d.commanders;
+  }
+
+  /**
+   * THE HOST HAS TOLD US WHICH SIDE WE ARE ON AND WHERE WE STAND.
+   *
+   * Applied to the LOCAL player from this machine's own roster entry, so a
+   * joining commander is on their own side, standing on their own ground, with
+   * their own army's anchor under them. Everything downstream is already
+   * generic — `canHarm`, `partyTeam`, the HUD's hostile count — so this is the
+   * one write the whole client half of a meeting needs.
+   *
+   * Idempotent and order-free on purpose: the roster arrives more than once and
+   * may arrive before or after the world is built, so this is safe to call on
+   * every one of them and does nothing when there is nothing new to say.
+   */
+  applySeat(entry) {
+    const p = this.player;
+    if (!entry || !p || this.netMode !== 'client') return false;
+    let moved = false;
+    const team = asTeam(entry.team);
+    if (p.team !== team) {
+      p.team = team;
+      this.partyTeam = team;
+      const c = this.command?.commander;
+      if (c) c.side = team;
+      moved = true;
+    }
+    const at = entry.at;
+    if (Array.isArray(at) && at.length === 3 && this._seatAt !== at.join()) {
+      this._seatAt = at.join();
+      _v1.set(at[0], at[1], at[2]);
+      p.position.copy(_v1);
+      p.actor?.setPosition?.(_v1);
+      if (p.camera && entry.facing !== undefined) p.camera.yaw = entry.facing;
+      const c = this.command?.commander;
+      if (c) { c.anchor = _v1.clone(); c.facing = entry.facing ?? 0; }
+      moved = true;
+    }
+    return moved;
+  }
+
+  /**
+   * THE MEETING'S OWN CLOCK.
+   *
+   * The host drives the match and everybody else receives it, for the reason
+   * `Net`'s `match` case gives: a round ends when a side has nothing standing,
+   * and the only node that can see every body is the host — a client knows its
+   * own health for certain and everybody else's as of 90 ms ago, so a client
+   * that scored its own rounds would award itself one every time a packet was
+   * late.
+   *
+   * Sent on a phase change rather than at the snapshot rate. The record is
+   * under 150 bytes and changes about four times a match; folding it into the
+   * 18 Hz snapshot would spend 2.7 KB/s saying the same thing eighteen times.
+   */
+  _matchTick(dt) {
+    const m = this.match, d = this.command;
+    if (!m || !d || this.netMode === 'client' || this.over) return;
+    const { standing, health } = d.census();
+    const events = m.update(dt, standing, health);
+    for (const ev of events) {
+      if (ev.type === 'fight') this.notify('ENGAGE', `${d.commander.army.name} against ${d.commander.foe.name}`);
+      if (ev.type !== 'match-end') continue;
+      this._endMeeting(m.winner);
+    }
+    if (this.net?.connected && this.netMode === 'host') {
+      const rec = packMatch(m);
+      const s = JSON.stringify(rec);
+      if (s !== this._matchSent) { this._matchSent = s; this.net.broadcast(rec); }
+    }
+  }
+
+  /**
+   * THE MEETING IS DECIDED.
+   *
+   * Through `onGameOver` with `won` on it, which is the door `_endCampaign`
+   * already uses and the one event in the tree that stops the director,
+   * releases the pointer, shows a card and writes the record. `won` is answered
+   * for THIS machine — the same match is a victory on one screen and a defeat
+   * on the other, which is the first time that has been true of anything in
+   * this game.
+   */
+  _endMeeting(winner) {
+    if (this.over) return;
+    this.over = true;
+    const d = this.command;
+    if (d) d.done = true;
+    const mine = this.partyTeam;
+    const name = d?.commanders.find((c) => c.side === winner)?.army.name ?? null;
+    this.notify(winner === mine ? 'THE FIELD IS YOURS' : 'THE FIELD IS LOST',
+      name ? `${name} holds Geonosis` : 'neither army holds the field');
+    /**
+     * …AND IT MAKES A SOUND. Until this line a won meeting was silent: the
+     * score's only ending was a death, and this mode is the first thing in the
+     * game that can be WON.
+     *
+     * The argument is answered for THIS machine, exactly as `won` below is —
+     * the same match is a victory on one screen and a defeat on the other, and
+     * `false` deliberately hands the losing commander the death cue rather than
+     * nothing.
+     */
+    audio.runWon?.(winner === mine);
+    const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
+    this.onGameOver?.({
+      won: winner === mine,
+      wave: this.director.wave,
+      score: this.score,
+      kills: sum('kills'),
+      deflects: sum('deflects'),
+      perfects: sum('perfects'),
+      limbs: sum('limbsRemoved'),
+    });
+  }
+
+  /** Host → this client: the state of the meeting. A client owns none of it. */
+  applyMatch(rec) {
+    if (this.netMode !== 'client' || !rec) return false;
+    /**
+     * MADE FROM THE FIRST RECORD, because nothing on a client ever makes one.
+     *
+     * `beginVersus` is the only constructor of a match and it runs on the host
+     * — correctly, since the host is the only node that can see every body. So
+     * this used to return on `!this.match` at the first line, every time, and a
+     * joining commander received the whole match and was told none of it: no
+     * countdown, no clock, and no card at the end of a battle they had just
+     * fought. `DuelMatch.WIRE` carries `sides`, which is the one thing the
+     * constructor needs and the one thing a client cannot work out.
+     */
+    if (!this.match) {
+      this.match = new DuelMatch(this.rules, Array.isArray(rec.sides) && rec.sides.length
+        ? rec.sides : [TEAM.PARTY, sideTeam(1)]);
+    }
+    this.match.apply(rec);
+    if (this.match.phase === 'match-over') this._endMeeting(this.match.winner);
+    return true;
+  }
+
+  /** Host → this client: the campaign as the host has it. */
+  applyArmy(msg) {
+    if (this.netMode !== 'client') return false;
+    return this.command?.applyNet?.(msg?.r) ?? false;
+  }
+
+  /**
+   * A JOINING PLAYER PRESSED AN ORDER KEY.
+   *
+   * The other direction from every other Command message, and the only one:
+   * `main.js` binds the six formation keys to `CommandDirector.order` on
+   * whichever machine pressed them, and the bodies only exist on the host. So
+   * this is the ask, and `applyOrder` below is the host deciding.
+   */
+  requestOrder(id) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost({ t: 'order', f: id });
+    return true;
+  }
+
+  /**
+   * …AND THE HOST DECIDING, through the same `order` every local key press
+   * goes through.
+   *
+   * Validation is NOT repeated here. `CommandDirector.order` already refuses an
+   * id that is not a formation and returns false, and writing a second
+   * membership test on this side is how the two come to disagree about what an
+   * order is — the rule is called, not restated. What this adds is the one
+   * thing the director cannot know: that only the host may move an army, so a
+   * peer cannot re-form somebody else's line by sending this to a machine that
+   * is not holding it.
+   */
+  applyOrder(peerId, msg) {
+    if (this.netMode !== 'host' || !this.command) return false;
+    return this.command.order(msg?.f, this.commanderFor(peerId));
+  }
+
+  /**
+   * WHOSE ARMY A PEER IS ENTITLED TO MOVE.
+   *
+   * `applyOrder` used to call `this.command.order(f)`, which defaults to
+   * `commanders[0]` — the HOST's commander. In co-op that is right and is the
+   * whole point: one army, everybody in the session leading it, so a peer's
+   * order and the host's reach the same line. In a MEETING it is the defect the
+   * mode was built to remove: a joining commander pressing `wedge` re-formed the
+   * host's line, in the host's colours, against their own army — the two
+   * machines then disagreed about a formation neither player had ordered for
+   * the army they were watching.
+   *
+   * So a peer moves the army it is commanding, and falls back to the shared one
+   * when it is not commanding anything. The fallback is not defensive: in co-op
+   * a peer HAS no commander of its own, and `find` returning nothing is exactly
+   * the statement that there is one army here.
+   *
+   * The host's own Player is skipped by identity rather than by id: only a
+   * RemoteAvatar carries one, so a `undefined === undefined` match would hand
+   * the first peer to send anything the host's army.
+   */
+  commanderFor(peerId) {
+    const d = this.command;
+    if (!d) return null;
+    return d.commanders.find((c) => c.player && c.player !== this.player
+      && c.player.id === peerId) || d.commander;
+  }
+
+  /**
+   * A JOINING COMMANDER PRESSED BUY, OR DONE.
+   *
+   * The other direction from every Command message but `order`, and it exists
+   * for the identical reason: the screen is on this machine and the ROSTER —
+   * the purse, the shelf, the strength cap, the names — is on the host's.
+   *
+   * What crosses is the unit or the word "done", and deliberately nothing else.
+   * A cost, a balance or a strength on this wire would be a number the host has
+   * to either trust or re-derive, and re-deriving it is what `recruit` already
+   * does with the roster in its hands.
+   */
+  requestMuster(type, done = false) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost(done ? { t: 'muster', done: 1 } : { t: 'muster', u: type });
+    return true;
+  }
+
+  /**
+   * THE MUSTER, IN WHICHEVER DIRECTION THIS MACHINE IS FACING.
+   *
+   * One message type, one handler, and the branch is `netMode` — which is total
+   * and mutually exclusive, so an offer can only ever be read by a machine that
+   * does not hold the army and an intent can only ever be acted on by one that
+   * does. That split is the whole of the security story, and it is the reason
+   * Net.js does not guard this case by direction: a guard there could assert
+   * only one of the two.
+   *
+   * VALIDATION IS NOT REPEATED HERE, exactly as it is not in `applyOrder`.
+   * `CommandDirector.recruit` already refuses a unit that is not in this army's
+   * list, one the advance has not reached, one there are not the points for and
+   * one that would break the strength cap — and it does all four against the
+   * roster the host is holding. A second membership or affordability test on
+   * this side would be a rule restated, which is how the two come to disagree
+   * about what the player can afford. What this adds is the one thing the
+   * director cannot know: which commander is asking.
+   */
+  applyMuster(msg, peerId) {
+    const d = this.command;
+    if (!d || !msg) return false;
+    /* A client owns none of this and is told all of it. */
+    if (this.netMode === 'client') return d.applyMusterNet?.(msg.o ?? null, msg.no) ?? false;
+    if (this.netMode !== 'host') return false;
+    /* No muster is open, so there is nothing to spend and nothing to close. A
+     * peer whose card is stale — the host closed it a frame ago — gets its next
+     * `muster` message from `closeMuster`'s own publish and takes the card
+     * down; it does not get to reopen a purse. */
+    if (!d.mustering) return false;
+    const c = this.commanderFor(peerId);
+    if (msg.done) return d.closeMuster();
+    /* `recruit` publishes the new offer to everyone sharing this purse when it
+     * succeeds — the host's own screen buys through the same line. A REFUSAL
+     * publishes nothing and is nobody else's business, so it goes back to the
+     * one peer that asked, with the offer they still have. */
+    if (d.recruit(msg.u, c)) return true;
+    this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+    return false;
+  }
+
+  /**
+   * THE MUSTER OFFER, TO EVERY MACHINE THAT IS NOT HOLDING THE PURSE.
+   *
+   * SENT AT THE MOMENT IT MOVES, and not folded into `_armyTick`'s throttled
+   * on-change send, which is where this obviously belonged and would not have
+   * worked at all. A muster STOPS THE WORLD on the machine showing it —
+   * `Screens.take` is the whole point of that overlay — so on a host sitting on
+   * its own muster card `world.update` is not running, `_netTick` is not
+   * running, and a polled message is never sent. The one moment a client most
+   * needs to hear from the host is the one moment the host's frame loop is
+   * stopped. So the three moments publish for themselves: the muster opening
+   * (`_areaClear`), a purchase landing (`recruit`), and the card coming down
+   * (`closeMuster`).
+   *
+   * ADDRESSED IN A MEETING, BROADCAST IN A CAMPAIGN — the same split
+   * `_armyTick` makes and for the same reason. In co-op there is one army and
+   * one purse and everybody in the session is spending it, so one offer is the
+   * truth on every screen. In a meeting each commander has a roster and a purse
+   * of their own, and the Confederacy's shelf is not the Republic's.
+   *
+   * THE MEETING HALF IS NOT REACHABLE TODAY and is written anyway. A meeting
+   * composes no waves — `CommandDirector.start` returns before `super.start`
+   * and `update` before `super.update` — so `payWave` never runs, `_areaClear`
+   * never fires and no muster ever opens in one. So this is a branch with no
+   * live caller, which this codebase is right to be suspicious of; it is here
+   * because the alternative is a plain broadcast that is silently WRONG the day
+   * a meeting grows an area, and because `_armyTick` twenty lines above makes
+   * the identical split for the identical reason. Two neighbouring answers to
+   * one question is how they come to disagree. Noted rather than hidden.
+   */
+  publishMuster(cmdr = null) {
+    const net = this.net, d = this.command;
+    if (this.netMode !== 'host' || !net?.connected || !d) return false;
+    const offer = (c) => (d.mustering ? d.musterOffer(c) : null);
+    if (!d.versus || d.commanders.length < 2) {
+      net.broadcast({ t: 'muster', o: offer(d.commander) });
+      return true;
+    }
+    for (const c of (cmdr ? [cmdr] : d.commanders)) {
+      const id = c.player?.id;
+      if (!id || c.player === this.player) continue;
+      net.toPeer(id, { t: 'muster', o: offer(c) });
+    }
+    return true;
   }
 
   /**
@@ -1993,6 +3427,10 @@ export class World {
     const net = this.net;
     if (!net?.connected || !this._netEnemyIndex) return;
     for (const [id, e] of this._netEnemyIndex) {
+      // The lift is a STATE and is reconciled on its own terms — see
+      // _netGripSync. It rides this loop because this is the tick that already
+      // walks every replicated body once, at the rate a claim is allowed to go.
+      this._netGripSync(e);
       const base = e._netHp;
       if (base === undefined) continue;
       const lost = base - e.hp;
@@ -2058,15 +3496,39 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md, tm, ck, cw, ch] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
         e = this.spawnEnemy(type, new THREE.Vector3(x, y, z));
         e.id = id;
         e.netDriven = true;
+        this._netClaimImpulse(e);
         this._netEnemyIndex.set(id, e);
       }
+      /**
+       * WHOSE BODY THIS IS — and until this line every one of them was the
+       * horde's, because `Enemy`'s constructor writes `team = 1` and nothing
+       * on the wire had ever said otherwise.
+       *
+       * That is right for every mode where `world.enemies` holds one army. It
+       * is wrong the moment Command puts YOUR army in the same list on the
+       * party's team: measured on a real host/client pair with a ten-man
+       * roster on the field, 10 of 10 named troopers arrived here as horde,
+       * `canHarm(this.player, yourTrooper)` returned true, and both directions
+       * of the resulting friendly fire were automatic — your troopers' own
+       * rifles found the joining player through `_boltHitTest`'s owner test,
+       * and every bolt that player deflected into the line hit somebody with a
+       * name on the roster.
+       *
+       * Written EVERY snapshot rather than only on the frame the body is
+       * created: `enlistBody` runs after `spawnEnemy` on the host, so the
+       * record that creates a trooper here is the one from before it was
+       * enlisted, and a body promoted onto a side later would otherwise stay
+       * on the wrong one for the rest of the session. `asTeam` is the gate —
+       * an illegible number is the horde, never a friend. See packSnapshot.
+       */
+      e.team = asTeam(tm);
       /**
        * THE ELITE, AND IT NEVER CROSSED.
        *
@@ -2138,6 +3600,7 @@ export class World {
        * the pose. See packDuel in Net.js.
        */
       e.netDuel = dl || null;
+      this._applyNetCast(e, ck || null, cw || 0, ch || 0);
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
     this._spawnNetBolts(msg.bf);
@@ -2214,6 +3677,186 @@ export class World {
   }
 
   /**
+   * THE CAST A JOINING PLAYER COULD NOT SEE COMING.
+   *
+   * `_forceBrain` opens every enemy power with a 0.45 s wind-up and a floating
+   * call over the head — FORCE PUSH, LIGHTNING, CHOKE — and its own note says
+   * the tell is the whole fairness contract: "a power that arrives with no
+   * frame of warning is the 11.5 m sphere the beasts check has a note about".
+   * That brain does not run here, and none of `_castKey`, `_castTimer` or
+   * `casting` was on the wire, so off-host the contract did not exist. Driven,
+   * a Jedi Master casting at a peer for 40 s: six casts, six tells on the
+   * host's screen, and on the peer's — six anonymous numbers arriving over
+   * `hit`, zero telegraphs, zero metres of displacement.
+   *
+   * The call is raised on the EDGE, when the key changes, so the tell appears
+   * once per cast and not eighteen times a second. It reads its label and its
+   * colour out of `ENEMY_POWERS` — the table the host's own call is drawn from
+   * — rather than a second table here, because a floating word that says
+   * something different on two machines is worse than no word at all.
+   *
+   * The fields are written whole rather than as a flag, because things that a
+   * client DOES run read them: `Enemy.damage` refuses to reach `breakCast`
+   * unless `_castTimer > 0 || casting`, and the HUD and any counterplay prompt
+   * want to know how much of the window is left.
+   */
+  _applyNetCast(e, key, windup, hold) {
+    const was = e._castKey || e.casting || null;
+    e._castKey = windup > 0 ? key : null;
+    e._castTimer = windup;
+    e.casting = key && windup <= 0 ? key : null;
+    e.castLeft = hold;
+    if (!key || key === was) return;
+    const P = ENEMY_POWERS[key];
+    if (P) this.notifyFloating(e.aimPoint(_v1), P.label, P.color);
+  }
+
+  /**
+   * THE SHOVE THIS MACHINE JUST GAVE A BODY IT DOES NOT OWN.
+   *
+   * `_claim` sent `cut` and `dmg` and nothing else, so there was no impulse on
+   * this wire at all. Measured on a real host/client pair, the host body taken
+   * off its brain so nothing else could move it: push, pull and throw each
+   * moved it 0.000 m on the guest's screen and 0.000 m on the host's, and the
+   * grip lifted it 0.000 m on both while `player.gripEnemy` was true the whole
+   * time on the guest's own machine — a hold that was real state with no physics
+   * under it. The DAMAGE crossed throughout and the hp came off. For everybody
+   * who was not the host, the Force was a number applied at a distance.
+   *
+   * WRAPPED AT THE DOOR, NOT ADDED AT THE CALL SITES, and that is the same
+   * argument `_recordFires` makes about `BoltPool.fire` and `_reconcileClaims`
+   * makes about hp. Enemy.js's own note names the two doors every power in the
+   * game arrives through — "`damage()` and `applyKnockback` are the two doors
+   * … so one call each means a blow is answered exactly once however it was
+   * thrown" — and the second of those two is the one that carries a direction.
+   * A power written next month is replicated the day it is written; a list of
+   * call sites here would be a seventh one waiting to be forgotten, which is
+   * the exact defect `_reconcileClaims` exists to have already fixed.
+   *
+   * The RAW arguments are claimed, before this machine's copy has resisted
+   * anything, so the HOST runs the contest: `Enemy.applyKnockback` weighs the
+   * shove and the harm together against the pool it holds (which is not
+   * replicated), breaks whatever the body was casting, stuns it past 12 m/s and
+   * makes it scream. Every one of those is a consequence only the authority can
+   * decide, and every one of them is now reachable from a guest's hands.
+   *
+   * `_claim(msg, e)` resyncs the hp baseline, so the damage half is billed here
+   * and NOT a second time by `_reconcileClaims` on the next tick.
+   */
+  _netClaimImpulse(e) {
+    if (e._netKnock) return;
+    e._netKnock = true;
+    const inner = e.applyKnockback.bind(e);
+    e.applyKnockback = (impulse, damage, source, gentle) => {
+      const mine = !!source?.isLocal && this.netMode === 'client';
+      /* READ BEFORE THE CALL, not after it. Every force power in Player.js
+       * hands this a shared module scratch (`_v2`), `applyKnockback` re-enters
+       * a great deal of code through `damage` and `stun`, and this file already
+       * carries a note about a direction being clobbered part way through a
+       * loop for exactly that reason. Three numbers cost less than the
+       * question of whether anything downstream writes to that vector. */
+      const v = mine && impulse ? [r2(impulse.x), r2(impulse.y), r2(impulse.z)] : null;
+      /**
+       * APPLIED LOCALLY FIRST, and for the reason the blade is: each player is
+       * authoritative over their own hands because they cannot tolerate a frame
+       * of lag. A guest whose own push waited a round trip to move anything
+       * would be a guest whose Force feels broken — which is what the wire said
+       * about it for the whole life of this protocol. `_netOwn` below is what
+       * stops the next snapshot stomping the shove it just applied.
+       */
+      inner(impulse, damage, source, gentle);
+      if (!mine) return;
+      this._netOwn(e);
+      // A body you were holding and have now thrown is a body you have let go
+      // of, and the host has to hear that BEFORE the throw or it will hold the
+      // thing in place while it flies. One rule, two callers.
+      this._netGripSync(e);
+      this._claim({ t: 'claim', k: 'imp', id: e.id, v,
+        d: Math.round((damage || 0) * 10) / 10,
+        g: gentle ? 1 : 0 }, e);
+    };
+  }
+
+  /**
+   * THE AUTHORITY WINDOW, and it is the crux of the whole thing.
+   *
+   * `_stepNetEnemies` overwrites `e.velocity` from the wire and damps position
+   * toward the host's at 14/s at the top of EVERY frame. That is correct for
+   * ordinary motion — a body walking is the host's business and the client's
+   * drawing — and it is wrong for the frames after a shove, because it erased a
+   * locally-applied impulse before anything could integrate it. The guest did
+   * not even get the local illusion.
+   *
+   * So a body this machine has just shoved is OURS for a moment, and the moment
+   * is the game's own clock rather than a number picked here: `applyKnockback`
+   * writes `knockTimer` — 0.7 s for a real shove, 0.35 for a gentle one — and
+   * `Enemy._move` reads exactly that field to decide when a knocked body stops
+   * being ballistic and starts steering again. The window is that, plus one
+   * round trip, because the host's stream cannot possibly carry the shove any
+   * sooner than the claim can reach it and a snapshot can come back: the
+   * client's own claim tick (1/24 s), the host's snapshot tick (1/18 s) and
+   * whatever the ping says. Close it earlier and the body snaps back to where
+   * the host still thinks it is; leave it open longer and the guest is
+   * simulating a body it is not the authority for.
+   *
+   * The host stays authoritative throughout: it has the impulse, it ran its own
+   * resistance contest against it, and the instant the window closes the damp
+   * resumes from wherever this copy got to toward wherever the host says it is.
+   * Both machines integrated the same shove, so that gap is small — and it is
+   * reconciled by the mechanism that was already there, not a new one.
+   *
+   * BOTH TERMS EARN THEIR PLACE, and the second one is the surprising half.
+   * Measured on an 11.5 m flight over a 240 ms round trip, watching how far the
+   * guest's own copy ever travels BACK toward where it started, which is what a
+   * rubber-band is:
+   *
+   *     this window                    0.78 m inside 50 ms · snap-back 0.74 m
+   *     knockTimer alone               0.78 m inside 50 ms · snap-back 2.31 m
+   *     no window (what shipped)       0.00 m inside 50 ms · snap-back 0.00 m
+   *
+   * Read the last line carefully: without the window the guest's copy still
+   * ends up flying, because the impulse claim alone reaches the host and the
+   * host's position comes back. It simply stands still for a quarter of a
+   * second first, and then teleports into a flight it never started.
+   */
+  _netOwn(e) {
+    const trip = 1 / 24 + 1 / 18 + 2 * (this.net?.latency || 0) / 1000;
+    e._netOwnT = Math.max(e._netOwnT || 0, (e.knockTimer || 0) + trip);
+  }
+
+  /**
+   * THE GRIP, WHICH IS A STATE AND NOT A BLOW.
+   *
+   * Every other force power ends in one impulse and is over. Lifting a body
+   * does not: `Player.toggleGrip` sets `e.gripped` and `_updateGrip` walks
+   * `e.liftTarget` toward the hold point every frame for as long as the player
+   * holds it, and `Enemy._move` reads those two to suspend the ragdoll by the
+   * chest. Neither field is an event, so neither can ride the impulse claim.
+   *
+   * Reconciled as a DIFF against what this machine last told the host, exactly
+   * as the hp is, so it cannot be forgotten by a call site: whatever the local
+   * player's grip is doing to a replicated body is what the host is told, and
+   * releasing, hurling and dying all clear the same two fields and therefore
+   * all send the same release.
+   *
+   * Re-sent every tick while held rather than only when the point moves,
+   * because the host puts a LEASE on it — see applyClaim. A guest whose lid
+   * closes mid-lift must not leave an enemy hanging in the air for the rest of
+   * the session, and a silence is the only signal that can ever say so.
+   */
+  _netGripSync(e) {
+    const lift = e.gripped && e.liftTarget ? e.liftTarget : null;
+    if (lift) {
+      e._netGripAt = true;
+      this._claim({ t: 'claim', k: 'grip', id: e.id, g: 1,
+        p: [r2(lift.x), r2(lift.y), r2(lift.z)] });
+    } else if (e._netGripAt) {
+      e._netGripAt = false;
+      this._claim({ t: 'claim', k: 'grip', id: e.id, g: 0 });
+    }
+  }
+
+  /**
    * THE WAVE SIGNAL, FOR A MACHINE WITH NO DIRECTOR.
    *
    * `director.update` is gated off on a client, and everything a wave is worth
@@ -2221,9 +3864,9 @@ export class World {
    * announcements, `score += 500 * w`, the 8 hp and 0.35 flow every player gets
    * for surviving one — and INSIGHT, whose single earning path is
    * `_earnInsight` installed on `onWaveClear`. So a joining player earned zero
-   * Insight for a whole session: the Constellation was a dead screen, the
-   * "kneel to connect to the Force" prompt always read 0, no star could ever be
-   * lit, and they were 8 hp and 0.35 flow per wave weaker than the host for as
+   * Insight for a whole session: the Holocron was a dead screen, the
+   * "kneel to connect to the Force" prompt always read 0, no facet could ever
+   * be woken, and they were 8 hp and 0.35 flow per wave weaker than the host for as
    * long as the session lasted.
    *
    * The signal is already on the wire — `w` and `act` — as an EDGE rather than
@@ -2277,8 +3920,24 @@ export class World {
       const owner = this._netEnemyIndex.get(oid) || null;
       _v1.set(x, y, z); _v2.set(dx, dy, dz);
       if (_v2.lengthSq() < 1e-8) continue;
+      /**
+       * THE BOLT'S OWN SIDE, WHICH USED TO BE THE LITERAL 1.
+       *
+       * Right for as long as everything that fires on this wire is the horde,
+       * and the other half of the trooper defect the moment it is not: the
+       * enemy branch of `_boltHitTest` sorts on `bolt.team === 1` BEFORE it
+       * reaches `canHarm`, so a trooper's replicated rifle round could not
+       * reach the droid it was aimed at on a joining player's screen — the
+       * shot flew through the body the host had just killed with it.
+       *
+       * Off the owner now that the owner carries a team (see applySnapshot).
+       * `TEAM.HORDE` when the owner has not arrived yet, which is what the
+       * literal said and what an unattributed bolt in this game has always
+       * been.
+       */
       this.bolts.fire(_v1, _v2, {
-        speed, damage, color, owner, team: 1, big: !!big, turned: !!turned,
+        speed, damage, color, owner, team: owner ? asTeam(owner.team) : TEAM.HORDE,
+        big: !!big, turned: !!turned,
         length: big ? 2.4 : 1.15, radius: big ? 0.1 : 0.05,
       });
       audio.blaster(_v1, !!big);
@@ -2296,10 +3955,36 @@ export class World {
    * velocity of 1.44× the truth to the gait solver; what happens here is the
    * body moves toward the host's position and reports the host's OWN velocity,
    * so the feet are planted for the ground the body actually covers.
+   *
+   * …EXCEPT FOR THE FRAMES AFTER THIS MACHINE SHOVED SOMETHING, which is the
+   * whole reason a guest's Force did nothing physical. See `_netOwn` for what
+   * opens that window and why it is as long as it is. Inside it the body runs
+   * `Enemy._move` — the shipped integrator, CALLED rather than restated, so the
+   * gravity, the ground it lands on, the arena bounds, the static geometry, the
+   * `knockTimer` that keeps a shoved body ballistic and the ragdoll suspension
+   * a lifted body hangs from are all the game's own and cannot drift from it.
+   * A net-driven body has no `wish` — `_think` never runs here — so `_move`
+   * steers it nowhere; it only carries it.
    */
-  _stepNetEnemies(dt) {
+  _stepNetEnemies(dt, ctx) {
     for (const e of this._netEnemyIndex.values()) {
       if (!e._netPos || e.dead) continue;
+      if (e._castTimer > 0) e._castTimer = Math.max(0, e._castTimer - dt);
+      const held = e.gripped && e.liftTarget;
+      if (e._netOwnT > 0) e._netOwnT = Math.max(0, e._netOwnT - dt);
+      if (ctx && (e._netOwnT > 0 || held)) {
+        /**
+         * …AND WHAT `_move` TAKES OFF IT IS NOT OURS TO BILL. `_reconcileClaims`
+         * measures a claim as the gap between the host's last hp and ours, and
+         * the host is integrating the same body off the same impulse — so a
+         * landing hard enough to hurt would be charged to it twice. Moving the
+         * baseline by the same amount is what says "this one is already yours".
+         */
+        const hp0 = e.hp;
+        e._move(dt, ctx);
+        if (e.hp < hp0 && e._netHp !== undefined) e._netHp -= hp0 - e.hp;
+        continue;
+      }
       _v5.copy(e.position);
       dampVec(e.position, e._netPos, 14, dt);
       // The host's own number when we have it. The fallback is what the body
@@ -2439,7 +4124,151 @@ export class World {
       }, by);
     } else if (msg.k === 'dmg') {
       e.damage(msg.d, new THREE.Vector3(...msg.p), by, 'remote');
+    } else if (msg.k === 'imp') {
+      /**
+       * A FRIEND'S SHOVE, ARRIVING AS A SHOVE.
+       *
+       * Through `applyKnockback` and not through a velocity write, because
+       * everything that makes a shove mean something lives inside it and none
+       * of it can be decided anywhere else: the resistance contest against the
+       * pool THIS machine holds (the guest cannot see it — `force` is not
+       * replicated), `breakCast`, the stun past 12 m/s, the scream past 10, and
+       * the damage weighed in the same currency as the impulse so the body is
+       * not billed twice for one blow. `by` is the peer's own RemoteAvatar, so
+       * a kill lands in their column exactly as `dmg` already made it.
+       */
+      e.applyKnockback(msg.v ? new THREE.Vector3(...msg.v) : null,
+        msg.d || 0, by, !!msg.g);
+    } else if (msg.k === 'grip') {
+      if (msg.g && msg.p) {
+        e.gripped = true;
+        e.liftTarget = (e._netLift ||= new THREE.Vector3()).set(msg.p[0], msg.p[1], msg.p[2]);
+        /**
+         * A LEASE, because a held body is the one state a lost connection can
+         * strand. Every other claim is an event that happened; this one is a
+         * standing instruction, and a guest whose lid closes mid-lift would
+         * otherwise leave an acolyte hanging in the air, out of its brain
+         * (`_think` returns on `gripped`), for the rest of the host's session.
+         * The guest re-sends it every claim tick, so a silence longer than a
+         * handful of them is the only thing it can mean.
+         */
+        e._netGripUntil = this.time + NET_GRIP_LEASE;
+      } else {
+        e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+        e._netGripUntil = 0;
+      }
     }
+  }
+
+  /**
+   * DROP WHATEVER A PEER STOPPED ASKING US TO HOLD. See the lease above.
+   *
+   * Over `enemies` rather than over a list of held bodies, because a held body
+   * is one field on an ordinary enemy and a second index of them would be a
+   * second thing to keep in step. It runs at the host's snapshot rate over a
+   * wave, which is the same loop `packSnapshot` already pays for.
+   */
+  _netGripLeases() {
+    if (this.netMode !== 'host') return;
+    for (const e of this.enemies) {
+      if (!e._netGripUntil || this.time < e._netGripUntil) continue;
+      e._netGripUntil = 0;
+      e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+    }
+  }
+
+  /**
+   * THE BODY BEHIND AN ID ON THE WIRE — the far end of `hitSourceId`.
+   *
+   * A `hit` used to be applied as `p.damage(d, null, null, kind)`, and the
+   * third null is the one that cost something: `Player.die` hands its source to
+   * `onPlayerDeath`, so a joining player killed by a Master's lightning died to
+   * nobody — no name on the card, no kill credit, nothing in the feed.
+   *
+   * `null` for an id this machine cannot place, which is exactly the state
+   * every one of these was in before, so an unknown attacker costs nothing.
+   *
+   * AND IT DOES NOT RE-JUDGE THE HIT. The host has already run `canHarm`, on
+   * the only machine that can see both fighters, and `Player.damage` runs it
+   * again at its own sink — so an attacker this machine's rulebook would refuse
+   * is dropped back to null rather than cancelling a blow the authority
+   * allowed. A duel's rules arrive in their own message and can be a packet
+   * behind; a hit that vanished because of it would be a hit nobody could
+   * explain.
+   */
+  netSource(id) {
+    if (!id) return null;
+    const src = this._netEnemyIndex?.get(id) || this.remotes?.get(id) || null;
+    if (!src || !this.player) return null;
+    return canHarm(src, this.player, this.rules) ? src : null;
+  }
+
+  /**
+   * THE HOST SAYS WE WERE HIT — the far end of `RemoteAvatar._tellHit`.
+   *
+   * It lived in main.js, which is the reason it could carry a defect for as
+   * long as it did: every other message on this wire is applied by a method on
+   * World (`applySnapshot`, `applyClaim`, `applyBond`, `applyMatch`,
+   * `applyArmy`, `applyMuster`, `applySeat`) and is therefore drivable by a
+   * check against two real endpoints, and this one alone was a closure inside a
+   * `net.on` in the entry point, where nothing could reach it. It was also the
+   * one that threw a direction and an attacker away.
+   *
+   * Applied through OUR OWN Player, so every boon that lives in the damage path
+   * is consulted where it actually exists: Second Wind, Steadfast, Encircled,
+   * the difficulty's damageTaken. Tutaminis is the exception — `absorb` is
+   * applied at the call site rather than inside `damage`, so it is repeated
+   * here or a peer would silently lose it.
+   *
+   * THROUGH `applyKnockback` WHEN A SHOVE CAME WITH IT, and that is not a
+   * detail. It is the door the host's own copy of this blow went through, and
+   * it weighs the impulse and the harm TOGETHER against the pool
+   * (`IMPULSE_AS_HP`) — so bracing against a shove means the same thing on both
+   * machines. Answering only the damage ran the contest, correctly and once,
+   * against a fraction of the weight. The same Master's push, priced both ways
+   * on a full bar:
+   *
+   *     p.damage(9.0, …, 'force')              −3.4 hp   3.5 Force   0.00 m/s
+   *     p.applyKnockback(27.9 m/s, 9.0)        −3.4 hp  16.7 Force  12.57 m/s
+   *
+   * 16.7 is the number HANDOFF §6.1a measured for bracing against this shove on
+   * the host. Off-host the pool was asked about the 9 and never about the 33 hp
+   * of shove behind it, so a joining player's guard cost a fifth of what it
+   * costs everyone else — and bought them nothing, because there was no shove
+   * on the wire for it to blunt.
+   *
+   * THE BRANCH IS THE DOOR, NOT THE WORD. `_tellHit` is reached from exactly
+   * two places on the host — `applyKnockback`, which stamps `k:'force'`, and
+   * `damage`, which carries the caller's own word — so "was this the Force" is
+   * a fact about which door it came through, and `Player.damage` reads `kind`
+   * for exactly one thing: whether the pool answers it. A held power bills with
+   * a null impulse (`Enemy._sustain` → `applyKnockback(null, debt, …)`) and
+   * still has to reach the contest, which is why the test is the kind and not
+   * the presence of a vector.
+   *
+   * The other branch passes `'remote'`, the word `applyClaim` already uses for a
+   * blow that arrived over the wire, and it is the truth this branch has just
+   * established: not the Force, so the pool has nothing to say. The host's own
+   * word for it rides the packet as `k` for anyone reading the traffic.
+   *
+   * THE TUTAMINIS BRANCH THAT USED TO BE HERE WAS UNREACHABLE. It read
+   * `msg.k === 'bolt'`, and `_tellHit` refuses to send a bolt at all — the peer
+   * resolves every replicated bolt in its own pool, where `_boltHitTest` has
+   * its own `absorb` branch, which is where a joining player's Tutaminis has
+   * actually been working all along. Two copies of one boon, one of which the
+   * wire could not deliver to.
+   */
+  applyHit(msg) {
+    const p = this.player;
+    if (!p || !p.alive || !msg) return false;
+    const push = Array.isArray(msg.v)
+      ? _v1.set(msg.v[0] || 0, msg.v[1] || 0, msg.v[2] || 0) : null;
+    const d = msg.d > 0 ? msg.d : 0;
+    if (!d && !push) return false;
+    const by = this.netSource(msg.s);
+    if (push || FORCE_KINDS.test(msg.k ?? '')) p.applyKnockback(push, d, by, !!msg.g);
+    else p.damage(d, null, by, 'remote');
+    return true;
   }
 
   /**

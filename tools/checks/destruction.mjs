@@ -1,5 +1,5 @@
 /**
- * SABER — destruction, measured.
+ * BATTLEFRONT BORZ — destruction, measured.
  *
  * Two complaints, both of them numbers underneath.
  *

@@ -1,5 +1,5 @@
 /**
- * SABER — the Force.
+ * BATTLEFRONT BORZ — the Force.
  *
  * Six complaints, all of them measurable, all of them from the player:
  *
@@ -83,6 +83,12 @@ function player(world, over = {}) {
       bodies: new Set(), centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
     },
     chest: V(0, 1.35, 0), aimDir: V(0, 0, -1),
+    /* A real Player always has one, and `_readInput` reads it: the controller
+     * needs to be told whether the feet are under a lunge, because
+     * `Player._attackDrive` now moves the anchor the controller would otherwise
+     * infer that from. This bench builds a Player-shaped object by hand, so a
+     * field the real constructor always sets has to be set here too. */
+    velocity: new THREE.Vector3(),
     camera: { pos: V(0, 1.6, 3), addShake() {}, addYaw() {}, addPitch() {}, firstPerson: false },
     boonMods: { forceCost: 1, flowGain: 1 },
     cooldowns: { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 },
@@ -126,11 +132,113 @@ export async function run({ check, assert, near }) {
     assert(caps[0.25] < PROPS.barrel, `0.25x lifts a ${PROPS.barrel} kg barrel (cap ${caps[0.25].toFixed(0)})`);
     assert(caps[1] >= ARCHETYPES.droideka.mass && caps[1] < PROPS.spire,
       `1x cap ${caps[1].toFixed(0)} does not sit between a droideka and a spire`);
-    // The whole point of the complaint: the top of the slider must clear the
-    // heaviest body in the game.
-    const heaviest = Math.max(...Object.values(PROPS), ...Object.values(ARCHETYPES).map(a => a.mass));
-    assert(caps[4] > heaviest, `max cap ${caps[4].toFixed(0)} kg cannot lift the heaviest thing there is (${heaviest} kg)`);
-    return `0.25x ${caps[0.25].toFixed(0)} kg → 1x ${caps[1].toFixed(0)} → 4x ${caps[4].toFixed(0)}; heaviest body ${heaviest} kg`;
+    /* THE WHOLE POINT OF THE COMPLAINT, AND ONE WORD OF IT HAS CHANGED:
+     * the top of the slider must clear the heaviest LIFTABLE body in the game.
+     *
+     * This was written when every body on the roster was an animal or a droid
+     * and the heaviest was a 1650 kg Reek, and against that roster "the cap
+     * clears the heaviest body" is exactly the right invariant — a cap nothing
+     * can reach is the same as no cap. Then an AT-TE arrived: 3600 kg and
+     * thirteen metres of six-legged siege armour, with an AAT at 2400 behind
+     * it. The check failed, and its SUBJECT was what had gone wrong rather than
+     * its rule. Raising the cap past 3600 to satisfy the old wording would
+     * price every other body in the game at nothing on the way past — a
+     * droideka is 210 kg — and it would hand the player a power that deletes
+     * the encounter these two exist to be: a heavy you fight AROUND.
+     *
+     * So the exclusion is authored on the archetype (`grippable: false`, see
+     * Vehicles.js) and read by `Player._grippableBody`, and this line asks the
+     * narrowed question. Three guards keep the narrowing from becoming a way to
+     * dodge the bound, and they are the reason this is not simply a weaker
+     * check than the one it replaces:
+     *
+     *   · every excluded body must be HEAVIER than the top of the slider, so
+     *     nothing the cap ought to have cleared can hide behind the flag;
+     *   · the exclusion set must be non-empty, or this has quietly gone back to
+     *     being the old assert with extra words;
+     *   · at least one `big` body must still be liftable, which is the
+     *     player's original complaint and the thing that must not regress. */
+    const excluded = Object.entries(ARCHETYPES).filter(([, a]) => a.grippable === false);
+    const liftable = Object.entries(ARCHETYPES).filter(([, a]) => a.grippable !== false);
+    const heaviest = Math.max(...Object.values(PROPS), ...liftable.map(([, a]) => a.mass));
+    assert(caps[4] > heaviest,
+      `max cap ${caps[4].toFixed(0)} kg cannot lift the heaviest liftable thing there is (${heaviest} kg)`);
+    assert(excluded.length > 0,
+      'nothing on the roster declares grippable:false, so this is the old unrestricted assert');
+    for (const [name, a] of excluded) {
+      assert(a.mass > caps[4],
+        `${name} is marked ungrippable at ${a.mass} kg, which the 4x cap of ${caps[4].toFixed(0)} kg `
+        + 'already clears — an exclusion is not a way to duck the bound');
+    }
+    assert(liftable.some(([, a]) => a.big),
+      'every `big` body is now un-liftable — the size wall the player complained about is back');
+    return `0.25x ${caps[0.25].toFixed(0)} kg → 1x ${caps[1].toFixed(0)} → 4x ${caps[4].toFixed(0)}; `
+      + `heaviest liftable ${heaviest} kg; not liftable at any setting: `
+      + excluded.map(([n, a]) => `${n} ${a.mass} kg`).join(', ');
+  });
+
+  check('force: a walker you cannot lift is REFUSED, not ignored', () => {
+    /* THE OTHER HALF OF THE CHANGE ABOVE, and the half that is about the
+     * player rather than about the roster. Excluding the AT-TE from the lift is
+     * only correct if pointing at one and pressing grip produces an ANSWER. Two
+     * ways it could have failed silently and both are asserted here:
+     *
+     *   · dropping it from the pick entirely would let the aim ray pass through
+     *     thirteen metres of walker and grip whatever stood behind it;
+     *   · returning null would play no sound, print nothing, and read exactly
+     *     like a power that is broken.
+     *
+     * A liftable body in the same cone must still win, or the refusal has
+     * bought silence somewhere else. */
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 4;
+    const said = [];
+    world.notify = (title, sub) => said.push(`${title} — ${sub}`);
+
+    const atte = new Enemy(world, 'atte', V(0, 0, -14));
+    settle(atte, world);
+    w.step(1 / 60);
+    const p = player(world);
+    const ctx = { physics: w, enemies: [atte], particles: null };
+    p.toggleGrip(ctx);
+    assert(!p.gripEnemy, 'an AT-TE came off the ground on a Force grip');
+    assert(p.lastGripRefusal && p.lastGripRefusal.immovable,
+      'the grip returned nothing at all — a silent refusal is indistinguishable from a broken button');
+    assert(said.length === 1, `the refusal printed ${said.length} messages`);
+    assert(/AT-TE/i.test(said[0]), `the refusal does not name what it refused: ${said[0]}`);
+    assert(/leg/i.test(said[0]), `the refusal names no way in: ${said[0]}`);
+    // …and it does not claim legs on a body that has none. The AAT is a
+    // repulsorlift, built with `legs: 0`.
+    const w2 = physicsWorld();
+    const world2 = gameWorld(w2);
+    world2.settings.forcePower = 4;
+    const said2 = [];
+    world2.notify = (t, s) => said2.push(`${t} — ${s}`);
+    const aat = new Enemy(world2, 'aat', V(0, 0, -14));
+    settle(aat, world2);
+    w2.step(1 / 60);
+    const p2 = player(world2);
+    p2.toggleGrip({ physics: w2, enemies: [aat], particles: null });
+    assert(!p2.gripEnemy, 'an AAT came off the ground on a Force grip');
+    assert(said2.length === 1 && !/leg/i.test(said2[0]),
+      `the AAT hovers on repulsorlifts and was told to have its legs cut: ${said2[0]}`);
+
+    // A droid standing in the same cone still wins the pick — the walker must
+    // not eat grips that were meant for something else.
+    const w3 = physicsWorld();
+    const world3 = gameWorld(w3);
+    world3.settings.forcePower = 4;
+    const big = new Enemy(world3, 'atte', V(2.5, 0, -16));
+    const b1 = new Enemy(world3, 'b1', V(-0.6, 0, -7));
+    settle(big, world3); settle(b1, world3);
+    w3.step(1 / 60);
+    const p3 = player(world3);
+    p3.toggleGrip({ physics: w3, enemies: [big, b1], particles: null });
+    assert(p3.gripEnemy === b1,
+      `the AT-TE ate a grip aimed near a B1 (got ${p3.gripEnemy ? p3.gripEnemy.type : 'nothing'})`);
+
+    return `AT-TE refused with "${said[0]}"; AAT refused without claiming legs; a B1 in the same cone still wins`;
   });
 
   check('force: the biggest enemies are a setting away, not a permanent no', () => {
@@ -845,7 +953,11 @@ export async function run({ check, assert, near }) {
       }
       w.unload();
     }
-    assert(frames > 3000, `only ${frames} flight frames were measured — the throw is not being driven`);
+    /* Per level rather than in total: 3000 was a sum over thirteen and is a
+     * roster count in disguise. Seven levels give 2471, which is 353 each
+     * against the old 231 — the survey got DENSER, not thinner. */
+    assert(frames / LEVEL_ORDER.length > 250,
+      `only ${frames} flight frames over ${LEVEL_ORDER.length} levels — the throw is not being driven`);
     assert(under === 0,
       `${under} of ${frames} flight frames put the blade under the surface, deepest ${deepest.toFixed(2)} m `
       + `(${worst}) — the note this answers opens "thrown saber vanishes into the ground"`);
@@ -901,7 +1013,10 @@ export async function run({ check, assert, near }) {
       delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
 
     const w = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
-    await w.loadLevel('meadow');
+    /* ANY level — see the note in lifecycle.mjs. `'meadow'` was culled and
+     * `loadLevel` has been quietly substituting `LEVEL_ORDER[0]` ever since. */
+    const { LEVEL_ORDER: ORDER } = await import('../../src/game/Levels.js');
+    await w.loadLevel(ORDER[0]);
     w.spawnPlayer();
     const p = w.player;
     for (let i = 0; i < 30; i++) w.update(1 / 60, idle);
@@ -947,6 +1062,116 @@ export async function run({ check, assert, near }) {
       + 'the HUD lights a power as READY that the player has never been granted');
     return `charged prices quoted: ${rows.join(', ')}; POWER_BOON {${held.join(', ')}} matches `
       + `Player's own gates`;
+  });
+
+  /**
+   * UNLEASH — the 360-degree "get off me", and every clause of the request is
+   * a bound below.
+   *
+   * "one force power that is a 360 degree 'get off me' type of ability, costs
+   * a lot of force but you like yell really loud and raise both your arms out
+   * and push everything around you off (like in a scenario where you're being
+   * overwhelmed)."
+   *
+   * The clause that is easy to get wrong and impossible to SEE is the first. A
+   * power built by copying `forcePush` inherits its cone, and a cone tested
+   * with the enemies in front of you passes every assertion while being
+   * exactly the wrong shape — you would only find it by being surrounded, in a
+   * fight, at the moment it mattered. So the ring here is seeded all the way
+   * round on purpose and the bound is a COMPARISON: what is behind the player
+   * must travel about as far as what is in front.
+   */
+  check('unleash: it throws what is behind you as hard as what is in front', async () => {
+    const H = await import('./_coop.mjs');
+    const { POWER_COST } = await import('../../src/game/Powers.js');
+    const { world } = await H.bootWorld({
+      /* NOT `sandbox`. That mode holds the field at `sandboxCount`, which
+       * defaults to five, so a ring of eight is quietly culled to five and the
+       * three that vanish read as three bodies the power failed to move —
+       * measured, and it cost an hour and a wrong hypothesis about vector
+       * aliasing in `_shockwave`. */
+      level: 'colosseum', settings: { mode: 'waves', difficulty: 'knight' },
+    });
+    const p = world.player;
+    const y = world.terrain.height(0, 0);
+    p.position.set(0, y, 0);
+    p.aimDir.set(0, 0, -1);
+    p.maxForce = 200; p.force = 200;
+    p.cooldowns.unleash = 0;
+
+    const ring = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      /* `spawnEnemy(type, pos)` — the position is an ARGUMENT, not something
+       * to set afterwards: Enemy's constructor builds its body and its physics
+       * proxy from it, so a body spawned at the default and moved later has
+       * its collider somewhere else. */
+      const at = new THREE.Vector3(Math.sin(a) * 6, y, Math.cos(a) * 6);
+      const e = world.spawnEnemy?.('b1', at);
+      if (!e || !e.position) continue;
+      ring.push({ e, a });
+    }
+    assert(ring.length >= 6, `only ${ring.length} of 8 bodies could be seeded`);
+    const before = ring.map(({ e }) => e.position.clone());
+
+    const ctx = { enemies: world.enemies, physics: world.physics, particles: world.particles,
+      terrain: world.terrain, groundColor: world.groundColor, input: H.idleInput() };
+    /* COST IS READ BEFORE THE WORLD IS STEPPED. Force regenerates, so a
+     * reading taken after the thirty frames the bodies need to fly reports the
+     * spend minus half a second of regen — measured, 37 against a real 52,
+     * which would have looked like the price table being wrong. */
+    const purse = p.force;
+    p.forceUnleash(ctx);
+    const cost = purse - p.force;
+    /* PEAK OUTWARD, not final. A B1 walks about 4 m/s and the AI starts
+     * closing again the instant it is upright, so half a second after the cast
+     * the FINAL distance is knockback minus walk-back — measured, one body read
+     * 0.25 m of net travel having been thrown several metres. What the power
+     * did is the furthest it put them, so that is what is sampled. */
+    const peak = before.map((b) => b.length());
+    for (let i = 0; i < 30; i++) {
+      world.update(1 / 60, H.idleInput());
+      ring.forEach(({ e }, k) => { peak[k] = Math.max(peak[k], e.position.length()); });
+    }
+
+    /* 1. it costs a lot — and more than anything else on the table, which is
+     *    the difference between "expensive" and "the panic button". */
+    assert(cost > 40, `unleash cost ${cost.toFixed(0)} Force`);
+    const dearest = Math.max(...Object.entries(POWER_COST)
+      .filter(([k]) => k !== 'unleash').map(([, v]) => v));
+    assert(POWER_COST.unleash > dearest,
+      `unleash is ${POWER_COST.unleash} against a dearest-other of ${dearest}`);
+
+    /* 2. EVERYTHING went outward, front and back alike. */
+    const moved = ring.map(({ e, a }, i) => ({
+      d: peak[i] - before[i].length(),
+      out: peak[i] - before[i].length(),
+      facing: -Math.cos(a),                 // +1 dead ahead, -1 dead behind
+    }));
+    const front = moved.filter((m) => m.facing > 0.3);
+    const back = moved.filter((m) => m.facing < -0.3);
+    assert(front.length && back.length, 'the ring did not straddle the player');
+    assert(moved.every((m) => m.out > 0.5),
+      `something was not pushed outward (least ${Math.min(...moved.map((m) => m.out)).toFixed(2)} m)`);
+    const mean = (xs) => xs.reduce((n, m) => n + m.d, 0) / xs.length;
+    const fm = mean(front), bm = mean(back);
+    assert(bm > fm * 0.6,
+      `in front ${fm.toFixed(2)} m, BEHIND ${bm.toFixed(2)} m — that is a cone wearing a circle's name`);
+
+    /* 3. it staggers, because the room it buys is the point and not the damage. */
+    const stunned = ring.filter(({ e }) => (e.stunT ?? e.stunTimer ?? 0) > 0 || e.staggered).length;
+    assert(stunned >= Math.floor(ring.length * 0.6),
+      `only ${stunned} of ${ring.length} were staggered — knockback alone buys no room`);
+
+    /* 4. and it cannot be leaned on. */
+    assert(p.cooldowns.unleash > 4, `cooldown is ${p.cooldowns.unleash}s`);
+    const again = p.force;
+    p.forceUnleash(ctx);
+    assert(p.force === again, 'a second cast on cooldown still charged the player');
+
+    world.unload();
+    return `${cost.toFixed(0)} Force · ${ring.length} bodies: front ${fm.toFixed(2)} m, `
+      + `behind ${bm.toFixed(2)} m · ${stunned} staggered · ${p.cooldowns.unleash}s cooldown`;
   });
 
 }

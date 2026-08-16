@@ -1,5 +1,5 @@
 /**
- * SABER — a Force key that refuses has to say so.
+ * BATTLEFRONT BORZ — a Force key that refuses has to say so.
  *
  * THE BUG. The player reported "force lightning does nothing when pressed",
  * and it was true. `KeyZ` is in ACTIONS, printed in the Codex and on the pause

@@ -76,7 +76,25 @@ function sources(dir, out = []) {
  * line with it. That direction of error is safe: it can only hide a violation
  * from a line that also contains a URL, never invent one.
  */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+/**
+ * Comments out, LINE NUMBERS INTACT.
+ *
+ * This collapsed each comment to a single space, which shifts every offset
+ * after it — and the failure message is built from `text.slice(0, m.index)`, so
+ * the line it printed was the line in the STRIPPED text, not in the file. The
+ * first real defect the sixth form below caught was reported at
+ * `src/toon/live.js:72`; it is at line 131, and line 72 is the middle of a
+ * comment block about something else entirely. A check that names the wrong
+ * line sends the next person somewhere there is nothing wrong, which is worse
+ * than naming no line at all.
+ *
+ * Replacing each comment with the same number of characters — newlines kept,
+ * everything else blanked — leaves every later index exactly where it was.
+ */
+const blank = (m) => m.replace(/[^\n]/g, ' ');
+const strip = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, blank)
+  .replace(/(^|[^:])(\/\/[^\n]*)/g, (_, pre, c) => pre + blank(c));
 
 const FORMS = [
   [/\blevel:\s*'([a-z][a-z0-9_]*)'/g, "level: '…'"],
@@ -88,6 +106,48 @@ const FORMS = [
   // behind, which is a level name in every sense that matters and is not an
   // assignment.
   [/\.level\s*===\s*'([a-z][a-z0-9_]*)'/g, ".level === '…'"],
+  /**
+   * A SIXTH, and it is the one that cost the most to be missing.
+   *
+   * `level('deeps')` and `loadLevel('temple')` are the two ways a check ASKS
+   * FOR a world, and neither matched any form above — the file's own note two
+   * paragraphs up predicted exactly this ("the list of forms is itself a list
+   * kept by hand, and it will be short of one"). The consequence was not a
+   * missing warning, it was the §2.7 hang: `World.loadLevel` substitutes
+   * `LEVEL_ORDER[0]` for a key it does not know, which is right for a player
+   * with a stale profile and a trap in a check. So every dead name silently
+   * BUILT ANOTHER FULL WORLD, cached it under the dead key, and then measured a
+   * property of a room that no longer exists against a copy of the Ember Shelf.
+   * `levels-quality.mjs` alone carried nine of them across three checks — five
+   * extra Worlds in one check — which is why that suite was the one holding the
+   * most alive at once, and why adding an eighth real level took it from slow to
+   * never finishing.
+   *
+   * Two suites had it independently (`levels-quality`, `cloth-cost`), found by
+   * two people who were each sure they had found a one-off. That is what makes
+   * it a class rather than a pair, and a class belongs in this table.
+   */
+  [/\b(?:load)?[Ll]evel\(\s*'([a-z][a-z0-9_]*)'/g, "level('…') / loadLevel('…')"],
+
+  /**
+   * THE SEVENTH FORM, and this file predicted its own gap.
+   *
+   * The note above says "the list of forms is itself a list kept by hand, and it
+   * will be short of one". It was. `tools/checks/_coop.mjs` wrote the dead level
+   * `arena` as a DESTRUCTURING DEFAULT — `bootWorld({ level = 'arena' })` — which
+   * has no colon and no call, so every pattern above walked straight past it.
+   *
+   * What the blindness cost is the argument for adding it: `bootWorld` and
+   * `bootPair` are how most of this harness stands a world up, so one unseen
+   * default put an unknown number of checks on a level they did not name, and
+   * `coop`'s marksman check spent its life measuring a sniper with no line of
+   * sight and blaming the network for it.
+   *
+   * This form is deliberately narrow — `level` or `levelKey` immediately
+   * followed by `=` and a quoted key — because a wide one would match every
+   * assignment in the tree and the failures would stop being read.
+   */
+  [/\blevel(?:Key)?\s*=\s*'([a-z][a-z0-9_]*)'/g, "level = '…' (default / assignment)"],
 ];
 
 export function run({ check, assert }) {
@@ -124,7 +184,12 @@ export function run({ check, assert }) {
     const orphan = Object.keys(LEVELS).filter((k) => !LEVEL_ORDER.includes(k));
     assert(!missing.length, `LEVEL_ORDER names ${missing.join(', ')}, which LEVELS does not have`);
     assert(!orphan.length, `${orphan.join(', ')} exist but are not in LEVEL_ORDER — unreachable content`);
-    assert(LEVEL_ORDER.length >= 8, `only ${LEVEL_ORDER.length} levels`);
+    /* SEVEN, and the floor is here to catch an accidental deletion rather than
+     * a deliberate one. It was 8 against a roster of 13; six were cut on the
+     * player's word — the ground broke the art direction, or the room was a
+     * box, or it was simply weaker than the rest. A menu is judged by what a
+     * player can pick WRONG, so the number going down is not a regression. */
+    assert(LEVEL_ORDER.length >= 6, `only ${LEVEL_ORDER.length} levels`);
     /* And every one of them has to have the two things a caller assumes without
      * checking: a display name (main.js puts it in the HUD) and a terrain key
      * (World builds the ground from it before anything else runs). */

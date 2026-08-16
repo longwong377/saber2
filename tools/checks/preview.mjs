@@ -1,5 +1,5 @@
 /**
- * SABER — the character creator's preview box.
+ * BATTLEFRONT BORZ — the character creator's preview box.
  *
  * THREE BUGS, ALL REPORTED BY A PLAYER, ALL INVISIBLE TO THIS SUITE.
  *
@@ -58,6 +58,7 @@ import { functionBody } from './_source.mjs';
 import {
   assemblePreview, dressPreviewFigure, standPreviewFigure, framePreviewCamera, previewContent,
   skinRackFor, HAIR_COLORS, PREVIEW_VIEW, PREVIEW_SETTLE, PREVIEW_SEED,
+  PREVIEW_ZOOM_MAX, PREVIEW_SHOTS,
   BLADE_CAP,
   DEFAULT_SETTINGS,
 } from '../../src/ui/Menu.js';
@@ -402,6 +403,85 @@ export async function run({ check, assert }) {
       + `${(clear * 1000).toFixed(0)} mm of air at the fist`;
   });
 
+  check('preview: a small character holds its saber the way a big one does', () => {
+    /**
+     * PLAYER NOTE #2, ON THE SCREEN WHERE YOU PICK THE CHARACTER.
+     *
+     * "The yoda species character, the saber floats above their hands, and both
+     * arms are in the air. Also their clothes are oversized." All three were
+     * fixed in the GAME rig, and tools/checks/stature.mjs holds them there —
+     * and all three were still true in the creator, because `poseSaberArm`,
+     * `dressPreviewFigure` and the shot's blade allowance are a second copy of
+     * the model authored against a 1.78 m body. Nothing measured that copy: the
+     * framing check above passed throughout, because a figure can be perfectly
+     * framed and still be holding its sword a hand-span away from its palm.
+     *
+     * Every quantity is stature.mjs's, for stature.mjs's reason — a small
+     * character is supposed to have small numbers, so a defect is a DIVERGENCE
+     * between two frames and never a magnitude. Each is a ratio of two lengths
+     * belonging to the same figure, and the HUMAN's own reading is the bar.
+     *
+     *                      before        after      human
+     *      bore (hands)      4.86         0.72       0.72
+     *      hilt (hands)      5.99         2.39       2.39
+     *      demand (reach)    0.99         0.83       0.84
+     *      hem below floor   280 mm       0 mm       0 mm
+     *
+     * `demand` at 0.99 is the one that explains "both arms in the air": above 1
+     * the two-bone IK cannot arrive at all — it straightens the arm, points it
+     * at the target and stops short.
+     */
+    const ref = {};
+    const rows = [];
+    for (const sp of SPECIES) {
+      const b = bench({ species: sp.id });
+      const rig = b.rig;
+      const hand = rig.get('handR');
+      const gs = b.saber.gripScale ?? 1;
+
+      // where the fist closes on the hilt, against where the fist actually is
+      const gripPt = b.saber.root.localToWorld(new THREE.Vector3(0, GRIP_AT.R * gs, 0));
+      const wrist = new THREE.Vector3();
+      hand.obj.getWorldPosition(wrist);
+      const bore = gripPt.distanceTo(wrist) / hand.length;
+
+      // the hilt, in the hand that holds it — Saber.setGripScale's own measure
+      const hb = new THREE.Box3().setFromObject(b.saber.hilt);
+      const hilt = Math.max(hb.max.x - hb.min.x, hb.max.y - hb.min.y, hb.max.z - hb.min.z) / hand.length;
+
+      // how far the arm is asked to reach, in its own whole reach
+      const shoulder = new THREE.Vector3();
+      rig.get('armR').obj.getWorldPosition(shoulder);
+      const demand = shoulder.distanceTo(wrist) / (rig.get('armR').length + rig.get('foreR').length);
+
+      // and the clothes, which is the third claim in the same note
+      let hem = 0;
+      for (const c of [b.cloak, b.skirt]) {
+        if (!c) continue;
+        for (let i = 1; i < c.pos.length; i += 3) hem = Math.min(hem, c.pos[i]);
+      }
+
+      if (!sp.frame) { ref.bore = bore; ref.hilt = hilt; ref.demand = demand; }
+      rows.push(`${sp.id} ${bore.toFixed(2)}/${hilt.toFixed(2)}/${demand.toFixed(2)}`);
+      // The bore is a place inside the fist, so a correct grip is the human's
+      // number and not zero; a third of a hand of slack is well inside anything
+      // a viewer would call held.
+      assert(Math.abs(bore - ref.bore) < 0.35,
+        `${sp.id} holds its hilt ${bore.toFixed(2)} of its own hands from its wrist against a human's `
+        + `${ref.bore.toFixed(2)} — the saber is floating beside the hand, not in it`);
+      assert(hilt < ref.hilt * 1.5,
+        `${sp.id} carries a hilt ${hilt.toFixed(2)} of its own hands long against a human's `
+        + `${ref.hilt.toFixed(2)} — the hilt did not take the species scale`);
+      assert(demand < 0.95,
+        `${sp.id}'s guard is solved ${demand.toFixed(2)} of its own arm's reach from its shoulder `
+        + '— the arm cannot get there and the hilt hangs in the gap');
+      assert(hem > -0.02,
+        `${sp.id}'s garments settle ${(-hem * 1000).toFixed(0)} mm below the floor it stands on `
+        + '— the preview is dressing it in somebody else\'s clothes');
+    }
+    return `bore/hilt in the figure's own hands, reach in its own arm — ${rows.join(', ')}`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  3. the robe cut                                                   */
   /* ══════════════════════════════════════════════════════════════════ */
@@ -475,7 +555,13 @@ export async function run({ check, assert }) {
     assert(/assemblePreview\(p\.pivot, p\.figure, p\.saber, this\.s\)/
       .test(functionBody(menu, '_refreshPreview(rebuild')),
       'the preview no longer assembles the figure from the live settings');
-    assert(/dressPreviewFigure\(host, built, s\.robeCut\)/.test(menu),
+    // The cut is still the third argument and still comes off the live
+    // settings; what follows it now is the rest of the wardrobe — the cape,
+    // the over-panels and the belt, which are the other pieces the same
+    // function attaches. The comma is deliberate: it pins the cut's POSITION
+    // without pinning the arity, so a piece added to the wardrobe does not
+    // read as the cut coming unwired.
+    assert(/dressPreviewFigure\(host, built, s\.robeCut[,)]/.test(menu),
       'the assembled figure is not dressed in the chosen cut');
     // and behaviourally: an unknown id must not throw in a menu
     const odd = dressPreviewFigure(new THREE.Group(), buildJedi({ scale: 1 }), 'no-such-cut');
@@ -619,5 +705,63 @@ export async function run({ check, assert }) {
     assert(diffs.every(d => d === 0),
       `two builds of the same character differ by ${diffs.join('/')} pixels — the preview is not reproducible`);
     return `two builds, four bearings, ${area(a[0])} px of figure, 0 pixels of difference`;
+  });
+
+  /**
+   * THE PREVIEW CAN BE WALKED INTO. Reported as "you should be able to zoom
+   * into the preview image to better see the customizations, or even zoom on
+   * the saber, it's too far away".
+   *
+   * Two properties, and the second is the one that is easy to get wrong. The
+   * first is that zoom moves the camera closer. The second is that it moves it
+   * closer along the SAME axis to the SAME framing — an earlier draft folded
+   * the zoom into the fit iteration, and the solver then dutifully converged on
+   * "the figure fills the frame at 3x", which is not a zoom, it is a smaller
+   * figure. So `fill` must be unchanged by zoom while `distance` falls.
+   *
+   * And `focus` is in units of the figure's own HALF-HEIGHT, not metres:
+   * a fixed offset frames a human's chin and Yoda's species' knees. That is
+   * checked by framing the face shot on both and asserting the camera's height
+   * lands the same fraction up each figure.
+   */
+  check('preview: the camera can be walked in, and walking in does not re-frame', () => {
+    const content = { y0: 0, y1: 1.78, radius: 0.55 };
+    const cam = new THREE.PerspectiveCamera(34, 1.15, 0.05, 40);
+
+    const base = framePreviewCamera(cam, content, { aspect: 1.15 });
+    const basePos = cam.position.clone();
+    assert(base.zoom === 1, `the default is zoom ${base.zoom}, not 1`);
+
+    let prev = base.distance;
+    for (const z of [1.5, 2.6, 3.4, PREVIEW_ZOOM_MAX]) {
+      const got = framePreviewCamera(cam, content, { aspect: 1.15, zoom: z });
+      assert(got.distance < prev, `zoom ${z} did not move the camera in (${got.distance} vs ${prev})`);
+      // the same framing, from closer: the fit is solved before the walk-in
+      assert(Math.abs(got.fill - base.fill) < 0.01,
+        `zoom ${z} re-framed the shot (fill ${got.fill.toFixed(3)} vs ${base.fill.toFixed(3)}) — `
+        + 'the zoom is inside the fit iteration, which makes it a smaller figure rather than a closer camera');
+      // …and along the same axis
+      const bearing = cam.position.clone().normalize().dot(basePos.clone().normalize());
+      assert(bearing > 0.999, `zoom ${z} swung the camera off its own axis (dot ${bearing.toFixed(4)})`);
+      prev = got.distance;
+    }
+    assert(base.distance / prev > 3, `${PREVIEW_ZOOM_MAX}x only bought ${(base.distance / prev).toFixed(2)}x`);
+
+    // The named shots, and FOCUS being proportional rather than absolute.
+    const face = PREVIEW_SHOTS.find(s => s.id === 'face');
+    assert(face, 'there is no face shot');
+    const heights = [];
+    for (const h of [1.78, 0.66]) {                       // a human, and Yoda's species
+      framePreviewCamera(cam, { y0: 0, y1: h, radius: 0.55 * (h / 1.78) },
+        { aspect: 1.15, zoom: face.zoom, focus: face.focus });
+      heights.push(cam.position.y / h);                   // as a fraction of the figure
+    }
+    assert(Math.abs(heights[0] - heights[1]) < 0.02,
+      `the face shot sits at ${(heights[0] * 100).toFixed(0)}% of a human and `
+      + `${(heights[1] * 100).toFixed(0)}% of a 0.66 m figure — the focus is in metres, not in figures`);
+
+    return `${PREVIEW_ZOOM_MAX}x max, ${(base.distance / prev).toFixed(1)}x closer, fill held at `
+      + `${base.fill.toFixed(3)}; ${PREVIEW_SHOTS.length} shots, face at `
+      + `${(heights[0] * 100).toFixed(0)}% of the figure on both`;
   });
 }

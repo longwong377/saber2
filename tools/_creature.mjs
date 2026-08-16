@@ -1,0 +1,200 @@
+/**
+ * WHAT THE BIG CREATURES LOOK LIKE AT FORTY METRES — as numbers.
+ *
+ *   node --import ./tools/register.mjs tools/_creature.mjs
+ *
+ * The complaint this was written for is "all your monsters look the same,
+ * sphere with some legs", and the thing that makes that answerable rather than
+ * a matter of taste is the reference the player supplied:
+ * `assets/reference/maps/colosseum/more arena 1.jpg` has three creatures in one
+ * frame at roughly forty metres, and at that range NONE of the detail survives.
+ * What tells them apart is the SILHOUETTE — a low wide block, a tall splayed
+ * tripod, a small squat one — so that is what this measures.
+ *
+ * Per creature it prints, off the real built rig posed by the real gait solver:
+ *
+ *   tris/meshes    against the 13 000 / 76 the characters check caps a body at
+ *   L×W×H          the bounding box in metres, at the scale the archetype uses
+ *   L/H            long-and-low against tall-and-heavy, the first read
+ *   fill           silhouette pixels over the area of its own bounding box —
+ *                  a solid animal fills 0.6+, a thing made of legs fills 0.2
+ *   mass@          height of the silhouette's centroid over its own height:
+ *                  where the weight is. A reek is 0.42, an acklay 0.62.
+ *   IoU            worst overlap with any OTHER creature, rasterised into one
+ *                  world frame at the same metres per pixel. This is the whole
+ *                  number: two animals that share a body plan land above 0.5.
+ *
+ * The frame is deliberately shared and absolute (12 m wide, 12 m tall, feet on
+ * the bottom edge) rather than per-creature-normalised, for the reason
+ * tools/checks/characters.mjs gives for its own: normalising each figure to its
+ * own box would call a 2 m nexu and a 7 m rancor identical for being the same
+ * shape, and they are not the same shape BECAUSE they are not the same size.
+ *
+ * ── AND IT IS FIVE ARCHETYPES OF THIRTY-ONE. ────────────────────────────
+ *
+ * `tools/_roster.mjs` is this file's method pointed at the whole roster, and
+ * it says the complaint was never about creatures alone: at LOD 1 the nineteen
+ * HUMANOIDS were 103 of 171 pairs over 0.50 flank IoU with two pairs at 1.000,
+ * against 0 of 10 here and 0 of 21 for the machines. Reach for that one for
+ * anything roster-wide; this one stays because it is the only place that
+ * prints a creature's body-plan numbers — L/H, fill, mass height and its move
+ * set — which is what "no two share a BODY PLAN" is actually read against.
+ *
+ * The two do NOT share a frame or a resolution, and that is deliberate rather
+ * than an oversight: 12 m at 128 px is 9.4 cm per pixel, which is right for a
+ * 7 m rancor and would render a 1.78 m trooper 19 pixels tall. Two runs are
+ * only comparable inside one family, which is why _roster.mjs frames each
+ * family separately and asserts nothing across them.
+ */
+// The DOM shim FIRST — hideMat reaches Textures.js, which bakes onto a canvas.
+import './dom-shim.mjs';
+import * as THREE from 'three';
+import { CREATURE_PLANS } from '../src/game/Bodies.js';
+import { initPhysics } from '../src/physics/Rapier.js';
+import { RapierWorld } from '../src/physics/RapierWorld.js';
+import { Enemy, enemyRng, ARCHETYPES, beastMoveSet } from '../src/game/Enemy.js';
+import '../src/game/Levels.js';          // registers the colosseum's creatures
+
+await initPhysics();
+
+/** Every archetype that runs the beast brain, found rather than listed. */
+const BEASTS = Object.keys(ARCHETYPES).filter((k) => ARCHETYPES[k].custom === 'beast');
+
+/**
+ * A real Enemy, posed by the real `_poseWalker` — NOT the bind pose.
+ *
+ * Measuring the rig as built is measuring something the player only ever sees
+ * past 62 m, where the solver stops running; every leg is then wherever its
+ * rest direction left it. It also flatters and punishes the wrong things: the
+ * first pass of this file called the reek and the gundark 59% the same figure
+ * because both are a mass with four limbs hanging off it in bind, and 27% once
+ * the gait had actually planted their feet.
+ */
+const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+const terrain = {
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+  size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+  crater() {}, flush() {}, slopeAt: () => 0,
+};
+physics.terrain = terrain;
+const particles = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+const world = {
+  scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+  players: [], enemies: [], props: [], particles, time: 0, groundColor: 0xcfae82,
+  bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+  report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+};
+const ctx = { enemies: [], particles, terrain, physics, bolts: world.bolts, time: 0,
+  pickTarget: () => null, camera: world.engine.camera };
+
+const W = 128, H = 128, SPAN = 12;
+
+/** Front silhouette (looking down -Z) into a fixed world frame, feet on the floor. */
+function silhouette(root) {
+  const bits = new Uint8Array(W * H);
+  const u0 = -SPAN / 2, v0 = 0, v1 = SPAN;
+  const sx = (W - 1) / SPAN, sy = (H - 1) / (v1 - v0);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    const g = o.geometry, p = g.attributes.position, idx = g.index;
+    const n = idx ? idx.count : p.count;
+    for (let i = 0; i < n; i += 3) {
+      const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+      a.fromBufferAttribute(p, i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(p, i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(p, i2).applyMatrix4(o.matrixWorld);
+      const P = [a, b, c].map((q) => [(q.x - u0) * sx, (v1 - q.y) * sy]);
+      const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
+      const x1 = Math.min(W - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
+      const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])));
+      const y1 = Math.min(H - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])));
+      const d0 = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[2][0] - P[0][0]) * (P[1][1] - P[0][1]);
+      if (Math.abs(d0) < 1e-12) continue;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5, py = y + 0.5;
+        const w0 = ((P[1][0] - px) * (P[2][1] - py) - (P[2][0] - px) * (P[1][1] - py)) / d0;
+        const w1 = ((P[2][0] - px) * (P[0][1] - py) - (P[0][0] - px) * (P[2][1] - py)) / d0;
+        if (w0 >= -1e-6 && w1 >= -1e-6 && 1 - w0 - w1 >= -1e-6) bits[y * W + x] = 1;
+      }
+    }
+  });
+  return bits;
+}
+
+function iou(a, b) {
+  let inter = 0, uni = 0;
+  for (let i = 0; i < a.length; i++) { if (a[i] || b[i]) uni++; if (a[i] && b[i]) inter++; }
+  return uni ? inter / uni : 0;
+}
+
+const rows = [];
+const sils = {};
+for (const type of BEASTS) {
+  const A = ARCHETYPES[type];
+  enemyRng.seed(99);
+  const e = new Enemy(world, type, new THREE.Vector3(0, 0, 0));
+  e.position.set(0, 0, 0);
+  /* Facing +X, so the raster below (which looks down −Z) sees the animal's
+   * FLANK. That is the view `more arena 1.jpg` is taken from and the one that
+   * carries leg count, stance height and mass distribution; head-on, a reek
+   * and a rancor are both "a wide thing" and the measurement says nothing.
+   * Left to itself an Enemy picks its own facing, and the first run of this
+   * file measured three creatures side-on and two head-on. */
+  e.facing = Math.PI / 2;
+  e.walkPhase = 0.12;                     // mid-stance, so no foot is airborne
+  e.state = 'approach';
+  e._poseWalker(1 / 60, ctx);
+  const root = e.rig.root;
+  root.updateMatrixWorld(true);
+
+  let tris = 0, meshes = 0, lodMeshes = 0;
+  const box = new THREE.Box3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    meshes++; box.expandByObject(o);
+    if (o.userData.silhouette || o === o.parent?.userData?.bone?.primary) lodMeshes++;
+    const g = o.geometry;
+    tris += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+  });
+  // drop it onto the floor so every silhouette shares one ground line
+  root.position.y -= box.min.y;
+  root.updateMatrixWorld(true);
+  const bits = silhouette(root);
+  sils[type] = bits;
+
+  const s = box.getSize(new THREE.Vector3());
+  let px = 0, sumY = 0, minY = H, maxY = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!bits[y * W + x]) continue;
+    px++; sumY += (H - 1 - y); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const hPx = (maxY - minY + 1), wPx = s.x * ((W - 1) / SPAN);
+  rows.push({
+    type, label: A.label, tris: Math.round(tris), meshes, lodMeshes,
+    L: s.x, Wd: s.z, Ht: s.y, lh: s.x / s.y,
+    fill: px / Math.max(1, hPx * wPx),
+    mass: (sumY / Math.max(1, px)) / Math.max(1, H - 1 - minY),
+    moves: beastMoveSet(A, e.built).join('/'),
+  });
+  e.dispose?.();
+}
+
+let worst = 0, worstPair = '';
+for (const a of BEASTS) for (const b of BEASTS) {
+  if (a >= b) continue;
+  const v = iou(sils[a], sils[b]);
+  if (v > worst) { worst = v; worstPair = `${a}/${b}`; }
+}
+
+console.log('creature      tris mesh/lod     L     W     H   L/H  fill  mass@  worstIoU  moves');
+for (const r of rows) {
+  let mx = 0, mxWith = '';
+  for (const o of BEASTS) if (o !== r.type) { const v = iou(sils[r.type], sils[o]); if (v > mx) { mx = v; mxWith = o; } }
+  console.log(
+    `${r.label.padEnd(9)} ${String(r.tris).padStart(6)} ${String(r.meshes).padStart(3)}/${String(r.lodMeshes).padStart(2)}  `
+    + `${r.L.toFixed(2).padStart(5)} ${r.Wd.toFixed(2).padStart(5)} ${r.Ht.toFixed(2).padStart(5)}  `
+    + `${r.lh.toFixed(2)}  ${r.fill.toFixed(2)}  ${r.mass.toFixed(2)}  ${mx.toFixed(2)} (${mxWith})  ${r.moves}`);
+}
+console.log(`\nworst pair overall: ${worstPair} ${worst.toFixed(3)}`);
+console.log(`body plans: ${Object.keys(CREATURE_PLANS).join(', ')}`);

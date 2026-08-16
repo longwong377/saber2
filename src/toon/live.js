@@ -1,5 +1,5 @@
 /**
- * SABER — the real game, on the meadow, cel-shaded.
+ * BATTLEFRONT BORZ — the real game, on the meadow, cel-shaded.
  *
  * The first experiment (`toon.html`) shaded a hand-built scene and answered a
  * narrow question: what does a ramp do to the lighting. The verdict was "better,
@@ -121,14 +121,30 @@ export class LiveToon {
        */
       this.settings = {
         ...DEFAULT_SETTINGS,
-        level: 'meadow', quality: 'ultra', mode: 'sandbox',
+        level: 'wood', quality: 'ultra', mode: 'sandbox',
         sandboxCount: 0, sandboxFire: 0,
         grassScale: 1.5, particleScale: 1.2, resolutionScale: 1,
         volume: 0, music: 0, firstPerson: false,
       };
       this.world = new World(this.engine, this.settings);
       this.world.difficulty = DIFFICULTY.knight;
-      this.world.loadLevel('meadow');
+      /**
+       * THE MEADOW IS GONE, and this page outlived it.
+       *
+       * `meadow` was culled with the five other levels the player asked to be
+       * rid of, and `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it
+       * does not know — so this page has been rendering the Ember Shelf, a
+       * basalt slab under an ash fall, while every word above it talks about
+       * grass and a low sun raking across a swell. It looked like it worked,
+       * which is why nobody noticed.
+       *
+       * `wood` is the closest surviving thing: the one outdoor level left with
+       * real ground cover. It is a bog rather than a meadow, so the grass this
+       * page thickens is reed and litter now, and the prose above is kept
+       * because it records what the experiment was FOR rather than what it is
+       * standing on.
+       */
+      this.world.loadLevel('wood');
       this._thickenGrass();
     });
 

@@ -1,5 +1,5 @@
 /**
- * SABER — a stylised render path, as an experiment.
+ * BATTLEFRONT BORZ — a stylised render path, as an experiment.
  *
  * ── SUPERSEDED. READ src/toon/Cel.js INSTEAD. ─────────────────────────────
  *

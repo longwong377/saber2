@@ -1,5 +1,5 @@
 /**
- * SABER — a flag an author sets has to mean something.
+ * BATTLEFRONT BORZ — a flag an author sets has to mean something.
  *
  * Two defects, both found by auditing the player's own feature requests rather
  * than by anything failing, and both the signature bug of this codebase: code

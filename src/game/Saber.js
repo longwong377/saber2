@@ -1,5 +1,5 @@
 /**
- * SABER — the weapon.
+ * BATTLEFRONT BORZ — the weapon.
  *
  * A hilt pose in, a swept blade volume out. Everything downstream — deflection,
  * cutting, the arm IK, the hum — reads from the sweep this produces, so the
@@ -130,6 +130,34 @@ export const SABER_COLORS = [
  * they stay inside ±15 mm of it, because a hilt that emits 4 cm further out is
  * a longer sword wearing a hilt's name.
  */
+/**
+ * WHERE THE METAL STOPS, off the geometry rather than off the spec.
+ *
+ * A hilt's own extent is what says whether a hand closes on it, and the ten
+ * hilts do not agree about it: the Graflex bottoms out 85 mm below the origin
+ * and the Shoto 54 mm, because a pommel, a control box and a belt hook all
+ * reach past whatever `len` says. So this is measured from the built meshes and
+ * not computed from `HILT_SPECS` — a second derivation off the spec would be a
+ * hand-maintained twin of the geometry, and the geometry is what the player
+ * sees a fist against.
+ *
+ * Once per build, on ten hilts, in the constructor. Never per frame.
+ */
+function hiltFloor(group) {
+  group.updateMatrixWorld(true);
+  let lo = Infinity;
+  const v = new THREE.Vector3();
+  group.traverse((o) => {
+    const pos = o.isMesh && o.geometry?.attributes?.position;
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      if (v.y < lo) lo = v.y;
+    }
+  });
+  return Number.isFinite(lo) ? lo : -0.09;
+}
+
 export const HILT_SPECS = {
   /* ── the five that shipped, now actually different from each other ──── */
   Graflex: {
@@ -635,6 +663,38 @@ const TRAIL_FRAG = /* glsl */`
 
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * THE ENGINE EVERY BLADE IN THE PLAYING SCENE SENDS ITS LIGHT TO.
+ *
+ * A registry rather than a constructor argument, and the reason is where the
+ * Sabers are built: `Enemy.js` (twice), `Net.js`, `Menu.js`, `toon/scene.js`
+ * and a dozen checks all call `new Saber(scene, …)`, and thirty ENEMY blades
+ * are what note #15 is about — the player's own two lights were never the
+ * problem. Threading a parameter to all of them means editing four files that
+ * other work is live in.
+ *
+ * So the first Saber that is TOLD about an engine publishes it, and every blade
+ * built into that engine's scene afterwards finds it. `Player` is that first
+ * Saber in every real game: `World.spawnPlayer` runs before any wave.
+ *
+ * `resolveLightSink` is the guard, and its test is the SCENE and not the
+ * registry: a blade only uses the pool if the object it was parented into
+ * belongs to that engine's scene graph. The character creator's preview runs
+ * its own renderer over its own scene while a game engine is alive, and a
+ * request posted from there would light nothing and cost a slot.
+ */
+let LIGHT_SINK = null;
+
+/** @returns the engine this saber should ask for light, or null for its own. */
+export function resolveLightSink(engine, scene) {
+  if (engine && typeof engine.lightUp === 'function') LIGHT_SINK = engine;
+  const sink = LIGHT_SINK;
+  if (!sink || !sink.scene) return null;
+  let top = scene;
+  while (top && top.parent) top = top.parent;
+  return top === sink.scene ? sink : null;
+}
+
 export class Saber {
   constructor(scene, opts = {}) {
     this.scene = scene;
@@ -644,6 +704,14 @@ export class Saber {
     this.glowColor = new THREE.Color(c.glow);
     this.hue = new THREE.Color(1, 1, 1);
     this.punch = 1;
+    /**
+     * Which view this blade is being LOOKED at from, and therefore which pinch
+     * its lobes take. A field with a setter rather than a flag Player pokes,
+     * because the lobes have to be re-synced when it changes and there is
+     * exactly one place that may write them (_syncWidth). Set before
+     * `coreWidth` below, whose setter runs that sync.
+     */
+    this._firstPerson = false;
     this.bladeLength = opts.bladeLength ?? 1.15;
     /**
      * The order this weapon was built by, or null for a blade that belongs to
@@ -712,12 +780,49 @@ export class Saber {
     // Two lights, not more, on purpose: every enemy in a wave carries one of
     // these, and NUM_POINT_LIGHTS is a per-fragment unrolled loop in every lit
     // material in the game.
+    //
+    // THAT COMMENT SAW HALF OF NOTE #15 AND CAPPED THE WRONG THING. It capped
+    // the lights PER BLADE at two and nothing capped the number of BLADES:
+    // measured with tools/_crowd.mjs, an empty colosseum carries 2 dynamic
+    // point lights and thirty acolytes carry 64. The second cost is the one the
+    // player calls a freeze rather than lag — three.js bakes NUM_POINT_LIGHTS
+    // into the shader SOURCE, so a blade igniting or a wielder dying moves the
+    // count and recompiles every lit material in the scene.
+    //
+    // These two are now REQUESTS rather than lights: they carry the position,
+    // the colour (see `_applyColour` and FLOOR_CHANNEL), the 5.4/2.4 candela
+    // tuning and the 1/r decay that the whole near/far balance is built on, and
+    // once a frame `_updateVisuals` offers them to `Engine.lightUp`. The engine
+    // holds a FIXED pool of eight that is never added to or removed from the
+    // scene, so the count cannot change and the recompile cannot happen.
+    //
+    // They are still PointLights and not plain records, because everything that
+    // grades this blade's light — tools/checks/saber-light.mjs, vfx.mjs — reads
+    // `decay`, `distance`, `castShadow` and `color` off them, and a second
+    // description of a light beside the light is the defect this project keeps
+    // removing.
     this.light = new THREE.PointLight(0xffffff, 0, 7, 1);
     this.light.castShadow = false;
-    scene.add(this.light);
     this.tipLight = new THREE.PointLight(0xffffff, 0, 4.5, 1);
     this.tipLight.castShadow = false;
-    scene.add(this.tipLight);
+    /**
+     * …AND THEY GO IN THE SCENE WHEN THERE IS NO POOL TO ASK.
+     *
+     * The character-creator preview (Menu.js) builds its Saber into `p.pivot`
+     * inside its OWN scene with its own renderer, and so does `toon/scene.js`
+     * and every headless check that news up a Saber against a bare
+     * `THREE.Scene`. None of those has an Engine, none of them has more than one
+     * blade, and a preview whose sabre stopped lighting anything would be a
+     * regression bought for nothing. So the fallback is exactly the old
+     * behaviour, and the test is IDENTITY OF THE SCENE — not merely "an engine
+     * was registered", because the menu preview runs while a game's engine is
+     * alive and its blade must not post requests into a pool that renders a
+     * different scene.
+     */
+    this.engine = resolveLightSink(opts.engine, scene);
+    /** Whose blade never loses a pool slot. See Engine.lightUp's ranking. */
+    this.lightPriority = opts.lightPriority ?? 0;
+    if (!this.engine) { scene.add(this.light); scene.add(this.tipLight); }
 
     this._applyColour();
   }
@@ -896,8 +1001,53 @@ export class Saber {
     this.hiltMetals = built.metals;
     this.hiltSpec = built.spec;
     this.hilt = built.group;
+    // BEFORE the group is parented and before the grip scale is applied, so the
+    // number comes out in the same space `GRIP_AT` is written in — the caller
+    // multiplies by `gs` exactly as it does for the third-person grip.
+    this.hiltFloor = hiltFloor(built.group);
     this.root.add(built.group);
-    this.emitterY = built.emitter;
+    this._emitter0 = built.emitter;
+    this.setGripScale(this.gripScale ?? 1);
+  }
+
+  /**
+   * HOW BIG THIS WEAPON'S HILT IS, because a grip is a contact between two
+   * objects and the smaller of them sets the scale.
+   *
+   * The hilt is the ONE part of a figure that is not built by `Bodies.js` and
+   * therefore the one part that never took a species scale. Measured on the
+   * shipped small frame (tools/_stature.mjs), in units of the hand holding it:
+   *
+   *     hilt / hand      human 2.44        smallfolk 6.10
+   *
+   * A 0.24 m bar through a 0.04 m fist is a quarterstaff. It is also why the
+   * arms sat high after the guard itself was fixed: `GRIP_AT.R` is a HILT-local
+   * +0.050, so the fist is pushed 50 mm up a blade that points upward in a
+   * guard — a tenth of a human's arm and a fifth of this one's — and both fists
+   * straddle a 65 mm span of shaft on a hand only 40 mm wide, which cannot
+   * close on it and cannot look like it has.
+   *
+   * WHY IT SHRINKS AT ALL, since a lightsaber is a machined object and not a
+   * texture: because the reference says so. `assets/reference/units/heroes/
+   * yoda.jpg` is a SHOTO — the metal standing clear above the fist is about one
+   * fist, and below it about half of one, which is the same proportion Obi-Wan's
+   * Graflex has in his much bigger hand two plates over. Across all fourteen
+   * plates the constant is not the hilt's length in centimetres, it is the hilt
+   * against the hand. At the hand's own scale this hilt is 96 mm — a heavy
+   * torch, not "nothing" — and it lands at 2.44 hands, the human's figure
+   * exactly, without that number being typed anywhere.
+   *
+   * The BLADE is untouched. `bladeLength` is a player setting and a combat
+   * reach, and a smaller wielder is not carrying a shorter sword; only the
+   * emitter face comes down with the hilt it is machined into, which shortens
+   * the whole weapon by 9 cm on a 1.3 m one.
+   */
+  setGripScale(g = 1) {
+    this.gripScale = g;
+    if (this.hilt) this.hilt.scale.setScalar(g);
+    this.emitterY = (this._emitter0 ?? this.emitterY ?? 0) * g;
+    if (this.bladeGroup) this.bladeGroup.position.y = this.emitterY;
+    return this;
   }
 
   /**
@@ -992,6 +1142,19 @@ export class Saber {
     amp:   [58.0,   5.20,   1.45],
     radius: 0.309,
   };
+
+  /**
+   * The per-VIEW pinch on that profile. See _syncWidth for the derivation; the
+   * short version is that first person is five times the angular size and the
+   * bloom pass works in screen space.
+   *
+   * NEUTRAL is 1.0 in every slot and `x * 1` is exact in IEEE float, so a
+   * third-person blade comes out of _syncWidth bit-for-bit what it was before
+   * this existed — which is what lets the whole saber-bloom suite, every one of
+   * whose bounds was measured in third person, stay untouched.
+   */
+  static NEUTRAL_PINCH = { width: [1, 1, 1], amp: [1, 1, 1] };
+  static FP_PINCH = { width: [0.82, 0.66, 0.52], amp: [0.90, 0.72, 0.58] };
 
   /**
    * HOW MUCH OF THE CORE LOBE'S CHROMA IS GIVEN UP, and why there is any.
@@ -1167,8 +1330,43 @@ export class Saber {
    * The smear's two AMPLITUDES live here for the same reason its thickness does,
    * and they did not until this round — see the second half of the body.
    */
+  get firstPerson() { return this._firstPerson; }
+  set firstPerson(v) {
+    const b = !!v;
+    if (b === this._firstPerson) return;    // _syncWidth is not free; a no-op write is common
+    this._firstPerson = b;
+    this._syncWidth();
+  }
+
   _syncWidth() {
     const w = this._coreWidth, P = Saber.PROFILE;
+    /**
+     * FIRST PERSON IS A DIFFERENT ANGULAR SIZE, and the bloom pass works in
+     * screen space.
+     *
+     * The profile above is measured and tuned in THIRD person, where the
+     * camera sits 3.05 m back and the blade is another 1.4 m out in front of
+     * the chest — call it 3.5 m of eye-to-blade. In first person the emitter
+     * is in the player's own hand and the blade runs out from roughly 0.7 m.
+     * That is five times the angular size, so the same world-space lobe covers
+     * five times the screen WIDTH and twenty-five times the screen AREA, and
+     * every one of those pixels is over the bloom threshold. Nothing about the
+     * blade changed between views; the solid angle did.
+     *
+     * THE LEVER IS SIGMA AND NOT AMPLITUDE, which is not a preference — the
+     * blown radius of a gaussian against a threshold goes as
+     * sigma·sqrt(2·ln(amp/t)), so it is LINEAR in sigma and only square-root-
+     * of-log in amplitude. tools/checks/saber-bloom.mjs reached the same
+     * conclusion the last time this was pinched and says so at length.
+     *
+     * `FP_PINCH` is deliberately not 1/5. Matching the screen-space halo
+     * exactly would put the core sigma at 1.4 mm, which is not a lightsaber,
+     * it is a scratch. It is the largest step that leaves the core reading as
+     * a blade in the hand — the halo takes most of the cut because the halo is
+     * the term that is actually spread across the frame, and the core takes
+     * least because the core is the object.
+     */
+    const V = this.firstPerson ? Saber.FP_PINCH : Saber.NEUTRAL_PINCH;
     /* THE ORDER'S TUNING IS A FACTOR ON EVERY LOBE, applied here and nowhere
      * else, for exactly the reason the width slider is: a second place that
      * writes uWidth is a second place that can be forgotten. NEUTRAL_TUNING is
@@ -1177,14 +1375,16 @@ export class Saber {
     const T = this._tuning;
     // The two lobes the SMEAR is defined against, computed once here so the
     // blade and the trail cannot be given different exponents by accident.
-    const glow = P.amp[1] * w * T.amp[1];
-    const halo = P.amp[2] * w * w * T.amp[2];
+    const glow = P.amp[1] * w * T.amp[1] * V.amp[1];
+    const halo = P.amp[2] * w * w * T.amp[2] * V.amp[2];
     if (this.bladeMat) {
       this.bladeMat.uniforms.uWidth.value.set(
-        P.width[0] * w * T.width[0], P.width[1] * w * T.width[1], P.width[2] * w * T.width[2]);
+        P.width[0] * w * T.width[0] * V.width[0],
+        P.width[1] * w * T.width[1] * V.width[1],
+        P.width[2] * w * T.width[2] * V.width[2]);
       // The quad has to reach past the widest lobe, so an order that opens the
       // halo up has to open the quad with it or the halo is cut off square.
-      this.bladeMat.uniforms.uRadius.value = P.radius * w * T.radius;
+      this.bladeMat.uniforms.uRadius.value = P.radius * w * T.radius * V.width[2];
       // THE WIDTH SLIDER HAS TO REACH THE BLOOM, or it does not do what its
       // label says. It used to scale only the gaussian SIGMAS, and the player
       // reported — twice — that the blade "covers way too much of the screen in
@@ -1200,7 +1400,8 @@ export class Saber {
       // stripe), but the GLOW and HALO — the two terms that actually spread
       // across the screen — now scale with the setting, superlinearly for the
       // halo because that is the one you see from the far side of an arena.
-      this.bladeMat.uniforms.uAmp.value.set(P.amp[0] * (0.55 + 0.45 * w) * T.amp[0], glow, halo);
+      this.bladeMat.uniforms.uAmp.value.set(
+        P.amp[0] * (0.55 + 0.45 * w) * T.amp[0] * V.amp[0], glow, halo);
     }
     this.trailThickness = P.width[1] * 1.6 * w;
     /* AND IT HAS TO REACH THE SMEAR, for the same reason and with more force.
@@ -1559,6 +1760,17 @@ export class Saber {
       this.tipLight.position.copy(_v1);
       this.tipLight.intensity = 2.4 * this.ignition * (1 + this.contactStrain * 0.9) * flick * this.punch;
       this.tipLight.distance = 3.8 + len * 2.2;
+      /* ASK, rather than BE, a light. Once a frame, both samples, with the
+       * numbers above unchanged — the pool ranks the frame's requests and the
+       * eight best drive real point lights. A blade that loses a slot still
+       * lights the shot through its own emissive geometry and the bloom, which
+       * is 88% of the visible effect (measured — see PROFILE). Unlit blades ask
+       * for nothing, so `retract()` costs a slot the same frame it takes the
+       * blade out. */
+      this.engine?.lightUp(this.light.position, this.light.color,
+        this.light.intensity, this.light.distance, this.lightPriority);
+      this.engine?.lightUp(this.tipLight.position, this.tipLight.color,
+        this.tipLight.intensity, this.tipLight.distance, this.lightPriority);
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;

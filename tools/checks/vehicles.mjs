@@ -1,0 +1,985 @@
+/**
+ * BATTLEFRONT BORZ — the vehicles, and whether they are actually four things.
+ *
+ * ── WHY THIS FILE EXISTS ──────────────────────────────────────────────────
+ *
+ * Player notes 9 and 26, about the big enemies already in the game:
+ *
+ *   "all your monsters look the same, sphere with some legs, like you really
+ *    need to make the big enemies more dangerous and more interesting and
+ *    menacing, they all attack the same way."
+ *
+ * Four new machines is four new chances to make that sentence true again, and
+ * "they look different" is a wish. So the distinctness is a CHECK, and it is
+ * written to fail in exactly the direction the note describes: two machines
+ * that share an outline, or two that share a cadence, or one whose outline
+ * exists only in detail that is culled at the range you fight it from.
+ *
+ * ── WHAT IS ASSERTED, AND WHY EACH ONE IS THE HONEST FORM OF THE QUESTION ──
+ *
+ *   LEG COUNT      counted off the rig, not read off a list. 4 / 6 / 0 / 0.
+ *   OUTLINE        the box of the whole machine and the box of the HULL ALONE,
+ *                  because "long and low" is a claim about the body and a box
+ *                  that includes a five-metre gun barrel cannot answer it. Any
+ *                  two machines with the same leg count must differ in outline.
+ *   AT SIXTY METRES  the same outline measured from ONLY the meshes
+ *                  `Enemy._applyLod` keeps past thirty metres. This is the half
+ *                  the old menagerie failed: every horn and crest was Kit detail
+ *                  and the LOD-1 mesh really was a trunk plus legs.
+ *   CADENCE        burst, cycle, volley and band. No two may be close on both
+ *                  the shape of the volley and its size.
+ *   CUTTABLE       a live Enemy in a live physics world, asked for its capsules.
+ *                  Not "does the builder look right" — does the blade solver
+ *                  get something back, and does it cover the hull end to end.
+ *   PHYSICAL       the movement proxy exists, and the fraction of the hull it
+ *                  covers is MEASURED rather than asserted, because that number
+ *                  is set in Enemy.js and this workstream does not own it. See
+ *                  the note on `proxy` below: the number is allowed to be bad,
+ *                  it is not allowed to be unknown.
+ *
+ * Nothing here hard-codes which four vehicles exist: the list comes off
+ * `VEHICLE_TYPES`, and everything measured comes off the built body or off the
+ * shipped archetype row. A fifth machine added tomorrow is measured tomorrow.
+ */
+
+import * as THREE from 'three';
+import { ARCHETYPES } from '../../src/game/Enemy.js';
+import { VEHICLE_TYPES, VEHICLE_SIDE, buildGunship } from '../../src/game/Vehicles.js';
+import { TOUGHNESS } from '../../src/game/Combat.js';
+
+/* ── measuring one machine, once ──────────────────────────────────────── */
+
+const _box = new THREE.Box3();
+const _size = new THREE.Vector3();
+
+const MEASURED = new Map();
+
+/**
+ * Build a vehicle, stand it on flat ground in its own rest stance, and read
+ * everything off the result.
+ *
+ * The pose is the one `_poseWalker` puts a body in on its first frame — hips at
+ * the stance's own `hipHeight`, every bone at rest — which is the only pose
+ * reproducible without an Enemy, a World and a terrain. That is deliberate: the
+ * live-Enemy checks below pay for a physics world and are the ones that ask
+ * behavioural questions; this one is about shape and must not.
+ */
+function measure(type) {
+  if (MEASURED.has(type)) return MEASURED.get(type);
+  const A = ARCHETYPES[type];
+  const built = A.build({ scale: A.scale });
+  const rig = built.rig;
+  const ST = built.stance;
+  rig.hipsBone.obj.position.set(0, ST.hipHeight, 0);
+  rig.updateMatrices();
+  rig.root.updateMatrixWorld(true);
+
+  let legs = 0;
+  while (rig.get(`femur${legs}`)) legs++;
+
+  const keep = new Set();
+  for (const b of rig.list) if (b.primary) keep.add(b.primary);
+
+  const all = new THREE.Box3().makeEmpty();
+  const lod = new THREE.Box3().makeEmpty();
+  const hull = new THREE.Box3().makeEmpty();
+  const hullNames = new Set(['body', 'prow', 'stern']);
+  let meshes = 0, kept = 0, tris = 0, hash = 2166136261 >>> 0, verts = 0;
+
+  rig.root.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    o.updateMatrixWorld(true);
+    _box.setFromObject(o);
+    all.union(_box);
+    if (keep.has(o) || o.userData.silhouette) { kept++; lod.union(_box); }
+    const g = o.geometry;
+    tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    const a = g.attributes.position;
+    verts += a.count;
+    for (let i = 0; i < a.count * 3; i++) {
+      const q = Math.round(a.array[i] * 1000) | 0;
+      hash ^= q; hash = Math.imul(hash, 16777619) >>> 0;
+    }
+  });
+  for (const name of hullNames) {
+    const b = rig.get(name);
+    if (b && b.primary) hull.union(_box.setFromObject(b.primary));
+  }
+  if (hull.isEmpty()) hull.copy(all);
+
+  const boxOf = (b) => { b.getSize(_size); return { w: _size.x, h: _size.y, l: _size.z }; };
+  const cycle = A.fireRate + A.burst * (A.burstGap ?? 0.12) + (A.telegraph ?? 0);
+
+  const out = {
+    type, A, built, rig, legs, meshes, kept, tris: Math.round(tris),
+    verts, hash: `${verts}:${hash.toString(16)}`,
+    box: boxOf(all), lod: boxOf(lod), hull: boxOf(hull),
+    clearance: hull.min.y, hullMinZ: hull.min.z, hullMidY: (hull.min.y + hull.max.y) * 0.5,
+    cycle, volley: A.burst * A.damage, dps: (A.burst * A.damage) / cycle,
+  };
+  MEASURED.set(type, out);
+  return out;
+}
+
+/* ── the silhouette, rasterised ───────────────────────────────────────── */
+
+/**
+ * THE FLANK, AS PIXELS — the same measurement `tools/_creature.mjs` makes of
+ * the menagerie, for the same complaint and against the same argument.
+ *
+ * An aspect ratio can be fooled: two machines with the same bounding box can
+ * still be a solid wedge and a pair of hoops with air between them, and two
+ * with different boxes can still be the same shape at two sizes. What cannot be
+ * fooled is the outline itself, rasterised into ONE ABSOLUTE WORLD FRAME —
+ * shared, not normalised per machine, because normalising would call a 2.8 m
+ * dwarf spider and a 13.5 m AT-TE identical for having the same proportions,
+ * which is the opposite of what is being asked.
+ *
+ * The view is along X, so what is drawn is the FLANK: the view every reference
+ * plate of every one of these is taken from, and the one that carries leg
+ * count, ground clearance and where the mass sits. Head-on, an AT-TE and an AAT
+ * are both "a wide thing" and the measurement says nothing.
+ */
+const RW = 160, RH = 96, RSPAN = 20, RTALL = 12;
+
+function silhouette(root, lodOnly, keep) {
+  const bits = new Uint8Array(RW * RH);
+  const sx = (RW - 1) / RSPAN, sy = (RH - 1) / RTALL;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    if (lodOnly && !keep.has(o) && !o.userData.silhouette) return;
+    const g = o.geometry, p = g.attributes.position, idx = g.index;
+    const n = idx ? idx.count : p.count;
+    for (let i = 0; i < n; i += 3) {
+      const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+      a.fromBufferAttribute(p, i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(p, i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(p, i2).applyMatrix4(o.matrixWorld);
+      // project along X: horizontal is z, vertical is y with the floor at the bottom
+      const P = [a, b, c].map((q) => [(q.z + RSPAN / 2) * sx, (RTALL - q.y) * sy]);
+      const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
+      const x1 = Math.min(RW - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
+      const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])));
+      const y1 = Math.min(RH - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])));
+      const d0 = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[2][0] - P[0][0]) * (P[1][1] - P[0][1]);
+      if (Math.abs(d0) < 1e-12) continue;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5, py = y + 0.5;
+        const w0 = ((P[1][0] - px) * (P[2][1] - py) - (P[2][0] - px) * (P[1][1] - py)) / d0;
+        const w1 = ((P[2][0] - px) * (P[0][1] - py) - (P[0][0] - px) * (P[2][1] - py)) / d0;
+        if (w0 >= -1e-6 && w1 >= -1e-6 && 1 - w0 - w1 >= -1e-6) bits[y * RW + x] = 1;
+      }
+    }
+  });
+  return bits;
+}
+
+function iou(a, b) {
+  let inter = 0, uni = 0;
+  for (let i = 0; i < a.length; i++) { if (a[i] || b[i]) uni++; if (a[i] && b[i]) inter++; }
+  return uni ? inter / uni : 0;
+}
+
+/** What fraction of its own bounding box a silhouette fills, and where its
+ *  weight sits up that box. A solid wedge fills 0.6; a thing made of legs and
+ *  hoops fills 0.2, and no ratio of boxes can tell those two apart. */
+function fillAndMass(bits) {
+  let n = 0, sy = 0, x0 = RW, x1 = -1, y0 = RH, y1 = -1;
+  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++) {
+    if (!bits[y * RW + x]) continue;
+    n++; sy += y;
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (!n) return { fill: 0, mass: 0 };
+  const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+  return { fill: n / area, mass: 1 - ((sy / n) - y0) / Math.max(1, y1 - y0) };
+}
+
+const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+/** How far apart two boxes are in SHAPE, ignoring size. */
+function aspectGap(a, b) {
+  const na = normalise(a), nb = normalise(b);
+  return Math.max(Math.abs(na[0] - nb[0]), Math.abs(na[1] - nb[1]), Math.abs(na[2] - nb[2]));
+}
+function normalise(s) {
+  const m = Math.max(s.w, s.h, s.l) || 1;
+  return [s.w / m, s.h / m, s.l / m];
+}
+
+/* ── the live half: an Enemy, in a physics world ──────────────────────── */
+
+/**
+ * A terrain stub. Flat, in bounds everywhere, sand underfoot — the same shape
+ * `tools/checks/beasts.mjs` uses, and for the same reason: what is being asked
+ * is about the body, and a real heightfield would make every number depend on
+ * where the probe happened to stand.
+ */
+const flat = () => ({
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+  size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+  crater() {}, flush() {}, slopeAt: () => 0,
+});
+
+let _worldOnce = null;
+async function liveWorld() {
+  if (_worldOnce) return _worldOnce;
+  const { initPhysics } = await import('../../src/physics/Rapier.js');
+  const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+  await initPhysics();
+  const scene = new THREE.Scene();
+  const physics = new RapierWorld();
+  _worldOnce = { scene, physics, terrain: flat() };
+  return _worldOnce;
+}
+
+/** Spawn one of these for real, as a wave would. */
+async function spawn(type) {
+  const { Enemy } = await import('../../src/game/Enemy.js');
+  const { scene, physics, terrain } = await liveWorld();
+  const world = {
+    scene, physics, terrain, particles: null, difficulty: null,
+    groundColor: 0xa9764a, enemies: [], bolts: null,
+  };
+  return new Enemy(world, type, new THREE.Vector3(0, 0, 0));
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+export async function run({ check, assert }) {
+  check('vehicles: four machines are registered, and every one names a side', () => {
+    assert(VEHICLE_TYPES.length >= 4, `only ${VEHICLE_TYPES.length} vehicle types`);
+    for (const t of VEHICLE_TYPES) {
+      assert(ARCHETYPES[t], `${t} is exported by VEHICLE_TYPES but not in ARCHETYPES — `
+        + 'the Object.assign in Vehicles.js did not run, or the key was renamed on one side only');
+      assert(VEHICLE_SIDE[t] === 'republic' || VEHICLE_SIDE[t] === 'separatist',
+        `${t} belongs to no army — Command mode's muster and fill are keyed on that`);
+      assert(typeof ARCHETYPES[t].build === 'function', `${t} has no builder`);
+    }
+    const sides = VEHICLE_TYPES.map((t) => `${t}/${VEHICLE_SIDE[t][0]}`);
+    return sides.join(' ');
+  });
+
+  /**
+   * A HEAVY IS A HEAVY, and the flags that say so are load-bearing in four
+   * different files: `big` decides that Arrivals marches it in rather than
+   * flying it, that it counts against `heavyLimit`, that its bolts are the fat
+   * ones and that its deflector — if it ever gets one — sits at chassis height.
+   * `custom: 'walker'` decides that `_poseWalker` runs instead of the biped
+   * animator, that `body` and `hips` are durasteel, and that it takes THREE
+   * legs to bring the chassis down instead of one.
+   */
+  check('vehicles: every one is flagged as the heavy it is', () => {
+    for (const t of VEHICLE_TYPES) {
+      const A = ARCHETYPES[t];
+      assert(A.big === true, `${t} is not flagged big — Arrivals would fly a ${A.hp}hp vehicle in on a dropship`);
+      assert(A.custom === 'walker', `${t} declares custom '${A.custom}' — it would run the biped animator`);
+      assert(A.toughness >= TOUGHNESS.heavy, `${t} is ${A.toughness} tough, softer than TOUGHNESS.heavy`);
+      assert(!A.weapon, `${t} carries hand weapon '${A.weapon}' — it has no hands`);
+      assert(A.ranged, `${t} is not ranged; nothing else here gives a chassis an attack`);
+    }
+    return `${VEHICLE_TYPES.length} flagged big + walker + heavy`;
+  });
+
+  /**
+   * `_muzzleWorld` TOGGLES A TWO-ELEMENT INDEX OVER `built.cannons` — literally
+   * `cannons[(this._armToggle = 1 - (this._armToggle || 0))]` — so a body that
+   * publishes ONE cannon reads index 1 on its second shot, gets undefined, and
+   * throws inside the update loop. It takes the modulo over `built.muzzles`,
+   * which is safe for any length. Every vehicle here publishes `muzzles`, and
+   * this is the check that says why.
+   */
+  check('vehicles: each publishes muzzles the shot path can index safely', () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      const mz = m.built.muzzles;
+      assert(Array.isArray(mz) && mz.length >= 1, `${t} publishes no muzzles — _muzzleWorld would fire from its own chest`);
+      assert(!m.built.cannons, `${t} publishes 'cannons', which _muzzleWorld indexes 0/1 unconditionally; `
+        + 'publish `muzzles` instead, which it takes a modulo over');
+      for (const o of mz) assert(o && o.isObject3D, `${t} has a muzzle that is not an Object3D`);
+      rows.push(`${t} ${mz.length}`);
+    }
+    return rows.join(', ');
+  });
+
+  /* ── the silhouette rule ─────────────────────────────────────────────── */
+
+  check('vehicles: the leg counts differ, and are the ones the plates show', () => {
+    const counts = VEHICLE_TYPES.map((t) => [t, measure(t).legs]);
+    const distinct = new Set(counts.map((c) => c[1]));
+    assert(distinct.size >= 3,
+      `${counts.map((c) => c.join(':')).join(', ')} — only ${distinct.size} distinct leg counts across `
+      + `${counts.length} machines. The existing walker is already a four-legged sphere.`);
+    assert(counts.some((c) => c[1] === 6), 'nothing here has six legs — the AT-TE is the only six-legged thing in the game');
+    assert(counts.some((c) => c[1] === 0), 'nothing here is legless — an AAT hovers and a hailfire rolls');
+    return counts.map((c) => `${c[0]} ${c[1]}`).join(', ');
+  });
+
+  /**
+   * THE PAIRWISE RULE, and it is where the whole file earns its keep.
+   *
+   * For every pair of machines, at least TWO of four independent cues have to
+   * separate them: leg count, the outline of the whole machine, the outline of
+   * the hull alone, and how far the hull stands off the ground. One cue is not
+   * enough — two things that differ only in leg count are the reek and the
+   * acklay problem, one body plan at two settings.
+   *
+   * The thresholds are not taste. 0.18 of normalised aspect is the difference
+   * between "long and low" and "tall and square" at the range these are first
+   * seen; 0.6 m of ground clearance is a body's width, which is what decides
+   * whether you can walk under a thing or not.
+   */
+  check('vehicles: no two of them read alike', () => {
+    const M = VEHICLE_TYPES.map(measure);
+    const rows = [];
+    for (let i = 0; i < M.length; i++) {
+      for (let j = i + 1; j < M.length; j++) {
+        const a = M[i], b = M[j];
+        const cues = [];
+        if (a.legs !== b.legs) cues.push('legs');
+        if (aspectGap(a.box, b.box) > 0.18) cues.push('box');
+        if (aspectGap(a.hull, b.hull) > 0.18) cues.push('hull');
+        if (Math.abs(a.clearance - b.clearance) > 0.6) cues.push('clearance');
+        assert(cues.length >= 2,
+          `${a.type} and ${b.type} are separated only by [${cues.join(',')}] — `
+          + `legs ${a.legs}/${b.legs}, box aspect gap ${aspectGap(a.box, b.box).toFixed(2)}, `
+          + `hull aspect gap ${aspectGap(a.hull, b.hull).toFixed(2)}, `
+          + `clearance ${a.clearance.toFixed(2)}/${b.clearance.toFixed(2)} m. `
+          + 'Two heavies that share three of four cues are one machine at two sizes, '
+          + 'which is the note the player wrote about the creatures.');
+        rows.push(`${a.type}|${b.type} ${cues.join('+')}`);
+      }
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * …AND THE HULL PROPORTIONS ARE THE ONES THE PLATES SHOW. This is the part a
+   * pairwise-difference rule cannot express: four machines could all differ
+   * from each other and all be wrong. The AT-TE's side plate is the clearest
+   * measurement in the whole reference folder — a hull about four times its own
+   * height — and the AAT's is a wedge about four and a half.
+   */
+  check('vehicles: the two long hulls are long, and the two compact ones are not', () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      rows.push(`${t} ${(m.hull.l / m.hull.h).toFixed(2)}`);
+    }
+    const atte = measure('atte'), aat = measure('aat');
+    const spider = measure('dwarfspider');
+    assert(atte.hull.l / atte.hull.h > 3.4,
+      `the AT-TE's hull is ${(atte.hull.l / atte.hull.h).toFixed(2)} long for its height; `
+      + 'the side plate is about 4:1 and "long and low" is the whole silhouette');
+    assert(atte.hull.l > 11 && atte.hull.l < 16, `the AT-TE hull is ${atte.hull.l.toFixed(1)} m long`);
+    assert(aat.hull.l / aat.hull.h > 3.4,
+      `the AAT's hull is ${(aat.hull.l / aat.hull.h).toFixed(2)} long for its height`);
+    assert(aat.box.w / aat.box.h > 1.5,
+      `the AAT is ${(aat.box.w / aat.box.h).toFixed(2)} wide for its height — it is a flat wedge, not a box`);
+    // low and wide: the dwarf spider's stance has to be wider than it is tall,
+    // which is the one thing that separates it from the homing spider droid the
+    // game already has (that one stands 1.6 of scale up on 1.35 of splay).
+    assert(spider.box.w / spider.box.h > 1.15,
+      `the dwarf spider is ${(spider.box.w / spider.box.h).toFixed(2)} wide for its height — `
+      + 'the plates show a machine much wider than it is tall, and the game already has the tall one');
+    return rows.join(', ');
+  });
+
+  /**
+   * THE SILHOUETTE HAS TO SURVIVE THE LOD CULL, which is the half of "sphere
+   * with some legs" that is not about modelling at all.
+   *
+   * Past thirty metres `Enemy._applyLod` hides every mesh that is not a bone's
+   * `primary` or tagged `userData.silhouette`. The old menagerie's horns,
+   * frills, crests and tails were all Kit detail, so at exactly the range the
+   * player was describing every creature was its trunk plus its legs. A gun
+   * barrel, a hoop wheel and a whip antenna are in the same category, and this
+   * is what stops them going the same way.
+   */
+  check('vehicles: what you see at sixty metres is still the machine', () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      const keptFrac = [m.lod.w / m.box.w, m.lod.h / m.box.h, m.lod.l / m.box.l];
+      const worst = Math.min(...keptFrac);
+      assert(worst > 0.9,
+        `${t} keeps only ${(worst * 100).toFixed(0)}% of one of its dimensions past LOD 0 `
+        + `(${m.box.w.toFixed(1)}×${m.box.h.toFixed(1)}×${m.box.l.toFixed(1)} → `
+        + `${m.lod.w.toFixed(1)}×${m.lod.h.toFixed(1)}×${m.lod.l.toFixed(1)}). Whatever it lost is `
+        + 'Kit detail that should be tagged userData.silhouette.');
+      /* …and it is not paid for by keeping everything, which is the other
+       * failure: a body with no LOD saving is sixty draw calls at sixty metres.
+       * The bar is ABSOLUTE rather than a fraction, because the fraction is not
+       * the cost — a hailfire that is nine tenths hoop legitimately keeps nine
+       * tenths of its meshes, and nineteen draw calls at range is the same
+       * nineteen whether it culled forty or six. Enemy.js records the number
+       * this is set against: an acolyte is 56 meshes at LOD 0 and 20 at LOD 1. */
+      assert(m.kept <= 32,
+        `${t} still draws ${m.kept} meshes at sixty metres; a heavy is capped near an acolyte's 20`);
+      assert(m.kept < m.meshes,
+        `${t} culls nothing at range — every one of its ${m.meshes} meshes is tagged silhouette`);
+      rows.push(`${t} ${(worst * 100).toFixed(0)}% on ${m.kept}/${m.meshes}`);
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * …AND THE OUTLINES DO NOT OVERLAP.
+   *
+   * This is the check the whole file is really for, and it is the one an aspect
+   * ratio cannot make: two flanks drawn into the same absolute world frame, and
+   * the intersection over the union of the pixels. Two machines that share a
+   * body plan land above 0.5 — that is the number `tools/_creature.mjs` records
+   * for the menagerie the player complained about. It is measured twice: once
+   * with everything, and once with ONLY what survives the LOD cull, because the
+   * range this matters at is the range where the second one is all there is.
+   *
+   *   measured the day this was written: worst pair of all four is aat|hailfire
+   *   at 0.22 whole and 0.21 at LOD 1, against a bar of 0.42 and a
+   *   same-body-plan reading of 0.5.
+   */
+  check('vehicles: their outlines do not overlap, at any range', () => {
+    const sils = new Map(), lods = new Map(), stats = [];
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      const keep = new Set();
+      for (const b of m.rig.list) if (b.primary) keep.add(b.primary);
+      const s = silhouette(m.rig.root, false, keep);
+      const l = silhouette(m.rig.root, true, keep);
+      sils.set(t, s); lods.set(t, l);
+      stats.push({ t, ...fillAndMass(s) });
+    }
+    let worst = 0, worstPair = '', worstLod = 0, worstLodPair = '';
+    for (let i = 0; i < VEHICLE_TYPES.length; i++) {
+      for (let j = i + 1; j < VEHICLE_TYPES.length; j++) {
+        const a = VEHICLE_TYPES[i], b = VEHICLE_TYPES[j];
+        const v = iou(sils.get(a), sils.get(b));
+        const w = iou(lods.get(a), lods.get(b));
+        if (v > worst) { worst = v; worstPair = `${a}|${b}`; }
+        if (w > worstLod) { worstLod = w; worstLodPair = `${a}|${b}`; }
+      }
+    }
+    assert(worst < 0.42,
+      `${worstPair} overlap ${(worst * 100).toFixed(0)}% of their combined outline. Two machines that `
+      + 'share a body plan land above 0.5 — that is the number _creature.mjs records for the '
+      + 'menagerie the player was describing when he wrote "sphere with some legs".');
+    assert(worstLod < 0.42,
+      `${worstLodPair} overlap ${(worstLod * 100).toFixed(0)}% at LOD 1, which is the only range that `
+      + 'matters for this — past thirty metres the culled meshes are not there to tell them apart');
+    /* And they are not one shape at four densities. `fill` separates a solid
+     * hovering wedge from a thing made of legs and hoops with air between them,
+     * and no ratio of bounding boxes can. */
+    const fills = stats.map((s) => s.fill);
+    assert(Math.max(...fills) > Math.min(...fills) * 1.6,
+      `every one of them fills ${fills.map((v) => v.toFixed(2)).join('/')} of its own box — `
+      + 'four machines of the same density is four skins on one plan');
+    return `worst ${worstPair} ${worst.toFixed(2)} (LOD1 ${worstLodPair} ${worstLod.toFixed(2)}); `
+      + stats.map((s) => `${s.t} fill ${s.fill.toFixed(2)} mass@${s.mass.toFixed(2)}`).join(', ');
+  });
+
+  check('vehicles: no two build the same geometry', () => {
+    const seen = new Map();
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      assert(!seen.has(m.hash), `${t} builds byte-identical geometry to ${seen.get(m.hash)}`);
+      seen.set(m.hash, t);
+    }
+    return VEHICLE_TYPES.map((t) => `${t} ${measure(t).tris}t`).join(', ');
+  });
+
+  /* ── the cadence rule ────────────────────────────────────────────────── */
+
+  /**
+   * "THEY ALL ATTACK THE SAME WAY" is the second half of the note and it is a
+   * different measurement from the first. Two machines are separated at the ear
+   * by the SHAPE of a volley (how many shots, how fast) and at the health bar
+   * by its SIZE (what one volley costs you, and how long until the next). This
+   * requires both to be different, because either alone is a reskin: same shape
+   * at a different size is a bigger gun, same size in a different shape is the
+   * same gun on a different timer.
+   */
+  check('vehicles: no two of them shoot alike', () => {
+    const M = VEHICLE_TYPES.map(measure);
+    const rows = [];
+    for (let i = 0; i < M.length; i++) {
+      for (let j = i + 1; j < M.length; j++) {
+        const a = M[i], b = M[j];
+        const shape = Math.abs(a.A.burst - b.A.burst) / Math.max(a.A.burst, b.A.burst)
+          + Math.abs(a.cycle - b.cycle) / Math.max(a.cycle, b.cycle);
+        const size = Math.abs(a.volley - b.volley) / Math.max(a.volley, b.volley);
+        assert(shape > 0.28,
+          `${a.type} and ${b.type} fire the same shape — burst ${a.A.burst}/${b.A.burst} on a `
+          + `${a.cycle.toFixed(2)}/${b.cycle.toFixed(2)} s cycle`);
+        assert(size > 0.20,
+          `${a.type} and ${b.type} hit for the same amount — ${a.volley} against ${b.volley} a volley`);
+        rows.push(`${a.type}|${b.type} ${shape.toFixed(2)}/${size.toFixed(2)}`);
+      }
+    }
+    /* AND THE BANDS SPREAD. A close-range machine that the player can reach and
+     * a long-range one they cannot are different fights; four heavies that all
+     * stand at twenty metres are one fight four times. */
+    const mids = M.map((m) => (m.A.preferred[0] + m.A.preferred[1]) / 2);
+    assert(Math.max(...mids) > Math.min(...mids) * 2.5,
+      `preferred bands run ${mids.map((v) => v.toFixed(0)).join('/')} m — they all want the same distance`);
+    // the one that comes to you has to be able to be reached with a blade
+    assert(Math.min(...M.map((m) => m.A.preferred[0])) <= 6,
+      'nothing here closes to blade range; a heavy you can never touch is a turret');
+    return rows.join(', ');
+  });
+
+  /* ── physicality ─────────────────────────────────────────────────────── */
+
+  /**
+   * THE HARD RULE, applied to a body rather than to a level.
+   *
+   * `tools/checks/physicality.mjs` walks the built LEVELS and asks whether every
+   * reachable thing has a collider. It cannot see these, because a vehicle is
+   * not placed by a level maker — it is spawned by a wave. So the same three
+   * questions are asked here, of a live Enemy in a live Rapier world:
+   *
+   *   CAN I WALK INTO IT — is there a body in the physics world?
+   *   CAN I CUT IT — does the blade solver get capsules back?
+   *   CAN I BREAK IT — does it take damage and can its rig collapse?
+   */
+  check('vehicles: a live one is a physical object in a real world', async () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const e = await spawn(t);
+      assert(e.body, `${t} has no movement proxy body — the player would walk through it`);
+      assert(e.world.physics.bodies.includes(e.body) || e.body.handle !== undefined,
+        `${t}'s proxy body was never added to the physics world`);
+      const caps = e.capsules();
+      assert(caps.length >= 4,
+        `${t} offers the blade only ${caps.length} capsule${caps.length === 1 ? '' : 's'} — `
+        + 'a twelve-metre hull on one bone is a hull you can only cut in the middle');
+      assert(caps.some((c) => c.toughness >= TOUGHNESS.durasteel),
+        `${t} has no durasteel anywhere; custom:'walker' is supposed to plate its body and hips`);
+      // it takes damage, which is what "you can break it" reduces to
+      const before = e.hp;
+      e.damage(40, new THREE.Vector3(0, 2, 0), null, 'blaster');
+      assert(e.hp < before, `${t} took no damage from a 40-point hit`);
+      rows.push(`${t} ${caps.length} caps`);
+      e.dispose?.();
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * IT STANDS ON THE GROUND.
+   *
+   * The rest pose says nothing about this: `_poseWalker` throws the rest pose
+   * away and IK-solves every leg to a foot target on the terrain, so whether a
+   * machine's feet reach that target — and whether its pads sit ON the floor
+   * rather than through it — is a property of five numbers agreeing (femur,
+   * tibia, hip height, plant radius, ankle offset) and of nothing you can see
+   * by reading the builder.
+   *
+   * `ankle` is the one that is easy to get wrong and the shipped spider walker
+   * gets it wrong: it plants the TIBIA's tip on the floor with `ankle: 0` and a
+   * 0.3-of-scale tarsus hanging on below, which buries its claws two thirds of
+   * a metre. Both walkers here lift the target by the tarsus's own drop.
+   */
+  check('vehicles: posed for real, the legs reach the floor and nothing sinks', async () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const e = await spawn(t);
+      const ctx = { terrain: flat(), time: 0 };
+      // eight frames at 60 Hz: enough for the gait phase to leave zero and for
+      // every leg to have been solved at least once
+      for (let i = 0; i < 8; i++) { ctx.time += 1 / 60; e._poseWalker(1 / 60, ctx); }
+      e.rig.root.updateMatrixWorld(true);
+
+      const ST = e.built.stance;
+      const hipY = e.rig.hipsBone.obj.position.y;
+      assert(Math.abs(hipY - ST.hipHeight) < ST.rear + ST.bob + 0.05,
+        `${t} rides at ${hipY.toFixed(2)} m against a declared hip height of ${ST.hipHeight.toFixed(2)}`);
+
+      let sunk = 0, deepest = 0, feet = 0, worstFoot = 0, bestFoot = Infinity;
+      e.rig.root.traverse((o) => {
+        if (!o.isMesh) return;
+        _box.setFromObject(o);
+        if (_box.min.y < -0.14) { sunk++; deepest = Math.min(deepest, _box.min.y); }
+      });
+      for (let i = 0; ; i++) {
+        const b = e.rig.get(`tarsus${i}`);
+        if (!b) break;
+        feet++;
+        b.obj.updateMatrixWorld(true);
+        const tip = new THREE.Vector3(0, b.length, 0).applyMatrix4(b.obj.matrixWorld);
+        worstFoot = Math.max(worstFoot, tip.y);
+        bestFoot = Math.min(bestFoot, Math.abs(tip.y));
+      }
+      assert(sunk === 0,
+        `${t} has ${sunk} mesh${sunk === 1 ? '' : 'es'} through the floor, the deepest by `
+        + `${(-deepest).toFixed(2)} m — check the stance's ankle offset against the tarsus length`);
+      if (feet) {
+        /* AT LEAST ONE FOOT IS PLANTED. Not "every foot", which would be wrong:
+         * `_poseWalker` runs a gait, and a leg in its swing half is SUPPOSED to
+         * be `lift` off the floor. The first cut of this check measured the
+         * worst foot and failed the AT-TE at 0.45 m, which was a swing leg at
+         * the top of its arc doing exactly what it should. The two halves are
+         * asked separately. */
+        assert(bestFoot < 0.12,
+          `${t} has no foot on the ground — the nearest is ${bestFoot.toFixed(2)} m off it. The leg `
+          + 'cannot reach its own plant radius, or the ankle offset is wrong');
+        assert(worstFoot < ST.lift + 0.25,
+          `${t} lifts a foot ${worstFoot.toFixed(2)} m, past its own declared lift of ${ST.lift.toFixed(2)}`);
+      }
+      rows.push(`${t} hips ${hipY.toFixed(2)}`
+        + (feet ? `, planted ${bestFoot.toFixed(2)}, lifted ${worstFoot.toFixed(2)}` : ', no feet'));
+      e.dispose?.();
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * …AND THE CAPSULES COVER THE HULL END TO END.
+   *
+   * "Has capsules" is not the question a player asks. The question is whether a
+   * blade swung at the back of an AT-TE meets anything, and the answer is a
+   * number: what fraction of the hull's own length lies inside at least one
+   * capsule, sampled down the centreline at hull height.
+   */
+  check('vehicles: the blade reaches the whole hull, not just its middle', () => {
+    const rows = [];
+    const s = new THREE.Vector3(), ab = new THREE.Vector3(), ap = new THREE.Vector3();
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      // the same capsules Enemy.capsules() builds, from the same bones
+      const caps = [];
+      const p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), q = new THREE.Quaternion();
+      for (const b of m.rig.list) {
+        if (!b.parts.length) continue;
+        b.obj.updateMatrixWorld(false);
+        p0.setFromMatrixPosition(b.obj.matrixWorld);
+        q.setFromRotationMatrix(b.obj.matrixWorld);
+        p1.copy(p0).add(new THREE.Vector3(0, b.length, 0).applyQuaternion(q));
+        caps.push({ p0: p0.clone(), p1: p1.clone(), r: b.radius * 1.12 });
+      }
+      const N = 64;
+      let hit = 0;
+      for (let i = 0; i < N; i++) {
+        s.set(0, m.hullMidY, m.hullMinZ + (i + 0.5) / N * m.hull.l);
+        for (const c of caps) {
+          ab.subVectors(c.p1, c.p0);
+          const t2 = Math.max(0, Math.min(1, ap.subVectors(s, c.p0).dot(ab) / Math.max(1e-9, ab.lengthSq())));
+          if (ap.copy(c.p0).addScaledVector(ab, t2).distanceTo(s) <= c.r) { hit++; break; }
+        }
+      }
+      const frac = hit / N;
+      assert(frac > 0.9,
+        `${t}: the blade can reach only ${(frac * 100).toFixed(0)}% of the hull's ${m.hull.l.toFixed(1)} m — `
+        + 'split the hull across more bones; capsules() emits one per bone that carries geometry');
+      rows.push(`${t} ${(frac * 100).toFixed(0)}%`);
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * THE COLLIDER GAP, MEASURED RATHER THAN CLAIMED.
+   *
+   * `Enemy.js:1296` sizes every heavy's movement proxy off one flag —
+   * `capsule(0.9, 1.1)` for anything `big` — and that file belongs to another
+   * workstream. So this check does NOT assert the proxy is big enough, because
+   * it is not, and a check that fails for a reason nobody here can fix is a
+   * check somebody will delete.
+   *
+   * What it asserts instead is that the DATA to fix it exists and is right: each
+   * builder publishes `built.proxy`, generated off the hull it actually built,
+   * and `Enemy._build()` already runs before the Body is constructed. It then
+   * prints both numbers side by side — what the shipped proxy covers, and what
+   * the published one would — so the gap is a line in the output rather than a
+   * paragraph in a handoff, and it closes on its own the day Enemy.js reads it.
+   *
+   *   measured the day this was written, as a fraction of hull length:
+   *     dwarfspider  shipped 100%   published 100%
+   *     atte         shipped   0%   published  95%
+   *     aat          shipped  27%   published 100%
+   *     hailfire     shipped 100%   published 100%
+   */
+  check('vehicles: how much of each hull you can actually walk into', () => {
+    const rows = [];
+    let worstShipped = 1;
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      const P = m.built.proxy;
+      assert(P && Array.isArray(P.spheres) && P.spheres.length,
+        `${t} publishes no hull proxy — nothing can widen its collider without remodelling it`);
+      assert(P.radius > 0 && P.halfHeight > 0, `${t}'s proxy has no extent`);
+
+      const N = 64;
+      let shipped = 0, published = 0;
+      for (let i = 0; i < N; i++) {
+        const z = m.hullMinZ + (i + 0.5) / N * m.hull.l;
+        // Enemy's own, copied so this reads what the game does and not a wish
+        const dy = Math.max(0, Math.abs(m.hullMidY - 1.4) - 0.9);
+        if (Math.hypot(z, dy) <= 1.1) shipped++;
+        for (const sp of P.spheres) {
+          if (Math.hypot(sp.c.x, sp.c.y + P.y - m.hullMidY, sp.c.z - z) <= sp.r) { published++; break; }
+        }
+      }
+      // The published one is this workstream's own work and IS asserted.
+      assert(published / N > 0.85,
+        `${t}'s published proxy covers only ${(published / N * 100).toFixed(0)}% of its own hull — `
+        + 'hullProxy() is generated off the hull, so this failing means the hull moved and the '
+        + 'generator did not follow');
+      worstShipped = Math.min(worstShipped, shipped / N);
+      rows.push(`${t} ${(shipped / N * 100).toFixed(0)}%→${(published / N * 100).toFixed(0)}%`);
+    }
+    return `${rows.join(', ')} (shipped proxy → published; worst shipped ${(worstShipped * 100).toFixed(0)}%)`;
+  });
+
+  /**
+   * THE WHEELS TURN BECAUSE THE MACHINE MOVED, and only then.
+   *
+   * There is no per-frame hook from Enemy.js into a built body and this
+   * workstream may not add one, so the hailfire's hoops roll off their own hub
+   * displacement inside `onBeforeRender`. That is a seam nothing else in this
+   * project uses, which makes it exactly the kind of thing that stops working
+   * silently — a renamed field, a mesh that stops being drawn, a group that
+   * gets reparented, and the machine slides on frozen wheels forever.
+   *
+   * Three properties, all behavioural: a stationary wheel does not turn, a
+   * moving one turns by distance over radius, and a teleport is discarded
+   * rather than spun through (which is what a frustum cull looks like from
+   * inside the callback).
+   */
+  check('hailfire: the hoops roll off their own odometry, and only when it moves', () => {
+    const m = measure('hailfire');
+    const w = m.built.wheels?.[0];
+    assert(w && w.hoop, 'the hailfire publishes no wheels');
+    const drivers = w.hoop.children.filter((c) => Object.prototype.hasOwnProperty.call(c, 'onBeforeRender'));
+    assert(drivers.length === 1,
+      `${drivers.length} roll drivers on one hoop — two of them integrate the same motion separately, `
+      + 'and the tread comes off the tyre the first time one of them is culled');
+    const driver = drivers[0];
+
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();                      // first call only takes a reading
+    const a0 = w.hoop.rotation.y;
+    driver.onBeforeRender();
+    assert(w.hoop.rotation.y === a0, 'a stationary hailfire turned its wheels');
+
+    // roll it forward two metres
+    m.rig.hipsBone.obj.position.z += 2;
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();
+    const turned = w.hoop.rotation.y - a0;
+    const want = 2 / w.radius;
+    assert(Math.abs(turned - want) < 1e-6,
+      `two metres of travel turned a ${w.radius.toFixed(2)} m wheel by ${turned.toFixed(3)} rad, `
+      + `not ${want.toFixed(3)} — that is not rolling, it is a timer`);
+
+    // …and a jump (a cull, or a respawn) is discarded rather than spun through
+    const a1 = w.hoop.rotation.y;
+    m.rig.hipsBone.obj.position.z += 60;
+    m.rig.root.updateMatrixWorld(true);
+    driver.onBeforeRender();
+    assert(w.hoop.rotation.y === a1, 'a sixty-metre jump was integrated as rolling');
+    m.rig.hipsBone.obj.position.z -= 62;
+    m.rig.root.updateMatrixWorld(true);
+    return `${want.toFixed(2)} rad per 2 m on a ${w.radius.toFixed(2)} m wheel; jumps discarded`;
+  });
+
+  /**
+   * WHERE THE GUN POINTS — and a defect that is NOT this workstream's.
+   *
+   * `_poseWalker` tracks the `head` bone onto the target with
+   *
+   *     const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing - Math.PI;
+   *
+   * `atan2(dx, dz) - facing` is already the target's bearing relative to the
+   * hull — zero when the target is dead ahead. The `- Math.PI` then puts the
+   * turret 180° out, and because the result is clamped to ±0.7 rad BEFORE it is
+   * applied, what actually happens is that the yaw saturates at one limit or the
+   * other and flips sign as the target crosses the centreline.
+   *
+   * Measured, turret axis against the line to the target, chassis facing +Z:
+   *
+   *     target dead ahead     45° off, every chassis
+   *     target 45° left       94° off
+   *     target 45° right      94° off
+   *
+   * and — the part that says whose bug it is — the SHIPPED Spider Walker reads
+   * 43.8 / 87.7 / 87.8 on the same probe. It is not something these four
+   * introduced and it is not something they can fix from outside: the clamp is
+   * applied to the wrong value, so no rest orientation or authoring convention
+   * can absorb it. It is one sign in Enemy.js.
+   *
+   * WHAT IS ASSERTED HERE is therefore what these four DO own and what keeps it
+   * from being a gameplay bug as well as a visual one: the muzzle is a real
+   * point on the front of the machine, and `_shoot` aims the bolt at the target
+   * rather than down the muzzle — so the shells go where they should while the
+   * barrel looks wrong. The error itself is REPORTED, every run, next to the
+   * shipped walker's, so the day the sign is fixed the number moves on its own.
+   */
+  check('vehicles: the shells go where they are aimed, and the barrels do not', async () => {
+    const rows = [];
+    const q = new THREE.Quaternion(), fwd = new THREE.Vector3(), want = new THREE.Vector3();
+    // the shipped Spider Walker is measured alongside, because it is the
+    // evidence that the cause is upstream of this file
+    for (const t of [...VEHICLE_TYPES, 'walker']) {
+      const e = await spawn(t);
+      e.facing = 0;
+      const tgt = new THREE.Vector3(0, 1.6, 30);
+      e.target = { position: tgt, chest: tgt };
+      const ctx = { terrain: flat(), time: 0 };
+      for (let i = 0; i < 40; i++) { ctx.time += 1 / 60; e._poseWalker(1 / 60, ctx); }
+      e.rig.root.updateMatrixWorld(true);
+
+      const from = e._muzzleWorld(new THREE.Vector3());
+      assert(Number.isFinite(from.x) && Number.isFinite(from.y),
+        `${t}: _muzzleWorld returned ${from.toArray()} — a NaN here puts every bolt at the origin`);
+      assert(from.y > 0.6, `${t} fires from ${from.y.toFixed(2)} m, which is the floor`);
+      assert(from.distanceTo(e.position) < 12,
+        `${t}'s muzzle is ${from.distanceTo(e.position).toFixed(1)} m from the body it is bolted to`);
+
+      const head = e.rig.get('head');
+      if (!head) { rows.push(`${t} no turret`); e.dispose?.(); continue; }
+      head.obj.getWorldQuaternion(q);
+      fwd.set(0, 0, 1).applyQuaternion(q);
+      want.copy(tgt).sub(from).normalize();
+      const deg = THREE.MathUtils.radToDeg(Math.acos(clampN(fwd.dot(want), -1, 1)));
+      /* A loose sanity bound and not a bar: the turret may be 45° out — it is,
+       * on every chassis in the game — but it may never end up pointing at the
+       * back of its own hull, which would mean something worse than the sign. */
+      assert(deg < 110, `${t}'s turret is ${deg.toFixed(0)}° off a target dead ahead`);
+      rows.push(`${t} ${deg.toFixed(0)}°`);
+      e.dispose?.();
+    }
+    return `turret error on a target dead ahead: ${rows.join(', ')} — see the note above; `
+      + 'the sign is in Enemy._poseWalker and the shipped walker has it too';
+  });
+
+  /* ── the gunship ─────────────────────────────────────────────────────── */
+
+  /**
+   * `Arrivals.js` flies `new THREE.BoxGeometry(2.7, 1.55, 7.6)` with a cone on
+   * the front, on every level, on every wave. `buildGunship` is the thing it is
+   * supposed to be, and it crosses a file boundary this workstream does not
+   * own — so what is checked is the CONTRACT rather than the look: it has to
+   * drop into `_makeDropship` without moving anything the flight path was tuned
+   * against, and it has to carry the two anchors Arrivals already animates.
+   */
+  check('gunship: it drops into the arrivals dropship without moving the flight path', () => {
+    const g = buildGunship();
+    g.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(g);
+    b.getSize(_size);
+    // the box it replaces: 2.7 wide, 1.55 tall, 7.6 long, wings out to ±5.0
+    assert(_size.z > 6.5 && _size.z < 9.5, `${_size.z.toFixed(1)} m long against the box's 7.6`);
+    assert(_size.x > 8.5 && _size.x < 12.5, `${_size.x.toFixed(1)} m span against the box's 10.0`);
+    assert(_size.y > 2.5 && _size.y < 5.5, `${_size.y.toFixed(1)} m tall against the box's 1.55`);
+    // the nose is at -Z, which is where `_makeDropship` puts its cone and the
+    // direction `_updateDropship` flies. Get this backwards and every ship in
+    // the game arrives tail first, and nothing throws.
+    const span = _size.x, len = _size.z;
+    const mid = b.getCenter(new THREE.Vector3());
+    assert(Math.abs(mid.z) < 1.2, `the hull is not centred on its own origin (z ${mid.z.toFixed(2)})`);
+    const e = g.userData.engines;
+    assert(Array.isArray(e) && e.length === 2, 'no pair of engine anchors for the exhaust glow');
+    assert(e[0].position.z > 0 && e[1].position.z > 0, 'the engine anchors are at the nose, not the tail');
+    assert(g.userData.lamp && g.userData.lamp.position.z < 0, 'no landing-lamp anchor at the nose');
+    let meshes = 0, tris = 0;
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      meshes++;
+      tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+    });
+    /* A wave puts up to MAX_CONCURRENT ships in the sky and Arrivals shares
+     * every geometry it has. A hundred-mesh gunship would be three hundred draw
+     * calls of scenery. */
+    assert(meshes <= 24, `${meshes} meshes — three of these is ${meshes * 3} draw calls of arrival`);
+    /* …and the size it PUBLISHES is the size it is. Arrivals sizes its landing
+     * wash and its flare off these, so a literal that had drifted from the
+     * geometry would put the dust cone somewhere the ship is not. */
+    assert(Math.abs(g.userData.span - span) < 0.01 && Math.abs(g.userData.length - len) < 0.01,
+      `it publishes ${g.userData.span?.toFixed(1)} × ${g.userData.length?.toFixed(1)} and measures `
+      + `${span.toFixed(1)} × ${len.toFixed(1)}`);
+    return `${span.toFixed(1)} m span, ${len.toFixed(1)} m long, ${meshes} meshes, ${Math.round(tris)} triangles`;
+  });
+
+  /**
+   * AND IT IS A LAAT RATHER THAN A WEDGE. Five cues, off the three plates, each
+   * expressed as something a bounding box can answer — because "it looks like
+   * the reference" is exactly the kind of claim this project keeps replacing
+   * with a number.
+   */
+  /**
+   * A SECOND SHIP COSTS A TRANSFORM AND NOT A REBUILD, and its lamps are its
+   * own. Arrivals.js opens by promising that "every geometry and every material
+   * below is built ONCE, at module scope, and shared by every arrival that ever
+   * runs" — three ships can be in the sky at once — so a replacement that
+   * re-merged forty geometries per wave would quietly delete that property.
+   *
+   * The half that is easy to get wrong is the second assertion. `Object3D.clone`
+   * copies `userData` SHALLOW, so a clone's `engines` array still points at the
+   * template's own anchors, and every ship in the sky would light its engines in
+   * the same place — one place, in the air, wherever the first ship happened to
+   * be. That is why the anchors are named.
+   */
+  check('gunship: a second one shares its buffers and owns its own anchors', () => {
+    const a = buildGunship(), b = buildGunship();
+    assert(a !== b, 'buildGunship handed back the same object twice');
+    const ga = [], gb = [];
+    a.traverse((o) => { if (o.isMesh) ga.push(o.geometry); });
+    b.traverse((o) => { if (o.isMesh) gb.push(o.geometry); });
+    assert(ga.length === gb.length && ga.length > 6, `${ga.length} against ${gb.length} meshes`);
+    const shared = ga.filter((g, i) => g === gb[i]).length;
+    assert(shared === ga.length,
+      `only ${shared} of ${ga.length} geometries are shared between two ships — a wave with three `
+      + 'arrivals in it would merge a hundred and twenty geometries');
+    assert(b.userData.engines[0] && b.userData.engines[0] !== a.userData.engines[0],
+      'the second ship carries the FIRST ship\'s engine anchors — clone() copies userData shallow, '
+      + 'so both would light their exhaust at the same point in the sky');
+    assert(b.userData.lamp && b.userData.lamp !== a.userData.lamp, 'the same for the landing lamp');
+    assert(b.getObjectByName('engineL') === b.userData.engines[0], 'the anchors were resolved off the wrong tree');
+    return `${ga.length} meshes, all shared; anchors re-resolved per ship`;
+  });
+
+  check('gunship: swept-forward wings, dorsal nacelles, chin turrets, a bay', () => {
+    const g = buildGunship();
+    g.updateMatrixWorld(true);
+    const found = { wing: 0, nacelle: 0, chin: 0, bubble: 0 };
+    const b = new THREE.Box3();
+    const c = new THREE.Vector3(), s = new THREE.Vector3();
+    for (const o of g.children) {
+      if (!o.isMesh) continue;
+      b.setFromObject(o); b.getCenter(c); b.getSize(s);
+      if (s.x > 8 && s.y < 2.5) found.wing++;              // spans the full width, thin
+      if (c.y > 1.0 && s.y > 1.5) found.nacelle++;         // stands above the hull
+      if (c.y < -0.2 && c.z < -1.5) found.chin++;          // under the nose
+      if (s.x > 5 && s.x < 8 && s.y < 2) found.bubble++;   // outriggers
+    }
+    assert(found.wing >= 1, 'nothing on this ship spans a wing');
+    assert(found.nacelle >= 1, 'nothing stands above the hull — the dorsal nacelles are half the outline');
+    assert(found.chin >= 1, 'no chin turrets under the nose');
+    // the wings sweep FORWARD, which is the cue that separates a LAAT from
+    // every other gunship shape. Measured off the wing mesh's own vertices:
+    // the outboard end has to be AHEAD of the root, not behind it.
+    let rootZ = 0, tipZ = 0, seen = false;
+    for (const o of g.children) {
+      if (!o.isMesh) continue;
+      b.setFromObject(o); b.getSize(s);
+      if (!(s.x > 8 && s.y < 2.5)) continue;
+      const a = o.geometry.attributes.position;
+      let bestIn = Infinity, bestOut = -Infinity, zIn = 0, zOut = 0;
+      for (let i = 0; i < a.count; i++) {
+        const x = Math.abs(a.getX(i)), z = a.getZ(i);
+        if (x < bestIn) { bestIn = x; zIn = z; }
+        if (x > bestOut) { bestOut = x; zOut = z; }
+      }
+      rootZ = zIn; tipZ = zOut; seen = true;
+      break;
+    }
+    assert(seen, 'no wing mesh to measure the sweep on');
+    assert(tipZ < rootZ - 0.5,
+      `the wing sweeps BACK (root z ${rootZ.toFixed(2)}, tip z ${tipZ.toFixed(2)}) — every plate of a `
+      + 'LAAT has the tip ahead of the root, and it is the one cue that reads at any distance');
+    return `wing sweep ${(rootZ - tipZ).toFixed(1)} m forward, ${found.nacelle} dorsal, ${found.chin} chin`;
+  });
+}

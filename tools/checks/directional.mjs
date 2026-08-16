@@ -1,5 +1,5 @@
 /**
- * SABER — DIRECTIONAL BLOCKING.
+ * BATTLEFRONT BORZ — DIRECTIONAL BLOCKING.
  *
  * The scheme this replaces had the mouse doing two jobs at once. Holding the
  * blade froze the camera so the mouse could steer a continuous guard POSITION,

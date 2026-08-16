@@ -1,5 +1,5 @@
 /**
- * SABER — cloth.
+ * BATTLEFRONT BORZ — cloth.
  *
  * A verlet SHEET pinned to the shoulders and a verlet TUBE pinned to the hips.
  * Robes are most of what makes a Jedi read as a Jedi, and a robe that does not
@@ -27,6 +27,42 @@
 
 import * as THREE from 'three';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
+import { limbScale } from './Rig.js';
+
+/**
+ * THE SCALE A GARMENT'S *LENGTH* TAKES, WHICH IS NOT THE ONE ITS WIDTH TAKES.
+ *
+ * Every length in this file is authored in metres against the reference figure
+ * and multiplied by `opts.scale` on the way out, and that is right for
+ * everything measured ACROSS the body. It is wrong for a hem, because a hem is
+ * measured DOWN A LEG and a species frame scales the leg separately: `smallfolk`
+ * is `scale: 0.40` with `legLen: 0.80`, so its legs are 0.32 while its robe was
+ * 0.40 — a robe a fifth longer than the body it is on.
+ *
+ * Measured on the shipped small frame before this (tools/_stature.mjs), as the
+ * hem's clearance above the figure's OWN feet in units of its own height:
+ *
+ *     garment   human   smallfolk
+ *     cloak     25.9%     12.8%
+ *     skirt     13.0%      2.9%
+ *
+ * Three centimetres of a sixty-nine centimetre figure. The robe is standing on
+ * the floor, and "their clothes are oversized" is what that looks like. None of
+ * the fourteen reference plates in assets/reference/units/heroes has cloth on
+ * the ground — Yoda's robe pools a little and both feet are still clear of it.
+ *
+ * Derived from the rig's own bones rather than taken as an argument, so a
+ * garment ordered by Enemy.js, by the character preview or by a check gets the
+ * same answer without any of them being told about it; `opts.drop` overrides
+ * for a caller that genuinely means something else. A human reads exactly 1 —
+ * `limbScale` divides the reference figure's leg by itself — so every garment
+ * built at scale 1 is unchanged to the bit.
+ */
+function dropScale(rig, opts, S) {
+  if (opts.drop != null) return opts.drop;
+  const rs = rig?.scale ?? 1;
+  return S * (limbScale(rig).leg / (rs || 1));
+}
 
 /**
  * The garment stream. Every cloak draws its own seed from here, so two Jedi in
@@ -1196,15 +1232,725 @@ function withCut(opts, part) {
   return out;
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE WARDROBE — the garment is not ONE choice                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT A PLAYER MAY WEAR, PIECE BY PIECE.
+ *
+ * The report was "you can only change the lower robe, like you can't change
+ * all the clothes… I want to be able to change all the clothes and also be
+ * able to choose from different capes or even go capeless". That is exactly
+ * what was there: `robeCut` chose the SKIRT's cut, `robeIndex` chose a palette
+ * for the whole figure, and everything else on the body — the cape, the
+ * over-panels on the chest, the belt's hanging ends, the boots, the gloves —
+ * came out of `buildJedi` the same on every character in the game.
+ *
+ * The thirteen references in assets/reference/units/heroes/ are the argument
+ * for splitting it, and they disagree with each other on nearly every layer:
+ *
+ *   CAPE          Dooku wears a floor-length one clasped at the throat;
+ *                 Obi-Wan a travelling cloak to the calf; Plo Koon a short
+ *                 shoulder mantle; Kit Fisto, Aayla Secura and Anakin (RotS)
+ *                 wear none at all. Five different garments, and one of them
+ *                 is the absence of a garment.
+ *   OVER-PANELS   Obi-Wan's tabard falls past the knee; Anakin's stops at the
+ *                 obi; Aayla and Kit Fisto have no over-layer on the torso at
+ *                 all; Mace's is doubled front and back.
+ *   BELT          the obi's ends hang long on Obi-Wan and Yoda, are absent on
+ *                 Dooku (a plain buckled belt), and are two short falls on
+ *                 Anakin.
+ *   AND THE TONES do not move together. Anakin's tunic is near-black under a
+ *                 dark leather tabard with SAND boots; Obi-Wan's is cream
+ *                 under sand with brown boots and no gloves; Aayla wears one
+ *                 tone head to foot. A single robe palette cannot say any of
+ *                 that, which is why each piece here carries its own tone as
+ *                 well as its own cut.
+ *
+ * WHAT LIVES HERE AND WHAT DOES NOT. Every piece below is either CLOTH (the
+ * cape, the over-panels, the belt's ends) or a TONE on a material that
+ * `buildJedi` already hands out. The pieces whose SHAPE is rigid geometry —
+ * the tunic's collar and cuffs, the boot shafts, the bracers — can be
+ * recoloured from here and cannot be recut from here; that needs geometry in
+ * src/game/Bodies.js, and this is exactly what:
+ *
+ *   TUNIC CUTS. The tunic is a collar band, a crossed V and two cuffs, and
+ *   they are lathes on the neck, chest and forearm bones. Three cuts would
+ *   cover the references: `crossed` (what ships), `high` — a standing collar
+ *   to the jaw, which is Dooku and half the Council — and `sleeveless`, which
+ *   is Kit Fisto and Aayla Secura and is the one that changes the SILHOUETTE
+ *   rather than the trim. It wants a `tunic` option on buildJedi and the
+ *   sleeve stack made conditional.
+ *
+ *   BOOT CUTS. `boot()` builds one boot and the shaft is a separate lathe on
+ *   the shin. `low` (an ankle boot), `high` (the shipped shaft), `greave` (a
+ *   plated shin) and `bare` are four numbers and one extra plate, and the
+ *   fourth is what a Yoda or a Nautolan wants.
+ *
+ *   GLOVE CUTS. Gloves and bracers are already separate meshes on the hand and
+ *   forearm bones; what is missing is the ABSENCE of them. `bare` (no glove,
+ *   no bracer — Obi-Wan), `bracer` (the shipped pair) and `gauntlet` (a longer
+ *   cuff over the glove — Plo Koon) are a visibility flag and one lathe.
+ *
+ *   AND THE ONE THING THIS FILE CANNOT FAKE AT ALL: a HOOD. Every reference
+ *   with a raised hood — Obi-Wan on Utapau, half the Council in session — has
+ *   a cowl that is part of the cape's collar, and a cape is a sheet pinned at
+ *   nine points across the shoulders. A hood is a second, smaller sheet pinned
+ *   in a RING round the neck, and it needs the head bone and a collision hull
+ *   for the skull; the machinery is all here (`closed`, `profile`, `pinRows`)
+ *   but the anchor belongs to whoever owns the head.
+ *
+ * Until then: every piece below can be RECOLOURED (tintWardrobe), and the
+ * three that are cloth — the cape, the over-panels and the belt's ends — can
+ * be recut here, because this file owns them.
+ */
+
+/**
+ * THE CAPE, including not having one.
+ *
+ * `cloak` is the garment that ships, to the millimetre: Player._makeCloak
+ * builds 0.36 × 0.86 m at 9 × 11 with flare 1.0, and those five numbers are
+ * repeated here because they ARE this entry. tools/checks/preview.mjs reads
+ * them back out of Player.js and compares them with the cape the preview
+ * builds, so the two cannot drift apart in silence — which is the only reason
+ * a second copy of them is safe.
+ *
+ * Every other row is measured against that one. `cell` is the area of one quad
+ * of the weave (see tools/checks/_weave.mjs): no cut may dice its cloth finer
+ * than the cape does, because a fine, small garment is the expensive kind and
+ * "it is only a few particles" is the reasoning that check exists to refuse.
+ *
+ *      cut        w × l        grid    particles   cell
+ *      none       —            —           0        —
+ *      mantle     0.46 × 0.42  9 × 6      54       48 cm²
+ *      cloak      0.36 × 0.86  9 × 11     99       39 cm²   ← what ships
+ *      travel     0.40 × 1.06  9 × 11     99       48 cm²
+ *      court      0.52 × 1.12  9 × 11     99       67 cm²
+ *
+ * so the three added cuts are all COARSER than the shipped cape and two of
+ * them are the same particle count. The mantle is the only one that is
+ * cheaper, and it is the one a player picks to be able to see their own legs.
+ */
+export const CAPE_CUTS = [
+  {
+    id: 'cloak', name: 'Jedi Cloak',
+    blurb: 'The order\'s own: off the shoulders, past the hips, flared enough to catch a turn.',
+    // THE FIVE NUMBERS ARE PLAYER._MAKECLOAK'S. They are stated here and not
+    // left blank because the wardrobe seam and the creator's preview pass a
+    // CUT and nothing else — a caller that had to know the shipped dimensions
+    // in order to ask for the shipped cape is a second copy of them at every
+    // call site. There is exactly one other copy, in Player.js, and
+    // tools/checks/preview.mjs reads it out of that file and compares it with
+    // the cape this builds, so the two cannot drift apart in silence.
+    cape: { width: 0.36, length: 0.86, cols: 9, rows: 11, flare: 1.0 },
+  },
+  {
+    id: 'none', name: 'No cape',
+    blurb: 'Capeless. Nothing behind the shoulders at all — the way half the Council fights.',
+    none: true,
+  },
+  {
+    id: 'mantle', name: 'Shoulder Mantle',
+    blurb: 'A short fall of heavy cloth off the shoulders. It clears the hips, so nothing hides your stance.',
+    // Wider at the collar and less than half as long: a mantle is a yoke, not
+    // a cape, so it is cut across the shoulders rather than down the back. The
+    // fabric is the cassock's — a mantle that fluttered would be a cape.
+    cape: { width: 0.46, length: 0.42, cols: 9, rows: 6, flare: 0.35,
+            damping: 0.952, lift: 0.55, drift: 0.45, bendDown: 0.80, fullness: 0.92 },
+  },
+  {
+    id: 'travel', name: 'Travelling Cloak',
+    blurb: 'To the calf and narrow at the throat, in the roughest cloth in the wardrobe. It hangs rather than flies.',
+    cape: { width: 0.40, length: 1.06, cols: 9, rows: 11, flare: 0.85,
+            damping: 0.960, lift: 0.5, drift: 0.5, bendDown: 0.66, fullness: 0.95 },
+  },
+  {
+    id: 'court', name: 'Court Cape',
+    blurb: 'Floor-length and wide at the collar. Too much cloth to be practical, which is the point of it.',
+    // The widest and longest thing anyone wears, and the lightest fabric on
+    // it: this is the cape that streams. flare 1.25 against the cloak's 1.0.
+    cape: { width: 0.52, length: 1.12, cols: 9, rows: 11, flare: 1.25,
+            damping: 0.980, lift: 1.35, drift: 0.85, bendDown: 0.42, fullness: 0.82 },
+  },
+];
+
+const CAPE_BY_ID = new Map(CAPE_CUTS.map((c) => [c.id, c]));
+/** The cape cut with this id, or null. Same contract as `robeCut`. */
+export function capeCut(id) { return CAPE_BY_ID.get(id) || null; }
+
+/**
+ * THE OVER-PANELS — the tabard, and the two ways of not having one.
+ *
+ * `buildJedi` builds three rigid panels on the chest bone in the `over` cloth:
+ * two down the front at ±0.315 rad and one across the back. They are welded to
+ * the ribcage, which is right for a garment tucked into a belt and wrong for
+ * one that falls past it — so the long cuts here HIDE the rigid pair (the
+ * runtime hands them over as `rigid`, exactly as the skirt does) and hang
+ * simulated cloth in their place.
+ *
+ * `temple` is the shipped figure and adds no cloth at all, which is what keeps
+ * a fresh character's garment set at the 287 particles / 1466 links
+ * tools/checks/cloth-cost.mjs pins.
+ */
+export const TABARD_CUTS = [
+  { id: 'temple', name: 'Temple Tabard',
+    blurb: 'The two short panels down the front, tucked into the obi. What the order issues.' },
+  { id: 'none', name: 'No over-robe',
+    blurb: 'Tunic and belt, nothing over them. Bare shoulders and a clean silhouette.',
+    hideRigid: true },
+  { id: 'long', name: 'Long Tabard',
+    blurb: 'One broad panel from the shoulders past the knee, loose below the belt so it swings.',
+    hideRigid: true, panels: ['front'], length: 0.86, width: 0.24, rows: 8 },
+  { id: 'double', name: 'Doubled Tabard',
+    blurb: 'Long panels front AND back, the way a Council master wears it. The heaviest cut here.',
+    hideRigid: true, panels: ['front', 'back'], length: 0.86, width: 0.24, rows: 8 },
+  { id: 'short', name: 'Duelling Tabard',
+    blurb: 'A single panel that stops at the obi. Nothing of it can be caught by a knee.',
+    hideRigid: true, panels: ['front'], length: 0.40, width: 0.26, rows: 5 },
+];
+const TABARD_BY_ID = new Map(TABARD_CUTS.map((c) => [c.id, c]));
+export function tabardCut(id) { return TABARD_BY_ID.get(id) || null; }
+
+/**
+ * THE BELT — how much of the obi hangs, and whether any of it does.
+ *
+ * `ends` is attachSash's own parameter, in the hips bone's frame: `at` is the
+ * knot, `w`/`d` the section of the strap (an ellipse 32 mm across and 9 thick
+ * is a band; a circle is a rope), `len` the fall and `lean` the forward push
+ * that puts the tip where the robe's surface already is on frame one.
+ *
+ * `obi` restates the shipped pair rather than leaving it empty, because
+ * attachSash's default table is what a garment with NO belt cut gets — the
+ * enemies — and a player picking "Knotted Obi" must get exactly those numbers
+ * whether or not they arrive through this table. tools/checks/sash.mjs
+ * measures the pair either way.
+ */
+export const SASH_CUTS = [
+  { id: 'obi', name: 'Knotted Obi',
+    blurb: 'Two ends off the knot, one long and one short. The knot every Jedi ties.',
+    ends: [
+      { at: [0.052, 0.030, 0.158], w: 0.032, d: 0.009, len: 0.34, lean: 0.085 },
+      { at: [-0.050, 0.026, 0.156], w: 0.026, d: 0.008, len: 0.25, lean: 0.062 },
+    ] },
+  { id: 'none', name: 'Plain Belt',
+    blurb: 'Buckled and nothing hanging. A belt that cannot be caught on anything.',
+    ends: [] },
+  { id: 'long', name: 'Long Fall',
+    blurb: 'One end taken to the knee. It swings a half-beat behind the robe under it.',
+    ends: [
+      { at: [0.052, 0.030, 0.158], w: 0.034, d: 0.009, len: 0.52, lean: 0.11 },
+      { at: [-0.050, 0.026, 0.156], w: 0.024, d: 0.008, len: 0.22, lean: 0.058 },
+    ] },
+  { id: 'double', name: 'Twin Falls',
+    blurb: 'Both ends long and hung wide, one on each hip.',
+    ends: [
+      { at: [0.086, 0.028, 0.128], w: 0.030, d: 0.009, len: 0.46, lean: 0.10 },
+      { at: [-0.086, 0.028, 0.128], w: 0.030, d: 0.009, len: 0.46, lean: 0.10 },
+    ] },
+  { id: 'short', name: 'Tucked Ends',
+    blurb: 'Both ends cut short and tidy, clear of the thigh.',
+    ends: [
+      { at: [0.052, 0.030, 0.158], w: 0.030, d: 0.009, len: 0.19, lean: 0.048 },
+      { at: [-0.050, 0.026, 0.156], w: 0.026, d: 0.008, len: 0.16, lean: 0.040 },
+    ] },
+];
+const SASH_BY_ID = new Map(SASH_CUTS.map((c) => [c.id, c]));
+export function sashCut(id) { return SASH_BY_ID.get(id) || null; }
+
+/**
+ * THE TONES A PIECE MAY BE DYED, and why they are not ROBE_COLORS.
+ *
+ * `ROBE_COLORS` (Bodies.js) is a PALETTE — three related tones, outer, inner
+ * and trim, which the builder then ladders into five cloth materials so the
+ * layers read apart at range. That is the right shape for "what is this robe
+ * made of" and the wrong shape for "what colour are the boots": a piece wants
+ * one flat answer, and picking it out of a three-tone palette would mean
+ * choosing an over-robe in order to choose a glove.
+ *
+ * Eleven, chosen off the references rather than as a colour wheel: the cream
+ * and sand of a temple tunic, the browns of worn leather, Anakin's near-black,
+ * Dooku's oxblood-lined black, Aayla's tan, Plo Koon's slate, and the ivory a
+ * Council master's over-robe is cut in. Index -1 is "as the robe", which is
+ * what every piece ships as, so a player who never opens these rows has
+ * EXACTLY the figure they had before they existed.
+ */
+export const GARMENT_TONES = [
+  { name: 'Bone',      hex: 0xd9cdb4 },
+  { name: 'Cream',     hex: 0xc9b894 },
+  { name: 'Sand',      hex: 0xa88f66 },
+  { name: 'Tan',       hex: 0x8a6a44 },
+  { name: 'Leather',   hex: 0x5b422c },
+  { name: 'Umber',     hex: 0x3c2c1e },
+  { name: 'Soot',      hex: 0x22222a },
+  { name: 'Slate',     hex: 0x465060 },
+  { name: 'Ash',       hex: 0x7d8390 },
+  { name: 'Oxblood',   hex: 0x5c1f22 },
+  { name: 'Deep Olive', hex: 0x3d4a2c },
+];
+
+/**
+ * THE WHOLE OF WHAT A CHARACTER IS WEARING, as one object.
+ *
+ * One object and not nine settings, for the reason `face` is one object in
+ * ui/Menu.js: nine top-level keys would each need a line in the settings blob,
+ * a reader declaration and a row in three checks, and the thing they describe
+ * is a single choice a player makes on one screen. `-1` on a tone means "as
+ * the robe" — the tone `buildJedi` derived from the chosen palette — so the
+ * default below is the figure that shipped, piece for piece.
+ */
+export const WARDROBE = {
+  cape: 'cloak',
+  tabard: 'temple',
+  sash: 'obi',
+  capeTone: -1,
+  tunicTone: -1,
+  tabardTone: -1,
+  sashTone: -1,
+  bootTone: -1,
+  gloveTone: -1,
+};
+
+const TONE_MAX = GARMENT_TONES.length - 1;
+/**
+ * Normalise anything that has ever been stored as a wardrobe.
+ *
+ * Same job and same shape as `characterSheet` in ui/Menu.js: a blob off disk
+ * is not to be trusted, an id that no longer exists must fall back to the
+ * shipped piece rather than leaving a character with no cape at all, and a
+ * tone index out of range must clamp rather than index past the end of the
+ * table. Pure, so the checks can drive it without a DOM.
+ */
+export function wardrobeOf(w) {
+  const src = (w && typeof w === 'object') ? w : {};
+  const id = (map, v, d) => (map.has(v) ? v : d);
+  const tone = (v) => (Number.isFinite(v) ? Math.max(-1, Math.min(TONE_MAX, Math.round(v))) : -1);
+  return {
+    cape: id(CAPE_BY_ID, src.cape, WARDROBE.cape),
+    tabard: id(TABARD_BY_ID, src.tabard, WARDROBE.tabard),
+    sash: id(SASH_BY_ID, src.sash, WARDROBE.sash),
+    capeTone: tone(src.capeTone),
+    tunicTone: tone(src.tunicTone),
+    tabardTone: tone(src.tabardTone),
+    sashTone: tone(src.sashTone),
+    bootTone: tone(src.bootTone),
+    gloveTone: tone(src.gloveTone),
+  };
+}
+
+/* ── dyeing a piece ──────────────────────────────────────────────────── */
+
+const _c1 = new THREE.Color();
+
+/**
+ * DYE ONE MATERIAL WITHOUT LOSING THE CORRECTION ITS BAKE NEEDED.
+ *
+ * `MeshStandardMaterial` multiplies `color` by `map`, so the number an author
+ * types is never the colour that renders — it is that colour times the bake's
+ * mean albedo. Bodies.js's `lit()` divides the tint through by that mean and
+ * records both halves on the material (`userData.authored`, `userData.mapMean`);
+ * `note()` records them without correcting, because the armour bakes ARE the
+ * paint. Two policies, and this function has to honour whichever one built the
+ * material it is handed.
+ *
+ * It does that by reading the correction back off the material rather than by
+ * restating either formula: the ratio between what `lit`/`note` was TOLD and
+ * what it SET is the correction, per channel, whether or not the clamp bit. A
+ * restated formula is the shape §2.4 of the handoff is about — an instrument
+ * that repeats a rule eventually disagrees with it.
+ *
+ * The builder's own colour is kept on first dye and is what "as the robe"
+ * restores, so putting a tone back is the value buildJedi produced and not a
+ * recomputation of it.
+ */
+function dye(mat, hex) {
+  if (!mat || !mat.color) return false;
+  const u = mat.userData || (mat.userData = {});
+  if (!u.wardrobe0) {
+    u.wardrobe0 = { color: mat.color.clone(), authored: u.authored ? u.authored.slice() : null };
+  }
+  const base = u.wardrobe0;
+  if (hex === null || hex === undefined) {           // "as the robe"
+    mat.color.copy(base.color);
+    if (base.authored) u.authored = base.authored.slice();
+    return true;
+  }
+  const want = _c1.set(hex);
+  const a = base.authored;
+  const k = (c, x) => (a && x > 1e-4 ? c / x : 1);
+  mat.color.setRGB(
+    Math.min(1, want.r * k(base.color.r, a && a[0])),
+    Math.min(1, want.g * k(base.color.g, a && a[1])),
+    Math.min(1, want.b * k(base.color.b, a && a[2])));
+  u.authored = [want.r, want.g, want.b];
+  return true;
+}
+
+/** The tone at an index, or null for -1 / anything out of the table. */
+export function garmentTone(i) {
+  return (i >= 0 && i < GARMENT_TONES.length) ? GARMENT_TONES[i].hex : null;
+}
+
+/** Every mesh hung on these bones that is painted with `mat`. */
+function meshesOn(rig, bones, mat) {
+  const out = [];
+  for (const name of bones) {
+    const b = rig?.get?.(name);
+    if (!b || !b.obj) continue;
+    for (const child of b.obj.children) {
+      if (child.isMesh && child.material === mat) out.push(child);
+    }
+  }
+  return out;
+}
+
+/**
+ * PUT THE CHOSEN TONES ON A FIGURE THAT IS ALREADY BUILT.
+ *
+ * Colour is the half of the wardrobe that needs no new geometry, and it is
+ * also the half that cannot be done in the builder: `buildJedi` derives five
+ * cloth tones from ONE palette, on purpose, so that the layers read apart at
+ * range — and a player who wants Anakin's near-black tunic under a leather
+ * tabard over sand boots is asking for three tones that no single palette
+ * contains. So the palette stays the default and each piece may override it.
+ *
+ * THE LEATHER HAS TO BE SPLIT FIRST. `buildJedi` paints the gloves, the boots,
+ * the bracers, the belt and its pouches with ONE material instance, which is
+ * right for a figure with one leather colour and makes "brown boots, black
+ * gloves" impossible — dyeing it dyes both. So the two sets are given clones
+ * of it the first time either is dyed, and only then. A character who never
+ * opens these rows keeps exactly the material count they always had.
+ *
+ * @param cloth  the live garments, whose materials are CLONES the builder
+ *               never sees: the skirt's cloth, the cape's, the sash's straps
+ *               and the over-panels'. Dyeing the palette alone would leave the
+ *               robe below the belt the old colour — which is the largest
+ *               thing on the figure.
+ */
+export function tintWardrobe(built, wardrobe, cloth = {}) {
+  if (!built || !built.palette) return 0;
+  const w = wardrobeOf(wardrobe);
+  const P = built.palette;
+  const rig = built.rig;
+  let n = 0;
+  const put = (mat, tone) => { if (dye(mat, garmentTone(tone))) n++; };
+
+  put(P.tunic, w.tunicTone);
+  // The over-robe: the panels on the chest, the shoulder mantles, the sleeve
+  // hems — and the cloth below the belt, which is a clone of the same
+  // material and is the biggest surface on the figure.
+  put(P.over, w.tabardTone);
+  if (cloth.skirt && cloth.skirt.mat) put(cloth.skirt.mat, w.tabardTone);
+  for (const p of cloth.cape?.panels || []) put(p.mat, w.tabardTone);
+  // The belt: the obi, the collar band, the boot strap and the bracer strap
+  // are all `trim`, and the two hanging ends are the same band of cloth.
+  put(P.trim, w.sashTone);
+  for (const p of cloth.skirt?.sash?.parts || []) put(p.mat, w.sashTone);
+  // The cape's own sheet. Its material is a clone of `outer` made per figure,
+  // so this cannot leak onto the body under it.
+  if (cloth.cape && cloth.cape.mat) put(cloth.cape.mat, w.capeTone);
+
+  if (rig && P.leather) {
+    const BOOTS = ['footL', 'footR', 'shinL', 'shinR'];
+    const GLOVES = ['handL', 'handR', 'foreL', 'foreR'];
+    const split = (key, bones, tone) => {
+      if (tone < 0 && !built[key]) return;            // never dyed: nothing to do
+      if (!built[key]) {
+        built[key] = P.leather.clone();
+        built[key].userData = { ...P.leather.userData, wardrobe0: undefined };
+        for (const m of meshesOn(rig, bones, P.leather)) m.material = built[key];
+      }
+      put(built[key], tone);
+    };
+    split('_bootMat', BOOTS, w.bootTone);
+    split('_gloveMat', GLOVES, w.gloveTone);
+  }
+
+  /*
+   * …AND THE RIGID OVER-PANELS COME OFF for the cuts that replace them.
+   *
+   * The same swap `attachSkirt` does with the rigid robe: the panels are
+   * hidden rather than deleted, because a builder this workstream does not own
+   * made them and a cut that hangs nothing in their place — "No over-robe" —
+   * has to be able to give them back. Found by MATERIAL rather than by index:
+   * `over` on the chest bone is the two front panels and the back one, and
+   * nothing else on that bone is painted with it.
+   */
+  if (rig && P.over) {
+    const cut = TABARD_BY_ID.get(w.tabard);
+    const show = !(cut && cut.hideRigid);
+    for (const m of meshesOn(rig, ['chest'], P.over)) m.visible = show;
+    // A tabard is what the mantle on the point of the shoulder belongs to as
+    // well: it is the same cloth and the same layer, and leaving two of them
+    // on a figure with "no over-robe" reads as an oversight rather than as a
+    // choice.
+    for (const m of meshesOn(rig, ['armL', 'armR'], P.over)) m.visible = show;
+  }
+  return n;
+}
+
+/**
+ * Fill a cape cut's dimensions in under whatever the caller asked for.
+ *
+ * Exactly `withCut`'s contract and for exactly its reason — Player and Enemy
+ * pass their own width, length and grid, and a preset has no business
+ * overwriting a caller who was explicit. What that means in practice is that
+ * a caller who wants a CUT must not also state the dimensions, which is why
+ * the wardrobe seam passes `cape` and nothing else.
+ */
+function withCape(opts) {
+  if (!opts.cape) return opts;
+  const c = CAPE_BY_ID.get(opts.cape);
+  if (!c || !c.cape) return opts;      // an unknown id, or the shipped cloak
+  const out = { ...opts }, from = c.cape;
+  for (const k in from) if (out[k] === undefined) out[k] = from[k];
+  return out;
+}
+
+/**
+ * NO CAPE AT ALL, as an object rather than as a null.
+ *
+ * `Player.update` steps the skirt INSIDE `if (this.cloak)` — the cape's
+ * collider proxy is the skirt's own particles, so the two are stepped as a
+ * pair — which means handing a capeless player a null cape would freeze their
+ * robe solid, and the robe is the garment this whole file exists for. Measured
+ * before this existed: with `p.cloak = null` the skirt's hem travels 0.0 mm in
+ * the pelvis frame over seven seconds of walking, which is the rigid cone
+ * again with extra steps.
+ *
+ * So "no cape" is a garment that answers every call a cape answers and draws
+ * nothing. It carries `panels` because a tabard can outlive a cape — Kit Fisto
+ * wears an over-panel and no cape — and those still have to be stepped.
+ */
+export function bareCape() {
+  /*
+   * Every method is a no-op and NOT "a loop over the panels", which was the
+   * first cut of this and was wrong: `dressCape` wraps all five of these to
+   * drive the panels, so a bare cape that also drove them would step every
+   * over-panel twice a frame — two verlet integrations per frame is a garment
+   * with twice the gravity and half the damping. `panels` is a field for the
+   * census in tools/checks/cloth-cost.mjs to walk, not a list this object
+   * owns.
+   */
+  return {
+    none: true, outer: null, panels: [], enabled: false, initialised: true,
+    colliders: [],
+    refreshColliders() { return this.colliders; },
+    update() {}, carry() {}, impulse() {}, setVisible() {}, dispose() {},
+  };
+}
+
+/**
+ * THE OVER-PANEL, as cloth hanging off the chest.
+ *
+ * It is the same argument the skirt made and then the sash made after it: the
+ * panels `buildJedi` builds are welded to the ribcage, so they move zero
+ * millimetres relative to it and a long one would read as a painted board on
+ * a body that is running. A panel that falls past the belt has to be cloth or
+ * it should not be long.
+ *
+ * A SHEET and not a tube, unlike everything else added to this file since the
+ * cape: an over-panel has two free vertical edges and they are most of what
+ * you see of it — the edge lifting off the thigh at the top of a stride is the
+ * whole read. `fullness` therefore works here exactly as it works on the cape
+ * (a tube would only shrink; see the note in reset()).
+ *
+ * @param opts.panels ['front'] or ['front','back'] — which sides to hang
+ * @param opts.outer  the garment beneath, for collision (attachCloak's own
+ *                    `outer`, i.e. the skirt, so the panel lies on the robe)
+ */
+export function attachTabard(scene, rig, opts = {}) {
+  const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
+  const chestB = rig.get('chest');
+  if (!chestB || !opts.panels || !opts.panels.length) return null;
+  const width = opts.width ?? 0.24;
+  const length = opts.length ?? 0.74;
+  const cols = opts.cols ?? 5;
+  const rows = opts.rows ?? 7;
+  const half = width * S * 0.5;
+  /*
+   * WHERE IT HANGS OFF THE RIBCAGE.
+   *
+   * The chest lathe is squashed to 0.76 on Z (buildJedi's `DEPTH`) over a
+   * radius that reaches 0.19, so the front of a dressed chest is at about
+   * 0.145 in the bone's own frame and the back at -0.145. 0.152 puts the top
+   * row a centimetre proud of the cloth already there, which is where a
+   * garment worn OVER the tunic starts. The height is the cape's collar
+   * height — a tabard comes over the same shoulder — less a little, so the
+   * two do not fight for the same particles at the neck.
+   */
+  const depth = opts.depth ?? 0.152;
+  const top = opts.top ?? 0.86;
+  const parts = [];
+  for (const side of opts.panels) {
+    const sz = side === 'back' ? -1 : 1;
+    const panel = new Cloak(scene, {
+      cols, rows,
+      width: width * S,
+      length: length * D,          // across the chest at S, down the thigh at D
+      material: opts.material,
+      color: opts.color ?? 0x5a4530,
+      /*
+       * Nearly parallel-sided, and stiff down its length. A tabard is a cut
+       * strip of the same heavy cloth as the over-robe: it is not gathered, it
+       * does not bell, and what it does do is stay in one plane while the body
+       * under it moves. flare 0.16 is the small widening a panel gets from
+       * hanging clear of the hips, not a bell.
+       */
+      flare: opts.flare ?? 0.16,
+      lean: 0,
+      fullness: opts.fullness ?? 0.94,
+      jitter: opts.jitter ?? 0.05,
+      stiffness: opts.stiffness ?? 0.90,
+      shear: opts.shear ?? 0.30,
+      bend: opts.bend ?? 0.14,
+      bendDown: opts.bendDown ?? 0.78,
+      bendStretchOnly: true,
+      damping: opts.damping ?? 0.945,
+      // Deaf to the air, like the sash and for the same reason: a doubled band
+      // of over-cloth belted at the waist does not flutter, it swings.
+      lift: opts.lift ?? 0.42, drift: opts.drift ?? 0.45,
+      gravity: opts.gravity ?? -14,
+      iterations: opts.iterations ?? 4,
+      seed: opts.seed === undefined ? undefined : opts.seed + (sz > 0 ? 0 : 7),
+      foldAO: opts.foldAO ?? 0.45,
+      anchorFn: (c, n, out) => {
+        const t = n === 1 ? 0.5 : c / (n - 1);
+        _m.copy(chestB.obj.matrixWorld);
+        // Mirrored on the back panel so both are laid out anticlockwise about
+        // the body; a back panel built with the front's winding is a sheet
+        // whose normals face into the ribs, and the fold occlusion inverts.
+        out.set(lerp(-half, half, t) * sz, chestB.length * top, depth * S * sz);
+        out.applyMatrix4(_m);
+      },
+    });
+    panel._sharedMat = !!opts.material;
+    panel.side = sz;
+    parts.push(panel);
+  }
+
+  /*
+   * WHAT A PANEL CAN HIT: the ribcage, the pelvis, and the robe under it.
+   *
+   * Three bones rather than the cape's seven — a panel hanging down the FRONT
+   * cannot reach a shin, and a collider nothing touches is a sphere test paid
+   * for four times a frame for the life of the character. The radii are the
+   * cape's own list taken in by about 15 mm, because this layer sits under the
+   * cape rather than over it and a panel held at the cape's radius stands off
+   * its own tunic.
+   */
+  const bones = ['chest', 'spine', 'hips'];
+  const radii = [0.176, 0.172, 0.188];
+  for (const panel of parts) {
+    panel.refreshColliders = () => {
+      const out = panel.colliders;
+      out.length = 0;
+      for (let i = 0; i < bones.length; i++) {
+        const b = rig.get(bones[i]);
+        if (!b || b.severed) continue;
+        b.obj.updateMatrixWorld(false);
+        for (const t of [0.3, 0.85]) {
+          _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
+          out.push({ c: _v3.clone(), r: radii[i] * S });
+        }
+      }
+      // …and the live robe, if there is one. Same rule as the cape's: the
+      // garment under this one moves 150 mm at a walk, so a table sampled off
+      // where it used to be is a photograph.
+      const live = opts.outer && opts.outer.proxy && opts.outer.proxy.length ? opts.outer.proxy : null;
+      if (live) for (let i = 0; i < live.length; i++) out.push(live[i]);
+      return out;
+    };
+  }
+
+  return {
+    parts,
+    get initialised() { return parts.every((p) => p.initialised); },
+    update(dt, wind) { for (const p of parts) if (p.enabled) p.update(dt, p.refreshColliders(), wind); },
+    carry(quat, pivot) { for (const p of parts) if (p.enabled && p.initialised) p.carry(quat, pivot); },
+    impulse(dir, strength, dt) { for (const p of parts) p.impulse(dir, strength, dt); },
+    setVisible(v) { for (const p of parts) p.setVisible(v); },
+    dispose() { for (const p of parts) p.dispose(); parts.length = 0; },
+  };
+}
+
+/**
+ * HANG THE OVER-PANELS ON THE CAPE, and let the cape drive them.
+ *
+ * The pattern is `attachSkirt`'s with the sash, verbatim, and it is worth
+ * restating why it is the right one: `Player` and `Enemy` already call
+ * `update`, `carry`, `impulse`, `setVisible` and `dispose` on a cape, in the
+ * right order, on the right clock, inside the frame the chest they hang from
+ * was posed in. A panel owned by the cape is driven by all five without a line
+ * at any of those call sites — and neither of those two files is this
+ * workstream's to edit.
+ *
+ * ONE THING IS NOT SHARED, and it is the first-person hide. Player calls
+ * `cloak.setVisible(!firstPerson, false)` because a cape hangs where a
+ * first-person camera cannot see it. A tabard hangs down the FRONT of the
+ * chest, which is precisely what you look at when you look down, and hiding it
+ * there would put the "hard cone under the clothes" complaint back in the one
+ * view the game is mostly played in. So the panels follow the LOD call
+ * (`standIn` true) and ignore the first-person one.
+ */
+function dressCape(cape, scene, rig, opts, S) {
+  const cut = TABARD_BY_ID.get(opts.tabard);
+  if (!cut || !cut.panels || !cut.panels.length) return cape;
+  const tab = attachTabard(scene, rig, {
+    scale: S, panels: cut.panels, length: cut.length, width: cut.width,
+    rows: cut.rows, cols: cut.cols,
+    material: opts.tabardMaterial, color: opts.tabardColor,
+    seed: opts.seed, outer: null,
+  });
+  if (!tab) return cape;
+  cape.panels = tab.parts;
+  // The panel lies on the ROBE, and the cape learns which robe that is after
+  // it is built (`cloak.outer = skirt`). Read through the cape on every
+  // refresh rather than captured, so a skirt rebuilt under a live cape — which
+  // is what changing the belt does — is the surface the panels then use.
+  for (const p of tab.parts) {
+    const refresh = p.refreshColliders;
+    p.refreshColliders = () => {
+      const out = refresh();
+      const live = cape.outer && cape.outer.proxy && cape.outer.proxy.length ? cape.outer.proxy : null;
+      if (live) for (let i = 0; i < live.length; i++) out.push(live[i]);
+      return out;
+    };
+  }
+  const _update = cape.update.bind(cape);
+  cape.update = (dt, colliders, wind) => { _update(dt, colliders, wind); if (cape.enabled !== false || cape.none) tab.update(dt, wind); };
+  const _carry = cape.carry.bind(cape);
+  cape.carry = (q, pivot) => { _carry(q, pivot); tab.carry(q, pivot); };
+  const _impulse = cape.impulse.bind(cape);
+  cape.impulse = (dir, strength, dt) => { _impulse(dir, strength, dt); tab.impulse(dir, strength, dt); };
+  const _setVisible = cape.setVisible.bind(cape);
+  cape.setVisible = (v, standIn = true) => { _setVisible(v, standIn); tab.setVisible(standIn ? v : true); };
+  const _dispose = cape.dispose.bind(cape);
+  cape.dispose = () => { tab.dispose(); _dispose(); };
+  cape.tabard = tab;
+  return cape;
+}
+
 /**
  * Build a cloak that hangs from a rig's chest bone, with colliders tracking
  * the torso and legs so it drapes instead of clipping.
+ *
+ * @param opts.cape    a CAPE_CUTS id. Fills the dimensions in under whatever
+ *                     the caller stated, and `none` returns a garment that
+ *                     draws nothing — see bareCape.
+ * @param opts.tabard  a TABARD_CUTS id. Its panels are owned by the cape the
+ *                     way the sash is owned by the skirt, so the six calls
+ *                     that already drive a cape drive them too.
  */
 export function attachCloak(scene, rig, opts = {}) {
-  opts = withCut(opts, 'cloak');
+  opts = withCape(withCut(opts, 'cloak'));
+  const capeless = CAPE_BY_ID.get(opts.cape)?.none;
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const chest = rig.get('chest');
   if (!chest) return null;
+  if (capeless) return dressCape(bareCape(), scene, rig, opts, S);
 
   // NB: (opts.width ?? 0.6) * S — the * S used to bind to the default only, so
   // any scaled character got a collar half as wide as its own cloth.
@@ -1213,7 +1959,7 @@ export function attachCloak(scene, rig, opts = {}) {
     cols: opts.cols ?? 9,
     rows: opts.rows ?? 11,
     width: (opts.width ?? 0.6) * S,
-    length: (opts.length ?? 1.0) * S,
+    length: (opts.length ?? 1.0) * D,  // collar at S, hem down the leg at D
     color: opts.color ?? 0x4c3a26,
     material: opts.material,
     flare: opts.flare,                 // was silently dropped on the floor
@@ -1323,7 +2069,7 @@ export function attachCloak(scene, rig, opts = {}) {
     }
     return out;
   };
-  return cloak;
+  return dressCape(cloak, scene, rig, opts, S);
 }
 
 /**
@@ -1349,6 +2095,7 @@ export function attachCloak(scene, rig, opts = {}) {
 export function attachSkirt(scene, rig, opts = {}) {
   opts = withCut(opts, 'skirt');
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const hipsB = rig.get('hips');
   if (!hipsB) return null;
 
@@ -1429,7 +2176,11 @@ export function attachSkirt(scene, rig, opts = {}) {
   const skirt = new Cloak(scene, {
     closed: true,
     cols, rows,
-    length: length * S,
+    /* THE HEM, and it is the one number in this call that is not `* S`. The
+     * waistband above it is a hip measurement and takes S; how far below the
+     * hip the cloth reaches is a leg measurement and takes D. See dropScale —
+     * at S this robe ended 2.9% of a small figure's height off the floor. */
+    length: length * D,
     // cut to the garment's own silhouette rather than to an exponent — see
     // `petticoat`. Divided by the waistband so the profile is a multiplier on
     // the anchor ring, which is what reset() wants.
@@ -1634,9 +2385,19 @@ export function attachSkirt(scene, rig, opts = {}) {
    * and the first-person hide — drive them too, without a line at any of them.
    * `sash: false` turns them off for a garment that has no belt.
    */
-  const sash = opts.sash === false ? null
+  /*
+   * `sash` is now a CUT ID as well as a `false`, so a belt travels the way a
+   * robe cut does — see SASH_CUTS. `false` still means "this garment has no
+   * belt at all", which is what an enemy in a bodysuit passes; a cut whose
+   * `ends` list is empty is a belt with nothing hanging off it, which is a
+   * choice a player makes and not the absence of a belt. Those are two
+   * different statements and they happen to build the same thing.
+   */
+  const sashPick = typeof opts.sash === 'string' ? SASH_BY_ID.get(opts.sash) : null;
+  const sashEnds = opts.sashEnds ?? (sashPick ? sashPick.ends : undefined);
+  const sash = (opts.sash === false || (sashEnds && !sashEnds.length)) ? null
     : attachSash(scene, rig, { scale: S, outer: skirt, material: opts.sashMaterial,
-      color: opts.sashColor, seed: opts.seed, ends: opts.sashEnds,
+      color: opts.sashColor, seed: opts.seed, ends: sashEnds,
       // The cut's OWN profile, not a copy of the default: a cassock is a column
       // and a duelling tabard stops at the thigh, and a sash clamped to the
       // wrong silhouette hangs off the garment it is on.
@@ -1748,6 +2509,7 @@ export function attachSkirt(scene, rig, opts = {}) {
  */
 export function attachSash(scene, rig, opts = {}) {
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const hipsB = rig.get('hips');
   if (!hipsB) return null;
   const cols = opts.cols ?? 4;
@@ -1786,7 +2548,7 @@ export function attachSash(scene, rig, opts = {}) {
     const strap = new Cloak(scene, {
       closed: true,
       cols, rows,
-      length: e.len * S,
+      length: e.len * D,           // a belt end hangs down the thigh, like a hem
       /* Parallel-sided. `flare` defaults to 0.85 and a sash that bells out to
        * 1.85× its own width at the tip is a pennant. */
       flare: 0,

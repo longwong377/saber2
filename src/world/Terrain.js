@@ -1,5 +1,5 @@
 /**
- * SABER — terrain.
+ * BATTLEFRONT BORZ — terrain.
  *
  * A single large heightfield: one draw call, sampled analytically for physics,
  * and deformable at runtime so a Force landing actually leaves a crater in the
@@ -99,6 +99,56 @@ export function strata(h, step, strength, seed = 0) {
  * tools/checks/terrain.mjs pins the agreement; it found two presets whose
  * rockAt disagreed with their own material by 0.17 and 0.43 of slope.
  */
+/**
+ * KAMINO'S COLONY, AND THE ONE AUTHORITY FOR WHERE IT STANDS.
+ *
+ * "It should be a series of tall connected platforms rising out of the sea, not
+ * one giant platform." It was one 156 × 128 m superellipse deck.
+ *
+ * THIS TABLE IS EXPORTED BECAUSE TWO FILES NEED IT AND ONLY ONE MAY OWN IT.
+ * The heightfield below builds the decks from it, and `Levels.kamino.dress()`
+ * walks the same rows to put a rail and a lamp on every rim. The signature
+ * defect of this project is a hand-maintained table beside its generated twin
+ * (HANDOFF §2.3 — eight instances found so far, and every one of them was a
+ * list typed into two files); a rail ring that agreed with the deck it is
+ * standing on only because somebody kept two copies of seven numbers in step
+ * would have been the ninth. `Levels.js` imports this.
+ *
+ * THE LAYOUT is a hub with six satellites on a 72 m hexagon, which is the
+ * reference's own arrangement (`kamino/wide shot of kamino.webp`,
+ * `kamino outside.webp`): decks that nearly touch, with narrow channels of open
+ * sea between them and causeways bridging the channels. The gaps are 8-16 m,
+ * so the ocean is in every sightline from anywhere on the colony — which is the
+ * other half of the note ("the ocean should be more present") — while the
+ * fightable area stays comparable to the slab it replaces: 17.4 k m² of deck
+ * against the old superellipse's 19.2 k.
+ *
+ * THE HEIGHTS SPAN 3.4 m TO 13.0 m and that is the point of the word "tall".
+ * A colony all at one level is a slab with slots cut in it. Adjacent decks
+ * differ by 1.6-3.6 m, so a causeway is a ramp you can see the far end of, and
+ * standing on deck 2 you look DOWN onto deck 6 across sixteen metres of sea.
+ *
+ * `y` is the deck top above the sea (which is the datum). `r` is the rim
+ * radius. `link` names the decks a causeway runs to, given once — the builder
+ * reads each pair in one direction only.
+ */
+export const KAMINO_DECKS = [
+  { x: 0, z: 0, r: 36, y: 6.2, link: [1, 2, 3, 4, 5, 6] },
+  { x: 72, z: 0, r: 28, y: 9.4, link: [2, 6] },
+  { x: 36, z: 62, r: 28, y: 13.0, link: [3] },
+  { x: -36, z: 62, r: 26, y: 4.6, link: [4] },
+  { x: -72, z: 0, r: 28, y: 11.2, link: [5] },
+  { x: -36, z: -62, r: 26, y: 7.8, link: [6] },
+  { x: 36, z: -62, r: 28, y: 3.4, link: [] },
+];
+
+/** Every causeway, as a resolved pair of decks. Derived, never typed. */
+export const KAMINO_SPANS = KAMINO_DECKS.flatMap((a, i) =>
+  a.link.map((j) => ({ a: i, b: j })));
+
+/** Half-width of a causeway deck, in metres. A rail either side of it. */
+export const KAMINO_SPAN_HALF = 5.0;
+
 export const TERRAIN_PRESETS = {
   dunes: {
     scale: 560, res: 340, waterLevel: -999,
@@ -828,6 +878,29 @@ export const TERRAIN_PRESETS = {
    * Everything else is the works, verbatim: same palette, same falls, same
    * shell. The two rooms are the same building.
    */
+  /**
+   * THE FOUNDRY'S SHELL MOVED OUT FROM 66 m TO 94, AND THAT IS THE DEPTH RULE.
+   *
+   * "The foundry could be cool if it weren't for the feeling that you're in a
+   * large box — the chemical stuff and industry stuff look cool but the walls
+   * and roof just take you out of it."
+   *
+   * The Temple is the level that worked out what to do about that and its own
+   * comment states the rule: an interior stops being a box when there are three
+   * more colonnades between the player and the wall. The plant on this floor is
+   * good and the player says so; what is wrong is that it stops at 56 m and
+   * then there is a wall, so the eye finds the edge of the room in one glance.
+   *
+   * So the wall goes back 28 m and the FIGHT DOES NOT MOVE. The bay grid, the
+   * gantries, the canal and the crate drift are all unchanged, at ±56; what
+   * fills the new annulus is three ranks of structure (see `deepRanks` in
+   * Levels.js), so from the middle of the floor the shell is behind a stanchion
+   * rank, behind a second, behind a third. It costs nothing on the fight and
+   * four draw calls on the frame, because the ranks are instanced.
+   *
+   * 94 → 112 rather than 66 → 84: the same 18 m of run, so the wall is still
+   * 46 m of ground at 69°, which is what `descent.mjs` needs it to be.
+   */
   foundry: {
     scale: 320, res: 180, waterLevel: -1.45, flat: true,
     // The works' palette verbatim: the two rooms are the same building, and
@@ -851,7 +924,7 @@ export const TERRAIN_PRESETS = {
     detail: [1.6, 26],
     height(x, z) {
       const d = Math.max(Math.abs(x), Math.abs(z));
-      const shell = smoothstep(66, 84, d) * 46;
+      const shell = smoothstep(94, 112, d) * 46;
       const gx = Math.abs(fract(x / 9) - 0.5), gz = Math.abs(fract(z / 9) - 0.5);
       const drain = -smoothstep(0.42, 0.5, Math.max(gx, gz)) * 0.09;
       // The canal, running across the hall on a slow S so it is never a ruled
@@ -904,7 +977,7 @@ export const TERRAIN_PRESETS = {
      * the shape of the room.
      *
      * Levels.js's `deeps.water.level` carries the same −1.50. Two numbers for
-     * one sea is how Mustafar ended up with a coastline 2.5 m wide that was
+     * one sea is how the Ember Shelf ended up with a coastline 2.5 m wide that was
      * lava on screen and rock underfoot; they move together or not at all.
      */
     scale: 320, res: 190, waterLevel: -1.50,
@@ -972,7 +1045,7 @@ export const TERRAIN_PRESETS = {
    * where the flow lobes drown — an outline with real bays and headlands
    * rather than a circle, because the lobes decide it.
    */
-  mustafar: {
+  scoria: {
     /**
      * 0.55, NOT THE 0.0 THIS PRESET CARRIED, and the difference was a ring of
      * ground all round the coast that was drawn as lava and treated as dry
@@ -1109,9 +1182,33 @@ export const TERRAIN_PRESETS = {
    * least relief of anything here on purpose: everything vertical on this
    * level is masonry the dressing pass places, and a heightfield with an
    * opinion underneath it would fight the plinths standing on it.
+   *
+   * ── THE HALL GOT FOUR TIMES BIGGER, AND THAT IS THE WHOLE FIX ────────────
+   *
+   * This preset shipped at 300 m of field with its precinct wall at 64-82 m,
+   * i.e. a room 128 m across. Six levels were deleted for being boxes, and the
+   * player named exactly why: "your interior maps remind you that this is an
+   * AI game — you have to get rid of the being-in-a-cube feeling". The
+   * references answer it and the answer is not detail, it is DEPTH: in
+   * `coruscant-temple/temple after battle.webp` and `temple 1.jpg` the sense of
+   * place is arcade behind arcade behind arcade, and THE EYE NEVER FINDS THE
+   * FAR WALL.
+   *
+   * A wall at 64 m is a wall you find on the second glance. The dressing pass
+   * stands six colonnades between the nave and this one — at |x| = 11, 27, 44,
+   * 62, 81 and 101 — so the shell has to be beyond the last of them with room
+   * to spare, and it is at 122. The cost of that is a 470 m heightfield, which
+   * is the same size as the Ember Shelf's and one metre finer per cell than the
+   * dune sea's, so it is a size this engine already carries six times over.
+   *
+   * The floor's own contribution to depth is the BANDS. In the reference the
+   * polished floor is laid in long linear strips running away from the eye,
+   * with a shallow inlaid channel between them; they are the strongest depth
+   * cue in the frame after the columns because they are the only thing in it
+   * with a vanishing point. So they are cut here, in the ground, along z.
    */
   temple: {
-    scale: 300, res: 172, waterLevel: -999, flat: true,
+    scale: 470, res: 250, waterLevel: -999, flat: true,
     /* Warm pale stone and one cool shadow band — the cream ashlar of the
      * reference frames, not the grey of a deck. The accent this level is
      * authored around is the BLADES, so the ground is held light and low in
@@ -1136,23 +1233,223 @@ export const TERRAIN_PRESETS = {
     texScale: [0.44, 0.27, 0.32],
     detail: [1.5, 28],
     height(x, z) {
-      const d = Math.max(Math.abs(x), Math.abs(z));
-      // The precinct wall. Nearer than the works' because a temple hall is a
-      // room and not a shed, and 68 m of floor is already an enormous room.
-      const shell = smoothstep(64, 82, d) * 40;
+      /* THE PRECINCT WALL, at 122 m and not 64. See the note above: the last
+       * colonnade the dressing pass stands is at |x| = 101, so a shell nearer
+       * than that would be a wall with columns in front of it instead of six
+       * arcades with a wall somewhere behind them. 44 m over 16 m of run is
+       * 70°, past the 61° every solver in this game calls walkable, so the
+       * hall is bounded by its own masonry rather than by an invisible box. */
+      const d = Math.max(Math.abs(x) / 122, Math.abs(z) / 158);
+      const shell = smoothstep(0.90, 1.0, d) * 44;
       // The flagging, on a 2.4 m course. Half a centimetre of relief: enough
       // for the ink pass to find the joints and for a raking light to catch
       // them, and far too little to trip anybody.
       const fx = Math.abs(fract(x / 2.4) - 0.5), fz = Math.abs(fract(z / 2.4) - 0.5);
       const joint = -smoothstep(0.40, 0.5, Math.max(fx, fz)) * 0.05;
-      // The dais. Three steps up at the far end of the hall, which is where
-      // the thing you came to kill is standing.
-      const dais = smoothstep(30, 26, Math.hypot(x - 4, (z + 34) * 1.35)) * 1.35;
+      /* THE BANDS. Long inlaid strips running the length of the hall — 4.6 m
+       * wide, 3 cm proud, ONLY grooved across x so the channel between them is
+       * unbroken from one end of the room to the other. That is the difference
+       * between a tiled floor and the reference's: a floor whose joints run
+       * both ways has no direction, and a floor with a continuous line down it
+       * has a vanishing point. Faded out past the last colonnade so the aisles
+       * read as flagging and the nave as polished inlay. */
+      const bx = Math.abs(fract(x / 4.6) - 0.5);
+      const band = -smoothstep(0.41, 0.5, bx) * 0.03 * smoothstep(112, 88, Math.abs(x));
+      /* THE DAIS at the crèche end, where the younglings are. Three courses,
+       * 1.6 m over 5 m of tread — 18°, which the nav and the gait solver both
+       * walk, because the fight has to be able to follow you up it. */
+      const dais = smoothstep(-118, -123, z) * 1.6;
       // and the crack the level's own history put across it
       const rift = -Math.max(0, 0.55 - Math.abs(z - 8 + Math.sin(x * 0.031) * 9) * 0.09) * 0.9;
-      return shell + joint + dais + rift + fbm2(x * 0.075, z * 0.075, 2) * 0.03;
+      return shell + joint + band + dais + rift + fbm2(x * 0.075, z * 0.075, 2) * 0.03;
     },
     rockAt() { return 1; },
+  },
+
+  /**
+   * MUSTAFAR — braided rivers of lava through dark broken rock.
+   *
+   * "For the actual mustafar map go off the reference images more."
+   *
+   * THE ONE THING EVERY REFERENCE AGREES ON IS THAT THERE IS NO LAVA SEA.
+   * Across `mustafar 2/3/4/5/6` the melt is a RIVER SYSTEM: a trunk channel
+   * winding through a valley, strands that split off it and rejoin, falls
+   * pouring over ledges, and a web of thin veins cracking the crust between
+   * them. The Ember Shelf (preset `scoria`, kept, renamed at the player's
+   * request) is the other thing — a shelf standing out of an open sea — and
+   * the two are built from opposite sides of the same water plane:
+   *
+   *   scoria     the ground is an ISLAND. The sheet is everywhere the
+   *              heightfield falls below it, which is most of the field.
+   *   mustafar   the ground is a PLATEAU with channels CUT INTO IT. The sheet
+   *              is at the datum and the shelf stands 3-26 m over it, so the
+   *              only lava you can see is what is in the cuts — which is
+   *              exactly the picture, and which is why the rivers have banks,
+   *              islands and braid bars in them instead of a coastline.
+   *
+   * THE ROCK IS NOT RED. In every reference the basalt is a near-black
+   * grey-brown and it only LOOKS red where the melt is throwing light on it.
+   * The palette is authored at that near-black; the red arrives from the sheet
+   * (analytic, self-luminous — see the Ember Shelf's note), from the point
+   * lights the dressing pass strings along the channels, and from the level's
+   * own sky. Author the rock warm to "help" and the accent has nothing to be
+   * an accent against, which is rule 5 and is the mistake `scoria`'s own
+   * comment records making from the other direction.
+   */
+  mustafar: {
+    scale: 500, res: 300, waterLevel: 0.0,
+    /* Near-black basalt, barely warm. `scoria` records the whole experiment
+     * that fixes this swatch: authored COLD (hue 232-250°) a two-tone cel ramp
+     * with a low sun bands straight to lavender, because the shaded band is
+     * most of the ground and there are no midtones to hide a cast in. So this
+     * is the same solution — a warm NEAR-NEUTRAL at 22° and 0.11 of
+     * saturation, dark enough to sit under the accent and on the warm side of
+     * neutral where the firelight can find it. */
+    sandColor: 0x2b2622, rockColor: 0x3a3029,
+    maps: 'rock',
+    gritColor: 0x241f1c, rockColor2: 0x2e2622,
+    /* The dust is the ash on the flow tops; the crust is the oxidised skin on
+     * a lobe that has cooled. The crust is the one genuinely chromatic band
+     * here and it is deliberately the minority material. */
+    dustColor: 0x4a413a, crustColor: 0x6b4433,
+    // 0.09 is 24° and 0.30 is 46°: ash lies on the benches, bare basalt on
+    // every ridge face and every channel wall.
+    slopeBands: [0.09, 0.30, 0.028, 0.10],
+    stoneSlope: 0.14,
+    crust: 0.52, strataH: 2.4, cliffs: true,
+    // Down the trunk valley, so the ash streaks the way the draught off the
+    // river lays it.
+    wind: [0.78, 0.62],
+    macro: [126, 0.62, 0.48, 1.12],
+    rockUpland: [0.10, 5, 24],
+    lagColor: 0x2b2c30, sheetColor: 0x5a4c42,
+    // Ash, like the Ember Shelf's and for the same reason: dry, fed from the
+    // sky continuously, a print filled back in inside a minute.
+    loose: { depth: 0.22, refill: 58, tilt: 0.90, tint: 0.42, soot: 1.0 },
+    mantle: [0.08, 0.66],
+    packedColor: 0x1b1a1c,
+    /* `ripAspect: 1.0` BECAUSE THE BASE MAP IS ROCK, and this preset was the
+     * only one in the table taking the default instead of saying so.
+     *
+     * `uRipAspect` stretches the frame the BASE MAP is sampled through, and it
+     * exists to pull the sand map's two ripple trains onto one bearing. The
+     * default is 0.42 — the sand stretch — and every other preset whose base
+     * map is not wind-worked writes 1.0 here with a note saying why ("a deck is
+     * poured, not blown"; "still water, not wind"; "rolled plate, not blown
+     * sand"). Mustafar wrote nothing, so a 0.42 frame was combing a basalt map
+     * that has no train in it at all: measured coherence 0.10, against sand's
+     * 0.79 and snow's 0.65. That is the same defect the meadow was fixed for —
+     * crumb combed into corduroy — on a lava shelf, and it arrived by the same
+     * route the `maps: 'rock'` fallthrough did, a missing declaration answered
+     * with a plausible default. tools/checks/terrain.mjs now derives combed
+     * from the map's own measured coherence, so the next one is loud. */
+    ripple: 0.66, ripAspect: 1.0,
+    detail: [0.95, 30],
+    height(x, z) {
+      /* ── THE RIVER SYSTEM ──────────────────────────────────────────────
+       *
+       * A braided river is not a sine wave and it is not a noise field. It is
+       * ONE meandering centre line that a high-frequency ridged term keeps
+       * splitting into strands and letting rejoin, and the thing that makes it
+       * read as water rather than as a canyon is that the strands share a
+       * floor: the bars between them stand a metre or two proud of the melt,
+       * so the channel is wide and the sheet inside it is broken up.
+       *
+       * The trunk wanders along x. Three harmonics, deliberately incommensurate,
+       * plus a slow warp — a river with one wavelength reads as a road. */
+      const trunk = Math.sin(x * 0.0097) * 38 + Math.sin(x * 0.0042 + 1.9) * 21
+        + fbm2(x * 0.0058, 4.1, 3) * 16;
+      /* THE BRAID. `ridged2` is near 1 along its crest lines, so subtracting a
+       * threshold and scaling gives a set of curved BARS wandering across the
+       * channel; adding them to the distance-from-centre-line splits the river
+       * into strands wherever a bar crosses it. This is the term that makes it
+       * braided rather than a canal. */
+      const bar = Math.max(0, ridged2(x * 0.0182 + 3.3, z * 0.0094 - 6.1, 3) - 0.38) * 30;
+      const d1 = Math.abs(z - trunk) + bar;
+      // A tributary joining from the far side, so the system has a confluence
+      // in it rather than one line across the map.
+      const trib = Math.sin(x * 0.0151 - 2.4) * 26 + 96;
+      const d2 = Math.abs(z - trunk * 0.4 - trib) + bar * 0.7;
+      // and a third strand on the near side, thinner, so the middle of the
+      // field is fought across a river and not beside one
+      const d3 = Math.abs(z - trunk * 0.7 + 78) + bar * 0.55;
+      const river = Math.min(d1, Math.min(d2, d3));
+
+      /* THE BANK. 0 in the channel, 1 on the shelf, over 24 m — which at 5.2 m
+       * of cut is a 12° ramp out of the melt and NOT a wall. That is the whole
+       * reason the number is 24 and not 8: a channel you can be pushed into
+       * and cannot climb out of is a death pit, and this level's melt already
+       * does 56 HP a second. */
+      const bank = smoothstep(7, 31, river);
+      const d0 = Math.hypot(x, z);
+      /* THE CHANNELS SHALLOW OUT TOWARD THE MIDDLE, and this is a defect fix
+       * rather than a shaping choice.
+       *
+       * `levels-quality` asks one thing of every level that declares a sea: on
+       * the ground you are meant to stand and FIGHT on, the player's eye may
+       * not pass under the sheet. Whatever the fluid is, a transparent
+       * double-sided plane with depth-write off, seen from underneath, is the
+       * single ugliest thing this renderer can show — and on this level those
+       * cells are also 56 HP a second. Measured with `tools/_wetfloor.mjs` on
+       * the 60 m fighting disc: 11.2% of it sat more than 1.62 m under the
+       * melt, against a bar of 3%. The braid runs straight through the middle
+       * of the map, which is exactly where a full 5.2 m cut cannot go.
+       *
+       * So the cut is SCALED: 16% of its depth at the spawn, full depth past
+       * 88 m. Measured on the same disc afterwards — 0.1% over eye height and
+       * the deepest cell 1.80 m under the melt, against 11.2% and 3.52 m — and
+       * the melt is still THERE, on 4.1% of the fighting floor, because a
+       * shallow river is still a river and still kills you in two seconds.
+       *
+       * It is also the composition the reference plates actually have:
+       * `mustafar 3.jpeg` is a dry foreground shelf with the river system
+       * beyond it, and `mustafar 4.jpeg` looks down into channels from a rim
+       * you are standing on. And it gives the level what its own pool wants —
+       * a clear middle to fight in, with the lethal edge at the rim you can be
+       * driven onto.
+       */
+      const shelf = 1 - 0.84 * smoothstep(88, 24, d0);
+      const cut = -(1 - bank) * 5.2 * shelf;
+
+      /* ── THE ROCK ──────────────────────────────────────────────────────
+       *
+       * Ridges and spires, both gated on `bank` so nothing stands up out of
+       * the river. `ridged2` again for the ridges, because what the reference
+       * shows is SHARP: knife-edge crests with the flanks falling straight
+       * into the channels, not the rounded swell an fbm gives. */
+      /* BOTH ARE HELD OFF THE MIDDLE, and the number came out of a measurement
+       * rather than a taste. `world-immersion` scores an ash level on how much
+       * of the walkable r = 90 m disc is loose material at least ankle deep,
+       * and ash does not lie on anything past about 12° — so relief inside the
+       * fight is relief the ground cover cannot survive. Written without the
+       * bowl the level measured 60% against a bar of 70%; the crests are the
+       * skyline and the skyline is not where you stand. */
+      const bowl = smoothstep(26, 96, d0);
+      const ridge = Math.max(0, ridged2(x * 0.0051 + 8.8, z * 0.0051 - 2.2, 4)) * 24 * bank
+        * (0.30 + 0.70 * bowl);
+      // and the spatter cones and stacks on top of them
+      const spire = Math.pow(Math.max(0, ridged2(x * 0.0148 + 7.3, z * 0.0148 - 3.1, 3) - 0.30), 1.6)
+        * 34 * bank * bowl;
+
+      /* The regional fall: the whole field drains toward +x, which is what
+       * puts the falls on one side of the map and the pools on the other. */
+      const fall = -x * 0.030;
+
+      /* The rim. 90 m out the ground climbs into the volcano wall so the level
+       * does not end in a cliff of sky — and so the smoke columns and the
+       * distant cones the dressing pass stands have somewhere to stand. */
+      const d = Math.hypot(x * 1.04, z * 0.94);
+      const rim = smoothstep(150, 244, d) * 54;
+
+      const raw = 3.1 + cut + ridge + spire + fall + rim;
+      /* Quantised into flow courses near the melt, exactly as the Ember Shelf
+       * quantises its sea cliffs: a channel wall reads as stacked cooled flows
+       * rather than as a smooth bank, and the strength falls off with height so
+       * the upland stays a landform instead of a wedding cake. */
+      return strata(raw, 1.8, smoothstep(11.0, 1.2, raw) * 0.50, 5.3)
+        + fbm2(x * 0.058, z * 0.058, 3) * 0.24;
+    },
+    rockAt(x, z, slope) { return clamp(slope * 4.4 - 0.40, 0, 1); },
   },
 
   /**
@@ -1524,14 +1821,34 @@ export const TERRAIN_PRESETS = {
    * cannot: the puddles are geometry the level already had, and what makes them
    * puddles is that the DECK is 4 cm lower there.
    *
-   * ── THE PLATFORM ─────────────────────────────────────────────────────────
+   * ── THE COLONY ───────────────────────────────────────────────────────────
    *
-   * A rounded-rectangular deck 156 × 128 m standing 5.6 m out of the sea, with
-   * a raised outer kerb so you can be driven to an edge you can see, and a
-   * chamfer past it so the drop reads as a drop rather than as a hole. Outside
-   * that there is nothing at all for 240 m, which is the point: `waterLevel` is
-   * 0 and the heightfield falls to −9, so the sea runs to the edge of the world
-   * and the level's own `Water` mesh runs a long way past it.
+   * SEVEN DECKS ON LEGS, NOT ONE SLAB — see `KAMINO_DECKS` above, which is the
+   * one place the layout is written down and is imported by the level's own
+   * dressing pass. Each deck is a disc with a raised outer kerb so an edge you
+   * can be driven to is an edge you can see coming, and a chamfer past it so
+   * the drop reads as a drop; the causeways between them are ramped over
+   * 8 m of overrun at each end so a 5 m step between decks arrives as a 12-20°
+   * walkway rather than as a wall.
+   *
+   * ── THERE IS NO SEABED YOU CAN STAND ON, AND THAT IS A MEASUREMENT ───────
+   *
+   * The slab version sat on a flat pan at −9 m. That is fine under one deck
+   * whose footprint fills the survey disc and wrong the moment the deck becomes
+   * a colony: `world-immersion` walks the walkable r = 90 m disc on a 4 m grid,
+   * excludes anything steeper than 0.55 (61°) as "not ground you can stand on",
+   * and asks the rest for an object within 12 m. With 8-16 m channels of open
+   * ocean threading the colony, a flat pan would have donated ~11 k m² of
+   * seabed to that survey as walkable ground with nothing on it for forty
+   * metres — a level failing a barrenness test on the floor of an ocean.
+   *
+   * So the bed FALLS AWAY from every skirt toe at a gradient of 2.15, which is
+   * 65°, and it keeps falling for 36 m before it bottoms out at −89. Inside the
+   * colony no point is more than about 20 m from a deck, so every square metre
+   * of water in the survey disc is on a face past the threshold and the survey
+   * measures the decks — which is the ground the player can actually stand on,
+   * and is what the check is for. It is also what the reference shows: the
+   * platforms stand on legs over open ocean and there is no bottom in frame.
    */
   kamino: {
     scale: 460, res: 280, waterLevel: 0.0,
@@ -1575,17 +1892,47 @@ export const TERRAIN_PRESETS = {
     texScale: [0.42, 0.26, 0.34],
     detail: [1.5, 26],
     height(x, z) {
-      /* The deck, as a rounded rectangle: a superellipse of order 6, which is
-       * square enough to read as built and round enough that the kerb does not
-       * have four corners you can be trapped in. */
-      const e = Math.pow(Math.pow(Math.abs(x) / 78, 6) + Math.pow(Math.abs(z) / 64, 6), 1 / 6);
-      const deck = smoothstep(1.02, 0.98, e) * 5.6;
-      // the kerb: a 0.9 m lip round the rim, so an edge you can be driven to
-      // is an edge you can see coming
-      const kerb = smoothstep(0.90, 0.965, e) * smoothstep(1.01, 0.98, e) * 0.9;
-      // and the chamfer below it, 5.6 m over 6 m of run — 43°, which is a face
-      // you slide off rather than a wall you stand against
-      const skirt = -smoothstep(1.02, 1.10, e) * 3.4;
+      /* THE DECKS AND THE CAUSEWAYS, as one profile.
+       *
+       * `edge` is the signed distance INSIDE the nearest built rim, in metres —
+       * positive on a deck, negative over open water. `edgeY` is the level of
+       * whichever rim that was, so the fall off the side starts from the right
+       * height whether it is deck 6 at 3.4 m or deck 2 at 13.0. `top` is the
+       * highest built surface here, and it is a MAX over the colony because a
+       * causeway overlaps the decks it lands on — max is what makes a landing a
+       * landing rather than a notch cut in the rim. */
+      let top = -1e9, edge = -1e9, edgeY = 0;
+      const rim = (inside, y) => {
+        if (inside > edge) { edge = inside; edgeY = y; }
+        if (inside <= -0.6) return;
+        // the kerb: a 0.9 m lip in the outer 3.2 m, so an edge you can be
+        // driven to is an edge you can see coming
+        const k = smoothstep(3.2, 0.9, inside) * smoothstep(-0.4, 0.6, inside) * 0.9;
+        const s = y * smoothstep(-0.4, 0.9, inside) + k;
+        if (s > top) top = s;
+      };
+      for (let i = 0; i < KAMINO_DECKS.length; i++) {
+        const D = KAMINO_DECKS[i];
+        rim(D.r - Math.hypot(x - D.x, z - D.z), D.y);
+      }
+      /* A ramp from deck A's level to deck B's, blended over the channel PLUS
+       * 8 m of overrun into each deck — which is what turns the steepest link
+       * in the colony (deck 0 at 6.2 m to deck 2 at 13.0 m over a 7.7 m
+       * channel) from a 41° face into a 16° walkway. `KAMINO_SPAN_HALF` is 5 m
+       * either side of the centre line, so a causeway is a 10 m road: wide
+       * enough for a fight and narrow enough that being on it is being out
+       * over the sea. */
+      for (let i = 0; i < KAMINO_SPANS.length; i++) {
+        const A = KAMINO_DECKS[KAMINO_SPANS[i].a], B = KAMINO_DECKS[KAMINO_SPANS[i].b];
+        const dx = B.x - A.x, dz = B.z - A.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const ux = dx / len, uz = dz / len;
+        const s = (x - A.x) * ux + (z - A.z) * uz;              // along the span
+        const t = Math.abs(-(x - A.x) * uz + (z - A.z) * ux);   // across it
+        const s0 = A.r - 8, s1 = len - B.r + 8;
+        if (s < s0 || s > s1) continue;
+        rim(KAMINO_SPAN_HALF - t, lerp(A.y, B.y, clamp((s - s0) / Math.max(1, s1 - s0), 0, 1)));
+      }
 
       /* THE PANS. Drainage falls on a 13 m module, cut 0.14 m deep — which is
        * 4 cm BELOW the sea, so `Water` lies in them. The falls are diagonal
@@ -1600,13 +1947,219 @@ export const TERRAIN_PRESETS = {
       const px = Math.abs(fract(x / 6.5) - 0.5), pz = Math.abs(fract(z / 6.5) - 0.5);
       const seam = -smoothstep(0.40, 0.5, Math.max(px, pz)) * 0.05;
 
-      // and the sea. −9 m, so nothing standing on it is ever half submerged.
-      const sea = -9;
-      const onDeck = smoothstep(1.10, 1.0, e);
-      return lerp(sea, deck + kerb + skirt + pan * onDeck + seam * onDeck, onDeck)
-        + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
+      if (edge > -0.6) {
+        const onDeck = clamp(edge / 3.0, 0, 1);
+        return top + (pan + seam) * onDeck + fbm2(x * 0.07, z * 0.07, 2) * 0.02 * onDeck;
+      }
+
+      /* ── OFF THE RIM: THE SHAFT, THE SHELF, AND THEN NOTHING ────────────
+       *
+       * Three metres of near-vertical face, ten metres of submerged shelf at
+       * −1.25, and past that a 69° bed to the abyssal pan at −78. Every one of
+       * the three numbers is load-bearing and two of them were measured.
+       *
+       * THE SHAFT is what the reference shows — each dome stands on legs and
+       * its flared underside meets the water as a rim, not as a beach — and it
+       * is what keeps the fall SHORT. `levels-quality`'s wade test walks the
+       * player off the deck and holds them to 3.0 m of depth; with an unbroken
+       * 69° bed running straight down from a 13 m deck they reached 6.8 m,
+       * because there was nothing to land on until the water was six metres
+       * deep. The shaft puts the bottom of the fall at −1.25 whatever height
+       * the deck is, so a plunge off the tallest deck in the colony is the same
+       * plunge as off the shortest.
+       *
+       * THE SHELF IS TEN METRES WIDE because that is what a 4.6 m/s walk off a
+       * 7 m kerb needs: 1.2 s of fall carries you 5.5 m out, and a shelf that
+       * ends before that is a shelf you walk straight over. It sits 1.25 m
+       * under the sheet, which is a quarter of a metre past `wade`, so the bed
+       * shoves you shoreward the moment you are on it — the check's own note
+       * calls the intended reading "chest-deep at the edge of the world", and
+       * this is where you end up standing.
+       *
+       * PAST THE SHELF there is no bottom you can stand on: 2.6 of gradient,
+       * i.e. 69°, past the 61° every solver in this game calls the limit of
+       * standable ground, held all the way down. See the note at the head of
+       * this preset for why that matters to the barrenness survey. */
+      const out = -edge;
+      const shaft = edgeY - 0.4 - smoothstep(0.6, 3.0, out) * (edgeY - 0.85);
+      const bed = -1.25 - Math.max(0, out - 10.0) * 2.6;
+      return Math.max(-78, Math.min(shaft, bed)) + fbm2(x * 0.05, z * 0.05, 2) * 0.22;
     },
     rockAt() { return 1; },
+  },
+
+  /**
+   * GEONOSIS — and this preset is the OPPOSITE of every other one in this file.
+   *
+   * Eleven reference images of this battle were read before a line of it was
+   * written, and amalgamated they agree on one thing before they agree on
+   * anything else: THE GROUND IS FLAT AND THE SIGHTLINES ARE ENORMOUS. Infantry
+   * are visible as specks to the horizon; two armies of hundreds advance in
+   * loose massed ranks across open ochre with nothing between them; the only
+   * things that break the line are vertical smoke columns off wrecks, a few
+   * isolated stacks, and the silhouettes of the machines themselves.
+   *
+   * Every level this game has shipped is a BOWL, a CIRQUE, a WASH or a DUNE
+   * TRAIN — landforms whose whole job is to give the player somewhere to fall
+   * back to and something to fight around. This is a mode about leading a line
+   * of troops, and a line cannot form in a gully. So the design constraint is
+   * inverted: the fighting ground must be flat enough to array an army on and
+   * open enough to see the other one coming a hundred and fifty metres out.
+   *
+   * WHAT THAT COSTS, AND HOW IT IS PAID. A flat plain fails the two properties
+   * every other preset gets for free from its landform — `terrain.mjs` holds
+   * every outdoor level to a luminance spread over 18% and a landform occlusion
+   * that varies by more than 0.05, and a plane has neither. It is paid for by
+   * the three things a real deflation plain has and a plane does not:
+   *
+   *   THE STACKS. Isolated flat-topped buttes, benched by `strata`, standing 20
+   *     to 46 m off the plain and placed by a ridged mask so they come in
+   *     groups with open ground between them — which is exactly what
+   *     `more geonosis landscape.jpeg` shows. They are suppressed inside 66 m of
+   *     the middle, so the ground you actually array an army on stays open, and
+   *     they are what carries the occlusion, the rock band and the skyline.
+   *   THE RILLS. Sheetwash on a plain does not cut a valley, it cuts a braided
+   *     web of shallow channels 30-60 cm deep. Underfoot they are nothing; to
+   *     the material channels they are the concavity that puts fines in the
+   *     hollows and lag on the interfluves, which is the whole 150 m patchwork.
+   *   THE SWELL. ±1.7 m over 200 m wavelengths. You cannot feel it and you
+   *     cannot see it, and it is the difference between ground and a table.
+   *
+   * MEASURED ON THE FIELD, inside the central 120 m — relief, then mean slope:
+   *
+   *     geonosis   1.62 m   2.58°
+   *     arena      1.77 m   2.20°     ← the flattest fighting floor in the game
+   *     meadow    13.69 m   6.58°
+   *     drifts    25.26 m  17.15°
+   *
+   * So it is level with the arena's dish, which is the flattest ground this
+   * project has, and it holds that out to 180 m where the arena's runs into a
+   * 27 m wall at 60. Of the disc inside 180 m, 17.6% stands over 6 m — that is
+   * the stacks, and it is the number that says this is a plain WITH buttes on it
+   * rather than butte country you can fight in the gaps of.
+   *
+   * THE SPIRES ARE NOT HERE, deliberately. Geonosian needle spires are 4-8 m
+   * across at the base and this heightfield is 1.8 m a cell, so a spire in the
+   * terrain is three vertices wide and comes out as a lump. They are PROPS —
+   * `makeSpire` already exists — and props can be as thin as they like.
+   *
+   * THE COLOUR is the one thing every image agrees on even more than the
+   * flatness: red-ochre rust, pale sand streaked over it, and a sky so full of
+   * dust that everything past a hundred metres desaturates into it. The two
+   * rock bands are the banded buttes — an iron-stained bed over a cooler
+   * grey-mauve one, which is the sandstone-over-shale pair the arena's rim
+   * already uses and the reason those cliffs read as rock rather than as sand.
+   */
+  geonosis: {
+    /* 620 m and 340 vertices — the largest field in the game, and it has to be:
+     * "you can see the other army coming" is a statement about metres. 1.82 m a
+     * cell, which is the coarsest here, and it is affordable precisely because
+     * there is no fine landform to lose — a plain is the one shape that does
+     * not need resolution. */
+    scale: 620, res: 340, waterLevel: -999,
+    sandColor: 0x9a5c34, rockColor: 0xa8613a,
+    maps: 'sand',
+    gritColor: 0x6e3f22, rockColor2: 0x6b5a55,
+    // Wind-blown fines are much paler than the dirt they came off, and the
+    // caliche crust on a deflation surface is paler still and nearly neutral.
+    dustColor: 0xc9a074, crustColor: 0xbfae8f,
+    /* Slope here is 1 − cos θ. 0.06 is 20° and 0.24 is 41°: the plain never
+     * reaches the band at all, and the butte faces are all of it. That is the
+     * point — this is the one level where the rock band is a LANDMARK rather
+     * than a texture, because there are exactly a dozen places on the map
+     * steep enough to trigger it. */
+    slopeBands: [0.06, 0.24, 0.045, 0.15],
+    stoneSlope: 0.22,
+    crust: 0.62, strataH: 6.5, cliffs: true,
+    /* The dust runs across the plain from the same bearing the level's sun
+     * comes from, so the smoke columns and the drifted sand agree with each
+     * other and with the shadows. */
+    wind: [0.94, 0.34],
+    /* Lag gain 0.72 — higher than the dune sea's 0.62 and near the arena's
+     * 0.75, for the same reason the arena needs it: on ground with almost no
+     * slope, the 150 m grain-sorting patchwork is the ONLY layer carrying
+     * variation, and a deflation plain is the landform that patchwork actually
+     * describes. This is the one preset where lag/sheet is not decoration. */
+    macro: [150, 0.72, 0.55, 1.05],
+    /* Rock by ELEVATION as well as slope, which is what makes the stacks read
+     * as stone all the way to their flat tops rather than as sand hats. 0.14
+     * slope, 6 m above the surrounding land, fully rock by 30. */
+    rockUpland: [0.14, 6, 30],
+    /* A deflation pavement is desert varnish on coarse gravel — grey-olive,
+     * never tan, and DARKER than the dirt it was winnowed out of. The sheet is
+     * the pale wind-blown fines that settle on top of it. The two bracket the
+     * base in value and sit either side of it in hue, which is what stops 150 m
+     * of patchwork reading as a brightness ramp. */
+    lagColor: 0x4e4a41, sheetColor: 0xd8b083,
+    /* THE MOST DEEPLY PRINTED GROUND IN THE GAME, and it is the mode that earns
+     * it: two armies of infantry cross this plain, and the record of where they
+     * went is the level's own subject. 0.24 m of loose over a hard pan, and a
+     * refill time of 240 s — four minutes, longer than any other preset, because
+     * the air here is dusty rather than windy. An area you fought through still
+     * shows it when you come back past. */
+    loose: { depth: 0.24, refill: 240, tilt: 1.0, tint: 0.52, soot: 1.0 },
+    packedColor: 0x6a3d20,
+    /* Aeolian ripples, but weakly: this is a deflation surface with the fines
+     * blown OFF it, not a dune field with them piling up. 0.7 puts a texture on
+     * the loose patches and leaves the pavement alone. */
+    ripple: 0.7,
+    detail: [1.0, 34],
+    height(x, z) {
+      const d = Math.hypot(x, z);
+
+      /* ── THE PLAIN. Three terms and none of them is a landform.
+       *
+       * The swell is two octaves at 200 m and 70 m, ±1.7 m total — under the
+       * eye's threshold at any distance and above the physics grid at every
+       * one, which is exactly what "flat but not a table" means.
+       *
+       * The rills are sheetwash: a braided web at 55 m, cut 0.55 m at most,
+       * with a second finer web inside it. `Math.max(0, ridged - k)` is the
+       * standard channel form in this file — it is zero over most of the ground
+       * and only cuts where the ridge function is high, so it produces separate
+       * channels with flat interfluves between them rather than corrugation. */
+      const swell = fbm2(x * 0.0050 + 3.1, z * 0.0050 - 1.4, 2) * 1.7;
+      const rill = -Math.max(0, ridged2(x * 0.0182, z * 0.0182, 3) - 0.44) * 1.25
+        - Math.max(0, ridged2(x * 0.049 + 6.3, z * 0.049 - 2.2, 2) - 0.52) * 0.55;
+      const micro = fbm2(x * 0.14, z * 0.14, 3) * 0.09;
+
+      /* ── THE STACKS.
+       *
+       * `mask` is a ridged field at 240 m thresholded hard, so buttes come in
+       * clusters with hundreds of metres of open plain between the clusters —
+       * which is what the landscape plate shows and what a uniform noise field
+       * cannot produce. `open` keeps them off the middle: nothing rises inside
+       * 66 m, and they come up over the next 40, so wherever the campaign puts
+       * you there is ground to array a line on.
+       *
+       * The profile is a PLATEAU, not a hill: `Math.pow(m, 0.42)` flattens the
+       * top of the mask and the strata band the sides, so what stands up is a
+       * flat-topped stack with benched walls. `strata` is the same quantiser the
+       * canyon's walls use, at 6.5 m a bed — several grid cells deep, which is
+       * what makes a bench survive a 1.8 m grid at all.
+       *
+       * A SECOND, SMALLER SET at three times the frequency and a fifth of the
+       * height gives the rubble stacks and boulder plinths the foreground plates
+       * are full of, without another octave of the expensive term. */
+      const open = smoothstep(66, 106, d);
+      const m = clamp((ridged2(x * 0.0042 - 4.7, z * 0.0042 + 2.9, 3) - 0.62) / 0.30, 0, 1);
+      const stack = strata(smoothstep(0, 0.62, m) * 44 * open, 7.5, 0.46, 21.3);
+      const m2 = clamp((ridged2(x * 0.0126 + 8.2, z * 0.0126 - 5.1, 2) - 0.66) / 0.26, 0, 1);
+      const rubble = smoothstep(0, 0.7, m2) * 8.0 * open;
+
+      /* ── THE FAR SIDE. The map is a hard-bounded box and the painted ranges
+       * (addHorizon) are what sell "endless" — see the note at the head of
+       * LEVELS. What this adds is the ground rising into them, so the drawn
+       * ranges stand ON something instead of floating at the edge of a plane.
+       * It starts at 236 m, which is beyond every sightline the fight uses. */
+      const far = smoothstep(236, 306, d) * 26
+        * (0.55 + Math.max(0, ridged2(x * 0.0072, z * 0.0072, 2)) * 0.9);
+
+      return swell + rill + micro + stack + rubble + far;
+    },
+    /* 0.06 → 0.24 is this preset's own rock band, i.e. stone starts at 20° and
+     * is all stone by 41°. The twin has to cross where the material does. */
+    rockAt(x, z, slope) { return clamp(slope * 5.55 - 0.33, 0, 1); },
   },
 };
 
@@ -2899,10 +3452,35 @@ export class Terrain {
     // in it: a snowfield's outcrop and a canyon wall are the same stone, and
     // the preset's two rock colours are what make them different rocks.
     switch (this.preset.maps) {
+      case 'sand': return [sandMaps(1), rockMaps(2)];
       case 'deck': return [duracreteMaps(2), metalMaps(2)];
       case 'soil': return [soilMaps(1), rockMaps(2)];
       case 'snow': return [snowMaps(1), rockMaps(2)];
-      default: return [sandMaps(1), rockMaps(2)];
+      /**
+       * ROCK ALL THE WAY DOWN — Mustafar, and it was falling through to SAND.
+       *
+       * `maps: 'rock'` was authored for the basalt shelf and no case ever
+       * matched it, so the `default` handed a lava plain the dune sea's sand
+       * carrier as its base map. The declaration and the switch were a
+       * hand-maintained pair that had quietly come apart (HANDOFF §2.3) — and
+       * because the fallthrough produced a perfectly valid material, nothing
+       * looked broken; it just looked like the wrong planet up close.
+       *
+       * Both maps are rock because that is what the landform is: the base is
+       * the flow top and the second is the same stone at the other variant, so
+       * the preset's two rock colours are still what separate them.
+       */
+      case 'rock': return [rockMaps(1), rockMaps(2)];
+      /* AND THERE IS NO `default: sand` ANY MORE.
+       *
+       * That fallthrough is the whole reason the paragraph above exists: an
+       * unknown key produced a perfectly valid material, so nothing threw,
+       * nothing logged, and the level simply looked like the wrong planet for
+       * as long as it took a person to notice. `sand` is a case like any other
+       * now, and a key nobody wrote a case for is loud at the moment the
+       * ground is built rather than silent forever. */
+      default: throw new Error(`terrain: preset ground map '${this.preset.maps}' has no case in `
+        + '_mapSet — add one rather than letting it render on sand');
     }
   }
 
@@ -2917,10 +3495,30 @@ export class Terrain {
    * level's authored colour" an identity rather than a near miss.
    */
   _mapMeans() {
-    const m3 = (n) => { const v = MEAN_ALBEDO[n]; return (v[0] + v[1] + v[2]) / 3; };
-    const pair = { deck: ['duracrete', 'metal'], soil: ['soil', 'rock'], snow: ['snow', 'rock'] };
-    const [b, r] = pair[this.preset.maps] || ['sand', 'rock'];
-    return new THREE.Vector2(m3(b), m3(r));
+    /* ASKED OF THE MAPS `_mapSet` ACTUALLY BOUND, which is the whole point.
+     *
+     * This used to be a second table — `{ deck: ['duracrete','metal'], soil:
+     * […] }` — sitting beside that switch, and its own comment called itself
+     * "the generated twin of that switch". It was: `maps: 'rock'` reached this
+     * table and not the switch, so for one release the far field of Mustafar
+     * collapsed onto basalt's mean while the near field rendered on sand.
+     * A set that binds two maps and a mean that names two materials have to
+     * agree, and the only way to guarantee that is to stop asking twice.
+     *
+     * Every texture carries the name of the bake it came from — see
+     * `toTexture` in Textures.js, where it was put precisely so a consumer
+     * could identify its own subject — so the mean is a lookup on what is
+     * bound, and a map with no calibrated mean is an error rather than a
+     * plausible number. */
+    const mean = (set) => {
+      const n = set.map.userData.saberBake;
+      const v = MEAN_ALBEDO[n];
+      if (!v) throw new Error(`terrain: the '${n}' map has no MEAN_ALBEDO — the far field `
+        + 'would collapse onto a colour the near field never had');
+      return (v[0] + v[1] + v[2]) / 3;
+    };
+    const [base, upper] = this._mapSet();
+    return new THREE.Vector2(mean(base), mean(upper));
   }
 
   _buildMesh(scene) {

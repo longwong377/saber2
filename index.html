@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#05070c">
-<title>SABER</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='14' y='2' width='4' height='20' rx='2' fill='%2360d8ff'/><rect x='13' y='21' width='6' height='9' rx='1.5' fill='%23888'/></svg>">
+<meta name="theme-color" content="#0a0b14">
+<title>Battlefront Borz</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='14' y='2' width='4' height='20' rx='2' fill='%2348d8ff'/><rect x='13' y='21' width='6' height='9' rx='1.5' fill='%23888'/></svg>">
 <link rel="stylesheet" href="./styles.css">
 <script type="importmap">
 {
@@ -24,7 +24,7 @@
 <!-- ══════════════════════ BOOT ══════════════════════ -->
 <div id="boot" class="screen">
   <div class="boot-inner">
-    <div class="logo"><span class="logo-blade"></span><h1>SABER</h1></div>
+    <div class="logo"><span class="logo-blade"></span><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
     <div class="boot-bar"><i id="boot-fill"></i></div>
     <div id="boot-msg" class="boot-msg">forging blade…</div>
   </div>
@@ -35,8 +35,8 @@
   <div class="menu-bg"></div>
   <div class="menu-wrap">
     <header class="menu-head">
-      <div class="logo small"><span class="logo-blade"></span><h1>SABER</h1></div>
-      <p class="tagline">a single blade against a hundred</p>
+      <div class="logo small"><span class="logo-blade"></span><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
+      <p class="tagline">Clone Wars · Front Line</p>
       <p class="byline">made by Valdrian</p>
       <!-- Filled by main.js from Progress.js. A HISTORY, not a currency:
            nothing here unlocks anything, and it is empty until you have played
@@ -62,6 +62,29 @@
         <p class="hint hidden" id="level-note"></p>
         <div id="level-list" class="cards"></div>
       </div>
+      <!-- THE RULES THE RUN IS FOUGHT UNDER — Waves.CONDITIONS, chosen instead
+           of dealt. Filled by Menu._buildRules; a rule the chosen theatre
+           cannot field is greyed with its reason on the card, the same way the
+           Theatre column greys when the mode owns the theatre. Empty markup for
+           the same reason every other list here is empty: CONDITIONS is the
+           table, and a second copy of it typed into this file is exactly the
+           defect this project keeps removing. -->
+      <div class="col narrow rules">
+        <h3>Run rules</h3>
+        <p class="hint" id="rule-note">Optional. Every one of them changes the question rather than the
+          number, they are in force from the first wave, and none of them makes the run cheaper.</p>
+        <div id="rule-list" class="difflist"></div>
+        <p class="hint" id="rule-seed"></p>
+        <!-- THE RUN'S NUMBER. Empty draws a fresh one on every Ignite, which is
+             what an endless mode wants by default; type one in and the waves,
+             the elite rolls, the duel forms and the arrivals all replay. It
+             sits under the rules because the two are one thought: a seed makes
+             a rule set a thing you can hand somebody. -->
+        <label class="netname seedbox">Seed
+          <input id="opt-seed" placeholder="fresh each run" maxlength="10"
+                 spellcheck="false" autocomplete="off" inputmode="numeric">
+        </label>
+      </div>
       <!-- THE LISTS SCROLL; THE BUTTON DOES NOT.
            Ignite used to be the last child of the scrolling column, held down
            by `position:sticky`, and its third box-shadow is a 22 px dark
@@ -81,7 +104,12 @@
         <div class="col-scroll">
           <h3>Trial</h3>
           <div id="diff-list" class="difflist"></div>
-          <h3 style="margin-top:26px">Mode</h3>
+          <!-- The gap between the two lists is a CLASS and not an inline style
+               because a short viewport has to be able to close it: at 1280x720
+               this scroller is 362 px over 819 px of content, and an inline
+               margin cannot be overridden by the media query that claws some
+               of that back. See `.col.narrow.pinned` in styles.css. -->
+          <h3 class="stacked">Mode</h3>
           <div id="mode-list" class="difflist"></div>
         </div>
         <button id="btn-deploy" class="primary">Ignite</button>
@@ -121,6 +149,30 @@
         <div id="cut-list" class="cards small"></div>
         <h3 style="margin-top:22px">Robe colour</h3>
         <div id="robe-list" class="swatches"></div>
+        <p class="hint">The palette every layer below is derived from. Each piece can then be dyed on
+          its own — the first swatch in every row is <b>as the robe</b>, which is what it was.</p>
+        <!-- THE WARDROBE. Nine rows, all built by Menu._buildSaber out of the
+             tables in src/game/Cloth.js, because a list of cape cuts typed
+             into this markup is a second copy of CAPE_CUTS waiting to disagree
+             with it. They write into `settings.wardrobe` and are applied to a
+             live body by applyWardrobe, so a piece picked here — or from the
+             pause card — lands without a redeploy. -->
+        <h3 id="h-cape" style="margin-top:22px">Cape</h3>
+        <div id="cape-list" class="cards small"></div>
+        <div id="cape-tone-list" class="swatches tone"></div>
+        <h3 id="h-tabard" style="margin-top:22px">Over-robe</h3>
+        <div id="tabard-list" class="cards small"></div>
+        <div id="tabard-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Tunic</h3>
+        <p class="hint">The collar, the crossed V at the chest and the cuffs under the sleeves.</p>
+        <div id="tunic-tone-list" class="swatches tone"></div>
+        <h3 id="h-sash" style="margin-top:22px">Belt &amp; sash</h3>
+        <div id="sash-list" class="cards small"></div>
+        <div id="sash-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Boots</h3>
+        <div id="boot-tone-list" class="swatches tone"></div>
+        <h3 style="margin-top:22px">Gloves &amp; bracers</h3>
+        <div id="glove-tone-list" class="swatches tone"></div>
         <h3 style="margin-top:22px">Crystal</h3>
         <div id="color-list" class="swatches"></div>
         <h3 style="margin-top:22px">Force lightning</h3>
@@ -134,7 +186,8 @@
       <div class="col narrow">
         <h3>Preview</h3>
         <div id="saber-preview" class="preview"></div>
-        <p class="hint">Drag to rotate. The Jedi you build is the Jedi you carry.</p>
+        <div id="preview-shots" class="shots"></div>
+        <p class="hint">Drag to turn, wheel to move in. The Jedi you build is the Jedi you carry.</p>
       </div>
     </section>
 
@@ -187,6 +240,35 @@
         <label class="slider">Power <input type="range" id="opt-forcepower" min="0.25" max="4" step="0.05" value="1"><b></b></label>
         <label class="slider">Drain <input type="range" id="opt-forcedrain" min="0" max="2" step="0.05" value="1"><b></b></label>
         <p class="hint">Drain at 0 is unlimited Force. Power scales reach, lift and impulse together.</p>
+        <h3 style="margin-top:22px">The Holocron</h3>
+        <div id="opt-holocron" class="difflist"></div>
+        <p class="hint">Earned is the game: Insight is a run currency, you kneel to spend it, and nothing
+          carries over. The other two are for looking at what is in here — a whole run can end without
+          ever meeting Force lightning or Compel, and a power nobody can reach is a power nobody can tell
+          you is broken.</p>
+        <!-- YOUR ARMY. Both of these had a reader in game/Command.js and no
+             control anywhere, which is how they escaped both dead-control
+             checks: those iterate DEFAULT_SETTINGS, and neither key was in it. -->
+        <h3 style="margin-top:22px">Your army</h3>
+        <label class="slider">Team damage <input type="range" id="opt-teamdamage" min="0" max="1" step="0.05" value="0.35"><b></b></label>
+        <p class="hint">How much of <b>your own</b> damage reaches your own troops. The physics is never
+          scaled — a push throws your sergeant exactly as far as it throws a B1, a grip lifts him, and
+          the blade goes through him whatever this says. What this scales is the damage that lands.
+          At 0 you can ragdoll the whole line into the air and lose nobody; at 100% a careless sweep
+          costs you a name off the roster.</p>
+        <label class="check"><input type="checkbox" id="opt-command-versus"> Meet another commander</label>
+        <p class="hint">Needs a <b>session</b>, and it changes what Command is. Instead of your army
+          against a composed horde across five areas, it is <b>one battle against another player's
+          army</b> — two rosters, two armies, deployed a hundred and twenty metres apart on the plain
+          and walking toward each other. Two Jedi do not both get the Republic; whoever joined first
+          keeps the army their order names and the other takes the opposing one. Permadeath is the
+          same, which is the point: the field belongs to whichever side still has somebody standing,
+          and every name you lose taking it is gone.</p>
+        <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
+        <div id="command-list" class="difflist"></div>
+        <p class="hint">The formation your squads form up in at the start of every area. You can change
+          it mid-fight with the order keys — they are ordinary rebindable controls, listed under
+          <b>Key bindings</b> and printed on the controls page.</p>
       </div>
       <div class="col">
         <h3>Key bindings</h3>
@@ -208,15 +290,54 @@
              checkbox the tier has overruled has to say so instead of sitting
              there ticked and doing nothing. -->
         <label class="check" id="opt-bloom-row"><input type="checkbox" id="opt-bloom" checked> <span id="opt-bloom-label">Bloom</span></label>
-        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter</label>
+        <!-- WHAT THE FIELD KEEPS, and how things arrive on it. Both had a
+             reader and no control: `Waves.instantSpawn(settings)` is the one
+             gate on every gunship, door and drop pod in the game, and
+             RapierWorld's body cap was `settings.maxBodies ?? 1100` against a
+             key nothing anywhere wrote. -->
+        <label class="slider">Wreckage kept <input type="range" id="opt-maxbodies" min="300" max="2400" step="100" value="1100"><b></b></label>
+        <p class="hint">Severed limbs, cut props and shattered walls all share this budget; past it the
+          oldest piece is culled. It is the number that decides whether a long fight leaves a
+          battlefield behind it or a clean floor.</p>
+        <label class="check"><input type="checkbox" id="opt-instant-spawn"> Instant arrivals</label>
+        <p class="hint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
+          On, they simply appear — cheaper, and the honest choice on a machine that cannot afford the
+          craft.</p>
+        <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter &amp; adapter</label>
+        <p class="hint">Frame time, 1% low and draw calls in the corner of the HUD — and the graphics
+          adapter and build id in the footer of this screen. Off by default because they are
+          instruments: a title screen that opens with a driver string is a bug report.</p>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
+        <label class="check"><input type="checkbox" id="opt-letterbox" checked> Letterbox bars</label>
+        <label class="check"><input type="checkbox" id="opt-deathdrain" checked> Colour drains when you fall</label>
+        <p class="hint">Both are separate from Camera shake on purpose: with motion feedback off they are
+          the only thing on screen that tells you a boss has arrived, or that you died.</p>
+        <label class="slider">Controller rumble <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
+        <p class="hint">A kill, a blow taken and a deflection each drive the pad. A slider rather than a
+          box because rumble is the one piece of feedback here with a physical strength — 0 is silent
+          and 1 is what the game was tuned to give. Camera shake off silences the pad as well; this
+          scales what survives it.</p>
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
         <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+        <!-- The `max` is written by Menu._buildOptions from MUSIC_TRACKS.length,
+             not typed here: a number in this attribute is a second copy of how
+             many tracks there are, and the first thing it does when a score is
+             added is leave the new one unreachable. -->
+        <label class="slider wide">Soundtrack <input type="range" id="opt-music-track" min="0" max="1" step="1" value="0"><b></b></label>
+        <p class="hint" id="music-blurb"></p>
         <label class="slider">Voices <input type="range" id="opt-voicelevel" min="0" max="1.2" step="0.02" value="0.9"><b></b></label>
+        <!-- SYNTHESISED / SPOKEN / BOTH. Built by Menu._buildSpeechModes,
+             which disables the two spoken rows outright on a browser with no
+             speechSynthesis rather than offering a control that does nothing. -->
+        <h3 style="margin-top:22px">Voice lines</h3>
+        <div id="opt-speech" class="difflist"></div>
+        <p class="hint">Nothing here is a recording either way: <b>Spoken</b> is your browser's own
+          speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
+          no download on a game that ships no audio but the score.</p>
         <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
         <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
         <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
@@ -249,6 +370,11 @@
         <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
           anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
           all rather than being drawn invisible.</p>
+        <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
+        <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
+          lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what
+          the power costs and not a Force more. Off, it is simply always there — which is what it was, and
+          is the answer if managing a power mid-fight is not something you want to do.</p>
       </div>
     </section>
 
@@ -275,7 +401,7 @@
       </div>
     </section>
 
-    <!-- The way into the star map lives HERE, in the footer's own flex row.
+    <!-- The way into the Holocron lives HERE, in the footer's own flex row.
          It used to be a `position:fixed` box at left:22 bottom:20, floating over
          the whole page while the GPU string it landed on sits inside the
          centred `.menu-wrap` — two boxes positioned against different things,
@@ -288,9 +414,18 @@
          Only ever shown on this screen anyway: main.js gates it on
          `screens.state === 'menu'`. -->
     <footer class="menu-foot">
-      <button id="btn-commune" class="ghost commune-entry hidden">Connect to the Force</button>
-      <span id="gpu-line"></span>
-      <span class="build">build <b id="build-id">—</b></span>
+      <button id="btn-commune" class="ghost commune-entry hidden">Open the Holocron</button>
+      <!-- THE ADAPTER STRING AND THE BUILD ID ARE DIAGNOSTICS, and they were
+           the last two things on the title screen. A player's first sight of
+           this game was a wordmark and then
+           "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device …)) · build r1.0",
+           which is a bug report, not a title screen. Both are hidden unless
+           Frame counter is ticked under Options -> Fidelity — the checkbox
+           that already means "show me the instruments" — and Menu._syncDiag
+           is what follows it. Nothing is deleted: the one machine that needs
+           the adapter name is the one whose owner has gone looking for it. -->
+      <span id="gpu-line" class="hidden"></span>
+      <span id="build-line" class="build hidden">build <b id="build-id">—</b></span>
     </footer>
   </div>
 </div>
@@ -404,10 +539,63 @@
   </div>
 
   <div class="hud-bl">
+    <!--
+      YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
+
+      Command mode gives every trooper a designation, a nickname earned by
+      surviving, a rank with a painted insignia and a permanent death — and
+      until now the only trace of any of it on screen was a two-line message
+      when somebody was promoted or died. `CommandDirector.readout()` has
+      published the whole roll the entire time and nothing read it: main.js
+      called `hud.setRoster?.(summary)` into a method that did not exist.
+
+      IN THE FLOW OF .hud-bl, ABOVE THE BARS, not a fifth absolutely-positioned
+      box. That is the rule this HUD was rebuilt on after the event feed and the
+      kill feed were found drawn through one another: boxes in a column cannot
+      overlap at any viewport, boxes pinned to the same corner eventually do.
+      Every element in here is filled by HUD.setRoster / HUD.setOrder; there is
+      no name, rank or key typed in this markup.
+    -->
+    <div id="roster" class="rp hidden" aria-hidden="true">
+      <div class="rp-head"><span id="rp-army">—</span><b id="rp-strength"></b></div>
+      <!-- The formation you are actually in. Nothing said this before, so the
+           six order keys changed the battle and the screen was silent. -->
+      <div class="rp-order"><i></i><span id="rp-order-name">—</span><em id="rp-order-sub"></em></div>
+      <!-- One chip per order, keys read from the live bindings by
+           HUD.setBindings — these are rebindable now, so they cannot be typed. -->
+      <div id="rp-orders" class="rp-keys"></div>
+      <div id="rp-list" class="rp-list"></div>
+      <div id="rp-foot" class="rp-foot"></div>
+    </div>
+    <!--
+      THE THREE LABELS THAT HAD NEVER BEEN ON SCREEN.
+
+      They were `<label>` children of `.bar`, and `.bar` is `height:13px;
+      overflow:hidden` while `.bar label` sat at `bottom:16px` — three pixels
+      ABOVE the box that clips them. So VITALITY, FORCE and STAMINA were in the
+      DOM, were styled, and had never been drawn: the player's health was an
+      unlabelled coloured rectangle told apart from the other two by HUE ALONE,
+      which is also the one channel a colour-blind player does not have.
+
+      The socket still clips — the fills are `inset:0` and the glow has to stop
+      at the ink — so the caption is lifted OUT of it into a wrapper instead of
+      the clipping being removed. `.bar` keeps its classes and stays the direct
+      parent of `<i>`/`<u>`, because HUD.update reaches for
+      `el.hp.parentElement` to flash `.low`.
+    -->
     <div class="bars">
-      <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u><label>VITALITY</label></div>
-      <div class="bar fc"><i id="bar-force"></i><label>FORCE</label></div>
-      <div class="bar st"><i id="bar-stam"></i><label>STAMINA</label></div>
+      <div class="barline">
+        <div class="bar-cap"><label>Vitality</label><b id="bar-hp-num">100</b></div>
+        <div class="bar hp"><i id="bar-hp"></i><u id="bar-hp-ghost"></u></div>
+      </div>
+      <div class="barline">
+        <div class="bar-cap"><label>Force</label><b id="bar-force-num">100</b></div>
+        <div class="bar fc"><i id="bar-force"></i></div>
+      </div>
+      <div class="barline">
+        <div class="bar-cap"><label>Stamina</label><b id="bar-stam-num">100</b></div>
+        <div class="bar st"><i id="bar-stam"></i></div>
+      </div>
     </div>
     <div id="boon-strip" class="boons"></div>
   </div>
@@ -429,6 +617,11 @@
       into and the budget that justifies them are the same number.
     -->
     <canvas id="minimap" aria-hidden="true"></canvas>
+    <!-- What it costs to bring the map up, and which key does it. Filled by
+         HUD.setBindings from the live `sense` binding — a typed key here could
+         not follow a rebind. Shown only while the map is a Force reading and
+         cold; the map itself is the readout once it is warm. -->
+    <div id="minimap-key" class="mapkey hidden"></div>
     <div id="power-wheel" class="powers"></div>
   </div>
 
@@ -489,12 +682,59 @@
 </div>
 
 <!-- ══════════════════════ OVERLAYS ══════════════════════ -->
+<!-- THE MENU NOBODY MEANT TO OPEN.
+     "Once I pressed a button and saw a menu mid game where I selected a power
+     up but idk how it happened or what button I pressed." Nothing was pressed:
+     this is the boon draft, and it opens by itself. Every line of it is
+     written by Menu.showDraft — the title, why it appeared and what the keys
+     are — because the WHY differs between a wave draft and a boss attunement
+     and a card that says the same thing in both cases is the thing that
+     confused a player in the first place. -->
 <div id="boon-draft" class="screen hidden">
   <div class="draft-wrap">
-    <h2>Attune</h2>
-    <p class="hint">The Force offers. Choose one — click it, press its number, or walk the row
-      with the arrows and take one with Enter.</p>
+    <h2 id="draft-title">The Force Offers</h2>
+    <p class="hint" id="draft-why"></p>
     <div id="draft-cards" class="draft-cards"></div>
+    <p class="hint draft-keys" id="draft-keys"></p>
+  </div>
+</div>
+
+<!-- ══ THE MUSTER ══
+     Between two areas of the Geonosis advance you are handed reinforcement
+     points and a shelf of units to spend them on. `CommandDirector.musterOffer()`
+     has returned exactly this shape since the mode was written, and there was
+     no screen: `main.js` tested `typeof screens.muster === 'function'`, found
+     nothing, and the director fell through to `autoMuster()` — which spent
+     your points for you, between every area, and showed you nothing at all.
+     Permadeath with an invisible replacement budget is permadeath with the
+     decision taken out of it.
+
+     Every string in here is written by Menu.showMuster from the offer. The
+     roll is the same summary the HUD panel draws, at full length, living above
+     fallen with the dead struck through — the casualty list is the point. -->
+<div id="muster" class="screen hidden">
+  <div class="muster-wrap">
+    <p class="muster-held" id="muster-held">—</p>
+    <h2 id="muster-title">The Muster</h2>
+    <p class="hint" id="muster-brief"></p>
+    <div class="muster-body">
+      <div class="muster-shop">
+        <h3>Reinforcements</h3>
+        <div id="muster-units" class="muster-units"></div>
+        <p class="hint muster-refused" id="muster-refused"></p>
+      </div>
+      <div class="muster-roll">
+        <h3 id="muster-roll-head">The roll</h3>
+        <div id="muster-list" class="rp-list muster-list"></div>
+      </div>
+    </div>
+    <div class="muster-foot">
+      <div class="muster-tally">
+        <div><span>Points</span><b id="muster-points">0</b></div>
+        <div><span>Standing</span><b id="muster-strength">0</b></div>
+      </div>
+      <button id="btn-muster-done" class="primary">Advance</button>
+    </div>
   </div>
 </div>
 
@@ -528,25 +768,23 @@
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
     <button id="btn-perfcopy" class="ghost">Copy frame report</button>
+    <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
+         Menu._buildBindings, which paints every host it finds rather than
+         keeping a second copy of the table for this card: same rows, same
+         rebind listener, same conflict resolver, same live `bindings` object,
+         so a key changed here is changed in Options too. Folded away by
+         default — see the note in _buildBindings. -->
+    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box">Key bindings</button>
+    <div id="pause-bind-box" class="pause-binds hidden">
+      <p class="hint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
+      <div id="pause-bind-list" class="bindlist"></div>
+      <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
+    </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so
          it is the one key here that is declared rather than read. -->
     <div class="pause-hints" id="pause-hints"></div>
-  </div>
-</div>
-
-<!-- The landing between rungs of the Spire. Deliberately its own screen rather
-     than a reskinned death card: this is the one moment in a run that is not a
-     fight and not a menu, and the altitude line is the whole point of it — a
-     player who can read how far they have climbed does not need to be told. -->
-<div id="landing" class="screen hidden">
-  <div class="landing-wrap">
-    <div id="landing-alt" class="landing-alt">0 m</div>
-    <h2 id="landing-title">The Foundations</h2>
-    <p class="hint" id="landing-brief"></p>
-    <div id="landing-stats" class="death-stats"></div>
-    <button id="btn-ascend" class="primary">Descend</button>
   </div>
 </div>
 
@@ -567,14 +805,27 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
-     THE MEDITATION — the Force constellation.
+     THE MEDITATION — the Holocron.
+
+     IT WAS A CONSTELLATION, and it was renamed because the player asked what
+     stars had to do with any of it: "you're becoming more and more attuned to
+     the force or good/evil side — wtf does that have to do with stars and
+     constellations". That is a fair question and the honest answer is that the
+     picture came first (a node graph reads as a star chart) and the fiction was
+     bent to fit it. A holocron is the same picture with the right fiction under
+     it — a crystal lattice you attune to and that teaches you — so the drawing
+     did not change and every word around it did. The lattice is grouped into
+     six CURRENTS of the Force, each a teaching; a node is a FACET, and you WAKE
+     one rather than lighting it. The currency is still Insight, which was
+     always right.
 
      Raised mid-run by kneeling (hold Crouch, still, with nothing near you) and
      between runs from the Temple. The world behind it is STOPPED and still
-     drawn: the overlay is translucent on purpose, because the whole reason
-     this is reached by kneeling rather than by a menu key is that it happens
-     in the place you were standing. src/ui/SkillTree.js draws it;
-     src/game/Constellation.js decides everything it is allowed to say.
+     drawn, and there is no blur over it: the whole reason this is reached by
+     kneeling rather than by a menu key is that it happens in the place you were
+     standing, and your own Jedi is knelt in the middle of it.
+     src/ui/SkillTree.js draws it; src/game/LivingForce.js decides everything
+     it is allowed to say.
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="meditation" class="screen hidden">
   <div class="med-wrap">
@@ -586,7 +837,7 @@
       <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
     </header>
     <div class="med-body">
-      <svg id="med-sky" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Force constellation"></svg>
+      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
         <button id="btn-med-buy" class="primary" disabled>Commune</button>

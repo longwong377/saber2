@@ -1,5 +1,5 @@
 /**
- * SABER — Rapier.
+ * BATTLEFRONT BORZ — Rapier.
  *
  * The bespoke solver in Physics.js approximates every object as a cluster of
  * spheres. That was a deliberate trade: when a limb is cut off, its collider

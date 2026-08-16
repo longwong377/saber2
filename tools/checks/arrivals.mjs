@@ -1,5 +1,5 @@
 /**
- * SABER — enemies must not pop into existence.
+ * BATTLEFRONT BORZ — enemies must not pop into existence.
  *
  * The whole of how a body got into the game was two lines in
  * `WaveDirector.update`:
@@ -161,12 +161,36 @@ export async function run({ check, assert }) {
      * player's request, and naming levels was the weaker form of the question
      * anyway — the property is about whether a level HAS A SKY, which every
      * level states, so every level can be asked. Nine levels are covered here
-     * where three were, and a new one cannot be added without answering it. */
+     * where three were, and a new one cannot be added without answering it.
+     *
+     * ── ONE WAVE WAS NOT A SAMPLE, and it took a level being ADDED to show it.
+     *
+     * `arrivalKindFor` draws from the terrain's own weighted list, and three
+     * levels weight it `['march', 'march', 'dropship']` — a one-in-three draw,
+     * against a wave that delivers about eight bodies of which the heavies march
+     * regardless. So "did this level ever fly a ship" was a coin flip that had
+     * been landing heads. Adding an eighth level to LEVEL_ORDER moved the phase
+     * of the shared arrival stream and the Drowned Wood — untouched, correct,
+     * and passing for a year — started failing.
+     *
+     * That is HANDOFF §6.2's order-independence residue in its purest form: a
+     * check that passes because it has margin rather than because the property
+     * holds. The fix is the one this file's FIRST check already argues for —
+     * take a bigger sample rather than lower the bar, because the property under
+     * test is unchanged and is now actually being tested. Waves are accumulated
+     * until the level has delivered enough bodies for a one-in-three draw to be
+     * a statement instead of a guess: at 24 deliveries, missing a 1/3 kind
+     * entirely is a 1-in-73,000 event.
+     */
     const seen = {}, rows = [];
     for (const key of LEVEL_ORDER) {
       const L = LEVELS[key];
       if (!L || L.training) continue;
-      const r = playWave(key);
+      const log = [];
+      for (let wave = 4; log.length < 24 && wave <= 16; wave += 2) {
+        log.push(...playWave(key, wave).log);
+      }
+      const r = { log };
       const kinds = [...new Set(r.log.map(l => l.kind))].sort();
       seen[key] = kinds;
       const roofed = L.atmosphere.sky === false;
@@ -193,15 +217,60 @@ export async function run({ check, assert }) {
   });
 
   check('arrivals: something too big for a ship walks in', () => {
-    // A spider walker does not fit in a gunship and an acklay does not queue
-    // at a door. Both walk, from beyond the ring, on every level.
-    for (const key of ['drifts', 'arena', 'foundry', 'mustafar', 'temple']) {
-      for (const type of ['walker', 'beast']) {
-        const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => 0.5);
+    /*
+     * THIS CHECK COULD NOT FAIL, and one of the five levels it named does not
+     * exist.
+     *
+     * `arrivalKindFor` opens with `if (walksIn(A)) return 'march';`, and
+     * `walksIn` is `A.big || A.boss`. The walker is `big` and the acklay is
+     * `boss`, so the function returned before the level was ever read — the
+     * loop over five level keys contributed nothing, and it would have passed
+     * against `null`, against `{}`, and as it did against
+     * `LEVELS['arena'] === undefined`, since `arena` was deleted with the
+     * Sanctum. The `|| ['march']` on the line after would have swallowed the
+     * dead key even if the branch HAD been reached. Its summary line claimed
+     * "on every level type", which is the one thing it did not test.
+     *
+     * So it now asserts both halves, and the levels are enumerated rather than
+     * typed (§2.3), which is also what stops a deleted key getting in again:
+     *
+     *   a body that walks in walks in EVERYWHERE — the property as written;
+     *   a body that does NOT walk in arrives some other way SOMEWHERE, which
+     *   is what makes the first half a fact about `walksIn` rather than a
+     *   restatement of the early return.
+     */
+    const walkers = Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].big || ARCHETYPES[t].boss);
+    const carried = Object.keys(ARCHETYPES).filter((t) => !ARCHETYPES[t].big && !ARCHETYPES[t].boss);
+    assert(walkers.length >= 2, `only ${walkers.length} bodies are too big for a ship`);
+    assert(carried.length >= 2, `only ${carried.length} bodies can be carried`);
+
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      assert(L, `LEVEL_ORDER names '${key}' and LEVELS has no such level`);
+      for (const type of walkers) {
+        const kind = arrivalKindFor(L, ARCHETYPES[type], () => 0.5);
         assert(kind === 'march', `${type} arrives by ${kind} on ${key}`);
       }
     }
-    return 'walker and acklay march in on every level type';
+
+    // The other half: over every level and every carried body, at least one
+    // arrival is NOT a march. Without this the check above is satisfied by an
+    // `arrivalKindFor` that returns 'march' unconditionally.
+    const other = new Set();
+    for (const key of LEVEL_ORDER) {
+      for (const type of carried) {
+        for (const roll of [0.1, 0.5, 0.9]) {
+          const kind = arrivalKindFor(LEVELS[key], ARCHETYPES[type], () => roll);
+          if (kind !== 'march') other.add(kind);
+        }
+      }
+    }
+    assert(other.size > 0,
+      'every body on every level arrives by marching — `arrivalKindFor` is answering before it reads '
+      + 'the level, which is exactly what made the previous version of this check unfailable');
+
+    return `${walkers.length} bodies march in on all ${LEVEL_ORDER.length} levels; `
+      + `${carried.length} carried bodies also arrive by ${[...other].sort().join('/')}`;
   });
 
   check('arrivals: a squad rides in together instead of one ship each', () => {
@@ -280,15 +349,53 @@ export async function run({ check, assert }) {
     return 'every wave body is requested from the arrival director; the direct call is the fallback only';
   });
 
-  check('arrivals: the sandbox keeps its instant room', () => {
-    // A debug room whose whole point is twenty bodies in three seconds must
-    // not wait for three gunships.
+  check('arrivals: the sandbox arrives from somewhere, and its instant room is a choice', () => {
+    /**
+     * THIS CHECK USED TO ASSERT THE OPPOSITE, and the correction is worth
+     * leaving in rather than quietly rewriting.
+     *
+     * It read `assert(d.arrivals.enabled === false, 'the sandbox is queueing
+     * bodies behind arrivals')`, under the comment "a debug room whose whole
+     * point is twenty bodies in three seconds must not wait for three
+     * gunships" — which is the same defence `WaveDirector`'s own constructor
+     * used to carry, written by the same hand, agreeing with itself.
+     *
+     * Player note #17 is about exactly that room: "even in training mode or in
+     * ANY MODE, the enemies should not materialize in front of you they should
+     * arrive from somewhere not teleport behind you." The sandbox is where a
+     * player spends the longest watching bodies enter the world — it is the mode
+     * you sit in and dial the count up and down — so it was the worst possible
+     * place to keep the one path that pops them into existence at eleven metres.
+     *
+     * The fast path is not deleted. It is `settings.instantSpawn`, and the whole
+     * of the change is which way round the default is. Both halves are asserted
+     * here so neither can drift: the room arrives by default, AND the instant
+     * room still exists for anybody who wants it.
+     */
     const w = fakeWorld('dunes');
     const d = new WaveDirector(w, { mode: 'sandbox', pool: ['b1'] });
-    assert(d.arrivals.enabled === false, 'the sandbox is queueing bodies behind arrivals');
-    assert(d.arrivals.request('b1') === false,
+    assert(d.arrivals.enabled === true,
+      'the sandbox still teleports bodies in front of the player — see note #17');
+    assert(d.arrivals.request('b1') === true,
+      'the sandbox director refused an arrival request, so its bodies have nowhere to come from');
+
+    const fast = fakeWorld('dunes');
+    fast.settings = { instantSpawn: true };
+    const df = new WaveDirector(fast, { mode: 'sandbox', pool: ['b1'] });
+    assert(df.arrivals.enabled === false,
+      'settings.instantSpawn did not reach the arrival director, so the fast path is unreachable');
+    assert(df.arrivals.request('b1') === false,
       'a disabled arrival director accepted a request, so the caller will never spawn directly');
-    return 'sandbox spawns stay direct and immediate';
+
+    /* …and the same setting reaches the WAVE path, which is the half a
+     * sandbox-only test would miss: a player who has asked for instant spawns
+     * has asked for them everywhere, and a mode that half-honoured it would be
+     * two behaviours behind one switch. */
+    const wr = fakeWorld('dunes');
+    wr.settings = { instantSpawn: true };
+    const dr = new WaveDirector(wr, { mode: 'roguelite', pool: ['b1'] });
+    assert(dr.arrivals.enabled === false, 'instantSpawn is honoured in the sandbox and ignored in a wave');
+    return 'default: the sandbox arrives; instantSpawn: direct and immediate, in every mode';
   });
 
   check('arrivals: an arrival leaves nothing behind in the scene', () => {

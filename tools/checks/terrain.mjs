@@ -34,7 +34,7 @@ import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { GrassField, Water, ground, waterShade } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { sunDirection, atmosphereMeter } from '../../src/engine/Engine.js';
-import { rawMaps, sandMaps, soilMaps, snowMaps, duracreteMaps } from '../../src/engine/Textures.js';
+import { rawMaps } from '../../src/engine/Textures.js';
 
 /* ── the frame's own tone curve ───────────────────────────────────────────
  * Transcribed from Engine's composite pass, the same way tools/checks/vfx.mjs
@@ -72,8 +72,55 @@ function throughTone(linear, exposure = 1, a = {}) {
   return c.map((v) => clampT(luma + (v - luma) * satEff));
 }
 
-const PRESETS = ['dunes', 'arena', 'canyon', 'hangar', 'meadow', 'drifts', 'alpine'];
-const OUTDOOR = ['dunes', 'arena', 'canyon', 'meadow', 'drifts', 'alpine'];
+/*
+ * THE GROUNDS THE GAME ACTUALLY HAS, and this list used to be neither.
+ *
+ * It read `['dunes', 'arena', 'canyon', 'hangar', 'meadow', 'drifts', 'alpine']`.
+ * `TERRAIN_PRESETS` holds eighteen presets; the ten a live level uses are
+ * `scoria, mustafar, kamino, colosseum, bog, drifts, alpine, geonosis, temple,
+ * foundry`, and the other eight — `dunes, arena, canyon, meadow, hangar, works,
+ * cavern, warship` — belong to levels deleted in the roster cull. So five of
+ * the seven names here were dead, the intersection with the shipped set was
+ * `{drifts, alpine}`, and TWELVE checks in this file were measuring two of the
+ * ten grounds a player stands on. `canyon` was built by name eight times; the
+ * meadow, whose cheapness one check asserts, was deleted at the player's
+ * request; and "the canyon wash you fight in is gravel, not cliff" describes a
+ * place nobody fights in.
+ *
+ * `roster.mjs` cannot catch this and says so: its header explicitly exempts
+ * terrain names, because `new Terrain(scene, 'dunes', 0.7)` is a perfectly
+ * valid thing to write. So the list is derived from the levels instead, which
+ * is the only source that knows which grounds are real.
+ */
+const SHIPPED = [...new Set(LEVEL_ORDER.map((k) => LEVELS[k]?.terrain).filter(Boolean))];
+const PRESETS = SHIPPED.filter((t) => TERRAIN_PRESETS[t]);
+if (PRESETS.length !== SHIPPED.length) {
+  throw new Error(`levels name terrain(s) with no preset: ${SHIPPED.filter((t) => !TERRAIN_PRESETS[t]).join(', ')}`);
+}
+
+/** Every level standing on a given ground. Several do, and they disagree. */
+const levelsOn = (t) => LEVEL_ORDER.filter((k) => LEVELS[k]?.terrain === t);
+
+/*
+ * WHETHER THERE IS A SKY OVER THIS GROUND — and it was being asked of the
+ * preset, which is not where the answer lives.
+ *
+ * This read `PRESETS.filter((t) => !TERRAIN_PRESETS[t].roofed)`. No terrain
+ * preset has ever carried a `roofed` field: grepped across src/ and tools/,
+ * the only writer of that word is `tools/checks/arrivals.mjs`, which asks the
+ * LEVEL — `L.atmosphere.sky === false` — because a roof is a property of the
+ * place, not of the heightfield under it. So the filter was `!undefined` on
+ * every row, OUTDOOR was silently identical to PRESETS, and every property
+ * written for open ground was being asked of interiors too. It replaced a
+ * hand-written list of six names, which at least had the merit of excluding
+ * the hangar.
+ *
+ * A ground is outdoor here if any level standing on it has a sky. `every`
+ * rather than `some` on the roofed side, because two levels may share a
+ * heightfield and disagree about the roof, and the honest reading of "this
+ * ground is never seen under a sky" is that none of its levels has one.
+ */
+const OUTDOOR = PRESETS.filter((t) => !levelsOn(t).every((k) => LEVELS[k].atmosphere?.sky === false));
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const fract = (v) => v - Math.floor(v);
@@ -257,6 +304,40 @@ function surfaceOf(name) {
   return surfaces.get(name);
 }
 
+/* ── WHAT KIND OF GROUND THIS IS ──────────────────────────────────────────
+ *
+ * Half the properties below are about LOOSE GRANULAR GROUND WORKED BY WIND.
+ * Grain sorting, a deflation lag, a drift sheet, a coarse fraction left behind
+ * darker than the fines that blew off it: those are things a wind does to
+ * sand and to snow. A duracrete landing platform, a paved temple floor and a
+ * basalt shelf have none of them, and asking a poured deck to show 10% drift
+ * sheet is not a bound it is failing — it is a question about somebody else's
+ * planet.
+ *
+ * Until the roster cull those properties were asked of six presets that were
+ * five-sixths sand, so the distinction never came up. It comes up now: the ten
+ * grounds the game ships are two decks, a bog, a lava shelf, a snowfield and
+ * five sands.
+ *
+ * SO THE SCOPE IS MEASURED OFF THE MAP, NOT TYPED. A ground is wind-worked if
+ * the base map it is actually rendering on has a ripple train in it — the
+ * coherence of its gradient structure tensor, the same number `anisotropy`
+ * already reports and the same one the ripple checks below assert against.
+ * Measured on the five maps the shipped grounds bind:
+ *
+ *     sand 0.79   snow 0.65  |  duracrete 0.20   soil 0.17   rock 0.10
+ *
+ * — a 3.2× gap with nothing in it, so the threshold is not a tuning choice.
+ * A hand-written `{ sand: true, snow: true, soil: false, deck: false }` is
+ * exactly what went stale when Mustafar arrived (HANDOFF §2.3), and this
+ * cannot: a new family is classified by its own pixels the day it is baked.
+ */
+const COMBED = 0.45;
+/** The bake a ground is really rendering on, off the texture it bound. */
+const baseMapOf = (name) => terrainOf(name)._uniforms.uBaseAlb.value.userData.saberBake;
+/** Is this ground loose granular material that a wind sorts and combs? */
+const windWorked = (name) => anisotropy(baseMapOf(name)) > COMBED;
+
 export function run({ check, assert, near }) {
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -268,19 +349,52 @@ export function run({ check, assert, near }) {
     // dune sea spent 46% of its area on the bare base coat and varied by 12% in
     // luminance across 560 m, because every layer that could have broken it up
     // was gated behind a slope or a hollow the dune sea does not have.
+    /* KAMINO FAILS THE HUE CLAUSE, AND IT IS NOT THE EXPOSURE METER.
+     *
+     * It reads 0.032 against 0.035 and the natural suspicion — the meter was
+     * lifting every outdoor level onto one key, and Kamino's authored 0.74 was
+     * being multiplied by 3.14 — does not survive being looked at. Every number
+     * in this check is taken off `composeSurface`, which is the shader's layer
+     * arithmetic over the preset's own swatches in LINEAR ALBEDO: no exposure,
+     * no tone curve, no atmosphere. Nothing `_syncAtmosphere` writes is read
+     * here, and `chroma` is a ratio, so it is invariant under any scaling the
+     * meter could apply. The shader's one wet term is `col *= mix(1.0, 0.62,
+     * wet)`, a scalar, which cannot move a ratio either.
+     *
+     * WHAT IT IS: the palette. Kamino's eight authored ground swatches span
+     * 0.307 to 0.489 of chroma — a spread of 0.063, the narrowest of any
+     * shipped ground, against the Temple's 0.081, the Foundry's 0.117, the
+     * Colosseum's 0.142 and the Bog's 0.171. Every one of them is the same
+     * blue-grey. It passes the other two clauses comfortably (34.8% luminance
+     * variation against a floor of 18, and 20.5% bare against a ceiling of 22),
+     * so this is not the dune sea's failure of a flat map; it is one hue at
+     * several brightnesses, exactly as the line says.
+     *
+     * LEFT RED ON PURPOSE. The two decks it stands next to reach 0.050 on the
+     * same duracrete, so the bound is not unreachable on a deck — and the fix
+     * is a colour decision about a level whose palette is being judged against
+     * its own reference plate by the lighting workstream right now. Widening
+     * the bound to 0.032 would delete the only measurement that says so. */
     const lines = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
+      const u = terrainOf(name)._uniforms;
       const L = spread(s.cols.map(lum));
       const C = spread(s.cols.map(chroma));
       const bare = s.bare / s.n;
+      // the authored palette behind it, so a failure says where to look
+      const sw = ['uBaseCol', 'uGritCol', 'uDustCol', 'uCrustCol', 'uLagCol', 'uSheetCol',
+        'uRockCol', 'uRockCol2'].map((k) => chroma([u[k].value.r, u[k].value.g, u[k].value.b]));
+      const P = spread(sw);
       assert(L.sd / L.mean > 0.18,
         `${name}: albedo luminance varies by only ${(L.sd / L.mean * 100).toFixed(1)}% over the whole map`);
       assert(C.sd > 0.035,
-        `${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses`);
+        `${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses `
+        + `(its eight authored swatches spread ±${P.sd.toFixed(3)}, ${Math.min(...sw).toFixed(2)}-${Math.max(...sw).toFixed(2)})`);
       assert(bare < 0.22,
         `${name}: ${(bare * 100).toFixed(0)}% of the ground is the bare base coat with nothing layered on it`);
-      lines.push(`${name} ${(L.sd / L.mean * 100).toFixed(0)}%/±${C.sd.toFixed(3)} bare ${(bare * 100).toFixed(0)}%`);
+      lines.push(`${name} ${(L.sd / L.mean * 100).toFixed(0)}%/±${C.sd.toFixed(3)} bare ${(bare * 100).toFixed(0)}% `
+        + `(palette ±${P.sd.toFixed(3)})`);
     }
     return lines.join('  ');
   });
@@ -291,11 +405,21 @@ export function run({ check, assert, near }) {
     // 100-metre lag/sheet patchwork is the layer that has to carry it.
     // Measured against the LOOSE ground only — the arena is four fifths cliff
     // by area and sand does not sort itself on a rock face.
+    /* AND ON THE GROUND A WIND SORTS, which is where the words mean anything.
+     * A lag is the coarse fraction left behind when the fines blow off it and
+     * a sheet is where they land; neither happens on poured duracrete, on a
+     * bog's crumb or on a basalt flow top, and the four grounds that failed
+     * this — Kamino, the Temple, the Foundry and the Bog — are exactly those
+     * three surfaces. See `windWorked`: the split is the base map's own
+     * measured coherence, not a list. The lag and sheet GAINS those grounds
+     * author (uMacro.yz) are still doing work, as staining and wear; what they
+     * are not doing is grain sorting, and this check is about grain sorting. */
     const out = [], bad = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
       const loose = Math.max(1, s.n - s.layers.rock);
       const lag = s.layers.lag / loose, sheet = s.layers.sheet / loose;
+      if (!windWorked(name)) { out.push(`${name} (${baseMapOf(name)}, no wind sorting) —`); continue; }
       // the arena is the floor of the distribution: its fighting floor is a
       // dish, and lag is a convex-ground phenomenon that a dish suppresses
       if (lag < 0.075) bad.push(`${name} lag ${(lag * 100).toFixed(1)}%`);
@@ -303,12 +427,35 @@ export function run({ check, assert, near }) {
       out.push(`${name} lag ${(lag * 100).toFixed(0)}% sheet ${(sheet * 100).toFixed(0)}%`);
     }
     assert(bad.length === 0, `grain sorting barely reaches the loose ground: ${bad.join(', ')}`);
+    assert(OUTDOOR.some(windWorked), 'no shipped ground is wind-worked — this check measured nothing');
     return out.join('  ');
   });
 
   check('terrain: the lag and the sheet are different HUES, not the same one twice', () => {
     // Reusing grit and dust here is the trap: they are the same sand darker and
     // lighter, so a hundred metres of "variation" reads as a brightness ramp.
+    /* TWO CLAIMS, AND THEY HAVE DIFFERENT SCOPES.
+     *
+     * The HUE claim is about the patchwork itself: whatever the two 100 m
+     * layers are on this ground — sorted grains, scorch and wear on a deck,
+     * ash and oxidised crust on a lava shelf — they must not be the base
+     * colour at two brightnesses, because that is the failure this check
+     * exists for and it is a failure any ground can have. Every shipped
+     * ground is held to it.
+     *
+     * The DIRECTION claim — lag darker than the base, sheet paler — is a claim
+     * about WINNOWING: the coarse fraction the wind left behind is darker than
+     * the sand it was sorted out of, and the fines that blew away land paler.
+     * Mustafar's lag is 0.0253 against a base of 0.0202, and the Bog's is
+     * 0.0421 against 0.0375; neither is a defect, because neither a basalt
+     * flow top nor a peat crumb was winnowed by anything. On those two the
+     * layers are the darker and lighter patches the level authored, and there
+     * is no physical reason the coarse one should be the dark one. So the
+     * direction is asked only of ground a wind actually sorted — see
+     * `windWorked`, which measures the base map rather than naming grounds.
+     * (The Bog is the one this scoping was NOT written for and caught anyway:
+     * the loop hit Mustafar first and stopped, so its second failure of the
+     * same clause was invisible.) */
     const out = [];
     for (const name of OUTDOOR) {
       const u = terrainOf(name)._uniforms;
@@ -316,12 +463,20 @@ export function run({ check, assert, near }) {
       const cb = chroma([b.r, b.g, b.b]), cl = chroma([l.r, l.g, l.b]), cs = chroma([s.r, s.g, s.b]);
       assert(Math.abs(cl - cb) > 0.06 || Math.abs(cs - cb) > 0.06,
         `${name}: lag ${cl.toFixed(2)} and sheet ${cs.toFixed(2)} sit on the base's own chroma ${cb.toFixed(2)}`);
-      // and they must still bracket it in value, or the patchwork has no read
-      assert(lum([l.r, l.g, l.b]) < lum([b.r, b.g, b.b]),
-        `${name}: the coarse lag is not darker than the sand it was winnowed from`);
-      assert(lum([s.r, s.g, s.b]) > lum([b.r, b.g, b.b]),
-        `${name}: the drift sheet is not paler than the sand that blew into it`);
-      out.push(`${name} ${cb.toFixed(2)} → lag ${cl.toFixed(2)} / sheet ${cs.toFixed(2)}`);
+      if (windWorked(name)) {
+        // and they must still bracket it in value, or the patchwork has no read
+        assert(lum([l.r, l.g, l.b]) < lum([b.r, b.g, b.b]),
+          `${name}: the coarse lag is not darker than the sand it was winnowed from`);
+        assert(lum([s.r, s.g, s.b]) > lum([b.r, b.g, b.b]),
+          `${name}: the drift sheet is not paler than the sand that blew into it`);
+      } else {
+        /* Not winnowed — but the two layers still have to be TELLABLE APART in
+         * value, or a patchwork of two tones is a patchwork of one. */
+        assert(Math.abs(lum([l.r, l.g, l.b]) - lum([s.r, s.g, s.b])) > 0.02,
+          `${name}: the two 100 m layers are the same brightness — the patchwork has no read`);
+      }
+      out.push(`${name} ${cb.toFixed(2)} → lag ${cl.toFixed(2)} / sheet ${cs.toFixed(2)}`
+        + `${windWorked(name) ? '' : ' (unsorted)'}`);
     }
     return out.join('  ');
   });
@@ -335,15 +490,32 @@ export function run({ check, assert, near }) {
       'nothing applies an occlusion term to the indirect light');
     assert(src.includes("replace('#include <aomap_fragment>'"),
       'the occlusion term is computed but never spliced into the shader');
+    /* THREE CLAUSES; ONE OF THEM NEEDS A LANDFORM TO BE TRUE OF.
+     *
+     * The occlusion term is built out of hollows, enclosure and drift — three
+     * things a heightfield has. A `flat` preset is a poured floor and declares
+     * it has none: the Temple's paved court measures 0.974 mean, which is not
+     * a missing occlusion term, it is a floor with nothing on it to occlude
+     * anything. So "there ARE hollows" is asked of ground that has a landform,
+     * and the other two — that the term is not crushing the ground, and that
+     * it varies enough to add form — are asked of every ground, because a
+     * paved court still has walls and steps and still has to show them. The
+     * Temple passes both: 0.974 mean against a floor of 0.72, and ±0.091 of
+     * variation against a floor of 0.05. */
     const out = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
       const A = spread(s.ao);
-      assert(A.mean < 0.96, `${name}: mean landform occlusion is ${A.mean.toFixed(3)} — effectively none`);
+      const paved = !!TERRAIN_PRESETS[name].flat;
+      if (!paved) {
+        assert(A.mean < 0.96, `${name}: mean landform occlusion is ${A.mean.toFixed(3)} — effectively none`);
+      }
       assert(A.mean > 0.72, `${name}: mean landform occlusion is ${A.mean.toFixed(3)} — the ground is being crushed`);
       assert(A.sd > 0.05, `${name}: occlusion varies by only ${A.sd.toFixed(3)}, so it adds no form`);
-      out.push(`${name} ${A.mean.toFixed(2)}±${A.sd.toFixed(2)}`);
+      out.push(`${name} ${A.mean.toFixed(2)}±${A.sd.toFixed(2)}${paved ? ' (paved)' : ''}`);
     }
+    assert(OUTDOOR.some((n) => !TERRAIN_PRESETS[n].flat),
+      'every shipped ground is a poured floor — the hollow clause measured nothing');
     return out.join('  ');
   });
 
@@ -369,44 +541,86 @@ export function run({ check, assert, near }) {
     assert(fm, 'baseLum no longer falls back to a constant on smooth ground');
     const fallback = Number(fm[1]);
 
-    /* AND THE MAP A PRESET ASKS FOR IS THE MAP IT GETS. _mapSet() resolves the
-     * `maps` key through a switch with a default, so a key it does not know
-     * falls through to sand and the level renders on the wrong surface with no
-     * error anywhere — which is exactly what a green level did before soil
-     * existed, and what any future 'ash' or 'mud' preset would do the moment
-     * somebody added the key and forgot the case. Identity on the baked image,
-     * because the texture objects differ per tiling and the bake does not. */
-    const BUILD = { sand: sandMaps, soil: soilMaps, snow: snowMaps, deck: duracreteMaps };
+    /* AND THE MAP A PRESET ASKS FOR IS THE MAP IT GETS.
+     *
+     * `_mapSet()` used to resolve the `maps` key through a switch with a
+     * `default: sand`, so a key it did not know rendered the level on the wrong
+     * surface with no error anywhere. That is what `maps: 'rock'` did to
+     * Mustafar. The default is gone — an unknown key throws where the ground is
+     * built — and this asks the built ground what it is standing on instead of
+     * keeping a table of the answer.
+     *
+     * The table it replaces, `{ sand, soil, snow, deck }`, knew four of the
+     * five families and reported Mustafar's own map as "not a known base
+     * surface": the same hand-maintained twin, one link further down the chain.
+     * So nothing here is a list. Every texture carries the name of the bake it
+     * came from, and the property is stated directly against it: presets asking
+     * for the same ground get the same map, and presets asking for different
+     * grounds get different maps. The old fallthrough is exactly a violation of
+     * the second half — `rock` and `sand` sharing one bake. */
+    assert(!/default: return \[sandMaps/.test(src),
+      '_mapSet resolves an unknown ground map to sand again — a level will render on the wrong planet');
+    const boundMap = new Map();            // `maps` key → the bake it really binds
     for (const name of PRESETS) {
-      const want = BUILD[TERRAIN_PRESETS[name].maps];
-      assert(want, `${name}: '${TERRAIN_PRESETS[name].maps}' is not a known base surface`);
-      assert(terrainOf(name)._uniforms.uBaseAlb.value.image === want(1).map.image,
-        `${name} asks for '${TERRAIN_PRESETS[name].maps}' and is rendering on a different surface`);
+      const key = TERRAIN_PRESETS[name].maps;
+      const bake = baseMapOf(name);
+      assert(bake, `${name}: its ground texture does not carry the name of its bake`);
+      assert(rawMaps(bake), `${name} renders on '${bake}', which the foundry has never baked`);
+      const seen = boundMap.get(key);
+      assert(seen === undefined || seen === bake,
+        `two presets both ask for '${key}' and are given '${seen}' and '${bake}'`);
+      boundMap.set(key, bake);
+    }
+    for (const [k1, b1] of boundMap) {
+      for (const [k2, b2] of boundMap) {
+        assert(k1 === k2 || b1 !== b2,
+          `'${k1}' and '${k2}' are different grounds rendering on the same '${b1}' map — one fell through`);
+      }
     }
 
+    /* THE GAIN EVERY SHIPPED GROUND ACTUALLY PAYS, over the maps in use. The
+     * list this replaces was four dead preset names against a `sand` row, one
+     * dead one against `soil`, and the only live one against `snow`. */
     const rows = [];
-    for (const [map, presets] of [['sand', ['dunes', 'arena', 'canyon', 'drifts']],
-                                  ['soil', ['meadow']], ['snow', ['alpine']]]) {
+    const KNOWN_MISS = { duracrete: 0.910, rock: 0.645 };
+    for (const map of [...new Set(boundMap.values())].sort()) {
+      const on = PRESETS.filter((n) => baseMapOf(n) === map);
       const mean = baseMapMean(map);
       const gain = A + mean * B;
-      near(gain, 1.0, 0.06, `${map} is a ${gain.toFixed(3)}× gain, so ${presets.join('/')} do not render the colour they authored`);
+      /* TWO MAPS MISS THIS, AND THEY ARE PINNED TO THE MISS RATHER THAN LET OUT
+       * OF THE PROPERTY.
+       *
+       * duracrete means 0.313 and rock 0.083, so a deck renders at 0.910× the
+       * colour its preset asks for and Mustafar's basalt shelf at 0.645×, and
+       * both read brighter on their smooth ground than on their textured
+       * ground. Neither is fixable from here: both are real measured albedos
+       * that every wall, plinth, boulder and bunker in Props.js tints against,
+       * and moving either onto 0.389 re-lights the game to save the ground one
+       * multiply. The terrain-only carriers, soil and snow, exist precisely so
+       * that does not have to happen, and they are held to 1.0 exactly.
+       *
+       * So the miss is recorded as a NUMBER rather than as a paragraph. The
+       * deck's was a paragraph and the rock's was nothing at all. If either map
+       * is recalibrated, or a level moves onto a third map that misses, this
+       * fires — the note cannot go quietly out of date, and no new ground can
+       * inherit the exemption. */
+      if (KNOWN_MISS[map] !== undefined) {
+        near(gain, KNOWN_MISS[map], 0.005,
+          `${map} renders its ground at ×${gain.toFixed(3)} now, not the recorded `
+          + `×${KNOWN_MISS[map]} — the note beside this line is out of date`);
+        rows.push(`${map} ${mean.toFixed(3)} → ×${gain.toFixed(3)} on ${on.join('/')} (known miss, pinned)`);
+        continue;
+      }
+      near(gain, 1.0, 0.06,
+        `${map} is a ${gain.toFixed(3)}× gain, so ${on.join('/')} do not render the colour they authored`);
       /* And the SMOOTH ground has to match the textured ground. baseLum lerps
        * toward this constant wherever the surface is barely rippled, so a map
        * whose mean is not it puts a visible step between a rippled patch and a
        * smooth one — on the same level, in the same light. */
       near(mean, fallback, 0.02,
         `${map} averages ${mean.toFixed(3)} but the shader falls back to ${fallback} on smooth ground`);
-      rows.push(`${map} ${mean.toFixed(3)} → ×${gain.toFixed(3)}`);
+      rows.push(`${map} ${mean.toFixed(3)} → ×${gain.toFixed(3)} on ${on.join('/')}`);
     }
-    /* The deck is NOT held to this and it is the one that misses. duracrete
-     * means 0.313, so the hangar's floor renders at 0.910× the colour the
-     * preset asks for and its smooth patches read 24% brighter than its
-     * textured ones. Recorded rather than asserted: the fix is either to
-     * recalibrate duracrete — which re-lights every wall and plinth that tints
-     * against MEAN_ALBEDO.duracrete — or to brighten the hangar's own swatch,
-     * and both of those are somebody else's level. */
-    const deck = baseMapMean('duracrete');
-    rows.push(`deck ${deck.toFixed(3)} → ×${(A + deck * B).toFixed(3)} (known, unasserted)`);
     return rows.join('  ');
   });
 
@@ -524,54 +738,55 @@ export function run({ check, assert, near }) {
      *
      * Everything is measured through the real ACES + grade, because clipping is
      * a display quantity; measured in linear radiance it does not exist. */
-    const KEY = Number((ENGINE_SRC().match(/^const KEY = ([\d.]+);/m) || [])[1]);
-    assert(KEY > 0, 'Engine no longer states the key it exposes for');
-
     /*
-     * The identity, on the levels it is an identity FOR — and asked rather than
-     * named, twice over, because both vocabularies here have moved.
+     * AT THE EXPOSURE EACH GROUND IS ACTUALLY DISPLAYED AT, and it used to
+     * derive that instead of asking for it.
      *
-     * The list used to be three literal level keys, two of which have since been
-     * deleted; note also that OUTDOOR above is a list of TERRAIN PRESETS, a
-     * different vocabulary that happens to share several spellings. But
-     * "every level with an atmosphere" is too wide, and wrong in an
-     * instructive way: the identity is the OUTDOOR branch of atmosphereMeter,
-     * where exposure = bias·KEY/key and key = E·0.18/π, so E cancels. The
-     * indoor branch does not meter at all — it returns bias·EXPOSURE flat,
-     * because an interior is lit by lamps the atmosphere cannot see — and
-     * against that the identity is out by up to 82% on the deeps. That is not
-     * a fault in the grade; it is the check asking a question the indoor path
-     * never claimed to answer. So the loop asks the meter which branch it took
-     * rather than deciding for it.
+     * This carried an identity — `albedo/π · E · exposure = albedo · bias ·
+     * KEY / 0.18`, with the irradiance cancelling out — and verified it against
+     * the shipped levels before using it. The identity held only while
+     * `exposure = authored × KEY / key` exactly, i.e. while the meter normalised
+     * every outdoor level onto one key. It no longer does: `METER_TRIM` bounds
+     * the correction, so a level far from KEY sits on the trim instead of on
+     * the key, and the identity is out by up to 59.6% — which is what this
+     * check reported the moment the meter was fixed, on a measurement that was
+     * itself sound.
+     *
+     * The right repair is not a wider tolerance on the identity. It is to stop
+     * deriving the exposure at all: the meter is a pure function of the
+     * atmosphere block, so the display level of a ground is a thing to ASK for,
+     * and asking is immune to the next change in how the meter decides. Each
+     * ground is now measured at the exposure of the level that stands on it,
+     * which is also the one number every row here was previously wrong about
+     * — a single borrowed bias put every ground at the erg's brightness, and
+     * Scoria is authored two thirds of a stop under it.
      */
-    const drift = [];
     let metered = 0;
-    for (const name of LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere)) {
-      const A = LEVELS[name].atmosphere;
-      const m = atmosphereMeter(A);
-      if (!m.outdoor) continue;
-      metered++;
-      assert(m.exposure > 0.2001 && m.exposure < 2.9999, `${name}: the exposure meter is on its clamp`);
-      const direct = (m.irradiance / Math.PI) * m.exposure;      // a 1.0 albedo ground
-      const identity = (A.exposure ?? 1.05) * KEY / 0.18;
-      drift.push(Math.abs(direct - identity) / identity);
+    const K_OF = new Map();          // preset → [level, linear gain of a 1.0 albedo ground]
+    for (const name of OUTDOOR) {
+      for (const key of levelsOn(name)) {
+        const m = atmosphereMeter(LEVELS[key].atmosphere ?? {});
+        if (!m.outdoor) continue;
+        metered++;
+        assert(m.exposure > 0.2001 && m.exposure < 2.9999, `${key}: the exposure meter is on its clamp`);
+        // what a fully lit 1.0-albedo horizontal patch reaches at ACES
+        const K = (m.irradiance / Math.PI) * m.exposure;
+        const prev = K_OF.get(name);
+        // two levels can share a ground; measure it at the brighter, which is
+        // the one that can put it on the shoulder
+        if (!prev || K > prev[1]) K_OF.set(name, [key, K]);
+      }
     }
-    assert(metered >= 3, `only ${metered} metered levels to verify the identity against`);
-    assert(Math.max(...drift) < 0.02,
-      `the exposure identity is out by ${(Math.max(...drift) * 100).toFixed(1)}% — the measurement below is measuring nothing`);
+    assert(metered >= 3, `only ${metered} metered levels to measure a ground against`);
+    assert(K_OF.size === OUTDOOR.length,
+      `${OUTDOOR.length - K_OF.size} outdoor ground(s) have no metered level to be displayed at`);
 
-    // ONE authored bias, used for every level here so the numbers compare. A
-    // level is free to bias its own, and that moves every row by the same
-    // factor. It used to be read off the dune sea, which no longer exists; the
-    // erg carries the same 0.86 and is the same kind of place, so not a digit
-    // in any row below moves.
-    const BIAS = LEVELS.drifts.atmosphere.exposure;
-    const K = BIAS * KEY / 0.18;
-    const disp = (c, k = 1) => LUMT(throughTone([c[0] * K * k, c[1] * K * k, c[2] * K * k]));
     const rows = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
       const P = TERRAIN_PRESETS[name];
+      const [lvl, K] = K_OF.get(name);
+      const disp = (c, k = 1) => LUMT(throughTone([c[0] * K * k, c[1] * K * k, c[2] * K * k]));
       const swatch = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
       const base = swatch(P.sandColor), sheet = swatch(P.sheetColor ?? P.dustColor ?? P.sandColor);
 
@@ -590,26 +805,59 @@ export function run({ check, assert, near }) {
        * is not "does it clip": ACES has a shoulder, not a wall, so nothing ever
        * reaches 1.0 and a clipping test on a snowfield reports 0.0% while the
        * snowfield is completely flat. What actually happens on the shoulder is
-       * that the material's layers stop being tellable apart. Measured through
-       * the real curve at this bias: a desert ground gets 0.049-0.051 of display
-       * for a 15% albedo step; REAL fresh snow at 0.90 albedo gets 0.018, a
-       * third of that, and the drift crest and the drift trough arrive at the
-       * same white however much work the shader did on them. */
+       * that the material's layers stop being tellable apart.
+       *
+       * BOTH BOUNDS WERE ABSOLUTE DISPLAY UNITS, AND THAT CONFLATES A GROUND
+       * AUTHORED DARK WITH A GROUND WHOSE LAYERS HAVE MERGED.
+       *
+       * It read `modul > 0.025` and `sep > 0.06`, calibrated when every row
+       * here was a desert measured at one borrowed bias. Metered at their own
+       * levels, three of the eight shipped grounds are authored near-black —
+       * Scoria's flow field displays at 0.032 mean luminance, Mustafar's at
+       * 0.031, Kamino's at 0.029 — and 15% of a small number is a small number.
+       * All three failed. None of them is on the shoulder: their local log-log
+       * slope through the curve is 2.08, 2.12 and 2.20, deep in the TOE, where
+       * the curve is expanding their layers by a factor of two. That is the
+       * opposite of the failure, reported as the failure.
+       *
+       * So both are stated as CONTRAST, against the case the check exists for.
+       * Real fresh snow at 0.90 albedo is the ground that cannot work, and it
+       * is measurable at every one of these exposures, so each ground is asked
+       * how much further from the shoulder it sits than the same material
+       * would if it were that snow. Measured: Scoria 7.4×, Mustafar 15.6×,
+       * Kamino 4.6×, Colosseum 4.0×, the Bog 9.8×, the erg 4.7×, Geonosis
+       * 4.5× — and the alpine 1.96×, which is right, because the alpine is
+       * the snowfield and is the only ground here in any danger. The gate is
+       * 1.5×, and the alpine is what it is guarding. */
+      const slopeAt = (c) => Math.log(disp(c, 1.15) / Math.max(disp(c), 1e-9)) / Math.log(1.15);
+      const michelson = (a, b) => {
+        const x = disp(a), y = disp(b);
+        return Math.abs(x - y) / Math.max(1e-9, x + y);
+      };
+      const FRESH = 0.90;                 // real fresh snow, the ground that cannot work
+      const asSnow = (c) => { const f = FRESH / Math.max(1e-9, lum(base)); return c.map((v) => v * f); };
       const modul = disp(base, 1.15) - disp(base);
+      const headroom = slopeAt(base) / Math.max(1e-9, slopeAt([FRESH, FRESH, FRESH]));
       /* And the same failure stated over the two layers that cover most of the
-       * ground: the base coat and the pale sheet riding on it. */
+       * ground: the base coat and the pale sheet riding on it, against the two
+       * of them lifted to fresh snow's albedo where they merge. */
       const sep = Math.abs(disp(sheet) - disp(base));
+      const layers = michelson(base, sheet) / Math.max(1e-9, michelson(asSnow(base), asSnow(sheet)));
 
       assert(loose < 0.88,
         `${name}: the loose ground displays at ${loose.toFixed(3)} mean luminance — nothing can be lit on top of that`);
-      assert(modul > 0.025,
-        `${name}: a 15% change in albedo is worth ${modul.toFixed(3)} of display — the ground is on the shoulder and its layers have merged`);
-      assert(sep > 0.06,
-        `${name}: the base coat and the drift sheet display ${sep.toFixed(3)} apart — the material's two biggest layers are one colour on screen`);
-      rows.push(`${name} base ${lum(base).toFixed(2)}→${disp(base).toFixed(3)} loose ${loose.toFixed(3)} `
-        + `mod ${modul.toFixed(3)} sep ${sep.toFixed(3)}`);
+      assert(headroom > 1.5,
+        `${name}: a 15% change in albedo buys ${headroom.toFixed(2)}× what it would buy on fresh snow `
+        + `(${modul.toFixed(3)} of display, curve slope ${slopeAt(base).toFixed(2)}) — the ground is on the `
+        + 'shoulder and its layers have merged');
+      assert(layers > 1.5,
+        `${name}: the base coat and the drift sheet separate ${layers.toFixed(2)}× as well as they would on `
+        + `fresh snow (${sep.toFixed(3)} of display) — the material's two biggest layers are one colour on screen`);
+      rows.push(`${name}@${lvl} ×${K.toFixed(3)} base ${lum(base).toFixed(2)}→${disp(base).toFixed(3)} `
+        + `loose ${loose.toFixed(3)} mod ${modul.toFixed(3)}/${headroom.toFixed(1)}× sep ${sep.toFixed(3)}/${layers.toFixed(1)}×`);
     }
-    return rows.join('; ') + ` (bias ${BIAS}, KEY ${KEY}; real snow at 0.90 albedo measures mod 0.018)`;
+    return rows.join('; ') + ` (${metered} metered levels; real snow at 0.90 albedo `
+      + 'measures mod 0.018 at a desert exposure)';
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -697,13 +945,27 @@ export function run({ check, assert, near }) {
      *
      * So the ground is split by what its base MAP is, and the map's own
      * directionality is measured rather than assumed. */
-    const COMB = { sand: true, snow: true, soil: false, deck: false };
+    /* …AND THE SPLIT IS THE MEASUREMENT, not a table beside it.
+     *
+     * This read `{ sand: true, snow: true, soil: false, deck: false }`, which
+     * is the same hand-maintained twin as `_mapSet`'s and went stale the same
+     * way: Mustafar's `rock` was in neither, so the only ground in the game
+     * whose base map is stone reported as "not a known base surface". The map's
+     * own coherence already answers the question and is asserted below, so it
+     * is what decides — see `windWorked`.
+     *
+     * IT FOUND ONE. `uRipAspect` defaults to 0.42, the sand stretch, and
+     * Mustafar was the single preset in the table taking the default rather
+     * than declaring: a rock map with a coherence of 0.10 was being combed by a
+     * frame built for sand's 0.79. Every other ground no wind worked writes
+     * `ripAspect: 1.0` with a note saying why. That is the meadow's own defect
+     * — crumb combed into corduroy — on a lava shelf, and it arrived exactly
+     * the way the `maps: 'rock'` fallthrough did: a missing declaration
+     * answered with a plausible default. */
     const rows = [];
     for (const name of PRESETS) {
-      const P = TERRAIN_PRESETS[name];
       const a = terrainOf(name)._uniforms.uRipAspect.value;
-      const combed = COMB[P.maps];
-      assert(combed !== undefined, `${name}: '${P.maps}' is not a known base surface`);
+      const combed = windWorked(name);
       if (combed) {
         assert(a > 0.2 && a < 0.75,
           `${name}: the ripple frame aspect is ${a} — 1.0 is the lattice, 0 is a smear`);
@@ -719,30 +981,55 @@ export function run({ check, assert, near }) {
      * not be within reach of each other, or "this ground is not combed" is a
      * claim about a uniform rather than about anything on screen. */
     const dirn = {};
-    for (const m of ['sand', 'snow', 'soil']) dirn[m] = anisotropy(m);
-    assert(dirn.sand > 0.45, `the sand map has no ripple train in it: coherence ${dirn.sand.toFixed(2)}`);
-    assert(dirn.snow > 0.45, `the snow map has no sastrugi in it: coherence ${dirn.snow.toFixed(2)}`);
-    assert(dirn.soil < 0.30, `the soil map is combed: coherence ${dirn.soil.toFixed(2)}`);
-    assert(dirn.soil < dirn.snow * 0.5,
-      `soil at ${dirn.soil.toFixed(2)} is as directional as the wind-carved snow at ${dirn.snow.toFixed(2)}`);
+    for (const m of [...new Set(PRESETS.map(baseMapOf))]) dirn[m] = anisotropy(m);
+    assert(dirn.sand > COMBED, `the sand map has no ripple train in it: coherence ${dirn.sand.toFixed(2)}`);
+    assert(dirn.snow > COMBED, `the snow map has no sastrugi in it: coherence ${dirn.snow.toFixed(2)}`);
+    /* And every map that is NOT wind-worked has to stay clear of the same line,
+     * or `windWorked` is sorting grounds by an accident. Measured: sand 0.79
+     * and snow 0.65 above it; duracrete 0.20, soil 0.17 and rock 0.10 below —
+     * a 3.2× gap with nothing in it. Stated over the maps in use rather than
+     * over `soil` alone, which is how `rock` and `duracrete` went unmeasured. */
+    for (const [m, v] of Object.entries(dirn)) {
+      if (v > COMBED) continue;
+      assert(v < 0.30, `the ${m} map is combed: coherence ${v.toFixed(2)}`);
+      assert(v < dirn.snow * 0.5,
+        `${m} at ${v.toFixed(2)} is as directional as the wind-carved snow at ${dirn.snow.toFixed(2)}`);
+    }
     // and wet sand is packed flat
     assert(/1\.0 - wet \* 0\.8/.test(src) || /\(1\.0 - wet/.test(src),
       'the river bed is still covered in wind ripples');
-    // the canyon is worked by water, the dune sea by wind
+    /* HOW HARD EACH GROUND IS COMBED, and this was four dead presets deep.
+     *
+     * It read `canyon < dunes×0.7`, `drifts > dunes`, `meadow < dunes×0.4`
+     * and `meadow > 0.15` — the dune sea, the canyon and the meadow are all
+     * deleted, so three of those four compared one shipped ground against
+     * nothing a player stands on and the fourth compared two deleted ones. The
+     * claims survive; the grounds they are made about are derived.
+     *
+     * FIRST: the wind-worked ground is combed harder than the ground no wind
+     * worked, as a group. Measured: 0.93 mean against 0.43, a factor of 2.15,
+     * and the bound is a factor because that is what the claim is.
+     *
+     * SECOND: no ground is a painted plane. uRip.w scales the whole base
+     * normal, so a ground "with no ripples" at 0.0 has no surface relief of any
+     * kind and lights only by the mesh normal — which is the trap this number
+     * sets, and it is now asked of all ten grounds rather than of the meadow.
+     * The floor is the meadow's own 0.15; the lowest shipped ground is the
+     * bog's 0.25. */
     const gain = (n) => terrainOf(n)._uniforms.uRip.value.w;
-    assert(gain('canyon') < gain('dunes') * 0.7, 'a river wash ripples as hard as a dune sea');
-    // a storm-driven erg combs harder than the dune sea, a meadow barely at all
-    assert(gain('drifts') > gain('dunes'), 'a sandstorm erg is combed no harder than a breeze');
-    assert(gain('meadow') < gain('dunes') * 0.4,
-      `the meadow ripples at ${gain('meadow')} against the dune sea's ${gain('dunes')}`);
-    /* …and NOT at zero, which is the trap this number sets. uRip.w scales the
-     * whole base normal, so a meadow "with no ripples" at 0.0 is a meadow with
-     * no surface relief of any kind: a painted plane that lights only by the
-     * mesh normal. The anisotropy is what had to go, not the relief. */
-    assert(gain('meadow') > 0.15, 'the meadow has no base relief left at all — that is a painted plane');
-    return `aspect ${rows.join(' ')}; gain dunes ${gain('dunes')} / drifts ${gain('drifts')} / `
-      + `canyon ${gain('canyon')} / meadow ${gain('meadow')}; map coherence sand ${dirn.sand.toFixed(2)} `
-      + `snow ${dirn.snow.toFixed(2)} soil ${dirn.soil.toFixed(2)}`;
+    const mean = (ns) => ns.reduce((a, n) => a + gain(n), 0) / Math.max(1, ns.length);
+    const blown = PRESETS.filter(windWorked), still = PRESETS.filter((n) => !windWorked(n));
+    assert(blown.length && still.length,
+      'every shipped ground is on the same side of the wind — the comparison measured nothing');
+    assert(mean(blown) > mean(still) * 1.5,
+      `wind-worked ground combs at ${mean(blown).toFixed(2)} against ${mean(still).toFixed(2)} `
+      + 'for ground no wind worked — the two are the same field');
+    for (const n of PRESETS) {
+      assert(gain(n) > 0.15, `${n} has no base relief left at all — that is a painted plane`);
+    }
+    return `aspect ${rows.join(' ')}; comb gain ${mean(blown).toFixed(2)} blown / ${mean(still).toFixed(2)} still `
+      + `(lowest ${PRESETS.reduce((a, b) => (gain(a) < gain(b) ? a : b))} ${Math.min(...PRESETS.map(gain))}); `
+      + `map coherence ${Object.entries(dirn).map(([m, v]) => `${m} ${v.toFixed(2)}`).join(' ')}`;
   });
 
   check('terrain: rock reads as jointed stone, not as tooled leather', () => {
@@ -875,18 +1162,47 @@ export function run({ check, assert, near }) {
       for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (f(m) < 0.5) lo = m; else hi = m; }
       return (lo + hi) / 2;
     };
-    // every preset that has loose ground; the hangar is exempt because
-    // surfaceAt() short-circuits a `flat` deck to 'metal' before either of
-    // these is consulted
-    for (const name of PRESETS.filter((n) => !TERRAIN_PRESETS[n].flat)) {
-      const p = TERRAIN_PRESETS[name], u = terrainOf(name)._uniforms.uBands.value;
-      const jsCross = cross((s) => p.rockAt(0, 0, s));
-      const glCross = cross((s) => smoothstep(u.x, u.y, s));
+    /* EVERY PRESET WHOSE SLOPE BAND IS A LOOSE/HARD SPLIT AT ALL — and the
+     * filter that used to say that said `!flat` instead, which is a different
+     * question with a nearly identical answer.
+     *
+     * Six presets are decks and every one of them writes `rockAt() { return
+     * 1; }`: a deck is hard everywhere, so its band is not choosing between
+     * loose ground and stone, it is choosing between duracrete and the plate
+     * under it. There is nothing there for a slope crossover to be the twin
+     * OF, and `cross()` on a constant returns 0 by construction. Five of the
+     * six also declare `flat`, so `!flat` excluded them by accident; Kamino is
+     * a deck standing on real relief, does not declare `flat`, and reported
+     * "rockAt turns to stone at slope 0.00 and the material at 0.13" — a
+     * disagreement between a constant and a band, which is not a disagreement.
+     *
+     * So the scope is the preset's own declaration, and it is checked in both
+     * directions: a ground with no slope split has to be hard everywhere
+     * (`rockAt` ≡ 1, not ≡ 0) and its band has to be revealing a manufactured
+     * surface rather than stone — asked of the map the material actually
+     * bound. A loose ground cannot opt out of the twin by flattening its
+     * rockAt, because it would then be claiming its sand is stone and
+     * revealing rock underneath it. */
+    const exempt = [];
+    for (const name of PRESETS) {
+      const p = TERRAIN_PRESETS[name], t = terrainOf(name), u = t._uniforms.uBands.value;
+      if (p.rockAt(0, 0, 0) === p.rockAt(0, 0, 1)) {
+        assert(p.rockAt(0, 0, 0) === 1,
+          `${name}: rockAt is the constant ${p.rockAt(0, 0, 0)} — a ground with no slope split has to be hard, not loose`);
+        const upper = t._uniforms.uRockAlb.value.userData.saberBake;
+        assert(upper !== 'rock',
+          `${name} has no slope split in rockAt but its band still reveals '${upper}' — that is loose ground claiming to be a deck`);
+        exempt.push(`${name} (${upper} under a deck)`);
+        continue;
+      }
+      const jsCross = cross((sl) => p.rockAt(0, 0, sl));
+      const glCross = cross((sl) => smoothstep(u.x, u.y, sl));
       assert(Math.abs(jsCross - glCross) < 0.06,
         `${name}: rockAt turns to stone at slope ${jsCross.toFixed(2)} and the material at ${glCross.toFixed(2)}`);
     }
+    assert(exempt.length < PRESETS.length, 'every shipped ground is a deck — the twin check measured nothing');
     return `flat ${(flatRock / flat * 100).toFixed(0)}% rock, 15-45° ${(midRock / mid * 100).toFixed(0)}%, `
-      + `steep ${(steepRock / steep * 100).toFixed(0)}%`;
+      + `steep ${(steepRock / steep * 100).toFixed(0)}%; no slope split on ${exempt.join(', ')}`;
   });
 
   check('terrain: the ground publishes itself, so water and decals can find it', () => {
@@ -1305,7 +1621,7 @@ export function run({ check, assert, near }) {
      * rule 8 of src/toon/REFERENCE.md deletes specular everywhere, and water
      * and lava were the last surfaces in the game still carrying a
      * view-dependent lobe — measured by walking the eye round the sheet at 8°
-     * of elevation, luminance swung 6.63× on mustafar, 6.80× on the wood and
+     * of elevation, luminance swung 6.63× on scoria, 6.80× on the wood and
      * 7.20× on kamino, which is a highlight whatever the code calls it. The
      * Fresnel and the facet term are now quantised to two levels each and the
      * sun lobes are gone (see WATER_FRAG), so the surface is drawn as two
@@ -1417,7 +1733,7 @@ export function run({ check, assert, near }) {
     return out.join('  ');
   });
 
-  check('terrain: every height function is smooth, and the meadow is the cheapest of them', () => {
+  check('terrain: every height function is smooth, and the poured floors are the cheapest', () => {
     /* height() is the hottest function in this file by a distance. It runs
      * res² times at bake, once per physics heightfield refresh, and once per
      * FOOT PER CHARACTER PER FRAME — so it is not a bake-time cost, it is a
@@ -1457,30 +1773,65 @@ export function run({ check, assert, near }) {
       assert(worst < 0.05,
         `${name}: the surface steps ${(worst * 1000).toFixed(0)} mm across one millimetre of ground`);
 
+      /* BEST OF THREE, because this is wall-clock on a box with other agents on
+       * it. A descheduled run only ever inflates a timing, never deflates it,
+       * so the minimum is the estimator that survives contention: measured
+       * back to back under load the same preset ranged 149-243 ns on one run
+       * and 132-165 on the next, while the minimum of three moved by under a
+       * tenth. §2.6 is explicit that timing checks blow when the box is busy;
+       * this is the cheapest way to stop that being a fiction. */
       const h = P.height;
       let s = 0;
       for (let i = 0; i < 60000; i++) s += h(i * 0.37 - 180, i * 0.71 - 240);   // warm
-      const t0 = process.hrtime.bigint();
-      for (let i = 0; i < 300000; i++) s += h(i * 0.37 - 180, i * 0.71 - 240);
-      cost[name] = Number(process.hrtime.bigint() - t0) / 300000;
+      let best = Infinity;
+      for (let rep = 0; rep < 3; rep++) {
+        const t0 = process.hrtime.bigint();
+        for (let i = 0; i < 300000; i++) s += h(i * 0.37 - 180, i * 0.71 - 240);
+        best = Math.min(best, Number(process.hrtime.bigint() - t0) / 300000);
+      }
+      cost[name] = best;
       if (!isFinite(s)) throw new Error(`${name}: the timing loop went non-finite`);
       rows.push(`${name} ${(worst * 1000).toFixed(1)}mm ${cost[name].toFixed(0)}ns`);
     }
-    /* The meadow's whole design claim, as a number. It is two octaves of fbm
-     * and a micro term — six noise2 calls against the dune sea's eighteen —
-     * and if it ever stops being the cheapest ground in the game, somebody has
-     * put landform into a landscape that does not have any. Measured: 0.19×.
-     * The gate is loose because this is wall-clock on a shared machine; the
-     * failure it is here to catch is a factor, not a percentage. */
-    assert(cost.meadow < cost.dunes * 0.40,
-      `the meadow costs ${(cost.meadow / cost.dunes).toFixed(2)}× the dune sea — it is not the simple one any more`);
-    // and the two new deserts/mountains must not cost more than the field they
-    // were built next to
-    assert(cost.drifts < cost.dunes * 1.4,
-      `the erg costs ${(cost.drifts / cost.dunes).toFixed(2)}× the dune sea`);
-    assert(cost.alpine < cost.canyon * 1.4,
-      `the alpine costs ${(cost.alpine / cost.canyon).toFixed(2)}× the canyon`);
-    return rows.join('  ') + `  — meadow ${(cost.meadow / cost.dunes).toFixed(2)}× dunes`;
+    /* THE SIMPLE GROUND IS STILL THE CHEAP ONE — and it used to say this about
+     * the meadow against the dune sea, both of which were deleted, so it
+     * divided undefined by undefined and reported NaN.
+     *
+     * The claim survives the presets that carried it. A ground that declares
+     * `flat` is a poured floor: its height function is a level surface with
+     * drainage channels cut into it and no landform at all, which is exactly
+     * what the meadow's "two octaves of fbm and a micro term" was standing in
+     * for. So the poured floors have to be cheaper than every ground that has
+     * a landform, and if that ever stops being true somebody has put landform
+     * into a landscape that does not have any — which is the sentence this
+     * check was written to be able to say. Measured on a quiet box: the
+     * dearest floor is 122 ns and the cheapest shaped ground 375, a factor of
+     * 3.1, and the gate sits at 1.67 because this is wall-clock.
+     *
+     * AND NOTHING IS AN OUTLIER. The two clauses this replaces asked whether
+     * two new presets cost more than the ground they were built next to; both
+     * of those neighbours are deleted. Stated over the shipped set instead: no
+     * ground may cost more than twice the median ground with a landform, which
+     * is the same claim without a named neighbour to go stale. Measured: the
+     * dearest is Kamino at 1.17× the median. */
+    const floors = PRESETS.filter((n) => TERRAIN_PRESETS[n].flat);
+    const shaped = PRESETS.filter((n) => !TERRAIN_PRESETS[n].flat);
+    assert(floors.length && shaped.length,
+      'every shipped ground is on one side of the flat/shaped line — the cost comparison measured nothing');
+    const dearestFloor = Math.max(...floors.map((n) => cost[n]));
+    const cheapestShaped = Math.min(...shaped.map((n) => cost[n]));
+    assert(dearestFloor < cheapestShaped * 0.6,
+      `a poured floor costs ${dearestFloor.toFixed(0)} ns against ${cheapestShaped.toFixed(0)} ns for the cheapest `
+      + 'ground with a landform — there is landform in a landscape that does not have any');
+    const sorted = shaped.map((n) => cost[n]).sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    for (const n of shaped) {
+      assert(cost[n] < median * 2,
+        `${n} costs ${(cost[n] / median).toFixed(2)}× the median shaped ground, and height() runs once per foot `
+        + 'per character per frame');
+    }
+    return rows.join('  ') + `  — floors ≤${dearestFloor.toFixed(0)}ns, shaped ≥${cheapestShaped.toFixed(0)}ns `
+      + `(${(dearestFloor / cheapestShaped).toFixed(2)}×), dearest ${(Math.max(...sorted) / median).toFixed(2)}× median`;
   });
 
   check('terrain: a Force landing still craters every ground that is not a deck', () => {
@@ -1489,18 +1840,66 @@ export function run({ check, assert, near }) {
     // off — because its height function is dominated by a term the deformation
     // is added under, or because it is quietly flat — would lose the one piece
     // of terrain interaction the game has.
+    /* WHERE THE CRATER IS DUG, and it used to be the constant (9, -6) on every
+     * ground in the game.
+     *
+     * Every clause here is about what crater() does to the ground. One of them
+     * — that the floor reads as a HOLLOW in the concavity channel — is not,
+     * because that channel is relative by construction: it is the local mean
+     * over an 8 m disc minus the height, so what it says about a point depends
+     * on the landform the point was already sitting on. Scoria's ground at
+     * (9, -6) is a spatter cone standing 2.83 m above its own neighbourhood,
+     * which saturates the channel at 0 before anything is dug; a 1.54 m crater
+     * moved it to 34 and the check read that as "the crater floor did not
+     * become a hollow". The crater was fine. The site was a crest, and asking
+     * a crest to become a basin is asking the ground about itself rather than
+     * about the Force landing.
+     *
+     * So the site is chosen by the ground: the sample nearest neutral
+     * concavity — ordinary ground, neither crest nor hollow — inside the
+     * middle half of the field and clear of any water. Eleven per cent of
+     * Scoria is saturated crest; a constant point was always going to land on
+     * one of them eventually, on one preset or another.
+     *
+     * AND THE UNIT-FUL FORM IS ASSERTED TOO, which the byte cannot dodge. The
+     * concavity channel clamps, so a crater dug into a crest can be a real
+     * hollowing that the byte still reports as "not a hollow". In metres the
+     * crater deepens the local concavity by 1.18-1.39 m for a 1.6 m bowl on
+     * every non-flat ground in the game, including the spatter cone — that is
+     * the property that holds everywhere, and it is what flush() claims when it
+     * says a fresh crater collects drift the way any other hollow does. */
+    const siteOf = (t) => {
+      const R = t.res, lim = t.half * 0.5;
+      let best = null;
+      for (let j = 4; j < R - 4; j += 2) {
+        for (let i = 4; i < R - 4; i += 2) {
+          const x = -t.half + i * t.step, z = -t.half + j * t.step;
+          if (Math.abs(x) > lim || Math.abs(z) > lim) continue;
+          if (t.waterLevel > -900 && t.heights[t._idx(i, j)] < t.waterLevel + 0.5) continue;
+          const d = Math.abs(t.landform[t._idx(i, j) * 4] - 128);
+          if (!best || d < best.d) best = { x, z, i, j, d };
+        }
+      }
+      return best;
+    };
     const rows = [];
     for (const name of PRESETS) {
       const t = new Terrain(new THREE.Scene(), name, 0.6);
+      const at = siteOf(t);
+      assert(at, `${name}: no ordinary dry ground in the middle of the field to crater`);
+      const { x, z } = at;
       /* 8 m, not the 3 the dune sea's own check uses: at quality 0.6 the grid
        * is up to 3 m and a crater narrower than a few cells is resolved by
        * whichever vertices happen to fall inside it, so a 4 m one measures as
        * a 0.7 m dent on the 540 m meadow and as 1.5 m on the 300 m deck. That
        * is the grid, not the preset — this is testing that the deformation
        * lands at all, not what crater() does at the resolution limit. */
-      const before = t.height(9, -6), rimBefore = t.height(17.3, -6);
-      t.crater(9, -6, 8, 1.6);
-      const after = t.height(9, -6);
+      const before = t.height(x, z), rimBefore = t.height(x + 8.3, z);
+      const k = t._idx(at.i, at.j);
+      const concBefore = t._localMean(at.i, at.j, t._rS) - t.heights[k];
+      const flagBefore = t.landform[k * 4];
+      t.crater(x, z, 8, 1.6);
+      const after = t.height(x, z);
       if (t.preset.flat) {
         near(after, before, 1e-6, `${name}: a deck deformed`);
         rows.push(`${name} —`);
@@ -1511,13 +1910,19 @@ export function run({ check, assert, near }) {
          * alpine's ribs put 13 m of relief inside the first 40 m, so a point
          * 8 m away is routinely metres below a crater floor that a perfectly
          * good 34 cm lip has just been added to. */
-        assert(t.height(17.3, -6) > rimBefore + 0.05,
-          `${name}: the crater has no raised rim — the ground 8.3 m out moved ${(t.height(17.3, -6) - rimBefore).toFixed(3)} m`);
+        assert(t.height(x + 8.3, z) > rimBefore + 0.05,
+          `${name}: the crater has no raised rim — the ground 8.3 m out moved ${(t.height(x + 8.3, z) - rimBefore).toFixed(3)} m`);
         assert(t.deformSeq === 1, `${name}: the physics heightfield was not told the ground moved`);
         t.flush();
-        const k = t._idx(Math.round((9 + t.half) * t.invStep), Math.round((-6 + t.half) * t.invStep));
-        assert(t.landform[k * 4] > 128, `${name}: the crater floor did not become a hollow in the landform`);
-        rows.push(`${name} ${(before - after).toFixed(2)}m`);
+        const concAfter = t._localMean(at.i, at.j, t._rS) - t.heights[k];
+        assert(concAfter - concBefore > 1.0,
+          `${name}: the crater deepened the local concavity by only ${(concAfter - concBefore).toFixed(2)} m `
+          + 'of a 1.6 m bowl — the landform channel was not rebuilt under it');
+        assert(t.landform[k * 4] > 128,
+          `${name}: the crater floor did not become a hollow in the landform `
+          + `(${flagBefore} → ${t.landform[k * 4]}, ${(concAfter - concBefore).toFixed(2)} m deeper)`);
+        rows.push(`${name} ${(before - after).toFixed(2)}m at (${x.toFixed(0)},${z.toFixed(0)}) `
+          + `conc ${flagBefore}→${t.landform[k * 4]}`);
       }
       t.dispose();
     }
@@ -1556,13 +1961,8 @@ export function run({ check, assert, near }) {
  * exposes: which chunk a term is spliced into, whether a bend is a
  * displacement or a rotation, whether the alpha reaches zero at the waterline.
  */
-let _terSrc = null, _scnSrc = null, _engSrc = null;
+let _terSrc = null, _scnSrc = null;
 const TERRAIN_SRC = () => (_terSrc ??= readSrc('Terrain.js'));
 const SCENERY_SRC = () => (_scnSrc ??= readSrc('Scenery.js'));
 const readSrc = (name) =>
   readFileSync(new URL(`../../src/world/${name}`, import.meta.url), 'utf8');
-/* The exposure key is a module-private const in Engine, and the whole snow
- * measurement is anchored on it; reading it out of the source is the only way
- * to be sure the check and the engine are talking about the same number. */
-const ENGINE_SRC = () =>
-  (_engSrc ??= readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8'));

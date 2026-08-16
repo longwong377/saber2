@@ -331,7 +331,13 @@ export function run({ check, assert, near }) {
       }
       rows.push(`${key} ${(f.cover * 100).toFixed(0)}% (${f.kind})`);
     }
-    assert(covered >= 5, `only ${covered} levels carry any ground cover at all`);
+    /* 5 of 13 was a bit over a third of the roster. The roster is 7 and the
+     * survivors carry cover on 4, which is a HIGHER share (57% against 38%) —
+     * three of the six levels deleted were interiors, which are the ones that
+     * legitimately have none. Stated as a share so it cannot become a roster
+     * count again. */
+    assert(covered / rows.length > 0.5,
+      `${covered} of ${rows.length} levels carry any ground cover at all`);
     return rows.join(', ');
   });
 
@@ -1088,7 +1094,11 @@ export function run({ check, assert, near }) {
       dome.dispose();
       terrain.dispose();
     }
-    assert(rows.length >= 3, 'no outdoor level built ranges to measure');
+    /* Two: `addHorizon` is called from exactly two dress() bodies, so the
+     * whole population is two levels' worth of ranges. It was three until the
+     * meadow was deleted — a roster count, not a property, so it is stated
+     * against the callers rather than against a number. */
+    assert(rows.length >= 2, 'no outdoor level built ranges to measure');
     assert(worstL < 0.995,
       `a range reaches ${worstL.toFixed(3)}× the sky above it on ${worstLat} — a landform behind 300 m ` +
       'of the same air cannot be that bright');
@@ -1175,7 +1185,8 @@ export function run({ check, assert, near }) {
       dome.dispose();
       terrain.dispose();
     }
-    assert(rows.length >= 9, 'no outdoor level built ranges to measure');
+    /* Three ranges each on the two levels that paint any: six. */
+    assert(rows.length >= 6, `only ${rows.length} ranges to measure`);
     assert(thinnest > 0.05,
       `an octave band of the skyline carries only ${(thinnest * 100).toFixed(1)}% of its energy — ` +
       'a ridgeline has structure at every scale, and a missing band is a scale the eye reads as drawn');

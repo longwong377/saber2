@@ -1,7 +1,7 @@
 /**
- * SABER — you can always get out.
+ * BATTLEFRONT BORZ — you can always get out.
  *
- * THE BUG. `draft` and `landing` stop the world and hand the screen to an
+ * THE BUG. `draft` and `landing` stopped the world and handed the screen to an
  * overlay, and the only way out of either was a click on that overlay. The
  * overlay hides itself BEFORE it calls back, so a callback that throws left the
  * game paused, input disabled, and nothing at all on the screen — and Escape,
@@ -32,8 +32,11 @@ function fakeMenu() {
     hidePause: () => up.delete('pause'),
     showDraft: () => { up.add('draft'); m.shown.push('draft'); },
     hideDraft: () => up.delete('draft'),
-    showLanding: () => { up.add('landing'); m.shown.push('landing'); },
-    hideLanding: () => up.delete('landing'),
+    /* The muster. It is a Menu card like the other three — the same show/hide
+     * pair, taken down by clear() and _hide() by name — which is what earns it
+     * a place in OVERLAY_STATES rather than in the `card()` registry. */
+    showMuster: () => { up.add('muster'); m.shown.push('muster'); },
+    hideMuster: () => up.delete('muster'),
     showDeath: () => { up.add('death'); m.shown.push('death'); },
     hideDeath: () => up.delete('death'),
   };
@@ -60,7 +63,9 @@ function enter(b, state) {
   if (state === 'playing') { b.s.state = 'playing'; b.world.paused = false; b.input.enabled = true; return; }
   if (state === 'paused') { enter(b, 'playing'); b.s.pause(); return; }
   if (state === 'draft') { enter(b, 'playing'); b.s.take('draft', () => b.menu.showDraft()); return; }
-  if (state === 'landing') { enter(b, 'playing'); b.s.take('landing', () => b.menu.showLanding()); return; }
+  // Through Screens.muster itself, not through take() — the point of that
+  // method is that main.js cannot raise this overlay any other way.
+  if (state === 'muster') { enter(b, 'playing'); b.s.muster({ area: 1 }, {}); return; }
   if (state === 'dead') { enter(b, 'playing'); b.s.take('dead', () => b.menu.showDeath()); return; }
   b.s.state = state;
 }
@@ -104,7 +109,7 @@ export async function run({ check, assert }) {
      * back, so a throw in the callback leaves an empty screen. Reproduced here
      * by hiding before throwing, which is what the real menu does.
      */
-    for (const st of ['draft', 'landing']) {
+    for (const st of ['draft', 'muster']) {
       const b = bench();
       enter(b, st);
       const boom = b.s.guarded('picking', () => {
@@ -121,7 +126,7 @@ export async function run({ check, assert }) {
       assert(b.s.state === 'playing' && !b.world.paused,
         `resuming after a failed ${st} left the state at '${b.s.state}' with paused=${b.world.paused}`);
     }
-    return 'a throwing draft and a throwing landing both land on a working pause card';
+    return 'a throwing draft and a throwing muster both land on a working pause card';
   });
 
   check('screens: pausing over a draft gives the draft back, not a skipped boon', () => {
@@ -195,12 +200,35 @@ export async function run({ check, assert }) {
     for (const call of ['screens.take(', 'screens.guarded(']) {
       assert(strip.includes(call), `main.js never calls ${call} — an overlay is being raised the unsafe way`);
     }
-    // and the two overlays that could strand the player go up through `take`
-    for (const [what, show] of [['draft', 'showDraft'], ['landing', 'showLanding']]) {
-      const re = new RegExp(`screens\\.take\\(\\s*'${what}'`);
-      assert(re.test(strip), `the ${what} is raised without screens.take — it will not be remembered`);
-      assert(strip.includes(`menu.${show}(`), `main.js no longer calls menu.${show}`);
+    /* …and every overlay that could strand the player goes up through `take`.
+     * There were two; the landing went with the Descent and the muster arrived
+     * with Command. It is worth saying that the LIST is the thing being checked
+     * rather than the pair — the next overlay somebody adds is the next one
+     * that can strand a player, and it has to be added here too.
+     * `OVERLAY_STATES` is the authority for what those are, so this reads it
+     * rather than restating it.
+     *
+     * TWO SHAPES ARE ACCEPTED, and the second is the better one. main.js may
+     * raise the overlay itself (`screens.take('draft', () => menu.showDraft())`)
+     * or go through a NAMED METHOD on Screens that does the take for it
+     * (`screens.muster(...)` → `take('muster', …)` inside Screens.js). The
+     * second keeps the `take` and the `guarded` wrappers out of main.js
+     * altogether, which is where they were forgotten the first time; what is
+     * checked is that the overlay reaches `take`, not which file spells it. */
+    const screensSrc = await readFile(new URL('../../src/ui/Screens.js', import.meta.url), 'utf8');
+    const seams = [];
+    for (const what of OVERLAY_STATES.filter(o => o !== 'dead')) {
+      const took = new RegExp(`take\\(\\s*'${what}'`);
+      const viaMain = took.test(strip);
+      const viaMethod = new RegExp(`screens\\.${what}\\(`).test(strip) && took.test(screensSrc);
+      assert(viaMain || viaMethod,
+        `the ${what} is raised without screens.take — it will not be remembered, and a `
+        + 'callback that throws inside it leaves the player on a frozen field with nothing to click');
+      const show = `show${what[0].toUpperCase()}${what.slice(1)}`;
+      assert(strip.includes(`menu.${show}(`) || (viaMethod && screensSrc.includes(`${show}(`)),
+        `nothing calls menu.${show} — the card cannot arrive`);
+      seams.push(`${what} ${viaMain ? 'via main' : 'via Screens.' + what}`);
     }
-    return 'no bare state assignments; draft and landing both go up through take()';
+    return `no bare state assignments; every overlay goes up through take() — ${seams.join(', ')}`;
   });
 }

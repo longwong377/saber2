@@ -1,5 +1,5 @@
 /**
- * SABER — combat resolution.
+ * BATTLEFRONT BORZ — combat resolution.
  *
  * Deflections are graded, never rolled. Cuts are geometric, never tagged. The
  * difference between a bolt scattering off your guard and a bolt going back

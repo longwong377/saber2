@@ -1,5 +1,5 @@
 /**
- * SABER — the controls tell the truth.
+ * BATTLEFRONT BORZ — the controls tell the truth.
  *
  * An audit for "reads correctly, silently wrong" found four of these in the
  * menu and the key table, and every one of them read perfectly well as source:
@@ -34,7 +34,12 @@ import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings, CODEX, SCHEMES, c
   keyChips } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
 import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, findConflicts,
-  resolveConflicts, keyLabel } from '../../src/engine/Bindings.js';
+  resolveConflicts, keyLabel, ORDER_ACTIONS, ORDER_GROUP, orderActionId,
+  registerOrders, PAD, PAD_CODES, PAD_AXES, PAD_AXIS_CODES, PAD_MODIFIERS, PAD_FAMILY,
+  isPadCode, isChord, chordParts, codesFor, padFamily, padLabel } from '../../src/engine/Bindings.js';
+// The authority for what an order IS. Imported here so the check can re-derive
+// the six rows from the same place Menu.js derives them, and disagree.
+import { FORMATIONS, FORMATION_IDS } from '../../src/game/Command.js';
 import { Input } from '../../src/engine/Input.js';
 import { SaberController } from '../../src/game/SaberController.js';
 import { QUALITY } from '../../src/engine/Engine.js';
@@ -562,8 +567,29 @@ export async function run({ check, assert }) {
         readers.get(m[1]).push(path);
       }
     }
+    /**
+     * THE ORDERS ARE READ THROUGH A REGISTRY, NOT BY NAME, and the regex above
+     * cannot see that — by construction, because the whole point of the seam is
+     * that nobody types `'form.circle'` anywhere.
+     *
+     * So they are credited against the seam itself, stated: main.js must walk
+     * `ORDER_ACTIONS` and ask `actHit` for each row's own action id. Delete the
+     * loop and this fails exactly as a dead action would; replace it with six
+     * literal `actHit('form.…')` calls and the readers map picks them up on the
+     * ordinary path instead. Either way an order key that nothing presses is
+     * still caught.
+     */
+    const orderIds = new Set(ORDER_ACTIONS.map(o => o.action));
+    if (orderIds.size) {
+      const mainSrc = files.find(([p]) => p === 'main.js')?.[1] || '';
+      const walks = /for\s*\(\s*const\s+(\w+)\s+of\s+ORDER_ACTIONS\s*\)/.exec(mainSrc);
+      assert(walks, 'main.js no longer walks ORDER_ACTIONS, so the six order keys are read by nobody');
+      assert(new RegExp(`\\.actHit\\(\\s*${walks[1]}\\.action\\s*\\)`).test(mainSrc),
+        `main.js walks ORDER_ACTIONS but never asks input.actHit(${walks[1]}.action) — `
+        + 'the orders are back to being raw key codes');
+    }
     // moveF..moveR come through Input.moveAxis, which names every one of them.
-    const dead = ACTION_IDS.filter(id => !readers.has(id));
+    const dead = ACTION_IDS.filter(id => !readers.has(id) && !orderIds.has(id));
     assert(!dead.length,
       `bound, listed and handled by nobody: ${dead.join(', ')} — every one is a key that does nothing`);
     assert(readers.get('scoreboard').includes('main.js'),
@@ -641,9 +667,99 @@ export async function run({ check, assert }) {
     // The overlay prints the key you hold to see it, so that label has to come
     // from the binding. A typed "Tab" is a lie the moment anybody rebinds it.
     assert(html.includes('id="score-key"'), 'the overlay has no slot for the live key label');
-    assert(/keyLabel\(\s*\(input\.bindings\.scoreboard/.test(main),
+    /*
+     * …AND IT FOLLOWS THE DEVICE, not only the binding.
+     *
+     * This asserted `keyLabel((input.bindings.scoreboard` — the label was read
+     * off the table, which was the whole of the claim while a keyboard was the
+     * only thing you could play with. A pad player holding this overlay open
+     * was told to hold Tab. `liveKey` is main.js's one helper for "what is this
+     * action called on the thing in the player's hands", and both halves are
+     * pinned: the caption goes through it, and it goes through the table.
+     */
+    assert(/scoreEl\.key\.textContent = liveKey\('scoreboard'\)/.test(main),
       'the scoreboard prints a hardcoded key instead of the one it is bound to');
+    assert(/const liveKey = \(id\) => keyLabel\(codesFor\(input\.bindings, id, input\.device\)/.test(main),
+      'liveKey no longer reads the bindings table and the active device — the caption can go stale again');
     return `#scoreboard filled from act('scoreboard'), default ${b.scoreboard.join('+')}, hold, label from the binding`;
+  });
+
+  check('controls: the six order keys are in the table, and the table is not a copy', async () => {
+    /**
+     * WHAT THIS IS FOR.
+     *
+     * main.js used to read the orders as RAW key codes — `input.hit(F.key)`,
+     * straight off `FORMATIONS`, past ACTIONS entirely. Six controls that were
+     * not rebindable, on no controls card, in no Codex row, and — the part that
+     * makes it a bug rather than an omission — invisible to `findConflicts`,
+     * which reported Digit6-Digit0 and Minus as FREE. The options screen would
+     * hand one of them to something else, warn about nothing, and no rebind
+     * could separate the pair afterwards.
+     *
+     * The obvious repair is six literal rows in Bindings.js. That is HANDOFF
+     * §2.3 — a hand-written table beside its generated twin — and it fails
+     * SILENTLY: change a key in Command.js and the copy goes on describing a
+     * game that stopped existing. So the rows are derived, and this check is the
+     * thing that says so: it re-derives them from `FORMATIONS` itself and
+     * compares field by field. A hand-edited row cannot survive it.
+     */
+    assert(ORDER_ACTIONS.length === FORMATION_IDS.length,
+      `${FORMATION_IDS.length} formations, ${ORDER_ACTIONS.length} registered orders — `
+      + 'somebody added a formation and the bindings table did not follow');
+
+    const b = defaultBindings();
+    const wrong = [];
+    for (const id of FORMATION_IDS) {
+      const F = FORMATIONS[id];
+      const action = orderActionId(id);
+      const row = ACTIONS.find(a => a.id === action);
+      if (!row) { wrong.push(`${id}: no action row at all`); continue; }
+      if (row.group !== ORDER_GROUP) wrong.push(`${id}: group ${row.group}, not ${ORDER_GROUP}`);
+      // The DEFAULT KEY is the field that drifts, because it is the one a
+      // designer moves. It has exactly one author and this is the assertion
+      // that keeps it that way.
+      if ((b[action] || [])[0] !== F.key) {
+        wrong.push(`${id}: bound to ${(b[action] || []).join('+') || 'nothing'}, Command.js says ${F.key}`);
+      }
+      if (!row.label.includes(F.name)) wrong.push(`${id}: label "${row.label}" does not name the formation`);
+      const pub = ORDER_ACTIONS.find(o => o.action === action);
+      if (pub?.blurb !== F.blurb) wrong.push(`${id}: the registry's blurb is not the formation's`);
+    }
+    assert(!wrong.length, wrong.join('; '));
+
+    // Nothing typed the codes into this file's own layer either: no order key
+    // may appear as a literal anywhere in Bindings.js or main.js.
+    const bindingsSrc = await readFile(src('engine/Bindings.js'), 'utf8');
+    const mainSrc = await readFile(src('main.js'), 'utf8');
+    const keys = FORMATION_IDS.map(id => FORMATIONS[id].key);
+    for (const [what, text] of [['Bindings.js', bindingsSrc], ['main.js', mainSrc]]) {
+      // Comments are prose and may name a key; code may not. Strip both comment
+      // forms before looking, or the notes explaining this very rule trip it.
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const typed = keys.filter(k => code.includes(`'${k}'`) || code.includes(`"${k}"`));
+      assert(!typed.length,
+        `${what} types the order key(s) ${typed.join(', ')} as a literal — that is the copy `
+        + 'this seam exists to abolish');
+    }
+
+    // A registration run twice must not double the table. The seam is called
+    // once today; "first one wins" is how a seam becomes the stale twin.
+    const before = ACTION_IDS.length;
+    registerOrders(FORMATIONS);
+    assert(ACTION_IDS.length === before,
+      `registering the orders a second time grew the table from ${before} to ${ACTION_IDS.length}`);
+
+    // And they are reachable as ordinary bindings: no clash with anything, and
+    // the conflict finder can now SEE them, which was the whole hole.
+    assert(!conflicts(b).length, 'the shipped defaults clash once the orders are in the table');
+    for (const id of FORMATION_IDS) {
+      const found = findConflicts(b, FORMATIONS[id].key, null);
+      assert(found.includes(orderActionId(id)),
+        `findConflicts still reports ${FORMATIONS[id].key} as free — the options screen would `
+        + 'hand it to something else without a warning');
+    }
+    return `${ORDER_ACTIONS.length} orders under "${ORDER_GROUP}": `
+      + ORDER_ACTIONS.map(o => `${o.name} ${keyLabel(o.key)}`).join(', ');
   });
 
   check('controls: no shipped default binds one key to two actions', () => {
@@ -666,9 +782,29 @@ export async function run({ check, assert }) {
     // _buildBindings.finish()'s own logic, which is: ask the resolver, then
     // write the key. Both victims are given a spare so that "could not settle"
     // is never the reason either version leaves a duplicate behind.
+    /* THE SPARES ARE FOUND, NOT TYPED. They were 'KeyU' and 'KeyI', and the
+     * day an action took KeyU this fixture started manufacturing a clash of
+     * its own — the check failed reporting "Mouse2 still answers to
+     * thrust+unleash", which is a defect in the test data and not in the
+     * resolver. Two keys that nothing in `defaultBindings()` claims, picked
+     * off the real table, cannot go stale that way. */
+    const spares = () => {
+      const b = defaultBindings();
+      const used = new Set(Object.values(b).flat());
+      const free = [];
+      for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+        if (!used.has(`Key${c}`)) free.push(`Key${c}`);
+        if (free.length === 2) break;
+      }
+      assert(free.length === 2,
+        'the bindings table has no two unbound letters left — this fixture needs spares to give up');
+      return free;
+    };
+
     const doubled = () => {
       const b = defaultBindings();
-      b.thrust = ['Mouse2', 'KeyU']; b.hurl = ['Mouse2', 'KeyI'];
+      const [s1, s2] = spares();
+      b.thrust = ['Mouse2', s1]; b.hurl = ['Mouse2', s2];
       return b;
     };
 
@@ -694,7 +830,16 @@ export async function run({ check, assert }) {
 
     // An action down to its LAST key keeps it and is reported, rather than
     // being silently muted — the one thing worse than a duplicate.
+    //
+    // THE PREMISE IS STATED AND NO LONGER ASSUMED. This read `defaultBindings()`
+    // and relied on Force push happening to ship with exactly one key, which
+    // stopped being true the day every action gained a pad code: push became
+    // ['KeyF', 'PadLB+PadA'], the resolver correctly TOOK KeyF because a
+    // binding was left, and the check failed reporting a defect in the
+    // resolver that was a defect in its own fixture. Same shape as the note on
+    // `spares()` above, and the same fix — say what the fixture needs.
     const last = defaultBindings();
+    last.push = ['KeyF'];
     const r3 = resolveConflicts(last, 'KeyF', 'view');
     assert(r3.refused.includes('push') && last.push.includes('KeyF'),
       'an action on its last key was left unbound');
@@ -924,6 +1069,117 @@ export async function run({ check, assert }) {
     terrain.dispose?.();
     return rows.map(r => `${r.t} ${r.pooled}p/${r.blades}g`).join('  ')
       + `  (${pSpread.toFixed(2)}× / ${gSpread.toFixed(2)}×)`;
+  });
+
+  check('controls: no setting is read that nothing defaults — the guard is not the list', async () => {
+    /**
+     * THE HOLE IN THE OTHER TWO GUARDS, AND IT IS THE SHAPE OF THE HOLE THAT
+     * MATTERS.
+     *
+     * "every setting in DEFAULT_SETTINGS is read" and "every setting has a
+     * control" are both real checks and both iterate
+     * `Object.keys(DEFAULT_SETTINGS)`. So the ONE class of dead control neither
+     * can see is a setting that is READ by shipped code and never declared: it
+     * is not a key, so it is in neither loop, so it needs no reader and no
+     * control and nothing anywhere complains. A guard keyed on the list of
+     * things you remembered to declare cannot find the thing you forgot to
+     * declare.
+     *
+     * Four were hiding there and every one had a live reader:
+     *
+     *   settings.teamDamage        game/Command.js  — asked for by name in a
+     *                                                 player note
+     *   settings.commandFormation  game/Command.js
+     *   settings.instantSpawn      game/Waves.js    — the gate on every
+     *                                                 gunship, door and pod
+     *   settings.maxBodies         game/World.js    — the physics body cap
+     *
+     * So this one runs the other way round: it finds what the SOURCE reads and
+     * requires a default for it. Direct reads (`settings.x`, `world.settings.x`,
+     * `this.settings?.x`) and the aliased idiom the config functions all use
+     * (`const s = settings || {}` … `s.x`) — the second one scoped to the block
+     * the alias was declared in, or `s` in one function would credit `s` in
+     * every other.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const files = [];
+    const walk = async (dir, prefix) => {
+      for (const e of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1)) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) await walk(u, prefix + e.name + '/');
+        else if (e.name.endsWith('.js')) files.push([prefix + e.name, await readFile(u, 'utf8')]);
+      }
+    };
+    await walk(src(''), '');
+
+    // Comments and string literals go first. `'saber.settings.v4'` is a
+    // localStorage key, not a read, and the notes in this repo talk about
+    // settings by name constantly.
+    const strip = (t) => t
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"\\])\/\/.*$/gm, '$1')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+    /** From `at` forward to the end of the block that encloses it. */
+    const restOfBlock = (code, at) => {
+      let depth = 0;
+      for (let i = at; i < code.length; i++) {
+        if (code[i] === '{') depth++;
+        else if (code[i] === '}') { if (depth === 0) return code.slice(at, i); depth--; }
+      }
+      return code.slice(at);
+    };
+
+    const readAt = new Map();
+    const note = (key, where) => {
+      if (!readAt.has(key)) readAt.set(key, new Set());
+      readAt.get(key).add(where);
+    };
+    for (const [path, raw] of files) {
+      const code = strip(raw);
+      for (const m of code.matchAll(/\bsettings\??\.([A-Za-z_$][\w$]*)/g)) note(m[1], path);
+      for (const m of code.matchAll(
+        /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.?]*\.)?settings\s*(?:\|\||\?\?)?[^;\n]*;/g)) {
+        const scope = restOfBlock(code, m.index + m[0].length);
+        for (const u of scope.matchAll(new RegExp(`\\b${m[1]}\\??\\.([A-Za-z_$][\\w$]*)`, 'g'))) note(u[1], path);
+      }
+    }
+
+    /**
+     * THE ONE DECLARED EXCEPTION, and it is a scope and not an excuse.
+     *
+     * A duel's rules arrive in the HOST'S SESSION BLOB, not in the player's
+     * save: `worldSettings()` spreads `session` over `settings`, and the note
+     * over `session` in main.js is explicit that a session is a different scope
+     * from a preference — writing one of these into DEFAULT_SETTINGS would put
+     * somebody else's match rules into your own persisted file, which is the
+     * bug that note exists to record. `pvpRules({})` returns co-op's rules for
+     * every one of them by design, so a missing key here is an answer and not a
+     * hole. Held to a standard anyway: each must still be genuinely read, so
+     * this list cannot rot into a place to put things.
+     */
+    const SESSION_ONLY = ['pvp', 'duelRounds', 'duelHealth', 'duelRoundTime', 'duelBoons'];
+    const stale = SESSION_ONLY.filter(k => !readAt.has(k));
+    assert(!stale.length,
+      `declared session-scoped and read by nothing: ${stale.join(', ')} — the exemption list is rotting`);
+
+    const orphan = [...readAt.keys()]
+      .filter(k => !(k in DEFAULT_SETTINGS) && !SESSION_ONLY.includes(k))
+      .sort();
+    assert(!orphan.length,
+      `read by shipped code and defaulted nowhere: `
+      + orphan.map(k => `${k} (${[...readAt.get(k)].join(', ')})`).join('; ')
+      + ' — a setting with no default is invisible to every other check in this file, '
+      + 'so it needs no reader declaration and no control and nothing complains');
+
+    // …and the four this check was written for really are settled now.
+    for (const key of ['teamDamage', 'commandFormation', 'instantSpawn', 'maxBodies']) {
+      assert(key in DEFAULT_SETTINGS, `${key} has a reader in src/ and no default again`);
+      assert(readAt.has(key), `nothing in src/ reads ${key} any more — the setting is dead`);
+    }
+    return `${readAt.size} settings read across ${files.length} files: `
+      + `${readAt.size - SESSION_ONLY.length} defaulted, ${SESSION_ONLY.length} session-scoped, 0 orphaned`;
   });
 
   check('controls: every setting in DEFAULT_SETTINGS is read by named code', async () => {
@@ -1319,10 +1575,24 @@ export async function run({ check, assert }) {
      * a setting cannot join this list without a control writing it.
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
-      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade',
+      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade', 'holocron',
       'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut',
       // a swatch row under the crystals, same shape as colorIndex's
-      'lightningColor'];
+      'lightningColor',
+      // The rest of the clothes — nine cut and tone rows writing into one
+      // object, the way `face` is one object, and written by `_wear`.
+      'wardrobe',
+      // Synthesised / spoken / both, on a card row of its own.
+      'speechMode',
+      // The standing order, as six cards built straight from FORMATIONS — the
+      // formation records ARE the card list, so the row cannot fall out of step
+      // with the orders on the keyboard.
+      'commandFormation',
+      // The run rules — a card per entry of Waves.CONDITIONS, on the Deploy
+      // panel, toggled rather than selected. Same shape as the mode list and
+      // held to the same standard: `_syncRules` writes `this.s.rules` by name,
+      // which is what the regex below is checking for.
+      'rules'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the
@@ -1331,7 +1601,7 @@ export async function run({ check, assert }) {
      * and the menu has to write the key by name — so this is a third shape of
      * control, not a third way to be excused from having one.
      */
-    const TYPED = { playerName: 'opt-name' };
+    const TYPED = { playerName: 'opt-name', seed: 'opt-seed' };
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (TYPED[key]) {
@@ -1350,7 +1620,7 @@ export async function run({ check, assert }) {
       // guarantee through a shared helper, so the vocabulary widens and the
       // property does not: a setting still cannot reach this list without a
       // control that writes it BY NAME.
-      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'|_cardRow\\('[a-z-]+', '[a-z-]+', '${key}'`);
+      const re = new RegExp(`this\\.s\\.${key}\\s*=|_set\\('${key}'|_swatchRow\\('[a-z-]+', '${key}'|_cardRow\\('[a-z-]+', '[a-z-]+', '${key}'|_pick\\('${key}'`);
       if (!re.test(menu)) ghost.push(key);
     }
     assert(!orphans.length,
@@ -1394,7 +1664,16 @@ export async function run({ check, assert }) {
     const world = await readFile(src('game/World.js'), 'utf8');
     assert(/density:\s*\(this\.settings\.grassScale \?\? 1\) \* L\.grass/.test(world),
       'grassScale no longer multiplies the level density');
-    assert(/const particleScale = \(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
+    /* The DECLARATION KEYWORD is not part of the claim, and pinning it made
+     * this red for a refactor that changed nothing it measures: World.js now
+     * hoists `particleScale` to the top of loadLevel and assigns it lower down,
+     * so `const particleScale = …` stopped matching while the two behavioural
+     * assertions above — half the slider halves the emission, and Performance
+     * at 150% still sits under Cinematic at 150% — went on passing. An
+     * instrument that restates a line will eventually disagree with a line that
+     * is still right (HANDOFF §2.4). What is asserted is the ARITHMETIC:
+     * particleScale is the setting TIMES the tier, however it is declared. */
+    assert(/particleScale\s*=\s*\(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
       'particleScale no longer multiplies the tier');
     return `slider 1.0→0.5 takes emission ${full.toFixed(2)}→${half.toFixed(2)}; `
       + `at 1.5, low ${lowMax.toFixed(2)} < ultra ${ultraMax.toFixed(2)}`;
@@ -1451,6 +1730,605 @@ export async function run({ check, assert }) {
       + '4 arrows + 4 numpad + IJKL fire nothing and move nothing';
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  THE CONTROLLER                                                    */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('controls: every action can be reached from a controller', () => {
+    /**
+     * MEASURED BEFORE THIS: NONE OF THEM COULD.
+     *
+     * `Input._codeDown` resolved a binding as a wheel pseudo-key, a `Mouse*`
+     * button or `keys.has(code)` — there was no code form a pad button could
+     * take, so no action in ACTIONS could be bound to one. What a pad reached
+     * was the two sticks and buttons 4 and 5 (wrist roll, read raw inside
+     * SaberController by INDEX, past this table). A player holding a controller
+     * could not attack, guard, jump, dodge, dash, use a power, pause or open
+     * the emote wheel.
+     *
+     * Stated as coverage of the WHOLE table rather than a list of the eight
+     * verbs in that sentence, because a list is the thing that goes stale: a
+     * 47th action added tomorrow fails here on the day it is written.
+     */
+    const b = defaultBindings();
+    const missing = ACTION_IDS.filter(id => !(b[id] || []).some(isPadCode));
+    assert(!missing.length,
+      `no pad binding at all for: ${missing.join(', ')} — a controller player cannot do these`);
+
+    // Every pad code names a real button or a real stick direction, so a typo
+    // is a dead binding rather than a silent one.
+    const known = new Set([...PAD_CODES, ...PAD_AXIS_CODES]);
+    const bogus = [];
+    for (const id of ACTION_IDS) {
+      for (const code of b[id] || []) {
+        if (!isPadCode(code)) continue;
+        for (const p of chordParts(code)) if (!known.has(p)) bogus.push(`${id} → ${p}`);
+      }
+    }
+    assert(!bogus.length, `pad codes that name no button: ${bogus.join(', ')}`);
+
+    // …and the pad map has to be as clash-free as the keyboard one. `conflicts`
+    // already runs over the shipped table above; this is the same question
+    // asked of the pad half alone, so a duplicate cannot hide behind 46 keys.
+    const byCode = new Map();
+    for (const id of ACTION_IDS) {
+      for (const code of (b[id] || []).filter(isPadCode)) {
+        if (!byCode.has(code)) byCode.set(code, []);
+        byCode.get(code).push(id);
+      }
+    }
+    const dup = [...byCode].filter(([, ids]) => ids.length > 1);
+    assert(!dup.length,
+      `one pad code, two actions: ${dup.map(([c, ids]) => `${keyLabel(c)} → ${ids.join('+')}`).join('; ')}`);
+
+    /* THE MODIFIERS HOLD NOTHING OF THEIR OWN. A modifier that also fires
+     * something means every cast drops whatever it was holding for the frame
+     * the chord lands on — see PAD_MODIFIERS for why that is a decision. */
+    for (const m of PAD_MODIFIERS) {
+      const bare = ACTION_IDS.filter(id => (b[id] || []).includes(m));
+      assert(!bare.length,
+        `${keyLabel(m)} is a chord modifier AND fires ${bare.join('+')} on its own — `
+        + 'every chord on it would drop that action for a frame');
+      // …and it has to actually BE a modifier, or the layer is unreachable.
+      const used = ACTION_IDS.some(id => (b[id] || []).some(c => isChord(c) && chordParts(c).includes(m)));
+      assert(used, `${keyLabel(m)} is declared a modifier and no binding uses it`);
+    }
+    const chords = byCode.size ? [...byCode.keys()].filter(isChord).length : 0;
+    return `${ACTION_IDS.length} actions, ${byCode.size} pad codes (${chords} chords, `
+      + `${PAD_AXIS_CODES.length} stick), 0 unreachable, 0 doubled`;
+  });
+
+  check('controls: the most specific chord wins, through the real Input', () => {
+    /**
+     * The rule the header of Bindings.js has stated since it was written —
+     * "with Push on F and Pull on Shift+F, holding shift must fire Pull and NOT
+     * Push" — and which nothing implemented until the pad needed it. Driven
+     * through a real Input against the shipped table, not against a fixture:
+     * LB+A is Force push and A alone is Force jump.
+     */
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const b = defaultBindings();
+    const i = fresh();
+    i.setBindings(b);
+
+    const press = (...codes) => {
+      i.padDownSet.clear(); i.padPressedSet.clear();
+      for (const c of codes) { i.padDownSet.add(c); i.padPressedSet.add(c); }
+    };
+    press('PadA');
+    assert(i.actHit('jump') && !i.actHit('push'), 'A alone does not jump, or it also pushes');
+    press('PadLB', 'PadA');
+    assert(i.actHit('push'), 'LB+A does not push');
+    assert(!i.actHit('jump'),
+      'LB+A jumps as well as pushing — the bare code is not suppressed and one press does two things');
+
+    // The chord lands on whichever half arrives last: a player holding LB and
+    // then pressing A, and a player pressing A and then adding LB, are both
+    // asking for the same thing.
+    i.padDownSet.clear(); i.padPressedSet.clear();
+    i.padDownSet.add('PadA');
+    i.padDownSet.add('PadLB'); i.padPressedSet.add('PadLB');
+    assert(i.actHit('push') && !i.actHit('jump'), 'adding the modifier to a held button does not fire the chord');
+
+    // A modifier held alone must fire NOTHING — it is the layer key, and a
+    // player resting a finger on it is not asking for anything at all.
+    for (const m of PAD_MODIFIERS) {
+      press(m);
+      const fired = ACTION_IDS.filter(id => i.act(id) || i.actHit(id));
+      assert(!fired.length, `${keyLabel(m)} held alone fires ${fired.join(', ')}`);
+    }
+
+    // …and every chord in the shipped table really does answer, which is the
+    // half a suppression rule can silently break: it is easy to write a mask
+    // that turns the whole layer off.
+    const silent = [];
+    for (const id of ACTION_IDS) {
+      const chord = (b[id] || []).find(c => isPadCode(c) && isChord(c));
+      if (!chord) continue;
+      press(...chordParts(chord));
+      if (!(i.act(id) || i.actHit(id))) silent.push(`${id} (${keyLabel(chord)})`);
+    }
+    assert(!silent.length, `chords in the shipped map that fire nothing: ${silent.join(', ')}`);
+    return `${ACTION_IDS.filter(id => (b[id] || []).some(c => isPadCode(c) && isChord(c))).length} chords all answer; `
+      + 'LB+A pushes and does not jump, in either order';
+  });
+
+  check('controls: the left stick is in the table and is still analog', () => {
+    /**
+     * `moveAxis` carried `if (this.padLeft) { x += this.padLeft.x; y -= this.padLeft.y; }`
+     * — a second set of movement bindings that no table knew about, added to
+     * whatever the table said. That is exactly the defect the four
+     * `|| this.down('ArrowUp')` were removed for one round ago, wearing a stick
+     * instead of an arrow key, and the check written for THAT could not see it
+     * because it probes key codes and a stick is not one.
+     *
+     * Both halves are asserted, because either alone is a different bug: in the
+     * table (so it can be rebound and can be seen to collide) and ANALOG (so a
+     * pad keeps the one thing it has that a keyboard does not).
+     */
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const b = defaultBindings();
+    for (const [id, code] of [['moveF', 'PadLUp'], ['moveB', 'PadLDown'],
+      ['moveL', 'PadLLeft'], ['moveR', 'PadLRight']]) {
+      assert((b[id] || []).includes(code), `${id} is not bound to ${code} — the stick is outside the table`);
+      assert(findConflicts(b, code).join() === id,
+        `findConflicts cannot see ${code}: it reports ${findConflicts(b, code).join('+') || 'nothing'}`);
+    }
+    const i = fresh();
+    i.setBindings(b);
+    /*
+     * DRIVEN THROUGH `_readPad` AND NOT BY SETTING THE FIELDS.
+     *
+     * The first draft of this reached in and wrote `i.padAxis[1] = -0.1`, which
+     * skips the deadzone — so it asserted a stick at rest read 0 while handing
+     * the code a value the real one never produces, and failed. That is
+     * HANDOFF §2.4 exactly: an instrument that restates a rule will eventually
+     * disagree with it. The rule is applied ONCE, in Input, and this pushes a
+     * raw axis value through the same door a controller does.
+     */
+    const gp = { connected: true, index: 0, id: 'Xbox Wireless Controller',
+      axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })) };
+    const nav = { getGamepads: () => [gp] };
+    const g = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+    let third, full, both, rest;
+    try {
+      const at = (v) => { gp.axes = [0, v, 0, 0]; i._readPad(1 / 60); return i.moveAxis(); };
+      // 0.496 raw, which is 0.4 once the 0.16 deadzone is taken off and the
+      // rest rescaled — the number the player's thumb is actually asking for.
+      third = at(-(0.16 + 0.4 * 0.84));
+      assert(Math.abs(third.y - 0.4) < 1e-9,
+        `the stick a third forward gives ${third.y.toFixed(3)} instead of 0.400 — it has been thresholded into a switch`);
+      assert(i.act('moveF') && Math.abs(i.actAxis('moveF') - 0.4) < 1e-9,
+        'act() and actAxis() disagree about the same stick position');
+      full = at(-1);
+      assert(Math.abs(full.y - 1) < 1e-9, `a stick at the stop gives ${full.y.toFixed(3)}`);
+      // A key and the stick at once is ONE, not two — the old code summed them.
+      i.keys.add('KeyW');
+      both = at(-(0.16 + 0.4 * 0.84));
+      assert(Math.abs(both.y - 1) < 1e-9,
+        `W and a stick at 0.4 give ${both.y.toFixed(3)} — the two bindings are being added, not maxed`);
+      i.keys.delete('KeyW');
+      // Inside the deadzone is nothing at all, on both answers.
+      rest = at(-0.1);
+      assert(rest.y === 0 && !i.act('moveF'), `a stick at rest reads ${rest.y}`);
+    } finally {
+      if (g === undefined) delete globalThis.navigator;
+      else Object.defineProperty(globalThis, 'navigator', { value: g, configurable: true, writable: true });
+    }
+    return `stick bound to moveF/B/L/R and visible to findConflicts; ${third.y.toFixed(3)} at a third, `
+      + `${full.y.toFixed(3)} at the stop, ${rest.y.toFixed(3)} inside the deadzone, `
+      + `${both.y.toFixed(3)} for W and a third of a stick together`;
+  });
+
+  check('controls: an analog trigger is a button, and the pad has an EDGE', () => {
+    /**
+     * TWO THINGS THE OLD PAD PATH COULD NOT DO.
+     *
+     * `this.padButtons = gp.buttons` held a reference to a SNAPSHOT — Chromium
+     * returns fresh objects on every `getGamepads()` — so there was no previous
+     * frame to compare against and therefore no press edge at all. Every pad
+     * read was a `down`. `blade` is a hold and `jump` is a press, and half the
+     * verbs in this game are the second kind.
+     *
+     * And a trigger reports a `value`, with `pressed` left to the browser: some
+     * pads only set it at the stop. `blade` is on RT, so a guard the player
+     * cannot raise is what "honour pressed only" would mean.
+     */
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const i = fresh();
+    i.setBindings(defaultBindings());
+    const pad = { connected: true, index: 0, id: 'Xbox Wireless Controller', axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })) };
+    const nav = { getGamepads: () => [pad] };
+    const g = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+    try {
+      const RT = 7;   // 'PadRT' — `blade`
+      const set = (v, pressed = false) => { pad.buttons[RT] = { pressed, value: v }; i._readPad(1 / 60); };
+      set(0.2);
+      assert(!i.act('blade'), 'a trigger barely touched already takes the blade');
+      set(0.5);
+      assert(i.act('blade') && i.actHit('blade'),
+        'a trigger pulled halfway does not take the blade — `pressed` is being trusted alone');
+      set(0.5);
+      assert(i.act('blade') && !i.actHit('blade'),
+        'a held trigger keeps firing its press edge — there is no previous frame');
+      set(0);
+      assert(!i.act('blade'), 'a released trigger is still held');
+      // …and a pad that reports only the flag still works.
+      set(0, true);
+      assert(i.act('blade') && i.actHit('blade'), 'a pad that sets `pressed` with no value is ignored');
+
+      // The press edge, on an ordinary button, across two frames.
+      pad.buttons[RT] = { pressed: false, value: 0 };
+      pad.buttons[0] = { pressed: true, value: 1 };
+      i._readPad(1 / 60);
+      assert(i.actHit('jump'), 'A pressed does not fire jump');
+      i._readPad(1 / 60);
+      assert(i.act('jump') && !i.actHit('jump'), 'A held re-fires jump every frame');
+
+      /* START IS THE WAY OUT, and only when no modifier is held — the pad map
+       * puts real bindings on Start chords. */
+      let menus = 0;
+      i.onMenu = () => { menus++; };
+      pad.buttons[0] = { pressed: false, value: 0 };
+      pad.buttons[9] = { pressed: true, value: 1 };
+      i._readPad(1 / 60);
+      assert(menus === 1, `Start raised the menu ${menus} times`);
+      pad.buttons[9] = { pressed: false, value: 0 }; i._readPad(1 / 60);
+      pad.buttons[4] = { pressed: true, value: 1 };   // LB
+      i._readPad(1 / 60);
+      pad.buttons[9] = { pressed: true, value: 1 };
+      i._readPad(1 / 60);
+      assert(menus === 1, 'LB+Start opened the menu as well as firing its chord');
+      assert(i.actHit('lessonRepeat'), 'LB+Start does not fire the chord it is bound to');
+    } finally {
+      if (g === undefined) delete globalThis.navigator;
+      else Object.defineProperty(globalThis, 'navigator', { value: g, configurable: true, writable: true });
+    }
+    return 'trigger 0.2 off / 0.5 on / flag-only on; press edge fires once and not twice; '
+      + 'Start opens the menu bare and fires its chord under a modifier';
+  });
+
+  check('controls: a pad can rebind itself, and one press still does one thing', async () => {
+    /**
+     * A PAD CODE THE GAME CAN BIND AND THE PLAYER CANNOT IS HALF A CONTROL —
+     * the shipped default map would then be the only map that exists, which is
+     * the thing this table was built to stop being true of the keyboard.
+     *
+     * The press arrives through `Input.onPadCode` rather than a listener,
+     * because a gamepad raises no DOM events at all: it is polled, and Input is
+     * the one thing polling it. And it arrives AS THE CHORD it was pressed
+     * with, so binding "LB + A" is the same gesture that fires it.
+     *
+     * The rest of this check is the ordering, which is where one press would
+     * otherwise do two things — inside the editor for the table whose whole
+     * purpose is that it cannot.
+     */
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const i = fresh();
+    i.setBindings(defaultBindings());
+    const pad = { connected: true, index: 0, id: 'Xbox Wireless Controller', axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })) };
+    const nav = { getGamepads: () => [pad] };
+    const g = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+    const down = (...ix) => {
+      for (let k = 0; k < 16; k++) pad.buttons[k] = { pressed: ix.includes(k), value: ix.includes(k) ? 1 : 0 };
+      i._readPad(1 / 60);
+    };
+    try {
+      const seen = [];
+      let confirms = 0, navs = 0, menus = 0;
+      i.onConfirm = () => { confirms++; };
+      i.onNav = () => { navs++; };
+      i.onMenu = () => { menus++; };
+
+      // Nothing listening: A confirms, the D-pad walks, Start opens the menu.
+      i.onPadCode = () => false;
+      down(0); down();
+      down(12); down();
+      down(9); down();
+      assert(confirms === 1 && navs === 1 && menus === 1,
+        `with no chip listening: ${confirms} confirms, ${navs} navs, ${menus} menus — expected one each`);
+
+      // A chip listening TAKES the press, and nothing else sees it.
+      i.onPadCode = (code) => { seen.push(code); return true; };
+      confirms = 0; navs = 0; menus = 0;
+      down(0);
+      assert(seen.join() === 'PadA', `the chip was offered ${seen.join('+') || 'nothing'}`);
+      assert(confirms === 0, 'A was bound to an action AND pressed the focused control');
+      down();
+      // …and a chord is offered as a chord, not as its main button.
+      seen.length = 0;
+      down(4, 0);
+      assert(seen.join() === 'PadLB+PadA',
+        `holding LB and pressing A offered ${seen.join('+')} — a chord cannot be bound from a pad`);
+      down();
+
+      // A DIRECTION that was just bound is still under the thumb, and must not
+      // start walking the list the moment the chip stops listening.
+      seen.length = 0; navs = 0;
+      down(12);                        // captured
+      i.onPadCode = () => false;       // the chip has finished
+      down(12); down(12); down(12);
+      assert(navs === 0, `a direction held through a rebind walked the list ${navs} times`);
+      down();                          // released
+      down(12);
+      assert(navs === 1, 'the direction never became a navigation again after being released');
+
+      // Start CANCELS a listening chip rather than opening the menu.
+      let cancelled = null;
+      i.onPadCode = (code) => { cancelled = code; return true; };
+      menus = 0;
+      down(); down(9);
+      assert(cancelled === 'PadStart' && menus === 0,
+        `Start during a rebind: offered ${cancelled}, opened the menu ${menus} times`);
+    } finally {
+      if (g === undefined) delete globalThis.navigator;
+      else Object.defineProperty(globalThis, 'navigator', { value: g, configurable: true, writable: true });
+    }
+
+    // …and the Menu really does turn that into a cancel and report the take.
+    const menuSrc = await readFile(src('ui/Menu.js'), 'utf8');
+    assert(/this\._padCapture\(code === 'PadStart' \? null : code\);\s*\n\s*return true;/.test(menuSrc),
+      'Menu.padCode no longer cancels on Start or no longer reports that it took the press');
+    const mainSrc = await read('src/main.js');
+    assert(/input\.onPadCode = \(code\) => !!menu\.padCode\?\.\(code\)/.test(mainSrc),
+      'main.js drops padCode\'s answer, so Input cannot know the press was taken');
+    return 'a chip takes A, LB+A as a chord and Start as a cancel; a taken press fires no confirm, '
+      + 'no nav and no menu, and a held direction waits to be let go of';
+  });
+
+  check('controls: every prompt in the game names the device in the player\'s hands', async () => {
+    /**
+     * THE TYPED-KEY-NAME RULE, EXTENDED TO THE THING BEING HELD.
+     *
+     * "No player-facing surface types a key name" is already a check, and it is
+     * satisfied by printing the BINDING. A player holding a controller was
+     * still told to press Tab, Ctrl and P — correct against the table and
+     * useless in their hands. So the surfaces read the ACTIVE DEVICE, and this
+     * asserts what a player would actually read.
+     *
+     * The default is the keyboard everywhere, which is what keeps every other
+     * check in this file — and the markup it measures — byte-identical.
+     */
+    const b = defaultBindings();
+    const key = codexHtml(b);
+    const pad = codexHtml(b, { device: 'pad', family: 'xbox' });
+    assert(key !== pad, 'the Codex renders the same markup on a pad as on a keyboard');
+    const chips = (s) => [...s.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(m => m[1].replace(/^Hold /, ''));
+
+    // Nothing keyboard-only survives into the pad render, and nothing pad-only
+    // leaks into the keyboard one. Both directions, because either alone is a
+    // surface that half-changed.
+    const padChips = new Set(chips(pad));
+    const keyChipSet = new Set(chips(key));
+    assert(padChips.size && keyChipSet.size, 'one of the two Codex renders prints no keys at all');
+    // Named, because these five are the ones a controller cannot press at all:
+    // there is no Tab, no Caps Lock, no wheel and no mouse button on a pad, so
+    // finding one of them in the pad render is a surface that did not swap.
+    for (const stray of ['Tab', 'Caps', 'Wheel ↑', 'M1', 'M2']) {
+      assert(keyChipSet.has(stray),
+        `"${stray}" is gone from the keyboard Codex — this check is no longer measuring the swap`);
+      assert(!padChips.has(stray),
+        `the Codex still says "${stray}" to a player holding a controller`);
+    }
+    // …and every action's pad binding really is what the pad render prints.
+    const silent = [];
+    for (const id of ACTION_IDS) {
+      const code = codesFor(b, id, 'pad')[0];
+      if (!isPadCode(code)) continue;
+      if (!padChips.has(keyLabel(code, 'xbox'))) silent.push(`${id} (${keyLabel(code)})`);
+    }
+    assert(!silent.length, `bound to a pad and printed on no screen: ${silent.join(', ')}`);
+
+    // The pause card names the OTHER device-level button — Start, not Esc.
+    assert(pauseHintsHtml(b).includes('<kbd>Esc</kbd>'), 'the pause card no longer names Esc');
+    const padHints = pauseHintsHtml(b, { device: 'pad', family: 'xbox' });
+    assert(!padHints.includes('<kbd>Esc</kbd>') && padHints.includes('<kbd>Menu</kbd>'),
+      `the pause card tells a controller player to press Esc: ${padHints}`);
+
+    /**
+     * AND THE SAME BUTTON IS CALLED THREE THINGS. The standard mapping fixes
+     * the POSITION and nothing fixes the name — index 3 is Y, △ or X depending
+     * on the shell — so a screen that says "Y" to somebody holding a DualSense
+     * is the typed-key-name defect wearing a controller.
+     */
+    const seen = new Map();
+    for (const f of PAD_FAMILY) {
+      const label = padLabel('PadY', f);
+      assert(label && label !== 'PadY', `${f} has no name for button 3`);
+      seen.set(f, label);
+    }
+    assert(new Set(seen.values()).size === PAD_FAMILY.length,
+      `three families print the same name for button 3: ${[...seen].map(([f, l]) => `${f} ${l}`).join(', ')}`);
+    for (const [id, want] of [['Xbox Wireless Controller', 'xbox'],
+      ['DualSense Wireless Controller', 'playstation'],
+      ['Pro Controller (STANDARD GAMEPAD)', 'nintendo'],
+      ['some unknown vendor pad', 'xbox']]) {
+      assert(padFamily(id) === want, `"${id}" is read as a ${padFamily(id)} pad, not ${want}`);
+    }
+
+    // Every surface in the game that prints a live binding has to be handed the
+    // device, and there are six of them across three files. Stated as source,
+    // because "did the free camera's caption repaint" has no headless answer.
+    const main = await read('src/main.js');
+    assert(/input\.onDevice = \(\) => \{/.test(main),
+      'main.js never listens for the device changing, so nothing repaints when a pad is picked up');
+    for (const call of ['menu.setDevice(input.device, input.padFamily)',
+      'hud.setBindings(input.bindings, padOf())', 'refreshCoachKeys()']) {
+      assert(main.includes(call), `the device change does not reach ${call}`);
+    }
+    const hudSrc = await readFile(src('ui/HUD.js'), 'utf8');
+    assert(/setBindings\(bindings, pad = this\._pad\)/.test(hudSrc),
+      'HUD.setBindings no longer takes the device, so the power wheel cannot follow it');
+    return `${padChips.size} pad glyphs in the Codex against ${keyChipSet.size} keyboard ones; `
+      + `button 3 prints ${[...seen.values()].join(' / ')}; pause card says `
+      + `${padHints.match(/<kbd>([^<]*)<\/kbd>/)[1]} on a pad`;
+  });
+
+  check('controls: the pad rumbles, and the slider is the strength it rumbles at', async () => {
+    /**
+     * `Engine.rumble` shipped with `clamp(num(this.rumbleLevel, 1), 0, 1)` and a
+     * note saying the field is deliberately uninitialised because "a field
+     * written once to the identity of its own operation and moved by nothing
+     * would be a second gate that is a claim rather than a control", and that
+     * "the day a strength slider exists it assigns this and every call scales".
+     * This is both halves of that: the slider exists, and it lands on the seam.
+     *
+     * Driven through the real `Engine.prototype.rumble` against a fake pad, so
+     * what is measured is the magnitude a controller would actually be sent.
+     */
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const sent = [];
+    const pad = { connected: true, vibrationActuator: {
+      playEffect: (kind, o) => { sent.push({ kind, ...o }); return Promise.resolve(); } } };
+    const nav = { getGamepads: () => [pad] };
+    const g = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+    try {
+      const e = { _rumbleUntil: 0, rumble: Engine.prototype.rumble };
+      // An engine nobody has spoken to rumbles at full — the `?? 1` is what
+      // keeps every headless harness measuring the shipped behaviour.
+      assert(e.rumble(0.8, 0.4, 100) === true, 'a fresh engine does not rumble at all');
+      assert(Math.abs(sent[0].strongMagnitude - 0.8) < 1e-9,
+        `an unset rumbleLevel sent ${sent[0].strongMagnitude} instead of the full 0.8`);
+      e._rumbleUntil = 0;
+      e.rumbleLevel = 0.5;
+      e.rumble(0.8, 0.4, 100);
+      assert(Math.abs(sent[1].strongMagnitude - 0.4) < 1e-9,
+        `at 50% the pad was sent ${sent[1].strongMagnitude}, not half of 0.8`);
+      e._rumbleUntil = 0;
+      e.rumbleLevel = 0;
+      assert(e.rumble(1, 1, 100) === false && sent.length === 2,
+        'at 0 the slider still sends the pad an effect');
+
+      // A LONGER EFFECT IS NOT CUT SHORT BY A SHORTER ONE — a wave of kills at
+      // 60 ms each must not truncate the 400 ms of a boss going down.
+      e.rumbleLevel = 1;
+      e._rumbleUntil = 0;
+      e.rumble(1, 1, 400);
+      const before = sent.length;
+      e.rumble(0.2, 0.1, 60);
+      assert(sent.length === before, 'a short rumble interrupted a long one');
+    } finally {
+      if (g === undefined) delete globalThis.navigator;
+      else Object.defineProperty(globalThis, 'navigator', { value: g, configurable: true, writable: true });
+    }
+
+    // The seam, from the other end: applyFeelSettings is what writes it, so a
+    // player moving the slider mid-fight feels the next kill at the new level.
+    const world = { engine: { }, players: [], addHitstop() {}, feelOn: () => true };
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, rumble: 0.25 });
+    assert(world.engine.rumbleLevel === 0.25,
+      `the slider wrote ${world.engine.rumbleLevel} onto the engine`);
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, rumble: undefined });
+    assert(world.engine.rumbleLevel === 1, 'a missing rumble setting does not fall back to full strength');
+
+    /**
+     * AND IT IS NOT A SECOND GATE ON `shake`. Every rumble call site already
+     * asks `world.feelOn('shake')` first — tools/checks/feel.mjs pins that the
+     * pad stays silent with the box off — so this scales what survives it. Two
+     * controls that mean different things, which is the whole reason the note
+     * over rumbleLevel refused to initialise the field.
+     */
+    const engineSrc = await readFile(src('engine/Engine.js'), 'utf8');
+    assert(/num\(this\.rumbleLevel, 1\)/.test(engineSrc),
+      'Engine.rumble no longer reads rumbleLevel — the slider is wired to nothing');
+    const sites = [];
+    for (const f of ['game/World.js', 'game/Player.js']) {
+      const text = await readFile(src(f), 'utf8');
+      for (const m of text.matchAll(/engine\??\.rumble\?\.\(/g)) sites.push(f);
+    }
+    assert(sites.length >= 3,
+      `only ${sites.length} rumble call sites — a kill, a blow taken and a deflection is three`);
+    return `unset → 0.800, 50% → 0.400, 0 → silent; ${sites.length} call sites; `
+      + 'a 60 ms effect does not cut a 400 ms one';
+  });
+
+  check('controls: the letterbox and the death drain are switches, and not the shake box', async () => {
+    /**
+     * THE TWO EFFECTS THAT WERE DELIBERATELY LEFT UNGATED.
+     *
+     * `shake` and `slowmo` have had boxes for a while. The colour draining out
+     * of the frame when you die, and the letterbox that arrives with it and
+     * with a boss, had none — and folding them into `shake` would have been the
+     * wrong fix, for the reason that kept them out of it: with motion feedback
+     * off they are the ONLY cue that you died. A player who turns motion off
+     * for comfort would have been left with nothing on screen at the one moment
+     * that matters.
+     *
+     * So: two switches of their own, both on, both gated at the FUNNEL —
+     * `setBars` and `setDrain` are the only writers of either target, exactly
+     * as `CameraRig.addShake` is the only writer of `rig.shake` — and this
+     * asserts the independence in both directions, which is the part a shared
+     * gate would silently break.
+     */
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const mk = () => ({ _barsTarget: 0, _drainTarget: 0,
+      setBars: Engine.prototype.setBars, setDrain: Engine.prototype.setDrain });
+
+    // An engine nobody has spoken to draws both — the shipped behaviour, which
+    // is what every headless harness and every check is measuring.
+    const fresh = mk();
+    fresh.setBars(0.085); fresh.setDrain(0.72);
+    assert(fresh._barsTarget === 0.085 && fresh._drainTarget === 0.72,
+      `an unset engine drew bars ${fresh._barsTarget} / drain ${fresh._drainTarget}`);
+
+    const off = mk();
+    off.letterboxOn = false;
+    off.setBars(0.085); off.setDrain(0.72);
+    assert(off._barsTarget === 0, `the letterbox is off and the bars are still ${off._barsTarget}`);
+    assert(off._drainTarget === 0.72,
+      'turning the letterbox off also drained the colour — the two switches are one');
+    const off2 = mk();
+    off2.deathDrainOn = false;
+    off2.setBars(0.085); off2.setDrain(0.72);
+    assert(off2._drainTarget === 0, `the drain is off and the colour is still at ${off2._drainTarget}`);
+    assert(off2._barsTarget === 0.085,
+      'turning the drain off also took the bars — the two switches are one');
+
+    /* THE SHAKE BOX MUST NOT REACH EITHER. This is the whole point: motion off
+     * and these two still on is the state the design is protecting. */
+    const world = { engine: mk(), players: [], addHitstop() {}, feelOn: () => true };
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, shake: false, slowmo: false });
+    world.engine.setBars(0.085); world.engine.setDrain(0.72);
+    assert(world.engine._barsTarget === 0.085 && world.engine._drainTarget === 0.72,
+      'with camera shake off the bars and the drain went with it — they are the only cue left');
+
+    // …and each box really does reach the engine, live.
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, letterbox: false });
+    assert(world.engine.letterboxOn === false && world.engine._barsTarget === 0,
+      'unticking the letterbox neither armed the gate nor released the frame already drawn');
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, deathDrain: false });
+    assert(world.engine.deathDrainOn === false && world.engine._drainTarget === 0,
+      'unticking the drain neither armed the gate nor released the frame already drawn');
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS });
+    assert(world.engine.letterboxOn === true && world.engine.deathDrainOn === true,
+      'the boxes do not come back on');
+
+    /**
+     * AND THE NAMES ARE THE FEEL KINDS, which is what wires the funnel with no
+     * new lookup: `World.feelOn(kind)` is `s[kind] !== false`, so naming the
+     * settings after the kinds means anything holding a world can ask
+     * `feelOn('letterbox')` and nothing in World.js had to learn a word.
+     */
+    const feelOn = World.prototype.feelOn;
+    for (const kind of ['letterbox', 'deathDrain', 'shake', 'slowmo']) {
+      assert(kind in DEFAULT_SETTINGS, `feelOn('${kind}') names no setting`);
+      assert(feelOn.call({ _feelSettings: { ...DEFAULT_SETTINGS, [kind]: false } }, kind) === false,
+        `feelOn('${kind}') answers yes with the setting off`);
+      assert(feelOn.call({ _feelSettings: DEFAULT_SETTINGS }, kind) === true,
+        `feelOn('${kind}') answers no with the setting on`);
+      assert(feelOn.call({}, kind) === true,
+        `a world nobody has spoken to says no to ${kind} — every harness would measure the wrong game`);
+    }
+    return 'bars and drain independent of each other and of the shake box; '
+      + `feelOn answers for ${['letterbox', 'deathDrain', 'shake', 'slowmo'].join('/')}`;
+  });
+
   check('controls: no gameplay reads a raw key code or a raw device', async () => {
     // The rule the arrows broke, stated once for the whole tree. A raw
     // `down('KeyX')` is not in ACTIONS, so it cannot be rebound, cannot be
@@ -1484,16 +2362,33 @@ export async function run({ check, assert }) {
     // inventing analogue bindings. It is listed here so it is visible and so a
     // SECOND one cannot appear beside it unremarked.
     const ALLOWED = new Set(['game/Player.js']);
+    /**
+     * …AND THE PAD, WHICH THIS PATTERN COULD NOT SEE.
+     *
+     * `input.padDown(4)` and `input.padDown(5)` sat in SaberController's wrist
+     * roll for the whole life of the project and sailed past every clause of
+     * this check: the key-code clause matches a QUOTED argument and 4 is not
+     * one, and the device clause named the mouse's fields and not the pad's.
+     * Two controls that no binding could move, on the one device that had no
+     * bindings at all — the exact bug this check exists for, in the blind spot
+     * of its own regex.
+     *
+     * They also went wrong the moment the pad had a default map: button 4 is
+     * LB, which is the Force modifier, so holding it to cast would have rolled
+     * the wrist. `rollL`/`rollR` are on the D-pad and read as actions now.
+     */
     const devices = [], excused = [];
     for (const f of files) {
       const body = strip(await readFile(src(f), 'utf8'));
-      for (const m of body.matchAll(/\binput\.mouse\.(wheel|buttons)\b|\binput\.(?:buttons|buttonPressed)\s*\[/g)) {
+      for (const m of body.matchAll(
+        /\binput\.mouse\.(wheel|buttons)\b|\binput\.(?:buttons|buttonPressed)\s*\[|\binput\.pad(?:Down|Buttons|Left|Axis|DownSet|PressedSet)\b/g)) {
         (ALLOWED.has(f) ? excused : devices).push(`${f}: ${m[0]}`);
       }
     }
     assert(!devices.length,
       `raw device reads past the bindings table: ${devices.join('; ')} — `
-      + 'a wheel notch or a mouse button read this way cannot be rebound and cannot be seen to collide');
+      + 'a wheel notch, a mouse button or a pad button read this way cannot be rebound '
+      + 'and cannot be seen to collide');
     return `${files.length} gameplay files, 0 raw key-code reads, `
       + `0 unexcused raw device reads (${excused.length} excused: ${excused.join(', ') || 'none'})`;
   });
@@ -1519,6 +2414,24 @@ export async function run({ check, assert }) {
       return out;
     };
     const files = ['game/Player.js', 'game/Enemy.js', 'game/World.js', 'game/Duel.js'];
+    /**
+     * THE ARITY CEILING IS READ OFF THE METHODS, NOT TYPED HERE.
+     *
+     * It was the literal 4, and it went red the day `Enemy.damage` grew a fifth
+     * parameter (`preResisted = false`) and a caller used it — a call that is
+     * CORRECT reported as a defect, which is the direction HANDOFF §2.4 warns
+     * about: an instrument that restates a rule eventually disagrees with it and
+     * manufactures a finding. The floor of 3 stays typed, because THAT is the
+     * bug this check exists for: `damage(x, null, 'fall')` put a string in the
+     * `source` slot and left `kind` undefined, and nothing threw.
+     */
+    const DECL = /(?:^|\n)\s{2}damage\(([^)]*)\)\s*\{/g;
+    let ceiling = 4;
+    for (const f of ['game/Player.js', 'game/Enemy.js']) {
+      for (const m of strip(await readFile(src(f), 'utf8')).matchAll(DECL)) {
+        ceiling = Math.max(ceiling, args(m[1]).length);
+      }
+    }
     const bad = [], kinds = new Set();
     let sites = 0;
     for (const f of files) {
@@ -1530,8 +2443,9 @@ export async function run({ check, assert }) {
         // rather than by arity — `pr` and `prop` are the only names used.
         if (/^(pr|prop)$/.test(m[1])) continue;
         sites++;
-        if (list.length < 3 || list.length > 4) {
-          bad.push(`${f}: ${m[1]}.damage(${m[2]}) has ${list.length} arguments`);
+        if (list.length < 3 || list.length > ceiling) {
+          bad.push(`${f}: ${m[1]}.damage(${m[2]}) has ${list.length} arguments, and damage() `
+            + `declares at most ${ceiling}`);
           continue;
         }
         // A string in the SOURCE slot is the bug, exactly.
@@ -1539,9 +2453,16 @@ export async function run({ check, assert }) {
           bad.push(`${f}: ${m[1]}.damage(…) passes ${list[2]} as \`source\`, which takes an entity — `
             + 'it belongs in `kind`, and `kind` is then undefined');
         }
-        if (list.length === 4) {
+        if (list.length >= 4) {
           if (!/^'[^']*'$/.test(list[3])) bad.push(`${f}: \`kind\` is ${list[3]}, which is not a string literal`);
           else kinds.add(list[3]);
+        }
+        // Anything past `kind` is a FLAG. A string there is the same mistake as
+        // a string in `source`, one slot along, and it would be just as silent.
+        for (let i = 4; i < list.length; i++) {
+          if (/^'[^']*'$/.test(list[i])) {
+            bad.push(`${f}: ${m[1]}.damage(…) passes the string ${list[i]} where damage() takes a flag`);
+          }
         }
       }
     }

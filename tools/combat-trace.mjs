@@ -1,5 +1,5 @@
 /**
- * SABER — what a FIGHT contains, as opposed to what a wave does.
+ * BATTLEFRONT BORZ — what a FIGHT contains, as opposed to what a wave does.
  *
  *   node --import ./tools/register.mjs tools/combat-trace.mjs [--waves 8] [--level colosseum]
  *   node --import ./tools/register.mjs tools/combat-trace.mjs --json > combat.json

@@ -38,7 +38,52 @@ const sat = (c) => {
   const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
   return mx <= 1e-6 ? 0 : (mx - mn) / mx;
 };
-const OUTDOOR = Object.keys(LEVELS).filter((k) => LEVELS[k].atmosphere?.sky !== false);
+/* Derived from LEVEL_ORDER and not from Object.keys: the roster is the ordered
+ * list, and a level parked in LEVELS without being in it is not in the game. */
+const OUTDOOR = LEVEL_ORDER.filter((k) => LEVELS[k]?.atmosphere?.sky !== false);
+
+/* ── the tone curve, because saturation is a DISPLAY quantity ──────────────
+ *
+ * Chroma is not a property of the radiance the shader writes, it is a property
+ * of the pixel: ACES desaturates as it approaches its shoulder, by design and
+ * by construction — the RRT fit is applied in the ACES AP1 primaries with a
+ * matrix in and a matrix out, so the three channels converge as they climb.
+ * A sky measured in linear therefore says nothing about whether the sky on
+ * screen has a hue, and that is the whole of the "0.046 saturated" complaint.
+ *
+ * Transcribed from three's own chunk rather than from memory, and the
+ * transcription is PINNED against the chunk below — the Narkowicz
+ * approximation that tools/skyprobe.mjs uses is per-channel and misses exactly
+ * the effect being measured here. */
+const ACES_FIT = (v) => (v * (v + 0.0245786) - 0.000090537)
+  / (v * (0.983729 * v + 0.432951) + 0.238081);
+const SRGB = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+function toDisplay(c, exposure) {
+  const k = exposure / 0.6;
+  const r = c.r * k, g = c.g * k, b = c.b * k;
+  // ACESInputMat, columns as GLSL's mat3() takes them
+  const R = ACES_FIT(0.59719 * r + 0.35458 * g + 0.04823 * b);
+  const G = ACES_FIT(0.07600 * r + 0.90834 * g + 0.01566 * b);
+  const B = ACES_FIT(0.02840 * r + 0.13383 * g + 0.83777 * b);
+  const cl = (v) => SRGB(Math.min(Math.max(v, 0), 1));
+  return new THREE.Color(
+    cl(1.60475 * R - 0.53108 * G - 0.07367 * B),
+    cl(-0.10208 * R + 1.10813 * G - 0.00605 * B),
+    cl(-0.00327 * R - 0.07276 * G + 1.07602 * B));
+}
+
+/** The band of dome a level camera actually shows: 3°–35°, all bearings. */
+const SKY_BAND = (() => {
+  const dirs = [];
+  for (let i = 0; i < 14; i++) {
+    const el = ((3 + (i + 0.5) * (32 / 14)) * Math.PI) / 180;
+    for (let k = 0; k < 36; k++) {
+      const az = ((k + 0.5) / 36) * Math.PI * 2;
+      dirs.push(new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)));
+    }
+  }
+  return dirs;
+})();
 
 /** The brightest the drawn dome gets anywhere, disc excluded. */
 function drawnMax(a) {
@@ -107,6 +152,124 @@ export function run({ check, assert, near }) {
       rows.push(`${key} ${zen.toFixed(2)}/${mid.toFixed(2)}/${low.toFixed(2)} (${(low / zen).toFixed(1)}:1)`);
     }
     return rows.join(', ');
+  });
+
+  check('sky: a level that authors a saturated sky DRAWS one', () => {
+    /* NOTHING HELD THIS, AND IT WAS FALSE ON SIX LEVELS OUT OF EIGHT.
+     *
+     * Geonosis authors `skyColor: 0xd9a058` and rendered a sky measuring 0.071
+     * saturated. Kamino's card says "at night, in the rain"; it rendered at
+     * 0.046 against its own reference plate
+     * (assets/reference/maps/kamino/kamino outside.webp) at 0.667. The check
+     * one file over — cel's "the ground converges on the sky's own hue" —
+     * passed throughout, because the ground DID converge on the sky: nothing
+     * anywhere held that the sky still HAD a hue to converge on.
+     *
+     * Two mechanisms took it, and they compound. The display shoulder
+     * (skyDisplayShoulder) is per-channel and asymptotic, so a sky far above
+     * its ceiling comes out with all three channels on the ceiling — grey by
+     * construction. And ACES desaturates as it climbs its shoulder. The
+     * flat-metered engine drove every level's sky up that shoulder: a level
+     * authored dark was metered up until its sky sat where chroma dies.
+     *
+     * MEASURED HERE ON THE BAND A LEVEL CAMERA SHOWS, in display, before and
+     * after (shipped-old → now):
+     *
+     *     scoria    0.220 → 0.323     drifts     0.174 → 0.174
+     *     mustafar  0.230 → 0.239     alpine     0.055 → 0.067
+     *     kamino    0.075 → 0.154     wood       0.065 → 0.088
+     *     geonosis  0.202 → 0.256     colosseum  0.082 → 0.082
+     *
+     * — the Shifting Waste and the Colosseum do not move, and that is correct:
+     * they are the two levels whose metered correction already fell inside
+     * METER_TRIM, i.e. the two the meter never had to bend.
+     */
+    const rows = [];
+    const shares = [], ctlShares = [], sats = [], ctlSats = [];
+    for (const key of OUTDOOR) {
+      const a = LEVELS[key].atmosphere;
+      const m = atmosphereMeter(a);
+      const sun = sunDirection(a);
+      const disp = skyDisplayShoulder(a, m);
+      /* THE CONTROL, AND IT IS THE ENGINE AS IT SHIPPED — built out of the
+       * meter's own numbers so there is no second copy of the old rule in
+       * here. `rawTrim` is the correction before METER_TRIM bounded it, and
+       * passing `key: null` takes skyDisplayShoulder's interior path, which is
+       * the CAP ALONE — `SKY_CLIP / exposure`, which is exactly what the drawn
+       * ceiling used to be for every level. Both halves of the old behaviour,
+       * neither of them retyped. */
+      const ctlExp = Math.min(Math.max((a.exposure ?? 1.05) * m.rawTrim, 0.2), 3);
+      const ctl = skyDisplayShoulder(a, { ...m, exposure: ctlExp, key: null });
+
+      let s = 0, sc = 0, sp = 0;
+      const c = new THREE.Color();
+      for (const d of SKY_BAND) {
+        const raw = skyRadiance(d, sun, a, new THREE.Color());
+        s += sat(toDisplay(skyShoulder(c.copy(raw), disp.knee, disp.ceil), m.exposure));
+        sc += sat(toDisplay(skyShoulder(c.copy(raw), ctl.knee, ctl.ceil), ctlExp));
+        // …and what the atmosphere itself produces, through the physical pair
+        // the light transport uses. That is the chroma there is to keep.
+        sp += sat(skyShoulder(c.copy(raw)));
+      }
+      const n = SKY_BAND.length;
+      s /= n; sc /= n; sp /= n;
+      const share = s / Math.max(sp, 1e-6), ctlShare = sc / Math.max(sp, 1e-6);
+      shares.push(share); ctlShares.push(ctlShare); sats.push(s); ctlSats.push(sc);
+
+      /* THE FLOOR, and where 0.118 comes from. Two readings put it in the same
+       * place and neither is a taste call:
+       *
+       *  · IT SEPARATES THE TWO ENGINES. The worst level the flat-metered
+       *    control draws keeps 0.105 of its own sky's chroma (the White Pass;
+       *    the Drowned Wood is 0.110). The worst the shipped one draws keeps
+       *    0.126 (the White Pass and the Colosseum). 0.118 is the geometric
+       *    midpoint of 0.110 and 0.126, so the control fails and the roster
+       *    passes, each with about a tenth of margin.
+       *  · IT IS WHERE A SKY STOPS HAVING A HUE. At that share these skies
+       *    measure 0.06–0.07 saturated on screen, which is `hoth.jpeg` — the
+       *    ONE plate in assets/reference/ that is a genuine whiteout, at 0.048.
+       *    Under the flat meter the White Pass and the Drowned Wood were both
+       *    there, and a swamp is not a whiteout.
+       */
+      assert(share > 0.118,
+        `${key}: the drawn sky keeps ${(share * 100).toFixed(1)}% of the chroma its own atmosphere `
+        + `makes (${s.toFixed(3)} against ${sp.toFixed(3)}) — the sky has been drawn grey`);
+      // …and the level's own authored swatch is not a decoration either: a
+      // level that states a saturated sky may not draw a neutral one.
+      const authored = sat(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+      assert(s > authored * 0.12,
+        `${key}: \`skyColor\` is ${authored.toFixed(2)} saturated and the dome draws ${s.toFixed(3)}`);
+      /* THE CHANGE MAY NOT COST A LEVEL ITS HUE. Two levels are unmoved by
+       * construction — the Colosseum lands on 1.0000 of the control — and the
+       * Shifting Waste gives up 0.03%, because anchoring the drawn ceiling to
+       * its own key takes it from 1.218 to 1.170 and a slightly lower ceiling
+       * compresses slightly harder. 0.99 is a hair of room around "unmoved";
+       * anything a viewer could see is a regression and fails. */
+      assert(s > sc * 0.99,
+        `${key}: the shipped sky is ${s.toFixed(3)} saturated against ${sc.toFixed(3)} for the `
+        + 'flat-metered control — the bound has cost this level its hue');
+      rows.push(`${key} ${sc.toFixed(3)}→${s.toFixed(3)} (${(share * 100).toFixed(0)}% of ${sp.toFixed(2)})`);
+    }
+    /* AND THE BOUND IS NOT DECORATIVE: the control has to fail the floor, and
+     * it has to fail it on the WORST level rather than on average, because an
+     * average can be carried by the two levels that never moved. */
+    assert(Math.min(...ctlShares) < 0.118,
+      `the flat-metered control keeps ${(Math.min(...ctlShares) * 100).toFixed(1)}% at its worst, `
+      + 'which is inside the floor above — so the floor is not what is holding the sky up');
+    const mean = (xs) => xs.reduce((p, q) => p + q, 0) / xs.length;
+    assert(mean(sats) > mean(ctlSats) * 1.15,
+      `the roster averages ${mean(sats).toFixed(3)} saturated against a control at `
+      + `${mean(ctlSats).toFixed(3)} — the change buys under 15% and is not worth its lines`);
+
+    // The transcription of ACES above is pinned against the chunk it copies.
+    const tm = THREE.ShaderChunk.tonemapping_pars_fragment;
+    for (const lit of ['0.0245786', '0.000090537', '0.983729', '0.4329510', '0.238081',
+      '0.59719', '0.35458', '0.83777', '1.60475', '1.07602', 'toneMappingExposure / 0.6']) {
+      assert(tm.indexOf(lit) >= 0,
+        `three's ACES fit no longer contains ${lit} — the display transform above is a copy of a `
+        + 'curve the renderer has stopped running');
+    }
+    return rows.join('; ');
   });
 
   check('sky: light transport still sees the real sky, not the drawn one', () => {
@@ -219,7 +382,7 @@ export function run({ check, assert, near }) {
     // level at all — only in cast.
     const dome = new SkyDome(new THREE.Scene());
     const u = dome.mat.uniforms;
-    const base = { ...LEVELS.arena.atmosphere };
+    const base = { ...LEVELS.colosseum.atmosphere };
     dome.configure({ ...base, cloudDark: 0x101014, cloudLit: 0x202018 });
     const darkL = lum(u.uCloudDark.value), litL = lum(u.uCloudLit.value);
     dome.configure({ ...base, cloudDark: 0xf0f0ff, cloudLit: 0xfffff0 });
@@ -306,8 +469,8 @@ export function run({ check, assert, near }) {
       near(cloudLight(LEVELS[key].atmosphere).amb, 0.42, 1e-9,
         `${key}: an interior must fall back to the neutral default`);
     }
-    dome.configure(LEVELS.temple.atmosphere);
-    const L = cloudLight(LEVELS.temple.atmosphere);
+    dome.configure(LEVELS.foundry.atmosphere);
+    const L = cloudLight(LEVELS.foundry.atmosphere);
     near(L.amb, 0.42, 1e-9, 'an interior must fall back to the neutral default');
     near(lum(L.tint), 1, 1e-6, 'an interior cloud tint must be white');
     dome.dispose();

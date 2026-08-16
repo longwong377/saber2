@@ -1,5 +1,5 @@
 /**
- * SABER — procedural bodies.
+ * BATTLEFRONT BORZ — procedural bodies.
  *
  * Every character is generated in code and hung off a bone hierarchy, one
  * limb-mesh per bone. That is not an aesthetic choice — it is what makes
@@ -1442,10 +1442,23 @@ export function dressHumanoid(rig, style) {
   const LIMB = style.limbOpts || {};
   const tune = (n) => LIMB[n] || LIMB[n.replace(/[LR]$/, '')] || null;
   const SECT = style.sections === false ? {} : (style.sections || FLESH_SECTIONS);
+  /**
+   * PER-BONE MATERIAL OVERRIDES — the one channel that is never culled.
+   *
+   * A bone's primary is the mesh `Enemy._applyLod` keeps at every range, and
+   * before this the only way to colour one was to paint the whole slot: every
+   * torso bone, or every arm bone. So an archetype's unit colour had to live
+   * on Kit detail, which is culled, and six clone archetypes measured 0.000
+   * apart in visible colour at thirty metres. Keyed by bone name or by the
+   * name with its L/R suffix dropped, exactly like `limbOpts` above.
+   */
+  const MATS = style.mats || {};
+  const matFor = (n, fallback) => MATS[n] || MATS[n.replace(/[LR]$/, '')] || fallback;
 
   const addLimb = (boneName, r0, r1, mat, opts = {}) => {
     const b = rig.get(boneName);
     if (!b) return null;
+    mat = matFor(boneName, mat);
     const t = tune(boneName);
     const sect = SECT[boneName] || SECT[boneName.replace(/[LR]$/, '')];
     if (sect) opts = Object.assign({ section: sect }, opts);
@@ -1496,9 +1509,12 @@ export function dressHumanoid(rig, style) {
       hg.scale(0.94, 1.16, 1.03);
       hg.translate(0, 0.10 * S, 0);
     }
-    const hm = mesh(hg, style.head || style.skin || style.body, head.obj);
+    const hm = mesh(hg, matFor('head', style.head || style.skin || style.body), head.obj);
     head.parts.push(hm); head.primary = hm; head.radius = (style.headRadius ?? 0.12) * S;
     if (style.buildHead) style.buildHead(head.obj, S, hg);
+    /* AFTER the hair and the species' own furniture, because a hood goes over
+     * both and `buildHead` returns early for a species that grows none. */
+    if (style.headKit) style.headKit(head.obj, S, hg);
   }
 
   // ── arms ───────────────────────────────────────────────────────────
@@ -1544,7 +1560,7 @@ export function dressHumanoid(rig, style) {
       // had a hand-shape field that could be edited to no effect whatsoever.
       const geo = style.handGeo ? style.handGeo(side, S, style.hands || {})
                                 : buildHand(side, S, style.hands || {});
-      const m = mesh(geo, style.hand || style.arm || style.body, hand.obj);
+      const m = mesh(geo, matFor('hand' + side, style.hand || style.arm || style.body), hand.obj);
       hand.parts.push(m); hand.primary = m; hand.radius = (style.handRadius ?? 0.05) * S;
     }
   }
@@ -1559,7 +1575,7 @@ export function dressHumanoid(rig, style) {
     const foot = rig.get('foot' + side);
     if (foot) {
       const geo = style.footGeo ? style.footGeo(S, side) : buildFoot(S, style.feet || {});
-      const m = mesh(geo, style.boot || style.leg || style.body, foot.obj);
+      const m = mesh(geo, matFor('foot' + side, style.boot || style.leg || style.body), foot.obj);
       foot.parts.push(m); foot.primary = m; foot.radius = 0.06 * S;
     }
   }
@@ -3149,7 +3165,51 @@ function beardParts(s, hg, B) {
 
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
+/**
+ * FOUR JEDI, ONE BUILDER, ONE DRAW — and therefore one Jedi.
+ *
+ * `Enemy.ARCHETYPES` gives the Knight, the Sentinel, the Guardian and the
+ * Master four declared fighting forms, four blades and four hilts, and then
+ * builds all four from `buildJedi({ ...o, ...jediLook() })` — the same pool of
+ * species, robe, hair, age and build rolled for every one of them. Measured at
+ * LOD 1 in `tools/_roster.mjs`: sentinel/master 0.939 flank IoU, guardian/
+ * master 0.889, jedi/sentinel 0.883, and 0.000 apart in visible colour. The
+ * player cannot learn "that one is a Guardian, it fights Djem So and cannot be
+ * parried" from a body that is a Knight with three centimetres more hilt.
+ *
+ * A rank is worn, and each of these is the piece the source material is most
+ * consistent about — chosen so no two change the same part of the outline:
+ *
+ *   knight    nothing added, and the robe cut SHORT. Ataru is the acrobatic
+ *             form; a knight fighting it has taken the long robe off. The most
+ *             compact of the four and the only one whose leg line is bare.
+ *   sentinel  the hood, up, and the robe at full length. Soresu waits, and a
+ *             sentinel is read head-first: the cowl is 14 cm of outline in the
+ *             one place a Jedi has none.
+ *   guardian  the Temple Guard's masked helm with its vertical crest, and a
+ *             pauldron. The tallest head on the roster and the widest shoulder
+ *             — which is what Djem So's 34 damage ought to look like.
+ *   master    the shoulder mantle and the longest robe. Width at the top of
+ *             the figure and cloth to the ankle, where the knight has neither.
+ *
+ * Every field defaults to the identity, so `buildJedi()` with no rank emits the
+ * geometry it always did — which the player, the menu preview and Net depend
+ * on and which `preview`, `grooming` and `garments` pin.
+ */
+export const JEDI_RANKS = {
+  knight:   { hem: 0.74 },
+  sentinel: { hood: true, hem: 1.32 },
+  guardian: { helm: true, pauldron: true, hem: 1.06 },
+  /* The Master is WIDE AT THE TOP and ordinary below, which is the opposite of
+   * the Sentinel — hooded, narrow, and cloth to the ankle. Two robed figures
+   * that are both long and both hooded are one figure, and the pair measured
+   * 0.939 before these two numbers were pushed apart. */
+  master:   { mantle: true, hem: 0.98 },
+};
+
 export function buildJedi(opts = {}) {
+  /** The rank's kit, if this body is wearing one. See JEDI_RANKS. */
+  const RANK = { hem: 1, ...(JEDI_RANKS[opts.rank] || null) };
   /**
    * The creator's axes. `sp` is a row of SPECIES, `G` the character sheet (cut,
    * beard, years, muscle — see SHEET_KEYS), `F` the eight face numbers with the
@@ -3656,7 +3716,9 @@ export function buildJedi(opts = {}) {
         for (let i = before; i < headObj.children.length; i++) speciesMeshes.push(headObj.children[i]);
       }
       if (!sp.hair) return;
-      if (hairGeo) mesh(hairGeo, hair, headObj);
+      // The hair mass is the whole difference between a bare Jedi head and a
+      // helmet at range, and it is one mesh.
+      if (hairGeo) markSilhouette(mesh(hairGeo, hair, headObj));
 
       // The strands — a padawan's braid, a warrior's tail, a plaited beard.
       //
@@ -3696,6 +3758,44 @@ export function buildJedi(opts = {}) {
           hair, headObj, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z]);
       }
     },
+
+    /**
+     * WHAT A RANK PUTS ON A HEAD. Runs after the hair and the species' own
+     * furniture, because a hood goes over both and a helm replaces neither.
+     */
+    headKit(headObj, s) {
+      if (RANK.hood) {
+        /* The cowl. Three's sphere puts phi = 0 at -X, so the shell starts at
+         * 0.80π for the 72° opening to land on the FACE rather than over one
+         * ear — the same construction the acolyte's uses, and deliberately so:
+         * these two are the roster's hooded bodies and they should be read
+         * against each other by colour and by what is under the hood, not by
+         * two different ideas of what a hood is. */
+        const cowl = new THREE.SphereGeometry(0.150 * s, 16, 12,
+          Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.70);
+        cowl.scale(1.02, 1.12, 1.16);
+        cowl.translate(0, 0.050 * s, -0.026 * s);
+        markSilhouette(mesh(cowl, outer, headObj));
+        // the rim of the opening, thickened so it reads as cloth rather than
+        // as a shell you can see the inside of
+        markSilhouette(mesh(new THREE.TorusGeometry(0.118 * s, 0.019 * s, 5, 16), outer, headObj,
+          [0, 0.098 * s, 0.022 * s], [-0.34, 0, 0]));
+      }
+      if (RANK.helm) {
+        /* The Temple Guard's helm: a smooth mask with no face on it at all and
+         * a vertical crest running front to back over the crown. It is the
+         * tallest head on the roster by 11 cm, which is the point — a Guardian
+         * is the one Jedi you are meant to identify before it has moved. */
+        const kh = new Kit();
+        kh.add(trim, plateGeo(0.152 * s, 0.220 * s, 0.150 * s, 0.030 * s, 3), [0, 0.108 * s, 0.006 * s]);
+        kh.add(trim, plateGeo(0.104 * s, 0.086 * s, 0.086 * s, 0.018 * s, 2), [0, -0.004 * s, 0.030 * s], [0.26, 0, 0]);
+        // the crest, and the two blades of it that stand against the sky
+        kh.add(trim, plateGeo(0.030 * s, 0.180 * s, 0.132 * s, 0.010 * s, 1), [0, 0.244 * s, -0.010 * s], [0.10, 0, 0]);
+        kh.add(trim, plateGeo(0.026 * s, 0.110 * s, 0.088 * s, 0.008 * s, 1), [0, 0.300 * s, -0.086 * s], [0.72, 0, 0]);
+        markSilhouette(kh.bake(headObj));
+      }
+    },
+
     dress(r, s) {
       const chestB = r.get('chest'), chest = chestB.obj;
       const hipsB = r.get('hips'), hips = hipsB.obj;
@@ -3764,12 +3864,50 @@ export function buildJedi(opts = {}) {
         (x, y) => 1 - 0.30 * clamp((y / s - 0.10) / 0.09, 0, 1),
         (x, y) => 1 - 0.36 * clamp(1 - Math.abs(y / s + 0.165) / 0.075, 0, 1),
       );
+      /* THE TABARD IS THE TORSO'S SECOND SILHOUETTE and it was being culled.
+       * Its own note above says so — "without it the figure is one smooth
+       * barrel from the collar to the obi" — and one smooth barrel is exactly
+       * what a Jedi was past thirty metres, which is where a player decides
+       * whether the thing walking at them has a blade. Three panels, three
+       * draw calls, against four archetypes that shared 0.94 of a figure. */
       for (const sx of [-1, 1]) {
         const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108 * KBELT);
         shadeAO(m.geometry, tabAO, { floor: 0.45 });
+        markSilhouette(m);
       }
       const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104 * KBELT);
       shadeAO(back.geometry, tabAO, { floor: 0.45 });
+      markSilhouette(back);
+
+      /* ── what a rank wears on the shoulders ──
+       *
+       * Two pieces, and they are deliberately at opposite ends of the same
+       * axis: the Guardian's pauldron is HARD and one-sided, the Master's
+       * mantle is soft and goes all the way round. Both are one merged mesh
+       * and both are kept at range, because a shoulder is where a silhouette
+       * is widest and therefore where a rank is legible from furthest away. */
+      if (RANK.pauldron || RANK.mantle) {
+        const kr = new Kit();
+        if (RANK.pauldron) {
+          kr.pair((sx) => {
+            kr.add(trim, plateGeo(0.130 * KTOR * s, 0.056 * s, 0.180 * s, 0.020 * s, 2),
+              [sx * 0.158 * KTOR * s, 0.176 * s, -0.004 * s], [0, 0, sx * -0.36]);
+            kr.add(trim, plateGeo(0.100 * KTOR * s, 0.040 * s, 0.140 * s, 0.014 * s, 1),
+              [sx * 0.184 * KTOR * s, 0.132 * s, -0.002 * s], [0, 0, sx * -0.48]);
+          });
+        }
+        if (RANK.mantle) {
+          // a short shoulder cape: a bell off the trapezius that stops at the
+          // bottom of the ribcage, so it widens the top of the figure without
+          // touching the belt the tabard already reads against
+          kr.add(over, limbGeo(0.380 * s, 0.126 * KTOR * s, 0.300 * KTOR * s, 20, false,
+            { rings: 5, bulge: 0, section: (th, t) => 1 + Math.pow(t, 1.3) * 0.05 * Math.cos(6 * th) }),
+            [0, 0.216 * s, 0], [0, 0, Math.PI], [XK, 1, 1]);
+          kr.add(over, bandGeo(0.070 * s, 0.086 * s, 0.064 * s, 0.104 * s, 0.062 * s, 14),
+            [0, 0.196 * s, 0], [0.08, 0, 0], [XK, 1, 1]);
+        }
+        markSilhouette(kr.bake(chest));
+      }
       // the V of the crossed tunic, showing between the two front panels.
       // It stands off the FRONT of the ribcage, so it has to follow both the
       // chest's radius and its depth — the two multiply. Measured on the
@@ -3863,7 +4001,10 @@ export function buildJedi(opts = {}) {
       // any angle. It is tucked at r=0.142 up inside the obi and bells over the
       // hip with a swell, which is both what covers the thigh and what puts a
       // non-monotone bulge in the profile.
-      const skirtH = 0.44 * s;
+      /* `RANK.hem` is 1 for every body that is not one of the four Jedi
+       * archetypes, and 1 * x is exact in IEEE float, so the neutral figure
+       * emits the lathe it always did. See JEDI_RANKS. */
+      const skirtH = 0.44 * s * RANK.hem;
       const foldAmt = (th) => 0.055 * Math.cos(7 * th + 0.4)
         + 0.030 * Math.cos(3 * th - 1.1) + 0.014 * Math.cos(11 * th + 2.3);
       const foldT = (t) => Math.pow(clamp(t, 0, 1), 1.25);
@@ -3918,7 +4059,11 @@ export function buildJedi(opts = {}) {
        * range with no cloth and no lathe has a bare pelvis. `robeSkirt` is the
        * handle: pass it to attachSkirt as `rigid` and the LOD swap is one call.
        */
-      outerLayer.push(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]));
+      /* The robe below the belt is a third of the standing figure and all of
+       * it was culled at thirty metres, so a Jedi's legs were two bare tubes
+       * — the one thing the under-robe's own note says separates this body
+       * from an armoured trooper. Both hems are kept. */
+      outerLayer.push(markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI])));
 
       // ── the under-robe ─────────────────────────────────────────────────
       // The long layer, in the mid tone, running from the belt to the ankle and
@@ -3933,7 +4078,7 @@ export function buildJedi(opts = {}) {
       // Its top 60% is inside the over-skirt and is never drawn against the
       // sky, so it is tessellated for the 26cm of it that shows: 24 segments
       // and 7 rings against the over-skirt's 28 and 9.
-      const underH = 0.72 * s;
+      const underH = 0.72 * s * RANK.hem;
       const underFold = (th) => 0.042 * Math.cos(5 * th - 0.7) + 0.020 * Math.cos(3 * th + 1.9);
       // The swell is centred at 0.45 and worth 20%, which is not a styling
       // choice: the over-skirt now ends ABOVE the knee, so this layer is the
@@ -3977,7 +4122,7 @@ export function buildJedi(opts = {}) {
        * It joins the outer layer now, so everything below the belt is either
        * simulated or hidden, and nothing under there is welded to the pelvis.
        */
-      outerLayer.push(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI]));
+      outerLayer.push(markSilhouette(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI])));
       // Two over-panels down the front in the darker cloth, so the layering
       // carries all the way down the figure instead of stopping at the belt.
 
@@ -4226,6 +4371,31 @@ function droidHandGeo(side, S, o = {}) {
 /* ── B1 battle droid ─────────────────────────────────────────────────── */
 
 /**
+ * FOUR ARCHETYPES RIDE THIS CHASSIS AND THREE OF THEM ARE A REPAINT.
+ *
+ * `b1`, `rocket`, `bx` and `dummy` are all `buildB1`, separated by `color`,
+ * `markColor` and `eyeColor` and by nothing else — and a colour is the one
+ * channel a dusty sky and a cel ramp take away first. Measured at LOD 1 in
+ * `tools/_roster.mjs`: b1/dummy 0.783 flank IoU, rocket/b1 0.712, bx/dummy
+ * 0.615. Each of the three has a piece of hardware it is DEFINED by in its
+ * own archetype note and none of them had it:
+ *
+ *   rocket    "a B1 with a tube" — the tube was never built.
+ *   bx        a vibrosword. Command.js's handover asked for `blade: 'vibro'`.
+ *   dummy     a range target that neither moves nor shoots.
+ *
+ * All three hang off the chest bone and all three are tagged silhouette,
+ * because a distinguishing feature that is culled at thirty metres has not
+ * distinguished anything.
+ */
+export const B1_KITS = {
+  line: {},
+  rocket: { pack: 'rocket' },
+  commando: { blade: 'vibro' },
+  target: { training: true },
+};
+
+/**
  * The B1 reads at range as three things: a snout, a backpack and a stick
  * figure. Everything below serves one of those. The limbs stay deliberately
  * thin — a B1 is a rack of struts, not a body — so the mechanical character
@@ -4235,6 +4405,8 @@ function droidHandGeo(side, S, o = {}) {
  * do the rest.
  */
 export function buildB1(opts = {}) {
+  /** See B1_KITS — `pack`, `blade` and `training` may also be passed directly. */
+  const K = { ...(B1_KITS[opts.kit] || B1_KITS.line), ...opts };
   const S = opts.scale ?? 1.02;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.06 }), { scale: S });
   const shell = armorMat(opts.color ?? 0xb9a077, 0.25, 0.62, 5.0);
@@ -4342,23 +4514,71 @@ export function buildB1(opts = {}) {
       k.add(mark, plateGeo(0.150 * s, 0.014 * s, 0.074 * s, 0.004 * s, 1), [0, 0.192 * s, 0.026 * s]);
       // blaster scoring — one draw call for the whole unit's battle damage
       scorchBone(k, scorch, r.get('chest'), 4, 0.01 * s, 0.20 * s, 0.075 * s);
-      // Backpack — the other half of the B1 silhouette. Two power cells in a
-      // cradle, a comms fin and the harness that straps it on.
-      k.add(joint, plateGeo(0.150 * s, 0.230 * s, 0.062 * s, 0.012 * s, 2), [0, 0.108 * s, -0.094 * s]);
       k.pair((sx) => {
-        k.add(shell, new THREE.CylinderGeometry(0.030 * s, 0.030 * s, 0.200 * s, 8),
-          [sx * 0.042 * s, 0.108 * s, -0.136 * s]);
-        k.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
-          [sx * 0.042 * s, 0.206 * s, -0.136 * s]);
-        k.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
-          [sx * 0.042 * s, 0.010 * s, -0.136 * s]);
         // harness strap over the shoulder, laid along the ribcage's own flank
         k.add(joint, plateGeo(0.024 * s, 0.200 * s, 0.012 * s, 0.003 * s, 1),
           onLimb(r.get('chest'), 0.110 * s, [sx * 0.9, 0, 0.44], 0.004 * s), [0, sx * 0.5, sx * 0.06]);
       });
-      k.add(joint, plateGeo(0.012 * s, 0.120 * s, 0.052 * s, 0.004 * s, 1), [0, 0.245 * s, -0.104 * s], [-0.3, 0, 0]);
       k.add(mark, plateGeo(0.080 * s, 0.012 * s, 0.064 * s, 0.003 * s, 1), [0, 0.196 * s, -0.096 * s]);
       k.bake(chest);
+
+      /* ── the backpack: the other half of the B1 silhouette, and it was
+       * being culled at the range the whole point of a B1 is that there are
+       * forty of them. Two power cells in a cradle, a comms fin and the
+       * harness. Everything above is panel lines and rivets; this is shape. */
+      const ko = new Kit();
+      ko.add(joint, plateGeo(0.150 * s, 0.230 * s, 0.062 * s, 0.012 * s, 2), [0, 0.108 * s, -0.094 * s]);
+      ko.pair((sx) => {
+        ko.add(shell, new THREE.CylinderGeometry(0.030 * s, 0.030 * s, 0.200 * s, 8),
+          [sx * 0.042 * s, 0.108 * s, -0.136 * s]);
+        ko.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
+          [sx * 0.042 * s, 0.206 * s, -0.136 * s]);
+        ko.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
+          [sx * 0.042 * s, 0.010 * s, -0.136 * s]);
+      });
+      ko.add(joint, plateGeo(0.012 * s, 0.120 * s, 0.052 * s, 0.004 * s, 1), [0, 0.245 * s, -0.104 * s], [-0.3, 0, 0]);
+      /* THE ROCKET TUBE. `rocket` is "a B1 with a tube" by its own archetype
+       * note — "the silhouette is the B1's, that is the point" — except that
+       * the tube was never built, so it was a B1 with a repaint and the two
+       * measured 0.712 alike at LOD 1. A launcher over the right shoulder is
+       * the one shape that says which of them is about to fire 44 damage. */
+      if (K.pack === 'rocket') {
+        ko.add(joint, new THREE.CylinderGeometry(0.052 * s, 0.052 * s, 0.400 * s, 8),
+          [0.098 * s, 0.176 * s, -0.086 * s], [0.30, 0, -0.20]);
+        ko.add(mark, new THREE.CylinderGeometry(0.056 * s, 0.056 * s, 0.030 * s, 8),
+          [0.132 * s, 0.348 * s, -0.030 * s], [0.30, 0, -0.20]);
+        ko.add(joint, plateGeo(0.030 * s, 0.070 * s, 0.056 * s, 0.006 * s, 1),
+          [0.060 * s, 0.216 * s, -0.106 * s], [0, 0, -0.20]);
+      }
+      /* THE VIBROSWORD. Command.js's handover, verbatim: the BX is "melee:
+       * true, saber: true today, which puts a glowing blade in a commando
+       * droid's hand". The scabbard down the spine is what makes a BX a BX
+       * from behind, and it is the half of that note this file can answer —
+       * the blade in the hand is `Enemy._build`'s SaberController. */
+      if (K.blade === 'vibro') {
+        ko.add(joint, plateGeo(0.030 * s, 0.560 * s, 0.024 * s, 0.006 * s, 1),
+          [-0.020 * s, 0.150 * s, -0.150 * s], [0.16, 0, 0.42]);
+        ko.add(shell, plateGeo(0.044 * s, 0.070 * s, 0.036 * s, 0.010 * s, 1),
+          [-0.136 * s, 0.400 * s, -0.108 * s], [0.16, 0, 0.42]);
+      }
+      /* THE TARGET. A Training Droid is a B1 that never fires and never moves,
+       * and the only thing that said so was the absence of a carbine — which
+       * is why it and a live B1 measured 0.702 alike. A scoring plate bolted
+       * across the chest is what a range target looks like and it reads from
+       * the far end of the dojo. */
+      if (K.training) {
+        /* A PADDED BOLSTER, not a decal. The first version was a 23 cm roundel
+         * 2 cm deep on a body 22 cm across: from the FLANK — which is the view
+         * this is measured in and the view a dojo is walked into — it was two
+         * centimetres of edge, and the pair moved 0.013. A practice droid is
+         * padded, and padding has depth. */
+        ko.add(joint, plateGeo(0.300 * s, 0.420 * s, 0.360 * s, 0.090 * s, 3), [0, 0.086 * s, 0.070 * s]);
+        ko.add(joint, plateGeo(0.240 * s, 0.170 * s, 0.280 * s, 0.070 * s, 3), [0, -0.096 * s, 0.048 * s]);
+        // the scoring rings, on the front of the bolster where a blade lands
+        ko.add(mark, plateGeo(0.190 * s, 0.190 * s, 0.020 * s, 0.030 * s, 3), [0, 0.110 * s, 0.244 * s]);
+        ko.add(shell, plateGeo(0.104 * s, 0.104 * s, 0.016 * s, 0.024 * s, 3), [0, 0.110 * s, 0.254 * s]);
+      }
+      markSilhouette(ko.bake(chest));
 
       /* ── exposed waist frame — the spine is a strut rack, not a barrel ── */
       const spineB = r.get('spine');
@@ -4483,6 +4703,15 @@ export function buildB1(opts = {}) {
  * and a wrist blaster with a heat shroud.
  */
 export function buildB2(opts = {}) {
+  /**
+   * `frame` is radial girth — the same field TROOPER_KITS uses, and here it
+   * exists for `buildBodyguard`, which is this chassis with a cowl on it. An
+   * IG-100 is a SPINDLE and a B2 is a slab, and building both at the same
+   * girth is how a rung-5 line droid came to share 0.965 of a silhouette with
+   * the Foundry's 1050-hp general. Default 1, and 1 * x is exact, so a B2 with
+   * no kit emits the geometry it always did.
+   */
+  const G = opts.frame ?? 1, g = (v) => v * G;
   const S = opts.scale ?? 1.18;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.0 }), { scale: S });
   const shell = armorMat(opts.color ?? 0x7d7266, 0.55, 0.48);
@@ -4506,8 +4735,8 @@ export function buildB2(opts = {}) {
   dressHumanoid(rig, {
     scale: S,
     body: shell, arm: shell, leg: shell, hand: dark, boot: dark, head: shell,
-    parts: { chestR: 0.21, shoulderR: 0.175, hipR: 0.14, waistR: 0.125,
-             armR: 0.072, clavR: 0.095, thighR: 0.095, neckR: 0.070, torsoDepth: 0.86,
+    parts: { chestR: g(0.21), shoulderR: g(0.175), hipR: g(0.14), waistR: g(0.125),
+             armR: g(0.072), clavR: g(0.095), thighR: g(0.095), neckR: 0.070, torsoDepth: 0.86,
              shoulderDome: 0.30 },
     seg: { torso: 12, arm: 12, leg: 10, clav: 8, neck: 8 },
     limbOpts: {
@@ -4561,22 +4790,30 @@ export function buildB2(opts = {}) {
       // to. From any angle but head-on it read as a board nailed to a drum.
       // These are arcs of the ribcage's own section, so the plate curves with
       // the chest and its edges land on it.
-      k.add(shell, arcGeo(0.218 * s, 0.196 * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
-      k.add(shell, arcGeo(0.212 * s, 0.192 * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
-      k.add(shell, arcGeo(0.214 * s, 0.206 * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
         k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], -0.014), [0, sx * 0.85, 0]);
         k.row(3, (i) => k.add(dark, riv, at(0.030 + i * 0.070, [sx, 0, 0.15], -0.050), [0, 0, -sx * 1.5708]));
         k.add(dark, bolt, at(0.234, [sx * 0.44, 0.2, 1], -0.030), [1.5708, 0, 0]);
-        // flank plates, so the barrel does not read as a barrel from the side
-        k.add(shell, arcGeo(0.216 * s, 0.196 * s, 0.230 * s, 1.05, 0.026 * s, 6),
-          [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
       });
       scorchBone(k, scorch, chestB, 5, 0.02 * s, 0.24 * s, 0.115 * s);
+      /* ── the cuirass: the whole of what a B2 IS at range ──
+       * Its own comment says the flank plates exist "so the barrel does not
+       * read as a barrel from the side", and at thirty metres they were culled
+       * and it read as a barrel from the side — which is how a B2 came to
+       * share 0.845 of a silhouette with a MagnaGuard. */
+      const ko = new Kit();
+      ko.add(shell, arcGeo(g(0.218) * s, g(0.196) * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.212) * s, g(0.192) * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.214) * s, g(0.206) * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
+      ko.pair((sx) => {
+        ko.add(shell, arcGeo(g(0.216) * s, g(0.196) * s, 0.230 * s, 1.05, 0.026 * s, 6),
+          [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
+      });
+      markSilhouette(ko.bake(chest));
       // Back: a vented dorsal block and two exhaust stacks, seated on the
       // ribcage's real back surface (it is 15cm deep here, not 5.8).
       const back = at;
-      k.add(dark, arcGeo(0.212 * s, 0.196 * s, 0.170 * s, 1.70, 0.040 * s, 8),
+      k.add(dark, arcGeo(g(0.212) * s, g(0.196) * s, 0.170 * s, 1.70, 0.040 * s, 8),
         [0, 0.120 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       k.pair((sx) => {
         const p = back(0.230, [sx * 0.34, 0, -1], 0.010);
@@ -4685,15 +4922,104 @@ export function buildB2(opts = {}) {
 /* ── clone trooper ───────────────────────────────────────────────────── */
 
 /**
+ * SIX ARCHETYPES RODE THIS ONE BUILDER AND THREE ARGUMENTS.
+ *
+ * `buildTrooper` took `scale`, `color` and `accent`, so a Clone Trooper, a
+ * Marksman, a Heavy Gunner, a Jet Trooper, an ARC and a Commander were one
+ * body six times over. Measured at LOD 1 in `tools/_roster.mjs`:
+ * trooper/sniper 1.000 flank IoU (identical geometry AND identical scale),
+ * arc/officer 0.940, trooper/jet 0.880, trooper/arc 0.878, heavy/officer 0.832.
+ * The colour did not save it either — the accent is 340 triangles of which
+ * ZERO survive the distance cull, so trooper↔heavy, trooper↔arc, trooper↔jet
+ * and heavy↔jet all measured 0.000 apart in triangle-weighted visible colour.
+ * Same shape and same colour, and the numbers said so.
+ *
+ * A kit is a set of HARDWARE, not a paint scheme, and each piece here is one
+ * the reference plates in `assets/reference/units/clones` actually show:
+ *
+ *   pack: 'jet'    two nozzles on a spine block between the shoulder bells.
+ *                  `jet` has `float: 1.35` and Command.js's own handover says
+ *                  it "hovers, but nothing on the model says why".
+ *   pack: 'field'  the heavy's ammunition box, its power feed, and the Z-6's
+ *                  barrel bundle slung across it. A suppression gunner is
+ *                  read by the mass on his back before anything else.
+ *   pauldron       one raked plate over the leading shoulder. `side` picks it,
+ *                  so an ARC and a Commander are not mirror images.
+ *   kama           the armoured skirt: four hanging leaves off the belt, which
+ *                  is the piece that breaks the leg line at range.
+ *   crest          a raised fin front-to-back over the crown, in the unit
+ *                  colour. Against the sky, so it survives everything.
+ *   rangefinder    the stalk-and-plate over one temple. It changes the head's
+ *                  outline, which is the first thing a silhouette is read by.
+ *
+ * WHERE THE UNIT COLOUR LIVES NOW. `tintBones` (Enemy.js) has always put its
+ * modifier tells on the bone PRIMARIES because `_applyLod` never culls them —
+ * that is the working pattern, and the archetypes were never given it. The
+ * accent now paints the two CLAVICLE primaries, which is exactly the shoulder
+ * line every clone plate flashes, at a cost of zero extra draw calls; the
+ * crest, the collar arc and the bells keep their paint and are tagged
+ * `userData.silhouette` so they stop being invisible past thirty metres.
+ */
+export const TROOPER_KITS = {
+  /** The line trooper: the baseline every other kit is read against. */
+  line: {},
+  /**
+   * The Marksman, and it is the hardest of the six because it is the line
+   * trooper at the SAME SCALE — 1.0 against 1.0, the only pair on the roster
+   * with no size difference to fall back on. So it is the one kit that takes
+   * something OFF: no shoulder bells, which is 21 cm of the widest part of the
+   * figure, against a long scope and a scout pack.
+   */
+  marksman: { rangefinder: 'scope', brace: true, bells: false, pack: 'scout', frame: 0.88 },
+  /** The suppression gunner: the pack and the Z-6 across it. */
+  heavy: { pack: 'field', frame: 1.15 },
+  /** The raider. Nothing on the arms — the pack is the whole read. */
+  jet: { pack: 'jet', frame: 0.97 },
+  /** The ARC: pauldron right, kama, twin holsters on the belt. */
+  arc: { pauldron: 'R', kama: 'long', holsters: true, frame: 1.07 },
+  /**
+   * The Commander. Everything the ARC has, mirrored, plus the two things a
+   * command body has and a line body never does: the comms pack with its
+   * antenna, and the shoulder cape. The ARC and the Commander are the pair
+   * this roster most wants to keep apart — same rung, same rifle, adjacent
+   * scales — so they differ at the top of the figure AND at the back of it.
+   */
+  commander: { pauldron: 'L', kama: true, crest: true, rangefinder: 'stalk',
+               pack: 'comms', cape: true, frame: 0.99 },
+};
+
+/**
  * The read at range is the helmet: a domed cranium, a hard brow, cheeks that
  * flare out and down, and a fin along the crown. Everything else is armour
  * that has to look like *separate plates over a bodysuit* rather than a white
  * paint job — so every plate is a curved shell standing a centimetre off the
  * black undersuit, with its own rim, its own rivets and a unit colour on the
  * pieces a squad actually paints: the crest, the shoulder bells, the knees.
+ *
+ * `opts.kit` names a row of TROOPER_KITS; the individual knobs may also be
+ * passed directly and override it, so a check can sweep one piece at a time.
  */
 export function buildTrooper(opts = {}) {
+  const K = { ...(TROOPER_KITS[opts.kit] || TROOPER_KITS.line), ...opts };
   const S = opts.scale ?? 1.0;
+  /**
+   * GIRTH, AND WHY IT IS A KIT FIELD RATHER THAN A SCALE.
+   *
+   * `scale` grows a body in all three axes, so a heavy gunner built by turning
+   * it up is a taller trooper — and the archetype's `hipHeight` and the gait
+   * solver both read the height. `frame` is RADIAL only: the same 1.78 m
+   * soldier, wider through the chest, the arms and the thighs. It is also the
+   * only lever on this list that moves the bone PRIMARIES, which are 19 of the
+   * 26 meshes a trooper keeps at thirty metres and most of its projected area,
+   * so it is worth more to the read than every plate on the figure.
+   *
+   * Every limb plate is `limbPlate(bone, …)`, which raycasts the bone's own
+   * tube and pushes out by a gap, so arms, forearms, thighs and shins refit
+   * themselves. Only the torso arcs are typed against a radius, and `g()`
+   * below is applied to exactly those.
+   */
+  const G = K.frame ?? 1;
+  const g = (v) => v * G;
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const plate = armorMat(opts.color ?? 0xe8e9ec, 0.08, 0.34, 3.0);
   // The undersuit was a bare MeshStandardMaterial: flat black vinyl over the
@@ -4743,6 +5069,14 @@ export function buildTrooper(opts = {}) {
   dressHumanoid(rig, {
     scale: S,
     body: under, arm: under, leg: under, hand: plate, boot: gear, head: plate,
+    /* THE UNIT COLOUR, ON A MESH THE LOD CANNOT TAKE AWAY.
+     *
+     * The clavicle primary runs from the sternum out to the point of the
+     * shoulder and is the one tube on this body that is bare undersuit at
+     * exactly the height a squad flash goes. Painting it costs nothing — the
+     * mesh already exists and is already kept at every range — and it is what
+     * takes trooper↔heavy↔jet↔officer off 0.000 visible-colour distance. */
+    mats: { clav: accent },
     // the shoulder bell does the deltoid's job and then some
     deltoid: false,
     // A soldier in full plate, and he has to read as one from thirty metres
@@ -4751,8 +5085,8 @@ export function buildTrooper(opts = {}) {
     // same height, same width, same everything but the colour. So the bulk is
     // real — a deeper ribcage, heavier arms and legs, a wider collarbone and a
     // shoulder bell 23% bigger — rather than a paint difference.
-    parts: { chestR: 0.140, shoulderR: 0.124, hipR: 0.122, waistR: 0.108,
-             armR: 0.057, clavR: 0.074, thighR: 0.100, neckR: 0.062, torsoDepth: 0.88 },
+    parts: { chestR: g(0.140), shoulderR: g(0.124), hipR: g(0.122), waistR: g(0.108),
+             armR: g(0.057), clavR: g(0.074), thighR: g(0.100), neckR: 0.062, torsoDepth: 0.88 },
     seg: { torso: 16, arm: 12, leg: 12, clav: 10, neck: 10 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
@@ -4810,32 +5144,66 @@ export function buildTrooper(opts = {}) {
         const f = new THREE.Vector3(sx * 0.86, 0.48, 0.14).normalize();
         k.aim(plate, riv, onSurface(hg, f, -0.003 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), f);
       });
+      k.bake(headObj);
+
+      /* ── the head's OUTLINE, in one merged mesh that the LOD keeps ──
+       *
+       * Everything above is detail: a visor recess, a grille, ear vents and
+       * rivets, none of it resolvable past thirty metres and all of it
+       * correctly culled. Everything below changes the shape of the head
+       * against the sky, which is the first thing a silhouette is read by —
+       * and all of it is one material, so it merges to ONE extra draw call.
+       */
+      const ko = new Kit();
       // Crest: the fin along the crown, in unit colour, plus the stripes that
       // actually get painted on a helmet.
-      k.add(accent, plateGeo(0.032 * s, 0.020 * s, 0.174 * s, 0.007 * s, 1), [0, 0.226 * s, -0.016 * s], [0.04, 0, 0]);
-      k.pair((sx) => {
+      const tall = K.crest ? 1.9 : 1.0;      // a commander's is raised and swept
+      ko.add(accent, plateGeo(0.032 * s, 0.020 * s * tall, 0.174 * s, 0.007 * s, 1),
+        [0, (0.226 + (K.crest ? 0.012 : 0)) * s, -0.016 * s], [0.04, 0, 0]);
+      if (K.crest) {
+        // the swept tail off the back of the crown, which is what turns a fin
+        // into a plume from the flank — the view a firing line is read from
+        ko.add(accent, plateGeo(0.026 * s, 0.052 * s, 0.096 * s, 0.008 * s, 1),
+          [0, 0.222 * s, -0.128 * s], [0.62, 0, 0]);
+      }
+      ko.pair((sx) => {
         // aim()'s local X is ref × dir, which for a crown normal runs
         // front-to-back, and its local Z runs across. Authored the other way
         // round, this stripe was 13cm WIDE and 2cm long: a blue slab on each
         // side of the helmet rather than a stripe over the crown.
         const d = new THREE.Vector3(sx * 0.50, 0.86, 0.10).normalize();
-        k.aim(accent, plateGeo(0.130 * s, 0.006 * s, 0.022 * s, 0.002 * s, 1),
+        ko.aim(accent, plateGeo(0.130 * s, 0.006 * s, 0.022 * s, 0.002 * s, 1),
           onSurface(hg, d, 0.001 * s, new THREE.Vector3(0, 0.138 * s, -0.030 * s)), d);
       });
-      k.bake(headObj);
+      /* The rangefinder. Two of them, because the two bodies that carry one
+       * carry different ones: a Commander's folds down over the eye off a
+       * short stalk, a Marksman's is a long tube clamped along the temple. It
+       * is 4 cm of outline in the one place a helmet has none, and it is the
+       * only thing on this roster that changes a HEAD's shape. */
+      if (K.rangefinder) {
+        const sx = K.pauldron === 'R' ? -1 : 1;   // opposite the shoulder plate
+        if (K.rangefinder === 'scope') {
+          ko.add(accent, new THREE.CylinderGeometry(0.016 * s, 0.014 * s, 0.170 * s, 8),
+            [sx * 0.086 * s, 0.176 * s, 0.010 * s], [1.5708, 0, 0]);
+          ko.add(accent, plateGeo(0.020 * s, 0.052 * s, 0.018 * s, 0.005 * s, 1),
+            [sx * 0.086 * s, 0.146 * s, -0.030 * s]);
+        } else {
+          ko.add(accent, new THREE.CylinderGeometry(0.010 * s, 0.010 * s, 0.088 * s, 6),
+            [sx * 0.084 * s, 0.208 * s, -0.020 * s], [0, 0, sx * -0.34]);
+          ko.add(accent, plateGeo(0.030 * s, 0.086 * s, 0.026 * s, 0.006 * s, 1),
+            [sx * 0.104 * s, 0.176 * s, 0.028 * s], [0.30, sx * 0.24, sx * -0.22]);
+        }
+      }
+      markSilhouette(ko.bake(headObj));
     },
 
     dress(r, s) {
       const chestB = r.get('chest'), spineB = r.get('spine'), hipsB = r.get('hips');
       const D = 0.88;   // the torso's z squash — the plates have to match it
 
-      /* ── torso: separate front, back and abdominal plates ── */
+      /* ── torso: straps, boxes and scorch — detail, correctly culled ── */
       const k = new Kit();
-      k.add(plate, arcGeo(0.146 * s, 0.132 * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
-      k.add(plate, arcGeo(0.146 * s, 0.128 * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
-      // collar that the helmet sits into, and the shoulder straps
-      k.add(plate, bandGeo(0.104 * s, 0.126 * s, 0.086 * s, 0.108 * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
-      k.add(accent, arcGeo(0.150 * s, 0.150 * s, 0.028 * s, 2.4, 0.008 * s, 8), [0, 0.150 * s, 0], null, [1, 1, D]);
+      k.add(accent, arcGeo(g(0.150) * s, g(0.150) * s, 0.028 * s, 2.4, 0.008 * s, 8), [0, 0.150 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
         k.add(gear, plateGeo(0.030 * s, 0.230 * s, 0.014 * s, 0.004 * s, 1),
           onLimb(chestB, 0.090 * s, [sx * 0.55, 0, 1], 0.002 * s), [0, -sx * 0.30, sx * 0.16]);
@@ -4847,29 +5215,180 @@ export function buildTrooper(opts = {}) {
       scorchBone(k, scorch, chestB, 3, 0.01 * s, 0.19 * s, 0.070 * s);
       k.bake(chestB.obj);
 
+      /* ── the torso's OUTLINE: the cuirass, and whatever is bolted to it ──
+       *
+       * The front, back and collar plates ARE the trooper's chest — 88% of the
+       * torso's outline at thirty metres — and they were Kit detail, so what
+       * survived the cull was the bare undersuit tube underneath. That is most
+       * of how six clone archetypes came to share one silhouette. One material,
+       * one merged mesh, one draw call. */
+      const ko = new Kit();
+      ko.add(plate, arcGeo(g(0.146) * s, g(0.132) * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
+      ko.add(plate, arcGeo(g(0.146) * s, g(0.128) * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      // collar that the helmet sits into
+      ko.add(plate, bandGeo(g(0.104) * s, g(0.126) * s, g(0.086) * s, g(0.108) * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
+      /* THE PAULDRON. One plate, over the leading shoulder, raked out and back.
+       * `side` is the knob rather than a boolean because an ARC wearing it on
+       * the right and a Commander on the left are two silhouettes from the
+       * flank and one from the front — and the flank is the view a firing line
+       * is met in. */
+      if (K.pauldron) {
+        const sx = K.pauldron === 'L' ? -1 : 1;
+        ko.add(plate, plateGeo(0.132 * s, 0.052 * s, 0.186 * s, 0.020 * s, 2),
+          [sx * g(0.170) * s, 0.132 * s, -0.006 * s], [0, 0, sx * -0.40]);
+        ko.add(plate, plateGeo(0.104 * s, 0.044 * s, 0.150 * s, 0.016 * s, 2),
+          [sx * g(0.196) * s, 0.086 * s, -0.004 * s], [0, 0, sx * -0.52]);
+      }
+      /* THE BRACE. A marksman's cheek-weld needs somewhere for the stock to
+       * go, and it is the one piece that separates him from the line trooper
+       * he is otherwise built from bolt for bolt. */
+      if (K.brace) {
+        ko.add(plate, plateGeo(0.086 * s, 0.030 * s, 0.120 * s, 0.010 * s, 1),
+          [-g(0.132) * s, 0.176 * s, 0.010 * s], [0, 0, 0.30]);
+      }
+      markSilhouette(ko.bake(chestB.obj));
+
+      /* THE COMMANDER'S CAPE. Rigid, not cloth: `cloth-cost` sizes the whole
+       * simulated-garment column on how many bodies wear one, and this mode
+       * fields a line of twenty. Hung off the pauldron's own shoulder so it
+       * falls down ONE side of the body — a half-cape reads as rank where a
+       * closed cone reads as a robe, and this figure must not read as a Jedi
+       * from behind. */
+      if (K.cape) {
+        /* HUNG SO IT FLARES BACKWARD, not flat against the shoulder blade.
+         * The first cut was 32 cm across and 3 cm deep: from the flank — the
+         * view a line of infantry is met in — it was a 3 cm edge, and the ARC
+         * and the Commander stayed 0.916 alike. A cape is read from the side,
+         * so its depth is the dimension that has to be real. */
+        const kc = new Kit();
+        const sx = K.pauldron === 'R' ? 1 : -1;
+        kc.add(gear, plateGeo(0.300 * s, 0.620 * s, 0.230 * s, 0.030 * s, 2),
+          [sx * 0.060 * s, -0.180 * s, -0.200 * s], [0.30, sx * 0.16, sx * 0.05]);
+        kc.add(gear, plateGeo(0.250 * s, 0.150 * s, 0.150 * s, 0.024 * s, 1),
+          [sx * 0.104 * s, 0.140 * s, -0.116 * s], [0.16, sx * 0.28, sx * -0.22]);
+        markSilhouette(kc.bake(chestB.obj));
+      }
+
+      /* ── the pack ──
+       *
+       * Command.js's handover: "`jet` is a trooper with `float: 1.35` and no
+       * hardware — it hovers, but nothing on the model says why." Two packs,
+       * because the two bodies that carry one carry opposite ones: a raider's
+       * is compact and points DOWN, a suppression gunner's is a box with a
+       * weapon slung across it and points sideways. Both hang off the chest
+       * bone so they roll with the torso, and both are tagged silhouette —
+       * a pack culled at thirty metres answers nothing. */
+      if (K.pack) {
+        const kp = new Kit();
+        const jet = K.pack === 'jet';
+        if (jet) {
+          // spine block between the bells, two nozzles below the belt line
+          kp.add(plate, plateGeo(0.180 * s, 0.230 * s, 0.098 * s, 0.020 * s, 2), [0, 0.086 * s, -0.166 * s]);
+          kp.add(accent, plateGeo(0.052 * s, 0.150 * s, 0.020 * s, 0.006 * s, 1), [0, 0.096 * s, -0.216 * s]);
+          kp.pair((sx) => {
+            kp.add(gear, new THREE.CylinderGeometry(0.030 * s, 0.042 * s, 0.140 * s, 8),
+              [sx * 0.076 * s, -0.036 * s, -0.176 * s], [0.30, 0, sx * 0.16]);
+            kp.add(plate, new THREE.CylinderGeometry(0.036 * s, 0.036 * s, 0.070 * s, 8),
+              [sx * 0.076 * s, 0.048 * s, -0.184 * s], [0.16, 0, sx * 0.10]);
+          });
+        } else if (K.pack === 'scout') {
+          // a flat scout pack with a folded bipod down it — narrow, so the
+          // marksman stays the thinnest body in the clone rack
+          kp.add(gear, plateGeo(0.130 * s, 0.220 * s, 0.070 * s, 0.014 * s, 1), [0, 0.076 * s, -0.156 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.320 * s, 6),
+            [0.052 * s, 0.070 * s, -0.196 * s], [0.10, 0, 0.18]);
+          kp.add(gear, new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.320 * s, 6),
+            [-0.052 * s, 0.070 * s, -0.196 * s], [0.10, 0, -0.18]);
+        } else if (K.pack === 'comms') {
+          // the command pack: a slab with a tall whip antenna, which is 40 cm
+          // of outline above the shoulder line and nothing else on the roster
+          // has anything there at all
+          kp.add(plate, plateGeo(0.190 * s, 0.240 * s, 0.096 * s, 0.018 * s, 2), [0, 0.076 * s, -0.166 * s]);
+          kp.add(accent, plateGeo(0.140 * s, 0.030 * s, 0.020 * s, 0.006 * s, 1), [0, 0.172 * s, -0.216 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.007 * s, 0.010 * s, 0.520 * s, 5),
+            [-0.078 * s, 0.420 * s, -0.176 * s], [0.06, 0, 0.10]);
+          kp.add(gear, plateGeo(0.070 * s, 0.070 * s, 0.024 * s, 0.008 * s, 1),
+            [0.070 * s, 0.176 * s, -0.212 * s], [0.20, -0.30, 0]);
+        } else {
+          // ammunition box, power feed, and the Z-6's barrel bundle across it
+          kp.add(plate, plateGeo(0.230 * s, 0.250 * s, 0.130 * s, 0.022 * s, 2), [0, 0.062 * s, -0.184 * s]);
+          kp.add(gear, plateGeo(0.150 * s, 0.084 * s, 0.060 * s, 0.012 * s, 1), [0, -0.062 * s, -0.190 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.020 * s, 0.020 * s, 0.230 * s, 6),
+            [0.096 * s, 0.062 * s, -0.150 * s], [0, 0, 0.24]);
+          // the slung weapon: three barrels and a drum, raked across the back
+          for (let i = 0; i < 3; i++) {
+            kp.add(gear, new THREE.CylinderGeometry(0.016 * s, 0.016 * s, 0.520 * s, 6),
+              [(i - 1) * 0.026 * s, 0.130 * s, -0.250 * s], [0.24, 0.34, 1.20]);
+          }
+          kp.add(gear, new THREE.CylinderGeometry(0.062 * s, 0.062 * s, 0.048 * s, 8),
+            [-0.070 * s, 0.030 * s, -0.244 * s], [0.24, 0.34, 1.20]);
+        }
+        markSilhouette(kp.bake(chestB.obj));
+      }
+
       /* ── abdomen: three overlapping bands, so the waist articulates ── */
       const ks = new Kit();
       ks.row(3, (i, t) => {
         const y = (0.020 + i * 0.062) * s;
-        ks.add(plate, arcGeo(0.126 * s + i * 0.006 * s, 0.130 * s + i * 0.006 * s, 0.050 * s, 2.9, 0.014 * s, 8),
+        ks.add(plate, arcGeo(g(0.126 + i * 0.006) * s, g(0.130 + i * 0.006) * s, 0.050 * s, 2.9, 0.014 * s, 8),
           [0, y, 0], null, [1, 1, D]);
-        ks.add(plate, arcGeo(0.124 * s + i * 0.006 * s, 0.128 * s + i * 0.006 * s, 0.048 * s, 2.2, 0.012 * s, 7),
+        ks.add(plate, arcGeo(g(0.124 + i * 0.006) * s, g(0.128 + i * 0.006) * s, 0.048 * s, 2.2, 0.012 * s, 7),
           [0, y, 0], [0, Math.PI, 0], [1, 1, D]);
       });
       ks.bake(spineB.obj);
 
-      /* ── belt, codpiece and tassets ── */
+      /* ── belt, codpiece and pouches — detail ── */
       const kh = new Kit();
-      kh.add(gear, bandGeo(0.118 * s, 0.136 * s, 0.118 * s, 0.136 * s, 0.056 * s, 16), [0, 0.056 * s, 0], null, [1, 1, D + 0.06]);
+      kh.add(gear, bandGeo(g(0.118) * s, g(0.136) * s, g(0.118) * s, g(0.136) * s, 0.056 * s, 16), [0, 0.056 * s, 0], null, [1, 1, D + 0.06]);
       kh.add(plate, plateGeo(0.052 * s, 0.046 * s, 0.024 * s, 0.006 * s, 1), onLimb(hipsB, 0.080 * s, [0, 0, 1], -0.008 * s));
-      kh.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
-      kh.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       kh.pair((sx) => {
         kh.add(gear, plateGeo(0.052 * s, 0.058 * s, 0.036 * s, 0.010 * s, 1),
           onLimb(hipsB, 0.052 * s, [sx * 0.85, 0, 0.62], -0.016 * s), [0, -sx * 0.5, 0]);
-        kh.add(plate, arcGeo(0.118 * s, 0.122 * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
       });
+      /* THE HOLSTERS. An ARC carries two sidearms on the belt in every plate
+       * there is, and they are the piece that reads at three metres where the
+       * kama reads at thirty. */
+      if (K.holsters) {
+        kh.pair((sx) => {
+          kh.add(gear, plateGeo(0.048 * s, 0.130 * s, 0.062 * s, 0.010 * s, 1),
+            [sx * 0.126 * s, -0.030 * s, 0.028 * s], [0.14, 0, sx * 0.24]);
+        });
+      }
       kh.bake(hipsB.obj);
+
+      /* ── the hips' OUTLINE: the tassets, and the kama over them ──
+       *
+       * The four tasset arcs are the only thing standing between the belt and
+       * two bare undersuit thighs, and they were culled at exactly the range
+       * that matters. */
+      const kho = new Kit();
+      kho.add(plate, arcGeo(g(0.120) * s, g(0.126) * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
+      kho.add(plate, arcGeo(g(0.120) * s, g(0.126) * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      kho.pair((sx) => {
+        kho.add(plate, arcGeo(g(0.118) * s, g(0.122) * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
+      });
+      /* THE KAMA. Command.js asked for one for `arc` and `officer` — "at three
+       * metres they read as the same body" — and pointed at `attachSkirt`.
+       * This is not that: a simulated garment is the most expensive per-body
+       * system in the game and `cloth-cost` sizes the whole column on how many
+       * bodies wear one. Four hanging leaves off the belt are rigid geometry
+       * on the hips bone, cost one draw call, and do the whole job a kama does
+       * at range — they break the leg line and add 22 cm of outline below the
+       * belt where every other clone has none. */
+      if (K.kama) {
+        /* An ARC's is to the knee and a Commander's stops at mid-thigh, which
+         * is the reference plates' own distinction and the one that keeps the
+         * roster's two kama-wearing bodies apart below the belt while the cape
+         * keeps them apart above it. */
+        const kl = K.kama === 'long' ? 1.34 : 1;
+        for (const [bearing, arc, len0] of [[0, 1.35, 0.300], [Math.PI, 1.55, 0.320],
+                                            [1.45, 0.85, 0.260], [-1.45, 0.85, 0.260]]) {
+          const len = len0 * kl;
+          kho.add(gear, arcGeo(g(0.132) * s, g(0.150) * s, len * s, arc, 0.012 * s, 7),
+            [0, -0.052 * s - len * s, 0], [0, bearing, 0], [1, 1, D]);
+        }
+      }
+      markSilhouette(kho.bake(hipsB.obj));
 
       /* ── shoulders, arms ── */
       for (const side of ['L', 'R']) {
@@ -4879,22 +5398,38 @@ export function buildTrooper(opts = {}) {
           const L = arm.length;
           // Shoulder bell on the humerus, so it rolls with the shoulder. The
           // sphere's pole is +Y, i.e. down the arm, so it is turned over.
-          const bell = new THREE.SphereGeometry(0.106 * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
+          const bell = new THREE.SphereGeometry(g(0.106) * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
           bell.scale(1.0, 1.02, 1.06);
-          ka.add(plate, bell, [0, 0.030 * s, 0], [Math.PI, 0, 0]);
+          // `bells: false` is the marksman's, and it is a REMOVAL rather than
+          // an addition on purpose — see TROOPER_KITS.marksman.
+          if (K.bells !== false) ka.add(plate, bell, [0, 0.030 * s, 0], [Math.PI, 0, 0]);
           // The rolled rim, ON the bell's own open edge — which is at y =
           // 0.049 and radius 0.096, measured off the sphere rather than
           // guessed. The band that was here sat at y = 0.086 with an outer
           // radius of 0.100 around an arm of radius 0.048: a white hoop
           // floating four centimetres off the bicep, while the bell itself
           // stayed a zero-thickness shell you could see the inside of.
-          ka.add(plate, bandGeo(0.0930 * s, 0.1095 * s, 0.0965 * s, 0.1095 * s, 0.032 * s, 14),
-            [0, 0.030 * s, 0], null, [1, 1, 1.06]);
-          ka.add(accent, arcGeo(0.1035 * s, 0.1035 * s, 0.028 * s, 1.9, 0.006 * s, 7), [0, 0.004 * s, 0], null, [1, 1, 1.06]);
+          if (K.bells !== false) {
+            ka.add(plate, bandGeo(g(0.0930) * s, g(0.1095) * s, g(0.0965) * s, g(0.1095) * s, 0.032 * s, 14),
+              [0, 0.030 * s, 0], null, [1, 1, 1.06]);
+          }
           // biceps plate over the suit
           ka.add(plate, limbPlate(arm, L * 0.34, L * 0.78, 3.1, { thick: 0.012 * s, seg: 7, gap: 0.005 * s }),
             [0, L * 0.34, 0]);
-          ka.bake(arm.obj);
+          /* The bell, its rim and the biceps plate are ONE material and ONE
+           * merged mesh, and they are the widest point of the figure — the
+           * line from the ear to the point of the shoulder that a human
+           * silhouette is read by first. Kept; the unit stripe under them is
+           * three centimetres of arc and is not, because the clavicle primary
+           * now carries that colour at the same height for nothing. */
+          markSilhouette(ka.bake(arm.obj));
+          /* THE UNIT STRIPE ROUND THE BELL IS GONE, and that is the accent
+           * pass paying for itself rather than adding to the bill. It was a
+           * 60-triangle arc per arm at the top of the humerus — 3 cm tall, on
+           * the one bone whose Kit is culled first, and measured at exactly
+           * zero pixels past thirty metres. The clavicle primary now carries
+           * the same colour at the same height and is never culled, so this
+           * was a hundred and twenty triangles of paint nobody ever saw. */
         }
         if (fore) {
           const kf = new Kit();
@@ -4953,6 +5488,27 @@ export function buildTrooper(opts = {}) {
 /* ── sith acolyte (saber duelist) ────────────────────────────────────── */
 
 /**
+ * A SPARRING PARTNER IS NOT A SITH, AND IT MEASURED 1.000 LIKE ONE.
+ *
+ * `acolyte` and `sparring` are the same call to this builder with the same
+ * arguments — same scale, same palette, same hood — so the dojo's 3-damage
+ * practice body and the roster's Sith duellist were byte-for-byte one figure
+ * and the flank IoU said exactly that: 1.000 at LOD 1. A player who has learnt
+ * to fear the black hood has learnt to fear the training dummy.
+ *
+ * The sparring kit takes the hood OFF (the one thing this head is read by) and
+ * puts a padded plastron on the chest, which is what a fencing partner wears
+ * and what nothing else on the roster wears.
+ */
+export const ACOLYTE_KITS = {
+  sith: {},
+  /* `frame` is radial girth, exactly as TROOPER_KITS uses it: a body wearing a
+   * padded practice jacket is a wider body, and the primaries are most of what
+   * survives the cull. */
+  sparring: { hood: false, plastron: true, frame: 1.12 },
+};
+
+/**
  * The one enemy the player fights face to face, so it gets the most work.
  *
  * Silhouette: a hood over a mask, a mantle, and a coat that breaks at the
@@ -4962,7 +5518,10 @@ export function buildTrooper(opts = {}) {
  * pauldrons, a studded belt with hanging tassets, and bracers.
  */
 export function buildAcolyte(opts = {}) {
+  /** See ACOLYTE_KITS. `hood` and `plastron` may also be passed directly. */
+  const K = { ...(ACOLYTE_KITS[opts.kit] || ACOLYTE_KITS.sith), ...opts };
   const S = opts.scale ?? 1.04;
+  const G = K.frame ?? 1, g = (v) => v * G;   // radial girth — see ACOLYTE_KITS
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const robe = clothMat(0x16171c, 0.94);
   const inner = clothMat(0x3a1a1e, 0.9);
@@ -5001,7 +5560,7 @@ export function buildAcolyte(opts = {}) {
     // them at range is mass distribution: the acolyte is narrow through the
     // chest and the limbs and carries all of its width low, in a coat that
     // flares to 46cm at the hem.
-    parts: { chestR: 0.146, shoulderR: 0.126, hipR: 0.124, waistR: 0.106,
+    parts: { chestR: g(0.146), shoulderR: g(0.126), hipR: g(0.124), waistR: g(0.106),
              armR: 0.042, clavR: 0.056, thighR: 0.080, neckR: 0.055, torsoDepth: 0.72 },
     seg: { torso: 16, arm: 14, leg: 10, clav: 10, neck: 10 },
     limbOpts: {
@@ -5054,23 +5613,29 @@ export function buildAcolyte(opts = {}) {
       // hemisphere pulled over the skull like a swim cap. Three's sphere puts
       // phi=0 at -X and phi=π/2 at +Z, so the shell has to start at 0.8π for
       // the 72° opening to land on the face rather than over one ear.
-      const cowl = new THREE.SphereGeometry(0.142 * s, 16, 12,
-        Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.72);
-      cowl.scale(1.02, 1.10, 1.14);
-      cowl.translate(0, 0.052 * s, -0.024 * s);
-      mesh(cowl, hoodMat, headObj);
-      // folds gathered at the back of the cowl, which is what stops it
-      // reading as a moulded plastic shell
-      const kc = new Kit();
-      kc.row(3, (i, t) => {
-        const a = (t - 0.5) * 1.5 + Math.PI;
-        kc.add(hoodMat, limbGeo(0.145 * s, 0.020 * s, 0.008 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
-          [Math.sin(a) * 0.116 * s, 0.170 * s, Math.cos(a) * 0.126 * s], [-2.6, a, 0]);
-      });
-      kc.bake(headObj);
-      // the rim of the opening, thickened so it reads as cloth
-      mesh(new THREE.TorusGeometry(0.112 * s, 0.018 * s, 5, 16), hoodMat, headObj,
-        [0, 0.100 * s, 0.020 * s], [-0.34, 0, 0]);
+      //
+      // KEPT AT RANGE. It is the single largest thing on this head and it was
+      // Kit-adjacent decoration, so past thirty metres the roster's hooded
+      // duellist was a bare 12 cm ball — the same ball a Jedi wears.
+      if (K.hood !== false) {
+        const cowl = new THREE.SphereGeometry(0.142 * s, 16, 12,
+          Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.72);
+        cowl.scale(1.02, 1.10, 1.14);
+        cowl.translate(0, 0.052 * s, -0.024 * s);
+        markSilhouette(mesh(cowl, hoodMat, headObj));
+        // folds gathered at the back of the cowl, which is what stops it
+        // reading as a moulded plastic shell
+        const kc = new Kit();
+        kc.row(3, (i, t) => {
+          const a = (t - 0.5) * 1.5 + Math.PI;
+          kc.add(hoodMat, limbGeo(0.145 * s, 0.020 * s, 0.008 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
+            [Math.sin(a) * 0.116 * s, 0.170 * s, Math.cos(a) * 0.126 * s], [-2.6, a, 0]);
+        });
+        kc.bake(headObj);
+        // the rim of the opening, thickened so it reads as cloth
+        markSilhouette(mesh(new THREE.TorusGeometry(0.112 * s, 0.018 * s, 5, 16), hoodMat, headObj,
+          [0, 0.100 * s, 0.020 * s], [-0.34, 0, 0]));
+      }
       k.bake(headObj);
     },
 
@@ -5082,9 +5647,6 @@ export function buildAcolyte(opts = {}) {
       k.add(robe, arcGeo(0.140 * s, 0.130 * s, 0.250 * s, 3.4, 0.016 * s, 9), [0, -0.020 * s, 0], null, [1, 1, 0.74]);
       k.add(robe, arcGeo(0.142 * s, 0.132 * s, 0.240 * s, 2.0, 0.020 * s, 7), [0, -0.014 * s, 0], [0, 0.42, 0], [1, 1, 0.74]);
       k.add(inner, arcGeo(0.136 * s, 0.128 * s, 0.180 * s, 1.1, 0.010 * s, 5), [0, 0.030 * s, 0], [0, -0.30, 0], [1, 1, 0.74]);
-      // Mantle across the shoulders — the cowl has to come from somewhere, and
-      // it is the one place the acolyte is allowed to be wide.
-      k.add(robe, bandGeo(0.112 * s, 0.196 * s, 0.082 * s, 0.120 * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
       k.add(leather, bandGeo(0.186 * s, 0.206 * s, 0.184 * s, 0.204 * s, 0.024 * s, 18), [0, 0.088 * s, 0], null, [1, 1, 0.78]);
       // studs on the collar band's own outer face — the band is 18.4cm across
       // and 14.7 deep after the torso squash, so a circle of 17.2 is inside it
@@ -5093,6 +5655,25 @@ export function buildAcolyte(opts = {}) {
         k.add(trim, stud, [Math.sin(a) * 0.210 * s, 0.100 * s, Math.cos(a) * 0.164 * s], [1.5708, a, 0]);
       });
       k.bake(chestB.obj);
+
+      /* ── the shoulders' OUTLINE ──
+       * "The one place the acolyte is allowed to be wide" — its own words for
+       * the mantle, and it was culled at thirty metres along with everything
+       * else, which is how a narrow-shouldered duellist in a bell-hemmed coat
+       * came to share 0.849 of a silhouette with a Jedi. */
+      const ko = new Kit();
+      ko.add(robe, bandGeo(g(0.112) * s, g(0.196) * s, g(0.082) * s, g(0.120) * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
+      /* THE PLASTRON. Padded, square, and worn over everything — the shape a
+       * fencing partner has and a Sith does not. See ACOLYTE_KITS. */
+      if (K.plastron) {
+        /* Sized to stand OUTSIDE the mantle it replaces — the first version was
+         * 32 cm across against a 39 cm mantle and 15 cm deep against a 30 cm
+         * torso, so it was entirely inside the outline it was meant to change
+         * and the pair moved 0.006. A padded jacket is bigger than the body. */
+        ko.add(inner, plateGeo(0.470 * s, 0.420 * s, 0.330 * s, 0.070 * s, 3), [0, 0.030 * s, 0.010 * s]);
+        ko.add(inner, bandGeo(0.180 * s, 0.212 * s, 0.180 * s, 0.212 * s, 0.240 * s, 14), [0, -0.090 * s, 0], null, [1, 1, 0.86]);
+      }
+      markSilhouette(ko.bake(chestB.obj));
 
       /* ── sash across the ribs ── */
       const ks = new Kit();
@@ -5132,6 +5713,24 @@ export function buildAcolyte(opts = {}) {
         m.userData.skirt = { angle: a, index: i };
       }
       kh.bake(hipsB.obj);
+
+      /* ── the coat's LINING, which is also its range proxy ──
+       *
+       * The eight panels above are the whole read on this body — "narrow
+       * shoulders over a bell", its own words — and eight separate meshes is
+       * eight draw calls, so tagging them all would cost more at range than
+       * the whole rest of the figure. A single lathe just inside them does the
+       * same job in one: at thirty metres it IS the bell, and up close it
+       * fills the eight gaps the panels leave, which is a fix in its own right
+       * — before this you could see a bare thigh between every pair of them.
+       *
+       * Cut 4 cm shorter than the panels and 2 cm inside their inner edge, so
+       * it is never the outermost surface at any bearing and cannot z-fight. */
+      const kl = new Kit();
+      kl.add(robe, limbGeo(0.500 * s, 0.126 * s, 0.196 * s, 16, false,
+        { rings: 4, bulge: 0, section: (th, t) => 1 + Math.pow(t, 1.3) * 0.05 * Math.cos(8 * th + Math.PI / 8) }),
+        [0, -0.030 * s, 0], [0, 0, Math.PI], [1, 1, 0.86]);
+      markSilhouette(kl.bake(hipsB.obj));
 
       /* ── pauldrons and bracers ── */
       for (const side of ['L', 'R']) {
@@ -5521,405 +6120,775 @@ export function buildWalker(opts = {}) {
   return { rig, cannons, palette: { shell, dark, mark, scorch, eye }, scale: S };
 }
 
-/* ── acklay-style beast (boss) ───────────────────────────────────────── */
+/* ── the menagerie: five creatures, five body plans ──────────────────── */
 
 /**
- * An animal, not a machine, and it has to read that way at forty metres: a
- * heavy ribbed carapace slung between six legs, a long neck carried forward
- * and up, and a narrow head with mandibles.
+ * "ALL YOUR MONSTERS LOOK THE SAME, SPHERE WITH SOME LEGS."
  *
- * The neck is the whole trick. walkerSkeleton hangs the head bone 0.6 units
- * BEHIND the body, which is why the old head was a sphere sitting entirely
- * inside the ribcage — invisible from every angle. The body is pulled back
- * and the neck built forward out of the head bone, so the skull clears the
- * shoulders and the AI's head tracking swings the whole neck with it.
+ * That is not hyperbole and it is not about detail. Past thirty metres
+ * `Enemy._applyLod` hides every mesh that is not a bone's PRIMARY, and the
+ * primaries of the old menagerie were: a trunk made of three scaled
+ * SphereGeometries, a skull made of a fourth, and sixteen identical tapering
+ * tubes. Every horn, frill, quill, scute, tooth and tail segment was Kit
+ * detail and therefore invisible at exactly the range the player was
+ * describing. The sentence is a precise description of the LOD-1 mesh.
+ *
+ * The other half is that all five stood on ONE skeleton. `walkerSkeleton`
+ * fixes the hip sockets at ±0.34 of scale, the femur at 0.62 and the tibia at
+ * 0.74 whatever the animal is, `_poseWalker` planted every foot 1.35 of scale
+ * out and poled every knee UP AND OUT — the insect bend — and the only things
+ * a "kind" could change were colours and a handful of proportion multipliers.
+ * Measured on the shipped five (tools/_creature.mjs): every one of them
+ * carried the centroid of its own silhouette at 0.50–0.54 of its height. Five
+ * animals, one mass distribution. That is the sphere.
+ *
+ * ── WHAT THE REFERENCE ACTUALLY ASKS FOR.
+ *
+ * `assets/reference/maps/colosseum/more arena 1.jpg` is the brief, because it
+ * is the test: three creatures in one frame at about forty metres, where no
+ * detail survives at all. What tells them apart there is
+ *
+ *   LEG COUNT, STANCE HEIGHT, MASS DISTRIBUTION, and the outline.
+ *
+ * The reek is a low dark BLOCK, wider than it is tall, with its head at knee
+ * height. The acklay is a tall splayed TRIPOD of thin lines with a small body
+ * hung in the middle of them and no visible head. The massiffs are squat
+ * commas. `assets/reference/units/creatures/` carries the rest and no two
+ * share a body plan: the rancor is a hunched biped whose arms reach the
+ * ground and whose head is fused into its shoulders, the wampa is an upright
+ * shaggy ape, the nexu is a long low cat with a whip tail twice its own body.
+ *
+ * So a plan below owns four things the old table could not express:
+ *
+ *   ITS SKELETON     `creatureSkeleton` builds the bones from the plan —
+ *                    how many limbs, where each one is mounted, how long each
+ *                    segment is, and whether a limb is a LEG or an ARM. The
+ *                    rancor and the gundark have two of each, the acklay six
+ *                    legs, the reek and the nexu four.
+ *   ITS STANCE       published on the built object and read by `_poseWalker`,
+ *                    so hip height, stride, foot lift and — the one that
+ *                    changes the outline most — the POLE each knee bends
+ *                    toward are the animal's own. A mammal's stifle points
+ *                    forward and its hock back; an acklay's knee stands above
+ *                    its own spine. That was one hard-coded vector for every
+ *                    creature in the game.
+ *   ITS SILHOUETTE   everything that makes the outline — horns, frill, crest,
+ *                    mane, tail, tusks — is merged into ONE extra mesh per
+ *                    bone and tagged `userData.silhouette`, which
+ *                    `_collectLodParts` now keeps. Two extra draw calls, and
+ *                    the animal still has horns at forty metres.
+ *   ITS VERBS        `moves`, read by `Enemy.beastMoveSet`. What an animal
+ *                    can DO is a property of what it is built like: a thing
+ *                    with a metre of horn carried in front of its eyes gores,
+ *                    a thing on six spindly legs stabs from outside your
+ *                    reach, a cat rakes. The archetype may override it (the
+ *                    rancor and the gundark do, in src/game/Levels.js) and
+ *                    then the archetype is the only authority for those two —
+ *                    a second copy here is exactly the defect HANDOFF §2.3
+ *                    is about, so those two plans deliberately carry none.
+ *
+ * ── WHAT DID NOT WORK, so the next person does not spend the afternoon.
+ *
+ *   Making the front legs SHORTER than the back to drop the reek's shoulders.
+ *   Every limb hangs off one `hips` bone at one height, so a short leg does
+ *   not lower the front — the IK clamps it straight and the foot hangs in the
+ *   air. The front end is dropped by pitching the TRUNK nose-down and putting
+ *   the shoulder hump on top of it, which is what the photograph shows
+ *   anyway.
+ *
+ *   Building the trunk from more spheres. A union of ellipsoids fills 0.785
+ *   of its own section however hard it is squashed — the same measurement
+ *   tools/checks/characters.mjs makes about humanoid torsos — so it reads as
+ *   a barrel from any angle. The trunk is ONE lathe now with a superellipse
+ *   section and gaussian swells at the shoulder and the haunch: fewer
+ *   triangles than the three spheres it replaces (392 against 532) and it is
+ *   not a body of revolution.
  */
-export function buildBeast(opts = {}) {
-  const S = opts.scale ?? 2.9;
-  const rig = new Rig(walkerSkeleton(S, 6), { scale: S });
-  // both of these were bare MeshStandardMaterials: an animal rendered in clay
-  const hide = hideMat(0x6d5a4a, 0.9);
-  const chitin = chitinMat(0x8f7a63, 0.55);
-  const belly = hideMat(0xa8907a, 0.92);
-  const eye = emissiveMat(0xffdd44, 2.6);
-  const tooth = boneMat(0xd8cdb4, 0.34);
 
-  /* ── carapace ── */
-  const body = rig.get('body');
-  const carapace = assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.66 * S, 16, 12); g.scale(0.74, 0.86, 1.28); return g; })(),
-      [0, 0.14 * S, -0.20 * S]],
-    // shoulder mass at the front, haunch at the back
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S, 10, 8); g.scale(0.94, 0.92, 0.9); return g; })(),
-      [0, 0.18 * S, 0.42 * S]],
-    [(() => { const g = new THREE.SphereGeometry(0.46 * S, 10, 8); g.scale(0.90, 0.94, 1.0); return g; })(),
-      [0, 0.12 * S, -0.86 * S]],
-  ], 'carapace');
-  const bm = mesh(carapace, chitin, body.obj);
-  body.primary = bm; body.parts.push(bm); body.radius = 0.7 * S;
-
-  const kb = new Kit();
-  // segmented plates over the spine, biggest over the shoulders
-  kb.row(7, (i, t) => {
-    const z = (0.42 - t * 1.30) * S;
-    const w = (0.60 - Math.abs(t - 0.35) * 0.34) * S;
-    kb.add(chitin, plateGeo(w * 0.82, 0.10 * S, 0.20 * S, 0.03 * S, 1), [0, (0.70 - Math.abs(t - 0.4) * 0.26) * S, z], [0.1, 0, 0]);
-    // a dorsal spine on each plate, tallest over the shoulder
-    const h = (0.42 - Math.abs(t - 0.3) * 0.30) * S;
-    kb.add(chitin, clawGeo(h, 0.075 * S, 0.012 * S, -0.5, 6, 3), [0, (0.72 - Math.abs(t - 0.4) * 0.26) * S, z], [0.5 - t * 0.5, 0, 0]);
-  });
-  // ribbed flanks and a soft underbelly
-  kb.pair((sx) => {
-    kb.row(5, (i, t) => kb.add(chitin, plateGeo(0.06 * S, 0.46 * S, 0.16 * S, 0.02 * S, 1),
-      [sx * (0.48 - Math.abs(t - 0.5) * 0.08) * S, 0.06 * S, (0.30 - t * 1.10) * S], [0, 0, sx * 0.24]));
-  });
-  kb.add(belly, (() => { const g = new THREE.SphereGeometry(0.46 * S, 12, 8); g.scale(0.90, 0.44, 1.30); return g; })(),
-    [0, -0.20 * S, -0.24 * S]);
-  kb.bake(body.obj);
-
-  /* ── neck and head ── */
-  const head = rig.get('head');
-  const neckParts = [];
-  // four segments swept up and forward out of the bone's origin
-  let x = 0, y = 0, z = 0, pitch = 0.55;
-  for (let i = 0; i < 4; i++) {
-    const len = (0.42 - i * 0.03) * S;
-    const r0 = (0.30 - i * 0.045) * S, r1 = (0.26 - i * 0.045) * S;
-    neckParts.push([limbGeo(len * 1.08, r0, r1, 10, true, { rings: 3, bulge: 0.06, capN: 2, capY0: 0.3, capY1: 0.3 }),
-      [x, y, z], [pitch, 0, 0]]);
-    x += 0; y += Math.cos(pitch) * len; z += Math.sin(pitch) * len;
-    pitch += 0.30;
-  }
-  // skull at the end of it: a long wedge, jaw underneath, brow over the eyes
-  const hx = 0, hy = y, hz = z;
-  neckParts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 10); g.scale(0.80, 0.72, 1.55); return g; })(),
-    [hx, hy + 0.02 * S, hz + 0.30 * S], [0.32, 0, 0]]);
-  neckParts.push([plateGeo(0.30 * S, 0.14 * S, 0.44 * S, 0.05 * S, 1), [hx, hy - 0.12 * S, hz + 0.36 * S], [0.36, 0, 0]]);
-  neckParts.push([plateGeo(0.36 * S, 0.10 * S, 0.26 * S, 0.03 * S, 1), [hx, hy + 0.16 * S, hz + 0.18 * S], [0.28, 0, 0]]);
-  const skull = assemble(neckParts, 'skull');
-  const hm = mesh(skull, hide, head.obj);
-  head.primary = hm; head.parts.push(hm); head.radius = 0.6 * S;
-
-  const kh = new Kit();
-  kh.pair((sx) => {
-    // eye set under the brow, and the horn above it
-    kh.add(eye, new THREE.SphereGeometry(0.052 * S, 7, 6), [sx * 0.155 * S, hy + 0.14 * S, hz + 0.20 * S]);
-    kh.add(chitin, clawGeo(0.30 * S, 0.050 * S, 0.010 * S, -0.7, 6, 3),
-      [sx * 0.13 * S, hy + 0.20 * S, hz + 0.06 * S], [-0.5, sx * 0.25, 0]);
-    // mandibles sweeping forward and in
-    kh.add(chitin, clawGeo(0.52 * S, 0.070 * S, 0.014 * S, 0.85, 6, 4),
-      [sx * 0.17 * S, hy - 0.13 * S, hz + 0.30 * S], [1.30, -sx * 0.30, 0]);
-    // teeth along the jaw
-    kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.115 * S, hy - 0.20 * S, hz + (0.22 + t * 0.34) * S], [0.5, 0, 0]));
-    // the upper row hangs from the palate, below the skull's own shell — at
-    // hy - 0.05 every one of these was inside the head
-    kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.09 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
-      [sx * 0.115 * S, hy - 0.09 * S, hz + (0.24 + t * 0.32) * S], [2.55, 0, 0]));
-    // neck plates
-    kh.row(3, (i, t) => kh.add(chitin, plateGeo(0.10 * S, 0.26 * S, 0.10 * S, 0.03 * S, 1),
-      [sx * 0.24 * S, (0.18 + t * 0.52) * S, (0.10 + t * 0.34) * S], [0.6, 0, sx * 0.3]));
-  });
-  kh.bake(head.obj);
-
-  /* ── legs ── */
-  for (let i = 0; i < 6; i++) {
-    for (const [name, r0, r1, mat, bulge] of [[`hipL${i}`, 0.13, 0.105, chitin, 0.08], [`femur${i}`, 0.12, 0.075, hide, 0.16],
-                                              [`tibia${i}`, 0.078, 0.045, chitin, 0.12], [`tarsus${i}`, 0.048, 0.018, chitin, 0.05]]) {
-      const b = rig.get(name);
-      if (!b) continue;
-      const m = mesh(limbGeo(b.length, r0 * S, r1 * S, 8, true, { rings: 4, bulge, bulgeAt: 0.26, capN: 3 }), mat, b.obj);
-      m.userData.limb = { r0: r0 * S, r1: r1 * S, seg: 8 };
-      b.parts.push(m); b.primary = m; b.radius = r0 * S;
-    }
-    const hip = rig.get(`hipL${i}`);
-    if (hip) {
-      const k = new Kit();
-      k.add(chitin, new THREE.SphereGeometry(0.140 * S, 8, 6), [0, hip.length, 0]);
-      k.bake(hip.obj);
-    }
-    const femur = rig.get(`femur${i}`);
-    if (femur) {
-      const k = new Kit();
-      const L = femur.length;
-      // a chitin plate over the outside of the thigh, and the knee spur
-      k.add(chitin, limbPlate(femur, L * 0.10, L * 0.70, 2.6, { thick: 0.022 * S, seg: 7, gap: 0.008 * S }), [0, L * 0.10, 0]);
-      k.add(chitin, clawGeo(0.30 * S, 0.055 * S, 0.012 * S, -0.55, 5, 3), [0, L * 0.96, 0], [-0.9, 0, 0]);
-      k.bake(femur.obj);
-    }
-    const tibia = rig.get(`tibia${i}`);
-    if (tibia) {
-      const k = new Kit();
-      const L = tibia.length;
-      k.add(chitin, limbPlate(tibia, L * 0.08, L * 0.62, 2.4, { thick: 0.018 * S, seg: 7, gap: 0.006 * S }), [0, L * 0.08, 0]);
-      k.bake(tibia.obj);
-    }
-    const tarsus = rig.get(`tarsus${i}`);
-    if (tarsus) {
-      const k = new Kit();
-      const L = tarsus.length;
-      // the hooked claw it actually walks on
-      k.add(chitin, clawGeo(0.46 * S, 0.046 * S, 0.010 * S, 1.15, 6, 4), [0, L * 0.92, 0], [0.1, 0, 0]);
-      k.add(chitin, clawGeo(0.16 * S, 0.030 * S, 0.008 * S, 0.7, 5, 3), [0, L * 0.88, 0], [-1.5, 0, 0]);
-      k.bake(tarsus.obj);
+/**
+ * The bones, from the plan. Same NAMES as `walkerSkeleton` — `hips`, `body`,
+ * `head`, and `hipL{i}`/`femur{i}`/`tibia{i}`/`tarsus{i}` per limb — because
+ * those names are load-bearing all the way down: Ragdoll's joint table is
+ * keyed on the prefixes, `Enemy.capsules` walks the bone list, `Actor.cut`
+ * reparents subtrees, and `_poseWalker` solves `femur{i}`→`tibia{i}`. What
+ * changes is every NUMBER, which is the part that was shared and should never
+ * have been.
+ *
+ * An ARM is parented to `body` rather than to `hips`, so it rides the trunk's
+ * pitch the way a real shoulder does; a LEG hangs off the hips.
+ */
+function creatureSkeleton(S, P) {
+  const s = S;
+  const out = [
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'body', parent: 'hips', offset: [0, P.trunk[0] * s, P.trunk[1] * s], length: P.trunk[2] * s, rest: [0, 1, 0], role: 'core' },
+    { name: 'head', parent: 'body', offset: [0, P.headAt[0] * s, P.headAt[1] * s], length: 0.4 * s, rest: [0, 1, 0], role: 'head' },
+  ];
+  let i = 0;
+  for (const L of P.limbs) {
+    for (const side of [1, -1]) {
+      const arm = L.role === 'arm';
+      const socket = 0.10 * s;
+      /* `L.role` IS the bone role — the plan has said 'leg' or 'arm' since the
+       * menagerie was built, and `Rig` and `Enemy.severanceOf` now read the same
+       * word rather than a second table keyed on `hipL2`. Which is why a rancor,
+       * whose two arms hang off `body` and whose two legs hang off `hips`, is
+       * priced as a biped with arms and an acklay as a hexapod, off one loop. */
+      out.push({ name: `hipL${i}`, parent: arm ? 'body' : 'hips',
+        offset: [L.x * s * side, L.y * s, L.z * s], length: socket,
+        rest: [side, arm ? -0.35 : 0.2, 0], role: L.role });
+      /* THE REST DIRECTIONS ARE THE ANIMAL'S TOO, and they are not cosmetic.
+       * `_poseWalker` solves femur→tibia every frame up to 62 m, but past that
+       * the solve stops and the body keeps whatever pose it last held — and on
+       * the first frame of a spawn there is no last pose, only these. A rest
+       * pair authored for an insect (femur up and OUT to a knee above the
+       * back, tibia straight down) was applied to a bull and a cat, which is
+       * the same defect as the shared pole vector one layer down. */
+      out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, socket, 0],
+        length: L.femur * s, rest: L.femurRest.map((v, n) => (n === 0 ? v * side : v)), role: L.role });
+      out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, L.femur * s, 0],
+        length: L.tibia * s, rest: L.tibiaRest.map((v, n) => (n === 0 ? v * side : v)), role: L.role });
+      out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, L.tibia * s, 0],
+        length: L.tarsus * s, rest: arm ? [0, -0.9, 0.3] : [0, -0.4, 0.6], role: L.role });
+      i++;
     }
   }
-  return { rig, palette: { hide, chitin, belly, eye }, scale: S };
+  return out;
 }
 
-/* ── the menagerie: four-legged arena beasts ─────────────────────────── */
-
 /**
- * FOUR CREATURES OUT OF ONE BUILDER, and the reason they are one builder is the
- * reason they read as different animals: everything that differs between them
- * is a PROPORTION, and proportion is what the eye actually uses to tell one
- * animal from another at fifty metres.
+ * THE FIVE PLANS.
  *
- *   the CHARGER   short, deep and front-heavy: shoulder mass at 1.45× the
- *                 haunch, legs at 0.78 of standard length, and a horn boss and
- *                 frill carried out in front of the eyes. Everything about the
- *                 silhouette says the weight is at the head end and it is
- *                 coming at you.
- *   the STALKER   long, low and back-heavy: the body stretched to 1.5× and
- *                 slung at 0.62 of the charger's hip height, legs at 1.06, a
- *                 quill mane over the shoulders and a tail as long as the body
- *                 again. Everything says it is about to leave the ground.
- *   the BRUTE     the largest thing on four legs in the game: shoulders at
- *                 1.95× the haunch on legs at 0.86, a skull half as wide again
- *                 as the charger's, and a spine of scutes. Its silhouette is a
- *                 WALL, and the whole of its answer is that you cannot be
- *                 beside it — see the slam in src/game/Enemy.js.
- *   the POUNCER   all leg: 1.24 of standard on a body barely longer than the
- *                 charger's, shoulders forward at 1.35 for the gather, and the
- *                 stalker's quill mane. It reads as coiled, which is what it
- *                 is: it crosses twelve metres in one bound.
+ * Fields, and every one of them was a shared constant before:
  *
- * ── AND THE DIFFERENCES ARE A TABLE, not a boolean.
- *
- * This was `const heavy = opts.kind !== 'stalker'` and twenty-three `heavy ? a
- * : b` expressions, which is a builder that can express exactly two animals and
- * whose third row has to be a third branch on every one of those lines. Every
- * one of the twenty-three is now a FIELD of QUADRUPED_KINDS below, so a new
- * creature is a row of numbers and the geometry underneath is untouched.
- *
- * The charger's and the stalker's rows hold exactly the values their branches
- * held, so both animals emit the geometry they always emitted — checked, not
- * assumed: tools/checks/beasts.mjs fingerprints the built vertices of every
- * kind against the shipped pair.
- *
- * All four stand on `walkerSkeleton(S, 4)`, so all four inherit the quadruped
- * gait, the sever points, the ragdoll and `Enemy.capsules`'s four-leg case for
- * free. The acklay's six-legged builder is left alone: it is the one creature
- * whose whole identity is that it has six legs.
- *
- * The head goes on the HEAD BONE and is built FORWARD out of it, the same
- * trick and for the same reason `buildBeast` documents: walkerSkeleton hangs
- * that bone 0.6 units behind the body, so a skull placed at its origin is
- * inside the ribcage and invisible from every angle.
+ *   hip      hip-bone height above the ground, ×scale. THE first read: the
+ *            reek stands at 0.88 and the acklay at 1.62, where both used to
+ *            stand at 1.5–1.6.
+ *   trunk    [y, z, length] of the body bone off the hips, ×scale.
+ *   pitch    trunk pitch, radians. 0 is a level quadruped spine along +Z;
+ *            1.02 stands the rancor up on its hind legs.
+ *   girth    trunk radius ×scale, and `swells` the two masses on it as
+ *            [where along it, how much, how wide] — limbGeo's own gaussians.
+ *   limbs    the pairs, each expanded left and right. `role` is 'leg' or
+ *            'arm', `plant` is where the foot goes down (×scale, off the
+ *            centreline), `femurRest`/`tibiaRest` are the bind pose, and
+ *            `pole` is where the joint bends TOWARD — the single number that
+ *            most changes the outline. An acklay poles up and out to a knee
+ *            above its own back; a reek's foreleg poles forward to an elbow
+ *            and its hind leg backward to a hock.
+ *   step/lift stride length and foot clearance, ×scale.
+ *   rear     metres of hip travel per unit of an attack's `rise`, ×scale.
+ *   moves    the verbs its anatomy affords. See the header.
  */
-export const QUADRUPED_KINDS = {
+export const CREATURE_PLANS = {
+  /**
+   * THE REEK — `assets/reference/units/creatures/Reek.jpeg`.
+   *
+   * Everything about it is at ground level. The photograph is a wall of
+   * shoulder with a head hanging off the FRONT of it at the height of its own
+   * knees, three horns and a bony frill carried in front of the eyes, and
+   * legs so short the belly is barely a metre off the sand. It reads at forty
+   * metres as a dark block wider than it is tall (`more arena 1.jpg`), which
+   * is why the hip is 0.88 where the old shared value was 1.6: at 2.4 scale
+   * that is 2.11 m at the hip instead of 3.84, and 3.84 m is a giraffe.
+   */
   charger: {
     hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
-    long: 1.0, front: 1.45, leg: 0.78, back: 'scutes', face: 'horned', foot: 'hoof',
-    tailN: 4, tailReach: 0.9, tailR: 0.13, tailPitch: 0.55, tailCurl: 0.10,
-    neckSegs: 3, neckLen: 0.40, neckR: 0.30, neckPitch: 0.32, neckCurl: -0.10,
-    skull: [0.98, 0.86, 1.24], jaw: 0.38,
+    hip: 0.74, trunk: [0.16, -0.20, 1.24], pitch: -0.13, girth: 0.44,
+    swells: [[0.74, 0.52, 0.24], [0.24, 0.24, 0.30]],
+    section: { n0: 2.8, n1: 3.4, back: 0.02, keel: 0.05, waist: 0.06 },
+    headAt: [0.20, 1.10], neck: [2, 0.20, 0.28, -0.44, -0.10], head: 'horned',
+    back: 'scutes', tail: [3, 0.46, 0.13, 0.18, -0.16],
+    limbs: [
+      // fore: thick, poled FORWARD so the elbow leads — a bull's column leg
+      { role: 'leg', x: 0.40, y: 0.06, z: 0.74, plant: 0.60, femur: 0.42, tibia: 0.46, tarsus: 0.15,
+        girth: 1.16, pole: [0.30, 0.55, 1.30], foot: 'hoof',
+        femurRest: [0.24, -0.86, 0.36], tibiaRest: [0.06, -0.96, -0.24] },
+      // hind: the hock points back, which is the other half of a mammal's leg
+      { role: 'leg', x: 0.42, y: 0.04, z: -0.60, plant: 0.62, femur: 0.42, tibia: 0.46, tarsus: 0.15,
+        girth: 1.0, pole: [0.30, 0.55, -1.30], foot: 'hoof',
+        femurRest: [0.24, -0.86, -0.36], tibiaRest: [0.06, -0.96, 0.24] },
+    ],
+    step: 0.80, lift: 0.28, rear: 0.34,
+    /* Its verbs, and both of the new ones come off the head. A metre of horn
+     * carried in front of the eyes is not a claw: it GORES, which is a
+     * committed run that aims when the drive begins, and it TOSSES, which is
+     * the same horn hooking under you — the biggest upward impulse in the
+     * game and the only attack that answers "I am standing in front of it"
+     * with height rather than with damage. */
+    moves: ['gore', 'toss', 'charge'],
   },
+
+  /**
+   * THE NEXU — `assets/reference/units/creatures/Nexu more.webp`.
+   *
+   * Long, low and horizontal: a body twice the length of the reek's at two
+   * thirds of its height, a quilled mane raked back off the shoulders, and a
+   * tail as long again as the animal that whips out behind it. Four eyes in
+   * two pairs, and a mouth that is wider than the skull it is in. The tail is
+   * 2.9 of scale — nearly five metres on a 1.7 body — because at range the
+   * tail IS the read: a low animal with a horizontal line trailing off it
+   * cannot be mistaken for anything else on the sand.
+   */
   stalker: {
     hide: 0x7a3a2c, plate: 0x4a3128, belly: 0xa8846a, eye: 0x66ff9a,
-    long: 1.5, front: 0.90, leg: 1.06, back: 'mane', face: 'fanged', foot: 'claw',
-    tailN: 7, tailReach: 2.2, tailR: 0.10, tailPitch: 0.18, tailCurl: -0.06,
-    neckSegs: 4, neckLen: 0.34, neckR: 0.20, neckPitch: 0.10, neckCurl: 0.02,
-    skull: [0.66, 0.62, 1.72], jaw: 0.48,
+    hip: 0.86, trunk: [0.12, -0.60, 1.72], pitch: 0.05, girth: 0.33,
+    swells: [[0.78, 0.34, 0.22], [0.26, 0.26, 0.28]],
+    section: { n0: 2.4, n1: 2.8, back: 0.04, keel: 0.02, waist: 0.10 },
+    headAt: [0.20, 1.18], neck: [3, 0.24, 0.20, 0.06, 0.02], head: 'fanged',
+    back: 'mane', tail: [7, 2.40, 0.085, 0.26, -0.10],
+    limbs: [
+      { role: 'leg', x: 0.26, y: 0.04, z: 0.86, plant: 0.34, femur: 0.50, tibia: 0.54, tarsus: 0.16,
+        girth: 0.92, pole: [0.22, 0.50, 1.15], foot: 'claw',
+        femurRest: [0.10, -0.88, 0.42], tibiaRest: [0.04, -0.94, -0.30] },
+      { role: 'leg', x: 0.28, y: 0.02, z: -0.74, plant: 0.36, femur: 0.52, tibia: 0.56, tarsus: 0.16,
+        girth: 0.96, pole: [0.22, 0.60, -1.20], foot: 'claw',
+        femurRest: [0.10, -0.82, -0.50], tibiaRest: [0.04, -0.92, 0.36] },
+    ],
+    step: 1.20, lift: 0.44, rear: 0.42,
+    /* A cat does not swing a claw once. The RAKE is the shortest attack in the
+     * game — 0.32 s to the hit against the sweep's 0.55 — and it is worth two
+     * thirds of the damage, so what makes it dangerous is that it arrives
+     * before you have finished reading it. */
+    moves: ['rake', 'pounce', 'charge'],
   },
-  /* THE BRUTE. Grey and unpainted, because it is the only creature in the
-   * roster whose read is MASS rather than markings — a shape this big does not
-   * need a colour to be recognised, and a bright one would fight the arena
-   * sand. Shoulders at 1.95 against the charger's 1.45 with the same haunch,
-   * so the front half is nearly half again as wide; the skull is 1.30 across
-   * where the charger's is 0.98; the tail is a stub, because a tail is a
-   * counterweight for something that runs and this does not run. */
+
+  /**
+   * THE RANCOR — `assets/reference/units/creatures/Rancor.png` and
+   * `Rancor  more.jpg`.
+   *
+   * A BIPED, which is the whole point of rebuilding it: it was a four-legged
+   * animal with the biggest numbers in the table, so the largest thing on the
+   * sand had the same outline as the smallest. The reference is not ambiguous
+   * — two massive hind legs, two arms long enough to put the knuckles on the
+   * ground, a head with no neck at all fused straight into the shoulders, and
+   * a tail. It stands 1.15 of scale at the hip and pitches its trunk up 1.02
+   * radians, so at 3.4 scale the crown is near six metres: a tower, against
+   * the reek's block.
+   *
+   * `moves` is deliberately absent — src/game/Levels.js declares the slam and
+   * argues for it there, and a copy here would be the twin HANDOFF §2.3 is
+   * about.
+   */
   brute: {
     hide: 0x6b6152, plate: 0x585044, belly: 0x8a7f6d, eye: 0xffd24a,
-    long: 1.05, front: 1.95, leg: 0.86, back: 'scutes', face: 'fanged', foot: 'claw',
-    tailN: 3, tailReach: 0.6, tailR: 0.15, tailPitch: 0.70, tailCurl: 0.14,
-    neckSegs: 2, neckLen: 0.34, neckR: 0.38, neckPitch: 0.42, neckCurl: -0.16,
-    skull: [1.30, 1.06, 1.10], jaw: 0.46,
+    hip: 0.92, trunk: [0.10, -0.10, 0.74], pitch: 1.02, girth: 0.54,
+    swells: [[0.80, 0.44, 0.26], [0.30, 0.20, 0.34]],
+    section: { n0: 2.6, n1: 3.2, back: 0.03, keel: 0.06, waist: 0.04 },
+    headAt: [0.64, 0.36], neck: [1, 0.14, 0.34, 0.34, 0], head: 'tusked',
+    back: 'ridge', tail: [5, 1.30, 0.16, 0.10, -0.14],
+    limbs: [
+      /* The hind legs, and they are plantigrade: the reference stands flat on
+       * a broad foot rather than up on a hock, so the pole is FORWARD and low
+       * and the tarsus is long enough to be a sole. */
+      { role: 'leg', x: 0.34, y: 0.02, z: -0.10, plant: 0.46, femur: 0.52, tibia: 0.54, tarsus: 0.26,
+        girth: 1.30, pole: [0.34, 0.60, 1.20], foot: 'paw',
+        femurRest: [0.16, -0.90, 0.34], tibiaRest: [0.04, -0.96, -0.26] },
+      /* The arms. Parented to `body`, mounted 0.66 up the trunk and 0.30
+       * forward of it, and 1.40 of scale of reach between shoulder and claw —
+       * long enough that the knuckles touch the sand when it hunches, which
+       * is the pose every photograph of one is in. */
+      { role: 'arm', x: 0.46, y: 0.40, z: 0.24, femur: 0.46, tibia: 0.48, tarsus: 0.22,
+        girth: 1.05, pole: [0.55, -0.10, -0.90], foot: 'talon',
+        femurRest: [0.16, -0.96, 0.22], tibiaRest: [0.06, -0.98, 0.16],
+        hand: [0.62, -0.22, 0.66] },
+    ],
+    step: 0.72, lift: 0.34, rear: 0.30,
   },
-  /* THE POUNCER. Legs at 1.24 — longer than anything else here, including the
-   * stalker — over a body only a quarter longer than the charger's, which is
-   * the proportion that reads as "about to jump" rather than "running". The
-   * mane is the stalker's, and that is deliberate: two predators in the same
-   * arena SHOULD share a family look, and everything below the shoulder tells
-   * them apart. */
+
+  /**
+   * THE GUNDARK — built off `assets/reference/units/creatures/wampa.jpg` and
+   * `Wampas preyed on tauntauns.webp`, which are the reference set's other
+   * upright body and a completely different one from the rancor's.
+   *
+   * Where the rancor is a hunched tower with its head thrown forward, this is
+   * a barrel standing straight up with the head sunk BETWEEN the shoulders,
+   * arms held high and forward rather than hanging, two horns curving
+   * sideways out of the skull, and a coat of shaggy fringes that breaks the
+   * outline into a fur silhouette instead of a smooth one. Two thirds the
+   * rancor's height and half again the reek's, so the three read as three
+   * sizes as well as three shapes.
+   */
   pouncer: {
     hide: 0x8a7b5c, plate: 0x6b4a2c, belly: 0xb0a084, eye: 0xff6a2a,
-    long: 1.25, front: 1.35, leg: 1.24, back: 'mane', face: 'fanged', foot: 'claw',
-    tailN: 5, tailReach: 1.1, tailR: 0.09, tailPitch: 0.30, tailCurl: -0.02,
-    neckSegs: 3, neckLen: 0.32, neckR: 0.24, neckPitch: 0.20, neckCurl: -0.04,
-    skull: [0.82, 0.78, 1.36], jaw: 0.42,
+    hip: 0.88, trunk: [0.08, -0.04, 0.62], pitch: 1.32, girth: 0.46,
+    swells: [[0.76, 0.40, 0.30], [0.28, 0.18, 0.30]],
+    section: { n0: 2.4, n1: 3.0, back: 0.02, keel: 0.04, waist: 0.08 },
+    headAt: [0.62, 0.16], neck: [1, 0.12, 0.30, 0.16, 0], head: 'horned-ape',
+    back: 'shag', tail: [0, 0, 0, 0, 0],
+    limbs: [
+      { role: 'leg', x: 0.30, y: 0.02, z: 0.02, plant: 0.42, femur: 0.50, tibia: 0.52, tarsus: 0.20,
+        girth: 1.20, pole: [0.36, 0.70, 1.10], foot: 'paw',
+        femurRest: [0.18, -0.86, 0.40], tibiaRest: [0.04, -0.94, -0.30] },
+      { role: 'arm', x: 0.44, y: 0.36, z: 0.14, femur: 0.44, tibia: 0.46, tarsus: 0.20,
+        girth: 1.00, pole: [0.60, 0.10, -0.90], foot: 'talon',
+        femurRest: [0.20, -0.86, 0.42], tibiaRest: [0.06, -0.80, 0.58],
+        // held UP and forward — the wampa's reaching pose, not the rancor's hang
+        hand: [0.66, 0.10, 0.78] },
+    ],
+    step: 0.66, lift: 0.42, rear: 0.44,
+  },
+
+  /**
+   * THE ACKLAY — `assets/reference/units/creatures/Acklay more.webp` and
+   * `maps/colosseum/fighting monster in arena.jpg`.
+   *
+   * SIX legs, and the body is the small part. In the photograph the trunk is
+   * a shell about a metre across hung in the middle of legs three times its
+   * length, splayed so wide that the animal's footprint is more than twice
+   * its own body, with the knees standing above the back and the legs coming
+   * to POINTS in the sand — there is no foot on the end of an acklay's leg.
+   * The head hangs forward and DOWN off the front of the shell on a short
+   * neck, under a flat crest that sweeps back over the shoulders.
+   *
+   * The old one had this backwards: a 1.9 m carapace on legs planted 1.35 of
+   * scale out, at the same hip height as everything else, with the neck
+   * sweeping UP. Here the girth is 0.50 against legs of 2.05, the feet plant
+   * at 1.90 of scale — the widest stance in the game by half again — and the
+   * hip stands at 1.62. It is the tripod from `more arena 1.jpg`.
+   */
+  acklay: {
+    hide: 0x6d5a4a, plate: 0x8f7a63, belly: 0xa8907a, eye: 0xffdd44,
+    hip: 1.62, trunk: [0.14, -0.30, 1.06], pitch: 0.06, girth: 0.50,
+    swells: [[0.72, 0.30, 0.26], [0.28, 0.24, 0.30]],
+    section: { n0: 3.0, n1: 3.6, back: 0.04, keel: 0.08, waist: 0.05 },
+    headAt: [0.06, 0.86], neck: [3, 0.30, 0.22, -0.30, -0.10], head: 'mandibles',
+    back: 'ridge', tail: [0, 0, 0, 0, 0],
+    limbs: [
+      { role: 'leg', x: 0.50, y: 0.10, z: 0.78, plant: 1.18, femur: 0.95, tibia: 1.05, tarsus: 0.52,
+        girth: 0.62, pole: [1.40, 3.10, 0.50], foot: 'spike',
+        femurRest: [0.62, 0.72, 0.30], tibiaRest: [0.34, -0.94, -0.10] },
+      { role: 'leg', x: 0.54, y: 0.06, z: 0.02, plant: 1.36, femur: 0.99, tibia: 1.09, tarsus: 0.52,
+        girth: 0.66, pole: [1.50, 3.20, 0], foot: 'spike',
+        femurRest: [0.70, 0.66, 0], tibiaRest: [0.38, -0.92, 0] },
+      { role: 'leg', x: 0.50, y: 0.02, z: -0.72, plant: 1.18, femur: 0.95, tibia: 1.05, tarsus: 0.52,
+        girth: 0.62, pole: [1.40, 3.10, -0.50], foot: 'spike',
+        femurRest: [0.62, 0.72, -0.30], tibiaRest: [0.34, -0.94, 0.10] },
+    ],
+    step: 1.40, lift: 0.52, rear: 0.26,
+    /* The REACH problem, stated as two moves. The STAB is a foreleg driven
+     * out from 3.8 m — further than anything else in the game can hit from,
+     * and further than the player's own blade — and the SNATCH is the
+     * mandibles closing and DRAGGING you in, which is the only attack on the
+     * field whose impulse points at the animal instead of away from it. */
+    moves: ['stab', 'snatch', 'sweep'],
   },
 };
 
-export function buildQuadruped(opts = {}) {
-  const S = opts.scale ?? 2.2;
-  const K = QUADRUPED_KINDS[opts.kind] || QUADRUPED_KINDS.charger;
-  const rig = new Rig(walkerSkeleton(S, 4), { scale: S });
-  const hide = hideMat(opts.hide ?? K.hide, 0.92);
-  const plate = chitinMat(opts.plate ?? K.plate, 0.52);
-  const belly = hideMat(opts.belly ?? K.belly, 0.94);
-  const eye = emissiveMat(opts.eye ?? K.eye, 2.8);
-  const tooth = boneMat(0xd6cbb0, 0.34);
+/**
+ * Where each foot plants, how the joint bends, and how high the ankle rides —
+ * derived from the plan rather than typed a second time, because
+ * `_poseWalker` needs exactly the numbers `creatureSkeleton` built from.
+ *
+ * `ankle` is the one that was silently wrong for years. `solveIK` puts the
+ * TIBIA's tip on the target and the tarsus hangs on past it, so planting the
+ * target on the ground buries the whole foot: on a 2.4-scale walker that is
+ * 0.72 m of leg below the sand. The ankle rides a fraction of the tarsus
+ * above the floor instead — nearly all of it for a leg that comes down on a
+ * point or a hoof, a third for a plantigrade sole that lies flat.
+ */
+const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, talon: 0.30 };
 
-  /* ── the barrel ── */
-  const body = rig.get('body');
-  const LONG = K.long;                             // how far the body is drawn out
-  const FRONT = K.front;                           // shoulder mass over haunch
-  const barrel = assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.60 * S, 14, 10); g.scale(0.80, 0.86, 1.20 * LONG); return g; })(),
-      [0, 0.10 * S, -0.10 * S]],
-    // shoulders forward, haunches back — the two masses a quadruped reads as
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S * FRONT, 10, 8); g.scale(0.94, 0.96, 0.92); return g; })(),
-      [0, 0.16 * S, 0.36 * S * LONG]],
-    [(() => { const g = new THREE.SphereGeometry(0.44 * S * (2.35 - FRONT), 10, 8); g.scale(0.92, 0.94, 0.96); return g; })(),
-      [0, 0.12 * S, -0.62 * S * LONG]],
-  ], 'barrel');
-  const bm = mesh(barrel, hide, body.obj);
-  body.primary = bm; body.parts.push(bm); body.radius = 0.62 * S;
-
-  const kb = new Kit();
-  if (K.back === 'scutes') {
-    // armour scutes down the spine, heaviest over the shoulder
-    kb.row(6, (i, t) => kb.add(plate, plateGeo((0.56 - Math.abs(t - 0.3) * 0.30) * S, 0.09 * S, 0.20 * S, 0.03 * S, 1),
-      [0, (0.60 - Math.abs(t - 0.35) * 0.16) * S, (0.44 - t * 1.24) * S], [0.08, 0, 0]));
-  } else {
-    /* THE MANE, and it is the stalker's whole read at range. Quills raked back
-     * off the shoulders in three rows: a low animal with a smooth back is a
-     * dog, and a low animal with a crest is a predator. */
-    kb.row(3, (i, t) => kb.pair((sx) => kb.add(plate, clawGeo((0.62 - t * 0.16) * S, 0.045 * S, 0.008 * S, -0.35, 6, 3),
-      [sx * (0.06 + t * 0.14) * S, 0.54 * S, (0.44 - t * 0.42) * S], [-0.85, sx * (0.1 + t * 0.3), sx * (0.2 + t * 0.5)])));
-  }
-  // ribbed flanks and a soft belly — the one place on either animal a blade
-  // meets flesh rather than plate
-  kb.pair((sx) => kb.row(4, (i, t) => kb.add(plate, plateGeo(0.05 * S, 0.40 * S, 0.15 * S, 0.02 * S, 1),
-    [sx * 0.46 * S, 0.02 * S, (0.30 - t * 1.00 * LONG) * S], [0, 0, sx * 0.2])));
-  kb.add(belly, (() => { const g = new THREE.SphereGeometry(0.44 * S, 12, 8); g.scale(0.88, 0.40, 1.24 * LONG); return g; })(),
-    [0, -0.24 * S, -0.14 * S]);
-
-  /* THE TAIL, on the body bone rather than a bone of its own: the skeleton has
-   * no tail chain, and a tail welded to the hips would swing with the hips,
-   * which is what a tail does. Six tapering segments, and the stalker's is as
-   * long again as its body. */
-  {
-    const n = K.tailN;
-    const reach = K.tailReach * S;
-    let z = -0.86 * S * LONG, y = 0.10 * S, pitch = K.tailPitch;
-    for (let i = 0; i < n; i++) {
-      const len = reach / n;
-      const r0 = K.tailR * S * (1 - i / (n + 1.5));
-      kb.add(hide, limbGeo(len * 1.12, r0, r0 * 0.78, 7, true, { rings: 2, capN: 2 }),
-        [0, y, z], [Math.PI / 2 + pitch, 0, 0]);
-      z -= Math.cos(pitch) * len; y += Math.sin(pitch) * len;
-      pitch += K.tailCurl;
+function stanceOf(S, P) {
+  const limbs = [];
+  for (const L of P.limbs) {
+    for (const side of [1, -1]) {
+      limbs.push({
+        arm: L.role === 'arm',
+        x: (L.plant ?? L.x) * S * side,
+        z: L.z * S,
+        ankle: (ANKLE_UP[L.foot] ?? 0.5) * L.tarsus * S,
+        pole: [L.pole[0] * S * side, L.pole[1] * S, L.pole[2] * S],
+        hand: L.hand ? [L.hand[0] * S * side, L.hand[1] * S, L.hand[2] * S] : null,
+        // a plantigrade sole lies along the ground; a hoof or a point drops
+        toe: L.foot === 'paw' || L.foot === 'talon' ? 0.75 : 0.30,
+      });
     }
   }
-  kb.bake(body.obj);
+  return {
+    hipHeight: P.hip * S, step: P.step * S, lift: P.lift * S,
+    rear: P.rear * S, bob: 0.05 * S, limbs,
+  };
+}
 
-  /* ── neck and head, built forward out of the head bone ── */
+/**
+ * One creature. `kind` names a row of CREATURE_PLANS.
+ *
+ * The name survives because src/game/Levels.js calls it for four of the five
+ * and that file belongs to another job this session; it is the menagerie
+ * builder, and two of the five it builds stand on two legs.
+ */
+export function buildQuadruped(opts = {}) {
+  const kind = opts.kind || 'charger';
+  const P = CREATURE_PLANS[kind] || CREATURE_PLANS.charger;
+  const S = opts.scale ?? 2.2;
+  const rig = new Rig(creatureSkeleton(S, P), { scale: S });
+  const hide = hideMat(opts.hide ?? P.hide, 0.92);
+  const plate = chitinMat(opts.plate ?? P.plate, 0.52);
+  const belly = hideMat(opts.belly ?? P.belly, 0.94);
+  const eye = emissiveMat(opts.eye ?? P.eye, 2.8);
+  const tooth = boneMat(0xd6cbb0, 0.34);
+
+  /* ── the trunk ──
+   * ONE lathe, laid along the animal's spine and reshaped by a superellipse
+   * section, with the shoulder and haunch masses as gaussian swells on the
+   * profile. See the header for why this is not three spheres. */
+  const body = rig.get('body');
+  const L = P.trunk[2] * S, R = P.girth * S;
+  const spine = limbGeo(L, R * 0.86, R * 0.72, 14, true, {
+    rings: 7, capN: 3, capY0: 0.72, capY1: 0.62, swells: P.swells,
+    section: bodySection(P.section),
+  });
+  // +Y along the spine: rotate.x = π/2 lays it along +Z, and the plan's pitch
+  // lifts the front of it — 1.02 rad stands the rancor up.
+  const trunkRot = [Math.PI / 2 - P.pitch, 0, 0];
+  const trunkParts = [[spine, [0, 0, 0], trunkRot]];
+  /* The dorsal structure goes in the PRIMARY for the plated animals and only
+   * for them: `Enemy._measurePlatform` measures a rideable deck as the
+   * highest vertex inside the middle 60% of the hull, and asserts (in
+   * tools/checks/standing.mjs) that it is not above the primary's own box —
+   * so on a body that carries a rider the ridge has to be part of the hull it
+   * is measured against, not a second mesh standing over it. */
+  if (P.back === 'ridge') {
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const y = Math.cos(P.pitch) * (0.12 + t * 0.02) * S + Math.sin(P.pitch) * (t - 0.1) * L;
+      const z = Math.cos(P.pitch) * (t - 0.1) * L - Math.sin(P.pitch) * 0.12 * S;
+      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S;
+      trunkParts.push([clawGeo(h, 0.075 * S, 0.012 * S, -0.45, 5, 3), [0, y, z], [0.55 - t * 0.9 - P.pitch, 0, 0]]);
+    }
+  }
+  const bm = mesh(assemble(trunkParts, 'trunk'), hide, body.obj);
+  body.primary = bm; body.parts.push(bm); body.radius = R;
+
+  /* ── the outline that hangs off the trunk ──
+   * One merged mesh, tagged so the LOD keeps it: this is the mane, the
+   * scutes, the shag and the tail, and every one of them is what the animal
+   * is recognised by at forty metres. */
+  const ks = new Kit();
+  const fwd = (t) => [0, Math.sin(P.pitch) * t * L + 0.10 * S, Math.cos(P.pitch) * t * L];
+  if (P.back === 'scutes') {
+    // low bony bosses down the spine, biggest over the shoulder
+    ks.row(6, (i, t) => {
+      const p = fwd(t * 0.92 - 0.02);
+      ks.add(plate, plateGeo((0.52 - Math.abs(t - 0.72) * 0.34) * S, 0.10 * S, 0.20 * S, 0.03 * S, 1),
+        [0, p[1] + 0.32 * S, p[2]], [0.08 - P.pitch, 0, 0]);
+    });
+  } else if (P.back === 'mane') {
+    /* THE MANE, and it is the nexu's whole read at range. Quills raked back
+     * off the shoulders in three rows: a low animal with a smooth back is a
+     * dog, a low animal with a crest is a predator. */
+    ks.row(4, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.62 + t * 0.30);
+      ks.add(plate, tubeGeo([[0, 0, 0, 0.040 * S], [sx * 0.10 * S, 0.30 * S, -0.16 * S, 0.028 * S],
+        [sx * 0.20 * S, 0.52 * S, -0.44 * S, 0.006 * S]], 5, { capRoot: false }),
+      [sx * (0.05 + t * 0.10) * S, p[1] + 0.22 * S, p[2]]);
+    }));
+  } else if (P.back === 'shag') {
+    /* THE COAT. A wampa's outline is not skin, it is fur breaking the
+     * edge — so the shag is authored as tapered clumps standing off the
+     * flanks and the shoulders rather than as a texture, which is the one
+     * thing that survives being a silhouette. */
+    ks.row(4, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.10 + t * 0.80);
+      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 5, 2),
+        [sx * (0.30 + t * 0.10) * S, p[1] + 0.10 * S, p[2] - 0.06 * S], [1.9, 0, sx * (0.9 - t * 0.4)]);
+    }));
+    ks.row(3, (i, t) => ks.pair((sx) => {
+      const p = fwd(0.74 + t * 0.20);
+      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 5, 2),
+        [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
+    }));
+  }
+  /* THE TAIL, on the body bone because the skeleton has no tail chain, swept
+   * as ONE tube rather than as a chain of capped limbs — six capped segments
+   * bury five pairs of end caps inside themselves, which is 60% of the
+   * triangles on geometry nobody can see (see tubeGeo). */
+  if (P.tail[0] > 0) {
+    const [n, reach, r0, pitch0, curl] = P.tail;
+    const nodes = [];
+    let y = 0.06 * S, z = -0.06 * S, a = pitch0;
+    const seg = (reach * S) / n;
+    for (let i = 0; i <= n; i++) {
+      nodes.push([0, y, z, r0 * S * (1 - i / (n + 1.2))]);
+      z -= Math.cos(a) * seg; y += Math.sin(a) * seg; a += curl;
+    }
+    ks.add(hide, tubeGeo(nodes, 7), [0, 0, 0]);
+  }
+  // ribbed flanks and a soft belly — the one place a blade meets flesh
+  ks.pair((sx) => ks.row(4, (i, t) => {
+    const p = fwd(0.12 + t * 0.66);
+    ks.add(plate, plateGeo(0.05 * S, 0.34 * S, 0.15 * S, 0.02 * S, 1),
+      [sx * R * 0.92, p[1] - 0.04 * S, p[2]], [0, 0, sx * 0.2]);
+  }));
+  {
+    const p = fwd(0.44);
+    ks.add(belly, limbGeo(L * 0.70, R * 0.52, R * 0.42, 10, true, { rings: 3, capN: 2 }),
+      [0, p[1] - R * 0.60, p[2] - L * 0.32], trunkRot);
+  }
+  markSilhouette(ks.bake(body.obj));
+
+  /* ── the head ── */
   const head = rig.get('head');
-  const parts = [];
-  let hy = 0, hz = 0, pitch = K.neckPitch;
-  const segs = K.neckSegs;
-  for (let i = 0; i < segs; i++) {
-    const len = K.neckLen * S;
-    const r0 = K.neckR * S - i * 0.03 * S;
-    parts.push([limbGeo(len * 1.10, r0, r0 * 0.88, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
-      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
-    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
-    pitch += K.neckCurl;
-  }
-  // the skull: a long wedge on both, but the charger's is a brick and the
-  // stalker's is a blade
-  parts.push([(() => {
-    const g = new THREE.SphereGeometry(0.26 * S, 12, 10);
-    g.scale(K.skull[0], K.skull[1], K.skull[2]);
-    return g;
-  })(), [0, hy + 0.02 * S, hz + 0.24 * S]]);
-  parts.push([plateGeo(0.26 * S, 0.12 * S, K.jaw * S, 0.04 * S, 1),
-    [0, hy - 0.13 * S, hz + 0.30 * S], [0.10, 0, 0]]);
-  const skull = assemble(parts, 'skull');
-  const hm = mesh(skull, hide, head.obj);
-  head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth });
 
-  const kh = new Kit();
-  if (K.face === 'horned') {
-    /* THE FRILL AND THE HORNS. A charging animal's threat display is carried
-     * where you will hit it, and it is what makes the head-on silhouette a
-     * wall rather than a face — which is the whole counter-play: you do not
-     * meet this from the front. */
-    kh.add(plate, plateGeo(1.00 * S, 0.62 * S, 0.10 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.10 * S], [-0.30, 0, 0]);
-    kh.pair((sx) => {
-      kh.add(plate, clawGeo(0.66 * S, 0.085 * S, 0.016 * S, 0.55, 7, 4),
-        [sx * 0.21 * S, hy + 0.12 * S, hz + 0.28 * S], [1.05, sx * 0.42, 0]);
-      kh.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 6), [sx * 0.17 * S, hy + 0.10 * S, hz + 0.22 * S]);
-    });
-    // a nose horn on the centre line, which is the thing that actually hits you
-    kh.add(plate, clawGeo(0.46 * S, 0.090 * S, 0.014 * S, -0.30, 7, 4), [0, hy + 0.06 * S, hz + 0.44 * S], [0.55, 0, 0]);
-  } else {
-    /* FOUR EYES, in two pairs. It is one line of geometry and it is the single
-     * most alien thing about this animal — a face with the wrong number of
-     * eyes on it reads as wrong from further away than any amount of horn. */
-    kh.pair((sx) => {
-      kh.add(eye, new THREE.SphereGeometry(0.040 * S, 7, 6), [sx * 0.12 * S, hy + 0.09 * S, hz + 0.24 * S]);
-      kh.add(eye, new THREE.SphereGeometry(0.028 * S, 6, 5), [sx * 0.15 * S, hy + 0.02 * S, hz + 0.14 * S]);
-      // the fangs, and the whiskers of quill either side of the jaw
-      kh.add(tooth, clawGeo(0.30 * S, 0.032 * S, 0.005 * S, 0.5, 5, 3),
-        [sx * 0.09 * S, hy - 0.14 * S, hz + 0.40 * S], [0.9, 0, 0]);
-      kh.add(plate, clawGeo(0.44 * S, 0.026 * S, 0.005 * S, -0.4, 5, 3),
-        [sx * 0.15 * S, hy + 0.02 * S, hz + 0.10 * S], [-0.6, sx * 0.9, 0]);
-    });
-  }
-  // the jaw teeth, on both
-  kh.pair((sx) => kh.row(4, (i, t) => kh.add(tooth, clawGeo(0.10 * S, 0.020 * S, 0.004 * S, 0.3, 4, 2),
-    [sx * 0.10 * S, hy - 0.18 * S, hz + (0.18 + t * 0.28) * S], [0.5, 0, 0])));
-  kh.bake(head.obj);
-
-  /* ── legs. The charger's are short and thick and the stalker's long and
-   * light, which is 78% and 106% of the same numbers. */
-  const LEG = K.leg;
-  for (let i = 0; i < 4; i++) {
+  /* ── the limbs ── */
+  for (let i = 0; i < P.limbs.length * 2; i++) {
+    const L2 = P.limbs[Math.floor(i / 2)];
+    const g = L2.girth;
+    const arm = L2.role === 'arm';
     for (const [name, r0, r1, mat, bulge] of [
-      [`hipL${i}`, 0.17, 0.14, plate, 0.08], [`femur${i}`, 0.16, 0.10, hide, 0.20],
-      [`tibia${i}`, 0.105, 0.058, hide, 0.14], [`tarsus${i}`, 0.060, 0.030, plate, 0.05]]) {
+      [`hipL${i}`, 0.15, 0.13, plate, 0.06], [`femur${i}`, 0.15, 0.096, hide, 0.20],
+      [`tibia${i}`, 0.10, 0.055, hide, 0.14], [`tarsus${i}`, 0.058, 0.026, plate, 0.05]]) {
       const b = rig.get(name);
       if (!b) continue;
-      const rr0 = r0 * S * LEG, rr1 = r1 * S * LEG;
+      const rr0 = r0 * S * g, rr1 = r1 * S * g;
       const m = mesh(limbGeo(b.length, rr0, rr1, 8, true, { rings: 4, bulge, bulgeAt: 0.26, capN: 3 }), mat, b.obj);
       m.userData.limb = { r0: rr0, r1: rr1, seg: 8 };
       b.parts.push(m); b.primary = m; b.radius = rr0;
     }
-    const hip = rig.get(`hipL${i}`);
-    if (hip) { const k = new Kit(); k.add(plate, new THREE.SphereGeometry(0.16 * S * LEG, 8, 6), [0, hip.length, 0]); k.bake(hip.obj); }
     const femur = rig.get(`femur${i}`);
     if (femur) {
-      const k = new Kit(); const L = femur.length;
-      k.add(plate, limbPlate(femur, L * 0.10, L * 0.66, 2.5, { thick: 0.024 * S, seg: 7, gap: 0.008 * S }), [0, L * 0.10, 0]);
+      const k = new Kit(); const len = femur.length;
+      k.add(plate, limbPlate(femur, len * 0.10, len * 0.66, arm ? 2.0 : 2.5,
+        { thick: 0.024 * S * g, seg: 6, gap: 0.008 * S }), [0, len * 0.10, 0]);
       k.bake(femur.obj);
     }
     const tarsus = rig.get(`tarsus${i}`);
     if (tarsus) {
-      const k = new Kit(); const L = tarsus.length;
-      // a hoof on the charger, a splayed claw on the stalker
-      if (K.foot === 'hoof') k.add(plate, new THREE.CylinderGeometry(0.13 * S, 0.15 * S, 0.16 * S, 8), [0, L * 0.94, 0.02 * S]);
-      else k.row(3, (j, t) => k.add(plate, clawGeo(0.34 * S, 0.036 * S, 0.008 * S, 1.05, 6, 4),
-        [(t - 0.5) * 0.14 * S, L * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
-      k.bake(tarsus.obj);
+      const k = new Kit(); const len = tarsus.length;
+      buildFootFor(k, L2.foot, plate, tooth, S, g, len);
+      markSilhouette(k.bake(tarsus.obj));
     }
   }
-  return { rig, palette: { hide, chitin: plate, belly, eye }, scale: S };
+  return {
+    rig, kind, plan: P, stance: stanceOf(S, P), moves: P.moves || null,
+    palette: { hide, chitin: plate, belly, eye }, scale: S,
+  };
+}
+
+/** The acklay keeps its own entry point — its archetype is declared in Enemy.js. */
+export function buildBeast(opts = {}) {
+  return buildQuadruped({ scale: 2.9, ...opts, kind: 'acklay' });
+}
+
+/**
+ * Tag a bone's merged extras as SILHOUETTE, which is what makes any of this
+ * visible at the range the complaint was about.
+ *
+ * `Enemy._collectLodParts` keeps one mesh per bone — the primary — and hides
+ * everything else past thirty metres, which is correct for rivets and panel
+ * lines and catastrophic for horns. A creature's outline pieces are merged
+ * per material by the Kit anyway, so keeping them costs at most two extra
+ * draw calls on a body there are never more than a handful of.
+ */
+function markSilhouette(meshes) {
+  if (meshes && meshes.isMesh) { meshes.userData.silhouette = true; return meshes; }
+  for (const m of meshes) m.userData.silhouette = true;
+  return meshes;
+}
+
+/**
+ * What the end of a limb is: a hoof, a paw, a claw, a talon, or a point.
+ *
+ * Sized off the CREATURE's scale and only widened by the limb's girth. The
+ * first pass passed `S * girth` for everything, which on the rancor's 1.30
+ * legs made a sole 2.3 m deep and put 2.27 m of foot below the floor — a
+ * girth multiplier is a radius, and applying it to lengths grows the foot in
+ * the two directions it must not grow in.
+ */
+function buildFootFor(k, kind, plate, tooth, S, g, len) {
+  if (kind === 'spike') return;              // an acklay's leg ends in the leg
+  if (kind === 'hoof') {
+    k.add(plate, new THREE.CylinderGeometry(0.10 * S * g, 0.13 * S * g, 0.12 * S, 8), [0, len * 0.92, 0.02 * S]);
+    k.add(plate, plateGeo(0.20 * S * g, 0.08 * S, 0.22 * S, 0.03 * S, 1), [0, len * 0.96, 0.05 * S]);
+    return;
+  }
+  if (kind === 'paw') {
+    // a broad flat sole with short toes — plantigrade, so it reads as standing
+    k.add(plate, plateGeo(0.24 * S * g, 0.07 * S, 0.34 * S, 0.04 * S, 1), [0, len * 0.94, 0.09 * S]);
+    k.row(3, (j, t) => k.add(tooth, clawGeo(0.12 * S, 0.028 * S, 0.006 * S, 0.6, 5, 2),
+      [(t - 0.5) * 0.17 * S * g, len * 0.92, 0.23 * S], [1.2, (t - 0.5) * 0.5, 0]));
+    return;
+  }
+  if (kind === 'talon') {
+    // four long fingers with hooks — the rancor's hand, which reaches its knee
+    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 3),
+      [(t - 0.5) * 0.18 * S, len * 0.84, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
+    return;
+  }
+  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 3),
+    [(t - 0.5) * 0.12 * S, len * 0.90, 0], [0.15, (t - 0.5) * 0.7, 0]));
+}
+
+/**
+ * THE HEADS, and they are the second half of the forty-metre read.
+ *
+ * Each is a neck swept forward out of the head BONE (walkerSkeleton hangs
+ * that bone behind the body, so a skull placed at its origin is inside the
+ * ribcage and invisible from every angle — the original note is worth
+ * keeping) plus a skull, and then the pieces that make the outline: they go
+ * into a single merged mesh per material and are tagged `silhouette`, so a
+ * reek still has horns and an acklay still has a crest at the range the
+ * player was complaining about.
+ */
+function buildCreatureHead(rig, P, S, M) {
+  const head = rig.get('head');
+  const [segs, nLen, nR, nPitch, nCurl] = P.neck;
+  const parts = [];
+  let hy = 0, hz = 0, pitch = nPitch;
+  for (let i = 0; i < segs; i++) {
+    const len = nLen * S;
+    const r0 = nR * S - i * 0.024 * S;
+    parts.push([limbGeo(len * 1.12, r0, r0 * 0.9, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
+      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
+    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
+    pitch += nCurl;
+  }
+  const k = new Kit();
+  const K = P.head;
+
+  if (K === 'horned') {
+    /* THE REEK. The skull is a wide low wedge and everything that matters is
+     * carried in FRONT of the eyes: a frill across the brow, two cheek horns
+     * curving down and forward, and the nasal horn that is the thing which
+     * actually hits you. Head-on it is a wall rather than a face, which is
+     * the whole counter-play — you do not meet this one from the front. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 9); g.scale(1.02, 0.80, 1.16); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.22 * S]]);
+    parts.push([plateGeo(0.30 * S, 0.13 * S, 0.42 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.32 * S], [0.08, 0, 0]]);
+    k.add(M.plate, plateGeo(0.92 * S, 0.58 * S, 0.11 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.02 * S], [-0.34, 0, 0]);
+    k.add(M.plate, tubeGeo([[0, hy + 0.06 * S, hz + 0.40 * S, 0.095 * S],
+      [0, hy + 0.30 * S, hz + 0.60 * S, 0.055 * S], [0, hy + 0.52 * S, hz + 0.74 * S, 0.012 * S]], 7));
+    k.pair((sx) => {
+      k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
+        [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
+        [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
+      k.add(M.eye, new THREE.SphereGeometry(0.046 * S, 7, 6), [sx * 0.18 * S, hy + 0.10 * S, hz + 0.20 * S]);
+    });
+  } else if (K === 'fanged') {
+    /* THE NEXU. FOUR EYES in two pairs — one line of geometry and the single
+     * most alien thing about the animal, because a face with the wrong number
+     * of eyes on it reads as wrong from further away than any amount of horn
+     * — over a mouth that is wider than the skull, with the fangs standing
+     * OUTSIDE the lip line the way the reference photograph has them. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.94, 0.68, 1.30); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.20 * S]]);
+    parts.push([plateGeo(0.44 * S, 0.14 * S, 0.40 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.28 * S], [0.14, 0, 0]]);
+    k.pair((sx) => {
+      k.add(M.eye, new THREE.SphereGeometry(0.042 * S, 7, 6), [sx * 0.11 * S, hy + 0.10 * S, hz + 0.26 * S]);
+      k.add(M.eye, new THREE.SphereGeometry(0.030 * S, 6, 5), [sx * 0.16 * S, hy + 0.03 * S, hz + 0.16 * S]);
+      k.row(4, (i, t) => {
+        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.030 * S, 0.005 * S, 0.35, 4, 2),
+          [sx * (0.10 + t * 0.09) * S, hy - 0.10 * S, hz + (0.40 - t * 0.16) * S], [0.9 + t * 0.5, 0, 0]);
+        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.026 * S, 0.005 * S, 0.35, 4, 2),
+          [sx * (0.10 + t * 0.09) * S, hy - 0.02 * S, hz + (0.40 - t * 0.16) * S], [2.35 - t * 0.4, 0, 0]);
+      });
+      // the quill whiskers either side of the jaw
+      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.020 * S],
+        [sx * 0.40 * S, hy + 0.12 * S, hz - 0.10 * S, 0.004 * S]], 5, { capRoot: false }));
+    });
+  } else if (K === 'tusked') {
+    /* THE RANCOR. No neck: the skull is a wedge sitting straight on the
+     * shoulders, and the read is the MOUTH — a jaw as wide as the head with
+     * tusks standing up out of the lower jaw past the upper lip, which is the
+     * thing every photograph of one is showing. Two small deep-set eyes above
+     * a brow shelf, and lumps of bone over the crown. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(0.86, 0.86, 1.20); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.16 * S]]);
+    parts.push([plateGeo(0.52 * S, 0.20 * S, 0.52 * S, 0.06 * S, 1), [0, hy - 0.20 * S, hz + 0.26 * S], [0.16, 0, 0]]);
+    parts.push([plateGeo(0.46 * S, 0.16 * S, 0.30 * S, 0.05 * S, 1), [0, hy + 0.26 * S, hz + 0.02 * S], [-0.24, 0, 0]]);
+    k.pair((sx) => {
+      // the tusks: up out of the lower jaw, past the lip
+      k.add(M.tooth, tubeGeo([[sx * 0.20 * S, hy - 0.24 * S, hz + 0.42 * S, 0.055 * S],
+        [sx * 0.23 * S, hy - 0.02 * S, hz + 0.46 * S, 0.036 * S],
+        [sx * 0.24 * S, hy + 0.18 * S, hz + 0.42 * S, 0.008 * S]], 6));
+      k.add(M.tooth, tubeGeo([[sx * 0.11 * S, hy - 0.26 * S, hz + 0.46 * S, 0.040 * S],
+        [sx * 0.12 * S, hy - 0.08 * S, hz + 0.50 * S, 0.024 * S],
+        [sx * 0.12 * S, hy + 0.06 * S, hz + 0.48 * S, 0.006 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.040 * S, 6, 5), [sx * 0.16 * S, hy + 0.14 * S, hz + 0.30 * S]);
+      k.add(M.plate, clawGeo(0.26 * S, 0.070 * S, 0.014 * S, -0.5, 5, 2),
+        [sx * 0.20 * S, hy + 0.32 * S, hz - 0.06 * S], [-0.7, 0, sx * 0.4]);
+      k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.11 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
+        [sx * (0.08 + t * 0.10) * S, hy - 0.12 * S, hz + (0.30 + t * 0.14) * S], [2.5, 0, 0]));
+    });
+  } else if (K === 'horned-ape') {
+    /* THE GUNDARK. A wide flat FACE rather than a muzzle — the wampa's read
+     * is that it looks at you from the front — with the horns curving out
+     * SIDEWAYS off the temples rather than forward, an underbite of fangs,
+     * and a fur ruff round the jaw that carries the head's outline into the
+     * shoulders. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.30 * S, 12, 9); g.scale(1.10, 0.94, 0.86); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.10 * S]]);
+    parts.push([plateGeo(0.40 * S, 0.20 * S, 0.26 * S, 0.05 * S, 1), [0, hy - 0.18 * S, hz + 0.20 * S], [0.20, 0, 0]]);
+    k.pair((sx) => {
+      k.add(M.plate, tubeGeo([[sx * 0.26 * S, hy + 0.18 * S, hz - 0.02 * S, 0.060 * S],
+        [sx * 0.46 * S, hy + 0.20 * S, hz + 0.10 * S, 0.040 * S],
+        [sx * 0.56 * S, hy + 0.06 * S, hz + 0.22 * S, 0.008 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.038 * S, 6, 5), [sx * 0.13 * S, hy + 0.08 * S, hz + 0.24 * S]);
+      k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.14 * S, 0.026 * S, 0.005 * S, 0.3, 4, 2),
+        [sx * (0.07 + t * 0.08) * S, hy - 0.18 * S, hz + 0.26 * S], [0.4 + t * 0.3, 0, 0]));
+      // the ruff — fur clumps round the jaw, which is where the wampa's
+      // outline stops being a head and starts being a coat
+      k.row(3, (i, t) => k.add(M.hide, clawGeo(0.28 * S, 0.085 * S, 0.015 * S, 0.5, 5, 2),
+        [sx * (0.20 + t * 0.08) * S, hy - (0.06 + t * 0.10) * S, hz - 0.02 * S], [1.6 + t * 0.4, 0, sx * (1.1 - t * 0.3)]));
+    });
+  } else {
+    /* THE ACKLAY. A long toothed jaw hung under a flat CREST that sweeps back
+     * over the shoulders — in the reference the crest is the biggest single
+     * shape on the animal and the old build had none of it. Mandibles sweep
+     * forward and in from the corners of the jaw. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(0.78, 0.72, 1.52); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.30 * S], [0.28, 0, 0]]);
+    parts.push([plateGeo(0.28 * S, 0.13 * S, 0.44 * S, 0.05 * S, 1), [0, hy - 0.13 * S, hz + 0.36 * S], [0.32, 0, 0]]);
+    // the crest: two swept plates rather than one, so it has a ridge down it
+    k.pair((sx) => {
+      k.add(M.plate, plateGeo(0.40 * S, 0.06 * S, 0.86 * S, 0.04 * S, 2),
+        [sx * 0.19 * S, hy + 0.30 * S, hz - 0.22 * S], [-0.62, sx * 0.10, sx * 0.22]);
+      k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.10 * S, hz + 0.14 * S, 0.055 * S],
+        [sx * 0.30 * S, hy - 0.12 * S, hz + 0.44 * S, 0.034 * S],
+        [sx * 0.20 * S, hy - 0.20 * S, hz + 0.70 * S, 0.008 * S]], 6));
+      k.add(M.eye, new THREE.SphereGeometry(0.048 * S, 7, 6), [sx * 0.14 * S, hy + 0.12 * S, hz + 0.22 * S]);
+      k.row(4, (i, t) => {
+        k.add(M.tooth, clawGeo(0.10 * S, 0.021 * S, 0.004 * S, 0.3, 4, 2),
+          [sx * 0.11 * S, hy - 0.20 * S, hz + (0.24 + t * 0.34) * S], [0.5, 0, 0]);
+        k.add(M.tooth, clawGeo(0.09 * S, 0.019 * S, 0.004 * S, 0.3, 4, 2),
+          [sx * 0.11 * S, hy - 0.09 * S, hz + (0.26 + t * 0.32) * S], [2.55, 0, 0]);
+      });
+    });
+  }
+
+  const skull = assemble(parts, 'skull');
+  const hm = mesh(skull, M.hide, head.obj);
+  head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
+  markSilhouette(k.bake(head.obj));
 }
 
 /* ── bodyguard droid (boss) ──────────────────────────────────────────── */
+
+/**
+ * TWO ARCHETYPES, ONE CHASSIS, TWO SCALES AND NOTHING ELSE.
+ *
+ * `magna` (rung 5 of the CIS ladder, 260 hp) and `bodyguard` (the Foundry's
+ * 1050-hp set-piece general) are both this builder, at 1.18 and 1.3, and they
+ * measured 0.658 flank IoU at LOD 1 — close enough that a player who has just
+ * learnt to fight one meets the other and reads it as the first one standing
+ * further away. A set-piece must be legible AS a set-piece before it moves.
+ */
+export const BODYGUARD_KITS = {
+  /* THE DEFAULT ROW IS THE IDENTITY, and it has to be. Every other table in
+   * this file makes its no-kit row `{}` so that a builder called the way it
+   * has always been called emits what it has always emitted; this one was
+   * first written with the guard's girth in the default row, which quietly
+   * made the shipped IG general 22% thinner before anything had asked it to. */
+  chassis: {},
+  /* `frame` goes through to buildB2's girth. An IG-100 is a spindle with a
+   * cowl on it, not a slab — the reference plates are unambiguous — and at a
+   * B2's own girth the two measured 0.965 alike. */
+  guard: { frame: 0.78 },
+  general: { banner: true, frame: 0.86 },
+};
 
 /**
  * THE THING AT THE END OF THE WARSHIP, and the one droid in the game that
@@ -5956,8 +6925,10 @@ export function buildQuadruped(opts = {}) {
  * plate in this file already travels.
  */
 export function buildBodyguard(opts = {}) {
+  /** See BODYGUARD_KITS — `banner` may also be passed directly. */
+  const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.chassis), ...opts };
   const S = opts.scale ?? 1.3;
-  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52 });
+  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52, frame: K.frame ?? 1 });
   const rig = built.rig;
   const dark = metalMat(0x24262a, 0.44, 0.92, 2.6);
   const trim = armorMat(0x8d3a20, 0.12, 0.52, 3.0);      // the one warm accent
@@ -5984,7 +6955,10 @@ export function buildBodyguard(opts = {}) {
     // one vertical lit slot, standing proud of the mask
     k.add(slot, plateGeo(0.018 * S, 0.098 * S, 0.010 * S, 0.003 * S, 1), [0, 0.150 * S, 0.084 * S]);
     k.add(dark, plateGeo(0.048 * S, 0.126 * S, 0.008 * S, 0.003 * S, 1), [0, 0.150 * S, 0.079 * S]);
-    k.bake(head.obj);
+    /* The cowl and the horns are the whole read on this head — the lit slot is
+     * a 3 cm emissive strip and stays detail. Keeping the `dark` bucket alone
+     * is one extra draw call for the piece the body is named after. */
+    for (const m of k.bake(head.obj)) { if (m.material === dark) markSilhouette(m); }
   }
 
   const chest = rig.get('chest');
@@ -6002,7 +6976,20 @@ export function buildBodyguard(opts = {}) {
     });
     // a gorget, so the cowl has a collar to sit in rather than a neck
     k.add(dark, plateGeo(0.190 * S, 0.052 * S, 0.170 * S, 0.020 * S, 2), [0, 0.140 * S, -0.006 * S]);
-    k.bake(chest.obj);
+    /* THE GENERAL'S BANNER. `magna` and `bodyguard` are this same chassis at
+     * 1.18 and 1.3 and nothing else, and they measured 0.658 alike — the
+     * Foundry's 1050-hp set-piece and a rung-5 line unit reading as one droid
+     * at two different distances, which is worse than reading as two units.
+     * The masts above already exist to hang something from; this is the
+     * something. A rigid tabard across them, not a simulated cape: this body
+     * declines cloth on purpose (see the archetype's own note) and
+     * `cloth-cost` sizes the whole column on how many bodies wear one. */
+    if (K.banner) {
+      k.add(dark, plateGeo(0.240 * S, 0.030 * S, 0.026 * S, 0.008 * S, 1), [0, 0.244 * S, -0.104 * S], [0.26, 0, 0]);
+      k.add(trim, plateGeo(0.290 * S, 0.560 * S, 0.020 * S, 0.010 * S, 1), [0, -0.036 * S, -0.148 * S], [0.10, 0, 0]);
+      k.add(dark, plateGeo(0.310 * S, 0.048 * S, 0.024 * S, 0.010 * S, 1), [0, -0.310 * S, -0.116 * S], [0.10, 0, 0]);
+    }
+    for (const m of k.bake(chest.obj)) { if (m.material !== slot) markSilhouette(m); }
   }
 
   return { ...built, palette: { ...built.palette, dark, trim, slot }, scale: S };
@@ -6067,7 +7054,85 @@ export function buildBlaster(kind = 'e5') {
     k.add(glow, new THREE.CylinderGeometry(0.016, 0.020, 0.04, 8), [0, 0.030, 0.50], [1.5708, 0, 0]);
     g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.53);
   }
-  k.bake(g);
+  /* A WEAPON IS PART OF A SOLDIER'S OUTLINE, and this one was culled.
+   *
+   * `Enemy._build` hangs the blaster off the hand, and `_build` runs BEFORE
+   * the constructor collects `_lodParts` — so every gun in the game was
+   * classed as decoration and stopped being drawn at thirty metres. Measured:
+   * a Training Droid and a B1 Battle Droid, the same chassis with one of them
+   * armed, shared 0.783 of one silhouette, and the whole difference between
+   * them is the carbine that was not on screen.
+   *
+   * The muzzle glow is NOT kept — a 40-triangle emissive cylinder is not an
+   * outline — so this is the receiver and the furniture, two merged meshes,
+   * on bodies already carrying nineteen. */
+  for (const m of k.bake(g)) { if (m.material !== glow) markSilhouette([m]); }
   g.traverse(o => { o.castShadow = true; });
   return g;
+}
+
+
+/* ── who wears what ──────────────────────────────────────────────────── */
+
+/**
+ * THE ARCHETYPE → KIT TABLE, AND THE ONE LINE THAT IS STILL MISSING.
+ *
+ * Every knob above exists because a specific archetype needed it, and this is
+ * the single place that says which archetype needs which — so a kit cannot be
+ * declared twice, and a new humanoid on the roster that nobody outfitted is a
+ * check failure rather than a body that quietly looks like another one.
+ * `tools/checks/characters.mjs` walks `Enemy.ARCHETYPES` and asserts that
+ * every humanoid on it has a row here.
+ *
+ * WHAT IT IS NOT: a second copy of the roster. It carries no stats, no colour
+ * and no scale — those live in the archetype and are passed by the caller. It
+ * carries only what a body WEARS, which nothing else in the codebase declares.
+ *
+ * ── HOW IT REACHES THE BUILDERS, WHICH IS NOT YET. ─────────────────────
+ *
+ * `Enemy._build` builds every body with `const opts = { scale: A.scale }` and
+ * a one-line special case for the marksman's paint, so the archetype's own
+ * identity never reaches Bodies.js at all. The whole wiring is:
+ *
+ *     const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
+ *
+ * in place of `const opts = { scale: A.scale };` (src/game/Enemy.js, in
+ * `_build`), plus `bodyOptsFor` on the import from this file. Command.js's
+ * units need nothing at all — every one of them is `(o) => buildX({ ...o, … })`
+ * and spreads whatever it is handed.
+ *
+ * Until that line lands, the kits below are reachable (and measured) but no
+ * spawned body wears one. Measured either way in `tools/_roster.mjs`, which
+ * takes `--wired` to apply this table and prints the gap.
+ */
+export const BODY_KITS = {
+  /* the clone army — see TROOPER_KITS */
+  trooper: { kit: 'line' },
+  sniper: { kit: 'marksman' },
+  heavy: { kit: 'heavy' },
+  jet: { kit: 'jet' },
+  arc: { kit: 'arc' },
+  officer: { kit: 'commander' },
+  /* the order — see JEDI_RANKS */
+  jedi: { rank: 'knight' },
+  sentinel: { rank: 'sentinel' },
+  guardian: { rank: 'guardian' },
+  master: { rank: 'master' },
+  /* the separatist chassis — see B1_KITS */
+  b1: { kit: 'line' },
+  rocket: { kit: 'rocket' },
+  bx: { kit: 'commando' },
+  dummy: { kit: 'target' },
+  /* the duellists — see ACOLYTE_KITS */
+  acolyte: { kit: 'sith' },
+  sparring: { kit: 'sparring' },
+  /* the heavy droids — see BODYGUARD_KITS. `b2` has one chassis and one rung. */
+  b2: {},
+  magna: { kit: 'guard' },
+  bodyguard: { kit: 'general' },
+};
+
+/** What an archetype wears, or null if it is not a body this file dresses. */
+export function bodyOptsFor(type) {
+  return BODY_KITS[type] || null;
 }

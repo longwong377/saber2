@@ -1,5 +1,5 @@
 /**
- * SABER — where does a long session go wrong?
+ * BATTLEFRONT BORZ — where does a long session go wrong?
  *
  * "The longer you play the more laggy it gets until it completely freezes."
  * That is unbounded growth, and no quality setting fixes it. Nothing in the

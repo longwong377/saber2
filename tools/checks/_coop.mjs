@@ -145,15 +145,46 @@ export async function stubEngine() {
   sun.shadow.camera.updateProjectionMatrix();
   const hemi = new THREE.HemisphereLight(0x88aaff, 0x886644, 1);
   scene.add(sun, hemi);
-  return {
+  /**
+   * THE LIGHT POOL IS BORROWED, NOT REBUILT.
+   *
+   * Every lit blade now asks `engine.lightUp()` for illumination instead of
+   * carrying its own point lights (Saber.js, player note #15). A stub with no
+   * `lightUp` sends every blade down the fallback path and adds two lights per
+   * sabre to the scene — so a headless harness would measure the behaviour the
+   * fix removed and report it as current.
+   *
+   * The pool SIZE and the RANKING come off the shipped Engine rather than being
+   * written out again here. A second copy of the ranking beside the real one is
+   * the signature defect of this codebase (HANDOFF §2.3/§2.4) and it fails in
+   * the direction nobody checks: the instrument disagrees with the game and
+   * manufactures a defect. The import is dynamic and inside a function body for
+   * the reason `bootWorld` gives below — Engine.js rewrites three's ShaderChunks
+   * behind once-only flags.
+   */
+  const { Engine, LIGHT_POOL_SIZE } = await import('../../src/engine/Engine.js');
+  const stub = {
     scene, camera, sun, hemi,
     sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
     renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
     profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
     applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
     setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
-    setQuality() {}, setResolutionScale() {}, render() {},
+    setQuality() {}, setResolutionScale() {},
+    lightPool: [], _lightReq: [], _lightsWanted: 0, _lightsLit: 0,
+    lightUp: Engine.prototype.lightUp,
+    _syncLights: Engine.prototype._syncLights,
+    // The real Engine resolves the frame's requests at the top of render(). A
+    // census taken without one would see a pool that had never been driven.
+    render() { this._syncLights(); },
   };
+  for (let i = 0; i < LIGHT_POOL_SIZE; i++) {
+    const L = new THREE.PointLight(0xffffff, 0, 7, 1);
+    L.castShadow = false;
+    scene.add(L);
+    stub.lightPool.push(L);
+  }
+  return stub;
 }
 
 /** An input device with nothing pressed. Shape taken from src/engine/Input.js. */
@@ -173,7 +204,30 @@ export const idleInput = () => ({
  * static graph resolved and burns the flag for the shader suites. See
  * tools/checks/materials.mjs.
  */
-export async function bootWorld({ level = 'arena', settings = {}, spawn = true } = {}) {
+/**
+ * THE DEFAULT LEVEL, AND WHY IT IS DERIVED RATHER THAN NAMED.
+ *
+ * `bootWorld` and `bootPair` both defaulted to `'arena'` — a level the roster
+ * cull deleted. `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does
+ * not know, deliberately and with a comment, so nothing threw and nothing looked
+ * wrong. What it cost: `coop`'s marksman check stood a sniper behind a rock on
+ * the Ember Shelf believing it was in an arena, measured line of sight on ZERO
+ * of 720 frames, never telegraphed, and reported itself as a wire defect —
+ * *"the joining player never saw the laser"* — for a laser the host never fired.
+ *
+ * The default now derives from the roster, so it cannot name a level that does
+ * not exist. This is behaviour-identical to what every caller was already
+ * getting; it just stops lying about it. A check that needs a PARTICULAR kind of
+ * ground — an arena, a corridor, open sky — must say so explicitly, because that
+ * is a statement about what it measures and not a default anyone should inherit.
+ */
+async function defaultLevel() {
+  const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+  return LEVEL_ORDER[0];
+}
+
+export async function bootWorld({ level = null, settings = {}, spawn = true } = {}) {
+  level = level || await defaultLevel();
   const { World } = await import('../../src/game/World.js');
   const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
   const { initPhysics } = await import('../../src/physics/Rapier.js');
@@ -198,41 +252,114 @@ export async function bootWorld({ level = 'arena', settings = {}, spawn = true }
  * moves whatever the production code decided to send. Messages are round-tripped
  * through JSON because a DataConnection serialises, so neither side can be
  * handed the other's live objects.
+ *
+ * IT CARRIES AVATARS AND HITS TOO, and until it did there was no such thing
+ * here as one player reaching another. `_netTick` broadcasts `packAvatar` from
+ * both ends on every tick and the pair discarded both, so neither World held a
+ * `RemoteAvatar` and `world.players` was one body on each machine — which means
+ * every player-versus-player claim this repository makes was measured on two
+ * local Players in ONE world, the exact shape `force.mjs` is 26/26 for. Now the
+ * host has a body for the peer and the peer has one for the host, each fed by
+ * the other's real packets, and a push aimed at one of them travels the way it
+ * travels in a session.
+ *
+ * `hit` and `avatar` are routed to the SHIPPED readers — `World.applyHit` and
+ * `RemoteAvatar.push` — for the reason HANDOFF §2.4 gives: an instrument that
+ * restates a rule eventually disagrees with it, and it fails by manufacturing
+ * defects. `applyHit` used to live in a closure in main.js, which is why this
+ * could not have been done before.
  */
-export async function bootPair({ level = 'arena', settings = {} } = {}) {
+/**
+ * @param lag  one-way delivery delay in SIMULATED seconds. Zero by default,
+ *   which is what an in-process wire really is; give it a number and every
+ *   packet is held for that long, and `net.latency` is published in the
+ *   milliseconds `Net`'s own ping would report so anything deriving a window
+ *   from it (World._netOwn) sees the connection it is actually on.
+ */
+export async function bootPair({ level = null, settings = {}, sides = null, lag = 0 } = {}) {
+  level = level || await defaultLevel();
+  const { RemoteAvatar } = await import('../../src/net/Net.js');
   const a = await bootWorld({ level, settings });
   const b = await bootWorld({ level, settings });
   const seen = { toClient: [], toHost: [] };
   const wire = { down: [], up: [] };
   const wrap = (m) => JSON.parse(JSON.stringify(m));
+  /* Simulated seconds since the pair was built. The pump owns it; the wire only
+   * stamps with it, so a delayed packet is delayed by GAME time and not by
+   * however long the box took to step two Worlds. */
+  const clock = { t: 0 };
+  const post = (q, m) => q.push([clock.t + lag, wrap(m)]);
+  /* The roster is what `hitSourceId` reads to learn which id the far end knows
+   * the host's own Player by — on the host it is 'local', everywhere else it is
+   * the host's peer id. Two entries, the shape `Net._refreshRoster` builds. */
+  const roster = [{ id: 'HOST', name: 'HOST', host: true }, { id: 'PEER', name: 'ALPHA' }];
   a.world.attachNet({
-    connected: true, isHost: true, name: 'HOST', roster: [], sweep() {},
-    broadcast(m) { wire.down.push(wrap(m)); }, toPeer(id, m) { wire.down.push(wrap(m)); }, toHost() {},
+    connected: true, isHost: true, name: 'HOST', roster, latency: lag * 1000, sweep() {},
+    broadcast(m) { post(wire.down, m); }, toPeer(id, m) { post(wire.down, m); }, toHost() {},
   }, 'host');
   b.world.attachNet({
-    connected: true, isHost: false, name: 'PEER', roster: [],
-    broadcast(m) { wire.up.push(wrap(m)); }, toPeer() {}, toHost(m) { wire.up.push(wrap(m)); },
+    connected: true, isHost: false, name: 'PEER', roster, latency: lag * 1000,
+    broadcast(m) { post(wire.up, m); }, toPeer() {}, toHost(m) { post(wire.up, m); },
   }, 'client');
+  if (sides) { a.world.player.team = sides[0]; b.world.player.team = sides[1]; }
+
+  /**
+   * Each machine's drawing of the other player, built on the first packet.
+   *
+   * THE INTERPOLATION WINDOW IS SET TO ZERO, and that is a statement about this
+   * harness rather than about the game. `RemoteAvatar.delay` exists to cover the
+   * worst recent GAP between arrivals — its own note says so — and it measures
+   * that gap with `performance.now()`, a wall clock. This pair has no jitter at
+   * all (delivery is a function call) and no wall clock of its own: it steps
+   * 1/60 s of simulation per iteration in whatever real time that costs, which
+   * here is about an eighth of it. Left alone, `now - delay` lands 60 ms of REAL
+   * time back — several hundred milliseconds of SIMULATED time — and the drawing
+   * renders the oldest packet in the buffer. Measured: the peer standing 2.00 m
+   * from where the host drew them, with both bodies at rest.
+   *
+   * So the window that absorbs jitter is closed on a wire that has none, and the
+   * drawing is the newest packet received. `minDelay` too, because `push`
+   * recomputes `delay` against it on every arrival.
+   */
+  const avatarOn = (world, id, name, team) => {
+    let r = world.remotes.get(id);
+    if (r) return r;
+    r = new RemoteAvatar(world, { id, name, team });
+    r.delay = 0; r.minDelay = 0;
+    world.remotes.set(id, r);
+    world.players.push(r);
+    return r;
+  };
 
   const input = idleInput();
+  /** Everything on `q` whose delivery time has come, in order. */
+  const ready = (q) => {
+    const out = [];
+    while (q.length && q[0][0] <= clock.t + 1e-9) out.push(q.shift()[1]);
+    return out;
+  };
   const pump = (seconds) => {
     const dt = 1 / 60;
     for (let i = 0; i < Math.round(seconds / dt); i++) {
+      clock.t += dt;
       a.world.update(dt, input);
-      while (wire.down.length) {
-        const m = wire.down.shift();
+      for (const m of ready(wire.down)) {
         seen.toClient.push(m);
         if (m.t === 'snapshot') b.world.applySnapshot(m);
+        else if (m.t === 'hit') b.world.applyHit(m);
+        else if (m.t === 'avatar') avatarOn(b.world, 'HOST', 'HOST', sides ? sides[0] : undefined)
+          .push(m, performance.now() / 1000);
       }
       b.world.update(dt, input);
-      while (wire.up.length) {
-        const m = wire.up.shift();
+      for (const m of ready(wire.up)) {
         seen.toHost.push(m);
         if (m.t === 'claim') a.world.applyClaim('PEER', m);
+        else if (m.t === 'avatar') avatarOn(a.world, 'PEER', 'ALPHA', sides ? sides[1] : undefined)
+          .push(m, performance.now() / 1000);
       }
     }
   };
-  return { host: a.world, client: b.world, pump, seen, input };
+  return { host: a.world, client: b.world, pump, seen, input, roster, clock };
 }
 
 /** Step a world for `seconds` of wall clock at 60 Hz. */
