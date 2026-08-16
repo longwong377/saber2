@@ -206,14 +206,14 @@ const powers = Object.entries(POWER_COST).map(([id, cost]) => ({
     : null,
 }));
 
-/* ── the sky, and what a run of this length can afford of it ────────────── */
+/* ── the Holocron, and what a run of this length can afford of it ───────── */
 
 const insight = Tree.insightAfter(WAVES, BOSS_EVERY);
-const stars = Tree.STARS?.length ?? 0;
-const livingForce = (Tree.CURRENTS ?? []).map((c) => ({
+const facets = Tree.FACETS?.length ?? 0;
+const currents = (Tree.CURRENTS ?? []).map((c) => ({
   axis: c.axis,
   root: c.root,
-  stars: Tree.starsOf?.(c.axis)?.length ?? null,
+  facets: Tree.facetsOf?.(c.axis)?.length ?? null,
 }));
 
 /* ── the roster it could all happen on ──────────────────────────────────── */
@@ -236,7 +236,7 @@ const trace = {
   firstOffered,
   axisTally,
   powers,
-  economy: { insightAfter: insight, starsInSky: stars, livingForce },
+  economy: { insightAfter: insight, facetsInLattice: facets, currents },
   levels,
 };
 
@@ -246,7 +246,7 @@ if (has('json')) {
   const pad = (s, n) => String(s).padEnd(n);
   console.log(`\nSABER — run trace: ${level}, ${WAVES} waves, seed ${SEED}\n`);
   console.log(`  ${Object.keys(ARCHETYPES).length} archetypes · ${BOONS.length} boons + `
-    + `${ATTUNEMENTS.length} attunements · ${stars} stars · ${LEVEL_ORDER.length} levels\n`);
+    + `${ATTUNEMENTS.length} attunements · ${facets} facets · ${LEVEL_ORDER.length} levels\n`);
 
   console.log('  WAVE  BODIES  THREAT  KINDS  COMPOSITION');
   for (const w of waves) {
@@ -272,7 +272,7 @@ if (has('json')) {
   }
 
   console.log(`\n  ECONOMY  ${insight} Insight after ${WAVES} waves`);
-  for (const c of livingForce) console.log(`  ${pad(c.axis, 10)}${c.stars} stars, root ${c.root}`);
+  for (const c of currents) console.log(`  ${pad(c.axis, 10)}${c.facets} facets, root ${c.root}`);
 
   console.log('\n  LEVELS');
   for (const l of levels) {

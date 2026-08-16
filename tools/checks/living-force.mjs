@@ -1,5 +1,5 @@
 /**
- * BATTLEFRONT BORZ — the livingForce: a skill tree that is not a lie.
+ * BATTLEFRONT BORZ — the Living Force: a skill tree that is not a lie.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  WHAT THIS SUITE IS DEFENDING AGAINST
@@ -20,23 +20,24 @@
  *
  * So the rule for this suite is that a node is proven BEHAVIOURALLY — by
  * driving the real Player, the real Enemy and the real damage path, and
- * measuring the difference between a run that took the star and one that did
+ * measuring the difference between a run that took the facet and one that did
  * not. No check below is satisfied by a flag being set. Where a card's whole
  * effect is a technique (a barrier, a reflection, an aura on somebody else),
  * the check installs it on a real prototype, runs frames, and reads the
  * consequence out of health, damage or a modifier the game already consults.
  *
  * The structural checks that remain are the ones a behavioural test cannot
- * express: that the sky is exactly the boon table (so a card cannot be added
- * and be invisible, or a star exist with no mechanism behind it), that the
+ * express: that the lattice is exactly the boon table (so a card cannot be
+ * added and be invisible, or a facet exist with no mechanism behind it), that
+ * the
  * economy cannot outrun the draft it sits beside (arithmetic, at every wave out
  * to 60, because a stochastic depth number would fail on honest tuning), and
  * that the meditation cannot strand the player (driven against the real
  * Screens, which is where that guarantee lives).
  *
- * Every check here fails on the tree before the livingForce existed: the
- * module is imported by name in the first check and every later one asserts on
- * something that had no code at all.
+ * Every check here fails on the tree that came before this one: the module is
+ * imported by name in the first check and every later one asserts on something
+ * that had no code at all.
  */
 
 import * as THREE from 'three';
@@ -165,8 +166,8 @@ const tick = (p, frames = 1, dt = 1 / 60) => {
   }
 };
 
-/** The nine stars this round added, and the instance field each one writes. */
-const NEW_STARS = [
+/** The nine facets this round added, and the instance field each one writes. */
+const NEW_FACETS = [
   ['thorns', '_thornsShare'], ['aegis', '_aegisMax'], ['momentum', '_momentumPer'],
   ['execute', '_executeAt'], ['detonate', '_detonate'], ['communion', '_bondEdge'],
   ['suffusion', '_bondHeal'], ['vow', '_bondWard'], ['unity', '_bondMastery'],
@@ -174,51 +175,51 @@ const NEW_STARS = [
 
 export async function run({ check, assert }) {
   await initPhysics();
-  Foe = await import('../../src/game/Enemy.js?livingForce');
+  Foe = await import('../../src/game/Enemy.js?living-force');
 
   let Tree = null, treeErr = null;
   try { Tree = await import('../../src/game/LivingForce.js'); } catch (e) { treeErr = e; }
 
   /* ══════════════════════════════════════════════════════════════════ */
-  /*  1. The sky is the boon table, arranged                            */
+  /*  1. The lattice is the boon table, arranged                        */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: the sky is the boon table and nothing else', () => {
+  check('living force: the lattice is the boon table and nothing else', () => {
     assert(Tree, `there is no src/game/LivingForce.js: ${treeErr?.message || 'missing'} — `
       + 'the run has no spine but a flat list of cards');
     const all = [...Waves.BOONS, ...Waves.ATTUNEMENTS];
     const ids = new Set(all.map((b) => b.id));
-    const stars = Tree.STARS;
-    const starIds = new Set(stars.map((s) => s.id));
-    assert(starIds.size === stars.length,
-      `${stars.length - starIds.size} star(s) appear twice in the sky — a card in two places is two prices`);
+    const facets = Tree.FACETS;
+    const facetIds = new Set(facets.map((s) => s.id));
+    assert(facetIds.size === facets.length,
+      `${facets.length - facetIds.size} facet(s) appear twice — a card in two places is two prices`);
     // The property that stops the tree from silently going stale: a card added
     // to BOONS and forgotten here would be draftable and invisible in the one
     // screen that claims to show the whole system.
-    const homeless = [...ids].filter((i) => !starIds.has(i));
+    const homeless = [...ids].filter((i) => !facetIds.has(i));
     assert(!homeless.length,
-      `cards with no star: ${homeless.join(', ')} — the sky claims to be the whole system and is not`);
-    // …and the reverse: a star with no boon behind it is a node that grants
+      `cards with no facet: ${homeless.join(', ')} — the Holocron claims to be the whole system and is not`);
+    // …and the reverse: a facet with no boon behind it is a node that grants
     // nothing at all, which is exactly the bug this suite exists for.
-    const ghosts = [...starIds].filter((i) => !ids.has(i));
-    assert(!ghosts.length, `stars with no card behind them: ${ghosts.join(', ')}`);
-    for (const s of stars) {
-      for (const t of s.to) assert(starIds.has(t), `${s.id} is joined to "${t}", which is not a star`);
-      assert(Tree.livingForceOf(s.axis), `${s.id} stands in "${s.axis}", which is not a livingForce`);
+    const ghosts = [...facetIds].filter((i) => !ids.has(i));
+    assert(!ghosts.length, `facets with no card behind them: ${ghosts.join(', ')}`);
+    for (const s of facets) {
+      for (const t of s.to) assert(facetIds.has(t), `${s.id} is joined to "${t}", which is not a facet`);
+      assert(Tree.currentOf(s.axis), `${s.id} stands in "${s.axis}", which is not a current`);
     }
-    return `${stars.length} stars over ${Tree.CURRENTS.length} livingForces, `
+    return `${facets.length} facets over ${Tree.CURRENTS.length} currents, `
       + `one per card across ${Waves.BOONS.length} boons and ${Waves.ATTUNEMENTS.length} attunements`;
   });
 
-  check('livingForce: every star can be walked to from its own heart', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: every facet can be walked to from its own heart', () => {
+    assert(Tree, 'no Living Force module');
     const rows = [];
     for (const c of Tree.CURRENTS) {
-      const mine = Tree.starsOf(c.axis).map((s) => s.id);
+      const mine = Tree.facetsOf(c.axis).map((s) => s.id);
       assert(mine.includes(c.root), `${c.axis}'s root "${c.root}" does not stand in it`);
       assert(Tree.isRoot(c.root), `${c.root} is not marked a root`);
       // Breadth-first over the lines, exactly as the reachability rule walks
-      // them. An unreachable star is one that can only ever be DRAFTED — the
+      // them. An unreachable facet is one that can only ever be DRAFTED — the
       // tree would show it, price it, and refuse it forever.
       const seen = new Set([c.root]);
       const q = [c.root];
@@ -227,8 +228,8 @@ export async function run({ check, assert }) {
       }
       const orphans = mine.filter((i) => !seen.has(i));
       assert(!orphans.length,
-        `${orphans.join(', ')} cannot be reached from ${c.root} by any path — nothing but a draft can ever light them`);
-      // and the heart must be something that never runs out, or a livingForce
+        `${orphans.join(', ')} cannot be reached from ${c.root} by any path — nothing but a draft can ever wake them`);
+      // and the heart must be something that never runs out, or a current
       // can be closed off by exhausting its only entrance
       const b = Waves.boonById(c.root);
       assert(Waves.maxRank(b) >= 3,
@@ -238,25 +239,25 @@ export async function run({ check, assert }) {
     return rows.join(' ');
   });
 
-  check('livingForce: the map is readable — nothing overlaps and nothing falls off the sky', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: the map is readable — nothing overlaps and nothing falls off the lattice', () => {
+    assert(Tree, 'no Living Force module');
     /**
-     * A STAR MAP IS A DRAWING, and a drawing has a correctness condition: two
-     * stars on top of each other are one star you cannot click, and a star
+     * THE LATTICE IS A DRAWING, and a drawing has a correctness condition: two
+     * facets on top of each other are one facet you cannot click, and a facet
      * outside the viewBox is a node that exists, is priced, and cannot be
      * reached by a mouse. The first hand-placed version of this table had four
-     * cross-livingForce pairs within 40 px and put `darkside` sixty pixels
+     * cross-current pairs within 40 px and put `darkside` sixty pixels
      * below the bottom edge — invisible, buyable by nothing, and impossible to
      * see in review because the table looked perfectly reasonable as source.
      *
-     * So the sky is DIVIDED first and the shapes are fitted into it, and this
-     * is the assertion that keeps that true as stars are added.
+     * So the lattice is DIVIDED first and the shapes are fitted into it, and
+     * this is the assertion that keeps that true as facets are added.
      */
-    const pts = Tree.STARS.map((s) => ({ id: s.id, axis: s.axis, ...Tree.positionOf(s) }));
+    const pts = Tree.FACETS.map((s) => ({ id: s.id, axis: s.axis, ...Tree.positionOf(s) }));
     const M = 30;                                  // the halo radius, plus room
-    const off = pts.filter((p) => p.x < M || p.x > Tree.SKY.w - M || p.y < 40 || p.y > Tree.SKY.h - 34);
+    const off = pts.filter((p) => p.x < M || p.x > Tree.LATTICE.w - M || p.y < 40 || p.y > Tree.LATTICE.h - 34);
     assert(!off.length,
-      `stars outside the sky: ${off.map((p) => `${p.id} (${p.x | 0},${p.y | 0})`).join(', ')}`);
+      `facets off the lattice: ${off.map((p) => `${p.id} (${p.x | 0},${p.y | 0})`).join(', ')}`);
     let worst = Infinity, pair = '';
     for (let i = 0; i < pts.length; i++) {
       for (let j = i + 1; j < pts.length; j++) {
@@ -267,71 +268,71 @@ export async function run({ check, assert }) {
     // 44 px is two 15 px discs with 14 px between them; below that the labels
     // collide and the map stops being a map.
     assert(worst >= 44, `${pair} are ${worst.toFixed(0)} px apart — they overlap on screen`);
-    // …and no livingForce may wander into another's zone, which is the
-    // property that makes adding a star to one of them safe.
+    // …and no current may wander into another's zone, which is the
+    // property that makes adding a facet to one of them safe.
     for (const p of pts) {
       const z = Tree.zoneOf(p.axis);
       assert(z && Math.abs(p.x - z.x) <= z.halfW + 1 && Math.abs(p.y - z.y) <= z.halfH + 1,
         `${p.id} is drawn outside ${p.axis}'s own zone`);
     }
-    return `${pts.length} stars inside ${Tree.SKY.w}×${Tree.SKY.h}, closest pair ${worst.toFixed(0)} px (${pair})`;
+    return `${pts.length} facets inside ${Tree.LATTICE.w}×${Tree.LATTICE.h}, closest pair ${worst.toFixed(0)} px (${pair})`;
   });
 
-  check('livingForce: the page and the sky agree on how big the sky is', async () => {
-    assert(Tree, 'no livingForce module');
-    // Two places, one truth. `SKY` is what positionOf lays out into and the
+  check('living force: the page and the lattice agree on how big it is', async () => {
+    assert(Tree, 'no Living Force module');
+    // Two places, one truth. `LATTICE` is what positionOf lays out into and the
     // viewBox is what the browser scales — and they are in different files, so
-    // a sky that grew in one of them would draw every star in the wrong place
-    // (or off the edge) with nothing anywhere reporting an error.
+    // a lattice that grew in one of them would draw every facet in the wrong
+    // place (or off the edge) with nothing anywhere reporting an error.
     const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
     const m = /id="med-field"[^>]*viewBox="0 0 (\d+) (\d+)"/.exec(html);
-    assert(m, 'the star map has no viewBox in index.html');
-    assert(+m[1] === Tree.SKY.w && +m[2] === Tree.SKY.h,
-      `the page draws a ${m[1]}×${m[2]} sky and LivingForce.js lays out a ${Tree.SKY.w}×${Tree.SKY.h} one`);
-    return `viewBox and SKY agree at ${Tree.SKY.w}×${Tree.SKY.h}`;
+    assert(m, 'the Holocron has no viewBox in index.html');
+    assert(+m[1] === Tree.LATTICE.w && +m[2] === Tree.LATTICE.h,
+      `the page draws a ${m[1]}×${m[2]} lattice and LivingForce.js lays out a ${Tree.LATTICE.w}×${Tree.LATTICE.h} one`);
+    return `viewBox and LATTICE agree at ${Tree.LATTICE.w}×${Tree.LATTICE.h}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  2. The names move with the alignment                              */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: the same star reads as a Jedi name and a Sith name', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: the same facet reads as a Jedi name and a Sith name', () => {
+    assert(Tree, 'no Living Force module');
     // The alignment is Order.js's, not a second one invented here. If those
     // three ids ever stop being the orders, this fails rather than quietly
     // naming everything after a tradition that no longer exists.
     for (const id of ['jedi', 'sith', 'grey']) {
-      assert(ORDER_IDS.includes(id), `Order.js no longer has "${id}", which this file names stars for`);
+      assert(ORDER_IDS.includes(id), `Order.js no longer has "${id}", which this file names facets for`);
     }
     const same = [], blank = [];
-    for (const s of Tree.STARS) {
+    for (const s of Tree.FACETS) {
       if (!s.jedi || !s.sith) { blank.push(s.id); continue; }
       if (s.jedi === s.sith) same.push(s.id);
       const j = Tree.nameOf(s.id, 'jedi'), k = Tree.nameOf(s.id, 'sith');
       assert(j === s.jedi && k === s.sith, `${s.id} does not read its own aligned name back`);
     }
-    assert(!blank.length, `stars with no aligned name: ${blank.join(', ')}`);
+    assert(!blank.length, `facets with no aligned name: ${blank.join(', ')}`);
     assert(!same.length,
-      `stars whose Jedi and Sith names are identical: ${same.join(', ')} — the alignment is decoration there`);
+      `facets whose Jedi and Sith names are identical: ${same.join(', ')} — the alignment is decoration there`);
     // A Grey took no temple's vocabulary: they read the canonical name, and so
     // does a player who has chosen no order at all. Defaulting them to the Jedi
     // column would quietly resolve "neither code" into one.
-    for (const s of Tree.STARS) {
+    for (const s of Tree.FACETS) {
       const canon = Waves.boonById(s.id).name;
       assert(Tree.nameOf(s.id, 'grey') === canon, `a Grey reads ${s.id} as something other than "${canon}"`);
       assert(Tree.nameOf(s.id, null) === canon, `with no order at all, ${s.id} is not the canonical name`);
     }
-    // and inside one livingForce two stars may not share a name in any
+    // and inside one current two facets may not share a name in any
     // alignment, or the map is unreadable in exactly one of the three
     for (const c of Tree.CURRENTS) {
       for (const order of ['jedi', 'sith', 'grey']) {
-        const names = Tree.starsOf(c.axis).map((s) => Tree.nameOf(s.id, order));
+        const names = Tree.facetsOf(c.axis).map((s) => Tree.nameOf(s.id, order));
         assert(new Set(names).size === names.length,
-          `two stars in ${c.axis} read the same to a ${order}: ${names.join(', ')}`);
+          `two facets in ${c.axis} read the same to a ${order}: ${names.join(', ')}`);
       }
     }
-    const sample = Tree.STARS.find((s) => s.id === 'lifesteal');
-    return `${Tree.STARS.length} stars, all three vocabularies distinct — e.g. `
+    const sample = Tree.FACETS.find((s) => s.id === 'lifesteal');
+    return `${Tree.FACETS.length} facets, all three vocabularies distinct — e.g. `
       + `"${sample.jedi}" / "${sample.sith}" / "${Waves.boonById('lifesteal').name}"`;
   });
 
@@ -339,18 +340,18 @@ export async function run({ check, assert }) {
   /*  3. The rule that makes it a tree                                  */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: a star cannot be lit out of nowhere', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: a facet cannot be woken out of nowhere', () => {
+    assert(Tree, 'no Living Force module');
     const led = new Tree.Communion({ insight: 9999 });
     const empty = new Waves.RankSet();
     // With nothing held, only the six hearts are open. Anything else buyable
     // from an empty hand means the lines are decoration.
-    const openNow = Tree.STARS.filter((s) => led.canBuy(s.id, empty, 40)).map((s) => s.id);
+    const openNow = Tree.FACETS.filter((s) => led.canBuy(s.id, empty, 40)).map((s) => s.id);
     const roots = Tree.CURRENTS.map((c) => c.root);
     assert(openNow.length === roots.length && roots.every((r) => openNow.includes(r)),
-      `from an empty hand the sky offers ${openNow.join(', ')} — it must offer exactly the six hearts`);
+      `from an empty hand the Holocron offers ${openNow.join(', ')} — it must offer exactly the six hearts`);
 
-    // A DRAFTED card is a bridgehead: it lights its own star, and its
+    // A DRAFTED card is a bridgehead: it wakes its own facet, and its
     // neighbours become reachable without any purchase at all. This is the
     // whole interplay between the two halves of the reward system.
     const held = new Waves.RankSet(['djemso']);
@@ -359,7 +360,7 @@ export async function run({ check, assert }) {
     for (const n of near) {
       assert(led.reachable(n, held), `holding Djem So does not open ${n}, which it is joined to`);
     }
-    assert(!led.reachable('tempest', held), 'a card on the other side of the sky is reachable from Djem So');
+    assert(!led.reachable('tempest', held), 'a card on the other side of the lattice is reachable from Djem So');
 
     // The gates the draft has, the tree must have too, or the tree is the way
     // around them: a mastery you can simply buy is not a mastery, and a wave-2
@@ -371,12 +372,12 @@ export async function run({ check, assert }) {
     assert(led.canBuy('darkside', committed, 40), 'a committed dark build still cannot reach its mastery');
     assert(led.reasonLocked('lightning', new Waves.RankSet(['attune-dark']), 2) === Tree.LOCKED.depth,
       'Force Lightning can be bought at wave 2 — the tree walks around minWave');
-    // …and a star with nothing left to give says so rather than taking money
+    // …and a facet with nothing left to give says so rather than taking money
     const full = new Waves.RankSet(['attune-guard']);
     for (let i = 0; i < Waves.maxRank(Waves.boonById('thorns')); i++) full.take('thorns');
     assert(led.reasonLocked('thorns', full, 40) === Tree.LOCKED.spent,
-      'a maxed star is still for sale');
-    return `six hearts open from nothing; a drafted card opens ${near.length} joined stars; `
+      'a maxed facet is still for sale');
+    return `six hearts open from nothing; a drafted card opens ${near.length} joined facets; `
       + 'masteries, minWave and rank caps all hold inside the tree';
   });
 
@@ -384,8 +385,8 @@ export async function run({ check, assert }) {
   /*  4. The economy cannot outrun the draft                            */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: the tree never outgrows the draft it sits beside', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: the tree never outgrows the draft it sits beside', () => {
+    assert(Tree, 'no Living Force module');
     /**
      * THE BALANCE BOUND, AS ARITHMETIC.
      *
@@ -397,7 +398,7 @@ export async function run({ check, assert }) {
      * cause, deterministically, because a simulated depth would fail on honest
      * tuning and on nothing else (see the header of tools/checks/balance.mjs).
      *
-     * The costs are an arithmetic series, so stars-per-run grows like √w while
+     * The costs are an arithmetic series, so facets-per-run grows like √w while
      * drafted cards grow like w/2. This asserts that relationship at every wave
      * out to 60 rather than trusting the algebra.
      */
@@ -415,8 +416,8 @@ export async function run({ check, assert }) {
     let worst = 0, worstAt = 0;
     for (let w = 1; w <= 60; w++) {
       let purse = Tree.insightAfter(w, Waves.BOSS_EVERY), bought = 0;
-      // Cheapest possible spending: every star a common, which is the most
-      // stars this economy can produce at that depth.
+      // Cheapest possible spending: every facet a common, which is the most
+      // facets this economy can produce at that depth.
       for (;;) {
         const cost = Tree.COST.common + Tree.COST_STEP * bought;
         if (purse < cost) break;
@@ -426,69 +427,69 @@ export async function run({ check, assert }) {
       const share = drafted ? bought / (bought + drafted) : 0;
       if (share > worst) { worst = share; worstAt = w; }
       assert(bought <= drafted || w < 4,
-        `at wave ${w} the tree can buy ${bought} stars against ${drafted} drafted cards — `
+        `at wave ${w} the tree can wake ${bought} facets against ${drafted} drafted cards — `
         + 'the side channel has become the main one');
       if (w % 20 === 0) rows.push(`w${w}: ${bought} bought / ${drafted} drafted`);
     }
     assert(worst <= 0.45,
       `at wave ${worstAt} the tree is ${(worst * 100).toFixed(0)}% of everything the run earned`);
     // Prices must CLIMB, or the escalator is not one and a late run buys the
-    // whole sky.
+    // whole lattice.
     const led = new Tree.Communion({ insight: 999 });
     const taken = new Waves.RankSet(['attune-blade']);
     const first = led.costOf('cadence', taken);
     led.buy('cadence', taken, 40); taken.take('cadence');
     const second = led.costOf('djemso', taken);
-    assert(second > first, `the second star cost ${second} against the first at ${first}`);
+    assert(second > first, `the second facet cost ${second} against the first at ${first}`);
     // and a repeat is never the cheap play
     const again = led.costOf('cadence', taken);
-    assert(again > second, `a second rank of the same star costs ${again}, less than a fresh one at ${second}`);
+    assert(again > second, `a second rank of the same facet costs ${again}, less than a fresh one at ${second}`);
     return `${rows.join(', ')}; worst share of a run's growth ${(worst * 100).toFixed(0)}% at w${worstAt}; `
       + `prices ${first} → ${second} → ${again}`;
   });
 
-  check('livingForce: a run lights a third of the sky, and two runs are not the same third', () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: a run wakes a third of the lattice, and two runs are not the same third', () => {
+    assert(Tree, 'no Living Force module');
     /**
-     * THE CHECK THAT SAYS WHAT THE SIZE OF THE SKY IS FOR, because the obvious
-     * reading of the numbers is wrong and it was acted on once already.
+     * THE CHECK THAT SAYS WHAT THE SIZE OF THE LATTICE IS FOR, because the
+     * obvious reading of the numbers is wrong and it was acted on once already.
      *
      * The obvious reading: a run earns `w + 2·floor(w/5)` Insight against an
-     * arithmetic price series, so it can afford about √w currents — four by
-     * wave 20, six by wave 40, ten by wave 100. Against 46 currents that is 13%,
-     * lighting the whole sky would take about 1690 waves, and the conclusion
-     * writes itself: the sky is 87% decoration, cut it to eighteen.
+     * arithmetic price series, so it can afford about √w facets — four by
+     * wave 20, six by wave 40, ten by wave 100. Against 46 facets that is 13%,
+     * waking the whole lattice would take about 1690 waves, and the conclusion
+     * writes itself: the Holocron is 87% decoration, cut it to eighteen.
      *
-     * IT IS WRONG BECAUSE THE PURSE IS NOT THE ONLY THING THAT LIGHTS A
-     * CURRENT. This file's own header says so in as many words — "a DRAFTED
-     * card lights its current too… the two halves are one system" — and
+     * IT IS WRONG BECAUSE THE PURSE IS NOT THE ONLY THING THAT WAKES A FACET.
+     * This file's own header says so in as many words — "a DRAFTED card wakes
+     * its facet too… the two halves are one system" — and
      * `Communion.reachable` reads `rankOf(taken, …)`, which the draft feeds.
      * Driven through the real `drawBoons` and the real ledger, 24 runs per
-     * style, counting DISTINCT currents held from both channels:
+     * style, counting DISTINCT facets held from both channels:
      *
-     *     style           wave   drafts  bought   lit   share of sky
+     *     style           wave   drafts  bought  woken  share of lattice
      *     random            20     12.0     3.8   13.9      30%
      *     random            40     24.0     5.9   23.9      52%
      *     commit-blade      40     24.0     5.5   17.5      38%
      *     commit-dark       60     36.0     7.0   24.6      53%
      *
      * and the overlap between two wave-40 runs of the same style is 42-47% —
-     * so more than half of each holding is currents the other one does not
-     * have. Every current in the table is reached by some run; the least-lit
+     * so more than half of each holding is facets the other one does not
+     * have. Every facet in the table is reached by some run; the least-woken
      * (`unity`, the bond mastery) is held by 8% of them.
      *
-     * Cutting to eighteen would take a run that lights half the sky to one that
-     * lights all of it by wave 40, which is the end of two runs differing. It
-     * would also delete twenty-six cards from the DRAFT, and
+     * Cutting to eighteen would take a run that wakes half the lattice to one
+     * that wakes all of it by wave 40, which is the end of two runs differing.
+     * It would also delete twenty-six cards from the DRAFT, and
      * `tools/checks/escalation.mjs` pins the opposite property there — "a
      * thirty-wave run draws half the table, not five eighths of it" — because
      * a thin draft is the defect that widening the table was done to fix.
      *
-     * So the size of the sky is load-bearing in two directions at once, and
-     * this check is what says so: enough currents that a run cannot hold them
+     * So the size of the lattice is load-bearing in two directions at once, and
+     * this check is what says so: enough facets that a run cannot hold them
      * all, and few enough that a run holds a real share of them.
      *
-     * ── WHAT IS ACTUALLY THIN, AND IT IS NOT THE SKY ─────────────────────
+     * ── WHAT IS ACTUALLY THIN, AND IT IS NOT THE LATTICE ─────────────────
      *
      * The PURSE: 5.9 purchases against 24 drafted cards by wave 40. That is
      * deliberate and it is pinned by "the tree never outgrows the draft it sits
@@ -498,7 +499,7 @@ export async function run({ check, assert }) {
      * Two things measured on the way here, neither of them fixed, both worth
      * the next reader's time:
      *
-     *   FIFTEEN of the 46 currents are never BOUGHT by a spender who buys the
+     *   FIFTEEN of the 46 facets are never BOUGHT by a spender who buys the
      *   moment it can afford anything — every root, every mastery, plus
      *   lightning, compel and the saber throw. They are not unreachable: a
      *   SAVER takes a mastery for 9 Insight at wave 12, because the escalator
@@ -544,7 +545,7 @@ export async function run({ check, assert }) {
           }
         }
         for (;;) {
-          const open = Tree.STARS.filter((s) => led.canBuy(s.id, taken, w));
+          const open = Tree.FACETS.filter((s) => led.canBuy(s.id, taken, w));
           if (!open.length) break;
           const pick = style.kind === 'commit'
             ? (open.find((s) => s.axis === style.axis) || open[0]) : open[die(open.length)];
@@ -552,7 +553,7 @@ export async function run({ check, assert }) {
           taken.take(pick.id); bought++;
         }
       }
-      return { drafts, bought, ids: new Set(Tree.STARS.filter((s) => Waves.rankOf(taken, s.id) > 0).map((s) => s.id)) };
+      return { drafts, bought, ids: new Set(Tree.FACETS.filter((s) => Waves.rankOf(taken, s.id) > 0).map((s) => s.id)) };
     };
 
     const rows = [];
@@ -561,9 +562,9 @@ export async function run({ check, assert }) {
       const name = st.kind === 'commit' ? `commit-${st.axis}` : 'random';
       const runs = [];
       for (let s = 1; s <= 12; s++) runs.push(runOne(40, st, s * 7));
-      const lit = runs.reduce((a, r) => a + r.ids.size, 0) / runs.length;
+      const woken = runs.reduce((a, r) => a + r.ids.size, 0) / runs.length;
       const bought = runs.reduce((a, r) => a + r.bought, 0) / runs.length;
-      const share = lit / Tree.STARS.length;
+      const share = woken / Tree.FACETS.length;
       if (share < worstShare) { worstShare = share; worstAt = name; }
       let j = 0, n = 0;
       for (let a = 0; a < runs.length; a++) {
@@ -574,20 +575,20 @@ export async function run({ check, assert }) {
         }
       }
       if (j / n > worstOverlap) { worstOverlap = j / n; overlapAt = name; }
-      rows.push(`${name} ${lit.toFixed(1)}/${Tree.STARS.length} lit (${bought.toFixed(1)} bought)`);
+      rows.push(`${name} ${woken.toFixed(1)}/${Tree.FACETS.length} woken (${bought.toFixed(1)} bought)`);
     }
     assert(worstShare >= 0.33,
-      `a ${worstAt} run reaches wave 40 holding ${(worstShare * 100).toFixed(0)}% of the sky — `
-      + 'most of the table is a picture of a system rather than a system, and the currents nobody '
+      `a ${worstAt} run reaches wave 40 holding ${(worstShare * 100).toFixed(0)}% of the lattice — `
+      + 'most of the table is a picture of a system rather than a system, and the facets nobody '
       + 'reaches should be cut or joined up');
     assert(worstShare <= 0.85,
-      `a ${worstAt} run holds ${(worstShare * 100).toFixed(0)}% of the sky by wave 40 — `
+      `a ${worstAt} run holds ${(worstShare * 100).toFixed(0)}% of the lattice by wave 40 — `
       + 'if a run can hold nearly all of it then there is nothing left for the next run to be');
     assert(worstOverlap <= 0.7,
-      `two ${overlapAt} runs hold ${(worstOverlap * 100).toFixed(0)}% of the same currents at wave 40 — `
-      + 'the sky is not producing different builds, it is producing one build with noise on it');
+      `two ${overlapAt} runs hold ${(worstOverlap * 100).toFixed(0)}% of the same facets at wave 40 — `
+      + 'the Holocron is not producing different builds, it is producing one build with noise on it');
     /**
-     * …AND NO CURRENT MAY BE UNREACHABLE IN PRACTICE, which is the real test of
+     * …AND NO FACET MAY BE UNREACHABLE IN PRACTICE, which is the real test of
      * whether a table entry is decoration — and the one the "87% of it is
      * decoration" reading was reaching for.
      *
@@ -600,16 +601,16 @@ export async function run({ check, assert }) {
     const ever = new Set();
     const sweep = [{ kind: 'random' }, ...Tree.AXES.map((axis) => ({ kind: 'commit', axis }))];
     for (const st of sweep) for (let s = 1; s <= 12; s++) for (const id of runOne(60, st, s * 13).ids) ever.add(id);
-    const dead = Tree.STARS.filter((s) => !ever.has(s.id)).map((s) => s.id);
+    const dead = Tree.FACETS.filter((s) => !ever.has(s.id)).map((s) => s.id);
     assert(!dead.length,
-      `no run in ${sweep.length * 12} ever held: ${dead.join(', ')} — a current nothing reaches is decoration, `
+      `no run in ${sweep.length * 12} ever held: ${dead.join(', ')} — a facet nothing reaches is decoration, `
       + 'and cutting it or joining it up is the honest answer');
     return `${rows.join('; ')}; two runs share ${(worstOverlap * 100).toFixed(0)}% at worst; `
-      + `all ${Tree.STARS.length} currents reached across ${sweep.length * 12} runs`;
+      + `all ${Tree.FACETS.length} facets reached across ${sweep.length * 12} runs`;
   });
 
-  check('livingForce: Insight is a run currency and never a save file', async () => {
-    assert(Tree, 'no livingForce module');
+  check('living force: Insight is a run currency and never a save file', async () => {
+    assert(Tree, 'no Living Force module');
     /**
      * Progress.js exists to say what a record is NOT: "no unlocks, no currency,
      * no cross-run power — the hundredth run starts exactly where the first
@@ -618,7 +619,7 @@ export async function run({ check, assert }) {
      */
     const fresh = new Tree.Communion();
     assert(fresh.insight === 0 && fresh.bought.length === 0,
-      `a new run starts with ${fresh.insight} Insight and ${fresh.bought.length} stars already lit`);
+      `a new run starts with ${fresh.insight} Insight and ${fresh.bought.length} facets already woken`);
     const progress = await read('game/Progress.js');
     assert(/no currency/.test(progress), 'the doctrine note in Progress.js is gone');
     // Nothing may read the record back INTO a run. The record is written in
@@ -631,7 +632,7 @@ export async function run({ check, assert }) {
     }
     const main = await read('main.js');
     const uses = [...main.matchAll(/loadProgress\(\)/g)].length;
-    assert(uses <= 1, `main.js reads the record ${uses} times; only the star chart may`);
+    assert(uses <= 1, `main.js reads the record ${uses} times; only the Holocron's chart may`);
     const i = main.indexOf('loadProgress()');
     assert(i > 0 && /history/.test(main.slice(Math.max(0, i - 400), i + 200)),
       'the record is read somewhere other than the chart');
@@ -647,7 +648,7 @@ export async function run({ check, assert }) {
    * here. If a mode with landings comes back, so does this check.
    */
 
-  check('livingForce: Reflection sends a share of the blow back to whoever struck it', () => {
+  check('living force: Reflection sends a share of the blow back to whoever struck it', () => {
     // Driven through the REAL damage path on both sides: Player.prototype.damage
     // takes the hit, the guard chain answers, and the answer lands on a real
     // Enemy through its own `damage`. Nothing here reads a flag.
@@ -681,7 +682,7 @@ export async function run({ check, assert }) {
     return `20 damage taken → ${back.toFixed(1)} returned to the body that dealt it (${before} → ${foe2.hp.toFixed(1)} hp)`;
   });
 
-  check('livingForce: the Aegis eats the blow and knits itself back together', () => {
+  check('living force: the Aegis eats the blow and knits itself back together', () => {
     const w = gameWorld();
     const plain = livePlayer(w);
     const ward = livePlayer(w);
@@ -715,7 +716,7 @@ export async function run({ check, assert }) {
       + `refilled to ${ward._aegis.toFixed(0)} after twelve quiet seconds`;
   });
 
-  check('livingForce: Momentum is paid by killing and taken back by standing still', () => {
+  check('living force: Momentum is paid by killing and taken back by standing still', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'momentum');
@@ -739,7 +740,7 @@ export async function run({ check, assert }) {
       + `back to ${p.boonMods.moveSpeed.toFixed(3)} after 30 s`;
   });
 
-  check('livingForce: the Mercy Stroke finishes the broken and spares the whole', () => {
+  check('living force: the Mercy Stroke finishes the broken and spares the whole', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'execute');
@@ -769,7 +770,7 @@ export async function run({ check, assert }) {
     return `threshold ${(at * 100).toFixed(0)}% — whole body survives, broken body dies and is credited`;
   });
 
-  check('livingForce: a Detonation reaches the crowd once, not the whole crowd forever', () => {
+  check('living force: a Detonation reaches the crowd once, not the whole crowd forever', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'detonate');
@@ -812,7 +813,7 @@ export async function run({ check, assert }) {
 
   /* ── the communion: buffs that land on somebody else ────────────────── */
 
-  check('livingForce: a communion lands on the ally, and half of it on you alone', () => {
+  check('living force: a communion lands on the ally, and half of it on you alone', () => {
     const w = gameWorld();
     const giver = livePlayer(w);
     const ally = livePlayer(w, { position: V(3, 0, 0) });
@@ -844,7 +845,7 @@ export async function run({ check, assert }) {
       + `holder ×${self.toFixed(2)} alone and ×${giver.boonMods.cutPower.toFixed(2)} with the mastery`;
   });
 
-  check('livingForce: Suffusion mends the person beside you, not you', () => {
+  check('living force: Suffusion mends the person beside you, not you', () => {
     const w = gameWorld();
     const healer = livePlayer(w, { hp: 60 });
     const ally = livePlayer(w, { hp: 40, position: V(4, 0, 0) });
@@ -866,7 +867,7 @@ export async function run({ check, assert }) {
     return `ally +${(ally.hp - 40).toFixed(1)} hp per limb, giver +0; alone +${(solo.hp - 60).toFixed(1)}`;
   });
 
-  check('livingForce: the Vow puts the ward on both of you', () => {
+  check('living force: the Vow puts the ward on both of you', () => {
     const w = gameWorld();
     const keeper = livePlayer(w);
     const ally = livePlayer(w, { position: V(4, 0, 0) });
@@ -897,7 +898,7 @@ export async function run({ check, assert }) {
       + `${together.toFixed(1)} with somebody beside them`;
   });
 
-  check('livingForce: a communion crosses the wire and lands on the receiver', async () => {
+  check('living force: a communion crosses the wire and lands on the receiver', async () => {
     /**
      * THE CO-OP HALF, and the failure it is written against is this project's
      * own history: `claim` existed at both ends and nothing ever sent one, so
@@ -949,10 +950,10 @@ export async function run({ check, assert }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
-  /*  6. The general rule: no star is a parameter nobody reads          */
+  /*  6. The general rule: no facet is a parameter nobody reads         */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: every new star installs a seam and every parameter has a reader', async () => {
+  check('living force: every new facet installs a seam and every parameter has a reader', async () => {
     /**
      * The structural companion to the behavioural checks above, and the exact
      * analogue of controls.mjs's "every boon changes the player and every
@@ -976,7 +977,7 @@ export async function run({ check, assert }) {
     const seams = (p, w) => [p._boonTicks?.size || 0, p._boonGuards?.size || 0,
       p._boonAfterHit?.size || 0, w._boonSever?.length || 0, w._boonKill?.length || 0].join('/');
     const unread = [], inert = [];
-    for (const [id, field] of NEW_STARS) {
+    for (const [id, field] of NEW_FACETS) {
       const b = boon(id);
       const w = gameWorld();
       const p = livePlayer(w);
@@ -989,30 +990,30 @@ export async function run({ check, assert }) {
       const re = new RegExp(`this\\.${field}\\b|q\\.${field}\\b|p\\.${field}\\b`);
       if (!re.test(readers)) unread.push(`${id} → ${field}`);
     }
-    assert(!inert.length, `stars that install nothing at all: ${inert.join(', ')}`);
+    assert(!inert.length, `facets that install nothing at all: ${inert.join(', ')}`);
     assert(!unread.length,
-      `parameters nothing outside the card reads: ${unread.join(', ')} — the star promises what the code never does`);
-    return `${NEW_STARS.length} new stars, each installing a real seam, each parameter read elsewhere`;
+      `parameters nothing outside the card reads: ${unread.join(', ')} — the facet promises what the code never does`);
+    return `${NEW_FACETS.length} new facets, each installing a real seam, each parameter read elsewhere`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  7. The meditation                                                 */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('meditation: the star map goes up through Screens and can always be left', () => {
+  check('meditation: the Holocron goes up through Screens and can always be left', () => {
     /**
      * The overlay rules are Screens.js's, and this drives the real thing: the
      * meditation is raised by `take`, so it must be REMEMBERED, it must stop
      * the world, Escape over it must land on a card that can resume, and
-     * resuming must put the star map back rather than silently skipping it.
+     * resuming must put the Holocron back rather than silently skipping it.
      *
      * The card is registered rather than built into Screens, and the registry
      * is the part that fails on the old code: without it, `clear()` and
-     * `_hide()` know nothing about this overlay and a star map raised over a
+     * `_hide()` know nothing about this overlay and a Holocron raised over a
      * run survives being quit to the main menu.
      */
     assert(LIVE.includes('meditation'),
-      "'meditation' is not a live state — Escape would do nothing at all inside the star map");
+      "'meditation' is not a live state — Escape would do nothing at all inside the Holocron");
     const up = new Set();
     const menu = {
       showPause: () => up.add('pause'), hidePause: () => up.delete('pause'),
@@ -1025,31 +1026,31 @@ export async function run({ check, assert }) {
       world: () => world, input, menu, pauseStats: () => [], onError: (what, e) => errors.push(`${what}: ${e.message}`),
     });
     assert(typeof s.card === 'function', 'Screens cannot be taught about an overlay it did not ship with');
-    s.card('meditation', () => up.delete('sky'));
+    s.card('meditation', () => up.delete('holocron'));
     s.state = 'playing';
-    s.take('meditation', () => up.add('sky'));
-    assert(up.has('sky'), 'the star map never went up');
+    s.take('meditation', () => up.add('holocron'));
+    assert(up.has('holocron'), 'the Holocron never went up');
     assert(s.overlay && s.overlay.state === 'meditation', 'the meditation was not remembered');
-    assert(world.paused, 'the world is still running under the star map');
-    assert(!input.enabled, 'the blade is still taking input under the star map');
+    assert(world.paused, 'the world is still running under the Holocron');
+    assert(!input.enabled, 'the blade is still taking input under the Holocron');
 
     const did = s.escape();
-    assert(did !== 'nothing', 'Escape inside the star map does nothing at all');
-    assert(!up.has('sky') && up.has('pause'),
+    assert(did !== 'nothing', 'Escape inside the Holocron does nothing at all');
+    assert(!up.has('holocron') && up.has('pause'),
       `Escape left ${[...up].join('+')} on screen — the registered card was not hidden`);
     s.resume();
-    assert(s.state === 'meditation' && up.has('sky'), 'resuming did not put the star map back');
+    assert(s.state === 'meditation' && up.has('holocron'), 'resuming did not put the Holocron back');
 
     // A throw inside a purchase must land on the pause card, never on a void.
-    s.guarded('lighting a star', () => { up.delete('sky'); throw new Error('applyBoon is not a function'); })();
+    s.guarded('waking a facet', () => { up.delete('holocron'); throw new Error('applyBoon is not a function'); })();
     assert(errors.length === 1, 'the throw was swallowed');
     assert(up.has('pause') && s.state === 'paused',
       `a failed purchase left state '${s.state}' with ${[...up].join('+')} on screen`);
     // …and quitting to the menu must take it down with everything else.
-    s.take('meditation', () => up.add('sky'));
+    s.take('meditation', () => up.add('holocron'));
     s.set('menu');
-    assert(!up.has('sky'), 'quitting to the menu left the star map on the screen forever');
-    return 'take → remembered, world stopped; Escape → pause; resume → star map; a throw → pause; clear → gone';
+    assert(!up.has('holocron'), 'quitting to the menu left the Holocron on the screen forever');
+    return 'take → remembered, world stopped; Escape → pause; resume → Holocron; a throw → pause; clear → gone';
   });
 
   check('meditation: it is reached by kneeling, and never in the middle of a fight', async () => {
@@ -1062,7 +1063,7 @@ export async function run({ check, assert }) {
      */
     const main = await read('main.js');
     assert(main.includes('function canCommune'),
-      'nothing decides whether a communion is possible — the star map has no in-world door');
+      'nothing decides whether a communion is possible — the Holocron has no in-world door');
     const body = functionBody(main, 'function canCommune');
     assert(/screens\.state !== 'playing'/.test(body), 'the kneel is possible while an overlay owns the screen');
     assert(/grounded/.test(body), 'you can kneel in mid-air');
@@ -1182,17 +1183,17 @@ export async function run({ check, assert }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
-  /*  The sky, operated                                                 */
+  /*  The Holocron, operated                                            */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('livingForce: a star that says it is a button behaves like one', async () => {
+  check('living force: a facet that says it is a button behaves like one', async () => {
     /**
-     * SkillTree draws every star with `tabindex="0"` and `role="button"`, and
-     * styles.css carries a `#med-field .current:focus` rule for it — so a star takes
-     * focus and announces itself to a screen reader as a button. It registered
-     * `click` and `dblclick` and nothing else, so Enter and Space did nothing
-     * at all: the ONE place in the whole front end that had bothered to claim a
-     * keyboard affordance was the one place that had not built it.
+     * SkillTree draws every facet with `tabindex="0"` and `role="button"`, and
+     * styles.css carries a `#med-field .facet:focus` rule for it — so a facet
+     * takes focus and announces itself to a screen reader as a button. It
+     * registered `click` and `dblclick` and nothing else, so Enter and Space did
+     * nothing at all: the ONE place in the whole front end that had bothered to
+     * claim a keyboard affordance was the one place that had not built it.
      *
      * Driven through the real SkillTree on the real meditation markup, because
      * the claim is about the elements it emits. Synchronous once the document
@@ -1208,24 +1209,24 @@ export async function run({ check, assert }) {
       const tree = new SkillTree(doc, { onBuy: (id) => bought.push(id) });
       const taken = new Waves.RankSet([]);
       tree.show({ taken, ledger: new Tree.Communion({ insight: 999 }), wave: 9, order: 'jedi', live: true });
-      const nodes = doc.querySelectorAll('#med-field .current');
+      const nodes = doc.querySelectorAll('#med-field .facet');
       assert(nodes.length > 10, `${nodes.length} nodes drew`);
       const deaf = nodes.filter(g => g.listenerCount('keydown') === 0);
       assert(!deaf.length,
         `${deaf.length}/${nodes.length} nodes carry tabindex="0" role="button" and no key listener at all`);
       const focusable = nodes.filter(g => g.getAttribute('tabindex') === '0');
-      assert(focusable.length === nodes.length, 'a star lost its place in the tab order');
+      assert(focusable.length === nodes.length, 'a facet lost its place in the tab order');
       // Enter selects, exactly as a click does…
       const root = nodes.find(g => g.classList.contains('root')) || nodes[0];
       root.dispatchEvent({ type: 'keydown', key: 'Enter' });
-      assert(tree.selected, 'Enter on a star selected nothing');
-      // …and Enter on the star already selected is the keyboard's double-click.
+      assert(tree.selected, 'Enter on a facet selected nothing');
+      // …and Enter on the facet already selected is the keyboard's double-click.
       const before = bought.length;
       root.dispatchEvent({ type: 'keydown', key: 'Enter' });
       assert(bought.length === before + 1,
-        'Enter on the selected star did not buy it — the keyboard can look and never spend');
+        'Enter on the selected facet did not buy it — the keyboard can look and never spend');
       assert(bought[0] === tree.selected, `it bought ${bought[0]} with ${tree.selected} selected`);
-      return `${nodes.length} stars, all focusable and listening; Enter selects then buys (${bought[0]})`;
+      return `${nodes.length} facets, all focusable and listening; Enter selects then buys (${bought[0]})`;
     } finally { restore(); }
   });
 
@@ -1285,9 +1286,9 @@ export async function run({ check, assert }) {
     assert(all.lightning, "'all' did not light Force lightning — the reported power is still unreachable");
     assert(all.compel, "'all' did not light Compel — the reported power is still unreachable");
     assert(all.held > earned.held + 10,
-      `'all' arrived holding only ${all.held} boons — the sky is ${Tree.STARS.length} facets wide`);
+      `'all' arrived holding only ${all.held} boons — the lattice is ${Tree.FACETS.length} facets wide`);
 
     return `earned ${earned.insight}i/${earned.held} · open ${open.insight}i/${open.held} · `
-      + `all ${all.held} of ${Tree.STARS.length} facets, lightning+compel lit`;
+      + `all ${all.held} of ${Tree.FACETS.length} facets, lightning+compel woken`;
   });
 }

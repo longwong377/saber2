@@ -102,7 +102,7 @@ export const MODES = {
   waves: {
     name: 'Trial of Waves',
     blurb: 'Endless escalation, and no cards to soften it. The Force sets the terms of every second wave; '
-      + 'what you build, you build in the sky.',
+      + 'what you build, you build in the Holocron.',
   },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
   /**
@@ -1042,7 +1042,7 @@ export class WaveDirector {
    * `wave` is therefore the wave number OF THE RUN — 1..16 down the Descent,
    * 1..∞ everywhere else — which is also the number every reader outside this
    * file already wanted: the HUD banner, the death card's "Wave reached", the
-   * pause card, the depth the livingForce gates its stars on, and the number
+   * pause card, the depth the Holocron gates its facets on, and the number
    * a co-op host puts on the wire. What is rung-local is `onWaveClear`'s
    * argument (see the wave-clear block in `update`), because that is the one
    * consumer — World's `run.wave >= rung.waves` — asking about THIS rung.
@@ -1171,7 +1171,7 @@ export class WaveDirector {
    * built player and that ends in a crown, is `gauntlet`. It fell on the wrong
    * side of that equality for its whole life: measured over twenty-four waves a
    * roguelite drafted twelve times and a gauntlet drafted zero, so the flagship
-   * run mode's entire reward loop was the livingForce and nothing else.
+   * run mode's entire reward loop was the Holocron and nothing else.
    *
    * A LIST, so the next mode that wants a run declares itself here rather than
    * being caught by an `===` somebody has to remember to widen. `waves` and
@@ -2841,7 +2841,7 @@ function cleaveAlong(p, from, to, dt) {
  * keep `_juyoStacks`, `_mendClock`, `_conduitKills` and `_bastionDeflects`
  * there. The rule that matters is unchanged and is the only one worth having:
  * the number must be READ, every frame, by the reader the card installed —
- * which is what tools/checks/livingForce.mjs measures, on a real Player, by
+ * which is what tools/checks/living-force.mjs measures, on a real Player, by
  * driving the fight and watching the difference rather than by reading a flag.
  */
 
@@ -3095,7 +3095,7 @@ const STAGGER_AT = 14;
  * defaultBoonMods` seeds it at 0, which is only sane the same way. The guard
  * then returned `amount * k`. Measured on a 40-point heavy blow: no card 40.00,
  * rank I 20.00, rank II 30.00 — rank two of a rare card cost the player a draft
- * slot (or 9+ Insight on the Guard livingForce, where a second rank carries
+ * slot (or 9+ Insight on the guard current, where a second rank carries
  * an extra RANK_STEP) to take FIFTY PERCENT MORE damage from every heavy blow
  * than rank one, with nothing on screen to say so.
  *
@@ -3163,7 +3163,7 @@ function secondWindAfter() {
  * ── WHY HERE AND NOT IN A NEW CARD ─────────────────────────────────────────
  *
  * `attune-guard` is offered at every set-piece forever, is uncapped, is
- * repeatable, and is the heart of the guard livingForce — it is already the
+ * repeatable, and is the heart of the guard current — it is already the
  * shape a growth curve needs. What it granted was `deflectDamage ×1.12`, which
  * is OFFENCE THROUGH DEFLECTION, and `flowGain ×1.05`. Its own card text says
  * "what you turn aside comes back harder", and that was the whole of it: the
@@ -3257,7 +3257,7 @@ function sunderThrough(enemy, bone, point) {
   } finally { this._sundering = false; }
 }
 
-/* ── the readers the livingForce added ─────────────────────────────── */
+/* ── the readers the Holocron added ────────────────────────────────── */
 
 /**
  * Reflection — a share of every blow that lands goes back to whoever struck it.
@@ -3402,7 +3402,7 @@ function detonateBody(enemy) {
  *   thing co-op in this project has historically got wrong.
  *
  *   IT IS NEVER A DEAD CARD ALONE. Solo, the holder keeps half of their own
- *   aura. That is not charity: it is what makes the Communion livingForce
+ *   aura. That is not charity: it is what makes the Communion current
  *   draftable in a solo run without being a trap, and the mastery is what turns
  *   the half back into a whole.
  */
@@ -3485,7 +3485,7 @@ export function bondGuardIn(amount) {
 /**
  * The aura itself, installed by every Communion card.
  *
- * One tick for the whole livingForce, because the descriptor is the SUM of
+ * One tick for the whole current, because the descriptor is the SUM of
  * whatever bond parameters the holder has collected — so taking a second bond
  * card widens the same aura instead of installing a second one that fights it.
  * The self-share goes through its own boonFactor slot so that an ally's aura

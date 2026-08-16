@@ -51,21 +51,21 @@ const blank = () => ({
    *  unlock — a note about what has worked. */
   crowned: [],
   /**
-   * THE SKY YOU HAVE WALKED: boon id → how many runs have ever held it.
+   * THE HOLOCRON YOU HAVE WALKED: boon id → how many runs have ever held it.
    *
    * Read by the meditation opened from the Temple, which is the one place this
    * game has where a player looks at the whole system at once and asks what
-   * they have actually tried. Every star is available in every run from the
+   * they have actually tried. Every facet is available in every run from the
    * first; this only draws where you have been, in a fainter colour.
    *
    * Emphatically NOT a currency and not an unlock — the file this sits in
    * exists to make that distinction and would be worthless if the first thing
    * added after it were a number that buys something. Nothing in src/ reads
-   * this back into a run: `grep -n "\.lit" src/` finds the chart and nothing
+   * this back into a run: `grep -n "\.woken" src/` finds the chart and nothing
    * else.
    */
-  lit: {},
-  /** Stars lit by communion, all-time. A tally of a thing done, same rule. */
+  woken: {},
+  /** Facets woken by communion, all-time. A tally of a thing done, same rule. */
   communed: 0,
   /**
    * Deepest run in each MODE — the field that says a record is about the game
@@ -85,7 +85,7 @@ const blank = () => ({
  * three `recordRun` call sites are gated on that Run, and the shipped default
  * in the menu is `roguelite` — so a player who installs the game, presses
  * Ignite and plays for an hour still has nothing in `saber.progress.v1`, the
- * menu's record line still reads "No runs yet", and the star map's history
+ * menu's record line still reads "No runs yet", and the Holocron's history
  * layer is still empty.
  *
  * Half of that fix is here and half of it is at the call sites: this function
@@ -125,7 +125,19 @@ function read() {
     // A record is not worth a crash. Anything malformed is a fresh start, and
     // silently — the alternative is a player who cannot open the game because
     // a number they never saw is a string.
-    return (v && typeof v === 'object') ? { ...blank(), ...v } : blank();
+    if (!v || typeof v !== 'object') return blank();
+    /**
+     * `woken` WAS `lit`, and a rename of a stored key is a silent deletion
+     * unless somebody carries the old one across. Under the star metaphor this
+     * field was "the sky you have walked"; the metaphor is gone and the field
+     * is the same fact, so a record written before the rename is read rather
+     * than replaced by an empty chart. The spread below would otherwise hand
+     * `blank()`'s empty `woken` to a player with fifty runs behind them and
+     * nothing anywhere would report it. Kept as long as `saber.progress.v1` is
+     * the key — bumping the version is what retires it.
+     */
+    if (v.lit && !v.woken) { v.woken = v.lit; delete v.lit; }
+    return { ...blank(), ...v };
   } catch { return blank(); }
 }
 
@@ -184,11 +196,11 @@ export function recordRun(summary) {
     p.crowned = [...set];
   }
 
-  // Once per run, not once per rank: this counts RUNS that held a star, so a
-  // four-rank Vitality is one visit to that star and not four.
-  p.lit = { ...p.lit };
-  for (const id of new Set(summary.boons || [])) p.lit[id] = (p.lit[id] || 0) + 1;
-  p.communed += (summary.lit || []).length;
+  // Once per run, not once per rank: this counts RUNS that held a facet, so a
+  // four-rank Vitality is one visit to that facet and not four.
+  p.woken = { ...p.woken };
+  for (const id of new Set(summary.boons || [])) p.woken[id] = (p.woken[id] || 0) + 1;
+  p.communed += (summary.woken || []).length;
 
   /**
    * THE SEED AND THE LADDER, which `Run.summary()` has always carried and this
@@ -206,7 +218,7 @@ export function recordRun(summary) {
     depth, tier: summary.tier || 0, score: summary.score || 0,
     won: !!summary.won, order: id.order || null, species: id.species || null,
     mode: summary.mode || null, seed: summary.seed ?? null,
-    stars: (summary.lit || []).length,
+    facets: (summary.woken || []).length,
     boons: (summary.boons || []).slice(0, 12),
   });
   if (p.recent.length > KEEP) p.recent.length = KEEP;
@@ -244,12 +256,12 @@ export function progressLines(p = read()) {
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`
       + (p.bestScore ? ` · best ${Math.floor(p.bestScore).toLocaleString()}` : ''),
   ];
-  const stars = Object.keys(p.lit || {}).length;
-  if (stars || p.communed) {
-    out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`
-      + (p.communed ? `, ${p.communed} lit by communion` : ''));
+  const woken = Object.keys(p.woken || {}).length;
+  if (woken || p.communed) {
+    out.push(`${woken} facet${woken === 1 ? '' : 's'} of the Holocron reached`
+      + (p.communed ? `, ${p.communed} woken in communion` : ''));
   }
-  // …and what was in your hand when you finished one. Same rule as `lit`: a note
+  // …and what was in your hand when you finished one. Same rule as `woken`: a note
   // about what has worked, not a gate — every card is in every draft from the
   // first run.
   if (p.crowned?.length) {

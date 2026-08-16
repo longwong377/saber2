@@ -52,9 +52,9 @@
 /**
  * The states in which a world exists and the player is not at a menu.
  *
- * 'meditation' is the livingForce, raised mid-run by kneeling. It is here
+ * 'meditation' is the Holocron, raised mid-run by kneeling. It is here
  * because rule 1 is about EVERY reachable state: Escape has to get you out of
- * the star map exactly as it gets you out of a draft, and `guarded` has to be
+ * the Holocron exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
 export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster'];
@@ -67,7 +67,7 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster
  * An overlay that owns its own card registers a hider with `card()` instead;
  * it is raised through the identical `take()` and gets the identical
  * guarantees (remembered as it is raised, restored by resume, escapable), which
- * is what tools/checks/livingForce.mjs drives the meditation through. Adding
+ * is what tools/checks/living-force.mjs drives the meditation through. Adding
  * such a state to this array would be a lie of a different kind: the array is
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.

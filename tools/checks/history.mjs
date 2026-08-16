@@ -26,8 +26,8 @@
  * two calls the death card actually makes, computed by main.js's own body.
  *
  * Not every total doubled, which is why this was easy to look at and not see:
- * `Progress.recordRun` adds `runs`, `kills`, `communed`, the lit stars and the
- * forty-entry `recent` history, and takes `Math.max` for `bestDepth`,
+ * `Progress.recordRun` adds `runs`, `kills`, `communed`, the woken facets and
+ * the forty-entry `recent` history, and takes `Math.max` for `bestDepth`,
  * `bestScore`, `bestTier` and the by-order/species/mode maps. Hence a record
  * line reading "2 runs" beside "roguelite 1".
  */

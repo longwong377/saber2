@@ -18,11 +18,11 @@ import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileT
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
-import { Communion, STARS } from './LivingForce.js';
+import { Communion, FACETS } from './LivingForce.js';
 /**
- * What "open" is worth, in Insight. Every facet in the sky, at its first-
+ * What "open" is worth, in Insight. Every facet in the lattice, at its first-
  * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
- * facet already bought, so the last one costs a great deal more than the
+ * facet already woken, so the last one costs a great deal more than the
  * first. 600 clears the whole chart with room over; it is deliberately a
  * number rather than a computed sum, because the point is "you will not run
  * out" and a computed sum would be exactly enough and therefore tense.
@@ -208,7 +208,7 @@ export class World {
     this.levelLights = [];
     this.takenBoons = new RankSet();
     /**
-     * The Insight this run has earned and the stars it has spent it on.
+     * The Insight this run has earned and the facets it has spent it on.
      *
      * Lives on the World because the wave director is what earns it and the
      * meditation is what spends it; carried across a landing by the Run, which
@@ -389,7 +389,7 @@ export class World {
     this.takenBoons = new RankSet();
     // …and the same for the Insight ledger. It used to be restored from the
     // Run across a landing, because `bought.length` is the price escalator and
-    // a climb that forgot it would make every star on the next rung cost
+    // a climb that forgot it would make every facet on the next rung cost
     // first-purchase prices again. There are no landings now — the Descent was
     // the only mode with them — so a level load starts a fresh ledger, which is
     // what every other mode always did.
@@ -824,19 +824,19 @@ export class World {
      *   'open'  a full purse. Everything is REACHABLE and the shape of the
      *           choice survives — you still kneel, you still pick, prices
      *           still escalate.
-     *   'all'   every facet already lit. No choice at all: the workshop
+     *   'all'   every facet already woken. No choice at all: the workshop
      *           setting, for looking at a power rather than earning it.
      *
      * Applied through `applyBoon`-equivalent paths rather than by poking
      * `boonMods`, so a facet cannot behave differently when it is granted than
-     * when it is bought — which is the whole reason the star table carries an
+     * when it is bought — which is the whole reason the facet table carries an
      * id into BOONS instead of carrying an effect of its own.
      */
     if (this.settings.holocron === 'open') {
       this.communion.insight = Math.max(this.communion.insight, HOLOCRON_PURSE);
     } else if (this.settings.holocron === 'all') {
-      for (const star of STARS) {
-        const boon = boonById(star.id);
+      for (const facet of FACETS) {
+        const boon = boonById(facet.id);
         if (!boon) continue;
         this.takenBoons.take?.(boon.id) ?? this.takenBoons.add(boon.id);
         if (typeof p.applyBoon === 'function') p.applyBoon(boon);
@@ -3596,9 +3596,9 @@ export class World {
    * announcements, `score += 500 * w`, the 8 hp and 0.35 flow every player gets
    * for surviving one — and INSIGHT, whose single earning path is
    * `_earnInsight` installed on `onWaveClear`. So a joining player earned zero
-   * Insight for a whole session: the LivingForce was a dead screen, the
-   * "kneel to connect to the Force" prompt always read 0, no star could ever be
-   * lit, and they were 8 hp and 0.35 flow per wave weaker than the host for as
+   * Insight for a whole session: the Holocron was a dead screen, the
+   * "kneel to connect to the Force" prompt always read 0, no facet could ever
+   * be woken, and they were 8 hp and 0.35 flow per wave weaker than the host for as
    * long as the session lasted.
    *
    * The signal is already on the wire — `w` and `act` — as an EDGE rather than

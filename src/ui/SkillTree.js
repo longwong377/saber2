@@ -1,12 +1,12 @@
 /**
- * BATTLEFRONT BORZ — the meditation: the livingForce, drawn.
+ * BATTLEFRONT BORZ — the meditation: the Holocron, drawn.
  *
- * THIS FILE DRAWS AND NOTHING ELSE. Every rule about what may be lit, what it
+ * THIS FILE DRAWS AND NOTHING ELSE. Every rule about what may be woken, what it
  * costs and what it is called lives in src/game/LivingForce.js, which has no
  * DOM in it and can therefore be driven by a check without a browser. What is
- * here is the sky, the lines, the currents and one button — and the discipline
- * that keeps it that way is `starView`: this file asks for a current's state and
- * renders it, and never decides one.
+ * here is the lattice, the lines, the facets and one button — and the
+ * discipline that keeps it that way is `facetView`: this file asks for a
+ * facet's state and renders it, and never decides one.
  *
  * ── why it is not in Menu.js ──────────────────────────────────────────────
  *
@@ -25,13 +25,13 @@
  * happens instead of it.
  */
 
-import { skyView, starView, shapeOf, livingForceName, creedOf, CURRENTS, SKY, LOCKED, COST_STEP, zoneOf }
+import { latticeView, facetView, shapeOf, currentName, creedOf, CURRENTS, LATTICE, LOCKED, COST_STEP, zoneOf }
   from '../game/LivingForce.js';
 import { audio } from '../engine/Audio.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
-/** A deterministic little PRNG, so the background sky is the same every time. */
+/** A deterministic little PRNG, so the motes behind the lattice never move. */
 function seeded(seed) {
   let s = seed >>> 0 || 1;
   return () => {
@@ -52,7 +52,7 @@ export class SkillTree {
   /**
    * @param {Document} doc
    * @param {object} hooks
-   * @param {(id: string) => void} hooks.onBuy   the player spent on this current
+   * @param {(id: string) => void} hooks.onBuy   the player spent on this facet
    * @param {() => void} hooks.onClose
    */
   constructor(doc, hooks = {}) {
@@ -60,7 +60,7 @@ export class SkillTree {
     this.hooks = hooks;
     this.el = {
       root: doc.getElementById('meditation'),
-      sky: doc.getElementById('med-field'),
+      field: doc.getElementById('med-field'),
       insight: doc.getElementById('med-insight'),
       title: doc.getElementById('med-title'),
       sub: doc.getElementById('med-sub'),
@@ -81,7 +81,7 @@ export class SkillTree {
   get open() { return !!this.el.root && !this.el.root.classList.contains('hidden'); }
 
   /**
-   * Raise the sky.
+   * Raise the Holocron.
    *
    * @param {object} ctx
    * @param {Set} ctx.taken     the run's taken-set (a RankSet)
@@ -90,7 +90,7 @@ export class SkillTree {
    * @param {string|null} ctx.order   'jedi' | 'sith' | 'grey' | null — the alignment
    *                                  every name in here is read in
    * @param {boolean} [ctx.live]      is there a run to spend in? Between runs
-   *                                  the sky is a chart, not a shop.
+   *                                  the Holocron is a chart, not a shop.
    * @param {string} [ctx.subtitle]
    */
   show(ctx) {
@@ -104,47 +104,47 @@ export class SkillTree {
 
   hide() { this.el.root?.classList.add('hidden'); }
 
-  /** Redraw in place — after a purchase, the sky has changed shape. */
+  /** Redraw in place — after a purchase, the lattice has changed shape. */
   refresh() { if (this.open) { this._draw(); this._select(this.selected); } }
 
   /* ── drawing ───────────────────────────────────────────────────────── */
 
   _draw() {
     const { taken, ledger, wave = 1, order = null, live = true, history = null } = this.ctx || {};
-    const sky = this.el.sky;
-    if (!sky) return;
-    this.view = skyView({ taken, ledger, wave, order });
+    const field = this.el.field;
+    if (!field) return;
+    this.view = latticeView({ taken, ledger, wave, order });
     const byId = new Map(this.view.map((v) => [v.id, v]));
-    while (sky.firstChild) sky.removeChild(sky.firstChild);
+    while (field.firstChild) field.removeChild(field.firstChild);
     this._nodes.clear();
     // The heading says which of the two this is: a communion you can spend in,
     // or the chart you read between runs.
     if (this.el.title) this.el.title.textContent = live ? 'Commune with the Holocron' : 'The Holocron';
 
-    /* the field of far currents — atmosphere, and the reason it reads as a sky */
+    /* the motes suspended in the crystal — atmosphere, and nothing reads them */
     const rnd = seeded(0x5ABE7);
-    const field = svg('g', { class: 'med-field' });
+    const motes = svg('g', { class: 'med-motes' });
     for (let i = 0; i < 190; i++) {
       const r = 0.4 + rnd() * 1.5;
-      field.appendChild(svg('circle', {
-        cx: (rnd() * SKY.w).toFixed(1), cy: (rnd() * SKY.h).toFixed(1),
+      motes.appendChild(svg('circle', {
+        cx: (rnd() * LATTICE.w).toFixed(1), cy: (rnd() * LATTICE.h).toFixed(1),
         r: r.toFixed(2), opacity: (0.12 + rnd() * 0.5).toFixed(2),
       }));
     }
-    sky.appendChild(field);
+    field.appendChild(motes);
 
     /* the teachings' names, behind their facets */
-    // At the TOP OF THE ZONE, not near the group's own centre: a livingForce
-    // fills its zone, so anything drawn at the middle of it lands on a current.
+    // At the TOP OF THE ZONE, not near the current's own centre: a current
+    // fills its zone, so anything drawn at the middle of it lands on a facet.
     const labels = svg('g', { class: 'med-cnames' });
     for (const c of CURRENTS) {
       const z = zoneOf(c.axis);
       if (!z) continue;
       const t = svg('text', { x: z.x, y: z.y - z.halfH - 18, 'text-anchor': 'middle', class: 'cname' });
-      t.textContent = livingForceName(c.axis, order).toUpperCase();
+      t.textContent = currentName(c.axis, order).toUpperCase();
       labels.appendChild(t);
     }
-    sky.appendChild(labels);
+    field.appendChild(labels);
 
     /* the lines, drawn once per pair and under every node */
     const lines = svg('g', { class: 'med-links' });
@@ -156,17 +156,17 @@ export class SkillTree {
         seen.add(key);
         const w = byId.get(other);
         if (!w) continue;
-        const cls = v.held && w.held ? 'lit' : (v.held || w.held) ? 'open' : 'dim';
+        const cls = v.held && w.held ? 'woken' : (v.held || w.held) ? 'open' : 'dim';
         lines.appendChild(svg('line', { x1: v.x, y1: v.y, x2: w.x, y2: w.y, class: cls }));
       }
     }
-    sky.appendChild(lines);
+    field.appendChild(lines);
 
     /* and the facets themselves */
-    const currents = svg('g', { class: 'med-currents' });
+    const facets = svg('g', { class: 'med-facets' });
     for (const v of this.view) {
       const g = svg('g', {
-        class: ['current', v.held ? 'held' : '', v.can && live ? 'can' : '', v.root ? 'root' : '',
+        class: ['facet', v.held ? 'held' : '', v.can && live ? 'can' : '', v.root ? 'root' : '',
           v.mastery ? 'mastery' : '', v.locked === LOCKED.spent ? 'spent' : '',
           history?.get(v.id) ? 'known' : ''].filter(Boolean).join(' '),
         transform: `translate(${v.x} ${v.y})`,
@@ -180,7 +180,7 @@ export class SkillTree {
       const label = svg('text', { class: 'label', y: (v.root ? 34 : 28), 'text-anchor': 'middle' });
       label.textContent = v.name.replace(/^Mastery — /, '');
       g.appendChild(label);
-      // rank pips: how many times this current has been lit, drawn rather than
+      // rank pips: how many times this facet has been woken, drawn rather than
       // written, because "×3" in 9px type at this scale is unreadable.
       for (let i = 0; i < Math.min(v.rank, 5); i++) {
         g.appendChild(svg('circle', { class: 'pip', cx: (i - (Math.min(v.rank, 5) - 1) / 2) * 7, cy: -20, r: 2 }));
@@ -190,16 +190,16 @@ export class SkillTree {
         c.textContent = String(v.cost);
         g.appendChild(c);
       }
-      /* A STAR ALREADY CLAIMED TO BE A BUTTON. NOW IT BEHAVES LIKE ONE.
+      /* A FACET ALREADY CLAIMED TO BE A BUTTON. NOW IT BEHAVES LIKE ONE.
        *
-       * `tabindex: '0', role: 'button'` above (and the `#med-field .current:focus`
-       * rule in styles.css) make every current focusable and announce it to a
+       * `tabindex: '0', role: 'button'` above (and the `#med-field .facet:focus`
+       * rule in styles.css) make every facet focusable and announce it to a
        * screen reader as a button — and the only listeners were `click` and
        * `dblclick`, so Enter and Space did nothing at all. That is worse than
        * an unreachable control: it is the interface promising a keyboard path
        * it never built, and it was the ONE place in the whole front end that
        * had bothered to set tabindex. Enter selects, exactly as a click does;
-       * Enter on the current already selected buys it, which is the keyboard's
+       * Enter on the facet already selected buys it, which is the keyboard's
        * version of the double-click. */
       const select = () => { audio.ui('hover'); this._select(v.id); };
       g.addEventListener('click', select);
@@ -209,17 +209,17 @@ export class SkillTree {
         e.preventDefault();
         if (this.selected === v.id) this._buy(v.id); else select();
       });
-      currents.appendChild(g);
+      facets.appendChild(g);
       this._nodes.set(v.id, g);
     }
-    sky.appendChild(currents);
+    field.appendChild(facets);
 
     /* the ledger line */
     if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
     if (this.el.sub) {
       this.el.sub.textContent = live
         ? (this.ctx.subtitle || 'Insight is earned by surviving. Wake a facet joined to one you already hold.')
-        : 'Between runs the sky is a chart: nothing here is bought, and nothing is carried into the next run.';
+        : 'Between runs the Holocron is a chart: nothing here is bought, and nothing is carried into the next run.';
     }
     if (this.el.hint) {
       const n = ledger?.bought?.length ?? 0;
@@ -234,16 +234,16 @@ export class SkillTree {
     const host = this.el.shape;
     if (!host) return;
     const { taken, order = null } = this.ctx || {};
-    const rows = shapeOf(taken).filter((r) => r.lit > 0).sort((a, b) => b.ranks - a.ranks);
+    const rows = shapeOf(taken).filter((r) => r.woken > 0).sort((a, b) => b.ranks - a.ranks);
     if (!rows.length) {
-      host.innerHTML = '<div class="med-empty">Nothing lit yet. The Force offers cards; the sky is where you choose.</div>';
+      host.innerHTML = '<div class="med-empty">Nothing woken yet. The Force offers cards; the Holocron is where you choose.</div>';
       return;
     }
     host.innerHTML = rows.map((r) => `
       <div class="med-row">
-        <span>${livingForceName(r.axis, order)}</span>
-        <i><b style="width:${Math.round(100 * r.lit / r.total)}%"></b></i>
-        <em>${r.lit}/${r.total}</em>
+        <span>${currentName(r.axis, order)}</span>
+        <i><b style="width:${Math.round(100 * r.woken / r.total)}%"></b></i>
+        <em>${r.woken}/${r.total}</em>
       </div>`).join('');
   }
 
@@ -257,12 +257,12 @@ export class SkillTree {
     if (!host) return;
     if (!id) {
       const axis = CURRENTS[0].axis;
-      host.innerHTML = `<h3>The sky</h3><p class="med-text">${creedOf(axis, order)}</p>`
+      host.innerHTML = `<h3>The Holocron</h3><p class="med-text">${creedOf(axis, order)}</p>`
         + '<p class="med-text">Pick a facet to read it.</p>';
       if (this.el.buy) { this.el.buy.disabled = true; this.el.buy.textContent = 'Commune'; }
       return;
     }
-    const v = starView(id, { taken, ledger, wave, order });
+    const v = facetView(id, { taken, ledger, wave, order });
     if (!v) return;
     const seen = this.ctx?.history?.get(id) || 0;
     const canon = v.canon !== v.name ? `<span class="med-canon">${v.canon}</span>` : '';
@@ -281,7 +281,7 @@ export class SkillTree {
 
   _stateLine(v, live) {
     const rank = v.rank ? `Held${isFinite(v.max) ? ` at ${v.rank} of ${v.max}` : ` ×${v.rank}`}. ` : '';
-    if (!live) return `${rank}Between runs nothing can be lit.`;
+    if (!live) return `${rank}Between runs nothing can be woken.`;
     if (v.can) return `${rank}${v.cost} Insight.`;
     // Keyed off LOCKED rather than off copies of its strings, so a reason that
     // is renamed cannot silently become an empty line here.

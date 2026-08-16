@@ -27,7 +27,7 @@
    Glow is not on that list and is deliberately still here: a lightsaber is the
    brightest thing in this game and the interface is allowed to say so. It is
    rationed to things that ARE light — the blade rule, the crystal swatches,
-   the Force bar, a lit star.
+   the Force bar, a woken facet.
    ──────────────────────────────────────────────────────────── */
 :root{
   /* ── the ground ── */
@@ -61,7 +61,7 @@
   --accent-warm:#ffb020;   /* SAND. Cost, mastery, a permanent choice */
   --danger:#ff5540;        /* EMBER. Damage, a boss, a mistake */
   --good:#5fe0a0;
-  --force:#a07dff;         /* the Force itself — the pool, the constellation */
+  --force:#a07dff;         /* the Force itself — the pool, the Holocron */
   --blade:#48d8ff;
 
   /* ── geometry ──
@@ -389,7 +389,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    key chips — and until Menu._activate they carried a click listener and
    nothing else: 120 controls, none of them reachable by keyboard, on a page
    whose only two focus rules in 590 lines were the join-code box and a
-   constellation star. A ring is the other half of that fix; a control you can
+   Holocron facet. A ring is the other half of that fix; a control you can
    focus and cannot SEE focused is not operable either.
 
    Warm rather than accent-blue on purpose: blue is what `.sel` already means
@@ -403,7 +403,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .bindrow .keys b:focus-visible,.slider input:focus-visible,.check input:focus-visible,
 .netname input:focus-visible,#join-code:focus-visible{
   outline:3px solid var(--accent-warm);outline-offset:3px;border-radius:0}
-#med-field .current:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
+#med-field .facet:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
 
 /* The Theatre column when the mode owns the theatre — see Menu._syncTheatre.
    Inert rather than hidden: the places are still worth looking at, they are
@@ -1162,7 +1162,7 @@ button{font-family:inherit}
 .panel .col.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
 
 /* ══════════════════════════════════════════════════════════════════════
-   THE MEDITATION — the Force constellation.
+   THE MEDITATION — the Holocron.
 
    Deliberately LESS opaque than the other screens: `.screen`'s own backdrop
    is a near-black wash, and the whole point of reaching this by kneeling is
@@ -1216,38 +1216,38 @@ button{font-family:inherit}
 .med-empty{font:var(--mono);color:var(--dimmer);line-height:1.6}
 .med-foot{display:flex;align-items:center;justify-content:space-between;gap:16px}
 
-/* the sky itself */
-#med-field .med-field circle{fill:#cfe6ff}
+/* the lattice itself */
+#med-field .med-motes circle{fill:#cfe6ff}
 #med-field .cname{font:600 10px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.34em;
   fill:rgba(150,190,235,.30)}
 #med-field .med-links line{stroke-width:1.2}
 #med-field .med-links line.dim{stroke:rgba(140,175,215,.13)}
 #med-field .med-links line.open{stroke:rgba(120,200,255,.42);stroke-dasharray:4 5}
-#med-field .med-links line.lit{stroke:var(--force);stroke-width:2.4;
+#med-field .med-links line.woken{stroke:var(--force);stroke-width:2.4;
   filter:drop-shadow(0 0 6px rgba(160,125,255,.7))}
-#med-field .current{cursor:pointer}
-#med-field .current .halo{fill:rgba(160,125,255,.06);stroke:none}
-#med-field .current .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
-#med-field .current .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
-#med-field .current .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
+#med-field .facet{cursor:pointer}
+#med-field .facet .halo{fill:rgba(160,125,255,.06);stroke:none}
+#med-field .facet .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
+#med-field .facet .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
+#med-field .facet .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
   letter-spacing:.02em}
-#med-field .current .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
-#med-field .current .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
-#med-field .current.root .disc{stroke-dasharray:3 3}
-#med-field .current.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
-#med-field .current.can .disc{stroke:var(--stroke);fill:#241f4a}
-#med-field .current.can .glyph,#med-field .current.can .label{fill:rgba(220,238,255,.9)}
-#med-field .current.can .halo{fill:rgba(160,125,255,.12)}
-#med-field .current.held .disc{fill:var(--force);stroke:var(--stroke);stroke-width:2;
+#med-field .facet .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
+#med-field .facet .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
+#med-field .facet.root .disc{stroke-dasharray:3 3}
+#med-field .facet.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
+#med-field .facet.can .disc{stroke:var(--stroke);fill:#241f4a}
+#med-field .facet.can .glyph,#med-field .facet.can .label{fill:rgba(220,238,255,.9)}
+#med-field .facet.can .halo{fill:rgba(160,125,255,.12)}
+#med-field .facet.held .disc{fill:var(--force);stroke:var(--stroke);stroke-width:2;
   filter:drop-shadow(0 0 10px rgba(160,125,255,.7))}
-#med-field .current.held .glyph{fill:var(--stroke)}
-#med-field .current.held .label{fill:rgba(215,236,255,.92)}
-#med-field .current.held.mastery .disc{fill:var(--accent-warm);filter:drop-shadow(0 0 12px rgba(255,176,32,.7))}
-#med-field .current.spent .disc{stroke-dasharray:2 3}
-#med-field .current.sel .halo{fill:rgba(160,125,255,.24);stroke:var(--force);stroke-width:2}
-#med-field .current:hover .halo{fill:rgba(160,125,255,.18)}
-#med-field .current:focus{outline:none}
-#med-field .current:focus .halo{stroke:var(--accent);stroke-width:1}
+#med-field .facet.held .glyph{fill:var(--stroke)}
+#med-field .facet.held .label{fill:rgba(215,236,255,.92)}
+#med-field .facet.held.mastery .disc{fill:var(--accent-warm);filter:drop-shadow(0 0 12px rgba(255,176,32,.7))}
+#med-field .facet.spent .disc{stroke-dasharray:2 3}
+#med-field .facet.sel .halo{fill:rgba(160,125,255,.24);stroke:var(--force);stroke-width:2}
+#med-field .facet:hover .halo{fill:rgba(160,125,255,.18)}
+#med-field .facet:focus{outline:none}
+#med-field .facet:focus .halo{stroke:var(--accent);stroke-width:1}
 
 /* ── the kneel ────────────────────────────────────────────────────────
    A prompt, not a button: it appears when a communion is actually possible
@@ -1261,7 +1261,7 @@ button{font-family:inherit}
   background:var(--void);overflow:hidden}
 .commune-ring i{position:absolute;left:0;bottom:0;width:100%;height:0%;
   background:var(--force);box-shadow:0 0 10px var(--force)}
-/* THE WAY INTO THE CONSTELLATION FROM THE TEMPLE.
+/* THE WAY INTO THE HOLOCRON FROM THE TEMPLE.
    `width:auto` is load-bearing: .primary/.secondary/.ghost are `display:block;
    width:100%` because they are laid out in a column inside a panel — a bare
    .ghost here fills whatever line it is on.
@@ -1289,8 +1289,8 @@ button{font-family:inherit}
   color:var(--ink);border-color:var(--stroke);background:var(--panel-2);
   clip-path:var(--cut-sm);box-shadow:2px 2px 0 var(--stroke)}
 .commune-entry:hover{color:var(--stroke);background:var(--force);border-color:var(--stroke)}
-/* A star this player has carried in an earlier run — the record, drawn on the
-   chart. Fainter than "can be lit", because it buys nothing: see Progress.js. */
-#med-field .current.known .disc{stroke:rgba(190,170,120,.42)}
-#med-field .current.known .label{fill:rgba(200,190,160,.55)}
+/* A facet this player has carried in an earlier run — the record, drawn on the
+   chart. Fainter than "can be woken", because it buys nothing: see Progress.js. */
+#med-field .facet.known .disc{stroke:rgba(190,170,120,.42)}
+#med-field .facet.known .label{fill:rgba(200,190,160,.55)}
 #commune em{font-style:normal;color:var(--accent-warm);letter-spacing:.1em;font-weight:800}

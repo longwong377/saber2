@@ -25,7 +25,7 @@ import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
-import { Communion, shapeOf, livingForceName, dominantAxis } from './game/LivingForce.js';
+import { Communion, shapeOf, currentName, dominantAxis } from './game/LivingForce.js';
 
 const canvas = document.getElementById('view');
 
@@ -570,7 +570,7 @@ const pause = () => screens.pause();
 /**
  * CONNECT TO THE FORCE.
  *
- * The livingForce is opened by KNEELING, and that is the whole design of the
+ * The Holocron is opened by KNEELING, and that is the whole design of the
  * entry point rather than a flourish on it. A key that opens a menu is a menu;
  * what this is meant to be is a thing you do in the world, at a moment when the
  * world allows it — so it asks for the three conditions a moment of quiet
@@ -603,12 +603,12 @@ const communePrompt = {
 };
 
 const tree = new SkillTree(document, {
-  onBuy: (id) => buyStar(id),
+  onBuy: (id) => wakeFacet(id),
   onClose: () => closeMeditation(),
 });
 // Screens now knows how to take this card down, which is what makes a pause
 // raised over a meditation (or a callback that threw inside one) recoverable
-// instead of leaving a star map sitting on top of the pause menu.
+// instead of leaving the Holocron sitting on top of the pause menu.
 screens.card('meditation', () => tree.hide());
 
 /** Is a communion possible this frame? The three conditions, in order. */
@@ -665,7 +665,7 @@ function communeTick(dt) {
  * The way in from the Temple, between runs.
  *
  * A button rather than a kneel, because there is no body to kneel with at the
- * menu — and it exists at all because a star map you can only see mid-fight is
+ * menu — and it exists at all because a Holocron you can only see mid-fight is
  * one you can never study. What it opens there is read-only; see openMeditation.
  */
 let _entryShown = null;
@@ -677,15 +677,15 @@ function setCommuneEntry(show) {
 }
 communePrompt.entry?.addEventListener('click', () => { audio.ui('click'); openMeditation(); });
 
-/** What the sky is being read with: the run's own alignment. */
+/** What the Holocron is being read with: the run's own alignment. */
 function communeContext(live) {
   const taken = world ? world.takenBoons : new Set();
   const ledger = world ? world.communion : new Communion();
-  // Between runs the chart is drawn over the RECORD: the stars this player has
-  // ever held, in a fainter colour. It buys nothing and carries nothing into
-  // the next run (see Progress.js) — it is the answer to "what have I actually
-  // tried", which is the question a star map is for when you cannot spend.
-  const history = live ? null : Object.entries(loadProgress().lit || {});
+  // Between runs the chart is drawn over the RECORD: the facets this player
+  // has ever held, in a fainter colour. It buys nothing and carries nothing
+  // into the next run (see Progress.js) — it is the answer to "what have I
+  // actually tried", which the Holocron is for when you cannot spend.
+  const history = live ? null : Object.entries(loadProgress().woken || {});
   return {
     taken, ledger, live,
     wave: world?.director?.wave ?? 1,
@@ -705,15 +705,15 @@ function openMeditation() {
     screens.take('meditation', () => tree.show(communeContext(true)));
     return;
   }
-  // Between runs there is no world to stop and no Insight to spend. The sky is
-  // a chart you read and a plan you make — see the doctrine note in
+  // Between runs there is no world to stop and no Insight to spend. It is a
+  // chart you read and a plan you make — see the doctrine note in
   // LivingForce.js about why it is deliberately not a shop.
   tree.show(communeContext(false));
 }
 
 function closeMeditation() {
   if (!world) { tree.hide(); return; }
-  // The overlay is forgotten FIRST, or resume() would put the star map straight
+  // The overlay is forgotten FIRST, or resume() would put the Holocron straight
   // back on the screen. Same idiom as answering a draft.
   tree.hide();
   screens.overlay = null;
@@ -722,18 +722,18 @@ function closeMeditation() {
 }
 
 /**
- * Spend Insight on a star.
+ * Spend Insight on a facet.
  *
  * The purchase itself is `Communion.buy`, which decides and charges; the EFFECT
  * goes through `World.applyBoon`, which is the only path that records the rank
  * on the taken-set, tells the Run, applies it to every local player and
- * re-derives what depends on it. A star that applied its own boon would be a
+ * re-derives what depends on it. A facet that applied its own boon would be a
  * second, divergent way of taking a card — and the first thing it would break
  * is a landing, which replays the Run's list into a freshly built player.
  */
-const buyStar = (id) => screens.guarded('lighting a star', (starId) => {
+const wakeFacet = (id) => screens.guarded('waking a facet', (facetId) => {
   if (!world) return;
-  const boon = world.communion.buy(starId, world.takenBoons, world.director?.wave ?? 1);
+  const boon = world.communion.buy(facetId, world.takenBoons, world.director?.wave ?? 1);
   if (!boon) return;                       // not affordable / not reachable — the UI said so
   world.applyBoon(boon);
   hud.setBoons(heldBoons());
@@ -879,8 +879,8 @@ function cardAfter(ms, what, show) {
  * world is one session, and the next Ignite builds a new one.
  *
  * Not every total doubled, which is why this was easy to look at and not see:
- * `Progress.recordRun` adds `runs`, `kills`, `communed`, the lit stars and the
- * forty-entry `recent` history, but takes `Math.max` for `bestDepth`,
+ * `Progress.recordRun` adds `runs`, `kills`, `communed`, the woken facets and
+ * the forty-entry `recent` history, but takes `Math.max` for `bestDepth`,
  * `bestScore`, `bestTier` and the by-order/species/mode maps. Hence a record
  * line reading "2 runs" beside "roguelite 1".
  */
@@ -1059,12 +1059,12 @@ function setScoreboard(open) {
   const p = world.player;
   /**
    * THE HOLDING, AS A SHAPE. `takenBoons` is a set and the chips below are a
-   * list, which is the flat readout the livingForce exists to replace: seven
+   * list, which is the flat readout the Holocron exists to replace: seven
    * chips tell you what you have and nothing about what you ARE. The two rows
    * added here are read straight off the same tree the meditation draws, so
-   * they cannot describe a build the sky does not show.
+   * they cannot describe a build the Holocron does not show.
    */
-  const shape = shapeOf(world.takenBoons).filter((r) => r.lit > 0).sort((a, b) => b.ranks - a.ranks);
+  const shape = shapeOf(world.takenBoons).filter((r) => r.woken > 0).sort((a, b) => b.ranks - a.ranks);
   const axis = dominantAxis(world.takenBoons);
   scoreEl.stats.innerHTML = [
     ['Wave', world.director?.wave ?? 1],
@@ -1074,8 +1074,8 @@ function setScoreboard(open) {
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
     ['Insight', Math.floor(world.communion?.insight ?? 0)],
-    ['Teaching', axis ? livingForceName(axis, settings.order) : '—'],
-    ['Facets lit', shape.reduce((n, r) => n + r.lit, 0)],
+    ['Teaching', axis ? currentName(axis, settings.order) : '—'],
+    ['Facets woken', shape.reduce((n, r) => n + r.woken, 0)],
   ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 
   // Only in co-op. Solo, a one-row table of yourself is noise.
@@ -1406,7 +1406,7 @@ input.onDevice = () => {
  * out has to survive a binding that has gone wrong, and a pad player had NO way
  * out at all: Escape is a key, and a controller has none. So Start lands on the
  * same `screens.escape()` the keydown listener below calls, through the same
- * star-map special case, and there is still exactly one rule for what the way
+ * Holocron special case, and there is still exactly one rule for what the way
  * out does from each state. Input only raises it when no modifier is held, so
  * the Start chords in the pad map stay bindable.
  */
@@ -1549,7 +1549,7 @@ hud.setBindings(input.bindings, padOf());
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && tree.open) {
-    // The star map's own way out, and it is the same one the Return button
+    // The Holocron's own way out, and it is the same one the Return button
     // uses. Not a special case in the state machine: closing it restores the
     // world through `resume()` exactly as answering a draft does, so Escape
     // still changes what is on the screen (rule 1) and still cannot leave the

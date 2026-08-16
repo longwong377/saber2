@@ -92,12 +92,12 @@ async function descend(seed = 0x5EED) {
   return { run, waves, drafts, depthAgree, insight: led.insight };
 }
 
-/** Stars an exhaustive search can light on `purse` Insight at `wave`. */
-function mostStars(purse, wave) {
+/** Facets an exhaustive search can wake on `purse` Insight at `wave`. */
+function mostFacets(purse, wave) {
   let best = 0, line = [];
   const step = (led, taken, path) => {
     if (path.length > best) { best = path.length; line = path.slice(); }
-    for (const s of Tree.STARS) {
+    for (const s of Tree.FACETS) {
       if (!led.canBuy(s.id, taken, wave)) continue;
       const cost = led.costOf(s.id, taken);
       const next = new Tree.Communion({ insight: led.insight, bought: led.bought, earned: led.earned });

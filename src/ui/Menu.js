@@ -309,7 +309,7 @@ export const DEFAULT_SETTINGS = {
    *   'open'  a full purse at the start of every run. Everything is
    *           reachable and the SHAPE of the choice is intact — you still
    *           kneel, you still pick, prices still escalate.
-   *   'all'   every facet already lit. No choice at all: this is the
+   *   'all'   every facet already woken. No choice at all: this is the
    *           workshop setting, for looking at a power rather than earning it.
    */
   holocron: 'earned',
@@ -2489,8 +2489,8 @@ export class Menu {
    * One helper rather than a tag change, for two reasons. The cards contain
    * block content (`<div class="art">`, `<div class="meta">`), which a `<button>`
    * may not legally hold; and this codebase has the other failure already on
-   * file — SkillTree.js sets `tabindex="0"` and `role="button"` on every star
-   * and registers only `click` and `dblclick`, so a focused star announces
+   * file — SkillTree.js sets `tabindex="0"` and `role="button"` on every facet
+   * and registers only `click` and `dblclick`, so a focused facet announces
    * itself as a button and does nothing when activated. A single function that
    * always does all three is the only version of this that cannot drift apart.
    *
@@ -3688,7 +3688,7 @@ export class Menu {
        'The game. Insight is a run currency, you kneel to spend it, and nothing carries over.'],
       ['open', 'Open',
        'A full purse at every deploy. You still kneel, still choose, and prices still climb — you simply never run short.'],
-      ['all', 'Everything lit',
+      ['all', 'Everything woken',
        'Every facet already yours before the first wave. No choice at all: this is for looking at a power, not earning it.'],
     ];
     host.innerHTML = '';
