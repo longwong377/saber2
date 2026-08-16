@@ -259,6 +259,27 @@ function buildWorld(levelKey) {
   world.onNotify = (t, s) => hud.message(t, s);
   world.onFloating = (p, text, color) => hud.floating(p, text, color);
   world.onHitmark = (p, kind, bone) => hud.hitmark(p, kind, bone);
+  /**
+   * A BODY WANTS TO SAY SOMETHING — player note #21, "I want to hear their
+   * screams… as they get force thrown or killed".
+   *
+   * Enemy.js decides WHEN (see `Enemy.cry`) and deliberately decides nothing
+   * else, because both of the other decisions already have exactly one owner
+   * and duplicating either is the defect this project keeps removing:
+   * `_enemySpec` derives the larynx from `bodyOf`, the roster's one body
+   * classifier, and `_enemyLine` spends the shared budget that stops five
+   * simultaneous deaths from talking over each other. So the event goes to the
+   * announcer and the announcer answers both questions.
+   *
+   * The two methods are private today, which is the wart in this line and not
+   * in the design: `Announcer` wants a public `enemyLine(enemy, kind)` that is
+   * exactly these two calls, and it is owned by another pass this session.
+   */
+  world.onEnemyVoice = (enemy, kind) => {
+    const a = hud.announcer;
+    if (!a || !enemy?.position) return;
+    a._enemyLine(a._enemySpec(enemy), kind, enemy.position, settings.enemyVoices !== false);
+  };
   world.onKillFeed = (who, what, kind) => hud.killFeed(who, what, kind);
   world.onGameOver = (stats) => gameOver(stats);
   world.onDraftOffer = (boons) => offerDraft(boons);

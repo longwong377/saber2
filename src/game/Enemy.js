@@ -1837,6 +1837,11 @@ export class Enemy {
       if (/droid|b1|b2|walker|droideka/.test(this.type)) p.sparkBurst(point, null, 22, { speed: 8 });
     }
     audio.cut(point, this.A.big);
+    // Losing a limb and living through it. `cry` decides nothing about what
+    // comes out of the throat — see the note there — only that there is
+    // something to say, and a droid's version of a scream is that it powers
+    // down, which is the announcer's call to make.
+    if (!this.dead) this.cry('scream', 0.7);
   }
 
   _cutDroideka(name, ev, source) {
@@ -1881,6 +1886,44 @@ export class Enemy {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
     }
+    // "I want to hear the enemies scream as they get force thrown" — the throw
+    // is the impulse, so the trigger belongs exactly here rather than in
+    // whichever power happened to produce it.
+    if (!gentle && impulse.length() > 10) this.cry('scream', 0.9);
+  }
+
+  /**
+   * SAY SOMETHING — player note #21, "I want to hear their screams".
+   *
+   * WHAT THIS FILE DECIDES IS *WHEN*, AND NOTHING ELSE. It does not pick a
+   * larynx and it does not call `audio.speak`, for two reasons that are both
+   * about not making a second copy of a rule:
+   *
+   *  · WHICH VOICE a body has is derived from `bodyOf` (src/engine/Presence.js)
+   *    and mapped to a spec by `Announcer._enemySpec` — one classifier, and the
+   *    note over it explains at length what happened the last time that mapping
+   *    was written down twice (the Reek and the Nexu died with a human throat).
+   *  · HOW OFTEN the room may speak is the announcer's shared enemy budget,
+   *    which exists so a squad wiped in one second does not produce five
+   *    simultaneous deaths. A body that spoke directly would be outside it.
+   *
+   * So this raises an EVENT — the same `world.onXxx` shape `onHitmark`,
+   * `onKillFeed` and `onDeflectFeedback` already use, wired in src/main.js —
+   * and the announcer, which owns both of those rules, decides what comes out.
+   * `kind` is one of Voice.js's ENEMY_LINES: 'scream', 'panic', 'alarm',
+   * 'chatter'.
+   *
+   * The per-body gap is here rather than in the announcer because it is a
+   * different rule from the room's: it stops ONE body from screaming twice in
+   * a second while being knocked down a slope, which no shared budget can see.
+   */
+  cry(kind, gap = 1.2) {
+    if (this.dead || this._netRemote) return false;
+    const t = this.world?.time ?? 0;
+    if (t < (this._cryAt ?? -99) + gap) return false;
+    this._cryAt = t;
+    this.world?.onEnemyVoice?.(this, kind);
+    return true;
   }
 
   /**
@@ -1918,6 +1961,26 @@ export class Enemy {
     this.dead = true;
     this.dying = 0;
     this.world.onEnemyKilled?.(this, source, kind);
+
+    /* THE ONE WHO SAW IT, and this is the half the announcer cannot do.
+     *
+     * `Announcer._enemies` already breaks a squad after three deaths inside
+     * three and a half seconds — a WAVE-level rule, and a good one — but it
+     * speaks through whichever body is nearest the PLAYER, which on a wide
+     * field is regularly somebody who was not there. A death is witnessed by
+     * whoever is standing next to it: 14 m, one of them, and it is the nearest
+     * because that is the one the player can also see falling.
+     *
+     * The gap is deliberately long. A wave cleared body by body would
+     * otherwise produce a running commentary, and panic that never stops is
+     * not panic. */
+    let saw = null, sawD = 14 * 14;
+    for (const o of (this.world.enemies || [])) {
+      if (o === this || o.dead || !o.position || o.team !== this.team) continue;
+      const d2 = o.position.distanceToSquared(this.position);
+      if (d2 < sawD) { sawD = d2; saw = o; }
+    }
+    saw?.cry('panic', 6.0);
 
     // Retire the hum with the body. dispose() only runs 40s later, when the
     // corpse is cleaned up, and retract() merely fades the gain — so a cleared
@@ -2180,7 +2243,13 @@ export class Enemy {
     if (_v1.lengthSq() > 1e-6) _v1.normalize();
     this.toTarget = _v1.clone();
 
-    if (this.gripped) { this.wish = null; return; }
+    if (this.gripped) {
+      // held off the ground by something it cannot see. `cry` is gapped, so
+      // holding one up for six seconds is one cry rather than 360.
+      this.cry('scream', 2.5);
+      this.wish = null;
+      return;
+    }
     if (this.stunTimer > 0 || this.toppled) {
       this.wish = null;
       // A beaten guard has to TRAVEL while the body is reeling. The brain is
