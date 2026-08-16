@@ -30,10 +30,10 @@
  * them. The player asked what stars had to do with becoming attuned to the
  * Force, which was a fair question with an embarrassing answer — a node graph
  * happens to look like a star chart, so the picture was chosen first and the
- * fiction was bent around it. The drawing is unchanged and every word around it
- * is not:
+ * fiction was bent around it. The drawing did not change; every word around it
+ * did:
  *
- *      the LATTICE   the whole figure, which the player meets as the Holocron:
+ *      the LATTICE   the whole drawing, which the player meets as the Holocron:
  *                    a crystal you kneel with and that teaches you.
  *      a CURRENT     one of the six teachings the lattice is grouped into —
  *                    "I feel the currents of the Force", and each one is an
@@ -159,12 +159,11 @@ const ZONE = { cols: 3, rows: 2, halfW: 138, halfH: 120, top: 200, bottom: 520, 
  * same direction and a build has one identity rather than three — and the sixth
  * is Communion, which is where the cards that land on somebody else live.
  *
- * `root` is the facet that needs no neighbour. For the five old axes it is that
- * axis's ATTUNEMENT, which is exactly right: an attunement is uncapped and
+ * `root` is the facet that needs no neighbour, and every one of the six is that
+ * axis's ATTUNEMENT. That is exactly right: an attunement is uncapped and
  * repeatable, so the heart of a current can never be exhausted and a current
- * can never close. Communion has no attunement (a sixth one would make the boss
- * draft six cards wide, which is a layout, not a design), so its root is
- * Communion itself.
+ * can never close. It was true of five of them for a while — see the note on
+ * `attune-bond` in the facet table for the one that had to be built.
  *
  * Where each one SITS is not in this table: it owns a zone of the lattice, and
  * the shape its facets declare is fitted into that zone. See ZONE and
