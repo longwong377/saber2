@@ -22,12 +22,29 @@ import { Player } from '../../src/game/Player.js';
 import { Enemy } from '../../src/game/Enemy.js';
 
 /** A receiver with just the collaborators Player.damage actually touches. */
+/*
+ * THE STUB CARRIES THE REAL `resistForce`, not a nulled-out one.
+ *
+ * `Player.damage` gained a line — `amount -= this.resistForce(amount, kind,
+ * source)`, the player's half of the Force contest — after this fixture was
+ * written, and the fixture did not have the method. So every check in here
+ * that drove `damage` threw `this.resistForce is not a function` before
+ * reaching a single assertion: a suite reporting a defect in the game that was
+ * really a stub two versions behind the object it stands in for.
+ *
+ * It is bound to `Player.prototype.resistForce` rather than to `() => 0`
+ * because a stub that answers zero is a stub that has quietly turned a feature
+ * off, and this suite's whole subject is what `damage` does to `hp` — with the
+ * real subtraction in the path or not at all. It reads `alive`, `force` and
+ * `staggerTimer`, which is why `force` is here now.
+ */
 function victim(hp = 100) {
   return {
     alive: true, invuln: 0, hp, difficulty: { damageTaken: 1 },
     world: { training: false, engine: { hurt() {} } },
-    flow: 1, combo: 3, staggerTimer: 0, hitFlash: 0,
+    flow: 1, combo: 3, staggerTimer: 0, hitFlash: 0, force: 100,
     camera: { addShake() {} }, chest: { x: 0, y: 0, z: 0 },
+    resistForce: Player.prototype.resistForce,
     died: false, die() { this.died = true; },
   };
 }
