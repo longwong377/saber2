@@ -1,10 +1,15 @@
-# SABER — session handoff
+# BATTLEFRONT BORZ — session handoff
 
 Written for whoever picks this up next, human or otherwise. It is not a status
 report; it is the set of things that cost time to learn and would cost the same
 again. Read the traps section before touching a tool.
 
-Repo: `longwong377/saber2` · branch `claude/lightsaber-combat-game-lxw391`
+Repo: `longwong377/saber2` · branch `claude/battlefront-borz-improvements-1g2xei`
+
+> **The default branch is still `claude/lightsaber-combat-game-lxw391`.** Everything
+> from this session is on the branch above, and a player opening the repo lands
+> on the default and sees none of it. That cost a round trip; it will cost the
+> next one too unless the default moves.
 Playable: <https://longwong377.github.io/saber2/> (Pages deploys on every push
 to that branch; all recent runs green)
 
@@ -14,10 +19,10 @@ to that branch; all recent runs green)
 
 | | |
 |---|---|
-| Suite | **1142 passed, 0 failed** — forward *and* `SABER_CHECK_ORDER=reverse` |
+| Suite | see below — run it, the number moved a lot this session |
 | Smoke | 11/11 steps clean, ~2 min |
-| Levels | 13, all composing distinctly |
-| Content | plan items P0–P8 closed; Audits 2 and 3 closed; V2 lanes landed |
+| Levels | **7**, down from 13 — six deleted on the player's word |
+| Modes | **5** — the Descent is deleted, and `Run.js` with it |
 
 Run things this way and no other way:
 
@@ -173,7 +178,7 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5. What today changed in the game
+## 5. What the LAST session changed
 
 - **13 of 13 levels compose distinctly**, where six were byte-identical. Pool
   repeats are weights now — `_pickType` already weighed per entry, but the pool
@@ -195,10 +200,62 @@ corrected *me* more often than they corrected the finders.
 
 ## 6. Open
 
-**Design calls — the user's, not yours.** Both confirmed exactly as the judges
-described; both defended by written reasoning and pinned by existing checks.
-Overriding a stated intent once today was correctly stopped by `temple.mjs` and
-`warship.mjs`. Do not repeat that on a judge's say-so.
+### 6.0 The first-person grip is OVER-CONSTRAINED — and this is the live one
+
+Third report of "the first person hand/hilt looks like jumbled garbage", and
+the first one with a number against it. `tools/_fpgeom.mjs` (new) projects
+every arm joint and 31 samples along the hilt into NDC in about a second,
+where `fpview.mjs` costs twenty minutes:
+
+```
+arms cover                    5.8% of the frame
+hilt on screen               27.7% of frame height
+of that, behind the fists              91%
+```
+
+The arms are **not** the mess and have not been since the shoulders were moved
+off the ribcage. The hilt is *bigger* in frame than the reference the player
+supplied (`assets/reference/first-person/`). What is wrong is that nine tenths
+of it is behind a glove: `GRIP_AT` puts both fists at +0.050 and −0.015 on a
+shaft whose metal spans −0.092 to +0.158.
+
+Sliding the fists down the shaft works — 91% → 40%, and the render shows the
+shroud and neck rings clear of the hand for the first time. **It also fails two
+checks, and both were written for earlier rounds of this same complaint:**
+raise the hilt to keep the hands in frame and looking up brings `elbowL` inside
+the 100 mm the deltoid needs against a 45 mm near plane (`viewmodel.mjs`); skip
+the raise and the off hand leaves the bottom of the frame (`first-person.mjs`).
+Swept as a pair over grip −0.020…−0.105 against rise +0…+0.070, **nothing
+satisfies both.**
+
+The way out is what the reference shows: **one hand on the hilt in first
+person**, which removes the second occluder and the folded left arm together.
+That is a decision about what a first-person grip IS. Ask before doing it.
+
+### 6.1 Held for reference images
+
+The player asked for these to wait, and the folders are `assets/reference/`:
+
+- **Geonosis** — the Command mode (lead named troops with permadeath and
+  promotion, squads, formations, mechs, jet troopers) is built on it.
+- **The Coruscant Jedi Temple** — as a level, ending in the younglings.
+- **The real Mustafar** — the current one is renamed *The Ember Shelf*; its
+  molten sea is still a lava sea and the player wants it changed to something
+  that is not Mustafar's.
+- **A flagship** — to replace the deleted *Invisible Hand*.
+- **Kamino's platforms** — one slab where it should be a series of tall
+  connected decks. I built the colony and rolled it back on instruction; the
+  work is in the reflog if it is wanted.
+- **The Drowned Wood's ground** — the last surface still drawn outside the cel
+  pipeline, and the reason the meadow was deleted rather than tuned.
+- **The big creatures, and Mandalorians** — "all your monsters look the same,
+  sphere with some legs".
+
+### 6.2 Older design calls — the user's, not yours
+
+Both confirmed exactly as the judges described; both defended by written
+reasoning and pinned by existing checks. Do not override a stated intent on a
+judge's say-so.
 
 1. The attunement screen offers the same six cards in the same fixed order at
    every attune wave, uncapped and unexcluded. `drawBoons` explains why it is
@@ -222,6 +279,17 @@ Overriding a stated intent once today was correctly stopped by `temple.mjs` and
    with a shared stream's phase (escalation 5, props 4, presence and co-op 3
    each). They pass both ways because they have margin. `ground` (Scenery.js) is
    the one piece of shared state the runner does not restore between suites.
+
+---
+
+## 6.3 New instruments
+
+| Tool | Answers |
+|---|---|
+| `tools/_fpgeom.mjs` | where the first-person arms and hilt are **in the frame**, and how much of the hilt is behind the fists — one second, against `fpview.mjs`'s twenty minutes |
+
+Both take `--import ./tools/register.mjs`; `_fpgeom` opens with `dom-shim.mjs`
+because it reaches Textures.js, which bakes onto a canvas.
 
 ---
 

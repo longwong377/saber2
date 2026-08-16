@@ -1,6 +1,6 @@
-# SABER — Design Specification
+# BATTLEFRONT BORZ — Design Specification
 
-> *A single blade against a hundred. The blade is yours to move.*
+> *The blade is yours to move.*
 
 This is the refined brief, rewritten as a build spec, followed by the systems that implement it.
 
