@@ -100,7 +100,37 @@ function garments(owner) {
 }
 
 
+/**
+ * WHERE THE CENSUS IS TAKEN, AND WHY IT IS NAMED ONCE.
+ *
+ * This suite used to stand its subjects on `'temple'`. That level was deleted
+ * when the roster was culled to seven, and `loadLevel` on a key that is not in
+ * `LEVELS` does not throw — the suite simply stopped completing, and two
+ * separate callers spent real time reading it as a hang and blaming CPU load.
+ * A wrong answer would have been better than no answer, so this file now says
+ * which field it wants ONCE and asserts that the field exists before it builds
+ * anything.
+ *
+ * The arena is the right field on its own merits, not just because it survives:
+ * it is the flattest fighting floor in the game (`terrain.mjs` measures 1.77 m
+ * of relief over the central 120 m), so a ring of enemies spawned at 8 m all
+ * stand at the same height and none of them is part-way up a slope while it is
+ * being asked what it is wearing.
+ */
+const FIELD = 'colosseum';
+
 export async function run({ check, assert, THREE }) {
+  /* Fail LOUDLY and immediately if the field is gone, rather than the silent
+   * non-completion that the deleted temple produced. */
+  check('cloth-cost: the field this census stands on still exists', async () => {
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    assert(LEVELS[FIELD],
+      `cloth-cost stands its subjects on '${FIELD}' and no such level exists. `
+      + 'Every measurement below builds a World on it; a missing key does not throw, '
+      + 'it just never finishes. Point FIELD at a level in LEVEL_ORDER.');
+    return `${FIELD}`;
+  });
+
   const { initPhysics } = await import('../../src/physics/Rapier.js');
   await initPhysics();
 
@@ -114,7 +144,7 @@ export async function run({ check, assert, THREE }) {
     // distance and every archetype is asked what it is WEARING, not what it is
     // currently solving.
     const world = new World(stubEngine(THREE), { ...DEFAULT_SETTINGS, quality: 'ultra' });
-    await world.loadLevel('temple');
+    await world.loadLevel(FIELD);
     world.spawnPlayer?.();
     const types = Object.keys(ARCHETYPES);
     const p = world.player.position;
@@ -181,7 +211,7 @@ export async function run({ check, assert, THREE }) {
       const { enemyRng } = await import('../../src/game/Enemy.js');
       enemyRng.seed(4711);
       const world = new World(stubEngine(THREE), { ...DEFAULT_SETTINGS, quality: 'high' });
-      await world.loadLevel('temple');
+      await world.loadLevel(FIELD);
       world.spawnPlayer?.();
       const p = world.player.position;
       for (let i = 0; i < 20; i++) {

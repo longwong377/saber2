@@ -173,14 +173,38 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
-**Or next to your own agents.** With six subagents running, `cloth-cost` — which
-builds a real World and steps 400 physics frames — did not finish in three
-separate attempts (10-25 min each, no output), from two different callers who
-had not spoken to each other. It is not hung and it is not broken; it is a
-CPU-bound suite competing with six Node processes on one box. If a full
-`verify.mjs` appears to stall on `cloth-cost`, look at what else you have
-running before you go looking for a deadlock, and re-run it once the fleet is
-idle.
+**`cloth-cost` did not finish, and TWO diagnoses of it were wrong.** Worth
+reading in full, because the wrong answers were more attractive than the right
+one and one of them is still open.
+
+The symptom: three attempts, 10-25 min each, no output, from two callers who had
+not spoken to each other. `cloth-cost` builds a real World and steps 400 physics
+frames.
+
+- **Wrong diagnosis 1 (mine): CPU contention.** Six subagents were running. It
+  is a CPU-bound suite. The story fit every fact I had and I wrote it into this
+  file as a finding. That is the trap: *a slow suite on a loaded box explains any
+  hang you meet, and it will always fit the evidence.*
+- **Wrong diagnosis 2 (an agent's): the deleted level.** `cloth-cost.mjs` stood
+  its subjects on `loadLevel('temple')`, and `temple` was deleted in the roster
+  cull — a genuinely alarming thing to find, and it looks causal. It is not.
+  `World.loadLevel` resolves `LEVELS[key] ? key : LEVEL_ORDER[0]`
+  (src/game/World.js:236): an unknown key **silently substitutes the first
+  level**, deliberately, with a comment explaining it as a safety net. It cannot
+  hang. I very nearly committed this correction on the agent's word.
+
+**The real cause of the non-completion is still unknown.** It is written down as
+unknown rather than given a third story.
+
+What the second wrong diagnosis *did* uncover is a real defect of its own, and
+the reason to keep the fix: after the cull, four checks were measuring a level
+they did not name. `cloth-cost` asked for `temple`, `garments`, `lifecycle` and
+`force` ask for `meadow`, and all four silently got `scoria`. A check that
+believes it is testing one place while testing another is HANDOFF 2.4's problem
+wearing a different coat — the fallback is right for a player with a stale save
+and wrong for a test, which should be told. `cloth-cost` now names its field once
+as `FIELD` and asserts the level exists. **The three `meadow` callers have not
+been fixed** — `grep -rn "loadLevel('" tools/` is the list.
 
 ### 2.7 A LATE full run can hang on a suite that passes alone
 
