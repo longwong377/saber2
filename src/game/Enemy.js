@@ -2207,7 +2207,7 @@ export class Enemy {
     }
 
     const lethal = vital >= 0.9 || (vital >= 0.7 && this.hp < this.maxHp * 0.55);
-    const dmg = lethal ? this.maxHp * 2 : this.maxHp * vital * 1.15;
+    const dmg = lethal ? this.maxHp * 2 : this.maxHp * vital * SEVER_LETHALITY;
     this.hp -= dmg;
     /* …and a CUT winds a beast, which is the whole point of the window. This
      * path subtracts from `hp` directly rather than going through `damage()`,
@@ -4787,6 +4787,22 @@ export class Enemy {
  * and never asks whether a toe is a body. It is the same shape as the defect
  * above, one module to the side, and it is not fixed: it lives in World.js.
  */
+/**
+ * What TAKING the bone costs, as a multiple of what the bone is worth.
+ *
+ * A completed pass bills twice — `World._applyBladeEvent` pays the grind that
+ * leads up to the sever at `GRIND_LETHALITY × severance`, and `takeCut` pays
+ * this for the sever itself. Over 1.0 because parting a limb is meant to be
+ * worth more than the work of getting there.
+ *
+ * Named rather than left as a literal because it is now READ from outside: a
+ * check that wanted to know how many passes a body survives had to have this
+ * number, and the choice was to export it or to let the check keep a second
+ * copy — which is the hand-maintained twin that this whole area of the code
+ * exists to be rid of.
+ */
+export const SEVER_LETHALITY = 1.15;
+
 const SEVERANCE = {
   core: { axial: 1.00 },
   neck: { axial: 1.00 },

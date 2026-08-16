@@ -49,8 +49,9 @@
  */
 
 import * as THREE from 'three';
-import { ARCHETYPES, Enemy, guardFor, severance, PRICED_ROLES, AXIAL_ROLES }
+import { ARCHETYPES, Enemy, guardFor, severance, PRICED_ROLES, AXIAL_ROLES, SEVER_LETHALITY }
   from '../../src/game/Enemy.js';
+import { GRIND_LETHALITY, grindWorth } from '../../src/game/World.js';
 import { Rig, BONE_ROLES } from '../../src/game/Rig.js';
 import * as PHYS from '../../src/physics/RapierWorld.js';
 import '../../src/game/Levels.js';        // registers the Command units, machines and menagerie
@@ -480,5 +481,112 @@ export async function run({ check, assert }) {
         + (legs.length ? ` + ${legs.length} legs at ${legs[0].vital.toFixed(3)}` : ''));
     }
     return rows.join(' · ');
+  });
+
+  check('severance: a completed pass costs what the BONE is worth, not what a body is', () => {
+    /**
+     * THE OTHER HALF OF THE SUM, and this file's own header called it the
+     * bigger half while it was still broken.
+     *
+     * A completed pass bills twice. `World._applyBladeEvent` pays the grind
+     * that leads up to the sever, and `Enemy.takeCut` pays the sever. Both are
+     * shares of MAXIMUM health, so how many passes a body survives through a
+     * given bone is decided by the two prices alone and its health never
+     * enters into it. The grind was a flat `GRIND_LETHALITY` of max hp for
+     * every capsule on every body — 55% for a toe, 55% for a torso — so
+     * completing a pass ANYWHERE had spent 55% before the bone was priced at
+     * all, and two completed passes killed everything in the game through
+     * anything it had. Fixing the sever alone could not reach it: the sever is
+     * the smaller term.
+     *
+     * Nothing else measures this. `cutting` measures dWork/need — the SHARE of
+     * a sever done per frame — and never what that share is billed at, so the
+     * whole of the defect sat under a green suite.
+     *
+     * Both constants are imported from the module that bills with them. A
+     * transcription here would be §2.3 in a check about §2.3.
+     */
+    /*
+     * ONLY BONES THAT ARE NOT MEANT TO BE LETHAL. `takeCut` makes anything at
+     * 0.9 or over kill outright, so counting passes through those measures the
+     * design rather than the billing — and the training remote is exactly one
+     * capsule, its own core, worth 1.0. Its cheapest bone IS its most vital
+     * one, and dying in a single pass through the whole of yourself is right.
+     * The first version of this check had it failing, which is a check
+     * asserting against a thing the game means.
+     */
+    const worst = { type: null, passes: Infinity, bone: null, vital: 0 };
+    const core = [], allVital = [];
+    const passesFor = (v) => (v >= 0.9 ? 1
+      : Math.ceil(1 / (GRIND_LETHALITY * grindWorth({ vital: v }) + v * SEVER_LETHALITY)));
+    for (const type of ROSTER) {
+      const { caps } = body(type);
+      if (!caps.length) continue;
+      const dearest = caps.reduce((a, b) => (b.vital > a.vital ? b : a));
+      core.push({ type, passes: passesFor(dearest.vital), vital: dearest.vital });
+      const severable = caps.filter((c) => c.vital < 0.9);
+      if (!severable.length) { allVital.push(type); continue; }
+      const cheapest = severable.reduce((a, b) => (b.vital < a.vital ? b : a));
+      const n = passesFor(cheapest.vital);
+      if (n < worst.passes) Object.assign(worst, { type, passes: n, bone: cheapest.name, vital: cheapest.vital });
+    }
+
+    /*
+     * THE PROPERTY IS PROPORTIONALITY, not a floor on passes, and two earlier
+     * versions of this check got that wrong in both directions. A floor fails
+     * the training remote, which is one capsule worth all of itself; and it
+     * fails the DROIDEKA, whose three legs are 0.367 each — two of its three
+     * legs is most of the machine, and dying to that is the game working.
+     *
+     * What actually broke was that a pass cost the same whatever it went
+     * through. So: for every severable bone on every body, the cost of a
+     * completed pass divided by what the bone is worth must be the SAME
+     * number. Under a flat grind it was not — a 0.024 AT-TE toe cost 0.578 of
+     * the machine and a 0.500 AAT prow cost 1.125, so cost/worth ran from 2.3
+     * to 24. That ratio is the defect, stated exactly.
+     */
+    const ratios = [];
+    for (const type of ROSTER) {
+      for (const c of body(type).caps) {
+        if (c.vital >= 0.9) continue;
+        const cost = GRIND_LETHALITY * grindWorth(c) + c.vital * SEVER_LETHALITY;
+        ratios.push({ type, name: c.name, v: c.vital, k: cost / c.vital });
+      }
+    }
+    const lo = ratios.reduce((a, b) => (b.k < a.k ? b : a));
+    const hi = ratios.reduce((a, b) => (b.k > a.k ? b : a));
+    assert(hi.k - lo.k < 1e-9,
+      `a completed pass costs ${lo.k.toFixed(2)}× what the bone is worth on ${lo.type}'s '${lo.name}' `
+      + `and ${hi.k.toFixed(2)}× on ${hi.type}'s '${hi.name}' — a pass is being billed partly against `
+      + 'the BODY, which is what made two passes through anything a kill');
+
+    /*
+     * A SECOND BOUND WAS TRIED HERE AND TAKEN OUT: "a bone worth under a fifth
+     * of its body must not kill it in four passes or fewer". It failed on 34
+     * bones, and every one of them was the game working — a walker shin is
+     * 0.15 of a walker, so four of them is sixty per cent of the machine, and
+     * a machine that has lost four legs is dead. The fifth and the four were
+     * numbers chosen to sound careful and derived from nothing. The bound that
+     * belongs here is the one above, which is a statement about the billing,
+     * and 'no body dies of ALL its extremities' further down, which is derived
+     * from the bodies themselves.
+     */
+
+    // The other direction, and it is the one a fix here could quietly break:
+    // reaching something vital in ONE pass is the whole design of the blade.
+    const slow = core.filter((c) => c.passes !== 1);
+    assert(slow.length === 0,
+      `${slow.length} bodies no longer die in one pass through their most vital capsule `
+      + `(${slow.slice(0, 3).map((c) => `${c.type} ${c.passes}`).join(', ')}) — pricing the grind by `
+      + 'the bone must not make a torso survive a blade through it');
+
+    assert(grindWorth({ shield: true, vital: 1 }) === 0,
+      'a deflector bubble is billing a grind against the body behind it');
+    assert(grindWorth({ name: 'unpriced' }) === 0,
+      'a capsule with no price bills a grind anyway — that is the silent fallback coming back');
+
+    return `${core.length} bodies · cheapest non-vital bone survives ${worst.passes} completed passes `
+      + `(${worst.type} '${worst.bone}', ${worst.vital.toFixed(3)}) · every core capsule still 1`
+      + (allVital.length ? ` · ${allVital.join(', ')} is vital all through and out of scope` : '');
   });
 }

@@ -157,8 +157,50 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
  * share of the target's maximum health along the way. 0.55 rather than 1.0
  * because taking the limb is itself supposed to be the decisive event — the
  * damage is what stops a failed pass from being free.
+ *
+ * ── AND IT IS A SHARE OF THE BONE, NOT OF THE BODY ────────────────────────
+ *
+ * That paragraph argues the number correctly for a body and never asks whether
+ * a TOE is a body. It was a flat 0.55 of maximum health for every capsule on
+ * every archetype, so completing a pass anywhere had already dealt 55% before
+ * the sever was billed at all:
+ *
+ *   Rancor toe   grind 55.0% + sever 11.6% = 66.6% of a 2200 hp animal
+ *   Acklay toe   grind 55.0% + sever  4.2% = 59.2%
+ *   AT-TE toe    grind 55.0% + sever  2.8% = 57.8%
+ *
+ * Two completed passes killed anything in the game, through any bone it has.
+ * That is the same defect that `VITAL[name] ?? 0.4` was — one price for every
+ * part of every body — surviving one module to the side of where it was fixed,
+ * and `SEVERANCE`'s note in Enemy.js named it as the bigger half of the toe.
+ *
+ * `grindWorth` below multiplies by what the capsule is actually worth, so this
+ * constant keeps its meaning and its tuned value: for a full-worth capsule —
+ * a torso, a neck, a head — a completed grind still deals exactly 0.55 of
+ * maximum health, which is where the number was measured and felt. Everything
+ * cheaper than a body now costs what it is.
  */
-const GRIND_LETHALITY = 0.55;
+export const GRIND_LETHALITY = 0.55;
+/**
+ * What the capsule under the blade is worth, for billing a grind.
+ *
+ * The shield first, and for `takeCut`'s reason: a bubble is not a bone, it
+ * carries no `vital` on purpose, and the pass costs the shield rather than the
+ * body. Grinding one bills nothing here; `takeCut` drops it when the pass
+ * completes.
+ *
+ * And no `?? 1` after that. A bone capsule with no price is a capsule that has
+ * not been through `severance`, which is exactly the condition `takeCut` throws
+ * on — so answering it here with a quiet default would put the silent fallback
+ * back into the game one function away from where it was taken out. A capsule
+ * that reaches this without a price will throw there a moment later anyway;
+ * this returns 0 so the frame survives to get there, and bills nothing rather
+ * than billing a body.
+ */
+export function grindWorth(cap) {
+  if (!cap || cap.shield) return 0;
+  return typeof cap.vital === 'number' ? cap.vital : 0;
+}
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
 /**
@@ -1905,7 +1947,7 @@ export class World {
           const e = t.enemy;
           const wasAlive = !e.dead;
           const share = ev.dWork / ev.need;
-          const dmg = share * e.maxHp * GRIND_LETHALITY;
+          const dmg = share * e.maxHp * GRIND_LETHALITY * grindWorth(ev.cap);
           e.damage(dmg, ev.point, player, 'saber');
           if (player.isLocal) this._claim({ t: 'claim', k: 'dmg', id: e.id, d: dmg,
             p: [ev.point.x, ev.point.y, ev.point.z] });
