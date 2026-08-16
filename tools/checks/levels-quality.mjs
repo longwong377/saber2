@@ -400,8 +400,28 @@ export async function run({ check, assert }) {
      * body born in a column is never pushed out of it — it walks out through
      * the masonry — and a body born under a hazard sheet is born in lava.
      */
+    /**
+     * FIVE DEAD LEVEL NAMES, and the whole check had been measuring the Ember
+     * Shelf five times over.
+     *
+     * It named `temple`, `arena`, `warship`, `intake` and `deeps` — every one of
+     * which was deleted in the roster cull. `World.loadLevel` substitutes the
+     * first surviving level for a key it does not know, so each of the five
+     * booted a copy of the Ember Shelf, cached it under a dead key, and had its
+     * spawn picks measured against a sentence about a level that is not there.
+     * FIVE EXTRA WORLDS, held simultaneously, on top of the file's real six —
+     * which is precisely why HANDOFF §2.7 names this suite as the one holding
+     * the most Worlds alive at once, and why adding an eighth real level took it
+     * from slow to not finishing. `roster.mjs` cannot see these: `level('x')` is
+     * none of the five syntactic forms it scans for.
+     *
+     * ENUMERATED over the real roster instead. The property is not about those
+     * five rooms — it is that NO level puts a body inside its own masonry or
+     * under its own water — so it is asked of every level the game has, and it
+     * cannot be outlived by another cull.
+     */
     const rows = [];
-    for (const key of ['temple', 'arena', 'warship', 'intake', 'deeps']) {
+    for (const key of LEVEL_ORDER) {
       const { world } = await level(key);
       const T = world.terrain;
       let inside = 0, deep = 0, n = 0;
@@ -779,7 +799,12 @@ export async function run({ check, assert }) {
 
     const rows = [];
     let got = 0, tot = 0;
-    for (const level of ['temple', 'warship', 'intake', 'cut']) {
+    /* FOUR MORE DEAD NAMES — see the note in the spawns check above. All four
+     * of these rooms were deleted, so this walked four copies of the Ember Shelf
+     * and called the result four interiors. Asked of the real roster instead:
+     * "an enemy gets to you" is a property of every level, and the ones with
+     * architecture in them are the ones that will fail it. */
+    for (const level of LEVEL_ORDER) {
       const r = await walk(level);
       assert(r.n >= 10, `only ${r.n} of ${N} bearings on ${level} were placeable — nothing measured`);
       got += r.arrived; tot += r.n;
