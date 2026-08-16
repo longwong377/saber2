@@ -48,7 +48,8 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
-import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, beastMoveSet } from '../../src/game/Enemy.js';
+import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, beastMoveSet, guardFor, TURNED_CUT }
+  from '../../src/game/Enemy.js';
 import { duelRng } from '../../src/game/Duel.js';
 import { buildQuadruped, CREATURE_PLANS } from '../../src/game/Bodies.js';
 import '../../src/game/Levels.js';        // registers the Colosseum's creatures
@@ -184,6 +185,51 @@ function fight(type, mode, seconds = 90, window = [0, 0.45]) {
 
 /** rate as a percentage, or a dash when the move never came out. */
 const pc = (r) => (r === null ? '—' : `${Math.round(r * 100)}%`);
+
+/**
+ * One real body in a real world, standing still, for the cut tests below.
+ *
+ * Everything the guard does happens inside `takeCut`, which severs through
+ * `this.actor` — so a stub with a `capsules()` on it is not enough and the body
+ * has to be genuinely built. Same world shape `fight()` uses.
+ */
+function bench(type) {
+  const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 400 });
+  const terrain = flat();
+  physics.terrain = terrain;
+  const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+    spatter() {}, plasma: { spawn() {} }, smoke: { spawn() {} } };
+  const w = {
+    scene: new THREE.Scene(), physics, terrain, statics: [],
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+    players: [], enemies: [], props: [], doors: [], locks: [],
+    particles, bolts: { fire() {}, update() {}, threatsNear: () => [] },
+    time: 0, combatIntensity: 0, groundColor: 0xcfae82,
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+    onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {}, onHitmark() {},
+    onExplosion() {}, spawnDebrisGroup() {},
+  };
+  const e = new Enemy(w, type, V(0, 0, -6));
+  w.enemies.push(e);
+  const ctx = { enemies: w.enemies, particles, terrain, physics,
+    bolts: w.bolts, time: 0, pickTarget: () => null, camera: w.engine.camera };
+  e.update(1 / 60, ctx);
+  return { w, e, ctx, physics };
+}
+
+/**
+ * A cut event of the shape `BladeContactSolver` emits, aimed at one capsule of
+ * a real body. Read off `Enemy.capsules()` so the vital and the toughness are
+ * the game's own rather than typed here.
+ */
+function cutAt(e, pick) {
+  const caps = e.capsules();
+  const cap = caps.find((c) => pick.test(c.name)) || caps[0];
+  return { bone: cap.name, cap, cutT: 0.5,
+    point: e.position.clone().setY(1), impulse: new THREE.Vector3(0, 0, -1) };
+}
 
 export async function run({ check, assert }) {
   await initPhysics();
@@ -576,5 +622,134 @@ export async function run({ check, assert }) {
       `every kind is ${ratio.map((v) => v.toFixed(2)).join('/')} long for its height — `
       + 'that is one animal at four scales');
     return rows.map((r) => `${r.kind} ${r.verts}v ${r.len.toFixed(1)}x${r.tall.toFixed(1)} m`).join(', ');
+  });
+
+  /* ══ THE HIDE — a body with no blade defending itself ═══════════════════ */
+
+  check('beasts: a body with no blade turns a killing pass, and what it turns is its own mass', () => {
+    /**
+     * THE MEASUREMENT THAT ASKED FOR THIS. `tools/balance.mjs` put a 28 hp B1,
+     * a 420 kg Nexu, a 1250 hp Reek, a 900 hp Acklay and a 2200 hp Rancor down
+     * in the SAME 0.64 s, because `takeCut` makes any `vital >= 0.9` capsule
+     * instantly lethal and nothing that was not a duellist defended itself. The
+     * player's words were "the large creatures all look the same… they all
+     * attack the same way"; the number adds the half nobody had said, which is
+     * that they also died like nothing.
+     *
+     * `guardFor` is the whole rule and it is DERIVED — hp for a duellist, mass
+     * for everything else. What is asserted here is the shape rather than the
+     * constant: nothing man-sized turns anything, it rises with the body, and
+     * it never contradicts the mass ordering.
+     */
+    const rows = [];
+    for (const [type, A] of Object.entries(ARCHETYPES)) {
+      if (A.training || A.inert) continue;
+      const g = guardFor(A);
+      if (A.saber) continue;                     // the duellist half, tested elsewhere
+      rows.push({ type, mass: A.mass ?? 0, hp: A.hp, g });
+    }
+    rows.sort((a, b) => a.mass - b.mass);
+    // MONOTONE IN MASS. Two bodies of the same weight must turn the same
+    // number of passes, and a heavier one may never turn fewer — that is what
+    // makes this a derivation rather than a table with opinions in it.
+    for (let i = 1; i < rows.length; i++) {
+      assert(rows[i].g >= rows[i - 1].g,
+        `${rows[i].type} at ${rows[i].mass} kg turns ${rows[i].g} passes and the lighter `
+        + `${rows[i - 1].type} at ${rows[i - 1].mass} kg turns ${rows[i - 1].g}`);
+    }
+    // A MAN IS NOT A WALL. Everything a player meets at eye level still comes
+    // apart on the first pass, which is the half of the game that was right.
+    for (const r of rows) {
+      if (r.mass <= 260) {
+        assert(r.g === 0, `${r.type} weighs ${r.mass} kg and turns ${r.g} killing passes — `
+          + 'a body a player can pick up should not be shrugging off a lightsaber');
+      }
+    }
+    // …AND THE BIG ONES DO. Named by what they are rather than by a list: any
+    // body over half a tonne is one of the "large creatures" the note is about.
+    const heavies = rows.filter((r) => r.mass >= 520);
+    assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg on the roster`);
+    for (const r of heavies) {
+      assert(r.g >= 1, `${r.type} weighs ${r.mass} kg and still turns nothing`);
+    }
+    return rows.filter((r) => r.g > 0)
+      .map((r) => `${r.type} ${r.mass}kg→${r.g}`).join(', ')
+      + `; ${rows.length - rows.filter((r) => r.g > 0).length} bodies turn nothing`;
+  });
+
+  check('beasts: the hide is a DELAY and never a wall — every body still dies, and the ceiling is the game\'s own', () => {
+    /**
+     * The failure mode a guard invites is the opposite of the one it fixes, and
+     * it is worse: a body nothing can finish. It cannot happen here and this is
+     * the proof, driven through the real `takeCut` on a real built body.
+     *
+     * A turned pass costs `TURNED_CUT` of maximum health, so `ceil(1 /
+     * TURNED_CUT)` turns kill the body outright however deep its guard is —
+     * which is why the AT-TE's twelve and the Rancor's five are one fight. The
+     * bound below is that ceiling plus the passes that actually land, and the
+     * point of it is that it does not scale with the guard.
+     */
+    const rows = [];
+    for (const type of [...BEASTS, 'walker', 'atte', 'aat', 'hailfire', 'dwarfspider', 'b1']) {
+      const { e } = bench(type);
+      const guard0 = e.guardMax;
+      let passes = 0, turned = 0;
+      // The same leg, over and over — the pessimistic case, and the one the
+      // player actually plays: you do not get to choose a new limb each swing.
+      while (!e.dead && passes < 40) {
+        const ev = cutAt(e, /femur|thigh|tibia|shin|hipL|leg/);
+        passes++;
+        if (e.takeCut(ev, null) === 'turned') turned++;
+      }
+      assert(e.dead, `${type} survived 40 passes at the same limb — the hide has become a wall`);
+      assert(turned <= Math.ceil(1 / TURNED_CUT),
+        `${type} turned ${turned} passes against a ceiling of ${Math.ceil(1 / TURNED_CUT)}`);
+      assert(turned <= guard0, `${type} turned ${turned} passes with a guard of ${guard0}`);
+      rows.push({ type, guard0, turned, passes });
+      e.dispose?.();
+    }
+    // The control: a battle droid still comes apart on the first pass. If this
+    // ever turns anything the constant has slipped down onto man-sized bodies.
+    const b1 = rows.find((r) => r.type === 'b1');
+    assert(b1.turned === 0 && b1.passes <= 3,
+      `a B1 turned ${b1.turned} passes and took ${b1.passes} — the hide has reached the droids`);
+    // …and the heavies cost strictly more than it does.
+    for (const r of rows) {
+      if (r.type === 'b1') continue;
+      assert(r.passes > b1.passes,
+        `${r.type} takes ${r.passes} passes and a B1 takes ${b1.passes} — it dies like a droid`);
+    }
+    return rows.map((r) => `${r.type} guard ${r.guard0}→turned ${r.turned}, ${r.passes} passes`).join('; ');
+  });
+
+  check('beasts: WINDED is the opening, and it is the one the animal already had', () => {
+    /**
+     * A guard with no way through is a wall, and the way through an animal is
+     * the state it already enters when you hurt it fast enough. `_beastBrain`
+     * has printed WINDED over its head since the move sets landed, and its own
+     * comment calls it "the only safe time to go for a leg" — but until the
+     * hide could turn a pass there was nothing for that window to be safe FROM,
+     * because every pass landed. `_guardOpen` reads it now, which is the same
+     * predicate the Force reads, so the opening is one rule and not two.
+     */
+    const rows = [];
+    for (const type of BEASTS) {
+      const { e } = bench(type);
+      if (e.guardMax <= 0) { e.dispose?.(); continue; }
+      // Guard up: the pass is turned.
+      assert(e.takeCut(cutAt(e, /femur|thigh|tibia|hipL/), null) === 'turned',
+        `${type} did not turn a pass with a full guard of ${e.guardMax}`);
+      const guardLeft = e.guard;
+      // Winded: the same pass lands, and does not spend the guard.
+      e.state = 'winded';
+      assert(e.takeCut(cutAt(e, /femur|thigh|tibia|hipL/), null) !== 'turned',
+        `${type} turned a pass while WINDED — the window the brain prints is a lie`);
+      assert(e.guard === guardLeft,
+        `${type} spent guard on a pass it did not turn`);
+      rows.push(`${type} ${e.guardMax}`);
+      e.dispose?.();
+    }
+    assert(rows.length >= 4, `only ${rows.length} beasts have a guard to open`);
+    return `${rows.join(', ')} — a full guard turns it, WINDED lets it through`;
   });
 }
