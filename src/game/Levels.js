@@ -17,7 +17,7 @@ import {
   addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd, addStorm,
   addInstanced, slabGeo, tubeUv, paintGeo, mergeGeos, torusGeo,
 } from '../world/Props.js';
-import { addHorizon, makeCoverField, ground } from '../world/Scenery.js';
+import { addHorizon, makeCoverField, ground, BODY_FADE } from '../world/Scenery.js';
 import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
@@ -387,11 +387,42 @@ export function stoneField(world, seed = 3300, opts = {}) {
    * water (`waterLevel` −999) pays one comparison that is never true. Rock does
    * gather under water in the world; it is not what is being drawn here, which
    * is the litter you see from a walkway.
+   *
+   * ── AND THE FIRST VERSION OF IT EMPTIED A SWAMP ──────────────────────────
+   *
+   * `height <= waterLevel` is the right test for an ocean and the wrong one for
+   * the Drowned Wood, whose whole subject is standing water you walk through.
+   * It took that level from 1761 stones to 138 against a floor of 150 and put
+   * `ground-cover` 12/14 — a fix for one level breaking another, caught only
+   * because a suite two lanes away was counting.
+   *
+   * The two sheets are not the same thing and the levels already say so.
+   * Measured depth below the waterline, sampled over each fight disc:
+   *
+   *     bog       submerged 833/4000   median 0.51 m   MAX 1.1 m
+   *     kamino    submerged 2944/4000  median 64.6 m   max 78.2
+   *     scoria    submerged 1617/4000  median 7.8 m    max 24.9
+   *     mustafar  submerged 623/4000   median 3.0 m    max 6.7
+   *
+   * So there are two clauses and each is read off a declaration rather than
+   * guessed. A sheet that DAMAGES you — `water.damage`, which scoria, mustafar
+   * and the foundry all carry and which is lava or melt — is never ground you
+   * see litter on, at any depth. And a harmless sheet is refused only where it
+   * has stopped being shallow, which is not a number invented here: the water
+   * shader mixes its shallow colour into its deep one at `BODY_FADE` per metre,
+   * so the game's own drawing calls it half-deep at ln2/0.55 = 1.26 m. The Bog
+   * is under that everywhere it is wet; Kamino is over it almost everywhere.
+   * A shore you can see the bottom of is a shore.
    */
   const T = world.terrain;
   const sea = T && T.waterLevel > -900 ? T.waterLevel : null;
+  const scalds = !!world.level?.water?.damage;
+  const WADE = Math.LN2 / BODY_FADE;
   const f = (x, z) => {
-    if (sea !== null && T.height(x, z) <= sea) return 0;
+    if (sea !== null) {
+      const depth = sea - T.height(x, z);
+      if (depth > 0 && (scalds || depth > WADE)) return 0;
+    }
     const v = F.at(x, z);
     return v * v * (cover ? 1 - shun * cover.at(x, z) : 1);
   };
