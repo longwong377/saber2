@@ -173,6 +173,29 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
+> **LATER, AND IT CHANGES THE CONCLUSION BELOW.** Everything in this section is
+> still true about the *early* symptoms, but contention was not the whole story.
+> Measured afterwards on a QUIET box, with the full run as the machine's main
+> consumer: `verify.mjs` spent **over forty minutes inside `cloth-cost` alone**
+> with its worker at 85-86% CPU the whole time, and was killed by a 50-minute
+> timeout having never left that suite. Six attempts across two callers have now
+> failed the same way. So:
+>
+> - It is **not** the §2.7 hang — that signature is a live worker burning NO
+>   CPU. This one burns CPU continuously and makes progress.
+> - It is **not** only contention — it does not finish with the box to itself.
+> - **`cloth-cost` is simply too expensive to sit in the default gate.** It
+>   spawns one of *every* archetype into an `ultra` World and steps 400 physics
+>   frames, and the roster grew from ~20 archetypes to **31** this session
+>   (seven Command units, four machines). That growth is the obvious suspect and
+>   **it is a hypothesis, not a measurement** — nobody has yet timed the suite
+>   against archetype count. Do that before "optimising" anything.
+>
+> To get a gate number meanwhile: `SABER_CHECK_ORDER=reverse` puts `cloth-cost`
+> near the END of the run instead of sixteenth, so every other suite reports
+> before it stalls. That is also the order-dependence check, so it is not a
+> workaround with no other value.
+
 **`cloth-cost` did not finish, and TWO diagnoses of it were wrong.** Worth
 reading in full, because the wrong answers were more attractive than the right
 one and one of them is still open.
