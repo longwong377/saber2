@@ -162,7 +162,11 @@ export const ACTIONS = [
   { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft', 'Mouse4'], pad: 'PadB' },
 
   { id: 'blade',      group: 'Blade',    label: 'Take the blade',    keys: ['Mouse1'],     hold: true, pad: 'PadRT' },
-  { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'], pad: 'PadRB' },
+  // PadY and not PadRB, and `stance` has the bumper instead — see the note on
+  // `stance` below. A thrust is a PRESS, so a face button costs the right thumb
+  // one beat off the look stick; a lateral guard is a HOLD, and a hold on a face
+  // button is a guard the player cannot aim from.
+  { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'], pad: 'PadY' },
   // The two halves of the attack rose, mirroring the guard rose: wheel up is an
   // overhead, wheel down is a stab. They are ordinary rows here rather than a
   // raw `mouse.wheel` read for exactly the reason the four rows below this one
@@ -184,7 +188,14 @@ export const ACTIONS = [
   // a HOLD you keep while strafing, so it has to stay under the left hand: the
   // digit row is the only thing left there that nothing else claims. Mouse5 is
   // the thumb button and is the nicer way to hold it if you have one.
-  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadY' },
+  /* PadRB, and the reason is the same one that put this on the DIGIT ROW for a
+   * keyboard: "a guard stance is a HOLD you keep while strafing, so it has to
+   * stay under the left hand". On a pad the equivalent constraint is that both
+   * THUMBS are on sticks — one moving, one aiming — for the whole time a guard
+   * is up, so a hold has to live under an index finger. RT is `blade` and LT is
+   * `focus`; RB is the one left, and `thrust` took the face button it vacated
+   * because a press can afford to. */
+  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadRB' },
   { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'], pad: 'PadLB+PadBack' },
   // One key for both halves of note 61: over a fallen hilt it takes, otherwise
   // it puts yours down.
