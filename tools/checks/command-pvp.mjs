@@ -459,14 +459,26 @@ export function run({ check, assert }) {
      * THE PURSE IS THE OTHER HALF OF THE ROSTER, AND IT HAD NO WIRE.
      *
      * `applyNet` has carried `mustering` and `points` to every machine in the
-     * session since the roster crossed — so a joining commander knew perfectly
-     * well that a muster was open and exactly how many reinforcement points
-     * were in the purse, and had no shelf to spend them on and no way to say
-     * what it wanted. `musterOffer()` on a shell computed over an empty roster:
-     * measured before this, on this pair, the joining commander's offer read
-     * 0 points with 0 of 7 rungs affordable while the host's read 11 with 2.
-     * So either the host's player chose that army's reinforcements for both of
-     * them, or — with no screen wired at all — `autoMuster` did.
+     * session since the roster crossed, so the shape of the defect is subtler
+     * than a blank screen and worse. Measured on this pair by running the
+     * pre-change path — `musterOffer`, `recruit` and `autoMuster` had no shell
+     * branch, so a client ran the local one:
+     *
+     *   the offer          22 points, 4 rungs, 4 affordable — and a roll of
+     *                      ZERO names against the host's ten, `have: 0` on
+     *                      every rung with ten of them standing in front of
+     *                      you, and `strength: 0`, so `afford` stayed true
+     *                      right past MAX_STRENGTH
+     *   buying a jet       enlisted CT-2458 onto the CLIENT's own shell
+     *                      roster, spent its own 22 → 14, and put 0 messages
+     *                      on the wire
+     *   the host           10 standing, 22 points. Unchanged. Both.
+     *   then autoMuster    2 more phantom bodies, down to 4 points, 0 messages
+     *
+     * So a joining commander's muster was a private fiction: the points were
+     * real, the army it thought it was buying did not exist anywhere else, and
+     * the actual reinforcements were chosen by the host's player — or, with no
+     * screen wired at all, by `autoMuster`.
      *
      * Driven end to end on two real Worlds: the muster opens on the host
      * through `payWave`, the offer crosses, the CLIENT buys, and the assertion
@@ -866,26 +878,34 @@ export function run({ check, assert }) {
      *
      * `formUp` has always laid its anchors out alternating down one line and
      * `assignArmies`' own note said the extras "share, which is correct". Both
-     * of those are statements about a 2v2 and neither had ever been run.
-     * Measured here at four commanders, before the fix:
+     * of those are statements about a 2v2 and neither had ever been run. At
+     * four commanders, before this:
      *
-     *   sides          0 / 2 / 3 / 4     — `sideTeam(i)`, a side each
-     *   match.sides    [0, 2, 3, 4]      — four
-     *   armies         separatist / republic / republic / separatist
-     *                                    from orders sith,jedi,jedi,sith
-     *   anchors        i=4 repeats i=2's ground
+     *   sides      0 / 2 / 3 / 4        `sideTeam(i)` — a side each
+     *   armies     republic / separatist / republic / separatist   (four Jedi)
+     *              separatist / republic / republic / separatist   (sith,
+     *                                    jedi, jedi, sith — measured)
+     *   anchors    i=0 and i=2 share the −z end, 14 m apart;
+     *              i=4 lands on i=2's exact ground
      *
-     * Four sides is four private wars: there are TWO armies on the roster, so
-     * the third and fourth commanders were fielding somebody else's units in
-     * somebody else's colours, on the same anchor as the ally they were now
-     * opposed to. And `DuelMatch.update` decides a round by filtering `sides`
-     * for who is still standing — with four of them a 2v2 that has wiped one
-     * side out still counts two survivors, so the battle could not end at all.
+     * Read those three together and the field is incoherent. Commanders 0 and 2
+     * lead the SAME army and stand 14 m apart at the same end — and they are on
+     * DIFFERENT sides, so `enlistBody` puts their bodies on different teams and
+     * two identical Republic lines in identical white armour open fire on each
+     * other before either has seen the enemy. There are two armies on the
+     * roster, so a third side has no units, no paint and no enemy list to be
+     * given.
      *
-     * So the sides ALTERNATE by join order, which is the line `formUp` was
-     * already drawing; an army belongs to a SIDE, so allies share one; and the
-     * match is built from the sides actually in play, each named once. Nothing
-     * about two commanders changes, which is every session that has ever run.
+     * So the sides come from `assignSides` — the rule the duel already uses,
+     * whose own note says a four-player session is 2v2 in roster order — capped
+     * at `ARMY_IDS.length`, and an army belongs to a SIDE so allies share one.
+     * That pairing then hands `DuelMatch` the same side number twice, and its
+     * round test is `sides.filter((s) => standing[s] > 0)`: two entries for one
+     * surviving side reads as two survivors and the round never closes. Hence
+     * the match is built from the sides in play, each named once — asserted
+     * below, because it is invisible until somebody wins.
+     *
+     * Nothing about two commanders changes, which is every session that has run.
      */
     const { PAIR_SPACING, VERSUS_SEPARATION } = await import('../../src/game/Command.js');
     const { host, pump } = await commandPair({ host: { commandVersus: true }, start: false });
