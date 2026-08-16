@@ -3546,9 +3546,35 @@ export class Enemy {
       t.velocity.multiplyScalar(0.86);
       if (t.staggerTimer !== undefined) t.staggerTimer = Math.max(t.staggerTimer, 0.12);
     }
+    /*
+     * THREE ARGUMENTS INTO A SIGNATURE OF FOUR, and it stopped the game.
+     *
+     * This was `sparkBurst(chest, 2, 0x9fd8ff)` against
+     * `sparkBurst(pos, normal, count, opts)`. So `2` landed in `normal` — and
+     * `_v.lerp(normal, …)` on a number gives NaN, spreading every spark in
+     * those bursts in no direction at all — while the COLOUR landed in
+     * `count`, asking for 10 467 583 sparks, 17.8 million spawns after the
+     * recipe's multiplier, each paying an sRGB→linear conversion.
+     *
+     * It ran on 35% of frames for every enemy holding a power. Measured
+     * headless with 20 acolytes: frames 1-20 cost 10-15 ms, and from frame 30
+     * — the first held lightning or choke — 71 to 134 SECONDS each, with 96%
+     * of a 439 s profile on this one path. In the shipped game that is a
+     * multi-second freeze every time an enemy casts, on the feature that was
+     * added so enemies would cast at all. It also ran the `cloth-cost` suite
+     * past forty minutes six times without it ever being seen to finish, which
+     * is how it was finally found.
+     *
+     * `Particles.sparkBurst` now bounds a burst by its own pool capacity, and
+     * that bound is not this fix — a ring buffer cannot show more than it
+     * holds, so the surplus was invisible work, but the arguments were still
+     * in the wrong slots. This is the fix. The count matches the other
+     * per-frame sustained effect in the game, which is guarded by the same
+     * 35% roll: three sparks, no embers.
+     */
     if (rng() < 0.35) {
-      this.world.particles?.sparkBurst?.(t.chest ?? t.position, 2,
-        this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a);
+      this.world.particles?.sparkBurst?.(t.chest ?? t.position, null, 3,
+        { speed: 5, embers: false, color: this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a });
     }
   }
 
