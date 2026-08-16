@@ -1918,16 +1918,22 @@ export class AudioEngine {
      * …AND WHAT COMES BACK IS NOT THE FIGHT.
      *
      * The four layers above are the BODY dying and they are not touched. This
-     * is the SCORE dying, which is a different event and was the missing one:
-     * everything but the bass is taken away in 0.22 s, the bass drops a tritone,
-     * and the fifth is left hanging. It arrives under the duck and comes up
-     * with it, so the two-and-a-half-second drop still owns the front of the
-     * moment and the harmony owns the eight seconds after it — which is exactly
-     * the window the death card lands in.
+     * is the SCORE dying, which is a different event and was the missing one.
+     *
+     * TWO THINGS, AND THEY ARE NOT SIMULTANEOUS. The bed collapses at once —
+     * `death`'s layer table has no drums, no ostinato and almost no strings,
+     * and the crossfade into it is a 0.22 s cut rather than the usual second —
+     * so the moment the player dies the fight stops. The HARMONY failing is a
+     * separate gesture and it is DELAYED: the duck above holds the music at
+     * 0.12 for nine tenths of a second so the drop, the collapsing room and the
+     * heartbeat own the front of it, and a brass note arriving underneath that
+     * would be a note nobody can hear. At +1.5 s the music is coming back, and
+     * what comes back is a bass falling a tritone with a fifth left hanging
+     * over it — which is still going when the death card lands at 2.6 s.
      */
     if (this.score) { this.score.dead = true; this.score.waveActive = false; }
     if (!this.score?.driven) this.score?.setState('death');
-    this.stinger('fall');
+    this.stinger('fall', { delay: 1.5 });
     return 2.6;
   }
 
@@ -2142,9 +2148,11 @@ export class AudioEngine {
    * entrance happens once, and a victory must never be refused for being close
    * to anything.
    *
-   * The score ducks itself for the big ones — a fanfare over a bed in the same
-   * key is mud — which is the one place ducking is used for something other
-   * than making room for the room.
+   * The BED ducks under the big ones — a fanfare in the same key on the same
+   * instruments as the pad under it arrives as the pad getting thicker — and it
+   * is the bed specifically and NOT the whole music path, because a stinger
+   * plays through that path too and would duck itself to no effect. See
+   * `Score.duckBed`.
    */
   stinger(kind, opts = {}) {
     if (!this.ready || !this.score) return 0;
@@ -2157,7 +2165,7 @@ export class AudioEngine {
     }
     const dur = this.score.stinger(kind, opts);
     const d = STINGER_DUCK[kind];
-    if (d) this._duck(d, dur * 0.7, { fall: 0.06, rise: 0.5 });
+    if (d && dur > 0) this.score.duckBed(d, num(opts.delay, 0) + dur * 0.8);
     return dur;
   }
 

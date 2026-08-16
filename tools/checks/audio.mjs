@@ -559,7 +559,9 @@ export async function run({ check, assert }) {
       // When the last thing this gesture scheduled is due, relative to now.
       const span = Math.max(0, ...ctx.running.filter(s => s._stopAt > t0).map(s => s._stopAt - t0));
       const out = { a, ctx, notes: a.score.stats.notes - n0, want: a.score._want,
-        duck: a.musicDuckLevel(), span, oscs,
+        // The room it made for itself: the BED under a stinger, or the whole
+        // music path when the thing that fired also ducked that (death).
+        duck: Math.min(a.score.bedLevel(), a.musicDuckLevel()), span, oscs,
         pitches: oscs.map(o => o.frequency.last('set') ?? o.frequency.value).filter(Boolean) };
       // `victory()` and `death()` schedule part of themselves through `_at`,
       // which is a silent oscillator on the AUDIO clock — nothing it defers has
@@ -612,6 +614,67 @@ export async function run({ check, assert }) {
       + `boss ${boss.notes}n/${boss.span.toFixed(1)}s→boss, death ${dead.notes}n/${dead.span.toFixed(1)}s→death, `
       + `victory ${won.notes}n/${won.span.toFixed(1)}s→victory; ducks `
       + [wave, clear, boss, dead, won].map(r => r.duck.toFixed(2)).join('/');
+  });
+
+  /**
+   * THE HARMONY ACTUALLY MOVES, and a stinger is not ducked by its own duck.
+   *
+   * Two things that sound the same when they are broken and are not:
+   *
+   *   A DRONE THAT NEVER CHANGES CHORD is a pad, and a pad is what this file's
+   *     header says the score must not be. The sustained layers are eleven
+   *     oscillators that are started once and RETUNED, so the only proof they
+   *     are playing a progression rather than holding one chord is to drive a
+   *     whole cycle and collect what the low brass was commanded to.
+   *
+   *   A STINGER THAT DUCKS ITSELF was the first version of the ducking here.
+   *     The gesture plays through the same bus as the bed, so pulling the whole
+   *     music path down moved both by the same amount and changed nothing
+   *     audible except the level. That is invisible to an ear — "the music got
+   *     quieter" is what it sounds like either way — and obvious in the graph.
+   */
+  check('audio: the score plays a progression, and a stinger is not under its own duck', () => {
+    const { a, ctx } = engine();
+    a.setMusicState({ state: 'combat' });
+    const cfg = SCORE_STATES.combat;
+    const bar = 4 * 60 / cfg.bpm;
+    const cycle = bar * cfg.hold * cfg.prog.length;
+    // Two full cycles, on the audio clock, with no frame loop.
+    for (let i = 0; i < Math.ceil(cycle * 2 / 0.05); i++) ctx.advance(0.05);
+    const lowOsc = a.score.lowOsc[0].o;
+    const seen = new Set(lowOsc.frequency.calls.filter(c => c[0] === 'tgt')
+      .map(c => Number(c[1].toFixed(2))));
+    const wanted = new Set(cfg.prog.map(n => Number(hz(CHORDS[n].bass).toFixed(2))));
+    for (const f of wanted) {
+      assert(seen.has(f), `the low brass never reached ${f.toFixed(1)} Hz over two full cycles — `
+        + `it visited ${[...seen].map(x => x.toFixed(1)).join(', ')}. The bed is one held chord.`);
+    }
+    assert(seen.size === wanted.size,
+      `the bed visited ${seen.size} roots for a progression of ${wanted.size}`);
+
+    /* THE CUE IS NOT INSIDE THE BED. */
+    assert(!a.score.bed.outs.has(a.score.cue) && !a.score.cue.outs.has(a.score.bed),
+      'the stingers and the bed are wired through each other');
+    assert(a.score.bed.outs.has(a.score.bus) && a.score.cue.outs.has(a.score.bus),
+      'the bed and the cue do not meet at the score bus');
+    for (const g of Object.values(a.score.layers)) {
+      assert(g.outs.has(a.score.bed), 'a layer bypasses the bed, so a stinger cannot duck it');
+    }
+
+    const bedMoves = a.score.bed.gain.moves(), cueMoves = a.score.cue.gain.moves();
+    const musicMoves = a.musicDuck.gain.moves();
+    a.stinger('boss');
+    assert(a.score.bed.gain.moves() > bedMoves, 'a boss entrance does not push the bed out of its way');
+    assert(a.score.cue.gain.moves() === cueMoves,
+      'the stinger ducked the node it plays through — it is ducking itself');
+    assert(a.musicDuck.gain.moves() === musicMoves,
+      'a stinger ducked the whole music path, which includes the stinger');
+    assert(a.score.bedLevel() < 0.8, `the bed only came down to ${a.score.bedLevel()}`);
+    ctx.advance(8);
+    assert(a.score.bedLevel() === 1, `the bed never came back: ${a.score.bedLevel()}`);
+    return `low brass over ${[...seen].sort((x, y) => x - y).map(f => f.toFixed(1)).join(' → ')} Hz `
+      + `for ${cfg.prog.join(' ')}; a boss stinger moves bed only, to `
+      + `${a.score._bedDuckAt}, and back to 1`;
   });
 
   /**

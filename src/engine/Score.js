@@ -303,11 +303,33 @@ export class Score {
     this.bus.connect(this.comp);
     this.comp.connect(out);
 
+    /**
+     * THE BED AND THE CUE ARE TWO NODES, and they have to be.
+     *
+     * A stinger that ducked the whole music path would duck ITSELF — it plays
+     * through the same bus — so the bed and the gesture would drop by exactly
+     * the same amount and the duck would achieve nothing except making the most
+     * important half-second in the wave quieter. That was the first version and
+     * it is the kind of mistake a graph measurement catches and an ear does not,
+     * because "the music got quieter" is what it sounds like either way.
+     *
+     * So: the five layers sum into `bed`, the stingers go into `cue`, both meet
+     * at `bus`, and `stinger()` pulls `bed` down under `cue`. The engine's own
+     * `musicDuck` sits downstream of both and moves them together, which is
+     * right for the thing IT is for — a clash beats the music, all of it,
+     * including a fanfare.
+     */
+    this.bed = ctx.createGain(); this.bed.gain.value = 1;
+    this.bed.connect(this.bus);
+    this.cue = ctx.createGain(); this.cue.gain.value = 1;
+    this.cue.connect(this.bus);
+    this._bedDuckUntil = 0; this._bedDuckAt = 1;
+
     this.layers = {};
     for (const k of ['low', 'strings', 'air', 'ost', 'perc']) {
       const g = ctx.createGain();
       g.gain.value = 0;
-      g.connect(this.bus);
+      g.connect(this.bed);
       this.layers[k] = g;
     }
 
@@ -704,6 +726,7 @@ export class Score {
     if (!this.enabled) return;
     if (ctx.state && ctx.state !== 'running') { this._armRetry(); return; }
     const now = ctx.currentTime;
+    this._retries = 0;
     // A tab that was backgrounded for a minute must not now build a minute of
     // bars. Everything before the present is gone; start from here.
     if (!(this._nextBar > now - 4)) this._nextBar = now + 0.03;
@@ -732,9 +755,18 @@ export class Score {
     } catch { /* the frame-loop nudge is the fallback */ }
   }
 
-  /** Wait for the audio clock to start, on the only clock that is running. */
+  /**
+   * Wait for the audio clock to start, on the only clock that is running.
+   *
+   * BOUNDED, because a browser that blocks autoplay and never gets a gesture
+   * would otherwise leave a timer polling four times a second for the life of
+   * the tab. Ten seconds is longer than any unlock takes; past that the frame
+   * loop's own `update()` and every one of `enable`/`setState`/`stinger` will
+   * pump again the moment something happens, and `AudioEngine.resume` is
+   * already watching the context.
+   */
   _armRetry() {
-    if (this._retry) return;
+    if (this._retry || (this._retries = (this._retries || 0) + 1) > 40) return;
     this._retry = setTimeout(() => { this._retry = 0; this._pump(); }, 260);
     // Node holds the process open for a pending timer; a check must not hang.
     this._retry?.unref?.();
@@ -801,9 +833,11 @@ export class Score {
    */
   stinger(kind, opts = {}) {
     if (!this.ctx) return 0;
-    const t = this.ctx.currentTime + 0.01;
+    // `delay` is on the audio clock and is what lets `death()` put the harmony
+    // failing AFTER the body has finished dying, rather than underneath it.
+    const t = this.ctx.currentTime + 0.01 + clamp(num(opts.delay, 0), 0, 8);
     const g = clamp(num(opts.gain, 1), 0, 2);
-    const S = this.layers.ost;
+    const S = this.cue;
     this.stats.stingers++;
     switch (kind) {
       /* A KILL. Not a jingle — a single low accent on the chord under it, so it
@@ -812,7 +846,7 @@ export class Score {
        * six-kill Force rend is a machine gun. */
       case 'kill': {
         const ch = this.chord || CHORDS.Apow;
-        this._brass(t, hz(ch.bass + 12), 0.20, 0.26 * g, { bright: 8, attack: 0.008, dest: S });
+        this._brass(t, hz(ch.bass), 0.20, 0.26 * g, { bright: 8, attack: 0.008, dest: S });
         this._drum(t, 78, 0.28, 0.22 * g, S);
         return 0.3;
       }
@@ -820,8 +854,8 @@ export class Score {
        * that reads as "and another". */
       case 'streak': {
         const ch = this.chord || CHORDS.Apow;
-        this._brass(t, hz(ch.bass + 12), 0.18, 0.26 * g, { bright: 8, attack: 0.008, dest: S });
-        this._brass(t + 0.16, hz(ch.bass + 19), 0.34, 0.30 * g, { bright: 9, attack: 0.01, dest: S });
+        this._brass(t, hz(ch.bass), 0.18, 0.26 * g, { bright: 8, attack: 0.008, dest: S });
+        this._brass(t + 0.16, hz(ch.bass + 7), 0.34, 0.30 * g, { bright: 9, attack: 0.01, dest: S });
         this._drum(t, 82, 0.3, 0.24 * g, S);
         return 0.55;
       }
@@ -841,10 +875,15 @@ export class Score {
       /* A WAVE CLEARED. A cadence — bVII to i, the one resolution A aeolian
        * has — with the room letting go under it. `AudioEngine.victory()` keeps
        * its own rising triad on top of this; the two were written a year apart
-       * and are in the same key because there has only ever been one key. */
+       * and are in the same key because there has only ever been one key.
+       *
+       * BARE FIFTHS, and that is not laziness. The triad above it is A MAJOR
+       * and this is in A minor's aeolian, so a bVII voiced with its own third
+       * (B) would sit a semitone off the C# arriving over it. G+D and A+E have
+       * no third to disagree with anything. */
       case 'clear': {
         this._brass(t, hz(-2), 0.5, 0.26 * g, { bright: 4, attack: 0.05, dest: S });
-        this._brass(t, hz(10), 0.5, 0.18 * g, { bright: 4, attack: 0.05, dest: S });
+        this._brass(t, hz(5), 0.5, 0.18 * g, { bright: 4, attack: 0.05, dest: S });
         this._brass(t + 0.42, hz(0), 1.8, 0.30 * g, { bright: 3.6, attack: 0.08, dest: S });
         this._brass(t + 0.42, hz(19), 1.8, 0.16 * g, { bright: 3.8, attack: 0.12, dest: S });
         this._drum(t + 0.42, 58, 1.0, 0.3 * g, S);
@@ -892,6 +931,35 @@ export class Score {
       }
       default: this.stats.stingers--; return 0;
     }
+  }
+
+  /**
+   * PULL THE BED DOWN UNDER A STINGER.
+   *
+   * The gesture and the bed are in the same key on the same instruments, so
+   * without this a fanfare arrives as the bed getting thicker rather than as
+   * something happening. Only ever deeper, like the engine's own music duck,
+   * and it reports what it COMMANDED because a param under a scheduled ramp
+   * cannot be read back.
+   */
+  duckBed(level, seconds) {
+    const t = this.ctx.currentTime;
+    const l = clamp(num(level, 0.5), 0, 1);
+    const d = clamp(num(seconds, 1), 0.05, 12);
+    if (t < this._bedDuckUntil && l >= this._bedDuckAt && t + d <= this._bedDuckUntil) return false;
+    try {
+      this.bed.gain.cancelScheduledValues(t);
+      this.bed.gain.setTargetAtTime(Math.max(0.0001, l), t, 0.07);
+      this.bed.gain.setTargetAtTime(1, t + d, 0.45);
+    } catch { return false; }
+    this._bedDuckAt = l;
+    this._bedDuckUntil = t + d;
+    return true;
+  }
+
+  /** How far the bed is being HELD under a stinger right now. */
+  bedLevel() {
+    return this.ctx && this.ctx.currentTime < this._bedDuckUntil ? this._bedDuckAt : 1;
   }
 
   /* ── switching on and off ───────────────────────────────────────────── */
@@ -944,7 +1012,8 @@ export class Score {
     this.enabled = false;
     if (this._retry) { clearTimeout(this._retry); this._retry = 0; }
     const osc = [...this.lowOsc, ...this.stringOsc, ...this.airOsc].map(x => x.o);
-    for (const n of [this.bus, this.comp, this.brassLP, this.stringBP, ...Object.values(this.layers)]) {
+    for (const n of [this.bus, this.comp, this.bed, this.cue, this.brassLP, this.stringBP,
+      ...Object.values(this.layers)]) {
       try { n.disconnect(); } catch {}
     }
     for (const o of [...osc, this._stringLfo, this._airVib]) { try { o.stop(); } catch {} }
