@@ -1107,6 +1107,11 @@ export function packAvatar(player) {
  *           HELD power once the wind-up has landed. A body doing neither pays
  *           `0, 0, 0`, which is most of every wave.
  *
+ *           Priced on a real director run rather than guessed at, the way `md`
+ *           was: wave 20 on the Colosseum fields 17 bodies and one snapshot of
+ *           it is 1226 bytes without these three and 1328 with — 21.6 against
+ *           23.3 KB/s at the host's 18 Hz.
+ *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
  * protocol can never contain one.

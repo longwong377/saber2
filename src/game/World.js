@@ -16,7 +16,7 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
@@ -1627,6 +1627,12 @@ export class World {
       // A remote player's death arrives as a field in a packet and raises
       // nothing, so the wipe condition has to be re-read rather than waited on.
       this._checkWipe();
+      /* OUTSIDE `_netTick`, and deliberately: that method returns on the first
+       * line when the connection is gone, and a body a peer was holding when
+       * the session ended would then stay held for the rest of the run — out of
+       * its own brain, hanging in the air, with nothing left that could ever
+       * say otherwise. The lease has to outlive the wire it came from. */
+      this._netGripLeases();
       this._netTick(rawDt);
     }
     // Solo, the aura still runs — it is what keeps the holder's own half — but
@@ -2137,9 +2143,14 @@ export class World {
     audio.clash(clash.point, clash.power);
     player.saber.strain(clash.power);
     enemy.saber.strain(clash.power);
-    // `?.` — the same crash again: a clash is resolved for whichever blade in
-    // `world.players` met the enemy's, remote ones included.
-    player.camera?.addShake(0.08 + clash.power * 0.12);
+    /* GUARDED, because a clash is resolved for whichever blade in
+     * `world.players` met the enemy's and a RemoteAvatar has no camera — see
+     * the note over `_applyBladeEvent` for what that TypeError costs on the
+     * host. Written as an `if` and not `?.` on purpose: `duelling.mjs` pins the
+     * six consequences of a clash by looking for `camera.addShake(` in this
+     * method, and an optional-chain spells it `camera?.addShake(` and reads to
+     * that check as the kick having been deleted. */
+    if (player.camera) player.camera.addShake(0.08 + clash.power * 0.12);
 
     // ── CHAMBER: swung against the declared arc, inside the window
     if (duel && duel.chamberOpen && bladeSpeed > 5.5 && duel.chambersWith(_v4)) {
@@ -2818,7 +2829,7 @@ export class World {
     // A peer that stopped talking without closing its connection. PeerJS only
     // raises `close` on a clean teardown, so without this a lid closing left a
     // ghost in the roster and in every other player's world forever.
-    if (this.netMode === 'host') { net.sweep?.(); this._netGripLeases(); }
+    if (this.netMode === 'host') net.sweep?.();
     if (this.netMode === 'client') this._reconcileClaims();
 
     if (this.player) {
@@ -4136,6 +4147,7 @@ export class World {
    * wave, which is the same loop `packSnapshot` already pays for.
    */
   _netGripLeases() {
+    if (this.netMode !== 'host') return;
     for (const e of this.enemies) {
       if (!e._netGripUntil || this.time < e._netGripUntil) continue;
       e._netGripUntil = 0;
@@ -4191,23 +4203,49 @@ export class World {
    * it weighs the impulse and the harm TOGETHER against the pool
    * (`IMPULSE_AS_HP`) — so bracing against a shove means the same thing on both
    * machines. Answering only the damage ran the contest, correctly and once,
-   * against a fraction of the weight: a Master's push is 9 hp and about 27 hp
-   * of impulse, and off-host the pool was only ever asked about the 9.
+   * against a fraction of the weight. The same Master's push, priced both ways
+   * on a full bar:
+   *
+   *     p.damage(9.0, …, 'force')              −3.4 hp   3.5 Force   0.00 m/s
+   *     p.applyKnockback(27.9 m/s, 9.0)        −3.4 hp  16.7 Force  12.57 m/s
+   *
+   * 16.7 is the number HANDOFF §6.1a measured for bracing against this shove on
+   * the host. Off-host the pool was asked about the 9 and never about the 33 hp
+   * of shove behind it, so a joining player's guard cost a fifth of what it
+   * costs everyone else — and bought them nothing, because there was no shove
+   * on the wire for it to blunt.
+   *
+   * THE BRANCH IS THE DOOR, NOT THE WORD. `_tellHit` is reached from exactly
+   * two places on the host — `applyKnockback`, which stamps `k:'force'`, and
+   * `damage`, which carries the caller's own word — so "was this the Force" is
+   * a fact about which door it came through, and `Player.damage` reads `kind`
+   * for exactly one thing: whether the pool answers it. A held power bills with
+   * a null impulse (`Enemy._sustain` → `applyKnockback(null, debt, …)`) and
+   * still has to reach the contest, which is why the test is the kind and not
+   * the presence of a vector.
+   *
+   * The other branch passes `'remote'`, the word `applyClaim` already uses for a
+   * blow that arrived over the wire, and it is the truth this branch has just
+   * established: not the Force, so the pool has nothing to say. The host's own
+   * word for it rides the packet as `k` for anyone reading the traffic.
+   *
+   * THE TUTAMINIS BRANCH THAT USED TO BE HERE WAS UNREACHABLE. It read
+   * `msg.k === 'bolt'`, and `_tellHit` refuses to send a bolt at all — the peer
+   * resolves every replicated bolt in its own pool, where `_boltHitTest` has
+   * its own `absorb` branch, which is where a joining player's Tutaminis has
+   * actually been working all along. Two copies of one boon, one of which the
+   * wire could not deliver to.
    */
   applyHit(msg) {
     const p = this.player;
     if (!p || !p.alive || !msg) return false;
     const push = Array.isArray(msg.v)
       ? _v1.set(msg.v[0] || 0, msg.v[1] || 0, msg.v[2] || 0) : null;
-    if (!(msg.d > 0) && !push) return false;
-    let d = msg.d > 0 ? msg.d : 0;
-    if (msg.k === 'bolt' && p.boonMods.absorb) {
-      p.force = Math.min(p.maxForce, p.force + d * 0.8);
-      d *= 0.45;
-    }
+    const d = msg.d > 0 ? msg.d : 0;
+    if (!d && !push) return false;
     const by = this.netSource(msg.s);
-    if (push) p.applyKnockback(push, d, by, !!msg.g);
-    else p.damage(d, null, by, msg.k || 'bolt');
+    if (push || FORCE_KINDS.test(msg.k ?? '')) p.applyKnockback(push, d, by, !!msg.g);
+    else p.damage(d, null, by, 'remote');
     return true;
   }
 
