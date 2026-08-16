@@ -108,6 +108,15 @@ The rules that follow, for any future parallel run:
   agents this explicitly in their brief, or they will try to make it clean.
 - **Commit early, by path.** A commit is the only thing that makes an agent's
   work safe from its peers.
+- **A new file and the import of it are ONE commit.** `src/world/Smoke.js` was
+  created untracked while `Levels.js` — committed by a *different* agent's
+  broad `git add` — imported it. Three consecutive commits (`28072ad`,
+  `dd6b757`, `d3df970`) therefore cannot be loaded at all in a clean checkout:
+  `ERR_MODULE_NOT_FOUND`. Nobody noticed, because every agent had the file on
+  disk. It only surfaced when a bisect checked out those commits somewhere
+  else. `git status` showing `??` next to a file that something already imports
+  is the signal, and it is exactly what a path-scoped `git add` is prone to
+  missing.
 
 The deeper lesson is that file-ownership partitioning is necessary and *not
 sufficient*: the shared mutable resource is not the files, it is the index and
