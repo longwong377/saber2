@@ -2175,7 +2175,14 @@ export class Enemy {
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
     const bone = ev.bone;
-    /* NO `?? 0.4` HERE EITHER. Every capsule this game emits is priced by
+    /* THE SHIELD FIRST, AND IT IS NOT A BONE. A bubble carries no `vital` on
+     * purpose — nothing is severed and nothing is billed, the pass costs the
+     * shield and stops — so it has to be answered before anything asks what
+     * losing it is worth. Putting the price check above this line is a real
+     * mistake somebody has now made: `escalation: an elite comes apart like
+     * everything else does` threw on the Shielded elite's first pass. */
+    if (ev.cap.shield) { this.dropShield(); return; }
+    /* NO `?? 0.4` HERE EITHER. Every BONE capsule this game emits is priced by
      * `severance`, which throws rather than guessing, so a missing `vital` is
      * a capsule from somewhere that has not been through it — and answering
      * that with the number that used to hide the whole defect is how it would
@@ -2186,7 +2193,6 @@ export class Enemy {
         + 'Capsules are priced by `severance` at the point they are built.');
     }
 
-    if (ev.cap.shield) { this.dropShield(); return; }
     // BEFORE anything is severed: a turned cut is a cut that did not land, and
     // a body that "turned" a pass while losing the limb would be nonsense.
     if (this._turnCut(ev, bone, vital, source)) return 'turned';
