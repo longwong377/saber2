@@ -2797,7 +2797,16 @@ LEVELS.geonosis = {
      * so flat that the stacks lose their form, which is what the check that
      * orders the indirect budget by sun height is protecting. */
     sunColor: 0xffcf8e, sunIntensity: 5.4, ambient: 0.52,
-    skyColor: 0xd9a058, groundColor: 0x8f6238,
+    /* THE GROUND HALF OF THE HEMISPHERE IS RED, WHERE THE SKY IS YELLOW, and
+     * that difference is the point rather than a decoration. This is the colour
+     * of the light the GROUND THROWS BACK UP, and on Geonosis the ground is
+     * red-ochre dirt while the sky is pale dust — B/R 0.26 against the sky's
+     * 0.41, a 35% shift into the shade. Authored the other way round (a ground
+     * within a few per cent of its own sky) the term is arithmetically present
+     * and unrecoverable from the frame, which is the exact failure
+     * `lighting.mjs`'s "the ground colour every level authors reaches the frame"
+     * exists to catch — it caught this one at 0.4%. */
+    skyColor: 0xd9a058, groundColor: 0x8a4a24,
     /* THE FILL IS WARM HERE, and that is the one thing about this level's light
      * that is not the default. Everywhere else the brightest thing that is not
      * the sun is a BLUE sky, so a fill placed opposite the key stands for the
@@ -2836,6 +2845,36 @@ LEVELS.geonosis = {
     count: 2100, color: 0xc9a074, opacity: 0.46, size: 34,
     fleckColor: 0xa87c4c,
     wind: { from: 200, strength: 2.8, gustiness: 0.48, wander: 0.24 },
+    /**
+     * A DUST FRONT, AND IT IS THE ONE THING THAT CAN CLOSE THIS MAP DOWN.
+     *
+     * Every other level's weather changes how it looks. On the one level whose
+     * entire premise is a sightline, weather changes how it PLAYS: you order a
+     * line abreast because you can see the other army at ninety metres, and
+     * when the front comes through you cannot, and the order you gave two
+     * minutes ago is now the wrong one. That is the mechanic, and it is why this
+     * level gets a front rather than a haze.
+     *
+     * `period` 146 s against `duration` 44 is the loosest cadence in the game —
+     * the dune sea storms for 48 of every 92 — because a front that is on more
+     * than it is off would make "you can see a long way" false, and that
+     * sentence is the level. Every 132 s it stops being true for 44, and the
+     * rest of the time the plain is open.
+     *
+     * `fogGain` 3.4 rather than the dune sea's 6.14: the air here is ALREADY
+     * the thickest in the game (fogDensity 0.0060 against 0.0044), and the fog
+     * cap binds at 0.030 — a gain that reaches the cap before the front has
+     * finished crossing stops the front being an event. 3.4 takes it to 0.0204,
+     * which is inside the cap with room, and it is what takes visibility from
+     * about 160 m to about 50.
+     *
+     * `sunLoss` 0.72 rather than 0.90 for a related reason: this level's key is
+     * already the weakest in the game (5.4) with the ambience carrying the
+     * load, so killing nine tenths of it leaves nothing to model the stacks
+     * with and the map goes flat rather than dark.
+     */
+    weather: { peak: 0.94, period: 146, duration: 44, unrest: 0.20, span: 240,
+               fogGain: 3.4, windGain: 2.6, sunLoss: 0.72, fillGain: 1.4, tint: 1.0 },
   },
   /* NO GRASS. Nothing grows on a deflation plain, and the one surface a battle
    * like this cannot have is a lawn — the same finding that deleted the meadow
@@ -2867,15 +2906,23 @@ LEVELS.geonosis = {
      * a lump. Nine of them, out past 80 m so the fighting ground stays open,
      * clustered in threes so they read as a group of stacks rather than as nine
      * evenly spaced posts. */
-    for (let k = 0; k < 3; k++) {
-      const base = findSite(world, 84, 210, { angle: (k / 3) * TAU + rng() * 0.7, clearance: 22, maxSlope: 0.30 });
+    /* SEVEN CLUSTERS OF THREE, out past 62 m so the ground you form up on stays
+     * open. Clustered rather than scattered because that is what the landscape
+     * plate shows — stacks come in groups with open plain between the groups —
+     * and because `world-immersion`'s silhouette gate is about COVERAGE: a
+     * plain wants something over 1.2 m within 25 m of everywhere you can stand.
+     * That gate caught this level at 22.4% bare against a 12% bar on the first
+     * pass, and it was right to. "You can see a long way" is only interesting if
+     * there is something out there to see. */
+    for (let k = 0; k < 7; k++) {
+      const base = findSite(world, 62, 235, { angle: (k / 7) * TAU + rng() * 0.6, clearance: 20, maxSlope: 0.30 });
       if (!base) continue;
       for (let i = 0; i < 3; i++) {
         const a = rng() * TAU, d = 4 + rng() * 16;
         const p = base.pos.clone();
         p.x += Math.cos(a) * d; p.z += Math.sin(a) * d;
         p.y = world.terrain.height(p.x, p.z);
-        makeSpire(world, p, 16 + rng() * 26, { mat: M.stone });
+        makeSpire(world, p, 14 + rng() * 28, { mat: M.stone });
       }
     }
 
@@ -2883,7 +2930,7 @@ LEVELS.geonosis = {
      * the one level where the fiction is that a battle has ALREADY been going
      * on — you are joining it — so the hulls are the level's own history and
      * they are what every smoke column is standing on. */
-    strewWrecks(world, { seed: 9120, count: 9, rmin: 46, rmax: 220, mat: M.hull });
+    strewWrecks(world, { seed: 9120, count: 14, rmin: 34, rmax: 235, mat: M.hull });
 
     /* THE SMOKE. See src/world/Smoke.js: seven columns, one draw call, leaning
      * downwind on the preset's own wind vector so they agree with the drifted
@@ -2898,13 +2945,17 @@ LEVELS.geonosis = {
      * is an order you can give on this map and it will not always find you
      * anything. Kept OUT of the middle 40 m, so the ground you form up on is
      * clear. */
-    for (let k = 0; k < 6; k++) {
-      const site = findSite(world, 40, 150, { angle: (k / 6) * TAU + rng() * 0.6, clearance: 13, maxSlope: 0.32 });
+    for (let k = 0; k < 16; k++) {
+      const site = findSite(world, 26, 210, { angle: (k / 16) * TAU + rng() * 0.5, clearance: 11, maxSlope: 0.34 });
       if (!site) continue;
-      addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 3.5 + rng() * 5, seed: 9130 + k, mat: M.stone });
+      addOutcrop(world, site.pos, { size: 3.5 + rng() * 5, height: 3.0 + rng() * 5.5, seed: 9130 + k, mat: M.stone });
     }
-    strewGround(world, { seed: 9140, radius: 190, spread: 0.24, mat: M.stone,
-      landmarks: 0.9, boulders: 1.0, cobble: 1.2 });
+    /* `landmarks` is `strewGround`'s own boulder-sized grade and it is turned
+     * UP here rather than down. On every other level the loose rock is texture
+     * under your feet; on a plain with no landform it is the only thing between
+     * two horizons, so it is doing the job a ridge does elsewhere. */
+    strewGround(world, { seed: 9140, radius: 235, spread: 0.30, mat: M.stone,
+      landmarks: 1.5, boulders: 1.3, cobble: 1.2 });
     return 12;
   },
 };

@@ -30,6 +30,8 @@ import { Communion, STARS } from './Constellation.js';
 const HOLOCRON_PURSE = 600;
 import { applyOrder } from './Order.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
+import { CommandDirector, COMMAND_POWER_RULES } from './Command.js';
+import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
@@ -119,6 +121,34 @@ export class World {
     // scale a droid's hp it assigns it here and every enemy spawned after
     // picks it up, which is exactly what the old line looked like it was for
     // and never did.
+
+    /**
+     * HOW MANY OF THE DEAD THE FIELD KEEPS — player note #15, second half.
+     *
+     * "sometimes for fun I'll spawn like 30 enemies and then it gets really
+     * really laggy, framerate probably <10 once there are that many DEAD AND
+     * ALIVE enemies on the map." Measured with tools/_crowd.mjs, thirty
+     * acolytes on the colosseum: thirty CORPSES simulate at 11.46 ms against
+     * thirty live ones at 6.76 and an empty field at 5.30, because a ragdoll is
+     * nineteen loose bodies with joints where a walking enemy is one capsule —
+     * 573 rigid bodies against 33. Nothing in this repository had ever removed
+     * one.
+     *
+     * ON THE WORLD rather than on the director, because a corpse outlives the
+     * wave that made it and every mode makes them — a duel, the sandbox and the
+     * dojo all leave bodies on the floor and none of them has a wave director
+     * that could own the budget.
+     *
+     * The budget rides the fidelity tier and not the difficulty: it is a
+     * frame-rate number, in the same sense `HEAVY_CAP` is, and `CORPSE_BUDGET`
+     * derives it from the measured cost of one corpse against the draw budget
+     * `world-immersion` holds a level to. Read `Corpses.js` before changing it —
+     * retirement is GRADED, and the big win (573 bodies → 33) is the SETTLE step
+     * which every corpse gets unrationed and which takes nothing off the screen.
+     */
+    this.corpses = new Corpses(this, {
+      budget: CORPSE_BUDGET[settings?.quality] ?? CORPSE_BUDGET.high,
+    });
 
     this.bladeSolver = new BladeContactSolver();
     /**
@@ -291,7 +321,24 @@ export class World {
       return L;
     }
     this.training = false;
-    this.director = new WaveDirector(this, { mode: this.settings.mode ?? 'roguelite', pool: L.pool });
+    /**
+     * COMMAND GETS ITS OWN DIRECTOR, off the mode string and nothing else.
+     *
+     * `CommandDirector` IS a `WaveDirector` — it subclasses it, and every one of
+     * the escalation's tuned parts (the budget curve, the body cap, the heavy
+     * limit, the modifier ladder, the arrivals, the liveness watchdog) runs
+     * unchanged inside it. What it adds is a second army, an AREA above the
+     * wave, and a pool filtered to one side. So this branch is which class, not
+     * which code path: everything below this line — the callbacks, the Insight,
+     * the draft, the party heal — is identical for both, which is the property
+     * that keeps Command inside the balance the rest of the game is held to.
+     */
+    const mode = this.settings.mode ?? 'roguelite';
+    this.director = mode === 'command'
+      ? new CommandDirector(this, { pool: L.pool })
+      : new WaveDirector(this, { mode, pool: L.pool });
+    /** The army, or null. Read by the HUD, the summary and the checks. */
+    this.command = mode === 'command' ? this.director : null;
     this.director.onWaveStart = (w, n) => {
       this.notify(`WAVE ${w}`, `${n} contacts inbound`);
       audio.ui('wave');
@@ -569,6 +616,11 @@ export class World {
     audio.setAmbience?.({ wind: 0, drone: 0 });
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
+    /* The corpse ledger holds references to bodies that have just been
+     * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
+     * level exactly as the World does, and what must not survive is its
+     * pointers into a scene graph that no longer exists. */
+    this.corpses?.clear();
     this.locks.length = 0;
     // …and the client's id→enemy map, which holds a whole Enemy graph per
     // entry. Clearing the list it points into is not the same as clearing it.
@@ -658,7 +710,35 @@ export class World {
       anchor.z + Math.sin(a) * rmin);
   }
 
+  /**
+   * WHO IS THIS BODY FIGHTING — one function, and it now answers for both
+   * armies rather than for the horde alone.
+   *
+   * `Enemy._think` asks this every frame and twelve things downstream read the
+   * answer, so it is the single seam that decides who anybody in this world is
+   * pointing at. Two branches:
+   *
+   *   A TROOP OF YOURS delegates to the command director, because the answer
+   *     depends on its FORMATION as well as on distance — the leash is what
+   *     makes "circle around me" a wall that will not chase and "charge" a wall
+   *     that will. The director owns the formation; it therefore owns the pick.
+   *     Returning null is a legitimate answer there and is what makes the leash
+   *     mean anything: `_think` sets `wish = null` on a null target and
+   *     `CommandDirector.steer` supplies the walk home.
+   *
+   *   EVERYTHING ELSE keeps exactly the rule it had, plus the enemy list. That
+   *     addition is the whole of "the horde fights your army too": with allies
+   *     living in `this.enemies` on the party's team, a B1 asking this question
+   *     used to be shown only the players and would walk past a squad of clones
+   *     to reach you. `hostileTo` is the same gate `bladeTargets` and
+   *     `Player.damage` consult, so nothing anywhere is built from a different
+   *     idea of who is fighting whom — and in every mode with no allies in it
+   *     the second loop finds nothing and this costs one `canHarm` per body.
+   */
   pickTarget(enemy) {
+    if (enemy?.trooper && this.command) {
+      return this.command.targetFor(enemy, this._hostilesFor(enemy));
+    }
     let best = null, bestD = Infinity;
     /* `hostileTo` rather than every player: in a duel the horde is on nobody's
      * side, and in co-op it returns all four unchanged. Filtering here rather
@@ -669,7 +749,38 @@ export class World {
       const d = p.position.distanceToSquared(enemy.position);
       if (d < bestD) { bestD = d; best = p; }
     }
+    /* …and the other army, if there is one. Skipped entirely when there is not,
+     * which is every mode but Command: `this.command` is null and this line
+     * does not run at all. */
+    if (this.command) {
+      for (const e of this.enemies) {
+        if (e === enemy || e.dead || e.team === enemy.team) continue;
+        const d = e.position.distanceToSquared(enemy.position);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
     return best;
+  }
+
+  /**
+   * Everything one body on this field is opposed to — players and bodies alike.
+   *
+   * The array is retained between calls for the reason `Player._foeList` is:
+   * this runs once per troop per frame, and a Command wave is twenty-four
+   * troops against forty droids.
+   */
+  _hostilesFor(who) {
+    const out = (this._foes ||= []);
+    out.length = 0;
+    for (const e of this.enemies) {
+      if (e === who || e.dead || e.team === who.team) continue;
+      out.push(e);
+    }
+    for (const p of this.players) {
+      if (!p.alive || p.team === who.team) continue;
+      out.push(p);
+    }
+    return out;
   }
 
   /** A loose mesh becomes a rigid body — with the mesh's own shape, hulled. */
@@ -806,6 +917,35 @@ export class World {
       physics: this.physics, terrain: this.terrain, particles: this.particles,
       bolts: this.bolts, enemies: this.enemies, players: this.players,
       groundColor: this.groundColor,
+      /**
+       * WHAT THE PLAYER'S FORCE POWERS MAY REACH — player note #29, in one field.
+       *
+       * "your allies should be as real as the enemies like no difference — you
+       * can do damage to them and throw them and manipulate them so you need to
+       * be careful not to hurt them … but like obviously the force blaster-stop
+       * thing shouldn't affect your allies' blasters."
+       *
+       * `Player._foes` — the list EVERY force power in this game iterates — reads
+       * `ctx.rules ?? this.world.rules`. The first half of that expression had no
+       * writer anywhere in the tree until this line. Handing the POWERS a
+       * friendly-fire rule while the WORLD keeps co-op's is not a fudge; it is
+       * exactly the distinction the note draws, and it is why every clause of it
+       * falls out of one field:
+       *
+       *   push, pull, grip, lightning, compel and rend reach your own troops,
+       *     because a Force power does not check a uniform;
+       *   an ally's BLASTER does not reach you or another ally, because
+       *     `_boltHitTest` and `bladeTargets` both consult `world.rules`, which
+       *     is untouched;
+       *   the BOLT-STOP does not freeze your army's fire, because
+       *     `Player._stasisCapture` skips `bolt.team === this.team` and your
+       *     troops are on your team — a line written years before this mode and
+       *     correct for it by construction.
+       *
+       * `undefined` in every other mode, so `_foes` falls through to
+       * `world.rules` exactly as it always did.
+       */
+      rules: this.command ? COMMAND_POWER_RULES : undefined,
       pickTarget: (e) => this.pickTarget(e),
       pickSpawn: (t) => this.pickSpawn(t),
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
@@ -835,6 +975,13 @@ export class World {
     // …and the hilts lying about age, so one just dropped cannot be picked
     // straight back up before the player has seen it leave their hand.
     ageDropped(this, dt);
+
+    /* …and the dead, whose cost this is the only thing that bounds. AFTER the
+     * enemy step, because that is where a ragdoll's bodies are integrated and
+     * `Corpses` decides to settle one on how fast it is still moving — asking
+     * before the step reads last frame's velocity, which on the frame a body
+     * lands is exactly the frame it would wrongly look still. */
+    this.corpses?.update(dt);
 
     // 3 — blades against everything
     this._resolveBlades(dt);
@@ -1649,6 +1796,22 @@ export class World {
       const friendly = bolt.deflected || bolt.turned;
       if (bolt.team === 1 && !friendly) continue;
       if (bolt.team === 1 && bolt.owner === e && !bolt.turned) continue;
+      /**
+       * …AND THE THIRD WAY, WHICH IS AN ARMY OF YOUR OWN.
+       *
+       * The two rules above sort bolts by the literal team 1, which is right
+       * for as long as everything in `this.enemies` is on it. Command puts your
+       * troops in that same array on the PARTY's team, and their bolts carry
+       * their owner's team — so without this line every trooper's rifle would
+       * pass the `team === 1` gate above and mow down the squad in front of it.
+       *
+       * `canHarm` rather than a team comparison, because that is the one gate
+       * this game is allowed to answer the question with, and it is the same
+       * one the player loop twenty lines up already consults. In every mode
+       * with no allies this is one extra call per body per bolt and its answer
+       * is always the one the two lines above already gave.
+       */
+      if (bolt.owner && !canHarm(bolt.owner, e, this.rules)) continue;
       const caps = e.capsules();
       for (const c of caps) {
         if (c.shield) {
@@ -1711,6 +1874,26 @@ export class World {
 
   onEnemyKilled(enemy, source, kind) {
     const A = enemy.A;
+    /**
+     * THE ONE PLACE A DEATH IS VISIBLE CENTRALLY, so it is where both of the
+     * things that care about one are hung.
+     *
+     * `corpses.take` is the budget from note #15: the body has stopped being a
+     * fighter and started being a cost, and this is the frame that transition
+     * happens on. `command.onDeath` is the roster from note #21: yours is a name
+     * off the roll and permanent, theirs is experience for whoever killed it.
+     *
+     * Both are `?.` because a check drives this method with a five-field stub
+     * world, and neither is worth a branch at the call sites that would
+     * otherwise have to remember them.
+     */
+    this.corpses?.take(enemy);
+    this.command?.onDeath(enemy, source);
+    /* A trooper of yours is not worth score, is not a kill, and does not feed
+     * the combo — it is a casualty. Everything below this line is the reward for
+     * killing something on the other side, and it must not pay out for losing
+     * one of your own. */
+    if (enemy.team !== undefined && enemy.team !== 1 && this.command) return;
     this.score += A.score;
     /**
      * `instanceof Player` OR a peer's avatar.
