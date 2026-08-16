@@ -2517,6 +2517,20 @@ export class World {
    */
   _checkWipe() {
     if (this.over || !this.players.length) return false;
+    /**
+     * A MEETING IS NOT DECIDED BY WHO IS STILL HOLDING A LIGHTSABER.
+     *
+     * The wipe rule is "every player on this field is down, so the run is
+     * over", and it is right for every mode where the players ARE the side. In
+     * a meeting the side is an army: `census` counts the commander as one of
+     * the standing precisely so that losing your general costs you your orders
+     * and not the battle, and `_frame` falls back to the anchor so a leaderless
+     * line holds the ground it was on. Two generals who kill each other in the
+     * opening pass would otherwise end a match with twenty bodies still firing
+     * — and end it as a DEFEAT for both, when the field is about to belong to
+     * one of them. `DuelMatch` is the authority here and it is already running.
+     */
+    if (this.match && !this.match.over) return false;
     if (this.players.every(p => !p.alive)) {
       /**
        * THE RUN IS OVER. THE WORLD IS NOT.
