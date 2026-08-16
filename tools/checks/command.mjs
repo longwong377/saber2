@@ -562,6 +562,66 @@ export function run({ check, assert }) {
     return `${R.length} ranks, ${new Set(cols).size} distinct colours, top at ${R[R.length - 1].xp} xp of ~${total}`;
   });
 
+  check('command: both armies learn names, and no two bodies answer to the same one', () => {
+    /**
+     * "EVERY ALLY HAS A UNIQUE NAME YOU CAN SEE which makes the gameplay more
+     * interesting because you can see who lived or who died."
+     *
+     * `award()` gated the whole nickname mechanic on `this.army === 'republic'`,
+     * so a Sith's droids could not earn a name at any rank, ever. That is half
+     * of note #21's identity feature missing from one of the two sides the same
+     * note names — and the file's stated reason ("droids get a COMMAND
+     * DESIGNATION instead") described a branch that did not exist: there was no
+     * second table, no designation change, nothing.
+     *
+     * And the clone side was not unique either. `NICKNAMES[floor(rng() * n)]`
+     * with no check against the roll puts two Ladders in the one list the player
+     * is meant to read.
+     *
+     * Asserted by promoting a FULL roster on each side through the shipped
+     * `award`, which is the only thing that hands one out.
+     */
+    const rows = [];
+    for (const army of Object.values(Cmd.ARMIES)) {
+      const { d } = dirFor({ army });
+      d.roster.points = 9999;
+      for (let i = 0; i < 40 && d.roster.strength < Cmd.MAX_STRENGTH; i++) d.recruit(army.tiers[0].type);
+      const roll = d.roster.living.slice();
+      assert(roll.length >= 20, `${army.name} only mustered ${roll.length}`);
+      // The gate is the SECOND rung and nothing below it.
+      const first = roll[0];
+      first.award(Cmd.RANKS[1].xp);
+      assert(first.rank === 1 && !first.nickname,
+        `${army.name}: a name was handed out at rung ${first.rank}, below the gate`);
+      for (const t of roll) t.award(Cmd.RANKS[2].xp);
+      const named = roll.filter((t) => t.nickname);
+      assert(named.length === roll.length,
+        `${army.name}: ${named.length} of ${roll.length} promoted bodies earned a name`);
+      const set = new Set(named.map((t) => t.nickname));
+      assert(set.size === named.length,
+        `${army.name}: ${named.length - set.size} of ${named.length} names are duplicates — `
+        + 'the one list the player is meant to read has two bodies answering to the same word');
+      // …and it is on the label, which is the only place a player ever sees it.
+      assert(roll[0].name.includes(roll[0].nickname), 'the earned name is not in the printed name');
+      // …and it is never lost.
+      roll[0].award(Cmd.RANKS[4].xp);
+      assert(roll[0].nickname === named[0].nickname, 'a further promotion changed the name');
+      rows.push(`${army.id} ${set.size}/${roll.length}`);
+    }
+    /* THE TWO TABLES ARE TWO TABLES. One list shared between the armies would
+     * put "Hardcase" on a battle droid, which is the other half of the same
+     * defect. */
+    const { d: rep } = dirFor();
+    const { d: cis } = dirFor({ army: Cmd.ARMIES.separatist });
+    const nameOne = (d) => { const t = d.roster.living[0]; t.award(Cmd.RANKS[2].xp); return t.nickname; };
+    const a = new Set(), b = new Set();
+    for (let i = 0; i < 12; i++) { a.add(nameOne(rep)); rep.roster.living.shift(); }
+    for (let i = 0; i < 12; i++) { b.add(nameOne(cis)); cis.roster.living.shift(); }
+    assert([...a].every((n) => !b.has(n)),
+      'a clone and a battle droid drew from the same list of names');
+    return `${rows.join(', ')} unique names earned at rung 2; the two armies' tables do not overlap`;
+  });
+
   check('command: the roster crosses an area, and the muster is what refills it', () => {
     /* "between rounds or areas on the map you get stronger and upgrade your
      * troops or bring in more troops." The roster is the one object that
@@ -1052,9 +1112,9 @@ export function run({ check, assert }) {
     assert(deployed === Cmd.OPENING_STRENGTH,
       `${deployed} of ${Cmd.OPENING_STRENGTH} troopers reached the field`);
 
-    let cleared = -1;
+    let cleared = -1, closed = false;
     d.onWaveClear = () => { if (cleared < 0) cleared = 1; };
-    const t = drive(world, 180, input, () => cleared > 0);
+    const t = drive(world, 180, input, () => { closed = closed || !!d._closing; return cleared > 0; });
     const kills = d.roster.all.reduce((n, x) => n + x.kills, 0);
     const alive = world.enemies.filter((e) => d.blocksWaveEnd(e)).length;
     assert(world.player.alive, 'the commander died, so this measured a corpse');
@@ -1062,6 +1122,14 @@ export function run({ check, assert }) {
       `wave 1 was still open after ${t.toFixed(0)} game-seconds with ${alive} of the horde alive and `
       + `${kills} kills to a ten-body army — the formation is refusing targets its own weapons reach`);
     assert(kills >= 2, `the wave cleared with only ${kills} kills credited to the roster`);
+    /* AND THE CLOSE-OUT ACTUALLY ENGAGED. A driven idle run once stalled from
+     * t≈711 s to t=3535 s with two horde bodies alive that the army would not
+     * walk to: nothing was stuck, so the watchdog had nothing to say, and the
+     * only exit was Abandon. `_closing` is the rule that ends that, and a rule
+     * that never fires in a real wave is a rule that does not exist. */
+    assert(closed,
+      'the wave cleared without the close-out ever engaging — either the last bodies were killed '
+      + 'before the queue drained (make the fixture longer) or `_closing` is dead code');
     /* AND THE HUD'S NUMBER IS THE HORDE'S. `remaining` counted your own troops,
      * so it could never reach zero while you had an army. */
     assert(d.remaining === 0,
