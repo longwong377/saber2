@@ -79,6 +79,43 @@ survived only because it was already on `origin`.
 - The scratchpad is *not* durable — files written there vanished mid-session.
   Anything worth keeping goes in a commit.
 
+### 2.2b Parallel agents share ONE working tree — git verbs that take the whole tree are loaded guns
+
+Five agents were run in parallel on this branch, each owning a disjoint set of
+files. That partitioning is sound for *editing* — two agents never touched the
+same file — and it is **completely undone by any git command whose unit is the
+tree rather than the path.** One agent tidied up with `git stash` and took
+**1 825 lines across 19 files belonging to five different agents** with it,
+including a whole new terrain preset and level that had never been committed.
+
+It was fully recoverable (`git stash list` → the WIP commit → `git checkout
+<stash> -- <paths>`), and the reflog line to look for is `reset: moving to
+HEAD`. Nothing was lost. But the recovery cost more than the tidying saved, and
+the failure is silent: the agent that stashed saw a clean tree and carried on,
+while four others kept editing files whose contents had reverted underneath
+them.
+
+The rules that follow, for any future parallel run:
+
+- **Banned outright while peers are live:** `git stash`, `git reset --hard`,
+  `git checkout -- <path>`, `git restore`, `git clean`. Every one of them
+  operates on paths the caller does not own.
+- **`git add` takes explicit paths. Never `-A`, never `.`, never `commit -a`.**
+  The soundtrack agent's commit swept in seven files belonging to three other
+  agents. Harmless that time — it is what rescued them — but it means a commit
+  message describes a third of its own diff.
+- **A dirty tree full of other agents' files is the correct steady state.** Tell
+  agents this explicitly in their brief, or they will try to make it clean.
+- **Commit early, by path.** A commit is the only thing that makes an agent's
+  work safe from its peers.
+
+The deeper lesson is that file-ownership partitioning is necessary and *not
+sufficient*: the shared mutable resource is not the files, it is the index and
+the working tree. Either brief every agent off the tree-wide verbs, or give each
+one a worktree (`isolation: 'worktree'`) and pay the merge cost instead. The
+one agent that ran in a worktree here was the only one that could not have
+caused this and could not have been hurt by it.
+
 ### 2.3 The signature defect: a hand-maintained table beside its generated twin
 
 Eight instances found so far. A HUD price list, an announcer voice map, the
