@@ -2220,10 +2220,43 @@ export class Engine {
    * frame are one punch at the strength of the bigger, not a doubled one.
    */
   punch(v) { this._punch = Math.max(this._punch, Math.min(1, num(v, 0))); }
+  /**
+   * ── THE TWO CONTROLS THE DRAIN AND THE BARS NEVER HAD ──────────────────
+   *
+   * Camera shake and cinematic slow-motion have had boxes for a while, and
+   * these two — the colour draining out of the frame when you die, and the
+   * letterbox that arrives with it and with a boss — were deliberately left
+   * OUT of the `shake` gate. The reason is worth keeping, because it is why
+   * they get controls of their own rather than being folded in: with motion
+   * feedback off they are the ONLY cue that you died. Gating them behind the
+   * motion box would take a player who turned it off for comfort and leave
+   * them with nothing on screen at the one moment that matters.
+   *
+   * So each is its own switch, on by default, and the gate is HERE rather than
+   * at the eight call sites — `setBars` and `setDrain` are the only writers of
+   * either target, exactly as `CameraRig.addShake` is the only writer of
+   * `rig.shake`, so this is the same funnel argument applyFeelSettings makes
+   * about those. It also means the call sites, which live in files this
+   * workstream does not own, needed no change at all.
+   *
+   * The FIELDS ARE NAMED AFTER THE SETTINGS — `letterboxOn`, `deathDrainOn` —
+   * and that is not decoration: SETTING_READERS points at these two lines, and
+   * the check that verifies it requires the named expression to MENTION the
+   * setting it claims to read. A gate called `barsOn` reads perfectly and
+   * proves nothing about `letterbox`, which is the same distance between a
+   * declaration and a reader that whole guard exists to close.
+   *
+   * `!== false` and not `??`: an Engine nobody has spoken to draws both, which
+   * is what keeps every check and every headless harness measuring the shipped
+   * behaviour. applyFeelSettings (ui/Menu.js) assigns them, and
+   * `world.feelOn('letterbox')` / `feelOn('deathDrain')` answer for anything
+   * that has a world to ask — the predicate is `s[kind] !== false`, so naming
+   * the settings after the kinds is what wires the funnel with no new lookup.
+   */
   /** Hold the colour out of the frame, 0..1. A state — nothing decays it. */
-  setDrain(v) { this._drainTarget = clamp(num(v, 0), 0, 1); }
+  setDrain(v) { this._drainTarget = this.deathDrainOn === false ? 0 : clamp(num(v, 0), 0, 1); }
   /** Letterbox bar height as a fraction of the frame. A state, like the drain. */
-  setBars(v) { this._barsTarget = clamp(num(v, 0), 0, 0.2); }
+  setBars(v) { this._barsTarget = this.letterboxOn === false ? 0 : clamp(num(v, 0), 0, 0.2); }
 
   /**
    * RUMBLE, and it is here rather than in the input layer on purpose.

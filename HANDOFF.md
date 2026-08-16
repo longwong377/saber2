@@ -848,11 +848,16 @@ judge's say-so.
 | `tools/_fpgeom.mjs` | where the first-person arms and hilt are **in the frame**, and how much of the hilt is behind the fists — one second, against `fpview.mjs`'s twenty minutes |
 | `tools/_celrank.mjs` | every outdoor level's sun height against its shadow's key share, the rank displacements, and **every neighbouring bound in one table** — `cel`'s span/rho/pairwise, `lighting`'s indirect budget and cast-shadow floor, `sky`'s cloud-top-over-sky, and the exposure clamp. `--set=kamino.sunIntensity=3.4,geonosis.elevation=18` measures a candidate look without editing Levels.js |
 | `tools/_previewgrip.mjs` | every species' creator preview in ONE table: the bore gap and the hilt's length in that figure's own hands, the hand target in its own arm-lengths, the figure's share of the content box, and where it lands in the frame. Twenty seconds, and it is what showed the framing was three defects rather than one |
+| `tools/_deployprobe.mjs` | **did the page throw, and does it deploy** — every pageerror and console error, plus the run seams read out of the RUNNING page. ~40 s against `smoke.mjs`'s five minutes. Written because smoke's deploy step waits 30 s for the HUD, which at §2.6's two seconds a frame is FIFTEEN FRAMES: it timed out on four steps while this probe deployed the same build in 22.2 s with zero errors. A smoke timeout is not evidence of a regression; this is what tells you which you have |
 
-All take `--import ./tools/register.mjs`; `_fpgeom`, `_celrank` and
-`_previewgrip` open with `dom-shim.mjs` because they reach Textures.js and
-Engine.js, which bake onto a canvas — and `_celrank` imports Engine.js
-DYNAMICALLY for §2.1.
+All except `_deployprobe` take `--import ./tools/register.mjs`; `_fpgeom`,
+`_celrank` and `_previewgrip` open with `dom-shim.mjs` because they reach
+Textures.js and Engine.js, which bake onto a canvas — and `_celrank` imports
+Engine.js DYNAMICALLY for §2.1. `_deployprobe` drives a real Chromium instead,
+so it needs neither: it must live under `tools/` rather than in a scratchpad
+because `playwright-core` resolves out of the repo's own node_modules, and it
+names the browser the same way `smoke.mjs` does (`/opt/pw-browsers/chromium-1194`
+— do NOT run `playwright install`).
 
 **Use `_celrank` before touching any level's light.** Six bounds in four suites
 read the same atmosphere block, they are not in the same file, and three of them

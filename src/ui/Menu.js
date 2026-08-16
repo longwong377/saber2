@@ -411,6 +411,24 @@ export const DEFAULT_SETTINGS = {
    * claim rather than a control if it duplicated the box.
    */
   rumble: 1,
+  /**
+   * THE LETTERBOX AND THE DEATH DRAIN, one box each.
+   *
+   * Both were left out of the `shake` gate on purpose, and the note over
+   * Engine.setBars records why: with motion feedback off they are the only cue
+   * that you died, so folding them into the motion box would take a player who
+   * turned it off for comfort and leave them nothing on screen at the one
+   * moment that matters. They are separate controls because they are separate
+   * questions.
+   *
+   * The names ARE the feel kinds. `World.feelOn(kind)` is `s[kind] !== false`,
+   * so `feelOn('letterbox')` and `feelOn('deathDrain')` answer correctly the
+   * moment these keys exist — nothing in World.js had to learn a word. The
+   * Engine-side gate is for the eight call sites that hold an engine and no
+   * world; see Engine.setBars.
+   */
+  letterbox: true,
+  deathDrain: true,
   volume: 0.8,
   music: 0.45,
   /**
@@ -608,6 +626,11 @@ export const SETTING_READERS = {
    * the same call the two feel gates are installed on, so a pad that is too
    * strong is turned down mid-fight from the pause card. */
   rumble:          ['ui/Menu.js', 'world.engine.rumbleLevel = clamp01(s.rumble)'],
+  /* The bars and the drain, gated at their own funnel rather than at the eight
+   * call sites — Engine.setBars/setDrain are the only writers of either target.
+   * Named after the feel kinds, so `feelOn('letterbox')` answers too. */
+  letterbox:       ['engine/Engine.js', 'this.letterboxOn === false ? 0 : clamp(num(v, 0), 0, 0.2)'],
+  deathDrain:      ['engine/Engine.js', 'this.deathDrainOn === false ? 0 : clamp(num(v, 0), 0, 1)'],
   volume:          ['main.js', 'audio.setVolume(settings.volume)'],
   music:           ['main.js', 'audio.setMusicVolume(settings.music)'],
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
@@ -704,6 +727,22 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
    * shipped behaviour, which is the same rule `feelOn` is written to.
    */
   if (world.engine) world.engine.rumbleLevel = clamp01(s.rumble);
+  /**
+   * …and the two that were never gated at all.
+   *
+   * Pushed rather than gated with a wrapper, because `setBars` and `setDrain`
+   * ARE the funnel — they are the only writers of the two targets — so the
+   * switch belongs inside them and this only has to say what the player chose.
+   * Turning one off has to bite NOW and not at the next death, which is what
+   * the second half of each line is for: the frame currently drawn is released.
+   */
+  if (world.engine) {
+    const e = world.engine;
+    e.letterboxOn = s.letterbox !== false;
+    e.deathDrainOn = s.deathDrain !== false;
+    if (!e.letterboxOn) e.setBars?.(0);
+    if (!e.deathDrainOn) e.setDrain?.(0);
+  }
   // "Blade holds position" is the same shape and rides the same seam.
   // SaberController reads `holdPosition` every frame, but the only line that
   // ever wrote it was World.spawnPlayer, so even once the setting existed the
@@ -4254,6 +4293,10 @@ export class Menu {
     this._check('opt-injury', 'injury', () => this.hooks.onFeel?.(this.s));
     this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
     this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
+    // The bars and the drain, on the same hook: unticking either has to release
+    // the frame that is drawn NOW, not wait for the next death.
+    this._check('opt-letterbox', 'letterbox', () => this.hooks.onFeel?.(this.s));
+    this._check('opt-deathdrain', 'deathDrain', () => this.hooks.onFeel?.(this.s));
     // The pad, on the same hook and for the same reason: applyFeelSettings is
     // where the strength is pushed into Engine.rumbleLevel, so a player turning
     // it down mid-fight feels the next kill at the new level.

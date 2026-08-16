@@ -2153,6 +2153,87 @@ export async function run({ check, assert }) {
       + 'a 60 ms effect does not cut a 400 ms one';
   });
 
+  check('controls: the letterbox and the death drain are switches, and not the shake box', async () => {
+    /**
+     * THE TWO EFFECTS THAT WERE DELIBERATELY LEFT UNGATED.
+     *
+     * `shake` and `slowmo` have had boxes for a while. The colour draining out
+     * of the frame when you die, and the letterbox that arrives with it and
+     * with a boss, had none — and folding them into `shake` would have been the
+     * wrong fix, for the reason that kept them out of it: with motion feedback
+     * off they are the ONLY cue that you died. A player who turns motion off
+     * for comfort would have been left with nothing on screen at the one moment
+     * that matters.
+     *
+     * So: two switches of their own, both on, both gated at the FUNNEL —
+     * `setBars` and `setDrain` are the only writers of either target, exactly
+     * as `CameraRig.addShake` is the only writer of `rig.shake` — and this
+     * asserts the independence in both directions, which is the part a shared
+     * gate would silently break.
+     */
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const mk = () => ({ _barsTarget: 0, _drainTarget: 0,
+      setBars: Engine.prototype.setBars, setDrain: Engine.prototype.setDrain });
+
+    // An engine nobody has spoken to draws both — the shipped behaviour, which
+    // is what every headless harness and every check is measuring.
+    const fresh = mk();
+    fresh.setBars(0.085); fresh.setDrain(0.72);
+    assert(fresh._barsTarget === 0.085 && fresh._drainTarget === 0.72,
+      `an unset engine drew bars ${fresh._barsTarget} / drain ${fresh._drainTarget}`);
+
+    const off = mk();
+    off.letterboxOn = false;
+    off.setBars(0.085); off.setDrain(0.72);
+    assert(off._barsTarget === 0, `the letterbox is off and the bars are still ${off._barsTarget}`);
+    assert(off._drainTarget === 0.72,
+      'turning the letterbox off also drained the colour — the two switches are one');
+    const off2 = mk();
+    off2.deathDrainOn = false;
+    off2.setBars(0.085); off2.setDrain(0.72);
+    assert(off2._drainTarget === 0, `the drain is off and the colour is still at ${off2._drainTarget}`);
+    assert(off2._barsTarget === 0.085,
+      'turning the drain off also took the bars — the two switches are one');
+
+    /* THE SHAKE BOX MUST NOT REACH EITHER. This is the whole point: motion off
+     * and these two still on is the state the design is protecting. */
+    const world = { engine: mk(), players: [], addHitstop() {}, feelOn: () => true };
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, shake: false, slowmo: false });
+    world.engine.setBars(0.085); world.engine.setDrain(0.72);
+    assert(world.engine._barsTarget === 0.085 && world.engine._drainTarget === 0.72,
+      'with camera shake off the bars and the drain went with it — they are the only cue left');
+
+    // …and each box really does reach the engine, live.
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, letterbox: false });
+    assert(world.engine.letterboxOn === false && world.engine._barsTarget === 0,
+      'unticking the letterbox neither armed the gate nor released the frame already drawn');
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS, deathDrain: false });
+    assert(world.engine.deathDrainOn === false && world.engine._drainTarget === 0,
+      'unticking the drain neither armed the gate nor released the frame already drawn');
+    applyFeelSettings(world, { ...DEFAULT_SETTINGS });
+    assert(world.engine.letterboxOn === true && world.engine.deathDrainOn === true,
+      'the boxes do not come back on');
+
+    /**
+     * AND THE NAMES ARE THE FEEL KINDS, which is what wires the funnel with no
+     * new lookup: `World.feelOn(kind)` is `s[kind] !== false`, so naming the
+     * settings after the kinds means anything holding a world can ask
+     * `feelOn('letterbox')` and nothing in World.js had to learn a word.
+     */
+    const feelOn = World.prototype.feelOn;
+    for (const kind of ['letterbox', 'deathDrain', 'shake', 'slowmo']) {
+      assert(kind in DEFAULT_SETTINGS, `feelOn('${kind}') names no setting`);
+      assert(feelOn.call({ _feelSettings: { ...DEFAULT_SETTINGS, [kind]: false } }, kind) === false,
+        `feelOn('${kind}') answers yes with the setting off`);
+      assert(feelOn.call({ _feelSettings: DEFAULT_SETTINGS }, kind) === true,
+        `feelOn('${kind}') answers no with the setting on`);
+      assert(feelOn.call({}, kind) === true,
+        `a world nobody has spoken to says no to ${kind} — every harness would measure the wrong game`);
+    }
+    return 'bars and drain independent of each other and of the shake box; '
+      + `feelOn answers for ${['letterbox', 'deathDrain', 'shake', 'slowmo'].join('/')}`;
+  });
+
   check('controls: no gameplay reads a raw key code or a raw device', async () => {
     // The rule the arrows broke, stated once for the whole tree. A raw
     // `down('KeyX')` is not in ACTIONS, so it cannot be rebound, cannot be
