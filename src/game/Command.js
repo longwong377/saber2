@@ -1614,8 +1614,7 @@ export class CommandDirector extends WaveDirector {
      * clauses are reading the same decision and cannot disagree about it. */
     const fighting = e.target && !e.target.dead && e.target.alive !== false;
     const limit = fighting ? this.leashFor(F, e) : FORM_TOLERANCE;
-    e.cmdOnStation = d <= limit;
-    if (e.cmdOnStation) return;
+    if (d <= limit) return;
     const inv = 1 / (d || 1);
     if (!e.wish) e.wish = new THREE.Vector3();
     e.wish.set(dx * inv, 0, dz * inv);

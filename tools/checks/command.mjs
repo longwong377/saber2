@@ -741,7 +741,11 @@ export function run({ check, assert }) {
      * the handover at the foot of Command.js.
      */
     const { bootWorld, idleInput } = await import('./_coop.mjs');
-    const { world } = await bootWorld({ level: 'arena', settings: { mode: 'waves' } });
+    /* A REAL LEVEL, NAMED. `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a
+     * key it does not know — right for a player with a stale profile, a trap in
+     * a check (HANDOFF §2.6) — and `bootWorld`'s own default is `arena`, which
+     * the roster cull deleted. `roster.mjs`'s sixth form is what catches it. */
+    const { world } = await bootWorld({ level: 'colosseum', settings: { mode: 'waves' } });
     let wipe = null;
     world.onGameOver = (s) => { wipe = s; };
     world.player.die(null);
