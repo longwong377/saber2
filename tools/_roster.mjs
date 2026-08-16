@@ -119,6 +119,31 @@ export function iou(a, b) {
   return uni ? inter / uni : 0;
 }
 
+/**
+ * IoU over a horizontal BAND of the frame, given as fractions of its height
+ * measured from the ground up.
+ *
+ * `tools/checks/characters.mjs` has said since it was written that whole-body
+ * overlap "can never go very low (they share a skeleton), so the number that
+ * matters is the head-and-shoulder band", and the roster-wide measurement
+ * agrees with it in a way nobody had put a number on: over 171 humanoid pairs
+ * the whole-body minimum is 0.254 and the median 0.497, and that minimum is
+ * between the two most extreme bodies the roster owns — a bare-strut training
+ * droid 41 cm across and a 1.92 m clone commander. Two 1.7 m bipeds standing
+ * the same way cannot be told apart by their footprint; they are told apart at
+ * the top, which is also where every piece of a kit lands.
+ */
+export function bandIou(a, b, N, y0, y1) {
+  const r0 = Math.max(0, Math.floor((1 - y1) * N)), r1 = Math.min(N, Math.ceil((1 - y0) * N));
+  let inter = 0, uni = 0;
+  for (let y = r0; y < r1; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x;
+    if (a[i] || b[i]) uni++;
+    if (a[i] && b[i]) inter++;
+  }
+  return uni ? inter / uni : 0;
+}
+
 /* ── one body, built, posed and culled the way the game does it ───────── */
 
 const triCount = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
@@ -271,8 +296,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         + `${r.u.size.y.toFixed(2)} ${r.u.size.x.toFixed(2)}    `
         + `${mx.toFixed(3)}   ${mxWith}`);
     }
+    /* The band is 1.30 m to 2.00 m off the floor on the humanoid frame: helmet,
+     * hood, crest, rangefinder, bells, pauldron, pack and antenna. */
+    if (fam === 'humanoid') {
+      for (const p of pairs) p.band = bandIou(p.a.bits, p.b.bits, N, 1.30 / span, 2.00 / span);
+      const bs = [...pairs].sort((x, y) => y.band - x.band);
+      console.log('  head+shoulders (1.30-2.00 m): worst '
+        + bs.slice(0, 6).map((p) => `${p.a.type}/${p.b.type} ${p.band.toFixed(3)}`).join(' · ')
+        + `   over 0.50: ${bs.filter((p) => p.band > 0.50).length} of ${pairs.length}`);
+    }
     const over = pairs.filter((p) => p.v > 0.50);
-    console.log(`  pairs over 0.50: ${over.length} of ${pairs.length}`);
+    const q = (f) => pairs[Math.min(pairs.length - 1, Math.floor(f * pairs.length))].v.toFixed(3);
+    console.log(`  pairs over 0.50: ${over.length} of ${pairs.length}`
+      + `   distribution max ${q(0)} / p75 ${q(0.25)} / median ${q(0.5)} / min ${pairs[pairs.length - 1].v.toFixed(3)}`);
     console.log('  worst: ' + pairs.slice(0, 12).map((p) => `${p.a.type}/${p.b.type} ${p.v.toFixed(3)}`).join(' · '));
 
     if (fam === 'humanoid') {

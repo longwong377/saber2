@@ -284,6 +284,214 @@ export function run({ check, assert, near, THREE: T }) {
     return `worst overlap ${worstPair} ${worst.toFixed(2)}, worst head+shoulders ${bandPair} ${worstBand.toFixed(2)}, area spread ${(Math.max(...areas) / Math.min(...areas)).toFixed(1)}×`;
   });
 
+  /**
+   * ── THE HUMANOID ROSTER, MEASURED THE WAY THE MENAGERIE WAS ──────────
+   *
+   * The check above is five archetypes at LOD 0. `tools/_roster.mjs` measures
+   * all thirty-one at LOD 1 — past the distance cull, which is where the
+   * complaint lives — and what it found is that the "sphere with some legs"
+   * pass fixed the creatures and the machines and never touched the people:
+   *
+   *     humanoids  103 of 171 pairs over 0.50 flank IoU, two of them 1.000
+   *     machines     0 of  21, worst 0.243
+   *     creatures    0 of  10, worst 0.415
+   *
+   * WHY 0.50 IS THE MACHINES' NUMBER AND CANNOT BE THE HUMANOIDS'. A droideka
+   * and a walker differ in leg count; a reek and a nexu differ in body plan.
+   * Nineteen humanoids share ONE skeleton, one standing height and one gait,
+   * and eleven of them share a scale with another to within 5%. Measured over
+   * all 171 pairs after this pass, the whole-body flank minimum is 0.254 — and
+   * that is between the two most extreme bodies the roster owns, a bare-strut
+   * training droid 41 cm across and a 1.92 m clone commander with a comms
+   * antenna. Two 1.7 m bipeds standing the same way cannot be made to overlap
+   * less than about a quarter by anything short of not being bipeds.
+   *
+   * So the bound below is 0.89 rather than 0.50, it is a RATCHET rather than a
+   * taste, and it is written against a measurement: the worst pair here was
+   * 1.000 — twice, two builders called with identical arguments — and is 0.871.
+   * Tighten it whenever the measurement allows; the one thing not to do is
+   * loosen it to meet a regression.
+   *
+   * WHAT THE CHECK BUILDS. `Bodies.BODY_KITS` is the archetype → kit table and
+   * this walks it, so a kit that stops resolving fails here. It does NOT build
+   * through `Enemy`, and the reason is written at BODY_KITS: `Enemy._build`
+   * does not yet thread the archetype key into the builder, so the shipped
+   * roster still renders the un-kitted bodies. `tools/_roster.mjs --wired`
+   * prints both numbers side by side. Measuring the builders is measuring what
+   * this file owns and can guarantee; claiming the roster wears them would be
+   * measuring something nobody has built yet.
+   */
+  const KITTED = {
+    trooper: (o) => B.buildTrooper(o), sniper: (o) => B.buildTrooper(o),
+    heavy: (o) => B.buildTrooper(o), jet: (o) => B.buildTrooper(o),
+    arc: (o) => B.buildTrooper(o), officer: (o) => B.buildTrooper(o),
+    jedi: (o) => B.buildJedi(o), sentinel: (o) => B.buildJedi(o),
+    guardian: (o) => B.buildJedi(o), master: (o) => B.buildJedi(o),
+    b1: (o) => B.buildB1(o), rocket: (o) => B.buildB1(o),
+    bx: (o) => B.buildB1(o), dummy: (o) => B.buildB1(o),
+    acolyte: (o) => B.buildAcolyte(o), sparring: (o) => B.buildAcolyte(o),
+    b2: (o) => B.buildB2(o), magna: (o) => B.buildBodyguard(o),
+    bodyguard: (o) => B.buildBodyguard(o),
+  };
+  /** The archetype's own scale, so a 1.06 heavy is not normalised into a 1.00. */
+  const KIT_SCALE = {
+    trooper: 1.0, sniper: 1.0, heavy: 1.06, jet: 0.98, arc: 1.02, officer: 1.03,
+    jedi: 1.0, sentinel: 1.02, guardian: 1.05, master: 1.03,
+    b1: 1.02, rocket: 1.04, bx: 1.06, dummy: 1.02,
+    acolyte: 1.04, sparring: 1.04, b2: 1.18, magna: 1.18, bodyguard: 1.3,
+  };
+
+  /**
+   * One kitted body, posed, with everything the distance cull would hide
+   * actually hidden.
+   *
+   * The cull rule is `Enemy._collectLodParts` + `_applyLod`: keep one primary
+   * per bone, keep anything tagged `userData.silhouette`, hide the rest. This
+   * applies the same rule to a bare rig, because a check cannot construct an
+   * `Enemy` without a World and a physics step; `tools/_roster.mjs` is the
+   * probe that drives the real one.
+   *
+   * WHAT THIS SEES THAT THE PROBE DOES NOT, stated rather than glossed: no
+   * LOADOUT. `Enemy._build` puts a blaster in the hand and a blade in the fist,
+   * and neither is in `BODY_KITS`. So the two disagree in BOTH directions and
+   * it is worth knowing which way: where the loadout differs this is stricter
+   * (an armed B1 against an unarmed training droid measures 0.641 with the
+   * carbine and worse without it), and where the loadout is identical it is
+   * looser (a trooper and a marksman both carry a DC-15, which is shared area:
+   * 0.871 here, 0.895 with the rifles on). Bodies are what this file makes, so
+   * bodies are what it is held to; the probe is where the whole spawned enemy
+   * is measured.
+   */
+  const LOD_CACHE = new Map();
+  function lodBody(name) {
+    if (LOD_CACHE.has(name)) return LOD_CACHE.get(name);
+    const opts = { scale: KIT_SCALE[name], ...(B.bodyOptsFor(name) || {}) };
+    const built = KITTED[name](opts);
+    const rig = built.rig;
+    const anim = new BipedAnimator(rig, { scale: rig.scale, hipHeight: 0.95 * rig.scale });
+    /* FACING +X, so a raster that looks down -Z sees the FLANK.
+     *
+     * This is not a detail. The check above rasterises the front, where a body
+     * is read by its WIDTH; a pack, a cape, a kama, a rangefinder and a slung
+     * weapon are all depth, and head-on they are edge-on. Measured with the
+     * figure left facing +Z, a Clone Commander with a 52 cm antenna, a comms
+     * pack and a half-cape came out 0.915 against an ARC — the same number it
+     * had before any of them existed, because the raster could not see one of
+     * them. The flank is also the view a firing line is met in.
+     */
+    const FACE = Math.PI / 2;
+    anim.setFacing(FACE);
+    const p = new THREE.Vector3(), v = new THREE.Vector3();
+    for (let i = 0; i < 60; i++) {
+      anim.update(1 / 60, { position: p, facing: FACE, velocity: v, grounded: true,
+        groundAt: () => 0, crouch: 0, accelForward: 0, accelStrafe: 0 });
+    }
+    anim.swingArms(1 / 60, 0, 1);
+    rig.updateMatrices();
+    rig.root.updateMatrixWorld(true);
+    const keep = new Set();
+    for (const b of rig.list) if (b.primary) keep.add(b.primary);
+    let kept = 0, total = 0;
+    rig.root.traverse((o) => {
+      if (!o.isMesh) return;
+      total++;
+      o.visible = keep.has(o) || !!o.userData.silhouette;
+      if (o.visible) kept++;
+    });
+    const out = { built, rig, root: rig.root, kept, total };
+    LOD_CACHE.set(name, out);
+    return out;
+  }
+
+  check('characters: every humanoid archetype has a kit, and it is the roster’s', async () => {
+    // The failure this forbids is SILENCE: a nineteenth humanoid added to the
+    // roster with no row in BODY_KITS looks exactly like an archetype that
+    // deliberately wears nothing, and the last time that happened three
+    // archetypes went a whole session without a body of their own.
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');       // the Command units and the IG general
+    const missing = [], unknown = [];
+    for (const [key, A] of Object.entries(ARCHETYPES)) {
+      // Enemy._build's own rule for what is a humanoid, not a copy of it.
+      const humanoid = !A.custom || A.custom === 'humanoid';
+      if (!humanoid) continue;
+      if (!B.bodyOptsFor(key)) missing.push(key);
+    }
+    for (const key of Object.keys(B.BODY_KITS)) if (!ARCHETYPES[key]) unknown.push(key);
+    assert(!missing.length, `${missing.join(', ')} on the roster with no row in BODY_KITS`);
+    assert(!unknown.length, `BODY_KITS names ${unknown.join(', ')}, which no archetype claims`);
+    // …and every kit named has to resolve. A typo in a kit name silently falls
+    // back to the line trooper, which is the defect wearing a new coat.
+    const tables = { kit: [B.TROOPER_KITS, B.B1_KITS, B.ACOLYTE_KITS, B.BODYGUARD_KITS],
+                     rank: [B.JEDI_RANKS] };
+    for (const [key, o] of Object.entries(B.BODY_KITS)) {
+      for (const field of ['kit', 'rank']) {
+        if (o[field] === undefined) continue;
+        assert(tables[field].some((t) => o[field] in t),
+          `${key} asks for ${field} '${o[field]}' and no table has one`);
+      }
+    }
+    return `${Object.keys(B.BODY_KITS).length} humanoid archetypes outfitted, every kit resolves`;
+  });
+
+  check('characters: a humanoid is more than nineteen tubes past thirty metres', () => {
+    // THE MEASURED DEFECT. `_applyLod` keeps one primary per bone plus anything
+    // tagged `userData.silhouette`, and `markSilhouette` was called three times
+    // in the whole codebase — all three inside the creature builder. So every
+    // one of the nineteen humanoids kept exactly nineteen meshes at LOD 1, the
+    // same nineteen tubes, while a creature kept 27 to 31 of 31 to 37: no
+    // cuirass, no tabard, no backpack, no hood, no robe hem and no weapon.
+    //
+    // The ceiling is the other half of it. This is a per-body draw call at a
+    // range where twenty bodies are on screen, so "keep everything" is not the
+    // answer either; 32 is above the busiest creature and below twice what a
+    // humanoid used to cost.
+    const rows = [];
+    let worstLow = 99, lowAt = '', worstHigh = 0, highAt = '';
+    for (const name of Object.keys(KITTED)) {
+      const u = lodBody(name);
+      if (u.kept < worstLow) { worstLow = u.kept; lowAt = name; }
+      if (u.kept > worstHigh) { worstHigh = u.kept; highAt = name; }
+      rows.push(`${name} ${u.kept}/${u.total}`);
+    }
+    assert(worstLow > 19, `${lowAt} keeps ${worstLow} meshes at LOD 1 — the bare limb tubes and nothing else`);
+    assert(worstHigh <= 32, `${highAt} keeps ${worstHigh} meshes at LOD 1, which is ${worstHigh * 2} draw calls with shadows`);
+    return `${worstLow} (${lowAt}) … ${worstHigh} (${highAt}) meshes kept · ` + rows.join(' ');
+  });
+
+  check('characters: no two humanoid kits are the same body at thirty metres', () => {
+    // Rasterised into ONE absolute 2.6 m frame at 1.3 cm per pixel, feet on the
+    // floor, at each archetype's own scale — see the long note above for why
+    // the bound is 0.90 and not the creatures' 0.50, and for the measurement
+    // that says 0.50 is not reachable by nineteen bodies on one skeleton.
+    const FR = [-1.3, 1.3, 0, 2.6], N = 200;
+    const names = Object.keys(KITTED);
+    const sils = {};
+    for (const n of names) {
+      const u = lodBody(n);
+      const b = box(u.root);
+      u.root.position.y -= b.min.y;
+      u.root.updateMatrixWorld(true);
+      sils[n] = silhouette(u.root, N, N, FR);
+      u.root.position.y += b.min.y;
+      u.root.updateMatrixWorld(true);
+    }
+    let worst = 0, worstPair = '', over = 0, pairs = 0, min = 1;
+    for (const a of names) for (const b2 of names) {
+      if (a >= b2) continue;
+      pairs++;
+      const v = iou(sils[a], sils[b2]);
+      if (v > worst) { worst = v; worstPair = `${a}/${b2}`; }
+      if (v < min) min = v;
+      if (v > 0.50) over++;
+    }
+    assert(worst < 0.89, `${worstPair} share ${(worst * 100).toFixed(1)}% of one silhouette at LOD 1`);
+    // …and no two are byte-identical, which is what the trooper/marksman and
+    // the acolyte/sparring pairs measured before there were kits at all.
+    assert(worst < 0.99, `${worstPair} is one body built twice`);
+    return `worst ${worstPair} ${worst.toFixed(3)}, ${over}/${pairs} over 0.50, floor ${min.toFixed(3)}`;
+  });
+
   check('characters: nothing on a head stands off it like a bolted-on slab', () => {
     // Kit.aim() puts a part's local +Y along the surface normal, so a panel
     // authored as (width, height, thickness) comes out (width, THICKNESS,

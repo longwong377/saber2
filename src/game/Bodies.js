@@ -3198,9 +3198,13 @@ function beardParts(s, hg, B) {
  */
 export const JEDI_RANKS = {
   knight:   { hem: 0.74 },
-  sentinel: { hood: true, hem: 1.20 },
+  sentinel: { hood: true, hem: 1.32 },
   guardian: { helm: true, pauldron: true, hem: 1.06 },
-  master:   { mantle: true, hem: 1.26 },
+  /* The Master is WIDE AT THE TOP and ordinary below, which is the opposite of
+   * the Sentinel — hooded, narrow, and cloth to the ankle. Two robed figures
+   * that are both long and both hooded are one figure, and the pair measured
+   * 0.939 before these two numbers were pushed apart. */
+  master:   { mantle: true, hem: 0.98 },
 };
 
 export function buildJedi(opts = {}) {
@@ -3896,9 +3900,9 @@ export function buildJedi(opts = {}) {
           // a short shoulder cape: a bell off the trapezius that stops at the
           // bottom of the ribcage, so it widens the top of the figure without
           // touching the belt the tabard already reads against
-          kr.add(over, limbGeo(0.300 * s, 0.128 * KTOR * s, 0.232 * KTOR * s, 20, false,
+          kr.add(over, limbGeo(0.380 * s, 0.126 * KTOR * s, 0.300 * KTOR * s, 20, false,
             { rings: 5, bulge: 0, section: (th, t) => 1 + Math.pow(t, 1.3) * 0.05 * Math.cos(6 * th) }),
-            [0, 0.212 * s, 0], [0, 0, Math.PI], [XK, 1, 1]);
+            [0, 0.216 * s, 0], [0, 0, Math.PI], [XK, 1, 1]);
           kr.add(over, bandGeo(0.070 * s, 0.086 * s, 0.064 * s, 0.104 * s, 0.062 * s, 14),
             [0, 0.196 * s, 0], [0.08, 0, 0], [XK, 1, 1]);
         }
@@ -4563,9 +4567,16 @@ export function buildB1(opts = {}) {
        * across the chest is what a range target looks like and it reads from
        * the far end of the dojo. */
       if (K.training) {
-        ko.add(mark, plateGeo(0.230 * s, 0.230 * s, 0.020 * s, 0.030 * s, 3), [0, 0.096 * s, 0.070 * s]);
-        ko.add(shell, plateGeo(0.130 * s, 0.130 * s, 0.014 * s, 0.030 * s, 3), [0, 0.096 * s, 0.084 * s]);
-        ko.add(mark, plateGeo(0.050 * s, 0.050 * s, 0.012 * s, 0.012 * s, 2), [0, 0.096 * s, 0.094 * s]);
+        /* A PADDED BOLSTER, not a decal. The first version was a 23 cm roundel
+         * 2 cm deep on a body 22 cm across: from the FLANK — which is the view
+         * this is measured in and the view a dojo is walked into — it was two
+         * centimetres of edge, and the pair moved 0.013. A practice droid is
+         * padded, and padding has depth. */
+        ko.add(joint, plateGeo(0.300 * s, 0.420 * s, 0.360 * s, 0.090 * s, 3), [0, 0.086 * s, 0.070 * s]);
+        ko.add(joint, plateGeo(0.240 * s, 0.170 * s, 0.280 * s, 0.070 * s, 3), [0, -0.096 * s, 0.048 * s]);
+        // the scoring rings, on the front of the bolster where a blade lands
+        ko.add(mark, plateGeo(0.190 * s, 0.190 * s, 0.020 * s, 0.030 * s, 3), [0, 0.110 * s, 0.244 * s]);
+        ko.add(shell, plateGeo(0.104 * s, 0.104 * s, 0.016 * s, 0.024 * s, 3), [0, 0.110 * s, 0.254 * s]);
       }
       markSilhouette(ko.bake(chest));
 
@@ -4692,6 +4703,15 @@ export function buildB1(opts = {}) {
  * and a wrist blaster with a heat shroud.
  */
 export function buildB2(opts = {}) {
+  /**
+   * `frame` is radial girth — the same field TROOPER_KITS uses, and here it
+   * exists for `buildBodyguard`, which is this chassis with a cowl on it. An
+   * IG-100 is a SPINDLE and a B2 is a slab, and building both at the same
+   * girth is how a rung-5 line droid came to share 0.965 of a silhouette with
+   * the Foundry's 1050-hp general. Default 1, and 1 * x is exact, so a B2 with
+   * no kit emits the geometry it always did.
+   */
+  const G = opts.frame ?? 1, g = (v) => v * G;
   const S = opts.scale ?? 1.18;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.0 }), { scale: S });
   const shell = armorMat(opts.color ?? 0x7d7266, 0.55, 0.48);
@@ -4715,8 +4735,8 @@ export function buildB2(opts = {}) {
   dressHumanoid(rig, {
     scale: S,
     body: shell, arm: shell, leg: shell, hand: dark, boot: dark, head: shell,
-    parts: { chestR: 0.21, shoulderR: 0.175, hipR: 0.14, waistR: 0.125,
-             armR: 0.072, clavR: 0.095, thighR: 0.095, neckR: 0.070, torsoDepth: 0.86,
+    parts: { chestR: g(0.21), shoulderR: g(0.175), hipR: g(0.14), waistR: g(0.125),
+             armR: g(0.072), clavR: g(0.095), thighR: g(0.095), neckR: 0.070, torsoDepth: 0.86,
              shoulderDome: 0.30 },
     seg: { torso: 12, arm: 12, leg: 10, clav: 8, neck: 8 },
     limbOpts: {
@@ -4782,18 +4802,18 @@ export function buildB2(opts = {}) {
        * and it read as a barrel from the side — which is how a B2 came to
        * share 0.845 of a silhouette with a MagnaGuard. */
       const ko = new Kit();
-      ko.add(shell, arcGeo(0.218 * s, 0.196 * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
-      ko.add(shell, arcGeo(0.212 * s, 0.192 * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
-      ko.add(shell, arcGeo(0.214 * s, 0.206 * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.218) * s, g(0.196) * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.212) * s, g(0.192) * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.214) * s, g(0.206) * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
       ko.pair((sx) => {
-        ko.add(shell, arcGeo(0.216 * s, 0.196 * s, 0.230 * s, 1.05, 0.026 * s, 6),
+        ko.add(shell, arcGeo(g(0.216) * s, g(0.196) * s, 0.230 * s, 1.05, 0.026 * s, 6),
           [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
       });
       markSilhouette(ko.bake(chest));
       // Back: a vented dorsal block and two exhaust stacks, seated on the
       // ribcage's real back surface (it is 15cm deep here, not 5.8).
       const back = at;
-      k.add(dark, arcGeo(0.212 * s, 0.196 * s, 0.170 * s, 1.70, 0.040 * s, 8),
+      k.add(dark, arcGeo(g(0.212) * s, g(0.196) * s, 0.170 * s, 1.70, 0.040 * s, 8),
         [0, 0.120 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       k.pair((sx) => {
         const p = back(0.230, [sx * 0.34, 0, -1], 0.010);
@@ -4943,16 +4963,29 @@ export function buildB2(opts = {}) {
 export const TROOPER_KITS = {
   /** The line trooper: the baseline every other kit is read against. */
   line: {},
-  /** The Marksman. A scope, a shoulder brace, and no bulk anywhere. */
-  marksman: { rangefinder: 'scope', brace: true },
+  /**
+   * The Marksman, and it is the hardest of the six because it is the line
+   * trooper at the SAME SCALE — 1.0 against 1.0, the only pair on the roster
+   * with no size difference to fall back on. So it is the one kit that takes
+   * something OFF: no shoulder bells, which is 21 cm of the widest part of the
+   * figure, against a long scope and a scout pack.
+   */
+  marksman: { rangefinder: 'scope', brace: true, bells: false, pack: 'scout', frame: 0.88 },
   /** The suppression gunner: the pack and the Z-6 across it. */
-  heavy: { pack: 'field' },
+  heavy: { pack: 'field', frame: 1.15 },
   /** The raider. Nothing on the arms — the pack is the whole read. */
-  jet: { pack: 'jet' },
+  jet: { pack: 'jet', frame: 0.97 },
   /** The ARC: pauldron right, kama, twin holsters on the belt. */
-  arc: { pauldron: 'R', kama: true, holsters: true },
-  /** The Commander: pauldron left, kama, crest and rangefinder. */
-  commander: { pauldron: 'L', kama: true, crest: true, rangefinder: 'stalk' },
+  arc: { pauldron: 'R', kama: 'long', holsters: true, frame: 1.07 },
+  /**
+   * The Commander. Everything the ARC has, mirrored, plus the two things a
+   * command body has and a line body never does: the comms pack with its
+   * antenna, and the shoulder cape. The ARC and the Commander are the pair
+   * this roster most wants to keep apart — same rung, same rifle, adjacent
+   * scales — so they differ at the top of the figure AND at the back of it.
+   */
+  commander: { pauldron: 'L', kama: true, crest: true, rangefinder: 'stalk',
+               pack: 'comms', cape: true, frame: 0.99 },
 };
 
 /**
@@ -4969,6 +5002,24 @@ export const TROOPER_KITS = {
 export function buildTrooper(opts = {}) {
   const K = { ...(TROOPER_KITS[opts.kit] || TROOPER_KITS.line), ...opts };
   const S = opts.scale ?? 1.0;
+  /**
+   * GIRTH, AND WHY IT IS A KIT FIELD RATHER THAN A SCALE.
+   *
+   * `scale` grows a body in all three axes, so a heavy gunner built by turning
+   * it up is a taller trooper — and the archetype's `hipHeight` and the gait
+   * solver both read the height. `frame` is RADIAL only: the same 1.78 m
+   * soldier, wider through the chest, the arms and the thighs. It is also the
+   * only lever on this list that moves the bone PRIMARIES, which are 19 of the
+   * 26 meshes a trooper keeps at thirty metres and most of its projected area,
+   * so it is worth more to the read than every plate on the figure.
+   *
+   * Every limb plate is `limbPlate(bone, …)`, which raycasts the bone's own
+   * tube and pushes out by a gap, so arms, forearms, thighs and shins refit
+   * themselves. Only the torso arcs are typed against a radius, and `g()`
+   * below is applied to exactly those.
+   */
+  const G = K.frame ?? 1;
+  const g = (v) => v * G;
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const plate = armorMat(opts.color ?? 0xe8e9ec, 0.08, 0.34, 3.0);
   // The undersuit was a bare MeshStandardMaterial: flat black vinyl over the
@@ -5034,8 +5085,8 @@ export function buildTrooper(opts = {}) {
     // same height, same width, same everything but the colour. So the bulk is
     // real — a deeper ribcage, heavier arms and legs, a wider collarbone and a
     // shoulder bell 23% bigger — rather than a paint difference.
-    parts: { chestR: 0.140, shoulderR: 0.124, hipR: 0.122, waistR: 0.108,
-             armR: 0.057, clavR: 0.074, thighR: 0.100, neckR: 0.062, torsoDepth: 0.88 },
+    parts: { chestR: g(0.140), shoulderR: g(0.124), hipR: g(0.122), waistR: g(0.108),
+             armR: g(0.057), clavR: g(0.074), thighR: g(0.100), neckR: 0.062, torsoDepth: 0.88 },
     seg: { torso: 16, arm: 12, leg: 12, clav: 10, neck: 10 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
@@ -5152,7 +5203,7 @@ export function buildTrooper(opts = {}) {
 
       /* ── torso: straps, boxes and scorch — detail, correctly culled ── */
       const k = new Kit();
-      k.add(accent, arcGeo(0.150 * s, 0.150 * s, 0.028 * s, 2.4, 0.008 * s, 8), [0, 0.150 * s, 0], null, [1, 1, D]);
+      k.add(accent, arcGeo(g(0.150) * s, g(0.150) * s, 0.028 * s, 2.4, 0.008 * s, 8), [0, 0.150 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
         k.add(gear, plateGeo(0.030 * s, 0.230 * s, 0.014 * s, 0.004 * s, 1),
           onLimb(chestB, 0.090 * s, [sx * 0.55, 0, 1], 0.002 * s), [0, -sx * 0.30, sx * 0.16]);
@@ -5172,10 +5223,10 @@ export function buildTrooper(opts = {}) {
        * of how six clone archetypes came to share one silhouette. One material,
        * one merged mesh, one draw call. */
       const ko = new Kit();
-      ko.add(plate, arcGeo(0.146 * s, 0.132 * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
-      ko.add(plate, arcGeo(0.146 * s, 0.128 * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      ko.add(plate, arcGeo(g(0.146) * s, g(0.132) * s, 0.230 * s, 2.55, 0.020 * s, 9), [0, -0.008 * s, 0], null, [1, 1, D]);
+      ko.add(plate, arcGeo(g(0.146) * s, g(0.128) * s, 0.220 * s, 2.30, 0.018 * s, 8), [0, 0.000 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       // collar that the helmet sits into
-      ko.add(plate, bandGeo(0.104 * s, 0.126 * s, 0.086 * s, 0.108 * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
+      ko.add(plate, bandGeo(g(0.104) * s, g(0.126) * s, g(0.086) * s, g(0.108) * s, 0.052 * s, 14), [0, 0.196 * s, 0], null, [1, 1, D + 0.1]);
       /* THE PAULDRON. One plate, over the leading shoulder, raked out and back.
        * `side` is the knob rather than a boolean because an ARC wearing it on
        * the right and a Commander on the left are two silhouettes from the
@@ -5184,18 +5235,39 @@ export function buildTrooper(opts = {}) {
       if (K.pauldron) {
         const sx = K.pauldron === 'L' ? -1 : 1;
         ko.add(plate, plateGeo(0.132 * s, 0.052 * s, 0.186 * s, 0.020 * s, 2),
-          [sx * 0.170 * s, 0.132 * s, -0.006 * s], [0, 0, sx * -0.40]);
+          [sx * g(0.170) * s, 0.132 * s, -0.006 * s], [0, 0, sx * -0.40]);
         ko.add(plate, plateGeo(0.104 * s, 0.044 * s, 0.150 * s, 0.016 * s, 2),
-          [sx * 0.196 * s, 0.086 * s, -0.004 * s], [0, 0, sx * -0.52]);
+          [sx * g(0.196) * s, 0.086 * s, -0.004 * s], [0, 0, sx * -0.52]);
       }
       /* THE BRACE. A marksman's cheek-weld needs somewhere for the stock to
        * go, and it is the one piece that separates him from the line trooper
        * he is otherwise built from bolt for bolt. */
       if (K.brace) {
         ko.add(plate, plateGeo(0.086 * s, 0.030 * s, 0.120 * s, 0.010 * s, 1),
-          [-0.132 * s, 0.176 * s, 0.010 * s], [0, 0, 0.30]);
+          [-g(0.132) * s, 0.176 * s, 0.010 * s], [0, 0, 0.30]);
       }
       markSilhouette(ko.bake(chestB.obj));
+
+      /* THE COMMANDER'S CAPE. Rigid, not cloth: `cloth-cost` sizes the whole
+       * simulated-garment column on how many bodies wear one, and this mode
+       * fields a line of twenty. Hung off the pauldron's own shoulder so it
+       * falls down ONE side of the body — a half-cape reads as rank where a
+       * closed cone reads as a robe, and this figure must not read as a Jedi
+       * from behind. */
+      if (K.cape) {
+        /* HUNG SO IT FLARES BACKWARD, not flat against the shoulder blade.
+         * The first cut was 32 cm across and 3 cm deep: from the flank — the
+         * view a line of infantry is met in — it was a 3 cm edge, and the ARC
+         * and the Commander stayed 0.916 alike. A cape is read from the side,
+         * so its depth is the dimension that has to be real. */
+        const kc = new Kit();
+        const sx = K.pauldron === 'R' ? 1 : -1;
+        kc.add(gear, plateGeo(0.300 * s, 0.620 * s, 0.230 * s, 0.030 * s, 2),
+          [sx * 0.060 * s, -0.180 * s, -0.200 * s], [0.30, sx * 0.16, sx * 0.05]);
+        kc.add(gear, plateGeo(0.250 * s, 0.150 * s, 0.150 * s, 0.024 * s, 1),
+          [sx * 0.104 * s, 0.140 * s, -0.116 * s], [0.16, sx * 0.28, sx * -0.22]);
+        markSilhouette(kc.bake(chestB.obj));
+      }
 
       /* ── the pack ──
        *
@@ -5219,6 +5291,24 @@ export function buildTrooper(opts = {}) {
             kp.add(plate, new THREE.CylinderGeometry(0.036 * s, 0.036 * s, 0.070 * s, 8),
               [sx * 0.076 * s, 0.048 * s, -0.184 * s], [0.16, 0, sx * 0.10]);
           });
+        } else if (K.pack === 'scout') {
+          // a flat scout pack with a folded bipod down it — narrow, so the
+          // marksman stays the thinnest body in the clone rack
+          kp.add(gear, plateGeo(0.130 * s, 0.220 * s, 0.070 * s, 0.014 * s, 1), [0, 0.076 * s, -0.156 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.320 * s, 6),
+            [0.052 * s, 0.070 * s, -0.196 * s], [0.10, 0, 0.18]);
+          kp.add(gear, new THREE.CylinderGeometry(0.012 * s, 0.012 * s, 0.320 * s, 6),
+            [-0.052 * s, 0.070 * s, -0.196 * s], [0.10, 0, -0.18]);
+        } else if (K.pack === 'comms') {
+          // the command pack: a slab with a tall whip antenna, which is 40 cm
+          // of outline above the shoulder line and nothing else on the roster
+          // has anything there at all
+          kp.add(plate, plateGeo(0.190 * s, 0.240 * s, 0.096 * s, 0.018 * s, 2), [0, 0.076 * s, -0.166 * s]);
+          kp.add(accent, plateGeo(0.140 * s, 0.030 * s, 0.020 * s, 0.006 * s, 1), [0, 0.172 * s, -0.216 * s]);
+          kp.add(gear, new THREE.CylinderGeometry(0.007 * s, 0.010 * s, 0.520 * s, 5),
+            [-0.078 * s, 0.420 * s, -0.176 * s], [0.06, 0, 0.10]);
+          kp.add(gear, plateGeo(0.070 * s, 0.070 * s, 0.024 * s, 0.008 * s, 1),
+            [0.070 * s, 0.176 * s, -0.212 * s], [0.20, -0.30, 0]);
         } else {
           // ammunition box, power feed, and the Z-6's barrel bundle across it
           kp.add(plate, plateGeo(0.230 * s, 0.250 * s, 0.130 * s, 0.022 * s, 2), [0, 0.062 * s, -0.184 * s]);
@@ -5240,16 +5330,16 @@ export function buildTrooper(opts = {}) {
       const ks = new Kit();
       ks.row(3, (i, t) => {
         const y = (0.020 + i * 0.062) * s;
-        ks.add(plate, arcGeo(0.126 * s + i * 0.006 * s, 0.130 * s + i * 0.006 * s, 0.050 * s, 2.9, 0.014 * s, 8),
+        ks.add(plate, arcGeo(g(0.126 + i * 0.006) * s, g(0.130 + i * 0.006) * s, 0.050 * s, 2.9, 0.014 * s, 8),
           [0, y, 0], null, [1, 1, D]);
-        ks.add(plate, arcGeo(0.124 * s + i * 0.006 * s, 0.128 * s + i * 0.006 * s, 0.048 * s, 2.2, 0.012 * s, 7),
+        ks.add(plate, arcGeo(g(0.124 + i * 0.006) * s, g(0.128 + i * 0.006) * s, 0.048 * s, 2.2, 0.012 * s, 7),
           [0, y, 0], [0, Math.PI, 0], [1, 1, D]);
       });
       ks.bake(spineB.obj);
 
       /* ── belt, codpiece and pouches — detail ── */
       const kh = new Kit();
-      kh.add(gear, bandGeo(0.118 * s, 0.136 * s, 0.118 * s, 0.136 * s, 0.056 * s, 16), [0, 0.056 * s, 0], null, [1, 1, D + 0.06]);
+      kh.add(gear, bandGeo(g(0.118) * s, g(0.136) * s, g(0.118) * s, g(0.136) * s, 0.056 * s, 16), [0, 0.056 * s, 0], null, [1, 1, D + 0.06]);
       kh.add(plate, plateGeo(0.052 * s, 0.046 * s, 0.024 * s, 0.006 * s, 1), onLimb(hipsB, 0.080 * s, [0, 0, 1], -0.008 * s));
       kh.pair((sx) => {
         kh.add(gear, plateGeo(0.052 * s, 0.058 * s, 0.036 * s, 0.010 * s, 1),
@@ -5272,10 +5362,10 @@ export function buildTrooper(opts = {}) {
        * two bare undersuit thighs, and they were culled at exactly the range
        * that matters. */
       const kho = new Kit();
-      kho.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
-      kho.add(plate, arcGeo(0.120 * s, 0.126 * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
+      kho.add(plate, arcGeo(g(0.120) * s, g(0.126) * s, 0.130 * s, 1.5, 0.016 * s, 6), [0, -0.062 * s, 0], null, [1, 1, D]);
+      kho.add(plate, arcGeo(g(0.120) * s, g(0.126) * s, 0.150 * s, 1.7, 0.016 * s, 6), [0, -0.076 * s, 0], [0, Math.PI, 0], [1, 1, D]);
       kho.pair((sx) => {
-        kho.add(plate, arcGeo(0.118 * s, 0.122 * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
+        kho.add(plate, arcGeo(g(0.118) * s, g(0.122) * s, 0.120 * s, 0.9, 0.014 * s, 5), [0, -0.058 * s, 0], [0, sx * 1.42, 0], [1, 1, D]);
       });
       /* THE KAMA. Command.js asked for one for `arc` and `officer` — "at three
        * metres they read as the same body" — and pointed at `attachSkirt`.
@@ -5286,9 +5376,15 @@ export function buildTrooper(opts = {}) {
        * at range — they break the leg line and add 22 cm of outline below the
        * belt where every other clone has none. */
       if (K.kama) {
-        for (const [bearing, arc, len] of [[0, 1.35, 0.300], [Math.PI, 1.55, 0.320],
-                                           [1.45, 0.85, 0.260], [-1.45, 0.85, 0.260]]) {
-          kho.add(gear, arcGeo(0.132 * s, 0.150 * s, len * s, arc, 0.012 * s, 7),
+        /* An ARC's is to the knee and a Commander's stops at mid-thigh, which
+         * is the reference plates' own distinction and the one that keeps the
+         * roster's two kama-wearing bodies apart below the belt while the cape
+         * keeps them apart above it. */
+        const kl = K.kama === 'long' ? 1.34 : 1;
+        for (const [bearing, arc, len0] of [[0, 1.35, 0.300], [Math.PI, 1.55, 0.320],
+                                            [1.45, 0.85, 0.260], [-1.45, 0.85, 0.260]]) {
+          const len = len0 * kl;
+          kho.add(gear, arcGeo(g(0.132) * s, g(0.150) * s, len * s, arc, 0.012 * s, 7),
             [0, -0.052 * s - len * s, 0], [0, bearing, 0], [1, 1, D]);
         }
       }
@@ -5302,17 +5398,21 @@ export function buildTrooper(opts = {}) {
           const L = arm.length;
           // Shoulder bell on the humerus, so it rolls with the shoulder. The
           // sphere's pole is +Y, i.e. down the arm, so it is turned over.
-          const bell = new THREE.SphereGeometry(0.106 * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
+          const bell = new THREE.SphereGeometry(g(0.106) * s, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
           bell.scale(1.0, 1.02, 1.06);
-          ka.add(plate, bell, [0, 0.030 * s, 0], [Math.PI, 0, 0]);
+          // `bells: false` is the marksman's, and it is a REMOVAL rather than
+          // an addition on purpose — see TROOPER_KITS.marksman.
+          if (K.bells !== false) ka.add(plate, bell, [0, 0.030 * s, 0], [Math.PI, 0, 0]);
           // The rolled rim, ON the bell's own open edge — which is at y =
           // 0.049 and radius 0.096, measured off the sphere rather than
           // guessed. The band that was here sat at y = 0.086 with an outer
           // radius of 0.100 around an arm of radius 0.048: a white hoop
           // floating four centimetres off the bicep, while the bell itself
           // stayed a zero-thickness shell you could see the inside of.
-          ka.add(plate, bandGeo(0.0930 * s, 0.1095 * s, 0.0965 * s, 0.1095 * s, 0.032 * s, 14),
-            [0, 0.030 * s, 0], null, [1, 1, 1.06]);
+          if (K.bells !== false) {
+            ka.add(plate, bandGeo(g(0.0930) * s, g(0.1095) * s, g(0.0965) * s, g(0.1095) * s, 0.032 * s, 14),
+              [0, 0.030 * s, 0], null, [1, 1, 1.06]);
+          }
           // biceps plate over the suit
           ka.add(plate, limbPlate(arm, L * 0.34, L * 0.78, 3.1, { thick: 0.012 * s, seg: 7, gap: 0.005 * s }),
             [0, L * 0.34, 0]);
@@ -5323,9 +5423,13 @@ export function buildTrooper(opts = {}) {
            * three centimetres of arc and is not, because the clavicle primary
            * now carries that colour at the same height for nothing. */
           markSilhouette(ka.bake(arm.obj));
-          const kab = new Kit();
-          kab.add(accent, arcGeo(0.1035 * s, 0.1035 * s, 0.028 * s, 1.9, 0.006 * s, 7), [0, 0.004 * s, 0], null, [1, 1, 1.06]);
-          kab.bake(arm.obj);
+          /* THE UNIT STRIPE ROUND THE BELL IS GONE, and that is the accent
+           * pass paying for itself rather than adding to the bill. It was a
+           * 60-triangle arc per arm at the top of the humerus — 3 cm tall, on
+           * the one bone whose Kit is culled first, and measured at exactly
+           * zero pixels past thirty metres. The clavicle primary now carries
+           * the same colour at the same height and is never culled, so this
+           * was a hundred and twenty triangles of paint nobody ever saw. */
         }
         if (fore) {
           const kf = new Kit();
@@ -5398,7 +5502,10 @@ export function buildTrooper(opts = {}) {
  */
 export const ACOLYTE_KITS = {
   sith: {},
-  sparring: { hood: false, plastron: true },
+  /* `frame` is radial girth, exactly as TROOPER_KITS uses it: a body wearing a
+   * padded practice jacket is a wider body, and the primaries are most of what
+   * survives the cull. */
+  sparring: { hood: false, plastron: true, frame: 1.12 },
 };
 
 /**
@@ -5414,6 +5521,7 @@ export function buildAcolyte(opts = {}) {
   /** See ACOLYTE_KITS. `hood` and `plastron` may also be passed directly. */
   const K = { ...(ACOLYTE_KITS[opts.kit] || ACOLYTE_KITS.sith), ...opts };
   const S = opts.scale ?? 1.04;
+  const G = K.frame ?? 1, g = (v) => v * G;   // radial girth — see ACOLYTE_KITS
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const robe = clothMat(0x16171c, 0.94);
   const inner = clothMat(0x3a1a1e, 0.9);
@@ -5452,7 +5560,7 @@ export function buildAcolyte(opts = {}) {
     // them at range is mass distribution: the acolyte is narrow through the
     // chest and the limbs and carries all of its width low, in a coat that
     // flares to 46cm at the hem.
-    parts: { chestR: 0.146, shoulderR: 0.126, hipR: 0.124, waistR: 0.106,
+    parts: { chestR: g(0.146), shoulderR: g(0.126), hipR: g(0.124), waistR: g(0.106),
              armR: 0.042, clavR: 0.056, thighR: 0.080, neckR: 0.055, torsoDepth: 0.72 },
     seg: { torso: 16, arm: 14, leg: 10, clav: 10, neck: 10 },
     limbOpts: {
@@ -5554,12 +5662,16 @@ export function buildAcolyte(opts = {}) {
        * else, which is how a narrow-shouldered duellist in a bell-hemmed coat
        * came to share 0.849 of a silhouette with a Jedi. */
       const ko = new Kit();
-      ko.add(robe, bandGeo(0.112 * s, 0.196 * s, 0.082 * s, 0.120 * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
+      ko.add(robe, bandGeo(g(0.112) * s, g(0.196) * s, g(0.082) * s, g(0.120) * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
       /* THE PLASTRON. Padded, square, and worn over everything — the shape a
        * fencing partner has and a Sith does not. See ACOLYTE_KITS. */
       if (K.plastron) {
-        ko.add(inner, plateGeo(0.320 * s, 0.360 * s, 0.150 * s, 0.040 * s, 3), [0, 0.020 * s, 0.020 * s]);
-        ko.add(inner, bandGeo(0.150 * s, 0.176 * s, 0.150 * s, 0.176 * s, 0.220 * s, 14), [0, -0.070 * s, 0], null, [1, 1, 0.80]);
+        /* Sized to stand OUTSIDE the mantle it replaces — the first version was
+         * 32 cm across against a 39 cm mantle and 15 cm deep against a 30 cm
+         * torso, so it was entirely inside the outline it was meant to change
+         * and the pair moved 0.006. A padded jacket is bigger than the body. */
+        ko.add(inner, plateGeo(0.470 * s, 0.420 * s, 0.330 * s, 0.070 * s, 3), [0, 0.030 * s, 0.010 * s]);
+        ko.add(inner, bandGeo(0.180 * s, 0.212 * s, 0.180 * s, 0.212 * s, 0.240 * s, 14), [0, -0.090 * s, 0], null, [1, 1, 0.86]);
       }
       markSilhouette(ko.bake(chestB.obj));
 
@@ -5601,6 +5713,24 @@ export function buildAcolyte(opts = {}) {
         m.userData.skirt = { angle: a, index: i };
       }
       kh.bake(hipsB.obj);
+
+      /* ── the coat's LINING, which is also its range proxy ──
+       *
+       * The eight panels above are the whole read on this body — "narrow
+       * shoulders over a bell", its own words — and eight separate meshes is
+       * eight draw calls, so tagging them all would cost more at range than
+       * the whole rest of the figure. A single lathe just inside them does the
+       * same job in one: at thirty metres it IS the bell, and up close it
+       * fills the eight gaps the panels leave, which is a fix in its own right
+       * — before this you could see a bare thigh between every pair of them.
+       *
+       * Cut 4 cm shorter than the panels and 2 cm inside their inner edge, so
+       * it is never the outermost surface at any bearing and cannot z-fight. */
+      const kl = new Kit();
+      kl.add(robe, limbGeo(0.500 * s, 0.126 * s, 0.196 * s, 16, false,
+        { rings: 4, bulge: 0, section: (th, t) => 1 + Math.pow(t, 1.3) * 0.05 * Math.cos(8 * th + Math.PI / 8) }),
+        [0, -0.030 * s, 0], [0, 0, Math.PI], [1, 1, 0.86]);
+      markSilhouette(kl.bake(hipsB.obj));
 
       /* ── pauldrons and bracers ── */
       for (const side of ['L', 'R']) {
@@ -6742,8 +6872,11 @@ function buildCreatureHead(rig, P, S, M) {
  * further away. A set-piece must be legible AS a set-piece before it moves.
  */
 export const BODYGUARD_KITS = {
-  guard: {},
-  general: { banner: true },
+  /* `frame` goes through to buildB2's girth. An IG-100 is a spindle with a
+   * cowl on it, not a slab — the reference plates are unambiguous — and at a
+   * B2's own girth the two measured 0.965 alike. */
+  guard: { frame: 0.78 },
+  general: { banner: true, frame: 0.86 },
 };
 
 /**
@@ -6784,7 +6917,7 @@ export function buildBodyguard(opts = {}) {
   /** See BODYGUARD_KITS — `banner` may also be passed directly. */
   const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.guard), ...opts };
   const S = opts.scale ?? 1.3;
-  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52 });
+  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52, frame: K.frame ?? 1 });
   const rig = built.rig;
   const dark = metalMat(0x24262a, 0.44, 0.92, 2.6);
   const trim = armorMat(0x8d3a20, 0.12, 0.52, 3.0);      // the one warm accent
