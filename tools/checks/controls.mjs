@@ -1986,6 +1986,96 @@ export async function run({ check, assert }) {
       + 'Start opens the menu bare and fires its chord under a modifier';
   });
 
+  check('controls: a pad can rebind itself, and one press still does one thing', async () => {
+    /**
+     * A PAD CODE THE GAME CAN BIND AND THE PLAYER CANNOT IS HALF A CONTROL —
+     * the shipped default map would then be the only map that exists, which is
+     * the thing this table was built to stop being true of the keyboard.
+     *
+     * The press arrives through `Input.onPadCode` rather than a listener,
+     * because a gamepad raises no DOM events at all: it is polled, and Input is
+     * the one thing polling it. And it arrives AS THE CHORD it was pressed
+     * with, so binding "LB + A" is the same gesture that fires it.
+     *
+     * The rest of this check is the ordering, which is where one press would
+     * otherwise do two things — inside the editor for the table whose whole
+     * purpose is that it cannot.
+     */
+    const fresh = () => new Input({ addEventListener() {}, requestPointerLock() {} });
+    const i = fresh();
+    i.setBindings(defaultBindings());
+    const pad = { connected: true, index: 0, id: 'Xbox Wireless Controller', axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })) };
+    const nav = { getGamepads: () => [pad] };
+    const g = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+    const down = (...ix) => {
+      for (let k = 0; k < 16; k++) pad.buttons[k] = { pressed: ix.includes(k), value: ix.includes(k) ? 1 : 0 };
+      i._readPad(1 / 60);
+    };
+    try {
+      const seen = [];
+      let confirms = 0, navs = 0, menus = 0;
+      i.onConfirm = () => { confirms++; };
+      i.onNav = () => { navs++; };
+      i.onMenu = () => { menus++; };
+
+      // Nothing listening: A confirms, the D-pad walks, Start opens the menu.
+      i.onPadCode = () => false;
+      down(0); down();
+      down(12); down();
+      down(9); down();
+      assert(confirms === 1 && navs === 1 && menus === 1,
+        `with no chip listening: ${confirms} confirms, ${navs} navs, ${menus} menus — expected one each`);
+
+      // A chip listening TAKES the press, and nothing else sees it.
+      i.onPadCode = (code) => { seen.push(code); return true; };
+      confirms = 0; navs = 0; menus = 0;
+      down(0);
+      assert(seen.join() === 'PadA', `the chip was offered ${seen.join('+') || 'nothing'}`);
+      assert(confirms === 0, 'A was bound to an action AND pressed the focused control');
+      down();
+      // …and a chord is offered as a chord, not as its main button.
+      seen.length = 0;
+      down(4, 0);
+      assert(seen.join() === 'PadLB+PadA',
+        `holding LB and pressing A offered ${seen.join('+')} — a chord cannot be bound from a pad`);
+      down();
+
+      // A DIRECTION that was just bound is still under the thumb, and must not
+      // start walking the list the moment the chip stops listening.
+      seen.length = 0; navs = 0;
+      down(12);                        // captured
+      i.onPadCode = () => false;       // the chip has finished
+      down(12); down(12); down(12);
+      assert(navs === 0, `a direction held through a rebind walked the list ${navs} times`);
+      down();                          // released
+      down(12);
+      assert(navs === 1, 'the direction never became a navigation again after being released');
+
+      // Start CANCELS a listening chip rather than opening the menu.
+      let cancelled = null;
+      i.onPadCode = (code) => { cancelled = code; return true; };
+      menus = 0;
+      down(); down(9);
+      assert(cancelled === 'PadStart' && menus === 0,
+        `Start during a rebind: offered ${cancelled}, opened the menu ${menus} times`);
+    } finally {
+      if (g === undefined) delete globalThis.navigator;
+      else Object.defineProperty(globalThis, 'navigator', { value: g, configurable: true, writable: true });
+    }
+
+    // …and the Menu really does turn that into a cancel and report the take.
+    const menuSrc = await readFile(src('ui/Menu.js'), 'utf8');
+    assert(/this\._padCapture\(code === 'PadStart' \? null : code\);\s*\n\s*return true;/.test(menuSrc),
+      'Menu.padCode no longer cancels on Start or no longer reports that it took the press');
+    const mainSrc = await read('src/main.js');
+    assert(/input\.onPadCode = \(code\) => !!menu\.padCode\?\.\(code\)/.test(mainSrc),
+      'main.js drops padCode\'s answer, so Input cannot know the press was taken');
+    return 'a chip takes A, LB+A as a chord and Start as a cancel; a taken press fires no confirm, '
+      + 'no nav and no menu, and a held direction waits to be let go of';
+  });
+
   check('controls: every prompt in the game names the device in the player\'s hands', async () => {
     /**
      * THE TYPED-KEY-NAME RULE, EXTENDED TO THE THING BEING HELD.

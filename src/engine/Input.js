@@ -85,7 +85,7 @@ export class Input {
     this.onMenu = null;
     /** Menu navigation intents from the pad — see _padUi. */
     this.onNav = null; this.onConfirm = null; this.onBack = null;
-    this._navDir = null; this._navWait = 0;
+    this._navDir = null; this._navWait = 0; this._navSuppress = false;
     this.padDownSet = new Set();
     this.padPressedSet = new Set();
     this.padAxis = { 0: 0, 1: 0, 2: 0, 3: 0 };
@@ -298,15 +298,33 @@ export class Input {
     }
     if (any) this._useDevice('pad');
 
-    this._padUi(dt);
-    // The rebinder hears a pad the way it hears a key. A press with a modifier
-    // already held is reported AS the chord, so binding "LB + A" is holding LB
-    // and pressing A — which is also how you would fire it.
+    /**
+     * THE REBINDER GETS THE FRAME FIRST, AND GETS ALL OF IT.
+     *
+     * It hears a pad the way it hears a key, and a press with a modifier
+     * already held is reported AS the chord — so binding "LB + A" is holding LB
+     * and pressing A, which is also how you would fire it.
+     *
+     * `consumed` is why this is ordered rather than merely present. While a
+     * binding chip is waiting, A means "bind A to this action" and NOT ALSO
+     * "press the thing under the focus ring", and D-pad up means "bind up" and
+     * not also "walk the list" — without this, one press did two things, which
+     * is the disease this whole table exists to cure showing up in the table's
+     * own editor.
+     */
+    let consumed = false;
     if (this.onPadCode) {
       for (const code of this.padPressedSet) {
         if (PAD_MODIFIERS.includes(code)) continue;
-        this.onPadCode(this.chordOf(code));
+        if (this.onPadCode(this.chordOf(code))) consumed = true;
       }
+    }
+    if (consumed) {
+      // …and a direction still held after it was BOUND must not start walking
+      // the list the moment the chip stops listening. Suppressed until every
+      // direction is released — see _padUi.
+      this._navSuppress = true;
+      return;
     }
     // START IS THE WAY OUT, and it is device-level for the reason Escape is:
     // pausing has to survive a binding that has gone wrong, so it is not in
@@ -320,6 +338,7 @@ export class Input {
       if (this.padPressedSet.has('PadA')) this.onConfirm?.();
       if (this.padPressedSet.has('PadB')) this.onBack?.();
     }
+    this._padUi(dt);
   }
 
   /**
@@ -344,9 +363,12 @@ export class Input {
    * finds the D-pad is not stuck pushing once per item.
    */
   _padUi(dt) {
-    if (!this.onNav && !this.onConfirm && !this.onBack) return;
+    if (!this.onNav) return;
     const held = UI_NAV.find(([, ...codes]) => codes.some(c => this.padDownSet.has(c)));
-    if (!held) { this._navDir = null; this._navWait = 0; return; }
+    if (!held) { this._navDir = null; this._navWait = 0; this._navSuppress = false; return; }
+    // A direction that was just BOUND to something is still under the thumb.
+    // It stops being a navigation until it is let go of — see _readPad.
+    if (this._navSuppress) return;
     const dir = held[0];
     if (dir !== this._navDir) {
       this._navDir = dir; this._navWait = UI_REPEAT_FIRST;

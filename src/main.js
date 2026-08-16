@@ -1415,8 +1415,14 @@ input.onMenu = () => {
   screens.escape();
 };
 
-/** A pad button, for whichever binding chip in the options list is listening. */
-input.onPadCode = (code) => menu.padCode?.(code);
+/**
+ * A pad button, for whichever binding chip in the options list is listening.
+ *
+ * The answer matters: `true` means the rebinder took the press, and Input drops
+ * the rest of the frame's pad handling so one button cannot both bind an action
+ * and press whatever the focus ring was on.
+ */
+input.onPadCode = (code) => !!menu.padCode?.(code);
 
 /**
  * THE FRONT END, WALKED WITH A PAD — and the policy is here rather than in

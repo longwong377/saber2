@@ -3964,8 +3964,23 @@ export class Menu {
     return true;
   }
 
-  /** A pad button, for whichever binding chip is listening. See _buildBindings. */
-  padCode(code) { if (this._padCapture) this._padCapture(code); }
+  /**
+   * A pad button, for whichever binding chip is listening. See _buildBindings.
+   *
+   * Returns whether it was TAKEN, and Input reads that: a press the rebinder
+   * consumed must not also press the control under the focus ring or walk the
+   * list. One press, one thing — inside the editor for the table that rule
+   * belongs to.
+   */
+  padCode(code) {
+    if (!this._padCapture) return false;
+    // Start CANCELS, which is what Escape does for a keyboard — and it costs
+    // nothing, because bare Start is the device-level way out and is bound to
+    // no action for exactly that reason. Without it a pad-only player who
+    // opened a chip by accident has no way to close it again.
+    this._padCapture(code === 'PadStart' ? null : code);
+    return true;
+  }
 
   /**
    * Is a binding chip waiting for a button right now?
