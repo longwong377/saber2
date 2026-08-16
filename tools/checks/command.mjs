@@ -94,6 +94,69 @@ const dirFor = (opts = {}) => {
   return { w, d };
 };
 
+/* ── the real thing ──────────────────────────────────────────────────── */
+
+/**
+ * A REAL COMMAND WORLD, DEPLOYED AND RUNNING — and it is the only fixture below
+ * this line, on purpose.
+ *
+ * `cmdWorld` above is a stub. It was the right shape for what it was written to
+ * ask (is the roster unique, does the rank ladder climb, is the leash gate a
+ * gate) and it is INCAPABLE of asking anything else, because nothing in it
+ * fights: `spawnEnemy` returns an object with a `_move` that increments a
+ * counter, so no body has ever walked, aimed, fired or died inside this file.
+ *
+ * That is why this suite was 15/15 green across two crashes, an advance that
+ * never ended, a win that could not be recorded, permadeath that fired zero
+ * times in 66 minutes, a leash that produced 0 kills from ten troopers in 70 s
+ * and a liveness watchdog that dismantled the formation it was asked to protect
+ * 19 times in 88 s. Every one of those is a fact about a world stepping, and a
+ * suite made of tables and stubs cannot see a single one.
+ *
+ * So: a real `World` on the real ground, the army deployed through
+ * `world.spawnEnemy`, and `world.update` as the only clock. It costs about
+ * thirty seconds a check and that is the price of a check that could fail.
+ *
+ * `trim` cuts the composed wave down to a few bodies. The wave is still composed
+ * by the shipped composer and delivered by the shipped arrivals — this only
+ * shortens the queue, so a check that has to reach a CLEAR reaches one in forty
+ * game-seconds instead of two hundred.
+ */
+async function commandWorld(opts = {}) {
+  const { bootWorld, idleInput } = await import('./_coop.mjs');
+  const { world } = await bootWorld({
+    level: 'geonosis',
+    settings: { mode: 'command', level: 'geonosis', order: opts.order || 'jedi' },
+  });
+  const d = world.command;
+  if (d && opts.formation) d.order(opts.formation);
+  if (d && opts.start !== false) {
+    world.director.start(1);
+    if (opts.trim) d.spawnQueue.length = Math.min(d.spawnQueue.length, opts.trim);
+  }
+  return { world, d, input: idleInput() };
+}
+
+/**
+ * Step a real world.
+ *
+ * 1/30 rather than 1/60 because these drives are forty to ninety GAME-seconds
+ * long and this box renders through swiftshader — HANDOFF §2.6. `main.js`
+ * clamps `dt` at 0.1 s, so 0.033 is inside the range the game is written to
+ * survive, and both halves of every A/B below were measured at it.
+ */
+const STEP = 1 / 30;
+function drive(world, seconds, input, until = null) {
+  const n = Math.round(seconds / STEP);
+  let t = 0;
+  for (let i = 0; i < n; i++) {
+    world.update(STEP, input);
+    t += STEP;
+    if (until && until(t)) break;
+  }
+  return t;
+}
+
 export function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The mode and its ground                                           */
@@ -546,9 +609,304 @@ export function run({ check, assert }) {
       + `${sold.length} of ${d.army.tiers.length} rungs on sale at the start`;
   });
 
+  check('command: the advance ends, once, and the run is recorded as won', async () => {
+    /**
+     * THE CAMPAIGN HAD NO END, AND IT IS THE DEFECT THIS SUITE MOST OBVIOUSLY
+     * SHOULD HAVE HAD.
+     *
+     * `_areaClear` on the last area notified, cleared `mustering` and returned
+     * WITHOUT resetting `areaWaves`. `area` clamps to the last entry, so the
+     * counter stayed at or above `area.waves` forever and the branch re-entered
+     * on EVERY subsequent wave clear: another announcement, another +2 xp to
+     * every body, another payout of the last area's reinforcement points —
+     * uncapped — and another entry on a log nothing trims.
+     *
+     * Driven to the real ending: the last area, a real wave through
+     * `world.update`, a real clear. Then the run is kept going and the same
+     * ledger is asked again, which is the half a one-shot assertion would miss.
+     */
+    const { world, d, input } = await commandWorld({ formation: 'front', trim: 2 });
+    // The last area, one wave short of holding it. Everything from here is the
+    // shipped path: payWave → _areaClear → lastArea → _endCampaign.
+    d.areaIndex = Cmd.AREAS.length - 1;
+    d.areaWaves = d.area.waves - 1;
+    assert(d.lastArea, 'the fixture did not reach the last area');
+    const overs = [];
+    world.onGameOver = (s) => overs.push(s);
+
+    const t = drive(world, 180, input, () => overs.length > 0);
+    assert(overs.length === 1,
+      `${overs.length} game-over events from one finished campaign after ${t.toFixed(0)}s`);
+    const s = overs[0];
+    assert(s.won === true,
+      'the advance ended and the summary does not say it was WON — `won` is the field '
+      + 'Progress.recordRun reads for `wins` and `crowned`, and nothing in src/ used to set it');
+    assert(d.done, 'the director does not know the campaign is over');
+    assert(world.over, 'the world is still running waves at a finished campaign');
+    assert(d.roster.all.every((x) => !x.body),
+      'the army is still standing on the field after the advance ended — recall did not run');
+
+    // AND IT DOES NOT HAPPEN AGAIN. Keep the clock running, then ask the ledger
+    // for another wave by hand — which is exactly what `payWave` used to accept.
+    const points = d.roster.points, logged = d.log.length, xp = d.roster.all.reduce((n, x) => n + x.xp, 0);
+    drive(world, 20, input);
+    d.payWave(d.wave + 1);
+    d.payWave(d.wave + 2);
+    assert(overs.length === 1, `the campaign ended ${overs.length} times`);
+    assert(d.roster.points === points,
+      `the muster paid out again after the advance was over: ${points} → ${d.roster.points}`);
+    assert(d.log.length === logged, `the campaign log grew by ${d.log.length - logged} after it ended`);
+    assert(d.roster.all.reduce((n, x) => n + x.xp, 0) === xp, 'the roster earned experience after the end');
+    const won = { ...s };
+    world.unload();
+    return `ended once at ${t.toFixed(0)}s in area ${Cmd.AREAS.length}, won=${won.won}, `
+      + `${d.roster.strength} of ${d.roster.all.length} walked off; two further payWave calls paid nothing`;
+  });
+
+  check('command: a victory reports the same stats a defeat does', async () => {
+    /**
+     * A PIN ON A TWIN THIS FILE'S OWNER COULD NOT DELETE.
+     *
+     * `World._checkWipe` assembles the six numbers a finished session is
+     * described by, inline, inside its `onGameOver` call. Command's
+     * `_endCampaign` needs the same six for a session that ended by being WON,
+     * and Command.js is not allowed to edit World.js — so there are two
+     * assemblies of one object, which is the shape this repository has been
+     * bitten by nine times (HANDOFF §2.3).
+     *
+     * It cannot be deleted from here. It CAN be made unable to drift in
+     * silence: drive a real party wipe and a real campaign victory, and require
+     * the two summaries to carry the identical set of keys. Add a field to one
+     * and this fails. The real fix is `World.runStats()`; it is written down in
+     * the handover at the foot of Command.js.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({ level: 'arena', settings: { mode: 'waves' } });
+    let wipe = null;
+    world.onGameOver = (s) => { wipe = s; };
+    world.player.die(null);
+    for (let i = 0; i < 8 && !wipe; i++) world.update(STEP, idleInput());
+    assert(wipe, 'killing the only player did not produce a game-over summary');
+    world.unload();
+
+    const { world: w2, d, input } = await commandWorld({ trim: 1 });
+    d.areaIndex = Cmd.AREAS.length - 1;
+    d.areaWaves = d.area.waves - 1;
+    let win = null;
+    w2.onGameOver = (s) => { win = s; };
+    drive(w2, 180, input, () => !!win);
+    assert(win, 'the campaign did not finish');
+    const a = Object.keys(wipe).sort(), b = Object.keys(win).filter((k) => k !== 'won').sort();
+    assert(a.join() === b.join(),
+      `a defeat reports {${a.join(', ')}} and a victory {${b.join(', ')}} — the two assemblies have drifted`);
+    for (const k of a) {
+      assert(typeof win[k] === typeof wipe[k],
+        `the victory's ${k} is a ${typeof win[k]} where a defeat's is a ${typeof wipe[k]}`);
+    }
+    w2.unload();
+    return `${a.length} shared fields (${a.join(', ')}) plus won on the victory`;
+  });
+
+  check('command: a trooper the watchdog withdraws is a casualty, not a free respawn', async () => {
+    /**
+     * PERMADEATH FIRED ZERO TIMES IN 66 MINUTES OF DRIVEN PLAY, and this is one
+     * of the two reasons.
+     *
+     * `Waves._retire` set `e.dead = true` and told nobody. `deploy()` skips a
+     * record whose body is alive and builds a new one for every record whose
+     * body is dead or missing — which is exactly the state a retirement leaves
+     * behind — so a retired trooper was silently rebuilt at the next area with
+     * its name, rank and experience intact. The watchdog was a free respawn.
+     *
+     * Driven on real bodies in a real world, through the shipped `_retire`.
+     */
+    const { world, d, input } = await commandWorld({ trim: 1 });
+    drive(world, 2, input);
+    const victim = d.roster.living[0];
+    const body = victim.body;
+    assert(body && !body.dead, 'the fixture trooper never got a body');
+    const was = d.roster.strength;
+
+    d._retire(body, { best: Infinity, hp: body.hp, t: 0, n: 9 }, 'a check');
+    assert(body.dead, 'the retirement did not take the body off the field');
+    assert(!victim.alive, 'a withdrawn trooper is still on the roll — it was not a casualty');
+    assert(victim.diedIn === d.areaNumber, 'the casualty does not record where it fell');
+    assert(d.roster.strength === was - 1, `the strength did not fall: ${was} → ${d.roster.strength}`);
+    assert(d.roster.fallen.includes(victim), 'the withdrawn trooper is not on the casualty list');
+
+    // …AND IT DOES NOT COME BACK. This is the half that made the bug invisible.
+    const before = world.enemies.filter((e) => e.trooper && !e.dead).length;
+    d.deploy();
+    const after = world.enemies.filter((e) => e.trooper && !e.dead).length;
+    assert(after <= before, `deploy resurrected ${after - before} body/bodies for a dead record`);
+    assert(!victim.body, 'the dead record was handed a new body');
+    world.unload();
+    return `${was} → ${d.roster.strength} standing, the name is on the casualty list and deploy left it there`;
+  });
+
+  check('command: the watchdog does not dismantle the formation it was asked to protect', async () => {
+    /**
+     * "TAKE COVER" WAS DESTROYED BY THE LIVENESS WATCHDOG.
+     *
+     * `_watchdog` measures each body's distance to the nearest PLAYER, and a
+     * squad ordered to go to ground stays where it was told while the commander
+     * walks away from it. Driven before the fix, on this same scenario: ten
+     * troopers planted and a commander walking a wide circle produced 25
+     * interventions on the player's own line in 90 s — 20 rescues that teleport
+     * a body to the level's spawn ring and 5 retirements — with the mean body 76
+     * m off its ordered mark and seven of ten names off the roll.
+     *
+     * The rule that fixes it is the wave-end count's own arithmetic, called
+     * rather than restated: a body that cannot hold a wave open is never the
+     * reason it has not ended, and one of your own troops never can.
+     *
+     * The horde's own rescues are asserted to still be POSSIBLE rather than
+     * required — a driven wave that happens to place every body somewhere
+     * reachable is a good wave, not a broken watchdog.
+     */
+    const { world, d, input } = await commandWorld({ formation: 'cover' });
+    const mine = new Set(d.army.tiers.map((t) => t.type));
+    // A commander who keeps walking: full stick with a slow turn, which is a
+    // ~80 m circle at 4.6 m/s and takes the line well outside anything the
+    // watchdog's distance-to-a-player clock would call "arrived".
+    input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; };
+    drive(world, 90, input, () => { world.player.camera.yaw += 0.055 * STEP; return false; });
+
+    const log = d.rescues || [];
+    const onMine = log.filter((r) => mine.has(r.type));
+    let away = 0;
+    for (const t of d.roster.living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      away = Math.max(away, Math.hypot(e.position.x - world.player.position.x,
+        e.position.z - world.player.position.z));
+    }
+    assert(onMine.length === 0,
+      `${onMine.length} watchdog interventions on your own line (${onMine.map((r) => r.what).join(', ')}) — `
+      + 'a body standing where it was ORDERED to stand is being rescued from its own firing position');
+    assert(d.roster.fallen.length < Cmd.OPENING_STRENGTH / 2,
+      `${d.roster.fallen.length} of ${Cmd.OPENING_STRENGTH} names came off the roll while holding an order`);
+    assert(away > 25,
+      `the fixture never actually left its line behind — the furthest trooper was ${away.toFixed(0)} m away`);
+    world.unload();
+    return `commander walked away to ${away.toFixed(0)} m over 90s: 0 interventions on ${d.roster.strength} `
+      + `troops holding cover, ${log.length} on the horde`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  Formations                                                        */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  check('command: a rung goes on sale in the area its own ladder names', () => {
+    /**
+     * THE NINTH HAND-MAINTAINED TABLE BESIDE ITS GENERATED TWIN (HANDOFF §2.3),
+     * and this one was an off-by-one nobody could see.
+     *
+     * `rung('arc', 3)` reads as "an ARC can be bought from area three". The
+     * muster compared that 3 against a SECOND hand-written column,
+     * `AREAS[i].tier`, which ran 1, 2, 2, 4, 4 — so `at: 3` was not satisfied by
+     * area 3 (tier 2), it was satisfied by area 4. Every rung-4 and rung-5 body
+     * on both ladders — the ARC, the Clone Commander, the BX and the MagnaGuard
+     * — arrived one whole area later than the ladder said, in a five-area
+     * campaign. Nothing on screen prints a tier, so it read as "the good units
+     * never turn up".
+     *
+     * The second column is deleted. This asserts that it stays deleted and that
+     * the offer and the purchase agree with the ladder at every area.
+     */
+    assert(Cmd.AREAS.every((a) => a.tier === undefined),
+      'AREAS carries a `tier` column again, beside the `at` that decides the same thing');
+    const rows = [];
+    for (let i = 0; i < Cmd.AREAS.length; i++) {
+      const { d } = dirFor();
+      d.areaIndex = i;
+      d.roster.points = 9999;
+      const on = new Set(d.musterOffer().units.map((u) => u.type));
+      for (const rung of d.army.tiers) {
+        const should = rung.at <= i + 1;
+        assert(on.has(rung.type) === should,
+          `area ${i + 1}: ${rung.type} declares at:${rung.at} and is ${on.has(rung.type) ? '' : 'not '}on sale`);
+        // …and the SALE is the same rule as the offer, or the screen lies.
+        const bought = d.recruit(rung.type);
+        assert(!!bought === should,
+          `area ${i + 1}: ${rung.type} is ${should ? 'offered and refused' : 'not offered and sold'}`
+          + (d.refused ? ` (${d.refused})` : ''));
+      }
+      rows.push(`${i + 1}:${on.size}`);
+    }
+    /* THE FOUR THAT WERE LOST, BY NAME. Both armies' rung 4 and rung 5. */
+    const { d } = dirFor();
+    d.areaIndex = 2;                                   // area 3
+    d.roster.points = 9999;
+    const three = new Set(d.musterOffer().units.map((u) => u.type));
+    for (const t of ['arc', 'officer']) {
+      assert(three.has(t), `${t} declares at:3 and is not on sale in area 3`);
+    }
+    const { d: cis } = dirFor({ army: Cmd.ARMIES.separatist });
+    cis.areaIndex = 2;
+    cis.roster.points = 9999;
+    const cisThree = new Set(cis.musterOffer().units.map((u) => u.type));
+    for (const t of ['bx', 'magna']) {
+      assert(cisThree.has(t), `${t} declares at:3 and is not on sale in area 3`);
+    }
+    return `rungs on sale per area: ${rows.join(', ')}; arc/officer/bx/magna all reachable in area 3`;
+  });
+
+  check('command: the army comes off the field between areas and goes down once', async () => {
+    /**
+     * `recall()` HAD NO CALLER ANYWHERE IN THE TREE, and could not safely have
+     * had one.
+     *
+     * The header of `Trooper` says "the Enemy is disposed at the end of every
+     * area and rebuilt at the start of the next one" — a claim about a method
+     * `grep -rn 'recall' src/` finds defined and never used. So the army never
+     * came off the field: survivors stayed wherever the last wave left them, up
+     * to eighty metres out, and the next area opened with the line already
+     * broken. And the method as it stood nulled `t.body` while leaving the BODY
+     * standing, where `deploy()` builds a fresh one for every record whose body
+     * is null — one call would have doubled the army with a second, nameless,
+     * unpromotable copy.
+     *
+     * Driven across a real area boundary in a real world, through the shipped
+     * path: payWave → _areaClear → recall → autoMuster → closeMuster → deploy.
+     */
+    const { world, d, input } = await commandWorld({ trim: 1 });
+    drive(world, 2, input);
+    const live = () => world.enemies.filter((e) => e.trooper && !e.dead).length;
+    const before = live();
+    assert(before === Cmd.OPENING_STRENGTH, `${before} troopers on the field before the boundary`);
+    const names = d.roster.all.map((t) => t.name).join('|');
+
+    d.areaWaves = d.area.waves - 1;
+    const paid = d.payWave(d.wave);
+    assert(paid, 'the last wave of the area did not pay');
+    assert(d.areaIndex === 1, 'the area did not advance');
+
+    const after = live();
+    assert(after === d.roster.strength,
+      `${after} bodies on the field for a roster of ${d.roster.strength} — recall left ghosts behind `
+      + 'or deploy built a second copy of the army');
+    for (const t of d.roster.living) {
+      assert(t.body && !t.body.dead, `${t.name} crossed the boundary without a body`);
+      assert(t.body.trooper === t, `${t.name}'s body does not point back at its record`);
+    }
+    for (const t of d.roster.fallen) assert(!t.body, `${t.name} is dead and still holding a body`);
+    /* Every name survives the crossing — the roster is the one object that
+     * outlives an area, which is the whole reason it is not the body. */
+    assert(names.split('|').every((n) => d.roster.all.some((t) => t.name === n)),
+      'a name was lost across the area boundary');
+    /* …and they came down AROUND THE COMMANDER rather than staying where the
+     * last wave left them. */
+    let far = 0;
+    for (const t of d.roster.living) {
+      far = Math.max(far, Math.hypot(t.body.position.x - world.player.position.x,
+        t.body.position.z - world.player.position.z));
+    }
+    assert(far < 30, `the furthest trooper deployed ${far.toFixed(0)} m from the commander`);
+    world.unload();
+    return `${before} → ${after} bodies for ${d.roster.strength} records across the boundary, `
+      + `furthest ${far.toFixed(1)} m from the commander`;
+  });
 
   check('command: the six formations are six different shapes, and the leash bites', () => {
     /* Note #30: "you can order your troops into different formations, circle
@@ -622,6 +980,95 @@ export function run({ check, assert }) {
     assert(d.targetFor(one, [friend]) === null, 'a trooper targeted one of its own');
     return `${shapes.size} distinct layouts; front z+${meanZ('front').toFixed(1)}, `
       + `column z${meanZ('behind').toFixed(1)}, circle ${rMin.toFixed(1)}-${rMax.toFixed(1)} m; leash gates`;
+  });
+
+  check('command: no order may forbid a body from fighting at its own range', () => {
+    /**
+     * THE ASSERTION THE OLD LEASH COULD NOT SURVIVE, and it is one line of
+     * arithmetic against two tables that already exist.
+     *
+     * `targetFor` requires a target to be within the leash OF THE TROOPER'S
+     * SLOT. The leashes were absolute metres — 5, 6, 7, 8, 10 — and the bodies
+     * wearing them fight from 7-15 m (b1), 9-19 (trooper), 11-22 (heavy) and
+     * 22-42 (sniper). So "circle around me" ordered ten troopers to stand in a
+     * ring and refuse every target their own rifles were built to reach: driven,
+     * 0 kills and 72 damage in 70 s, and a sweep in which the kill count tracked
+     * the leash number monotonically (5→0, 6→0, 7→1, 8→5, 10→8) and did not
+     * respond to the SHAPE at all.
+     *
+     * The property that forbids that forever: whatever the order, a body may
+     * engage at least as far from its slot as its own `preferred[1]`. A
+     * formation is allowed to say "do not chase"; it is not allowed to say "do
+     * not shoot".
+     */
+    const worst = [];
+    const { d } = dirFor();
+    for (const F of Object.values(Cmd.FORMATIONS)) {
+      for (const army of Object.values(Cmd.ARMIES)) {
+        for (const rung of army.tiers) {
+          const A = ARCHETYPES[rung.type];
+          const reach = A.preferred?.[1] ?? 0;
+          if (!reach) continue;                       // a machine with no band
+          const leash = d.leashFor(F, { A });
+          assert(leash >= reach - 1e-9,
+            `${F.name} leashes a ${A.label} to ${leash.toFixed(1)} m of its slot and the body `
+            + `fights from ${reach} m — the order forbids it from using its own weapon`);
+          worst.push([F.id, rung.type, leash / reach]);
+        }
+      }
+    }
+    /* …and the six are still SIX. A leash that is the same for everybody is the
+     * slider-with-six-labels this check exists to prevent, in the other
+     * direction. */
+    const spread = new Set(Object.values(Cmd.FORMATIONS).map((F) => F.leash));
+    assert(spread.size >= 5, `${spread.size} distinct leashes over six formations`);
+    assert(Cmd.FORMATIONS.charge.leash === Infinity, 'a charge is leashed');
+    assert(Cmd.FORMATIONS.circle.leash < Cmd.FORMATIONS.front.leash,
+      'a ring around you is not tighter than a screen in front of you');
+    const tightest = worst.reduce((a, b) => (b[2] < a[2] ? b : a));
+    return `${worst.length} order/body pairs, tightest ${tightest[0]}/${tightest[1]} at `
+      + `${tightest[2].toFixed(2)}× its own reach; ${spread.size} distinct leashes`;
+  });
+
+  check('command: an idle commander\'s army clears a wave by itself', async () => {
+    /**
+     * DRIVEN, AND IT IS THE CHECK THIS WHOLE SUITE DID NOT HAVE.
+     *
+     * The player stands still and does nothing. Everything that happens is the
+     * army's: the wave is composed by the shipped composer, delivered by the
+     * shipped arrivals, fought by ten Enemy bodies with a team number on them,
+     * and the clock is `world.update`. Under the old leash this run does not
+     * end — measured on this exact fixture, the same seed and the same three
+     * bodies: with the leash restored to its old absolute metres the wave was
+     * still open at 180 game-seconds with 2 kills; it clears at 57 s with the
+     * leash derived from the body's own reach.
+     *
+     * The wave is trimmed to three bodies for time. Nothing else is touched.
+     */
+    const { world, d, input } = await commandWorld({ formation: 'circle', trim: 3 });
+    assert(d, 'the mode did not build a command director');
+    assert(d.roster.strength === Cmd.OPENING_STRENGTH, 'the army did not muster');
+    const deployed = world.enemies.filter((e) => e.trooper && !e.dead).length;
+    assert(deployed === Cmd.OPENING_STRENGTH,
+      `${deployed} of ${Cmd.OPENING_STRENGTH} troopers reached the field`);
+
+    let cleared = -1;
+    d.onWaveClear = () => { if (cleared < 0) cleared = 1; };
+    const t = drive(world, 180, input, () => cleared > 0);
+    const kills = d.roster.all.reduce((n, x) => n + x.kills, 0);
+    const alive = world.enemies.filter((e) => d.blocksWaveEnd(e)).length;
+    assert(world.player.alive, 'the commander died, so this measured a corpse');
+    assert(cleared > 0,
+      `wave 1 was still open after ${t.toFixed(0)} game-seconds with ${alive} of the horde alive and `
+      + `${kills} kills to a ten-body army — the formation is refusing targets its own weapons reach`);
+    assert(kills >= 2, `the wave cleared with only ${kills} kills credited to the roster`);
+    /* AND THE HUD'S NUMBER IS THE HORDE'S. `remaining` counted your own troops,
+     * so it could never reach zero while you had an army. */
+    assert(d.remaining === 0,
+      `the wave cleared and the readout still says ${d.remaining} remaining — it is counting your own line`);
+    world.unload();
+    return `cleared at ${t.toFixed(0)}s with an idle commander, ${kills} kills to the roster, `
+      + `${d.roster.strength} of ${Cmd.OPENING_STRENGTH} standing`;
   });
 
   check('command: the steer is installed on the one seam it has, and it moves a body', () => {

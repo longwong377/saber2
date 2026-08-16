@@ -1646,15 +1646,27 @@ export class CommandDirector extends WaveDirector {
    *
    *   the commander's own measured pace, so the follow tracks a sprint rather
    *     than a constant somebody typed;
-   *   plus a term in the gap, so a body 30 m adrift closes rather than trailing
-   *     at exactly the speed of the thing it is chasing forever;
+   *   plus a term in the gap, so a body adrift CLOSES rather than trailing at
+   *     exactly the speed of the thing it is chasing forever. 0.30 m/s per
+   *     metre, swept: at 0.09 the line held a 4.9 m mean gap on a commander
+   *     walking a continuous circle, at 0.20 3.6 m, at 0.30 3.0 m and at 0.45
+   *     2.6 m for a fleet permanently at the cap. 0.30 is where the straggling
+   *     stops (bodies more than 6 m off their mark: 70.6% of samples under the
+   *     old rule, 33.4% at 0.09, 0.9% here) and past it the return is buying
+   *     nothing but a jog that never lets up;
    *   capped at CATCH_UP × its own speed, so the ladder still means something —
    *     a heavy at 1.8× is 5.2 m/s and STILL cannot match a sprinting Jedi, and
    *     that is the correct answer for a heavy.
+   *
+   * IT DOES NOT SOLVE IT COMPLETELY AND IT CANNOT. A body chasing a commander
+   * who never stops moving is never standing exactly on its mark: measured over
+   * a 45 s continuous circle it is outside the 2.2 m tolerance 88.9% of the time
+   * against 98.6% before. What changed is the SIZE of the miss — a line 3 m
+   * behind you is a formation, a line 8.6 m behind you is a crowd.
    */
   followSpeed(e, gap) {
     const own = e.speed || 1;
-    const want = this._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.09;
+    const want = this._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.30;
     return Math.min(own * CATCH_UP, Math.max(own, want));
   }
 
