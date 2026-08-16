@@ -713,7 +713,7 @@ export function buildDwarfSpider(opts = {}) {
 
   const stance = chassisStance(S, {
       legs: 4, hipHeight: 0.92, step: 0.72, lift: 0.20, rear: 0.26, bob: 0.030,
-      plantX: 1.52, plantZ: [0.62, -0.62], ankle: 0.178, toe: 0.34,
+      plantX: 1.52, plantZ: [0.62, -0.62], ankle: 0.197, toe: 0.16,
       poleX: 1.75, poleY: 1.30, poleZ: 0,
   });
   return {
@@ -894,7 +894,7 @@ export function buildATTE(opts = {}) {
     tm.userData.limb = { r0: 0.125 * S, r1: 0.085 * S, seg: 8 };
     const kt2 = new Kit();
     kt2.add(shell, plateGeo(0.14 * S, T * 0.66, 0.24 * S, 0.04 * S, 1), [0, T * 0.36, 0.05 * S]);
-    kt2.add(dark, new THREE.CylinderGeometry(0.22 * S, 0.22 * S, 0.14 * S, 12), [0, T, 0], [0, 0, 1.5708]);
+    kt2.add(dark, new THREE.CylinderGeometry(0.13 * S, 0.13 * S, 0.16 * S, 10), [0, T, 0], [0, 0, 1.5708]);
     kt2.bake(tibia.obj);
 
     /* THE PAD STANDS ON THE GROUND, and getting that right is arithmetic
@@ -903,14 +903,24 @@ export function buildATTE(opts = {}) {
      * tarsus TIP and flipped, and the stance's `ankle` has to lift the target
      * by however far the tarsus drops. The shipped spider walker sets `ankle:
      * 0` with a 0.3-of-scale tarsus, which buries its claws two thirds of a
-     * metre; this is what that field is for. */
+     * metre; this is what that field is for.
+     *
+     * `toe` IS THE OTHER HALF, and it is not a cosmetic. `_poseWalker` aims the
+     * tarsus along `fwd·toe + up·−(1−toe)`, so a big toe value leans the whole
+     * ankle forward and a foot pad 1.6 m across, lying in the tarsus's own
+     * plane, digs its front rim into the ground: measured at toe 0.32, four of
+     * the six pads were 0.41 m under the floor while every tarsus TIP was
+     * exactly on it. The tip landing correctly is what makes this invisible to
+     * a check that only looks at the joint. An AT-TE's pads are flat and level
+     * in every plate, so the ankle stands nearly upright and the pad lies flat
+     * on it. */
     const P = tarsus.length;
     primary(tarsus, assemble([[padGeo(0.36 * S, 0.28 * S, 4), [0, P, 0], [Math.PI, 0, 0]]]), shell, 0.22 * S);
   }
 
   const stance = chassisStance(S, {
       legs: 6, hipHeight: 1.30, step: 0.86, lift: 0.26, rear: 0.22, bob: 0.018,
-      plantX: 1.34, plantZ: [1.70, 0.02, -1.62], ankle: 0.235, toe: 0.32,
+      plantX: 1.34, plantZ: [1.70, 0.02, -1.62], ankle: 0.259, toe: 0.08,
       poleX: 1.05, poleY: 1.45, poleZ: 0,
   });
   return {

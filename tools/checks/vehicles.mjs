@@ -122,6 +122,82 @@ function measure(type) {
   return out;
 }
 
+/* ── the silhouette, rasterised ───────────────────────────────────────── */
+
+/**
+ * THE FLANK, AS PIXELS — the same measurement `tools/_creature.mjs` makes of
+ * the menagerie, for the same complaint and against the same argument.
+ *
+ * An aspect ratio can be fooled: two machines with the same bounding box can
+ * still be a solid wedge and a pair of hoops with air between them, and two
+ * with different boxes can still be the same shape at two sizes. What cannot be
+ * fooled is the outline itself, rasterised into ONE ABSOLUTE WORLD FRAME —
+ * shared, not normalised per machine, because normalising would call a 2.8 m
+ * dwarf spider and a 13.5 m AT-TE identical for having the same proportions,
+ * which is the opposite of what is being asked.
+ *
+ * The view is along X, so what is drawn is the FLANK: the view every reference
+ * plate of every one of these is taken from, and the one that carries leg
+ * count, ground clearance and where the mass sits. Head-on, an AT-TE and an AAT
+ * are both "a wide thing" and the measurement says nothing.
+ */
+const RW = 160, RH = 96, RSPAN = 20, RTALL = 12;
+
+function silhouette(root, lodOnly, keep) {
+  const bits = new Uint8Array(RW * RH);
+  const sx = (RW - 1) / RSPAN, sy = (RH - 1) / RTALL;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    if (lodOnly && !keep.has(o) && !o.userData.silhouette) return;
+    const g = o.geometry, p = g.attributes.position, idx = g.index;
+    const n = idx ? idx.count : p.count;
+    for (let i = 0; i < n; i += 3) {
+      const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+      a.fromBufferAttribute(p, i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(p, i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(p, i2).applyMatrix4(o.matrixWorld);
+      // project along X: horizontal is z, vertical is y with the floor at the bottom
+      const P = [a, b, c].map((q) => [(q.z + RSPAN / 2) * sx, (RTALL - q.y) * sy]);
+      const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
+      const x1 = Math.min(RW - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
+      const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])));
+      const y1 = Math.min(RH - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])));
+      const d0 = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[2][0] - P[0][0]) * (P[1][1] - P[0][1]);
+      if (Math.abs(d0) < 1e-12) continue;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5, py = y + 0.5;
+        const w0 = ((P[1][0] - px) * (P[2][1] - py) - (P[2][0] - px) * (P[1][1] - py)) / d0;
+        const w1 = ((P[2][0] - px) * (P[0][1] - py) - (P[0][0] - px) * (P[2][1] - py)) / d0;
+        if (w0 >= -1e-6 && w1 >= -1e-6 && 1 - w0 - w1 >= -1e-6) bits[y * RW + x] = 1;
+      }
+    }
+  });
+  return bits;
+}
+
+function iou(a, b) {
+  let inter = 0, uni = 0;
+  for (let i = 0; i < a.length; i++) { if (a[i] || b[i]) uni++; if (a[i] && b[i]) inter++; }
+  return uni ? inter / uni : 0;
+}
+
+/** What fraction of its own bounding box a silhouette fills, and where its
+ *  weight sits up that box. A solid wedge fills 0.6; a thing made of legs and
+ *  hoops fills 0.2, and no ratio of boxes can tell those two apart. */
+function fillAndMass(bits) {
+  let n = 0, sy = 0, x0 = RW, x1 = -1, y0 = RH, y1 = -1;
+  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++) {
+    if (!bits[y * RW + x]) continue;
+    n++; sy += y;
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (!n) return { fill: 0, mass: 0 };
+  const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+  return { fill: n / area, mass: 1 - ((sy / n) - y0) / Math.max(1, y1 - y0) };
+}
+
 /** How far apart two boxes are in SHAPE, ignoring size. */
 function aspectGap(a, b) {
   const na = normalise(a), nb = normalise(b);
@@ -349,6 +425,60 @@ export async function run({ check, assert }) {
     return rows.join(', ');
   });
 
+  /**
+   * …AND THE OUTLINES DO NOT OVERLAP.
+   *
+   * This is the check the whole file is really for, and it is the one an aspect
+   * ratio cannot make: two flanks drawn into the same absolute world frame, and
+   * the intersection over the union of the pixels. Two machines that share a
+   * body plan land above 0.5 — that is the number `tools/_creature.mjs` records
+   * for the menagerie the player complained about. It is measured twice: once
+   * with everything, and once with ONLY what survives the LOD cull, because the
+   * range this matters at is the range where the second one is all there is.
+   *
+   *   measured the day this was written: worst pair of all four is aat|hailfire
+   *   at 0.22 whole and 0.21 at LOD 1, against a bar of 0.42 and a
+   *   same-body-plan reading of 0.5.
+   */
+  check('vehicles: their outlines do not overlap, at any range', () => {
+    const sils = new Map(), lods = new Map(), stats = [];
+    for (const t of VEHICLE_TYPES) {
+      const m = measure(t);
+      const keep = new Set();
+      for (const b of m.rig.list) if (b.primary) keep.add(b.primary);
+      const s = silhouette(m.rig.root, false, keep);
+      const l = silhouette(m.rig.root, true, keep);
+      sils.set(t, s); lods.set(t, l);
+      stats.push({ t, ...fillAndMass(s) });
+    }
+    let worst = 0, worstPair = '', worstLod = 0, worstLodPair = '';
+    for (let i = 0; i < VEHICLE_TYPES.length; i++) {
+      for (let j = i + 1; j < VEHICLE_TYPES.length; j++) {
+        const a = VEHICLE_TYPES[i], b = VEHICLE_TYPES[j];
+        const v = iou(sils.get(a), sils.get(b));
+        const w = iou(lods.get(a), lods.get(b));
+        if (v > worst) { worst = v; worstPair = `${a}|${b}`; }
+        if (w > worstLod) { worstLod = w; worstLodPair = `${a}|${b}`; }
+      }
+    }
+    assert(worst < 0.42,
+      `${worstPair} overlap ${(worst * 100).toFixed(0)}% of their combined outline. Two machines that `
+      + 'share a body plan land above 0.5 — that is the number _creature.mjs records for the '
+      + 'menagerie the player was describing when he wrote "sphere with some legs".');
+    assert(worstLod < 0.42,
+      `${worstLodPair} overlap ${(worstLod * 100).toFixed(0)}% at LOD 1, which is the only range that `
+      + 'matters for this — past thirty metres the culled meshes are not there to tell them apart');
+    /* And they are not one shape at four densities. `fill` separates a solid
+     * hovering wedge from a thing made of legs and hoops with air between them,
+     * and no ratio of bounding boxes can. */
+    const fills = stats.map((s) => s.fill);
+    assert(Math.max(...fills) > Math.min(...fills) * 1.6,
+      `every one of them fills ${fills.map((v) => v.toFixed(2)).join('/')} of its own box — `
+      + 'four machines of the same density is four skins on one plan');
+    return `worst ${worstPair} ${worst.toFixed(2)} (LOD1 ${worstLodPair} ${worstLod.toFixed(2)}); `
+      + stats.map((s) => `${s.t} fill ${s.fill.toFixed(2)} mass@${s.mass.toFixed(2)}`).join(', ');
+  });
+
   check('vehicles: no two build the same geometry', () => {
     const seen = new Map();
     for (const t of VEHICLE_TYPES) {
@@ -431,6 +561,74 @@ export async function run({ check, assert }) {
       e.damage(40, new THREE.Vector3(0, 2, 0), null, 'blaster');
       assert(e.hp < before, `${t} took no damage from a 40-point hit`);
       rows.push(`${t} ${caps.length} caps`);
+      e.dispose?.();
+    }
+    return rows.join(', ');
+  });
+
+  /**
+   * IT STANDS ON THE GROUND.
+   *
+   * The rest pose says nothing about this: `_poseWalker` throws the rest pose
+   * away and IK-solves every leg to a foot target on the terrain, so whether a
+   * machine's feet reach that target — and whether its pads sit ON the floor
+   * rather than through it — is a property of five numbers agreeing (femur,
+   * tibia, hip height, plant radius, ankle offset) and of nothing you can see
+   * by reading the builder.
+   *
+   * `ankle` is the one that is easy to get wrong and the shipped spider walker
+   * gets it wrong: it plants the TIBIA's tip on the floor with `ankle: 0` and a
+   * 0.3-of-scale tarsus hanging on below, which buries its claws two thirds of
+   * a metre. Both walkers here lift the target by the tarsus's own drop.
+   */
+  check('vehicles: posed for real, the legs reach the floor and nothing sinks', async () => {
+    const rows = [];
+    for (const t of VEHICLE_TYPES) {
+      const e = await spawn(t);
+      const ctx = { terrain: flat(), time: 0 };
+      // eight frames at 60 Hz: enough for the gait phase to leave zero and for
+      // every leg to have been solved at least once
+      for (let i = 0; i < 8; i++) { ctx.time += 1 / 60; e._poseWalker(1 / 60, ctx); }
+      e.rig.root.updateMatrixWorld(true);
+
+      const ST = e.built.stance;
+      const hipY = e.rig.hipsBone.obj.position.y;
+      assert(Math.abs(hipY - ST.hipHeight) < ST.rear + ST.bob + 0.05,
+        `${t} rides at ${hipY.toFixed(2)} m against a declared hip height of ${ST.hipHeight.toFixed(2)}`);
+
+      let sunk = 0, deepest = 0, feet = 0, worstFoot = 0, bestFoot = Infinity;
+      e.rig.root.traverse((o) => {
+        if (!o.isMesh) return;
+        _box.setFromObject(o);
+        if (_box.min.y < -0.14) { sunk++; deepest = Math.min(deepest, _box.min.y); }
+      });
+      for (let i = 0; ; i++) {
+        const b = e.rig.get(`tarsus${i}`);
+        if (!b) break;
+        feet++;
+        b.obj.updateMatrixWorld(true);
+        const tip = new THREE.Vector3(0, b.length, 0).applyMatrix4(b.obj.matrixWorld);
+        worstFoot = Math.max(worstFoot, tip.y);
+        bestFoot = Math.min(bestFoot, Math.abs(tip.y));
+      }
+      assert(sunk === 0,
+        `${t} has ${sunk} mesh${sunk === 1 ? '' : 'es'} through the floor, the deepest by `
+        + `${(-deepest).toFixed(2)} m — check the stance's ankle offset against the tarsus length`);
+      if (feet) {
+        /* AT LEAST ONE FOOT IS PLANTED. Not "every foot", which would be wrong:
+         * `_poseWalker` runs a gait, and a leg in its swing half is SUPPOSED to
+         * be `lift` off the floor. The first cut of this check measured the
+         * worst foot and failed the AT-TE at 0.45 m, which was a swing leg at
+         * the top of its arc doing exactly what it should. The two halves are
+         * asked separately. */
+        assert(bestFoot < 0.12,
+          `${t} has no foot on the ground — the nearest is ${bestFoot.toFixed(2)} m off it. The leg `
+          + 'cannot reach its own plant radius, or the ankle offset is wrong');
+        assert(worstFoot < ST.lift + 0.25,
+          `${t} lifts a foot ${worstFoot.toFixed(2)} m, past its own declared lift of ${ST.lift.toFixed(2)}`);
+      }
+      rows.push(`${t} hips ${hipY.toFixed(2)}`
+        + (feet ? `, planted ${bestFoot.toFixed(2)}, lifted ${worstFoot.toFixed(2)}` : ', no feet'));
       e.dispose?.();
     }
     return rows.join(', ');

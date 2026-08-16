@@ -182,3 +182,92 @@ if (verbose) {
     console.log(`\n  ${r.type}: hp ${A.hp} mass ${A.mass} speed ${A.speed} threat ${A.threat} score ${A.score}`);
   }
 }
+
+/* ── --art: the flank, as characters ──────────────────────────────────────
+ *
+ * Everything above is a number, and a number cannot tell you that a cab is on
+ * upside down. This rasterises the same flank `tools/checks/vehicles.mjs`
+ * measures the overlap of, into one shared absolute frame, so four machines can
+ * be looked at side by side at the scale they actually are. `#` is what
+ * survives the LOD cull past thirty metres; `.` is detail that does not.
+ */
+if (flag('art', false)) {
+  const RW = 116, RH = 34, RSPAN = 20, RTALL = 9;
+  const tri = new THREE.Vector3(), tb = new THREE.Vector3(), tc = new THREE.Vector3();
+  const draw = (root, keep) => {
+    const bits = new Uint8Array(RW * RH);
+    const sx = (RW - 1) / RSPAN, sy = (RH - 1) / RTALL;
+    root.traverse((o) => {
+      if (!o.isMesh || !o.geometry?.attributes?.position) return;
+      const lvl = (keep.has(o) || o.userData.silhouette) ? 2 : 1;
+      const g = o.geometry, p = g.attributes.position, idx = g.index;
+      const n = idx ? idx.count : p.count;
+      for (let i = 0; i < n; i += 3) {
+        const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+        tri.fromBufferAttribute(p, i0).applyMatrix4(o.matrixWorld);
+        tb.fromBufferAttribute(p, i1).applyMatrix4(o.matrixWorld);
+        tc.fromBufferAttribute(p, i2).applyMatrix4(o.matrixWorld);
+        const P = [tri, tb, tc].map((q) => [(q.z + RSPAN / 2) * sx, (RTALL - q.y) * sy]);
+        const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
+        const x1 = Math.min(RW - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
+        const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])));
+        const y1 = Math.min(RH - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])));
+        const d0 = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[2][0] - P[0][0]) * (P[1][1] - P[0][1]);
+        if (Math.abs(d0) < 1e-12) continue;
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const px = x + 0.5, py = y + 0.5;
+          const w0 = ((P[1][0] - px) * (P[2][1] - py) - (P[2][0] - px) * (P[1][1] - py)) / d0;
+          const w1 = ((P[2][0] - px) * (P[0][1] - py) - (P[0][0] - px) * (P[2][1] - py)) / d0;
+          if (w0 >= -1e-6 && w1 >= -1e-6 && 1 - w0 - w1 >= -1e-6) {
+            bits[y * RW + x] = Math.max(bits[y * RW + x], lvl);
+          }
+        }
+      }
+    });
+    return bits;
+  };
+  /* POSED FOR REAL, not at rest.
+   *
+   * The first version of this drew the rig in its rest pose and the AT-TE's
+   * feet came out as spikes — the pads were there and were simply seen
+   * edge-on, because `_poseWalker` throws the rest pose away and IK-solves
+   * every leg to a target on the floor. A picture of a pose the game never
+   * shows is worse than no picture: it invites a fix to something that is not
+   * broken. So this spawns a live Enemy and steps its own pose solver, which
+   * is the same thing tools/_creature.mjs does and for the same reason. */
+  const { initPhysics } = await import('../src/physics/Rapier.js');
+  const { RapierWorld } = await import('../src/physics/RapierWorld.js');
+  const { Enemy } = await import('../src/game/Enemy.js');
+  await initPhysics();
+  const terrain = {
+    height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+    size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+    crater() {}, flush() {}, slopeAt: () => 0,
+  };
+  const world = {
+    scene: new THREE.Scene(), physics: new RapierWorld(), terrain,
+    enemies: [], particles: null, difficulty: null, groundColor: 0xa9764a,
+  };
+  for (const type of types) {
+    const e = new Enemy(world, type, new THREE.Vector3(0, 0, 0));
+    /* FACING ZERO, deliberately. `_poseWalker` yaws the hips to `this.facing`,
+     * which a fresh Enemy sets from its spawn heading — so the first version of
+     * this drew the AT-TE HEAD ON, 8.3 m wide and 6.8 m tall, and it read as a
+     * blob. The flank is the view every reference plate is taken from and the
+     * only one that carries leg count and ground clearance. */
+    e.facing = 0;
+    const pctx = { terrain, time: 0 };
+    for (let i = 0; i < 8; i++) { pctx.time += 1 / 60; e._poseWalker(1 / 60, pctx); }
+    e.rig.root.updateMatrixWorld(true);
+    const keep = new Set();
+    for (const b of e.rig.list) if (b.primary) keep.add(b.primary);
+    const bits = draw(e.rig.root, keep);
+    console.log(`\n  ${type} — flank, nose to the right, ${RSPAN} m across`);
+    for (let y = 0; y < RH; y++) {
+      let line = '  ';
+      for (let x = 0; x < RW; x++) line += bits[y * RW + x] === 2 ? '#' : bits[y * RW + x] ? '.' : ' ';
+      if (line.trim()) console.log(line.replace(/\s+$/, ''));
+    }
+    console.log('  ' + '─'.repeat(RW));
+  }
+}
