@@ -6,12 +6,21 @@ again. Read the traps section before touching a tool.
 
 Repo: `longwong377/saber2` · branch `claude/battlefront-borz-improvements-1g2xei`
 
-> **The default branch is still `claude/lightsaber-combat-game-lxw391`.** Everything
-> from this session is on the branch above, and a player opening the repo lands
-> on the default and sees none of it. That cost a round trip; it will cost the
-> next one too unless the default moves.
-Playable: <https://longwong377.github.io/saber2/> (Pages deploys on every push
-to that branch; all recent runs green)
+> **THE DEFAULT BRANCH HAS MOVED.** PR #1 merged 303 commits into
+> `claude/lightsaber-combat-game-lxw391` (merge `a092074`), so the default *is*
+> this work now and a player opening the repo lands on it. The note that used to
+> stand here — that everything was stranded on a side branch — is discharged.
+>
+> The working branch was restarted from the merged default afterwards, which is
+> what a merged PR requires: do not stack new commits on the old history.
+
+Playable two ways:
+
+- <https://longwong377.github.io/saber2/> — Pages deploys on every push to the
+  **default** branch only (see `.github/workflows/pages.yml`; a feature branch
+  publishes nothing, which is worth knowing before you worry about a push).
+- `node tools/pack.mjs <out.html>` — the whole game as ONE self-contained file,
+  no server. See §3.
 
 ---
 
@@ -19,10 +28,11 @@ to that branch; all recent runs green)
 
 | | |
 |---|---|
-| Suite | **1260 passed, 8 failed, ~11 min** — it completes again; §2.7b, failures in §6.4 |
+| Suite | **1311 passed, 5 failed, ~13 min** — failures in §6.4, all named and none blocking |
 | Smoke | 11/11 steps clean, ~2 min |
-| Levels | **7**, down from 13 — six deleted on the player's word |
-| Modes | **5** — the Descent is deleted, and `Run.js` with it |
+| Levels | **10** |
+| Modes | **6** — `waves, roguelite, duel, sandbox, training, command` |
+| Archetypes | **31**, and `src/game/Levels.js` must be imported to see 16 of them |
 
 Run things this way and no other way:
 
@@ -383,7 +393,10 @@ Two things that are NOT the cause, ruled out rather than assumed: suite order
 (above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
 reverse run; it hung anyway).
 
-### 2.7b THE GATE RUNS. **1260 passed, 8 failed, ~11 minutes.** — CLOSED
+### 2.7b THE GATE RUNS — CLOSED
+
+*(The figure this section was written around was 1260 passed / 8 failed. §1 carries
+the current one; this is the record of the run being fixed, not a status line.)*
 
 *Was "verify.mjs is ALL-OR-NOTHING, and that is why nobody has a gate number".
 All three of the problems it named are now measured and fixed, and one of the
@@ -500,6 +513,27 @@ A full `verify` run takes ~12 min. Use `run_in_background: true`. Foreground
 | `trace.mjs` | what a run **contains** | combat |
 | `combat-trace.mjs` | what a fight **contains** | anything past a stationary floor |
 | `smoke.mjs` | does the real page **boot and render** | mechanics |
+| `pack.mjs` | does the whole game **run with no server** | anything a check already covers |
+
+**`pack.mjs` is how this got play-tested at all.** Browsers refuse ES modules
+from `file://`, so playing the game needed a web server and therefore nobody had
+played it. Nothing actually needed one: every module is already an ES module,
+three and rapier are vendored, and rapier's WASM is base64 inside its own .js.
+So `node tools/pack.mjs out.html` rewrites all 76 modules to name their
+dependencies by a bare key and emits each as a `data:` URL in the page's own
+import map — the browser's loader then does live bindings, circular imports and
+load order exactly as it does on disk. No bundler, and nothing re-implementing
+ESM semantics to get subtly wrong. It re-reads every specifier out of its own
+output and fails if one is not a key of the map it just built, which is not
+decoration: the first version appended `String.replace`'s offset argument to two
+thirds of the specifiers, and eleven megabytes of unbootable page looks exactly
+like eleven megabytes of working one until a browser opens it.
+
+Two things cannot survive the move and are handled rather than hoped over.
+`import.meta.url` inside a `data:` module IS the data: URL, and `new URL(rel,
+base)` refuses an opaque path as a base — `main.js` built its track list that
+way at module top level, so the page died before the menu drew. And peerjs,
+injected at runtime as a `<script src>`, is inlined.
 
 **Why `trace.mjs` exists.** 1142 checks and two adversarial audits share one
 shape: *the code claims X and does Y*. A finding needs a line to be wrong about,
@@ -536,6 +570,87 @@ corrected *me* more often than they corrected the finders.
 ---
 
 ## 5. What the LAST session changed
+
+Two hostile audit rounds, five read-only lanes each, then ten fix lanes. The
+audits were briefed to assume the game was a shallow demo wearing a long coat of
+comments and to produce numbers rather than opinions. Everything below was
+measured through the shipped code.
+
+**Things a player feels**
+
+- **The Reek's opening attack could not be dodged at any speed** — 18.73 hp/s
+  against standing, retreating, strafing and dashing, the same to two decimals.
+  Escape window 0.10 s against a 2.16 m footprint, so leaving it needed 21.6 m/s
+  and the fastest movement in the game is a 15.5 m/s dash lasting 0.24 s. The
+  Rancor's charge window was **zero seconds**. Both dressed with a roar, a body
+  wind-up and a floating orange call. Now 0% against any movement above
+  standing, pinned by `tools/checks/dodgeable.mjs`, which measures the player's
+  paces by driving a real `Player` rather than transcribing them.
+- **An enemy casting a held power froze the game.** `sparkBurst(chest, 2,
+  0x9fd8ff)` against `(pos, normal, count, opts)` — the colour landed in `count`
+  and asked for 10 467 583 sparks on 35% of frames per caster. Frames 1-20 cost
+  10-15 ms; from frame 30, **71 to 134 seconds each**. It is also what ran
+  `cloth-cost` past forty minutes six times without it ever being seen to
+  finish, which is how it was found. That suite is 4.8 s now.
+- **The telegraphed shot re-aimed every frame**, so leaving the drawn red line
+  did nothing: 0.02 m from the bolt after stepping 4 m aside, now 4.25 m.
+- **Six archetypes, one a 1050 hp boss, were shut out by holding walk-back**
+  (0.00 hp/s). The player also now obeys `limitBackpedal`, the law every enemy
+  already did, which makes the sidestep a better answer than the backpedal.
+- **The chamber window was never humanly reachable** — every window shorter than
+  a simple auditory reaction time, with the cue firing on the frame the window
+  *opened*. The cue leads by up to 220 ms now.
+- **A guest's Force moved nothing.** Shove/pull/throw/grip all 0.000 m on both
+  machines; only the damage number crossed. Now 11.5 m on both, with the cast
+  telegraph and a source id on the wire so a guest can read, break and be
+  credited.
+- **Two armies were both fighting you.** Geonosis wave 3 fielded five B1s, a B2,
+  a rocket droid *and two clone troopers* together; 19 of 20 waves mixed sides,
+  now 0 of 20. The census the fix printed is the wider finding: **175 of 200
+  waves across all ten levels** mixed Republic and Confederate bodies.
+- **A meeting opened on an order that does not advance** — two idle commanders,
+  124 s, lines closing 120 m to 111 m, draw on the clock. And **quitting a
+  meeting won it**.
+
+**Things underneath**
+
+- **`VITAL[name] ?? 0.4`** — nineteen humanoid bone names over 31 bodies; 142 of
+  532 capsules hit the silent default and eight bodies died of their own
+  extremities at 184-276% of themselves. Priced off `bone.role` now, and
+  `severance` throws rather than guessing. Underneath it `World` billed every
+  grind at a flat 55% of max health, so **two completed passes killed anything
+  through any bone it had**; an AT-TE toe is 25 passes now and a torso is still
+  one.
+- **The exposure meter overruled the art** — every outdoor level normalised to
+  one key, so the darker a level was authored the harder it was lifted.
+  Authored-vs-rendered correlation **0.405 → 0.929**, and the blade owns 98% of
+  the clipping pixels on Kamino again.
+- **Run rules** — the six conditions are chosen before Ignite: 430 legal sets
+  across ten theatres, never charged, vetoed with a reason. Testing four at wave
+  1 found two real defects nobody had seen, including `_upgrade` paying itself
+  back. A shareable seed came with it; `bestTier` was deleted (written every run,
+  read by nothing).
+- **A databank** — 31 of 31 archetypes, generated off `ARCHETYPES`. The research
+  was already written in the comments and invisible to the player.
+- **Escalation's guard ran a synthetic pool** matching no shipped level, and
+  `BODY_CREEP = 1.6` was 1.6 *bodies* against a *threat* budget — a unit error
+  sending 67-108% of each wave's added budget into more bodies instead of better
+  ones. 4-34% now.
+
+**Instruments that were lying**
+
+`terrain` measured 2 of the 10 shipped grounds; `gait-support` booted Worlds on
+two deleted level names and printed scoria's numbers as "warship" and "meadow";
+`arrivals: something too big for a ship walks in` **could not fail**;
+`footwork` drove all five forms on the one body fast enough to fight back;
+`powers` ran a world where the player's blade never touched anything; `pvp`
+reported two false open seams; `balance`'s model counted legs by a name regex
+the game had stopped using. All fixed, most by deriving the list from the game
+instead of keeping one.
+
+---
+
+## 5b. What the session before that changed
 
 - **13 of 13 levels compose distinctly**, where six were byte-identical. Pool
   repeats are weights now — `_pickType` already weighed per entry, but the pool
@@ -976,6 +1091,17 @@ judge's say-so.
 | `tools/_previewgrip.mjs` | every species' creator preview in ONE table: the bore gap and the hilt's length in that figure's own hands, the hand target in its own arm-lengths, the figure's share of the content box, and where it lands in the frame. Twenty seconds, and it is what showed the framing was three defects rather than one |
 | `tools/_deployprobe.mjs` | **did the page throw, and does it deploy** — every pageerror and console error, plus the run seams read out of the RUNNING page. ~40 s against `smoke.mjs`'s five minutes. Written because smoke's deploy step waits 30 s for the HUD, which at §2.6's two seconds a frame is FIFTEEN FRAMES: it timed out on four steps while this probe deployed the same build in 22.2 s with zero errors. A smoke timeout is not evidence of a regression; this is what tells you which you have |
 
+**New check suites this session**, each named for the property it holds rather
+than the file it guards: `wiring` (the module graph the BROWSER walks — nothing
+else imports the whole game, so a missed import could 404 the page with every
+other check green), `severance` (what losing a bone is worth, over the whole
+roster, derived from the bones), `dodgeable` (every creature attack leaves a
+window a walk can use, with the player's paces measured by driving a real
+`Player`), `runrules` (the panel and the director agree on all 70 theatre×rule
+pairs), `factions` (no wave composes empty, and the levels that mix two armies
+without saying so are counted), `databank` (every archetype has an entry and no
+name is typed into the markup).
+
 All except `_deployprobe` take `--import ./tools/register.mjs`; `_fpgeom`,
 `_celrank` and `_previewgrip` open with `dom-shim.mjs` because they reach
 Textures.js and Engine.js, which bake onto a canvas — and `_celrank` imports
@@ -994,52 +1120,67 @@ one-level tuning pass becomes a four-suite bisect.
 
 ---
 
-## 6.4 The eight the gate is red on, and who owns each
-
-Three full runs, measured on this box, with the load recorded at the head of
-each. **Every one of them completed** — which is the change; the numbers below
-are ordinary work, not a blocked gate.
+## 6.4 The five the gate is red on, and who owns each
 
 ```
-forward  (before the §2.7b stub fix)   1258 passed,  9 failed   10 m 57 s
-forward  (after)                       1250 passed,  8 failed    9 m 57 s
-reverse  (after)                       1260 passed,  8 failed   11 m 58 s
+forward   1311 passed, 5 failed   ~13 min
 ```
-
-The forward/reverse totals differ by ten because a **shared-tree race**, not a
-defect, voided one suite in the middle run: `severance.mjs` imports
-`SEVER_LETHALITY` and the other lane committed the export (`7a4e36a`) while the
-run was in flight, so the suite failed to load and its checks did not run. If
-you see `does not provide an export named …` on a shared tree, check the log
-before believing it.
-
-**Seven failures are stable across both orders.** None of them is in this
-lane's files, and none blocks a run.
-
-| # | Check | Reads | Whose |
-|---|---|---|---|
-| 1 | `particles: no effect asks a pool for more sparks than the pool can hold` | 810 of 828 bursts over capacity, worst 10 475 775 against 4 200 | **`Enemy._sustain`, Enemy.js:3544** — §2.7b. The argument list is out of step; this is the loudest thing on the list and it is a shipped multi-second freeze |
-| 2 | `terrain: every preset stays finite, bounded and continuous everywhere` | `kamino reaches a gradient of 24.7 (88°)` against a bound of 20 | the Kamino platforms work (§6.1). **Steep, not discontinuous** — the check's fine/coarse clause passes, so it is a face too sheer for the bound, not a hole |
-| 3 | `audio: a NaN never leaks the voice pool dry` | `NaN reached an AudioParam` | `AudioEngine.noise` (Audio.js) does not sanitise `dur`/`gain`/`freq` at the door. The check's own summary line says it should |
-| 4-5 | `vitals: the duel strike passes the number, and it kills`, `vitals: a bad amount cannot make the player immortal` | `this.resistForce is not a function` | thrown from inside `Player.damage` (Player.js:5730), so `damage` is being invoked against something that is not a Player. The §6.1a lane |
-| 6 | `hilts: the hands still close on the grip, whichever one it is` | `Graflex: the FP hand grips at −75 mm, and the hilt runs −85…158 mm` | the first-person grip, §6.0 — the live one |
-| 7 | `training: the eleven lessons run in any theatre, not only the dojo` | a lesson placed a body away from the player | **order-dependent, not a defect: 23/23 alone.** §6.2.5 |
-
-**Two more are order-dependent and appear in exactly one direction**, which is
-what the reverse switch is for:
-
-- `escalation: depth stops buying bodies and starts buying elites` — red in
-  reverse, green forward, **27/27 alone**. §6.2.5 already names `escalation` as
-  the largest block of order-dependent residue (5 checks).
-- `prefracture: preparing a piece the player is walking towards never costs a
-  frame` — red in the first run under load 5.07, **3/3 alone**. §2.6's timing
-  warning doing exactly what it says.
 
 **Read this table the way it is built.** A red line in a full run is not a
-finding until it has been re-run alone on a quiet box — three of the nine in the
-first run evaporated that way, and one was a race with a peer's commit. That is
-now cheap to do, because the per-suite output tells you which line to re-run
-instead of handing you a filename.
+finding until it has been re-run alone on a quiet box — in the previous session
+three of nine evaporated that way and one was a race with a peer's commit. The
+per-suite output tells you which line to re-run instead of handing you a
+filename, so this is cheap.
+
+| # | Check | Reads | What it is |
+|---|---|---|---|
+| 1 | `first person: the hilt is ON SCREEN and not behind your own fist` | 35% of the hilt behind the fist against a `< 35` bound | **two bounds that contradict each other by about 2 mm.** `hilts` needs the grip inside EVERY hilt's own extent with a 12 mm margin (`fp > −0.042`, set by the Shoto); `first person` needs at most 35% occlusion (`fp ≲ −0.070`, set by the Graflex). That interval is empty. The grip is derived per hilt off `Saber.hiltFloor` now, so nine weapons stopped inheriting one number — the residual is ONE sample of 31, and `pct < 35` on a 31-point grid can only ever be met at 10/31 = 32.3%, so the "35%" in that message is not a value its own measurement can produce. Which constant gives is a question about how the weapon should look in frame. §6.0 |
+| 2 | `terrain: no level composes to one colour at three brightnesses` | kamino chroma varies by 0.032 | **not the exposure meter, and it was checked.** Every number there comes off `composeSurface` in linear albedo — no exposure, no tone curve, and `chroma` is a ratio invariant under any scaling the meter could apply. Kamino's eight authored ground swatches spread ±0.063, the narrowest of any shipped ground (temple 0.081, foundry 0.117, bog 0.171). A palette decision |
+| 3 | `terrain: every height function is smooth, and the poured floors are the cheapest` | kamino costs 6.75× the median shaped ground | **real, and new — nothing measured this before the ground list was derived.** `height()` runs once per foot per character per frame; roughly 0.27 ms/frame at forty bodies. Kamino's profile loops every deck and every span per call. Fixing it properly is a spatial index or a cached grid on a shipped level, which is why it was written down rather than rushed |
+| 4 | `terrain: every preset stays finite, bounded and continuous everywhere` | `kamino reaches a gradient of 24.7 (88°)` against a bound of 20 | the Kamino platforms working (§6.1). **Steep, not discontinuous** — the fine/coarse clause passes, so it is a face too sheer for the bound, not a hole |
+| 5 | `training: the eleven lessons run in any theatre, not only the dojo` | a lesson placed a body away from the player | **order-dependent, not a defect: `training` is 23/23 alone in the same run.** §6.2.5 |
+
+Two more are order- or load-dependent and appear in one direction only, which
+is what the reverse switch and §2.6 are for: `escalation` (green alone) and
+`prefracture` (3/3 alone, red under load).
+
+**Closed since the last list, and worth knowing they are gone:** the
+`sparkBurst` freeze (#1 on the old table, a shipped multi-second stall); the
+`audio` NaN (`_timePitch` was initialised where the audio GRAPH is built, not
+where the object is, so `if (this._timePitch !== 1)` passed on `undefined` and
+`freq *= undefined` re-poisoned a frequency `num()` had just sanitised); both
+`vitals` failures (a fixture two versions behind `Player.damage`, not a game
+defect); and `hilts`, by deriving the grip per weapon.
+
+---
+
+## 6.5 If you pick this up cold, do these in this order
+
+1. **Get it in front of the player, then read §7.** `node tools/pack.mjs
+   /tmp/borz.html` and send them the file. Nothing in §6.4 is worth more than
+   one person playing it for ten minutes, and after two audit rounds every
+   remaining finding is a measurement rather than a complaint.
+2. **Kamino's height cost** (§6.4 #3) is the only red that is unambiguously a
+   defect with an unambiguous fix — a spatial index or a cached grid. It is
+   self-contained and it is the one a next session can close cleanly.
+3. **Decide the grip contradiction** (§6.4 #1). It needs a look, not a
+   measurement: the two bounds cannot both hold and somebody has to say which
+   matters more. Show the player `_fpgeom` and a screenshot rather than a table.
+4. **The nine levels that still mix two armies.** The faction rotation works and
+   is on Geonosis alone, because only its blurb promises two armies; the other
+   nine field Republic and Confederate bodies in one wave and their notes each
+   argue a horde. `factions` prints the census so it stays visible, and refuses
+   any level whose second side is under three archetypes. One line plus the
+   measurement, per level, if the player wants it.
+5. **`World.js:1123`** — `pickTarget`'s cross-team loop is gated `if
+   (this.command)`, and dropping that gate is the whole of "both armies fight
+   each other as well as you". Wave-clear already works for it: `blocksWaveEnd`
+   counts anything not on the party team.
+
+**What NOT to do first.** Do not start another audit. Two rounds have run, the
+second found real things, and a third would be measuring a game nobody has
+played since the first. §7 is not a platitude here — it is the specific reason
+this list is short.
 
 ---
 
