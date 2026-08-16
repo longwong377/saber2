@@ -158,10 +158,27 @@ function duel(formKey, seconds, opts = {}) {
    * answer the Force, and a wrapper that dropped it made every knockback pay
    * the pool twice INSIDE THE HARNESS ONLY. Nothing here reads past `kind`, so
    * there is no reason to name any of them. */
+  /**
+   * AND `s.hits` IS THE SWEPT TEST'S ALONE, WHICH IT WAS NOT.
+   *
+   * The tip branch below bills through this same `p.damage`, so every tip hit
+   * used to land in BOTH counters — and the clause "the two hit tests must
+   * never both fire for the same swing" then read `tipHits + hits > strikes`
+   * with the tips counted twice. A form that connects on more than half its
+   * swings and takes one tip hit fails an inequality about double-billing
+   * without anything having been billed twice, and the pass line's "N swept
+   * hits, M tip-test hits" printed the total under the word `swept`. The two
+   * counters are disjoint now; `hitsThisStrike`, which is the per-swing latch,
+   * still counts either.
+   */
   p.damage = (amt, pt, ...rest) => {
-    if (rest[0] === e && rest[1] === 'saber') { s.hits++; s.hitsThisStrike++; }
+    if (rest[0] === e && rest[1] === 'saber') {
+      if (!inTipTest) s.hits++;
+      s.hitsThisStrike++;
+    }
     return realDamage(amt, pt, ...rest);
   };
+  let inTipTest = false;
   const c0 = new THREE.Vector3(), c1 = new THREE.Vector3();
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const dt = 1 / 60, N = Math.round(seconds * 60);
@@ -205,7 +222,9 @@ function duel(formKey, seconds, opts = {}) {
         s.minTipDist = Math.min(s.minTipDist, d);
         if (d <= 0.44) {
           s.tipHits++;
+          inTipTest = true;
           p.damage(e.attackDamage * e.duel.damageScale, a.clone(), e, 'saber');
+          inTipTest = false;
           e.duel.interrupt(0.45);
         }
       }
