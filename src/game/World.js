@@ -3291,6 +3291,16 @@ export class World {
    * one purse and everybody in the session is spending it, so one offer is the
    * truth on every screen. In a meeting each commander has a roster and a purse
    * of their own, and the Confederacy's shelf is not the Republic's.
+   *
+   * THE MEETING HALF IS NOT REACHABLE TODAY and is written anyway. A meeting
+   * composes no waves — `CommandDirector.start` returns before `super.start`
+   * and `update` before `super.update` — so `payWave` never runs, `_areaClear`
+   * never fires and no muster ever opens in one. So this is a branch with no
+   * live caller, which this codebase is right to be suspicious of; it is here
+   * because the alternative is a plain broadcast that is silently WRONG the day
+   * a meeting grows an area, and because `_armyTick` twenty lines above makes
+   * the identical split for the identical reason. Two neighbouring answers to
+   * one question is how they come to disagree. Noted rather than hidden.
    */
   publishMuster(cmdr = null) {
     const net = this.net, d = this.command;
