@@ -287,9 +287,27 @@ export async function run({ check, assert }) {
     assert(dilated > 0.9,
       `the clock advanced ${dilated.toFixed(3)} s over the 3 s before the death card — `
       + 'the world is frozen, so nothing written for this moment can run');
-    const tick = world.time;
-    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
-    assert(world.time > tick, 'the clock stopped once the death dilation expired');
+    /**
+     * THE DISCRIMINATOR, and the old bar did not have one.
+     *
+     * "1.68 s of world time over 3 s of frames" is what a FREEZE looks like and
+     * it is also what a DILATION looks like, and the two want opposite
+     * responses — one is a bug to hunt and the other is the feature the audit
+     * asked for. They are told apart per FRAME, not in aggregate: a frozen
+     * world advances by EXACTLY ZERO on the frames it is frozen for, and a
+     * dilated one advances by `dt × scale` on every single one. Measured over
+     * the 180 frames below: 0 frames at zero, minimum advance 0.00567 s =
+     * 0.34 × 1/60, which is `Player.die`'s own `killTime(0.34, 2.4)`, and the
+     * wall clock costs a median 0.85 ms a frame throughout — nothing blocks.
+     */
+    const adv = [];
+    for (let i = 0; i < 180; i++) { const t = world.time; world.update(1 / 60, input); adv.push(world.time - t); }
+    const stalled = adv.filter((v) => v <= 1e-9).length;
+    assert(stalled === 0,
+      `${stalled} of ${adv.length} frames advanced the clock by exactly zero — that is a STALL, `
+      + 'not the death dilation, and a camera move layered over it will stutter');
+    assert(world.timeScale > 0.98,
+      `the world never came back to speed after the death dip (${world.timeScale.toFixed(3)})`);
     assert(engine.camera.position.distanceTo(cam0) > 0.5,
       `the death camera moved ${engine.camera.position.distanceTo(cam0).toFixed(4)} m`);
     // -0.52 is `CameraRig.beginDeathShot`'s own target; -0.42 was the old
@@ -306,7 +324,8 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 600; i++) world.update(1 / 60, input);
     assert(world.enemies.length <= before,
       `the director sent ${world.enemies.length - before} more enemies after the run ended`);
-    const line = `clock +${(world.time - t0).toFixed(1)} s, camera back `
+    const line = `clock +${(world.time - t0).toFixed(1)} s over 6 s of frames with 0 frozen frames `
+      + `(min advance ${Math.min(...adv).toFixed(5)} s = the 0.34x death dip), camera back `
       + `${engine.camera.position.distanceTo(cam0).toFixed(2)} m to pitch ${p.camera.pitch.toFixed(2)}, `
       + `blade ${ign0.toFixed(2)}→${p.saber.ignition.toFixed(2)}, director stopped`;
     world.unload(); world.dispose?.();

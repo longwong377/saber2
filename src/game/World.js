@@ -905,6 +905,34 @@ export class World {
   spawnEnemy(type, pos) {
     const e = new Enemy(this, type, pos);
     this.enemies.push(e);
+    /**
+     * A BOSS ARRIVING IS A SHOT, and the camera had never framed one.
+     *
+     * A boss got exactly the same nothing as a B1: the notify banner, and the
+     * body simply standing there. `setBars` and `punch` already exist for the
+     * death card; an entrance is the same two channels used the other way
+     * round — the frame narrows and holds, a low swell arrives under it, and
+     * the world dips for three quarters of a second so you actually see the
+     * thing walk in. The bars are released by a timer on the WORLD's clock (see
+     * `_bossFrame`), never by a `setTimeout`, for the reason the jump's lens
+     * kick is now on the world's clock too.
+     */
+    if (e.A?.boss && this.player?.isLocal && !this._bossFrame) {
+      this.notify(String(e.A.label || 'A CHALLENGER').toUpperCase(), 'it has come for you');
+      this._bossFrame = 2.6;
+      this.engine?.setBars?.(0.075);
+      if (this.feelOn?.('shake') !== false) {
+        this.engine?.punch?.(0.5);
+        this.engine?.rumble?.(0.75, 0.3, 420);
+      }
+      this.killTime(0.5, 0.75);
+      const at = e.position;
+      audio.tone({ freq: 46, freqEnd: 30, dur: 2.4, gain: 0.34, type: 'sine', attack: 0.04,
+        prio: PRIO.critical });
+      audio.tone({ freq: 92, freqEnd: 61, dur: 1.9, gain: 0.14, type: 'triangle', attack: 0.12,
+        prio: PRIO.critical });
+      if (at) audio.bodyThump(at, clamp(num(e.A.mass, 300) * 3, 200, 2400));
+    }
     return e;
   }
 
@@ -1312,6 +1340,12 @@ export class World {
     if (kt && (kt.left -= rawDt) <= 0) {
       this._killTime = null;
       if (Math.abs(this.targetTimeScale - kt.scale) < 1e-6) this.setTimeScale(kt.restore);
+    }
+    // …and the boss entrance's letterbox, on the same clock and inline for the
+    // same reason. A `setTimeout` would release the bars behind a pause card.
+    if (this._bossFrame > 0 && (this._bossFrame -= rawDt) <= 0) {
+      this._bossFrame = 0;
+      this.engine?.setBars?.(0);
     }
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
     /**
@@ -2135,7 +2169,13 @@ export class World {
      * block and a perfect return are not the same in the hands — which is the
      * whole argument of this pass, applied to the one mechanic that already had
      * a four-step grade to spend on it. */
-    if (owner.isLocal && this.feelOn('shake')) {
+    /* `feelOn?.()` and not `feelOn()`: three suites drive World.prototype
+     * methods against a hand-built stub world that lists the members it
+     * borrows, and a bare call out of one of them fails every one of them with
+     * `is not a function`. The optional call reads as "ask the gate if there is
+     * one", and the absent case is the shipped behaviour rather than a
+     * plausible default for a missing thing. */
+    if (owner.isLocal && this.feelOn?.('shake') !== false) {
       this.engine?.rumble?.(0.20 + res.grade * 0.16, 0.34 + res.grade * 0.14, 45 + res.grade * 22);
     }
     if (res.grade >= GRADE.RETURN) {
