@@ -69,6 +69,29 @@ const held = (x = 0, y = 0) => ({
 const WORLDS = new Map();
 /** One booted World per level, shared by every check in this file. */
 async function level(key) {
+  /**
+   * THE KEY HAS TO EXIST, AND NOTHING SAID SO UNTIL A SUITE STOPPED FINISHING.
+   *
+   * `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does not know —
+   * correctly, because a saved profile pointing at a deleted level must still
+   * boot. In a CHECK that safety net is a trap: this file asked for `deeps`,
+   * which was deleted in the roster cull, got the Ember Shelf back, cached it
+   * under a second key, and measured the wrong level's water against a
+   * submersion bar. It also built a NINTH full World — terrain heightfield,
+   * Rapier world, instanced fields, texture set — and this suite is one of the
+   * two HANDOFF §2.7 names as holding the most Worlds alive at once. Adding an
+   * eighth real level on top of that is what took it from slow to not
+   * finishing.
+   *
+   * `roster.mjs` scans the whole tree for level names and could not see this
+   * one: it knows five syntactic forms and `level('deeps')` is none of them —
+   * which its own note predicts ("a form this does not know is a violation that
+   * goes unreported"). So the assertion goes where the call is.
+   */
+  if (!LEVELS[key]) {
+    throw new Error(`levels-quality asks for the level '${key}', which no longer exists — `
+      + `loadLevel would silently substitute ${LEVEL_ORDER[0]} and this file would measure it instead`);
+  }
   if (WORLDS.has(key)) return WORLDS.get(key);
   const engine = stubEngine();
   /* `low`, deliberately: the terrain grid is coarser at the bottom tier — the
@@ -426,22 +449,65 @@ export async function run({ check, assert }) {
      * Both halves are held: the geometry, and then the CAMERA, which is the
      * thing the player actually complains about.
      */
-    const { world, engine } = await level('deeps');
-    const T = world.terrain, wl = world.level.water.level;
-    let n = 0, sub = 0, eye = 0;
-    for (let x = -60; x <= 60; x += 1) {
-      for (let z = -60; z <= 60; z += 1) {
-        if (x * x + z * z > 3600) continue;
-        const y = T.height(x, z); n++;
-        if (y < wl) sub++;
-        if (y + 1.62 < wl) eye++;
+    /**
+     * NAMED `deeps`, WHICH WAS DELETED, and the check went on running for
+     * months against a level that was not there.
+     *
+     * `loadLevel` substitutes the first surviving level for a key it does not
+     * know, so this measured the Ember Shelf's LAVA sheet against a submersion
+     * bar written for a flooded cavern, cached a second copy of that world under
+     * the dead key, and — the part that showed — pushed this suite's peak to
+     * nine simultaneous Worlds. It is one of the two HANDOFF §2.7 names as
+     * holding the most alive at once, and adding an eighth real level on top
+     * took it from slow to not finishing. `level()` now refuses a dead key
+     * outright; this is the check that was pointed at one.
+     *
+     * ENUMERATED RATHER THAN NAMED, which is the fix this file has already made
+     * three times over. The property is not about one cavern — it is that NO
+     * level drowns the ground it is fought on — so it is asked of every level
+     * that has a sea. That is strictly stronger and it cannot be outlived by a
+     * roster cull.
+     */
+    const rows = [];
+    let worst = null;
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L?.water || !(L.water.level > -900)) continue;
+      const { world } = await level(key);
+      const T = world.terrain, wl = L.water.level;
+      let n = 0, sub = 0, eye = 0;
+      for (let x = -60; x <= 60; x += 1) {
+        for (let z = -60; z <= 60; z += 1) {
+          if (x * x + z * z > 3600) continue;
+          const y = T.height(x, z); n++;
+          if (y < wl) sub++;
+          if (y + 1.62 < wl) eye++;
+        }
       }
+      /* A LAVA SEA IS NOT A FLOODED FLOOR. The Ember Shelf's own note says 69%
+       * of that map is lava and that walking into it is a death rather than a
+       * swim — the level is a shelf standing OUT of a sea, so the sea is the
+       * boundary and not the floor. What the bar is about is water you fight
+       * IN, so a hazard sea is asked the eye-height question only: whatever the
+       * fluid is, the player's eye must not be under the plane on the ground
+       * they are meant to stand on. */
+      if (!L.water.damage) {
+        assert(sub / n < 0.60,
+          `${key}: ${(100 * sub / n).toFixed(1)}% of the fighting floor is under the water sheet`);
+      }
+      assert(eye / n < 0.03,
+        `${key}: ${(100 * eye / n).toFixed(1)}% of the fighting floor is deep enough to put the `
+        + "player's eye under the surface");
+      rows.push(`${key} ${(100 * sub / n).toFixed(0)}% wet / ${(100 * eye / n).toFixed(1)}% over eye`);
+      if (!worst || eye / n > worst.eye) worst = { key, eye: eye / n, wl };
     }
-    assert(sub / n < 0.60,
-      `${(100 * sub / n).toFixed(1)}% of the fighting floor is under the water sheet`);
-    assert(eye / n < 0.03,
-      `${(100 * eye / n).toFixed(1)}% of the fighting floor is deep enough to put the player's eye `
-      + 'under the surface');
+    assert(rows.length > 0, 'no level in the roster has a sea, so this check measured nothing');
+
+    /* …and then the CAMERA, on the worst of them, which is the half the player
+     * actually complains about: a floor that is technically dry at the feet and
+     * puts the eye through a DoubleSide depthWrite-off plane while you walk. */
+    const { world, engine } = await level(worst.key);
+    const wl = worst.wl;
     let frames = 0, camUnder = 0;
     for (let b = 0; b < 4; b++) {
       const p = stand(world, 0, 0, (b / 4) * Math.PI * 2);
@@ -453,10 +519,10 @@ export async function run({ check, assert }) {
       }
     }
     assert(camUnder / frames < 0.05,
-      `the render camera is under the water plane on ${(100 * camUnder / frames).toFixed(0)}% of frames `
-      + 'over four bearings of walking');
-    return `${(100 * sub / n).toFixed(0)}% of the floor wet, ${(100 * eye / n).toFixed(1)}% over eye height, `
-      + `camera under the sheet on ${(100 * camUnder / frames).toFixed(1)}% of ${frames} frames`;
+      `${worst.key}: the render camera is under the water plane on `
+      + `${(100 * camUnder / frames).toFixed(0)}% of frames over four bearings of walking`);
+    return rows.join('; ') + `; camera under ${worst.key}'s sheet on `
+      + `${(100 * camUnder / frames).toFixed(1)}% of ${frames} frames`;
   });
 
   /* ── 6. one sea, one number ───────────────────────────────────────── */
