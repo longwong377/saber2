@@ -3114,8 +3114,28 @@ check('levels: every level dresses itself without throwing', () => {
   // makers do not share one signature (addBrokenWall takes its size as a
   // Vector3 third argument while its neighbours take an options object), so
   // this is a very easy mistake and a very confusing one to chase.
-  const stub = () => {
+  /**
+   * THE STUB TERRAIN IS SIZED FROM THE LEVEL'S OWN PRESET, and the reason is
+   * §2.3 wearing a harness for a coat.
+   *
+   * This stub is a hand-maintained copy of the Terrain surface that dressing
+   * uses, standing beside the real class, and it went stale exactly the way
+   * every other instance in §2.3 did: the dressing passes reach for
+   * `T.inBounds(x, z, margin)` in six places and the stub did not have it, so
+   * the check failed with `T.inBounds is not a function` — a harness defect
+   * reported in the voice of a game defect, on a red line naming a level.
+   *
+   * `inBounds` is not invented here. It is Terrain's own rule — `|x| < half -
+   * margin` — read off the same `TERRAIN_PRESETS[L.terrain].scale` that
+   * `World.loadLevel` hands the real constructor, so a dressing pass that keeps
+   * to the map under the real terrain keeps to it under this one. A flat `true`
+   * would have made the check green and stopped it testing the bounds clause of
+   * six placements, which is the failure mode §2.3's close relative names: a
+   * missing thing answered with a plausible default.
+   */
+  const stub = (L) => {
     const scene = new THREE.Scene();
+    const half = ((TERRAIN_PRESETS[L?.terrain]?.scale) ?? 300) / 2;
     return {
       scene, statics: [], lights: [], levelLights: [], props: [], enemies: [], doors: [], grass: null,
       physics: { addStaticBox: () => {}, staticBoxes: [], add: () => {}, bodies: [], raycast: () => null },
@@ -3130,6 +3150,8 @@ check('levels: every level dresses itself without throwing', () => {
         slopeAt: (x, z) => Math.abs(Math.sin(x * 0.03 + z * 0.02)) * 0.5,
         normalAt: (x, z, o) => o.set(0, 1, 0).normalize(),
         surfaceAt: () => 'sand',
+        inBounds: (x, z, margin = 4) => Math.abs(x) < half - margin && Math.abs(z) < half - margin,
+        size: half * 2, half,
       },
       settings: { quality: 'medium' },
     };
@@ -3139,7 +3161,7 @@ check('levels: every level dresses itself without throwing', () => {
   for (const key of LEVEL_ORDER) {
     const L = LEVELS[key];
     if (!L || typeof L.dress !== 'function') continue;
-    const world = stub();
+    const world = stub(L);
     L.dress(world);                       // must not throw
     const n = world.statics.length + world.props.length;
     assert(n > 0, `${key} dressed itself with nothing at all`);
