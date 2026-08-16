@@ -106,6 +106,11 @@ export const ARMY_FACTIONS = Object.keys(FACTIONS).filter((k) => FACTIONS[k].arm
  *   faction   an id in FACTIONS.
  *   weapon    what it is carrying, by its real name. Every ranged body and every
  *             body with a blade has one; a body with neither says so.
+ *   heldMesh  present ONLY where the model in the body's hands is a different
+ *             weapon from the one it is fighting with — two units, both in
+ *             Command.js, and both stated out loud rather than papered over.
+ *             The check pins it to the archetype's builder key, so fixing the
+ *             game turns the declaration red and it gets deleted with the bug.
  *   text      the paragraph. Written to the same rule as the rest of this
  *             repository — specific, plain, and no sentence that would survive
  *             being said about a different body.
@@ -124,8 +129,8 @@ export const DATABANK = {
     faction: 'separatist',
     weapon: 'E-5 blaster rifle',
     text: 'The Trade Federation\'s line infantry and the most numerous soldier in '
-      + 'the war. A B1 is thin-limbed, hollow-voiced and cheap: twenty-eight points '
-      + 'of health and one clean pass through the waist. It is built that way on '
+      + 'the war. A B1 is thin-limbed, hollow-voiced and cheap, and one clean pass '
+      + 'through the waist leaves two halves of one. It is built that way on '
       + 'purpose — the foundries turn out more of them in a week than Kamino grew '
       + 'clones in a decade — and it fights in ranks because a rank is the only '
       + 'thing that makes one of them matter. Meeting a B1 is nothing. Meeting '
@@ -145,6 +150,14 @@ export const DATABANK = {
   rocket: {
     faction: 'separatist',
     weapon: 'Shoulder-launched rocket tube',
+    /* AND THE GAME PUTS AN E-5 IN ITS HANDS. `weapon` on an archetype is a
+     * BUILDER KEY into `buildBlaster`, and Command.js hands this one `'e5'` —
+     * the B1 carbine — for a unit whose whole design is one 44-damage round on
+     * a 0.9 s telegraph. `heldMesh` states the disagreement rather than letting
+     * the page and the model quietly differ, and the check fails the day the
+     * builder key changes, so the note cannot outlive the defect. Command.js
+     * belongs to another lane; see the handover. */
+    heldMesh: 'e5',
     text: 'A B1 with a tube on its shoulder, and the silhouette is the point: it is '
       + 'a B1 right up until it fires. The Confederacy\'s answer to the Republic\'s '
       + 'heavy gunner is the opposite answer — one slow, telegraphed round of 44 '
@@ -172,17 +185,17 @@ export const DATABANK = {
       + 'infiltrate rather than to fill a rank: 5.6 metres a second, a blade in its '
       + 'hands, and a duellist\'s brain behind it — it feints, it chambers against '
       + 'your arc, and it punishes a recovery. It is the one unit the Confederacy '
-      + 'has that makes a Jedi\'s own game unsafe. It also costs the Confederacy '
-      + 'about what forty B1s cost, which is why you meet one and not a rank.',
+      + 'has that makes a Jedi\'s own game unsafe. A wave pays six times for one of '
+      + 'these what it pays for a B1, which is why you meet a BX and never a rank.',
   },
   magna: {
     faction: 'separatist',
     weapon: 'Electrostaff',
     text: 'IG-100, built to stand at General Grievous\'s shoulder and to keep '
       + 'standing after he has left. An electrostaff is not a lightsaber: it is two '
-      + 'metres of arc weapon swung by 140 kilos of droid, and it fights Djem So — '
-      + 'three heavy attacks and one that cannot be parried at all, with the longest '
-      + 'recovery on either side. It carries the same rally aura a clone commander '
+      + 'metres of arc weapon swung two-handed by a machine built to stand beside a '
+      + 'four-armed general, and it fights Djem So — three heavy attacks and one '
+      + 'that cannot be parried at all, and the longest recovery any form has. It carries the same rally aura a clone commander '
       + 'does, so it improves the droids around it. The tabard is a marking and not '
       + 'armour.',
   },
@@ -196,8 +209,8 @@ export const DATABANK = {
       + 'anything else in frame does: a command sphere carried on four very tall, '
       + 'very thin legs with one beam weapon off the top. The legs are the design — '
       + 'it walks over its own infantry rather than through it, and it can stand in '
-      + 'a crowd its own army made. Six hundred and twenty points of health, and '
-      + 'three legs have to go before the sphere comes down. Cutting one is not '
+      + 'a crowd its own army made. Three legs have to go before the sphere comes '
+      + 'down, and it keeps shooting through the first two. Cutting one is not '
       + 'enough. Neither is cutting two.',
   },
   dwarfspider: {
@@ -208,7 +221,8 @@ export const DATABANK = {
       + 'when the Guild joined the Confederacy. It is the only Confederate machine '
       + 'that comes to you: its band is five to fourteen metres, which is inside a '
       + 'blade\'s walk, so unlike the armour behind it this one can be reached and '
-      + 'cut. Three hundred and forty points of health and a fast double tap.',
+      + 'cut. A fast double tap, and the thinnest hull of the four machines the '
+      + 'Confederacy walks onto a field.',
   },
   aat: {
     faction: 'separatist',
@@ -218,8 +232,9 @@ export const DATABANK = {
       + 'about fighting one: there are no legs to cut, so the way in is the armour. '
       + 'It fires two shells in a ripple 0.44 seconds apart at 52 damage each, and '
       + 'that gap is deliberate — it is long enough to be two events rather than a '
-      + 'burst, which is how you tell an AAT from a hailfire without looking. At '
-      + '2 400 kilos it is past the top of the Force grip.',
+      + 'burst, which is how you tell an AAT from a hailfire without looking. It is '
+      + 'past the top of the Force grip, and with no legs to cut there was never a '
+      + 'shortcut to take.',
   },
   hailfire: {
     faction: 'separatist',
@@ -237,8 +252,8 @@ export const DATABANK = {
     weapon: 'Electrostaff',
     text: 'The same IG chassis a MagnaGuard is built on, at four times the health '
       + 'and half again the size: the machine a Confederate general keeps at the '
-      + 'door rather than in the line. A thousand and fifty points of health behind '
-      + 'a durasteel torso, and that plate is the whole of the counter-play — you '
+      + 'door rather than in the line. The torso is plated in durasteel and that is '
+      + 'the whole of the counter-play — you '
       + 'are not going to cut this one in half across the chest, and you do not have '
       + 'to. The legs are still legs. It fights Djem So, and its recovery is the '
       + 'longest opening anything on the roster offers.',
@@ -271,6 +286,12 @@ export const DATABANK = {
   heavy: {
     faction: 'republic',
     weapon: 'Z-6 rotary blaster cannon',
+    /* AND THE GAME PUTS A DC-15 IN HIS HANDS — see the note on `rocket`.
+     * `buildBlaster` has a third branch and its own comment calls it "heavy
+     * repeater: three barrels in a shroud, drum magazine, carry handle", which
+     * is a Z-6; nothing reaches it, because Command.js declares `weapon:
+     * 'dc15'` here. One word in another lane's file. */
+    heldMesh: 'dc15',
     text: 'A trooper who has been handed a Z-6 and told to hold a line. A rotary '
       + 'cannon is not a rifle that hits harder, it is a rifle that does not stop — '
       + 'nine rounds at 0.07 seconds against a line trooper\'s three at 0.11 — and '
@@ -294,9 +315,9 @@ export const DATABANK = {
     text: 'Republic airborne, used to take ground that has nothing underneath it. A '
       + 'jet trooper sits a metre and a third off the deck, which puts him over '
       + 'cover, over the crowd, and inside your blade\'s arc from an angle nothing '
-      + 'else on either side attacks from. Fast at 6.2 metres a second and thin at '
-      + 'fifty-four points of health, because a man with a jump pack is a raider and '
-      + 'not a line unit.',
+      + 'else on either side attacks from. Fast at 6.2 metres a second and thin '
+      + 'enough that one pass ends him, because a man with a jump pack is a raider '
+      + 'and not a line unit.',
   },
   arc: {
     faction: 'republic',
@@ -304,8 +325,9 @@ export const DATABANK = {
     text: 'Advanced Recon Commando: trained by Jango Fett himself, off the standard '
       + 'clone template rather than the flattened one, and very nearly destroyed in '
       + 'the batch for it — they came out independent, which was the point and also '
-      + 'the problem. Blue markings, a pauldron and a kama. He carries the line '
-      + 'rifle at twice the cadence, and his preferred band is four to eleven metres '
+      + 'the problem. Blue markings, a pauldron and a kama. He works the line rifle '
+      + 'on a 0.95 second cycle against a line trooper\'s 1.35, and his preferred '
+      + 'band is four to eleven metres '
       + 'while every other shooter on the field is trying to stay out at twenty. An '
       + 'ARC closes.',
   },
@@ -323,7 +345,7 @@ export const DATABANK = {
     faction: 'republic',
     weapon: 'Mass-driver siege cannon',
     text: 'All Terrain Tactical Enforcer — thirteen metres of six-legged siege '
-      + 'armour at 3 600 kilos, walked off a gunship\'s undercarriage straight into '
+      + 'armour, walked off a gunship\'s undercarriage straight into '
       + 'a droid line that outnumbers it. One shell every 4.6 seconds at 58 damage, '
       + 'the heaviest single hit in the game, behind a 1.1 second telegraph that is '
       + 'the only warning of that size anybody gets. It is too heavy for the Force '
@@ -350,7 +372,7 @@ export const DATABANK = {
       + 'study: a Jedi who learns the skills the Temple does not teach and works '
       + 'where the Republic\'s law does not reach. Soresu is the form — three '
       + 'attacks, every one of them parryable, thrown at the lowest aggression '
-      + 'anything has — and two hundred points of health to outlast you with. It '
+      + 'anything has — and the health to outlast you while it waits. It '
       + 'will not walk onto your blade. Every opening it gives you it gives you on '
       + 'purpose.',
   },
@@ -369,8 +391,8 @@ export const DATABANK = {
     faction: 'order',
     weapon: 'Lightsaber, Makashi',
     text: 'The rank above Knight, given for taking a padawan through to the Trials '
-      + 'or for work the Council would rather not name. Four hundred and sixty '
-      + 'points of health, four powers, and the only Unleash anything on the field '
+      + 'or for work the Council would rather not name. Four powers, and the only '
+      + 'Unleash anything on the field '
       + 'has — it fires once, under a third health, with a blade already inside its '
       + 'guard. It fences Makashi, and every attack it throws can be parried, which '
       + 'is not a weakness: it is reading you, and the thrust arrives the moment you '
@@ -381,17 +403,17 @@ export const DATABANK = {
     weapon: 'Low-power training sting',
     text: 'The sphere every initiate learns the blade against. It hovers a metre and '
       + 'a half up, drifts, and fires a sting worth three damage — enough to be '
-      + 'worth avoiding and not enough to matter. Four points of health, so the '
-      + 'lesson ends the moment you actually meet it. It exists so that the first '
+      + 'worth avoiding and not enough to matter. It comes apart the instant you '
+      + 'actually meet it. It exists so that the first '
       + 'bolt you ever turn is one that will not kill you, and there is no other '
       + 'reason to build one.',
   },
   dummy: {
     faction: 'order',
     weapon: 'None — it does not fight back',
-    text: 'A battle droid chassis with the drive train pulled out and nine hundred '
-      + 'and ninety-nine points of health poured in, standing exactly where it was '
-      + 'left. It does not move, does not shoot and does not fall over. What it is '
+    text: 'A battle droid chassis with the drive train pulled out and more health '
+      + 'poured in than you will ever get to the end of, standing exactly where it '
+      + 'was left. It does not move, does not shoot and does not fall over. What it is '
       + 'for is the one thing every other body in the game is too busy to let you '
       + 'learn: where the tip of your blade actually is, and what it costs to put it '
       + 'somewhere.',
@@ -414,16 +436,16 @@ export const DATABANK = {
     weapon: 'Bladed forelimbs',
     text: 'An acklay: three metres of Vendaxan crustacean walking on six bladed '
       + 'legs, shipped to Geonosis to execute prisoners in the Petranaki arena and '
-      + 'used that way ever since. The reach is the problem. It is the only thing on '
-      + 'the roster that can hit you from outside your own reach, and there are nine '
-      + 'hundred points of health behind the claws. It has no interest in what '
-      + 'either army is doing here.',
+      + 'used that way ever since. The reach is the problem: it fights out to five '
+      + 'metres, four times the length of the blade you are holding, so it opens you '
+      + 'up from a distance where you have nothing to answer with. It has no '
+      + 'interest in what either army is doing here.',
   },
   charger: {
     faction: 'wild',
     weapon: 'Horns and mass',
-    text: 'A reek: Ithorian range cattle gone to the arena, sixteen hundred and '
-      + 'fifty kilos of horned quadruped that spends most of a fight walking and the '
+    text: 'A reek: Ithorian range cattle gone to the arena, a horned quadruped '
+      + 'that spends most of a fight walking and the '
       + 'rest of it running you down at six metres a second. Meeting it head-on is '
       + 'the one thing that does not work — the frill and the horns are carried in '
       + 'front of its eyes and the charge does 54. The work is its legs; three of '
@@ -435,16 +457,16 @@ export const DATABANK = {
     weapon: 'Claws',
     text: 'A nexu: a forest cat off Cholganna with four eyes, the second pair for '
       + 'heat, brought to the sand because it is the fastest thing anyone could get '
-      + 'into a cage. Eight and a half metres a second — nothing else out here is '
-      + 'close — and only four hundred and twenty points of health behind it. It '
+      + 'into a cage. Eight and a half metres a second — nothing else in the game is '
+      + 'close — on the thinnest body of the five. It '
       + 'does not out-trade you and does not try to. It is at your back before the '
       + 'animal you were watching has finished its swing.',
   },
   brute: {
     faction: 'wild',
     weapon: 'Jaws and fists',
-    text: 'A rancor, Dathomirian, twenty-two hundred points of health and the '
-      + 'slowest thing in the arena at three and a half metres a second. Neither the '
+    text: 'A rancor, Dathomirian, the heaviest body in the arena and the slowest '
+      + 'at three and a half metres a second. Neither the '
       + 'size nor the slowness is what makes it hard: the slam covers seven metres '
       + 'of ground centred on the animal, which is wider than the band it fights at, '
       + 'so every metre you spend beside it is a metre you have to give back. It '

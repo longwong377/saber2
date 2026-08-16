@@ -50,6 +50,11 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
          codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
 import { FORMATIONS, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+// THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
+// and never typed — and Databank.js carries the one thing a roster cannot hold:
+// which side a body fights for, what it is carrying, and who it is.
+import { ARCHETYPES } from '../game/Enemy.js';
+import { DATABANK, FACTIONS, entryFor } from '../game/Databank.js';
 
 /**
  * THE SIX ORDER KEYS JOIN THE TABLE, HERE, AND IT HAS TO BE HERE.
@@ -1305,6 +1310,91 @@ export function codexHtml(bindings, pad = null) {
   }).join('');
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The databank                                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * EVERY BODY IN THE GAME, AS A PAGE — AND THE LIST IS ENUMERATED, NOT TYPED.
+ *
+ * The product fields thirty-one archetypes and, before this, told the player
+ * what none of them was: the tab called "Codex" is a keybind reference and the
+ * HUD prints a label. So a player meets a droideka, a BX commando, a hailfire
+ * droid, an acklay and a reek, and nothing in the game ever says what any of
+ * them is or whose army it belongs to — while the research to say it is already
+ * written in the comments that price them.
+ *
+ * `Object.keys(ARCHETYPES)` is the roster and this walks it. Nothing here holds
+ * a second list of bodies, and that is the whole reason it is a function rather
+ * than a constant: Levels.js, Vehicles.js and Command.js each register more
+ * archetypes AFTER this module finishes evaluating, so a table built at module
+ * scope would show fifteen of the thirty-one and look complete doing it. Same
+ * temporal trap `sandboxKeys` records in Waves.js.
+ *
+ * WHAT COMES FROM WHERE. The name, the threat, the health, the speed, the reach
+ * and the levels a body is met on are read off `ARCHETYPES` and the level pools
+ * at call time — none of them is repeated in `DATABANK`, so none of them can
+ * drift. `DATABANK` carries only what cannot be computed: the faction, the real
+ * name of the weapon, and the paragraph.
+ *
+ * A MISSING ENTRY IS AN ERROR AND SAYS SO. `entryFor` returns null rather than a
+ * plausible default and this passes the null straight through, so an archetype
+ * registered without an entry renders as a page that names itself as missing
+ * instead of a page with confident wrong prose on it —
+ * `tools/checks/databank.mjs` fails on it either way.
+ */
+export function databankPages() {
+  return Object.keys(ARCHETYPES).map((key) => {
+    const A = ARCHETYPES[key];
+    const e = entryFor(key);
+    return {
+      key,
+      /* The name a player sees in the HUD, so the page and the kill feed agree. */
+      name: A.label || key,
+      faction: e ? FACTIONS[e.faction] : null,
+      factionId: e ? e.faction : null,
+      weapon: e ? e.weapon : null,
+      text: e ? e.text : null,
+      /* Read, never typed. */
+      hp: A.hp, threat: A.threat ?? 0, speed: A.speed ?? 0, mass: A.mass ?? 0,
+      boss: !!A.boss, big: !!A.big, training: !!A.training,
+      setPieceOnly: !!A.setPieceOnly,
+      /* WHERE IT IS MET, derived from the pools — which is the question a player
+       * actually has ("where do I go to fight one of these") and the one thing
+       * on the page that no comment anywhere in the source already answers.
+       * A dojo body is met in the dojo and says so; a set-piece is met on a boss
+       * wave of the levels whose pool names it, which is the same list. */
+      levels: LEVEL_ORDER.filter((k) => (LEVELS[k].pool || []).includes(key))
+        .map((k) => LEVELS[k].name),
+    };
+  });
+}
+
+/**
+ * The pages, grouped under their faction, in the order FACTIONS declares.
+ *
+ * Sorted inside a group by threat, so a group reads as its own ladder — a B1
+ * before a droideka before an AAT — which is the same order the muster and the
+ * unlock ladder put them in, and it is the order a player meets them in.
+ */
+export function databankGroups() {
+  const pages = databankPages();
+  const out = [];
+  for (const id of Object.keys(FACTIONS)) {
+    const mine = pages.filter((p) => p.factionId === id)
+      .sort((a, b) => a.threat - b.threat || (a.name < b.name ? -1 : 1));
+    if (mine.length) out.push({ id, faction: FACTIONS[id], pages: mine });
+  }
+  /* Anything the databank does not know is its own group at the bottom, named
+   * as the defect it is rather than dropped. A body silently missing from this
+   * page is exactly the failure the page exists to end. */
+  const orphans = pages.filter((p) => !p.factionId);
+  if (orphans.length) {
+    out.push({ id: null, faction: { name: 'Unrecorded', short: 'Unrecorded', note: '' }, pages: orphans });
+  }
+  return out;
+}
+
 /**
  * The pause card's legend.
  *
@@ -2082,6 +2172,7 @@ export class Menu {
     // kind of bug this codebase specialises in.
     this._bound = new Map();
     this._buildTraining();          // must exist before the tab wiring runs
+    this._buildDatabank();          // …and so must this, for the same reason
     this._buildTabs();
     this._buildLevels();
     this._buildDifficulty();
@@ -3722,6 +3813,169 @@ export class Menu {
       this.selectMode('sandbox');
       this.hooks.onDeploy?.(this.s);
     });
+  }
+
+  /* ── databank ────────────────────────────────────────────────────── */
+
+  /**
+   * THE PAGE PER BODY.
+   *
+   * Built here rather than in index.html for the reason `_buildTraining` is:
+   * the list has to come from `ARCHETYPES`, and thirty-one blocks of markup
+   * typed into a file would be wrong the day somebody adds a droid — which is
+   * the defect this repository has now removed nine times. There is no unit
+   * name, threat number or level name in the markup below; every one of them is
+   * interpolated from `databankGroups()`.
+   *
+   * TWO COLUMNS AND NOT A GRID OF CARDS. A card grid can show thirty-one names
+   * and no prose, or thirty-one paragraphs and no shape; the point of this page
+   * is the paragraph. So the roster is a narrow list of every body grouped by
+   * army, and the wide column is whichever one is selected, at length. It is the
+   * same shape the Deploy panel already uses for theatres and the creator uses
+   * for species, so it inherits the keyboard path (`_activate`) and the scroll
+   * fade with it.
+   *
+   * It has to exist before `_buildTabs` runs — that is what collects `.tab` and
+   * `.panel` — hence the call order in the constructor.
+   */
+  _buildDatabank() {
+    const tabs = document.querySelector('.menu-tabs');
+    const wrap = document.querySelector('.menu-wrap');
+    if (!tabs || !wrap) return;                       // stripped DOM (tests)
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.dataset.tab = 'databank';
+    tab.textContent = 'Databank';
+    /* Immediately before the Codex, which is the other reference page. The two
+     * are one thought — what the controls do, and what the things you are using
+     * them on are — and a player who has found one has found the other. */
+    const codexTab = [...tabs.children].find((t) => t.dataset.tab === 'train');
+    tabs.insertBefore(tab, codexTab || null);
+
+    const panel = document.createElement('section');
+    panel.className = 'panel';
+    panel.dataset.panel = 'databank';
+    panel.innerHTML = `
+      <div class="col narrow databank-roster">
+        <h3>Roster</h3>
+        <div id="databank-list"></div>
+      </div>
+      <div class="col wide databank-page" id="databank-page"></div>`;
+    /* Before the footer, so the tab order and the DOM order agree. */
+    const foot = wrap.querySelector('.menu-foot');
+    wrap.insertBefore(panel, foot || null);
+
+    this._buildDatabankList();
+    this._showDatabank(null);
+  }
+
+  /** The roster column: every archetype in the game, under its faction. */
+  _buildDatabankList() {
+    const host = document.getElementById('databank-list');
+    if (!host) return;
+    host.innerHTML = '';
+    for (const group of databankGroups()) {
+      const head = document.createElement('h4');
+      head.className = 'codex-head databank-army';
+      head.textContent = group.faction.short;
+      host.appendChild(head);
+      const list = document.createElement('div');
+      list.className = 'difflist';
+      for (const p of group.pages) {
+        const d = document.createElement('div');
+        d.className = 'diff';
+        d.dataset.entry = p.key;
+        /* The sub-line is the two numbers a player can act on — what it is
+         * carrying and how hard it hits — and both are read off the roster. */
+        d.innerHTML = `<i class="dot"></i><div class="txt"><b>${escKey(p.name)}</b>`
+          + `<span>${escKey(p.weapon || 'no entry')} · threat ${p.threat}</span></div>`;
+        this._activate(d, () => {
+          audio.ui('click');
+          this._showDatabank(p.key);
+        });
+        list.appendChild(d);
+      }
+      host.appendChild(list);
+    }
+  }
+
+  /**
+   * One page, or the standing instruction when nothing is chosen.
+   *
+   * `key` is validated against the pages rather than trusted: it comes back off
+   * a saved profile, and a profile written before an archetype was renamed would
+   * otherwise open the tab on a blank column.
+   */
+  _showDatabank(key) {
+    const host = document.getElementById('databank-page');
+    if (!host) return;
+    const pages = databankPages();
+    const p = pages.find((x) => x.key === key) || null;
+    const list = document.getElementById('databank-list');
+    if (list) {
+      for (const d of list.querySelectorAll('.diff')) {
+        d.classList.toggle('sel', !!p && d.dataset.entry === p.key);
+      }
+    }
+    /* HELD ON THE MENU AND NOT IN THE PROFILE, deliberately. Which page you
+     * last read is not a setting — it changes nothing about a run, it would need
+     * a reader declaration in SETTING_READERS to state that it changes nothing,
+     * and the tab is better for opening on the index every time: the index is
+     * the sentence that says what this page is for. */
+    this._databankKey = p ? p.key : null;
+
+    if (!p) {
+      const groups = databankGroups();
+      /* Both numbers counted, neither typed. "Thirty-one bodies on three sides"
+       * was in this sentence for about an hour and it was already the defect
+       * this page exists to end — a hand-written count beside the generated list
+       * directly under it. */
+      host.innerHTML = `<h3>The databank</h3>
+        <p class="hint">${pages.length} bodies fight this war and ${groups.length} banners fly
+          over them. Pick one. Every page is the same four things: whose it is, what it is
+          carrying, where you meet it, and what it is.</p>
+        ${groups.map((g) => `<p class="hint"><b>${escKey(g.faction.short)}</b> — `
+          + `${escKey(g.faction.note || '')}</p>`).join('')}`;
+      return;
+    }
+
+    /* A body with no entry renders as the hole it is. Silence here would be the
+     * thing this whole page exists to end. */
+    if (!p.text) {
+      host.innerHTML = `<h3>${escKey(p.name)}</h3>
+        <p class="hint">This body is in the game and has no databank entry.
+          <b>tools/checks/databank.mjs</b> fails while that is true.</p>`;
+      return;
+    }
+
+    const where = p.training ? 'The dojo, and nowhere else'
+      : p.levels.length ? p.levels.join(' · ')
+      : 'Nowhere — no theatre fields this one';
+    /* The tags are facts off the archetype, not adjectives. `setPieceOnly` is
+     * the one a player cannot otherwise discover: it is why a Jedi Master never
+     * turns up in an ordinary wave however long you fight. */
+    const tags = [
+      p.boss ? 'set-piece' : null,
+      p.big && !p.boss ? 'heavy' : null,
+      p.setPieceOnly ? 'boss waves only' : null,
+      p.training ? 'training' : null,
+    ].filter(Boolean);
+
+    host.innerHTML = `
+      <h3 class="databank-name">${escKey(p.name)}</h3>
+      <p class="databank-army-line">${escKey(p.faction.name)}</p>
+      <div class="databank-stats">
+        <div><b>Weapon</b><span>${escKey(p.weapon)}</span></div>
+        <div><b>Health</b><span>${p.hp}</span></div>
+        <div><b>Threat</b><span>${p.threat}</span></div>
+        <div><b>Pace</b><span>${p.speed ? p.speed.toFixed(1) + ' m/s' : 'stationary'}</span></div>
+        <div><b>Mass</b><span>${p.mass ? p.mass + ' kg' : '—'}</span></div>
+        <div class="wide"><b>Met on</b><span>${escKey(where)}</span></div>
+      </div>
+      ${tags.length ? `<p class="databank-tags">${tags.map((t) => `<i>${escKey(t)}</i>`).join('')}</p>` : ''}
+      <p class="databank-text">${escKey(p.text)}</p>
+      <p class="hint databank-foot">${escKey(p.faction.note)}</p>`;
   }
 
   _buildSandboxUnits() {

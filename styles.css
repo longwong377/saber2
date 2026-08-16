@@ -592,6 +592,65 @@ button{font-family:inherit}
 .codex-list i{color:var(--accent);font-style:normal;font-weight:700}
 .col.codex{padding-right:14px}
 
+/* ── databank ─────────────────────────────────────────────────────────
+   The one page in this product where the player READS. Everything here is
+   already-built furniture — .diff rows for the roster, .codex-head for the
+   army titles, the panel's own ink and cut — because a reference page that
+   invented its own chrome would be the second interface this game has, which
+   is the fault the header of this file exists to have fixed once.
+
+   The only new box is the stat strip, and it is the same object as a .card's
+   meta row seen larger: solid fill, 2 px ink, cut corner, hard stamp. No
+   gradient, no blur, no rule that is not a filled block. */
+.col.narrow.databank-roster{flex:0 0 264px}
+.databank-roster .difflist{margin:8px 0 16px}
+/* The army heading. Same tab as a Codex section, and it is the only thing on
+   this page that carries the warm hue — a faction is the one distinction the
+   eye has to make before it reads a word. */
+.databank-army{margin-top:14px}
+.databank-army:first-child{margin-top:0}
+
+.col.wide.databank-page{padding-right:16px;max-width:760px}
+.databank-name{margin-bottom:2px}
+/* Whose it is, directly under the name, in the mono voice every other label on
+   this page uses. Warm rather than accent: the blade colour is reserved for
+   things that are live, and a faction is a fact. */
+.databank-army-line{font:var(--mono);font-size:10px;font-weight:800;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--accent-warm);margin:0 0 14px}
+
+/* SIX CHIPS, NOT ONE TABLE, and the first cut was the table.
+   It drew the ink by giving the GRID a dark background and letting a 2 px gap
+   show through between solid cells — which is a real trick and it is wrong for
+   a grid whose cell count does not divide by its column count: screenshotted at
+   1440x900 the six stats landed in a 4-wide grid and the two empty positions in
+   the second row came out as flat black holes with an outline round them.
+   Independent chips have nothing to leave behind, and they are the same object
+   as a .diff row or a crystal swatch, which is what the rest of this file is
+   made of. */
+.databank-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:9px;
+  margin-bottom:14px;align-items:start}
+.databank-stats div{background:var(--panel);padding:8px 11px 9px;border:2px solid var(--stroke);
+  box-shadow:var(--stamp);clip-path:var(--cut-sm)}
+/* The theatres a body is met on is a list and not a number, so it gets the room
+   a list needs rather than wrapping six times in a column sized for "170". */
+.databank-stats div.wide{grid-column:span 2}
+.databank-stats b{display:block;font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dimmer);margin-bottom:3px}
+.databank-stats span{display:block;font-size:12px;font-weight:700;color:var(--ink);line-height:1.4}
+
+/* What the roster says about a body that a stat cannot: a set-piece, a heavy,
+   a thing you only meet on a boss wave. Chips, not adjectives. */
+.databank-tags{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px}
+.databank-tags i{font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.14em;
+  text-transform:uppercase;font-style:normal;padding:3px 8px 4px;color:var(--stroke);
+  background:var(--accent-warm);clip-path:var(--cut-sm)}
+
+/* THE PARAGRAPH, and it is sized to be read rather than scanned: 13.5 px at
+   1.75 against the 12 px/1.55 the hint rows use. This is the only body copy in
+   the product and it is allowed to look like body copy. */
+.databank-text{font-size:13.5px;line-height:1.78;color:var(--ink);margin:0 0 16px}
+.databank-foot{border-top:2px solid var(--panel-hi);padding-top:12px;margin-top:0}
+
 .menu-foot{display:flex;align-items:center;gap:16px;justify-content:space-between;padding-top:11px;
   margin-top:2px;border-top:2px solid var(--panel-hi);
   font:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--dimmer);text-transform:uppercase}
