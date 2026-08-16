@@ -1230,7 +1230,9 @@ export function simulateRun(opts) {
     p.world.enemies = alive;
     let qi = 0, spawnTimer = 0, t = 0, killed = 0;
     const hpAtStart = p.hp;
-    let engaged = null, phase = 'travel', phaseT = 0;
+    // `travelNeed` is how long the engagement's travel phase lasts, SNAPSHOT
+    // when the target is picked — see the note at its only reader.
+    let engaged = null, phase = 'travel', phaseT = 0, travelNeed = 0;
     const maxAlive = 26;   // WaveDirector's own default
 
     while ((qi < total || alive.length) && p.alive) {
@@ -1306,6 +1308,9 @@ export function simulateRun(opts) {
           if (cost < best) { best = cost; engaged = e; }
         }
         phase = 'travel'; phaseT = 0;
+        /* CAPTURED HERE, and that is the whole of the fix below. */
+        travelNeed = engaged
+          ? (engaged.A.melee ? Math.max(engaged.close, engaged.arm) : engaged.close) : 0;
       }
 
       /* ── blade work ── */
@@ -1331,9 +1336,27 @@ export function simulateRun(opts) {
            * pessimistic reading — a player running at it meets it sooner than
            * either clock alone says — and it is the one that removes the bias
            * rather than the one that flatters the player.
+           *
+           * ── AND THE FLOOR WAS EXACTLY HALF WHAT THAT SAYS ────────────────
+           *
+           * `e.arm` is a COUNTDOWN. The incoming loop below runs `e.arm -= dt`
+           * on every body every tick, so this line compared a clock counting UP
+           * from zero against a clock counting DOWN to it, and they meet in the
+           * middle: the player began cutting at `arm / 2`, not at `arm`.
+           *
+           * That is HANDOFF §2.4 wearing the comment above as a disguise — the
+           * rule is stated correctly three lines up and the arithmetic does
+           * something else, and it fails in the direction nobody checks,
+           * because it flatters the player. Measured on the Colosseum's wave-1
+           * opener at Knight: the Nexu's arm clock is 4.16 s and it dies at
+           * 3.36 s, so it never attacked once in 24 seeds at three tiers and
+           * the wave cost 0.0 hp — the identical symptom the note above says
+           * was fixed, still there, one line under the fix.
+           *
+           * `travelNeed` is the same quantity captured when the engagement
+           * begins, which is what the note always described.
            */
-          const reach = engaged.A.melee ? Math.max(engaged.close, engaged.arm) : engaged.close;
-          if (phaseT >= reach) { phase = 'cut'; phaseT = 0; }
+          if (phaseT >= travelNeed) { phase = 'cut'; phaseT = 0; }
         } else if (canSwing) {
           if (phaseT >= engaged.eng.tNeutralise) engaged.neutral = true;
           if (phaseT >= engaged.eng.tKill) {
